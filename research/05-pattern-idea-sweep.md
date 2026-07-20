@@ -136,3 +136,18 @@ Judgment on the sweep — what I'd graduate onto the map now:
 - **Patterns, folded into existing tickets rather than new ones**: nothing-selected pan, modifier zoom, Shift+Space preview, the P link mode with the four-step linking gesture, blue-flag starting points, one-name-three-surfaces, flows inferred/overlapping/never pre-declared, bound auto-updating arrows, thumbnail-then-hydrate, resize-handle-as-responsive-test, the culling and two-coordinate-layer rendering patterns, presence-scoped-to-nodes with pull-selection/push-presence, workspace-file switching with restore-not-reload, and the allowlist/render hook split. These become checklist input for "v1 canvas scope" (#7), "Flow layer semantics" (#5), and the two tests (#8, #9).
 - **Ideas I'd take for v1**: directory-triggered skill auto-load; agent handoff notes; synced side-by-side variant compare; named camera bookmarks; structural frame lint; LAN device mirror; git-native hover history (scrubber later); per-frame cost HUD with one nuance — attributing spend to a frame needs the handoff-notes convention first, so it lands right after that exists.
 - **Two corrections of emphasis**: "resize the box, don't transform the pixels" applies to *frame resize*, not to canvas zoom — world zoom still needs a CSS transform, which is fine Chrome-first and is exactly what the live-frames test measures. And the [later] on Stitch's auto-suggest-next-screen is right for taste reasons, not technical ones: generative scope creep is the thing spool's Liam-picks model exists to avoid.
+
+---
+
+## Second-pass audit (2026-07-20)
+
+New items only. Verdict tags remain suggestions; Liam decides.
+
+### UI/UX patterns
+
+- **Locked means live, unlocked means selectable**: tldraw sends pointer events straight into a locked embed, while an unlocked embed selects on click and requires double-click to enter; click-outside or Escape exits. This is a proven local alternative to a whole-canvas Play switch, but spool's already-decided global Arrange/Play split is clearer. [tldraw embed shape docs](https://tldraw.dev/sdk-features/embed-shape) [skip]
+- **Comments bind to rendered elements, not coordinates**: Magic Patterns lets reviewers comment from either the editor or shared preview, keeps anchors attached through responsive resize, and groups feedback by design version. [Inline Comments](https://www.magicpatterns.com/docs/documentation/collaboration/inline-comments) [later]
+
+### Capability candidates
+
+- **Non-blocking agent job lanes**: keep the canvas editable while independent agent work runs in parallel, show progress per job, and leave dependent prompts in a visible queue that Liam can retract before they start; Figma validates parallel background work with local loading states, while Magic Patterns validates the removable queued-prompt interaction. [Figma release notes](https://www.figma.com/release-notes/) / [Magic Patterns changelog](https://www.magicpatterns.com/docs/documentation/feature-releases/changelog) [later]
