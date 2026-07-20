@@ -28,6 +28,15 @@ function useFps(): React.RefObject<number[]> {
 const bucket = (b: TickBucket) =>
 	b.frames === 0 ? "—" : `${b.tps} tps / ${b.frames} (${(b.tps / b.frames).toFixed(0)} each)`;
 
+// product-language labels over the mechanical policy names
+const POLICY_LABELS: Record<Policy, string> = {
+	"all-live": "all-live (stress)",
+	"viewport-warm": "live · near plays",
+	"all-warm": "design · all frozen",
+	"viewport-snapshot": "viewport-snapshot",
+	"all-snapshot": "stills · click-to-play",
+};
+
 export function Hud({
 	policy,
 	onPolicy,
@@ -147,7 +156,7 @@ export function Hud({
 								onClick={() => onPolicy(p)}
 								className={`rounded-md px-2 py-1.5 text-left text-[11px] font-medium ${policy === p ? "bg-[#8b5cf6] text-white" : "bg-white/8 text-white/70 hover:bg-white/15"}`}
 							>
-								{p}
+								{POLICY_LABELS[p]}
 							</button>
 						))}
 					</div>

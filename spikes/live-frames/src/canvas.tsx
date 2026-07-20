@@ -132,7 +132,7 @@ export function Canvas() {
 	const [marquee, setMarquee] = useState<Bounds | null>(null);
 	const [guides, setGuides] = useState<SnapGuide[]>([]);
 	const [interactId, setInteractId] = useState<string | null>(null);
-	const [policy, setPolicy] = useState<Policy>("all-live");
+	const [policy, setPolicy] = useState<Policy>("viewport-warm");
 	const [thumbSource, setThumbSource] = useState<ThumbSource>("self");
 	const [pwAvailable, setPwAvailable] = useState(false);
 	const [busy, setBusy] = useState(false);
@@ -603,8 +603,12 @@ export function Canvas() {
 		h: b.h * k,
 	});
 
-	const shotFor = (id: string): string | undefined =>
-		thumbSource === "playwright" && pwAvailable ? `/shots/${id}.png` : shots[id];
+	// fresh self-captures win; the pre-rendered playwright shots are the fallback so
+	// a reload (in-memory captures gone) never shows a wall of name-card placeholders
+	const shotFor = (id: string): string | undefined => {
+		if (thumbSource === "playwright" && pwAvailable) return `/shots/${id}.png`;
+		return shots[id] ?? (pwAvailable ? `/shots/${id}.png` : undefined);
+	};
 
 	const labelColor = (f: SceneFrame): string => {
 		if (interactId === f.id) return "#8b5cf6";

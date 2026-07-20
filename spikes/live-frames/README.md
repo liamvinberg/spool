@@ -19,7 +19,8 @@ pnpm build && pnpm bench    # scripted benchmark → capture/results.md (headed 
 
 ## What to feel
 
-- **Boot**: all 63 frames hydrate at once (~0.4–1.3 s storm, timed in the HUD). Clocks tick, particles fly, tickers scroll.
+- **Boot**: all 63 frames hydrate at once (~0.4–1.3 s storm, timed in the HUD). Default mode is **live · near plays** — frames near the camera run, far ones freeze in place; zoom into anything and it wakes up.
+- **design · all frozen** is the design-mode preview: time stopped everywhere, but every frame is real DOM — crisp at any zoom, and the surface element-click-for-agent will later live on. **stills · click-to-play** goes further: nothing mounted, images only (pre-rendered playwright shots as fallback after a reload), double-click boots a frame fresh.
 - **Pan/zoom in all-live** — the stress mode. Watch fps and the tick buckets: offscreen frames report 0 (Chrome pauses their rAF entirely), visible ones vsync at ~120.
 - **Zoom to fit in all-live** and watch the visible-live tick bucket explode: Chrome *free-runs* rAF in tiny-rendered frames (500–1300 Hz each). This is the one regime that burns CPU for nothing — flip to viewport-warm and watch it die.
 - **viewport-warm freezes time, not pixels**: demoted frames keep their real DOM on canvas — crisp at any zoom, no thumbnail — with time stopped inside (a shim injected before each frame's own scripts holds rAF callbacks and skips interval ticks; clocks halt, particles hang mid-air). Promote back to live and time resumes. Thumbnails now only cover unmounted frames and boots.
@@ -66,4 +67,4 @@ Persistence, flows/player, agent CLI, WebKit (Chrome-first already decided), tou
 
 ## Recommendation (provisional — react to the demo)
 
-Live frames at scale are **viable, comfortably**. Default policy for v1: **viewport-warm with the zoom threshold** — state survives, no remount jank, memory ≈ all-live anyway, and it kills the tiny-frame free-run. viewport-snapshot as opt-in hibernation past some frame count. Self-capture for ambient thumbs, playwright behind the CLI's deliberate shots. Boot thumbnail-first, hydrate behind it.
+Live frames at scale are **viable, comfortably**. The mode model that emerged from Liam's reactions: **live mode** (default) = viewport-warm — frames near you play, far ones freeze as real DOM (crisp, state kept, kills the tiny-frame free-run); **design mode** = all-warm — time frozen everywhere, the future element-select surface; **stills/hibernation** = snapshot tiers for huge canvases and cold boots. Per-frame "always play" pin later for hero screens. Self-capture for ambient thumbs (2×, canvas-aware), playwright shots as the persistent fallback and the CLI's deliberate-shot path. Boot thumbnail-first, hydrate behind it.
