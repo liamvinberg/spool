@@ -116,3 +116,23 @@
 
 - **Git-native per-frame history** — hovering a frame tile synthesizes a one-line summary from its last commit message so Liam can scan dozens of tiles for "what changed and why," and selecting a frame exposes a scrubber over its actual commit history rendering the historical `srcdoc` at each point, not just the current file on disk; git is already the decided versioning layer, this just projects it onto the canvas UI. [adopt-v1]
 - **Semantic frame search** — a Cmd+K-style search across all frame files and fixture states using the agent's own file-reading and reasoning ability ("take me to the checkout error state") rather than filename/text match alone, useful once a board holds dozens of frames; cousin of Spotlight/Linear-style fuzzy search, pushed further by an agent that can actually read the files behind each result. [later]
+
+---
+
+## Fable ideation pass (main session, 2026-07-20)
+
+Added candidates — same rules, tags are suggestions only:
+
+- **Frame lifecycle front-matter** — each frame declares `status: exploring | chosen | promoted` plus a one-line intent in a small front-matter block; canvas badges it, the CLI lists it, and "chosen" becomes the machine-readable form of taste-is-locked-execute-literally. [adopt-v1]
+- **Handoff command** — `spool handoff <frame|flow>` packages the chosen frames, fixtures, flow edges, and a short generated spec into a build-ready ticket body; the concrete v1 form of the two-way promise before component sync exists. [adopt-v1]
+- **State timeline** — the runtime owns `ui.state`, so log every mutation per play session and let any moment be exported as a named scenario preset; the log is nearly free, record/replay rides on it, scrubber UI can come later. [adopt-v1]
+- **Flow coverage dimming** — play sessions record which links and states were actually walked; arrange mode dims never-visited paths. The dynamic complement to the structural lint pass. [later]
+- **Render matrices beyond fixtures** — generalize the fixture-grid axes: one frame source rendered across viewports and light/dark simultaneously as a locked grid; iframes are real viewports, so this is arrangement work, not runtime work. [later]
+- **URL-to-frame import** — paste any URL and snapshot its DOM/CSS into a frame source to riff on; matches an existing habit of redesigning ugly incumbents, and doubles as a crude own-product importer before component sync exists. [later]
+- **Golden states as taste locks** — pin a screenshot of the agreed state beside a frame as the reference artifact; implementing agents pixel-check against it. The pre-ship sibling of the visual production-drift diff. [later]
+
+Judgment on the sweep — what I'd graduate onto the map now:
+
+- **Patterns, folded into existing tickets rather than new ones**: nothing-selected pan, modifier zoom, Shift+Space preview, the P link mode with the four-step linking gesture, blue-flag starting points, one-name-three-surfaces, flows inferred/overlapping/never pre-declared, bound auto-updating arrows, thumbnail-then-hydrate, resize-handle-as-responsive-test, the culling and two-coordinate-layer rendering patterns, presence-scoped-to-nodes with pull-selection/push-presence, workspace-file switching with restore-not-reload, and the allowlist/render hook split. These become checklist input for "v1 canvas scope" (#7), "Flow layer semantics" (#5), and the two tests (#8, #9).
+- **Ideas I'd take for v1**: directory-triggered skill auto-load; agent handoff notes; synced side-by-side variant compare; named camera bookmarks; structural frame lint; LAN device mirror; git-native hover history (scrubber later); per-frame cost HUD with one nuance — attributing spend to a frame needs the handoff-notes convention first, so it lands right after that exists.
+- **Two corrections of emphasis**: "resize the box, don't transform the pixels" applies to *frame resize*, not to canvas zoom — world zoom still needs a CSS transform, which is fine Chrome-first and is exactly what the live-frames test measures. And the [later] on Stitch's auto-suggest-next-screen is right for taste reasons, not technical ones: generative scope creep is the thing spool's Liam-picks model exists to avoid.
