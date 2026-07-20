@@ -40,6 +40,8 @@ Both variants render the same five frames (a fake habit app: three phone screens
 
 - **Gap snapping** (equal-spacing guides) — tldraw ships it; home-built only does edge/center alignment. Building it is real work; that gap is part of the price being measured.
 - **Multi-select resize** — tldraw yes; home-built resizes single frames only.
+- **Edge-handle resize and snap-while-resizing** — tldraw yes; home-built has corner handles only, no resize snapping.
+- **Undo/redo** — tldraw has a full history stack built in (not key-wired in this spike's chrome); home-built has none, and a real home-built canvas needs a command stack eventually.
 - **Arrow authoring** — tldraw's arrow tool is fully general (bendable, reroutable, labels); home-built arrows are fixed nearest-side noodles.
 - **Arrow styling** differs slightly (tldraw palette blue vs Figma blue) — cosmetic.
 - **Watermark** — the tldraw variant shows "made with tldraw" because it runs unlicensed, which is exactly how a free spool would have to ship (see below).
