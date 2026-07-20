@@ -120,7 +120,7 @@ export function Hud({
 						<span className={val}>{s ? bucket(s.buckets.offLive) : "–"}</span>
 					</div>
 					<div className={row}>
-						<span className={label}>ticks — warm (hidden)</span>
+						<span className={label}>ticks — warm (frozen)</span>
 						<span className={val}>{s ? bucket(s.buckets.warm) : "–"}</span>
 					</div>
 					<div className={row}>
