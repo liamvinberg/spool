@@ -1,0 +1,6 @@
+node_modules
+dist
+*.local
+public/shots
+capture/self-samples
+capture/*.png
