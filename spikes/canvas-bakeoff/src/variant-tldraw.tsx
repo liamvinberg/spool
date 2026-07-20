@@ -160,6 +160,15 @@ const Chrome = track(function Chrome() {
 				return;
 			}
 			if (mod) return;
+			// Physical keys for shifted digits — layout-independent (Swedish shift+2 types ").
+			if (e.shiftKey && e.code === "Digit1") {
+				editor.zoomToFit({ animation: { duration: 220 } });
+				return;
+			}
+			if (e.shiftKey && e.code === "Digit2") {
+				editor.zoomToSelection({ animation: { duration: 220 } });
+				return;
+			}
 			switch (e.key) {
 				case "v":
 					editor.setCurrentTool("select");
@@ -176,12 +185,6 @@ const Chrome = track(function Chrome() {
 					break;
 				case "-":
 					editor.zoomOut(undefined, anim);
-					break;
-				case "!":
-					editor.zoomToFit({ animation: { duration: 220 } });
-					break;
-				case "@":
-					editor.zoomToSelection({ animation: { duration: 220 } });
 					break;
 				case "Backspace":
 				case "Delete":

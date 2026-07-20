@@ -177,6 +177,17 @@ export function VariantHome() {
 
 	const frameById = (id: string) => framesRef.current.find((f) => f.id === id);
 
+	// Geometric hit-test (topmost first). Pointer capture retargets events to the viewport,
+	// so e.target is useless mid-gesture — position is the only reliable signal.
+	const frameAtWorld = (p: Point) => {
+		const fs = framesRef.current;
+		for (let i = fs.length - 1; i >= 0; i--) {
+			const f = fs[i];
+			if (f && p.x >= f.x && p.x <= f.x + f.w && p.y >= f.y && p.y <= f.y + f.h) return f.id;
+		}
+		return null;
+	};
+
 	// Initial fit before first paint.
 	useLayoutEffect(() => {
 		const el = viewportRef.current;
@@ -290,6 +301,16 @@ export function VariantHome() {
 				return;
 			}
 			if (mod) return;
+			// Physical-key matching for shifted digits — on a Swedish layout shift+2 types ",
+			// so e.key comparison against "@" never fires.
+			if (e.shiftKey && e.code === "Digit1") {
+				zoomFit();
+				return;
+			}
+			if (e.shiftKey && e.code === "Digit2") {
+				zoomSelection();
+				return;
+			}
 			switch (e.key) {
 				case "v":
 					setTool("select");
@@ -311,14 +332,6 @@ export function VariantHome() {
 					zoomAt(c.x, c.y, 0.8, true);
 					break;
 				}
-				case "!":
-				case "1":
-					if (e.shiftKey || e.key === "!") zoomFit();
-					break;
-				case "@":
-				case "2":
-					if (e.shiftKey || e.key === "@") zoomSelection();
-					break;
 				case "Backspace":
 				case "Delete": {
 					const sel = selectionRef.current;
@@ -448,8 +461,12 @@ export function VariantHome() {
 
 		switch (g.kind) {
 			case "pan": {
-				setCamera((c) => (c ? { ...c, x: c.x + p.x - g.last.x, y: c.y + p.y - g.last.y } : c));
+				// Delta must be computed NOW: the functional updater runs after this handler,
+				// by which time g.last has been mutated and the delta would always be zero.
+				const dx = p.x - g.last.x;
+				const dy = p.y - g.last.y;
 				g.last = p;
+				setCamera((c) => (c ? { ...c, x: c.x + dx, y: c.y + dy } : c));
 				break;
 			}
 			case "maybe-drag": {
@@ -516,9 +533,9 @@ export function VariantHome() {
 				break;
 			}
 			case "arrow": {
-				const overId =
-					(e.target as Element).closest("[data-frame-id]")?.getAttribute("data-frame-id") ?? null;
-				setArrowDraft({ fromId: g.fromId, toWorld: toWorld(p, cam), overId: overId === g.fromId ? null : overId });
+				const w = toWorld(p, cam);
+				const overId = frameAtWorld(w);
+				setArrowDraft({ fromId: g.fromId, toWorld: w, overId: overId === g.fromId ? null : overId });
 				break;
 			}
 		}
@@ -547,7 +564,8 @@ export function VariantHome() {
 		}
 
 		if (g.kind === "arrow") {
-			const overId = (e.target as Element).closest("[data-frame-id]")?.getAttribute("data-frame-id") ?? null;
+			const cam = cameraRef.current;
+			const overId = cam ? frameAtWorld(toWorld(localPoint(e), cam)) : null;
 			if (overId && overId !== g.fromId) {
 				setArrows((as) => [...as, { id: `a-${g.fromId}-${overId}-${as.length}`, from: g.fromId, to: overId }]);
 			}
@@ -582,6 +600,7 @@ export function VariantHome() {
 		>
 			{/* world layer — one transform, everything inside is world-space */}
 			<div
+				data-world
 				className="absolute top-0 left-0"
 				style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${k})`, transformOrigin: "0 0" }}
 			>
