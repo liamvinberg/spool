@@ -579,7 +579,8 @@ export function Canvas() {
 		const rect = viewportRef.current?.getBoundingClientRect();
 		const p = { x: e.clientX - (rect?.left ?? 0), y: e.clientY - (rect?.top ?? 0) };
 		const id = frameAtWorld(toWorld(p, cam));
-		if (id && states[id] === "live") {
+		// frozen frames boot on entry — double-click is the "play" gesture
+		if (id) {
 			setInteractId(id);
 			setSelection(new Set());
 		}
@@ -607,8 +608,7 @@ export function Canvas() {
 	const labelColor = (f: SceneFrame): string => {
 		if (interactId === f.id) return "#8b5cf6";
 		if (selection.has(f.id)) return "#0d99ff";
-		const st = states[f.id] ?? "live";
-		return st === "snapshot" ? "#b3b1bd" : st === "warm" ? "#d99a2b" : "#6f6e77";
+		return (states[f.id] ?? "live") === "live" ? "#6f6e77" : "#8f8d99";
 	};
 
 	return (
@@ -651,6 +651,7 @@ export function Canvas() {
 					>
 						<div className="absolute bottom-full left-0 origin-bottom-left whitespace-nowrap" style={{ transform: `scale(${1 / k})` }}>
 							<div className="cursor-default pb-1.5 text-[12px] font-medium" style={{ color: labelColor(f) }}>
+								{(states[f.id] ?? "live") !== "live" && <span className="opacity-60">▸ </span>}
 								{f.name}
 							</div>
 						</div>
