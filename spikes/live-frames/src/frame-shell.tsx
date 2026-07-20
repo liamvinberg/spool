@@ -6,7 +6,7 @@
 // memo'd hard: canvas pans/zooms/drags must never re-render shells — React
 // reconciling an iframe with a changed srcDoc reloads it and resets its state.
 
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { DOCS } from "./docs";
 import type { FrameState } from "./lifecycle";
 
@@ -44,11 +44,25 @@ export const FrameShell = memo(function FrameShell({
 	// Stable ref callback: an inline arrow re-runs on every render (detach + attach),
 	// and the detach side clears the frame's ready flag — which must only happen on a
 	// real unmount, or the loading cover comes back and swallows pointer events.
-	const refCb = useCallback((el: HTMLIFrameElement | null) => onIframe(id, el), [id, onIframe]);
+	const elRef = useRef<HTMLIFrameElement | null>(null);
+	const refCb = useCallback(
+		(el: HTMLIFrameElement | null) => {
+			elRef.current = el;
+			onIframe(id, el);
+		},
+		[id, onIframe],
+	);
 
-	// The thumbnail doubles as the loading cover: it stays up until the frame has
-	// booted (ready), then fades — no white flash on entry.
-	const covered = state !== "live" || !ready;
+	// warm = the real DOM stays on canvas with time stopped inside (crisp at any
+	// zoom); live = time flows. Re-sent when ready flips so a booting frame gets
+	// its freeze once its listener exists.
+	useEffect(() => {
+		elRef.current?.contentWindow?.postMessage({ spool: "freeze", on: state === "warm" }, "*");
+	}, [state, ready]);
+
+	// The thumbnail is only the loading cover now: shown while nothing is mounted
+	// (snapshot) or a mounted frame hasn't booted yet, then fades — no white flash.
+	const covered = state === "snapshot" || !ready;
 	const [veil, setVeil] = useState(covered);
 	useEffect(() => {
 		if (covered) {
@@ -74,7 +88,6 @@ export const FrameShell = memo(function FrameShell({
 						border: 0,
 						background: "#fff",
 						pointerEvents: interacting ? "auto" : "none",
-						visibility: state === "warm" ? "hidden" : "visible",
 					}}
 				/>
 			)}

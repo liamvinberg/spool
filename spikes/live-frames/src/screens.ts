@@ -299,6 +299,38 @@ const screens: Record<ScreenKind, string> = { login, clock, habit, statsdesk, bu
 
 // --- instrumentation ---------------------------------------------------------
 
+// Runs BEFORE the frame's own scripts (they grab timers at boot): wraps rAF and
+// setInterval so the parent can stop time inside the frame — the real DOM stays
+// on canvas, crisp at any zoom, instead of a rasterized thumbnail.
+const freezeShim = `<script>
+(() => {
+	let frozen = false;
+	let pausedByUs = [];
+	const heldRaf = [];
+	const nativeRaf = window.requestAnimationFrame.bind(window);
+	window.requestAnimationFrame = (cb) => {
+		if (frozen) { heldRaf.push(cb); return 0; }
+		return nativeRaf(cb);
+	};
+	const nativeSetInterval = window.setInterval.bind(window);
+	window.setInterval = (fn, ms, ...args) => nativeSetInterval((...a) => { if (!frozen) fn(...a); }, ms, ...args);
+	window.__spoolSetFrozen = (f) => {
+		if (frozen === f) return;
+		frozen = f;
+		try {
+			if (f) {
+				pausedByUs = document.getAnimations().filter((a) => a.playState === "running");
+				pausedByUs.forEach((a) => a.pause());
+			} else {
+				pausedByUs.forEach((a) => { try { a.play(); } catch (e) {} });
+				pausedByUs = [];
+			}
+		} catch (e) {}
+		if (!f) heldRaf.splice(0).forEach((cb) => nativeRaf(cb));
+	};
+})();
+</script>`;
+
 const agent = (id: string) => `<script>
 (() => {
 	const ID = ${JSON.stringify(id)};
@@ -343,9 +375,11 @@ const agent = (id: string) => `<script>
 		const img = new Image();
 		img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 		await img.decode();
+		const scale = Math.min(window.devicePixelRatio || 1, 2); // retina-sharp thumbnails
 		const cv = document.createElement("canvas");
-		cv.width = W; cv.height = H;
+		cv.width = W * scale; cv.height = H * scale;
 		const ctx = cv.getContext("2d");
+		ctx.scale(scale, scale);
 		ctx.fillStyle = "#fff";
 		ctx.fillRect(0, 0, W, H);
 		ctx.drawImage(img, 0, 0);
@@ -354,6 +388,7 @@ const agent = (id: string) => `<script>
 
 	addEventListener("message", async (e) => {
 		const m = e.data;
+		if (m && m.spool === "freeze") { window.__spoolSetFrozen(!!m.on); return; }
 		if (!m || m.spool !== "capture") return;
 		const t0 = performance.now();
 		try {
@@ -369,7 +404,8 @@ const agent = (id: string) => `<script>
 export function instrument(kind: ScreenKind, id: string): string {
 	const html = screens[kind];
 	const tag = agent(id);
-	return html.includes("</body>") ? html.replace("</body>", `${tag}</body>`) : html + tag;
+	const body = html.includes("</body>") ? html.replace("</body>", `${tag}</body>`) : html + tag;
+	return freezeShim + body;
 }
 
 export const rawScreens = screens;

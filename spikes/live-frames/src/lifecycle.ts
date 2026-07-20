@@ -4,7 +4,8 @@
 //
 // States:
 //   live     — iframe mounted + visible (+ interactive when the frame is "entered")
-//   warm     — iframe mounted, hidden under a thumbnail; in-frame state survives
+//   warm     — real DOM stays on canvas, time frozen inside (cooperative shim);
+//              crisp at any zoom, in-frame state survives
 //   snapshot — no iframe; thumbnail (or placeholder) only; in-frame state is gone
 //
 // Policies:
