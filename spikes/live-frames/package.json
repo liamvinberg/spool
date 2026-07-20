@@ -1,0 +1,28 @@
+{
+	"name": "live-frames-spike",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "tsc && vite build",
+		"preview": "vite preview",
+		"shots": "tsx capture/playwright-shots.ts",
+		"bench": "tsx capture/bench-runner.ts"
+	},
+	"dependencies": {
+		"react": "^19.2.7",
+		"react-dom": "^19.2.7"
+	},
+	"devDependencies": {
+		"@tailwindcss/vite": "^4.3.3",
+		"@types/node": "^26.0.0",
+		"@types/react": "^19.2.17",
+		"@types/react-dom": "^19.2.3",
+		"@vitejs/plugin-react": "^6.0.3",
+		"playwright": "^1.57.0",
+		"tailwindcss": "^4.3.3",
+		"tsx": "^4.20.3",
+		"typescript": "^7.0.2",
+		"vite": "^8.1.5"
+	}
+}
