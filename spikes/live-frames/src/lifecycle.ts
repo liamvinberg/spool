@@ -61,11 +61,15 @@ export function useLifecycle(
 	viewportRef: React.RefObject<HTMLDivElement | null>,
 	policy: Policy,
 	interactId: string | null,
+	selectedRef: React.RefObject<Set<string>>,
 ) {
 	const [states, setStates] = useState<Record<string, FrameState>>(() =>
 		Object.fromEntries(sceneFrames.map((f) => [f.id, "live" as FrameState])),
 	);
 	const [shots, setShots] = useState<Record<string, string>>({});
+	// frames that have booted since their current mount — the thumbnail stays up
+	// as the loading cover until its frame appears here (kills the entry flash)
+	const [ready, setReady] = useState<Set<string>>(new Set());
 
 	const statesRef = useRef(states);
 	statesRef.current = states;
@@ -90,8 +94,17 @@ export function useLifecycle(
 	const captureWaiters = useRef(new Map<string, (ok: boolean) => void>());
 
 	const onIframe = useCallback((id: string, el: HTMLIFrameElement | null) => {
-		if (el) iframes.current.set(id, el);
-		else iframes.current.delete(id);
+		if (el) {
+			iframes.current.set(id, el);
+		} else {
+			iframes.current.delete(id);
+			setReady((s) => {
+				if (!s.has(id)) return s;
+				const n = new Set(s);
+				n.delete(id);
+				return n;
+			});
+		}
 	}, []);
 
 	// Everything the frames say arrives here.
@@ -100,6 +113,7 @@ export function useLifecycle(
 			const m = e.data as FrameMsg;
 			if (!m || !m.spool || typeof m.id !== "string") return;
 			if (m.spool === "loaded") {
+				setReady((s) => (s.has(m.id as string) ? s : new Set(s).add(m.id as string)));
 				if (pendingLoads.current.delete(m.id) && pendingLoads.current.size === 0 && stormT0.current) {
 					hydrate.current = { n: stormN.current, ms: Math.round(performance.now() - stormT0.current) };
 					stormT0.current = 0;
@@ -222,6 +236,10 @@ export function useLifecycle(
 					}
 				}
 			}
+			// first click pre-boots: a selected still mounts hidden, so the
+			// double-click that usually follows reveals an already-running frame
+			if (target === "snapshot" && selectedRef.current.has(f.id)) target = "warm";
+
 			// leaving live: this frame's thumbnail is stale — refresh it once the
 			// camera settles, while the (hidden) iframe is still mounted, so overview
 			// zoom shows content instead of placeholders
@@ -243,7 +261,7 @@ export function useLifecycle(
 
 		visSet.current = nextVis;
 		if (changed) setStates(next);
-	}, [cameraRef, viewportRef, framesRef, requestCapture]);
+	}, [cameraRef, viewportRef, framesRef, selectedRef, requestCapture]);
 
 	// Policy switches are hydrate storms: note t0, expect loads from every frame
 	// that will newly mount.
@@ -316,5 +334,5 @@ export function useLifecycle(
 
 	const loadedPending = useCallback(() => pendingLoads.current.size, []);
 
-	return { states, shots, onIframe, recompute, captureAll, getStats, loadedPending };
+	return { states, shots, ready, onIframe, recompute, captureAll, getStats, loadedPending };
 }

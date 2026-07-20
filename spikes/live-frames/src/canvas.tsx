@@ -151,12 +151,13 @@ export function Canvas() {
 	interactRef.current = interactId;
 	const animRef = useRef(0);
 
-	const { states, shots, onIframe, captureAll, getStats, loadedPending } = useLifecycle(
+	const { states, shots, ready, onIframe, captureAll, getStats, loadedPending } = useLifecycle(
 		framesRef,
 		cameraRef,
 		viewportRef,
 		policy,
 		interactId,
+		selectionRef,
 	);
 	const shotsRef = useRef(shots);
 	shotsRef.current = shots;
@@ -664,6 +665,7 @@ export function Canvas() {
 								name={f.name}
 								kind={f.kind}
 								state={states[f.id] ?? "live"}
+								ready={ready.has(f.id)}
 								interacting={interactId === f.id}
 								shot={shotFor(f.id)}
 								onIframe={onIframe}
