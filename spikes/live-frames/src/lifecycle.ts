@@ -17,12 +17,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type SceneFrame, sceneFrames } from "./scene";
 
-export type Policy = "all-live" | "viewport-warm" | "viewport-snapshot" | "all-snapshot";
+export type Policy = "all-live" | "viewport-warm" | "all-warm" | "viewport-snapshot" | "all-snapshot";
 export type FrameState = "live" | "warm" | "snapshot";
 export type Camera = { x: number; y: number; k: number };
 export type Bounds = { x: number; y: number; w: number; h: number };
 
-export const POLICIES: Policy[] = ["all-live", "viewport-warm", "viewport-snapshot", "all-snapshot"];
+export const POLICIES: Policy[] = ["all-live", "viewport-warm", "all-warm", "viewport-snapshot", "all-snapshot"];
 
 const MARGIN_FRAC = 0.5; // extra viewport fractions kept live on each side
 const K_MIN_LIVE = 0.15; // below this zoom nothing is interactable anyway
@@ -198,6 +198,9 @@ export function useLifecycle(
 			} else if (pol === "all-live") {
 				target = "live";
 				exitPending.current.delete(f.id);
+			} else if (pol === "all-warm") {
+				// design mode: time frozen everywhere, real DOM everywhere
+				target = "warm";
 			} else if (pol === "all-snapshot") {
 				// capture on the way down: hold at warm until the goodbye shot lands
 				const ep = exitPending.current.get(f.id);
@@ -270,7 +273,7 @@ export function useLifecycle(
 		const prevPolicy = policyRef.current;
 		policyRef.current = policy;
 		if (policy !== prevPolicy) hydrate.current = null; // a row only shows a storm it caused
-		if (policy !== prevPolicy && (policy === "all-live" || policy.startsWith("viewport"))) {
+		if (policy !== prevPolicy && policy !== "all-snapshot") {
 			pendingLoads.current = new Set(
 				framesRef.current?.filter((f) => (statesRef.current[f.id] ?? "live") === "snapshot").map((f) => f.id) ?? [],
 			);
