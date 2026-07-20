@@ -577,6 +577,8 @@ export function Canvas() {
 	const onDoubleClick = (e: React.MouseEvent) => {
 		const cam = cameraRef.current;
 		if (!cam || tool !== "select") return;
+		// design mode: clicks are the (future) element-select surface, not an enter gesture
+		if (policy === "all-warm") return;
 		const rect = viewportRef.current?.getBoundingClientRect();
 		const p = { x: e.clientX - (rect?.left ?? 0), y: e.clientY - (rect?.top ?? 0) };
 		const id = frameAtWorld(toWorld(p, cam));
