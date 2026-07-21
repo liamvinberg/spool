@@ -4,7 +4,8 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
 	plugins: [react(), tailwindcss()],
-	// null-origin srcdoc frames fetch react/screen modules cross-origin — allow them
-	server: { cors: true },
-	preview: { cors: true },
+	// cors: null-origin srcdoc frames fetch react/screen modules cross-origin.
+	// allowedHosts: the tailnet share proxies with the ts.net host header.
+	server: { cors: true, allowedHosts: [".ts.net"] },
+	preview: { cors: true, allowedHosts: [".ts.net"] },
 });
