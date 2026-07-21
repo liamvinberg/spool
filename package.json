@@ -17,6 +17,7 @@
 	"scripts": {
 		"dev": "tsx src/cli.ts",
 		"build": "tsup",
+		"prepack": "tsup",
 		"typecheck": "tsc --noEmit",
 		"check": "biome check .",
 		"test": "vitest run"

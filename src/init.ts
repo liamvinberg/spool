@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { SpoolError } from "./errors";
+import { realDir } from "./paths";
 import { registerProject } from "./registry";
 import { scaffoldDirs, scaffoldFiles } from "./templates";
 
@@ -9,12 +10,7 @@ import { scaffoldDirs, scaffoldFiles } from "./templates";
  * Never touches an existing design/, whoever owns it.
  */
 export function initProject(targetDir: string, spoolDir: string): { root: string } {
-	let root: string;
-	try {
-		root = realpathSync(resolve(targetDir));
-	} catch {
-		throw new SpoolError(`no such directory: ${targetDir}`);
-	}
+	const root = realDir(targetDir);
 
 	const design = join(root, "design");
 	if (existsSync(join(design, "canvas.json"))) {

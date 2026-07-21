@@ -4,7 +4,7 @@
  */
 export const FORMAT_VERSION = 1;
 
-const canvasJson = `${JSON.stringify({ format: FORMAT_VERSION }, null, "\t")}\n`;
+export const canvasJson = `${JSON.stringify({ format: FORMAT_VERSION }, null, "\t")}\n`;
 
 const gitignore = ".spool/\n";
 
