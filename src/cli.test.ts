@@ -45,6 +45,20 @@ describe("spool cli", () => {
 		expect(result.stdout).toContain(realpathSync(repo));
 	});
 
+	it("status reports a stopped daemon with a nonzero exit", () => {
+		const result = spool(["status"], makeTempDir());
+
+		expect(result.status).toBe(1);
+		expect(result.stdout).toContain("not running");
+	});
+
+	it("stop is goal-state: stopping a stopped daemon succeeds", () => {
+		const result = spool(["stop"], makeTempDir());
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain("was not running");
+	});
+
 	it("fails cleanly on an unknown command", () => {
 		const result = spool(["frobnicate"], makeTempDir());
 

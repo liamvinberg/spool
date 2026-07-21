@@ -1,7 +1,8 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { onTestFinished } from "vitest";
+import { initProject } from "./init";
 import { canvasJson } from "./templates";
 
 export function makeTempDir(): string {
@@ -13,4 +14,21 @@ export function makeTempDir(): string {
 export function markProject(root: string): void {
 	mkdirSync(join(root, "design"), { recursive: true });
 	writeFileSync(join(root, "design", "canvas.json"), canvasJson);
+}
+
+/** A registered project scaffolded through the real init path. */
+export function makeProject(spoolDir: string): { root: string; name: string } {
+	const dir = makeTempDir();
+	const { root } = initProject(dir, spoolDir);
+	return { root, name: basename(root) };
+}
+
+export function writeDesignFile(root: string, rel: string, content: string): void {
+	const file = join(root, "design", rel);
+	mkdirSync(dirname(file), { recursive: true });
+	writeFileSync(file, content);
+}
+
+export function writeFrame(root: string, name: string, tsx: string): void {
+	writeDesignFile(root, join("frames", name, "frame.tsx"), tsx);
 }
