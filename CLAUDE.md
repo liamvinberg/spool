@@ -1,6 +1,6 @@
 # spool
 
-Liam's live prototyping canvas: agent-authored live HTML frames on an infinite canvas, flows between them, repo-native, two-way with product code later.
+Liam's live prototyping canvas: agent-authored live TSX frames on an infinite canvas, flows between them, repo-native, two-way with product code later.
 
 The soul of this project (why, wedge, decisions, status) lives in the bank: `~/bank/personal/wiki/projects/spool.md`. Read it before substantial work here.
 
