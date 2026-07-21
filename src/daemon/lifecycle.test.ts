@@ -48,6 +48,11 @@ describe("resolveServeConfig", () => {
 
 		expect(() => resolveServeConfig(spoolDir, {})).toThrow(SpoolError);
 		expect(() => resolveServeConfig(makeSpoolDir(), { SPOOL_PORT: "canvas" })).toThrow(SpoolError);
+
+		const outOfRange = makeSpoolDir();
+		mkdirSync(outOfRange, { recursive: true });
+		writeFileSync(join(outOfRange, "config.json"), JSON.stringify({ port: 99999 }));
+		expect(() => resolveServeConfig(outOfRange, {})).toThrow(/port number/);
 	});
 });
 

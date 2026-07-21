@@ -27,21 +27,15 @@ export function assembleFrameDocument({
 }: FrameDocumentParts): string {
 	const fontsBlock = fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`;
 	const bundledBlock = bundledCss === undefined ? "" : `<style>${escapeInlineStyle(bundledCss)}</style>\n`;
-	return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(frame)} · spool</title>
-<style>${escapeInlineStyle(css)}</style>
+	return htmlShell(
+		frame,
+		`<style>${escapeInlineStyle(css)}</style>
 ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMap)}</script>
-</head>
-<body>
-<div id="root"></div>
+`,
+		`<div id="root"></div>
 <script type="module">${escapeInlineScript(bootJs)}</script>
-</body>
-</html>
-`;
+`,
+	);
 }
 
 /**
@@ -51,23 +45,31 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  */
 export function errorDocument(frame: string, message: string): string {
 	const report = `if (parent !== window) parent.postMessage({ spool: "error", frame: ${JSON.stringify(frame)}, error: ${JSON.stringify(message)} }, "*");`;
+	return htmlShell(
+		frame,
+		`<style>
+body { margin: 0; padding: 24px; background: #111110; color: #b5b3ad; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+h1 { margin: 0 0 16px; font-size: 13px; font-weight: 400; color: #f5391a; }
+pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+</style>
+`,
+		`<h1>${escapeHtml(frame)} failed to compile</h1>
+<pre>${escapeHtml(message)}</pre>
+<script>${escapeInlineScript(report)}</script>
+`,
+	);
+}
+
+function htmlShell(frame: string, head: string, body: string): string {
 	return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(frame)} · spool</title>
-<style>
-body { margin: 0; padding: 24px; background: #111110; color: #b5b3ad; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
-h1 { margin: 0 0 16px; font-size: 13px; font-weight: 400; color: #f5391a; }
-pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
-</style>
-</head>
+${head}</head>
 <body>
-<h1>${escapeHtml(frame)} failed to compile</h1>
-<pre>${escapeHtml(message)}</pre>
-<script>${escapeInlineScript(report)}</script>
-</body>
+${body}</body>
 </html>
 `;
 }

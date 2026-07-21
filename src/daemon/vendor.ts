@@ -26,7 +26,15 @@ export function reactImportMapPins(): Record<string, string> {
 let bundle: Promise<string> | undefined;
 
 export function vendorReactJs(): Promise<string> {
-	bundle ??= buildVendorReact();
+	if (bundle === undefined) {
+		const attempt = buildVendorReact();
+		// same rule as the frame compiler: failures are never cached — a
+		// transient build error must not poison /vendor/react.js until restart
+		attempt.catch(() => {
+			if (bundle === attempt) bundle = undefined;
+		});
+		bundle = attempt;
+	}
 	return bundle;
 }
 
