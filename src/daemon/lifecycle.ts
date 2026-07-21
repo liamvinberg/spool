@@ -54,8 +54,13 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 			host = config.host;
 		}
 		if (config.port !== undefined) {
-			if (typeof config.port !== "number" || !Number.isInteger(config.port)) {
-				throw new SpoolError(`config at ${file}: "port" must be an integer`);
+			if (
+				typeof config.port !== "number" ||
+				!Number.isInteger(config.port) ||
+				config.port < 0 ||
+				config.port > 65535
+			) {
+				throw new SpoolError(`config at ${file}: "port" must be a port number (0-65535)`);
 			}
 			port = config.port;
 		}
@@ -174,11 +179,16 @@ async function liveDaemon(spoolDir: string): Promise<{ state: DaemonState; url: 
 
 export type DaemonStatus = { running: true; url: string; pid: number; version: string } | { running: false };
 
+/** Drop a daemon.json whose recorded daemon is no longer the one answering. */
+function sweepStaleState(spoolDir: string): void {
+	const stale = readDaemonState(spoolDir);
+	if (stale !== undefined) clearDaemonState(spoolDir, stale.pid);
+}
+
 export async function statusDaemon(spoolDir: string): Promise<DaemonStatus> {
 	const live = await liveDaemon(spoolDir);
 	if (live === undefined) {
-		const stale = readDaemonState(spoolDir);
-		if (stale !== undefined) clearDaemonState(spoolDir, stale.pid);
+		sweepStaleState(spoolDir);
 		return { running: false };
 	}
 	return { running: true, url: live.url, pid: live.state.pid, version: live.state.version };
@@ -244,8 +254,7 @@ export type StopResult = { stopped: true; pid: number } | { stopped: false };
 export async function stopDaemon(spoolDir: string): Promise<StopResult> {
 	const live = await liveDaemon(spoolDir);
 	if (live === undefined) {
-		const stale = readDaemonState(spoolDir);
-		if (stale !== undefined) clearDaemonState(spoolDir, stale.pid);
+		sweepStaleState(spoolDir);
 		return { stopped: false };
 	}
 

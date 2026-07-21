@@ -69,9 +69,10 @@ export function lookupProjectByName(spoolDir: string, name: string): ProjectLook
 	const roots = readRegistry(spoolDir)
 		.projects.map((project) => project.root)
 		.filter((root) => basename(root) === name);
-	if (roots.length === 0) return { kind: "unknown" };
-	if (roots.length > 1) return { kind: "ambiguous", roots };
-	return { kind: "found", root: roots[0] as string };
+	const [first, ...rest] = roots;
+	if (first === undefined) return { kind: "unknown" };
+	if (rest.length > 0) return { kind: "ambiguous", roots };
+	return { kind: "found", root: first };
 }
 
 function isRegistry(value: unknown): value is Registry {

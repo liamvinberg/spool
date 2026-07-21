@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { initProject } from "../init";
@@ -143,6 +143,23 @@ describe("frame documents", () => {
 		writeDesignFile(root, "shared/tokens.css", "@theme {\n\t--color-thread: #00ff00;\n}\n");
 		const third = await app.request(`/p/${name}/frames/hello`);
 		expect(third.headers.get("x-spool-cache")).toBe("miss");
+	});
+
+	it("recompiles when a stylesheet imported by tokens.css changes", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/tokens.css", '@import "./palette.css";\n');
+		writeDesignFile(root, "shared/palette.css", "@theme {\n\t--color-thread: #f5391a;\n}\n");
+		writeFrame(root, "hello", helloTsx);
+		const app = makeApp(spoolDir);
+
+		const first = await (await app.request(`/p/${name}/frames/hello`)).text();
+		expect(first).toContain("#f5391a");
+
+		writeDesignFile(root, "shared/palette.css", "@theme {\n\t--color-thread: #00aa55;\n}\n");
+		const second = await app.request(`/p/${name}/frames/hello`);
+		expect(second.headers.get("x-spool-cache")).toBe("miss");
+		expect(await second.text()).toContain("#00aa55");
 	});
 
 	it("reports loaded from a commit-time effect, never rAF", async () => {
@@ -352,6 +369,22 @@ describe("change events", () => {
 		const app = makeApp(makeTempDir());
 
 		expect((await app.request("/api/p/ghost/events")).status).toBe(404);
+	});
+
+	it("keeps serving when a registered project's design/ has vanished", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		const app = makeApp(spoolDir);
+		rmSync(join(root, "design"), { recursive: true });
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+
+		// push degrades to silence; the daemon must not crash
+		const res = await app.request(`/api/p/${name}/events`, { signal: controller.signal });
+
+		expect(res.status).toBe(200);
+		const events = sseReader(res);
+		expect(await events.next()).toEqual({ event: "hello", data: { project: name } });
 	});
 });
 
