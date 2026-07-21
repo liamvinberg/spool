@@ -15,9 +15,7 @@ const rootConfigPointer = `add this line to the repo's root CLAUDE.md or AGENTS.
   design/ is a spool canvas (see design/AGENTS.md; run \`spool skill\` to learn it)
 `;
 
-const program = new Command("spool")
-	.description("the live prototyping canvas")
-	.version(pkg.version, "-v, --version");
+const program = new Command("spool").description("the live prototyping canvas").version(pkg.version, "-v, --version");
 
 program
 	.command("init")
