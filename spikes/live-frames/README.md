@@ -2,6 +2,8 @@
 
 Throwaway spike for [Test: live frames at scale](https://github.com/devosurf/spool/issues/8): does a canvas full of live sandboxed frames stay fast enough to build on? 63 srcdoc iframes (`allow-scripts`, null origin — the spool frame model) on the bake-off's home-built canvas, under a snapshot/warm/live lifecycle, instrumented to the teeth. Deletable without ceremony.
 
+Extended for [Test: React frames at scale](https://github.com/devosurf/spool/issues/17): the same 63 screens rebuilt as compiled TSX components (`src/screens-react/`), loaded per frame via import map against one pinned react ESM bundle and a ~22 KB minified Tailwind stylesheet inlined into every frame document — the #16/#15/#12 serve model in miniature. Open with `?frames=react`; `pnpm bench` runs both variants.
+
 ## Run
 
 ```sh
@@ -49,6 +51,20 @@ pnpm build && pnpm bench    # scripted benchmark → capture/results.md (headed 
 - **Hydrate storms are fine**: 63 frames boot in 0.4–1.3 s; 59 remounts in ~160 ms warm-cache. Thumbnail-first boot would mask even that.
 - **React is not the bottleneck**: all-snapshot (identical React work, no iframes) pegs the 120 Hz cap — reconciling 63 frame wrappers per camera frame costs nothing measurable at this scale.
 - **Capture-on-settle matters**: rasterizing goodbye thumbnails mid-fling measurably janks the tour (main thread is shared); deferring captures until the camera stops (400 ms) got it back. Same lesson will apply to any per-frame work the runtime schedules.
+
+## React frames (M1 Pro MacBook, Chrome 150, 2026-07-21)
+
+`capture/results.md` holds the paired run — same machine, same day, fresh browser per variant. The #17 verdict in numbers:
+
+| | vanilla | react | read |
+|---|---|---|---|
+| all-live tour | 107 fps · p95 16.6 ms | 107 fps · p95 16.5 ms | identical — React costs nothing at tour time |
+| boot hydrate storm (63 frames) | 338 ms | 849 ms | +8.1 ms/frame for module fetch + eval + render; thumbnail-first boot already covers it |
+| marginal memory per live frame | 3.6 MB | 5.7 MB | +2.1 MB/frame — top of #16's +1–2 MB estimate, ~130 MB extra at 63 live |
+| self-capture sweep | 1031 ms | 1081 ms | unchanged |
+| viewport-snapshot | 106 fps · 18 long | 102 fps · 23 long | remount storms now pay React re-eval too — hibernation stays a non-default |
+
+The in-frame lifecycle behaves identically: visible live frames vsync-lock, offscreen rAF pauses (the loaded report must not gate on rAF for exactly that reason), warm freeze holds React frames the same way it holds vanilla ones, and interaction through the sandbox drives `useState` state fine.
 
 ## Thumbnails: self-capture vs playwright
 

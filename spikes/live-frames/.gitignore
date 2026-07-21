@@ -4,3 +4,6 @@ dist
 public/shots
 capture/self-samples
 capture/*.png
+public/vendor
+public/react-screens
+src/generated

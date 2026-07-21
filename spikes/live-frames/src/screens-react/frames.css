@@ -1,0 +1,7 @@
+/* Tailwind input for the React frame variant: preflight + utilities scanned from
+   the nine screen components. Compiled by scripts/build-frames.ts into
+   src/generated/frames-css.ts and inlined into every react-variant srcdoc — the
+   per-document stylesheet parse cost #15 folded into this bench. */
+
+@import "tailwindcss";
+@source "./";
