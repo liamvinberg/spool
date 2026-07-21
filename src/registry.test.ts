@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SpoolError } from "./errors";
@@ -58,5 +58,21 @@ describe("registry", () => {
 
 		expect(() => readRegistry(spoolDir)).toThrow(SpoolError);
 		expect(() => readRegistry(spoolDir)).toThrow(file);
+	});
+
+	it("rejects valid JSON that is not a registry", () => {
+		const spoolDir = makeTempDir();
+		writeFileSync(join(spoolDir, "registry.json"), '{"foo": 1}');
+
+		expect(() => readRegistry(spoolDir)).toThrow(SpoolError);
+		expect(() => readRegistry(spoolDir)).toThrow(/corrupt registry/);
+	});
+
+	it("surfaces unreadable registries instead of treating them as empty", () => {
+		const spoolDir = makeTempDir();
+		mkdirSync(join(spoolDir, "registry.json"));
+
+		expect(() => readRegistry(spoolDir)).toThrow(SpoolError);
+		expect(() => readRegistry(spoolDir)).toThrow(/cannot read registry/);
 	});
 });
