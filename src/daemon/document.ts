@@ -6,6 +6,7 @@
  */
 
 export interface FrameDocumentParts {
+	project: string;
 	frame: string;
 	/** Compiled Tailwind output: theme vars, preflight, used utilities. */
 	css: string;
@@ -18,6 +19,7 @@ export interface FrameDocumentParts {
 }
 
 export function assembleFrameDocument({
+	project,
 	frame,
 	css,
 	fonts,
@@ -27,10 +29,12 @@ export function assembleFrameDocument({
 }: FrameDocumentParts): string {
 	const fontsBlock = fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`;
 	const bundledBlock = bundledCss === undefined ? "" : `<style>${escapeInlineStyle(bundledCss)}</style>\n`;
+	// the config rides a classic script so it exists before any module evaluates
 	return htmlShell(
 		frame,
 		`<style>${escapeInlineStyle(css)}</style>
 ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMap)}</script>
+<script>window.__SPOOL__ = ${escapeJsonScript({ project, frame })}</script>
 `,
 		`<div id="root"></div>
 <script type="module">${escapeInlineScript(bootJs)}</script>

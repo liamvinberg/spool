@@ -4,6 +4,7 @@ import { assembleFrameDocument, errorDocument, mergeImportMap } from "./document
 describe("assembleFrameDocument", () => {
 	it("keeps a </script> inside frame code from ending the boot module", () => {
 		const doc = assembleFrameDocument({
+			project: "demo",
 			frame: "hello",
 			css: "",
 			importMap: { imports: {} },
@@ -16,6 +17,7 @@ describe("assembleFrameDocument", () => {
 
 	it("escapes the import map against script breakout", () => {
 		const doc = assembleFrameDocument({
+			project: "demo",
 			frame: "hello",
 			css: "",
 			importMap: { imports: { evil: "https://x/</script>" } },
@@ -25,10 +27,11 @@ describe("assembleFrameDocument", () => {
 		expect(doc).not.toContain("https://x/</script>");
 	});
 
-	it("escapes frame names in the title", () => {
-		const doc = assembleFrameDocument({ frame: "a<b>", css: "", importMap: {}, bootJs: "" });
+	it("escapes frame names in the title and the document config", () => {
+		const doc = assembleFrameDocument({ project: "demo", frame: "a<b>", css: "", importMap: {}, bootJs: "" });
 
 		expect(doc).toContain("<title>a&lt;b&gt; · spool</title>");
+		expect(doc).toContain('window.__SPOOL__ = {"project":"demo","frame":"a\\u003cb>"}');
 	});
 });
 

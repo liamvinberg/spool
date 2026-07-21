@@ -17,6 +17,8 @@ This folder is a [spool](https://spool.page) project: live TSX frames on an infi
 - A frame is born by writing \`frames/<name>/frame.tsx\` default-exporting one React component. No registration step, no \`spool new\`.
 - Variants are sibling frames named with \`--\`, like \`checkout--empty/\`.
 - Shared code lives in \`shared/\`: \`ui/\` components (props only, never import \`"spool"\`), \`lib/utils.ts\` with \`cn()\`, \`tokens.css\`, \`scenarios/\`, \`fixtures/\`.
+- Flow: \`data-go="<frame-name>"\` on any element walks there on click; \`import { ui } from "spool"\` for everything richer — \`ui.go(name, patch)\`, \`ui.back()\`, \`ui.state\`, \`ui.use()\`. Sessions seed from \`shared/scenarios/<name>.json\` (\`{ "state": {}, "mock": {} }\`, default.json on play); initialize state defensively (\`ui.state.items ??= […]\`) — any frame can start a session.
+- Mock: a relative \`fetch("/api/x")\` returns \`shared/fixtures/x.json\`; scenario \`mock\` rules add per-route method/status/fixture/latency; absolute URLs hit the real network.
 - Run \`spool skill\` for the complete contract. If it is not in there, spool does not do it.
 - \`canvas.json\` and \`.spool/\` are app-owned. Never edit them.
 `;

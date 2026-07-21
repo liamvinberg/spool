@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { onTestFinished } from "vitest";
+import { createDaemonApp } from "./daemon/app";
 import { initProject } from "./init";
 import { canvasJson } from "./templates";
 
@@ -31,4 +32,11 @@ export function writeDesignFile(root: string, rel: string, content: string): voi
 
 export function writeFrame(root: string, name: string, tsx: string): void {
 	writeDesignFile(root, join("frames", name, "frame.tsx"), tsx);
+}
+
+/** A daemon app on a given ~/.spool dir, closed with the test. */
+export function makeApp(spoolDir: string) {
+	const daemon = createDaemonApp({ spoolDir, version: "0.0.0-test" });
+	onTestFinished(() => daemon.close());
+	return daemon.app;
 }
