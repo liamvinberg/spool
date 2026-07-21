@@ -1,4 +1,5 @@
-// Drives the rig end-to-end and writes capture/results.md:
+// Drives the rig end-to-end and writes capture/results.md — both frame variants
+// (vanilla srcdoc HTML = the #8 baseline, react = #17), each in a fresh browser:
 //   - boots the built app (vite preview) in a real Chromium
 //   - per policy: hydrate-settle, camera tour (in-page rAF timings),
 //     OS-level memory (RSS summed over the browser's process tree) and
@@ -15,6 +16,8 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { preview } from "vite";
 import type { TourRow } from "../src/bench";
+import type { FrameVariant } from "../src/docs";
+import { framesCssBytes } from "../src/generated/frames-css";
 import { POLICIES } from "../src/lifecycle";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -65,6 +68,12 @@ function browserTree(rootPid: number): { totalMB: number; renderers: number; pro
 	};
 }
 
+function machine(): string {
+	const cpu = execFileSync("sysctl", ["-n", "machdep.cpu.brand_string"], { encoding: "utf8" }).trim();
+	const memGB = Math.round(Number(execFileSync("sysctl", ["-n", "hw.memsize"], { encoding: "utf8" }).trim()) / 1024 ** 3);
+	return `${cpu} · ${memGB} GB`;
+}
+
 const server = await preview({ root, preview: { port: 4310 } });
 const url = server.resolvedUrls?.local[0] ?? "http://localhost:4310/";
 
@@ -73,80 +82,136 @@ const url = server.resolvedUrls?.local[0] ?? "http://localhost:4310/";
 // tick numbers there overstate real usage. Chrome is also spool's target browser.
 const headless = process.env.HEADLESS === "1";
 const useChrome = process.env.BUNDLED !== "1";
-const browser = await chromium.launch(useChrome ? { headless, channel: "chrome" } : { headless });
-const cdp = await browser.newBrowserCDPSession();
-const procInfo = (await cdp.send("SystemInfo.getProcessInfo")) as { processInfo: { type: string; id: number }[] };
-const rootPid = procInfo.processInfo.find((p) => p.type === "browser")?.id;
-if (!rootPid) throw new Error("no browser pid");
-
-const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
-page.on("console", (msg) => {
-	if (msg.type() === "error") console.error("[page]", msg.text());
-});
-await page.goto(url);
-await page.waitForFunction(() => window.__rig !== undefined);
-
-// boot storm: default policy is all-live, everything mounts at once
-await page.waitForFunction(() => window.__rig !== undefined && window.__rig.loadedPending() === 0, undefined, { timeout: 30000 });
-await page.waitForTimeout(1500);
-const bootHydrate = await page.evaluate(() => window.__rig?.getStats().hydrate ?? null);
 
 type FullRow = TourRow & { osMemMB: number; renderers: number; processes: number };
-const rows: FullRow[] = [];
+type VariantResult = {
+	variant: FrameVariant;
+	chromeVersion: string;
+	bootHydrate: { n: number; ms: number } | null;
+	capture: { n: number; ms: number; failed: number } | null;
+	shotsCount: number;
+	rows: FullRow[];
+};
 
-for (const policy of POLICIES) {
-	await page.evaluate((p) => window.__rig?.setPolicy(p), policy);
-	await page.waitForFunction(() => window.__rig !== undefined && window.__rig.loadedPending() === 0, undefined, { timeout: 30000 });
-	await page.waitForTimeout(2500); // let unmount grace + captures play out
-	const row = await page.evaluate(() => window.__rig?.runTour());
-	if (!row) throw new Error("tour returned nothing");
-	await page.waitForTimeout(500);
-	const mem = browserTree(rootPid);
-	rows.push({ ...row, osMemMB: mem.totalMB, renderers: mem.renderers, processes: mem.processes });
-	console.log(
-		`${policy}: ${row.avgFps} fps · p95 ${row.p95ms} ms · long ${row.longFrames}/${row.samples} · ticks/s ${row.ticksPerSec} · os mem ${mem.totalMB} MB · renderers ${mem.renderers}`,
-	);
+async function benchVariant(variant: FrameVariant): Promise<VariantResult> {
+	const browser = await chromium.launch(useChrome ? { headless, channel: "chrome" } : { headless });
+	const cdp = await browser.newBrowserCDPSession();
+	const procInfo = (await cdp.send("SystemInfo.getProcessInfo")) as { processInfo: { type: string; id: number }[] };
+	const rootPid = procInfo.processInfo.find((p) => p.type === "browser")?.id;
+	if (!rootPid) throw new Error("no browser pid");
+
+	const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+	page.on("console", (msg) => {
+		if (msg.type() === "error") console.error(`[page:${variant}]`, msg.text());
+	});
+	await page.goto(variant === "react" ? `${url}?frames=react` : url);
+	await page.waitForFunction(() => window.__rig !== undefined);
+
+	// boot storm: default policy mounts everything at once
+	await page.waitForFunction(() => window.__rig !== undefined && window.__rig.loadedPending() === 0, undefined, {
+		timeout: 30000,
+	});
+	await page.waitForTimeout(1500);
+	const bootHydrate = await page.evaluate(() => window.__rig?.getStats().hydrate ?? null);
+
+	const rows: FullRow[] = [];
+	for (const policy of POLICIES) {
+		await page.evaluate((p) => window.__rig?.setPolicy(p), policy);
+		await page.waitForFunction(() => window.__rig !== undefined && window.__rig.loadedPending() === 0, undefined, {
+			timeout: 30000,
+		});
+		await page.waitForTimeout(2500); // let unmount grace + captures play out
+		const row = await page.evaluate(() => window.__rig?.runTour());
+		if (!row) throw new Error("tour returned nothing");
+		await page.waitForTimeout(500);
+		const mem = browserTree(rootPid);
+		rows.push({ ...row, osMemMB: mem.totalMB, renderers: mem.renderers, processes: mem.processes });
+		console.log(
+			`${variant}/${policy}: ${row.avgFps} fps · p95 ${row.p95ms} ms · long ${row.longFrames}/${row.samples} · ticks/s ${row.ticksPerSec} · os mem ${mem.totalMB} MB · renderers ${mem.renderers}`,
+		);
+	}
+
+	// thumbnail path A timing: in-page cooperative self-capture across all mounted frames
+	await page.evaluate((p) => window.__rig?.setPolicy(p), "all-live");
+	await page.waitForFunction(() => window.__rig !== undefined && window.__rig.loadedPending() === 0, undefined, {
+		timeout: 30000,
+	});
+	await page.waitForTimeout(1000);
+	const capture = (await page.evaluate(() => window.__rig?.captureAll())) ?? null;
+	const shots = await page.evaluate(() => {
+		const all = window.__rig?.getShots() ?? {};
+		const ids = Object.keys(all).sort();
+		const sample = ["f-00", ids[Math.floor(ids.length / 2)] ?? "", ids[ids.length - 1] ?? ""].filter(Boolean);
+		return { count: ids.length, sample: sample.map((id) => ({ id, url: all[id] ?? "" })) };
+	});
+
+	const samplesDir = join(root, "capture", "self-samples");
+	mkdirSync(samplesDir, { recursive: true });
+	for (const s of shots.sample) {
+		const b64 = s.url.split(",")[1];
+		if (b64) writeFileSync(join(samplesDir, `${variant === "react" ? "react-" : ""}${s.id}.png`), Buffer.from(b64, "base64"));
+	}
+
+	const chromeVersion = browser.version();
+	await browser.close();
+	return { variant, chromeVersion, bootHydrate, capture, shotsCount: shots.count, rows };
 }
 
-// thumbnail path A timing: in-page cooperative self-capture across all mounted frames
-await page.evaluate((p) => window.__rig?.setPolicy(p), "all-live");
-await page.waitForFunction(() => window.__rig !== undefined && window.__rig.loadedPending() === 0, undefined, { timeout: 30000 });
-await page.waitForTimeout(1000);
-const capture = await page.evaluate(() => window.__rig?.captureAll());
-const shots = await page.evaluate(() => {
-	const all = window.__rig?.getShots() ?? {};
-	const ids = Object.keys(all).sort();
-	const sample = ["f-00", ids[Math.floor(ids.length / 2)] ?? "", ids[ids.length - 1] ?? ""].filter(Boolean);
-	return { count: ids.length, sample: sample.map((id) => ({ id, url: all[id] ?? "" })) };
-});
-
-const samplesDir = join(root, "capture", "self-samples");
-mkdirSync(samplesDir, { recursive: true });
-for (const s of shots.sample) {
-	const b64 = s.url.split(",")[1];
-	if (b64) writeFileSync(join(samplesDir, `${s.id}.png`), Buffer.from(b64, "base64"));
-}
-
-const chromeVersion = browser.version();
-await browser.close();
+const vanilla = await benchVariant("vanilla");
+const react = await benchVariant("react");
 await server.close();
 
+const table = (rows: FullRow[]) =>
+	[
+		"| policy | avg fps | p95 ms | p99 ms | long frames | in-frame ticks/s | live/warm/snap | js heap MB | os mem MB | renderers | procs | hydrate ms |",
+		"|---|---|---|---|---|---|---|---|---|---|---|---|",
+		...rows.map(
+			(r) =>
+				`| ${r.policy} | ${r.avgFps} | ${r.p95ms} | ${r.p99ms} | ${r.longFrames}/${r.samples} | ${r.ticksPerSec} | ${r.live}/${r.warm}/${r.snapshot} | ${r.heapStartMB ?? "–"}→${r.heapEndMB ?? "–"} | ${r.osMemMB} | ${r.renderers} | ${r.processes} | ${r.hydrateMs ?? "–"} |`,
+		),
+	].join("\n");
+
+const variantSection = (v: VariantResult) =>
+	[
+		`## ${v.variant === "react" ? "react frames (#17)" : "vanilla srcdoc HTML (#8 baseline rerun)"}`,
+		"",
+		`- boot hydrate storm (all 63 frames at once): ${v.bootHydrate ? `${v.bootHydrate.n} frames in ${v.bootHydrate.ms} ms` : "n/a"}`,
+		`- self-capture (thumbnail path A): ${v.capture ? `${v.capture.n} ok / ${v.capture.failed} failed in ${v.capture.ms} ms total` : "n/a"} · ${v.shotsCount} shots held`,
+		"",
+		table(v.rows),
+	].join("\n");
+
+const marginal = (v: VariantResult) => {
+	const live = v.rows.find((r) => r.policy === "all-live");
+	const snap = v.rows.find((r) => r.policy === "all-snapshot");
+	return live && snap ? (live.osMemMB - snap.osMemMB) / 63 : null;
+};
+
+const liveRow = (v: VariantResult) => v.rows.find((r) => r.policy === "all-live");
+const vLive = liveRow(vanilla);
+const rLive = liveRow(react);
+const vMarg = marginal(vanilla);
+const rMarg = marginal(react);
+
 const md = [
-	"# live-frames benchmark",
+	"# live-frames benchmark — react vs vanilla",
 	"",
 	`- date: ${new Date().toISOString()}`,
-	`- chromium ${chromeVersion} (playwright, ${headless ? "headless" : "headed"}) · viewport 1600×1000 · prod build via vite preview`,
-	`- boot hydrate storm (all 63 frames at once): ${bootHydrate ? `${bootHydrate.n} frames in ${bootHydrate.ms} ms` : "n/a"}`,
-	`- self-capture (thumbnail path A): ${capture ? `${capture.n} ok / ${capture.failed} failed in ${capture.ms} ms total` : "n/a"} · ${shots.count} shots held · samples in capture/self-samples/`,
-	`- marginal cost of 63 live frames vs all-snapshot: ~${rows.length >= 4 ? Math.round((rows[0]!.osMemMB - rows[3]!.osMemMB) / 63) : "?"} MB/frame OS memory; renderer count stays flat (no per-iframe process)`,
-	"- ticks/s column: in-frame rAF activity during the tour. Chrome vsync-locks rAF for visible frames at working zoom (~120/frame), fully pauses offscreen frames (0), but FREE-RUNS frames rendered tiny (overview zoom) at 500–1300 Hz each — reproduced in bare Chrome, not an automation artifact. The lifecycle zoom threshold exists for exactly that regime.",
+	`- machine: ${machine()}`,
+	`- chromium ${vanilla.chromeVersion} (playwright, ${headless ? "headless" : "headed"}${useChrome ? ", channel: chrome" : ", bundled"}) · viewport 1600×1000 · prod build via vite preview · fresh browser per variant`,
+	`- react variant: compiled screen components via import map against one pinned react ESM bundle (single instance, evaluated per frame realm); ${(framesCssBytes / 1024).toFixed(1)} KB minified Tailwind stylesheet (preflight + utilities) inlined per frame document per #15`,
+	"- ticks/s column: in-frame rAF activity during the tour. Chrome vsync-locks rAF for visible frames at working zoom, fully pauses offscreen frames, but FREE-RUNS frames rendered tiny (overview zoom) — the lifecycle zoom threshold exists for exactly that regime.",
 	"",
-	"| policy | avg fps | p95 ms | p99 ms | long frames | in-frame ticks/s | live/warm/snap | js heap MB | os mem MB | renderers | procs | hydrate ms |",
-	"|---|---|---|---|---|---|---|---|---|---|---|---|",
-	...rows.map(
-		(r) =>
-			`| ${r.policy} | ${r.avgFps} | ${r.p95ms} | ${r.p99ms} | ${r.longFrames}/${r.samples} | ${r.ticksPerSec} | ${r.live}/${r.warm}/${r.snapshot} | ${r.heapStartMB ?? "–"}→${r.heapEndMB ?? "–"} | ${r.osMemMB} | ${r.renderers} | ${r.processes} | ${r.hydrateMs ?? "–"} |`,
-	),
+	variantSection(vanilla),
+	"",
+	variantSection(react),
+	"",
+	"## react vs vanilla",
+	"",
+	`- boot hydrate storm: ${vanilla.bootHydrate?.ms ?? "?"} → ${react.bootHydrate?.ms ?? "?"} ms (${vanilla.bootHydrate && react.bootHydrate ? `+${react.bootHydrate.ms - vanilla.bootHydrate.ms} ms for 63 frames, ~+${Math.round(((react.bootHydrate.ms - vanilla.bootHydrate.ms) / 63) * 10) / 10} ms/frame` : "n/a"})`,
+	`- all-live tour: ${vLive?.avgFps ?? "?"} → ${rLive?.avgFps ?? "?"} fps · p95 ${vLive?.p95ms ?? "?"} → ${rLive?.p95ms ?? "?"} ms · os mem ${vLive?.osMemMB ?? "?"} → ${rLive?.osMemMB ?? "?"} MB`,
+	`- marginal memory per live frame (all-live minus all-snapshot): ${vMarg === null ? "?" : vMarg.toFixed(1)} → ${rMarg === null ? "?" : rMarg.toFixed(1)} MB/frame`,
+	`- self-capture sweep: ${vanilla.capture?.ms ?? "?"} → ${react.capture?.ms ?? "?"} ms for 63 frames`,
 	"",
 ].join("\n");
 

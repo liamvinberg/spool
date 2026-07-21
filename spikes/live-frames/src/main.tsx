@@ -3,7 +3,10 @@
 
 import { createRoot } from "react-dom/client";
 import { Canvas } from "./canvas";
+import { VARIANT } from "./docs";
 import "./index.css";
+
+if (VARIANT === "react") document.title = `${document.title} · react frames`;
 
 const root = document.getElementById("root");
 if (!root) throw new Error("no #root");

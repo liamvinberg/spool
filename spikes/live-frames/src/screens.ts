@@ -302,7 +302,7 @@ const screens: Record<ScreenKind, string> = { login, clock, habit, statsdesk, bu
 // Runs BEFORE the frame's own scripts (they grab timers at boot): wraps rAF and
 // setInterval so the parent can stop time inside the frame — the real DOM stays
 // on canvas, crisp at any zoom, instead of a rasterized thumbnail.
-const freezeShim = `<script>
+export const freezeShim = `<script>
 (() => {
 	let frozen = false;
 	let pausedByUs = [];
@@ -331,7 +331,9 @@ const freezeShim = `<script>
 })();
 </script>`;
 
-const agent = (id: string) => `<script>
+// postLoaded=false for the react variant: there the boot module reports loaded
+// after the first committed render, not at parse time.
+export const agent = (id: string, postLoaded = true) => `<script>
 (() => {
 	const ID = ${JSON.stringify(id)};
 	let ticks = 0;
@@ -349,7 +351,7 @@ const agent = (id: string) => `<script>
 		ticks = 0;
 		lastReport = now;
 	}, 1000);
-	parent.postMessage({ spool: "loaded", id: ID }, "*");
+	${postLoaded ? `parent.postMessage({ spool: "loaded", id: ID }, "*");` : ""}
 
 	async function selfCapture() {
 		const W = document.documentElement.clientWidth || innerWidth;
