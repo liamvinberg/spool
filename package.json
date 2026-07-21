@@ -31,6 +31,13 @@
 		"vitest": "^4.1.10"
 	},
 	"dependencies": {
-		"commander": "^15.0.0"
+		"@hono/node-server": "^2.0.10",
+		"@tailwindcss/oxide": "4.3.3",
+		"commander": "^15.0.0",
+		"esbuild": "^0.28.1",
+		"hono": "^4.12.31",
+		"react": "19.2.7",
+		"react-dom": "19.2.7",
+		"tailwindcss": "4.3.3"
 	}
 }

@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { SpoolError } from "./errors";
 
 export interface RegistryProject {
@@ -52,6 +52,26 @@ export function registerProject(spoolDir: string, root: string): void {
 		registry.projects.push({ root: real, openedAt });
 	}
 	writeRegistry(spoolDir, registry);
+}
+
+export type ProjectLookup =
+	| { kind: "found"; root: string }
+	| { kind: "unknown" }
+	| { kind: "ambiguous"; roots: string[] };
+
+/**
+ * Resolve a project by its display name — the folder name of a registered
+ * root (#4: identity is the root path, display is the folder name). Two
+ * registered roots sharing a folder name is an ambiguity to surface, never
+ * a first-wins guess.
+ */
+export function lookupProjectByName(spoolDir: string, name: string): ProjectLookup {
+	const roots = readRegistry(spoolDir)
+		.projects.map((project) => project.root)
+		.filter((root) => basename(root) === name);
+	if (roots.length === 0) return { kind: "unknown" };
+	if (roots.length > 1) return { kind: "ambiguous", roots };
+	return { kind: "found", root: roots[0] as string };
 }
 
 function isRegistry(value: unknown): value is Registry {
