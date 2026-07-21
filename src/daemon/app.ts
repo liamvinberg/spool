@@ -4,7 +4,8 @@ import { streamSSE } from "hono/streaming";
 import { lookupProjectByName } from "../registry";
 import { createFrameCompiler } from "./compile";
 import { createChangeHub } from "./events";
-import { reactVersion, vendorReactJs } from "./vendor";
+import { type ProjectJson, readFixture, readScenario } from "./project-files";
+import { reactVersion, vendorReactJs, vendorSpoolJs } from "./vendor";
 
 export interface DaemonOptions {
 	spoolDir: string;
@@ -37,6 +38,15 @@ export function createDaemonApp({ spoolDir, version }: DaemonOptions) {
 		return { root: lookup.root };
 	}
 
+	// scenario and fixture reads land in null-origin sandboxed frames — CORS open
+	function serveProjectJson(c: Context, result: ProjectJson): Response {
+		c.header("access-control-allow-origin", "*");
+		if (result.kind === "missing") return c.text(result.message, 404);
+		if (result.kind === "invalid") return c.text(result.message, 500);
+		c.header("content-type", "application/json; charset=utf-8");
+		return c.body(result.json);
+	}
+
 	const app = new Hono()
 		.get("/api/health", (c) => c.json({ name: "spool", version, pid: process.pid, startedAt }))
 		.get("/p/:project/frames/:frame", async (c) => {
@@ -49,6 +59,16 @@ export function createDaemonApp({ spoolDir, version }: DaemonOptions) {
 			c.header("etag", doc.etag);
 			c.header("x-spool-cache", doc.cache);
 			return c.html(doc.document);
+		})
+		.get("/api/p/:project/scenarios/:name", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			return serveProjectJson(c, readScenario(project.root, c.req.param("name")));
+		})
+		.get("/api/p/:project/fixtures/:name{.+}", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			return serveProjectJson(c, readFixture(project.root, c.req.param("name")));
 		})
 		.get("/api/p/:project/events", (c) => {
 			const name = c.req.param("project");
@@ -73,6 +93,15 @@ export function createDaemonApp({ spoolDir, version }: DaemonOptions) {
 			c.header("cache-control", "public, max-age=0, must-revalidate");
 			c.header("content-type", "text/javascript; charset=utf-8");
 			return c.body(await vendorReactJs());
+		})
+		.get("/vendor/spool.js", async (c) => {
+			c.header("access-control-allow-origin", "*");
+			const runtime = await vendorSpoolJs();
+			if (c.req.header("if-none-match") === runtime.etag) return c.body(null, 304);
+			c.header("etag", runtime.etag);
+			c.header("cache-control", "public, max-age=0, must-revalidate");
+			c.header("content-type", "text/javascript; charset=utf-8");
+			return c.body(runtime.js);
 		});
 
 	return { app, close: () => hub.close() };

@@ -2,14 +2,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { initProject } from "../init";
-import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
-import { createDaemonApp } from "./app";
-
-function makeApp(spoolDir: string) {
-	const daemon = createDaemonApp({ spoolDir, version: "0.0.0-test" });
-	onTestFinished(() => daemon.close());
-	return daemon.app;
-}
+import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 
 const helloTsx = `import { useState } from "react";
 

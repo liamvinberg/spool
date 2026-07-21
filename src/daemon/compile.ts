@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { build, formatMessagesSync } from "esbuild";
+import { basename, join, relative, resolve, sep } from "node:path";
+import { build, formatMessagesSync, type Plugin } from "esbuild";
 import { assembleFrameDocument, errorDocument, mergeImportMap } from "./document";
+import { isSafeName, readIfExists } from "./project-files";
 import { buildFrameCss } from "./tailwind";
-import { reactImportMapPins } from "./vendor";
+import { importMapPins } from "./vendor";
 
 export type FrameDocument =
 	| { kind: "ok"; document: string; etag: string; cache: "hit" | "miss" }
@@ -32,7 +33,7 @@ export function createFrameCompiler(version: string) {
 	const cache = new Map<string, CacheEntry>();
 
 	async function getDocument(root: string, frame: string): Promise<FrameDocument> {
-		if (!isFrameName(frame)) return { kind: "missing", message: `not a frame name: "${frame}"` };
+		if (!isSafeName(frame)) return { kind: "missing", message: `not a frame name: "${frame}"` };
 		const designDir = join(root, "design");
 		const frameDir = join(designDir, "frames", frame);
 		if (!existsSync(join(frameDir, "frame.tsx"))) {
@@ -49,7 +50,7 @@ export function createFrameCompiler(version: string) {
 		}
 
 		try {
-			const entry = await compileFrame(version, designDir, frameDir, frame);
+			const entry = await compileFrame(version, basename(root), designDir, frameDir, frame);
 			cache.set(key, entry);
 			return { kind: "ok", document: entry.document, etag: entry.etag, cache: "miss" };
 		} catch (error) {
@@ -63,7 +64,13 @@ export function createFrameCompiler(version: string) {
 
 export type FrameCompiler = ReturnType<typeof createFrameCompiler>;
 
-async function compileFrame(version: string, designDir: string, frameDir: string, frame: string): Promise<CacheEntry> {
+async function compileFrame(
+	version: string,
+	project: string,
+	designDir: string,
+	frameDir: string,
+	frame: string,
+): Promise<CacheEntry> {
 	const result = await build({
 		stdin: { contents: bootEntry(frame), resolveDir: frameDir, loader: "js", sourcefile: STDIN_NAME },
 		bundle: true,
@@ -77,6 +84,7 @@ async function compileFrame(version: string, designDir: string, frameDir: string
 		write: false,
 		outdir: VIRTUAL_OUTDIR,
 		absWorkingDir: designDir,
+		plugins: [spoolBoundaryPlugin(designDir)],
 		logLevel: "silent",
 	});
 
@@ -90,9 +98,9 @@ async function compileFrame(version: string, designDir: string, frameDir: string
 	const shared = join(designDir, "shared");
 	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
 	const fonts = readIfExists(join(shared, "fonts.css"));
-	const importMap = mergeImportMap(parseImportMap(readIfExists(join(shared, "importmap.json"))), reactImportMapPins());
+	const importMap = mergeImportMap(parseImportMap(readIfExists(join(shared, "importmap.json"))), importMapPins());
 
-	const document = assembleFrameDocument({ frame, css, importMap, bootJs, fonts, bundledCss });
+	const document = assembleFrameDocument({ project, frame, css, importMap, bootJs, fonts, bundledCss });
 	const inputs = [...sourceFiles, ...stylesheets, join(shared, "fonts.css"), join(shared, "importmap.json")];
 	const hash = hashInputs(version, frame, inputs);
 	return { inputs, hash, etag: `"${hash.slice(0, 32)}"`, document };
@@ -102,9 +110,14 @@ async function compileFrame(version: string, designDir: string, frameDir: string
  * The loaded report rides a commit-time effect (#17): Chrome pauses rAF
  * entirely in offscreen iframes, and offscreen frames must still report —
  * an effect fires after the first committed render regardless of visibility.
+ *
+ * "spool" is imported for its side effects in every document — data-go and
+ * the mock layer work in frames that never import it — and its top-level
+ * await holds the first render until the session is seeded.
  */
 function bootEntry(frame: string): string {
-	return `import { createElement, Fragment, useEffect } from "react";
+	return `import "spool";
+import { createElement, Fragment, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import Frame from "./frame.tsx";
 const FRAME = ${JSON.stringify(frame)};
@@ -123,8 +136,32 @@ createRoot(document.getElementById("root")).render(
 `;
 }
 
-function isFrameName(frame: string): boolean {
-	return frame.length > 0 && !frame.startsWith(".") && !frame.includes("/") && !frame.includes("\\");
+/**
+ * The load-bearing boundary (#16), enforced where it is visible: shared/ui/
+ * components have feel, never knowledge — an import of "spool" there fails
+ * the compile. For every other importer "spool" stays external and resolves
+ * through the import map pin.
+ */
+function spoolBoundaryPlugin(designDir: string): Plugin {
+	const uiDir = join(designDir, "shared", "ui") + sep;
+	return {
+		name: "spool-boundary",
+		setup(build) {
+			build.onResolve({ filter: /^spool(\/|$)/ }, (args) => {
+				if (args.importer.startsWith(uiDir)) {
+					const importer = relative(designDir, args.importer);
+					return {
+						errors: [
+							{
+								text: `${importer} imports "spool" — shared/ui components take props, never knowledge. Move flow and state up into the frame.`,
+							},
+						],
+					};
+				}
+				return { path: args.path, external: true };
+			});
+		},
+	};
 }
 
 function hashInputs(version: string, frame: string, inputs: string[]): string {
@@ -142,14 +179,6 @@ function hashContent(file: string): string {
 		return "absent";
 	}
 	return createHash("sha256").update(content).digest("hex");
-}
-
-function readIfExists(file: string): string | undefined {
-	try {
-		return readFileSync(file, "utf8");
-	} catch {
-		return undefined;
-	}
 }
 
 function parseImportMap(raw: string | undefined): unknown {
