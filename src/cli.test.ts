@@ -12,7 +12,7 @@ const cliPath = join(repoRoot, "src", "cli.ts");
 function spool(args: string[], home: string, cwd?: string) {
 	return spawnSync(tsxBin, [cliPath, ...args], {
 		cwd: cwd ?? repoRoot,
-		encoding: "utf8" as const,
+		encoding: "utf8",
 		env: { ...process.env, HOME: home },
 	});
 }
