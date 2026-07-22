@@ -4,14 +4,17 @@ import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import {
+	daemonUrl,
 	ensureDaemon,
 	resolveServeConfig,
 	resolveSpoolDir,
+	spoolDaemonAt,
 	statusDaemon,
 	stopDaemon,
+	writeDaemonState,
 } from "./daemon/lifecycle";
 import { serveDaemon } from "./daemon/server";
-import { SpoolError } from "./errors";
+import { PortBusyError, SpoolError } from "./errors";
 import { initProject } from "./init";
 import { openProject } from "./open";
 import { skillText } from "./skill";
@@ -146,13 +149,36 @@ program
 	.action(async (options: { foreground?: boolean }) => {
 		if (options.foreground === true) {
 			const config = resolveServeConfig(spoolDir, process.env);
-			const daemon = await serveDaemon({
-				spoolDir,
-				version: pkg.version,
-				host: config.host,
-				port: config.port,
-				uiDir,
-			});
+			let daemon: Awaited<ReturnType<typeof serveDaemon>>;
+			try {
+				daemon = await serveDaemon({
+					spoolDir,
+					version: pkg.version,
+					host: config.host,
+					port: config.port,
+					uiDir,
+				});
+			} catch (error) {
+				if (error instanceof PortBusyError) {
+					const sibling = await spoolDaemonAt(config.host, config.port);
+					if (sibling !== undefined) {
+						// launchd must not read an occupied port as a crash: record
+						// who answers and exit clean — KeepAlive revives real deaths
+						writeDaemonState(spoolDir, {
+							pid: sibling.pid,
+							host: config.host,
+							port: config.port,
+							version: sibling.version,
+							startedAt: sibling.startedAt,
+						});
+						process.stdout.write(
+							`another spool daemon already serves ${daemonUrl(config.host, config.port)} — standing down\n`,
+						);
+						return;
+					}
+				}
+				throw error;
+			}
 			process.stdout.write(`spool daemon listening at ${daemon.url} (pid ${process.pid})\n`);
 			const shutdown = () => {
 				void daemon.close().then(() => process.exit(0));

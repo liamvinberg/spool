@@ -2,3 +2,6 @@
 export class SpoolError extends Error {
 	override readonly name = "SpoolError";
 }
+
+/** The serve port is already bound — a sibling daemon, or a stranger. */
+export class PortBusyError extends SpoolError {}
