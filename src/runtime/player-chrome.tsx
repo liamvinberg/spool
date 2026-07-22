@@ -32,6 +32,10 @@ export function Player({
 	const { w, h } = controller.geometry(frame);
 	const viewport = useViewport();
 	const Screen = frames[frame];
+	// the session's history is unbounded (#5); the readout is not — a loop-
+	// heavy walk shows its tail, the full path rides the title
+	const trail = stack.slice(-3);
+	const buried = stack.length - trail.length;
 
 	return (
 		<div className="spool-stage">
@@ -57,8 +61,14 @@ export function Player({
 						/>
 					</svg>
 				</button>
-				<span className="spool-stack">
-					{stack.map((name, position) => (
+				<span className="spool-stack" title={[...stack, frame].join(" / ")}>
+					{buried > 0 && (
+						<Fragment>
+							<span>…</span>
+							<span>/</span>
+						</Fragment>
+					)}
+					{trail.map((name, position) => (
 						// biome-ignore lint/suspicious/noArrayIndexKey: the same frame can sit at two stack depths — position IS a name-stack entry's identity
 						<Fragment key={`${position}:${name}`}>
 							<span>{name}</span>

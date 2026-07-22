@@ -154,6 +154,7 @@ export default function Cart() {
 			<output>{String(state.count ?? "unset")}</output>
 			<button type="button" id="go-back" onClick={() => ui.back()}>back</button>
 			<button type="button" id="walk-pay" data-go="pay--done">pay</button>
+			<button type="button" id="walk-menu" data-go="menu">menu</button>
 		</main>
 	);
 }
@@ -245,6 +246,30 @@ describe("the player session", () => {
 		await waitForStack("menu/cart");
 		click("#spool-back");
 		await waitForStack("menu");
+	});
+
+	it("shows the deep stack's tail in the pill, full path on the title", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+
+		await loadPlayerDocument(harness, "?frame=menu");
+		await waitForText("output", "2");
+
+		// a loop-heavy session: the history is unbounded, the readout is not
+		click("#walk");
+		await waitForStack("menu/cart");
+		click("#walk-menu");
+		await waitForStack("menu/cart/menu");
+		click("#walk");
+		await waitForStack("menu/cart/menu/cart");
+		click("#walk-menu");
+		await waitForStack("…/cart/menu/cart/menu");
+
+		expect(document.querySelector(".spool-stack")?.getAttribute("title")).toBe("menu / cart / menu / cart / menu");
+
+		// back still pops through the buried entries one by one
+		click("#spool-back");
+		await waitForStack("menu/cart/menu/cart");
 	});
 
 	it("restart re-seeds the session from a fresh scenario read at the start frame", async () => {
