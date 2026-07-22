@@ -9,12 +9,27 @@ import type { SessionRecord } from "../../runtime/frame-runtime";
 
 export type { SessionRecord };
 
+/** What the shim found under a design-mode click (#23). */
+export interface PickedHit {
+	selector: string;
+	tag: string;
+	outerHtml: string;
+	/** Frame-local geometry of the picked element, for the outline overlay. */
+	rect: { x: number; y: number; w: number; h: number };
+	radius: number;
+	/** Nearest data-spool-source stamp, "frames/…/frame.tsx:line:col". */
+	source: string | null;
+	/** True when the stamp sits on an ancestor — JS-created DOM (#6 degrade). */
+	generated: boolean;
+}
+
 export type FrameMessage =
 	| { spool: "loaded"; frame: string }
 	| { spool: "error"; frame: string; error: string }
 	| { spool: "shot"; frame: string; url?: string; error?: string }
 	| { spool: "session?"; frame: string }
 	| { spool: "key"; frame: string; key: string }
+	| { spool: "picked"; frame: string; hit: PickedHit | null }
 	| { spool: "go"; frame: string; target: string; session?: SessionRecord }
 	| { spool: "back"; frame: string; target: string; session?: SessionRecord };
 
@@ -30,6 +45,8 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 			return m as unknown as FrameMessage;
 		case "key":
 			return typeof m.key === "string" ? (m as unknown as FrameMessage) : undefined;
+		case "picked":
+			return typeof m.hit === "object" ? (m as unknown as FrameMessage) : undefined;
 		case "go":
 		case "back":
 			return typeof m.target === "string" ? (m as unknown as FrameMessage) : undefined;
@@ -40,4 +57,5 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 
 export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const;
 export const captureMessage = { spool: "capture" } as const;
+export const pickMessage = (x: number, y: number) => ({ spool: "pick", x, y }) as const;
 export const sessionReply = (record: SessionRecord | null) => ({ spool: "session", record }) as const;

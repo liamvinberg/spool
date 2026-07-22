@@ -78,6 +78,11 @@ async function compileFrame(
 		platform: "browser",
 		target: "es2022",
 		jsx: "automatic",
+		// jsxDev routes element creation through spool's stamping runtime (#23):
+		// every intrinsic element carries its exact source location for the
+		// picker, while React itself stays the pinned production build
+		jsxDev: true,
+		jsxImportSource: "spool",
 		packages: "external",
 		define: { "process.env.NODE_ENV": '"production"' },
 		metafile: true,
@@ -148,6 +153,9 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
 		name: "spool-boundary",
 		setup(build) {
 			build.onResolve({ filter: /^spool(\/|$)/ }, (args) => {
+				// the stamping runtime is compiler-injected, not knowledge — the
+				// boundary judges what a component's author wrote, not the toolchain
+				if (args.path === "spool/jsx-dev-runtime") return { path: args.path, external: true };
 				if (args.importer.startsWith(uiDir)) {
 					const importer = relative(designDir, args.importer);
 					return {

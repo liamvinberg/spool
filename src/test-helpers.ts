@@ -35,8 +35,8 @@ export function writeFrame(root: string, name: string, tsx: string): void {
 }
 
 /** A daemon app on a given ~/.spool dir, closed with the test. */
-export function makeApp(spoolDir: string) {
-	const daemon = createDaemonApp({ spoolDir, version: "0.0.0-test" });
+export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof createDaemonApp>[0]>) {
+	const daemon = createDaemonApp({ spoolDir, version: "0.0.0-test", ...options });
 	onTestFinished(() => daemon.close());
 	return daemon.app;
 }

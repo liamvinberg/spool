@@ -20,6 +20,8 @@ export const VENDOR_REACT_URL = "/vendor/react.js";
 
 export const VENDOR_SPOOL_URL = "/vendor/spool.js";
 
+export const VENDOR_SPOOL_JSX_URL = "/vendor/spool-jsx.js";
+
 export const reactVersion: string = (createRequire(import.meta.url)("react/package.json") as { version: string })
 	.version;
 
@@ -28,6 +30,8 @@ export function importMapPins(): Record<string, string> {
 	return {
 		...Object.fromEntries(REACT_SPECIFIERS.map((spec) => [spec, VENDOR_REACT_URL])),
 		spool: VENDOR_SPOOL_URL,
+		// the stamping JSX runtime the compiler injects (#23) — not agent surface
+		"spool/jsx-dev-runtime": VENDOR_SPOOL_JSX_URL,
 	};
 }
 
@@ -81,11 +85,12 @@ async function buildVendorReact(): Promise<string> {
 }
 
 /**
- * The flow runtime (#5), one ESM module served at /vendor/spool.js with react
- * left external for the import map. The installed package reads the prebuilt
- * dist/frame-runtime.js (a tsup entry next to cli.js); a checkout (tsx,
- * vitest) has no prebuilt file next to this module and compiles
- * src/runtime/frame-runtime.ts on demand, so dev always serves fresh source.
+ * The runtime modules frames import: the flow runtime (#5) at
+ * /vendor/spool.js and the stamping JSX runtime (#23) at /vendor/spool-jsx.js,
+ * react left external for the import map. The installed package reads
+ * prebuilt dist modules (tsup entries next to cli.js); a checkout (tsx,
+ * vitest) has no prebuilt files next to this module and compiles
+ * src/runtime/*.ts on demand, so dev always serves fresh source.
  */
 
 export interface VendorModule {
@@ -93,31 +98,33 @@ export interface VendorModule {
 	etag: string;
 }
 
-export const vendorSpoolJs: () => Promise<VendorModule> = lazyBuild(buildVendorSpool);
+export const vendorSpoolJs: () => Promise<VendorModule> = lazyBuild(() => vendorRuntime("frame-runtime"));
 
-async function buildVendorSpool(): Promise<VendorModule> {
-	const js = await frameRuntimeJs();
+export const vendorSpoolJsxJs: () => Promise<VendorModule> = lazyBuild(() => vendorRuntime("jsx-dev-runtime"));
+
+async function vendorRuntime(name: "frame-runtime" | "jsx-dev-runtime"): Promise<VendorModule> {
+	const js = await runtimeJs(name);
 	return { js, etag: `"spool-${createHash("sha256").update(js).digest("hex").slice(0, 32)}"` };
 }
 
-async function frameRuntimeJs(): Promise<string> {
+async function runtimeJs(name: string): Promise<string> {
 	try {
-		return readFileSync(new URL("./frame-runtime.js", import.meta.url), "utf8");
+		return readFileSync(new URL(`./${name}.js`, import.meta.url), "utf8");
 	} catch {
 		// no prebuilt module next to this file: running from source
 	}
 	const result = await build({
-		entryPoints: [fileURLToPath(new URL("../runtime/frame-runtime.ts", import.meta.url))],
+		entryPoints: [fileURLToPath(new URL(`../runtime/${name}.ts`, import.meta.url))],
 		bundle: true,
 		format: "esm",
 		platform: "browser",
 		target: "es2022",
-		external: ["react"],
+		external: ["react", "react/jsx-runtime"],
 		define: { "process.env.NODE_ENV": '"production"' },
 		write: false,
 		logLevel: "silent",
 	});
 	const js = result.outputFiles[0]?.text;
-	if (js === undefined) throw new Error("frame runtime bundle produced no output");
+	if (js === undefined) throw new Error(`${name} bundle produced no output`);
 	return js;
 }

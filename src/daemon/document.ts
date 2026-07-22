@@ -49,7 +49,10 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * protocol: {spool:"freeze"} stops time cooperatively — rAF callbacks held,
  * interval ticks skipped, running animations paused — so warm frames stay
  * real DOM, crisp at any zoom; {spool:"capture"} answers with a foreignObject
- * self-rasterization, the ambient thumbnail path (Playwright is the fallback).
+ * self-rasterization, the ambient thumbnail path (Playwright is the fallback);
+ * {spool:"pick", x, y} answers with the element at that frame-local point —
+ * its selector, geometry, and nearest data-spool-source stamp (#23), the
+ * canvas's design-mode select without ever handing the frame the pointer.
  */
 const canvasShimJs = `(() => {
 	let frozen = false;
@@ -118,10 +121,57 @@ const canvasShimJs = `(() => {
 		return cv.toDataURL("image/png");
 	}
 
+	// selector below the boot root: tags with :nth-of-type where siblings repeat
+	function cssPath(el) {
+		const parts = [];
+		let node = el;
+		while (node && node.nodeType === 1 && node !== document.body && node.id !== "root" && parts.length < 8) {
+			if (node.id) { parts.unshift("#" + node.id); return parts.join(" > "); }
+			let seg = node.tagName.toLowerCase();
+			const parent = node.parentElement;
+			if (parent) {
+				const same = Array.from(parent.children).filter((c) => c.tagName === node.tagName);
+				if (same.length > 1) seg += ":nth-of-type(" + (same.indexOf(node) + 1) + ")";
+			}
+			parts.unshift(seg);
+			node = parent;
+		}
+		return parts.join(" > ");
+	}
+
+	function pick(x, y) {
+		const el = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
+		if (!el || el === document.documentElement || el === document.body || el.id === "root") return null;
+		let stamped = el;
+		while (stamped && stamped.nodeType === 1 && !stamped.hasAttribute("data-spool-source")) {
+			stamped = stamped.parentElement;
+		}
+		const source = stamped && stamped.nodeType === 1 ? stamped.getAttribute("data-spool-source") : null;
+		const rect = el.getBoundingClientRect();
+		let radius = 0;
+		try { radius = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch {}
+		return {
+			selector: cssPath(el),
+			tag: el.tagName.toLowerCase(),
+			outerHtml: el.outerHTML.slice(0, 240),
+			rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
+			radius,
+			source,
+			generated: stamped !== el,
+		};
+	}
+
 	addEventListener("message", async (event) => {
 		const m = event.data;
 		if (!m || typeof m !== "object") return;
 		if (m.spool === "freeze") { setFrozen(!!m.on); return; }
+		if (m.spool === "pick") {
+			const frame = (window.__SPOOL__ || {}).frame;
+			let hit = null;
+			try { hit = pick(m.x, m.y); } catch {}
+			parent.postMessage({ spool: "picked", frame, hit }, "*");
+			return;
+		}
 		if (m.spool !== "capture") return;
 		const frame = (window.__SPOOL__ || {}).frame;
 		try {

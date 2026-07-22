@@ -1,5 +1,6 @@
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { readGeometry, writeGeometry } from "./geometry";
 import { thumbFile } from "./thumbs";
 
 /**
@@ -50,7 +51,11 @@ export function listProjectFrames(root: string): Projection {
 	for (const name of unplaced) {
 		const frame = { name, x: cursor, y: baseline, w: DEFAULT_W, h: DEFAULT_H, hasThumb: hasThumb(root, name) };
 		cursor += DEFAULT_W + GUTTER;
-		writeGeometry(join(framesDir, name, "frame.json"), frame);
+		try {
+			writeGeometry(join(framesDir, name, "frame.json"), frame);
+		} catch {
+			// read-only checkout: placement stays deterministic within this daemon run
+		}
 		placed.push(frame);
 	}
 
@@ -69,39 +74,6 @@ function frameNames(root: string): string[] | undefined {
 	} catch {
 		return undefined;
 	}
-}
-
-interface Geometry {
-	x: number;
-	y: number;
-	w: number;
-	h: number;
-}
-
-/** Anything short of four finite numbers reads as unplaced — heal, don't fail. */
-function readGeometry(file: string): Geometry | undefined {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(readFileSync(file, "utf8"));
-	} catch {
-		return undefined;
-	}
-	if (typeof parsed !== "object" || parsed === null) return undefined;
-	const { x, y, w, h } = parsed as Record<string, unknown>;
-	if (!isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(w) || !isFiniteNumber(h)) return undefined;
-	return { x, y, w, h };
-}
-
-function writeGeometry(file: string, { x, y, w, h }: Geometry): void {
-	try {
-		writeFileSync(file, `${JSON.stringify({ x, y, w, h }, null, "\t")}\n`);
-	} catch {
-		// read-only checkout: placement stays deterministic within this daemon run
-	}
-}
-
-function isFiniteNumber(value: unknown): value is number {
-	return typeof value === "number" && Number.isFinite(value);
 }
 
 function hasThumb(root: string, frame: string): boolean {

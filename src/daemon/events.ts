@@ -1,7 +1,13 @@
 import { watch } from "node:fs";
 import { join, sep } from "node:path";
 
-export type ChangeEvent = { kind: "frame"; frame: string } | { kind: "shared" } | { kind: "thumb"; frame: string };
+export type ChangeEvent =
+	| { kind: "frame"; frame: string }
+	| { kind: "shared" }
+	| { kind: "thumb"; frame: string }
+	// a hands write to a frame.json sidecar (#23), published by the geometry
+	// API so other browsers see the move — never emitted by the fs watcher
+	| { kind: "geometry"; frame: string };
 type Listener = (event: ChangeEvent) => void;
 
 interface RootWatch {

@@ -9,12 +9,13 @@ export default defineConfig([
 		target: "node22",
 	},
 	{
-		// the flow runtime the daemon serves at /vendor/spool.js: browser ESM,
-		// react left external for the import map pin (see daemon/vendor.ts)
-		entry: { "frame-runtime": "src/runtime/frame-runtime.ts" },
+		// the runtimes the daemon serves at /vendor/spool.js and
+		// /vendor/spool-jsx.js: browser ESM, react left external for the
+		// import map pins (see daemon/vendor.ts)
+		entry: { "frame-runtime": "src/runtime/frame-runtime.ts", "jsx-dev-runtime": "src/runtime/jsx-dev-runtime.ts" },
 		format: "esm",
 		platform: "browser",
 		target: "es2022",
-		external: ["react"],
+		external: ["react", "react/jsx-runtime"],
 	},
 ]);

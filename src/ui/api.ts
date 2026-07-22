@@ -1,10 +1,12 @@
 import { hc } from "hono/client";
 import type { AppType } from "../daemon/app";
 import type { FsListing } from "../daemon/fs-list";
+import type { Geometry } from "../daemon/geometry";
 import type { Camera, CanvasMode, CanvasState } from "../daemon/project-state";
 import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
+import type { SelectionPut } from "../daemon/selection";
 
-export type { Camera, CanvasMode, CanvasState, FsListing, ProjectCard, ProjectedFrame, Projection };
+export type { Camera, CanvasMode, CanvasState, FsListing, Geometry, ProjectCard, ProjectedFrame, Projection };
 
 /**
  * The daemon over its typed RPC surface (#12): hc<AppType> is the
@@ -78,6 +80,43 @@ async function errorText(res: { text(): Promise<string> }): Promise<string> {
 	} catch {
 		return raw;
 	}
+}
+
+/** What Liam points at (#23) — daemon memory, the agent's read surface. */
+export function putSelection(project: string, selection: SelectionPut): void {
+	void client.api.p[":project"].selection.$put({ param: { project }, json: selection });
+}
+
+/** Move and resize write geometry sidecars alone — never source (#23). */
+export async function putGeometry(project: string, frames: Record<string, Geometry>): Promise<boolean> {
+	try {
+		return (await client.api.p[":project"].geometry.$put({ param: { project }, json: { frames } })).ok;
+	} catch {
+		return false;
+	}
+}
+
+export async function postTrash(project: string, frames: string[]): Promise<boolean> {
+	try {
+		return (await client.api.p[":project"].trash.$post({ param: { project }, json: { frames } })).ok;
+	} catch {
+		return false;
+	}
+}
+
+/** The page is going away — a beacon outlives it where fetch would not. */
+export function beaconTrash(project: string, frames: string[]): void {
+	navigator.sendBeacon(
+		`/api/p/${encodeURIComponent(project)}/trash`,
+		new Blob([JSON.stringify({ frames })], { type: "application/json" }),
+	);
+}
+
+export function openInEditor(project: string, path: string, line?: number): void {
+	void client.api.p[":project"].editor.$post({
+		param: { project },
+		json: line === undefined ? { path } : { path, line },
+	});
 }
 
 export function frameDocumentUrl(project: string, frame: string, nonce: number): string {

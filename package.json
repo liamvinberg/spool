@@ -45,9 +45,11 @@
 		"commander": "^15.0.0",
 		"esbuild": "^0.28.1",
 		"hono": "^4.12.31",
+		"launch-editor": "^2.14.1",
 		"playwright-core": "^1.61.1",
 		"react": "19.2.7",
 		"react-dom": "19.2.7",
-		"tailwindcss": "4.3.3"
+		"tailwindcss": "4.3.3",
+		"trash": "^10.1.1"
 	}
 }
