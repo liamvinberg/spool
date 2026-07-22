@@ -1,7 +1,7 @@
 import { watch } from "node:fs";
 import { join, sep } from "node:path";
 
-export type ChangeEvent = { kind: "frame"; frame: string } | { kind: "shared" };
+export type ChangeEvent = { kind: "frame"; frame: string } | { kind: "shared" } | { kind: "thumb"; frame: string };
 type Listener = (event: ChangeEvent) => void;
 
 interface RootWatch {
@@ -81,7 +81,18 @@ export function createChangeHub() {
 		roots.clear();
 	}
 
-	return { subscribe, close };
+	/**
+	 * Daemon-originated events (thumbnail writes) ride the same stream as fs
+	 * changes — .spool is invisible to the watcher by design, so the store
+	 * announces its own writes.
+	 */
+	function publish(root: string, event: ChangeEvent): void {
+		const entry = roots.get(root);
+		if (entry === undefined) return;
+		for (const emit of entry.listeners) emit(event);
+	}
+
+	return { subscribe, publish, close };
 }
 
 export type ChangeHub = ReturnType<typeof createChangeHub>;
@@ -89,12 +100,18 @@ export type ChangeHub = ReturnType<typeof createChangeHub>;
 /**
  * Only source-relevant paths become events: a frame folder names its frame,
  * anything in shared/ can stale every document. App-owned state (.spool/,
- * canvas.json) never fires — thumbnail writes must not echo as edits.
+ * canvas.json) never fires — thumbnail writes must not echo as edits — and
+ * neither does frame.json: geometry is hands-owned (#3), so a sidecar fill or
+ * a resize must never read as a source edit and reload the frame.
  */
 function classify(filename: string | null): ChangeEvent | undefined {
 	if (filename === null) return { kind: "shared" };
-	const [head, frame] = filename.split(sep);
-	if (head === "frames" && frame !== undefined && frame !== "") return { kind: "frame", frame };
+	const parts = filename.split(sep);
+	const [head, frame] = parts;
+	if (head === "frames" && frame !== undefined && frame !== "") {
+		if (parts.length === 3 && parts[2]?.startsWith("frame.json") === true) return undefined;
+		return { kind: "frame", frame };
+	}
 	if (head === "shared") return { kind: "shared" };
 	return undefined;
 }

@@ -33,7 +33,8 @@ interface Scenario {
 	mock: Record<string, unknown>;
 }
 
-interface SessionRecord {
+/** One play session on the wire: storage record, host handoff, walk snapshot. */
+export interface SessionRecord {
 	scenario: string;
 	state: SpoolState;
 	stack: string[];
@@ -128,19 +129,53 @@ function storage(): Storage | undefined {
 	}
 }
 
+function parseSessionRecord(record: unknown): SessionRecord | undefined {
+	if (typeof record !== "object" || record === null) return undefined;
+	const { scenario, state, stack: names } = record as Partial<SessionRecord>;
+	if (typeof scenario !== "string" || typeof state !== "object" || state === null) return undefined;
+	if (!Array.isArray(names) || !names.every((name) => typeof name === "string")) return undefined;
+	return { scenario, state, stack: names };
+}
+
 function loadSession(): SessionRecord | undefined {
 	try {
 		const raw = storage()?.getItem(storageKey);
 		if (raw == null) return undefined;
-		const record: unknown = JSON.parse(raw);
-		if (typeof record !== "object" || record === null) return undefined;
-		const { scenario, state, stack: names } = record as Partial<SessionRecord>;
-		if (typeof scenario !== "string" || typeof state !== "object" || state === null) return undefined;
-		if (!Array.isArray(names) || !names.every((name) => typeof name === "string")) return undefined;
-		return { scenario, state, stack: names };
+		return parseSessionRecord(JSON.parse(raw));
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * Embedded session continuity (#22): a sandboxed frame has no storage, so the
+ * canvas is the keeper — on boot the frame asks its host for the in-flight
+ * session and the host answers with the record a previous frame's walk posted.
+ * A host that stays silent (a foreign embedder, a plain iframe) costs one
+ * 250ms beat and the frame seeds from the scenario as if standalone.
+ */
+function requestHostSession(): Promise<SessionRecord | undefined> {
+	if (!embedded) return Promise.resolve(undefined);
+	return new Promise((resolve) => {
+		const timer = setTimeout(() => {
+			removeEventListener("message", onMessage);
+			resolve(undefined);
+		}, 250);
+		function onMessage(event: MessageEvent): void {
+			const message = event.data as { spool?: string; record?: unknown } | null;
+			if (message === null || typeof message !== "object" || message.spool !== "session") return;
+			clearTimeout(timer);
+			removeEventListener("message", onMessage);
+			resolve(parseSessionRecord(message.record));
+		}
+		addEventListener("message", onMessage);
+		post({ spool: "session?" });
+	});
+}
+
+/** What the host needs to seed the next frame: storage semantics, JSON-clean. */
+function sessionSnapshot(): SessionRecord {
+	return JSON.parse(JSON.stringify({ scenario: scenarioName, state: stateTarget, stack })) as SessionRecord;
 }
 
 let persistScheduled = false;
@@ -186,11 +221,12 @@ async function loadScenario(name: string): Promise<Scenario> {
 /**
  * Session start: resume the stored session when one exists, unless the URL
  * names a different scenario — switching scenario restarts the session (#5).
- * A new session re-seeds state from the scenario.
+ * A new session re-seeds state from the scenario. Embedded, the host is the
+ * storage: the handshake record plays the stored session's part.
  */
 async function start(): Promise<void> {
 	const requested = queryScenario();
-	const record = loadSession();
+	const record = (await requestHostSession()) ?? loadSession();
 	const resume =
 		record !== undefined && (requested === undefined || requested === record.scenario) ? record : undefined;
 	scenarioName = resume?.scenario ?? requested ?? "default";
@@ -249,10 +285,11 @@ function go(target: string, patch?: Record<string, unknown>): void {
 	}
 	if (patch !== undefined) Object.assign(state, patch);
 	if (embedded) {
-		// the host owns embedded walks; it mirrors the session its own way
+		// the host owns embedded walks; the snapshot rides along so it can
+		// seed the target frame's boot with this session
 		stack.push(doc.frame);
 		persist();
-		post({ spool: "go", target });
+		post({ spool: "go", target, session: sessionSnapshot() });
 		return;
 	}
 	// the push commits only when the walk really happens, so a typo'd target
@@ -270,7 +307,7 @@ function back(): void {
 	// past a deleted frame beats retrying it forever
 	persist();
 	if (embedded) {
-		post({ spool: "back", target });
+		post({ spool: "back", target, session: sessionSnapshot() });
 		return;
 	}
 	void walkTo(target);

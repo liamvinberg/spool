@@ -13,6 +13,11 @@
 		"indentWidth": 3,
 		"lineWidth": 120
 	},
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
+		}
+	},
 	"linter": {
 		"rules": {
 			"preset": "recommended",

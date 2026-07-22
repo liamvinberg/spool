@@ -52,7 +52,12 @@ afterAll(() => rmSync(bootDir, { recursive: true, force: true }));
 async function loadFrameDocument(
 	harness: Harness,
 	frame: string,
-	options: { scenario?: string; outside?: (url: string) => Response | undefined } = {},
+	options: {
+		scenario?: string;
+		outside?: (url: string) => Response | undefined;
+		/** Play the canvas: receive parent-bound postMessages. Makes the frame embedded. */
+		host?: (message: Record<string, unknown>) => void;
+	} = {},
 ) {
 	const { app, name } = harness;
 	const search = options.scenario === undefined ? "" : `?scenario=${options.scenario}`;
@@ -89,6 +94,13 @@ async function loadFrameDocument(
 	expect(configScript, "served config script").toBeDefined();
 	new Function(configScript ?? "")();
 
+	// embedded means parent !== window: the host option stands in for the canvas
+	const host = options.host;
+	Object.defineProperty(window, "parent", {
+		configurable: true,
+		value: host === undefined ? window : { postMessage: (data: unknown) => host(data as Record<string, unknown>) },
+	});
+
 	const bootJs = doc.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
 	expect(bootJs, "served boot module").toBeDefined();
 	const bootFile = join(bootDir, `boot-${bootCount++}.js`);
@@ -96,6 +108,11 @@ async function loadFrameDocument(
 	await import(bootFile);
 
 	return { assign };
+}
+
+/** Answer the frame realm's message listener the way a canvas would. */
+function hostReply(data: Record<string, unknown>): void {
+	window.dispatchEvent(new MessageEvent("message", { data }));
 }
 
 function click(selector: string): boolean {
@@ -401,5 +418,80 @@ describe("the mock layer", () => {
 		const notice = await missing.text();
 		expect(notice).toContain("GET /api/ghost");
 		expect(notice).toContain("scenario rule");
+	});
+});
+
+describe("embedded in a canvas", () => {
+	it("asks the host for a session on boot and resumes the answered record", async () => {
+		const harness = makeHarness();
+		scaffoldFlow(harness);
+		const messages: Record<string, unknown>[] = [];
+
+		await loadFrameDocument(harness, "inbox", {
+			host: (message) => {
+				messages.push(message);
+				if (message.spool === "session?") {
+					// the canvas carries the walk's session into the freshly booted frame
+					hostReply({
+						spool: "session",
+						record: { scenario: "default", state: { unread: 7 }, stack: ["thread--detail"] },
+					});
+				}
+			},
+		});
+
+		// the handed state wins over the scenario seed (2)
+		await waitForText("output", "7");
+		expect(messages.some((m) => m.spool === "session?")).toBe(true);
+
+		// ui.back pops the handed stack and posts the walk to the host
+		click("#back-empty");
+		await vi.waitFor(() => {
+			const back = messages.find((m) => m.spool === "back");
+			expect(back).toBeDefined();
+			expect(back).toMatchObject({ target: "thread--detail", frame: "inbox" });
+			expect((back as { session: { stack: string[] } }).session.stack).toEqual([]);
+		});
+	});
+
+	it("posts go with the session snapshot instead of navigating, seeding fresh when the host has nothing", async () => {
+		const harness = makeHarness();
+		scaffoldFlow(harness);
+		const messages: Record<string, unknown>[] = [];
+
+		const { assign } = await loadFrameDocument(harness, "inbox", {
+			host: (message) => {
+				messages.push(message);
+				if (message.spool === "session?") hostReply({ spool: "session", record: null });
+			},
+		});
+
+		// nothing to resume: the scenario seed is the session
+		await waitForText("output", "2");
+
+		click("#carry");
+		await vi.waitFor(() => {
+			const go = messages.find((m) => m.spool === "go");
+			expect(go).toBeDefined();
+			expect(go).toMatchObject({ target: "thread--detail", frame: "inbox" });
+			const session = (go as { session: { scenario: string; state: Record<string, unknown>; stack: string[] } })
+				.session;
+			// the patch landed before the snapshot; this frame is on the stack
+			expect(session.state.unread).toBe(99);
+			expect(session.stack).toEqual(["inbox"]);
+			expect(session.scenario).toBe("default");
+		});
+		// the host owns embedded walks — never a navigation
+		expect(assign).not.toHaveBeenCalled();
+	});
+
+	it("boots on the scenario seed when the host never answers", async () => {
+		const harness = makeHarness();
+		scaffoldFlow(harness);
+
+		// a silent host (or a foreign embedder): the 250ms handshake times out
+		await loadFrameDocument(harness, "inbox", { host: () => {} });
+
+		await waitForText("output", "2");
 	});
 });

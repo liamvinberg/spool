@@ -2,7 +2,15 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { initProject } from "../init";
-import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import {
+	makeApp,
+	makeProject,
+	makeTempDir,
+	type SseEvent,
+	sseReader,
+	writeDesignFile,
+	writeFrame,
+} from "../test-helpers";
 
 const helloTsx = `import { useState } from "react";
 
@@ -244,70 +252,6 @@ describe("vendor react", () => {
 	});
 });
 
-interface SseEvent {
-	event: string;
-	data: unknown;
-}
-
-class SseTimeout extends Error {}
-
-/** Reads server-sent events off a streaming response, one promise per event. */
-function sseReader(res: Response) {
-	const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-	const decoder = new TextDecoder();
-	let buffer = "";
-	const queue: SseEvent[] = [];
-	// a timed-out read is never abandoned: the pending promise carries the next
-	// chunk and must be consumed by a later call
-	let pendingRead: ReturnType<typeof reader.read> | undefined;
-
-	async function next(timeoutMs = 5000): Promise<SseEvent> {
-		const deadline = Date.now() + timeoutMs;
-		while (queue.length === 0) {
-			const remaining = deadline - Date.now();
-			if (remaining <= 0) throw new SseTimeout("timed out waiting for an SSE event");
-			pendingRead ??= reader.read();
-			const outcome = await Promise.race([
-				pendingRead,
-				new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), remaining)),
-			]);
-			if (outcome === "timeout") continue;
-			pendingRead = undefined;
-			if (outcome.done) throw new Error("SSE stream ended");
-			buffer += decoder.decode(outcome.value, { stream: true });
-			const blocks = buffer.split("\n\n");
-			buffer = blocks.pop() ?? "";
-			for (const block of blocks) {
-				const event = block.match(/^event: (.*)$/m)?.[1] ?? "message";
-				const data = block.match(/^data: (.*)$/m)?.[1];
-				if (data !== undefined) queue.push({ event, data: JSON.parse(data) });
-			}
-		}
-		return queue.shift() as SseEvent;
-	}
-
-	async function drain(quietMs: number): Promise<void> {
-		try {
-			for (;;) await next(quietMs);
-		} catch (error) {
-			if (!(error instanceof SseTimeout)) throw error;
-		}
-	}
-
-	async function expectQuiet(ms: number): Promise<void> {
-		let seen: SseEvent;
-		try {
-			seen = await next(ms);
-		} catch (error) {
-			if (error instanceof SseTimeout) return;
-			throw error;
-		}
-		throw new Error(`expected quiet, got ${JSON.stringify(seen)}`);
-	}
-
-	return { next, drain, expectQuiet };
-}
-
 describe("change events", () => {
 	it("pushes hello on connect, then frame and shared changes, ignoring .spool", { timeout: 20_000 }, async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
@@ -355,6 +299,10 @@ describe("change events", () => {
 
 		await events.drain(300);
 		writeDesignFile(root, ".spool/thumbs/hello.png", "not really a png");
+		await events.expectQuiet(400);
+
+		// geometry is hands-owned, never a source edit — no reload for a sidecar
+		writeDesignFile(root, "frames/hello/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
 		await events.expectQuiet(400);
 	});
 
