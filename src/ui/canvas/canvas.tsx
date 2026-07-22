@@ -18,6 +18,7 @@ import { RibbonMark } from "../icons";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
 import { ContextMenu, MENU_SIZE } from "./context-menu";
 import { FlowArrows } from "./flow-arrows";
+import { FrameLabel } from "./frame-label";
 import { FrameShell, type WalkBoot } from "./frame-shell";
 import { useFrameLifecycle } from "./lifecycle";
 import {
@@ -1319,28 +1320,14 @@ export function ProjectCanvas({
 								{/* the label: mono, muted; thread when selected; ▸ = paused (system
 								    page). Entered swaps it for the state chip (#28): time is
 								    running under the pointer, and esc is the way out. */}
-								<div
-									data-frame-label={frame.name}
-									className="absolute bottom-full left-0 origin-bottom-left whitespace-nowrap"
-									style={{ transform: `scale(${1 / k})` }}
-								>
-									{isEntered ? (
-										<div className="flex items-center pb-2.5">
-											<span className="rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3">
-												live · esc exits
-											</span>
-										</div>
-									) : (
-										<div className="flex items-center gap-1.5 pb-2.5">
-											{paused && <span className="font-mono text-2xs text-muted leading-3">▸</span>}
-											<span
-												className={`font-mono text-sm leading-4 ${isSelected ? "text-thread" : "text-muted"}`}
-											>
-												{frame.name}
-											</span>
-										</div>
-									)}
-								</div>
+								<FrameLabel
+									name={frame.name}
+									frameWidth={frame.w}
+									k={k}
+									entered={isEntered}
+									paused={paused}
+									selected={isSelected}
+								/>
 								<div className="relative h-full w-full overflow-hidden" style={{ borderRadius: shellRadius }}>
 									<FrameShell
 										project={project}
