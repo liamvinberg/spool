@@ -14,6 +14,7 @@ import { lookupProjectByName, readRegistry } from "../registry";
 import { createFrameCompiler } from "./compile";
 import { errorDocument } from "./document";
 import { createChangeHub } from "./events";
+import { deriveFlows, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFile, writeGeometry } from "./geometry";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerEtag } from "./play";
@@ -246,6 +247,46 @@ export function createDaemonApp({ spoolDir, version, uiDir, moveToTrash, launchE
 				return c.body(null, 204);
 			},
 		)
+		.get("/api/p/:project/flows", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			return c.json(deriveFlows(project.root));
+		})
+		.post(
+			"/api/p/:project/walked",
+			validator("json", (value, c) => {
+				const { from, to } = (value ?? {}) as { from?: unknown; to?: unknown };
+				if (typeof from !== "string" || !isSafeName(from) || typeof to !== "string" || !isSafeName(to)) {
+					return c.text('a walk is { "from": "<frame>", "to": "<frame>" }', 400);
+				}
+				return { from, to };
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const { from, to } = c.req.valid("json");
+				// only witness walks between frames that really exist — a session
+				// racing a delete records nothing
+				for (const frame of [from, to]) {
+					if (!existsSync(join(project.root, "design", "frames", frame, "frame.tsx"))) {
+						return c.text(`no frame "${frame}" to walk`, 404);
+					}
+				}
+				recordWalk(project.root, from, to);
+				hub.publish(project.root, { kind: "walked" });
+				return c.body(null, 204);
+			},
+		)
+		.get("/api/p/:project/verify/:frame", async (c) => {
+			// the agent's compile probe (#25): shot and logs branch on this JSON —
+			// ok hands the closure etag (the log cache key), error the text verbatim
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const doc = await compiler.getDocument(project.root, c.req.param("frame"));
+			if (doc.kind === "missing") return c.json({ kind: "missing", message: doc.message }, 404);
+			if (doc.kind === "error") return c.json({ kind: "error", message: doc.message }, 500);
+			return c.json({ kind: "ok", etag: doc.etag });
+		})
 		.get("/api/p/:project/selection", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;

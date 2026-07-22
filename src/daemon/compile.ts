@@ -9,7 +9,7 @@ import { importMapPins } from "./vendor";
 
 export type FrameDocument =
 	| { kind: "ok"; document: string; etag: string; cache: "hit" | "miss" }
-	| { kind: "error"; document: string }
+	| { kind: "error"; document: string; message: string }
 	| { kind: "missing"; message: string };
 
 interface CacheEntry {
@@ -55,7 +55,8 @@ export function createFrameCompiler(version: string) {
 			return { kind: "ok", document: entry.document, etag: entry.etag, cache: "miss" };
 		} catch (error) {
 			cache.delete(key);
-			return { kind: "error", document: errorDocument(frame, describeCompileError(error)) };
+			const message = describeCompileError(error);
+			return { kind: "error", document: errorDocument(frame, message), message };
 		}
 	}
 

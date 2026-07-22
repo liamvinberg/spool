@@ -1,12 +1,24 @@
 import { hc } from "hono/client";
 import type { AppType } from "../daemon/app";
+import type { FlowLink, Flows } from "../daemon/flows";
 import type { FsListing } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { Camera, CanvasMode, CanvasState } from "../daemon/project-state";
 import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionPut } from "../daemon/selection";
 
-export type { Camera, CanvasMode, CanvasState, FsListing, Geometry, ProjectCard, ProjectedFrame, Projection };
+export type {
+	Camera,
+	CanvasMode,
+	CanvasState,
+	FlowLink,
+	Flows,
+	FsListing,
+	Geometry,
+	ProjectCard,
+	ProjectedFrame,
+	Projection,
+};
 
 /**
  * The daemon over its typed RPC surface (#12): hc<AppType> is the
@@ -80,6 +92,18 @@ async function errorText(res: { text(): Promise<string> }): Promise<string> {
 	} catch {
 		return raw;
 	}
+}
+
+/** The link graph (#25): declared from source, walked from witnessed sessions. */
+export async function fetchFlows(project: string): Promise<Flows | undefined> {
+	const res = await client.api.p[":project"].flows.$get({ param: { project } });
+	if (!res.ok) return undefined;
+	return (await res.json()) as Flows;
+}
+
+/** An entered walk really happened — the canvas is the witness (#25). */
+export function postWalk(project: string, from: string, to: string): void {
+	void client.api.p[":project"].walked.$post({ param: { project }, json: { from, to } }).catch(() => {});
 }
 
 /** What Liam points at (#23) — daemon memory, the agent's read surface. */
