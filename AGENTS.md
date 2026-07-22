@@ -1,9 +1,8 @@
 # spool
 
-Liam's live prototyping canvas: agent-authored live TSX frames on an infinite canvas, flows between them, repo-native, two-way with product code later.
+Spool is a local-first prototyping canvas. Agents author live TSX frames; people arrange them spatially and walk through the flows between them.
 
-The soul of this project (why, wedge, decisions, status) lives in the bank: `~/bank/personal/wiki/projects/spool.md`. Read it before substantial work here.
-
-Planning ran as a wayfinder through v0.1; the map ([#1](https://github.com/liamvinberg/spool/issues/1)) closed 2026-07-22 with 0.1.0 shipped. New work is standalone tickets now — no map parent. Never resolve more than one non-research ticket per session. Research assets from the exploration session (2026-07-20) live in `research/`; tickets cite them instead of re-researching.
-
-design/ is a spool canvas: run `spool skill` before working there — it is the complete contract
+- Code, tests, and configuration are the source of truth. Read the implementation and nearest tests before changing behavior. Do not add documentation that restates the code.
+- Start at `src/cli.ts` for commands, `src/daemon/` for local server and project state, `src/ui/` for the canvas, and `src/runtime/` for code injected into frames and the player. `research/` is historical evidence, not current behavior.
+- Keep a session to one non-research ticket. Use Node 22+ and pnpm. Before handoff, run the relevant tests, `pnpm typecheck`, and `pnpm check`; run `pnpm test` for changes with broader behavioral reach.
+- `design/` is Spool's dogfood canvas. Run `spool skill` before working there; its nested `AGENTS.md` governs that folder.
