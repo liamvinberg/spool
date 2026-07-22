@@ -104,4 +104,16 @@ describe("skill", () => {
 		expect(() => skillText("vibes")).toThrowError(SpoolError);
 		expect(() => skillText("vibes")).toThrowError(/frames, flows, scenarios, mock, styling, verbs/);
 	});
+
+	it("opens with the completeness contract and carries the fixed laws verbatim", () => {
+		expect(skillText()).toContain("if it isn't here, spool doesn't do it");
+		expect(skillText()).toContain("never write app-owned files");
+		expect(skillText("styling")).toContain("cn() only, never template-literal class strings");
+	});
+
+	it("indexes every topic as its own overview row", () => {
+		for (const topic of ["frames", "flows", "scenarios", "mock", "styling", "verbs"]) {
+			expect(skillText()).toMatch(new RegExp(`^  ${topic} {2,}\\S`, "m"));
+		}
+	});
 });
