@@ -104,14 +104,6 @@ export function App() {
 		if (!res.ok) setToast({ kind: "failed", message: res.error });
 	}, []);
 
-	// an upgrader that dies before touching the daemon would leave "Updating…"
-	// forever — no reconnect ever tells the story, so time does
-	useEffect(() => {
-		if (toast?.kind !== "updating") return;
-		const timer = setTimeout(() => setToast({ kind: "failed" }), 120_000);
-		return () => clearTimeout(timer);
-	}, [toast]);
-
 	const dismissToast = useCallback(() => {
 		if (toastRef.current?.kind === "offer") dismissedLatest.current = toastRef.current.latest;
 		setToast(null);

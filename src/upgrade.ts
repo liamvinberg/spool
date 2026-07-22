@@ -61,7 +61,7 @@ export function planUpgrade(realCliPath: string, io: PlanIo = {}): InstallPlan {
 	if (!realCliPath.endsWith(PACKAGE_SUFFIX)) {
 		return {
 			ok: false,
-			message: `the running spool is the development checkout (${realCliPath}) — update it with git, not \`spool upgrade\``,
+			message: `the running spool is the development checkout (${realCliPath}) — run: git pull`,
 		};
 	}
 	const packageDir = realCliPath.slice(0, -"/dist/cli.js".length);
@@ -242,15 +242,6 @@ export async function runUpgrade(
 	}
 
 	if (before.running) {
-		if (before.version === to) {
-			// the daemon already serves the installed version — nothing to restart
-			return {
-				kind: "done",
-				from: currentVersion,
-				to,
-				daemon: { running: true, url: before.url, restarted: false },
-			};
-		}
 		narrate(`restarting the daemon (v${before.version} → v${to})`);
 		await stop();
 		const ensure = io.ensure ?? ((command: string[]) => ensureDaemon(spoolDir, { command }));
