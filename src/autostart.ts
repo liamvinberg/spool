@@ -18,6 +18,9 @@ export function launchAgentPath(home: string): string {
 	return join(home, "Library", "LaunchAgents", `${AUTOSTART_LABEL}.plist`);
 }
 
+/** launchctl's name for the job inside the user's gui domain. */
+const serviceTarget = (uid: number): string => `gui/${uid}/${AUTOSTART_LABEL}`;
+
 export interface LaunchAgentSpec {
 	/** absolute node binary */
 	execPath: string;
@@ -83,8 +86,8 @@ export function installAutostart({ home, uid, spec, spoolDir, run = runLaunchctl
 	mkdirSync(dirname(plist), { recursive: true });
 	mkdirSync(spoolDir, { recursive: true });
 	writeFileSync(plist, launchAgentPlist(spec));
-	run(["bootout", `gui/${uid}/${AUTOSTART_LABEL}`]); // best-effort: clear any previous incarnation
-	run(["enable", `gui/${uid}/${AUTOSTART_LABEL}`]); // best-effort: undo an old disable, or bootstrap refuses
+	run(["bootout", serviceTarget(uid)]); // best-effort: clear any previous incarnation
+	run(["enable", serviceTarget(uid)]); // best-effort: undo an old disable, or bootstrap refuses
 	const bootstrap = run(["bootstrap", `gui/${uid}`, plist]);
 	if (bootstrap.status !== 0) {
 		throw new SpoolError(`launchctl bootstrap failed: ${bootstrap.stderr.trim() || `status ${bootstrap.status}`}`);
@@ -104,7 +107,7 @@ export type RemoveResult = { removed: true; plist: string } | { removed: false }
 export function removeAutostart({ home, uid, run = runLaunchctl }: RemoveOptions): RemoveResult {
 	const plist = launchAgentPath(home);
 	const existed = existsSync(plist);
-	run(["bootout", `gui/${uid}/${AUTOSTART_LABEL}`]); // best-effort even without a plist: strays die too
+	run(["bootout", serviceTarget(uid)]); // best-effort even without a plist: strays die too
 	rmSync(plist, { force: true });
 	return existed ? { removed: true, plist } : { removed: false };
 }

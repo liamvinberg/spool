@@ -1,22 +1,23 @@
 #!/usr/bin/env node
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
 import {
 	daemonUrl,
 	ensureDaemon,
+	poll,
 	resolveServeConfig,
 	resolveSpoolDir,
+	selfCliPath,
 	spoolDaemonAt,
 	statusDaemon,
 	stopDaemon,
 	writeDaemonState,
 } from "./daemon/lifecycle";
-import { serveDaemon } from "./daemon/server";
+import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { PortBusyError, SpoolError } from "./errors";
 import { initProject } from "./init";
 import { openProject } from "./open";
@@ -152,7 +153,7 @@ program
 	.action(async (options: { foreground?: boolean }) => {
 		if (options.foreground === true) {
 			const config = resolveServeConfig(spoolDir, process.env);
-			let daemon: Awaited<ReturnType<typeof serveDaemon>>;
+			let daemon: RunningDaemon;
 			try {
 				daemon = await serveDaemon({
 					spoolDir,
@@ -225,8 +226,6 @@ program
 			throw new SpoolError(`autostart serves the daily daemon — unset ${split.join(" and ")} first`);
 		}
 
-		const cli = process.argv[1];
-		if (cli === undefined) throw new SpoolError("cannot determine the spool cli path");
 		// an unsupervised daemon yields first, so launchd's own binds cleanly
 		await stopDaemon(spoolDir);
 		installAutostart({
@@ -236,19 +235,17 @@ program
 			spec: {
 				execPath: process.execPath,
 				execArgv: process.execArgv,
-				// realpath through the package-manager bin symlink: survives relinks
-				cliPath: realpathSync(cli),
+				cliPath: selfCliPath(),
 				logFile: join(spoolDir, "daemon.log"),
 			},
 		});
-		const deadline = Date.now() + 10_000;
-		while (Date.now() < deadline) {
-			const status = await statusDaemon(spoolDir);
-			if (status.running) {
-				process.stdout.write(`spool starts at login — daemon running at ${status.url} (pid ${status.pid})\n`);
-				return;
-			}
-			await sleep(100);
+		const status = await poll(10_000, async () => {
+			const probed = await statusDaemon(spoolDir);
+			return probed.running ? probed : undefined;
+		});
+		if (status !== undefined) {
+			process.stdout.write(`spool starts at login — daemon running at ${status.url} (pid ${status.pid})\n`);
+			return;
 		}
 		throw new SpoolError(`launchd took the job but no daemon came up — see ${join(spoolDir, "daemon.log")}`);
 	});
