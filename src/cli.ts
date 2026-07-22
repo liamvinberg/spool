@@ -1,8 +1,11 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
+import { installAutostart, removeAutostart } from "./autostart";
 import {
 	daemonUrl,
 	ensureDaemon,
@@ -193,6 +196,61 @@ program
 				? `spool daemon started at ${result.url} (pid ${result.pid})\n`
 				: `spool daemon already running at ${result.url} (pid ${result.pid})\n`,
 		);
+	});
+
+program
+	.command("autostart")
+	.description("start the daemon at login (macOS launchd); off removes it")
+	.argument("[state]", "on or off", "on")
+	.action(async (state: string) => {
+		if (state !== "on" && state !== "off") throw new SpoolError(`autostart takes "on" or "off", got "${state}"`);
+		if (process.platform !== "darwin") throw new SpoolError("autostart is launchd-backed — macOS only for now");
+		const uid = process.getuid?.();
+		if (uid === undefined) throw new SpoolError("cannot determine the current uid");
+		const home = homedir();
+
+		if (state === "off") {
+			const result = removeAutostart({ home, uid });
+			process.stdout.write(
+				result.removed
+					? "autostart removed — nothing revives the daemon now; any spool command still starts one\n"
+					: "autostart was not installed\n",
+			);
+			return;
+		}
+
+		const split = ["SPOOL_DIR", "SPOOL_PORT"].filter((name) => (process.env[name] ?? "") !== "");
+		if (split.length > 0) {
+			// the dogfood split must never reach launchd: login serves the daily daemon
+			throw new SpoolError(`autostart serves the daily daemon — unset ${split.join(" and ")} first`);
+		}
+
+		const cli = process.argv[1];
+		if (cli === undefined) throw new SpoolError("cannot determine the spool cli path");
+		// an unsupervised daemon yields first, so launchd's own binds cleanly
+		await stopDaemon(spoolDir);
+		installAutostart({
+			home,
+			uid,
+			spoolDir,
+			spec: {
+				execPath: process.execPath,
+				execArgv: process.execArgv,
+				// realpath through the package-manager bin symlink: survives relinks
+				cliPath: realpathSync(cli),
+				logFile: join(spoolDir, "daemon.log"),
+			},
+		});
+		const deadline = Date.now() + 10_000;
+		while (Date.now() < deadline) {
+			const status = await statusDaemon(spoolDir);
+			if (status.running) {
+				process.stdout.write(`spool starts at login — daemon running at ${status.url} (pid ${status.pid})\n`);
+				return;
+			}
+			await sleep(100);
+		}
+		throw new SpoolError(`launchd took the job but no daemon came up — see ${join(spoolDir, "daemon.log")}`);
 	});
 
 program

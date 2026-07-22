@@ -107,6 +107,20 @@ describe("spool cli", () => {
 		expect(result.stderr).toContain("already in use");
 	});
 
+	it("autostart rejects anything but on and off", () => {
+		const result = spool(["autostart", "sideways"], makeTempDir());
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain('"on" or "off"');
+	});
+
+	it("autostart refuses a dogfood-split environment", () => {
+		const result = spool(["autostart"], makeTempDir(), undefined, { SPOOL_DIR: makeTempDir() });
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("unset SPOOL_DIR");
+	});
+
 	it("fails cleanly on an unknown command", () => {
 		const result = spool(["frobnicate"], makeTempDir());
 
