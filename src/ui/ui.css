@@ -59,6 +59,10 @@ body,
 	height: 100%;
 }
 
+html {
+	overscroll-behavior-x: none;
+}
+
 body {
 	background: var(--color-bg);
 	color: var(--color-text);
