@@ -1,6 +1,6 @@
 import type { AddressInfo } from "node:net";
 import { serve } from "@hono/node-server";
-import { SpoolError } from "../errors";
+import { PortBusyError, SpoolError } from "../errors";
 import { createDaemonApp } from "./app";
 import { clearDaemonState, daemonUrl, writeDaemonState } from "./lifecycle";
 
@@ -50,8 +50,11 @@ export function serveDaemon({ spoolDir, version, host, port, uiDir }: ServeDaemo
 			});
 		});
 		server.on("error", (error: NodeJS.ErrnoException) => {
+			// the app was already constructed — release its watchers and timers
+			// or the failed process never drains its event loop
+			daemon.close();
 			if (error.code === "EADDRINUSE") {
-				reject(new SpoolError(`port ${port} on ${host} is already in use — is another spool daemon serving?`));
+				reject(new PortBusyError(`port ${port} on ${host} is already in use — is another spool daemon serving?`));
 			} else {
 				reject(new SpoolError(`cannot bind ${host}:${port}: ${error.message}`));
 			}

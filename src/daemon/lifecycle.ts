@@ -153,14 +153,14 @@ export function daemonUrl(host: string, port: number): string {
 	return dialable.includes(":") ? `http://[${dialable}]:${port}` : `http://${dialable}:${port}`;
 }
 
-interface Health {
+export interface DaemonHealth {
 	name: string;
 	version: string;
 	pid: number;
 	startedAt: string;
 }
 
-async function fetchHealth(url: string): Promise<Health | undefined> {
+async function fetchHealth(url: string): Promise<DaemonHealth | undefined> {
 	let body: unknown;
 	try {
 		const res = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(1000) });
@@ -176,6 +176,11 @@ async function fetchHealth(url: string): Promise<Health | undefined> {
 		return undefined;
 	}
 	return { name: "spool", version: health.version, pid: health.pid, startedAt: health.startedAt };
+}
+
+/** The daemon answering health at host:port — whoever started it — or nothing. */
+export async function spoolDaemonAt(host: string, port: number): Promise<DaemonHealth | undefined> {
+	return fetchHealth(daemonUrl(host, port));
 }
 
 /** The daemon recorded in state, but only if it answers health as itself. */

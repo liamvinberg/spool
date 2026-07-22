@@ -10,6 +10,7 @@ import {
 	readDaemonState,
 	resolveServeConfig,
 	resolveSpoolDir,
+	spoolDaemonAt,
 	statusDaemon,
 	stopDaemon,
 } from "./lifecycle";
@@ -106,6 +107,20 @@ describe("serveDaemon", () => {
 		await daemon.close();
 
 		expect(readDaemonState(spoolDir)).toBeUndefined();
+	});
+});
+
+describe("spoolDaemonAt", () => {
+	it("returns the answering daemon's health, and nothing for a dead port", async () => {
+		const daemon = await makeServer(makeSpoolDir());
+
+		expect(await spoolDaemonAt("127.0.0.1", daemon.port)).toEqual({
+			name: "spool",
+			version: "0.0.0-test",
+			pid: process.pid,
+			startedAt: expect.any(String),
+		});
+		expect(await spoolDaemonAt("127.0.0.1", 1)).toBeUndefined();
 	});
 });
 
