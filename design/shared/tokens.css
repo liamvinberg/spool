@@ -1,0 +1,44 @@
+/*
+ * spool tokens — distilled verbatim from the Paper identity "Röda tråden Natt".
+ * Names and values exact; the set is already Tailwind-v4-namespace shaped, so it
+ * lives under @theme and the utilities fall out (--color-surface -> bg-surface,
+ * --color-thread -> text-thread/bg-thread, --font-mono -> font-mono, ...).
+ * Dark-first, near-black chrome; exactly one accent, the cadmium-red thread.
+ */
+@theme {
+  --color-bg: #0E0E0E;
+  --color-canvas: #161616;
+  --color-surface: #1C1C1C;
+  --color-raised: #282828;
+  --color-border: #262626;
+  --color-border-raised: #363636;
+  --color-text: #F0EFED;
+  --color-muted: #8E8C88;
+  --color-thread: #F5391A;
+  --color-on-thread: #FFFFFF;
+  --font-sans: Familjen Grotesk;
+  --font-mono: Fragment Mono;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 18px;
+  --text-2xs: 10px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0em;
+  --leading-xs: 16px;
+  --leading-sm: 18px;
+  --leading-base: 20px;
+  --leading-md: 22px;
+  --leading-lg: 26px;
+  --breakpoint-app: 1280px;
+  --container-artboard: 1360px;
+  --spacing-unit: 4px;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
