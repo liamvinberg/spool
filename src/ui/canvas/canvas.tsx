@@ -806,6 +806,13 @@ export function ProjectCanvas({
 			setEntered(hit);
 			setSelected([]);
 			setPicked(null);
+			// and it is a focusing gesture: fly to the frame, Shift+2's fit —
+			// walks stay same-zoom pans (#5), only the enter zooms
+			const frame = framesRef.current.find((f) => f.name === hit);
+			const viewport = viewportRef.current;
+			if (frame !== undefined && viewport !== null) {
+				animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
+			}
 		}
 	};
 
