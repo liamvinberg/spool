@@ -59,7 +59,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	const lastUsable = useRef(new Map<string, number>());
 	const exitPending = useRef(new Map<string, { t0: number; captured: boolean }>());
 	const needsShot = useRef(new Set<string>());
-	const captureWaiters = useRef(new Map<string, (ok: boolean) => void>());
+	const captureWaiters = useRef(new Map<string, (url: string | undefined) => void>());
 	const prevCamera = useRef<Camera | null>(null);
 	const lastCameraMove = useRef(0);
 
@@ -85,23 +85,28 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 	/** A shot reply from the frame's shim: resolve the waiter, persist upward. */
 	const noteShot = useCallback((frame: string, url: string | undefined) => {
-		captureWaiters.current.get(frame)?.(url !== undefined);
+		captureWaiters.current.get(frame)?.(url);
 		captureWaiters.current.delete(frame);
 		if (url !== undefined) onShotRef.current(frame, url);
 	}, []);
 
-	const requestCapture = useCallback((frame: string): Promise<boolean> => {
+	/**
+	 * Ask the frame's shim for a self-capture. Resolves the data URL — or
+	 * undefined for an unmounted, unbooted, already-capturing or mute frame —
+	 * and every landed capture also persists as the thumbnail via onShot.
+	 */
+	const requestCapture = useCallback((frame: string): Promise<string | undefined> => {
 		const el = iframes.current.get(frame);
-		if (el?.contentWindow == null || !readyRef.current.has(frame)) return Promise.resolve(false);
+		if (el?.contentWindow == null || !readyRef.current.has(frame)) return Promise.resolve(undefined);
 		const pending = captureWaiters.current.get(frame);
-		if (pending !== undefined) return Promise.resolve(false);
+		if (pending !== undefined) return Promise.resolve(undefined);
 		return new Promise((resolve) => {
 			captureWaiters.current.set(frame, resolve);
 			el.contentWindow?.postMessage(captureMessage, "*");
 			setTimeout(() => {
 				if (captureWaiters.current.get(frame) === resolve) {
 					captureWaiters.current.delete(frame);
-					resolve(false);
+					resolve(undefined);
 				}
 			}, CAPTURE_REPLY_TIMEOUT_MS);
 		});
@@ -154,9 +159,9 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				const exit = exitPending.current.get(frame.name);
 				if (exit === undefined) {
 					exitPending.current.set(frame.name, { t0: now, captured: false });
-					void requestCapture(frame.name).then((ok) => {
+					void requestCapture(frame.name).then((url) => {
 						const entry = exitPending.current.get(frame.name);
-						if (entry !== undefined) entry.captured = ok;
+						if (entry !== undefined) entry.captured = url !== undefined;
 					});
 					target = "warm";
 				} else if (exit.captured || now - exit.t0 >= EXIT_CAPTURE_TIMEOUT_MS) {
@@ -209,5 +214,5 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		needsShot.current.add(frame);
 	}, []);
 
-	return { states, ready, onIframe, noteLoaded, noteShot, markStale };
+	return { states, ready, onIframe, noteLoaded, noteShot, markStale, capture: requestCapture };
 }

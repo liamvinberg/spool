@@ -18,7 +18,7 @@ import { RibbonMark } from "../icons";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
 import { ContextMenu, MENU_SIZE } from "./context-menu";
 import { FlowArrows } from "./flow-arrows";
-import { FrameShell } from "./frame-shell";
+import { FrameShell, type WalkBoot } from "./frame-shell";
 import { useFrameLifecycle } from "./lifecycle";
 import {
 	editorTarget,
@@ -69,6 +69,7 @@ type Gesture =
 	| { kind: "resize"; frame: string; handle: Handle; anchor: Point; origin: Box };
 
 const SETTLE_PERSIST_MS = 600;
+const WALK_STILL_MS = 450;
 const DRAG_THRESHOLD_PX = 3;
 const SNAP_THRESHOLD_PX = 8;
 const MIN_FRAME_SIZE = 40;
@@ -102,6 +103,8 @@ export function ProjectCanvas({
 	const [pendingTrash, setPendingTrash] = useState<string[] | null>(null);
 	const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set<string>());
 	const [docNonces, setDocNonces] = useState<Record<string, number>>({});
+	// frames whose current boot is a walk arrival (#28): quiet cover, no veil
+	const [walkBoots, setWalkBoots] = useState<Record<string, WalkBoot>>({});
 	const [thumbNonces, setThumbNonces] = useState<Record<string, number>>({});
 	const [freshThumbs, setFreshThumbs] = useState<ReadonlySet<string>>(new Set<string>());
 
@@ -127,6 +130,7 @@ export function ProjectCanvas({
 	// the walk session mirror: what the last go/back carried, owed to the next boot
 	const walkSession = useRef<SessionRecord | null>(null);
 	const walkTarget = useRef<string | null>(null);
+	const walkGen = useRef(0);
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
 	const pickSeq = useRef(0);
@@ -224,6 +228,19 @@ export function ProjectCanvas({
 		});
 	}, [frames]);
 
+	// a walk marker must not outlive its walk: a frame that hibernated before
+	// its boot ever reported loaded re-mounts ambiently, and that boot is
+	// honest — only the current walk target keeps its marker (#28)
+	useEffect(() => {
+		setWalkBoots((current) => {
+			const dead = Object.keys(current).filter(
+				(name) => name !== walkTarget.current && (lifecycle.states[name] ?? "hibernated") === "hibernated",
+			);
+			if (dead.length === 0) return current;
+			return Object.fromEntries(Object.entries(current).filter(([name]) => !dead.includes(name)));
+		});
+	}, [lifecycle.states]);
+
 	// no stored camera: fit the field once both viewport and frames exist
 	useLayoutEffect(() => {
 		if (camera !== null || !loaded) return;
@@ -288,8 +305,9 @@ export function ProjectCanvas({
 		(target: string, session: SessionRecord | null) => {
 			walkSession.current = session;
 			walkTarget.current = target;
-			// screen scripts run fresh on every arrival — reboot even a warm target
-			setDocNonces((current) => ({ ...current, [target]: (current[target] ?? 0) + 1 }));
+			const gen = ++walkGen.current;
+			// arrival is instant — entered (and its chip) must name the frame whose
+			// time runs the moment the walk lands, not after the capture below
 			setEntered(target);
 			setSelected([]);
 			setPicked(null);
@@ -299,6 +317,22 @@ export function ProjectCanvas({
 			if (frame !== undefined && viewport !== null && cam !== null) {
 				animateCamera(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
 			}
+			void (async () => {
+				// the reboot must not read as a reload (#28): self-capture the target
+				// just before rebooting and hold that still, uncovered, until the
+				// fresh boot's loaded report. Bounded — a mute frame cannot stall the
+				// walk, and its late reply still lands as the thumbnail via onShot.
+				const still = await Promise.race([
+					lifecycleRef.current.capture(target),
+					new Promise<undefined>((resolve) => setTimeout(resolve, WALK_STILL_MS)),
+				]);
+				// only the newest walk reboots (pickGen's pattern): a superseding walk
+				// or an exit mid-capture voids this one
+				if (walkGen.current !== gen || walkTarget.current !== target) return;
+				setWalkBoots((current) => ({ ...current, [target]: { still } }));
+				// screen scripts run fresh on every arrival — reboot even a warm target
+				setDocNonces((current) => ({ ...current, [target]: (current[target] ?? 0) + 1 }));
+			})();
 		},
 		[animateCamera],
 	);
@@ -559,6 +593,8 @@ export function ProjectCanvas({
 				if (event.kind === "frame" && event.frame !== undefined) {
 					const frame = event.frame;
 					setDocNonces((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
+					// an edit reboot is honest — it does not wear a walk's quiet cover
+					setWalkBoots((current) => without(current, frame));
 					// the DOM this pick pointed into is gone
 					setPicked((current) => (current?.frame === frame ? null : current));
 					lifecycleRef.current.markStale(frame);
@@ -572,6 +608,7 @@ export function ProjectCanvas({
 						for (const frame of framesRef.current) next[frame.name] = (next[frame.name] ?? 0) + 1;
 						return next;
 					});
+					setWalkBoots((current) => (Object.keys(current).length === 0 ? current : {}));
 					setPicked(null);
 					void refetchFrames();
 				} else if (event.kind === "walked") {
@@ -602,12 +639,19 @@ export function ProjectCanvas({
 			switch (message.spool) {
 				case "loaded":
 					lifecycleRef.current.noteLoaded(message.frame);
+					// a completed boot retires its walk cover — later reboots are honest
+					setWalkBoots((current) => without(current, message.frame));
+					// the keyboard follows the walk: an entered frame owns it (#28)
+					if (enteredRef.current === message.frame) iframes.current.get(message.frame)?.focus();
 					return;
 				case "shot":
 					lifecycleRef.current.noteShot(message.frame, message.url);
 					return;
 				case "error":
 					console.warn(`spool: frame "${message.frame}" reported:`, message.error);
+					// a walk boot that broke falls back to the honest cover: the quiet
+					// still must not dress a dead document as a settled one (#28)
+					setWalkBoots((current) => without(current, message.frame));
 					return;
 				case "session?": {
 					const record = walkTarget.current === message.frame ? walkSession.current : null;
@@ -621,8 +665,10 @@ export function ProjectCanvas({
 					return;
 				}
 				case "key":
-					// an entered frame owns the keyboard; the shim forwards the exit key
-					if (message.key === "Escape" && enteredRef.current === message.frame) exitEntered();
+					// an entered frame owns the keyboard; the shim forwards the exit
+					// key — from any frame: a walked-away source legitimately still
+					// holds focus, and its Esc means the same thing (#28)
+					if (message.key === "Escape" && enteredRef.current !== null) exitEntered();
 					return;
 				case "go":
 				case "back": {
@@ -977,6 +1023,9 @@ export function ProjectCanvas({
 		setEntered(hit);
 		setSelected([]);
 		setPicked(null);
+		// the entered frame owns the keyboard from the first moment; a frame
+		// booting right now gets it at its loaded report instead
+		iframes.current.get(hit)?.focus();
 		// and it is a focusing gesture: fly to the frame, Shift+2's fit —
 		// walks stay same-zoom pans (#5), only the enter zooms
 		const frame = framesRef.current.find((f) => f.name === hit);
@@ -1227,20 +1276,30 @@ export function ProjectCanvas({
 								className="absolute"
 								style={{ transform: `translate(${frame.x}px, ${frame.y}px)`, width: frame.w, height: frame.h }}
 							>
-								{/* the label: mono, muted; thread when selected; ▸ = paused (system page) */}
+								{/* the label: mono, muted; thread when selected; ▸ = paused (system
+								    page). Entered swaps it for the state chip (#28): time is
+								    running under the pointer, and esc is the way out. */}
 								<div
 									data-frame-label={frame.name}
 									className="absolute bottom-full left-0 origin-bottom-left whitespace-nowrap"
 									style={{ transform: `scale(${1 / k})` }}
 								>
-									<div className="flex items-center gap-1.5 pb-2.5">
-										{paused && <span className="font-mono text-2xs text-muted leading-3">▸</span>}
-										<span
-											className={`font-mono text-sm leading-4 ${isSelected || isEntered ? "text-thread" : "text-muted"}`}
-										>
-											{frame.name}
-										</span>
-									</div>
+									{isEntered ? (
+										<div className="flex items-center pb-2.5">
+											<span className="rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3">
+												live · esc exits
+											</span>
+										</div>
+									) : (
+										<div className="flex items-center gap-1.5 pb-2.5">
+											{paused && <span className="font-mono text-2xs text-muted leading-3">▸</span>}
+											<span
+												className={`font-mono text-sm leading-4 ${isSelected ? "text-thread" : "text-muted"}`}
+											>
+												{frame.name}
+											</span>
+										</div>
+									)}
 								</div>
 								<div className="relative h-full w-full overflow-hidden" style={{ borderRadius: shellRadius }}>
 									<FrameShell
@@ -1252,6 +1311,7 @@ export function ProjectCanvas({
 										docNonce={docNonces[frame.name] ?? 0}
 										thumbNonce={thumbNonces[frame.name] ?? 0}
 										hasThumb={hasThumb(frame.name)}
+										walkBoot={walkBoots[frame.name]}
 										onIframe={onIframe}
 									/>
 								</div>
@@ -1316,6 +1376,12 @@ function normalizedRect(a: Point, b: Point): Box {
 
 function sameNames(a: readonly string[], b: readonly string[]): boolean {
 	return a.length === b.length && a.every((name, i) => name === b[i]);
+}
+
+/** The record without one key — same object back when the key is absent. */
+function without<T>(record: Record<string, T>, key: string): Record<string, T> {
+	if (!(key in record)) return record;
+	return Object.fromEntries(Object.entries(record).filter(([k]) => k !== key));
 }
 
 /** "frame-label" → "frameLabel": dataset keys camel-case their attribute. */
