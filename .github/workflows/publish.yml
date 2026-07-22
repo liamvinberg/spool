@@ -6,7 +6,7 @@ on:
 
 jobs:
   release-please:
-    if: github.repository == 'devosurf/spool'
+    if: github.repository == 'liamvinberg/spool'
     runs-on: ubuntu-latest
     permissions:
       contents: write
