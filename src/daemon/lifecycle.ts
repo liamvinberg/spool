@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -160,6 +160,21 @@ export interface DaemonHealth {
 	startedAt: string;
 }
 
+/** Probe every stepMs until the probe yields a value or the deadline passes. */
+export async function poll<T>(
+	timeoutMs: number,
+	probe: () => Promise<T | undefined>,
+	stepMs = 100,
+): Promise<T | undefined> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const value = await probe();
+		if (value !== undefined) return value;
+		await sleep(stepMs);
+	}
+	return undefined;
+}
+
 async function fetchHealth(url: string): Promise<DaemonHealth | undefined> {
 	let body: unknown;
 	try {
@@ -248,20 +263,21 @@ export async function ensureDaemon(spoolDir: string, options: EnsureOptions = {}
 	child.unref();
 	closeSync(log);
 
-	const deadline = Date.now() + (options.timeoutMs ?? 10_000);
-	while (Date.now() < deadline) {
-		const live = await liveDaemon(spoolDir);
-		if (live !== undefined) return { url: live.url, pid: live.state.pid, started: true };
-		await sleep(100);
-	}
+	const live = await poll(options.timeoutMs ?? 10_000, () => liveDaemon(spoolDir));
+	if (live !== undefined) return { url: live.url, pid: live.state.pid, started: true };
 	throw new SpoolError(`spool daemon did not come up — see ${logFile}`);
 }
 
-function defaultServeCommand(): string[] {
+/** The running cli entry, package-manager bin symlinks resolved away. */
+export function selfCliPath(): string {
 	const cli = process.argv[1];
 	if (cli === undefined) throw new SpoolError("cannot determine the spool cli path");
+	return realpathSync(cli);
+}
+
+function defaultServeCommand(): string[] {
 	// execArgv carries loader flags, so a dev checkout (tsx) spawns like the built cli
-	return [process.execPath, ...process.execArgv, cli, "serve", "--foreground"];
+	return [process.execPath, ...process.execArgv, selfCliPath(), "serve", "--foreground"];
 }
 
 export type StopResult = { stopped: true; pid: number } | { stopped: false };
@@ -282,13 +298,10 @@ export async function stopDaemon(spoolDir: string): Promise<StopResult> {
 		return { stopped: false };
 	}
 
-	const deadline = Date.now() + 5000;
-	while (Date.now() < deadline) {
-		if (!isAlive(pid)) {
-			clearDaemonState(spoolDir, pid);
-			return { stopped: true, pid };
-		}
-		await sleep(50);
+	const gone = await poll(5000, async () => (isAlive(pid) ? undefined : true), 50);
+	if (gone === true) {
+		clearDaemonState(spoolDir, pid);
+		return { stopped: true, pid };
 	}
 	throw new SpoolError(`spool daemon (pid ${pid}) did not exit — kill it manually`);
 }

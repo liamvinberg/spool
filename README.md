@@ -17,11 +17,12 @@ Node 22+. macOS-first; the canvas wants Chrome (WebKit renders transformed ifram
 ```sh
 cd your-product
 spool init        # scaffold design/ and register the project
+spool open        # or: register an already-scaffolded design/ on this machine
 spool serve       # daemon at http://localhost:7766 — any spool command starts it too
 spool autostart   # start at login (launchd); spool autostart off removes it
 ```
 
-Open the canvas in Chrome (install as app for the dock icon). Frames are authored by your agent: `spool skill` prints the complete contract, and `spool init` writes the signposts that point agents at it.
+Open the canvas in Chrome (install as app for the dock icon). Frames are authored by your agent: `spool skill` prints the complete contract, verify verbs (`spool shot <frame>` and friends) included, and `spool init` writes the signposts that point agents at it.
 
 ## Develop
 
