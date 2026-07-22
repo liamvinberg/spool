@@ -64,23 +64,38 @@ export function createFrameCompiler(version: string) {
 
 export type FrameCompiler = ReturnType<typeof createFrameCompiler>;
 
-async function compileFrame(
-	version: string,
-	project: string,
-	designDir: string,
-	frameDir: string,
-	frame: string,
-): Promise<CacheEntry> {
+export interface DesignBundle {
+	/** Every design/ file in the bundle closure, absolute — they are cache inputs. */
+	sourceFiles: string[];
+	bootJs: string;
+	/** Extra stylesheet emitted by plain .css imports, when any. */
+	bundledCss?: string | undefined;
+}
+
+/**
+ * The one design/ compile (#16), shared by frame documents and the player
+ * composition (#24): stamping JSX, the shared/ui boundary, packages external
+ * to the import map. jsxDev routes element creation through spool's stamping
+ * runtime (#23) — every intrinsic element carries its exact source location
+ * for the picker, while React itself stays the pinned production build.
+ */
+export async function buildDesignEntry(options: {
+	designDir: string;
+	/** Where the entry's relative imports resolve from. */
+	resolveDir: string;
+	sourcefile: string;
+	contents: string;
+	/** Names the compilation in errors: `frame "inbox"`, `the player`. */
+	label: string;
+}): Promise<DesignBundle> {
+	const { designDir, resolveDir, sourcefile, contents, label } = options;
 	const result = await build({
-		stdin: { contents: bootEntry(frame), resolveDir: frameDir, loader: "js", sourcefile: STDIN_NAME },
+		stdin: { contents, resolveDir, loader: "js", sourcefile },
 		bundle: true,
 		format: "esm",
 		platform: "browser",
 		target: "es2022",
 		jsx: "automatic",
-		// jsxDev routes element creation through spool's stamping runtime (#23):
-		// every intrinsic element carries its exact source location for the
-		// picker, while React itself stays the pinned production build
 		jsxDev: true,
 		jsxImportSource: "spool",
 		packages: "external",
@@ -94,11 +109,28 @@ async function compileFrame(
 	});
 
 	const sourceFiles = Object.keys(result.metafile.inputs)
-		.filter((input) => input !== STDIN_NAME)
+		.filter((input) => input !== sourcefile)
 		.map((input) => resolve(designDir, input));
 	const bootJs = result.outputFiles.find((file) => file.path.endsWith(".js"))?.text;
-	if (bootJs === undefined) throw new Error(`frame "${frame}" compiled to no module`);
+	if (bootJs === undefined) throw new Error(`${label} compiled to no module`);
 	const bundledCss = result.outputFiles.find((file) => file.path.endsWith(".css"))?.text;
+	return { sourceFiles, bootJs, bundledCss };
+}
+
+async function compileFrame(
+	version: string,
+	project: string,
+	designDir: string,
+	frameDir: string,
+	frame: string,
+): Promise<CacheEntry> {
+	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry({
+		designDir,
+		resolveDir: frameDir,
+		sourcefile: STDIN_NAME,
+		contents: bootEntry(frame),
+		label: `frame "${frame}"`,
+	});
 
 	const shared = join(designDir, "shared");
 	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
@@ -172,7 +204,7 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
 	};
 }
 
-function hashInputs(version: string, frame: string, inputs: string[]): string {
+export function hashInputs(version: string, frame: string, inputs: string[]): string {
 	const files = [...inputs].sort().map((file) => [file, hashContent(file)]);
 	return createHash("sha256")
 		.update(JSON.stringify([version, frame, files]))
@@ -189,7 +221,7 @@ function hashContent(file: string): string {
 	return createHash("sha256").update(content).digest("hex");
 }
 
-function parseImportMap(raw: string | undefined): unknown {
+export function parseImportMap(raw: string | undefined): unknown {
 	if (raw === undefined) return undefined;
 	try {
 		return JSON.parse(raw);
@@ -198,7 +230,7 @@ function parseImportMap(raw: string | undefined): unknown {
 	}
 }
 
-function describeCompileError(error: unknown): string {
+export function describeCompileError(error: unknown): string {
 	if (typeof error === "object" && error !== null && "errors" in error && Array.isArray(error.errors)) {
 		return formatMessagesSync(error.errors, { kind: "error" }).join("\n");
 	}

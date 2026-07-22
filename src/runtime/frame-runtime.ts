@@ -1,4 +1,8 @@
-import { useSyncExternalStore } from "react";
+import type { ComponentType } from "react";
+import { createElement, useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { Player, type PlayerController } from "./player-chrome";
 
 /**
  * The "spool" module (#5, #16): every frame document imports it — explicitly
@@ -7,6 +11,11 @@ import { useSyncExternalStore } from "react";
  * the session seed, so a frame's first render always sees seeded state and an
  * installed mock. Bundled per spool version and served at /vendor/spool.js;
  * the import map pins the specifier.
+ *
+ * The same module is the player runtime (#24): a /play/ document declares
+ * itself with __SPOOL_PLAY__ and composes every frame component, so walking
+ * swaps screens in place under the View Transitions API instead of navigating
+ * — one session model, three ways of standing in it.
  */
 
 /** Session state is prototype data: schemaless JSON, keys owned by the agent. */
@@ -40,17 +49,29 @@ export interface SessionRecord {
 	stack: string[];
 }
 
+/** The /play/ document's config (#24): present only in the player page. */
+export interface PlayerConfig {
+	project: string;
+	start: string;
+	scenario: string;
+	frames: Record<string, { w: number; h: number }>;
+}
+
 declare global {
 	interface Window {
 		__SPOOL__?: SpoolDocument;
+		__SPOOL_PLAY__?: PlayerConfig;
 	}
 }
 
-const config = window.__SPOOL__;
+const play = window.__SPOOL_PLAY__;
+const config = play === undefined ? window.__SPOOL__ : { project: play.project, frame: play.start };
 if (config === undefined) {
-	throw new Error('spool: no document config — "spool" only runs inside a spool-served frame document');
+	throw new Error('spool: no document config — "spool" only runs inside a spool-served document');
 }
 const doc: SpoolDocument = config;
+/** Where the session stands now: fixed in a frame document, walked in the player. */
+let currentFrame = doc.frame;
 
 /** The runtime's own plumbing (scenario, fixtures) always rides the real fetch. */
 const nativeFetch = window.fetch.bind(window);
@@ -190,6 +211,8 @@ function schedulePersist(): void {
 }
 
 function persist(): void {
+	// the player session is the page: a reload is a restart, never a resume
+	if (play !== undefined) return;
 	try {
 		storage()?.setItem(storageKey, JSON.stringify({ scenario: scenarioName, state: stateTarget, stack }));
 	} catch {
@@ -225,6 +248,15 @@ async function loadScenario(name: string): Promise<Scenario> {
  * storage: the handshake record plays the stored session's part.
  */
 async function start(): Promise<void> {
+	if (play !== undefined) {
+		// the player seeds fresh every load: the URL names the scenario, and
+		// reload is just restart spelled by the browser
+		scenarioName = play.scenario;
+		const scenario = await loadScenario(scenarioName);
+		mockConfig = scenario.mock;
+		seedState(scenario.state);
+		return;
+	}
 	const requested = queryScenario();
 	const record = (await requestHostSession()) ?? loadSession();
 	const resume =
@@ -278,12 +310,24 @@ async function walkTo(target: string, commit?: () => void): Promise<void> {
 	window.location.assign(url);
 }
 
-function go(target: string, patch?: Record<string, unknown>): void {
+function navigate(target: string, patch?: Record<string, unknown>, transition?: string): void {
 	if (!isFrameName(target)) {
 		console.error(`spool: not a frame name: "${target}"`);
 		return;
 	}
 	if (patch !== undefined) Object.assign(state, patch);
+	if (play !== undefined) {
+		// the composition is the map: a target outside it is loud but harmless,
+		// exactly like a frame document's failed probe (#5)
+		if (play.frames[target] === undefined) {
+			console.error(`spool: no frame "${target}" to walk to`);
+			return;
+		}
+		stack.push(currentFrame);
+		currentFrame = target;
+		swapScreen("forward", transition);
+		return;
+	}
 	if (embedded) {
 		// the host owns embedded walks; the snapshot rides along so it can
 		// seed the target frame's boot with this session
@@ -300,9 +344,18 @@ function go(target: string, patch?: Record<string, unknown>): void {
 	});
 }
 
+function go(target: string, patch?: Record<string, unknown>): void {
+	navigate(target, patch);
+}
+
 function back(): void {
 	const target = stack.pop();
 	if (target === undefined) return;
+	if (play !== undefined) {
+		currentFrame = target;
+		swapScreen("back");
+		return;
+	}
 	// the pop stays committed even if the frame vanished mid-session: backing
 	// past a deleted frame beats retrying it forever
 	persist();
@@ -315,7 +368,9 @@ function back(): void {
 
 /**
  * data-go: click-only sugar on any element, nearest ancestor wins, anchors
- * get preventDefault. Everything richer calls ui.go from code.
+ * get preventDefault. A data-transition on the same element names the
+ * per-link transition type (#24) — meaningful in the player, inert elsewhere.
+ * Everything richer calls ui.go from code.
  */
 function bindDataGo(): void {
 	window.document.addEventListener("click", (event) => {
@@ -325,8 +380,110 @@ function bindDataGo(): void {
 		const target = carrier.getAttribute("data-go");
 		if (target === null || target === "") return;
 		event.preventDefault();
-		go(target);
+		navigate(target, undefined, carrier.getAttribute("data-transition") ?? undefined);
 	});
+}
+
+// --- player (#24) -----------------------------------------------------------
+
+let arrival = 0;
+let motionOn = true;
+let playVersion = 0;
+const playListeners = new Set<() => void>();
+
+function notifyPlay(): void {
+	playVersion++;
+	for (const listener of playListeners) listener();
+}
+
+type SwapDirection = "forward" | "back" | "restart";
+
+/**
+ * Swap the active screen, letting the View Transitions API film it: the
+ * direction rides as a transition type, any data-transition override on top,
+ * so transitions.css can style forward, back, and named moves apart. Default
+ * is the API's own crossfade; morphs come free from matching
+ * view-transition-names because the screens share one document. No API, or
+ * motion off: the swap lands bare — reduce-motion means never starting a
+ * transition at all.
+ */
+function swapScreen(direction: SwapDirection, transition?: string): void {
+	arrival++;
+	const update = () => flushSync(notifyPlay);
+	const startViewTransition = (
+		window.document as {
+			startViewTransition?: (options: { update: () => void; types: string[] } | (() => void)) => unknown;
+		}
+	).startViewTransition?.bind(window.document);
+	if (!motionOn || startViewTransition === undefined) {
+		update();
+		return;
+	}
+	const types = transition === undefined ? [direction] : [direction, transition];
+	try {
+		startViewTransition({ update, types });
+	} catch {
+		// a View Transitions v1 engine: plain callback, default crossfade —
+		// and whatever the engine does, the swap itself must always land
+		try {
+			startViewTransition(update);
+		} catch {
+			update();
+		}
+	}
+}
+
+async function restartSession(): Promise<void> {
+	if (play === undefined) return;
+	// a fresh read, so an edited seed lands without a reload
+	const scenario = await loadScenario(scenarioName);
+	mockConfig = scenario.mock;
+	stack.length = 0;
+	currentFrame = play.start;
+	seedState(scenario.state);
+	swapScreen("restart");
+}
+
+function closePlayer(): void {
+	window.close();
+	// a tab the canvas opened closes; a phone's direct URL walks to the canvas
+	setTimeout(() => {
+		if (!window.closed) window.location.href = `/p/${encodeURIComponent(doc.project)}`;
+	}, 150);
+}
+
+const playerController: PlayerController = {
+	subscribe(listener) {
+		playListeners.add(listener);
+		return () => playListeners.delete(listener);
+	},
+	version: () => playVersion,
+	read: () => ({ frame: currentFrame, stack: [...stack], motion: motionOn, arrival }),
+	// the fallback restates the projection's default footprint across the
+	// compile-unit boundary; unreachable while navigate guards membership
+	geometry: (frame) => play?.frames[frame] ?? { w: 390, h: 844 },
+	back,
+	restart: () => void restartSession(),
+	toggleMotion() {
+		motionOn = !motionOn;
+		notifyPlay();
+	},
+	close: closePlayer,
+};
+
+/**
+ * Boot the /play/ document (#24): called by the served composition with every
+ * frame component, after this module's top-level await has seeded the session
+ * — the first paint of any screen sees seeded state and an installed mock.
+ */
+export function bootPlayer(frames: Record<string, ComponentType>): void {
+	if (play === undefined) {
+		throw new Error("spool: bootPlayer only runs inside a /play/ document");
+	}
+	motionOn = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	const root = window.document.getElementById("root");
+	if (root === null) throw new Error("spool: the player document has no #root");
+	createRoot(root).render(createElement(Player, { frames, controller: playerController }));
 }
 
 // --- mock -------------------------------------------------------------------
