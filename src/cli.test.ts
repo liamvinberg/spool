@@ -13,7 +13,8 @@ function spool(args: string[], home: string, cwd?: string) {
 	return spawnSync(tsxBin, [cliPath, ...args], {
 		cwd: cwd ?? repoRoot,
 		encoding: "utf8",
-		env: { ...process.env, HOME: home },
+		// SPOOL_DIR emptied so a dev shell's dogfood split cannot leak past HOME
+		env: { ...process.env, HOME: home, SPOOL_DIR: "" },
 	});
 }
 

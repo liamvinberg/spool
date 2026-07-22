@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
-import { ensureDaemon, resolveServeConfig, statusDaemon, stopDaemon } from "./daemon/lifecycle";
+import {
+	ensureDaemon,
+	resolveServeConfig,
+	resolveSpoolDir,
+	statusDaemon,
+	stopDaemon,
+} from "./daemon/lifecycle";
 import { serveDaemon } from "./daemon/server";
 import { SpoolError } from "./errors";
 import { initProject } from "./init";
@@ -14,7 +19,7 @@ import { mintPlayerUrl, readFlows, readSelection, resolveRegisteredProject } fro
 import { logsFrame, shotFrame } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
-const spoolDir = join(homedir(), ".spool");
+const spoolDir = resolveSpoolDir(process.env);
 // package root anchors dist/ui for both the built cli (dist/cli.js) and a checkout (src/cli.ts)
 const uiDir = fileURLToPath(new URL("../dist/ui", import.meta.url));
 

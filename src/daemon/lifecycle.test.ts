@@ -1,10 +1,18 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { SpoolError } from "../errors";
 import { makeTempDir } from "../test-helpers";
-import { ensureDaemon, readDaemonState, resolveServeConfig, statusDaemon, stopDaemon } from "./lifecycle";
+import {
+	ensureDaemon,
+	readDaemonState,
+	resolveServeConfig,
+	resolveSpoolDir,
+	statusDaemon,
+	stopDaemon,
+} from "./lifecycle";
 import { serveDaemon } from "./server";
 
 function makeSpoolDir(): string {
@@ -17,6 +25,21 @@ async function makeServer(spoolDir: string, version = "0.0.0-test") {
 	onTestFinished(() => daemon.close());
 	return daemon;
 }
+
+describe("resolveSpoolDir", () => {
+	it("defaults to ~/.spool", () => {
+		expect(resolveSpoolDir({})).toBe(join(homedir(), ".spool"));
+	});
+
+	it("honors SPOOL_DIR so a checkout daemon keeps its state beside the daily one", () => {
+		const dir = makeTempDir();
+		expect(resolveSpoolDir({ SPOOL_DIR: dir })).toBe(resolve(dir));
+	});
+
+	it("treats an empty SPOOL_DIR as unset", () => {
+		expect(resolveSpoolDir({ SPOOL_DIR: "" })).toBe(join(homedir(), ".spool"));
+	});
+});
 
 describe("resolveServeConfig", () => {
 	it("defaults to localhost:7766 — exposure is never implicit", () => {
@@ -162,8 +185,9 @@ describe("daemon lifecycle end to end", () => {
 			"serve",
 			"--foreground",
 		];
-		// SPOOL_PORT=0 → the child binds an ephemeral port and records it in daemon.json
-		const env = { HOME: home, SPOOL_PORT: "0" };
+		// SPOOL_PORT=0 → the child binds an ephemeral port and records it in
+		// daemon.json; SPOOL_DIR emptied so a dev shell's split cannot leak
+		const env = { HOME: home, SPOOL_PORT: "0", SPOOL_DIR: "" };
 		onTestFinished(async () => {
 			await stopDaemon(spoolDir).catch(() => {});
 		});
