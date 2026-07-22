@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/liamvinberg/spool/compare/v0.1.0...v0.2.0) (2026-07-22)
+
+
+### Features
+
+* extract frame label into reusable component ([7585c6c](https://github.com/liamvinberg/spool/commit/7585c6cf1ce571b537879d88111c480205a822bd))
+* the update loop — spool upgrade, daily check, toast + self-reload ([#30](https://github.com/liamvinberg/spool/issues/30)) ([f20716b](https://github.com/liamvinberg/spool/commit/f20716b29984ca0ba39e2c51bf38ecef7f536127))
+
+
+### Bug fixes
+
+* align the update loop with its contract ([cc4646b](https://github.com/liamvinberg/spool/commit/cc4646b4938a33c921a17ad4065da51b457f72f9))
+* keep canvas zoom inside entered frames ([1de8ad9](https://github.com/liamvinberg/spool/commit/1de8ad94b24f3c71e26055261acfe0a4eddda7a9))
+* prevent browser history swipes ([4611238](https://github.com/liamvinberg/spool/commit/46112384d06168b4bff5ce5731294549fc786ceb))
+* serve the spool mark as favicon ([09c3646](https://github.com/liamvinberg/spool/commit/09c3646e93a0e8a269b0b5faf7a955477f0b9b1e))
+
 ## 0.1.0 (2026-07-22)
 
 
