@@ -63,7 +63,7 @@ describe("planUpgrade", () => {
 			if (!plan.ok) {
 				expect(plan.message).toContain("checkout");
 				expect(plan.message).toContain(real);
-				expect(plan.message).toContain("git");
+				expect(plan.message).toContain("git pull");
 			}
 		}
 	});
@@ -181,18 +181,18 @@ describe("runUpgrade", () => {
 		});
 	});
 
-	it("leaves a daemon already serving the installed version untouched", async () => {
+	it("restarts a running daemon even when it already reports the installed version", async () => {
 		const { io, calls } = fakeIo({ statuses: [{ running: true, url: "http://x", pid: 1, version: "0.2.0" }] });
 
 		const outcome = await runUpgrade(makeTempDir(), "0.2.0", io);
 
-		expect(calls.stops).toBe(0);
-		expect(calls.ensures).toEqual([]);
+		expect(calls.stops).toBe(1);
+		expect(calls.ensures).toEqual([["/opt/homebrew/bin/node", NEW_CLI, "serve", "--foreground"]]);
 		expect(outcome).toEqual({
 			kind: "done",
 			from: "0.2.0",
 			to: "0.2.0",
-			daemon: { running: true, url: "http://x", restarted: false },
+			daemon: { running: true, url: "http://127.0.0.1:7766", restarted: true },
 		});
 	});
 

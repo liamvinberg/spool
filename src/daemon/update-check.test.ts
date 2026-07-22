@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { makeTempDir } from "../test-helpers";
@@ -16,6 +17,9 @@ describe("isNewer", () => {
 		expect(isNewer("0.2.0", "0.2.0-beta.1")).toBe(true);
 		expect(isNewer("0.2.0-beta.1", "0.2.0")).toBe(false);
 		expect(isNewer("0.2.0-beta.2", "0.2.0-beta.1")).toBe(true);
+		expect(isNewer("0.2.0-beta.2", "0.2.0-beta.10")).toBe(false);
+		expect(isNewer("0.2.0-beta.10", "0.2.0-beta.2")).toBe(true);
+		expect(isNewer("0.2.0-beta.1", "0.2.0-beta.alpha")).toBe(false);
 	});
 
 	it("treats malformed versions as never newer", () => {
@@ -71,6 +75,31 @@ describe("createUpdateChecker", () => {
 		checker.stop();
 	});
 
+	it("schedules the next ask from the cached check time, not the boot time", async () => {
+		vi.useFakeTimers();
+		try {
+			const spoolDir = join(makeTempDir(), ".spool");
+			writeUpdateCache(spoolDir, { latest: "0.1.0", checkedAt: new Date(Date.now() - 45_000).toISOString() });
+			const fetchLatest = vi.fn().mockResolvedValue("0.2.0");
+			const checker = createUpdateChecker({
+				spoolDir,
+				version: "0.1.0",
+				onUpdate: () => {},
+				fetchLatest,
+				intervalMs: 60_000,
+			});
+
+			checker.start();
+			await vi.advanceTimersByTimeAsync(14_999);
+			expect(fetchLatest).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(fetchLatest).toHaveBeenCalledTimes(1);
+			checker.stop();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("re-asks on the interval and announces each distinct newer latest once", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		writeUpdateCache(spoolDir, { latest: "0.1.0", checkedAt: new Date().toISOString() });
@@ -94,6 +123,20 @@ describe("createUpdateChecker", () => {
 		await vi.waitFor(() => expect(fetchLatest).toHaveBeenCalled());
 		expect(onUpdate).not.toHaveBeenCalled();
 		expect(readUpdateCache(spoolDir)).toBeUndefined();
+		expect(checker.available()).toBeUndefined();
+		checker.stop();
+	});
+
+	it("stays silent when the cache cannot be written", async () => {
+		const spoolDir = join(makeTempDir(), "not-a-directory");
+		writeFileSync(spoolDir, "blocked");
+		const fetchLatest = vi.fn().mockResolvedValue("0.2.0");
+		const onUpdate = vi.fn();
+		const checker = createUpdateChecker({ spoolDir, version: "0.1.0", onUpdate, fetchLatest, intervalMs: 60_000 });
+
+		checker.start();
+		await vi.waitFor(() => expect(fetchLatest).toHaveBeenCalled());
+		expect(onUpdate).not.toHaveBeenCalled();
 		expect(checker.available()).toBeUndefined();
 		checker.stop();
 	});

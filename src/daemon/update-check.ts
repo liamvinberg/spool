@@ -40,15 +40,37 @@ export function writeUpdateCache(spoolDir: string, cache: UpdateCache): void {
 
 interface ParsedVersion {
 	nums: [number, number, number];
-	pre: string | undefined;
+	pre: string[] | undefined;
 }
 
 function parseVersion(version: string): ParsedVersion | undefined {
-	const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(version);
+	const numeric = "(?:0|[1-9]\\d*)";
+	const identifier = "[0-9A-Za-z-]+";
+	const match = new RegExp(
+		`^(${numeric})\\.(${numeric})\\.(${numeric})(?:-(${identifier}(?:\\.${identifier})*))?(?:\\+${identifier}(?:\\.${identifier})*)?$`,
+	).exec(version);
 	if (match === null) return undefined;
 	const [, major, minor, patch, pre] = match;
 	if (major === undefined || minor === undefined || patch === undefined) return undefined;
-	return { nums: [Number(major), Number(minor), Number(patch)], pre };
+	const parts = pre?.split(".");
+	if (parts?.some((part) => /^\d+$/.test(part) && part.length > 1 && part.startsWith("0"))) return undefined;
+	return { nums: [Number(major), Number(minor), Number(patch)], pre: parts };
+}
+
+function comparePrerelease(a: string[], b: string[]): number {
+	for (let i = 0; i < Math.max(a.length, b.length); i++) {
+		const left = a[i];
+		const right = b[i];
+		if (left === undefined) return -1;
+		if (right === undefined) return 1;
+		if (left === right) continue;
+		const leftNumeric = /^\d+$/.test(left);
+		const rightNumeric = /^\d+$/.test(right);
+		if (leftNumeric && rightNumeric) return BigInt(left) > BigInt(right) ? 1 : -1;
+		if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+		return left > right ? 1 : -1;
+	}
+	return 0;
 }
 
 /** Strictly newer by semver order — a stale cache must never toast a fresh daemon. */
@@ -59,10 +81,11 @@ export function isNewer(candidate: string, current: string): boolean {
 	for (const i of [0, 1, 2] as const) {
 		if (a.nums[i] !== b.nums[i]) return a.nums[i] > b.nums[i];
 	}
-	// same triple: a release outranks its prereleases; prereleases order lexically
+	// Same triple: a release outranks its prereleases; prerelease identifiers
+	// follow semver precedence (numeric order, numerics below non-numerics).
 	if (a.pre === undefined) return b.pre !== undefined;
 	if (b.pre === undefined) return false;
-	return a.pre > b.pre;
+	return comparePrerelease(a.pre, b.pre) > 0;
 }
 
 /** The registry's dist-tag answer, or undefined — offline is a normal day. */
@@ -108,30 +131,46 @@ export function createUpdateChecker({
 	let known = readUpdateCache(spoolDir)?.latest;
 	let announced: string | undefined;
 	let timer: NodeJS.Timeout | undefined;
+	let running = false;
 
 	async function check(): Promise<void> {
-		const latest = await fetchLatest();
-		if (latest === undefined) return;
-		known = latest;
-		writeUpdateCache(spoolDir, { latest, checkedAt: new Date().toISOString() });
-		if (latest !== announced && isNewer(latest, version)) {
-			announced = latest;
-			onUpdate(latest);
+		try {
+			const latest = await fetchLatest();
+			if (latest === undefined) return;
+			writeUpdateCache(spoolDir, { latest, checkedAt: new Date().toISOString() });
+			known = latest;
+			if (latest !== announced && isNewer(latest, version)) {
+				announced = latest;
+				onUpdate(latest);
+			}
+		} catch {
+			// A phone-home can only add an update hint. Network, disk, and callback
+			// failures stay silent and never disturb a working daemon.
 		}
+	}
+
+	function schedule(delay: number): void {
+		if (!running) return;
+		timer = setTimeout(async () => {
+			await check();
+			schedule(intervalMs);
+		}, delay);
+		timer.unref();
 	}
 
 	return {
 		available: () => (known !== undefined && isNewer(known, version) ? known : undefined),
 		start: () => {
-			if (timer !== undefined) return;
-			timer = setInterval(() => void check(), intervalMs);
-			timer.unref();
+			if (running) return;
+			running = true;
 			const cache = readUpdateCache(spoolDir);
-			const fresh = cache !== undefined && Date.now() - Date.parse(cache.checkedAt) < intervalMs;
-			if (!fresh) void check();
+			const checkedAt = cache === undefined ? Number.NaN : Date.parse(cache.checkedAt);
+			const age = Number.isFinite(checkedAt) ? Math.max(0, Date.now() - checkedAt) : intervalMs;
+			schedule(Math.max(0, intervalMs - age));
 		},
 		stop: () => {
-			if (timer !== undefined) clearInterval(timer);
+			running = false;
+			if (timer !== undefined) clearTimeout(timer);
 			timer = undefined;
 		},
 	};
