@@ -1,0 +1,16 @@
+{
+	"$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+	"packages": {
+		".": {
+			"release-type": "node",
+			"package-name": "spool.page",
+			"include-component-in-tag": false,
+			"bump-minor-pre-major": true,
+			"changelog-sections": [
+				{ "type": "feat", "section": "Features" },
+				{ "type": "fix", "section": "Bug fixes" },
+				{ "type": "polish", "section": "Polish" }
+			]
+		}
+	}
+}
