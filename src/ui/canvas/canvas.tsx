@@ -18,27 +18,30 @@ import { ContextMenu, MENU_SIZE } from "./context-menu";
 import { FrameShell } from "./frame-shell";
 import { useFrameLifecycle } from "./lifecycle";
 import {
-	type Corner,
 	editorTarget,
 	type Guides,
-	isCorner,
+	HANDLE_CURSORS,
+	type Handle,
+	isHandle,
 	NO_GUIDES,
 	type PickedSelection,
 	SelectionOverlay,
 } from "./overlays";
 import { type PickedHit, parseFrameMessage, pickMessage, type SessionRecord, sessionReply } from "./protocol";
-import { snapMovedBox } from "./snap";
+import { snapEdge, snapMovedBox } from "./snap";
 import { TrashToast } from "./trash-toast";
 
 /**
  * The infinite canvas (#22) and its hands (#23): design/ projected as
  * sandboxed frames with Figma-feel pan/zoom — Space or middle-drag pans, the
- * pointer always selects, no tool switcher. Single click selects (frame in
- * live, element in design via compile-time stamps), double click enters where
- * time runs, the entered state follows data-go walks (#5), Esc exits. Hands
- * obey the one law: move, resize and nudge write geometry sidecars only;
- * delete rides the OS Trash behind a toast-undo; the canvas never writes
- * frame source.
+ * pointer always selects, no tool switcher. Selection is Figma's: single
+ * click selects the frame (or, inside an element scope, the sibling at that
+ * depth), double click goes deeper — into running time in live (the entered
+ * state then follows data-go walks, #5), one element level per click in
+ * design, where ⌘-click jumps to the deepest element and Esc ascends back
+ * out. Hands obey the one law: move, resize and nudge write
+ * geometry sidecars only; delete rides the OS Trash behind a toast-undo; the
+ * canvas never writes frame source.
  */
 
 export interface CanvasChrome {
@@ -56,11 +59,11 @@ type Gesture =
 	| { kind: "idle" }
 	| { kind: "pan"; lastX: number; lastY: number }
 	// pointer down on a frame, before the drag threshold: a clean release is a
-	// click (design defers its select for the element pick), movement promotes
-	| { kind: "pending"; frame: string; names: string[]; origins: Map<string, Point>; start: Point; defer: boolean }
+	// click, movement promotes to a move
+	| { kind: "pending"; names: string[]; origins: Map<string, Point>; start: Point }
 	| { kind: "move"; names: string[]; origins: Map<string, Point>; start: Point }
 	| { kind: "marquee"; start: Point; base: readonly string[] }
-	| { kind: "resize"; frame: string; corner: Corner; anchor: Point; origin: Box };
+	| { kind: "resize"; frame: string; handle: Handle; anchor: Point; origin: Box };
 
 const SETTLE_PERSIST_MS = 600;
 const DRAG_THRESHOLD_PX = 3;
@@ -121,7 +124,14 @@ export function ProjectCanvas({
 	const walkSession = useRef<SessionRecord | null>(null);
 	const walkTarget = useRef<string | null>(null);
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
-	const pickWaiters = useRef(new Map<string, (hit: PickedHit | null) => void>());
+	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
+	const pickSeq = useRef(0);
+	// picks apply only while their generation is current: a superseding intent
+	// (a fresh press, a drag, Esc) bumps it and voids them — while a click and
+	// the double-click it begins share one generation and apply in send order
+	const pickGen = useRef(0);
+	// the ancestry behind the current element selection — Esc ascends it
+	const pickedChain = useRef<{ frame: string; chain: PickedHit[] } | null>(null);
 	const nudgeDirty = useRef(new Set<string>());
 	const nudgeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const trashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -427,32 +437,110 @@ export function ProjectCanvas({
 
 	// --- element pick (#23): the shim answers, the pointer never enters ---------
 
-	const pickAt = useCallback((frame: string, local: Point) => {
-		const finish = (hit: PickedHit | null) => {
-			if (hit === null) {
-				// frame background (or a silent frame): the frame is the selection
-				setSelected([frame]);
-				setPicked(null);
-			} else {
-				setSelected([]);
-				setPicked({ frame, ...hit });
-			}
-		};
-		const target = iframes.current.get(frame)?.contentWindow;
-		if (target == null) {
-			finish(null);
-			return;
-		}
-		const waiter = (hit: PickedHit | null) => finish(hit);
-		pickWaiters.current.set(frame, waiter);
-		target.postMessage(pickMessage(local.x, local.y), "*");
-		setTimeout(() => {
-			if (pickWaiters.current.get(frame) === waiter) {
-				pickWaiters.current.delete(frame);
-				finish(null);
-			}
-		}, PICK_REPLY_MS);
+	const cancelPicks = useCallback(() => {
+		pickGen.current++;
 	}, []);
+
+	/**
+	 * Ask the frame for the element ancestry at a frame-local point. The apply
+	 * callback runs only while this pick's generation is current — a silent or
+	 * booting document never applies; onSilence answers for it when a caller
+	 * cannot afford dead air.
+	 */
+	const beginPick = useCallback(
+		(frame: string, local: Point, apply: (chain: PickedHit[]) => void, onSilence?: () => void) => {
+			const target = iframes.current.get(frame)?.contentWindow;
+			if (target == null) {
+				onSilence?.();
+				return;
+			}
+			const id = ++pickSeq.current;
+			const gen = pickGen.current;
+			pickWaiters.current.set(id, (chain) => {
+				if (pickGen.current === gen) apply(chain);
+			});
+			target.postMessage(pickMessage(local.x, local.y, id), "*");
+			setTimeout(() => {
+				if (pickWaiters.current.delete(id) && pickGen.current === gen) onSilence?.();
+			}, PICK_REPLY_MS);
+		},
+		[],
+	);
+
+	const applyPick = useCallback((frame: string, chain: PickedHit[], hit: PickedHit | undefined) => {
+		if (hit === undefined) return; // frame background: the frame stays the selection
+		pickedChain.current = { frame, chain };
+		setSelected([]);
+		setPicked({ frame, ...hit });
+	}, []);
+
+	/** Figma's descend: each double-click selects one level deeper under the cursor. */
+	const descendAt = useCallback(
+		(frame: string, local: Point) => {
+			beginPick(frame, local, (chain) => {
+				const current = pickedRef.current;
+				const depth =
+					current !== null && current.frame === frame
+						? chain.findIndex((h) => h.selector === current.selector)
+						: -1;
+				applyPick(frame, chain, chain[Math.min(depth + 1, chain.length - 1)]);
+			});
+		},
+		[beginPick, applyPick],
+	);
+
+	/** Figma's deep select (⌘-click, and the right-click point): the deepest element. */
+	const deepSelectAt = useCallback(
+		(frame: string, local: Point) => {
+			beginPick(frame, local, (chain) => applyPick(frame, chain, chain[chain.length - 1]));
+		},
+		[beginPick, applyPick],
+	);
+
+	/**
+	 * Figma's scope memory: while an element is selected, a click selects the
+	 * element at the same depth under the cursor — a sibling inside the shared
+	 * ancestry, the divergence point outside it, the frame on empty space.
+	 */
+	const scopedSelectAt = useCallback(
+		(frame: string, local: Point) => {
+			// empty space and a frame that never answers both pop the selection
+			// back to the frame — a silent document must not trap the scope
+			const pop = () => {
+				pickedChain.current = null;
+				setPicked(null);
+				setSelected([frame]);
+			};
+			beginPick(
+				frame,
+				local,
+				(chain) => {
+					if (chain.length === 0) {
+						pop();
+						return;
+					}
+					const current = pickedRef.current;
+					const held = pickedChain.current;
+					const prior = current !== null && held !== null && held.frame === frame ? held.chain : null;
+					const depth =
+						prior === null || current === null ? -1 : prior.findIndex((h) => h.selector === current.selector);
+					if (prior === null || depth < 0) {
+						applyPick(frame, chain, chain[0]);
+						return;
+					}
+					// walk the shared ancestry: a full match lands at the scope's
+					// depth (a sibling), a partial one at the divergence point
+					let shared = 0;
+					while (shared < depth && shared < chain.length && prior[shared]?.selector === chain[shared]?.selector) {
+						shared++;
+					}
+					applyPick(frame, chain, chain[Math.min(shared, chain.length - 1)]);
+				},
+				pop,
+			);
+		},
+		[beginPick, applyPick],
+	);
 
 	// SSE: the agent loop (#22) — source edits update the canvas without reload
 	useEffect(() => {
@@ -513,9 +601,9 @@ export function ProjectCanvas({
 					return;
 				}
 				case "picked": {
-					const waiter = pickWaiters.current.get(message.frame);
-					pickWaiters.current.delete(message.frame);
-					waiter?.(message.hit);
+					const waiter = pickWaiters.current.get(message.id);
+					pickWaiters.current.delete(message.id);
+					waiter?.(message.chain);
 					return;
 				}
 				case "key":
@@ -589,6 +677,12 @@ export function ProjectCanvas({
 		return target.closest<HTMLElement>(`[data-${attribute}]`)?.dataset[camelize(attribute)] ?? null;
 	};
 
+	/** A world point in a frame's own coordinates — what every pick verb takes. */
+	const frameLocalAt = (name: string, world: Point): Point | null => {
+		const frame = framesRef.current.find((f) => f.name === name);
+		return frame === undefined ? null : { x: world.x - frame.x, y: world.y - frame.y };
+	};
+
 	const cancelGesture = useCallback(() => {
 		const active = gesture.current;
 		gesture.current = { kind: "idle" };
@@ -623,6 +717,7 @@ export function ProjectCanvas({
 		if (cam === null || event.button === 2) return;
 		stopAnimation();
 		setMenu(null);
+		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
 		viewportRef.current?.setPointerCapture(event.pointerId);
 		const p = localPoint(event);
 
@@ -639,31 +734,32 @@ export function ProjectCanvas({
 		}
 		if (event.button !== 0) return;
 
-		// corner handles first: they overhang the frame and own the pointer
-		const cornerHit = datasetHit(event.target, "corner");
-		const corner = cornerHit !== null && isCorner(cornerHit) ? cornerHit : null;
+		// resize handles first: they overhang the frame and own the pointer
+		const handleHit = datasetHit(event.target, "handle");
+		const handle = handleHit !== null && isHandle(handleHit) ? handleHit : null;
 		const single = selectedRef.current.length === 1 ? (selectedRef.current[0] ?? null) : null;
-		if (corner !== null && single !== null) {
+		if (handle !== null && single !== null) {
 			const frame = framesRef.current.find((f) => f.name === single);
 			if (frame !== undefined) {
 				const anchor = {
-					x: corner.includes("w") ? frame.x + frame.w : frame.x,
-					y: corner.includes("n") ? frame.y + frame.h : frame.y,
+					x: handle.includes("w") ? frame.x + frame.w : frame.x,
+					y: handle.includes("n") ? frame.y + frame.h : frame.y,
 				};
 				gesture.current = {
 					kind: "resize",
 					frame: single,
-					corner,
+					handle,
 					anchor,
 					origin: { x: frame.x, y: frame.y, w: frame.w, h: frame.h },
 				};
-				setResizeCursor(corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize");
+				setResizeCursor(HANDLE_CURSORS[handle]);
 				return;
 			}
 		}
 
 		const world = toWorld(p, cam);
-		const hit = datasetHit(event.target, "frame-label") ?? frameAtWorld(world);
+		const label = datasetHit(event.target, "frame-label");
+		const hit = label ?? frameAtWorld(world);
 
 		if (hit === null) {
 			// empty canvas: a clean click clears, a drag draws the marquee
@@ -683,16 +779,32 @@ export function ProjectCanvas({
 			return;
 		}
 
+		// ⌘-click in design deep-selects the element under the cursor (Figma);
+		// meta only — on the Mac, ctrl-click is the context menu's
+		if (modeRef.current === "design" && event.metaKey && label === null) {
+			const local = frameLocalAt(hit, world);
+			if (local !== null) deepSelectAt(hit, local);
+			return;
+		}
+
+		// inside an element scope the click stays scoped (Figma): the sibling
+		// under the cursor, answered by the frame within a paint or two — and
+		// the double-click this press may begin then descends from that answer
+		const scoped = pickedRef.current;
+		if (modeRef.current === "design" && scoped !== null && scoped.frame === hit && label === null) {
+			const local = frameLocalAt(hit, world);
+			if (local !== null) scopedSelectAt(hit, local);
+			gesture.current = { kind: "pending", names: [hit], origins: originsOf([hit]), start: p };
+			return;
+		}
+
 		const wasSelected = selectedRef.current.includes(hit);
 		const names = wasSelected ? [...selectedRef.current] : [hit];
-		// design body-clicks defer their select: a clean release picks the element
-		// under the pointer instead (#7: element in design), a drag still arranges
-		const defer = modeRef.current === "design" && datasetHit(event.target, "frame-label") === null;
-		if (!defer && !wasSelected) {
+		if (!wasSelected) {
 			setSelected([hit]);
 			setPicked(null);
 		}
-		gesture.current = { kind: "pending", frame: hit, names, origins: originsOf(names), start: p, defer };
+		gesture.current = { kind: "pending", names, origins: originsOf(names), start: p };
 	};
 
 	const onPointerMove = (event: React.PointerEvent) => {
@@ -712,10 +824,10 @@ export function ProjectCanvas({
 
 		if (active.kind === "pending") {
 			if (Math.hypot(p.x - active.start.x, p.y - active.start.y) < DRAG_THRESHOLD_PX) return;
-			if (active.defer) {
-				setSelected(active.names);
-				setPicked(null);
-			}
+			// a drag is an arrange (#7): it moves frames, so element scope ends
+			cancelPicks();
+			setSelected(active.names);
+			setPicked(null);
 			gesture.current = { kind: "move", names: active.names, origins: active.origins, start: active.start };
 			onPointerMove(event);
 			return;
@@ -762,13 +874,60 @@ export function ProjectCanvas({
 
 		if (active.kind === "resize") {
 			const world = toWorld(p, cam);
-			const west = active.corner.includes("w");
-			const north = active.corner.includes("n");
-			const x = west ? Math.min(world.x, active.anchor.x - MIN_FRAME_SIZE) : active.anchor.x;
-			const y = north ? Math.min(world.y, active.anchor.y - MIN_FRAME_SIZE) : active.anchor.y;
-			const w = west ? active.anchor.x - x : Math.max(world.x - active.anchor.x, MIN_FRAME_SIZE);
-			const h = north ? active.anchor.y - y : Math.max(world.y - active.anchor.y, MIN_FRAME_SIZE);
-			const box = { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
+			const { handle, anchor, origin } = active;
+			// the dragged edges snap like moves do; a min-size clamp beats the snap
+			// and drops its guides — a line must never point at an edge that isn't there
+			const statics = framesRef.current.filter((f) => f.name !== active.frame);
+			const threshold = SNAP_THRESHOLD_PX / cam.k;
+			let { x, y, w, h } = origin;
+			let vGuides: number[] = [];
+			let hGuides: number[] = [];
+			if (handle.includes("w") || handle.includes("e")) {
+				const snap = snapEdge(world.x, statics, "x", threshold);
+				let edge = snap.value;
+				vGuides = snap.guides;
+				if (handle.includes("w")) {
+					const limit = anchor.x - MIN_FRAME_SIZE;
+					if (edge > limit) {
+						edge = limit;
+						vGuides = [];
+					}
+					x = edge;
+					w = anchor.x - edge;
+				} else {
+					const limit = anchor.x + MIN_FRAME_SIZE;
+					if (edge < limit) {
+						edge = limit;
+						vGuides = [];
+					}
+					x = anchor.x;
+					w = edge - anchor.x;
+				}
+			}
+			if (handle.includes("n") || handle.includes("s")) {
+				const snap = snapEdge(world.y, statics, "y", threshold);
+				let edge = snap.value;
+				hGuides = snap.guides;
+				if (handle.includes("n")) {
+					const limit = anchor.y - MIN_FRAME_SIZE;
+					if (edge > limit) {
+						edge = limit;
+						hGuides = [];
+					}
+					y = edge;
+					h = anchor.y - edge;
+				} else {
+					const limit = anchor.y + MIN_FRAME_SIZE;
+					if (edge < limit) {
+						edge = limit;
+						hGuides = [];
+					}
+					y = anchor.y;
+					h = edge - anchor.y;
+				}
+			}
+			setGuides({ v: vGuides, h: hGuides });
+			const box = { x, y, w, h };
 			setFrames((current) => current.map((frame) => (frame.name === active.frame ? { ...frame, ...box } : frame)));
 		}
 	};
@@ -780,15 +939,6 @@ export function ProjectCanvas({
 		setGuides(NO_GUIDES);
 		setMarquee(null);
 		setResizeCursor(null);
-		if (active.kind === "pending" && active.defer) {
-			const cam = cameraRef.current;
-			const frame = framesRef.current.find((f) => f.name === active.frame);
-			if (cam !== null && frame !== undefined) {
-				const world = toWorld(active.start, cam);
-				pickAt(active.frame, { x: world.x - frame.x, y: world.y - frame.y });
-			}
-			return;
-		}
 		if (active.kind === "move") commitGeometry(active.names);
 		if (active.kind === "resize") commitGeometry([active.frame]);
 	};
@@ -796,23 +946,27 @@ export function ProjectCanvas({
 	const onDoubleClick = (event: React.MouseEvent) => {
 		const cam = cameraRef.current;
 		if (cam === null) return;
-		// design mode: time is frozen everywhere, there is nothing to enter (#7)
-		if (modeRef.current === "design") return;
-		const hit = frameAtWorld(toWorld(localPoint(event), cam));
-		if (hit !== null) {
-			// entering is the play gesture — a hibernated frame boots fresh here
-			walkTarget.current = null;
-			walkSession.current = null;
-			setEntered(hit);
-			setSelected([]);
-			setPicked(null);
-			// and it is a focusing gesture: fly to the frame, Shift+2's fit —
-			// walks stay same-zoom pans (#5), only the enter zooms
-			const frame = framesRef.current.find((f) => f.name === hit);
-			const viewport = viewportRef.current;
-			if (frame !== undefined && viewport !== null) {
-				animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
-			}
+		const world = toWorld(localPoint(event), cam);
+		const hit = frameAtWorld(world);
+		if (hit === null) return;
+		if (modeRef.current === "design") {
+			// time is frozen, so going deeper means structure: descend one level
+			const local = frameLocalAt(hit, world);
+			if (local !== null) descendAt(hit, local);
+			return;
+		}
+		// entering is the play gesture — a hibernated frame boots fresh here
+		walkTarget.current = null;
+		walkSession.current = null;
+		setEntered(hit);
+		setSelected([]);
+		setPicked(null);
+		// and it is a focusing gesture: fly to the frame, Shift+2's fit —
+		// walks stay same-zoom pans (#5), only the enter zooms
+		const frame = framesRef.current.find((f) => f.name === hit);
+		const viewport = viewportRef.current;
+		if (frame !== undefined && viewport !== null) {
+			animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
 		}
 	};
 
@@ -833,10 +987,11 @@ export function ProjectCanvas({
 			setPicked(null);
 		}
 		// in design the right-click also points: the menu's Open in editor and the
-		// context chip both ride the element under the cursor
+		// context chip both ride the deepest element under the cursor
 		if (modeRef.current === "design") {
-			const frame = framesRef.current.find((f) => f.name === hit);
-			if (frame !== undefined) pickAt(hit, { x: world.x - frame.x, y: world.y - frame.y });
+			cancelPicks();
+			const local = frameLocalAt(hit, world);
+			if (local !== null) deepSelectAt(hit, local);
 		}
 		const viewport = viewportRef.current;
 		const x = viewport === null ? p.x : Math.min(p.x, viewport.clientWidth - MENU_SIZE.w - 8);
@@ -949,13 +1104,28 @@ export function ProjectCanvas({
 						stageTrash([...selectedRef.current]);
 					}
 					break;
-				case "Escape":
+				case "Escape": {
+					cancelPicks();
 					if (gesture.current.kind !== "idle" && gesture.current.kind !== "pan") cancelGesture();
 					else if (menuOpenRef.current) setMenu(null);
 					else if (enteredRef.current !== null) exitEntered();
-					else if (pickedRef.current !== null) setPicked(null);
-					else setSelected([]);
+					else if (pickedRef.current !== null) {
+						// ascend the ancestry (Figma): element → parent → … → frame → clear
+						const picked = pickedRef.current;
+						const held = pickedChain.current;
+						const depth =
+							held !== null && held.frame === picked.frame
+								? held.chain.findIndex((h) => h.selector === picked.selector)
+								: -1;
+						const parent = depth > 0 ? held?.chain[depth - 1] : undefined;
+						if (parent !== undefined) setPicked({ frame: picked.frame, ...parent });
+						else {
+							setPicked(null);
+							setSelected([picked.frame]);
+						}
+					} else setSelected([]);
 					break;
+				}
 			}
 		};
 		const onKeyUp = (event: KeyboardEvent) => {
@@ -978,6 +1148,7 @@ export function ProjectCanvas({
 		stageTrash,
 		undoTrash,
 		cancelGesture,
+		cancelPicks,
 	]);
 
 	// --- chrome (top bar) -------------------------------------------------------
