@@ -209,7 +209,10 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 	background: #fff;
 	border: 1px solid #363636;
 	border-radius: 12px;
-	overflow: clip;
+	/* an iframe'd frame scrolls when its content overflows — the same frame
+	   must scroll here; contain keeps the chain out of the stage */
+	overflow: auto;
+	overscroll-behavior: contain;
 	view-transition-name: spool-screen;
 }
 .spool-pill {
