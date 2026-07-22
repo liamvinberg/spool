@@ -283,6 +283,23 @@ function isFrameName(name: string): boolean {
 	return name.length > 0 && !name.startsWith(".") && !name.includes("/") && !name.includes("\\");
 }
 
+/**
+ * A session really walked from → to: witnessed edges draw the dashed arrows
+ * (#25). Only the player reports — embedded walks ride the bridge and the
+ * canvas is their witness, and standalone documents stay silent because
+ * `spool shot`/`logs` boots exactly that surface: a robot's boot must never
+ * mint an edge (#5: no robo-simulation). Plumbing rides nativeFetch so the
+ * mock never swallows it.
+ */
+function reportWalk(from: string, to: string): void {
+	void nativeFetch(`/api/p/${encodeURIComponent(doc.project)}/walked`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ from, to }),
+		keepalive: true,
+	}).catch(() => {});
+}
+
 /** Sibling frame document, same project, same scenario query. */
 function frameUrl(target: string): string {
 	const path = window.location.pathname.replace(/[^/]+$/, encodeURIComponent(target));
@@ -324,6 +341,7 @@ function navigate(target: string, patch?: Record<string, unknown>, transition?: 
 			return;
 		}
 		stack.push(currentFrame);
+		reportWalk(currentFrame, target);
 		currentFrame = target;
 		swapScreen("forward", transition);
 		return;

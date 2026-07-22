@@ -64,7 +64,7 @@ export function listProjectFrames(root: string): Projection {
 }
 
 /** Every frame folder holding a frame.tsx, sorted; undefined when frames/ is unreadable. */
-function frameNames(root: string): string[] | undefined {
+export function frameNames(root: string): string[] | undefined {
 	const framesDir = join(root, "design", "frames");
 	try {
 		return readdirSync(framesDir, { withFileTypes: true })

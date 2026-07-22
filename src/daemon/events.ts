@@ -7,7 +7,10 @@ export type ChangeEvent =
 	| { kind: "thumb"; frame: string }
 	// a hands write to a frame.json sidecar (#23), published by the geometry
 	// API so other browsers see the move — never emitted by the fs watcher
-	| { kind: "geometry"; frame: string };
+	| { kind: "geometry"; frame: string }
+	// a session witnessed an edge (#25), published by the walked API — .spool
+	// is invisible to the watcher, so the store announces its own writes
+	| { kind: "walked" };
 type Listener = (event: ChangeEvent) => void;
 
 interface RootWatch {

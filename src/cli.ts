@@ -9,6 +9,9 @@ import { serveDaemon } from "./daemon/server";
 import { SpoolError } from "./errors";
 import { initProject } from "./init";
 import { openProject } from "./open";
+import { skillText } from "./skill";
+import { mintPlayerUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
+import { logsFrame, shotFrame } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const spoolDir = join(homedir(), ".spool");
@@ -43,6 +46,92 @@ program
 		if (status.running) {
 			process.stdout.write(`canvas: ${status.url}/p/${encodeURIComponent(basename(root))}\n`);
 		}
+	});
+
+// --- agent verbs (#25): read-only, cwd-resolved, daemon auto-started ---------
+
+const narrate = (line: string) => process.stderr.write(`spool: ${line}\n`);
+
+/** Every verb's preamble: the project this cwd is inside, and a live daemon. */
+async function verbContext(): Promise<{ root: string; name: string; daemonUrl: string }> {
+	const { root, name } = resolveRegisteredProject(spoolDir, process.cwd());
+	const { url } = await ensureDaemon(spoolDir);
+	return { root, name, daemonUrl: url };
+}
+
+program
+	.command("selection")
+	.description("print the live selection payload — what the human points at")
+	.action(async () => {
+		const { name, daemonUrl } = await verbContext();
+		process.stdout.write(`${await readSelection(daemonUrl, name)}\n`);
+	});
+
+program
+	.command("flows")
+	.description("print the link graph: declared from source, walked from sessions")
+	.action(async () => {
+		const { name, daemonUrl } = await verbContext();
+		process.stdout.write(`${await readFlows(daemonUrl, name)}\n`);
+	});
+
+program
+	.command("shot")
+	.description("boot a frame headless, save a screenshot, print its path")
+	.argument("<frame>", "frame folder name")
+	.action(async (frame: string) => {
+		const { root, name, daemonUrl } = await verbContext();
+		const outcome = await shotFrame({ daemonUrl, root, name, frame, narrate });
+		if (outcome.kind === "missing") throw new SpoolError(outcome.message);
+		if (outcome.kind === "broken") {
+			// the compile or boot error verbatim — nothing of spool's in the way
+			process.stderr.write(`${outcome.message}\n`);
+			process.exitCode = 1;
+			return;
+		}
+		process.stdout.write(`${outcome.file}\n`);
+		if (outcome.bootErrors.length > 0) {
+			process.stderr.write(`${outcome.bootErrors.join("\n")}\n`);
+			process.exitCode = 1;
+		}
+	});
+
+program
+	.command("logs")
+	.description("print the frame's boot console output (cached until source changes)")
+	.argument("<frame>", "frame folder name")
+	.action(async (frame: string) => {
+		const { root, name, daemonUrl } = await verbContext();
+		const outcome = await logsFrame({ daemonUrl, root, name, frame, narrate });
+		if (outcome.kind === "missing") throw new SpoolError(outcome.message);
+		if (outcome.kind === "broken") {
+			process.stderr.write(`${outcome.message}\n`);
+			process.exitCode = 1;
+			return;
+		}
+		if (outcome.replayed) narrate("replaying the last boot's logs — source unchanged");
+		if (outcome.entries.length === 0) {
+			narrate("the boot logged nothing");
+			return;
+		}
+		process.stdout.write(`${outcome.entries.map((entry) => `[${entry.type}] ${entry.text}`).join("\n")}\n`);
+	});
+
+program
+	.command("url")
+	.description("mint a player-session URL to drive in a browser")
+	.argument("<frame>", "frame folder name")
+	.action(async (frame: string) => {
+		const { name, daemonUrl } = await verbContext();
+		process.stdout.write(`${await mintPlayerUrl(daemonUrl, name, frame)}\n`);
+	});
+
+program
+	.command("skill")
+	.description("print the spool skill — how agents author for this canvas")
+	.argument("[topic]", "one topic instead of the overview")
+	.action((topic?: string) => {
+		process.stdout.write(`${skillText(topic)}\n`);
 	});
 
 program

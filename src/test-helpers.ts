@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { onTestFinished } from "vitest";
 import { createDaemonApp } from "./daemon/app";
+import { serveDaemon } from "./daemon/server";
 import { initProject } from "./init";
 import { canvasJson } from "./templates";
 
@@ -39,6 +40,15 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 	const daemon = createDaemonApp({ spoolDir, version: "0.0.0-test", ...options });
 	onTestFinished(() => daemon.close());
 	return daemon.app;
+}
+
+/** A registered project behind a really-served daemon on an ephemeral port. */
+export async function serveProject() {
+	const spoolDir = join(makeTempDir(), ".spool");
+	const { root, name } = makeProject(spoolDir);
+	const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
+	onTestFinished(() => daemon.close());
+	return { spoolDir, root, name, url: daemon.url };
 }
 
 export interface SseEvent {

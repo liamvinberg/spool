@@ -382,6 +382,36 @@ describe("the player session", () => {
 		});
 	});
 
+	it("a driven session leaves its coded walks as dashed edges in the flows graph (#25)", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+		writeFrame(
+			harness.root,
+			"coded",
+			`import { ui } from "spool";
+
+export default function Coded() {
+	return <button type="button" id="coded-walk" onClick={() => ui.go("pay--done")}>pay</button>;
+}
+`,
+		);
+
+		await loadPlayerDocument(harness, "?frame=coded");
+		await vi.waitFor(() => expect(document.querySelector("#coded-walk")).not.toBeNull());
+
+		click("#coded-walk");
+		await waitForStack("coded/pay--done");
+
+		// the walk was witnessed: the daemon serves it as a dashed edge, while the
+		// declared data-go links stay derived-not-stored
+		await vi.waitFor(async () => {
+			const flows = (await (await harness.app.request(`/api/p/${harness.name}/flows`)).json()) as {
+				links: { from: string; to: string; kind: string }[];
+			};
+			expect(flows.links).toContainEqual({ from: "coded", to: "pay--done", kind: "walked" });
+		});
+	});
+
 	it("close closes the tab the canvas opened", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
