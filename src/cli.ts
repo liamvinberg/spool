@@ -18,9 +18,9 @@ const spoolDir = join(homedir(), ".spool");
 // package root anchors dist/ui for both the built cli (dist/cli.js) and a checkout (src/cli.ts)
 const uiDir = fileURLToPath(new URL("../dist/ui", import.meta.url));
 
-const rootConfigPointer = `add this line to the repo's root CLAUDE.md or AGENTS.md so future sessions find the canvas:
+const rootConfigPointer = `add this line to the repo's root CLAUDE.md or AGENTS.md so every future session finds the canvas:
 
-  design/ is a spool canvas (see design/AGENTS.md; run \`spool skill\` to learn it)
+  design/ is a spool canvas: run \`spool skill\` before working there — it is the complete contract
 `;
 
 const program = new Command("spool").description("the live prototyping canvas").version(pkg.version, "-v, --version");
