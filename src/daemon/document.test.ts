@@ -31,6 +31,7 @@ describe("assembleFrameDocument", () => {
 		const doc = assembleFrameDocument({ project: "demo", frame: "a<b>", css: "", importMap: {}, bootJs: "" });
 
 		expect(doc).toContain("<title>a&lt;b&gt; · spool</title>");
+		expect(doc).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
 		expect(doc).toContain('window.__SPOOL__ = {"project":"demo","frame":"a\\u003cb>"}');
 	});
 });

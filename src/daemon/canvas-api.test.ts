@@ -351,6 +351,11 @@ describe("serving the canvas page", () => {
 		const css = await app.request("/ui/assets/app-abc123.css");
 		expect(css.headers.get("content-type")).toContain("text/css");
 
+		const favicon = await app.request("/favicon.svg");
+		expect(favicon.status).toBe(200);
+		expect(favicon.headers.get("content-type")).toContain("image/svg+xml");
+		expect(await favicon.text()).toContain('fill="#f5391a"');
+
 		expect((await app.request("/ui/assets/nope.js")).status).toBe(404);
 		expect((await app.request(`/ui/assets/${encodeURIComponent("../../../etc/passwd")}`)).status).toBe(404);
 	});

@@ -275,6 +275,7 @@ function htmlShell(frame: string, head: string, body: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>${escapeHtml(frame)} · spool</title>
 ${head}</head>
 <body>
