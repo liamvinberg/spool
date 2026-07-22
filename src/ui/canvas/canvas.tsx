@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Camera, CanvasMode, Geometry, ProjectedFrame } from "../api";
+import type { Camera, CanvasMode, FlowLink, Geometry, ProjectedFrame } from "../api";
 import {
 	beaconTrash,
 	fetchCanvasState,
+	fetchFlows,
 	fetchProjection,
 	openInEditor,
 	postTrash,
+	postWalk,
 	putCanvasState,
 	putGeometry,
 	putSelection,
@@ -15,6 +17,7 @@ import {
 import { RibbonMark } from "../icons";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
 import { ContextMenu, MENU_SIZE } from "./context-menu";
+import { FlowArrows } from "./flow-arrows";
 import { FrameShell } from "./frame-shell";
 import { useFrameLifecycle } from "./lifecycle";
 import {
@@ -83,6 +86,7 @@ export function ProjectCanvas({
 }) {
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const [frames, setFrames] = useState<ProjectedFrame[]>([]);
+	const [links, setLinks] = useState<FlowLink[]>([]);
 	const [loaded, setLoaded] = useState(false);
 	const [camera, setCamera] = useState<Camera | null>(null);
 	const [mode, setMode] = useState<CanvasMode>("live");
@@ -191,7 +195,12 @@ export function ProjectCanvas({
 		setLoaded(true);
 	}, [project]);
 
-	// boot: stored state (mode + camera) and the projection
+	const refetchFlows = useCallback(async () => {
+		const flows = await fetchFlows(project);
+		if (flows !== undefined) setLinks(flows.links);
+	}, [project]);
+
+	// boot: stored state (mode + camera), the projection, the link graph
 	useEffect(() => {
 		let alive = true;
 		void (async () => {
@@ -200,12 +209,12 @@ export function ProjectCanvas({
 				setMode(state.mode);
 				if (state.camera !== undefined) setCamera(state.camera);
 			}
-			if (alive) await refetchFrames();
+			if (alive) await Promise.all([refetchFrames(), refetchFlows()]);
 		})();
 		return () => {
 			alive = false;
 		};
-	}, [project, refetchFrames]);
+	}, [project, refetchFrames, refetchFlows]);
 
 	// a staged Trash resolves when the projection stops listing the folder
 	useEffect(() => {
@@ -554,6 +563,8 @@ export function ProjectCanvas({
 					setPicked((current) => (current?.frame === frame ? null : current));
 					lifecycleRef.current.markStale(frame);
 					void refetchFrames();
+					// an edit moves the graph: declared links re-derive, walked edges drop
+					void refetchFlows();
 				} else if (event.kind === "shared") {
 					// anything in shared/ can stale every document
 					setDocNonces((current) => {
@@ -563,6 +574,9 @@ export function ProjectCanvas({
 					});
 					setPicked(null);
 					void refetchFrames();
+				} else if (event.kind === "walked") {
+					// a session witnessed an edge (#25) — ours or an agent's own browser
+					void refetchFlows();
 				} else if (event.kind === "geometry") {
 					// another browser's hands (or our own echo); ours are the truth
 					// while a gesture or an un-flushed nudge is in flight
@@ -577,7 +591,7 @@ export function ProjectCanvas({
 				}
 			},
 		});
-	}, [project, refetchFrames, noteThumb]);
+	}, [project, refetchFrames, refetchFlows, noteThumb]);
 
 	// the frame protocol: loaded/error/shot route into the lifecycle, session?
 	// answers with the carried walk session, go/back move the entered state
@@ -613,6 +627,8 @@ export function ProjectCanvas({
 				case "go":
 				case "back": {
 					if (enteredRef.current !== message.frame) return;
+					// a forward walk in the entered state really happened — witness it (#25)
+					if (message.spool === "go") postWalk(project, message.frame, message.target);
 					walkTo(message.target, message.session ?? null);
 					return;
 				}
@@ -620,7 +636,7 @@ export function ProjectCanvas({
 		};
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
-	}, [walkTo, exitEntered]);
+	}, [project, walkTo, exitEntered]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
 	useEffect(() => {
@@ -1198,6 +1214,8 @@ export function ProjectCanvas({
 					className="absolute top-0 left-0"
 					style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${k})`, transformOrigin: "0 0" }}
 				>
+					{/* the threads live under the frames: the map, never a hit target */}
+					<FlowArrows frames={visibleFrames} links={links} k={k} />
 					{visibleFrames.map((frame) => {
 						const state = lifecycle.states[frame.name] ?? "hibernated";
 						const isEntered = entered === frame.name;
