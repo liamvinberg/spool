@@ -300,6 +300,14 @@ export function ProjectCanvas({
 		animateCamera(fitCamera(boundsOf(framesRef.current), viewport.clientWidth, viewport.clientHeight));
 	}, [animateCamera]);
 
+	const resetZoom = useCallback(() => {
+		const cam = cameraRef.current;
+		if (cam === null) return;
+		const c = viewportCenter();
+		const w = toWorld(c, cam);
+		animateCamera({ k: 1, x: c.x - w.x, y: c.y - w.y });
+	}, [animateCamera, viewportCenter]);
+
 	/** An entered walk: fresh boot for the target (#5), session carried, camera pans. */
 	const walkTo = useCallback(
 		(target: string, session: SessionRecord | null) => {
@@ -670,6 +678,35 @@ export function ProjectCanvas({
 					// holds focus, and its Esc means the same thing (#28)
 					if (message.key === "Escape" && enteredRef.current !== null) exitEntered();
 					return;
+				case "zoom": {
+					// Entered frames own pointer + keyboard input, and those events do
+					// not cross an iframe boundary. The frame shim claims browser-zoom
+					// gestures and hands them back here as canvas camera intents.
+					if (enteredRef.current !== message.frame) return;
+					stopAnimation();
+					setMenu(null);
+					if (message.kind === "wheel") {
+						const iframe = iframes.current.get(message.frame);
+						const viewport = viewportRef.current;
+						if (iframe === undefined || viewport === null) return;
+						const frameRect = iframe.getBoundingClientRect();
+						const viewportRect = viewport.getBoundingClientRect();
+						const cameraScale = cameraRef.current?.k ?? 1;
+						const scaleX = iframe.clientWidth > 0 ? frameRect.width / iframe.clientWidth : cameraScale;
+						const scaleY = iframe.clientHeight > 0 ? frameRect.height / iframe.clientHeight : cameraScale;
+						const deltaScale = message.deltaMode === 1 ? 16 : message.deltaMode === 2 ? viewport.clientHeight : 1;
+						const factor = clamp(Math.exp(-message.deltaY * deltaScale * 0.0075), 0.5, 2);
+						zoomAtPoint(
+							frameRect.left - viewportRect.left + message.x * scaleX,
+							frameRect.top - viewportRect.top + message.y * scaleY,
+							factor,
+						);
+						return;
+					}
+					const c = viewportCenter();
+					zoomAtPoint(c.x, c.y, message.kind === "in" ? 1.25 : 0.8, true);
+					return;
+				}
 				case "go":
 				case "back": {
 					if (enteredRef.current !== message.frame) return;
@@ -682,7 +719,7 @@ export function ProjectCanvas({
 		};
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
-	}, [project, walkTo, exitEntered]);
+	}, [project, walkTo, exitEntered, stopAnimation, zoomAtPoint, viewportCenter]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
 	useEffect(() => {
@@ -1109,15 +1146,6 @@ export function ProjectCanvas({
 				zoomAtPoint(c.x, c.y, 0.8, true);
 				return;
 			}
-			if (mod && event.key === "0") {
-				event.preventDefault();
-				const cam = cameraRef.current;
-				if (cam === null) return;
-				const c = viewportCenter();
-				const w = toWorld(c, cam);
-				animateCamera({ k: 1, x: c.x - w.x, y: c.y - w.y });
-				return;
-			}
 			if (mod) return;
 			if (event.shiftKey && event.code === "Digit1") {
 				zoomFit();
@@ -1149,6 +1177,9 @@ export function ProjectCanvas({
 					zoomAtPoint(c.x, c.y, 0.8, true);
 					break;
 				}
+				case "0":
+					resetZoom();
+					break;
 				case "ArrowLeft":
 				case "ArrowRight":
 				case "ArrowUp":
@@ -1206,6 +1237,7 @@ export function ProjectCanvas({
 		viewportCenter,
 		zoomAtPoint,
 		zoomFit,
+		resetZoom,
 		animateCamera,
 		exitEntered,
 		switchMode,
