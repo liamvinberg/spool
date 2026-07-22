@@ -6,6 +6,7 @@
 			"package-name": "spool.page",
 			"include-component-in-tag": false,
 			"bump-minor-pre-major": true,
+			"initial-version": "0.1.0",
 			"changelog-sections": [
 				{ "type": "feat", "section": "Features" },
 				{ "type": "fix", "section": "Bug fixes" },
