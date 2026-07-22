@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -119,6 +119,29 @@ describe("spool cli", () => {
 
 		expect(result.status).toBe(1);
 		expect(result.stderr).toContain("unset SPOOL_DIR");
+	});
+
+	it("upgrade refuses the checkout, pointing at git (#30)", () => {
+		const result = spool(["upgrade"], makeTempDir());
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("checkout");
+		expect(result.stderr).toContain("git");
+	});
+
+	it("status mentions a cached newer release without phoning home (#30)", () => {
+		const home = makeTempDir();
+		mkdirSync(join(home, ".spool"), { recursive: true });
+		writeFileSync(
+			join(home, ".spool", "update.json"),
+			JSON.stringify({ latest: "99.0.0", checkedAt: new Date().toISOString() }),
+		);
+
+		const result = spool(["status"], home);
+
+		expect(result.status).toBe(1); // daemon still not running
+		expect(result.stdout).toContain("v99.0.0 available");
+		expect(result.stdout).toContain("spool upgrade");
 	});
 
 	it("fails cleanly on an unknown command", () => {

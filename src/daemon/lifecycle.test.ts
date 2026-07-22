@@ -44,7 +44,7 @@ describe("resolveSpoolDir", () => {
 
 describe("resolveServeConfig", () => {
 	it("defaults to localhost:7766 — exposure is never implicit", () => {
-		expect(resolveServeConfig(makeSpoolDir(), {})).toEqual({ host: "127.0.0.1", port: 7766 });
+		expect(resolveServeConfig(makeSpoolDir(), {})).toEqual({ host: "127.0.0.1", port: 7766, updateCheck: true });
 	});
 
 	it("honors the owner's explicit host and port config", () => {
@@ -52,7 +52,7 @@ describe("resolveServeConfig", () => {
 		mkdirSync(spoolDir, { recursive: true });
 		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ host: "0.0.0.0", port: 7800 }));
 
-		expect(resolveServeConfig(spoolDir, {})).toEqual({ host: "0.0.0.0", port: 7800 });
+		expect(resolveServeConfig(spoolDir, {})).toEqual({ host: "0.0.0.0", port: 7800, updateCheck: true });
 	});
 
 	it("lets the environment override config for checkout-on-its-own-port development", () => {
@@ -62,7 +62,18 @@ describe("resolveServeConfig", () => {
 
 		const config = resolveServeConfig(spoolDir, { SPOOL_PORT: "7801", SPOOL_HOST: "::1" });
 
-		expect(config).toEqual({ host: "::1", port: 7801 });
+		expect(config).toEqual({ host: "::1", port: 7801, updateCheck: true });
+	});
+
+	it("honors the phone-home opt-out and rejects a non-boolean one (#30)", () => {
+		const spoolDir = makeSpoolDir();
+		mkdirSync(spoolDir, { recursive: true });
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ updateCheck: false }));
+
+		expect(resolveServeConfig(spoolDir, {}).updateCheck).toBe(false);
+
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ updateCheck: "never" }));
+		expect(() => resolveServeConfig(spoolDir, {})).toThrow(/updateCheck/);
 	});
 
 	it("rejects malformed config loudly instead of guessing", () => {

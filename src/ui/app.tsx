@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CanvasMode, ProjectCard } from "./api";
-import { fetchProjects, fetchSession, putSession, subscribeSse } from "./api";
+import { fetchProjects, fetchSession, postUpgrade, putSession, subscribeSse } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { Home } from "./home";
 import { CloseIcon, PlayIcon, PlusIcon, RibbonMark } from "./icons";
 import { FolderPicker } from "./picker";
+import { type UpdateToast, UpdateToastPill } from "./update-toast";
 
 /**
  * The shell (#4/#12/#13): one top bar — brand lockup as the home door, one
@@ -27,6 +28,13 @@ export function App() {
 	const [booted, setBooted] = useState(false);
 	const [picking, setPicking] = useState(false);
 	const [chrome, setChrome] = useState<CanvasChrome | null>(null);
+	const [toast, setToast] = useState<UpdateToast | null>(null);
+	const toastRef = useRef(toast);
+	toastRef.current = toast;
+	// the daemon version this page first heard — a different one on a later
+	// hello is the upgraded daemon back up (#30)
+	const daemonVersion = useRef<string | null>(null);
+	const dismissedLatest = useRef<string | null>(null);
 
 	const byRoot = useMemo(() => new Map(projects.map((p) => [p.root, p])), [projects]);
 	const tabs: TabProject[] = useMemo(
@@ -58,12 +66,56 @@ export function App() {
 		if (root !== undefined) setFocused(root);
 	}, [booted, focused, open]);
 
-	// `spool open` in a shell lands here as a session event — a background tab
+	const offerUpdate = useCallback((latest: string) => {
+		if (dismissedLatest.current === latest) return;
+		if (toastRef.current !== null && toastRef.current.kind !== "offer") return;
+		setToast({ kind: "offer", latest });
+	}, []);
+
+	// `spool open` in a shell lands here as a session event — a background tab;
+	// hello doubles as the update loop's truth (#30): reload on a version flip,
+	// fail honestly when the same daemon comes back mid-update
 	useEffect(() => {
 		return subscribeSse("/api/events", {
-			app: () => void refetch(),
+			hello: (data) => {
+				const { version, latest } = data as { version?: unknown; latest?: unknown };
+				if (typeof version !== "string") return;
+				if (daemonVersion.current === null) {
+					daemonVersion.current = version;
+				} else if (daemonVersion.current !== version) {
+					window.location.reload();
+					return;
+				} else if (toastRef.current?.kind === "updating") {
+					setToast({ kind: "failed" });
+				}
+				if (typeof latest === "string") offerUpdate(latest);
+			},
+			app: (data) => {
+				const event = data as { kind?: unknown; latest?: unknown };
+				if (event.kind === "update" && typeof event.latest === "string") offerUpdate(event.latest);
+				void refetch();
+			},
 		});
-	}, [refetch]);
+	}, [refetch, offerUpdate]);
+
+	const startUpgrade = useCallback(async () => {
+		setToast({ kind: "updating" });
+		const res = await postUpgrade();
+		if (!res.ok) setToast({ kind: "failed", message: res.error });
+	}, []);
+
+	// an upgrader that dies before touching the daemon would leave "Updating…"
+	// forever — no reconnect ever tells the story, so time does
+	useEffect(() => {
+		if (toast?.kind !== "updating") return;
+		const timer = setTimeout(() => setToast({ kind: "failed" }), 120_000);
+		return () => clearTimeout(timer);
+	}, [toast]);
+
+	const dismissToast = useCallback(() => {
+		if (toastRef.current?.kind === "offer") dismissedLatest.current = toastRef.current.latest;
+		setToast(null);
+	}, []);
 
 	useEffect(() => {
 		document.title = focusedTab === undefined ? "spool" : `${focusedTab.name} · spool`;
@@ -181,6 +233,10 @@ export function App() {
 					<ProjectCanvas key={focusedTab.root} project={focusedTab.name} onChrome={setChrome} />
 				)}
 			</main>
+
+			{toast !== null && (
+				<UpdateToastPill toast={toast} onUpdate={() => void startUpgrade()} onDismiss={dismissToast} />
+			)}
 
 			{picking && (
 				<div className="absolute inset-0">

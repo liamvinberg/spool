@@ -85,6 +85,19 @@ export async function initProjectAt(path: string): Promise<OpenOutcome> {
 	return { kind: "error", message: await errorText(res) };
 }
 
+export type UpgradeStart = { ok: true } | { ok: false; error: string };
+
+/** The toast door (#30): ask the daemon to spawn the upgrader and stand back. */
+export async function postUpgrade(): Promise<UpgradeStart> {
+	try {
+		const res = await client.api.upgrade.$post();
+		if (res.ok) return { ok: true };
+		return { ok: false, error: await errorText(res) };
+	} catch {
+		return { ok: false, error: "the daemon is unreachable" };
+	}
+}
+
 async function errorText(res: { text(): Promise<string> }): Promise<string> {
 	const raw = await res.text();
 	try {

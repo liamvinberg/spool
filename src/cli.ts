@@ -18,10 +18,12 @@ import {
 	writeDaemonState,
 } from "./daemon/lifecycle";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
+import { isNewer, readUpdateCache } from "./daemon/update-check";
 import { PortBusyError, SpoolError } from "./errors";
 import { initProject } from "./init";
 import { openProject } from "./open";
 import { skillText } from "./skill";
+import { runUpgrade } from "./upgrade";
 import { mintPlayerUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
 import { logsFrame, shotFrame } from "./verify";
 
@@ -161,6 +163,7 @@ program
 					host: config.host,
 					port: config.port,
 					uiDir,
+					updateCheck: config.updateCheck,
 				});
 			} catch (error) {
 				if (error instanceof PortBusyError) {
@@ -251,18 +254,48 @@ program
 	});
 
 program
+	.command("upgrade")
+	.description("install the latest release and restart the daemon on it")
+	.action(async () => {
+		const outcome = await runUpgrade(spoolDir, pkg.version, { narrate });
+		if (outcome.kind === "refused" || outcome.kind === "failed") throw new SpoolError(outcome.message);
+		process.stdout.write(
+			outcome.to === outcome.from
+				? `already the latest (v${outcome.to})\n`
+				: `spool v${outcome.from} → v${outcome.to}\n`,
+		);
+		if (outcome.daemon.running) {
+			process.stdout.write(
+				outcome.daemon.restarted
+					? `daemon restarted at ${outcome.daemon.url} (v${outcome.to})\n`
+					: `daemon already serves v${outcome.to} at ${outcome.daemon.url}\n`,
+			);
+		} else {
+			process.stdout.write("daemon not running — any spool command starts it on the new version\n");
+		}
+	});
+
+program
 	.command("status")
 	.description("report whether the daemon is running")
 	.action(async () => {
 		const status = await statusDaemon(spoolDir);
+		// the daemon's cached daily check (#30) — status itself never phones home
+		const cache = readUpdateCache(spoolDir);
+		const available =
+			cache !== undefined && isNewer(cache.latest, pkg.version)
+				? ` — v${cache.latest} available, run \`spool upgrade\``
+				: "";
 		if (!status.running) {
-			process.stdout.write("spool daemon not running\n");
+			process.stdout.write(`spool daemon not running${available}\n`);
 			process.exitCode = 1;
 			return;
 		}
 		const skew =
-			status.version === pkg.version ? "" : ` — cli is v${pkg.version}, \`spool stop\` then any command updates it`;
-		process.stdout.write(`spool daemon running at ${status.url} (pid ${status.pid}, v${status.version})${skew}\n`);
+			status.version === pkg.version ? "" : ` — cli is v${pkg.version}, \`spool upgrade\` brings them in step`;
+		process.stdout.write(
+			`spool daemon running at ${status.url} (pid ${status.pid}, v${status.version})${skew}${available}\n`,
+		);
 	});
 
 program

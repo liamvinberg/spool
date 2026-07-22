@@ -10,6 +10,8 @@ export interface ServeDaemonOptions {
 	host: string;
 	port: number;
 	uiDir?: string | undefined;
+	/** #30 phone-home — absent means off, so tests and tools stay silent. */
+	updateCheck?: boolean | undefined;
 }
 
 export interface RunningDaemon {
@@ -23,13 +25,22 @@ export interface RunningDaemon {
  * Bind the daemon and record it in daemon.json — written only after a
  * successful listen, so a losing racer never clobbers the winner's state.
  */
-export function serveDaemon({ spoolDir, version, host, port, uiDir }: ServeDaemonOptions): Promise<RunningDaemon> {
-	const daemon = createDaemonApp({ spoolDir, version, uiDir });
+export function serveDaemon({
+	spoolDir,
+	version,
+	host,
+	port,
+	uiDir,
+	updateCheck,
+}: ServeDaemonOptions): Promise<RunningDaemon> {
+	const daemon = createDaemonApp({ spoolDir, version, uiDir, updateCheck });
 
 	return new Promise<RunningDaemon>((resolve, reject) => {
 		const server = serve({ fetch: daemon.app.fetch, hostname: host, port }, (info: AddressInfo) => {
 			// bound: the daemon can now dial itself (the thumb healer's shots)
 			daemon.setSelfOrigin(daemonUrl(host, info.port));
+			// listening first, asking after — the registry never delays the canvas
+			daemon.startUpdateCheck();
 			writeDaemonState(spoolDir, {
 				pid: process.pid,
 				host,
