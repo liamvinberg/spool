@@ -40,7 +40,7 @@ export function Player({
 	return (
 		<div className="spool-stage">
 			<div className="spool-screen" style={{ width: w, height: h, transform: place(w, h, viewport) }}>
-				{Screen === undefined ? null : <Screen key={arrival} />}
+				<div className="spool-screen-scroll">{Screen === undefined ? null : <Screen key={arrival} />}</div>
 			</div>
 			<div className="spool-pill">
 				<button
