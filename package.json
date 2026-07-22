@@ -2,7 +2,7 @@
 	"name": "spool.page",
 	"version": "0.0.0",
 	"description": "Live prototyping canvas: agent-authored TSX frames on an infinite canvas, repo-native.",
-	"repository": "github:devosurf/spool",
+	"repository": "github:liamvinberg/spool",
 	"homepage": "https://spool.page",
 	"type": "module",
 	"bin": {
