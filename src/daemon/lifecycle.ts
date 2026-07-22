@@ -16,6 +16,8 @@ import { SpoolError } from "../errors";
 export interface ServeConfig {
 	host: string;
 	port: number;
+	/** #30: false silences the daily registry ask and the update toast */
+	updateCheck: boolean;
 }
 
 export const DEFAULT_HOST = "127.0.0.1";
@@ -40,6 +42,7 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 	const file = join(spoolDir, "config.json");
 	let host = DEFAULT_HOST;
 	let port = DEFAULT_PORT;
+	let updateCheck = true;
 
 	let raw: string | undefined;
 	try {
@@ -75,6 +78,12 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 			}
 			port = config.port;
 		}
+		if (config.updateCheck !== undefined) {
+			if (typeof config.updateCheck !== "boolean") {
+				throw new SpoolError(`config at ${file}: "updateCheck" must be true or false`);
+			}
+			updateCheck = config.updateCheck;
+		}
 	}
 
 	if (env.SPOOL_HOST !== undefined && env.SPOOL_HOST !== "") host = env.SPOOL_HOST;
@@ -86,7 +95,7 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 		port = parsed;
 	}
 
-	return { host, port };
+	return { host, port, updateCheck };
 }
 
 export interface DaemonState {

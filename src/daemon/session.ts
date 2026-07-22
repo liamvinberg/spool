@@ -19,7 +19,7 @@ export interface AppSession {
 const SESSION_FILE = "session.json";
 const DEBOUNCE_MS = 40;
 
-export type AppEvent = { kind: "registry" } | { kind: "session" };
+export type AppEvent = { kind: "registry" } | { kind: "session" } | { kind: "update"; latest: string };
 
 export function readSession(spoolDir: string): AppSession {
 	let parsed: unknown;

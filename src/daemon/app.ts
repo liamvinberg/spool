@@ -11,6 +11,7 @@ import { SpoolError } from "../errors";
 import { initProject } from "../init";
 import { openProject } from "../open";
 import { lookupProjectByName, readRegistry } from "../registry";
+import { requestUpgrade } from "../upgrade";
 import { createFrameCompiler } from "./compile";
 import { errorDocument } from "./document";
 import { createChangeHub } from "./events";
@@ -26,6 +27,7 @@ import { type AppEvent, readSession, watchRegistry, writeSession } from "./sessi
 import { createShotTaker } from "./shots";
 import { createThumbHealer, readThumb, writeThumb } from "./thumbs";
 import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
+import { createUpdateChecker } from "./update-check";
 import { reactVersion, type VendorModule, vendorReactJs, vendorSpoolJs, vendorSpoolJsxJs } from "./vendor";
 
 export interface DaemonOptions {
@@ -37,6 +39,12 @@ export interface DaemonOptions {
 	moveToTrash?: (paths: string[]) => Promise<void>;
 	/** Editor launch for path:line jumps — swapped out by seam tests. */
 	launchEditor?: (target: string) => void;
+	/** #30 phone-home: on only when `spool serve` resolves it on from config. */
+	updateCheck?: boolean | undefined;
+	/** The registry probe — swapped out by seam tests. */
+	fetchLatest?: () => Promise<string | undefined>;
+	/** The toast door's detached `spool upgrade` spawn — swapped out by seam tests. */
+	upgrade?: () => { ok: true } | { ok: false; error: string };
 }
 
 /** The player's params (#24): Zod-validated, path-safe names only. */
@@ -55,7 +63,16 @@ const launchEditorDefault = createRequire(import.meta.url)("launch-editor") as L
  * app.request(), no port needed. The inferred AppType is the compile-time
  * tripwire between daemon and UI once the canvas exists.
  */
-export function createDaemonApp({ spoolDir, version, uiDir, moveToTrash, launchEditor }: DaemonOptions) {
+export function createDaemonApp({
+	spoolDir,
+	version,
+	uiDir,
+	moveToTrash,
+	launchEditor,
+	updateCheck,
+	fetchLatest,
+	upgrade,
+}: DaemonOptions) {
 	const startedAt = new Date().toISOString();
 	const compiler = createFrameCompiler(version);
 	const playerCompiler = createPlayerCompiler(version);
@@ -76,6 +93,18 @@ export function createDaemonApp({ spoolDir, version, uiDir, moveToTrash, launchE
 		for (const listener of appListeners) listener(event);
 	};
 	const stopRegistryWatch = watchRegistry(spoolDir, emitAppEvent);
+
+	// #30: the daily registry ask — constructed idle, started only by a
+	// really-listening daemon whose owner has not opted out; a check that
+	// learns of a newer release tells every connected page over app SSE
+	const upgradeImpl = upgrade ?? (() => requestUpgrade(spoolDir));
+	const updateChecker = createUpdateChecker({
+		spoolDir,
+		version,
+		...(fetchLatest === undefined ? {} : { fetchLatest }),
+		onUpdate: (latest) => emitAppEvent({ kind: "update", latest }),
+	});
+	const updateAvailable = () => (updateCheck === true ? updateChecker.available() : undefined);
 
 	// the healer needs a dialable origin, which exists only once the server has
 	// bound — in-process app.request() never activates it
@@ -122,6 +151,13 @@ export function createDaemonApp({ spoolDir, version, uiDir, moveToTrash, launchE
 
 	const app = new Hono()
 		.get("/api/health", (c) => c.json({ name: "spool", version, pid: process.pid, startedAt }))
+		.post("/api/upgrade", (c) => {
+			// the toast door (#30): spawn the one orchestrator detached and stand
+			// back — the SSE drop and the version flip tell the rest of the story
+			const outcome = upgradeImpl();
+			if (!outcome.ok) return c.json({ error: outcome.error }, 409);
+			return c.json({ started: true }, 202);
+		})
 		.get("/api/session", (c) => c.json(readSession(spoolDir)))
 		.put(
 			"/api/session",
@@ -144,17 +180,21 @@ export function createDaemonApp({ spoolDir, version, uiDir, moveToTrash, launchE
 		.get("/api/events", (c) => {
 			return streamSSE(c, async (stream) => {
 				let id = 0;
-				await stream.writeSSE({
-					event: "hello",
-					data: JSON.stringify({ name: "spool", version }),
-					id: String(id++),
-				});
+				// subscribed before the first write: an event emitted while hello is
+				// still in flight is delivered, never dropped into the handshake gap
 				const listener = (event: AppEvent) => {
 					void stream.writeSSE({ event: "app", data: JSON.stringify(event), id: String(id++) }).catch(() => {});
 				};
 				appListeners.add(listener);
 				stream.onAbort(() => {
 					appListeners.delete(listener);
+				});
+				// hello carries the daemon's version — the reconnect after an upgrade
+				// answers a different one, and the page reloads itself on it (#30)
+				await stream.writeSSE({
+					event: "hello",
+					data: JSON.stringify({ name: "spool", version, latest: updateAvailable() ?? null }),
+					id: String(id++),
 				});
 				await new Promise<void>((resolve) => stream.onAbort(resolve));
 			});
@@ -556,9 +596,14 @@ export function createDaemonApp({ spoolDir, version, uiDir, moveToTrash, launchE
 		setSelfOrigin: (origin: string) => {
 			selfOrigin = origin;
 		},
+		/** Begin the daily phone-home — post-listen only, and only when opted in. */
+		startUpdateCheck: () => {
+			if (updateCheck === true) updateChecker.start();
+		},
 		close: () => {
 			stopRegistryWatch();
 			hub.close();
+			updateChecker.stop();
 			void shots.close();
 		},
 	};

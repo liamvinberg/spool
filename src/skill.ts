@@ -29,7 +29,7 @@ Read verbs (work from any cwd inside a registered project, auto-start the daemon
   spool url <frame>     mint a player URL to drive in your own browser
   spool skill [topic]   this text (needs nothing)
 
-The daemon: \`spool serve\` / \`spool status\` / \`spool stop\` are the handles; \`spool autostart\` makes it start at login (macOS). The CLI boots your frame in spool's own headless Chrome — it never reads the human's canvas.
+The daemon: \`spool serve\` / \`spool status\` / \`spool stop\` are the handles; \`spool autostart\` makes it start at login (macOS); \`spool upgrade\` installs the latest release and restarts it. The CLI boots your frame in spool's own headless Chrome — it never reads the human's canvas.
 
 Topics — \`spool skill <topic>\`:
   frames      the design/ contract: folders, sidecars, shared/, libraries
