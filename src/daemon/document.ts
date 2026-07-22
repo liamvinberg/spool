@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /**
  * Assembly of the served frame document. Spool owns the whole page (#16):
  * frames carry zero boilerplate, so everything a component needs to render —
@@ -206,6 +208,14 @@ const canvasShimJs = `(() => {
 	});
 })();
 `;
+
+/**
+ * The shim's identity, folded into every document hash (#23): the shim is
+ * baked into the daemon process, invisible to the input files — without this
+ * a restarted daemon 304s browsers into keeping documents whose shim speaks
+ * yesterday's protocol.
+ */
+export const shimHash: string = createHash("sha256").update(canvasShimJs).digest("hex");
 
 /**
  * The document served when a frame does not compile: the toolchain's message,

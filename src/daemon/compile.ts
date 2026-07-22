@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { build, formatMessagesSync, type Plugin } from "esbuild";
-import { assembleFrameDocument, errorDocument, mergeImportMap } from "./document";
+import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
 import { isSafeName, readIfExists } from "./project-files";
 import { buildFrameCss } from "./tailwind";
 import { importMapPins } from "./vendor";
@@ -208,7 +208,7 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
 export function hashInputs(version: string, frame: string, inputs: string[]): string {
 	const files = [...inputs].sort().map((file) => [file, hashContent(file)]);
 	return createHash("sha256")
-		.update(JSON.stringify([version, frame, files]))
+		.update(JSON.stringify([version, shimHash, frame, files]))
 		.digest("hex");
 }
 
