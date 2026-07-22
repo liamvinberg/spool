@@ -29,11 +29,14 @@ export function assembleFrameDocument({
 }: FrameDocumentParts): string {
 	const fontsBlock = fonts === undefined ? "" : `<style>${escapeInlineStyle(fonts)}</style>\n`;
 	const bundledBlock = bundledCss === undefined ? "" : `<style>${escapeInlineStyle(bundledCss)}</style>\n`;
-	// config and shim ride classic scripts so both exist before any module evaluates
+	// config and shim ride classic scripts so both exist before any module evaluates.
+	// the height chain is baseline (#10): h-full reaches the frame edge in this
+	// document AND inside the player's screen — one dialect for both contexts
 	return htmlShell(
 		frame,
 		`<script>window.__SPOOL__ = ${escapeJsonScript({ project, frame })}</script>
 <script>${escapeInlineScript(canvasShimJs)}</script>
+<style>html, body, #root { height: 100%; }</style>
 <style>${escapeInlineStyle(css)}</style>
 ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMap)}</script>
 `,
