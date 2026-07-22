@@ -1,22 +1,26 @@
-import type { ComponentType } from "react";
-import { Fragment, useEffect, useState, useSyncExternalStore } from "react";
+import type { ComponentType, RefObject } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 /**
  * The stage and pill (#24), matching Paper screens v1 "05 · player": the
  * frame letterboxed at native size on the near-black stage, or scaled to
  * fill a smaller viewport, and one floating pill — back, the name-stack, a
- * hairline, restart, the motion toggle, close. Styling lives in the served
- * document's chrome stylesheet; this component owns structure and wiring.
+ * hairline, restart, the motion toggle, the hint toggle, close. Styling
+ * lives in the served document's chrome stylesheet; this component owns
+ * structure and wiring.
  */
 
 export interface PlayerController {
 	subscribe(listener: () => void): () => void;
 	version(): number;
-	read(): { frame: string; stack: string[]; motion: boolean; arrival: number };
+	read(): { frame: string; stack: string[]; motion: boolean; hint: boolean; arrival: number };
 	geometry(frame: string): { w: number; h: number };
+	/** Stamps of this frame's coded-navigation elements, for the hint layer (#34). */
+	hintStamps(frame: string): string[];
 	back(): void;
 	restart(): void;
 	toggleMotion(): void;
+	toggleHint(): void;
 	close(): void;
 }
 
@@ -28,9 +32,11 @@ export function Player({
 	controller: PlayerController;
 }) {
 	useSyncExternalStore(controller.subscribe, controller.version);
-	const { frame, stack, motion, arrival } = controller.read();
+	const { frame, stack, motion, hint, arrival } = controller.read();
 	const { w, h } = controller.geometry(frame);
 	const viewport = useViewport();
+	const scrollRef = useRef<HTMLDivElement | null>(null);
+	const stamps = useMemo(() => controller.hintStamps(frame), [controller, frame]);
 	const Screen = frames[frame];
 	// the session's history is unbounded (#5); the readout is not — a loop-
 	// heavy walk shows its tail, the full path rides the title
@@ -40,7 +46,10 @@ export function Player({
 	return (
 		<div className="spool-stage">
 			<div className="spool-screen" style={{ width: w, height: h, transform: place(w, h, viewport) }}>
-				<div className="spool-screen-scroll">{Screen === undefined ? null : <Screen key={arrival} />}</div>
+				<div ref={scrollRef} className="spool-screen-scroll">
+					{Screen === undefined ? null : <Screen key={arrival} />}
+				</div>
+				{hint && <HintOverlay stamps={stamps} scrollRef={scrollRef} arrival={arrival} />}
 			</div>
 			<div className="spool-pill">
 				<button
@@ -117,6 +126,27 @@ export function Player({
 						/>
 					</svg>
 				</button>
+				<button
+					type="button"
+					id="spool-hint"
+					className={hint ? "spool-hint-toggle is-on" : "spool-hint-toggle"}
+					aria-label="Hints"
+					aria-pressed={hint}
+					onClick={controller.toggleHint}
+				>
+					<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+						<rect
+							x="2"
+							y="3.5"
+							width="10"
+							height="7"
+							rx="2"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="1.5"
+						/>
+					</svg>
+				</button>
 				<button type="button" id="spool-close" aria-label="Close" onClick={controller.close}>
 					<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
 						<path
@@ -129,6 +159,90 @@ export function Player({
 					</svg>
 				</button>
 			</div>
+		</div>
+	);
+}
+
+interface HintBox {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+	r: number;
+}
+
+/**
+ * The hint layer (#34): one outline over every element that navigates — the
+ * live [data-go] carriers plus the stamped ui.go carriers the config names.
+ * Overlay chrome only, pointer-transparent, measured against the screen
+ * viewport so scroll and scale never lie; the frame's own DOM is never
+ * touched (the parity law).
+ */
+function HintOverlay({
+	stamps,
+	scrollRef,
+	arrival,
+}: {
+	stamps: string[];
+	scrollRef: RefObject<HTMLDivElement | null>;
+	arrival: number;
+}) {
+	const [boxes, setBoxes] = useState<HintBox[]>([]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies(arrival): a screen swap re-measures — the new screen's elements are the point
+	useEffect(() => {
+		const scroller = scrollRef.current;
+		if (scroller === null) return;
+		const measure = () => {
+			const screenRect = scroller.getBoundingClientRect();
+			// the screen is transformed: divide measured pixels back to frame units
+			const scale = scroller.clientWidth > 0 ? screenRect.width / scroller.clientWidth : 1;
+			const carriers = new Set<Element>(scroller.querySelectorAll("[data-go]"));
+			if (stamps.length > 0) {
+				const wanted = new Set(stamps);
+				for (const el of scroller.querySelectorAll("[data-spool-source]")) {
+					const stamp = el.getAttribute("data-spool-source");
+					if (stamp !== null && wanted.has(stamp)) carriers.add(el);
+				}
+			}
+			setBoxes(
+				[...carriers].map((el) => {
+					const rect = el.getBoundingClientRect();
+					let radius = 0;
+					try {
+						radius = Number.parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
+					} catch {
+						// a detached element outlines square rather than not at all
+					}
+					return {
+						x: (rect.x - screenRect.x) / scale,
+						y: (rect.y - screenRect.y) / scale,
+						w: rect.width / scale,
+						h: rect.height / scale,
+						r: radius,
+					};
+				}),
+			);
+		};
+		measure();
+		scroller.addEventListener("scroll", measure, { passive: true });
+		window.addEventListener("resize", measure);
+		return () => {
+			scroller.removeEventListener("scroll", measure);
+			window.removeEventListener("resize", measure);
+		};
+	}, [stamps, scrollRef, arrival]);
+
+	return (
+		<div className="spool-hints" aria-hidden="true">
+			{boxes.map((box, index) => (
+				<div
+					// biome-ignore lint/suspicious/noArrayIndexKey: boxes are rebuilt whole per measure — position is identity
+					key={index}
+					className="spool-hint"
+					style={{ left: box.x, top: box.y, width: box.w, height: box.h, borderRadius: box.r }}
+				/>
+			))}
 		</div>
 	);
 }

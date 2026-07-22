@@ -1,6 +1,6 @@
 import { hc } from "hono/client";
 import type { AppType } from "../daemon/app";
-import type { FlowLink, Flows } from "../daemon/flows";
+import type { EdgeSite, FlowEdge, Flows } from "../daemon/flows";
 import type { FsListing } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { Camera, CanvasMode, CanvasState } from "../daemon/project-state";
@@ -11,7 +11,8 @@ export type {
 	Camera,
 	CanvasMode,
 	CanvasState,
-	FlowLink,
+	EdgeSite,
+	FlowEdge,
 	Flows,
 	FsListing,
 	Geometry,
@@ -107,7 +108,7 @@ async function errorText(res: { text(): Promise<string> }): Promise<string> {
 	}
 }
 
-/** The link graph (#25): declared from source, walked from witnessed sessions. */
+/** The link graph (#34): read from source, verified by witnessed sessions. */
 export async function fetchFlows(project: string): Promise<Flows | undefined> {
 	const res = await client.api.p[":project"].flows.$get({ param: { project } });
 	if (!res.ok) return undefined;

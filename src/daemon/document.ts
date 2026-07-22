@@ -59,7 +59,9 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * point — top-level element down to the deepest, each with its selector,
  * geometry, and nearest data-spool-source stamp (#23) — the canvas walks it
  * Figma-style (double-click descends, Esc ascends) without ever handing the
- * frame the pointer. Entered frames also hand canvas-zoom gestures back across
+ * frame the pointer; {spool:"sites"} answers with the frame-local boxes of
+ * navigation-site elements (#34) so arrows grow out of what causes them.
+ * Entered frames also hand canvas-zoom gestures back across
  * the iframe boundary; ordinary wheel input stays inside the frame so its own
  * scroll surfaces remain real.
  */
@@ -181,6 +183,37 @@ const canvasShimJs = `(() => {
 		return line.map(hitOf);
 	}
 
+	// where each navigation site's element sits (#34): stamp match first, and
+	// for data-go sites the rendered attribute as fallback — component-wrapped
+	// elements stamp where they are authored, which is not the site's file.
+	// Answers are keyed by the anchor's own path:line:col, both sides' spelling.
+	function siteBoxes(sites) {
+		const byStamp = new Map();
+		for (const el of document.querySelectorAll("[data-spool-source]")) {
+			const stamp = el.getAttribute("data-spool-source");
+			if (stamp && !byStamp.has(stamp)) byStamp.set(stamp, el);
+		}
+		const carriers = Array.from(document.querySelectorAll("[data-go]"));
+		const claimed = new Set();
+		const boxes = {};
+		for (const site of Array.isArray(sites) ? sites : []) {
+			if (!site || typeof site.path !== "string") continue;
+			const key = site.path + ":" + site.line + ":" + site.col;
+			let el = byStamp.get(key) || null;
+			if (!el && typeof site.target === "string") {
+				el = carriers.find((c) => c.getAttribute("data-go") === site.target && !claimed.has(c)) || null;
+			}
+			if (el) claimed.add(el);
+			if (el) {
+				const rect = el.getBoundingClientRect();
+				boxes[key] = { x: rect.x, y: rect.y, w: rect.width, h: rect.height };
+			} else {
+				boxes[key] = null;
+			}
+		}
+		return boxes;
+	}
+
 	addEventListener("message", async (event) => {
 		const m = event.data;
 		if (!m || typeof m !== "object") return;
@@ -190,6 +223,13 @@ const canvasShimJs = `(() => {
 			let chain = [];
 			try { chain = pickChain(m.x, m.y); } catch {}
 			parent.postMessage({ spool: "picked", frame, id: m.id, chain }, "*");
+			return;
+		}
+		if (m.spool === "sites") {
+			const frame = (window.__SPOOL__ || {}).frame;
+			let boxes = {};
+			try { boxes = siteBoxes(m.sites); } catch {}
+			parent.postMessage({ spool: "site-boxes", frame, id: m.id, boxes }, "*");
 			return;
 		}
 		if (m.spool !== "capture") return;

@@ -31,7 +31,7 @@ export async function readSelection(daemonUrl: string, name: string): Promise<st
 	return pretty(body.selection);
 }
 
-/** The derived link graph: declared from source, walked from witnessed sessions. */
+/** The derived link graph: read from source, verified by witnessed sessions. */
 export async function readFlows(daemonUrl: string, name: string): Promise<string> {
 	return pretty(await apiJson(`${daemonUrl}/api/p/${encodeURIComponent(name)}/flows`));
 }

@@ -83,7 +83,7 @@ program
 
 program
 	.command("flows")
-	.description("print the link graph: declared from source, walked from sessions")
+	.description("print the link graph: read from source, verified by sessions")
 	.action(async () => {
 		const { name, daemonUrl } = await verbContext();
 		process.stdout.write(`${await readFlows(daemonUrl, name)}\n`);
