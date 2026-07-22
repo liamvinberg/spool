@@ -46,6 +46,60 @@ function nextPicked(): Promise<unknown> {
 }
 
 describe("the freeze shim", () => {
+	it("claims canvas zoom gestures that start inside an entered frame", async () => {
+		const shim = await servedShim();
+		const posted: unknown[] = [];
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", {
+			configurable: true,
+			value: { postMessage: (message: unknown) => posted.push(message) },
+		});
+		window.__SPOOL__ = { project: "project", frame: "host" };
+
+		try {
+			runShim(shim);
+
+			const pinch = new WheelEvent("wheel", {
+				bubbles: true,
+				cancelable: true,
+				deltaY: -20,
+			});
+			// happy-dom's WheelEvent omits the MouseEvent modifier/point fields.
+			Object.defineProperties(pinch, {
+				ctrlKey: { value: true },
+				clientX: { value: 12 },
+				clientY: { value: 34 },
+			});
+			window.dispatchEvent(pinch);
+
+			const shortcut = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				metaKey: true,
+				key: "+",
+			});
+			window.dispatchEvent(shortcut);
+			const browserReset = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				metaKey: true,
+				key: "0",
+			});
+			window.dispatchEvent(browserReset);
+
+			expect(pinch.defaultPrevented, "pinch must not become browser page zoom").toBe(true);
+			expect(shortcut.defaultPrevented, "shortcut must not become browser page zoom").toBe(true);
+			expect(browserReset.defaultPrevented, "browser reset must remain an escape hatch").toBe(false);
+			expect(posted).toEqual([
+				{ spool: "zoom", frame: "host", kind: "wheel", x: 12, y: 34, deltaY: -20, deltaMode: 0 },
+				{ spool: "zoom", frame: "host", kind: "in" },
+			]);
+		} finally {
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
 	it("holds rAF callbacks while frozen and releases them on thaw", async () => {
 		const shim = await servedShim();
 		runShim(shim);

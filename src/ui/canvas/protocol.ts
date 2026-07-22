@@ -23,12 +23,25 @@ export interface PickedHit {
 	generated: boolean;
 }
 
+interface FrameWheelZoomMessage {
+	spool: "zoom";
+	frame: string;
+	kind: "wheel";
+	x: number;
+	y: number;
+	deltaY: number;
+	deltaMode: number;
+}
+
+export type FrameZoomMessage = FrameWheelZoomMessage | { spool: "zoom"; frame: string; kind: "in" | "out" };
+
 export type FrameMessage =
 	| { spool: "loaded"; frame: string }
 	| { spool: "error"; frame: string; error: string }
 	| { spool: "shot"; frame: string; url?: string; error?: string }
 	| { spool: "session?"; frame: string }
 	| { spool: "key"; frame: string; key: string }
+	| FrameZoomMessage
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
 	| { spool: "go"; frame: string; target: string; session?: SessionRecord }
 	| { spool: "back"; frame: string; target: string; session?: SessionRecord };
@@ -45,6 +58,17 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 			return m as unknown as FrameMessage;
 		case "key":
 			return typeof m.key === "string" ? (m as unknown as FrameMessage) : undefined;
+		case "zoom":
+			if (m.kind === "in" || m.kind === "out") {
+				return m as unknown as FrameMessage;
+			}
+			return m.kind === "wheel" &&
+				finite(m.x) &&
+				finite(m.y) &&
+				finite(m.deltaY) &&
+				(m.deltaMode === 0 || m.deltaMode === 1 || m.deltaMode === 2)
+				? (m as unknown as FrameMessage)
+				: undefined;
 		case "picked":
 			return Array.isArray(m.chain) && typeof m.id === "number" ? (m as unknown as FrameMessage) : undefined;
 		case "go":
@@ -54,6 +78,8 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 			return undefined;
 	}
 }
+
+const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 
 export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const;
 export const captureMessage = { spool: "capture" } as const;

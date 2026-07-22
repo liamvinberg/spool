@@ -59,7 +59,9 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * point — top-level element down to the deepest, each with its selector,
  * geometry, and nearest data-spool-source stamp (#23) — the canvas walks it
  * Figma-style (double-click descends, Esc ascends) without ever handing the
- * frame the pointer.
+ * frame the pointer. Entered frames also hand canvas-zoom gestures back across
+ * the iframe boundary; ordinary wheel input stays inside the frame so its own
+ * scroll surfaces remain real.
  */
 const canvasShimJs = `(() => {
 	let frozen = false;
@@ -200,11 +202,39 @@ const canvasShimJs = `(() => {
 		}
 	});
 
-	// an entered frame owns the pointer AND the keyboard — Esc must still exit
-	// (#22), so the one exit key is forwarded to the host
+	// Wheel and key events do not cross an iframe boundary. Once entered, the
+	// frame owns both, so claim only browser/canvas zoom gestures here and hand
+	// them to the host. Ordinary wheel input remains the frame's own scrolling.
+	addEventListener("wheel", (event) => {
+		if (window.parent === window || (!event.ctrlKey && !event.metaKey)) return;
+		event.preventDefault();
+		window.parent.postMessage({
+			spool: "zoom",
+			frame: (window.__SPOOL__ || {}).frame,
+			kind: "wheel",
+			x: event.clientX,
+			y: event.clientY,
+			deltaY: event.deltaY,
+			deltaMode: event.deltaMode,
+		}, "*");
+	}, { passive: false });
+
+	// Esc must still exit (#22); browser zoom shortcuts become the canvas's
+	// shortcuts so a focused frame cannot zoom the whole page into a trap.
 	addEventListener("keydown", (event) => {
-		if (event.key !== "Escape" || parent === window) return;
-		parent.postMessage({ spool: "key", frame: (window.__SPOOL__ || {}).frame, key: "Escape" }, "*");
+		if (window.parent === window) return;
+		const frame = (window.__SPOOL__ || {}).frame;
+		if (event.key === "Escape") {
+			window.parent.postMessage({ spool: "key", frame, key: "Escape" }, "*");
+			return;
+		}
+		if (!event.metaKey && !event.ctrlKey) return;
+		let kind;
+		if (event.key === "+" || event.key === "=") kind = "in";
+		else if (event.key === "-") kind = "out";
+		else return;
+		event.preventDefault();
+		window.parent.postMessage({ spool: "zoom", frame, kind }, "*");
 	});
 })();
 `;
