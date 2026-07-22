@@ -1,0 +1,154 @@
+import type { ComponentType } from "react";
+import { Fragment, useEffect, useState, useSyncExternalStore } from "react";
+
+/**
+ * The stage and pill (#24), matching Paper screens v1 "05 · player": the
+ * frame letterboxed at native size on the near-black stage, or scaled to
+ * fill a smaller viewport, and one floating pill — back, the name-stack, a
+ * hairline, restart, the motion toggle, close. Styling lives in the served
+ * document's chrome stylesheet; this component owns structure and wiring.
+ */
+
+export interface PlayerController {
+	subscribe(listener: () => void): () => void;
+	version(): number;
+	read(): { frame: string; stack: string[]; motion: boolean; arrival: number };
+	geometry(frame: string): { w: number; h: number };
+	back(): void;
+	restart(): void;
+	toggleMotion(): void;
+	close(): void;
+}
+
+export function Player({
+	frames,
+	controller,
+}: {
+	frames: Record<string, ComponentType>;
+	controller: PlayerController;
+}) {
+	useSyncExternalStore(controller.subscribe, controller.version);
+	const { frame, stack, motion, arrival } = controller.read();
+	const { w, h } = controller.geometry(frame);
+	const viewport = useViewport();
+	const Screen = frames[frame];
+
+	return (
+		<div className="spool-stage">
+			<div className="spool-screen" style={{ width: w, height: h, transform: place(w, h, viewport) }}>
+				{Screen === undefined ? null : <Screen key={arrival} />}
+			</div>
+			<div className="spool-pill">
+				<button
+					type="button"
+					id="spool-back"
+					aria-label="Back"
+					disabled={stack.length === 0}
+					onClick={controller.back}
+				>
+					<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+						<path
+							d="M10 3.5 L5.5 8 L10 12.5"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="1.5"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						/>
+					</svg>
+				</button>
+				<span className="spool-stack">
+					{stack.map((name, position) => (
+						// biome-ignore lint/suspicious/noArrayIndexKey: the same frame can sit at two stack depths — position IS a name-stack entry's identity
+						<Fragment key={`${position}:${name}`}>
+							<span>{name}</span>
+							<span>/</span>
+						</Fragment>
+					))}
+					<span className="is-current">{frame}</span>
+				</span>
+				<span className="spool-rule" />
+				<button type="button" id="spool-restart" aria-label="Restart" onClick={controller.restart}>
+					<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+						<path
+							d="M9.4 3.25 A5 5 0 1 1 6.3 3.3"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="1.5"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						/>
+						<path
+							d="M8.4 1.5 L6.3 3.3 L8 5"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="1.5"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						/>
+					</svg>
+				</button>
+				<button
+					type="button"
+					id="spool-motion"
+					className={motion ? "spool-motion is-on" : "spool-motion"}
+					aria-label="Motion"
+					aria-pressed={motion}
+					onClick={controller.toggleMotion}
+				>
+					<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+						<path
+							d="M1.5 7 Q3.25 2.8 5 7 T8.5 7 T12 7"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="1.5"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						/>
+					</svg>
+				</button>
+				<button type="button" id="spool-close" aria-label="Close" onClick={controller.close}>
+					<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+						<path
+							d="M4 4 L12 12 M12 4 L4 12"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="1.5"
+							strokeLinecap="round"
+						/>
+					</svg>
+				</button>
+			</div>
+		</div>
+	);
+}
+
+interface Viewport {
+	vw: number;
+	vh: number;
+}
+
+function useViewport(): Viewport {
+	const [viewport, setViewport] = useState<Viewport>(() => ({ vw: window.innerWidth, vh: window.innerHeight }));
+	useEffect(() => {
+		const measure = () => setViewport({ vw: window.innerWidth, vh: window.innerHeight });
+		window.addEventListener("resize", measure);
+		return () => window.removeEventListener("resize", measure);
+	}, []);
+	return viewport;
+}
+
+/**
+ * Screens v1 placement: native size 28px from the top when the frame fits
+ * inside the stage margins (56 across, 120 below for the pill zone); a
+ * viewport smaller than that — a phone — gets the frame scaled to fit,
+ * centered, immersive. Never above native size: a small frame on a big
+ * stage sits at its own pixels.
+ */
+function place(w: number, h: number, { vw, vh }: Viewport): string {
+	if (w <= vw - 56 && h <= vh - 120) {
+		return `translate(${Math.round((vw - w) / 2)}px, 28px)`;
+	}
+	const scale = Math.min(1, vw / w, vh / h);
+	return `translate(${(vw - w * scale) / 2}px, ${(vh - h * scale) / 2}px) scale(${scale})`;
+}

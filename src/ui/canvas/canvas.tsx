@@ -1089,7 +1089,11 @@ export function ProjectCanvas({
 			{menu !== null && (
 				<ContextMenu
 					at={menu}
-					onPlay={null}
+					onPlay={() => {
+						// the player's second door (#13): a session opening on this frame
+						window.open(`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(menu.frame)}`, "_blank");
+						setMenu(null);
+					}}
 					onOpenEditor={() => {
 						const pick = pickedRef.current;
 						openEditorFor(

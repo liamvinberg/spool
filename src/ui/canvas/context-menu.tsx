@@ -2,8 +2,8 @@
  * The right-click menu (#23), the second door to decided actions only (#7),
  * matching screens v1 verbatim: Play from here / Open in editor / separator /
  * Move to Trash, 200px raised panel, 30px rows, hover = surface. Play is the
- * player's door (#13) and stays disabled until the player exists (#24) —
- * modes control time, so the canvas never fakes play by entering.
+ * player's door (#13/#24) — modes control time, so the canvas never fakes
+ * play by entering; the player owns cinema in its own tab.
  */
 
 export interface MenuPlacement {
@@ -21,8 +21,7 @@ export function ContextMenu({
 	onTrash,
 }: {
 	at: MenuPlacement;
-	/** null renders Play from here disabled — the player arrives with #24. */
-	onPlay: (() => void) | null;
+	onPlay: () => void;
 	onOpenEditor: () => void;
 	onTrash: () => void;
 }) {
@@ -37,12 +36,8 @@ export function ContextMenu({
 			<button
 				type="button"
 				role="menuitem"
-				className={`flex h-[30px] shrink-0 items-center rounded-sm px-3 text-left text-base leading-[14px] ${
-					onPlay === null ? "text-muted" : "text-text hover:bg-surface"
-				}`}
-				disabled={onPlay === null}
-				title={onPlay === null ? "The player arrives with #24" : undefined}
-				onClick={onPlay ?? undefined}
+				className="flex h-[30px] shrink-0 items-center rounded-sm px-3 text-left text-base text-text leading-[14px] hover:bg-surface"
+				onClick={onPlay}
 			>
 				Play from here
 			</button>

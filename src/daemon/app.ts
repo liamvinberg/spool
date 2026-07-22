@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, isAbsolute, join, normalize, sep } from "node:path";
 import type { Context } from "hono";
@@ -6,14 +6,17 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import trash from "trash";
+import { z } from "zod";
 import { SpoolError } from "../errors";
 import { initProject } from "../init";
 import { openProject } from "../open";
 import { lookupProjectByName, readRegistry } from "../registry";
 import { createFrameCompiler } from "./compile";
+import { errorDocument } from "./document";
 import { createChangeHub } from "./events";
 import { listDirectory } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFile, writeGeometry } from "./geometry";
+import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerEtag } from "./play";
 import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
 import { frameGeometry, listProjectFrames, type ProjectCard, summarizeProject } from "./projection";
@@ -35,6 +38,12 @@ export interface DaemonOptions {
 	launchEditor?: (target: string) => void;
 }
 
+/** The player's params (#24): Zod-validated, path-safe names only. */
+const playParams = z.object({
+	frame: z.string().refine(isSafeName, { message: "not a frame name" }).optional(),
+	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
+});
+
 type LaunchEditor = (file: string, onError?: (fileName: string, message: string | null) => void) => void;
 
 /** launch-editor is CJS `export =` — createRequire keeps the types honest. */
@@ -48,6 +57,7 @@ const launchEditorDefault = createRequire(import.meta.url)("launch-editor") as L
 export function createDaemonApp({ spoolDir, version, uiDir, moveToTrash, launchEditor }: DaemonOptions) {
 	const startedAt = new Date().toISOString();
 	const compiler = createFrameCompiler(version);
+	const playerCompiler = createPlayerCompiler(version);
 	const hub = createChangeHub();
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
@@ -376,6 +386,54 @@ export function createDaemonApp({ spoolDir, version, uiDir, moveToTrash, launchE
 			c.header("x-spool-cache", doc.cache);
 			return c.html(doc.document);
 		})
+		.get(
+			"/play/:project",
+			validator("query", (value, c) => {
+				const parsed = playParams.safeParse(value);
+				if (!parsed.success) {
+					const issues = parsed.error.issues
+						.map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+						.join("; ");
+					return c.text(`not a playable request — ${issues}`, 400);
+				}
+				return parsed.data;
+			}),
+			async (c) => {
+				const name = c.req.param("project");
+				const project = resolveProject(c, name);
+				if ("response" in project) return project.response;
+				const { frame, scenario } = c.req.valid("query");
+				const projection = listProjectFrames(project.root);
+				const names = projection.frames.map((entry) => entry.name);
+				const first = names[0];
+				if (first === undefined) {
+					return c.text(
+						`nothing to play in "${name}" — a frame is born by writing design/frames/<name>/frame.tsx`,
+						404,
+					);
+				}
+				if (frame !== undefined && !names.includes(frame)) {
+					return c.text(`no frame "${frame}" to play — expected design/frames/${frame}/frame.tsx`, 404);
+				}
+				// the selected-else-first start (#13): an explicit ?frame= wins, then
+				// whatever the canvas last pointed at, then the first frame by name
+				const selected = selections.get(project.root).find((entry) => names.includes(entry.frame))?.frame;
+				const start = frame ?? selected ?? first;
+				const compiled = await playerCompiler.getBundle(project.root, names);
+				if (compiled.kind === "error") return c.html(errorDocument("player", compiled.message), 500);
+				const config = {
+					project: name,
+					start,
+					scenario: scenario ?? "default",
+					frames: Object.fromEntries(projection.frames.map((entry) => [entry.name, { w: entry.w, h: entry.h }])),
+				};
+				const etag = playerEtag(compiled.bundle, config);
+				if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+				c.header("etag", etag);
+				c.header("x-spool-cache", compiled.cache);
+				return c.html(assemblePlayerDocument(config, compiled.bundle));
+			},
+		)
 		.get("/api/p/:project/scenarios/:name", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
@@ -412,6 +470,17 @@ export function createDaemonApp({ spoolDir, version, uiDir, moveToTrash, launchE
 		})
 		.get("/vendor/spool.js", (c) => serveRuntime(c, vendorSpoolJs))
 		.get("/vendor/spool-jsx.js", (c) => serveRuntime(c, vendorSpoolJsxJs))
+		.get("/vendor/fonts/:file", (c) => {
+			// the player chrome's mono rides spool's own install — never a CDN
+			const file = chromeFontFile(c.req.param("file"));
+			if (file === undefined) return c.text("no such font", 404);
+			const etag = `"font-${version}-${c.req.param("file")}"`;
+			if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+			c.header("etag", etag);
+			c.header("cache-control", "public, max-age=0, must-revalidate");
+			c.header("content-type", "font/woff2");
+			return c.body(new Uint8Array(readFileSync(file)));
+		})
 		.get("/ui/*", (c) => {
 			const asset = readUiAsset(uiDir, c.req.path.slice("/ui/".length));
 			if (asset === undefined) return c.text("no such asset", 404);

@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@fontsource/fragment-mono':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@hono/node-server':
         specifier: ^2.0.10
         version: 2.0.10(hono@4.12.31)
@@ -41,14 +44,14 @@ importers:
       trash:
         specifier: ^10.1.1
         version: 10.1.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.5.5
         version: 2.5.5
       '@fontsource-variable/familjen-grotesk':
-        specifier: ^5.3.0
-        version: 5.3.0
-      '@fontsource/fragment-mono':
         specifier: ^5.3.0
         version: 5.3.0
       '@tailwindcss/vite':
@@ -1884,6 +1887,9 @@ packages:
     resolution: {integrity: sha512-N1XQngeqMBoj9wM4ZFadVV2MymImeiFfYD+fJrNlcVcOHsJFFQe7n3b+aBoTPwARuq2HQxukfzVpQmAk1gN4sQ==}
     engines: {node: '>=10'}
 
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+
 snapshots:
 
   '@biomejs/biome@2.5.5':
@@ -3236,3 +3242,5 @@ snapshots:
       mount-point: 3.0.0
       user-home: 2.0.0
       xdg-basedir: 4.0.0
+
+  zod@4.4.3: {}

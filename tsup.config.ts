@@ -16,6 +16,7 @@ export default defineConfig([
 		format: "esm",
 		platform: "browser",
 		target: "es2022",
-		external: ["react", "react/jsx-runtime"],
+		tsconfig: "tsconfig.runtime.json",
+		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client"],
 	},
 ]);

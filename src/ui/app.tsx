@@ -162,9 +162,9 @@ export function App() {
 					<div className="flex h-full items-center gap-4">
 						<button
 							type="button"
-							className="flex h-7 w-7 items-center justify-center rounded-sm opacity-40"
-							title="Play — the player arrives with #24"
-							disabled
+							className="flex h-7 w-7 items-center justify-center rounded-sm hover:bg-surface"
+							title="Play"
+							onClick={() => window.open(`/play/${encodeURIComponent(focusedTab.name)}`, "_blank")}
 						>
 							<PlayIcon />
 						</button>
