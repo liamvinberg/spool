@@ -1,0 +1,7 @@
+/*
+ * Project fonts, injected into every frame document.
+ * Familjen Grotesk — display + UI (400 regular through 700 for hero display type).
+ * Fragment Mono — code, paths, the install line (weight 400 only).
+ * Instrument Sans — the sample kaffe product shown inside the spool screens.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&family=Fragment+Mono&family=Instrument+Sans:wght@400;500;600&display=swap');
