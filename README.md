@@ -5,3 +5,29 @@ A canvas where the frames are alive.
 Agent-authored TSX frames on an infinite canvas: arrange them spatially, link them into walkable flows, and feel an app (interactions, motion, state, real inputs) before it exists. Code is the document; the canvas is a projection of it. A design space is just a `design/` folder inside your product repo: local-first, git-tracked, no cloud.
 
 Home: [spool.page](https://spool.page). Status: wayfinding. The map lives in this repo's issues (`wayfinder:map`); exploration research lives in `research/`.
+
+## Install
+
+```sh
+npm i -g spool.page
+```
+
+Node 22+. macOS-first; the canvas wants Chrome (WebKit renders transformed iframes blurry).
+
+```sh
+cd your-product
+spool init        # scaffold design/ and register the project
+spool serve       # daemon at http://localhost:7766 — any spool command starts it too
+spool autostart   # start at login (launchd); spool autostart off removes it
+```
+
+Open the canvas in Chrome (install as app for the dock icon). Frames are authored by your agent: `spool skill` prints the complete contract, and `spool init` writes the signposts that point agents at it.
+
+## Develop
+
+```sh
+pnpm install
+pnpm dev <command>   # the checkout cli — own state dir (~/.spool-dev), own port (7767)
+```
+
+Real projects run the released version; a checkout daemon serves beside it on its own port and state dir (the `dev` script sets `SPOOL_DIR` and `SPOOL_PORT`). Shipping: conventional commits on main feed release-please; merging the release PR is the one human gate — the publish workflow re-runs the gates, then npm trusted publishing releases `spool.page`.
