@@ -78,6 +78,14 @@ const SELECTION_PUT_MS = 150;
 const PICK_REPLY_MS = 400;
 const TRASH_UNDO_MS = 5000;
 
+function wheelPixels(delta: number, mode: number, pageSize: number): number {
+	return delta * (mode === 1 ? 16 : mode === 2 ? pageSize : 1);
+}
+
+function wheelZoomFactor(delta: number, mode: number, pageSize: number): number {
+	return clamp(Math.exp(-wheelPixels(delta, mode, pageSize) * 0.0075), 0.5, 2);
+}
+
 export function ProjectCanvas({
 	project,
 	onChrome,
@@ -694,12 +702,10 @@ export function ProjectCanvas({
 						const cameraScale = cameraRef.current?.k ?? 1;
 						const scaleX = iframe.clientWidth > 0 ? frameRect.width / iframe.clientWidth : cameraScale;
 						const scaleY = iframe.clientHeight > 0 ? frameRect.height / iframe.clientHeight : cameraScale;
-						const deltaScale = message.deltaMode === 1 ? 16 : message.deltaMode === 2 ? viewport.clientHeight : 1;
-						const factor = clamp(Math.exp(-message.deltaY * deltaScale * 0.0075), 0.5, 2);
 						zoomAtPoint(
 							frameRect.left - viewportRect.left + message.x * scaleX,
 							frameRect.top - viewportRect.top + message.y * scaleY,
-							factor,
+							wheelZoomFactor(message.deltaY, message.deltaMode, viewport.clientHeight),
 						);
 						return;
 					}
@@ -729,13 +735,15 @@ export function ProjectCanvas({
 			event.preventDefault();
 			stopAnimation();
 			setMenu(null);
-			const scale = event.deltaMode === 1 ? 16 : 1;
-			const dx = event.deltaX * scale;
-			const dy = event.deltaY * scale;
+			const dx = wheelPixels(event.deltaX, event.deltaMode, el.clientHeight);
+			const dy = wheelPixels(event.deltaY, event.deltaMode, el.clientHeight);
 			if (event.ctrlKey || event.metaKey) {
 				const rect = el.getBoundingClientRect();
-				const factor = clamp(Math.exp(-dy * 0.0075), 0.5, 2);
-				zoomAtPoint(event.clientX - rect.left, event.clientY - rect.top, factor);
+				zoomAtPoint(
+					event.clientX - rect.left,
+					event.clientY - rect.top,
+					wheelZoomFactor(event.deltaY, event.deltaMode, el.clientHeight),
+				);
 			} else {
 				setCamera((c) =>
 					c === null ? c : event.shiftKey && dx === 0 ? { ...c, x: c.x - dy } : { ...c, x: c.x - dx, y: c.y - dy },
