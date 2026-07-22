@@ -23,3 +23,18 @@ describe("frame zoom protocol", () => {
 		expect(parseFrameMessage({ spool: "zoom", frame: "host", kind: "huge" })).toBeUndefined();
 	});
 });
+
+describe("site boxes protocol (#34)", () => {
+	it("accepts a shim's site-box answer and rejects a shapeless one", () => {
+		const answer = {
+			spool: "site-boxes",
+			frame: "cart",
+			id: 3,
+			boxes: { "frames/cart/frame.tsx:4:4": { x: 10, y: 20, w: 120, h: 44 }, "frames/cart/frame.tsx:9:4": null },
+		};
+
+		expect(parseFrameMessage(answer)).toEqual(answer);
+		expect(parseFrameMessage({ spool: "site-boxes", frame: "cart", id: 3 })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "site-boxes", frame: "cart", boxes: {} })).toBeUndefined();
+	});
+});

@@ -1,4 +1,5 @@
 import type { SessionRecord } from "../../runtime/frame-runtime";
+import type { Box } from "./camera";
 
 /**
  * The postMessage bridge between canvas and frames. The frame side lives in
@@ -35,6 +36,21 @@ interface FrameWheelZoomMessage {
 
 export type FrameZoomMessage = FrameWheelZoomMessage | { spool: "zoom"; frame: string; kind: "in" | "out" };
 
+/** Frame-local boxes of navigation-site elements, keyed `path:line:col` of
+ * the anchor each side derives; null when no element renders for it. */
+export type SiteBoxes = Record<string, Box | null>;
+
+/** One anchor the canvas wants located: its stamp position, and for data-go
+ * sites the target as a DOM fallback — a component-wrapped element stamps
+ * where it is authored (shared/ui), never at the site. A ui.go site carries
+ * no target: its only truths are the stamp and the frame edge (#34). */
+export interface SiteAnchor {
+	path: string;
+	line: number;
+	col: number;
+	target?: string;
+}
+
 export type FrameMessage =
 	| { spool: "loaded"; frame: string }
 	| { spool: "error"; frame: string; error: string }
@@ -43,6 +59,7 @@ export type FrameMessage =
 	| { spool: "key"; frame: string; key: string }
 	| FrameZoomMessage
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
+	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
 	| { spool: "go"; frame: string; target: string; session?: SessionRecord }
 	| { spool: "back"; frame: string; target: string; session?: SessionRecord };
 
@@ -71,6 +88,10 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				: undefined;
 		case "picked":
 			return Array.isArray(m.chain) && typeof m.id === "number" ? (m as unknown as FrameMessage) : undefined;
+		case "site-boxes":
+			return typeof m.boxes === "object" && m.boxes !== null && typeof m.id === "number"
+				? (m as unknown as FrameMessage)
+				: undefined;
 		case "go":
 		case "back":
 			return typeof m.target === "string" ? (m as unknown as FrameMessage) : undefined;
@@ -85,3 +106,4 @@ export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const
 export const captureMessage = { spool: "capture" } as const;
 export const pickMessage = (x: number, y: number, id: number) => ({ spool: "pick", x, y, id }) as const;
 export const sessionReply = (record: SessionRecord | null) => ({ spool: "session", record }) as const;
+export const sitesMessage = (sites: SiteAnchor[], id: number) => ({ spool: "sites", sites, id }) as const;

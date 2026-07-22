@@ -19,6 +19,7 @@ import { createChangeHub } from "./events";
 import { deriveFlows, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFile, writeGeometry } from "./geometry";
+import { hintStamps } from "./nav-sites";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerEtag } from "./play";
 import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
@@ -313,8 +314,9 @@ export function createDaemonApp({
 						return c.text(`no frame "${frame}" to walk`, 404);
 					}
 				}
-				recordWalk(project.root, from, to);
-				hub.publish(project.root, { kind: "walked" });
+				// a mark that records moves the flows payload; a discarded walk is
+				// silent — the map never claims more than source (#34)
+				if (recordWalk(project.root, from, to)) hub.publish(project.root, { kind: "walked" });
 				return c.body(null, 204);
 			},
 		)
@@ -508,6 +510,12 @@ export function createDaemonApp({
 					start,
 					scenario: scenario ?? "default",
 					frames: Object.fromEntries(projection.frames.map((entry) => [entry.name, { w: entry.w, h: entry.h }])),
+					hints: Object.fromEntries(
+						names.flatMap((frameName) => {
+							const stamps = hintStamps(project.root, frameName);
+							return stamps.length === 0 ? [] : [[frameName, stamps]];
+						}),
+					),
 				};
 				const etag = playerEtag(compiled.bundle, config);
 				if (c.req.header("if-none-match") === etag) return c.body(null, 304);

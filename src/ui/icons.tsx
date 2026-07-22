@@ -50,6 +50,22 @@ export function BackIcon() {
 	);
 }
 
+/** The thread glyph (#34): one arrow of the map, tail to head. */
+export function ThreadIcon() {
+	return (
+		<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+			<path
+				d="M2.5 12.5 C 6.5 12.5, 9.5 3.5, 12.5 3.5"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+			/>
+			<path d="M14.5 3.5 L10.8 1.8 L10.8 5.2 Z" fill="currentColor" stroke="none" />
+		</svg>
+	);
+}
+
 export function CloseIcon() {
 	return (
 		<svg width="8" height="8" viewBox="0 0 16 16" aria-hidden="true">

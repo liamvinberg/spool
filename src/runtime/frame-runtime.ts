@@ -55,6 +55,8 @@ export interface PlayerConfig {
 	start: string;
 	scenario: string;
 	frames: Record<string, { w: number; h: number }>;
+	/** Stamps of coded-navigation elements per frame, for the hint layer (#34). */
+	hints: Record<string, string[]>;
 }
 
 declare global {
@@ -406,6 +408,9 @@ function bindDataGo(): void {
 
 let arrival = 0;
 let motionOn = true;
+// the hint layer (#34): outlines every element that navigates. Off by default
+// — the player is the immersive stage — and never persisted.
+let hintOn = false;
 let playVersion = 0;
 const playListeners = new Set<() => void>();
 
@@ -476,14 +481,19 @@ const playerController: PlayerController = {
 		return () => playListeners.delete(listener);
 	},
 	version: () => playVersion,
-	read: () => ({ frame: currentFrame, stack: [...stack], motion: motionOn, arrival }),
+	read: () => ({ frame: currentFrame, stack: [...stack], motion: motionOn, hint: hintOn, arrival }),
 	// the fallback restates the projection's default footprint across the
 	// compile-unit boundary; unreachable while navigate guards membership
 	geometry: (frame) => play?.frames[frame] ?? { w: 390, h: 844 },
+	hintStamps: (frame) => play?.hints?.[frame] ?? [],
 	back,
 	restart: () => void restartSession(),
 	toggleMotion() {
 		motionOn = !motionOn;
+		notifyPlay();
+	},
+	toggleHint() {
+		hintOn = !hintOn;
 		notifyPlay();
 	},
 	close: closePlayer,

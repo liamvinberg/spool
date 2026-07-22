@@ -4,9 +4,10 @@ import { writeAtomic } from "../atomic-write";
 
 /**
  * Per-project canvas state in design/.spool/state.json: the mode (#7 — D
- * toggles live/design, persisted per project, never auto-switched) and the
+ * toggles live/design, persisted per project, never auto-switched), the
  * last settled camera (#12 — cameras are per-browser live, last-settle wins
- * the persisted slot). App-owned ephemera: corrupt state reads as absent.
+ * the persisted slot), and the arrows toggle (#34 — unset means on: the map
+ * is spool's identity). App-owned ephemera: corrupt state reads as absent.
  */
 
 export type CanvasMode = "live" | "design";
@@ -20,6 +21,7 @@ export interface Camera {
 export interface CanvasState {
 	mode: CanvasMode;
 	camera?: Camera;
+	arrows?: boolean;
 }
 
 const DEFAULT_STATE: CanvasState = { mode: "live" };
@@ -48,11 +50,13 @@ export function parseCanvasState(value: unknown): CanvasState | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const record = value as Record<string, unknown>;
 	if (record.mode !== "live" && record.mode !== "design") return undefined;
-	if (record.camera === undefined) return { mode: record.mode };
+	if (record.arrows !== undefined && typeof record.arrows !== "boolean") return undefined;
+	const arrows = record.arrows === undefined ? {} : { arrows: record.arrows };
+	if (record.camera === undefined) return { mode: record.mode, ...arrows };
 	const camera = record.camera as Record<string, unknown>;
 	if (typeof camera !== "object" || camera === null) return undefined;
 	const { x, y, k } = camera;
 	if (typeof x !== "number" || typeof y !== "number" || typeof k !== "number") return undefined;
 	if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(k) || k <= 0) return undefined;
-	return { mode: record.mode, camera: { x, y, k } };
+	return { mode: record.mode, camera: { x, y, k }, ...arrows };
 }

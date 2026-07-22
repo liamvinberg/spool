@@ -457,6 +457,30 @@ describe("thumbnails", () => {
 		).toBe(400);
 	});
 
+	it("remembers the arrows toggle with the rest of the canvas state (#34)", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const app = makeApp(spoolDir);
+
+		// unset means on — the map is spool's identity; a fresh project stores nothing
+		expect(await (await app.request(`/api/p/${name}/state`)).json()).toEqual({ mode: "live" });
+
+		const put = await app.request(`/api/p/${name}/state`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ mode: "live", arrows: false }),
+		});
+		expect(put.status).toBe(204);
+		expect(await (await app.request(`/api/p/${name}/state`)).json()).toEqual({ mode: "live", arrows: false });
+
+		const bad = await app.request(`/api/p/${name}/state`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ mode: "live", arrows: "hidden" }),
+		});
+		expect(bad.status).toBe(400);
+	});
+
 	it("publishes a thumb event to the project's SSE stream on write", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);

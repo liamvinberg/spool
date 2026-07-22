@@ -66,7 +66,15 @@ describe("selection and flows over the daemon", () => {
 
 		expect(JSON.parse(printed)).toEqual({
 			frames: ["cart", "pay"],
-			links: [{ from: "cart", to: "pay", kind: "declared" }],
+			edges: [
+				{
+					from: "cart",
+					to: "pay",
+					certainty: "will",
+					sites: [{ via: "data-go", path: "frames/cart/frame.tsx", line: 2, anchor: { line: 2, col: 9 } }],
+				},
+			],
+			unreadable: [],
 		});
 	});
 });

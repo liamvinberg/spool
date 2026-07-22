@@ -23,7 +23,7 @@ Lifecycle (offline, take a path):
 
 Read verbs (work from any cwd inside a registered project, auto-start the daemon):
   spool selection       what the human points at: frame or element, source path and lines
-  spool flows           the link graph: declared from source, walked from real sessions
+  spool flows           the link graph, read from source: edges, certainty, verified walks
   spool shot <frame>    boot the frame headless, save a screenshot, print its path
   spool logs <frame>    the same boot's console output, cached until the document changes
   spool url <frame>     mint a player URL to drive in your own browser
@@ -57,7 +57,7 @@ const topics: Record<string, string> = {
   AGENTS.md, CLAUDE.md       init's signposts pointing here; .gitignore covers .spool/
   canvas.json, .spool/       app-owned — never write these
 
-Names are folder names — no leading dot, no slashes. Variants are \`--\`-suffixed siblings (checkout--empty), complete frames in their own right and valid walk targets. Renaming a frame is renaming its folder: update data-go literals that target it; its walked arrows drop until re-walked. Deleting is deleting the folder.
+Names are folder names — no leading dot, no slashes. Variants are \`--\`-suffixed siblings (checkout--empty), complete frames in their own right and valid walk targets. Renaming a frame is renaming its folder: update data-go and ui.go literals that target it, or the map marks them missing. Deleting is deleting the folder.
 
 frame.json is the one file both hands write, geometry only: spool fills it in when missing (390×844, placed beside the existing frames) and rewrites it as the human drags and resizes; write w/h yourself for an exact size. Beyond that, spool's hands touch your files exactly one more way — the human's delete moves a frame folder to the OS Trash. Source is never edited from the canvas.
 
@@ -83,7 +83,7 @@ Coded walks carry no transition name — data-transition rides the element, ui.g
 
 The session seeds from a scenario before first render — a frame never renders unseeded (topic: scenarios). A frame document keeps its session across walks and reloads in that browser tab; ?scenario=<name> on its URL names the seed, and a name different from the running session's restarts it. On the canvas, a walk hands the session to the next frame. In the player every load is a fresh session — reload is restart.
 
-Arrows on the canvas are derived, never drawn. A literal data-go target anywhere in a frame's folder is a declared link: a solid arrow. Computed targets — ui.go, a data-go built at runtime — are invisible until a real session walks them: walks in player sessions (yours via spool url, the human's) and on the canvas draw dashed arrows. A headless shot/logs boot never mints a link. Editing a frame's source drops its walked links until re-walked; a declared link subsumes its walked twin. \`spool flows\` prints the graph.
+Arrows claim what the code says. Every literal data-go target and ui.go(name) call anywhere in a frame's folder is an edge, drawn from the element that causes it: solid when the walk is unconditional (will go), faint when the literal sits inside a branch — ternary, if/else, switch, &&/|| (might go; ui.go(ok ? "receipt" : "topup") draws two faint arrows). A destination the parser cannot read (ui.go(routeFor(state))) draws nothing and is reported by \`spool flows\` as unreadable — prefer literal targets when you want the map to show the flow. Playing never adds or removes an arrow; real walks only flip verified marks on derived edges, dropped when the from-frame's source changes. A headless shot/logs boot never verifies anything.
 
 The player composes every frame into one document, so walks are View Transitions, not navigations: crossfade by default; morphs happen wherever two frames give an element the same view-transition-name. Each swap carries its direction (forward, back, restart) plus any data-transition type — style them in shared/transitions.css with ::view-transition-* selectors, plain CSS. Reduced motion is respected, and the player pill toggles motion, walks back, restarts, and closes. Screen components mount fresh on every arrival.`,
 
@@ -146,14 +146,14 @@ The verify loop — shot and logs are two outputs of one boot: your frame's real
 
 The first shot on a machine downloads spool's pinned headless Chrome once, narrated on stderr — relay the wait, don't kill it.
 
-The drive loop — \`spool url <frame>\` prints a player URL (append &scenario=<name> to pick a seed) after checking the frame exists. Open it in your own browser and drive the real thing: click, type, walk. Walks you take are witnessed as dashed arrows on the human's canvas — verifying a flow and mapping it are the same act. The player's restart re-reads the scenario, so edit-seed-restart iterates on one URL.
+The drive loop — \`spool url <frame>\` prints a player URL (append &scenario=<name> to pick a seed) after checking the frame exists. Open it in your own browser and drive the real thing: click, type, walk. Walks you take flip verified marks on the map's derived edges — \`spool flows\` shows which claims a real session has confirmed, most valuable on might edges: a verified faint edge is a branch that actually fired. The player's restart re-reads the scenario, so edit-seed-restart iterates on one URL.
 
 \`spool selection\` prints what the human points at — always a JSON list, empty when nothing is selected:
   frame entries      { kind: "frame", frame, path, size: { w, h } }
   element entries    { kind: "element", frame, path, lines: [start, end], selector, excerpt }
                      — the human descended into a frame in design mode. path and lines land in source (open-in-editor exact), selector in the live DOM, excerpt is the JSX span. "generated": true marks runtime-created DOM: lines point at the nearest stamped ancestor (no stamp at all: the frame's first line), excerpt becomes live outerHTML, trust the selector.
 
-\`spool flows\` prints { frames, links } — every link { from, to, kind: "declared" | "walked" }, and "missing": true on declared targets no frame answers: the todo list when wiring a flow.`,
+\`spool flows\` prints { frames, edges, unreadable } — every edge { from, to, certainty: "will" | "might", sites: [{ path, line, conditional? }] }, "verified": true once a real session took it, "missing": true on targets no frame answers (typo'd ui.go literals included), and unreadable entries { frame, path, line } for navigation whose destination cannot be read: together, the todo list when wiring a flow.`,
 };
 
 export function skillText(topic?: string): string {

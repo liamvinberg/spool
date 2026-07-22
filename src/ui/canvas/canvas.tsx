@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Camera, CanvasMode, FlowLink, Geometry, ProjectedFrame } from "../api";
+import type { Camera, CanvasMode, FlowEdge, Geometry, ProjectedFrame } from "../api";
 import {
 	beaconTrash,
 	fetchCanvasState,
@@ -17,7 +17,7 @@ import {
 import { RibbonMark } from "../icons";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
 import { ContextMenu, MENU_SIZE } from "./context-menu";
-import { FlowArrows } from "./flow-arrows";
+import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
 import { FrameLabel } from "./frame-label";
 import { FrameShell, type WalkBoot } from "./frame-shell";
 import { useFrameLifecycle } from "./lifecycle";
@@ -31,7 +31,15 @@ import {
 	type PickedSelection,
 	SelectionOverlay,
 } from "./overlays";
-import { type PickedHit, parseFrameMessage, pickMessage, type SessionRecord, sessionReply } from "./protocol";
+import {
+	type PickedHit,
+	parseFrameMessage,
+	pickMessage,
+	type SessionRecord,
+	type SiteAnchor,
+	sessionReply,
+	sitesMessage,
+} from "./protocol";
 import { snapEdge, snapMovedBox } from "./snap";
 import { TrashToast } from "./trash-toast";
 
@@ -52,6 +60,9 @@ export interface CanvasChrome {
 	mode: CanvasMode;
 	zoomPct: number;
 	setMode: (mode: CanvasMode) => void;
+	/** The threads toggle (#34): shown pressed while the map draws. */
+	arrowsOn: boolean;
+	toggleArrows: () => void;
 }
 
 interface Point {
@@ -96,7 +107,11 @@ export function ProjectCanvas({
 }) {
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const [frames, setFrames] = useState<ProjectedFrame[]>([]);
-	const [links, setLinks] = useState<FlowLink[]>([]);
+	const [edges, setEdges] = useState<FlowEdge[]>([]);
+	// the arrows toggle (#34): per-project, default on — the map is spool's identity
+	const [arrowsOn, setArrowsOn] = useState(true);
+	// frame-local boxes of navigation-site elements, as each frame's shim answers
+	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
 	const [camera, setCamera] = useState<Camera | null>(null);
 	const [mode, setMode] = useState<CanvasMode>("live");
@@ -210,16 +225,17 @@ export function ProjectCanvas({
 
 	const refetchFlows = useCallback(async () => {
 		const flows = await fetchFlows(project);
-		if (flows !== undefined) setLinks(flows.links);
+		if (flows !== undefined) setEdges(flows.edges);
 	}, [project]);
 
-	// boot: stored state (mode + camera), the projection, the link graph
+	// boot: stored state (mode + camera + arrows), the projection, the link graph
 	useEffect(() => {
 		let alive = true;
 		void (async () => {
 			const state = await fetchCanvasState(project);
 			if (alive && state !== undefined) {
 				setMode(state.mode);
+				setArrowsOn(state.arrows ?? true);
 				if (state.camera !== undefined) setCamera(state.camera);
 			}
 			if (alive) await Promise.all([refetchFrames(), refetchFlows()]);
@@ -228,6 +244,52 @@ export function ProjectCanvas({
 			alive = false;
 		};
 	}, [project, refetchFrames, refetchFlows]);
+
+	// --- site boxes (#34): arrows grow out of the element that causes them ------
+
+	const edgesRef = useRef(edges);
+	edgesRef.current = edges;
+	const siteBoxSeq = useRef(0);
+	const siteBoxExpected = useRef(new Map<string, number>());
+
+	/**
+	 * Ask one frame's shim where its navigation-site elements sit. Only the
+	 * newest request per frame applies; a hibernated frame has no document to
+	 * ask and its arrows keep the frame-edge fallback.
+	 */
+	const requestSiteBoxes = useCallback((frame: string) => {
+		const target = iframes.current.get(frame)?.contentWindow;
+		if (target == null) return;
+		const anchors: SiteAnchor[] = [];
+		const seen = new Set<string>();
+		for (const edge of edgesRef.current) {
+			if (edge.from !== frame) continue;
+			for (const site of edge.sites) {
+				if (site.anchor === undefined) continue;
+				const key = anchorKeyOf(site.path, site.anchor);
+				if (seen.has(key)) continue;
+				seen.add(key);
+				// only data-go sites carry the DOM-fallback target: a ui.go site
+				// whose stamp misses must fall to the frame edge, never claim an
+				// unrelated carrier that happens to share the destination
+				anchors.push({
+					path: site.path,
+					line: site.anchor.line,
+					col: site.anchor.col,
+					...(site.via === "data-go" ? { target: edge.to } : {}),
+				});
+			}
+		}
+		if (anchors.length === 0) return;
+		const id = ++siteBoxSeq.current;
+		siteBoxExpected.current.set(frame, id);
+		target.postMessage(sitesMessage(anchors, id), "*");
+	}, []);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies(edges): the graph moving is the trigger — the request reads it through the ref
+	useEffect(() => {
+		for (const name of iframes.current.keys()) requestSiteBoxes(name);
+	}, [edges, requestSiteBoxes]);
 
 	// a staged Trash resolves when the projection stops listing the folder
 	useEffect(() => {
@@ -370,6 +432,8 @@ export function ProjectCanvas({
 		},
 		[exitEntered],
 	);
+
+	const toggleArrows = useCallback(() => setArrowsOn((on) => !on), []);
 
 	// --- selection sync (#23): what Liam points at, served to agents ------------
 
@@ -616,7 +680,8 @@ export function ProjectCanvas({
 					setPicked((current) => (current?.frame === frame ? null : current));
 					lifecycleRef.current.markStale(frame);
 					void refetchFrames();
-					// an edit moves the graph: declared links re-derive, walked edges drop
+					// an edit moves the graph: edges re-derive, verified marks may drop —
+					// walks themselves stay canvas-silent (#34): they cannot move the map
 					void refetchFlows();
 				} else if (event.kind === "shared") {
 					// anything in shared/ can stale every document
@@ -628,9 +693,6 @@ export function ProjectCanvas({
 					setWalkBoots((current) => (Object.keys(current).length === 0 ? current : {}));
 					setPicked(null);
 					void refetchFrames();
-				} else if (event.kind === "walked") {
-					// a session witnessed an edge (#25) — ours or an agent's own browser
-					void refetchFlows();
 				} else if (event.kind === "geometry") {
 					// another browser's hands (or our own echo); ours are the truth
 					// while a gesture or an un-flushed nudge is in flight
@@ -660,6 +722,8 @@ export function ProjectCanvas({
 					setWalkBoots((current) => without(current, message.frame));
 					// the keyboard follows the walk: an entered frame owns it (#28)
 					if (enteredRef.current === message.frame) iframes.current.get(message.frame)?.focus();
+					// a fresh document renders fresh elements: re-anchor its arrows (#34)
+					requestSiteBoxes(message.frame);
 					return;
 				case "shot":
 					lifecycleRef.current.noteShot(message.frame, message.url);
@@ -679,6 +743,14 @@ export function ProjectCanvas({
 					const waiter = pickWaiters.current.get(message.id);
 					pickWaiters.current.delete(message.id);
 					waiter?.(message.chain);
+					return;
+				}
+				case "site-boxes": {
+					// only the newest request per frame applies — a slow reply from a
+					// superseded document must not re-anchor arrows to dead geometry
+					if (siteBoxExpected.current.get(message.frame) !== message.id) return;
+					siteBoxExpected.current.delete(message.frame);
+					setSiteBoxes((current) => ({ ...current, [message.frame]: message.boxes }));
 					return;
 				}
 				case "key":
@@ -726,7 +798,7 @@ export function ProjectCanvas({
 		};
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
-	}, [project, walkTo, exitEntered, stopAnimation, zoomAtPoint, viewportCenter]);
+	}, [project, walkTo, exitEntered, stopAnimation, zoomAtPoint, viewportCenter, requestSiteBoxes]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
 	useEffect(() => {
@@ -755,14 +827,14 @@ export function ProjectCanvas({
 		return () => el.removeEventListener("wheel", onWheel);
 	}, [stopAnimation, zoomAtPoint]);
 
-	// persist camera + mode on settle: last-settle wins the stored slot (#12)
+	// persist camera + mode + arrows on settle: last-settle wins the stored slot (#12)
 	useEffect(() => {
 		if (camera === null) return;
 		const settle = setTimeout(() => {
-			putCanvasState(project, { mode, camera: { x: camera.x, y: camera.y, k: camera.k } });
+			putCanvasState(project, { mode, arrows: arrowsOn, camera: { x: camera.x, y: camera.y, k: camera.k } });
 		}, SETTLE_PERSIST_MS);
 		return () => clearTimeout(settle);
-	}, [camera, mode, project]);
+	}, [camera, mode, arrowsOn, project]);
 
 	// --- gestures ---------------------------------------------------------------
 
@@ -1169,6 +1241,11 @@ export function ProjectCanvas({
 				}
 				return;
 			}
+			if (!event.repeat && !event.shiftKey && (event.key === "t" || event.key === "T")) {
+				// the threads toggle (#34): persisted per project with the mode
+				toggleArrows();
+				return;
+			}
 			switch (event.key) {
 				case "d":
 				case "D":
@@ -1255,15 +1332,16 @@ export function ProjectCanvas({
 		undoTrash,
 		cancelGesture,
 		cancelPicks,
+		toggleArrows,
 	]);
 
 	// --- chrome (top bar) -------------------------------------------------------
 
 	const zoomPct = camera === null ? 100 : Math.round(camera.k * 100);
 	useEffect(() => {
-		onChrome({ mode, zoomPct, setMode: switchMode });
+		onChrome({ mode, zoomPct, setMode: switchMode, arrowsOn, toggleArrows });
 		return () => onChrome(null);
-	}, [mode, zoomPct, onChrome, switchMode]);
+	}, [mode, zoomPct, onChrome, switchMode, arrowsOn, toggleArrows]);
 
 	// --- render -------------------------------------------------------------------
 
@@ -1305,7 +1383,7 @@ export function ProjectCanvas({
 					style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${k})`, transformOrigin: "0 0" }}
 				>
 					{/* the threads live under the frames: the map, never a hit target */}
-					<FlowArrows frames={visibleFrames} links={links} k={k} />
+					{arrowsOn && <FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} k={k} />}
 					{visibleFrames.map((frame) => {
 						const state = lifecycle.states[frame.name] ?? "hibernated";
 						const isEntered = entered === frame.name;

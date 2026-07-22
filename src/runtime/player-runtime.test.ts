@@ -382,7 +382,7 @@ describe("the player session", () => {
 		});
 	});
 
-	it("a driven session leaves its coded walks as dashed edges in the flows graph (#25)", async () => {
+	it("a driven session flips a verified mark on the derived edge it walks (#34)", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
 		writeFrame(
@@ -402,14 +402,52 @@ export default function Coded() {
 		click("#coded-walk");
 		await waitForStack("coded/pay--done");
 
-		// the walk was witnessed: the daemon serves it as a dashed edge, while the
-		// declared data-go links stay derived-not-stored
+		// the map already claimed this edge from source; the walk can only confirm it
 		await vi.waitFor(async () => {
 			const flows = (await (await harness.app.request(`/api/p/${harness.name}/flows`)).json()) as {
-				links: { from: string; to: string; kind: string }[];
+				edges: { from: string; to: string; certainty: string; verified?: boolean }[];
 			};
-			expect(flows.links).toContainEqual({ from: "coded", to: "pay--done", kind: "walked" });
+			const edge = flows.edges.find((e) => e.from === "coded" && e.to === "pay--done");
+			expect(edge?.certainty).toBe("will");
+			expect(edge?.verified).toBe(true);
 		});
+	});
+
+	it("the hint toggle outlines every navigating element as overlay chrome, default off (#34)", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+		writeFrame(
+			harness.root,
+			"hints",
+			`import { ui } from "spool";
+
+export default function Hints() {
+	return (
+		<main>
+			<button type="button" id="coded" onClick={() => ui.go("menu")}>coded</button>
+			<a id="markup" data-go="cart">markup</a>
+		</main>
+	);
+}
+`,
+		);
+
+		await loadPlayerDocument(harness, "?frame=hints");
+		await waitForStack("hints");
+
+		// default off: the player is the immersive stage
+		expect(document.querySelector("#spool-hint")).not.toBeNull();
+		expect(document.querySelectorAll(".spool-hint")).toHaveLength(0);
+
+		click("#spool-hint");
+		// both the stamped ui.go carrier and the data-go carrier get one outline
+		// each — overlay chrome only, the frame's own DOM untouched (parity law)
+		await vi.waitFor(() => expect(document.querySelectorAll(".spool-hint")).toHaveLength(2));
+		expect(document.querySelector("#coded")?.className).toBe("");
+		expect(document.querySelector("#coded")?.getAttribute("style")).toBeNull();
+
+		click("#spool-hint");
+		await vi.waitFor(() => expect(document.querySelectorAll(".spool-hint")).toHaveLength(0));
 	});
 
 	it("close closes the tab the canvas opened", async () => {

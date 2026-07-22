@@ -3,7 +3,7 @@ import type { CanvasMode, ProjectCard } from "./api";
 import { fetchProjects, fetchSession, postUpgrade, putSession, subscribeSse } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { Home } from "./home";
-import { CloseIcon, PlayIcon, PlusIcon, RibbonMark } from "./icons";
+import { CloseIcon, PlayIcon, PlusIcon, RibbonMark, ThreadIcon } from "./icons";
 import { FolderPicker } from "./picker";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
 
@@ -211,6 +211,18 @@ export function App() {
 							onClick={() => window.open(`/play/${encodeURIComponent(focusedTab.name)}`, "_blank")}
 						>
 							<PlayIcon />
+						</button>
+						{/* the threads toggle (#34): the map is identity, so on is the default */}
+						<button
+							type="button"
+							className={`flex h-7 w-7 items-center justify-center rounded-sm hover:bg-surface ${
+								chrome.arrowsOn ? "text-text" : "text-muted"
+							}`}
+							title="Threads (T)"
+							aria-pressed={chrome.arrowsOn}
+							onClick={chrome.toggleArrows}
+						>
+							<ThreadIcon />
 						</button>
 						<ModeControl mode={chrome.mode} onMode={chrome.setMode} />
 						<span className="min-w-9 text-right font-mono text-muted text-xs leading-xs">{chrome.zoomPct}%</span>
