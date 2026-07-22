@@ -1,0 +1,49 @@
+name: publish
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release-please:
+    if: github.repository == 'devosurf/spool'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    # macOS to match ci.yml: the release gate reruns the macOS-validated suite.
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) — no token secret anywhere
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm check
+      # trusted publishing needs npm >= 11.5.1; node 22 ships npm 10
+      - run: npm install -g npm@11
+      - run: npm publish
