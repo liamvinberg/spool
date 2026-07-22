@@ -1,5 +1,6 @@
-import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { basename, join } from "node:path";
+import { writeAtomic } from "./atomic-write";
 import { SpoolError } from "./errors";
 
 export interface RegistryProject {
@@ -87,9 +88,5 @@ function isRegistry(value: unknown): value is Registry {
 }
 
 function writeRegistry(spoolDir: string, registry: Registry): void {
-	mkdirSync(spoolDir, { recursive: true });
-	const file = join(spoolDir, "registry.json");
-	const tmp = `${file}.tmp`;
-	writeFileSync(tmp, `${JSON.stringify(registry, null, "\t")}\n`);
-	renameSync(tmp, file);
+	writeAtomic(join(spoolDir, "registry.json"), `${JSON.stringify(registry, null, "\t")}\n`);
 }

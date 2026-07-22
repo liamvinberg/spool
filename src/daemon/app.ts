@@ -1,15 +1,30 @@
+import { existsSync } from "node:fs";
+import { basename, join } from "node:path";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { lookupProjectByName } from "../registry";
+import { validator } from "hono/validator";
+import { SpoolError } from "../errors";
+import { initProject } from "../init";
+import { openProject } from "../open";
+import { lookupProjectByName, readRegistry } from "../registry";
 import { createFrameCompiler } from "./compile";
 import { createChangeHub } from "./events";
-import { type ProjectJson, readFixture, readScenario } from "./project-files";
+import { listDirectory } from "./fs-list";
+import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
+import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
+import { frameGeometry, listProjectFrames, type ProjectCard, summarizeProject } from "./projection";
+import { type AppEvent, readSession, watchRegistry, writeSession } from "./session";
+import { createShotTaker } from "./shots";
+import { createThumbHealer, readThumb, writeThumb } from "./thumbs";
+import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
 import { reactVersion, vendorReactJs, vendorSpoolJs } from "./vendor";
 
 export interface DaemonOptions {
 	spoolDir: string;
 	version: string;
+	/** dist/ui — absent in seam tests and unbuilt checkouts. */
+	uiDir?: string | undefined;
 }
 
 /**
@@ -17,10 +32,26 @@ export interface DaemonOptions {
  * app.request(), no port needed. The inferred AppType is the compile-time
  * tripwire between daemon and UI once the canvas exists.
  */
-export function createDaemonApp({ spoolDir, version }: DaemonOptions) {
+export function createDaemonApp({ spoolDir, version, uiDir }: DaemonOptions) {
 	const startedAt = new Date().toISOString();
 	const compiler = createFrameCompiler(version);
 	const hub = createChangeHub();
+
+	// the app-level channel: registry and session changes, fanned to every page
+	const appListeners = new Set<(event: AppEvent) => void>();
+	const emitAppEvent = (event: AppEvent) => {
+		for (const listener of appListeners) listener(event);
+	};
+	const stopRegistryWatch = watchRegistry(spoolDir, emitAppEvent);
+
+	// the healer needs a dialable origin, which exists only once the server has
+	// bound — in-process app.request() never activates it
+	let selfOrigin: string | undefined;
+	const shots = createShotTaker();
+	const healer = createThumbHealer({
+		capture: (target) => shots.capture(target),
+		stored: (root, frame) => hub.publish(root, { kind: "thumb", frame }),
+	});
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -38,6 +69,15 @@ export function createDaemonApp({ spoolDir, version }: DaemonOptions) {
 		return { root: lookup.root };
 	}
 
+	/** Body of the picker's POSTs: { path } — anything else is a 400. */
+	function requestedPath(value: unknown, c: Context): { path: string } | Response {
+		const path = (value as { path?: unknown }).path;
+		if (typeof path !== "string" || path === "") {
+			return c.json({ error: 'expected { "path": "/abs/dir" }' }, 400);
+		}
+		return { path };
+	}
+
 	// scenario and fixture reads land in null-origin sandboxed frames — CORS open
 	function serveProjectJson(c: Context, result: ProjectJson): Response {
 		c.header("access-control-allow-origin", "*");
@@ -49,6 +89,145 @@ export function createDaemonApp({ spoolDir, version }: DaemonOptions) {
 
 	const app = new Hono()
 		.get("/api/health", (c) => c.json({ name: "spool", version, pid: process.pid, startedAt }))
+		.get("/api/session", (c) => c.json(readSession(spoolDir)))
+		.put(
+			"/api/session",
+			validator("json", (value, c) => {
+				const open = (value as { open?: unknown }).open;
+				if (!Array.isArray(open) || !open.every((root): root is string => typeof root === "string")) {
+					return c.text('session must be { "open": [root, ...] }', 400);
+				}
+				const registered = new Set(readRegistry(spoolDir).projects.map((project) => project.root));
+				const rogue = open.find((root) => !registered.has(root));
+				if (rogue !== undefined) return c.text(`not a registered project root: ${rogue}`, 400);
+				return { open };
+			}),
+			(c) => {
+				writeSession(spoolDir, { open: [...new Set(c.req.valid("json").open)] });
+				emitAppEvent({ kind: "session" });
+				return c.body(null, 204);
+			},
+		)
+		.get("/api/events", (c) => {
+			return streamSSE(c, async (stream) => {
+				let id = 0;
+				await stream.writeSSE({
+					event: "hello",
+					data: JSON.stringify({ name: "spool", version }),
+					id: String(id++),
+				});
+				const listener = (event: AppEvent) => {
+					void stream.writeSSE({ event: "app", data: JSON.stringify(event), id: String(id++) }).catch(() => {});
+				};
+				appListeners.add(listener);
+				stream.onAbort(() => {
+					appListeners.delete(listener);
+				});
+				await new Promise<void>((resolve) => stream.onAbort(resolve));
+			});
+		})
+		.get("/api/fs/list", (c) => {
+			const listing = listDirectory(c.req.query("path"));
+			if (listing === undefined) return c.json({ error: "no such directory" }, 404);
+			return c.json(listing);
+		})
+		.post("/api/projects/open", validator("json", requestedPath), (c) => {
+			try {
+				const { root } = openProject(c.req.valid("json").path, spoolDir);
+				return c.json({ root, name: basename(root) });
+			} catch (error) {
+				if (!(error instanceof SpoolError)) throw error;
+				// nothing found by walk-up: the picker's next move is offering init
+				return c.json({ error: error.message, offerInit: true }, 404);
+			}
+		})
+		.post("/api/projects/init", validator("json", requestedPath), (c) => {
+			try {
+				const { root } = initProject(c.req.valid("json").path, spoolDir);
+				return c.json({ root, name: basename(root) });
+			} catch (error) {
+				if (!(error instanceof SpoolError)) throw error;
+				return c.json({ error: error.message }, 409);
+			}
+		})
+		.get("/api/projects", (c) => {
+			const projects: ProjectCard[] = readRegistry(spoolDir)
+				.projects.map((project) => ({
+					name: basename(project.root),
+					root: project.root,
+					openedAt: project.openedAt,
+					...summarizeProject(project.root),
+				}))
+				.sort((a, b) => b.openedAt.localeCompare(a.openedAt));
+			return c.json({ projects });
+		})
+		.get("/api/p/:project/frames", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			return c.json(listProjectFrames(project.root));
+		})
+		.get("/api/p/:project/thumbs/:frame", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const frame = c.req.param("frame");
+			if (!isSafeName(frame)) return c.text(`not a frame name: "${frame}"`, 404);
+			const thumb = readThumb(project.root, frame);
+			if (thumb === undefined) {
+				// a missing cover heals itself: enqueue the Playwright fallback and
+				// let the thumb event tell the canvas to look again
+				if (selfOrigin !== undefined && existsSync(join(project.root, "design", "frames", frame, "frame.tsx"))) {
+					const name = c.req.param("project");
+					const { w, h } = frameGeometry(project.root, frame);
+					healer.request({
+						root: project.root,
+						frame,
+						url: `${selfOrigin}/p/${encodeURIComponent(name)}/frames/${encodeURIComponent(frame)}`,
+						width: w,
+						height: h,
+					});
+				}
+				return c.text(`no thumbnail for "${frame}"`, 404);
+			}
+			if (c.req.header("if-none-match") === thumb.etag) return c.body(null, 304);
+			c.header("etag", thumb.etag);
+			c.header("content-type", "image/png");
+			return c.body(new Uint8Array(thumb.png));
+		})
+		.get("/api/p/:project/state", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			return c.json(readCanvasState(project.root));
+		})
+		.put(
+			"/api/p/:project/state",
+			validator("json", (value, c) => {
+				const state = parseCanvasState(value);
+				if (state === undefined) {
+					return c.text('canvas state must be { "mode": "live" | "design", "camera"?: { x, y, k } }', 400);
+				}
+				return state;
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				writeCanvasState(project.root, c.req.valid("json"));
+				return c.body(null, 204);
+			},
+		)
+		.put("/api/p/:project/thumbs/:frame", async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const frame = c.req.param("frame");
+			// captures are only accepted for frames that exist — never a write for a ghost
+			if (!isSafeName(frame) || !existsSync(join(project.root, "design", "frames", frame, "frame.tsx"))) {
+				return c.text(`no frame "${frame}" to cover`, 404);
+			}
+			const png = Buffer.from(await c.req.arrayBuffer());
+			if (png.byteLength === 0) return c.text("empty capture", 400);
+			writeThumb(project.root, frame, png);
+			hub.publish(project.root, { kind: "thumb", frame });
+			return c.body(null, 204);
+		})
 		.get("/p/:project/frames/:frame", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
@@ -102,9 +281,37 @@ export function createDaemonApp({ spoolDir, version }: DaemonOptions) {
 			c.header("cache-control", "public, max-age=0, must-revalidate");
 			c.header("content-type", "text/javascript; charset=utf-8");
 			return c.body(runtime.js);
-		});
+		})
+		.get("/ui/*", (c) => {
+			const asset = readUiAsset(uiDir, c.req.path.slice("/ui/".length));
+			if (asset === undefined) return c.text("no such asset", 404);
+			c.header("content-type", asset.contentType);
+			c.header("cache-control", asset.cacheControl);
+			return c.body(new Uint8Array(asset.body));
+		})
+		.get("/", (c) => serveUiIndex(c))
+		.get("/p/:project", (c) => serveUiIndex(c));
 
-	return { app, close: () => hub.close() };
+	function serveUiIndex(c: Context): Response {
+		const index = readUiIndex(uiDir);
+		if (index === undefined) return c.text(UI_MISSING_NOTICE, 503);
+		c.header("content-type", index.contentType);
+		c.header("cache-control", index.cacheControl);
+		return c.body(new Uint8Array(index.body));
+	}
+
+	return {
+		app,
+		/** Activate origin-dependent work (the thumb healer) once really bound. */
+		setSelfOrigin: (origin: string) => {
+			selfOrigin = origin;
+		},
+		close: () => {
+			stopRegistryWatch();
+			hub.close();
+			void shots.close();
+		},
+	};
 }
 
 export type AppType = ReturnType<typeof createDaemonApp>["app"];

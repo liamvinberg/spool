@@ -9,6 +9,7 @@ export interface ServeDaemonOptions {
 	version: string;
 	host: string;
 	port: number;
+	uiDir?: string | undefined;
 }
 
 export interface RunningDaemon {
@@ -22,11 +23,13 @@ export interface RunningDaemon {
  * Bind the daemon and record it in daemon.json — written only after a
  * successful listen, so a losing racer never clobbers the winner's state.
  */
-export function serveDaemon({ spoolDir, version, host, port }: ServeDaemonOptions): Promise<RunningDaemon> {
-	const daemon = createDaemonApp({ spoolDir, version });
+export function serveDaemon({ spoolDir, version, host, port, uiDir }: ServeDaemonOptions): Promise<RunningDaemon> {
+	const daemon = createDaemonApp({ spoolDir, version, uiDir });
 
 	return new Promise<RunningDaemon>((resolve, reject) => {
 		const server = serve({ fetch: daemon.app.fetch, hostname: host, port }, (info: AddressInfo) => {
+			// bound: the daemon can now dial itself (the thumb healer's shots)
+			daemon.setSelfOrigin(daemonUrl(host, info.port));
 			writeDaemonState(spoolDir, {
 				pid: process.pid,
 				host,

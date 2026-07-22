@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { ensureDaemon, resolveServeConfig, statusDaemon, stopDaemon } from "./daemon/lifecycle";
 import { serveDaemon } from "./daemon/server";
@@ -11,6 +12,8 @@ import { openProject } from "./open";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const spoolDir = join(homedir(), ".spool");
+// package root anchors dist/ui for both the built cli (dist/cli.js) and a checkout (src/cli.ts)
+const uiDir = fileURLToPath(new URL("../dist/ui", import.meta.url));
 
 const rootConfigPointer = `add this line to the repo's root CLAUDE.md or AGENTS.md so future sessions find the canvas:
 
@@ -32,9 +35,14 @@ program
 	.command("open")
 	.description("resolve the project by walk-up and register it")
 	.argument("[path]", "where the walk-up starts", ".")
-	.action((path: string) => {
+	.action(async (path: string) => {
 		const { root } = openProject(path, spoolDir);
 		process.stdout.write(`registered ${basename(root)} (${root})\n`);
+		// daemon-less by design (#12); when one runs, the tab is already opening — say where
+		const status = await statusDaemon(spoolDir);
+		if (status.running) {
+			process.stdout.write(`canvas: ${status.url}/p/${encodeURIComponent(basename(root))}\n`);
+		}
 	});
 
 program
@@ -44,7 +52,13 @@ program
 	.action(async (options: { foreground?: boolean }) => {
 		if (options.foreground === true) {
 			const config = resolveServeConfig(spoolDir, process.env);
-			const daemon = await serveDaemon({ spoolDir, version: pkg.version, host: config.host, port: config.port });
+			const daemon = await serveDaemon({
+				spoolDir,
+				version: pkg.version,
+				host: config.host,
+				port: config.port,
+				uiDir,
+			});
 			process.stdout.write(`spool daemon listening at ${daemon.url} (pid ${process.pid})\n`);
 			const shutdown = () => {
 				void daemon.close().then(() => process.exit(0));
