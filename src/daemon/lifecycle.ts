@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { SpoolError } from "../errors";
 
@@ -19,6 +20,16 @@ export interface ServeConfig {
 
 export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_PORT = 7766; // SPOO on a phone keypad
+
+/**
+ * ~/.spool unless SPOOL_DIR says otherwise — the state half of the dogfood
+ * split: a checkout daemon rides its own registry, daemon.json and log
+ * beside the released daily one (SPOOL_PORT gives it its own port).
+ */
+export function resolveSpoolDir(env: Record<string, string | undefined>): string {
+	if (env.SPOOL_DIR !== undefined && env.SPOOL_DIR !== "") return resolve(env.SPOOL_DIR);
+	return join(homedir(), ".spool");
+}
 
 /**
  * localhost:7766 unless the owner explicitly says otherwise: config.json
