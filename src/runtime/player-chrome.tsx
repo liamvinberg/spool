@@ -138,16 +138,21 @@ function useViewport(): Viewport {
 	return viewport;
 }
 
+/** Touch is the immersive context; anything with a fine pointer letterboxes. */
+const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+
 /**
- * Screens v1 placement: native size 28px from the top when the frame fits
- * inside the stage margins (56 across, 120 below for the pill zone); a
- * viewport smaller than that — a phone — gets the frame scaled to fit,
- * centered, immersive. Never above native size: a small frame on a big
- * stage sits at its own pixels.
+ * Screens v1 placement, split by pointer. Fine pointer: always the artboard
+ * posture — 28px from the top, scaled down until the frame clears the stage
+ * margins (56 across, 120 below), so the pill never covers the frame's own
+ * bottom UI. Coarse pointer — a phone — keeps full-bleed: scaled to the
+ * whole viewport, centered, pill overlaying. Never above native size either
+ * way: a small frame on a big stage sits at its own pixels.
  */
 function place(w: number, h: number, { vw, vh }: Viewport): string {
-	if (w <= vw - 56 && h <= vh - 120) {
-		return `translate(${Math.round((vw - w) / 2)}px, 28px)`;
+	if (!coarsePointer) {
+		const scale = Math.min(1, (vw - 56) / w, (vh - 120) / h);
+		return `translate(${Math.round((vw - w * scale) / 2)}px, 28px) scale(${scale})`;
 	}
 	const scale = Math.min(1, vw / w, vh / h);
 	return `translate(${(vw - w * scale) / 2}px, ${(vh - h * scale) / 2}px) scale(${scale})`;
