@@ -62,7 +62,7 @@ describe("the freeze shim", () => {
 		await vi.waitFor(() => expect(ran).toContain("frozen"));
 	});
 
-	it("answers a pick with the element's selector, stamp and geometry", async () => {
+	it("answers a pick with the ancestry down to the element at the point", async () => {
 		const shim = await servedShim();
 		runShim(shim);
 		document.body.innerHTML = `<div id="root"><main data-spool-source="frames/host/frame.tsx:3:3">
@@ -73,16 +73,24 @@ describe("the freeze shim", () => {
 		const button = document.querySelector("button") as Element;
 		document.elementFromPoint = () => button;
 		const picked = nextPicked();
-		window.postMessage({ spool: "pick", x: 10, y: 20 }, "*");
+		window.postMessage({ spool: "pick", x: 10, y: 20, id: 7 }, "*");
 
-		const reply = (await picked) as { hit: Record<string, unknown> };
-		expect(reply.hit).toMatchObject({
+		const reply = (await picked) as { id: number; chain: Array<Record<string, unknown>> };
+		expect(reply.id).toBe(7);
+		expect(reply.chain).toHaveLength(2);
+		expect(reply.chain[0]).toMatchObject({
+			selector: "main",
+			tag: "main",
+			source: "frames/host/frame.tsx:3:3",
+			generated: false,
+		});
+		expect(reply.chain[1]).toMatchObject({
 			selector: "main > button",
 			tag: "button",
 			source: "frames/host/frame.tsx:4:4",
 			generated: false,
 		});
-		expect(reply.hit.rect).toEqual({ x: 0, y: 0, w: 0, h: 0 });
+		expect(reply.chain[1]?.rect).toEqual({ x: 0, y: 0, w: 0, h: 0 });
 	});
 
 	it("degrades an unstamped element to its nearest stamped ancestor", async () => {
@@ -97,8 +105,9 @@ describe("the freeze shim", () => {
 		const picked = nextPicked();
 		window.postMessage({ spool: "pick", x: 1, y: 1 }, "*");
 
-		const reply = (await picked) as { hit: Record<string, unknown> };
-		expect(reply.hit).toMatchObject({
+		const reply = (await picked) as { chain: Array<Record<string, unknown>> };
+		expect(reply.chain).toHaveLength(3);
+		expect(reply.chain[2]).toMatchObject({
 			selector: "main > ul > li:nth-of-type(2)",
 			outerHtml: "<li>b</li>",
 			source: "frames/host/frame.tsx:6:4",
@@ -106,7 +115,7 @@ describe("the freeze shim", () => {
 		});
 	});
 
-	it("answers null for the frame background and missing hits", async () => {
+	it("answers an empty chain for the frame background and missing hits", async () => {
 		const shim = await servedShim();
 		runShim(shim);
 		document.body.innerHTML = `<div id="root"><p>content</p></div>`;
@@ -114,12 +123,12 @@ describe("the freeze shim", () => {
 		document.elementFromPoint = () => null;
 		let picked = nextPicked();
 		window.postMessage({ spool: "pick", x: 1, y: 1 }, "*");
-		expect(((await picked) as { hit: unknown }).hit).toBeNull();
+		expect(((await picked) as { chain: unknown }).chain).toEqual([]);
 
 		document.elementFromPoint = () => document.getElementById("root");
 		picked = nextPicked();
 		window.postMessage({ spool: "pick", x: 1, y: 1 }, "*");
-		expect(((await picked) as { hit: unknown }).hit).toBeNull();
+		expect(((await picked) as { chain: unknown }).chain).toEqual([]);
 	});
 
 	it("skips setInterval ticks while frozen", async () => {

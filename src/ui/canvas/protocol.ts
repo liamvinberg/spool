@@ -9,7 +9,7 @@ import type { SessionRecord } from "../../runtime/frame-runtime";
 
 export type { SessionRecord };
 
-/** What the shim found under a design-mode click (#23). */
+/** One element of the ancestry the shim found under a design-mode point (#23). */
 export interface PickedHit {
 	selector: string;
 	tag: string;
@@ -29,7 +29,7 @@ export type FrameMessage =
 	| { spool: "shot"; frame: string; url?: string; error?: string }
 	| { spool: "session?"; frame: string }
 	| { spool: "key"; frame: string; key: string }
-	| { spool: "picked"; frame: string; hit: PickedHit | null }
+	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
 	| { spool: "go"; frame: string; target: string; session?: SessionRecord }
 	| { spool: "back"; frame: string; target: string; session?: SessionRecord };
 
@@ -46,7 +46,7 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 		case "key":
 			return typeof m.key === "string" ? (m as unknown as FrameMessage) : undefined;
 		case "picked":
-			return typeof m.hit === "object" ? (m as unknown as FrameMessage) : undefined;
+			return Array.isArray(m.chain) && typeof m.id === "number" ? (m as unknown as FrameMessage) : undefined;
 		case "go":
 		case "back":
 			return typeof m.target === "string" ? (m as unknown as FrameMessage) : undefined;
@@ -57,5 +57,5 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 
 export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const;
 export const captureMessage = { spool: "capture" } as const;
-export const pickMessage = (x: number, y: number) => ({ spool: "pick", x, y }) as const;
+export const pickMessage = (x: number, y: number, id: number) => ({ spool: "pick", x, y, id }) as const;
 export const sessionReply = (record: SessionRecord | null) => ({ spool: "session", record }) as const;

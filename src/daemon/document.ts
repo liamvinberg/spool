@@ -53,9 +53,11 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * interval ticks skipped, running animations paused — so warm frames stay
  * real DOM, crisp at any zoom; {spool:"capture"} answers with a foreignObject
  * self-rasterization, the ambient thumbnail path (Playwright is the fallback);
- * {spool:"pick", x, y} answers with the element at that frame-local point —
- * its selector, geometry, and nearest data-spool-source stamp (#23), the
- * canvas's design-mode select without ever handing the frame the pointer.
+ * {spool:"pick", x, y} answers with the element ancestry at that frame-local
+ * point — top-level element down to the deepest, each with its selector,
+ * geometry, and nearest data-spool-source stamp (#23) — the canvas walks it
+ * Figma-style (double-click descends, Esc ascends) without ever handing the
+ * frame the pointer.
  */
 const canvasShimJs = `(() => {
 	let frozen = false;
@@ -142,9 +144,7 @@ const canvasShimJs = `(() => {
 		return parts.join(" > ");
 	}
 
-	function pick(x, y) {
-		const el = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
-		if (!el || el === document.documentElement || el === document.body || el.id === "root") return null;
+	function hitOf(el) {
 		let stamped = el;
 		while (stamped && stamped.nodeType === 1 && !stamped.hasAttribute("data-spool-source")) {
 			stamped = stamped.parentElement;
@@ -164,15 +164,28 @@ const canvasShimJs = `(() => {
 		};
 	}
 
+	// the ancestry at the point, top-level element first, deepest last
+	function pickChain(x, y) {
+		const el = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
+		if (!el || el === document.documentElement || el === document.body || el.id === "root") return [];
+		const line = [];
+		let node = el;
+		while (node && node.nodeType === 1 && node !== document.documentElement && node !== document.body && node.id !== "root") {
+			line.unshift(node);
+			node = node.parentElement;
+		}
+		return line.map(hitOf);
+	}
+
 	addEventListener("message", async (event) => {
 		const m = event.data;
 		if (!m || typeof m !== "object") return;
 		if (m.spool === "freeze") { setFrozen(!!m.on); return; }
 		if (m.spool === "pick") {
 			const frame = (window.__SPOOL__ || {}).frame;
-			let hit = null;
-			try { hit = pick(m.x, m.y); } catch {}
-			parent.postMessage({ spool: "picked", frame, hit }, "*");
+			let chain = [];
+			try { chain = pickChain(m.x, m.y); } catch {}
+			parent.postMessage({ spool: "picked", frame, id: m.id, chain }, "*");
 			return;
 		}
 		if (m.spool !== "capture") return;

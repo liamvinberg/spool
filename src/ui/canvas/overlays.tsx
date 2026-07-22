@@ -8,7 +8,8 @@ import type { PickedHit } from "./protocol";
  * 1.5px thread at 3px offset radius +2; handles 8px on-thread fill with
  * thread border; readout thread fill, on-thread mono 10; element outline 1px
  * thread at 2px offset, no handles; context chip raised, mono 2xs,
- * path:line · Open in editor.
+ * path:line · Open in editor. Knobs render on corners only — the sides carry
+ * invisible grab bands, Figma's pattern for single-axis resize.
  */
 
 export interface PickedSelection extends PickedHit {
@@ -22,18 +23,26 @@ export interface Guides {
 
 export const NO_GUIDES: Guides = { v: [], h: [] };
 
-export type Corner = "nw" | "ne" | "sw" | "se";
+export type Handle = "nw" | "ne" | "sw" | "se" | "n" | "e" | "s" | "w";
 
-export function isCorner(value: string): value is Corner {
-	return value === "nw" || value === "ne" || value === "sw" || value === "se";
+export function isHandle(value: string): value is Handle {
+	return value in HANDLE_CURSORS;
 }
 
-const CORNERS: ReadonlyArray<{ corner: Corner; cursor: string }> = [
-	{ corner: "nw", cursor: "nwse-resize" },
-	{ corner: "ne", cursor: "nesw-resize" },
-	{ corner: "sw", cursor: "nesw-resize" },
-	{ corner: "se", cursor: "nwse-resize" },
-];
+export const HANDLE_CURSORS: Record<Handle, string> = {
+	nw: "nwse-resize",
+	se: "nwse-resize",
+	ne: "nesw-resize",
+	sw: "nesw-resize",
+	n: "ns-resize",
+	s: "ns-resize",
+	e: "ew-resize",
+	w: "ew-resize",
+};
+
+const CORNERS = ["nw", "ne", "sw", "se"] as const;
+
+const SIDES = ["n", "e", "s", "w"] as const;
 
 export function SelectionOverlay({
 	camera,
@@ -99,26 +108,50 @@ export function SelectionOverlay({
 				);
 			})}
 
-			{single !== undefined && (
-				<>
-					{CORNERS.map(({ corner, cursor }) => {
-						const rect = screenRect(single);
-						const cx = corner.includes("w") ? rect.x - 3 : rect.x + rect.w + 3;
-						const cy = corner.includes("n") ? rect.y - 3 : rect.y + rect.h + 3;
-						return (
-							<div
-								key={corner}
-								data-corner={corner}
-								className="pointer-events-auto absolute flex h-4 w-4 items-center justify-center"
-								style={{ left: cx - 8, top: cy - 8, cursor }}
-							>
-								<div className="h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread" />
-							</div>
-						);
-					})}
-					{(() => {
-						const rect = screenRect(single);
-						return (
+			{single !== undefined &&
+				(() => {
+					const rect = screenRect(single);
+					return (
+						<>
+							{SIDES.map((side) => {
+								// invisible 10px bands along the ring, inset past the corner zones
+								const place =
+									side === "n" || side === "s"
+										? {
+												left: rect.x + 5,
+												width: Math.max(rect.w - 10, 0),
+												top: side === "n" ? rect.y - 8 : rect.y + rect.h - 2,
+												height: 10,
+											}
+										: {
+												top: rect.y + 5,
+												height: Math.max(rect.h - 10, 0),
+												left: side === "w" ? rect.x - 8 : rect.x + rect.w - 2,
+												width: 10,
+											};
+								return (
+									<div
+										key={side}
+										data-handle={side}
+										className="pointer-events-auto absolute"
+										style={{ ...place, cursor: HANDLE_CURSORS[side] }}
+									/>
+								);
+							})}
+							{CORNERS.map((corner) => {
+								const cx = corner.includes("w") ? rect.x - 3 : rect.x + rect.w + 3;
+								const cy = corner.includes("n") ? rect.y - 3 : rect.y + rect.h + 3;
+								return (
+									<div
+										key={corner}
+										data-handle={corner}
+										className="pointer-events-auto absolute flex h-4 w-4 items-center justify-center"
+										style={{ left: cx - 8, top: cy - 8, cursor: HANDLE_CURSORS[corner] }}
+									>
+										<div className="h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread" />
+									</div>
+								);
+							})}
 							<div
 								className="absolute flex items-center justify-center rounded-xs bg-thread px-2 py-[3px]"
 								style={{ left: rect.x + rect.w / 2, top: rect.y + rect.h + 14, transform: "translateX(-50%)" }}
@@ -127,10 +160,9 @@ export function SelectionOverlay({
 									{Math.round(single.w)} × {Math.round(single.h)}
 								</span>
 							</div>
-						);
-					})()}
-				</>
-			)}
+						</>
+					);
+				})()}
 
 			{picked !== null && pickedFrame !== undefined && (
 				<>
