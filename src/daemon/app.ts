@@ -7,6 +7,7 @@ import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import trash from "trash";
 import { z } from "zod";
+import { SPOOL_FAVICON_SVG } from "../brand";
 import { SpoolError } from "../errors";
 import { initProject } from "../init";
 import { openProject } from "../open";
@@ -561,6 +562,11 @@ export function createDaemonApp({
 			c.header("cache-control", "public, max-age=0, must-revalidate");
 			c.header("content-type", "font/woff2");
 			return c.body(new Uint8Array(readFileSync(file)));
+		})
+		.get("/favicon.svg", (c) => {
+			c.header("content-type", "image/svg+xml");
+			c.header("cache-control", "no-cache");
+			return c.body(SPOOL_FAVICON_SVG);
 		})
 		.get("/ui/*", (c) => {
 			const asset = readUiAsset(uiDir, c.req.path.slice("/ui/".length));

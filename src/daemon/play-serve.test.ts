@@ -87,6 +87,7 @@ describe("serving the player", () => {
 		// the player is its own light page: no canvas assets, no canvas config,
 		// no canvas shim protocol
 		expect(doc).not.toContain("/ui/");
+		expect(doc).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
 		expect(doc).not.toContain("window.__SPOOL__ ");
 		expect(doc).not.toContain('"freeze"');
 	});
