@@ -140,7 +140,8 @@ export function revealKeys(
 	return walk(rows, []);
 }
 
-/** The elements a row stands for when selected — a boundary stands for none. */
+/** The elements a row stands for when selected — a boundary stands for the
+ * component's rendered roots it wraps, a call-site for its instances. */
 export function rowSelectors(row: TreeRow): string[] {
 	switch (row.kind) {
 		case "element":
@@ -149,6 +150,6 @@ export function rowSelectors(row: TreeRow): string[] {
 		case "callsite":
 			return row.children.flatMap((child) => (child.kind === "instance" ? [child.selector] : []));
 		case "boundary":
-			return [];
+			return row.children.flatMap((child) => rowSelectors(child));
 	}
 }

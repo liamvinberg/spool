@@ -1045,13 +1045,9 @@ export function ProjectCanvas({
 		}
 	};
 
-	/** The same grammar on tree rows; ranges run over one frame's visible rows. */
+	/** The same grammar on tree rows; ranges run over one frame's visible rows.
+	 * Every row selects on click — expansion is the chevron's alone. */
 	const selectTreeRow = (frame: string, row: TreeRow, modifiers: SelectModifiers) => {
-		// a boundary is a file marker, not an element: its click is its chevron's
-		if (row.kind === "boundary") {
-			toggleTreeRow(row.key);
-			return;
-		}
 		if (modifiers.shift && rowAnchor.current?.frame === frame) {
 			const visible = visibleRows(rowsByFrame[frame] ?? [], expandedRows);
 			const a = visible.findIndex((candidate) => candidate.key === rowAnchor.current?.key);
