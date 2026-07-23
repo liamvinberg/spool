@@ -220,7 +220,7 @@ export function CanvasSidebar({
 											/>
 											<span className="min-w-0 flex-1 truncate">{frame.name}</span>
 											<span className="pr-1 text-2xs text-muted opacity-0 transition-opacity group-hover:opacity-100">
-												frame.tsx
+												{frame.kind === "term" ? "term.tsx" : "frame.tsx"}
 											</span>
 										</button>
 									</div>
