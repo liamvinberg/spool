@@ -15,12 +15,22 @@ import {
 	putSelection,
 	putThumb,
 	subscribeSse,
+	thumbUrl,
 } from "../api";
 import { RibbonMark } from "../icons";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
 import { CollisionNotice } from "./collision-notice";
 import { ContextMenu, MENU_SIZE } from "./context-menu";
+import { ExportDialog, type ExportFormat } from "./export-dialog";
+import { type ExportNotice, ExportToast } from "./export-toast";
 import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
+import {
+	buildFramePdf,
+	type CapturedFrame,
+	downloadBytes,
+	framesInCanvasOrder,
+	pngBytesFromImageBlob,
+} from "./frame-export";
 import { FrameLabel } from "./frame-label";
 import { FrameShell, type WalkBoot } from "./frame-shell";
 import { useFrameLifecycle } from "./lifecycle";
@@ -156,6 +166,13 @@ export function ProjectCanvas({
 	const [guides, setGuides] = useState<Guides>(NO_GUIDES);
 	const [marquee, setMarquee] = useState<Box | null>(null);
 	const [menu, setMenu] = useState<{ x: number; y: number; frame: string } | null>(null);
+	const [exportDialog, setExportDialog] = useState<readonly string[] | null>(null);
+	const [exportReturnMenu, setExportReturnMenu] = useState<{ x: number; y: number; frame: string } | null>(null);
+	const [exporting, setExporting] = useState(false);
+	const [exportError, setExportError] = useState<string | undefined>(undefined);
+	const [exportNotice, setExportNotice] = useState<ExportNotice | null>(null);
+	const exportDialogRef = useRef(exportDialog);
+	exportDialogRef.current = exportDialog;
 	const [pendingTrash, setPendingTrash] = useState<string[] | null>(null);
 	const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set<string>());
 	const [docNonces, setDocNonces] = useState<Record<string, number>>({});
@@ -175,6 +192,16 @@ export function ProjectCanvas({
 		() => frames.filter((f) => pageOf(f) === activePage && !hidden.has(f.name)),
 		[frames, activePage, hidden],
 	);
+	const exportFrames = useMemo(
+		() => (exportDialog === null ? [] : framesInCanvasOrder(visibleFrames, exportDialog)),
+		[visibleFrames, exportDialog],
+	);
+	useEffect(() => {
+		if (exportDialog === null || exportFrames.length > 0) return;
+		setExportDialog(null);
+		setExportReturnMenu(null);
+		setExportError(undefined);
+	}, [exportDialog, exportFrames.length]);
 	// links that leave the page surface as portals at the frame edge (#39)
 	const portals = useMemo(() => portalEdges(edges, frames, activePage), [edges, frames, activePage]);
 
@@ -265,6 +292,77 @@ export function ProjectCanvas({
 		else iframes.current.set(name, el);
 		lifecycleRef.current.onIframe(name, el);
 	}, []);
+
+	const capturePng = useCallback(
+		async (frame: ProjectedFrame): Promise<CapturedFrame> => {
+			if (frame.kind === "html") {
+				const dataUrl = await lifecycleRef.current.capture(frame.name);
+				if (dataUrl !== undefined) {
+					const png = await pngBytesFromImageBlob(await (await fetch(dataUrl)).blob(), frame.w, frame.h);
+					return { name: frame.name, width: frame.w, height: frame.h, png };
+				}
+			}
+
+			const cover = await fetch(thumbUrl(project, frame.name, Date.now()), { cache: "no-store" });
+			if (!cover.ok) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
+			const png = await pngBytesFromImageBlob(await cover.blob(), frame.w, frame.h);
+			return { name: frame.name, width: frame.w, height: frame.h, png };
+		},
+		[project],
+	);
+
+	const runExport = useCallback(
+		async (names: readonly string[], format: ExportFormat) => {
+			const ordered = framesInCanvasOrder(framesRef.current, names);
+			const first = ordered[0];
+			if (first === undefined) return;
+			setExporting(true);
+			setExportError(undefined);
+			if (ordered.length === 1) setExportNotice({ kind: "progress", message: `Exporting ${first.name}…` });
+			try {
+				const captured: CapturedFrame[] = [];
+				for (const frame of ordered) captured.push(await capturePng(frame));
+
+				if (format === "png") {
+					for (const frame of captured) downloadBytes(frame.png, "image/png", `${frame.name}.png`);
+				} else {
+					downloadBytes(await buildFramePdf(captured), "application/pdf", `${project}.pdf`);
+				}
+
+				setExportDialog(null);
+				setExportReturnMenu(null);
+				setExportNotice({
+					kind: "success",
+					message:
+						format === "pdf"
+							? `Exported ${project}.pdf`
+							: captured.length === 1
+								? `Exported ${first.name}.png`
+								: `Exported ${captured.length} PNG images`,
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : "Export failed. Try again.";
+				if (ordered.length === 1) setExportNotice({ kind: "error", message });
+				else setExportError(message);
+			} finally {
+				setExporting(false);
+			}
+		},
+		[capturePng, project],
+	);
+
+	const cancelExportDialog = useCallback(() => {
+		setExportDialog(null);
+		setExportError(undefined);
+		setMenu(exportReturnMenu);
+		setExportReturnMenu(null);
+	}, [exportReturnMenu]);
+
+	useEffect(() => {
+		if (exportNotice === null || exportNotice.kind === "progress") return;
+		const timeout = setTimeout(() => setExportNotice(null), 3500);
+		return () => clearTimeout(timeout);
+	}, [exportNotice]);
 
 	const refetchFrames = useCallback(async () => {
 		const projection = await fetchProjection(project);
@@ -1056,6 +1154,7 @@ export function ProjectCanvas({
 	};
 
 	const onPointerDown = (event: React.PointerEvent) => {
+		if (exportDialogRef.current !== null) return;
 		const cam = cameraRef.current;
 		if (cam === null || event.button === 2) return;
 		stopAnimation();
@@ -1300,6 +1399,7 @@ export function ProjectCanvas({
 	};
 
 	const onDoubleClick = (event: React.MouseEvent) => {
+		if (exportDialogRef.current !== null) return;
 		const cam = cameraRef.current;
 		if (cam === null) return;
 		const world = toWorld(localPoint(event), cam);
@@ -1317,6 +1417,7 @@ export function ProjectCanvas({
 
 	const onContextMenu = (event: React.MouseEvent) => {
 		event.preventDefault();
+		if (exportDialogRef.current !== null) return;
 		const cam = cameraRef.current;
 		if (cam === null) return;
 		const p = localPoint(event);
@@ -1361,6 +1462,8 @@ export function ProjectCanvas({
 
 	const menuOpenRef = useRef(false);
 	menuOpenRef.current = menu !== null;
+	const exportingRef = useRef(exporting);
+	exportingRef.current = exporting;
 
 	useEffect(() => {
 		const pickTarget = () => (pickedRef.current === null ? [] : [pickedRef.current.frame]);
@@ -1369,6 +1472,13 @@ export function ProjectCanvas({
 			(target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (isTyping(event.target)) return;
+			if (exportDialogRef.current !== null) {
+				if (event.key === "Escape" && !exportingRef.current) {
+					event.preventDefault();
+					cancelExportDialog();
+				}
+				return;
+			}
 			const mod = event.metaKey || event.ctrlKey;
 			if (event.code === "Space" && !event.repeat) {
 				setSpaceDown(true);
@@ -1532,6 +1642,7 @@ export function ProjectCanvas({
 		cancelGesture,
 		cancelPicks,
 		toggleArrows,
+		cancelExportDialog,
 	]);
 
 	// --- chrome (top bar) -------------------------------------------------------
@@ -1566,7 +1677,7 @@ export function ProjectCanvas({
 	}
 
 	return (
-		<div className="flex h-full w-full">
+		<div className="relative flex h-full w-full">
 			<CanvasSidebar
 				pages={pages}
 				activePage={activePage}
@@ -1677,6 +1788,20 @@ export function ProjectCanvas({
 				{menu !== null && (
 					<ContextMenu
 						at={menu}
+						selectionCount={selected.includes(menu.frame) ? selected.length : 1}
+						onExport={() => {
+							const names = selectedRef.current.includes(menu.frame) ? [...selectedRef.current] : [menu.frame];
+							const returnMenu = menu;
+							setMenu(null);
+							setExportError(undefined);
+							if (names.length === 1) {
+								setExportReturnMenu(null);
+								void runExport(names, "png");
+								return;
+							}
+							setExportReturnMenu(returnMenu);
+							setExportDialog(framesInCanvasOrder(framesRef.current, names).map((frame) => frame.name));
+						}}
 						onPlay={() => {
 							// the player's second door (#13): a session opening on this frame
 							window.open(
@@ -1702,10 +1827,26 @@ export function ProjectCanvas({
 					/>
 				)}
 
+				{exportNotice !== null ? <ExportToast notice={exportNotice} /> : null}
+
 				{collisions.length > 0 && <CollisionNotice collisions={collisions} />}
 
 				{pendingTrash !== null && <TrashToast frames={pendingTrash} onUndo={undoTrash} />}
 			</div>
+			{exportDialog !== null && exportFrames.length > 0 ? (
+				<ExportDialog
+					exporting={exporting}
+					frames={exportFrames.map((frame) => ({
+						name: frame.name,
+						...(hasThumb(frame.name)
+							? { thumbnail: thumbUrl(project, frame.name, thumbNonces[frame.name] ?? 0) }
+							: {}),
+					}))}
+					{...(exportError === undefined ? {} : { error: exportError })}
+					onCancel={cancelExportDialog}
+					onExport={(format) => void runExport(exportDialog, format)}
+				/>
+			) : null}
 		</div>
 	);
 }

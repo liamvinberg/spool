@@ -1,9 +1,9 @@
 /**
  * The right-click menu (#23), the second door to decided actions only (#7),
- * matching screens v1 verbatim: Play from here / Open in editor / separator /
- * Move to Trash, 200px raised panel, 30px rows, hover = surface. Play is the
- * player's door (#13/#24) — modes control time, so the canvas never fakes
- * play by entering; the player owns cinema in its own tab.
+ * Play from here / Open in editor / adaptive export / Move to Trash. One frame
+ * exports as PNG immediately; a multi-selection opens the format choice.
+ * Play is the player's door (#13/#24) — modes control time, so the canvas
+ * never fakes play by entering; the player owns cinema in its own tab.
  */
 
 export interface MenuPlacement {
@@ -11,16 +11,20 @@ export interface MenuPlacement {
 	y: number;
 }
 
-/** The rendered footprint (4px pad + three 30px rows + 1px separator + border) — placement clamps with it. */
-export const MENU_SIZE = { w: 200, h: 101 } as const;
+/** The rendered footprint (4px pad + four 30px rows + two separators + border) — placement clamps with it. */
+export const MENU_SIZE = { w: 200, h: 132 } as const;
 
 export function ContextMenu({
 	at,
+	selectionCount,
+	onExport,
 	onPlay,
 	onOpenEditor,
 	onTrash,
 }: {
 	at: MenuPlacement;
+	selectionCount: number;
+	onExport: () => void;
 	onPlay: () => void;
 	onOpenEditor: () => void;
 	onTrash: () => void;
@@ -48,6 +52,15 @@ export function ContextMenu({
 				onClick={onOpenEditor}
 			>
 				Open in editor
+			</button>
+			<div className="mx-auto h-px w-[176px] shrink-0 bg-border-raised" />
+			<button
+				type="button"
+				role="menuitem"
+				className="flex h-[30px] shrink-0 items-center rounded-sm px-3 text-left text-base text-text leading-[14px] hover:bg-surface"
+				onClick={onExport}
+			>
+				{selectionCount === 1 ? "Export as PNG" : `Export ${selectionCount} frames…`}
 			</button>
 			<div className="mx-auto h-px w-[176px] shrink-0 bg-border-raised" />
 			<button
