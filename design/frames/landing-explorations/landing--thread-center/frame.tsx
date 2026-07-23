@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
-import { SpoolMark } from "../../shared/ui/spool-mark";
-import { cn } from "../../shared/lib/utils";
+import { SpoolMark } from "../../../shared/ui/spool-mark";
+import { cn } from "../../../shared/lib/utils";
 
 /**
  * landing--thread-center

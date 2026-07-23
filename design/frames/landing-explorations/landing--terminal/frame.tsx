@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { SpoolMark } from "../../shared/ui/spool-mark";
+import { SpoolMark } from "../../../shared/ui/spool-mark";
 
 /**
  * landing--terminal
