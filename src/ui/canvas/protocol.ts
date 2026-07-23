@@ -24,6 +24,30 @@ export interface PickedHit {
 	generated: boolean;
 }
 
+/** A stamp taken apart: "frames/cart/frame.tsx:10:5" → rel, line, col. */
+export interface StampRef {
+	rel: string;
+	line: number;
+	col: number;
+}
+
+export function parseStampRef(source: string | null | undefined): StampRef | undefined {
+	const [, rel, line, col] = source?.match(/^(.+):(\d+):(\d+)$/) ?? [];
+	if (rel === undefined || line === undefined || col === undefined) return undefined;
+	return { rel, line: Number.parseInt(line, 10), col: Number.parseInt(col, 10) };
+}
+
+/** One element of a frame's live DOM as the tree walk serialized it (#37). */
+export interface RawTreeNode {
+	tag: string;
+	selector: string;
+	/** The element's own stamp — null for JS-created DOM, which inherits its parent's group. */
+	source: string | null;
+	/** Direct text children, collapsed and capped — the row label when non-empty. */
+	text: string;
+	children: RawTreeNode[];
+}
+
 interface FrameWheelZoomMessage {
 	spool: "zoom";
 	frame: string;
@@ -59,6 +83,8 @@ export type FrameMessage =
 	| { spool: "key"; frame: string; key: string }
 	| FrameZoomMessage
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
+	| { spool: "tree"; frame: string; id: number; roots: RawTreeNode[] }
+	| { spool: "described"; frame: string; id: number; chains: PickedHit[][] }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
 	| { spool: "external"; frame: string; href: string }
 	| { spool: "go"; frame: string; target: string; session?: SessionRecord }
@@ -89,6 +115,10 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				: undefined;
 		case "picked":
 			return Array.isArray(m.chain) && typeof m.id === "number" ? (m as unknown as FrameMessage) : undefined;
+		case "tree":
+			return Array.isArray(m.roots) && typeof m.id === "number" ? (m as unknown as FrameMessage) : undefined;
+		case "described":
+			return Array.isArray(m.chains) && typeof m.id === "number" ? (m as unknown as FrameMessage) : undefined;
 		case "site-boxes":
 			return typeof m.boxes === "object" && m.boxes !== null && typeof m.id === "number"
 				? (m as unknown as FrameMessage)
@@ -118,5 +148,8 @@ function webHref(value: unknown): value is string {
 export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const;
 export const captureMessage = { spool: "capture" } as const;
 export const pickMessage = (x: number, y: number, id: number) => ({ spool: "pick", x, y, id }) as const;
+// "tree?" asks, "tree" answers — distinct kinds, so a reply can never read as a request
+export const treeMessage = (id: number) => ({ spool: "tree?", id }) as const;
+export const describeMessage = (selectors: string[], id: number) => ({ spool: "describe", selectors, id }) as const;
 export const sessionReply = (record: SessionRecord | null) => ({ spool: "session", record }) as const;
 export const sitesMessage = (sites: SiteAnchor[], id: number) => ({ spool: "sites", sites, id }) as const;

@@ -57,13 +57,15 @@ describe("the selection API", () => {
 		const put = await app.request(
 			`/api/p/${name}/selection`,
 			jsonPut({
-				element: {
-					frame: "checkout",
-					selector: "main > button",
-					outerHtml: '<button class="pay">Pay now</button>',
-					source: "frames/checkout/frame.tsx:4:4",
-					generated: false,
-				},
+				elements: [
+					{
+						frame: "checkout",
+						selector: "main > button",
+						outerHtml: '<button class="pay">Pay now</button>',
+						source: "frames/checkout/frame.tsx:4:4",
+						generated: false,
+					},
+				],
 			}),
 		);
 		expect(put.status).toBe(204);
@@ -82,6 +84,44 @@ describe("the selection API", () => {
 		});
 	});
 
+	it("serves a multi-element selection as one entry per element, in put order", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "checkout", frameTsx);
+		const app = makeApp(spoolDir);
+
+		const put = await app.request(
+			`/api/p/${name}/selection`,
+			jsonPut({
+				elements: [
+					{
+						frame: "checkout",
+						selector: "main > button",
+						outerHtml: '<button class="pay">Pay now</button>',
+						source: "frames/checkout/frame.tsx:4:4",
+						generated: false,
+					},
+					{
+						frame: "checkout",
+						selector: "main",
+						outerHtml: "<main></main>",
+						source: "frames/checkout/frame.tsx:3:3",
+						generated: false,
+					},
+				],
+			}),
+		);
+		expect(put.status).toBe(204);
+
+		const { selection } = (await (await app.request(`/api/p/${name}/selection`)).json()) as {
+			selection: Array<Record<string, unknown>>;
+		};
+		expect(selection.map((entry) => [entry.kind, entry.selector, entry.lines])).toEqual([
+			["element", "main > button", [4, 4]],
+			["element", "main", [3, 5]],
+		]);
+	});
+
 	it("degrades generated elements honestly: ancestor lines, live outerHTML excerpt", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
@@ -91,13 +131,15 @@ describe("the selection API", () => {
 		await app.request(
 			`/api/p/${name}/selection`,
 			jsonPut({
-				element: {
-					frame: "checkout",
-					selector: "main > ul > li:nth-of-type(2)",
-					outerHtml: "<li>b</li>",
-					source: "frames/checkout/frame.tsx:3:3",
-					generated: true,
-				},
+				elements: [
+					{
+						frame: "checkout",
+						selector: "main > ul > li:nth-of-type(2)",
+						outerHtml: "<li>b</li>",
+						source: "frames/checkout/frame.tsx:3:3",
+						generated: true,
+					},
+				],
 			}),
 		);
 
@@ -122,13 +164,15 @@ describe("the selection API", () => {
 		await app.request(
 			`/api/p/${name}/selection`,
 			jsonPut({
-				element: {
-					frame: "checkout",
-					selector: "main > i",
-					outerHtml: "<i>x</i>",
-					source: "../../secrets.txt:1:1",
-					generated: false,
-				},
+				elements: [
+					{
+						frame: "checkout",
+						selector: "main > i",
+						outerHtml: "<i>x</i>",
+						source: "../../secrets.txt:1:1",
+						generated: false,
+					},
+				],
 			}),
 		);
 
@@ -151,6 +195,8 @@ describe("the selection API", () => {
 		expect((await app.request(`/api/p/${name}/selection`, jsonPut({}))).status).toBe(400);
 		expect((await app.request(`/api/p/${name}/selection`, jsonPut({ frames: ["../escape"] }))).status).toBe(400);
 		expect((await app.request(`/api/p/${name}/selection`, jsonPut({ frames: [42] }))).status).toBe(400);
+		expect((await app.request(`/api/p/${name}/selection`, jsonPut({ elements: [{ frame: "x" }] }))).status).toBe(400);
+		expect((await app.request(`/api/p/${name}/selection`, jsonPut({ elements: "main" }))).status).toBe(400);
 	});
 
 	it("drops selected frames that no longer exist instead of fabricating entries", async () => {
@@ -165,6 +211,57 @@ describe("the selection API", () => {
 			selection: Array<{ frame: string }>;
 		};
 		expect(selection.map((entry) => entry.frame)).toEqual(["checkout"]);
+	});
+});
+
+describe("the stamp labels API", () => {
+	const listTsx = `const items = ["a", "b"];
+export default function Frame() {
+	return (
+		<ul>
+			{items.map((item) => (
+				<li key={item}>{item}</li>
+			))}
+		</ul>
+	);
+}
+`;
+
+	it("labels repeated stamps from their call site and nulls the rest", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "list", listTsx);
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(
+			`/api/p/${name}/stamp-labels`,
+			jsonPost({
+				stamps: [
+					"frames/list/frame.tsx:6:5",
+					"frames/list/frame.tsx:4:3",
+					"../../escape.tsx:1:1",
+					"frames/ghost/frame.tsx:1:1",
+				],
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({
+			labels: {
+				"frames/list/frame.tsx:6:5": "items.map(…)",
+				"frames/list/frame.tsx:4:3": null,
+				"../../escape.tsx:1:1": null,
+				"frames/ghost/frame.tsx:1:1": null,
+			},
+		});
+	});
+
+	it("rejects a shapeless ask", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const app = makeApp(spoolDir);
+
+		expect((await app.request(`/api/p/${name}/stamp-labels`, jsonPost({}))).status).toBe(400);
+		expect((await app.request(`/api/p/${name}/stamp-labels`, jsonPost({ stamps: [7] }))).status).toBe(400);
 	});
 });
 

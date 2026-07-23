@@ -43,6 +43,7 @@ function sweeper() {
 			mode: "live",
 			entered: null,
 			selected: null,
+			wakeRequested: new Set(),
 			states,
 			ready: new Set(frames.map((f) => f.name)),
 			capturing: new Set(),
@@ -146,6 +147,26 @@ describe("intent", () => {
 		const first = sweep([frame("off", 5000, 5000)], { selected: "off" });
 		expect(first.states).toEqual({ off: "warm" });
 	});
+
+	it("admits a wake-requested frame behind selected, ahead of the visible tiers (#37)", () => {
+		const { sweep } = sweeper();
+
+		// an offscreen expand must not wait behind five visible mounts
+		const first = sweep([...inView, frame("off", 5000, 5000)], { wakeRequested: new Set(["off"]) });
+		expect(first.states.off).toBe("warm");
+
+		// selected still outranks it: with three slots, the last request waits
+		const contended = sweeper().sweep(
+			[frame("s", 5000, 5000), frame("r1", 7000, 5000), frame("r2", 9000, 5000), frame("r3", 11000, 5000)],
+			{ selected: "s", wakeRequested: new Set(["r1", "r2", "r3"]) },
+		);
+		expect(contended.states.s).toBe("warm");
+		expect(
+			Object.entries(contended.states)
+				.filter(([, state]) => state === "hibernated")
+				.map(([name]) => name),
+		).toHaveLength(1);
+	});
 });
 
 describe("warm pool", () => {
@@ -225,6 +246,21 @@ describe("warm pool", () => {
 		expect(held.states.f0).toBe("warm");
 
 		// deselection releases it to normal pool policy
+		const released = s.sweep(frames, { camera: parked });
+		expect(released.exitCaptures).toEqual(["f0"]);
+	});
+
+	it("never evicts a wake-requested frame while the request stands (#37)", () => {
+		const frames = strip(WARM_POOL_CAP + 1);
+		const s = sweeper();
+		tour(s, frames);
+
+		// f0 is the oldest-seen, but an expanded tree row keeps it real
+		const held = s.sweep(frames, { camera: parked, wakeRequested: new Set(["f0"]) });
+		expect(held.exitCaptures).toEqual([]);
+		expect(held.states.f0).toBe("warm");
+
+		// collapsing the row releases it to normal pool policy
 		const released = s.sweep(frames, { camera: parked });
 		expect(released.exitCaptures).toEqual(["f0"]);
 	});

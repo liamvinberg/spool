@@ -36,7 +36,7 @@ Spool is a local-first prototyping canvas: agents author live TSX frames on disk
 
 **Warm pool**: The bounded set of offscreen frames kept mounted with time frozen; overflowing it, oldest-seen first, is the only path into hibernation. _Avoid_: cache
 
-**Wake queue**: The single ordered path a frame takes into the DOM, drained a few mounts per sweep — entered immediately, selected next, then nearest the viewport center. Every burst site (zoom wake, design flip, page entry) drains through it.
+**Wake queue**: The single ordered path a frame takes into the DOM, drained a few mounts per sweep — entered immediately, selected next, then wake-requested tree rows, then nearest the viewport center. Every burst site (zoom wake, design flip, page entry, tree expand) drains through it.
 
 **Hands**: The human at the canvas. Hands own geometry and arrangement; agents own frame source. _Avoid_: user, designer
 
