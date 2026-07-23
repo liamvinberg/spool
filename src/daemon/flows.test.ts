@@ -98,7 +98,7 @@ describe("flows derivation", () => {
 		]);
 	});
 
-	it("two sites claiming the same edge stay two arrows on one edge", async () => {
+	it("two sites claiming the same edge stay grouped on one edge", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "menu", goTsx(["cart", "cart"]));
