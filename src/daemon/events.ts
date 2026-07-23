@@ -1,4 +1,4 @@
-import { watch } from "node:fs";
+import { existsSync, watch } from "node:fs";
 import { join, sep } from "node:path";
 
 export type ChangeEvent =
@@ -53,7 +53,7 @@ export function createChangeHub() {
 		let watcher: ReturnType<typeof watch> | undefined;
 		try {
 			watcher = watch(join(root, "design"), { recursive: true }, (_type, filename) => {
-				const event = classify(filename);
+				const event = classify(root, filename);
 				if (event === undefined) return;
 				pending.set(event.kind === "frame" ? `frame ${event.frame}` : "shared", event);
 				timer ??= setTimeout(() => {
@@ -111,15 +111,25 @@ export type ChangeHub = ReturnType<typeof createChangeHub>;
  * anything in shared/ can stale every document. App-owned state (.spool/,
  * canvas.json) never fires — thumbnail writes must not echo as edits — and
  * neither does frame.json: geometry is hands-owned (#3), so a sidecar fill or
- * a resize must never read as a source edit and reload the frame.
+ * a resize must never read as a source edit and reload the frame. A top-level
+ * folder without frame.tsx is a page (#39): its frame folders sit one deeper,
+ * and the sidecar exemption moves down with them. A path a delete has made
+ * unreadable may misname its frame — any frame event refreshes discovery, so
+ * over-firing is safe and guessing wrong is cheap.
  */
-function classify(filename: string | null): ChangeEvent | undefined {
+function classify(root: string, filename: string | null): ChangeEvent | undefined {
 	if (filename === null) return { kind: "shared" };
 	const parts = filename.split(sep);
-	const [head, frame] = parts;
-	if (head === "frames" && frame !== undefined && frame !== "") {
+	const [head, first] = parts;
+	if (head === "frames" && first !== undefined && first !== "") {
+		if (parts.length >= 3 && !existsSync(join(root, "design", "frames", first, "frame.tsx"))) {
+			const second = parts[2];
+			if (second === undefined || second === "") return { kind: "frame", frame: first };
+			if (parts.length === 4 && parts[3]?.startsWith("frame.json") === true) return undefined;
+			return { kind: "frame", frame: second };
+		}
 		if (parts.length === 3 && parts[2]?.startsWith("frame.json") === true) return undefined;
-		return { kind: "frame", frame };
+		return { kind: "frame", frame: first };
 	}
 	if (head === "shared") return { kind: "shared" };
 	return undefined;

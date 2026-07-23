@@ -15,8 +15,9 @@ export interface Geometry {
 	h: number;
 }
 
-export function sidecarFile(root: string, frame: string): string {
-	return join(root, "design", "frames", frame, "frame.json");
+/** The sidecar rides in the frame's folder — it moves when the folder moves (#39). */
+export function sidecarFileIn(frameDir: string): string {
+	return join(frameDir, "frame.json");
 }
 
 /** Anything short of four finite numbers reads as unplaced — heal, don't fail. */

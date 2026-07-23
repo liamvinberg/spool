@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { parse } from "@babel/parser";
 import type { Node } from "@babel/types";
+import { lookupFrame } from "./projection";
 
 /**
  * The claim reader (#34): one AST core for flow derivation. Every navigation
@@ -42,11 +43,13 @@ export interface NavSites {
 
 const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 
-/** The frame is its folder: every source file in it, nested ones included. */
+/** The frame is its folder — wherever pages put it: every source file in it,
+ * nested ones included. An unresolvable name claims no source at all. */
 export function frameSourceFiles(root: string, frame: string): string[] {
-	const dir = join(root, "design", "frames", frame);
+	const found = lookupFrame(root, frame);
+	if (found.kind !== "found") return [];
 	try {
-		return readdirSync(dir, { withFileTypes: true, recursive: true })
+		return readdirSync(found.dir, { withFileTypes: true, recursive: true })
 			.filter((entry) => entry.isFile() && SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext)))
 			.map((entry) => join(entry.parentPath, entry.name))
 			.sort();

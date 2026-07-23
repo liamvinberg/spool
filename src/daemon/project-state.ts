@@ -1,13 +1,17 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
+import { isSafeName } from "./project-files";
 
 /**
  * Per-project canvas state in design/.spool/state.json: the mode (#7 — D
  * toggles live/design, persisted per project, never auto-switched), the
  * last settled camera (#12 — cameras are per-browser live, last-settle wins
- * the persisted slot), and the arrows toggle (#34 — unset means on: the map
- * is spool's identity). App-owned ephemera: corrupt state reads as absent.
+ * the persisted slot), the arrows toggle (#34 — unset means on: the map
+ * is spool's identity), and the page bookkeeping (#39 — the active page and
+ * each named page's camera; the root page keeps the original camera slot, so
+ * flat projects' files read unchanged). App-owned ephemera: corrupt state
+ * reads as absent.
  */
 
 export type CanvasMode = "live" | "design";
@@ -20,8 +24,13 @@ export interface Camera {
 
 export interface CanvasState {
 	mode: CanvasMode;
+	/** The root page's last settled camera. */
 	camera?: Camera;
 	arrows?: boolean;
+	/** The page the canvas last had active; absent means the root page. */
+	activePage?: string;
+	/** Named pages' last settled cameras, keyed by page name. */
+	pageCameras?: Record<string, Camera>;
 }
 
 const DEFAULT_STATE: CanvasState = { mode: "live" };
@@ -50,13 +59,39 @@ export function parseCanvasState(value: unknown): CanvasState | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const record = value as Record<string, unknown>;
 	if (record.mode !== "live" && record.mode !== "design") return undefined;
-	if (record.arrows !== undefined && typeof record.arrows !== "boolean") return undefined;
-	const arrows = record.arrows === undefined ? {} : { arrows: record.arrows };
-	if (record.camera === undefined) return { mode: record.mode, ...arrows };
-	const camera = record.camera as Record<string, unknown>;
-	if (typeof camera !== "object" || camera === null) return undefined;
-	const { x, y, k } = camera;
+	const state: CanvasState = { mode: record.mode };
+	if (record.arrows !== undefined) {
+		if (typeof record.arrows !== "boolean") return undefined;
+		state.arrows = record.arrows;
+	}
+	if (record.camera !== undefined) {
+		const camera = parseCamera(record.camera);
+		if (camera === undefined) return undefined;
+		state.camera = camera;
+	}
+	if (record.activePage !== undefined) {
+		if (typeof record.activePage !== "string" || !isSafeName(record.activePage)) return undefined;
+		state.activePage = record.activePage;
+	}
+	if (record.pageCameras !== undefined) {
+		if (typeof record.pageCameras !== "object" || record.pageCameras === null || Array.isArray(record.pageCameras)) {
+			return undefined;
+		}
+		const cameras: Record<string, Camera> = {};
+		for (const [page, raw] of Object.entries(record.pageCameras)) {
+			const camera = parseCamera(raw);
+			if (!isSafeName(page) || camera === undefined) return undefined;
+			cameras[page] = camera;
+		}
+		state.pageCameras = cameras;
+	}
+	return state;
+}
+
+function parseCamera(value: unknown): Camera | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const { x, y, k } = value as Record<string, unknown>;
 	if (typeof x !== "number" || typeof y !== "number" || typeof k !== "number") return undefined;
 	if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(k) || k <= 0) return undefined;
-	return { mode: record.mode, camera: { x, y, k }, ...arrows };
+	return { x, y, k };
 }
