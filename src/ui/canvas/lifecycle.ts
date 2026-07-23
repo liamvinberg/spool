@@ -1,28 +1,234 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Camera, CanvasMode, ProjectedFrame } from "../api";
-import { intersects, visibleWorldRect } from "./camera";
+import { intersects, toWorld, visibleWorldRect } from "./camera";
 import { captureMessage } from "./protocol";
 
 /**
- * The engine lifecycle (#8, #13): which frames run, which stand frozen, which
- * exist only as their thumbnail. Live mode: near frames play; tiny-rendered
+ * The engine lifecycle (#8, #13, #40): which frames run, which stand frozen,
+ * which exist only as their still. Live mode: near frames play; tiny-rendered
  * and offscreen frames freeze (Chrome free-runs tiny live frames at 500+ Hz —
- * the zoom threshold is load-bearing), and after a grace window they take a
- * goodbye self-capture and unmount. Design mode: real DOM everywhere, time
- * stopped. Hibernation is automatic engine lifecycle, never a user mode;
- * double-click boots a hibernated frame fresh — reset-on-return is a feature.
+ * the zoom threshold is load-bearing) and stay mounted in the warm pool.
+ * Hibernation's payoff is memory, never CPU: only pool overflow demotes a
+ * frame to its still, oldest-seen first, html frames taking a goodbye
+ * self-capture on the way out. Every mount drains through the wake queue —
+ * entered immediately, selected next, then nearest the viewport center, a
+ * few per sweep — so no burst site (zoom wake, design flip, page entry) can
+ * land every mount in one commit. Design mode: real DOM everywhere, time
+ * stopped, never evicted. Hibernation is automatic engine lifecycle, never a
+ * user mode; double-click boots a hibernated frame fresh — reset-on-return
+ * is a feature.
  */
 
 export type FrameState = "live" | "warm" | "hibernated";
 
 const MARGIN_FRACTION = 0.5; // extra viewport fractions kept mounted around the screen
 const K_MIN_LIVE = 0.15; // below this zoom nothing is interactable anyway
-const GRACE_MS = 2000; // offscreen time a frame stays warm before hibernating
-const EXIT_CAPTURE_TIMEOUT_MS = 600; // how long hibernation waits for the goodbye shot
+const EXIT_CAPTURE_TIMEOUT_MS = 600; // how long an eviction waits for the goodbye shot
 const CAMERA_SETTLE_MS = 400; // capture on settle, never mid-gesture
 const SWEEP_MS = 300;
 const CAPTURE_REPLY_TIMEOUT_MS = 3000;
+export const MOUNTS_PER_SWEEP = 3; // wake-queue drain rate: 3 × ~8 ms ≈ one skipped paint per sweep at worst
+export const WARM_POOL_CAP = 24; // offscreen warm frames kept mounted; each holds ~4.6 MB and a renderer
+
+/** The decision function's persistent bookkeeping, owned by the hook, fabricated by tests. */
+export interface LifecycleModel {
+	/** When each frame was last usable — the warm pool evicts oldest-seen first. */
+	lastUsable: Map<string, number>;
+	/** Evictions mid-goodbye: the frame stays warm until its capture lands or times out. */
+	exitPending: Map<string, { t0: number; captured: boolean }>;
+	/** Frames whose still went stale — a source edit, or leaving live. */
+	staleStills: Set<string>;
+	prevCamera: Camera | null;
+	lastCameraMove: number;
+}
+
+export function createLifecycleModel(): LifecycleModel {
+	return {
+		lastUsable: new Map(),
+		exitPending: new Map(),
+		staleStills: new Set(),
+		prevCamera: null,
+		lastCameraMove: 0,
+	};
+}
+
+/** The goodbye shot's outcome — an eviction mid-dance learns whether its capture landed. */
+export function noteExitCapture(model: LifecycleModel, frame: string, captured: boolean): void {
+	const exit = model.exitPending.get(frame);
+	if (exit !== undefined) exit.captured = captured;
+}
+
+export interface SweepInput {
+	frames: readonly ProjectedFrame[];
+	camera: Camera;
+	viewportWidth: number;
+	viewportHeight: number;
+	mode: CanvasMode;
+	entered: string | null;
+	selected: string | null;
+	states: Readonly<Record<string, FrameState>>;
+	/** Frames whose boot has reported loaded — the ones a capture can reach. */
+	ready: ReadonlySet<string>;
+	/** Frames with a capture already in flight. */
+	capturing: ReadonlySet<string>;
+	hasThumb: (frame: string) => boolean;
+	now: number;
+}
+
+export interface SweepResult {
+	states: Record<string, FrameState>;
+	changed: boolean;
+	/** Evicted html frames owed a goodbye capture; route each outcome to noteExitCapture. */
+	exitCaptures: string[];
+	/** Frames whose still should refresh while their DOM is mounted and settled. */
+	refreshCaptures: string[];
+}
+
+export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
+	const {
+		frames,
+		camera,
+		viewportWidth,
+		viewportHeight,
+		mode,
+		entered,
+		selected,
+		states,
+		ready,
+		capturing,
+		hasThumb,
+		now,
+	} = input;
+
+	const prev = model.prevCamera;
+	if (prev === null || prev.x !== camera.x || prev.y !== camera.y || prev.k !== camera.k) {
+		model.prevCamera = { ...camera };
+		model.lastCameraMove = now;
+	}
+	const settled = now - model.lastCameraMove > CAMERA_SETTLE_MS;
+
+	const margined = visibleWorldRect(camera, viewportWidth, viewportHeight, MARGIN_FRACTION);
+	const strict = visibleWorldRect(camera, viewportWidth, viewportHeight, 0);
+	const center = toWorld({ x: viewportWidth / 2, y: viewportHeight / 2 }, camera);
+
+	interface Entry {
+		frame: ProjectedFrame;
+		current: FrameState;
+		usable: boolean;
+		target: FrameState;
+	}
+	const entries: Entry[] = [];
+	// the wake queue: every mount waits here; strictly-visible frames precede
+	// the margin ring, nearest the viewport center first within each tier
+	const waiting: { entry: Entry; wakeTo: "live" | "warm"; tier: number; dist: number }[] = [];
+
+	for (const frame of frames) {
+		const current = states[frame.name] ?? "hibernated";
+		const onScreen = intersects(margined, frame);
+		const usable = onScreen && camera.k >= K_MIN_LIVE;
+		if (usable) {
+			model.lastUsable.set(frame.name, now);
+			// coming back into view rescues an eviction mid-goodbye
+			model.exitPending.delete(frame.name);
+		}
+
+		let target: FrameState;
+		let wakeTo: "live" | "warm" | null = null;
+		if (mode === "design") {
+			// design: time frozen everywhere (#8), real DOM everywhere — the
+			// canvas exits any entered frame on the way into design mode
+			model.exitPending.delete(frame.name);
+			target = current === "hibernated" ? "hibernated" : "warm";
+			if (current === "hibernated") wakeTo = "warm";
+		} else if (current !== "hibernated") {
+			target = entered === frame.name || usable ? "live" : "warm";
+		} else if (entered === frame.name) {
+			// entering mounts in its own sweep, bypassing the cap
+			target = "live";
+		} else {
+			target = "hibernated";
+			// first click pre-boots (#8): a selected frame mounts hidden so the
+			// double-click that follows reveals an already-running frame
+			wakeTo = usable ? "live" : selected === frame.name ? "warm" : null;
+		}
+
+		const entry: Entry = { frame, current, usable, target };
+		entries.push(entry);
+		if (wakeTo !== null) {
+			const cx = frame.x + frame.w / 2 - center.x;
+			const cy = frame.y + frame.h / 2 - center.y;
+			const tier = selected === frame.name ? 0 : intersects(strict, frame) ? 1 : onScreen ? 2 : 3;
+			waiting.push({ entry, wakeTo, tier, dist: cx * cx + cy * cy });
+		}
+	}
+
+	waiting.sort((a, b) => a.tier - b.tier || a.dist - b.dist);
+	for (const admitted of waiting.slice(0, MOUNTS_PER_SWEEP)) admitted.entry.target = admitted.wakeTo;
+
+	const exitCaptures: string[] = [];
+	if (mode !== "design") {
+		// resolve in-flight goodbyes: the capture landed or timed out — unmount now
+		for (const entry of entries) {
+			if (entry.target !== "warm") continue;
+			const exit = model.exitPending.get(entry.frame.name);
+			if (exit === undefined) continue;
+			if (exit.captured || now - exit.t0 >= EXIT_CAPTURE_TIMEOUT_MS) {
+				model.exitPending.delete(entry.frame.name);
+				entry.target = "hibernated";
+			}
+		}
+		// the warm pool: only overflow hibernates, oldest-seen first — live frames
+		// never count, the selected frame is pre-boot intent (evicting it would
+		// only re-queue it), and a mid-goodbye frame is already on its way out
+		const pool = entries.filter(
+			(e) => e.target === "warm" && !e.usable && e.frame.name !== selected && !model.exitPending.has(e.frame.name),
+		);
+		const overflow = pool.length - WARM_POOL_CAP;
+		if (overflow > 0) {
+			pool.sort((a, b) => (model.lastUsable.get(a.frame.name) ?? 0) - (model.lastUsable.get(b.frame.name) ?? 0));
+			for (const evicted of pool.slice(0, overflow)) {
+				if (evicted.frame.kind === "term") {
+					// a terminal's still is the daemon's grid (#42) — no goodbye capture
+					evicted.target = "hibernated";
+				} else {
+					// one goodbye self-capture while the DOM still exists
+					model.exitPending.set(evicted.frame.name, { t0: now, captured: false });
+					exitCaptures.push(evicted.frame.name);
+				}
+			}
+		}
+	}
+
+	const refreshCaptures: string[] = [];
+	const next: Record<string, FrameState> = {};
+	let changed = false;
+	for (const { frame, current, target } of entries) {
+		// leaving live stales the still; refresh once the camera settles,
+		// while the (hidden) DOM is still mounted
+		if (current === "live" && target === "warm" && frame.kind !== "term") model.staleStills.add(frame.name);
+		if (
+			frame.kind !== "term" &&
+			target !== "hibernated" &&
+			settled &&
+			(model.staleStills.has(frame.name) || !hasThumb(frame.name)) &&
+			!capturing.has(frame.name) &&
+			!model.exitPending.has(frame.name) &&
+			ready.has(frame.name)
+		) {
+			model.staleStills.delete(frame.name);
+			refreshCaptures.push(frame.name);
+		}
+		next[frame.name] = target;
+		if (target !== current) changed = true;
+	}
+	return {
+		states: next,
+		changed: changed || Object.keys(states).length !== frames.length,
+		exitCaptures,
+		refreshCaptures,
+	};
+}
 
 export interface LifecycleDeps {
 	framesRef: RefObject<ProjectedFrame[]>;
@@ -56,12 +262,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	onShotRef.current = onShot;
 
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
-	const lastUsable = useRef(new Map<string, number>());
-	const exitPending = useRef(new Map<string, { t0: number; captured: boolean }>());
-	const needsShot = useRef(new Set<string>());
+	const model = useRef(createLifecycleModel());
 	const captureWaiters = useRef(new Map<string, (url: string | undefined) => void>());
-	const prevCamera = useRef<Camera | null>(null);
-	const lastCameraMove = useRef(0);
 
 	const onIframe = useCallback((frame: string, el: HTMLIFrameElement | null) => {
 		if (el !== null) {
@@ -118,87 +320,25 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		const viewport = viewportRef.current;
 		const frames = framesRef.current;
 		if (camera === null || viewport === null) return;
-		const now = performance.now();
-
-		const prev = prevCamera.current;
-		if (prev === null || prev.x !== camera.x || prev.y !== camera.y || prev.k !== camera.k) {
-			prevCamera.current = { ...camera };
-			lastCameraMove.current = now;
+		const result = sweepLifecycle(model.current, {
+			frames,
+			camera,
+			viewportWidth: viewport.clientWidth,
+			viewportHeight: viewport.clientHeight,
+			mode: modeRef.current,
+			entered: enteredRef.current,
+			selected: selectedRef.current,
+			states: statesRef.current,
+			ready: readyRef.current,
+			capturing: new Set(captureWaiters.current.keys()),
+			hasThumb: hasThumbRef.current,
+			now: performance.now(),
+		});
+		for (const frame of result.exitCaptures) {
+			void requestCapture(frame).then((url) => noteExitCapture(model.current, frame, url !== undefined));
 		}
-		const settled = now - lastCameraMove.current > CAMERA_SETTLE_MS;
-
-		const visible = visibleWorldRect(camera, viewport.clientWidth, viewport.clientHeight, MARGIN_FRACTION);
-		const next: Record<string, FrameState> = {};
-		let changed = false;
-
-		for (const frame of frames) {
-			const current = statesRef.current[frame.name] ?? "hibernated";
-			const onScreen = intersects(visible, frame);
-			const usable = onScreen && camera.k >= K_MIN_LIVE;
-			if (usable) {
-				lastUsable.current.set(frame.name, now);
-				exitPending.current.delete(frame.name);
-			}
-
-			let target: FrameState;
-			if (modeRef.current === "design") {
-				// design: time frozen everywhere (#8), no exceptions — the canvas
-				// exits any entered frame on the way into design mode
-				target = "warm";
-				exitPending.current.delete(frame.name);
-			} else if (enteredRef.current === frame.name) {
-				target = "live";
-			} else if (usable) {
-				target = "live";
-			} else if (current === "hibernated") {
-				target = "hibernated";
-			} else if (now - (lastUsable.current.get(frame.name) ?? 0) < GRACE_MS) {
-				target = "warm";
-			} else if (frame.kind === "term") {
-				// a terminal's still is the daemon's grid (#42) — no goodbye capture
-				target = "hibernated";
-			} else {
-				// past grace: try one goodbye capture while the DOM still exists
-				const exit = exitPending.current.get(frame.name);
-				if (exit === undefined) {
-					exitPending.current.set(frame.name, { t0: now, captured: false });
-					void requestCapture(frame.name).then((url) => {
-						const entry = exitPending.current.get(frame.name);
-						if (entry !== undefined) entry.captured = url !== undefined;
-					});
-					target = "warm";
-				} else if (exit.captured || now - exit.t0 >= EXIT_CAPTURE_TIMEOUT_MS) {
-					exitPending.current.delete(frame.name);
-					target = "hibernated";
-				} else {
-					target = "warm";
-				}
-			}
-
-			// first click pre-boots (#8): a selected frame mounts hidden so the
-			// double-click that follows reveals an already-running frame
-			if (target === "hibernated" && selectedRef.current === frame.name) target = "warm";
-			// leaving live stales the thumbnail; refresh once the camera settles,
-			// while the (hidden) DOM is still mounted
-			if (current === "live" && target === "warm" && frame.kind !== "term") needsShot.current.add(frame.name);
-			if (
-				frame.kind !== "term" &&
-				target !== "hibernated" &&
-				settled &&
-				(needsShot.current.has(frame.name) || !hasThumbRef.current(frame.name)) &&
-				!captureWaiters.current.has(frame.name) &&
-				!exitPending.current.has(frame.name) &&
-				readyRef.current.has(frame.name)
-			) {
-				needsShot.current.delete(frame.name);
-				void requestCapture(frame.name);
-			}
-
-			next[frame.name] = target;
-			if (target !== current) changed = true;
-		}
-
-		if (changed || Object.keys(statesRef.current).length !== frames.length) setStates(next);
+		for (const frame of result.refreshCaptures) void requestCapture(frame);
+		if (result.changed) setStates(result.states);
 	}, [cameraRef, viewportRef, framesRef, requestCapture]);
 
 	// mode flips recompute immediately — D must feel instant, not one sweep late
@@ -214,7 +354,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 	/** A source edit made this frame's cover stale (#22: SSE-live updates). */
 	const markStale = useCallback((frame: string) => {
-		needsShot.current.add(frame);
+		model.current.staleStills.add(frame);
 	}, []);
 
 	return { states, ready, onIframe, noteLoaded, noteShot, markStale, capture: requestCapture };
