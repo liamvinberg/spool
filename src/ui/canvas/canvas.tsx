@@ -17,6 +17,7 @@ import {
 } from "../api";
 import { RibbonMark } from "../icons";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
+import { CollisionNotice } from "./collision-notice";
 import { ContextMenu, MENU_SIZE } from "./context-menu";
 import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
 import { FrameLabel } from "./frame-label";
@@ -34,14 +35,15 @@ import {
 } from "./overlays";
 import {
 	camerasFromState,
-	type PortalMarker,
-	pageLabel,
+	frameSourcePath,
 	pageOf,
 	portalEdges,
 	ROOT_PAGE,
 	resolveActivePage,
 	stateCameraSlots,
+	switchPage,
 } from "./pages";
+import { PortalChips } from "./portal-chips";
 import {
 	type PickedHit,
 	parseFrameMessage,
@@ -715,6 +717,15 @@ export function ProjectCanvas({
 
 	// --- pages (#39): one canvas per page, cameras bookkept per page ------------
 
+	/** The camera that lands an arrival centered on its target, zoom kept. */
+	const arrivalAt = useCallback((frame: ProjectedFrame): Camera | undefined => {
+		const viewport = viewportRef.current;
+		const cam = cameraRef.current;
+		return viewport !== null && cam !== null
+			? centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight)
+			: undefined;
+	}, []);
+
 	/**
 	 * Switching saves the leaving page's camera, swaps the field, and restores
 	 * the arriving page's — fits when it has none, or lands where a caller
@@ -734,10 +745,10 @@ export function ProjectCanvas({
 			setPicked(null);
 			setExternalLink(null);
 			stopAnimation();
-			const cam = cameraRef.current;
-			if (cam !== null) cameras.current = { ...cameras.current, [activePageRef.current]: cam };
+			const next = switchPage(cameras.current, activePageRef.current, cameraRef.current, target, arriveAt);
+			cameras.current = next.cameras;
 			setActivePage(target);
-			setCamera(arriveAt ?? cameras.current[target] ?? null);
+			setCamera(next.camera);
 		},
 		[flushNudge, commitTrash, cancelPicks, exitEntered, stopAnimation],
 	);
@@ -747,17 +758,10 @@ export function ProjectCanvas({
 		(name: string) => {
 			const frame = allFramesRef.current.find((f) => f.name === name);
 			if (frame === undefined || pageOf(frame) === activePageRef.current) return;
-			const viewport = viewportRef.current;
-			const cam = cameraRef.current;
-			switchToPage(
-				pageOf(frame),
-				viewport !== null && cam !== null
-					? centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight)
-					: undefined,
-			);
+			switchToPage(pageOf(frame), arrivalAt(frame));
 			setSelected([name]);
 		},
-		[switchToPage],
+		[switchToPage, arrivalAt],
 	);
 
 	// a page deleted on disk cannot stay active: snap back to the root page
@@ -775,14 +779,7 @@ export function ProjectCanvas({
 		(target: string, session: SessionRecord | null) => {
 			const across = allFramesRef.current.find((f) => f.name === target);
 			if (across !== undefined && pageOf(across) !== activePageRef.current) {
-				const viewport = viewportRef.current;
-				const cam = cameraRef.current;
-				switchToPage(
-					pageOf(across),
-					viewport !== null && cam !== null
-						? centerOn(cam, across, viewport.clientWidth, viewport.clientHeight)
-						: undefined,
-				);
+				switchToPage(pageOf(across), arrivalAt(across));
 			}
 			walkSession.current = session;
 			walkTarget.current = target;
@@ -815,7 +812,7 @@ export function ProjectCanvas({
 				setDocNonces((current) => ({ ...current, [target]: (current[target] ?? 0) + 1 }));
 			})();
 		},
-		[animateCamera, switchToPage],
+		[animateCamera, switchToPage, arrivalAt],
 	);
 
 	// SSE: the agent loop (#22) — source edits update the canvas without reload
@@ -1342,11 +1339,10 @@ export function ProjectCanvas({
 		[project],
 	);
 
-	/** The frame's source path for the editor, wherever its page put it (#39). */
-	const frameSourcePath = (name: string): string => {
+	/** The page a named frame sits on — the root page when it is unknown. */
+	const framePageOf = (name: string): string => {
 		const frame = allFramesRef.current.find((f) => f.name === name);
-		const page = frame === undefined ? ROOT_PAGE : pageOf(frame);
-		return page === ROOT_PAGE ? `design/frames/${name}/frame.tsx` : `design/frames/${page}/${name}/frame.tsx`;
+		return frame === undefined ? ROOT_PAGE : pageOf(frame);
 	};
 
 	// --- keys -------------------------------------------------------------------
@@ -1661,7 +1657,7 @@ export function ProjectCanvas({
 						guides={guides}
 						marquee={marquee}
 						shellRadius={shellRadius}
-						onOpenEditor={(pick) => openEditorFor(editorTarget(pick))}
+						onOpenEditor={(pick) => openEditorFor(editorTarget(pick, framePageOf(pick.frame)))}
 					/>
 				)}
 
@@ -1680,8 +1676,8 @@ export function ProjectCanvas({
 							const pick = pickedRef.current;
 							openEditorFor(
 								pick !== null && pick.frame === menu.frame
-									? editorTarget(pick)
-									: { path: frameSourcePath(menu.frame) },
+									? editorTarget(pick, framePageOf(pick.frame))
+									: { path: frameSourcePath(menu.frame, framePageOf(menu.frame)) },
 							);
 							setMenu(null);
 						}}
@@ -1697,48 +1693,6 @@ export function ProjectCanvas({
 
 				{pendingTrash !== null && <TrashToast frames={pendingTrash} onUndo={undoTrash} />}
 			</div>
-		</div>
-	);
-}
-
-/** A link leaving the page (#39): no drawable arrow, so a chip at the frame
- * edge names the target and its page — activating it jumps there. */
-function PortalChips({ portals, k, onJump }: { portals: PortalMarker[]; k: number; onJump: (frame: string) => void }) {
-	return (
-		<div className="absolute top-full left-0 origin-top-left" style={{ transform: `scale(${1 / k})` }}>
-			<div className="flex flex-col items-start gap-1 pt-2.5">
-				{portals.map((portal) => (
-					<button
-						key={portal.to}
-						type="button"
-						data-portal={portal.to}
-						title={`Jump to ${portal.to} on ${pageLabel(portal.toPage)}`}
-						onClick={() => onJump(portal.to)}
-						className="flex items-center gap-1.5 whitespace-nowrap rounded-xs border border-border-raised bg-raised px-2 py-[3px] font-mono text-2xs text-muted leading-3 hover:border-thread hover:text-text"
-					>
-						<span>→ {portal.to}</span>
-						<span className="opacity-60">· {pageLabel(portal.toPage)}</span>
-					</button>
-				))}
-			</div>
-		</div>
-	);
-}
-
-/** Two folders claiming one frame name (#39): identity is ambiguous, so the
- * canvas says so plainly instead of guessing which folder wins. */
-function CollisionNotice({ collisions }: { collisions: FrameCollision[] }) {
-	return (
-		<div className="pointer-events-none absolute inset-x-0 top-3 flex flex-col items-center gap-1.5">
-			{collisions.map((collision) => (
-				<div
-					key={collision.name}
-					className="rounded-md border border-border-raised bg-raised px-3 py-1.5 font-mono text-2xs leading-3"
-				>
-					<span className="text-thread">two frames named "{collision.name}"</span>
-					<span className="text-muted">: {collision.paths.join(" · ")}</span>
-				</div>
-			))}
 		</div>
 	);
 }

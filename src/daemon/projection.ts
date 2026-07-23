@@ -109,7 +109,7 @@ function discover(root: string): Discovery | undefined {
 	for (const [name, list] of claims) {
 		const first = list[0];
 		if (list.length === 1 && first !== undefined) frames.push({ name, page: first.page, dir: first.dir });
-		else collisions.push({ name, paths: list.map((entry) => relFrameDir(name, entry.page)).sort() });
+		else collisions.push({ name, paths: list.map((entry) => frameFolder(name, entry.page)).sort() });
 	}
 	frames.sort((a, b) => a.name.localeCompare(b.name));
 	collisions.sort((a, b) => a.name.localeCompare(b.name));
@@ -117,8 +117,9 @@ function discover(root: string): Discovery | undefined {
 	return { frames, pages, collisions };
 }
 
-/** The design-relative folder a frame name resolves to, wire-format slashes. */
-function relFrameDir(name: string, page: string | undefined): string {
+/** The design-relative folder a frame name resolves to, wire-format slashes —
+ * the one spelling of "where pages put a frame" every daemon surface shares. */
+export function frameFolder(name: string, page: string | undefined): string {
 	return page === undefined ? `frames/${name}` : `frames/${page}/${name}`;
 }
 

@@ -4,7 +4,7 @@ import { pageLabel, pageList } from "./pages";
 
 /**
  * The frames sidebar (#39), to the settled file-tree design: one collapsible
- * left panel — a pages section above the active page's frame list, rows in the
+ * left panel — the pages list above the active page's frame list, rows in the
  * frame-row idiom. The panel is a navigator over the projection: rows select
  * and switch, they never author. Dragging the edge resizes; past the snap
  * threshold it collapses to the rail. The per-frame element tree layers in
@@ -16,6 +16,7 @@ const RAIL_WIDTH = 44;
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 320;
 const SNAP_BELOW = 144;
+const COLLAPSED_BELOW = 72;
 
 export function CanvasSidebar({
 	pages,
@@ -37,7 +38,7 @@ export function CanvasSidebar({
 	const [width, setWidth] = useState(PANEL_WIDTH);
 	const [dragging, setDragging] = useState(false);
 	const drag = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
-	const collapsed = width <= 72;
+	const collapsed = width <= COLLAPSED_BELOW;
 
 	function finishDrag(target: HTMLElement, pointerId: number) {
 		const current = drag.current;

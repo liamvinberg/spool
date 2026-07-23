@@ -34,6 +34,32 @@ export function pageLabel(page: string): string {
 	return page === ROOT_PAGE ? "root" : page;
 }
 
+/** The frame's own source file relative to design/ — the stamp convention. */
+export function frameSourceRel(name: string, page: string): string {
+	return page === ROOT_PAGE ? `frames/${name}/frame.tsx` : `frames/${page}/${name}/frame.tsx`;
+}
+
+/** The same file as an editor path, wherever the frame's page put it. */
+export function frameSourcePath(name: string, page: string): string {
+	return `design/${frameSourceRel(name, page)}`;
+}
+
+/**
+ * One page switch: the leaving page keeps its last camera, the arriving page
+ * shows its stored one — a caller's arrival camera wins, and none at all
+ * means null: fit the field.
+ */
+export function switchPage(
+	cameras: Record<string, Camera>,
+	leaving: string,
+	leavingCamera: Camera | null,
+	arriving: string,
+	arriveAt?: Camera,
+): { cameras: Record<string, Camera>; camera: Camera | null } {
+	const kept = leavingCamera === null ? cameras : { ...cameras, [leaving]: leavingCamera };
+	return { cameras: kept, camera: arriveAt ?? kept[arriving] ?? null };
+}
+
 /** Every page's last known camera, keyed by page — the root page from the
  * original camera slot, named pages from theirs. */
 export function camerasFromState(state: CanvasState): Record<string, Camera> {

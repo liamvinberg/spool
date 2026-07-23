@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, sep } from "node:path";
 import { extractJsxSpan } from "./jsx-span";
 import { isSafeName } from "./project-files";
-import { frameGeometry, lookupFrame } from "./projection";
+import { frameFolder, frameGeometry, lookupFrame } from "./projection";
 
 /**
  * What Liam points at (#23), held in daemon memory and served over the API —
@@ -115,7 +115,7 @@ function enrich(root: string, put: SelectionPut): SelectionEntry[] {
 
 /** The frame's own source path, wherever its page put the folder (#39). */
 function framePathOf(frame: string, page: string | undefined): string {
-	return page === undefined ? `design/frames/${frame}/frame.tsx` : `design/frames/${page}/${frame}/frame.tsx`;
+	return `design/${frameFolder(frame, page)}/frame.tsx`;
 }
 
 interface Stamp {

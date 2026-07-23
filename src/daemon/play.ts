@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { buildDesignEntry, describeCompileError, hashInputs, parseImportMap } from "./compile";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript, mergeImportMap } from "./document";
 import { readIfExists } from "./project-files";
+import { frameFolder } from "./projection";
 import { buildFrameCss } from "./tailwind";
 import { importMapPins } from "./vendor";
 
@@ -53,7 +54,7 @@ export type PlayerCompile =
 /** A frame in the composition: leaf-name identity, page-aware folder (#39). */
 export interface PlayerFrameRef {
 	name: string;
-	page?: string | undefined;
+	page?: string;
 }
 
 interface PlayerCacheEntry {
@@ -76,7 +77,7 @@ export function createPlayerCompiler(version: string) {
 	const cache = new Map<string, PlayerCacheEntry>();
 
 	async function getBundle(root: string, frames: PlayerFrameRef[]): Promise<PlayerCompile> {
-		const stamp = frames.map(frameRelDir).join("\n");
+		const stamp = frames.map((ref) => frameFolder(ref.name, ref.page)).join("\n");
 		const cached = cache.get(root);
 		if (cached !== undefined && cached.stamp === stamp && hashInputs(version, stamp, cached.inputs) === cached.hash) {
 			return { kind: "ok", bundle: cached.bundle, cache: "hit" };
@@ -96,10 +97,6 @@ export function createPlayerCompiler(version: string) {
 }
 
 export type PlayerCompiler = ReturnType<typeof createPlayerCompiler>;
-
-function frameRelDir(ref: PlayerFrameRef): string {
-	return ref.page === undefined ? `frames/${ref.name}` : `frames/${ref.page}/${ref.name}`;
-}
 
 async function compilePlayer(
 	version: string,
@@ -139,7 +136,7 @@ async function compilePlayer(
 /** The composition: every frame imported, handed to the runtime's player boot. */
 function playerEntry(frames: PlayerFrameRef[]): string {
 	const imports = frames
-		.map((ref, i) => `import f${i} from ${JSON.stringify(`./${frameRelDir(ref)}/frame.tsx`)};`)
+		.map((ref, i) => `import f${i} from ${JSON.stringify(`./${frameFolder(ref.name, ref.page)}/frame.tsx`)};`)
 		.join("\n");
 	const map = frames.map((ref, i) => `${JSON.stringify(ref.name)}: f${i}`).join(", ");
 	return `import { bootPlayer } from "spool";
