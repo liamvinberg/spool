@@ -35,6 +35,11 @@ export function writeFrame(root: string, name: string, tsx: string): void {
 	writeDesignFile(root, join("frames", name, "frame.tsx"), tsx);
 }
 
+/** A frame on a named page (#39): one level down, identity still the leaf name. */
+export function writePageFrame(root: string, page: string, name: string, tsx: string): void {
+	writeDesignFile(root, join("frames", page, name, "frame.tsx"), tsx);
+}
+
 /** A daemon app on a given ~/.spool dir, closed with the test. */
 export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof createDaemonApp>[0]>) {
 	const daemon = createDaemonApp({ spoolDir, version: "0.0.0-test", ...options });

@@ -50,7 +50,14 @@ export type PlayerCompile =
 	| { kind: "ok"; bundle: PlayerBundle; cache: "hit" | "miss" }
 	| { kind: "error"; message: string };
 
+/** A frame in the composition: leaf-name identity, page-aware folder (#39). */
+export interface PlayerFrameRef {
+	name: string;
+	page?: string | undefined;
+}
+
 interface PlayerCacheEntry {
+	stamp: string;
 	inputs: string[];
 	hash: string;
 	bundle: PlayerBundle;
@@ -58,27 +65,25 @@ interface PlayerCacheEntry {
 
 /**
  * Compiles the whole project into its player bundle, content-hash cached like
- * the frame compiler: the frame-name list rides the hash, so a frame born,
- * renamed, or trashed after the last compile is a miss, not a stale player.
- * The per-request config (start, scenario, geometry) never enters the cache —
- * a selection change re-assembles the document on the same bundle.
+ * the frame compiler: the frame-folder list rides the hash, so a frame born,
+ * renamed, moved between pages, or trashed after the last compile is a miss,
+ * not a stale player. The per-request config (start, scenario, geometry) never
+ * enters the cache — a selection change re-assembles the document on the same
+ * bundle. The player itself is page-blind: pages shape import paths here and
+ * nothing else.
  */
 export function createPlayerCompiler(version: string) {
 	const cache = new Map<string, PlayerCacheEntry>();
 
-	async function getBundle(root: string, names: string[]): Promise<PlayerCompile> {
-		const stamp = names.join("\n");
+	async function getBundle(root: string, frames: PlayerFrameRef[]): Promise<PlayerCompile> {
+		const stamp = frames.map(frameRelDir).join("\n");
 		const cached = cache.get(root);
-		if (
-			cached !== undefined &&
-			cached.bundle.names.join("\n") === stamp &&
-			hashInputs(version, stamp, cached.inputs) === cached.hash
-		) {
+		if (cached !== undefined && cached.stamp === stamp && hashInputs(version, stamp, cached.inputs) === cached.hash) {
 			return { kind: "ok", bundle: cached.bundle, cache: "hit" };
 		}
 
 		try {
-			const entry = await compilePlayer(version, root, names);
+			const entry = await compilePlayer(version, root, frames, stamp);
 			cache.set(root, entry);
 			return { kind: "ok", bundle: entry.bundle, cache: "miss" };
 		} catch (error) {
@@ -92,7 +97,16 @@ export function createPlayerCompiler(version: string) {
 
 export type PlayerCompiler = ReturnType<typeof createPlayerCompiler>;
 
-async function compilePlayer(version: string, root: string, names: string[]): Promise<PlayerCacheEntry> {
+function frameRelDir(ref: PlayerFrameRef): string {
+	return ref.page === undefined ? `frames/${ref.name}` : `frames/${ref.page}/${ref.name}`;
+}
+
+async function compilePlayer(
+	version: string,
+	root: string,
+	frames: PlayerFrameRef[],
+	stamp: string,
+): Promise<PlayerCacheEntry> {
 	const designDir = join(root, "design");
 	// the same stamping compile as frame documents (#23): one dialect, one
 	// pipeline, identical semantics whether a frame renders alone or composed
@@ -100,7 +114,7 @@ async function compilePlayer(version: string, root: string, names: string[]): Pr
 		designDir,
 		resolveDir: designDir,
 		sourcefile: STDIN_NAME,
-		contents: playerEntry(names),
+		contents: playerEntry(frames),
 		label: "the player",
 	});
 
@@ -117,17 +131,17 @@ async function compilePlayer(version: string, root: string, names: string[]): Pr
 		join(shared, "transitions.css"),
 		join(shared, "importmap.json"),
 	];
-	const stamp = names.join("\n");
 	const hash = hashInputs(version, stamp, inputs);
-	return { inputs, hash, bundle: { bootJs, css, fonts, bundledCss, transitions, importMap, names, hash } };
+	const names = frames.map((ref) => ref.name);
+	return { stamp, inputs, hash, bundle: { bootJs, css, fonts, bundledCss, transitions, importMap, names, hash } };
 }
 
 /** The composition: every frame imported, handed to the runtime's player boot. */
-function playerEntry(names: string[]): string {
-	const imports = names
-		.map((name, i) => `import f${i} from ${JSON.stringify(`./frames/${name}/frame.tsx`)};`)
+function playerEntry(frames: PlayerFrameRef[]): string {
+	const imports = frames
+		.map((ref, i) => `import f${i} from ${JSON.stringify(`./${frameRelDir(ref)}/frame.tsx`)};`)
 		.join("\n");
-	const map = names.map((name, i) => `${JSON.stringify(name)}: f${i}`).join(", ");
+	const map = frames.map((ref, i) => `${JSON.stringify(ref.name)}: f${i}`).join(", ");
 	return `import { bootPlayer } from "spool";
 ${imports}
 bootPlayer({ ${map} });

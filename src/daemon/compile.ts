@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { build, formatMessagesSync, type Plugin } from "esbuild";
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
 import { isSafeName, readIfExists } from "./project-files";
+import { describeCollision, lookupFrame } from "./projection";
 import { buildFrameCss } from "./tailwind";
 import { importMapPins } from "./vendor";
 
@@ -35,13 +36,19 @@ export function createFrameCompiler(version: string) {
 	async function getDocument(root: string, frame: string): Promise<FrameDocument> {
 		if (!isSafeName(frame)) return { kind: "missing", message: `not a frame name: "${frame}"` };
 		const designDir = join(root, "design");
-		const frameDir = join(designDir, "frames", frame);
-		if (!existsSync(join(frameDir, "frame.tsx"))) {
+		const lookup = lookupFrame(root, frame);
+		if (lookup.kind === "collision") {
+			// an ambiguous name serves nobody — fail loud, name both locations (#39)
+			const message = describeCollision(frame, lookup.paths);
+			return { kind: "error", document: errorDocument(frame, message), message };
+		}
+		if (lookup.kind === "missing") {
 			return {
 				kind: "missing",
 				message: `no frame "${frame}" — expected design/frames/${frame}/frame.tsx in ${root}`,
 			};
 		}
+		const frameDir = lookup.dir;
 
 		const key = `${root}\0${frame}`;
 		const cached = cache.get(key);
