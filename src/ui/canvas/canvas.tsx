@@ -42,6 +42,7 @@ import {
 	sitesMessage,
 } from "./protocol";
 import { snapEdge, snapMovedBox } from "./snap";
+import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { TrashToast } from "./trash-toast";
 
 /**
@@ -90,6 +91,21 @@ const NUDGE_FLUSH_MS = 400;
 const SELECTION_PUT_MS = 150;
 const PICK_REPLY_MS = 400;
 const TRASH_UNDO_MS = 5000;
+
+function spatialDirection(key: string): SpatialDirection | undefined {
+	switch (key) {
+		case "ArrowLeft":
+			return "left";
+		case "ArrowRight":
+			return "right";
+		case "ArrowUp":
+			return "up";
+		case "ArrowDown":
+			return "down";
+		default:
+			return undefined;
+	}
+}
 
 function wheelPixels(delta: number, mode: number, pageSize: number): number {
 	return delta * (mode === 1 ? 16 : mode === 2 ? pageSize : 1);
@@ -381,6 +397,27 @@ export function ProjectCanvas({
 		animateCamera({ k: 1, x: c.x - w.x, y: c.y - w.y });
 	}, [animateCamera, viewportCenter]);
 
+	/** Enter one frame as a fresh preview root: no carried session, no witnessed edge. */
+	const enterFrame = useCallback(
+		(target: string) => {
+			const frame = framesRef.current.find((candidate) => candidate.name === target);
+			if (frame === undefined) return;
+			walkTarget.current = null;
+			walkSession.current = null;
+			setEntered(target);
+			setSelected([]);
+			setPicked(null);
+			// the entered frame owns the keyboard from the first moment; a frame
+			// booting right now gets it at its loaded report instead
+			iframes.current.get(target)?.focus();
+			// entering is a focusing gesture: fit once. Walks and shell navigation
+			// preserve zoom so the field keeps its spatial continuity.
+			const viewport = viewportRef.current;
+			if (viewport !== null) animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
+		},
+		[animateCamera],
+	);
+
 	/** An entered walk: fresh boot for the target (#5), session carried, camera pans. */
 	const walkTo = useCallback(
 		(target: string, session: SessionRecord | null) => {
@@ -418,11 +455,19 @@ export function ProjectCanvas({
 		[animateCamera],
 	);
 
-	const exitEntered = useCallback(() => {
+	const exitEntered = useCallback((retainFrame = false) => {
+		const frame = enteredRef.current;
 		setEntered(null);
 		setExternalLink(null);
 		walkTarget.current = null;
 		walkSession.current = null;
+		if (retainFrame && frame !== null) {
+			setSelected([frame]);
+			setPicked(null);
+		}
+		// Focus can otherwise remain trapped in the now-inert iframe, where the
+		// following arrow would never reach the canvas navigation layer.
+		viewportRef.current?.focus({ preventScroll: true });
 	}, []);
 
 	/** The one mode door: design freezes time everywhere, so entering it exits play. */
@@ -765,7 +810,7 @@ export function ProjectCanvas({
 					// an entered frame owns the keyboard; the shim forwards the exit
 					// key — from any frame: a walked-away source legitimately still
 					// holds focus, and its Esc means the same thing (#28)
-					if (message.key === "Escape" && enteredRef.current !== null) exitEntered();
+					if (message.key === "Escape" && enteredRef.current !== null) exitEntered(true);
 					return;
 				case "zoom": {
 					// Entered frames own pointer + keyboard input, and those events do
@@ -1144,21 +1189,7 @@ export function ProjectCanvas({
 			return;
 		}
 		// entering is the play gesture — a hibernated frame boots fresh here
-		walkTarget.current = null;
-		walkSession.current = null;
-		setEntered(hit);
-		setSelected([]);
-		setPicked(null);
-		// the entered frame owns the keyboard from the first moment; a frame
-		// booting right now gets it at its loaded report instead
-		iframes.current.get(hit)?.focus();
-		// and it is a focusing gesture: fly to the frame, Shift+2's fit —
-		// walks stay same-zoom pans (#5), only the enter zooms
-		const frame = framesRef.current.find((f) => f.name === hit);
-		const viewport = viewportRef.current;
-		if (frame !== undefined && viewport !== null) {
-			animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
-		}
+		enterFrame(hit);
 	};
 
 	const onContextMenu = (event: React.MouseEvent) => {
@@ -1280,12 +1311,42 @@ export function ProjectCanvas({
 				case "ArrowDown": {
 					if (enteredRef.current !== null || selectedRef.current.length === 0) break;
 					event.preventDefault();
+					if (modeRef.current === "live") {
+						if (selectedRef.current.length !== 1) break;
+						const current = framesRef.current.find((frame) => frame.name === selectedRef.current[0]);
+						if (current === undefined) break;
+						const direction = spatialDirection(event.key);
+						if (direction === undefined) break;
+						const target = nextSpatialFrame(current, framesRef.current, direction);
+						if (target === undefined) break;
+						setSelected([target.name]);
+						setPicked(null);
+						const viewport = viewportRef.current;
+						const cam = cameraRef.current;
+						if (viewport !== null && cam !== null) {
+							animateCamera(centerOn(cam, target, viewport.clientWidth, viewport.clientHeight));
+						}
+						break;
+					}
 					const step = event.shiftKey ? 10 : 1;
 					const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
 					const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
 					nudge(dx, dy);
 					break;
 				}
+				case "Enter":
+					if (
+						!event.repeat &&
+						modeRef.current === "live" &&
+						enteredRef.current === null &&
+						selectedRef.current.length === 1
+					) {
+						const [target] = selectedRef.current;
+						if (target === undefined) break;
+						event.preventDefault();
+						enterFrame(target);
+					}
+					break;
 				case "Delete":
 				case "Backspace":
 					// frame delete only — element delete is deliberately out (#7)
@@ -1298,7 +1359,7 @@ export function ProjectCanvas({
 					cancelPicks();
 					if (gesture.current.kind !== "idle" && gesture.current.kind !== "pan") cancelGesture();
 					else if (menuOpenRef.current) setMenu(null);
-					else if (enteredRef.current !== null) exitEntered();
+					else if (enteredRef.current !== null) exitEntered(true);
 					else if (pickedRef.current !== null) {
 						// ascend the ancestry (Figma): element → parent → … → frame → clear
 						const picked = pickedRef.current;
@@ -1334,6 +1395,7 @@ export function ProjectCanvas({
 		resetZoom,
 		animateCamera,
 		exitEntered,
+		enterFrame,
 		switchMode,
 		nudge,
 		stageTrash,
@@ -1377,7 +1439,9 @@ export function ProjectCanvas({
 			ref={viewportRef}
 			role="application"
 			aria-label={`${project} canvas`}
-			className="relative h-full w-full touch-none select-none overflow-hidden bg-canvas"
+			// biome-ignore lint/a11y/noNoninteractiveTabindex: the canvas is one keyboard composite; focus returns here from its iframe
+			tabIndex={0}
+			className="relative h-full w-full touch-none select-none overflow-hidden bg-canvas outline-none"
 			style={{ cursor }}
 			onPointerDown={onPointerDown}
 			onPointerMove={onPointerMove}
