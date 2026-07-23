@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
-import type { Camera, CanvasMode, FlowEdge, Geometry, ProjectedFrame } from "../api";
+import type { Camera, CanvasMode, FlowEdge, FrameCollision, Geometry, ProjectedFrame } from "../api";
 import {
 	beaconTrash,
 	fetchCanvasState,
@@ -33,6 +33,16 @@ import {
 	SelectionOverlay,
 } from "./overlays";
 import {
+	camerasFromState,
+	type PortalMarker,
+	pageLabel,
+	pageOf,
+	portalEdges,
+	ROOT_PAGE,
+	resolveActivePage,
+	stateCameraSlots,
+} from "./pages";
+import {
 	type PickedHit,
 	parseFrameMessage,
 	pickMessage,
@@ -41,6 +51,7 @@ import {
 	sessionReply,
 	sitesMessage,
 } from "./protocol";
+import { CanvasSidebar } from "./sidebar";
 import { snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { TrashToast } from "./trash-toast";
@@ -149,9 +160,20 @@ export function ProjectCanvas({
 	const [walkBoots, setWalkBoots] = useState<Record<string, WalkBoot>>({});
 	const [thumbNonces, setThumbNonces] = useState<Record<string, number>>({});
 	const [freshThumbs, setFreshThumbs] = useState<ReadonlySet<string>>(new Set<string>());
+	// pages (#39): the named pages on disk, the one the canvas shows, and the
+	// names discovery refuses to resolve
+	const [pages, setPages] = useState<string[]>([]);
+	const [activePage, setActivePage] = useState<string>(ROOT_PAGE);
+	const [collisions, setCollisions] = useState<FrameCollision[]>([]);
 
-	// frames staged for the Trash vanish instantly; the disk move waits on the toast
-	const visibleFrames = useMemo(() => frames.filter((f) => !hidden.has(f.name)), [frames, hidden]);
+	// the active page is the canvas: only its frames mount — and frames staged
+	// for the Trash vanish instantly; the disk move waits on the toast
+	const visibleFrames = useMemo(
+		() => frames.filter((f) => pageOf(f) === activePage && !hidden.has(f.name)),
+		[frames, activePage, hidden],
+	);
+	// links that leave the page surface as portals at the frame edge (#39)
+	const portals = useMemo(() => portalEdges(edges, frames, activePage), [edges, frames, activePage]);
 
 	const gesture = useRef<Gesture>({ kind: "idle" });
 	const animation = useRef(0);
@@ -159,6 +181,13 @@ export function ProjectCanvas({
 	cameraRef.current = camera;
 	const framesRef = useRef(visibleFrames);
 	framesRef.current = visibleFrames;
+	// the whole projection, for cross-page reads: portals, walks, editor paths
+	const allFramesRef = useRef(frames);
+	allFramesRef.current = frames;
+	const activePageRef = useRef(activePage);
+	activePageRef.current = activePage;
+	// every page's last known camera this session, keyed by page (#39)
+	const cameras = useRef<Record<string, Camera>>({});
 	const enteredRef = useRef(entered);
 	enteredRef.current = entered;
 	const modeRef = useRef(mode);
@@ -238,6 +267,8 @@ export function ProjectCanvas({
 		const projection = await fetchProjection(project);
 		if (projection === undefined) return;
 		setFrames(projection.frames);
+		setPages(projection.pages);
+		setCollisions(projection.collisions);
 		setLoaded(true);
 	}, [project]);
 
@@ -246,7 +277,8 @@ export function ProjectCanvas({
 		if (flows !== undefined) setEdges(flows.edges);
 	}, [project]);
 
-	// boot: stored state (mode + camera + arrows), the projection, the link graph
+	// boot: stored state (mode + cameras + arrows + active page), the
+	// projection, the link graph — the canvas reopens on the page it left (#39)
 	useEffect(() => {
 		let alive = true;
 		void (async () => {
@@ -254,7 +286,11 @@ export function ProjectCanvas({
 			if (alive && state !== undefined) {
 				setMode(state.mode);
 				setArrowsOn(state.arrows ?? true);
-				if (state.camera !== undefined) setCamera(state.camera);
+				cameras.current = camerasFromState(state);
+				const page = state.activePage ?? ROOT_PAGE;
+				setActivePage(page);
+				const camera = cameras.current[page];
+				if (camera !== undefined) setCamera(camera);
 			}
 			if (alive) await Promise.all([refetchFrames(), refetchFlows()]);
 		})();
@@ -414,43 +450,6 @@ export function ProjectCanvas({
 			// preserve zoom so the field keeps its spatial continuity.
 			const viewport = viewportRef.current;
 			if (viewport !== null) animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
-		},
-		[animateCamera],
-	);
-
-	/** An entered walk: fresh boot for the target (#5), session carried, camera pans. */
-	const walkTo = useCallback(
-		(target: string, session: SessionRecord | null) => {
-			walkSession.current = session;
-			walkTarget.current = target;
-			const gen = ++walkGen.current;
-			// arrival is instant — entered (and its chip) must name the frame whose
-			// time runs the moment the walk lands, not after the capture below
-			setEntered(target);
-			setSelected([]);
-			setPicked(null);
-			const frame = framesRef.current.find((f) => f.name === target);
-			const viewport = viewportRef.current;
-			const cam = cameraRef.current;
-			if (frame !== undefined && viewport !== null && cam !== null) {
-				animateCamera(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
-			}
-			void (async () => {
-				// the reboot must not read as a reload (#28): self-capture the target
-				// just before rebooting and hold that still, uncovered, until the
-				// fresh boot's loaded report. Bounded — a mute frame cannot stall the
-				// walk, and its late reply still lands as the thumbnail via onShot.
-				const still = await Promise.race([
-					lifecycleRef.current.capture(target),
-					new Promise<undefined>((resolve) => setTimeout(resolve, WALK_STILL_MS)),
-				]);
-				// only the newest walk reboots (pickGen's pattern): a superseding walk
-				// or an exit mid-capture voids this one
-				if (walkGen.current !== gen || walkTarget.current !== target) return;
-				setWalkBoots((current) => ({ ...current, [target]: { still } }));
-				// screen scripts run fresh on every arrival — reboot even a warm target
-				setDocNonces((current) => ({ ...current, [target]: (current[target] ?? 0) + 1 }));
-			})();
 		},
 		[animateCamera],
 	);
@@ -714,6 +713,111 @@ export function ProjectCanvas({
 		[beginPick, applyPick],
 	);
 
+	// --- pages (#39): one canvas per page, cameras bookkept per page ------------
+
+	/**
+	 * Switching saves the leaving page's camera, swaps the field, and restores
+	 * the arriving page's — fits when it has none, or lands where a caller
+	 * says. Selection, element scope, and entered time are page-local and
+	 * reset; a pending trash commits (one undo slot, as ever). Live/design mode
+	 * is global and rides through untouched.
+	 */
+	const switchToPage = useCallback(
+		(target: string, arriveAt?: Camera) => {
+			if (activePageRef.current === target) return;
+			flushNudge();
+			commitTrash();
+			cancelPicks();
+			exitEntered();
+			setMenu(null);
+			setSelected([]);
+			setPicked(null);
+			setExternalLink(null);
+			stopAnimation();
+			const cam = cameraRef.current;
+			if (cam !== null) cameras.current = { ...cameras.current, [activePageRef.current]: cam };
+			setActivePage(target);
+			setCamera(arriveAt ?? cameras.current[target] ?? null);
+		},
+		[flushNudge, commitTrash, cancelPicks, exitEntered, stopAnimation],
+	);
+
+	/** Follow a portal: land on the target's page with the target centered (#39). */
+	const jumpToFrame = useCallback(
+		(name: string) => {
+			const frame = allFramesRef.current.find((f) => f.name === name);
+			if (frame === undefined || pageOf(frame) === activePageRef.current) return;
+			const viewport = viewportRef.current;
+			const cam = cameraRef.current;
+			switchToPage(
+				pageOf(frame),
+				viewport !== null && cam !== null
+					? centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight)
+					: undefined,
+			);
+			setSelected([name]);
+		},
+		[switchToPage],
+	);
+
+	// a page deleted on disk cannot stay active: snap back to the root page
+	useEffect(() => {
+		if (!loaded) return;
+		if (resolveActivePage(activePage, pages) !== activePage) switchToPage(ROOT_PAGE);
+	}, [loaded, activePage, pages, switchToPage]);
+
+	/**
+	 * An entered walk: fresh boot for the target (#5), session carried, camera
+	 * pans — and when the target lives on another page, the page follows the
+	 * walk (#39): cross-page links are legal, journeys hand off to each other.
+	 */
+	const walkTo = useCallback(
+		(target: string, session: SessionRecord | null) => {
+			const across = allFramesRef.current.find((f) => f.name === target);
+			if (across !== undefined && pageOf(across) !== activePageRef.current) {
+				const viewport = viewportRef.current;
+				const cam = cameraRef.current;
+				switchToPage(
+					pageOf(across),
+					viewport !== null && cam !== null
+						? centerOn(cam, across, viewport.clientWidth, viewport.clientHeight)
+						: undefined,
+				);
+			}
+			walkSession.current = session;
+			walkTarget.current = target;
+			const gen = ++walkGen.current;
+			// arrival is instant — entered (and its chip) must name the frame whose
+			// time runs the moment the walk lands, not after the capture below
+			setEntered(target);
+			setSelected([]);
+			setPicked(null);
+			const frame = framesRef.current.find((f) => f.name === target);
+			const viewport = viewportRef.current;
+			const cam = cameraRef.current;
+			if (frame !== undefined && viewport !== null && cam !== null) {
+				animateCamera(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
+			}
+			void (async () => {
+				// the reboot must not read as a reload (#28): self-capture the target
+				// just before rebooting and hold that still, uncovered, until the
+				// fresh boot's loaded report. Bounded — a mute frame cannot stall the
+				// walk, and its late reply still lands as the thumbnail via onShot.
+				const still = await Promise.race([
+					lifecycleRef.current.capture(target),
+					new Promise<undefined>((resolve) => setTimeout(resolve, WALK_STILL_MS)),
+				]);
+				// only the newest walk reboots (pickGen's pattern): a superseding walk
+				// or an exit mid-capture voids this one
+				if (walkGen.current !== gen || walkTarget.current !== target) return;
+				setWalkBoots((current) => ({ ...current, [target]: { still } }));
+				// screen scripts run fresh on every arrival — reboot even a warm target
+				setDocNonces((current) => ({ ...current, [target]: (current[target] ?? 0) + 1 }));
+			})();
+		},
+		[animateCamera, switchToPage],
+	);
+
 	// SSE: the agent loop (#22) — source edits update the canvas without reload
 	useEffect(() => {
 		return subscribeSse(`/api/p/${encodeURIComponent(project)}/events`, {
@@ -880,14 +984,22 @@ export function ProjectCanvas({
 		return () => el.removeEventListener("wheel", onWheel);
 	}, [stopAnimation, zoomAtPoint]);
 
-	// persist camera + mode + arrows on settle: last-settle wins the stored slot (#12)
+	// persist mode + arrows + the page bookkeeping on settle: last-settle wins
+	// the stored slot (#12); each page keeps its own camera, and the active
+	// page rides along so reopening resumes it (#39)
 	useEffect(() => {
 		if (camera === null) return;
 		const settle = setTimeout(() => {
-			putCanvasState(project, { mode, arrows: arrowsOn, camera: { x: camera.x, y: camera.y, k: camera.k } });
+			cameras.current = { ...cameras.current, [activePage]: { x: camera.x, y: camera.y, k: camera.k } };
+			putCanvasState(project, {
+				mode,
+				arrows: arrowsOn,
+				...stateCameraSlots(cameras.current),
+				...(activePage === ROOT_PAGE ? {} : { activePage }),
+			});
 		}, SETTLE_PERSIST_MS);
 		return () => clearTimeout(settle);
-	}, [camera, mode, arrowsOn, project]);
+	}, [camera, mode, arrowsOn, project, activePage]);
 
 	// --- gestures ---------------------------------------------------------------
 
@@ -951,6 +1063,8 @@ export function ProjectCanvas({
 		stopAnimation();
 		setMenu(null);
 		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
+		// a portal chip owns its click (#39) — capturing here would swallow it
+		if (datasetHit(event.target, "portal") !== null) return;
 		viewportRef.current?.setPointerCapture(event.pointerId);
 		const p = localPoint(event);
 
@@ -1228,6 +1342,13 @@ export function ProjectCanvas({
 		[project],
 	);
 
+	/** The frame's source path for the editor, wherever its page put it (#39). */
+	const frameSourcePath = (name: string): string => {
+		const frame = allFramesRef.current.find((f) => f.name === name);
+		const page = frame === undefined ? ROOT_PAGE : pageOf(frame);
+		return page === ROOT_PAGE ? `design/frames/${name}/frame.tsx` : `design/frames/${page}/${name}/frame.tsx`;
+	};
+
 	// --- keys -------------------------------------------------------------------
 
 	const menuOpenRef = useRef(false);
@@ -1415,12 +1536,14 @@ export function ProjectCanvas({
 
 	// --- render -------------------------------------------------------------------
 
-	const empty = loaded && frames.length === 0;
+	// no frames and no pages anywhere: the project is untouched — the page
+	// surface only exists once something does (#39)
+	const projectEmpty = loaded && frames.length === 0 && pages.length === 0;
 	const k = camera?.k ?? 1;
 	const shellRadius = Math.min(12 / k, 24);
 	const cursor = resizeCursor ?? (panning ? "grabbing" : spaceDown ? "grab" : "default");
 
-	if (empty) {
+	if (projectEmpty) {
 		// agent-first, buttonless (#13): the canvas never pretends hands author frames
 		return (
 			<div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-canvas pb-20">
@@ -1435,116 +1558,187 @@ export function ProjectCanvas({
 	}
 
 	return (
-		<div
-			ref={viewportRef}
-			role="application"
-			aria-label={`${project} canvas`}
-			// biome-ignore lint/a11y/noNoninteractiveTabindex: the canvas is one keyboard composite; focus returns here from its iframe
-			tabIndex={0}
-			className="relative h-full w-full touch-none select-none overflow-hidden bg-canvas outline-none"
-			style={{ cursor }}
-			onPointerDown={onPointerDown}
-			onPointerMove={onPointerMove}
-			onPointerUp={onPointerUp}
-			onDoubleClick={onDoubleClick}
-			onContextMenu={onContextMenu}
-		>
-			{camera !== null && (
-				<div
-					className="absolute top-0 left-0"
-					style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${k})`, transformOrigin: "0 0" }}
-				>
-					{/* the threads live under the frames: the map, never a hit target */}
-					{arrowsOn && <FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} k={k} />}
-					{visibleFrames.map((frame) => {
-						const state = lifecycle.states[frame.name] ?? "hibernated";
-						const isEntered = entered === frame.name;
-						const isSelected = selected.includes(frame.name);
-						const paused = mode === "live" && state !== "live";
-						return (
-							<div
-								key={frame.name}
-								className="absolute"
-								style={{ transform: `translate(${frame.x}px, ${frame.y}px)`, width: frame.w, height: frame.h }}
-							>
-								{/* the label: mono, muted; thread when selected; ▸ = paused (system
-								    page). Entered swaps it for the state chip (#28): time is
-								    running under the pointer, and esc is the way out. */}
-								<FrameLabel
-									name={frame.name}
-									frameWidth={frame.w}
-									k={k}
-									entered={isEntered}
-									paused={paused}
-									selected={isSelected}
-								/>
-								<div className="relative h-full w-full overflow-hidden" style={{ borderRadius: shellRadius }}>
-									<FrameShell
-										project={project}
+		<div className="flex h-full w-full">
+			<CanvasSidebar
+				pages={pages}
+				activePage={activePage}
+				frames={visibleFrames}
+				selected={selected}
+				onSwitchPage={switchToPage}
+				onSelectFrame={(name) => {
+					setSelected([name]);
+					setPicked(null);
+				}}
+			/>
+			<div
+				ref={viewportRef}
+				role="application"
+				aria-label={`${project} canvas`}
+				// biome-ignore lint/a11y/noNoninteractiveTabindex: the canvas is one keyboard composite; focus returns here from its iframe
+				tabIndex={0}
+				className="relative h-full min-w-0 flex-1 touch-none select-none overflow-hidden bg-canvas outline-none"
+				style={{ cursor }}
+				onPointerDown={onPointerDown}
+				onPointerMove={onPointerMove}
+				onPointerUp={onPointerUp}
+				onDoubleClick={onDoubleClick}
+				onContextMenu={onContextMenu}
+			>
+				{camera !== null && (
+					<div
+						className="absolute top-0 left-0"
+						style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${k})`, transformOrigin: "0 0" }}
+					>
+						{/* the threads live under the frames: the map, never a hit target */}
+						{arrowsOn && <FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} k={k} />}
+						{visibleFrames.map((frame) => {
+							const state = lifecycle.states[frame.name] ?? "hibernated";
+							const isEntered = entered === frame.name;
+							const isSelected = selected.includes(frame.name);
+							const paused = mode === "live" && state !== "live";
+							const framePortals = portals.filter((portal) => portal.from === frame.name);
+							return (
+								<div
+									key={frame.name}
+									className="absolute"
+									style={{
+										transform: `translate(${frame.x}px, ${frame.y}px)`,
+										width: frame.w,
+										height: frame.h,
+									}}
+								>
+									{/* the label: mono, muted; thread when selected; ▸ = paused (system
+									    page). Entered swaps it for the state chip (#28): time is
+									    running under the pointer, and esc is the way out. */}
+									<FrameLabel
 										name={frame.name}
-										state={state}
-										ready={lifecycle.ready.has(frame.name)}
+										frameWidth={frame.w}
+										k={k}
 										entered={isEntered}
-										docNonce={docNonces[frame.name] ?? 0}
-										thumbNonce={thumbNonces[frame.name] ?? 0}
-										hasThumb={hasThumb(frame.name)}
-										walkBoot={walkBoots[frame.name]}
-										onIframe={onIframe}
+										paused={paused}
+										selected={isSelected}
 									/>
-									{externalLink?.frame === frame.name && (
-										<ExternalLinkDialog
-											href={externalLink.href}
-											onStay={() => setExternalLink(null)}
-											onOpen={() => setExternalLink(null)}
-										/>
+									{framePortals.length > 0 && (
+										<PortalChips portals={framePortals} k={k} onJump={jumpToFrame} />
 									)}
+									<div
+										className="relative h-full w-full overflow-hidden"
+										style={{ borderRadius: shellRadius }}
+									>
+										<FrameShell
+											project={project}
+											name={frame.name}
+											state={state}
+											ready={lifecycle.ready.has(frame.name)}
+											entered={isEntered}
+											docNonce={docNonces[frame.name] ?? 0}
+											thumbNonce={thumbNonces[frame.name] ?? 0}
+											hasThumb={hasThumb(frame.name)}
+											walkBoot={walkBoots[frame.name]}
+											onIframe={onIframe}
+										/>
+										{externalLink?.frame === frame.name && (
+											<ExternalLinkDialog
+												href={externalLink.href}
+												onStay={() => setExternalLink(null)}
+												onOpen={() => setExternalLink(null)}
+											/>
+										)}
+									</div>
 								</div>
-							</div>
-						);
-					})}
+							);
+						})}
+					</div>
+				)}
+
+				{camera !== null && (
+					<SelectionOverlay
+						camera={camera}
+						frames={visibleFrames}
+						selected={selected}
+						entered={entered}
+						picked={picked}
+						guides={guides}
+						marquee={marquee}
+						shellRadius={shellRadius}
+						onOpenEditor={(pick) => openEditorFor(editorTarget(pick))}
+					/>
+				)}
+
+				{menu !== null && (
+					<ContextMenu
+						at={menu}
+						onPlay={() => {
+							// the player's second door (#13): a session opening on this frame
+							window.open(
+								`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(menu.frame)}`,
+								"_blank",
+							);
+							setMenu(null);
+						}}
+						onOpenEditor={() => {
+							const pick = pickedRef.current;
+							openEditorFor(
+								pick !== null && pick.frame === menu.frame
+									? editorTarget(pick)
+									: { path: frameSourcePath(menu.frame) },
+							);
+							setMenu(null);
+						}}
+						onTrash={() => {
+							const names = selectedRef.current.includes(menu.frame) ? [...selectedRef.current] : [menu.frame];
+							setMenu(null);
+							stageTrash(names);
+						}}
+					/>
+				)}
+
+				{collisions.length > 0 && <CollisionNotice collisions={collisions} />}
+
+				{pendingTrash !== null && <TrashToast frames={pendingTrash} onUndo={undoTrash} />}
+			</div>
+		</div>
+	);
+}
+
+/** A link leaving the page (#39): no drawable arrow, so a chip at the frame
+ * edge names the target and its page — activating it jumps there. */
+function PortalChips({ portals, k, onJump }: { portals: PortalMarker[]; k: number; onJump: (frame: string) => void }) {
+	return (
+		<div className="absolute top-full left-0 origin-top-left" style={{ transform: `scale(${1 / k})` }}>
+			<div className="flex flex-col items-start gap-1 pt-2.5">
+				{portals.map((portal) => (
+					<button
+						key={portal.to}
+						type="button"
+						data-portal={portal.to}
+						title={`Jump to ${portal.to} on ${pageLabel(portal.toPage)}`}
+						onClick={() => onJump(portal.to)}
+						className="flex items-center gap-1.5 whitespace-nowrap rounded-xs border border-border-raised bg-raised px-2 py-[3px] font-mono text-2xs text-muted leading-3 hover:border-thread hover:text-text"
+					>
+						<span>→ {portal.to}</span>
+						<span className="opacity-60">· {pageLabel(portal.toPage)}</span>
+					</button>
+				))}
+			</div>
+		</div>
+	);
+}
+
+/** Two folders claiming one frame name (#39): identity is ambiguous, so the
+ * canvas says so plainly instead of guessing which folder wins. */
+function CollisionNotice({ collisions }: { collisions: FrameCollision[] }) {
+	return (
+		<div className="pointer-events-none absolute inset-x-0 top-3 flex flex-col items-center gap-1.5">
+			{collisions.map((collision) => (
+				<div
+					key={collision.name}
+					className="rounded-md border border-border-raised bg-raised px-3 py-1.5 font-mono text-2xs leading-3"
+				>
+					<span className="text-thread">two frames named "{collision.name}"</span>
+					<span className="text-muted">: {collision.paths.join(" · ")}</span>
 				</div>
-			)}
-
-			{camera !== null && (
-				<SelectionOverlay
-					camera={camera}
-					frames={visibleFrames}
-					selected={selected}
-					entered={entered}
-					picked={picked}
-					guides={guides}
-					marquee={marquee}
-					shellRadius={shellRadius}
-					onOpenEditor={(pick) => openEditorFor(editorTarget(pick))}
-				/>
-			)}
-
-			{menu !== null && (
-				<ContextMenu
-					at={menu}
-					onPlay={() => {
-						// the player's second door (#13): a session opening on this frame
-						window.open(`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(menu.frame)}`, "_blank");
-						setMenu(null);
-					}}
-					onOpenEditor={() => {
-						const pick = pickedRef.current;
-						openEditorFor(
-							pick !== null && pick.frame === menu.frame
-								? editorTarget(pick)
-								: { path: `design/frames/${menu.frame}/frame.tsx` },
-						);
-						setMenu(null);
-					}}
-					onTrash={() => {
-						const names = selectedRef.current.includes(menu.frame) ? [...selectedRef.current] : [menu.frame];
-						setMenu(null);
-						stageTrash(names);
-					}}
-				/>
-			)}
-
-			{pendingTrash !== null && <TrashToast frames={pendingTrash} onUndo={undoTrash} />}
+			))}
 		</div>
 	);
 }
