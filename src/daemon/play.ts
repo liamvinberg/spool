@@ -220,9 +220,13 @@ const CHROME_CSS = `:root { color-scheme: dark; }
 }
 html, body, #root { height: 100%; }
 body { margin: 0; background: #0e0e0e; overflow: hidden; }
-/* a terminal screen (#42): the daemon's grid, verbatim — the svg is the pixels */
-.spool-term-screen { height: 100%; background: #111110; }
+/* a terminal screen (#44): the live term document over the daemon's grid as
+   boot poster — the iframe covers the poster the moment it paints */
+.spool-term-screen { position: relative; height: 100%; background: #111110; }
 .spool-term-screen svg { display: block; }
+.spool-term-poster { position: absolute; inset: 0; }
+.spool-term-screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.spool-term-chord { padding: 0 3px; flex: none; white-space: nowrap; }
 .spool-boot {
 	position: fixed;
 	inset: 0;

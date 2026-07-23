@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { termKeyIntent } from "./term-keys";
+import { exitChordLabel, termKeyIntent } from "./term-keys";
 
 const key = (k: string, mods?: { meta?: boolean; ctrl?: boolean }) => ({
 	key: k,
@@ -30,5 +30,18 @@ describe("termKeyIntent — the parity law for keys", () => {
 		expect(termKeyIntent(key("+", { meta: true }))).toBe("tui");
 		expect(termKeyIntent(key("=", { ctrl: true }))).toBe("tui");
 		expect(termKeyIntent(key("-", { ctrl: true }))).toBe("tui");
+	});
+});
+
+describe("exitChordLabel — the binding as this platform spells it", () => {
+	it("spells the command chord on Apple platforms", () => {
+		expect(exitChordLabel("MacIntel")).toBe("⌘⎋");
+		expect(exitChordLabel("iPhone")).toBe("⌘⎋");
+	});
+
+	it("spells the control chord everywhere else, unknown platforms included", () => {
+		expect(exitChordLabel("Win32")).toBe("ctrl+⎋");
+		expect(exitChordLabel("Linux x86_64")).toBe("ctrl+⎋");
+		expect(exitChordLabel("")).toBe("ctrl+⎋");
 	});
 });
