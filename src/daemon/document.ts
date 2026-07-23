@@ -59,7 +59,11 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * point — top-level element down to the deepest, each with its selector,
  * geometry, and nearest data-spool-source stamp (#23) — the canvas walks it
  * Figma-style (double-click descends, Esc ascends) without ever handing the
- * frame the pointer; {spool:"sites"} answers with the frame-local boxes of
+ * frame the pointer; {spool:"tree?"} answers with the whole live DOM below
+ * the boot root, each element carrying its own stamp (#37) — the sidebar
+ * tree's source; {spool:"describe", selectors} answers with one ancestry
+ * chain per selector so tree rows become canvas selections;
+ * {spool:"sites"} answers with the frame-local boxes of
  * navigation-site elements (#34) so arrows grow out of what causes them.
  * Entered frames also hand canvas-zoom gestures back across
  * the iframe boundary; ordinary wheel input stays inside the frame so its own
@@ -170,10 +174,8 @@ const canvasShimJs = `(() => {
 		};
 	}
 
-	// the ancestry at the point, top-level element first, deepest last
-	function pickChain(x, y) {
-		const el = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
-		if (!el || el === document.documentElement || el === document.body || el.id === "root") return [];
+	// the ancestry of one element, top-level element first, deepest last
+	function chainOf(el) {
 		const line = [];
 		let node = el;
 		while (node && node.nodeType === 1 && node !== document.documentElement && node !== document.body && node.id !== "root") {
@@ -181,6 +183,33 @@ const canvasShimJs = `(() => {
 			node = node.parentElement;
 		}
 		return line.map(hitOf);
+	}
+
+	// the ancestry at the point
+	function pickChain(x, y) {
+		const el = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
+		if (!el || el === document.documentElement || el === document.body || el.id === "root") return [];
+		return chainOf(el);
+	}
+
+	// direct text children only (#37): a wrapper never wears its descendants' words
+	function textOf(el) {
+		let out = "";
+		for (const node of el.childNodes) if (node.nodeType === 3) out += node.textContent;
+		out = out.replace(/\\s+/g, " ").trim();
+		return out.length > 60 ? out.slice(0, 59) + "\\u2026" : out;
+	}
+
+	// the live DOM below the boot root (#37): every element, its own stamp only —
+	// grouping and boundaries are the canvas's read of the stamps
+	function rawTree(el) {
+		return {
+			tag: el.tagName.toLowerCase(),
+			selector: cssPath(el),
+			source: el.getAttribute("data-spool-source"),
+			text: textOf(el),
+			children: Array.from(el.children).map(rawTree),
+		};
 	}
 
 	// where each navigation site's element sits (#34): stamp match first, and
@@ -230,6 +259,30 @@ const canvasShimJs = `(() => {
 			let boxes = {};
 			try { boxes = siteBoxes(m.sites); } catch {}
 			parent.postMessage({ spool: "site-boxes", frame, id: m.id, boxes }, "*");
+			return;
+		}
+		if (m.spool === "tree?") {
+			const frame = (window.__SPOOL__ || {}).frame;
+			let roots = [];
+			try {
+				const root = document.getElementById("root");
+				roots = root ? Array.from(root.children).map(rawTree) : [];
+			} catch {}
+			parent.postMessage({ spool: "tree", frame, id: m.id, roots }, "*");
+			return;
+		}
+		if (m.spool === "describe") {
+			const frame = (window.__SPOOL__ || {}).frame;
+			let chains = [];
+			try {
+				chains = (Array.isArray(m.selectors) ? m.selectors : []).map((sel) => {
+					let el = null;
+					try { el = typeof sel === "string" ? document.querySelector(sel) : null; } catch {}
+					if (!el || el.id === "root") return [];
+					return chainOf(el);
+				});
+			} catch {}
+			parent.postMessage({ spool: "described", frame, id: m.id, chains }, "*");
 			return;
 		}
 		if (m.spool !== "capture") return;

@@ -7,6 +7,7 @@ import {
 	fetchCanvasState,
 	fetchFlows,
 	fetchProjection,
+	fetchStampLabels,
 	openInEditor,
 	postTrash,
 	postWalk,
@@ -21,6 +22,7 @@ import { RibbonMark } from "../icons";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
 import { CollisionNotice } from "./collision-notice";
 import { ContextMenu, contextMenuSize } from "./context-menu";
+import { buildTreeRows, revealKeys, rowSelectors, type TreeRow, visibleRows } from "./element-tree";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { type ExportNotice, ExportToast } from "./export-toast";
 import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
@@ -43,11 +45,13 @@ import {
 	isHandle,
 	NO_GUIDES,
 	type PickedSelection,
+	pickKey,
 	SelectionOverlay,
 } from "./overlays";
 import {
 	camerasFromState,
 	frameSourcePath,
+	frameSourceRel,
 	pageOf,
 	portalEdges,
 	ROOT_PAGE,
@@ -57,15 +61,19 @@ import {
 } from "./pages";
 import { PortalChips } from "./portal-chips";
 import {
+	describeMessage,
 	type PickedHit,
 	parseFrameMessage,
+	parseStampRef,
 	pickMessage,
+	type RawTreeNode,
 	type SessionRecord,
 	type SiteAnchor,
 	sessionReply,
 	sitesMessage,
+	treeMessage,
 } from "./protocol";
-import { CanvasSidebar } from "./sidebar";
+import { CanvasSidebar, type SelectModifiers } from "./sidebar";
 import { snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { TrashToast } from "./trash-toast";
@@ -77,8 +85,10 @@ import { TrashToast } from "./trash-toast";
  * click selects the frame (or, inside an element scope, the sibling at that
  * depth), double click goes deeper — into running time in live (the entered
  * state then follows data-go walks, #5), one element level per click in
- * design, where ⌘-click jumps to the deepest element and Esc ascends back
- * out. Hands obey the one law: move, resize and nudge write
+ * design, where ⌘-click jumps to the deepest element, shift-click toggles
+ * elements in and out of a multi-selection, hover previews the would-be
+ * target (#37), and Esc ascends back out — a multi-selection drops straight
+ * to its frames. Hands obey the one law: move, resize and nudge write
  * geometry sidecars only; delete rides the OS Trash behind a toast-undo; the
  * canvas never writes frame source.
  */
@@ -124,6 +134,10 @@ const SELECTION_PUT_MS = 150;
 const PICK_REPLY_MS = 400;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
+const TREE_REPLY_MS = 1000;
+const STAMP_LABEL_BATCH = 256;
+
+const NO_WAKES: ReadonlySet<string> = new Set();
 
 function spatialDirection(key: string): SpatialDirection | undefined {
 	switch (key) {
@@ -196,6 +210,11 @@ export function ProjectCanvas({
 	const [pages, setPages] = useState<string[]>([]);
 	const [activePage, setActivePage] = useState<string>(ROOT_PAGE);
 	const [collisions, setCollisions] = useState<FrameCollision[]>([]);
+	// the sidebar tree (#37): per-frame raw walks, row expansion, call-site labels
+	const [trees, setTrees] = useState<Record<string, RawTreeNode[]>>({});
+	const [expandedFrames, setExpandedFrames] = useState<ReadonlySet<string>>(new Set<string>());
+	const [expandedRows, setExpandedRows] = useState<ReadonlySet<string>>(new Set<string>());
+	const [callSiteLabels, setCallSiteLabels] = useState<Record<string, string | null>>({});
 
 	// the active page is the canvas: only its frames mount — and frames staged
 	// for the Trash vanish instantly; the disk move waits on the toast
@@ -255,6 +274,12 @@ export function ProjectCanvas({
 	// hover picks ride pointer-move (#37): throttled, one in flight at a time
 	const hoverLast = useRef(0);
 	const hoverBusy = useRef(false);
+	// tree and describe round-trips (#37), pickWaiters' pattern
+	const treeWaiters = useRef(new Map<number, (roots: RawTreeNode[]) => void>());
+	const describeWaiters = useRef(new Map<number, (chains: PickedHit[][]) => void>());
+	// the panel's range anchors (#37): one per list, ranges never cross lists
+	const frameAnchor = useRef<string | null>(null);
+	const rowAnchor = useRef<{ frame: string; key: string } | null>(null);
 	const nudgeDirty = useRef(new Set<string>());
 	const nudgeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const trashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -287,6 +312,14 @@ export function ProjectCanvas({
 		[project, noteThumb],
 	);
 
+	// expand is attention (#37): an expanded tree row wakes its frame through
+	// the queue and keeps it real while the row stays open
+	const wakeRequested = useMemo<ReadonlySet<string>>(() => {
+		if (mode !== "design") return NO_WAKES;
+		const names = [...expandedFrames].filter((name) => visibleFrames.some((f) => f.name === name));
+		return names.length === 0 ? NO_WAKES : new Set(names);
+	}, [mode, expandedFrames, visibleFrames]);
+
 	const lifecycle = useFrameLifecycle({
 		framesRef,
 		cameraRef,
@@ -295,6 +328,7 @@ export function ProjectCanvas({
 		entered,
 		// first click pre-boots (#8) — a hint that only means one thing at a time
 		selected: selected.length === 1 ? (selected[0] ?? null) : null,
+		wakeRequested,
 		hasThumb: (name) => hasThumbRef.current(name),
 		onShot,
 	});
@@ -877,6 +911,233 @@ export function ProjectCanvas({
 		[beginPick, atDepthIn],
 	);
 
+	// --- element tree (#37): the sidebar's rows, extracted from live DOM --------
+
+	const treeBusy = useRef(new Set<string>());
+	const labelsAsked = useRef(new Set<string>());
+
+	/** Ask one frame's shim for its raw DOM walk; the newest answer stands. */
+	const requestTree = useCallback((frame: string) => {
+		const target = iframes.current.get(frame)?.contentWindow;
+		if (target == null || treeBusy.current.has(frame)) return;
+		treeBusy.current.add(frame);
+		const id = ++pickSeq.current;
+		treeWaiters.current.set(id, (roots) => {
+			treeBusy.current.delete(frame);
+			setTrees((current) => ({ ...current, [frame]: roots }));
+		});
+		target.postMessage(treeMessage(id), "*");
+		setTimeout(() => {
+			if (treeWaiters.current.delete(id)) treeBusy.current.delete(frame);
+		}, TREE_REPLY_MS);
+	}, []);
+
+	useEffect(() => {
+		if (mode !== "design") return;
+		for (const name of expandedFrames) {
+			if (trees[name] === undefined && lifecycle.ready.has(name)) requestTree(name);
+		}
+	}, [mode, expandedFrames, trees, lifecycle.ready, requestTree]);
+
+	// a hibernated frame's cached walk is a lie — the next expand re-asks
+	useEffect(() => {
+		setTrees((current) => {
+			const dead = Object.keys(current).filter((name) => (lifecycle.states[name] ?? "hibernated") === "hibernated");
+			if (dead.length === 0) return current;
+			return Object.fromEntries(Object.entries(current).filter(([name]) => !dead.includes(name)));
+		});
+	}, [lifecycle.states]);
+
+	const rowsByFrame = useMemo(() => {
+		const out: Record<string, TreeRow[]> = {};
+		for (const [name, roots] of Object.entries(trees)) {
+			out[name] = buildTreeRows(roots, frameSourceRel(name, activePage));
+		}
+		return out;
+	}, [trees, activePage]);
+
+	// call-site rows name themselves from source (#37): fetch labels once each,
+	// batched to the endpoint's cap — a failed batch un-asks so a later pass retries
+	useEffect(() => {
+		const missing = new Set<string>();
+		for (const rows of Object.values(rowsByFrame)) collectCallSites(rows, missing);
+		const wanted = [...missing].filter((stamp) => !labelsAsked.current.has(stamp));
+		if (wanted.length === 0) return;
+		for (const stamp of wanted) labelsAsked.current.add(stamp);
+		for (const batch of chunked(wanted, STAMP_LABEL_BATCH)) {
+			void fetchStampLabels(project, batch).then((labels) => {
+				if (Object.keys(labels).length === 0) {
+					for (const stamp of batch) labelsAsked.current.delete(stamp);
+					return;
+				}
+				setCallSiteLabels((current) => ({ ...current, ...labels }));
+			});
+		}
+	}, [rowsByFrame, project]);
+
+	/**
+	 * Rows become canvas selection through a describe round-trip: the frame
+	 * answers each selector's ancestry, the deepest hit is the selection and
+	 * the last chain becomes the scope Esc ascends. Additive keeps prior picks.
+	 */
+	const selectSelectors = useCallback((frame: string, selectors: string[], additive: boolean) => {
+		if (selectors.length === 0) return;
+		const target = iframes.current.get(frame)?.contentWindow;
+		if (target == null) return;
+		const id = ++pickSeq.current;
+		const gen = pickGen.current;
+		describeWaiters.current.set(id, (chains) => {
+			if (pickGen.current !== gen) return;
+			const hits: PickedSelection[] = [];
+			let lastChain: PickedHit[] | null = null;
+			for (const chain of chains) {
+				const hit = chain[chain.length - 1];
+				if (hit === undefined) continue;
+				hits.push({ frame, ...hit });
+				lastChain = chain;
+			}
+			if (hits.length === 0) return;
+			if (lastChain !== null) pickedChain.current = { frame, chain: lastChain };
+			setSelected([]);
+			setPicked(additive ? mergePicks(pickedRef.current, hits) : hits);
+		});
+		target.postMessage(describeMessage(selectors, id), "*");
+		setTimeout(() => describeWaiters.current.delete(id), PICK_REPLY_MS);
+	}, []);
+
+	const toggleFrameRow = (name: string) => {
+		setExpandedFrames((current) => {
+			const next = new Set(current);
+			if (next.has(name)) next.delete(name);
+			else next.add(name);
+			return next;
+		});
+	};
+
+	const toggleTreeRow = (key: string) => {
+		setExpandedRows((current) => {
+			const next = new Set(current);
+			if (next.has(key)) next.delete(key);
+			else next.add(key);
+			return next;
+		});
+	};
+
+	/** The panel grammar on frame rows: shift ranges, ⌘ toggles, click replaces. */
+	const selectFrameRow = (name: string, modifiers: SelectModifiers) => {
+		setPicked([]);
+		pickedChain.current = null;
+		if (modifiers.shift && frameAnchor.current !== null) {
+			const names = visibleFrames.map((f) => f.name);
+			const a = names.indexOf(frameAnchor.current);
+			const b = names.indexOf(name);
+			if (a !== -1 && b !== -1) {
+				const range = names.slice(Math.min(a, b), Math.max(a, b) + 1);
+				setSelected(modifiers.toggle ? [...new Set([...selectedRef.current, ...range])] : range);
+				return;
+			}
+		}
+		frameAnchor.current = name;
+		if (modifiers.toggle) {
+			setSelected((current) => (current.includes(name) ? current.filter((n) => n !== name) : [...current, name]));
+		} else {
+			setSelected([name]);
+		}
+	};
+
+	/** The same grammar on tree rows; ranges run over one frame's visible rows. */
+	const selectTreeRow = (frame: string, row: TreeRow, modifiers: SelectModifiers) => {
+		// a boundary is a file marker, not an element: its click is its chevron's
+		if (row.kind === "boundary") {
+			toggleTreeRow(row.key);
+			return;
+		}
+		if (modifiers.shift && rowAnchor.current?.frame === frame) {
+			const visible = visibleRows(rowsByFrame[frame] ?? [], expandedRows);
+			const a = visible.findIndex((candidate) => candidate.key === rowAnchor.current?.key);
+			const b = visible.findIndex((candidate) => candidate.key === row.key);
+			if (a !== -1 && b !== -1) {
+				const range = visible.slice(Math.min(a, b), Math.max(a, b) + 1);
+				const selectors = [...new Set(range.flatMap((member) => rowSelectors(member)))];
+				selectSelectors(frame, selectors, modifiers.toggle);
+				return;
+			}
+		}
+		rowAnchor.current = { frame, key: row.key };
+		const selectors = rowSelectors(row);
+		if (modifiers.toggle) {
+			const held = new Set(pickedRef.current.filter((pick) => pick.frame === frame).map((pick) => pick.selector));
+			if (selectors.every((selector) => held.has(selector))) {
+				setPicked(
+					pickedRef.current.filter(
+						(pick) => !(pick.frame === frame && held.has(pick.selector) && selectors.includes(pick.selector)),
+					),
+				);
+				return;
+			}
+			selectSelectors(frame, selectors, true);
+			return;
+		}
+		selectSelectors(frame, selectors, false);
+	};
+
+	/** Double-click on a frame row flies the camera to the frame (#37). */
+	const flyToFrame = (name: string) => {
+		const frame = framesRef.current.find((f) => f.name === name);
+		const viewport = viewportRef.current;
+		if (frame === undefined || viewport === null) return;
+		animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
+	};
+
+	/** Double-click on a tree row jumps the editor to the stamped line. */
+	const openRowInEditor = (frame: string, row: TreeRow) => {
+		if (row.kind === "boundary") {
+			openEditorFor({ path: `design/${row.file}` });
+			return;
+		}
+		const stamp = parseStampRef(row.source);
+		openEditorFor(
+			stamp === undefined
+				? { path: frameSourcePath(frame, activePageRef.current) }
+				: { path: `design/${stamp.rel}`, line: stamp.line },
+		);
+	};
+
+	// canvas picks always have a row to reveal (#37): expand the frame row and
+	// every ancestor — boundary rows included — so sync lands on screen
+	const revealTarget = useMemo(() => {
+		const anchorPick = picked[picked.length - 1];
+		if (mode !== "design" || anchorPick === undefined) return undefined;
+		const rows = rowsByFrame[anchorPick.frame];
+		if (rows === undefined) return undefined;
+		return revealKeys(rows, anchorPick.selector)?.key;
+	}, [mode, picked, rowsByFrame]);
+
+	useEffect(() => {
+		const anchorPick = picked[picked.length - 1];
+		if (mode !== "design" || anchorPick === undefined) return;
+		setExpandedFrames((current) =>
+			current.has(anchorPick.frame) ? current : new Set(current).add(anchorPick.frame),
+		);
+		const rows = rowsByFrame[anchorPick.frame];
+		if (rows === undefined) return;
+		const reveal = revealKeys(rows, anchorPick.selector);
+		if (reveal === undefined) return;
+		setExpandedRows((current) => {
+			if (reveal.ancestors.every((key) => current.has(key))) return current;
+			return new Set([...current, ...reveal.ancestors]);
+		});
+	}, [mode, picked, rowsByFrame]);
+
+	// a quiet pending state (#37): expanded, but the DOM has not answered yet
+	const pendingWakes = useMemo<ReadonlySet<string>>(() => {
+		if (mode !== "design") return NO_WAKES;
+		const pending = [...expandedFrames].filter(
+			(name) => visibleFrames.some((f) => f.name === name) && rowsByFrame[name] === undefined,
+		);
+		return pending.length === 0 ? NO_WAKES : new Set(pending);
+	}, [mode, expandedFrames, visibleFrames, rowsByFrame]);
+
 	// --- pages (#39): one canvas per page, cameras bookkept per page ------------
 
 	/** The camera that lands an arrival centered on its target, zoom kept. */
@@ -988,12 +1249,13 @@ export function ProjectCanvas({
 					setDocNonces((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
 					// an edit reboot is honest — it does not wear a walk's quiet cover
 					setWalkBoots((current) => without(current, frame));
-					// the DOM these picks pointed into is gone
+					// the DOM these picks pointed into is gone — and so is its walk
 					setPicked((current) => {
 						const kept = current.filter((pick) => pick.frame !== frame);
 						return kept.length === current.length ? current : kept;
 					});
 					if (pickedChain.current?.frame === frame) pickedChain.current = null;
+					setTrees((current) => without(current, frame));
 					lifecycleRef.current.markStale(frame);
 					void refetchFrames();
 					// an edit moves the graph: edges re-derive, verified marks may drop —
@@ -1009,6 +1271,7 @@ export function ProjectCanvas({
 					setWalkBoots((current) => (Object.keys(current).length === 0 ? current : {}));
 					setPicked([]);
 					pickedChain.current = null;
+					setTrees((current) => (Object.keys(current).length === 0 ? current : {}));
 					void refetchFrames();
 				} else if (event.kind === "geometry") {
 					// another browser's hands (or our own echo); ours are the truth
@@ -1065,6 +1328,18 @@ export function ProjectCanvas({
 					const waiter = pickWaiters.current.get(message.id);
 					pickWaiters.current.delete(message.id);
 					waiter?.(message.chain);
+					return;
+				}
+				case "tree": {
+					const waiter = treeWaiters.current.get(message.id);
+					treeWaiters.current.delete(message.id);
+					waiter?.(message.roots);
+					return;
+				}
+				case "described": {
+					const waiter = describeWaiters.current.get(message.id);
+					describeWaiters.current.delete(message.id);
+					waiter?.(message.chains);
 					return;
 				}
 				case "site-boxes": {
@@ -1725,9 +2000,9 @@ export function ProjectCanvas({
 						pickedChain.current = null;
 						setPicked([]);
 						setSelected(frames);
-					} else if (pickedRef.current.length === 1) {
+					} else if (pickedRef.current[0] !== undefined) {
 						// ascend the ancestry (Figma): element → parent → … → frame → clear
-						const picked = pickedRef.current[0] as PickedSelection;
+						const picked = pickedRef.current[0];
 						const held = pickedChain.current;
 						const depth =
 							held !== null && held.frame === picked.frame
@@ -1811,11 +2086,21 @@ export function ProjectCanvas({
 				activePage={activePage}
 				frames={visibleFrames}
 				selected={selected}
+				mode={mode}
+				picked={picked}
+				rowsByFrame={rowsByFrame}
+				callSiteLabels={callSiteLabels}
+				expandedFrames={expandedFrames}
+				expandedRows={expandedRows}
+				pendingWakes={pendingWakes}
+				revealTarget={revealTarget}
 				onSwitchPage={switchToPage}
-				onSelectFrame={(name) => {
-					setSelected([name]);
-					setPicked([]);
-				}}
+				onSelectFrame={selectFrameRow}
+				onDoubleClickFrame={flyToFrame}
+				onToggleFrame={toggleFrameRow}
+				onSelectRow={selectTreeRow}
+				onDoubleClickRow={openRowInEditor}
+				onToggleRow={toggleTreeRow}
 			/>
 			<div
 				ref={viewportRef}
@@ -2013,4 +2298,25 @@ function without<T>(record: Record<string, T>, key: string): Record<string, T> {
 /** "frame-label" → "frameLabel": dataset keys camel-case their attribute. */
 function camelize(attribute: string): string {
 	return attribute.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+}
+
+/** Every call-site stamp in a row tree, folded into one set (#37). */
+function collectCallSites(rows: readonly TreeRow[], into: Set<string>): void {
+	for (const row of rows) {
+		if (row.kind === "callsite") into.add(row.source);
+		collectCallSites(row.children, into);
+	}
+}
+
+/** Prior picks plus the new ones, (frame, selector) identity, order kept. */
+function mergePicks(current: readonly PickedSelection[], additions: readonly PickedSelection[]): PickedSelection[] {
+	const held = new Set(current.map((pick) => pickKey(pick.frame, pick.selector)));
+	return [...current, ...additions.filter((pick) => !held.has(pickKey(pick.frame, pick.selector)))];
+}
+
+/** At most `size` per slice, order kept — the stamp-labels endpoint's cap. */
+function chunked<T>(items: readonly T[], size: number): T[][] {
+	const out: T[][] = [];
+	for (let start = 0; start < items.length; start += size) out.push(items.slice(start, start + size));
+	return out;
 }

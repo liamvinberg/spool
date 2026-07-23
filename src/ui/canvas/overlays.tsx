@@ -2,7 +2,7 @@ import { cellsForPx } from "../../term/cells";
 import type { Camera, ProjectedFrame } from "../api";
 import type { Box } from "./camera";
 import { frameSourcePath, frameSourceRel, pageOf } from "./pages";
-import type { PickedHit } from "./protocol";
+import { type PickedHit, parseStampRef } from "./protocol";
 
 /**
  * Screen-space selection furniture (#23), drawn over the transformed field so
@@ -17,6 +17,9 @@ import type { PickedHit } from "./protocol";
 export interface PickedSelection extends PickedHit {
 	frame: string;
 }
+
+/** The (frame, selector) pair as one identity — picks match on nothing else. */
+export const pickKey = (frame: string, selector: string): string => `${frame}\0${selector}`;
 
 /** The would-be click target under the cursor (#37) — outlined, never selected. */
 export interface ElementPreview {
@@ -85,6 +88,12 @@ export function SelectionOverlay({
 		w: box.w * k,
 		h: box.h * k,
 	});
+	/** A frame-local element rect on screen — undefined when the frame is gone. */
+	const elementBox = (name: string, rect: { x: number; y: number; w: number; h: number }): Box | undefined => {
+		const frame = frames.find((f) => f.name === name);
+		if (frame === undefined) return undefined;
+		return screenRect({ x: frame.x + rect.x, y: frame.y + rect.y, w: rect.w, h: rect.h });
+	};
 	const ringRadius = Math.min(12, shellRadius * k) + 2;
 
 	const ringed = [...new Set(entered === null ? selected : [...selected, entered])];
@@ -189,51 +198,16 @@ export function SelectionOverlay({
 				})()}
 
 			{picked.map((pick) => {
-				const frame = frames.find((f) => f.name === pick.frame);
-				if (frame === undefined) return null;
-				const rect = screenRect({
-					x: frame.x + pick.rect.x,
-					y: frame.y + pick.rect.y,
-					w: pick.rect.w,
-					h: pick.rect.h,
-				});
-				return (
-					<div
-						key={`pick-${pick.frame}-${pick.selector}`}
-						className="absolute border border-thread"
-						style={{
-							left: rect.x - 2,
-							top: rect.y - 2,
-							width: rect.w + 4,
-							height: rect.h + 4,
-							borderRadius: pick.radius * k + 2,
-						}}
-					/>
-				);
+				const box = elementBox(pick.frame, pick.rect);
+				if (box === undefined) return null;
+				return <ElementOutline key={pickKey(pick.frame, pick.selector)} box={box} radius={pick.radius * k} />;
 			})}
 
 			{previewShown !== null &&
 				(() => {
-					const frame = frames.find((f) => f.name === previewShown.frame);
-					if (frame === undefined) return null;
-					const rect = screenRect({
-						x: frame.x + previewShown.rect.x,
-						y: frame.y + previewShown.rect.y,
-						w: previewShown.rect.w,
-						h: previewShown.rect.h,
-					});
-					return (
-						<div
-							className="absolute border border-thread opacity-50"
-							style={{
-								left: rect.x - 2,
-								top: rect.y - 2,
-								width: rect.w + 4,
-								height: rect.h + 4,
-								borderRadius: previewShown.radius * k + 2,
-							}}
-						/>
-					);
+					const box = elementBox(previewShown.frame, previewShown.rect);
+					if (box === undefined) return null;
+					return <ElementOutline box={box} radius={previewShown.radius * k} faded />;
 				})()}
 
 			{[...pickedByFrame.entries()].map(([name, picks]) => {
@@ -275,9 +249,25 @@ export function SelectionOverlay({
 	);
 }
 
+/** The element outline: 1px thread at 2px offset, no handles — faded previews. */
+function ElementOutline({ box, radius, faded }: { box: Box; radius: number; faded?: boolean }) {
+	return (
+		<div
+			className={`absolute border border-thread ${faded === true ? "opacity-50" : ""}`}
+			style={{
+				left: box.x - 2,
+				top: box.y - 2,
+				width: box.w + 4,
+				height: box.h + 4,
+				borderRadius: radius + 2,
+			}}
+		/>
+	);
+}
+
 /** "frames/cart/frame.tsx:38" — the stamp minus its column, or the frame file. */
 function chipLabel(picked: PickedSelection, page: string): string {
-	const stamp = parseStamp(picked);
+	const stamp = parseStampRef(picked.source);
 	if (stamp === undefined) return frameSourceRel(picked.frame, page);
 	return `${stamp.rel}:${stamp.line}`;
 }
@@ -285,13 +275,7 @@ function chipLabel(picked: PickedSelection, page: string): string {
 /** The editor target off the selection (#7: path:line from the payload). The
  * stampless fallback needs the frame's page — the folder moved with it (#39). */
 export function editorTarget(picked: PickedSelection, page: string): { path: string; line?: number } {
-	const stamp = parseStamp(picked);
+	const stamp = parseStampRef(picked.source);
 	if (stamp === undefined) return { path: frameSourcePath(picked.frame, page) };
 	return { path: `design/${stamp.rel}`, line: stamp.line };
-}
-
-function parseStamp(picked: PickedSelection): { rel: string; line: number } | undefined {
-	const [, rel, line] = picked.source?.match(/^(.+):(\d+):(\d+)$/) ?? [];
-	if (rel === undefined || line === undefined) return undefined;
-	return { rel, line: Number.parseInt(line, 10) };
 }
