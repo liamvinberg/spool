@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.3.0](https://github.com/liamvinberg/spool/compare/v0.2.0...v0.3.0) (2026-07-23)
+
+
+### Features
+
+* add frame reload action ([d5e94c7](https://github.com/liamvinberg/spool/commit/d5e94c73dd5d5474de70342beffd334e3d4743e7))
+* add landing page blueprint frame with engineering drawing style ([b76df55](https://github.com/liamvinberg/spool/commit/b76df55d053a709acddf1e316b269b357d010150))
+* add spatial navigation boundary constant and test ([e75c9ec](https://github.com/liamvinberg/spool/commit/e75c9ecf16adab2102eb06ec1869ebde502aa33d))
+* canvas file tree — element tree sidebar with multi-element selection ([222e41f](https://github.com/liamvinberg/spool/commit/222e41fb936f8863114a88b026570ebd0eb02b55))
+* export canvas frames ([3cfcd86](https://github.com/liamvinberg/spool/commit/3cfcd861542f08abf22c8334f2addf060b0bf957))
+* multi-element selection with hover previews ([196101f](https://github.com/liamvinberg/spool/commit/196101f74e69319b020f4beddc26b228116efeb5))
+* operate terminal frames live in player walks ([d145632](https://github.com/liamvinberg/spool/commit/d14563259c0e45f25c1a38a93919b13becaea1a0))
+* operate terminal frames live in player walks ([5b74883](https://github.com/liamvinberg/spool/commit/5b748835e3435818156b7ddb6a871202e4ab713b))
+* page-aware frame discovery and daemon surfaces ([c46a797](https://github.com/liamvinberg/spool/commit/c46a7970a849a47d8c78ca5bd88691493365e10d))
+* pages — folders on disk, one canvas per page ([ef1cd00](https://github.com/liamvinberg/spool/commit/ef1cd0060ce63a0f4476044baad93e27ff95d9c9))
+* pages sidebar, per-page canvas, portal jumps ([d452bb9](https://github.com/liamvinberg/spool/commit/d452bb99bb0d3921f4a6fa7430c5ebcffe8445b8))
+* read the flow map from source ([#34](https://github.com/liamvinberg/spool/issues/34)) ([1e5efb7](https://github.com/liamvinberg/spool/commit/1e5efb7c72fc5d50cd28d37bc254e323678d54f8))
+* remove editor chip from selection overlay and update terminal tests ([b829033](https://github.com/liamvinberg/spool/commit/b829033cd1b06f6303c6e64faddc0435437993f6))
+* sidebar element tree with selection sync and editor jumps ([a4d7c53](https://github.com/liamvinberg/spool/commit/a4d7c532bfb0305e752a1e213b8f6e1edadf64a5))
+* spatial keyboard navigation between frames ([8da1a0c](https://github.com/liamvinberg/spool/commit/8da1a0c3d3cc95d7c9dc750fa80311469769a76c))
+* teach pages in the agent skill, page term in the glossary ([ad49ddd](https://github.com/liamvinberg/spool/commit/ad49dddec670249305fcd84f70e3033f8239301e))
+* terminal frames — term.tsx runs live on the canvas ([#43](https://github.com/liamvinberg/spool/issues/43)) ([25f5233](https://github.com/liamvinberg/spool/commit/25f52331b2e954fb807f3840c0299f6e69efe8c3))
+* undo and redo for frame move, resize and nudge ([b3801cb](https://github.com/liamvinberg/spool/commit/b3801cb28d9d2b6ac71964f66f641ef7fdfc72ef))
+* update external link dialog layout and styling ([6c66174](https://github.com/liamvinberg/spool/commit/6c66174cb0870afd62e3a49187e52b0c914d5ad4))
+
+
+### Bug fixes
+
+* boundary rows select on click, the chevron alone expands ([8fe05e5](https://github.com/liamvinberg/spool/commit/8fe05e5d53853897944953de95381ecfd031dc31))
+* confirm external links without leaving prototypes ([817f7a2](https://github.com/liamvinberg/spool/commit/817f7a29c6942f20a362a29596e5d396547470c5))
+* confirm external links without leaving prototypes ([7d96125](https://github.com/liamvinberg/spool/commit/7d961252b343aa7c492e00766c988fda62a9d276))
+* deduplicate frame arrows ([1bca8bc](https://github.com/liamvinberg/spool/commit/1bca8bc662063a5c23838fdd9a105a040d5161e0))
+* deliver sigwinch so terminal resize reaches the tui ([91259fd](https://github.com/liamvinberg/spool/commit/91259fded7fcb3e19969c5ecf145ffe7876f4384))
+* deliver the winch to the spawned app ([1a88d35](https://github.com/liamvinberg/spool/commit/1a88d357ef806fa640cd97611de64b17625bba03))
+* exit chord works wherever focus sits ([ab1fb8e](https://github.com/liamvinberg/spool/commit/ab1fb8ece7a532926d384fa8f682f7b00d4c0cf6))
+* player follows canvas geometry live ([dbb0192](https://github.com/liamvinberg/spool/commit/dbb01924b763d5c0b578e4049b38172849f4db59))
+* preserve design selection on right click ([96f59da](https://github.com/liamvinberg/spool/commit/96f59da224536798e93ecf4ecc2c670e99dad66c))
+* replace grace hibernation with warm pool and wake queue ([657d2c6](https://github.com/liamvinberg/spool/commit/657d2c6ceed1ddb5cd12efc742a3a78fd0b15461))
+* replace grace hibernation with warm pool and wake queue ([f2a12b0](https://github.com/liamvinberg/spool/commit/f2a12b04bd1ec12f64263af940de4e7c7002744f))
+* sidebar labels terminal frames term.tsx ([e83d679](https://github.com/liamvinberg/spool/commit/e83d67910f5cca762b93c4639ead92b6112bd2f6))
+* spell the terminal exit chord as esc ([8cd9b07](https://github.com/liamvinberg/spool/commit/8cd9b07711fd36ec790f773d110bd96f444d57c2))
+* spell the terminal exit chord as esc ([2d8fea6](https://github.com/liamvinberg/spool/commit/2d8fea6b9a28a246ffd88e61e65f948030db5bc4))
+* stop daemon with open event streams ([16efbcb](https://github.com/liamvinberg/spool/commit/16efbcb1f7e4bcb122a86ad71dcb5c58e20b5f23))
+* terminal cells match the emulator's real metrics ([a546e66](https://github.com/liamvinberg/spool/commit/a546e6669b27d3f0f2c78b75f30713b32a3e3870))
+* terminal document follows daemon size, pins cell metrics, exits from anywhere ([2aba857](https://github.com/liamvinberg/spool/commit/2aba8577bd67ab696a2c6e4ace431b9c318240f5))
+* terminal frame rows offer no element tree ([a82a9a6](https://github.com/liamvinberg/spool/commit/a82a9a60a6a629747a739c7e696870cb91d7c966))
+* terminal frame rows offer no element tree ([6c4d014](https://github.com/liamvinberg/spool/commit/6c4d014c4da9583331cd9bb70377a7592cd79698))
+* terminal frame stability — resize, replay, death, exit ([af75151](https://github.com/liamvinberg/spool/commit/af7515189790178a8bf24e089431e238a5368c44))
+* terminal sessions own the grid size and keep a dying tui's last screen ([564cae6](https://github.com/liamvinberg/spool/commit/564cae62f9c0db7403f133460a6ef53387e5695c))
+
+
+### Polish
+
+* distinguish development favicon ([ed8b2e0](https://github.com/liamvinberg/spool/commit/ed8b2e06dc1ad9d8bc57540e810cd17594dd1f7b))
+
 ## [0.2.0](https://github.com/liamvinberg/spool/compare/v0.1.0...v0.2.0) (2026-07-22)
 
 
