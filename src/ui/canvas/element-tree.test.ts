@@ -163,6 +163,7 @@ describe("rowSelectors", () => {
 
 		expect(rowSelectors(main)).toEqual(["main"]);
 		expect(rowSelectors(callsite)).toEqual(["main > ul > li:nth-of-type(1)", "main > ul > li:nth-of-type(2)"]);
-		expect(rowSelectors(boundary)).toEqual([]);
+		// a boundary selects what it wraps: the component's rendered roots
+		expect(rowSelectors(boundary)).toEqual(["main > button"]);
 	});
 });
