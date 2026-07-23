@@ -154,6 +154,9 @@ export default function Inbox() {
 			<button type="button" id="back-empty" onClick={() => ui.back()}>back</button>
 			<button type="button" id="typo" data-go="thread--detial">typo</button>
 			<span id="outer" data-go="checkout--empty"><em id="inner" data-go="thread--detail">nested</em></span>
+			<a id="external" href="https://github.com/liamvinberg/spool">github</a>
+			<a id="handled" href="https://example.com" onClick={(event) => event.preventDefault()}>handled</a>
+			<a id="empty-go" data-go="" href="https://example.com/empty-go">empty go</a>
 		</main>
 	);
 }
@@ -422,6 +425,35 @@ describe("the mock layer", () => {
 });
 
 describe("embedded in a canvas", () => {
+	it("hands an external anchor to the host without navigating the frame", async () => {
+		const harness = makeHarness();
+		scaffoldFlow(harness);
+		const messages: Record<string, unknown>[] = [];
+		const { assign } = await loadFrameDocument(harness, "inbox", {
+			host: (message) => {
+				messages.push(message);
+				if (message.spool === "session?") hostReply({ spool: "session", record: null });
+			},
+		});
+		await waitForText("output", "2");
+
+		expect(click("#handled"), "handled click default-prevented").toBe(false);
+		expect(messages.some((message) => message.spool === "external")).toBe(false);
+		expect(click("#empty-go"), "empty data-go click default-prevented").toBe(false);
+		expect(messages).toContainEqual({
+			spool: "external",
+			frame: "inbox",
+			href: "https://example.com/empty-go",
+		});
+		expect(click("#external"), "external click default-prevented").toBe(false);
+		expect(messages).toContainEqual({
+			spool: "external",
+			frame: "inbox",
+			href: "https://github.com/liamvinberg/spool",
+		});
+		expect(assign).not.toHaveBeenCalled();
+	});
+
 	it("asks the host for a session on boot and resumes the answered record", async () => {
 		const harness = makeHarness();
 		scaffoldFlow(harness);

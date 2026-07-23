@@ -136,6 +136,9 @@ export default function Menu() {
 			<button type="button" id="bump" onClick={() => { ui.state.count = 5; }}>bump</button>
 			<button type="button" id="walk" data-go="cart" data-transition="lift">to cart</button>
 			<button type="button" id="typo" data-go="ghost">to ghost</button>
+			<button type="button" id="frame-top" style={{ position: "fixed", inset: 0, zIndex: 9999 }}>top layer</button>
+			<a id="external" href="https://github.com/liamvinberg/spool">github</a>
+			<a id="external-port" href="http://example.com:8080/docs">port</a>
 		</main>
 	);
 }
@@ -227,6 +230,48 @@ describe("the player session", () => {
 		await waitForStack("menu");
 		expect((document.querySelector("#spool-back") as HTMLButtonElement).disabled).toBe(true);
 		expect(assign).not.toHaveBeenCalled();
+	});
+
+	it("confirms external links above the current screen without disturbing the session", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+
+		await loadPlayerDocument(harness, "?frame=menu");
+		await waitForText("output", "2");
+		click("#bump");
+		await waitForText("output", "5");
+
+		click("#external");
+		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+
+		const open = document.querySelector<HTMLAnchorElement>(
+			'[role="dialog"] a[href="https://github.com/liamvinberg/spool"]',
+		);
+		expect(open?.target).toBe("_blank");
+		expect(open?.rel).toBe("noopener noreferrer");
+		expect(document.querySelector("output")?.textContent).toBe("5");
+		expect(document.querySelector(".spool-stack")?.textContent).toBe("menu");
+		expect((document.querySelector("#spool-restart") as HTMLButtonElement).disabled).toBe(true);
+		expect((document.querySelector(".spool-screen-scroll") as HTMLElement).style.getPropertyValue("isolation")).toBe(
+			"isolate",
+		);
+		(document.querySelector("#spool-restart") as HTMLButtonElement).click();
+		expect(document.querySelector("output")?.textContent).toBe("5");
+
+		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+		expect(document.querySelector("output")?.textContent).toBe("5");
+		expect(document.querySelector(".spool-stack")?.textContent).toBe("menu");
+
+		click("#external-port");
+		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+		expect(document.querySelector('[role="dialog"]')?.textContent).toContain("http://example.com:8080/docs");
+		expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Open example.com:8080");
+		const portOpen = document.querySelector<HTMLAnchorElement>(
+			'[role="dialog"] a[href="http://example.com:8080/docs"]',
+		);
+		expect(portOpen?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))).toBe(true);
+		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
 	});
 
 	it("stacks names through a three-frame walk", async () => {

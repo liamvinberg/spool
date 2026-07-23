@@ -1,5 +1,6 @@
 import type { ComponentType, RefObject } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { ExternalLinkDialog } from "./external-link-dialog";
 
 /**
  * The stage and pill (#24), matching Paper screens v1 "05 · player": the
@@ -13,7 +14,14 @@ import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } 
 export interface PlayerController {
 	subscribe(listener: () => void): () => void;
 	version(): number;
-	read(): { frame: string; stack: string[]; motion: boolean; hint: boolean; arrival: number };
+	read(): {
+		frame: string;
+		stack: string[];
+		motion: boolean;
+		hint: boolean;
+		arrival: number;
+		externalHref: string | null;
+	};
 	geometry(frame: string): { w: number; h: number };
 	/** Stamps of this frame's coded-navigation elements, for the hint layer (#34). */
 	hintStamps(frame: string): string[];
@@ -21,6 +29,7 @@ export interface PlayerController {
 	restart(): void;
 	toggleMotion(): void;
 	toggleHint(): void;
+	dismissExternal(): void;
 	close(): void;
 }
 
@@ -32,7 +41,7 @@ export function Player({
 	controller: PlayerController;
 }) {
 	useSyncExternalStore(controller.subscribe, controller.version);
-	const { frame, stack, motion, hint, arrival } = controller.read();
+	const { frame, stack, motion, hint, arrival, externalHref } = controller.read();
 	const { w, h } = controller.geometry(frame);
 	const viewport = useViewport();
 	const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -46,17 +55,28 @@ export function Player({
 	return (
 		<div className="spool-stage">
 			<div className="spool-screen" style={{ width: w, height: h, transform: place(w, h, viewport) }}>
-				<div ref={scrollRef} className="spool-screen-scroll">
+				<div
+					ref={scrollRef}
+					className="spool-screen-scroll"
+					style={{ position: "relative", zIndex: 0, isolation: "isolate" }}
+				>
 					{Screen === undefined ? null : <Screen key={arrival} />}
 				</div>
 				{hint && <HintOverlay stamps={stamps} scrollRef={scrollRef} arrival={arrival} />}
+				{externalHref !== null && (
+					<ExternalLinkDialog
+						href={externalHref}
+						onStay={controller.dismissExternal}
+						onOpen={controller.dismissExternal}
+					/>
+				)}
 			</div>
-			<div className="spool-pill">
+			<div className="spool-pill" inert={externalHref !== null}>
 				<button
 					type="button"
 					id="spool-back"
 					aria-label="Back"
-					disabled={stack.length === 0}
+					disabled={externalHref !== null || stack.length === 0}
 					onClick={controller.back}
 				>
 					<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
@@ -87,7 +107,13 @@ export function Player({
 					<span className="is-current">{frame}</span>
 				</span>
 				<span className="spool-rule" />
-				<button type="button" id="spool-restart" aria-label="Restart" onClick={controller.restart}>
+				<button
+					type="button"
+					id="spool-restart"
+					aria-label="Restart"
+					disabled={externalHref !== null}
+					onClick={controller.restart}
+				>
 					<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
 						<path
 							d="M9.4 3.25 A5 5 0 1 1 6.3 3.3"
@@ -113,6 +139,7 @@ export function Player({
 					className={motion ? "spool-motion is-on" : "spool-motion"}
 					aria-label="Motion"
 					aria-pressed={motion}
+					disabled={externalHref !== null}
 					onClick={controller.toggleMotion}
 				>
 					<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
@@ -132,6 +159,7 @@ export function Player({
 					className={hint ? "spool-hint-toggle is-on" : "spool-hint-toggle"}
 					aria-label="Hints"
 					aria-pressed={hint}
+					disabled={externalHref !== null}
 					onClick={controller.toggleHint}
 				>
 					<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
@@ -147,7 +175,13 @@ export function Player({
 						/>
 					</svg>
 				</button>
-				<button type="button" id="spool-close" aria-label="Close" onClick={controller.close}>
+				<button
+					type="button"
+					id="spool-close"
+					aria-label="Close"
+					disabled={externalHref !== null}
+					onClick={controller.close}
+				>
 					<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
 						<path
 							d="M4 4 L12 12 M12 4 L4 12"

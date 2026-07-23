@@ -404,10 +404,38 @@ function bindDataGo(): void {
 	});
 }
 
+/** Plain web anchors leave through the owning Spool surface, never through a screen. */
+function bindExternalLinks(): void {
+	window.document.addEventListener("click", (event) => {
+		if (event.defaultPrevented) return;
+		if (!(event.target instanceof Element)) return;
+		const anchor = event.target.closest("a[href]");
+		if (!(anchor instanceof HTMLAnchorElement)) return;
+		const href = anchor.getAttribute("href");
+		if (href === null || href.startsWith("#")) return;
+		let url: URL;
+		try {
+			url = new URL(href, window.location.href);
+		} catch {
+			return;
+		}
+		if (url.protocol !== "http:" && url.protocol !== "https:") return;
+		if (play === undefined && !embedded) return;
+		event.preventDefault();
+		if (play !== undefined) {
+			externalHref = url.href;
+			notifyPlay();
+		} else {
+			post({ spool: "external", href: url.href });
+		}
+	});
+}
+
 // --- player (#24) -----------------------------------------------------------
 
 let arrival = 0;
 let motionOn = true;
+let externalHref: string | null = null;
 // the hint layer (#34): outlines every element that navigates. Off by default
 // — the player is the immersive stage — and never persisted.
 let hintOn = false;
@@ -432,6 +460,7 @@ type SwapDirection = "forward" | "back" | "restart";
  */
 function swapScreen(direction: SwapDirection, transition?: string): void {
 	arrival++;
+	externalHref = null;
 	const update = () => flushSync(notifyPlay);
 	const startViewTransition = (
 		window.document as {
@@ -481,7 +510,14 @@ const playerController: PlayerController = {
 		return () => playListeners.delete(listener);
 	},
 	version: () => playVersion,
-	read: () => ({ frame: currentFrame, stack: [...stack], motion: motionOn, hint: hintOn, arrival }),
+	read: () => ({
+		frame: currentFrame,
+		stack: [...stack],
+		motion: motionOn,
+		hint: hintOn,
+		arrival,
+		externalHref,
+	}),
 	// the fallback restates the projection's default footprint across the
 	// compile-unit boundary; unreachable while navigate guards membership
 	geometry: (frame) => play?.frames[frame] ?? { w: 390, h: 844 },
@@ -494,6 +530,11 @@ const playerController: PlayerController = {
 	},
 	toggleHint() {
 		hintOn = !hintOn;
+		notifyPlay();
+	},
+	dismissExternal() {
+		if (externalHref === null) return;
+		externalHref = null;
 		notifyPlay();
 	},
 	close: closePlayer,
@@ -631,5 +672,6 @@ export const ui: SpoolUi = Object.freeze({ state, use: useSpoolState, go, back }
 
 installMock();
 bindDataGo();
+bindExternalLinks();
 // importers wait here: no frame renders before its session is seeded
 await start();

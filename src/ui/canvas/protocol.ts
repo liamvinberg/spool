@@ -60,6 +60,7 @@ export type FrameMessage =
 	| FrameZoomMessage
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
+	| { spool: "external"; frame: string; href: string }
 	| { spool: "go"; frame: string; target: string; session?: SessionRecord }
 	| { spool: "back"; frame: string; target: string; session?: SessionRecord };
 
@@ -92,6 +93,8 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 			return typeof m.boxes === "object" && m.boxes !== null && typeof m.id === "number"
 				? (m as unknown as FrameMessage)
 				: undefined;
+		case "external":
+			return webHref(m.href) ? (m as unknown as FrameMessage) : undefined;
 		case "go":
 		case "back":
 			return typeof m.target === "string" ? (m as unknown as FrameMessage) : undefined;
@@ -101,6 +104,16 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 }
 
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+function webHref(value: unknown): value is string {
+	if (typeof value !== "string") return false;
+	try {
+		const url = new URL(value);
+		return url.protocol === "http:" || url.protocol === "https:";
+	} catch {
+		return false;
+	}
+}
 
 export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const;
 export const captureMessage = { spool: "capture" } as const;
