@@ -11,7 +11,7 @@ import { validator } from "hono/validator";
 import trash from "trash";
 import { type WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
-import { SPOOL_FAVICON_SVG } from "../brand";
+import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_FAVICON_SVG } from "../brand";
 import { SpoolError } from "../errors";
 import { initProject } from "../init";
 import { openProject } from "../open";
@@ -61,6 +61,8 @@ export interface DaemonOptions {
 	version: string;
 	/** dist/ui — absent in seam tests and unbuilt checkouts. */
 	uiDir?: string | undefined;
+	/** The checkout daemon keeps its browser identity distinct from the release. */
+	development?: boolean | undefined;
 	/** The OS Trash (#7: spool never manages it) — swapped out by seam tests. */
 	moveToTrash?: (paths: string[]) => Promise<void>;
 	/** Editor launch for path:line jumps — swapped out by seam tests. */
@@ -95,6 +97,7 @@ export function createDaemonApp({
 	spoolDir,
 	version,
 	uiDir,
+	development,
 	moveToTrash,
 	launchEditor,
 	updateCheck,
@@ -657,7 +660,7 @@ export function createDaemonApp({
 		.get("/favicon.svg", (c) => {
 			c.header("content-type", "image/svg+xml");
 			c.header("cache-control", "no-cache");
-			return c.body(SPOOL_FAVICON_SVG);
+			return c.body(development === true ? SPOOL_DEVELOPMENT_FAVICON_SVG : SPOOL_FAVICON_SVG);
 		})
 		.get("/ui/*", (c) => {
 			const asset = readUiAsset(uiDir, c.req.path.slice("/ui/".length));

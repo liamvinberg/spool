@@ -29,6 +29,7 @@ import { logsFrame, shotFrame } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const spoolDir = resolveSpoolDir(process.env);
+const development = (process.env.SPOOL_DIR ?? "") !== "";
 // package root anchors dist/ui for both the built cli (dist/cli.js) and a checkout (src/cli.ts)
 const uiDir = fileURLToPath(new URL("../dist/ui", import.meta.url));
 
@@ -163,6 +164,7 @@ program
 					host: config.host,
 					port: config.port,
 					uiDir,
+					development,
 					updateCheck: config.updateCheck,
 				});
 			} catch (error) {

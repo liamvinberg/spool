@@ -12,6 +12,7 @@ export interface ServeDaemonOptions {
 	host: string;
 	port: number;
 	uiDir?: string | undefined;
+	development?: boolean | undefined;
 	/** #30 phone-home — absent means off, so tests and tools stay silent. */
 	updateCheck?: boolean | undefined;
 	/** The PTY spawn (#42) — seam tests inject a fixture. */
@@ -35,6 +36,7 @@ export function serveDaemon({
 	host,
 	port,
 	uiDir,
+	development,
 	updateCheck,
 	termExecutor,
 }: ServeDaemonOptions): Promise<RunningDaemon> {
@@ -42,6 +44,7 @@ export function serveDaemon({
 		spoolDir,
 		version,
 		uiDir,
+		development,
 		updateCheck,
 		...(termExecutor === undefined ? {} : { termExecutor }),
 	});

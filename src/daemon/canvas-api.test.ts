@@ -360,6 +360,15 @@ describe("serving the canvas page", () => {
 		expect((await app.request(`/ui/assets/${encodeURIComponent("../../../etc/passwd")}`)).status).toBe(404);
 	});
 
+	it("serves the blue mark for the development daemon", async () => {
+		const app = makeApp(join(makeTempDir(), ".spool-dev"), { development: true });
+
+		const favicon = await app.request("/favicon.svg");
+
+		expect(favicon.status).toBe(200);
+		expect(await favicon.text()).toContain('fill="#3b82f6"');
+	});
+
 	it("says what is wrong when the UI build is absent", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const app = makeApp(spoolDir); // no uiDir at all
