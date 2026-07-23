@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import type { Camera, CanvasMode, FlowEdge, Geometry, ProjectedFrame } from "../api";
 import {
 	beaconTrash,
@@ -118,6 +119,7 @@ export function ProjectCanvas({
 	const [selected, setSelected] = useState<string[]>([]);
 	const [picked, setPicked] = useState<PickedSelection | null>(null);
 	const [entered, setEntered] = useState<string | null>(null);
+	const [externalLink, setExternalLink] = useState<{ frame: string; href: string } | null>(null);
 	const [spaceDown, setSpaceDown] = useState(false);
 	const [panning, setPanning] = useState(false);
 	const [resizeCursor, setResizeCursor] = useState<string | null>(null);
@@ -418,6 +420,7 @@ export function ProjectCanvas({
 
 	const exitEntered = useCallback(() => {
 		setEntered(null);
+		setExternalLink(null);
 		walkTarget.current = null;
 		walkSession.current = null;
 	}, []);
@@ -739,6 +742,11 @@ export function ProjectCanvas({
 					(event.source as WindowProxy | null)?.postMessage(sessionReply(record), "*");
 					return;
 				}
+				case "external":
+					if (enteredRef.current === message.frame) {
+						setExternalLink({ frame: message.frame, href: message.href });
+					}
+					return;
 				case "picked": {
 					const waiter = pickWaiters.current.get(message.id);
 					pickWaiters.current.delete(message.id);
@@ -1419,6 +1427,13 @@ export function ProjectCanvas({
 										walkBoot={walkBoots[frame.name]}
 										onIframe={onIframe}
 									/>
+									{externalLink?.frame === frame.name && (
+										<ExternalLinkDialog
+											href={externalLink.href}
+											onStay={() => setExternalLink(null)}
+											onOpen={() => setExternalLink(null)}
+										/>
+									)}
 								</div>
 							</div>
 						);

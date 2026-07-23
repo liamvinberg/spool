@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { parseFrameMessage } from "./protocol";
 
+describe("external link protocol", () => {
+	it("accepts a resolved web destination and rejects a shapeless intent", () => {
+		const intent = {
+			spool: "external",
+			frame: "landing",
+			href: "https://github.com/liamvinberg/spool",
+		};
+
+		expect(parseFrameMessage(intent)).toEqual(intent);
+		expect(parseFrameMessage({ spool: "external", frame: "landing" })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "external", frame: "landing", href: 42 })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "external", frame: "landing", href: "javascript:alert(1)" })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "external", frame: "landing", href: "/relative" })).toBeUndefined();
+	});
+});
+
 describe("frame zoom protocol", () => {
 	it("accepts entered-frame pinch and shortcut intents", () => {
 		const wheel = {
