@@ -136,6 +136,70 @@ describe("death and revival", () => {
 		expect(viewer.streamed()).toContain("crashed here");
 		expect(viewer.controls.some((c) => c.t === "exit" && c.code === 2)).toBe(true);
 	});
+
+	it("marks an attach-time exit so entering can revive; a live death stays unmarked", async () => {
+		const { root, spawned, sessions } = harness();
+		const witness = new FakeClient();
+		await sessions.attach(root, "dash", witness);
+		spawned[0]?.exit(2);
+
+		// the death happened while attached: never an invitation to respawn
+		const death = witness.controls.find((c) => c.t === "exit");
+		expect(death).toBeDefined();
+		expect(death?.attach).toBeUndefined();
+
+		// a later attach replays the exit as arrival state — the enter gesture
+		// (walk arrival, canvas enter) may answer it with a revive
+		const arriver = new FakeClient();
+		await sessions.attach(root, "dash", arriver);
+		expect(arriver.controls.find((c) => c.t === "exit")).toMatchObject({ code: 2, attach: true });
+	});
+});
+
+describe("player restarts (#44)", () => {
+	it("restart kills and respawns a running session, telling every mirror to reset", async () => {
+		const { root, spawned, sessions } = harness();
+		const canvas = new FakeClient();
+		const player = new FakeClient();
+		await sessions.attach(root, "dash", canvas);
+		await sessions.attach(root, "dash", player);
+
+		await sessions.restart(root, "dash");
+
+		expect(spawned[0]?.killed).toBe(true);
+		expect(spawned).toHaveLength(2);
+		expect(canvas.controls.some((c) => c.t === "restart")).toBe(true);
+		expect(player.controls.some((c) => c.t === "restart")).toBe(true);
+	});
+
+	it("restart revives an exited session", async () => {
+		const { root, spawned, sessions } = harness();
+		await sessions.attach(root, "dash", new FakeClient());
+		spawned[0]?.exit(1);
+		await sessions.restart(root, "dash");
+		expect(spawned).toHaveLength(2);
+	});
+
+	it("restart without a session is a quiet no-op — the next attach is already clean", async () => {
+		const { root, spawned, sessions } = harness();
+		await sessions.restart(root, "dash");
+		expect(spawned).toHaveLength(0);
+	});
+
+	it("restart clears a hibernated corpse's death mark — the next attach spawns fresh, not dead", async () => {
+		const { root, spawned, sessions } = harness({ detachGraceMs: 10 });
+		const attached = await sessions.attach(root, "dash", new FakeClient());
+		spawned[0]?.exit(3);
+		attached.detach();
+		await new Promise((r) => setTimeout(r, 60));
+
+		await sessions.restart(root, "dash");
+
+		const arriver = new FakeClient();
+		await sessions.attach(root, "dash", arriver);
+		expect(spawned).toHaveLength(2);
+		expect(arriver.controls.some((c) => c.t === "exit")).toBe(false);
+	});
 });
 
 describe("save restarts", () => {

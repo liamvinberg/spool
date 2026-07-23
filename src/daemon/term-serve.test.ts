@@ -9,7 +9,10 @@ import {
 	makeProject,
 	makeTempDir,
 	serveProject,
+	settle,
 	sseReader,
+	termWsClient,
+	until,
 	writeDesignFile,
 } from "../test-helpers";
 
@@ -20,46 +23,6 @@ import {
  */
 
 const enc = (s: string) => new TextEncoder().encode(s);
-
-function wsClient(url: string) {
-	const socket = new WebSocket(url);
-	socket.binaryType = "arraybuffer";
-	const binary: string[] = [];
-	const controls: { t: string; [key: string]: unknown }[] = [];
-	socket.addEventListener("message", (event) => {
-		if (typeof event.data === "string") controls.push(JSON.parse(event.data));
-		else binary.push(new TextDecoder().decode(new Uint8Array(event.data as ArrayBuffer)));
-	});
-	const open = new Promise<void>((resolve, reject) => {
-		socket.addEventListener("open", () => resolve());
-		socket.addEventListener("error", () => reject(new Error("terminal socket refused")));
-	});
-	return { socket, binary, controls, open, streamed: () => binary.join("") };
-}
-
-async function until(condition: () => boolean, ms = 8000): Promise<void> {
-	const start = Date.now();
-	while (!condition()) {
-		if (Date.now() - start > ms) throw new Error("condition never held");
-		await new Promise((r) => setTimeout(r, 25));
-	}
-}
-
-/** Wait for a counter to stop moving — spawns settled, watcher replays drained. */
-async function settle(read: () => number, quietMs = 300): Promise<void> {
-	let last = read();
-	let quietSince = Date.now();
-	const start = Date.now();
-	while (Date.now() - quietSince < quietMs) {
-		if (Date.now() - start > 8000) return;
-		await new Promise((r) => setTimeout(r, 40));
-		const now = read();
-		if (now !== last) {
-			last = now;
-			quietSince = Date.now();
-		}
-	}
-}
 
 describe("terminal frame documents", () => {
 	it("serves term.tsx as an emulator document with zero compile", async () => {
@@ -135,7 +98,7 @@ describe("the terminal bridge", () => {
 		const { root, name, url } = await serveProject({ termExecutor: executor });
 		writeDesignFile(root, join("frames", "dash", "term.tsx"), "// tui\n");
 
-		const client = wsClient(`${url.replace("http", "ws")}/term/${name}/dash`);
+		const client = termWsClient(`${url.replace("http", "ws")}/term/${name}/dash`);
 		await client.open;
 		await until(() => spawned.length >= 1);
 		// the freshly-armed watcher may replay the term.tsx write as a save —
@@ -176,7 +139,7 @@ describe("the terminal bridge", () => {
 		const { root, name, url } = await serveProject({ termExecutor: executor });
 		writeDesignFile(root, join("frames", "dash", "term.tsx"), "// v1\n");
 
-		const client = wsClient(`${url.replace("http", "ws")}/term/${name}/dash`);
+		const client = termWsClient(`${url.replace("http", "ws")}/term/${name}/dash`);
 		await client.open;
 		await until(() => spawned.length === 1);
 
@@ -194,7 +157,7 @@ describe("the terminal bridge", () => {
 		const project = await serveProject({ termExecutor: executor });
 		writeDesignFile(project.root, join("frames", "dash", "term.tsx"), "// tui\n");
 
-		const client = wsClient(`${project.url.replace("http", "ws")}/term/${project.name}/dash`);
+		const client = termWsClient(`${project.url.replace("http", "ws")}/term/${project.name}/dash`);
 		await client.open;
 		await until(() => spawned.length === 1);
 		// onTestFinished closes the daemon; reaching the end IS the assertion —
@@ -208,7 +171,7 @@ describe("shot for terminal frames", () => {
 		const { root, name, url } = await serveProject({ termExecutor: executor });
 		writeDesignFile(root, join("frames", "dash", "term.tsx"), "// tui\n");
 
-		const client = wsClient(`${url.replace("http", "ws")}/term/${name}/dash`);
+		const client = termWsClient(`${url.replace("http", "ws")}/term/${name}/dash`);
 		await client.open;
 		await until(() => spawned.length >= 1);
 		await settle(() => spawned.length);
@@ -247,7 +210,7 @@ describe("terminal events over SSE", () => {
 		expect((await reader.next()).event).toBe("hello");
 		await reader.drain(400);
 
-		const client = wsClient(`${url.replace("http", "ws")}/term/${name}/dash`);
+		const client = termWsClient(`${url.replace("http", "ws")}/term/${name}/dash`);
 		await client.open;
 		await until(() => spawned.length >= 1);
 		await settle(() => spawned.length);

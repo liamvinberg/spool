@@ -382,6 +382,20 @@ export function createDaemonApp({
 				return c.body(null, 204);
 			},
 		)
+		.post("/api/p/:project/term/:frame/restart", async (c) => {
+			// a play-session restart (#44): the walk asks for a clean run. A live
+			// session respawns — every mirrored surface (canvas included) sees the
+			// same restart: one process, one truth. A hibernated corpse loses its
+			// death mark so the next attach spawns fresh.
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const frame = c.req.param("frame");
+			if (!isSafeName(frame) || projectedKind(project.root, frame) !== "term") {
+				return c.text(`no terminal frame "${frame}" to restart`, 404);
+			}
+			await terms.restart(project.root, frame);
+			return c.body(null, 204);
+		})
 		.get("/api/p/:project/verify/:frame", async (c) => {
 			// the agent's compile probe (#25): shot and logs branch on this JSON —
 			// ok hands the closure etag (the log cache key), error the text verbatim

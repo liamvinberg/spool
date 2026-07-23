@@ -2,7 +2,7 @@ import type { ComponentType } from "react";
 import { createElement, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { Player, type PlayerController } from "./player-chrome";
+import { Player, type PlayerController, TermScreen } from "./player-chrome";
 
 /**
  * The "spool" module (#5, #16): every frame document imports it — explicitly
@@ -57,7 +57,7 @@ export interface PlayerConfig {
 	frames: Record<string, { w: number; h: number }>;
 	/** Stamps of coded-navigation elements per frame, for the hint layer (#34). */
 	hints: Record<string, string[]>;
-	/** Terminal frames as static grids from the daemon-held buffer (#42), keyboard-inert in verse one. */
+	/** Terminal frames (#42): the daemon's grid rides along as each live screen's boot poster (#44). */
 	terminals?: Record<string, { svg: string }>;
 }
 
@@ -491,6 +491,9 @@ function swapScreen(direction: SwapDirection, transition?: string): void {
 
 async function restartSession(): Promise<void> {
 	if (play === undefined) return;
+	// a new epoch: terminal frames the restarted walk reaches start clean (#44)
+	termEpoch++;
+	termEnsured.clear();
 	// a fresh read, so an edited seed lands without a reload
 	const scenario = await loadScenario(scenarioName);
 	mockConfig = scenario.mock;
@@ -498,6 +501,50 @@ async function restartSession(): Promise<void> {
 	currentFrame = play.start;
 	seedState(scenario.state);
 	swapScreen("restart");
+}
+
+// --- terminal screens (#44) --------------------------------------------------
+
+/**
+ * The play session's claim to clean runs: a pill restart opens a new epoch,
+ * and the first arrival at each terminal frame inside it asks the daemon for
+ * a fresh process before joining. Epoch zero joins whatever already runs —
+ * mirrored attach means one process, one truth, and a canvas-staged process
+ * is the demo, not dirt.
+ */
+let termEpoch = 0;
+const termEnsured = new Set<string>();
+/** The current screen's iframe — the only document allowed to speak for the walk. */
+const termIframes = new Map<string, HTMLIFrameElement>();
+
+async function ensureTermFresh(frame: string): Promise<void> {
+	if (termEpoch === 0 || termEnsured.has(frame)) return;
+	termEnsured.add(frame);
+	try {
+		await nativeFetch(`/api/p/${encodeURIComponent(doc.project)}/term/${encodeURIComponent(frame)}/restart`, {
+			method: "POST",
+		});
+	} catch {
+		// the walk still lands on the live session; only the clean-run ask failed
+	}
+}
+
+/**
+ * The player as terminal host (#44): the embedded term document speaks the
+ * same protocol it speaks to the canvas — a nav the TUI fired walks forward
+ * (verifying its edge, never minting one), and the exit chord hands the
+ * keyboard back to the chrome. Only the current screen's own document is
+ * heard; chrome touches no other key.
+ */
+function bindTermHost(): void {
+	window.addEventListener("message", (event) => {
+		const message = event.data as { spool?: string; target?: string; key?: string } | null;
+		if (message === null || typeof message !== "object") return;
+		const iframe = termIframes.get(currentFrame);
+		if (iframe === undefined || event.source !== iframe.contentWindow) return;
+		if (message.spool === "go" && typeof message.target === "string") navigate(message.target);
+		else if (message.spool === "key" && message.key === "Escape") iframe.blur();
+	});
 }
 
 function closePlayer(): void {
@@ -526,6 +573,7 @@ const playerController: PlayerController = {
 	// compile-unit boundary; unreachable while navigate guards membership
 	geometry: (frame) => play?.frames[frame] ?? { w: 390, h: 844 },
 	hintStamps: (frame) => play?.hints?.[frame] ?? [],
+	terminal: (frame) => play?.terminals?.[frame] !== undefined,
 	back,
 	restart: () => void restartSession(),
 	toggleMotion() {
@@ -553,22 +601,29 @@ export function bootPlayer(frames: Record<string, ComponentType>): void {
 	if (play === undefined) {
 		throw new Error("spool: bootPlayer only runs inside a /play/ document");
 	}
+	const config = play;
 	motionOn = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 	const root = window.document.getElementById("root");
 	if (root === null) throw new Error("spool: the player document has no #root");
-	// terminal frames arrive as daemon-rendered grids (#42): true screens,
-	// walkable, keyboard-inert until the interactive-player verse
+	// terminal frames are live (#44): the same term document the canvas embeds,
+	// attached to the same daemon session, over the daemon's grid as poster
 	const termScreens = Object.fromEntries(
-		Object.entries(play.terminals ?? {}).map(([name, screen]) => [
+		Object.entries(config.terminals ?? {}).map(([name, screen]) => [
 			name,
 			() =>
-				createElement("div", {
-					className: "spool-term-screen",
-					// biome-ignore lint/security/noDangerouslySetInnerHtml: the svg is the daemon's own grid rasterization, text-escaped at render
-					dangerouslySetInnerHTML: { __html: screen.svg },
+				createElement(TermScreen, {
+					src: `/p/${encodeURIComponent(config.project)}/frames/${encodeURIComponent(name)}`,
+					poster: screen.svg,
+					title: name,
+					ensureFresh: () => ensureTermFresh(name),
+					register: (el: HTMLIFrameElement | null) => {
+						if (el === null) termIframes.delete(name);
+						else termIframes.set(name, el);
+					},
 				}),
 		]),
 	);
+	bindTermHost();
 	createRoot(root).render(
 		createElement(Player, { frames: { ...frames, ...termScreens }, controller: playerController }),
 	);
