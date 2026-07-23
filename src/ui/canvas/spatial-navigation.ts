@@ -2,6 +2,9 @@ import type { ProjectedFrame } from "../api";
 
 export type SpatialDirection = "left" | "right" | "up" | "down";
 
+/** Canvas-world distance: local groups use 80–580px gaps; separate fields sit thousands apart. */
+export const MAX_SPATIAL_DISTANCE = 640;
+
 interface Candidate {
 	frame: ProjectedFrame;
 	aligned: boolean;
@@ -41,6 +44,7 @@ export function nextSpatialFrame(
 		const lateralGap = intervalGap(fromLateralStart, fromLateralEnd, lateralStart, lateralEnd);
 		const forwardGap =
 			sign > 0 ? Math.max(0, forwardStart - fromForwardEnd) : Math.max(0, fromForwardStart - forwardEnd);
+		if (Math.hypot(forwardGap, lateralGap) > MAX_SPATIAL_DISTANCE) continue;
 		candidates.push({
 			frame,
 			aligned: lateralGap === 0,
