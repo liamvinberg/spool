@@ -171,7 +171,9 @@ export function CanvasSidebar({
 					<div className="min-h-0 flex-1 overflow-y-auto py-2">
 						{frames.map((frame) => {
 							const isSelected = selected.includes(frame.name);
-							const open = mode === "design" && expandedFrames.has(frame.name);
+							// a terminal is a cell grid, not an element tree (#42): no expansion
+							const expandable = mode === "design" && frame.kind !== "term";
+							const open = expandable && expandedFrames.has(frame.name);
 							const rows = rowsByFrame[frame.name];
 							return (
 								<div key={frame.name}>
@@ -181,7 +183,7 @@ export function CanvasSidebar({
 										}`}
 									>
 										{/* element expansion is design's (#7): live rows carry no chevron */}
-										{mode === "design" ? (
+										{expandable ? (
 											<button
 												type="button"
 												aria-label={open ? `Collapse ${frame.name}` : `Expand ${frame.name}`}
@@ -192,7 +194,8 @@ export function CanvasSidebar({
 												<ChevronIcon open={open} className="h-2.5 w-2.5" />
 											</button>
 										) : (
-											<span className="w-3 shrink-0" />
+											// hold the chevron column in design so term rows align
+											<span className={mode === "design" ? "w-6 shrink-0" : "w-3 shrink-0"} />
 										)}
 										<button
 											type="button"
@@ -200,7 +203,7 @@ export function CanvasSidebar({
 											onClick={(event) => onSelectFrame(frame.name, modifiersOf(event))}
 											onDoubleClick={() => onDoubleClickFrame(frame.name)}
 											onKeyDown={(event) => {
-												if (mode !== "design") return;
+												if (!expandable) return;
 												if (event.key === "ArrowRight" && !open) {
 													event.preventDefault();
 													onToggleFrame(frame.name);
