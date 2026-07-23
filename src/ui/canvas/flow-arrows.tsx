@@ -4,16 +4,16 @@ import { clamp } from "./camera";
 import type { SiteBoxes } from "./protocol";
 
 /**
- * The threads (#34), to the system page's primitive: every navigation site
- * draws its own arrow, growing out of the element that causes it — the site's
- * stamped box projected onto the frame edge facing the target, frame-edge
- * midline when no element is located. Unconditional sites draw solid, branched
- * ones faint; dashed is retired. Heads pick their target side by approach
- * angle, and every touch point on a frame edge — arriving tips and fallback
- * tails alike — spreads along it, so arrows can never chain through a shared
- * point into a link nobody declared. 1.5px thread, constant screen weight
- * (world measures divide by the camera's k), drawn under the frames; arrows
- * are the map, never a hit target.
+ * The threads (#34), to the system page's primitive: every directed frame edge
+ * draws one arrow, anchored to its first declared navigation site. The site's
+ * stamped box projects onto the frame edge facing the target, with the
+ * frame-edge midline as fallback. Edges claimed only from branches draw faint;
+ * dashed is retired. Heads pick their target side by approach angle, and every
+ * touch point on a frame edge — arriving tips and fallback tails alike —
+ * spreads along it, so arrows can never chain through a shared point into a
+ * link nobody declared. 1.5px thread, constant screen weight (world measures
+ * divide by the camera's k), drawn under the frames; arrows are the map, never
+ * a hit target.
  */
 
 const HEAD_LENGTH = 10;
@@ -97,38 +97,37 @@ export function routeArrows(
 		const to = byName.get(edge.to);
 		if (from === undefined || to === undefined) continue;
 		const target = center(to);
-		edge.sites.forEach((site, index) => {
-			const box =
-				site.anchor === undefined ? null : (siteBoxes[edge.from]?.[anchorKeyOf(site.path, site.anchor)] ?? null);
-			// the element's center in world space, clamped into the frame — a
-			// scrolled-away element still claims its edge honestly
-			const anchored = box !== null;
-			const anchor: Point =
-				box === null
-					? center(from)
-					: {
-							x: clamp(from.x + box.x + box.w / 2, from.x, from.x + from.w),
-							y: clamp(from.y + box.y + box.h / 2, from.y, from.y + from.h),
-						};
-			const exit = sideToward(anchor, target);
-			const tail: TouchPoint = {
-				at: clampToEdge(cross(exit, anchor), from, exit),
-				toward: cross(exit, target),
-				anchored,
-			};
-			const tailPoint = onEdge(from, exit, tail.at);
-			// the head lands on the face the approach sees: opposite the travel side
-			const entry = OPPOSITE[sideToward(tailPoint, target)];
-			specs.push({
-				key: `${edge.from}\0${edge.to}\0${index}\0${site.path}:${site.line}`,
-				from,
-				to,
-				exit,
-				entry,
-				tail,
-				tip: { at: clampToEdge(cross(entry, target), to, entry), toward: cross(entry, tailPoint), anchored: false },
-				faint: site.conditional === true,
-			});
+		const site = edge.sites[0];
+		const box =
+			site?.anchor === undefined ? null : (siteBoxes[edge.from]?.[anchorKeyOf(site.path, site.anchor)] ?? null);
+		// the element's center in world space, clamped into the frame — a
+		// scrolled-away element still claims its edge honestly
+		const anchored = box !== null;
+		const anchor: Point =
+			box === null
+				? center(from)
+				: {
+						x: clamp(from.x + box.x + box.w / 2, from.x, from.x + from.w),
+						y: clamp(from.y + box.y + box.h / 2, from.y, from.y + from.h),
+					};
+		const exit = sideToward(anchor, target);
+		const tail: TouchPoint = {
+			at: clampToEdge(cross(exit, anchor), from, exit),
+			toward: cross(exit, target),
+			anchored,
+		};
+		const tailPoint = onEdge(from, exit, tail.at);
+		// the head lands on the face the approach sees: opposite the travel side
+		const entry = OPPOSITE[sideToward(tailPoint, target)];
+		specs.push({
+			key: `${edge.from}\0${edge.to}`,
+			from,
+			to,
+			exit,
+			entry,
+			tail,
+			tip: { at: clampToEdge(cross(entry, target), to, entry), toward: cross(entry, tailPoint), anchored: false },
+			faint: edge.certainty === "might",
 		});
 	}
 

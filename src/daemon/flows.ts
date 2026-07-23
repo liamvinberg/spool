@@ -26,7 +26,7 @@ export interface FlowEdge {
 	to: string;
 	/** will = an unconditional site claims it; might = only branched sites do. */
 	certainty: "will" | "might";
-	/** Every site claiming this edge — each draws its own arrow. */
+	/** Every site claiming this edge, retained behind its single arrow. */
 	sites: EdgeSite[];
 	/** A real session took this edge since the from-frame last changed. */
 	verified?: true;

@@ -3,10 +3,10 @@ import type { FlowEdge, ProjectedFrame } from "../api";
 import { routeArrows } from "./flow-arrows";
 
 /**
- * The arrow layout (#34): per-site arrows growing out of their element,
- * angle-based side choice with spread at the target edge — the geometry that
- * killed the midpoint pileup. Asserted on tails and tips; the cubic between
- * them is presentation.
+ * The arrow layout (#34): one arrow per directed frame edge, anchored to the
+ * first site, with angle-based side choice and spread at the target edge — the
+ * geometry that killed the midpoint pileup. Asserted on tails and tips; the
+ * cubic between them is presentation.
  */
 
 const frame = (name: string, x: number, y: number, w = 400, h = 800): ProjectedFrame =>
@@ -30,7 +30,7 @@ const site = (line: number, col = 4, conditional = false) => ({
 const anchorKey = (line: number, col = 4) => `frames/a/frame.tsx:${line}:${col}`;
 
 describe("routeArrows", () => {
-	it("each site grows its own arrow out of its element's edge point", () => {
+	it("draws one arrow for an edge claimed by multiple sites", () => {
 		const frames = [frame("a", 0, 0), frame("b", 1000, 0)];
 		const edges = [edge("a", "b", [site(4), site(9)])];
 		const boxes = {
@@ -42,11 +42,10 @@ describe("routeArrows", () => {
 
 		const arrows = routeArrows(edges, frames, boxes, 1);
 
-		expect(arrows).toHaveLength(2);
-		// both leave a's right edge at their element's height, not a shared midpoint
-		expect(arrows.map((arrow) => arrow.tail.x)).toEqual([400, 400]);
+		expect(arrows).toHaveLength(1);
+		// the first declared site remains the edge's visual anchor
+		expect(arrows[0]?.tail.x).toBe(400);
 		expect(arrows[0]?.tail.y).toBe(100);
-		expect(arrows[1]?.tail.y).toBe(580);
 	});
 
 	it("a site without a located element falls back to the frame edge midline", () => {
@@ -100,6 +99,16 @@ describe("routeArrows", () => {
 		const arrows = routeArrows(edges, frames, {}, 1);
 
 		expect(arrows.map((arrow) => arrow.faint)).toEqual([true, false]);
+	});
+
+	it("draws a grouped edge solid when any claiming site is unconditional", () => {
+		const frames = [frame("a", 0, 0), frame("b", 1000, 0)];
+		const edges = [edge("a", "b", [site(4, 4, true), site(9)])];
+
+		const arrows = routeArrows(edges, frames, {}, 1);
+
+		expect(arrows).toHaveLength(1);
+		expect(arrows[0]?.faint).toBe(false);
 	});
 
 	it("self-links and edges off the field draw nothing", () => {
