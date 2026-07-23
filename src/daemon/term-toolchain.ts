@@ -229,10 +229,8 @@ for (;;) {
 			const message = JSON.parse(new TextDecoder().decode(payload));
 			if (message.resize) {
 				term.resize(message.resize.cols, message.resize.rows);
-				// bun's Terminal.resize sets the PTY winsize but the child never
-				// learns: under Bun.spawn it is not the pty's foreground process
-				// group, so the kernel's SIGWINCH reaches nobody. Deliver it by
-				// hand or no TUI ever reflows.
+				// the kernel signals only the terminal's foreground group, and the
+				// spawned app may not be it — deliver the winch by hand
 				proc.kill("SIGWINCH");
 			}
 			if (message.signal) proc.kill(message.signal);

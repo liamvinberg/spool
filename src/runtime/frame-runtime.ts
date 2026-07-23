@@ -547,6 +547,45 @@ function bindTermHost(): void {
 	});
 }
 
+/**
+ * The canvas owns geometry (#44): the player follows the sidecar live over the
+ * project's SSE stream, so a canvas resize re-fits the player's screens — the
+ * emulator inside a re-sized terminal box re-derives its grid and every
+ * mirrored surface converges on the same cells, instead of painting one grid
+ * into another's box.
+ */
+function followGeometry(): void {
+	const config = play;
+	if (config === undefined || typeof EventSource === "undefined") return;
+	const project = encodeURIComponent(config.project);
+	const source = new EventSource(`/api/p/${project}/events`);
+	source.addEventListener("change", (event) => {
+		let change: { kind?: string };
+		try {
+			change = JSON.parse((event as MessageEvent).data) as { kind?: string };
+		} catch {
+			return;
+		}
+		if (change.kind !== "geometry") return;
+		void nativeFetch(`/api/p/${project}/frames`)
+			.then((res) =>
+				res.ok ? (res.json() as Promise<{ frames?: { name: string; w: number; h: number }[] }>) : undefined,
+			)
+			.then((listing) => {
+				let moved = false;
+				for (const frame of listing?.frames ?? []) {
+					const known = config.frames[frame.name];
+					if (known !== undefined && (known.w !== frame.w || known.h !== frame.h)) {
+						config.frames[frame.name] = { w: frame.w, h: frame.h };
+						moved = true;
+					}
+				}
+				if (moved) notifyPlay();
+			})
+			.catch(() => {});
+	});
+}
+
 function closePlayer(): void {
 	window.close();
 	// a tab the canvas opened closes; a phone's direct URL walks to the canvas
@@ -624,6 +663,7 @@ export function bootPlayer(frames: Record<string, ComponentType>): void {
 		]),
 	);
 	bindTermHost();
+	followGeometry();
 	createRoot(root).render(
 		createElement(Player, { frames: { ...frames, ...termScreens }, controller: playerController }),
 	);
