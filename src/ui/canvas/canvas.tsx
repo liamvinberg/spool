@@ -20,7 +20,7 @@ import {
 import { RibbonMark } from "../icons";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
 import { CollisionNotice } from "./collision-notice";
-import { ContextMenu, MENU_SIZE } from "./context-menu";
+import { ContextMenu, contextMenuSize } from "./context-menu";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { type ExportNotice, ExportToast } from "./export-toast";
 import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
@@ -96,6 +96,13 @@ interface Point {
 	y: number;
 }
 
+interface CanvasContextMenu {
+	x: number;
+	y: number;
+	frame: string;
+	selection: "frames" | "element";
+}
+
 type Gesture =
 	| { kind: "idle" }
 	| { kind: "pan"; lastX: number; lastY: number }
@@ -165,9 +172,9 @@ export function ProjectCanvas({
 	const [resizeCursor, setResizeCursor] = useState<string | null>(null);
 	const [guides, setGuides] = useState<Guides>(NO_GUIDES);
 	const [marquee, setMarquee] = useState<Box | null>(null);
-	const [menu, setMenu] = useState<{ x: number; y: number; frame: string } | null>(null);
+	const [menu, setMenu] = useState<CanvasContextMenu | null>(null);
 	const [exportDialog, setExportDialog] = useState<readonly string[] | null>(null);
-	const [exportReturnMenu, setExportReturnMenu] = useState<{ x: number; y: number; frame: string } | null>(null);
+	const [exportReturnMenu, setExportReturnMenu] = useState<CanvasContextMenu | null>(null);
 	const [exporting, setExporting] = useState(false);
 	const [exportError, setExportError] = useState<string | undefined>(undefined);
 	const [exportNotice, setExportNotice] = useState<ExportNotice | null>(null);
@@ -1428,21 +1435,19 @@ export function ProjectCanvas({
 			return;
 		}
 		if (enteredRef.current !== null) exitEntered();
-		if (!selectedRef.current.includes(hit)) {
+		const elementSelection = pickedRef.current?.frame === hit;
+		if (!elementSelection && !selectedRef.current.includes(hit)) {
 			setSelected([hit]);
 			setPicked(null);
 		}
-		// in design the right-click also points: the menu's Open in editor and the
-		// context chip both ride the deepest element under the cursor
-		if (modeRef.current === "design") {
-			cancelPicks();
-			const local = frameLocalAt(hit, world);
-			if (local !== null) deepSelectAt(hit, local);
-		}
+		// A context click acts on the existing frame selection. Element picking
+		// belongs to design's click, double-click and ⌘-click gestures.
+		cancelPicks();
+		const menuSize = contextMenuSize(!elementSelection);
 		const viewport = viewportRef.current;
-		const x = viewport === null ? p.x : Math.min(p.x, viewport.clientWidth - MENU_SIZE.w - 8);
-		const y = viewport === null ? p.y : Math.min(p.y, viewport.clientHeight - MENU_SIZE.h - 8);
-		setMenu({ x, y, frame: hit });
+		const x = viewport === null ? p.x : Math.min(p.x, viewport.clientWidth - menuSize.w - 8);
+		const y = viewport === null ? p.y : Math.min(p.y, viewport.clientHeight - menuSize.h - 8);
+		setMenu({ x, y, frame: hit, selection: elementSelection ? "element" : "frames" });
 	};
 
 	const openEditorFor = useCallback(
@@ -1788,20 +1793,30 @@ export function ProjectCanvas({
 				{menu !== null && (
 					<ContextMenu
 						at={menu}
-						selectionCount={selected.includes(menu.frame) ? selected.length : 1}
-						onExport={() => {
-							const names = selectedRef.current.includes(menu.frame) ? [...selectedRef.current] : [menu.frame];
-							const returnMenu = menu;
-							setMenu(null);
-							setExportError(undefined);
-							if (names.length === 1) {
-								setExportReturnMenu(null);
-								void runExport(names, "png");
-								return;
-							}
-							setExportReturnMenu(returnMenu);
-							setExportDialog(framesInCanvasOrder(framesRef.current, names).map((frame) => frame.name));
-						}}
+						exportAction={
+							menu.selection === "element"
+								? null
+								: {
+										selectionCount: selected.includes(menu.frame) ? selected.length : 1,
+										onSelect: () => {
+											const names = selectedRef.current.includes(menu.frame)
+												? [...selectedRef.current]
+												: [menu.frame];
+											const returnMenu = menu;
+											setMenu(null);
+											setExportError(undefined);
+											if (names.length === 1) {
+												setExportReturnMenu(null);
+												void runExport(names, "png");
+												return;
+											}
+											setExportReturnMenu(returnMenu);
+											setExportDialog(
+												framesInCanvasOrder(framesRef.current, names).map((frame) => frame.name),
+											);
+										},
+									}
+						}
 						onPlay={() => {
 							// the player's second door (#13): a session opening on this frame
 							window.open(

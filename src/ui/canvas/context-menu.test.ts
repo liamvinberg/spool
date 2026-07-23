@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import { ContextMenu } from "./context-menu";
 
 const callbacks = {
-	onExport: () => {},
 	onOpenEditor: () => {},
 	onPlay: () => {},
 	onTrash: () => {},
@@ -15,7 +14,7 @@ describe("ContextMenu export action", () => {
 		const markup = renderToStaticMarkup(
 			createElement(ContextMenu, {
 				at: { x: 20, y: 30 },
-				selectionCount: 1,
+				exportAction: { selectionCount: 1, onSelect: () => {} },
 				...callbacks,
 			}),
 		);
@@ -28,7 +27,7 @@ describe("ContextMenu export action", () => {
 		const markup = renderToStaticMarkup(
 			createElement(ContextMenu, {
 				at: { x: 20, y: 30 },
-				selectionCount: 3,
+				exportAction: { selectionCount: 3, onSelect: () => {} },
 				...callbacks,
 			}),
 		);
