@@ -24,12 +24,19 @@ import { errorDocument } from "./document";
 import { createChangeHub } from "./events";
 import { deriveFlows, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
-import { type Geometry, parseGeometry, sidecarFile, writeGeometry } from "./geometry";
+import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { hintStamps } from "./nav-sites";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerEtag } from "./play";
 import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
-import { frameGeometry, listProjectFrames, type ProjectCard, projectedKind, summarizeProject } from "./projection";
+import {
+	frameGeometry,
+	listProjectFrames,
+	lookupFrame,
+	type ProjectCard,
+	projectedKind,
+	summarizeProject,
+} from "./projection";
 import { createSelectionStore, parseSelectionPut } from "./selection";
 import { type AppEvent, readSession, watchRegistry, writeSession } from "./session";
 import { createShotTaker } from "./shots";
@@ -425,14 +432,17 @@ export function createDaemonApp({
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				const { frames } = c.req.valid("json");
-				// all-or-nothing: every frame verified before the first sidecar write
+				// all-or-nothing: every frame resolved before the first sidecar write
+				const dirs = new Map<string, string>();
 				for (const name of Object.keys(frames)) {
-					if (projectedKind(project.root, name) === undefined) {
-						return c.text(`no frame "${name}" to place`, 404);
-					}
+					const found = lookupFrame(project.root, name);
+					if (found.kind !== "found") return c.text(`no frame "${name}" to place`, 404);
+					dirs.set(name, found.dir);
 				}
 				for (const [name, geometry] of Object.entries(frames)) {
-					writeGeometry(sidecarFile(project.root, name), geometry);
+					const dir = dirs.get(name);
+					if (dir === undefined) continue;
+					writeGeometry(sidecarFileIn(dir), geometry);
 					hub.publish(project.root, { kind: "geometry", frame: name });
 				}
 				return c.body(null, 204);
@@ -458,9 +468,9 @@ export function createDaemonApp({
 				const dirs: string[] = [];
 				for (const name of c.req.valid("json").frames) {
 					if (!isSafeName(name)) return c.text(`not a frame name: "${name}"`, 400);
-					const dir = join(project.root, "design", "frames", name);
-					if (projectedKind(project.root, name) === undefined) return c.text(`no frame "${name}" to trash`, 404);
-					dirs.push(dir);
+					const found = lookupFrame(project.root, name);
+					if (found.kind !== "found") return c.text(`no frame "${name}" to trash`, 404);
+					dirs.push(found.dir);
 				}
 				// the whole folder moves; the OS Trash owns restore from here (#7)
 				await trashImpl(dirs);
@@ -559,10 +569,12 @@ export function createDaemonApp({
 				const selected = selections.get(project.root).find((entry) => names.includes(entry.frame))?.frame;
 				const start = frame ?? selected ?? first;
 				// only html frames enter the compile; terminal frames ride the config
-				// as daemon-rendered grids (#42) — their screens are live data
-				const htmlNames = projection.frames.filter((entry) => entry.kind === "html").map((entry) => entry.name);
+				// as daemon-rendered grids (#42) — their screens are live data. The
+				// player stays page-blind (#39): pages only steer where the compiler
+				// finds each frame's folder.
+				const htmlFrames = projection.frames.filter((entry) => entry.kind === "html");
 				const termFrames = projection.frames.filter((entry) => entry.kind === "term");
-				const compiled = await playerCompiler.getBundle(project.root, htmlNames);
+				const compiled = await playerCompiler.getBundle(project.root, htmlFrames);
 				if (compiled.kind === "error") return c.html(errorDocument("player", compiled.message), 500);
 				const terminals: Record<string, { svg: string }> = {};
 				for (const entry of termFrames) {

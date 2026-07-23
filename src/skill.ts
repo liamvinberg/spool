@@ -48,6 +48,7 @@ const topics: Record<string, string> = {
   frames/<name>/frame.tsx    default-exports one React component: the frame
   frames/<name>/frame.json   geometry sidecar { x, y, w, h } (integers, px)
   frames/<name>/*            anything else the frame imports relatively
+  frames/<page>/<name>/      a page: one level of grouping, its own canvas (below)
   shared/ui/                 shared components: kebab-case files, no barrels
   shared/lib/utils.ts        cn() — clsx + tailwind-merge
   shared/tokens.css          the single token file (topic: styling)
@@ -62,7 +63,9 @@ const topics: Record<string, string> = {
 
 Names are folder names — no leading dot, no slashes. Variants are \`--\`-suffixed siblings (checkout--empty), complete frames in their own right and valid walk targets. Renaming a frame is renaming its folder: update data-go and ui.go literals that target it, or the map marks them missing. Deleting is deleting the folder.
 
-frame.json is the one file both hands write, geometry only: spool fills it in when missing (390×844, placed beside the existing frames) and rewrites it as the human drags and resizes; write w/h yourself for an exact size. Beyond that, spool's hands touch your files exactly one more way — the human's delete moves a frame folder to the OS Trash. Source is never edited from the canvas.
+Pages group frames into journeys: a folder under frames/ without a frame entry (frame.tsx or term.tsx) is a page, its subfolders are frames of either kind, and there is no deeper nesting. Each page is its own canvas; the flat top level is the permanent root page. Start flat — introduce pages when the project grows and flows cluster into distinct journeys. Frame names stay identity project-wide: unique across every page (two claimants is a loud error naming both), so walk targets, URLs, thumbnails, and geometry all survive moves. Create a page by creating its folder; move a frame by moving its folder — and re-aim its relative imports (shared/ sits one level further up from inside a page). The canvas reflects both live. Walks cross pages freely: the player ignores pages entirely, and the canvas draws a portal marker where an arrow cannot reach.
+
+frame.json is the one file both hands write, geometry only: spool fills it in when missing (390×844, placed beside its own page's frames) and rewrites it as the human drags and resizes; write w/h yourself for an exact size. Beyond that, spool's hands touch your files exactly one more way — the human's delete moves a frame folder to the OS Trash. Source is never edited from the canvas.
 
 The component: a React function component, hooks and all, rendered into #root of a document spool assembles — finished CSS, tokens, fonts.css, the import map, and the runtime are injected; html, body, and #root have height: 100%, so h-full reaches the frame edge. Frames are blank until React commits; the canvas covers boots with thumbnails. State split: useState is what a widget feels, ui.state is what the app knows (topic: flows).
 

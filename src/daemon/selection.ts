@@ -1,8 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, sep } from "node:path";
 import { extractJsxSpan } from "./jsx-span";
 import { isSafeName } from "./project-files";
-import { frameGeometry } from "./projection";
+import { frameFolder, frameGeometry, lookupFrame } from "./projection";
 
 /**
  * What Liam points at (#23), held in daemon memory and served over the API —
@@ -79,18 +79,23 @@ export type SelectionStore = ReturnType<typeof createSelectionStore>;
 function enrich(root: string, put: SelectionPut): SelectionEntry[] {
 	if ("frames" in put) {
 		// a frame that vanished serves nothing — never a fabricated path/size
-		return put.frames
-			.filter((frame) => existsSync(join(root, "design", "frames", frame, "frame.tsx")))
-			.map((frame) => ({
-				kind: "frame",
-				frame,
-				path: `design/frames/${frame}/frame.tsx`,
-				size: frameGeometry(root, frame),
-			}));
+		return put.frames.flatMap((frame) => {
+			const found = lookupFrame(root, frame);
+			if (found.kind !== "found") return [];
+			return [
+				{
+					kind: "frame" as const,
+					frame,
+					path: framePathOf(frame, found.page),
+					size: frameGeometry(root, frame),
+				},
+			];
+		});
 	}
 
 	const { frame, selector, outerHtml, source, generated } = put.element;
-	const framePath = `design/frames/${frame}/frame.tsx`;
+	const found = lookupFrame(root, frame);
+	const framePath = framePathOf(frame, found.kind === "found" ? found.page : undefined);
 	const stamp = source === null ? undefined : parseStamp(root, source);
 	if (stamp === undefined) {
 		// no stamp anywhere: JS-created DOM under an unstamped root (#6 degrade)
@@ -106,6 +111,11 @@ function enrich(root: string, put: SelectionPut): SelectionEntry[] {
 	const excerpt = generated ? cap(outerHtml) : (span?.excerpt ?? sourceLine(stamp) ?? cap(outerHtml));
 	const entry: SelectionEntry = { kind: "element", frame, path: `design/${stamp.rel}`, lines, selector, excerpt };
 	return [generated ? { ...entry, generated: true } : entry];
+}
+
+/** The frame's own source path, wherever its page put the folder (#39). */
+function framePathOf(frame: string, page: string | undefined): string {
+	return `design/${frameFolder(frame, page)}/frame.tsx`;
 }
 
 interface Stamp {

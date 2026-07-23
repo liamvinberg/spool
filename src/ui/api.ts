@@ -4,7 +4,7 @@ import type { EdgeSite, FlowEdge, Flows } from "../daemon/flows";
 import type { FsListing } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { Camera, CanvasMode, CanvasState } from "../daemon/project-state";
-import type { ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
+import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionPut } from "../daemon/selection";
 
 export type {
@@ -14,6 +14,7 @@ export type {
 	EdgeSite,
 	FlowEdge,
 	Flows,
+	FrameCollision,
 	FsListing,
 	Geometry,
 	ProjectCard,
