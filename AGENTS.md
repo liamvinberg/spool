@@ -7,3 +7,17 @@ Spool is a local-first prototyping canvas. Agents author live TSX frames; people
 - Release Please derives versions and changelog entries from commits on `main`. Before committing or choosing a squash title, follow `docs/releases.md`; commit types describe user-visible release impact, not the kind of implementation work.
 - Keep a session to one non-research ticket. Use Node 22+ and pnpm. Before handoff, run the relevant tests, `pnpm typecheck`, and `pnpm check`; run `pnpm test` for changes with broader behavioral reach.
 - `design/` is Spool's dogfood canvas. Run `spool skill` before working there; its nested `AGENTS.md` governs that folder.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues for `liamvinberg/spool`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The repo uses the five canonical triage-role labels unchanged. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+The repo uses a single-context domain-doc layout, with the glossary in `CONTEXT.md` at the root. See `docs/agents/domain.md`.
