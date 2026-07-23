@@ -57,3 +57,26 @@ describe("site boxes protocol (#34)", () => {
 		expect(parseFrameMessage({ spool: "site-boxes", frame: "cart", boxes: {} })).toBeUndefined();
 	});
 });
+
+describe("element tree protocol (#37)", () => {
+	it("accepts a shim's tree answer and rejects a shapeless one", () => {
+		const answer = {
+			spool: "tree",
+			frame: "cart",
+			id: 5,
+			roots: [{ tag: "main", selector: "main", source: "frames/cart/frame.tsx:3:3", text: "", children: [] }],
+		};
+
+		expect(parseFrameMessage(answer)).toEqual(answer);
+		expect(parseFrameMessage({ spool: "tree", frame: "cart", id: 5 })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "tree", frame: "cart", roots: [] })).toBeUndefined();
+	});
+
+	it("accepts a shim's describe answer and rejects a shapeless one", () => {
+		const answer = { spool: "described", frame: "cart", id: 6, chains: [[], []] };
+
+		expect(parseFrameMessage(answer)).toEqual(answer);
+		expect(parseFrameMessage({ spool: "described", frame: "cart", id: 6 })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "described", frame: "cart", chains: [] })).toBeUndefined();
+	});
+});

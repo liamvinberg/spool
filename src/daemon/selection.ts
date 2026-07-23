@@ -129,7 +129,7 @@ function framePathOf(frame: string, page: string | undefined): string {
 	return `design/${frameFolder(frame, page)}/frame.tsx`;
 }
 
-interface Stamp {
+export interface Stamp {
 	file: string;
 	rel: string;
 	line: number;
@@ -141,7 +141,7 @@ interface Stamp {
  * DOM attributes, so anything malformed or escaping design/ reads as no
  * stamp at all — the entry degrades, the read never leaves the project.
  */
-function parseStamp(root: string, source: string): Stamp | undefined {
+export function parseStamp(root: string, source: string): Stamp | undefined {
 	const match = source.match(/^(.+):(\d+):(\d+)$/);
 	const [, raw, lineText, columnText] = match ?? [];
 	if (raw === undefined || lineText === undefined || columnText === undefined) return undefined;
