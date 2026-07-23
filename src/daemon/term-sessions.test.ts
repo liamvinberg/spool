@@ -48,7 +48,9 @@ describe("attach and stream", () => {
 			rows: 24,
 			entry: join(root, "design", "frames", "dash", "term.tsx"),
 		});
-		expect(client.controls[0]).toMatchObject({ t: "state", state: "running" });
+		// size precedes the snapshot: the client must grid its emulator before the replay
+		expect(client.controls[0]).toMatchObject({ t: "size", cols: 80, rows: 24 });
+		expect(client.controls[1]).toMatchObject({ t: "state", state: "running" });
 
 		spawned[0]?.emit("hello from tui");
 		expect(client.streamed()).toContain("hello from tui");
@@ -61,11 +63,13 @@ describe("attach and stream", () => {
 		expect(spawned[0]?.inputs).toEqual(["\x1b\x03q"]);
 	});
 
-	it("hands a real terminal resize to the process and its buffer", async () => {
+	it("hands a real terminal resize to the process and its buffer, and echoes it to every mirror", async () => {
 		const { root, spawned, sessions } = harness();
-		await sessions.attach(root, "dash", new FakeClient());
+		const client = new FakeClient();
+		await sessions.attach(root, "dash", client);
 		sessions.resize(root, "dash", 100, 30);
 		expect(spawned[0]?.sizes).toEqual([{ cols: 100, rows: 30 }]);
+		expect(client.controls.at(-1)).toMatchObject({ t: "size", cols: 100, rows: 30 });
 		const still = await sessions.still(root, "dash");
 		expect(still).toContain(`viewBox="0 0 ${100 * 9} ${30 * 18}"`);
 	});
@@ -104,6 +108,7 @@ describe("death and revival", () => {
 		spawned[0]?.emit("final screen");
 		await flush();
 		spawned[0]?.exit(3);
+		await flush();
 
 		expect(client.controls.some((c) => c.t === "exit" && c.code === 3)).toBe(true);
 		expect(spawned).toHaveLength(1);
@@ -137,11 +142,53 @@ describe("death and revival", () => {
 		expect(viewer.controls.some((c) => c.t === "exit" && c.code === 2)).toBe(true);
 	});
 
+	it("a TUI that leaves the alternate screen as it dies keeps its last frame", async () => {
+		const { root, spawned, sessions } = harness();
+		const client = new FakeClient();
+		await sessions.attach(root, "dash", client);
+		// the full-screen life of a TUI: enter alt, paint, wipe on the way out
+		spawned[0]?.emit("\x1b[?1049h\x1b[2J\x1b[Hthe dashboard\x1b[?1049l");
+		await flush();
+		spawned[0]?.exit(0);
+		await flush();
+
+		// the artifact survives the wipe — on every mirror and in the still
+		const still = await sessions.still(root, "dash");
+		expect(still).toContain("the dashboard");
+		expect(client.streamed()).toContain("the dashboard");
+
+		// and the corpse persisted with it: a fresh attach shows the screen, not a blank
+		const late = new FakeClient();
+		await sessions.attach(root, "dash", late);
+		expect(late.streamed()).toContain("the dashboard");
+	});
+
+	it("a corpse keeps its screen through a resize — the new grid waits for the revival", async () => {
+		const { root, spawned, sessions } = harness();
+		const client = new FakeClient();
+		await sessions.attach(root, "dash", client);
+		spawned[0]?.emit("last words");
+		await flush();
+		spawned[0]?.exit(1);
+
+		sessions.resize(root, "dash", 100, 30);
+		// no echo, no reflow: the dead screen stays exactly as it was painted
+		expect(client.controls.some((c) => c.t === "size" && c.cols === 100)).toBe(false);
+		const still = await sessions.still(root, "dash");
+		expect(still).toContain(`viewBox="0 0 ${80 * 9} ${24 * 18}"`);
+
+		await sessions.revive(root, "dash");
+		// the deferred grid lands with the respawn — process, buffer, and mirrors together
+		expect(spawned[1]?.spawn).toMatchObject({ cols: 100, rows: 30 });
+		expect(client.controls.some((c) => c.t === "size" && c.cols === 100 && c.rows === 30)).toBe(true);
+	});
+
 	it("marks an attach-time exit so entering can revive; a live death stays unmarked", async () => {
 		const { root, spawned, sessions } = harness();
 		const witness = new FakeClient();
 		await sessions.attach(root, "dash", witness);
 		spawned[0]?.exit(2);
+		await flush();
 
 		// the death happened while attached: never an invitation to respawn
 		const death = witness.controls.find((c) => c.t === "exit");
