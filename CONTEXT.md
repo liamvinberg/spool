@@ -32,7 +32,11 @@ Spool is a local-first prototyping canvas: agents author live TSX frames on disk
 
 **Entered**: The state of a frame after double-click: interaction goes inside it and walks happen in place. Esc leaves an html frame; a terminal owns every key, so the platform modifier + Esc leaves it. _Avoid_: focused
 
-**Hibernated**: A frame the engine has demoted to its still to protect frame rate; it boots again on entry. _Avoid_: paused
+**Hibernated**: A frame demoted to its still because the warm pool overflowed; it boots fresh on return. Hibernation's payoff is memory, never CPU. _Avoid_: paused
+
+**Warm pool**: The bounded set of offscreen frames kept mounted with time frozen; overflowing it, oldest-seen first, is the only path into hibernation. _Avoid_: cache
+
+**Wake queue**: The single ordered path a frame takes into the DOM, drained a few mounts per sweep — entered immediately, selected next, then nearest the viewport center. Every burst site (zoom wake, design flip, page entry) drains through it.
 
 **Hands**: The human at the canvas. Hands own geometry and arrangement; agents own frame source. _Avoid_: user, designer
 
