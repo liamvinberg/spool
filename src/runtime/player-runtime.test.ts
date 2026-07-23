@@ -66,8 +66,18 @@ async function loadPlayerDocument(harness: Harness, query = "") {
 		addEventListener(type, listener, opts);
 	});
 
+	// terminal screens mount iframes (#44) — no daemon listens on the test URL,
+	// so happy-dom must not try to really load them. It prints one unsuppressible
+	// "Iframe page loading is disabled" notice per mount (it holds the worker's
+	// original console, captured before vitest's interception): known noise.
+	const settings = (window as unknown as { happyDOM?: { settings?: { disableIframePageLoading?: boolean } } }).happyDOM
+		?.settings;
+	if (settings !== undefined) settings.disableIframePageLoading = true;
+
+	const fetched: { method: string; url: string }[] = [];
 	window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
 		const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+		fetched.push({ method: (init?.method ?? "GET").toUpperCase(), url });
 		return Promise.resolve(app.request(url, init));
 	}) as typeof fetch;
 
@@ -84,7 +94,7 @@ async function loadPlayerDocument(harness: Harness, query = "") {
 	writeFileSync(bootFile, bootJs ?? "");
 	await import(bootFile);
 
-	return { assign };
+	return { assign, fetched };
 }
 
 /** Observe what the runtime hands the View Transitions API. */
@@ -507,5 +517,123 @@ export default function Hints() {
 		click("#spool-close");
 
 		expect(close).toHaveBeenCalled();
+	});
+});
+
+const hallTsx = `export default function Hall() {
+	return <button type="button" id="to-dash" data-go="dash">to dash</button>;
+}
+`;
+
+function scaffoldTerminal(harness: Harness): void {
+	writeDesignFile(
+		harness.root,
+		join("frames", "dash", "term.tsx"),
+		'import { term } from "spool/term";\nexport const go = () => term.go("hall");\n',
+	);
+	writeFrame(harness.root, "hall", hallTsx);
+	writeDesignFile(harness.root, "shared/scenarios/default.json", '{\n\t"state": {},\n\t"mock": {}\n}\n');
+}
+
+function termIframe(): HTMLIFrameElement {
+	const el = document.querySelector<HTMLIFrameElement>(".spool-term-screen iframe");
+	expect(el, "the terminal screen's iframe").not.toBeNull();
+	return el as HTMLIFrameElement;
+}
+
+function postFromTerm(iframe: HTMLIFrameElement, data: Record<string, unknown>): void {
+	window.dispatchEvent(new MessageEvent("message", { data, source: iframe.contentWindow }));
+}
+
+describe("live terminal screens (#44)", () => {
+	it("hosts the term document the canvas embeds, over the daemon's grid as poster", async () => {
+		const harness = makeHarness();
+		scaffoldTerminal(harness);
+
+		await loadPlayerDocument(harness, "?frame=dash");
+		await vi.waitFor(() => termIframe());
+
+		const iframe = termIframe();
+		expect(iframe.getAttribute("src")).toBe(`/p/${harness.name}/frames/dash`);
+		expect(iframe.getAttribute("sandbox")).toBe("allow-scripts");
+		expect(iframe.getAttribute("title")).toBe("dash");
+		expect(document.querySelector(".spool-term-poster svg")).not.toBeNull();
+
+		// the pill shows the one binding chrome may answer; html screens show none
+		expect(document.querySelector(".spool-term-chord")?.textContent).toContain("⎋");
+	});
+
+	it("a nav the TUI fired advances the walk and verifies its edge — only from the current screen", async () => {
+		const harness = makeHarness();
+		scaffoldTerminal(harness);
+
+		await loadPlayerDocument(harness, "?frame=dash");
+		await vi.waitFor(() => termIframe());
+
+		// a message from anything but the current screen's own document is noise
+		window.dispatchEvent(new MessageEvent("message", { data: { spool: "go", target: "hall" }, source: window }));
+		await new Promise((r) => setTimeout(r, 50));
+		expect(document.querySelector(".spool-stack")?.textContent).toBe("dash");
+
+		postFromTerm(termIframe(), { spool: "go", target: "hall" });
+		await waitForStack("dash/hall");
+		await vi.waitFor(() => expect(document.querySelector("#to-dash")).not.toBeNull());
+		expect(document.querySelector(".spool-term-chord")).toBeNull();
+
+		// the map already claimed dash → hall from term.go source; the walk confirmed it
+		await vi.waitFor(async () => {
+			const flows = (await (await harness.app.request(`/api/p/${harness.name}/flows`)).json()) as {
+				edges: { from: string; to: string; verified?: boolean }[];
+			};
+			expect(flows.edges.find((e) => e.from === "dash" && e.to === "hall")?.verified).toBe(true);
+		});
+
+		// walking back in lands a fresh live screen, same walk
+		click("#to-dash");
+		await waitForStack("dash/hall/dash");
+		await vi.waitFor(() => termIframe());
+	});
+
+	it("the exit chord hands the keyboard back to the chrome", async () => {
+		const harness = makeHarness();
+		scaffoldTerminal(harness);
+
+		await loadPlayerDocument(harness, "?frame=dash");
+		await vi.waitFor(() => termIframe());
+
+		// arrival is the enter gesture: the screen holds the keyboard
+		const iframe = termIframe();
+		await vi.waitFor(() => expect(document.activeElement).toBe(iframe));
+
+		postFromTerm(iframe, { spool: "key", key: "Escape" });
+		await vi.waitFor(() => expect(document.activeElement).not.toBe(iframe));
+	});
+
+	it("a restarted session claims a clean process once per terminal, per epoch", async () => {
+		const harness = makeHarness();
+		scaffoldTerminal(harness);
+
+		const { fetched } = await loadPlayerDocument(harness, "?frame=dash");
+		const restarts = () => fetched.filter((f) => f.method === "POST" && f.url.endsWith("/term/dash/restart"));
+
+		// the first run joins whatever runs — a canvas-staged process is the demo
+		await vi.waitFor(() => termIframe());
+		expect(restarts()).toHaveLength(0);
+
+		// restart opens a new epoch: the remounted screen asks for a clean run
+		click("#spool-restart");
+		await vi.waitFor(() => expect(restarts()).toHaveLength(1));
+		await vi.waitFor(() => termIframe());
+
+		// revisiting inside the epoch joins the run it already cleaned
+		postFromTerm(termIframe(), { spool: "go", target: "hall" });
+		await waitForStack("dash/hall");
+		click("#to-dash");
+		await waitForStack("dash/hall/dash");
+		await vi.waitFor(() => termIframe());
+		expect(restarts()).toHaveLength(1);
+
+		click("#spool-restart");
+		await vi.waitFor(() => expect(restarts()).toHaveLength(2));
 	});
 });

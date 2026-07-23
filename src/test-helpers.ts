@@ -170,3 +170,45 @@ export function fixtureTermExecutor() {
 	};
 	return { spawned, executor };
 }
+
+/** A terminal-bridge WebSocket client: binary frames collected as text, JSON
+ * control frames parsed — the browser runtime's view of a session. */
+export function termWsClient(url: string) {
+	const socket = new WebSocket(url);
+	socket.binaryType = "arraybuffer";
+	const binary: string[] = [];
+	const controls: { t: string; [key: string]: unknown }[] = [];
+	socket.addEventListener("message", (event) => {
+		if (typeof event.data === "string") controls.push(JSON.parse(event.data));
+		else binary.push(new TextDecoder().decode(new Uint8Array(event.data as ArrayBuffer)));
+	});
+	const open = new Promise<void>((resolve, reject) => {
+		socket.addEventListener("open", () => resolve());
+		socket.addEventListener("error", () => reject(new Error("terminal socket refused")));
+	});
+	return { socket, binary, controls, open, streamed: () => binary.join("") };
+}
+
+export async function until(condition: () => boolean, ms = 8000): Promise<void> {
+	const start = Date.now();
+	while (!condition()) {
+		if (Date.now() - start > ms) throw new Error("condition never held");
+		await new Promise((r) => setTimeout(r, 25));
+	}
+}
+
+/** Wait for a counter to stop moving — spawns settled, watcher replays drained. */
+export async function settle(read: () => number, quietMs = 300): Promise<void> {
+	let last = read();
+	let quietSince = Date.now();
+	const start = Date.now();
+	while (Date.now() - quietSince < quietMs) {
+		if (Date.now() - start > 8000) return;
+		await new Promise((r) => setTimeout(r, 40));
+		const now = read();
+		if (now !== last) {
+			last = now;
+			quietSince = Date.now();
+		}
+	}
+}

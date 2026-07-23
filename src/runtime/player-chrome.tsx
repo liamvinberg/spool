@@ -1,6 +1,7 @@
 import type { ComponentType, RefObject } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLinkDialog } from "./external-link-dialog";
+import { exitChordLabel } from "./term-keys";
 
 /**
  * The stage and pill (#24), matching Paper screens v1 "05 · player": the
@@ -25,6 +26,8 @@ export interface PlayerController {
 	geometry(frame: string): { w: number; h: number };
 	/** Stamps of this frame's coded-navigation elements, for the hint layer (#34). */
 	hintStamps(frame: string): string[];
+	/** Whether this screen is a terminal frame (#44) — the pill shows its exit chord. */
+	terminal(frame: string): boolean;
 	back(): void;
 	restart(): void;
 	toggleMotion(): void;
@@ -46,6 +49,7 @@ export function Player({
 	const viewport = useViewport();
 	const scrollRef = useRef<HTMLDivElement | null>(null);
 	const stamps = useMemo(() => controller.hintStamps(frame), [controller, frame]);
+	const terminal = controller.terminal(frame);
 	const Screen = frames[frame];
 	// the session's history is unbounded (#5); the readout is not — a loop-
 	// heavy walk shows its tail, the full path rides the title
@@ -106,6 +110,14 @@ export function Player({
 					))}
 					<span className="is-current">{frame}</span>
 				</span>
+				{terminal && (
+					<span
+						className="spool-term-chord"
+						title="the terminal owns every key — the chord hands the keyboard back"
+					>
+						{exitChordLabel(navigator.platform)}
+					</span>
+				)}
 				<span className="spool-rule" />
 				<button
 					type="button"
@@ -277,6 +289,58 @@ function HintOverlay({
 					style={{ left: box.x, top: box.y, width: box.w, height: box.h, borderRadius: box.r }}
 				/>
 			))}
+		</div>
+	);
+}
+
+/**
+ * A live terminal screen (#44): the same term document the canvas embeds,
+ * hosted over the daemon's last grid as a boot poster — parity by
+ * construction, one emulator, one host protocol. The walk arriving is the
+ * enter gesture, so the document is focused as soon as it exists; the runtime
+ * inside relays streaming, keys, and the exit chord to this host.
+ */
+export function TermScreen({
+	src,
+	poster,
+	title,
+	ensureFresh,
+	register,
+}: {
+	src: string;
+	poster: string;
+	title: string;
+	/** Resolves once the session may be joined — a restarted walk asks for a clean process first. */
+	ensureFresh: () => Promise<void>;
+	/** Scopes the walk's witness: the current screen's iframe, registered while mounted. */
+	register: (el: HTMLIFrameElement | null) => void;
+}) {
+	const [ready, setReady] = useState(false);
+	useEffect(() => {
+		let alive = true;
+		void ensureFresh().then(() => {
+			if (alive) setReady(true);
+		});
+		return () => {
+			alive = false;
+		};
+	}, [ensureFresh]);
+	return (
+		<div className="spool-term-screen">
+			{/* biome-ignore lint/security/noDangerouslySetInnerHtml: the svg is the daemon's own grid rasterization, text-escaped at render */}
+			<div className="spool-term-poster" aria-hidden dangerouslySetInnerHTML={{ __html: poster }} />
+			{ready && (
+				<iframe
+					ref={(el) => {
+						register(el);
+						el?.focus();
+					}}
+					src={src}
+					title={title}
+					sandbox="allow-scripts"
+					onLoad={(event) => event.currentTarget.focus()}
+				/>
+			)}
 		</div>
 	);
 }
