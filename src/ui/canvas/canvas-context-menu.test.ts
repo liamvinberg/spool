@@ -8,73 +8,63 @@ import { ProjectCanvas } from "./canvas";
 const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html", hasThumb: false }];
 
 describe("canvas context menu", () => {
-	it("opens for a selected frame in design mode without selecting an element", async () => {
-		stubCanvasApis();
-		const host = document.createElement("div");
-		document.body.append(host);
-		const root = createRoot(host);
-		onTestFinished(() => {
-			act(() => root.unmount());
-			host.remove();
-			vi.unstubAllGlobals();
-			vi.restoreAllMocks();
-		});
+	it("reloads a frame with a fresh document", async () => {
+		const { host, canvas } = await renderCanvas();
+		const firstDocument = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
+		expect(firstDocument).not.toBeNull();
 
-		await act(async () => {
-			root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} }));
-		});
-		await until(() => host.querySelector('iframe[title="home"]') !== null);
-		const canvas = host.querySelector<HTMLElement>('[role="application"]');
+		await reloadFromMenu(host, canvas);
+
+		expect(host.querySelector('iframe[title="home"]')).not.toBe(firstDocument);
+		expect(host.querySelector('[role="menu"]')).toBeNull();
+	});
+
+	it("restarts a terminal frame when reloading it", async () => {
+		const { host, canvas, requests } = await renderCanvas([
+			{ name: "shell", x: 0, y: 0, w: 320, h: 240, kind: "term", hasThumb: false },
+		]);
+		await reloadFromMenu(host, canvas);
+
+		expect(
+			requests.mock.calls.some(([input, init]) => {
+				const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+				const method = input instanceof Request ? input.method : init?.method;
+				return url.pathname === "/api/p/test/term/shell/restart" && method === "POST";
+			}),
+		).toBe(true);
+	});
+
+	it("opens for a selected frame in design mode without selecting an element", async () => {
+		const { host, canvas } = await renderCanvas();
 		const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
-		expect(canvas).not.toBeNull();
 		expect(iframe?.contentWindow).not.toBeNull();
 
 		await act(async () => {
-			canvas?.dispatchEvent(
+			canvas.dispatchEvent(
 				new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
 			);
-			canvas?.dispatchEvent(
+			canvas.dispatchEvent(
 				new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
 			);
 		});
 
 		const postMessage = vi.spyOn(iframe?.contentWindow as Window, "postMessage");
 		postMessage.mockClear();
-		await act(async () => {
-			canvas?.dispatchEvent(
-				new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }),
-			);
-		});
+		await openFrameMenu(canvas);
 
 		expect(host.querySelector('[role="menu"]')?.textContent).toContain("Export as PNG");
 		expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ spool: "pick" }), "*");
 	});
 
-	it("does not offer frame export for an element-only selection", async () => {
-		stubCanvasApis();
-		const host = document.createElement("div");
-		document.body.append(host);
-		const root = createRoot(host);
-		onTestFinished(() => {
-			act(() => root.unmount());
-			host.remove();
-			vi.unstubAllGlobals();
-			vi.restoreAllMocks();
-		});
-
-		await act(async () => {
-			root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} }));
-		});
-		await until(() => host.querySelector('iframe[title="home"]') !== null);
-		const canvas = host.querySelector<HTMLElement>('[role="application"]');
+	it("clears an element-only selection when reloading", async () => {
+		const { host, canvas } = await renderCanvas();
 		const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
-		expect(canvas).not.toBeNull();
 		expect(iframe?.contentWindow).not.toBeNull();
 
 		const postMessage = vi.spyOn(iframe?.contentWindow as Window, "postMessage");
 		postMessage.mockClear();
 		await act(async () => {
-			canvas?.dispatchEvent(
+			canvas.dispatchEvent(
 				new PointerEvent("pointerdown", {
 					bubbles: true,
 					button: 0,
@@ -117,19 +107,64 @@ describe("canvas context menu", () => {
 			);
 		});
 
-		await act(async () => {
-			canvas?.dispatchEvent(
-				new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }),
-			);
-		});
+		await openFrameMenu(canvas);
 
 		const menu = host.querySelector('[role="menu"]');
 		expect(menu).not.toBeNull();
 		expect(menu?.textContent).not.toContain("Export");
+
+		await clickMenuItem(host, "Reload frame");
+		await openFrameMenu(canvas);
+
+		expect(host.querySelector('[role="menu"]')?.textContent).toContain("Export as PNG");
 	});
 });
 
-function stubCanvasApis(): void {
+async function renderCanvas(projectedFrames = frames) {
+	const requests = stubCanvasApis(projectedFrames);
+	const host = document.createElement("div");
+	document.body.append(host);
+	const root = createRoot(host);
+	onTestFinished(() => {
+		act(() => root.unmount());
+		host.remove();
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	await act(async () => {
+		root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} }));
+	});
+	const frame = projectedFrames[0];
+	if (frame === undefined) throw new Error("a canvas test needs one frame");
+	await until(() => host.querySelector(`iframe[title="${frame.name}"]`) !== null);
+	const canvas = host.querySelector<HTMLElement>('[role="application"]');
+	if (canvas === null) throw new Error("canvas did not render");
+	return { host, canvas, requests };
+}
+
+async function openFrameMenu(canvas: HTMLElement): Promise<void> {
+	await act(async () => {
+		canvas.dispatchEvent(
+			new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }),
+		);
+	});
+}
+
+async function clickMenuItem(host: HTMLElement, label: string): Promise<void> {
+	const item = [...host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+		(candidate) => candidate.textContent === label,
+	);
+	expect(item).toBeDefined();
+	await act(async () => item?.click());
+}
+
+async function reloadFromMenu(host: HTMLElement, canvas: HTMLElement): Promise<void> {
+	await openFrameMenu(canvas);
+	await clickMenuItem(host, "Reload frame");
+}
+
+function stubCanvasApis(projectedFrames = frames) {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	const setAttribute = HTMLIFrameElement.prototype.setAttribute;
 	vi.spyOn(HTMLIFrameElement.prototype, "setAttribute").mockImplementation(function (
@@ -139,23 +174,26 @@ function stubCanvasApis(): void {
 	) {
 		setAttribute.call(this, name, name === "src" ? "about:blank" : value);
 	});
-	vi.stubGlobal(
-		"fetch",
-		vi.fn(async (input: RequestInfo | URL) => {
-			const raw = input instanceof Request ? input.url : String(input);
-			const url = new URL(raw, window.location.href);
-			if (url.pathname.endsWith("/state")) {
-				return Response.json({ mode: "design", camera: { x: 0, y: 0, k: 1 } });
-			}
-			if (url.pathname.endsWith("/frames")) {
-				return Response.json({ root: "/project", pages: [], frames, collisions: [] });
-			}
-			if (url.pathname.endsWith("/flows")) {
-				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });
-			}
-			return Response.json({});
-		}),
-	);
+	const requests = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+		const raw = input instanceof Request ? input.url : String(input);
+		const url = new URL(raw, window.location.href);
+		if (url.pathname.endsWith("/state")) {
+			return Response.json({ mode: "design", camera: { x: 0, y: 0, k: 1 } });
+		}
+		if (url.pathname.endsWith("/frames")) {
+			return Response.json({ root: "/project", pages: [], frames: projectedFrames, collisions: [] });
+		}
+		if (url.pathname.endsWith("/flows")) {
+			return Response.json({
+				frames: projectedFrames.map((frame) => frame.name),
+				links: [],
+				edges: [],
+				unreadable: [],
+			});
+		}
+		return Response.json({});
+	});
+	vi.stubGlobal("fetch", requests);
 	vi.stubGlobal(
 		"EventSource",
 		class {
@@ -168,6 +206,7 @@ function stubCanvasApis(): void {
 		return 1;
 	});
 	vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+	return requests;
 }
 
 async function until(done: () => boolean): Promise<void> {

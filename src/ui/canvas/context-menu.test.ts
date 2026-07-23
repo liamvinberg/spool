@@ -6,6 +6,7 @@ import { ContextMenu } from "./context-menu";
 const callbacks = {
 	onOpenEditor: () => {},
 	onPlay: () => {},
+	onReload: () => {},
 	onTrash: () => {},
 };
 

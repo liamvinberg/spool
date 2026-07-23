@@ -143,6 +143,14 @@ export async function postTrash(project: string, frames: string[]): Promise<bool
 	}
 }
 
+export async function restartTerminalFrame(project: string, frame: string): Promise<boolean> {
+	try {
+		return (await client.api.p[":project"].term[":frame"].restart.$post({ param: { project, frame } })).ok;
+	} catch {
+		return false;
+	}
+}
+
 /** The page is going away — a beacon outlives it where fetch would not. */
 export function beaconTrash(project: string, frames: string[]): void {
 	navigator.sendBeacon(
