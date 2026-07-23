@@ -13,8 +13,8 @@ export interface MenuPlacement {
 }
 
 const MENU_WIDTH = 200;
-const MENU_HEIGHT_WITH_EXPORT = 132;
-const MENU_HEIGHT_WITHOUT_EXPORT = 101;
+const MENU_HEIGHT_WITH_EXPORT = 162;
+const MENU_HEIGHT_WITHOUT_EXPORT = 131;
 
 export function contextMenuSize(canExport: boolean): { w: number; h: number } {
 	return { w: MENU_WIDTH, h: canExport ? MENU_HEIGHT_WITH_EXPORT : MENU_HEIGHT_WITHOUT_EXPORT };
@@ -25,12 +25,14 @@ export function ContextMenu({
 	exportAction,
 	onPlay,
 	onOpenEditor,
+	onReload,
 	onTrash,
 }: {
 	at: MenuPlacement;
 	exportAction: { selectionCount: number; onSelect: () => void } | null;
 	onPlay: () => void;
 	onOpenEditor: () => void;
+	onReload: () => void;
 	onTrash: () => void;
 }) {
 	return (
@@ -56,6 +58,14 @@ export function ContextMenu({
 				onClick={onOpenEditor}
 			>
 				Open in editor
+			</button>
+			<button
+				type="button"
+				role="menuitem"
+				className="flex h-[30px] shrink-0 items-center rounded-sm px-3 text-left text-base text-text leading-[14px] hover:bg-surface"
+				onClick={onReload}
+			>
+				Reload frame
 			</button>
 			<div className="mx-auto h-px w-[176px] shrink-0 bg-border-raised" />
 			{exportAction !== null ? (

@@ -15,6 +15,7 @@ import {
 	putGeometry,
 	putSelection,
 	putThumb,
+	restartTerminalFrame,
 	subscribeSse,
 	thumbUrl,
 } from "../api";
@@ -334,6 +335,16 @@ export function ProjectCanvas({
 	});
 	const lifecycleRef = useRef(lifecycle);
 	lifecycleRef.current = lifecycle;
+
+	const reloadFrameDocument = useCallback((frame: string) => {
+		setDocNonces((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
+		setWalkBoots((current) => without(current, frame));
+		setPicked((current) => current.filter((pick) => pick.frame !== frame));
+		if (pickedChain.current?.frame === frame) pickedChain.current = null;
+		setTrees((current) => without(current, frame));
+		setPreview((current) => (current?.frame === frame ? null : current));
+		lifecycleRef.current.markStale(frame);
+	}, []);
 
 	const onIframe = useCallback((name: string, el: HTMLIFrameElement | null) => {
 		if (el === null) iframes.current.delete(name);
@@ -1242,17 +1253,7 @@ export function ProjectCanvas({
 				const event = data as { kind: string; frame?: string };
 				if (event.kind === "frame" && event.frame !== undefined) {
 					const frame = event.frame;
-					setDocNonces((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
-					// an edit reboot is honest — it does not wear a walk's quiet cover
-					setWalkBoots((current) => without(current, frame));
-					// the DOM these picks pointed into is gone — and so is its walk
-					setPicked((current) => {
-						const kept = current.filter((pick) => pick.frame !== frame);
-						return kept.length === current.length ? current : kept;
-					});
-					if (pickedChain.current?.frame === frame) pickedChain.current = null;
-					setTrees((current) => without(current, frame));
-					lifecycleRef.current.markStale(frame);
+					reloadFrameDocument(frame);
 					void refetchFrames();
 					// an edit moves the graph: edges re-derive, verified marks may drop —
 					// walks themselves stay canvas-silent (#34): they cannot move the map
@@ -1283,7 +1284,7 @@ export function ProjectCanvas({
 				}
 			},
 		});
-	}, [project, refetchFrames, refetchFlows, noteThumb]);
+	}, [project, refetchFrames, refetchFlows, noteThumb, reloadFrameDocument]);
 
 	// the frame protocol: loaded/error/shot route into the lifecycle, session?
 	// answers with the carried walk session, go/back move the entered state
@@ -2247,6 +2248,14 @@ export function ProjectCanvas({
 									? editorTarget(pick, framePageOf(pick.frame))
 									: { path: frameSourcePath(menu.frame, framePageOf(menu.frame)) },
 							);
+							setMenu(null);
+						}}
+						onReload={() => {
+							const frame = menu.frame;
+							if (allFramesRef.current.find((candidate) => candidate.name === frame)?.kind === "term") {
+								void restartTerminalFrame(project, frame);
+							}
+							reloadFrameDocument(frame);
 							setMenu(null);
 						}}
 						onTrash={() => {
