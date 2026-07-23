@@ -117,6 +117,9 @@ function connect(): void {
 	ws = socket;
 
 	socket.addEventListener("open", () => {
+		// every connection re-asks: the daemon's session may predate this
+		// document and hold another size
+		lastSent = { cols: 0, rows: 0 };
 		sendResize();
 		if (!loadedReported) {
 			loadedReported = true;
@@ -131,8 +134,17 @@ function connect(): void {
 				target?: string;
 				state?: string;
 				attach?: boolean;
+				cols?: number;
+				rows?: number;
 			};
-			if (message.t === "exit") {
+			if (message.t === "size") {
+				// the daemon owns the grid: adopt its size so the replayed screen
+				// lands on the columns it was painted at — our own wish is already
+				// racing there as a resize, and its application echoes back here
+				if (typeof message.cols === "number" && typeof message.rows === "number") {
+					if (term.cols !== message.cols || term.rows !== message.rows) term.resize(message.cols, message.rows);
+				}
+			} else if (message.t === "exit") {
 				// an attach-time corpse met with focus is being entered — a walk
 				// arrival, an entered boot — and entering revives (#44). A death
 				// watched live never respawns by itself.
@@ -178,8 +190,9 @@ term.onBinary((data) => {
 
 let lastSent = { cols: 0, rows: 0 };
 function sendResize(): void {
+	// ask, never apply: the emulator follows the daemon's size echo, so the
+	// screen and the process can never disagree about columns
 	const size = grid();
-	if (term.cols !== size.cols || term.rows !== size.rows) term.resize(size.cols, size.rows);
 	if (size.cols !== lastSent.cols || size.rows !== lastSent.rows) {
 		lastSent = size;
 		control({ t: "resize", cols: size.cols, rows: size.rows });
@@ -239,6 +252,11 @@ window.addEventListener(
 window.addEventListener("focus", () => {
 	if (exited) control({ t: "revive" });
 	term.focus();
+});
+// the same gesture from inside: a frame that died while entered never gets a
+// fresh focus event, so a click on the corpse is the revival
+window.addEventListener("mousedown", () => {
+	if (exited) control({ t: "revive" });
 });
 
 // ---- host protocol odds and ends -------------------------------------------
