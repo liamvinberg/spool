@@ -559,8 +559,23 @@ describe("live terminal screens (#44)", () => {
 		expect(iframe.getAttribute("title")).toBe("dash");
 		expect(document.querySelector(".spool-term-poster svg")).not.toBeNull();
 
-		// the pill shows the one binding chrome may answer; html screens show none
-		expect(document.querySelector(".spool-term-chord")?.textContent).toContain("esc");
+		// A terminal player is already entered: its own chrome stays out of the
+		// way, and the terminal takes focus explicitly once its document loads.
+		expect(document.querySelector(".spool-term-chord")).toBeNull();
+		expect(document.querySelector("#spool-hint")).toBeNull();
+		expect(document.querySelector(".spool-screen-scroll")?.classList.contains("is-terminal")).toBe(true);
+
+		const screen = document.querySelector<HTMLElement>(".spool-screen");
+		expect(screen?.style.transform).toBe(
+			`translate(${Math.round((window.innerWidth - 720) / 2)}px, ${Math.round((window.innerHeight - 480) / 2)}px) scale(1)`,
+		);
+
+		const termWindow = iframe.contentWindow;
+		expect(termWindow).not.toBeNull();
+		if (termWindow === null) throw new Error("terminal iframe has no window");
+		const postMessage = vi.spyOn(termWindow, "postMessage");
+		iframe.dispatchEvent(new Event("load"));
+		expect(postMessage).toHaveBeenCalledWith({ spool: "focus" }, "*");
 	});
 
 	it("a nav the TUI fired advances the walk and verifies its edge — only from the current screen", async () => {
