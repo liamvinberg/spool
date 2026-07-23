@@ -4,8 +4,9 @@ import { basename, join, relative, resolve, sep } from "node:path";
 import { build, formatMessagesSync, type Plugin } from "esbuild";
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
 import { isSafeName, readIfExists } from "./project-files";
-import { describeCollision, lookupFrame } from "./projection";
+import { describeCollision, frameKind, lookupFrame } from "./projection";
 import { buildFrameCss } from "./tailwind";
+import { assembleTermDocument, termDocumentEtag } from "./term-document";
 import { importMapPins } from "./vendor";
 
 export type FrameDocument =
@@ -49,6 +50,24 @@ export function createFrameCompiler(version: string) {
 			};
 		}
 		const frameDir = lookup.dir;
+		// the raw entry read, not the projection's normalization: a both-entries
+		// folder must serve its error, not compile as html (#42)
+		const kind = frameKind(frameDir);
+		if (kind === undefined) {
+			return {
+				kind: "missing",
+				message: `no frame "${frame}" — expected design/frames/${frame}/frame.tsx in ${root}`,
+			};
+		}
+		if (kind === "conflict") {
+			const message = `design/frames/${frame} holds both frame.tsx and term.tsx — a frame is one kind; remove one entry`;
+			return { kind: "error", document: errorDocument(frame, message), message };
+		}
+		if (kind === "term") {
+			// no compile: the app runs daemon-side; the document only paints the grid
+			const document = assembleTermDocument({ project: basename(root), frame });
+			return { kind: "ok", document, etag: termDocumentEtag(version, document), cache: "hit" };
+		}
 
 		const key = `${root}\0${frame}`;
 		const cached = cache.get(key);

@@ -16,6 +16,7 @@ import {
 
 const frame = (name: string, page?: string): ProjectedFrame => ({
 	name,
+	kind: "html",
 	...(page === undefined ? {} : { page }),
 	x: 0,
 	y: 0,

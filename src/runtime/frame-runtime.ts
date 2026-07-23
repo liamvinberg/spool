@@ -57,6 +57,8 @@ export interface PlayerConfig {
 	frames: Record<string, { w: number; h: number }>;
 	/** Stamps of coded-navigation elements per frame, for the hint layer (#34). */
 	hints: Record<string, string[]>;
+	/** Terminal frames as static grids from the daemon-held buffer (#42), keyboard-inert in verse one. */
+	terminals?: Record<string, { svg: string }>;
 }
 
 declare global {
@@ -554,7 +556,22 @@ export function bootPlayer(frames: Record<string, ComponentType>): void {
 	motionOn = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 	const root = window.document.getElementById("root");
 	if (root === null) throw new Error("spool: the player document has no #root");
-	createRoot(root).render(createElement(Player, { frames, controller: playerController }));
+	// terminal frames arrive as daemon-rendered grids (#42): true screens,
+	// walkable, keyboard-inert until the interactive-player verse
+	const termScreens = Object.fromEntries(
+		Object.entries(play.terminals ?? {}).map(([name, screen]) => [
+			name,
+			() =>
+				createElement("div", {
+					className: "spool-term-screen",
+					// biome-ignore lint/security/noDangerouslySetInnerHtml: the svg is the daemon's own grid rasterization, text-escaped at render
+					dangerouslySetInnerHTML: { __html: screen.svg },
+				}),
+		]),
+	);
+	createRoot(root).render(
+		createElement(Player, { frames: { ...frames, ...termScreens }, controller: playerController }),
+	);
 }
 
 // --- mock -------------------------------------------------------------------

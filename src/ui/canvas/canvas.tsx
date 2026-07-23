@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
+import { snapPxToCells } from "../../term/cells";
 import type { Camera, CanvasMode, FlowEdge, FrameCollision, Geometry, ProjectedFrame } from "../api";
 import {
 	beaconTrash,
@@ -1270,6 +1271,17 @@ export function ProjectCanvas({
 					h = edge - anchor.y;
 				}
 			}
+			// a terminal resizes in its own units (#42): whole cells, and a cell
+			// snap that moved an edge drops that axis's guides like the clamp does
+			if (framesRef.current.find((f) => f.name === active.frame)?.kind === "term") {
+				const snapped = snapPxToCells(w, h);
+				if (snapped.w !== w) vGuides = [];
+				if (snapped.h !== h) hGuides = [];
+				if (handle.includes("w")) x = anchor.x - snapped.w;
+				if (handle.includes("n")) y = anchor.y - snapped.h;
+				w = snapped.w;
+				h = snapped.h;
+			}
 			setGuides({ v: vGuides, h: hGuides });
 			const box = { x, y, w, h };
 			setFrames((current) => current.map((frame) => (frame.name === active.frame ? { ...frame, ...box } : frame)));
@@ -1613,6 +1625,7 @@ export function ProjectCanvas({
 										entered={isEntered}
 										paused={paused}
 										selected={isSelected}
+										terminal={frame.kind === "term"}
 									/>
 									{framePortals.length > 0 && (
 										<PortalChips portals={framePortals} k={k} onJump={jumpToFrame} />

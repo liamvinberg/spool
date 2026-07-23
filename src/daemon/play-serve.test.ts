@@ -260,3 +260,45 @@ describe("the pill's font", () => {
 		expect((await app.request(`/vendor/fonts/${encodeURIComponent("../react.js")}`)).status).toBe(404);
 	});
 });
+
+describe("terminal frames in the player (#42)", () => {
+	it("composes terminal frames as static grids without breaking the walk", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(
+			root,
+			"menu",
+			`export default function Menu() {\n\treturn <div className="p-4">menu-screen</div>;\n}\n`,
+		);
+		writeDesignFile(root, join("frames", "dash", "term.tsx"), "// tui\n");
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(`/play/${name}`);
+		expect(res.status).toBe(200);
+		const doc = await res.text();
+
+		const config = configOf(doc) as ReturnType<typeof configOf> & { terminals?: Record<string, { svg: string }> };
+		expect(Object.keys(config.frames).sort()).toEqual(["dash", "menu"]);
+		// born unplaced at the conventional floor: 80×24 in exact cell pixels
+		expect(config.frames.dash).toEqual({ w: 720, h: 432 });
+		expect(config.terminals?.dash?.svg).toContain("<svg");
+		expect(config.terminals?.dash?.svg).toContain('viewBox="0 0 720 432"');
+
+		// only html frames enter the compile; the terminal never passes esbuild
+		const boot = doc.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1] ?? "";
+		expect(boot).toContain("menu-screen");
+		expect(boot).toContain("bootPlayer");
+		expect(boot).not.toContain("dash/term.tsx");
+	});
+
+	it("plays a project holding only terminal frames", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, join("frames", "dash", "term.tsx"), "// tui\n");
+		const app = makeApp(spoolDir);
+		const res = await app.request(`/play/${name}`);
+		expect(res.status).toBe(200);
+		const doc = await res.text();
+		expect(configOf(doc).start).toBe("dash");
+	});
+});
