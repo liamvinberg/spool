@@ -6,7 +6,7 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["**", "!spikes", "!research", "!.release-please-manifest.json"]
+		"includes": ["**", "!design", "!spikes", "!research", "!.release-please-manifest.json"]
 	},
 	"formatter": {
 		"indentStyle": "tab",
