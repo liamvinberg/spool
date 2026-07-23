@@ -2202,7 +2202,6 @@ export function ProjectCanvas({
 						guides={guides}
 						marquee={marquee}
 						shellRadius={shellRadius}
-						onOpenEditor={(pick) => openEditorFor(editorTarget(pick, framePageOf(pick.frame)))}
 					/>
 				)}
 

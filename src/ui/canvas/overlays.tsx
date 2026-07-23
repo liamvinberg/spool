@@ -1,7 +1,7 @@
 import { cellsForPx } from "../../term/cells";
 import type { Camera, ProjectedFrame } from "../api";
 import type { Box } from "./camera";
-import { frameSourcePath, frameSourceRel, pageOf } from "./pages";
+import { frameSourcePath } from "./pages";
 import { type PickedHit, parseStampRef } from "./protocol";
 
 /**
@@ -9,9 +9,8 @@ import { type PickedHit, parseStampRef } from "./protocol";
  * strokes stay hairline at any zoom. The system page's laws verbatim: ring
  * 1.5px thread at 3px offset radius +2; handles 8px on-thread fill with
  * thread border; readout thread fill, on-thread mono 10; element outline 1px
- * thread at 2px offset, no handles; context chip raised, mono 2xs,
- * path:line · Open in editor. Knobs render on corners only — the sides carry
- * invisible grab bands, Figma's pattern for single-axis resize.
+ * thread at 2px offset, no handles. Knobs render on corners only — the sides
+ * carry invisible grab bands, Figma's pattern for single-axis resize.
  */
 
 export interface PickedSelection extends PickedHit {
@@ -67,7 +66,6 @@ export function SelectionOverlay({
 	guides,
 	marquee,
 	shellRadius,
-	onOpenEditor,
 }: {
 	camera: Camera;
 	frames: ProjectedFrame[];
@@ -79,7 +77,6 @@ export function SelectionOverlay({
 	/** Normalized screen-space rect while a marquee drag is live. */
 	marquee: Box | null;
 	shellRadius: number;
-	onOpenEditor: (picked: PickedSelection) => void;
 }) {
 	const k = camera.k;
 	const screenRect = (box: Box): Box => ({
@@ -98,13 +95,6 @@ export function SelectionOverlay({
 
 	const ringed = [...new Set(entered === null ? selected : [...selected, entered])];
 	const single = selected.length === 1 && entered === null ? frames.find((f) => f.name === selected[0]) : undefined;
-	// one chip per frame holding picks: the first pick names the file, the rest count
-	const pickedByFrame = new Map<string, PickedSelection[]>();
-	for (const pick of picked) {
-		const held = pickedByFrame.get(pick.frame);
-		if (held === undefined) pickedByFrame.set(pick.frame, [pick]);
-		else held.push(pick);
-	}
 	const previewShown =
 		preview !== null && !picked.some((pick) => pick.frame === preview.frame && pick.selector === preview.selector)
 			? preview
@@ -210,35 +200,6 @@ export function SelectionOverlay({
 					return <ElementOutline box={box} radius={previewShown.radius * k} faded />;
 				})()}
 
-			{[...pickedByFrame.entries()].map(([name, picks]) => {
-				const frame = frames.find((f) => f.name === name);
-				const first = picks[0];
-				if (frame === undefined || first === undefined) return null;
-				const rect = screenRect(frame);
-				return (
-					<div
-						key={`chip-${name}`}
-						className="pointer-events-auto absolute flex items-center gap-1.5 rounded-xs border border-border-raised bg-raised px-2 py-unit"
-						style={{ left: rect.x, top: rect.y + rect.h + 12 }}
-						onPointerDown={(event) => event.stopPropagation()}
-					>
-						<span className="font-mono text-2xs text-muted leading-3">{chipLabel(first, pageOf(frame))}</span>
-						<span className="font-mono text-2xs text-muted leading-3">·</span>
-						{picks.length > 1 ? (
-							<span className="font-mono text-2xs text-text leading-3">{picks.length} elements</span>
-						) : (
-							<button
-								type="button"
-								className="font-mono text-2xs text-text leading-3 hover:text-thread"
-								onClick={() => onOpenEditor(first)}
-							>
-								Open in editor
-							</button>
-						)}
-					</div>
-				);
-			})}
-
 			{marquee !== null && (
 				<div
 					className="absolute border border-thread bg-thread/10"
@@ -263,13 +224,6 @@ function ElementOutline({ box, radius, faded }: { box: Box; radius: number; fade
 			}}
 		/>
 	);
-}
-
-/** "frames/cart/frame.tsx:38" — the stamp minus its column, or the frame file. */
-function chipLabel(picked: PickedSelection, page: string): string {
-	const stamp = parseStampRef(picked.source);
-	if (stamp === undefined) return frameSourceRel(picked.frame, page);
-	return `${stamp.rel}:${stamp.line}`;
 }
 
 /** The editor target off the selection (#7: path:line from the payload). The

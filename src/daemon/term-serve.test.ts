@@ -39,6 +39,8 @@ describe("terminal frame documents", () => {
 		expect(doc).toContain("/vendor/spool-term.js");
 		expect(doc).toContain("JetBrains Mono");
 		expect(doc).toContain(".xterm");
+		expect(doc).toContain(".xterm-viewport::-webkit-scrollbar");
+		expect(doc).toContain("scrollbar-width: none");
 		expect(doc).toContain(`"frame":"dash"`);
 	});
 
