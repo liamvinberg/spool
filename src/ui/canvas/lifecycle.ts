@@ -12,12 +12,12 @@ import { captureMessage } from "./protocol";
  * Hibernation's payoff is memory, never CPU: only pool overflow demotes a
  * frame to its still, oldest-seen first, html frames taking a goodbye
  * self-capture on the way out. Every mount drains through the wake queue —
- * entered immediately, selected next, then nearest the viewport center, a
- * few per sweep — so no burst site (zoom wake, design flip, page entry) can
- * land every mount in one commit. Design mode: real DOM everywhere, time
- * stopped, never evicted. Hibernation is automatic engine lifecycle, never a
- * user mode; double-click boots a hibernated frame fresh — reset-on-return
- * is a feature.
+ * entered immediately, selected next, then wake-requested rows (#37), then
+ * nearest the viewport center, a few per sweep — so no burst site (zoom
+ * wake, design flip, page entry) can land every mount in one commit. Design
+ * mode: real DOM everywhere, time stopped, never evicted. Hibernation is
+ * automatic engine lifecycle, never a user mode; double-click boots a
+ * hibernated frame fresh — reset-on-return is a feature.
  */
 
 export type FrameState = "live" | "warm" | "hibernated";
@@ -67,6 +67,8 @@ export interface SweepInput {
 	mode: CanvasMode;
 	entered: string | null;
 	selected: string | null;
+	/** Frames whose tree row is expanded (#37): expand is attention — wake them. */
+	wakeRequested: ReadonlySet<string>;
 	states: Readonly<Record<string, FrameState>>;
 	/** Frames whose boot has reported loaded — the ones a capture can reach. */
 	ready: ReadonlySet<string>;
@@ -94,6 +96,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		mode,
 		entered,
 		selected,
+		wakeRequested,
 		states,
 		ready,
 		capturing,
@@ -149,8 +152,9 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		} else {
 			target = "hibernated";
 			// first click pre-boots (#8): a selected frame mounts hidden so the
-			// double-click that follows reveals an already-running frame
-			wakeTo = usable ? "live" : selected === frame.name ? "warm" : null;
+			// double-click that follows reveals an already-running frame — and an
+			// expanded tree row asks the same way (#37)
+			wakeTo = usable ? "live" : selected === frame.name || wakeRequested.has(frame.name) ? "warm" : null;
 		}
 
 		const entry: Entry = { frame, current, usable, target };
@@ -158,7 +162,16 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		if (wakeTo !== null) {
 			const cx = frame.x + frame.w / 2 - center.x;
 			const cy = frame.y + frame.h / 2 - center.y;
-			const tier = selected === frame.name ? 0 : intersects(strict, frame) ? 1 : onScreen ? 2 : 3;
+			const tier =
+				selected === frame.name
+					? 0
+					: wakeRequested.has(frame.name)
+						? 1
+						: intersects(strict, frame)
+							? 2
+							: onScreen
+								? 3
+								: 4;
 			waiting.push({ entry, wakeTo, tier, dist: cx * cx + cy * cy });
 		}
 	}
@@ -180,9 +193,15 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		}
 		// the warm pool: only overflow hibernates, oldest-seen first — live frames
 		// never count, the selected frame is pre-boot intent (evicting it would
-		// only re-queue it), and a mid-goodbye frame is already on its way out
+		// only re-queue it), a wake-requested frame is watched intent (#37), and
+		// a mid-goodbye frame is already on its way out
 		const pool = entries.filter(
-			(e) => e.target === "warm" && !e.usable && e.frame.name !== selected && !model.exitPending.has(e.frame.name),
+			(e) =>
+				e.target === "warm" &&
+				!e.usable &&
+				e.frame.name !== selected &&
+				!wakeRequested.has(e.frame.name) &&
+				!model.exitPending.has(e.frame.name),
 		);
 		const overflow = pool.length - WARM_POOL_CAP;
 		if (overflow > 0) {
@@ -237,12 +256,14 @@ export interface LifecycleDeps {
 	mode: CanvasMode;
 	entered: string | null;
 	selected: string | null;
+	/** Frames whose tree row is expanded (#37) — wake and keep them real. */
+	wakeRequested: ReadonlySet<string>;
 	hasThumb: (frame: string) => boolean;
 	onShot: (frame: string, dataUrl: string) => void;
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
-	const { framesRef, cameraRef, viewportRef, mode, entered, selected, hasThumb, onShot } = deps;
+	const { framesRef, cameraRef, viewportRef, mode, entered, selected, wakeRequested, hasThumb, onShot } = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
 	const [ready, setReady] = useState<ReadonlySet<string>>(new Set<string>());
@@ -256,6 +277,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	enteredRef.current = entered;
 	const selectedRef = useRef(selected);
 	selectedRef.current = selected;
+	const wakeRequestedRef = useRef(wakeRequested);
+	wakeRequestedRef.current = wakeRequested;
 	const hasThumbRef = useRef(hasThumb);
 	hasThumbRef.current = hasThumb;
 	const onShotRef = useRef(onShot);
@@ -328,6 +351,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			mode: modeRef.current,
 			entered: enteredRef.current,
 			selected: selectedRef.current,
+			wakeRequested: wakeRequestedRef.current,
 			states: statesRef.current,
 			ready: readyRef.current,
 			capturing: new Set(captureWaiters.current.keys()),
@@ -346,6 +370,12 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		modeRef.current = mode;
 		compute();
 	}, [mode, compute]);
+
+	// so does an expand: the wake must start now, not one sweep late (#37)
+	useEffect(() => {
+		wakeRequestedRef.current = wakeRequested;
+		compute();
+	}, [wakeRequested, compute]);
 
 	useEffect(() => {
 		const sweep = setInterval(compute, SWEEP_MS);

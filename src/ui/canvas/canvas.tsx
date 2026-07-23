@@ -7,6 +7,7 @@ import {
 	fetchCanvasState,
 	fetchFlows,
 	fetchProjection,
+	fetchStampLabels,
 	openInEditor,
 	postTrash,
 	postWalk,
@@ -21,6 +22,7 @@ import { RibbonMark } from "../icons";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
 import { CollisionNotice } from "./collision-notice";
 import { ContextMenu, contextMenuSize } from "./context-menu";
+import { buildTreeRows, revealKeys, rowSelectors, type TreeRow, visibleRows } from "./element-tree";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { type ExportNotice, ExportToast } from "./export-toast";
 import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
@@ -35,6 +37,7 @@ import { FrameLabel } from "./frame-label";
 import { FrameShell, type WalkBoot } from "./frame-shell";
 import { useFrameLifecycle } from "./lifecycle";
 import {
+	type ElementPreview,
 	editorTarget,
 	type Guides,
 	HANDLE_CURSORS,
@@ -42,11 +45,13 @@ import {
 	isHandle,
 	NO_GUIDES,
 	type PickedSelection,
+	pickKey,
 	SelectionOverlay,
 } from "./overlays";
 import {
 	camerasFromState,
 	frameSourcePath,
+	frameSourceRel,
 	pageOf,
 	portalEdges,
 	ROOT_PAGE,
@@ -56,15 +61,19 @@ import {
 } from "./pages";
 import { PortalChips } from "./portal-chips";
 import {
+	describeMessage,
 	type PickedHit,
 	parseFrameMessage,
+	parseStampRef,
 	pickMessage,
+	type RawTreeNode,
 	type SessionRecord,
 	type SiteAnchor,
 	sessionReply,
 	sitesMessage,
+	treeMessage,
 } from "./protocol";
-import { CanvasSidebar } from "./sidebar";
+import { CanvasSidebar, type SelectModifiers } from "./sidebar";
 import { snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { TrashToast } from "./trash-toast";
@@ -76,8 +85,10 @@ import { TrashToast } from "./trash-toast";
  * click selects the frame (or, inside an element scope, the sibling at that
  * depth), double click goes deeper — into running time in live (the entered
  * state then follows data-go walks, #5), one element level per click in
- * design, where ⌘-click jumps to the deepest element and Esc ascends back
- * out. Hands obey the one law: move, resize and nudge write
+ * design, where ⌘-click jumps to the deepest element, shift-click toggles
+ * elements in and out of a multi-selection, hover previews the would-be
+ * target (#37), and Esc ascends back out — a multi-selection drops straight
+ * to its frames. Hands obey the one law: move, resize and nudge write
  * geometry sidecars only; delete rides the OS Trash behind a toast-undo; the
  * canvas never writes frame source.
  */
@@ -122,6 +133,11 @@ const NUDGE_FLUSH_MS = 400;
 const SELECTION_PUT_MS = 150;
 const PICK_REPLY_MS = 400;
 const TRASH_UNDO_MS = 5000;
+const HOVER_PICK_MS = 80;
+const TREE_REPLY_MS = 1000;
+const STAMP_LABEL_BATCH = 256;
+
+const NO_WAKES: ReadonlySet<string> = new Set();
 
 function spatialDirection(key: string): SpatialDirection | undefined {
 	switch (key) {
@@ -164,8 +180,10 @@ export function ProjectCanvas({
 	const [camera, setCamera] = useState<Camera | null>(null);
 	const [mode, setMode] = useState<CanvasMode>("live");
 	const [selected, setSelected] = useState<string[]>([]);
-	const [picked, setPicked] = useState<PickedSelection | null>(null);
+	const [picked, setPicked] = useState<PickedSelection[]>([]);
 	const [entered, setEntered] = useState<string | null>(null);
+	// the hover preview (#37): the element a click would target, outlined live
+	const [preview, setPreview] = useState<ElementPreview | null>(null);
 	const [externalLink, setExternalLink] = useState<{ frame: string; href: string } | null>(null);
 	const [spaceDown, setSpaceDown] = useState(false);
 	const [panning, setPanning] = useState(false);
@@ -192,6 +210,11 @@ export function ProjectCanvas({
 	const [pages, setPages] = useState<string[]>([]);
 	const [activePage, setActivePage] = useState<string>(ROOT_PAGE);
 	const [collisions, setCollisions] = useState<FrameCollision[]>([]);
+	// the sidebar tree (#37): per-frame raw walks, row expansion, call-site labels
+	const [trees, setTrees] = useState<Record<string, RawTreeNode[]>>({});
+	const [expandedFrames, setExpandedFrames] = useState<ReadonlySet<string>>(new Set<string>());
+	const [expandedRows, setExpandedRows] = useState<ReadonlySet<string>>(new Set<string>());
+	const [callSiteLabels, setCallSiteLabels] = useState<Record<string, string | null>>({});
 
 	// the active page is the canvas: only its frames mount — and frames staged
 	// for the Trash vanish instantly; the disk move waits on the toast
@@ -248,6 +271,15 @@ export function ProjectCanvas({
 	const pickGen = useRef(0);
 	// the ancestry behind the current element selection — Esc ascends it
 	const pickedChain = useRef<{ frame: string; chain: PickedHit[] } | null>(null);
+	// hover picks ride pointer-move (#37): throttled, one in flight at a time
+	const hoverLast = useRef(0);
+	const hoverBusy = useRef(false);
+	// tree and describe round-trips (#37), pickWaiters' pattern
+	const treeWaiters = useRef(new Map<number, (roots: RawTreeNode[]) => void>());
+	const describeWaiters = useRef(new Map<number, (chains: PickedHit[][]) => void>());
+	// the panel's range anchors (#37): one per list, ranges never cross lists
+	const frameAnchor = useRef<string | null>(null);
+	const rowAnchor = useRef<{ frame: string; key: string } | null>(null);
 	const nudgeDirty = useRef(new Set<string>());
 	const nudgeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const trashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -280,6 +312,14 @@ export function ProjectCanvas({
 		[project, noteThumb],
 	);
 
+	// expand is attention (#37): an expanded tree row wakes its frame through
+	// the queue and keeps it real while the row stays open
+	const wakeRequested = useMemo<ReadonlySet<string>>(() => {
+		if (mode !== "design") return NO_WAKES;
+		const names = [...expandedFrames].filter((name) => visibleFrames.some((f) => f.name === name));
+		return names.length === 0 ? NO_WAKES : new Set(names);
+	}, [mode, expandedFrames, visibleFrames]);
+
 	const lifecycle = useFrameLifecycle({
 		framesRef,
 		cameraRef,
@@ -288,6 +328,7 @@ export function ProjectCanvas({
 		entered,
 		// first click pre-boots (#8) — a hint that only means one thing at a time
 		selected: selected.length === 1 ? (selected[0] ?? null) : null,
+		wakeRequested,
 		hasThumb: (name) => hasThumbRef.current(name),
 		onShot,
 	});
@@ -550,7 +591,8 @@ export function ProjectCanvas({
 			walkSession.current = null;
 			setEntered(target);
 			setSelected([]);
-			setPicked(null);
+			setPicked([]);
+			setPreview(null);
 			// the entered frame owns the keyboard from the first moment; a frame
 			// booting right now gets it at its loaded report instead
 			iframes.current.get(target)?.focus();
@@ -570,7 +612,7 @@ export function ProjectCanvas({
 		walkSession.current = null;
 		if (retainFrame && frame !== null) {
 			setSelected([frame]);
-			setPicked(null);
+			setPicked([]);
 		}
 		// Focus can otherwise remain trapped in the now-inert iframe, where the
 		// following arrow would never reach the canvas navigation layer.
@@ -582,7 +624,8 @@ export function ProjectCanvas({
 		(next: CanvasMode) => {
 			if (next === "design") exitEntered();
 			// the element surface is design's; its selection does not outlive it
-			if (next === "live") setPicked(null);
+			if (next === "live") setPicked([]);
+			setPreview(null);
 			setMode(next);
 		},
 		[exitEntered],
@@ -594,9 +637,16 @@ export function ProjectCanvas({
 
 	useEffect(() => {
 		const timer = setTimeout(() => {
-			if (picked !== null) {
-				const { frame, selector, outerHtml, source, generated } = picked;
-				putSelection(project, { element: { frame, selector, outerHtml, source, generated } });
+			if (picked.length > 0) {
+				putSelection(project, {
+					elements: picked.map(({ frame, selector, outerHtml, source, generated }) => ({
+						frame,
+						selector,
+						outerHtml,
+						source,
+						generated,
+					})),
+				});
 			} else {
 				putSelection(project, { frames: selected });
 			}
@@ -681,7 +731,10 @@ export function ProjectCanvas({
 			commitTrash(); // an earlier toast still open commits now — one undo slot (#7)
 			setHidden((current) => new Set([...current, ...names]));
 			setSelected((current) => current.filter((name) => !names.includes(name)));
-			setPicked((current) => (current !== null && names.includes(current.frame) ? null : current));
+			setPicked((current) => {
+				const kept = current.filter((pick) => !names.includes(pick.frame));
+				return kept.length === current.length ? current : kept;
+			});
 			if (enteredRef.current !== null && names.includes(enteredRef.current)) exitEntered();
 			pendingTrashRef.current = names;
 			setPendingTrash(names);
@@ -750,22 +803,51 @@ export function ProjectCanvas({
 		if (hit === undefined) return; // frame background: the frame stays the selection
 		pickedChain.current = { frame, chain };
 		setSelected([]);
-		setPicked({ frame, ...hit });
+		setPicked([{ frame, ...hit }]);
 	}, []);
+
+	/** The anchor of the element scope: the most recent pick, whose chain is held. */
+	const pickAnchor = useCallback((): PickedSelection | undefined => {
+		return pickedRef.current[pickedRef.current.length - 1];
+	}, []);
+
+	/**
+	 * Figma's scope memory as a walk: the element at the anchor's depth under a
+	 * fresh chain — a sibling inside the shared ancestry, the divergence point
+	 * outside it, the top-level element when no scope holds.
+	 */
+	const atDepthIn = useCallback(
+		(frame: string, chain: PickedHit[]): PickedHit | undefined => {
+			if (chain.length === 0) return undefined;
+			const anchor = pickAnchor();
+			const held = pickedChain.current;
+			const prior = anchor !== undefined && anchor.frame === frame && held?.frame === frame ? held.chain : null;
+			const depth = prior === null ? -1 : prior.findIndex((h) => h.selector === anchor?.selector);
+			if (prior === null || depth < 0) return chain[0];
+			// walk the shared ancestry: a full match lands at the scope's
+			// depth (a sibling), a partial one at the divergence point
+			let shared = 0;
+			while (shared < depth && shared < chain.length && prior[shared]?.selector === chain[shared]?.selector) {
+				shared++;
+			}
+			return chain[Math.min(shared, chain.length - 1)];
+		},
+		[pickAnchor],
+	);
 
 	/** Figma's descend: each double-click selects one level deeper under the cursor. */
 	const descendAt = useCallback(
 		(frame: string, local: Point) => {
 			beginPick(frame, local, (chain) => {
-				const current = pickedRef.current;
+				const anchor = pickAnchor();
 				const depth =
-					current !== null && current.frame === frame
-						? chain.findIndex((h) => h.selector === current.selector)
+					anchor !== undefined && anchor.frame === frame
+						? chain.findIndex((h) => h.selector === anchor.selector)
 						: -1;
 				applyPick(frame, chain, chain[Math.min(depth + 1, chain.length - 1)]);
 			});
 		},
-		[beginPick, applyPick],
+		[beginPick, applyPick, pickAnchor],
 	);
 
 	/** Figma's deep select (⌘-click, and the right-click point): the deepest element. */
@@ -777,49 +859,284 @@ export function ProjectCanvas({
 	);
 
 	/**
-	 * Figma's scope memory: while an element is selected, a click selects the
-	 * element at the same depth under the cursor — a sibling inside the shared
-	 * ancestry, the divergence point outside it, the frame on empty space.
+	 * The scoped click: while an element is selected, a click selects the
+	 * element at the same depth under the cursor; empty space (and a frame that
+	 * never answers) pops the selection back to the frame.
 	 */
 	const scopedSelectAt = useCallback(
 		(frame: string, local: Point) => {
-			// empty space and a frame that never answers both pop the selection
-			// back to the frame — a silent document must not trap the scope
 			const pop = () => {
 				pickedChain.current = null;
-				setPicked(null);
+				setPicked([]);
 				setSelected([frame]);
 			};
 			beginPick(
 				frame,
 				local,
 				(chain) => {
-					if (chain.length === 0) {
+					const target = atDepthIn(frame, chain);
+					if (target === undefined) {
 						pop();
 						return;
 					}
-					const current = pickedRef.current;
-					const held = pickedChain.current;
-					const prior = current !== null && held !== null && held.frame === frame ? held.chain : null;
-					const depth =
-						prior === null || current === null ? -1 : prior.findIndex((h) => h.selector === current.selector);
-					if (prior === null || depth < 0) {
-						applyPick(frame, chain, chain[0]);
-						return;
-					}
-					// walk the shared ancestry: a full match lands at the scope's
-					// depth (a sibling), a partial one at the divergence point
-					let shared = 0;
-					while (shared < depth && shared < chain.length && prior[shared]?.selector === chain[shared]?.selector) {
-						shared++;
-					}
-					applyPick(frame, chain, chain[Math.min(shared, chain.length - 1)]);
+					applyPick(frame, chain, target);
 				},
 				pop,
 			);
 		},
-		[beginPick, applyPick],
+		[beginPick, applyPick, atDepthIn],
 	);
+
+	/**
+	 * Shift-click's toggle (#37): the at-depth target in or out of the picked
+	 * set — with ⌘, the deepest. A toggle in moves the anchor; membership is
+	 * (frame, selector) identity.
+	 */
+	const togglePickAt = useCallback(
+		(frame: string, local: Point, deepest: boolean) => {
+			beginPick(frame, local, (chain) => {
+				const target = deepest ? chain[chain.length - 1] : atDepthIn(frame, chain);
+				if (target === undefined) return; // frame background: nothing to toggle
+				const current = pickedRef.current;
+				const held = current.filter((pick) => !(pick.frame === frame && pick.selector === target.selector));
+				if (held.length < current.length) {
+					setPicked(held);
+				} else {
+					pickedChain.current = { frame, chain };
+					setPicked([...current, { frame, ...target }]);
+				}
+				setSelected([]);
+			});
+		},
+		[beginPick, atDepthIn],
+	);
+
+	// --- element tree (#37): the sidebar's rows, extracted from live DOM --------
+
+	const treeBusy = useRef(new Set<string>());
+	const labelsAsked = useRef(new Set<string>());
+
+	/** Ask one frame's shim for its raw DOM walk; the newest answer stands. */
+	const requestTree = useCallback((frame: string) => {
+		const target = iframes.current.get(frame)?.contentWindow;
+		if (target == null || treeBusy.current.has(frame)) return;
+		treeBusy.current.add(frame);
+		const id = ++pickSeq.current;
+		treeWaiters.current.set(id, (roots) => {
+			treeBusy.current.delete(frame);
+			setTrees((current) => ({ ...current, [frame]: roots }));
+		});
+		target.postMessage(treeMessage(id), "*");
+		setTimeout(() => {
+			if (treeWaiters.current.delete(id)) treeBusy.current.delete(frame);
+		}, TREE_REPLY_MS);
+	}, []);
+
+	useEffect(() => {
+		if (mode !== "design") return;
+		for (const name of expandedFrames) {
+			if (trees[name] === undefined && lifecycle.ready.has(name)) requestTree(name);
+		}
+	}, [mode, expandedFrames, trees, lifecycle.ready, requestTree]);
+
+	// a hibernated frame's cached walk is a lie — the next expand re-asks
+	useEffect(() => {
+		setTrees((current) => {
+			const dead = Object.keys(current).filter((name) => (lifecycle.states[name] ?? "hibernated") === "hibernated");
+			if (dead.length === 0) return current;
+			return Object.fromEntries(Object.entries(current).filter(([name]) => !dead.includes(name)));
+		});
+	}, [lifecycle.states]);
+
+	const rowsByFrame = useMemo(() => {
+		const out: Record<string, TreeRow[]> = {};
+		for (const [name, roots] of Object.entries(trees)) {
+			out[name] = buildTreeRows(roots, frameSourceRel(name, activePage));
+		}
+		return out;
+	}, [trees, activePage]);
+
+	// call-site rows name themselves from source (#37): fetch labels once each,
+	// batched to the endpoint's cap — a failed batch un-asks so a later pass retries
+	useEffect(() => {
+		const missing = new Set<string>();
+		for (const rows of Object.values(rowsByFrame)) collectCallSites(rows, missing);
+		const wanted = [...missing].filter((stamp) => !labelsAsked.current.has(stamp));
+		if (wanted.length === 0) return;
+		for (const stamp of wanted) labelsAsked.current.add(stamp);
+		for (const batch of chunked(wanted, STAMP_LABEL_BATCH)) {
+			void fetchStampLabels(project, batch).then((labels) => {
+				if (Object.keys(labels).length === 0) {
+					for (const stamp of batch) labelsAsked.current.delete(stamp);
+					return;
+				}
+				setCallSiteLabels((current) => ({ ...current, ...labels }));
+			});
+		}
+	}, [rowsByFrame, project]);
+
+	/**
+	 * Rows become canvas selection through a describe round-trip: the frame
+	 * answers each selector's ancestry, the deepest hit is the selection and
+	 * the last chain becomes the scope Esc ascends. Additive keeps prior picks.
+	 */
+	const selectSelectors = useCallback((frame: string, selectors: string[], additive: boolean) => {
+		if (selectors.length === 0) return;
+		const target = iframes.current.get(frame)?.contentWindow;
+		if (target == null) return;
+		const id = ++pickSeq.current;
+		const gen = pickGen.current;
+		describeWaiters.current.set(id, (chains) => {
+			if (pickGen.current !== gen) return;
+			const hits: PickedSelection[] = [];
+			let lastChain: PickedHit[] | null = null;
+			for (const chain of chains) {
+				const hit = chain[chain.length - 1];
+				if (hit === undefined) continue;
+				hits.push({ frame, ...hit });
+				lastChain = chain;
+			}
+			if (hits.length === 0) return;
+			if (lastChain !== null) pickedChain.current = { frame, chain: lastChain };
+			setSelected([]);
+			setPicked(additive ? mergePicks(pickedRef.current, hits) : hits);
+		});
+		target.postMessage(describeMessage(selectors, id), "*");
+		setTimeout(() => describeWaiters.current.delete(id), PICK_REPLY_MS);
+	}, []);
+
+	const toggleFrameRow = (name: string) => {
+		setExpandedFrames((current) => {
+			const next = new Set(current);
+			if (next.has(name)) next.delete(name);
+			else next.add(name);
+			return next;
+		});
+	};
+
+	const toggleTreeRow = (key: string) => {
+		setExpandedRows((current) => {
+			const next = new Set(current);
+			if (next.has(key)) next.delete(key);
+			else next.add(key);
+			return next;
+		});
+	};
+
+	/** The panel grammar on frame rows: shift ranges, ⌘ toggles, click replaces. */
+	const selectFrameRow = (name: string, modifiers: SelectModifiers) => {
+		setPicked([]);
+		pickedChain.current = null;
+		if (modifiers.shift && frameAnchor.current !== null) {
+			const names = visibleFrames.map((f) => f.name);
+			const a = names.indexOf(frameAnchor.current);
+			const b = names.indexOf(name);
+			if (a !== -1 && b !== -1) {
+				const range = names.slice(Math.min(a, b), Math.max(a, b) + 1);
+				setSelected(modifiers.toggle ? [...new Set([...selectedRef.current, ...range])] : range);
+				return;
+			}
+		}
+		frameAnchor.current = name;
+		if (modifiers.toggle) {
+			setSelected((current) => (current.includes(name) ? current.filter((n) => n !== name) : [...current, name]));
+		} else {
+			setSelected([name]);
+		}
+	};
+
+	/** The same grammar on tree rows; ranges run over one frame's visible rows. */
+	const selectTreeRow = (frame: string, row: TreeRow, modifiers: SelectModifiers) => {
+		// a boundary is a file marker, not an element: its click is its chevron's
+		if (row.kind === "boundary") {
+			toggleTreeRow(row.key);
+			return;
+		}
+		if (modifiers.shift && rowAnchor.current?.frame === frame) {
+			const visible = visibleRows(rowsByFrame[frame] ?? [], expandedRows);
+			const a = visible.findIndex((candidate) => candidate.key === rowAnchor.current?.key);
+			const b = visible.findIndex((candidate) => candidate.key === row.key);
+			if (a !== -1 && b !== -1) {
+				const range = visible.slice(Math.min(a, b), Math.max(a, b) + 1);
+				const selectors = [...new Set(range.flatMap((member) => rowSelectors(member)))];
+				selectSelectors(frame, selectors, modifiers.toggle);
+				return;
+			}
+		}
+		rowAnchor.current = { frame, key: row.key };
+		const selectors = rowSelectors(row);
+		if (modifiers.toggle) {
+			const held = new Set(pickedRef.current.filter((pick) => pick.frame === frame).map((pick) => pick.selector));
+			if (selectors.every((selector) => held.has(selector))) {
+				setPicked(
+					pickedRef.current.filter(
+						(pick) => !(pick.frame === frame && held.has(pick.selector) && selectors.includes(pick.selector)),
+					),
+				);
+				return;
+			}
+			selectSelectors(frame, selectors, true);
+			return;
+		}
+		selectSelectors(frame, selectors, false);
+	};
+
+	/** Double-click on a frame row flies the camera to the frame (#37). */
+	const flyToFrame = (name: string) => {
+		const frame = framesRef.current.find((f) => f.name === name);
+		const viewport = viewportRef.current;
+		if (frame === undefined || viewport === null) return;
+		animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
+	};
+
+	/** Double-click on a tree row jumps the editor to the stamped line. */
+	const openRowInEditor = (frame: string, row: TreeRow) => {
+		if (row.kind === "boundary") {
+			openEditorFor({ path: `design/${row.file}` });
+			return;
+		}
+		const stamp = parseStampRef(row.source);
+		openEditorFor(
+			stamp === undefined
+				? { path: frameSourcePath(frame, activePageRef.current) }
+				: { path: `design/${stamp.rel}`, line: stamp.line },
+		);
+	};
+
+	// canvas picks always have a row to reveal (#37): expand the frame row and
+	// every ancestor — boundary rows included — so sync lands on screen
+	const revealTarget = useMemo(() => {
+		const anchorPick = picked[picked.length - 1];
+		if (mode !== "design" || anchorPick === undefined) return undefined;
+		const rows = rowsByFrame[anchorPick.frame];
+		if (rows === undefined) return undefined;
+		return revealKeys(rows, anchorPick.selector)?.key;
+	}, [mode, picked, rowsByFrame]);
+
+	useEffect(() => {
+		const anchorPick = picked[picked.length - 1];
+		if (mode !== "design" || anchorPick === undefined) return;
+		setExpandedFrames((current) =>
+			current.has(anchorPick.frame) ? current : new Set(current).add(anchorPick.frame),
+		);
+		const rows = rowsByFrame[anchorPick.frame];
+		if (rows === undefined) return;
+		const reveal = revealKeys(rows, anchorPick.selector);
+		if (reveal === undefined) return;
+		setExpandedRows((current) => {
+			if (reveal.ancestors.every((key) => current.has(key))) return current;
+			return new Set([...current, ...reveal.ancestors]);
+		});
+	}, [mode, picked, rowsByFrame]);
+
+	// a quiet pending state (#37): expanded, but the DOM has not answered yet
+	const pendingWakes = useMemo<ReadonlySet<string>>(() => {
+		if (mode !== "design") return NO_WAKES;
+		const pending = [...expandedFrames].filter(
+			(name) => visibleFrames.some((f) => f.name === name) && rowsByFrame[name] === undefined,
+		);
+		return pending.length === 0 ? NO_WAKES : new Set(pending);
+	}, [mode, expandedFrames, visibleFrames, rowsByFrame]);
 
 	// --- pages (#39): one canvas per page, cameras bookkept per page ------------
 
@@ -848,7 +1165,8 @@ export function ProjectCanvas({
 			exitEntered();
 			setMenu(null);
 			setSelected([]);
-			setPicked(null);
+			setPicked([]);
+			setPreview(null);
 			setExternalLink(null);
 			stopAnimation();
 			const next = switchPage(cameras.current, activePageRef.current, cameraRef.current, target, arriveAt);
@@ -894,7 +1212,7 @@ export function ProjectCanvas({
 			// time runs the moment the walk lands, not after the capture below
 			setEntered(target);
 			setSelected([]);
-			setPicked(null);
+			setPicked([]);
 			const frame = framesRef.current.find((f) => f.name === target);
 			const viewport = viewportRef.current;
 			const cam = cameraRef.current;
@@ -931,8 +1249,13 @@ export function ProjectCanvas({
 					setDocNonces((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
 					// an edit reboot is honest — it does not wear a walk's quiet cover
 					setWalkBoots((current) => without(current, frame));
-					// the DOM this pick pointed into is gone
-					setPicked((current) => (current?.frame === frame ? null : current));
+					// the DOM these picks pointed into is gone — and so is its walk
+					setPicked((current) => {
+						const kept = current.filter((pick) => pick.frame !== frame);
+						return kept.length === current.length ? current : kept;
+					});
+					if (pickedChain.current?.frame === frame) pickedChain.current = null;
+					setTrees((current) => without(current, frame));
 					lifecycleRef.current.markStale(frame);
 					void refetchFrames();
 					// an edit moves the graph: edges re-derive, verified marks may drop —
@@ -946,7 +1269,9 @@ export function ProjectCanvas({
 						return next;
 					});
 					setWalkBoots((current) => (Object.keys(current).length === 0 ? current : {}));
-					setPicked(null);
+					setPicked([]);
+					pickedChain.current = null;
+					setTrees((current) => (Object.keys(current).length === 0 ? current : {}));
 					void refetchFrames();
 				} else if (event.kind === "geometry") {
 					// another browser's hands (or our own echo); ours are the truth
@@ -1003,6 +1328,18 @@ export function ProjectCanvas({
 					const waiter = pickWaiters.current.get(message.id);
 					pickWaiters.current.delete(message.id);
 					waiter?.(message.chain);
+					return;
+				}
+				case "tree": {
+					const waiter = treeWaiters.current.get(message.id);
+					treeWaiters.current.delete(message.id);
+					waiter?.(message.roots);
+					return;
+				}
+				case "described": {
+					const waiter = describeWaiters.current.get(message.id);
+					describeWaiters.current.delete(message.id);
+					waiter?.(message.chains);
 					return;
 				}
 				case "site-boxes": {
@@ -1131,6 +1468,42 @@ export function ProjectCanvas({
 		return frame === undefined ? null : { x: world.x - frame.x, y: world.y - frame.y };
 	};
 
+	/**
+	 * The hover previews (#37), on throttled pointer-move: holding ⌘ outlines
+	 * the would-be deepest target under the cursor; inside an element scope,
+	 * plain hover outlines the at-depth target in the scope's own frame.
+	 */
+	const hoverPickAt = (frame: string | null, world: Point, deepest: boolean) => {
+		const scopeFrame = pickedRef.current[pickedRef.current.length - 1]?.frame;
+		if (frame === null || !(deepest || frame === scopeFrame)) {
+			setPreview(null);
+			return;
+		}
+		const now = performance.now();
+		if (hoverBusy.current || now - hoverLast.current < HOVER_PICK_MS) return;
+		const local = frameLocalAt(frame, world);
+		if (local === null) return;
+		hoverLast.current = now;
+		hoverBusy.current = true;
+		beginPick(
+			frame,
+			local,
+			(chain) => {
+				hoverBusy.current = false;
+				if (gesture.current.kind !== "idle") return;
+				const target = deepest ? chain[chain.length - 1] : atDepthIn(frame, chain);
+				setPreview(
+					target === undefined
+						? null
+						: { frame, selector: target.selector, rect: target.rect, radius: target.radius },
+				);
+			},
+			() => {
+				hoverBusy.current = false;
+			},
+		);
+	};
+
 	const cancelGesture = useCallback(() => {
 		const active = gesture.current;
 		gesture.current = { kind: "idle" };
@@ -1166,6 +1539,7 @@ export function ProjectCanvas({
 		if (cam === null || event.button === 2) return;
 		stopAnimation();
 		setMenu(null);
+		setPreview(null); // the press supersedes the hover; its own answer redraws
 		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
 		// a portal chip owns its click (#39) — capturing here would swallow it
 		if (datasetHit(event.target, "portal") !== null) return;
@@ -1217,15 +1591,23 @@ export function ProjectCanvas({
 			const base = event.shiftKey ? selectedRef.current : [];
 			if (!event.shiftKey) {
 				setSelected([]);
-				setPicked(null);
+				setPicked([]);
 			}
 			gesture.current = { kind: "marquee", start: p, base };
 			return;
 		}
 
+		// inside an element scope, shift toggles membership (#37): the at-depth
+		// target under the cursor, or with ⌘ the deepest — the two hover previews
+		if (modeRef.current === "design" && event.shiftKey && pickedRef.current.length > 0 && label === null) {
+			const local = frameLocalAt(hit, world);
+			if (local !== null) togglePickAt(hit, local, event.metaKey);
+			return;
+		}
+
 		if (event.shiftKey) {
 			// shift-click: add/remove, never a drag
-			setPicked(null);
+			setPicked([]);
 			setSelected((current) => (current.includes(hit) ? current.filter((name) => name !== hit) : [...current, hit]));
 			return;
 		}
@@ -1241,8 +1623,8 @@ export function ProjectCanvas({
 		// inside an element scope the click stays scoped (Figma): the sibling
 		// under the cursor, answered by the frame within a paint or two — and
 		// the double-click this press may begin then descends from that answer
-		const scoped = pickedRef.current;
-		if (modeRef.current === "design" && scoped !== null && scoped.frame === hit && label === null) {
+		const anchor = pickedRef.current[pickedRef.current.length - 1];
+		if (modeRef.current === "design" && anchor !== undefined && anchor.frame === hit && label === null) {
 			const local = frameLocalAt(hit, world);
 			if (local !== null) scopedSelectAt(hit, local);
 			gesture.current = { kind: "pending", names: [hit], origins: originsOf([hit]), start: p };
@@ -1253,17 +1635,24 @@ export function ProjectCanvas({
 		const names = wasSelected ? [...selectedRef.current] : [hit];
 		if (!wasSelected) {
 			setSelected([hit]);
-			setPicked(null);
+			setPicked([]);
 		}
 		gesture.current = { kind: "pending", names, origins: originsOf(names), start: p };
 	};
 
 	const onPointerMove = (event: React.PointerEvent) => {
 		const active = gesture.current;
-		if (active.kind === "idle") return;
 		const cam = cameraRef.current;
 		if (cam === null) return;
 		const p = localPoint(event);
+
+		if (active.kind === "idle") {
+			// idle motion is the hover surface (#37) — design only, never entered
+			if (modeRef.current !== "design" || enteredRef.current !== null || menuOpenRef.current) return;
+			const world = toWorld(p, cam);
+			hoverPickAt(frameAtWorld(world), world, event.metaKey);
+			return;
+		}
 
 		if (active.kind === "pan") {
 			const dx = p.x - active.lastX;
@@ -1278,7 +1667,7 @@ export function ProjectCanvas({
 			// a drag is an arrange (#7): it moves frames, so element scope ends
 			cancelPicks();
 			setSelected(active.names);
-			setPicked(null);
+			setPicked([]);
 			gesture.current = { kind: "move", names: active.names, origins: active.origins, start: active.start };
 			onPointerMove(event);
 			return;
@@ -1435,10 +1824,10 @@ export function ProjectCanvas({
 			return;
 		}
 		if (enteredRef.current !== null) exitEntered();
-		const elementSelection = pickedRef.current?.frame === hit;
+		const elementSelection = pickedRef.current.some((pick) => pick.frame === hit);
 		if (!elementSelection && !selectedRef.current.includes(hit)) {
 			setSelected([hit]);
-			setPicked(null);
+			setPicked([]);
 		}
 		// A context click acts on the existing frame selection. Element picking
 		// belongs to design's click, double-click and ⌘-click gestures.
@@ -1471,7 +1860,7 @@ export function ProjectCanvas({
 	exportingRef.current = exporting;
 
 	useEffect(() => {
-		const pickTarget = () => (pickedRef.current === null ? [] : [pickedRef.current.frame]);
+		const pickTarget = () => [...new Set(pickedRef.current.map((pick) => pick.frame))];
 		const isTyping = (target: EventTarget | null) =>
 			target instanceof HTMLElement &&
 			(target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
@@ -1564,7 +1953,7 @@ export function ProjectCanvas({
 						const target = nextSpatialFrame(current, framesRef.current, direction);
 						if (target === undefined) break;
 						setSelected([target.name]);
-						setPicked(null);
+						setPicked([]);
 						const viewport = viewportRef.current;
 						const cam = cameraRef.current;
 						if (viewport !== null && cam !== null) {
@@ -1601,21 +1990,28 @@ export function ProjectCanvas({
 					break;
 				case "Escape": {
 					cancelPicks();
+					setPreview(null);
 					if (gesture.current.kind !== "idle" && gesture.current.kind !== "pan") cancelGesture();
 					else if (menuOpenRef.current) setMenu(null);
 					else if (enteredRef.current !== null) exitEntered(true);
-					else if (pickedRef.current !== null) {
+					else if (pickedRef.current.length > 1) {
+						// a multi-selection has no one ancestry: drop to its frames
+						const frames = [...new Set(pickedRef.current.map((pick) => pick.frame))];
+						pickedChain.current = null;
+						setPicked([]);
+						setSelected(frames);
+					} else if (pickedRef.current[0] !== undefined) {
 						// ascend the ancestry (Figma): element → parent → … → frame → clear
-						const picked = pickedRef.current;
+						const picked = pickedRef.current[0];
 						const held = pickedChain.current;
 						const depth =
 							held !== null && held.frame === picked.frame
 								? held.chain.findIndex((h) => h.selector === picked.selector)
 								: -1;
 						const parent = depth > 0 ? held?.chain[depth - 1] : undefined;
-						if (parent !== undefined) setPicked({ frame: picked.frame, ...parent });
+						if (parent !== undefined) setPicked([{ frame: picked.frame, ...parent }]);
 						else {
-							setPicked(null);
+							setPicked([]);
 							setSelected([picked.frame]);
 						}
 					} else setSelected([]);
@@ -1625,6 +2021,8 @@ export function ProjectCanvas({
 		};
 		const onKeyUp = (event: KeyboardEvent) => {
 			if (event.code === "Space") setSpaceDown(false);
+			// releasing ⌘ outside an element scope ends the deep-hover preview
+			if (event.key === "Meta" && pickedRef.current.length === 0) setPreview(null);
 		};
 		window.addEventListener("keydown", onKeyDown);
 		window.addEventListener("keyup", onKeyUp);
@@ -1688,11 +2086,21 @@ export function ProjectCanvas({
 				activePage={activePage}
 				frames={visibleFrames}
 				selected={selected}
+				mode={mode}
+				picked={picked}
+				rowsByFrame={rowsByFrame}
+				callSiteLabels={callSiteLabels}
+				expandedFrames={expandedFrames}
+				expandedRows={expandedRows}
+				pendingWakes={pendingWakes}
+				revealTarget={revealTarget}
 				onSwitchPage={switchToPage}
-				onSelectFrame={(name) => {
-					setSelected([name]);
-					setPicked(null);
-				}}
+				onSelectFrame={selectFrameRow}
+				onDoubleClickFrame={flyToFrame}
+				onToggleFrame={toggleFrameRow}
+				onSelectRow={selectTreeRow}
+				onDoubleClickRow={openRowInEditor}
+				onToggleRow={toggleTreeRow}
 			/>
 			<div
 				ref={viewportRef}
@@ -1705,6 +2113,7 @@ export function ProjectCanvas({
 				onPointerDown={onPointerDown}
 				onPointerMove={onPointerMove}
 				onPointerUp={onPointerUp}
+				onPointerLeave={() => setPreview(null)}
 				onDoubleClick={onDoubleClick}
 				onContextMenu={onContextMenu}
 			>
@@ -1783,6 +2192,7 @@ export function ProjectCanvas({
 						selected={selected}
 						entered={entered}
 						picked={picked}
+						preview={preview}
 						guides={guides}
 						marquee={marquee}
 						shellRadius={shellRadius}
@@ -1826,9 +2236,9 @@ export function ProjectCanvas({
 							setMenu(null);
 						}}
 						onOpenEditor={() => {
-							const pick = pickedRef.current;
+							const pick = pickedRef.current.find((candidate) => candidate.frame === menu.frame);
 							openEditorFor(
-								pick !== null && pick.frame === menu.frame
+								pick !== undefined
 									? editorTarget(pick, framePageOf(pick.frame))
 									: { path: frameSourcePath(menu.frame, framePageOf(menu.frame)) },
 							);
@@ -1888,4 +2298,25 @@ function without<T>(record: Record<string, T>, key: string): Record<string, T> {
 /** "frame-label" → "frameLabel": dataset keys camel-case their attribute. */
 function camelize(attribute: string): string {
 	return attribute.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+}
+
+/** Every call-site stamp in a row tree, folded into one set (#37). */
+function collectCallSites(rows: readonly TreeRow[], into: Set<string>): void {
+	for (const row of rows) {
+		if (row.kind === "callsite") into.add(row.source);
+		collectCallSites(row.children, into);
+	}
+}
+
+/** Prior picks plus the new ones, (frame, selector) identity, order kept. */
+function mergePicks(current: readonly PickedSelection[], additions: readonly PickedSelection[]): PickedSelection[] {
+	const held = new Set(current.map((pick) => pickKey(pick.frame, pick.selector)));
+	return [...current, ...additions.filter((pick) => !held.has(pickKey(pick.frame, pick.selector)))];
+}
+
+/** At most `size` per slice, order kept — the stamp-labels endpoint's cap. */
+function chunked<T>(items: readonly T[], size: number): T[][] {
+	const out: T[][] = [];
+	for (let start = 0; start < items.length; start += size) out.push(items.slice(start, start + size));
+	return out;
 }

@@ -5,3 +5,7 @@ The live-frames spike behind #40 overturned the assumption hibernation was built
 ## Considered options
 
 A longer grace timer keeps the burst and merely delays it. Memory-API budgets (`performance.memory`, pressure events) are Chrome-only and make lifecycle behavior machine-dependent and untestable. Cross-page warmth would mount frames the page filter deliberately excludes. Fixed counts — pool cap and mounts per sweep — are dumb, deterministic, and tunable.
+
+## Amended by #37
+
+The sidebar element tree made expand a wake intent: a frame whose tree row is open enters the queue at a tier behind selected and ahead of the visible tiers, and while the row stays open the frame is exempt from pool eviction — evicting it would drop its DOM walk and re-queue it on the next sweep, an expand/evict thrash. The queue order is now: entered immediately, selected, wake-requested rows, then nearest the viewport center.

@@ -26,18 +26,17 @@ export type SelectionEntry =
 			generated?: true;
 	  };
 
-/** The canvas's wire shape: a frame list, or one element as the shim saw it. */
-export type SelectionPut =
-	| { frames: string[] }
-	| {
-			element: {
-				frame: string;
-				selector: string;
-				outerHtml: string;
-				source: string | null;
-				generated: boolean;
-			};
-	  };
+/** One element as the shim saw it — the canvas sends a list of these. */
+export interface ElementPut {
+	frame: string;
+	selector: string;
+	outerHtml: string;
+	source: string | null;
+	generated: boolean;
+}
+
+/** The canvas's wire shape: a frame list, or the picked elements in pick order. */
+export type SelectionPut = { frames: string[] } | { elements: ElementPut[] };
 
 const EXCERPT_CAP = 240;
 
@@ -50,14 +49,18 @@ export function parseSelectionPut(value: unknown): SelectionPut | undefined {
 		}
 		return { frames: record.frames };
 	}
-	const element = record.element as Record<string, unknown> | undefined;
-	if (typeof element !== "object" || element === null) return undefined;
-	const { frame, selector, outerHtml, source, generated } = element;
-	if (typeof frame !== "string" || !isSafeName(frame)) return undefined;
-	if (typeof selector !== "string" || typeof outerHtml !== "string") return undefined;
-	if (source !== null && typeof source !== "string") return undefined;
-	if (typeof generated !== "boolean") return undefined;
-	return { element: { frame, selector, outerHtml, source, generated } };
+	if (!Array.isArray(record.elements)) return undefined;
+	const elements: ElementPut[] = [];
+	for (const element of record.elements) {
+		if (typeof element !== "object" || element === null) return undefined;
+		const { frame, selector, outerHtml, source, generated } = element as Record<string, unknown>;
+		if (typeof frame !== "string" || !isSafeName(frame)) return undefined;
+		if (typeof selector !== "string" || typeof outerHtml !== "string") return undefined;
+		if (source !== null && typeof source !== "string") return undefined;
+		if (typeof generated !== "boolean") return undefined;
+		elements.push({ frame, selector, outerHtml, source, generated });
+	}
+	return { elements };
 }
 
 export function createSelectionStore() {
@@ -92,16 +95,24 @@ function enrich(root: string, put: SelectionPut): SelectionEntry[] {
 			];
 		});
 	}
+	return put.elements.map((element) => elementEntry(root, element));
+}
 
-	const { frame, selector, outerHtml, source, generated } = put.element;
+function elementEntry(root: string, { frame, selector, outerHtml, source, generated }: ElementPut): SelectionEntry {
 	const found = lookupFrame(root, frame);
 	const framePath = framePathOf(frame, found.kind === "found" ? found.page : undefined);
 	const stamp = source === null ? undefined : parseStamp(root, source);
 	if (stamp === undefined) {
 		// no stamp anywhere: JS-created DOM under an unstamped root (#6 degrade)
-		return [
-			{ kind: "element", frame, path: framePath, lines: [1, 1], selector, excerpt: cap(outerHtml), generated: true },
-		];
+		return {
+			kind: "element",
+			frame,
+			path: framePath,
+			lines: [1, 1],
+			selector,
+			excerpt: cap(outerHtml),
+			generated: true,
+		};
 	}
 
 	const span = spanOf(stamp);
@@ -110,7 +121,7 @@ function enrich(root: string, put: SelectionPut): SelectionEntry[] {
 	// is the excerpt, the stamped ancestor lends its lines
 	const excerpt = generated ? cap(outerHtml) : (span?.excerpt ?? sourceLine(stamp) ?? cap(outerHtml));
 	const entry: SelectionEntry = { kind: "element", frame, path: `design/${stamp.rel}`, lines, selector, excerpt };
-	return [generated ? { ...entry, generated: true } : entry];
+	return generated ? { ...entry, generated: true } : entry;
 }
 
 /** The frame's own source path, wherever its page put the folder (#39). */
@@ -118,7 +129,7 @@ function framePathOf(frame: string, page: string | undefined): string {
 	return `design/${frameFolder(frame, page)}/frame.tsx`;
 }
 
-interface Stamp {
+export interface Stamp {
 	file: string;
 	rel: string;
 	line: number;
@@ -130,7 +141,7 @@ interface Stamp {
  * DOM attributes, so anything malformed or escaping design/ reads as no
  * stamp at all — the entry degrades, the read never leaves the project.
  */
-function parseStamp(root: string, source: string): Stamp | undefined {
+export function parseStamp(root: string, source: string): Stamp | undefined {
 	const match = source.match(/^(.+):(\d+):(\d+)$/);
 	const [, raw, lineText, columnText] = match ?? [];
 	if (raw === undefined || lineText === undefined || columnText === undefined) return undefined;
