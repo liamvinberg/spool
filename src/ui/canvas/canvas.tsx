@@ -35,6 +35,7 @@ import { FrameLabel } from "./frame-label";
 import { FrameShell, type WalkBoot } from "./frame-shell";
 import { useFrameLifecycle } from "./lifecycle";
 import {
+	type ElementPreview,
 	editorTarget,
 	type Guides,
 	HANDLE_CURSORS,
@@ -122,6 +123,7 @@ const NUDGE_FLUSH_MS = 400;
 const SELECTION_PUT_MS = 150;
 const PICK_REPLY_MS = 400;
 const TRASH_UNDO_MS = 5000;
+const HOVER_PICK_MS = 80;
 
 function spatialDirection(key: string): SpatialDirection | undefined {
 	switch (key) {
@@ -164,8 +166,10 @@ export function ProjectCanvas({
 	const [camera, setCamera] = useState<Camera | null>(null);
 	const [mode, setMode] = useState<CanvasMode>("live");
 	const [selected, setSelected] = useState<string[]>([]);
-	const [picked, setPicked] = useState<PickedSelection | null>(null);
+	const [picked, setPicked] = useState<PickedSelection[]>([]);
 	const [entered, setEntered] = useState<string | null>(null);
+	// the hover preview (#37): the element a click would target, outlined live
+	const [preview, setPreview] = useState<ElementPreview | null>(null);
 	const [externalLink, setExternalLink] = useState<{ frame: string; href: string } | null>(null);
 	const [spaceDown, setSpaceDown] = useState(false);
 	const [panning, setPanning] = useState(false);
@@ -248,6 +252,9 @@ export function ProjectCanvas({
 	const pickGen = useRef(0);
 	// the ancestry behind the current element selection — Esc ascends it
 	const pickedChain = useRef<{ frame: string; chain: PickedHit[] } | null>(null);
+	// hover picks ride pointer-move (#37): throttled, one in flight at a time
+	const hoverLast = useRef(0);
+	const hoverBusy = useRef(false);
 	const nudgeDirty = useRef(new Set<string>());
 	const nudgeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const trashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -550,7 +557,8 @@ export function ProjectCanvas({
 			walkSession.current = null;
 			setEntered(target);
 			setSelected([]);
-			setPicked(null);
+			setPicked([]);
+			setPreview(null);
 			// the entered frame owns the keyboard from the first moment; a frame
 			// booting right now gets it at its loaded report instead
 			iframes.current.get(target)?.focus();
@@ -570,7 +578,7 @@ export function ProjectCanvas({
 		walkSession.current = null;
 		if (retainFrame && frame !== null) {
 			setSelected([frame]);
-			setPicked(null);
+			setPicked([]);
 		}
 		// Focus can otherwise remain trapped in the now-inert iframe, where the
 		// following arrow would never reach the canvas navigation layer.
@@ -582,7 +590,8 @@ export function ProjectCanvas({
 		(next: CanvasMode) => {
 			if (next === "design") exitEntered();
 			// the element surface is design's; its selection does not outlive it
-			if (next === "live") setPicked(null);
+			if (next === "live") setPicked([]);
+			setPreview(null);
 			setMode(next);
 		},
 		[exitEntered],
@@ -594,9 +603,16 @@ export function ProjectCanvas({
 
 	useEffect(() => {
 		const timer = setTimeout(() => {
-			if (picked !== null) {
-				const { frame, selector, outerHtml, source, generated } = picked;
-				putSelection(project, { element: { frame, selector, outerHtml, source, generated } });
+			if (picked.length > 0) {
+				putSelection(project, {
+					elements: picked.map(({ frame, selector, outerHtml, source, generated }) => ({
+						frame,
+						selector,
+						outerHtml,
+						source,
+						generated,
+					})),
+				});
 			} else {
 				putSelection(project, { frames: selected });
 			}
@@ -681,7 +697,10 @@ export function ProjectCanvas({
 			commitTrash(); // an earlier toast still open commits now — one undo slot (#7)
 			setHidden((current) => new Set([...current, ...names]));
 			setSelected((current) => current.filter((name) => !names.includes(name)));
-			setPicked((current) => (current !== null && names.includes(current.frame) ? null : current));
+			setPicked((current) => {
+				const kept = current.filter((pick) => !names.includes(pick.frame));
+				return kept.length === current.length ? current : kept;
+			});
 			if (enteredRef.current !== null && names.includes(enteredRef.current)) exitEntered();
 			pendingTrashRef.current = names;
 			setPendingTrash(names);
@@ -750,22 +769,51 @@ export function ProjectCanvas({
 		if (hit === undefined) return; // frame background: the frame stays the selection
 		pickedChain.current = { frame, chain };
 		setSelected([]);
-		setPicked({ frame, ...hit });
+		setPicked([{ frame, ...hit }]);
 	}, []);
+
+	/** The anchor of the element scope: the most recent pick, whose chain is held. */
+	const pickAnchor = useCallback((): PickedSelection | undefined => {
+		return pickedRef.current[pickedRef.current.length - 1];
+	}, []);
+
+	/**
+	 * Figma's scope memory as a walk: the element at the anchor's depth under a
+	 * fresh chain — a sibling inside the shared ancestry, the divergence point
+	 * outside it, the top-level element when no scope holds.
+	 */
+	const atDepthIn = useCallback(
+		(frame: string, chain: PickedHit[]): PickedHit | undefined => {
+			if (chain.length === 0) return undefined;
+			const anchor = pickAnchor();
+			const held = pickedChain.current;
+			const prior = anchor !== undefined && anchor.frame === frame && held?.frame === frame ? held.chain : null;
+			const depth = prior === null ? -1 : prior.findIndex((h) => h.selector === anchor?.selector);
+			if (prior === null || depth < 0) return chain[0];
+			// walk the shared ancestry: a full match lands at the scope's
+			// depth (a sibling), a partial one at the divergence point
+			let shared = 0;
+			while (shared < depth && shared < chain.length && prior[shared]?.selector === chain[shared]?.selector) {
+				shared++;
+			}
+			return chain[Math.min(shared, chain.length - 1)];
+		},
+		[pickAnchor],
+	);
 
 	/** Figma's descend: each double-click selects one level deeper under the cursor. */
 	const descendAt = useCallback(
 		(frame: string, local: Point) => {
 			beginPick(frame, local, (chain) => {
-				const current = pickedRef.current;
+				const anchor = pickAnchor();
 				const depth =
-					current !== null && current.frame === frame
-						? chain.findIndex((h) => h.selector === current.selector)
+					anchor !== undefined && anchor.frame === frame
+						? chain.findIndex((h) => h.selector === anchor.selector)
 						: -1;
 				applyPick(frame, chain, chain[Math.min(depth + 1, chain.length - 1)]);
 			});
 		},
-		[beginPick, applyPick],
+		[beginPick, applyPick, pickAnchor],
 	);
 
 	/** Figma's deep select (⌘-click, and the right-click point): the deepest element. */
@@ -777,48 +825,56 @@ export function ProjectCanvas({
 	);
 
 	/**
-	 * Figma's scope memory: while an element is selected, a click selects the
-	 * element at the same depth under the cursor — a sibling inside the shared
-	 * ancestry, the divergence point outside it, the frame on empty space.
+	 * The scoped click: while an element is selected, a click selects the
+	 * element at the same depth under the cursor; empty space (and a frame that
+	 * never answers) pops the selection back to the frame.
 	 */
 	const scopedSelectAt = useCallback(
 		(frame: string, local: Point) => {
-			// empty space and a frame that never answers both pop the selection
-			// back to the frame — a silent document must not trap the scope
 			const pop = () => {
 				pickedChain.current = null;
-				setPicked(null);
+				setPicked([]);
 				setSelected([frame]);
 			};
 			beginPick(
 				frame,
 				local,
 				(chain) => {
-					if (chain.length === 0) {
+					const target = atDepthIn(frame, chain);
+					if (target === undefined) {
 						pop();
 						return;
 					}
-					const current = pickedRef.current;
-					const held = pickedChain.current;
-					const prior = current !== null && held !== null && held.frame === frame ? held.chain : null;
-					const depth =
-						prior === null || current === null ? -1 : prior.findIndex((h) => h.selector === current.selector);
-					if (prior === null || depth < 0) {
-						applyPick(frame, chain, chain[0]);
-						return;
-					}
-					// walk the shared ancestry: a full match lands at the scope's
-					// depth (a sibling), a partial one at the divergence point
-					let shared = 0;
-					while (shared < depth && shared < chain.length && prior[shared]?.selector === chain[shared]?.selector) {
-						shared++;
-					}
-					applyPick(frame, chain, chain[Math.min(shared, chain.length - 1)]);
+					applyPick(frame, chain, target);
 				},
 				pop,
 			);
 		},
-		[beginPick, applyPick],
+		[beginPick, applyPick, atDepthIn],
+	);
+
+	/**
+	 * Shift-click's toggle (#37): the at-depth target in or out of the picked
+	 * set — with ⌘, the deepest. A toggle in moves the anchor; membership is
+	 * (frame, selector) identity.
+	 */
+	const togglePickAt = useCallback(
+		(frame: string, local: Point, deepest: boolean) => {
+			beginPick(frame, local, (chain) => {
+				const target = deepest ? chain[chain.length - 1] : atDepthIn(frame, chain);
+				if (target === undefined) return; // frame background: nothing to toggle
+				const current = pickedRef.current;
+				const held = current.filter((pick) => !(pick.frame === frame && pick.selector === target.selector));
+				if (held.length < current.length) {
+					setPicked(held);
+				} else {
+					pickedChain.current = { frame, chain };
+					setPicked([...current, { frame, ...target }]);
+				}
+				setSelected([]);
+			});
+		},
+		[beginPick, atDepthIn],
 	);
 
 	// --- pages (#39): one canvas per page, cameras bookkept per page ------------
@@ -848,7 +904,8 @@ export function ProjectCanvas({
 			exitEntered();
 			setMenu(null);
 			setSelected([]);
-			setPicked(null);
+			setPicked([]);
+			setPreview(null);
 			setExternalLink(null);
 			stopAnimation();
 			const next = switchPage(cameras.current, activePageRef.current, cameraRef.current, target, arriveAt);
@@ -894,7 +951,7 @@ export function ProjectCanvas({
 			// time runs the moment the walk lands, not after the capture below
 			setEntered(target);
 			setSelected([]);
-			setPicked(null);
+			setPicked([]);
 			const frame = framesRef.current.find((f) => f.name === target);
 			const viewport = viewportRef.current;
 			const cam = cameraRef.current;
@@ -931,8 +988,12 @@ export function ProjectCanvas({
 					setDocNonces((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
 					// an edit reboot is honest — it does not wear a walk's quiet cover
 					setWalkBoots((current) => without(current, frame));
-					// the DOM this pick pointed into is gone
-					setPicked((current) => (current?.frame === frame ? null : current));
+					// the DOM these picks pointed into is gone
+					setPicked((current) => {
+						const kept = current.filter((pick) => pick.frame !== frame);
+						return kept.length === current.length ? current : kept;
+					});
+					if (pickedChain.current?.frame === frame) pickedChain.current = null;
 					lifecycleRef.current.markStale(frame);
 					void refetchFrames();
 					// an edit moves the graph: edges re-derive, verified marks may drop —
@@ -946,7 +1007,8 @@ export function ProjectCanvas({
 						return next;
 					});
 					setWalkBoots((current) => (Object.keys(current).length === 0 ? current : {}));
-					setPicked(null);
+					setPicked([]);
+					pickedChain.current = null;
 					void refetchFrames();
 				} else if (event.kind === "geometry") {
 					// another browser's hands (or our own echo); ours are the truth
@@ -1131,6 +1193,42 @@ export function ProjectCanvas({
 		return frame === undefined ? null : { x: world.x - frame.x, y: world.y - frame.y };
 	};
 
+	/**
+	 * The hover previews (#37), on throttled pointer-move: holding ⌘ outlines
+	 * the would-be deepest target under the cursor; inside an element scope,
+	 * plain hover outlines the at-depth target in the scope's own frame.
+	 */
+	const hoverPickAt = (frame: string | null, world: Point, deepest: boolean) => {
+		const scopeFrame = pickedRef.current[pickedRef.current.length - 1]?.frame;
+		if (frame === null || !(deepest || frame === scopeFrame)) {
+			setPreview(null);
+			return;
+		}
+		const now = performance.now();
+		if (hoverBusy.current || now - hoverLast.current < HOVER_PICK_MS) return;
+		const local = frameLocalAt(frame, world);
+		if (local === null) return;
+		hoverLast.current = now;
+		hoverBusy.current = true;
+		beginPick(
+			frame,
+			local,
+			(chain) => {
+				hoverBusy.current = false;
+				if (gesture.current.kind !== "idle") return;
+				const target = deepest ? chain[chain.length - 1] : atDepthIn(frame, chain);
+				setPreview(
+					target === undefined
+						? null
+						: { frame, selector: target.selector, rect: target.rect, radius: target.radius },
+				);
+			},
+			() => {
+				hoverBusy.current = false;
+			},
+		);
+	};
+
 	const cancelGesture = useCallback(() => {
 		const active = gesture.current;
 		gesture.current = { kind: "idle" };
@@ -1166,6 +1264,7 @@ export function ProjectCanvas({
 		if (cam === null || event.button === 2) return;
 		stopAnimation();
 		setMenu(null);
+		setPreview(null); // the press supersedes the hover; its own answer redraws
 		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
 		// a portal chip owns its click (#39) — capturing here would swallow it
 		if (datasetHit(event.target, "portal") !== null) return;
@@ -1217,15 +1316,23 @@ export function ProjectCanvas({
 			const base = event.shiftKey ? selectedRef.current : [];
 			if (!event.shiftKey) {
 				setSelected([]);
-				setPicked(null);
+				setPicked([]);
 			}
 			gesture.current = { kind: "marquee", start: p, base };
 			return;
 		}
 
+		// inside an element scope, shift toggles membership (#37): the at-depth
+		// target under the cursor, or with ⌘ the deepest — the two hover previews
+		if (modeRef.current === "design" && event.shiftKey && pickedRef.current.length > 0 && label === null) {
+			const local = frameLocalAt(hit, world);
+			if (local !== null) togglePickAt(hit, local, event.metaKey);
+			return;
+		}
+
 		if (event.shiftKey) {
 			// shift-click: add/remove, never a drag
-			setPicked(null);
+			setPicked([]);
 			setSelected((current) => (current.includes(hit) ? current.filter((name) => name !== hit) : [...current, hit]));
 			return;
 		}
@@ -1241,8 +1348,8 @@ export function ProjectCanvas({
 		// inside an element scope the click stays scoped (Figma): the sibling
 		// under the cursor, answered by the frame within a paint or two — and
 		// the double-click this press may begin then descends from that answer
-		const scoped = pickedRef.current;
-		if (modeRef.current === "design" && scoped !== null && scoped.frame === hit && label === null) {
+		const anchor = pickedRef.current[pickedRef.current.length - 1];
+		if (modeRef.current === "design" && anchor !== undefined && anchor.frame === hit && label === null) {
 			const local = frameLocalAt(hit, world);
 			if (local !== null) scopedSelectAt(hit, local);
 			gesture.current = { kind: "pending", names: [hit], origins: originsOf([hit]), start: p };
@@ -1253,17 +1360,24 @@ export function ProjectCanvas({
 		const names = wasSelected ? [...selectedRef.current] : [hit];
 		if (!wasSelected) {
 			setSelected([hit]);
-			setPicked(null);
+			setPicked([]);
 		}
 		gesture.current = { kind: "pending", names, origins: originsOf(names), start: p };
 	};
 
 	const onPointerMove = (event: React.PointerEvent) => {
 		const active = gesture.current;
-		if (active.kind === "idle") return;
 		const cam = cameraRef.current;
 		if (cam === null) return;
 		const p = localPoint(event);
+
+		if (active.kind === "idle") {
+			// idle motion is the hover surface (#37) — design only, never entered
+			if (modeRef.current !== "design" || enteredRef.current !== null || menuOpenRef.current) return;
+			const world = toWorld(p, cam);
+			hoverPickAt(frameAtWorld(world), world, event.metaKey);
+			return;
+		}
 
 		if (active.kind === "pan") {
 			const dx = p.x - active.lastX;
@@ -1278,7 +1392,7 @@ export function ProjectCanvas({
 			// a drag is an arrange (#7): it moves frames, so element scope ends
 			cancelPicks();
 			setSelected(active.names);
-			setPicked(null);
+			setPicked([]);
 			gesture.current = { kind: "move", names: active.names, origins: active.origins, start: active.start };
 			onPointerMove(event);
 			return;
@@ -1435,10 +1549,10 @@ export function ProjectCanvas({
 			return;
 		}
 		if (enteredRef.current !== null) exitEntered();
-		const elementSelection = pickedRef.current?.frame === hit;
+		const elementSelection = pickedRef.current.some((pick) => pick.frame === hit);
 		if (!elementSelection && !selectedRef.current.includes(hit)) {
 			setSelected([hit]);
-			setPicked(null);
+			setPicked([]);
 		}
 		// A context click acts on the existing frame selection. Element picking
 		// belongs to design's click, double-click and ⌘-click gestures.
@@ -1471,7 +1585,7 @@ export function ProjectCanvas({
 	exportingRef.current = exporting;
 
 	useEffect(() => {
-		const pickTarget = () => (pickedRef.current === null ? [] : [pickedRef.current.frame]);
+		const pickTarget = () => [...new Set(pickedRef.current.map((pick) => pick.frame))];
 		const isTyping = (target: EventTarget | null) =>
 			target instanceof HTMLElement &&
 			(target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
@@ -1564,7 +1678,7 @@ export function ProjectCanvas({
 						const target = nextSpatialFrame(current, framesRef.current, direction);
 						if (target === undefined) break;
 						setSelected([target.name]);
-						setPicked(null);
+						setPicked([]);
 						const viewport = viewportRef.current;
 						const cam = cameraRef.current;
 						if (viewport !== null && cam !== null) {
@@ -1601,21 +1715,28 @@ export function ProjectCanvas({
 					break;
 				case "Escape": {
 					cancelPicks();
+					setPreview(null);
 					if (gesture.current.kind !== "idle" && gesture.current.kind !== "pan") cancelGesture();
 					else if (menuOpenRef.current) setMenu(null);
 					else if (enteredRef.current !== null) exitEntered(true);
-					else if (pickedRef.current !== null) {
+					else if (pickedRef.current.length > 1) {
+						// a multi-selection has no one ancestry: drop to its frames
+						const frames = [...new Set(pickedRef.current.map((pick) => pick.frame))];
+						pickedChain.current = null;
+						setPicked([]);
+						setSelected(frames);
+					} else if (pickedRef.current.length === 1) {
 						// ascend the ancestry (Figma): element → parent → … → frame → clear
-						const picked = pickedRef.current;
+						const picked = pickedRef.current[0] as PickedSelection;
 						const held = pickedChain.current;
 						const depth =
 							held !== null && held.frame === picked.frame
 								? held.chain.findIndex((h) => h.selector === picked.selector)
 								: -1;
 						const parent = depth > 0 ? held?.chain[depth - 1] : undefined;
-						if (parent !== undefined) setPicked({ frame: picked.frame, ...parent });
+						if (parent !== undefined) setPicked([{ frame: picked.frame, ...parent }]);
 						else {
-							setPicked(null);
+							setPicked([]);
 							setSelected([picked.frame]);
 						}
 					} else setSelected([]);
@@ -1625,6 +1746,8 @@ export function ProjectCanvas({
 		};
 		const onKeyUp = (event: KeyboardEvent) => {
 			if (event.code === "Space") setSpaceDown(false);
+			// releasing ⌘ outside an element scope ends the deep-hover preview
+			if (event.key === "Meta" && pickedRef.current.length === 0) setPreview(null);
 		};
 		window.addEventListener("keydown", onKeyDown);
 		window.addEventListener("keyup", onKeyUp);
@@ -1691,7 +1814,7 @@ export function ProjectCanvas({
 				onSwitchPage={switchToPage}
 				onSelectFrame={(name) => {
 					setSelected([name]);
-					setPicked(null);
+					setPicked([]);
 				}}
 			/>
 			<div
@@ -1705,6 +1828,7 @@ export function ProjectCanvas({
 				onPointerDown={onPointerDown}
 				onPointerMove={onPointerMove}
 				onPointerUp={onPointerUp}
+				onPointerLeave={() => setPreview(null)}
 				onDoubleClick={onDoubleClick}
 				onContextMenu={onContextMenu}
 			>
@@ -1783,6 +1907,7 @@ export function ProjectCanvas({
 						selected={selected}
 						entered={entered}
 						picked={picked}
+						preview={preview}
 						guides={guides}
 						marquee={marquee}
 						shellRadius={shellRadius}
@@ -1826,9 +1951,9 @@ export function ProjectCanvas({
 							setMenu(null);
 						}}
 						onOpenEditor={() => {
-							const pick = pickedRef.current;
+							const pick = pickedRef.current.find((candidate) => candidate.frame === menu.frame);
 							openEditorFor(
-								pick !== null && pick.frame === menu.frame
+								pick !== undefined
 									? editorTarget(pick, framePageOf(pick.frame))
 									: { path: frameSourcePath(menu.frame, framePageOf(menu.frame)) },
 							);
