@@ -10,7 +10,9 @@ Spool is a local-first prototyping canvas: agents author live TSX frames on disk
 
 **Daemon**: The one per-machine local server every spool surface is served from.
 
-**Frame**: A folder under `design/frames/<name>/` whose `frame.tsx` default-exports one component; the unit prototypes are made of. _Avoid_: screen, artboard, mockup
+**Frame**: A folder under `design/frames/<name>/` holding one entry file — `frame.tsx` (html) or `term.tsx` (terminal); the unit prototypes are made of. The entry filename is the kind, and a folder holding both is a discovery error. _Avoid_: screen, artboard, mockup
+
+**Terminal frame**: A frame whose `term.tsx` is an OpenTUI app the daemon runs as a real process in a PTY; the canvas paints its cell grid live, and it is sized, frozen, and stilled in whole cells. The second and final frame kind.
 
 **Variant**: A frame whose `--`-suffixed name marks it as an alternative take on its base frame (`home--empty`).
 
@@ -24,7 +26,7 @@ Spool is a local-first prototyping canvas: agents author live TSX frames on disk
 
 **Design mode**: The canvas mode in which time is frozen everywhere and clicks select elements.
 
-**Entered**: The state of a frame after double-click: interaction goes inside it and walks happen in place until Esc. _Avoid_: focused
+**Entered**: The state of a frame after double-click: interaction goes inside it and walks happen in place. Esc leaves an html frame; a terminal owns every key, so the platform modifier + Esc leaves it. _Avoid_: focused
 
 **Hibernated**: A frame the engine has demoted to its still to protect frame rate; it boots again on entry. _Avoid_: paused
 
@@ -34,7 +36,7 @@ Spool is a local-first prototyping canvas: agents author live TSX frames on disk
 
 **Flow map**: The arrow layer: the link graph derived by reading frame source. Walking can verify an edge, never add or remove one.
 
-**Navigation site**: A place in frame source that navigates, a `data-go` attribute or a `ui.go(...)` call; each site's arrow grows out of its element.
+**Navigation site**: A place in frame source that navigates — a `data-go` attribute, a `ui.go(...)` call, or a terminal frame's `term.go(...)` call; each site's arrow grows out of its element.
 
 **Certainty**: An arrow's claim: `will` (solid, unconditional site) or `might` (faint, the site sits inside a branch). _Avoid_: dashed arrows (retired)
 

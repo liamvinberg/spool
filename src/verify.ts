@@ -38,6 +38,7 @@ export type LogsOutcome =
 	| { kind: "logs"; entries: LogEntry[]; replayed: boolean };
 
 export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
+	if (await isTermFrame(deps)) return termShot(deps);
 	const probe = await probeCompile(deps);
 	if (probe.kind === "error") return { kind: "broken", message: probe.message };
 	if (probe.kind === "missing") return probe;
@@ -47,6 +48,12 @@ export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 }
 
 export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
+	if (await isTermFrame(deps)) {
+		return {
+			kind: "broken",
+			message: `"${deps.frame}" is a terminal frame — its output is its screen; use \`spool shot ${deps.frame}\``,
+		};
+	}
 	const probe = await probeCompile(deps);
 	if (probe.kind === "error") return { kind: "broken", message: probe.message };
 	if (probe.kind === "missing") return probe;
@@ -57,6 +64,30 @@ export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
 	const boot = await bootFrame(deps, probe.etag);
 	if (boot.kind === "broken") return boot;
 	return { kind: "logs", entries: boot.entries, replayed: false };
+}
+
+/**
+ * A terminal frame's shot (#42) needs no browser: the daemon rasterizes the
+ * screen grid in the pinned font, so the artifact is the process's own truth.
+ */
+async function termShot(deps: BootDeps): Promise<ShotOutcome> {
+	const url = `${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/thumbs/${encodeURIComponent(deps.frame)}`;
+	const res = await fetch(url);
+	if (!res.ok) return { kind: "broken", message: await res.text() };
+	const file = join(deps.root, "design", ".spool", "verify", `${deps.frame}.svg`);
+	writeAtomic(file, await res.text());
+	return { kind: "shot", file, bootErrors: [] };
+}
+
+async function isTermFrame(deps: BootDeps): Promise<boolean> {
+	try {
+		const res = await fetch(`${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/frames`);
+		if (!res.ok) return false;
+		const projection = (await res.json()) as { frames?: { name: string; kind?: string }[] };
+		return projection.frames?.find((entry) => entry.name === deps.frame)?.kind === "term";
+	} catch {
+		return false;
+	}
 }
 
 export function shotFile(root: string, frame: string): string {

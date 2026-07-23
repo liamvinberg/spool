@@ -31,6 +31,8 @@ export interface PlayerConfig {
 	 * carriers are queried live in the DOM. Frames with none are omitted.
 	 */
 	hints: Record<string, string[]>;
+	/** Terminal frames as static grids from the daemon-held buffer (#42). */
+	terminals?: Record<string, { svg: string }>;
 }
 
 export interface PlayerBundle {
@@ -191,8 +193,25 @@ const CHROME_CSS = `:root { color-scheme: dark; }
 	font-display: swap;
 	src: url("/vendor/fonts/fragment-mono-latin-400-normal.woff2") format("woff2");
 }
+@font-face {
+	font-family: "JetBrains Mono";
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url("/vendor/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+	font-family: "JetBrains Mono";
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url("/vendor/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
+}
 html, body, #root { height: 100%; }
 body { margin: 0; background: #0e0e0e; overflow: hidden; }
+/* a terminal screen (#42): the daemon's grid, verbatim — the svg is the pixels */
+.spool-term-screen { height: 100%; background: #111110; }
+.spool-term-screen svg { display: block; }
 .spool-boot {
 	position: fixed;
 	inset: 0;

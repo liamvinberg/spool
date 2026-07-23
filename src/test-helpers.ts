@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { onTestFinished } from "vitest";
 import { createDaemonApp } from "./daemon/app";
 import { serveDaemon } from "./daemon/server";
+import type { TermExecutor, TermProcess, TermSpawn } from "./daemon/term-exec";
 import { initProject } from "./init";
 import { canvasJson } from "./templates";
 
@@ -43,10 +44,10 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 }
 
 /** A registered project behind a really-served daemon on an ephemeral port. */
-export async function serveProject() {
+export async function serveProject(options?: Partial<Parameters<typeof serveDaemon>[0]>) {
 	const spoolDir = join(makeTempDir(), ".spool");
 	const { root, name } = makeProject(spoolDir);
-	const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
+	const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0, ...options });
 	onTestFinished(() => daemon.close());
 	return { spoolDir, root, name, url: daemon.url };
 }
@@ -113,4 +114,54 @@ export function sseReader(res: Response) {
 	}
 
 	return { next, drain, expectQuiet };
+}
+
+/** The terminal fixture executor (#42): the injected stand-in for the bun
+ * toolchain — a controllable process emitting known ANSI, so daemon-seam
+ * tests exercise sessions without ever downloading bun or OpenTUI. */
+export class FakeTermProc implements TermProcess {
+	inputs: string[] = [];
+	sizes: { cols: number; rows: number }[] = [];
+	signals: string[] = [];
+	killed = false;
+	spawn: TermSpawn;
+	private dataCb: (chunk: Uint8Array) => void = () => {};
+	private exitCb: (code: number) => void = () => {};
+	constructor(spawn: TermSpawn) {
+		this.spawn = spawn;
+	}
+	write(data: Uint8Array): void {
+		this.inputs.push(new TextDecoder().decode(data));
+	}
+	resize(cols: number, rows: number): void {
+		this.sizes.push({ cols, rows });
+	}
+	signal(sig: "SIGSTOP" | "SIGCONT"): void {
+		this.signals.push(sig);
+	}
+	kill(): void {
+		this.killed = true;
+	}
+	onData(cb: (chunk: Uint8Array) => void): void {
+		this.dataCb = cb;
+	}
+	onExit(cb: (code: number) => void): void {
+		this.exitCb = cb;
+	}
+	emit(text: string): void {
+		this.dataCb(new TextEncoder().encode(text));
+	}
+	exit(code: number): void {
+		this.exitCb(code);
+	}
+}
+
+export function fixtureTermExecutor() {
+	const spawned: FakeTermProc[] = [];
+	const executor: TermExecutor = async (spawn) => {
+		const proc = new FakeTermProc(spawn);
+		spawned.push(proc);
+		return proc;
+	};
+	return { spawned, executor };
 }

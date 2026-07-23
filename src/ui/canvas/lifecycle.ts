@@ -154,6 +154,9 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				target = "hibernated";
 			} else if (now - (lastUsable.current.get(frame.name) ?? 0) < GRACE_MS) {
 				target = "warm";
+			} else if (frame.kind === "term") {
+				// a terminal's still is the daemon's grid (#42) — no goodbye capture
+				target = "hibernated";
 			} else {
 				// past grace: try one goodbye capture while the DOM still exists
 				const exit = exitPending.current.get(frame.name);
@@ -178,8 +181,9 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 			// leaving live stales the thumbnail; refresh once the camera settles,
 			// while the (hidden) DOM is still mounted
-			if (current === "live" && target === "warm") needsShot.current.add(frame.name);
+			if (current === "live" && target === "warm" && frame.kind !== "term") needsShot.current.add(frame.name);
 			if (
+				frame.kind !== "term" &&
 				target !== "hibernated" &&
 				settled &&
 				(needsShot.current.has(frame.name) || !hasThumbRef.current(frame.name)) &&
