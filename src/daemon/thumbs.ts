@@ -14,6 +14,11 @@ export function thumbFile(root: string, frame: string): string {
 	return join(root, "design", ".spool", "thumbs", `${frame}.png`);
 }
 
+/** A terminal frame's serialized screen (#42) — its still store, beside the thumbs. */
+export function termScreenFile(root: string, frame: string): string {
+	return join(root, "design", ".spool", "term", `${frame}.screen`);
+}
+
 export interface StoredThumb {
 	png: Buffer;
 	etag: string;

@@ -16,8 +16,8 @@ import type { Node } from "@babel/types";
 
 export interface NavSite {
 	target: string;
-	/** how the source spells the walk — markup sugar or the coded call */
-	via: "data-go" | "ui.go";
+	/** how the source spells the walk — markup sugar or a dialect's coded call */
+	via: "data-go" | "ui.go" | "term.go";
 	/** design-relative source file of the site */
 	path: string;
 	/** 1-based line of the site itself — the attribute or the call */
@@ -127,11 +127,14 @@ export function parseNavSites(source: string, path: string): NavSites {
 			if (value == null) return;
 			pushSites(out, readTargets(value as Node), { via: "data-go", path, line, ancestors });
 		}
-		if (node.type === "CallExpression" && isUiGo(node.callee as Node)) {
-			const line = node.loc?.start.line ?? 0;
-			const arg = node.arguments[0] as Node | undefined;
-			const read = arg === undefined ? { targets: [], unreadable: true } : readTargets(arg);
-			pushSites(out, read, { via: "ui.go", path, line, ancestors });
+		if (node.type === "CallExpression") {
+			const via = codedWalk(node.callee as Node);
+			if (via !== undefined) {
+				const line = node.loc?.start.line ?? 0;
+				const arg = node.arguments[0] as Node | undefined;
+				const read = arg === undefined ? { targets: [], unreadable: true } : readTargets(arg);
+				pushSites(out, read, { via, path, line, ancestors });
+			}
 		}
 	});
 	return out;
@@ -189,16 +192,24 @@ function underBranch(ancestors: readonly Node[]): boolean {
 	return false;
 }
 
-/** The dialect's one coded walk: a plain `ui.go(...)` member call (#5). */
-function isUiGo(callee: Node): boolean {
-	return (
-		callee.type === "MemberExpression" &&
-		!callee.computed &&
-		callee.object.type === "Identifier" &&
-		callee.object.name === "ui" &&
-		callee.property.type === "Identifier" &&
-		callee.property.name === "go"
-	);
+/**
+ * Each dialect's one coded walk: `ui.go(...)` in HTML frames (#5) and
+ * `term.go(...)` in terminal frames (#42) — plain member calls, matched
+ * syntactically like everything else here.
+ */
+function codedWalk(callee: Node): "ui.go" | "term.go" | undefined {
+	if (
+		callee.type !== "MemberExpression" ||
+		callee.computed ||
+		callee.object.type !== "Identifier" ||
+		callee.property.type !== "Identifier" ||
+		callee.property.name !== "go"
+	) {
+		return undefined;
+	}
+	if (callee.object.name === "ui") return "ui.go";
+	if (callee.object.name === "term") return "term.go";
+	return undefined;
 }
 
 interface TargetRead {

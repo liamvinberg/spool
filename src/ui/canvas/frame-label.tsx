@@ -1,3 +1,6 @@
+/** The exit binding as this platform spells it — the chip must show a chord that works here. */
+const EXIT_CHORD = typeof navigator !== "undefined" && !/Mac|iP/.test(navigator.platform) ? "ctrl+⎋" : "⌘⎋";
+
 export function FrameLabel({
 	name,
 	frameWidth,
@@ -5,6 +8,7 @@ export function FrameLabel({
 	entered,
 	paused,
 	selected,
+	terminal = false,
 }: {
 	name: string;
 	frameWidth: number;
@@ -12,6 +16,8 @@ export function FrameLabel({
 	entered: boolean;
 	paused: boolean;
 	selected: boolean;
+	/** An entered terminal owns every key (#42) — the chip must show the one way out. */
+	terminal?: boolean;
 }) {
 	// The camera scales this after the label's 1/k counter-scale. Pre-scaling
 	// the layout width by k keeps its final screen width equal to the frame.
@@ -26,7 +32,7 @@ export function FrameLabel({
 			{entered ? (
 				<div className="flex items-center pb-2.5">
 					<span className="rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3">
-						live · esc exits
+						{terminal ? `live · ${EXIT_CHORD} exits` : "live · esc exits"}
 					</span>
 				</div>
 			) : (

@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { PortBusyError, SpoolError } from "../errors";
 import { createDaemonApp } from "./app";
 import { clearDaemonState, daemonUrl, writeDaemonState } from "./lifecycle";
+import type { TermExecutor } from "./term-exec";
 
 export interface ServeDaemonOptions {
 	spoolDir: string;
@@ -13,6 +14,8 @@ export interface ServeDaemonOptions {
 	uiDir?: string | undefined;
 	/** #30 phone-home — absent means off, so tests and tools stay silent. */
 	updateCheck?: boolean | undefined;
+	/** The PTY spawn (#42) — seam tests inject a fixture. */
+	termExecutor?: TermExecutor | undefined;
 }
 
 export interface RunningDaemon {
@@ -33,11 +36,20 @@ export function serveDaemon({
 	port,
 	uiDir,
 	updateCheck,
+	termExecutor,
 }: ServeDaemonOptions): Promise<RunningDaemon> {
-	const daemon = createDaemonApp({ spoolDir, version, uiDir, updateCheck });
+	const daemon = createDaemonApp({
+		spoolDir,
+		version,
+		uiDir,
+		updateCheck,
+		...(termExecutor === undefined ? {} : { termExecutor }),
+	});
 
 	return new Promise<RunningDaemon>((resolve, reject) => {
 		const server = serve({ fetch: daemon.app.fetch, hostname: host, port, createServer }, (info: AddressInfo) => {
+			// spool's first WebSocket (#42): terminal frames attach on /term/…
+			server.on("upgrade", daemon.handleUpgrade);
 			// bound: the daemon can now dial itself (the thumb healer's shots)
 			daemon.setSelfOrigin(daemonUrl(host, info.port));
 			// listening first, asking after — the registry never delays the canvas

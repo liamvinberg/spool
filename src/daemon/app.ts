@@ -1,17 +1,23 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import type { IncomingMessage } from "node:http";
 import { createRequire } from "node:module";
 import { basename, isAbsolute, join, normalize, sep } from "node:path";
+import type { Duplex } from "node:stream";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import trash from "trash";
+import { type WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import { SPOOL_FAVICON_SVG } from "../brand";
 import { SpoolError } from "../errors";
 import { initProject } from "../init";
 import { openProject } from "../open";
 import { lookupProjectByName, readRegistry } from "../registry";
+import { cellsForPx } from "../term/cells";
+import { type Grid, gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
 import { createFrameCompiler } from "./compile";
 import { errorDocument } from "./document";
@@ -23,14 +29,25 @@ import { hintStamps } from "./nav-sites";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerEtag } from "./play";
 import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
-import { frameGeometry, listProjectFrames, type ProjectCard, summarizeProject } from "./projection";
+import { frameGeometry, listProjectFrames, type ProjectCard, projectedKind, summarizeProject } from "./projection";
 import { createSelectionStore, parseSelectionPut } from "./selection";
 import { type AppEvent, readSession, watchRegistry, writeSession } from "./session";
 import { createShotTaker } from "./shots";
+import { bunExecutor, type TermExecutor } from "./term-exec";
+import { termFontDataCss, termFontFile } from "./term-fonts";
+import { createTermSessions } from "./term-sessions";
+import { ensureToolchain, toolchainEffects } from "./term-toolchain";
 import { createThumbHealer, readThumb, writeThumb } from "./thumbs";
 import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
 import { createUpdateChecker } from "./update-check";
-import { reactVersion, type VendorModule, vendorReactJs, vendorSpoolJs, vendorSpoolJsxJs } from "./vendor";
+import {
+	reactVersion,
+	type VendorModule,
+	vendorReactJs,
+	vendorSpoolJs,
+	vendorSpoolJsxJs,
+	vendorSpoolTermJs,
+} from "./vendor";
 
 export interface DaemonOptions {
 	spoolDir: string;
@@ -47,6 +64,8 @@ export interface DaemonOptions {
 	fetchLatest?: () => Promise<string | undefined>;
 	/** The toast door's detached `spool upgrade` spawn — swapped out by seam tests. */
 	upgrade?: () => { ok: true } | { ok: false; error: string };
+	/** The PTY spawn (#42) — seam tests inject a fixture; CI never downloads the toolchain. */
+	termExecutor?: TermExecutor;
 }
 
 /** The player's params (#24): Zod-validated, path-safe names only. */
@@ -74,6 +93,7 @@ export function createDaemonApp({
 	updateCheck,
 	fetchLatest,
 	upgrade,
+	termExecutor,
 }: DaemonOptions) {
 	const startedAt = new Date().toISOString();
 	const compiler = createFrameCompiler(version);
@@ -116,6 +136,26 @@ export function createDaemonApp({
 		capture: (target) => shots.capture(target),
 		stored: (root, frame) => hub.publish(root, { kind: "thumb", frame }),
 	});
+
+	// terminal sessions (#42): one real process per running terminal frame,
+	// provisioned toolchain by default, fixture executor in seam tests
+	const narrateTerm = (line: string) => process.stderr.write(`spool: ${line}\n`);
+	const terms = createTermSessions({
+		executor: termExecutor ?? bunExecutor(() => ensureToolchain(spoolDir, toolchainEffects(narrateTerm))),
+		publish: (root, frame) => hub.publish(root, { kind: "thumb", frame }),
+	});
+	// a save must restart the process even when no canvas page is open — the
+	// session watches its own root through the same hub the SSE stream rides
+	const termWatches = new Map<string, () => void>();
+	function watchTermRoot(root: string): void {
+		if (termWatches.has(root)) return;
+		termWatches.set(
+			root,
+			hub.subscribe(root, (event) => {
+				if (event.kind === "frame") void terms.handleChange(root, event.frame);
+			}),
+		);
+	}
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -241,16 +281,28 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			return c.json(listProjectFrames(project.root));
 		})
-		.get("/api/p/:project/thumbs/:frame", (c) => {
+		.get("/api/p/:project/thumbs/:frame", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const frame = c.req.param("frame");
 			if (!isSafeName(frame)) return c.text(`not a frame name: "${frame}"`, 404);
+			const kind = projectedKind(project.root, frame);
+			if (kind === "term") {
+				// terminal stills rasterize from the daemon-held grid in the pinned
+				// font (#42) — the DOM-clone capture cannot see emulator pixels
+				const svg = await terms.still(project.root, frame, termFontDataCss());
+				if (svg === undefined) return c.text(`no still for "${frame}" — it has not run yet`, 404);
+				const etag = `"term-still-${createHash("sha256").update(svg).digest("hex").slice(0, 32)}"`;
+				if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+				c.header("etag", etag);
+				c.header("content-type", "image/svg+xml; charset=utf-8");
+				return c.body(svg);
+			}
 			const thumb = readThumb(project.root, frame);
 			if (thumb === undefined) {
 				// a missing cover heals itself: enqueue the Playwright fallback and
 				// let the thumb event tell the canvas to look again
-				if (selfOrigin !== undefined && existsSync(join(project.root, "design", "frames", frame, "frame.tsx"))) {
+				if (selfOrigin !== undefined && kind === "html") {
 					const name = c.req.param("project");
 					const { w, h } = frameGeometry(project.root, frame);
 					healer.request({
@@ -310,7 +362,7 @@ export function createDaemonApp({
 				// only witness walks between frames that really exist — a session
 				// racing a delete records nothing
 				for (const frame of [from, to]) {
-					if (!existsSync(join(project.root, "design", "frames", frame, "frame.tsx"))) {
+					if (projectedKind(project.root, frame) === undefined) {
 						return c.text(`no frame "${frame}" to walk`, 404);
 					}
 				}
@@ -375,7 +427,7 @@ export function createDaemonApp({
 				const { frames } = c.req.valid("json");
 				// all-or-nothing: every frame verified before the first sidecar write
 				for (const name of Object.keys(frames)) {
-					if (!existsSync(join(project.root, "design", "frames", name, "frame.tsx"))) {
+					if (projectedKind(project.root, name) === undefined) {
 						return c.text(`no frame "${name}" to place`, 404);
 					}
 				}
@@ -407,7 +459,7 @@ export function createDaemonApp({
 				for (const name of c.req.valid("json").frames) {
 					if (!isSafeName(name)) return c.text(`not a frame name: "${name}"`, 400);
 					const dir = join(project.root, "design", "frames", name);
-					if (!existsSync(join(dir, "frame.tsx"))) return c.text(`no frame "${name}" to trash`, 404);
+					if (projectedKind(project.root, name) === undefined) return c.text(`no frame "${name}" to trash`, 404);
 					dirs.push(dir);
 				}
 				// the whole folder moves; the OS Trash owns restore from here (#7)
@@ -450,8 +502,11 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			const frame = c.req.param("frame");
 			// captures are only accepted for frames that exist — never a write for a ghost
-			if (!isSafeName(frame) || !existsSync(join(project.root, "design", "frames", frame, "frame.tsx"))) {
-				return c.text(`no frame "${frame}" to cover`, 404);
+			const kind = isSafeName(frame) ? projectedKind(project.root, frame) : undefined;
+			if (kind === undefined) return c.text(`no frame "${frame}" to cover`, 404);
+			// a terminal's still is the daemon's grid, never a DOM capture
+			if (kind === "term") {
+				return c.text(`"${frame}" is a terminal frame — its stills rasterize from the grid`, 400);
 			}
 			const png = Buffer.from(await c.req.arrayBuffer());
 			if (png.byteLength === 0) return c.text("empty capture", 400);
@@ -503,8 +558,20 @@ export function createDaemonApp({
 				// whatever the canvas last pointed at, then the first frame by name
 				const selected = selections.get(project.root).find((entry) => names.includes(entry.frame))?.frame;
 				const start = frame ?? selected ?? first;
-				const compiled = await playerCompiler.getBundle(project.root, names);
+				// only html frames enter the compile; terminal frames ride the config
+				// as daemon-rendered grids (#42) — their screens are live data
+				const htmlNames = projection.frames.filter((entry) => entry.kind === "html").map((entry) => entry.name);
+				const termFrames = projection.frames.filter((entry) => entry.kind === "term");
+				const compiled = await playerCompiler.getBundle(project.root, htmlNames);
 				if (compiled.kind === "error") return c.html(errorDocument("player", compiled.message), 500);
+				const terminals: Record<string, { svg: string }> = {};
+				for (const entry of termFrames) {
+					const shape: Grid = (await terms.grid(project.root, entry.name)) ?? {
+						...cellsForPx(entry.w, entry.h),
+						lines: [],
+					};
+					terminals[entry.name] = { svg: gridToSvg(shape) };
+				}
 				const config = {
 					project: name,
 					start,
@@ -516,6 +583,7 @@ export function createDaemonApp({
 							return stamps.length === 0 ? [] : [[frameName, stamps]];
 						}),
 					),
+					...(termFrames.length === 0 ? {} : { terminals }),
 				};
 				const etag = playerEtag(compiled.bundle, config);
 				if (c.req.header("if-none-match") === etag) return c.body(null, 304);
@@ -560,10 +628,13 @@ export function createDaemonApp({
 		})
 		.get("/vendor/spool.js", (c) => serveRuntime(c, vendorSpoolJs))
 		.get("/vendor/spool-jsx.js", (c) => serveRuntime(c, vendorSpoolJsxJs))
+		.get("/vendor/spool-term.js", (c) => serveRuntime(c, vendorSpoolTermJs))
 		.get("/vendor/fonts/:file", (c) => {
-			// the player chrome's mono rides spool's own install — never a CDN
-			const file = chromeFontFile(c.req.param("file"));
+			// chrome and terminal monos ride spool's own install — never a CDN;
+			// null-origin sandboxed frames fetch fonts under CORS
+			const file = chromeFontFile(c.req.param("file")) ?? termFontFile(c.req.param("file"));
 			if (file === undefined) return c.text("no such font", 404);
+			c.header("access-control-allow-origin", "*");
 			const etag = `"font-${version}-${c.req.param("file")}"`;
 			if (c.req.header("if-none-match") === etag) return c.body(null, 304);
 			c.header("etag", etag);
@@ -604,6 +675,76 @@ export function createDaemonApp({
 		return c.body(new Uint8Array(index.body));
 	}
 
+	// the terminal bridge (#42): spool's first WebSocket. The HTTP server hands
+	// upgrades on /term/:project/:frame here; binary frames are terminal bytes
+	// in both directions, text frames are JSON control.
+	const wss = new WebSocketServer({ noServer: true });
+	const sockets = new Set<WebSocket>();
+	function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+		const match = /^\/term\/([^/]+)\/([^/?]+)/.exec(req.url ?? "");
+		const project = match?.[1] === undefined ? undefined : decodeURIComponent(match[1]);
+		const frame = match?.[2] === undefined ? undefined : decodeURIComponent(match[2]);
+		if (project === undefined || frame === undefined || !isSafeName(frame)) {
+			socket.destroy();
+			return;
+		}
+		const lookup = lookupProjectByName(spoolDir, project);
+		if (lookup.kind !== "found" || projectedKind(lookup.root, frame) !== "term") {
+			socket.destroy();
+			return;
+		}
+		const root = lookup.root;
+		const frameId: string = frame;
+		wss.handleUpgrade(req, socket, head, (client) => {
+			sockets.add(client);
+			watchTermRoot(root);
+			const send = (message: string | Uint8Array) => {
+				if (client.readyState === client.OPEN) client.send(message);
+			};
+			function handle(data: Buffer, isBinary: boolean): void {
+				if (isBinary) {
+					terms.input(root, frameId, new Uint8Array(data));
+					return;
+				}
+				try {
+					const message = JSON.parse(data.toString()) as {
+						t?: string;
+						cols?: number;
+						rows?: number;
+						on?: boolean;
+					};
+					if (message.t === "resize" && typeof message.cols === "number" && typeof message.rows === "number") {
+						terms.resize(root, frameId, message.cols, message.rows);
+					} else if (message.t === "freeze") terms.freeze(root, frameId, message.on === true);
+					else if (message.t === "revive") void terms.revive(root, frameId);
+				} catch {
+					// a malformed control frame is noise, never a crash
+				}
+			}
+			// listeners attach synchronously: a frame arriving while the session
+			// spawns must never be dropped — it queues until attach settles
+			const queued: [Buffer, boolean][] = [];
+			let route: typeof handle = (data, isBinary) => void queued.push([data, isBinary]);
+			let closed = false;
+			let detach = () => {};
+			client.on("message", (data: Buffer, isBinary: boolean) => route(data, isBinary));
+			client.on("close", () => {
+				sockets.delete(client);
+				closed = true;
+				detach();
+			});
+			void terms.attach(root, frameId, { send }).then((attached) => {
+				detach = attached.detach;
+				if (closed) {
+					detach();
+					return;
+				}
+				route = handle;
+				for (const [data, isBinary] of queued.splice(0)) handle(data, isBinary);
+			});
+		});
+	}
+
 	return {
 		app,
 		/** Activate origin-dependent work (the thumb healer) once really bound. */
@@ -614,8 +755,17 @@ export function createDaemonApp({
 		startUpdateCheck: () => {
 			if (updateCheck === true) updateChecker.start();
 		},
+		/** The /term upgrade path — wired by serveDaemon onto the raw server. */
+		handleUpgrade,
+		/** Terminal sessions, exposed for the player's static grids and seam tests. */
+		terms,
 		close: () => {
 			stopRegistryWatch();
+			for (const unsubscribe of termWatches.values()) unsubscribe();
+			termWatches.clear();
+			for (const socket of sockets) socket.terminate();
+			wss.close();
+			void terms.close();
 			hub.close();
 			updateChecker.stop();
 			void shots.close();

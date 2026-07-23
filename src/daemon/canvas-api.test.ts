@@ -28,7 +28,7 @@ describe("frame projection", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { root: string; frames: unknown[] };
 		expect(body.root).toBe(root);
-		expect(body.frames).toEqual([{ name: "checkout", x: 120, y: 40, w: 800, h: 600, hasThumb: false }]);
+		expect(body.frames).toEqual([{ name: "checkout", kind: "html", x: 120, y: 40, w: 800, h: 600, hasThumb: false }]);
 	});
 
 	it("fills in missing sidecars on disk, placing frames side by side", async () => {
