@@ -211,13 +211,15 @@ window.addEventListener("resize", () => {
 
 // ---- keys: full passthrough, one way out -----------------------------------
 
+let playerHosted = false;
+
 // the exit chord is claimed at the document level, capture-phase: focus can
 // sit on the body or the exit chip rather than the emulator's textarea, and
 // the one way out must work from anywhere inside the frame
 window.addEventListener(
 	"keydown",
 	(event) => {
-		if (termKeyIntent(event) !== "exit") return;
+		if (termKeyIntent(event, !playerHosted) !== "exit") return;
 		event.preventDefault();
 		post({ spool: "key", key: "Escape" });
 	},
@@ -227,7 +229,7 @@ window.addEventListener(
 // the emulator only suppresses the chord — the relay above already spoke
 term.attachCustomKeyEventHandler((event) => {
 	if (event.type !== "keydown") return true;
-	return termKeyIntent(event) !== "exit";
+	return termKeyIntent(event, !playerHosted) !== "exit";
 });
 
 // pinch-zoom belongs to the canvas; ordinary wheel stays the terminal's scrollback
@@ -262,9 +264,12 @@ window.addEventListener("mousedown", () => {
 // ---- host protocol odds and ends -------------------------------------------
 
 window.addEventListener("message", (event) => {
-	const m = event.data as { spool?: string; on?: boolean; id?: number };
+	const m = event.data as { spool?: string; surface?: string; on?: boolean; id?: number };
 	if (m === null || typeof m !== "object") return;
-	if (m.spool === "freeze") control({ t: "freeze", on: m.on === true });
+	if (m.spool === "focus") {
+		playerHosted = m.surface === "player";
+		term.focus();
+	} else if (m.spool === "freeze") control({ t: "freeze", on: m.on === true });
 	// a terminal has no elements to pick and no site anchors; answer so the
 	// canvas never waits on a reply that cannot come
 	else if (m.spool === "pick" && typeof m.id === "number") post({ spool: "picked", id: m.id, chain: [] });

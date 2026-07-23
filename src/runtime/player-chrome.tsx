@@ -1,7 +1,6 @@
-import type { ComponentType, RefObject } from "react";
-import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { ComponentType } from "react";
+import { Fragment, useEffect, useState, useSyncExternalStore } from "react";
 import { ExternalLinkDialog } from "./external-link-dialog";
-import { exitChordLabel } from "./term-keys";
 
 /**
  * The stage and pill (#24), matching Paper screens v1 "05 · player": the
@@ -19,19 +18,15 @@ export interface PlayerController {
 		frame: string;
 		stack: string[];
 		motion: boolean;
-		hint: boolean;
 		arrival: number;
 		externalHref: string | null;
 	};
 	geometry(frame: string): { w: number; h: number };
-	/** Stamps of this frame's coded-navigation elements, for the hint layer (#34). */
-	hintStamps(frame: string): string[];
-	/** Whether this screen is a terminal frame (#44) — the pill shows its exit chord. */
+	/** Whether this screen is a terminal frame (#44). */
 	terminal(frame: string): boolean;
 	back(): void;
 	restart(): void;
 	toggleMotion(): void;
-	toggleHint(): void;
 	dismissExternal(): void;
 	close(): void;
 }
@@ -44,11 +39,9 @@ export function Player({
 	controller: PlayerController;
 }) {
 	useSyncExternalStore(controller.subscribe, controller.version);
-	const { frame, stack, motion, hint, arrival, externalHref } = controller.read();
+	const { frame, stack, motion, arrival, externalHref } = controller.read();
 	const { w, h } = controller.geometry(frame);
 	const viewport = useViewport();
-	const scrollRef = useRef<HTMLDivElement | null>(null);
-	const stamps = useMemo(() => controller.hintStamps(frame), [controller, frame]);
 	const terminal = controller.terminal(frame);
 	const Screen = frames[frame];
 	// the session's history is unbounded (#5); the readout is not — a loop-
@@ -58,15 +51,16 @@ export function Player({
 
 	return (
 		<div className="spool-stage">
-			<div className="spool-screen" style={{ width: w, height: h, transform: place(w, h, viewport) }}>
+			<div
+				className={terminal ? "spool-screen is-terminal" : "spool-screen"}
+				style={{ width: w, height: h, transform: place(w, h, viewport) }}
+			>
 				<div
-					ref={scrollRef}
-					className="spool-screen-scroll"
+					className={terminal ? "spool-screen-scroll is-terminal" : "spool-screen-scroll"}
 					style={{ position: "relative", zIndex: 0, isolation: "isolate" }}
 				>
 					{Screen === undefined ? null : <Screen key={arrival} />}
 				</div>
-				{hint && <HintOverlay stamps={stamps} scrollRef={scrollRef} arrival={arrival} />}
 				{externalHref !== null && (
 					<ExternalLinkDialog
 						href={externalHref}
@@ -110,14 +104,6 @@ export function Player({
 					))}
 					<span className="is-current">{frame}</span>
 				</span>
-				{terminal && (
-					<span
-						className="spool-term-chord"
-						title="the terminal owns every key — the chord hands the keyboard back"
-					>
-						{exitChordLabel(navigator.platform)}
-					</span>
-				)}
 				<span className="spool-rule" />
 				<button
 					type="button"
@@ -167,28 +153,6 @@ export function Player({
 				</button>
 				<button
 					type="button"
-					id="spool-hint"
-					className={hint ? "spool-hint-toggle is-on" : "spool-hint-toggle"}
-					aria-label="Hints"
-					aria-pressed={hint}
-					disabled={externalHref !== null}
-					onClick={controller.toggleHint}
-				>
-					<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-						<rect
-							x="2"
-							y="3.5"
-							width="10"
-							height="7"
-							rx="2"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="1.5"
-						/>
-					</svg>
-				</button>
-				<button
-					type="button"
 					id="spool-close"
 					aria-label="Close"
 					disabled={externalHref !== null}
@@ -205,90 +169,6 @@ export function Player({
 					</svg>
 				</button>
 			</div>
-		</div>
-	);
-}
-
-interface HintBox {
-	x: number;
-	y: number;
-	w: number;
-	h: number;
-	r: number;
-}
-
-/**
- * The hint layer (#34): one outline over every element that navigates — the
- * live [data-go] carriers plus the stamped ui.go carriers the config names.
- * Overlay chrome only, pointer-transparent, measured against the screen
- * viewport so scroll and scale never lie; the frame's own DOM is never
- * touched (the parity law).
- */
-function HintOverlay({
-	stamps,
-	scrollRef,
-	arrival,
-}: {
-	stamps: string[];
-	scrollRef: RefObject<HTMLDivElement | null>;
-	arrival: number;
-}) {
-	const [boxes, setBoxes] = useState<HintBox[]>([]);
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies(arrival): a screen swap re-measures — the new screen's elements are the point
-	useEffect(() => {
-		const scroller = scrollRef.current;
-		if (scroller === null) return;
-		const measure = () => {
-			const screenRect = scroller.getBoundingClientRect();
-			// the screen is transformed: divide measured pixels back to frame units
-			const scale = scroller.clientWidth > 0 ? screenRect.width / scroller.clientWidth : 1;
-			const carriers = new Set<Element>(scroller.querySelectorAll("[data-go]"));
-			if (stamps.length > 0) {
-				const wanted = new Set(stamps);
-				for (const el of scroller.querySelectorAll("[data-spool-source]")) {
-					const stamp = el.getAttribute("data-spool-source");
-					if (stamp !== null && wanted.has(stamp)) carriers.add(el);
-				}
-			}
-			setBoxes(
-				[...carriers].map((el) => {
-					const rect = el.getBoundingClientRect();
-					let radius = 0;
-					try {
-						radius = Number.parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
-					} catch {
-						// a detached element outlines square rather than not at all
-					}
-					return {
-						x: (rect.x - screenRect.x) / scale,
-						y: (rect.y - screenRect.y) / scale,
-						w: rect.width / scale,
-						h: rect.height / scale,
-						r: radius,
-					};
-				}),
-			);
-		};
-		measure();
-		scroller.addEventListener("scroll", measure, { passive: true });
-		window.addEventListener("resize", measure);
-		return () => {
-			scroller.removeEventListener("scroll", measure);
-			window.removeEventListener("resize", measure);
-		};
-	}, [stamps, scrollRef, arrival]);
-
-	return (
-		<div className="spool-hints" aria-hidden="true">
-			{boxes.map((box, index) => (
-				<div
-					// biome-ignore lint/suspicious/noArrayIndexKey: boxes are rebuilt whole per measure — position is identity
-					key={index}
-					className="spool-hint"
-					style={{ left: box.x, top: box.y, width: box.w, height: box.h, borderRadius: box.r }}
-				/>
-			))}
 		</div>
 	);
 }
@@ -338,7 +218,10 @@ export function TermScreen({
 					src={src}
 					title={title}
 					sandbox="allow-scripts"
-					onLoad={(event) => event.currentTarget.focus()}
+					onLoad={(event) => {
+						event.currentTarget.focus({ preventScroll: true });
+						event.currentTarget.contentWindow?.postMessage({ spool: "focus", surface: "player" }, "*");
+					}}
 				/>
 			)}
 		</div>
@@ -364,17 +247,13 @@ function useViewport(): Viewport {
 const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
 
 /**
- * Screens v1 placement, split by pointer. Fine pointer: always the artboard
- * posture — 28px from the top, scaled down until the frame clears the stage
- * margins (56 across, 120 below), so the pill never covers the frame's own
- * bottom UI. Coarse pointer — a phone — keeps full-bleed: scaled to the
- * whole viewport, centered, pill overlaying. Never above native size either
- * way: a small frame on a big stage sits at its own pixels.
+ * Fine pointer: keep stage margins for the pill, then center the frame. Coarse
+ * pointer: use the whole viewport. Never scale a frame above its native size.
  */
 function place(w: number, h: number, { vw, vh }: Viewport): string {
 	if (!coarsePointer) {
 		const scale = Math.min(1, (vw - 56) / w, (vh - 120) / h);
-		return `translate(${Math.round((vw - w * scale) / 2)}px, 28px) scale(${scale})`;
+		return `translate(${Math.round((vw - w * scale) / 2)}px, ${Math.round((vh - h * scale) / 2)}px) scale(${scale})`;
 	}
 	const scale = Math.min(1, vw / w, vh / h);
 	return `translate(${(vw - w * scale) / 2}px, ${(vh - h * scale) / 2}px) scale(${scale})`;

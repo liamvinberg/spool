@@ -14,8 +14,8 @@ export interface KeyLike {
 	ctrlKey: boolean;
 }
 
-export function termKeyIntent(event: KeyLike): TermKeyIntent {
-	return (event.metaKey || event.ctrlKey) && event.key === "Escape" ? "exit" : "tui";
+export function termKeyIntent(event: KeyLike, exitChord = true): TermKeyIntent {
+	return exitChord && (event.metaKey || event.ctrlKey) && event.key === "Escape" ? "exit" : "tui";
 }
 
 export function exitChipLabel(code: number): string {

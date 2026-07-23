@@ -24,6 +24,8 @@ function xtermCss(): string {
 
 const TERM_CSS = `html, body, #term { height: 100%; }
 body { margin: 0; background: ${TERM_BACKGROUND}; overflow: hidden; }
+.xterm .xterm-viewport { scrollbar-width: none; }
+.xterm .xterm-viewport::-webkit-scrollbar { display: none; }
 #term.spool-exited { opacity: 0.55; }
 .spool-exit-chip {
 	position: fixed; top: 8px; right: 8px; z-index: 10;
