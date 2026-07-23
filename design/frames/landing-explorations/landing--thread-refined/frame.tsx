@@ -1,13 +1,14 @@
 import { motion } from "motion/react";
-import { SpoolMark } from "../../shared/ui/spool-mark";
+import { SpoolMark } from "../../../shared/ui/spool-mark";
 
 /**
- * landing--thread-unspool
- * Axis A — install INSIDE the hero. Axis B — the beam is born at the mark. The
- * ribbon sits at the top and the thread spools out of its base, becoming the page
- * spine that the rest of the page hangs from. The pulse starts each cycle at the
- * ribbon, so you read the thread leaving the spool. The statement and the install
- * live to the right of the thread it pays out.
+ * landing--thread-refined
+ * Axis A — dedicated install section. Axis B — the original left spine, refined.
+ * Held deliberately close to landing--thread so the drift is legible: the spine
+ * now fades in and out at the page edges instead of hard-cutting, each node gains
+ * a stitch halo so it reads as a deliberate point rather than a stray dot, and the
+ * pulse is taller, softer and slower. Copy, layout and the dedicated install are
+ * the parent's, so the refinement is the only variable in view.
  */
 
 const stance = [
@@ -23,6 +24,7 @@ const stance = [
 	{ k: "flows", v: "walk screen to screen, with morphing transitions." },
 ];
 
+/** a stitch point on the spine: the dot, plus a faint halo ring that makes it deliberate */
 function Node() {
 	return (
 		<span className="absolute -left-[124px] top-[9px] block h-[9px] w-[9px]">
@@ -32,32 +34,21 @@ function Node() {
 	);
 }
 
-export default function LandingThreadUnspool() {
+export default function LandingThreadRefined() {
 	return (
 		<div className="relative min-h-full w-full overflow-hidden bg-bg font-sans text-text antialiased">
-			{/* the spool: the ribbon the thread pays out of */}
-			<motion.div
-				className="absolute left-[132px] top-[128px] w-[136px]"
-				animate={{ rotate: [-3, 3, -3] }}
-				transition={{ duration: 11, repeat: Infinity, ease: "easeInOut" }}
-			>
-				<SpoolMark className="w-full text-thread" title="spool ribbon" />
-			</motion.div>
-
-			{/* the thread — spools out of the ribbon base and runs the page as its spine */}
+			{/* thread spine — solid through the body, softened where it meets the page edges */}
 			<div
-				className="absolute left-[200px] top-[300px] bottom-0 w-px"
+				className="absolute inset-y-0 left-[200px] w-px"
 				style={{
 					background:
-						"linear-gradient(to bottom, rgba(245,57,26,0.6) 0%, rgba(245,57,26,0.55) 92%, transparent 100%)",
+						"linear-gradient(to bottom, transparent 0%, rgba(245,57,26,0.55) 4%, rgba(245,57,26,0.55) 96%, transparent 100%)",
 				}}
 			>
-				{/* the point where the thread leaves the spool */}
-				<span className="absolute left-1/2 top-0 block h-[9px] w-[9px] -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-bg bg-thread" />
 				<motion.span
 					className="absolute left-1/2 block h-24 w-[7px] -translate-x-1/2 rounded-full bg-gradient-to-b from-transparent via-thread to-transparent"
-					animate={{ top: ["-3%", "104%"] }}
-					transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+					animate={{ top: ["-10%", "110%"] }}
+					transition={{ duration: 8.5, repeat: Infinity, ease: "easeInOut" }}
 				/>
 			</div>
 
@@ -79,9 +70,10 @@ export default function LandingThreadUnspool() {
 					</div>
 				</header>
 
-				{/* hero — statement top-aligned with the spool, install as the second beat */}
-				<section className="relative pb-40 pt-2">
+				{/* hero */}
+				<section className="relative grid grid-cols-[1fr_auto] items-center gap-16 pb-32 pt-20">
 					<div className="max-w-[620px]">
+						<Node />
 						<h1 className="text-[76px] font-semibold leading-[0.98] tracking-[-0.02em]">
 							feel an app
 							<br />
@@ -92,35 +84,18 @@ export default function LandingThreadUnspool() {
 							infinite canvas and links them into walkable flows. you feel the
 							real thing, interactions and motion and inputs, before it exists.
 						</p>
-
-						{/* install — the second beat, the thread pointing at the action */}
-						<div className="mt-11">
-							<div className="flex gap-5">
-								<span className="w-px shrink-0 self-stretch bg-thread/70" />
-								<div className="font-mono text-[16px] leading-[32px]">
-									<div>
-										<span className="select-none text-muted">$ </span>
-										npm i -g spool.page
-									</div>
-									<div>
-										<span className="select-none text-muted">$ </span>
-										spool init
-									</div>
-									<div>
-										<span className="select-none text-muted">$ </span>
-										spool open
-									</div>
-								</div>
-							</div>
-							<div className="mt-6 pl-[25px] font-mono text-xs text-muted">
-								requires node 22+ · best in chrome · macos-first today
-							</div>
-						</div>
 					</div>
+					<motion.div
+						className="relative w-[300px] shrink-0"
+						animate={{ y: [0, -14, 0] }}
+						transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+					>
+						<SpoolMark className="w-full text-thread" title="spool ribbon" />
+					</motion.div>
 				</section>
 
 				{/* stance */}
-				<section className="relative border-t border-border pb-4 pt-16">
+				<section className="relative border-t border-border pt-16">
 					<Node />
 					<div className="grid grid-cols-2 gap-x-16 gap-y-12">
 						{stance.map((s, i) => (
@@ -141,8 +116,42 @@ export default function LandingThreadUnspool() {
 					</div>
 				</section>
 
+				{/* install */}
+				<section className="relative pb-28 pt-28">
+					<Node />
+					<div className="grid grid-cols-[auto_1fr] items-end gap-16">
+						<div>
+							<div className="mb-6 font-mono text-xs text-muted">install</div>
+							<div className="rounded-md border border-border bg-surface p-7 font-mono text-[15px] leading-[30px]">
+								<div>
+									<span className="select-none text-muted">$ </span>
+									npm i -g spool.page
+								</div>
+								<div>
+									<span className="select-none text-muted">$ </span>
+									spool init
+								</div>
+								<div>
+									<span className="select-none text-muted">$ </span>
+									spool open
+								</div>
+							</div>
+						</div>
+						<div className="pb-2">
+							<p className="max-w-[300px] text-md leading-[22px] text-muted">
+								run <span className="font-mono text-text">spool init</span> inside
+								your repo. the canvas opens at{" "}
+								<span className="font-mono text-text">localhost:7766</span>.
+							</p>
+							<div className="mt-6 font-mono text-xs text-muted">
+								requires node 22+ · best in chrome · macos-first today
+							</div>
+						</div>
+					</div>
+				</section>
+
 				{/* footer */}
-				<footer className="mt-28 flex items-center justify-between border-t border-border py-10">
+				<footer className="flex items-center justify-between border-t border-border py-10">
 					<div className="flex items-center gap-2.5">
 						<SpoolMark className="h-4 w-4 text-thread" />
 						<span className="text-sm text-muted">spool.page</span>
