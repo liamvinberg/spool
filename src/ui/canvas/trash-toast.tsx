@@ -2,7 +2,7 @@
  * The Trash toast (#23), matching screens v1: raised pill, message, Undo in
  * thread (red binds the destructive action, #13), ⌘Z in muted mono. While it
  * stands, the disk move is deferred — Undo restores the canvas and nothing
- * ever left the folder (#7: ⌘Z = the toast, the only undo in v1).
+ * ever left the folder (#7: ⌘Z answers the toast ahead of the geometry undo).
  */
 
 export function TrashToast({ frames, onUndo }: { frames: readonly string[]; onUndo: () => void }) {
