@@ -26,6 +26,20 @@ import { termScreenFile } from "./thumbs";
 
 const DEFAULT_DETACH_GRACE_MS = 3000;
 
+/** The ways a TUI leaves the alternate screen — the wipe before its artifact vanishes. */
+const LEAVE_ALT = ["\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"].map((s) => Uint8Array.from(s, (c) => c.charCodeAt(0)));
+
+/** Byte offset of the last leave-alt sequence in a chunk, -1 for none. */
+function lastLeaveAlt(out: Uint8Array): number {
+	for (let i = out.length - 1; i >= 0; i--) {
+		if (out[i] !== 0x1b) continue;
+		for (const seq of LEAVE_ALT) {
+			if (i + seq.length <= out.length && seq.every((byte, j) => out[i + j] === byte)) return i;
+		}
+	}
+	return -1;
+}
+
 // both xterm packages are CJS — createRequire keeps the types honest
 const require = createRequire(import.meta.url);
 const { Terminal: HeadlessTerminal } = require("@xterm/headless") as typeof import("@xterm/headless");
@@ -51,6 +65,9 @@ interface Session {
 	proc: TermProcess | undefined;
 	state: "running" | "frozen" | "exited";
 	exitCode: number | undefined;
+	/** The screen serialized just before the last leave-alt-screen sequence —
+	 * a dying TUI wipes its own artifact on the way out, and this is it. */
+	altStash: string | undefined;
 	clients: Set<TermClient>;
 	detachTimer: NodeJS.Timeout | undefined;
 	cols: number;
@@ -83,6 +100,15 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		return new Promise((resolve) => term.write("", resolve));
 	}
 
+	/** Nothing but blanks on the visible screen. */
+	function screenBlank(term: Terminal): boolean {
+		const buffer = term.buffer.active;
+		for (let y = 0; y < term.rows; y++) {
+			if ((buffer.getLine(y + buffer.viewportY)?.translateToString(true) ?? "").trim() !== "") return false;
+		}
+		return true;
+	}
+
 	function broadcast(session: Session, message: string | Uint8Array): void {
 		for (const client of session.clients) client.send(message);
 	}
@@ -110,7 +136,17 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 			if (session.generation !== generation) return;
 			const { out, navs } = session.filter.push(chunk);
 			if (out.length > 0) {
-				session.term.write(out);
+				// a leave-alt-screen wipes the display: keep the frame before it,
+				// so a death that rides one still has its last screen (see onExit)
+				const leave = lastLeaveAlt(out);
+				if (leave >= 0) {
+					session.term.write(out.subarray(0, leave), () => {
+						if (session.generation === generation) session.altStash = session.serialize.serialize();
+					});
+					session.term.write(out.subarray(leave));
+				} else {
+					session.term.write(out);
+				}
 				broadcast(session, out);
 			}
 			for (const target of navs) control(session, { t: "nav", target });
@@ -120,9 +156,20 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 			session.proc = undefined;
 			session.state = "exited";
 			session.exitCode = code;
-			control(session, { t: "exit", code });
-			void persist(session);
-			publish(session.root, session.frame);
+			void (async () => {
+				await settled(session.term);
+				// the artifact law: an exited TUI keeps its last screen. One that
+				// left the alternate screen on the way out blanked it — restore the
+				// frame stashed just before the wipe, everywhere at once.
+				if (session.altStash !== undefined && screenBlank(session.term)) {
+					session.term.write(session.altStash);
+					broadcast(session, new TextEncoder().encode(session.altStash));
+				}
+				session.altStash = undefined;
+				control(session, { t: "exit", code });
+				await persist(session);
+				publish(session.root, session.frame);
+			})();
 		});
 	}
 
@@ -162,6 +209,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 				proc: undefined,
 				state: "running",
 				exitCode: undefined,
+				altStash: undefined,
 				clients: new Set(),
 				detachTimer: undefined,
 				cols,
@@ -189,6 +237,10 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		session.clients.add(client);
 
 		await settled(session.term);
+		// the daemon owns the grid's size: the client sizes its emulator to this
+		// before the snapshot lands, or a replay serialized at other columns
+		// wraps every line and shreds the screen
+		client.send(JSON.stringify({ t: "size", cols: session.cols, rows: session.rows }));
 		const snapshot = session.serialize.serialize();
 		if (snapshot.length > 0) client.send(new TextEncoder().encode(snapshot));
 		// an attach-time exit is arrival state, not a death watched happen: the
@@ -235,8 +287,13 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		if (session === undefined || (cols === session.cols && rows === session.rows)) return;
 		session.cols = cols;
 		session.rows = rows;
+		// a corpse keeps its last screen verbatim — the new size waits for the
+		// revival's respawn; reflowing dead output could only shred it
+		if (session.state === "exited") return;
 		session.term.resize(cols, rows);
 		session.proc?.resize(cols, rows);
+		// every mirror follows the daemon's grid — including the asker
+		control(session, { t: "size", cols, rows });
 	}
 
 	function freeze(root: string, frame: string, on: boolean): void {
@@ -255,8 +312,14 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		killProcess(session);
 		session.proc = undefined;
 		session.term.reset();
+		// a corpse resized while dead deferred the new grid to this respawn
+		if (session.term.cols !== session.cols || session.term.rows !== session.rows) {
+			session.term.resize(session.cols, session.rows);
+		}
 		session.filter = createOscFilter();
+		session.altStash = undefined;
 		control(session, { t: "restart" });
+		control(session, { t: "size", cols: session.cols, rows: session.rows });
 		await spawnInto(session);
 		control(session, { t: "state", state: "running" });
 	}
