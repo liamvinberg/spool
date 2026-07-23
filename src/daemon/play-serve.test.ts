@@ -280,9 +280,9 @@ describe("terminal frames in the player (#42)", () => {
 		const config = configOf(doc) as ReturnType<typeof configOf> & { terminals?: Record<string, { svg: string }> };
 		expect(Object.keys(config.frames).sort()).toEqual(["dash", "menu"]);
 		// born unplaced at the conventional floor: 80×24 in exact cell pixels
-		expect(config.frames.dash).toEqual({ w: 720, h: 432 });
+		expect(config.frames.dash).toEqual({ w: 720, h: 480 });
 		expect(config.terminals?.dash?.svg).toContain("<svg");
-		expect(config.terminals?.dash?.svg).toContain('viewBox="0 0 720 432"');
+		expect(config.terminals?.dash?.svg).toContain('viewBox="0 0 720 480"');
 
 		// only html frames enter the compile; the terminal never passes esbuild
 		const boot = doc.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1] ?? "";

@@ -1,5 +1,5 @@
 import { Terminal } from "@xterm/xterm";
-import { cellsForPx, TERM_FONT_PX, TERM_LINE_HEIGHT } from "../term/cells";
+import { cellsForViewport, TERM_FONT_PX, TERM_LINE_HEIGHT } from "../term/cells";
 import { TERM_ANSI, TERM_BACKGROUND, TERM_CURSOR, TERM_FOREGROUND } from "../term/theme";
 import { exitChipLabel, termKeyIntent } from "./term-keys";
 
@@ -50,19 +50,10 @@ const theme = {
 	brightWhite: TERM_ANSI[15],
 };
 
-const grid = () => cellsForPx(document.documentElement.clientWidth, document.documentElement.clientHeight);
-
-// the pinned font must be the one measured: the emulator derives its cell box
-// from whatever face is loaded at open, and a fallback-measured cell breaks
-// the 9×18 contract every other layer computes with — the grid renders
-// stretched and clipped. Bounded, so an unloadable font degrades, never blocks.
-await Promise.race([
-	Promise.all([
-		document.fonts.load(`${TERM_FONT_PX}px "JetBrains Mono"`),
-		document.fonts.load(`700 ${TERM_FONT_PX}px "JetBrains Mono"`),
-	]),
-	new Promise((resolve) => setTimeout(resolve, 2000)),
-]).catch(() => {});
+// the nearest grid, not the floor: the hosting chrome shaves a pixel or two
+// off the authored box, and losing a cell to that would fork this surface's
+// grid from the sidecar's — the one every other surface derives
+const grid = () => cellsForViewport(document.documentElement.clientWidth, document.documentElement.clientHeight);
 
 const start = grid();
 const term = new Terminal({
@@ -79,6 +70,13 @@ const term = new Terminal({
 
 const host = document.getElementById("term");
 if (host === null) throw new Error("spool: the terminal document has no #term");
+// the pinned mono must be the measured font: xterm sizes its cells once at
+// open, and fallback-measured rows overshoot 18px — the grid then clips its
+// last rows. The race keeps a broken font from ever holding the boot.
+await Promise.race([
+	document.fonts.load(`${TERM_FONT_PX}px "JetBrains Mono"`).catch(() => {}),
+	new Promise((resolve) => setTimeout(resolve, 1500)),
+]);
 term.open(host);
 // booting already focused — a player walk arriving (#44), an entered reload —
 // is the enter gesture: hand the keyboard straight to the emulator
@@ -213,20 +211,24 @@ window.addEventListener("resize", () => {
 
 // ---- keys: full passthrough, one way out -----------------------------------
 
-// the chord is caught at the window, capture phase: it must work from
-// anywhere in the document — a dead TUI, a click that moved focus off the
-// emulator — or entering becomes a trap. Stopping propagation keeps it from
-// the emulator too: no terminal has ever transmitted it, so none may start.
+// the exit chord is claimed at the document level, capture-phase: focus can
+// sit on the body or the exit chip rather than the emulator's textarea, and
+// the one way out must work from anywhere inside the frame
 window.addEventListener(
 	"keydown",
 	(event) => {
 		if (termKeyIntent(event) !== "exit") return;
 		event.preventDefault();
-		event.stopImmediatePropagation();
 		post({ spool: "key", key: "Escape" });
 	},
 	{ capture: true },
 );
+
+// the emulator only suppresses the chord — the relay above already spoke
+term.attachCustomKeyEventHandler((event) => {
+	if (event.type !== "keydown") return true;
+	return termKeyIntent(event) !== "exit";
+});
 
 // pinch-zoom belongs to the canvas; ordinary wheel stays the terminal's scrollback
 window.addEventListener(

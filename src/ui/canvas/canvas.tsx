@@ -1895,6 +1895,16 @@ export function ProjectCanvas({
 				zoomAtPoint(c.x, c.y, 0.8, true);
 				return;
 			}
+			if (mod && event.key === "Escape") {
+				// the terminal exit chord (#42) landing canvas-side: focus can sit
+				// here instead of inside the entered frame, and the frame cannot
+				// relay a chord it never saw
+				if (enteredRef.current !== null) {
+					event.preventDefault();
+					exitEntered(true);
+				}
+				return;
+			}
 			if (mod) return;
 			if (event.shiftKey && event.code === "Digit1") {
 				zoomFit();
