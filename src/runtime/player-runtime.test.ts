@@ -560,7 +560,7 @@ describe("live terminal screens (#44)", () => {
 		expect(document.querySelector(".spool-term-poster svg")).not.toBeNull();
 
 		// the pill shows the one binding chrome may answer; html screens show none
-		expect(document.querySelector(".spool-term-chord")?.textContent).toContain("⎋");
+		expect(document.querySelector(".spool-term-chord")?.textContent).toContain("esc");
 	});
 
 	it("a nav the TUI fired advances the walk and verifies its edge — only from the current screen", async () => {
