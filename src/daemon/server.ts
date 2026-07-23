@@ -1,3 +1,4 @@
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { serve } from "@hono/node-server";
 import { PortBusyError, SpoolError } from "../errors";
@@ -36,7 +37,7 @@ export function serveDaemon({
 	const daemon = createDaemonApp({ spoolDir, version, uiDir, updateCheck });
 
 	return new Promise<RunningDaemon>((resolve, reject) => {
-		const server = serve({ fetch: daemon.app.fetch, hostname: host, port }, (info: AddressInfo) => {
+		const server = serve({ fetch: daemon.app.fetch, hostname: host, port, createServer }, (info: AddressInfo) => {
 			// bound: the daemon can now dial itself (the thumb healer's shots)
 			daemon.setSelfOrigin(daemonUrl(host, info.port));
 			// listening first, asking after — the registry never delays the canvas
@@ -57,9 +58,10 @@ export function serveDaemon({
 						daemon.close();
 						clearDaemonState(spoolDir, process.pid);
 						server.close(() => done());
+						server.closeAllConnections();
 					}),
 			});
-		});
+		}) as Server;
 		server.on("error", (error: NodeJS.ErrnoException) => {
 			// the app was already constructed — release its watchers and timers
 			// or the failed process never drains its event loop
