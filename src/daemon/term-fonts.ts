@@ -25,8 +25,16 @@ export function termFontFile(name: string): string | undefined {
 }
 
 function faces(src: (file: string) => string): string {
+	// the metric overrides are the 9×18 contract (term/cells.ts): JetBrains
+	// Mono's natural line box is 1.32 em, and the emulator sizes its cell from
+	// that measurement — 15px type would land on 24px rows. Pinning the box to
+	// exactly 1 em (77/23 keeps the face's own ascent:descent ratio) makes the
+	// measured line 15px, so the emulator's 1.2 line height yields the 18px
+	// cell every other layer computes with. Glyph ink is untouched.
 	const face = (weight: number, file: string) =>
-		`@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: ${weight}; src: url(${src(file)}) format("woff2"); }`;
+		`@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: ${weight}; ` +
+		`ascent-override: 77%; descent-override: 23%; line-gap-override: 0%; ` +
+		`src: url(${src(file)}) format("woff2"); }`;
 	return [face(400, "jetbrains-mono-latin-400-normal.woff2"), face(700, "jetbrains-mono-latin-700-normal.woff2")].join(
 		"\n",
 	);

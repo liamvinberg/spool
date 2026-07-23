@@ -52,6 +52,18 @@ const theme = {
 
 const grid = () => cellsForPx(document.documentElement.clientWidth, document.documentElement.clientHeight);
 
+// the pinned font must be the one measured: the emulator derives its cell box
+// from whatever face is loaded at open, and a fallback-measured cell breaks
+// the 9×18 contract every other layer computes with — the grid renders
+// stretched and clipped. Bounded, so an unloadable font degrades, never blocks.
+await Promise.race([
+	Promise.all([
+		document.fonts.load(`${TERM_FONT_PX}px "JetBrains Mono"`),
+		document.fonts.load(`700 ${TERM_FONT_PX}px "JetBrains Mono"`),
+	]),
+	new Promise((resolve) => setTimeout(resolve, 2000)),
+]).catch(() => {});
+
 const start = grid();
 const term = new Terminal({
 	cols: start.cols,
@@ -107,6 +119,9 @@ function connect(): void {
 	ws = socket;
 
 	socket.addEventListener("open", () => {
+		// every connection re-asks: the daemon's session may predate this
+		// document and hold another size
+		lastSent = { cols: 0, rows: 0 };
 		sendResize();
 		if (!loadedReported) {
 			loadedReported = true;
@@ -121,8 +136,17 @@ function connect(): void {
 				target?: string;
 				state?: string;
 				attach?: boolean;
+				cols?: number;
+				rows?: number;
 			};
-			if (message.t === "exit") {
+			if (message.t === "size") {
+				// the daemon owns the grid: adopt its size so the replayed screen
+				// lands on the columns it was painted at — our own wish is already
+				// racing there as a resize, and its application echoes back here
+				if (typeof message.cols === "number" && typeof message.rows === "number") {
+					if (term.cols !== message.cols || term.rows !== message.rows) term.resize(message.cols, message.rows);
+				}
+			} else if (message.t === "exit") {
 				// an attach-time corpse met with focus is being entered — a walk
 				// arrival, an entered boot — and entering revives (#44). A death
 				// watched live never respawns by itself.
@@ -168,8 +192,9 @@ term.onBinary((data) => {
 
 let lastSent = { cols: 0, rows: 0 };
 function sendResize(): void {
+	// ask, never apply: the emulator follows the daemon's size echo, so the
+	// screen and the process can never disagree about columns
 	const size = grid();
-	if (term.cols !== size.cols || term.rows !== size.rows) term.resize(size.cols, size.rows);
 	if (size.cols !== lastSent.cols || size.rows !== lastSent.rows) {
 		lastSent = size;
 		control({ t: "resize", cols: size.cols, rows: size.rows });
@@ -188,15 +213,20 @@ window.addEventListener("resize", () => {
 
 // ---- keys: full passthrough, one way out -----------------------------------
 
-term.attachCustomKeyEventHandler((event) => {
-	if (event.type !== "keydown") return true;
-	if (termKeyIntent(event) === "exit") {
+// the chord is caught at the window, capture phase: it must work from
+// anywhere in the document — a dead TUI, a click that moved focus off the
+// emulator — or entering becomes a trap. Stopping propagation keeps it from
+// the emulator too: no terminal has ever transmitted it, so none may start.
+window.addEventListener(
+	"keydown",
+	(event) => {
+		if (termKeyIntent(event) !== "exit") return;
 		event.preventDefault();
+		event.stopImmediatePropagation();
 		post({ spool: "key", key: "Escape" });
-		return false;
-	}
-	return true;
-});
+	},
+	{ capture: true },
+);
 
 // pinch-zoom belongs to the canvas; ordinary wheel stays the terminal's scrollback
 window.addEventListener(
@@ -220,6 +250,11 @@ window.addEventListener(
 window.addEventListener("focus", () => {
 	if (exited) control({ t: "revive" });
 	term.focus();
+});
+// the same gesture from inside: a frame that died while entered never gets a
+// fresh focus event, so a click on the corpse is the revival
+window.addEventListener("mousedown", () => {
+	if (exited) control({ t: "revive" });
 });
 
 // ---- host protocol odds and ends -------------------------------------------
