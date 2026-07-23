@@ -36,6 +36,7 @@ import {
 } from "./frame-export";
 import { FrameLabel } from "./frame-label";
 import { FrameShell, type WalkBoot } from "./frame-shell";
+import { emptyHistory, entryOf, record, takeRedo, takeUndo } from "./history";
 import { useFrameLifecycle } from "./lifecycle";
 import {
 	type ElementPreview,
@@ -282,9 +283,13 @@ export function ProjectCanvas({
 	const frameAnchor = useRef<string | null>(null);
 	const rowAnchor = useRef<{ frame: string; key: string } | null>(null);
 	const nudgeDirty = useRef(new Set<string>());
+	// where each frame stood when its nudge run began — one undo entry per flush
+	const nudgeOrigins = useRef(new Map<string, Geometry>());
 	const nudgeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const trashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const pendingTrashRef = useRef<string[] | null>(null);
+	// the geometry undo/redo stacks: per window, in memory, hands' writes only
+	const geometryHistory = useRef(emptyHistory());
 
 	const hasThumb = useCallback(
 		(name: string) => freshThumbs.has(name) || (framesRef.current.find((f) => f.name === name)?.hasThumb ?? false),
@@ -668,7 +673,7 @@ export function ProjectCanvas({
 	// --- geometry writes (#23): sidecars only, never source ---------------------
 
 	const commitGeometry = useCallback(
-		(names: readonly string[]) => {
+		(names: readonly string[], before?: Record<string, Geometry>) => {
 			const patch: Record<string, Geometry> = {};
 			for (const frame of framesRef.current) {
 				if (!names.includes(frame.name)) continue;
@@ -680,6 +685,10 @@ export function ProjectCanvas({
 				};
 			}
 			if (Object.keys(patch).length === 0) return;
+			if (before !== undefined) {
+				const entry = entryOf(before, patch);
+				if (entry !== undefined) geometryHistory.current = record(geometryHistory.current, entry);
+			}
 			setFrames((current) => {
 				return current.map((frame) => {
 					const rounded = patch[frame.name];
@@ -701,13 +710,19 @@ export function ProjectCanvas({
 		if (nudgeDirty.current.size === 0) return;
 		const names = [...nudgeDirty.current];
 		nudgeDirty.current.clear();
-		commitGeometry(names);
+		const before = Object.fromEntries(nudgeOrigins.current);
+		nudgeOrigins.current.clear();
+		commitGeometry(names, before);
 	}, [commitGeometry]);
 
 	const nudge = useCallback(
 		(dx: number, dy: number) => {
 			const names = selectedRef.current;
 			if (names.length === 0) return;
+			for (const frame of framesRef.current) {
+				if (!names.includes(frame.name) || nudgeOrigins.current.has(frame.name)) continue;
+				nudgeOrigins.current.set(frame.name, { x: frame.x, y: frame.y, w: frame.w, h: frame.h });
+			}
 			setFrames((current) =>
 				current.map((frame) =>
 					names.includes(frame.name) ? { ...frame, x: frame.x + dx, y: frame.y + dy } : frame,
@@ -719,6 +734,42 @@ export function ProjectCanvas({
 		},
 		[flushNudge],
 	);
+
+	// --- undo/redo: inverse patches over the same sidecar writes ----------------
+
+	const applyRects = useCallback(
+		(rects: Record<string, Geometry>) => {
+			setFrames((current) =>
+				current.map((frame) => {
+					const rect = rects[frame.name];
+					return rect === undefined ? frame : { ...frame, ...rect };
+				}),
+			);
+			void putGeometry(project, rects).then((ok) => {
+				if (!ok) void refetchFrames();
+			});
+		},
+		[project, refetchFrames],
+	);
+
+	const undoGeometry = useCallback(() => {
+		flushNudge(); // a pending nudge becomes the entry this ⌘Z pops
+		const alive = new Set(allFramesRef.current.map((frame) => frame.name));
+		const taken = takeUndo(geometryHistory.current, alive);
+		if (taken === undefined) return;
+		geometryHistory.current = taken.history;
+		applyRects(taken.rects);
+	}, [applyRects, flushNudge]);
+
+	const redoGeometry = useCallback(() => {
+		// a pending nudge is a fresh edit: flushing voids redo, exactly as typed
+		flushNudge();
+		const alive = new Set(allFramesRef.current.map((frame) => frame.name));
+		const taken = takeRedo(geometryHistory.current, alive);
+		if (taken === undefined) return;
+		geometryHistory.current = taken.history;
+		applyRects(taken.rects);
+	}, [applyRects, flushNudge]);
 
 	// --- trash (#23): instant canvas removal, disk move deferred on the toast ---
 
@@ -1530,6 +1581,16 @@ export function ProjectCanvas({
 		return origins;
 	};
 
+	// the rects a move began from — origins carry x/y, a move never changes size
+	const moveBefore = (origins: ReadonlyMap<string, Point>): Record<string, Geometry> => {
+		const before: Record<string, Geometry> = {};
+		for (const frame of framesRef.current) {
+			const origin = origins.get(frame.name);
+			if (origin !== undefined) before[frame.name] = { x: origin.x, y: origin.y, w: frame.w, h: frame.h };
+		}
+		return before;
+	};
+
 	const onPointerDown = (event: React.PointerEvent) => {
 		if (exportDialogRef.current !== null) return;
 		const cam = cameraRef.current;
@@ -1538,6 +1599,7 @@ export function ProjectCanvas({
 		setMenu(null);
 		setPreview(null); // the press supersedes the hover; its own answer redraws
 		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
+		flushNudge(); // a pending nudge settles before a new gesture captures origins
 		// a portal chip owns its click (#39) — capturing here would swallow it
 		if (datasetHit(event.target, "portal") !== null) return;
 		viewportRef.current?.setPointerCapture(event.pointerId);
@@ -1787,8 +1849,8 @@ export function ProjectCanvas({
 		setGuides(NO_GUIDES);
 		setMarquee(null);
 		setResizeCursor(null);
-		if (active.kind === "move") commitGeometry(active.names);
-		if (active.kind === "resize") commitGeometry([active.frame]);
+		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
+		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
 	};
 
 	const onDoubleClick = (event: React.MouseEvent) => {
@@ -1876,12 +1938,15 @@ export function ProjectCanvas({
 				event.preventDefault();
 				return;
 			}
-			if (mod && !event.shiftKey && (event.key === "z" || event.key === "Z")) {
-				// ⌘Z = the toast (#7): the one undo in v1 — ⌘⇧Z stays redo's, unbound
-				if (pendingTrashRef.current !== null) {
-					event.preventDefault();
-					undoTrash();
+			if (mod && (event.key === "z" || event.key === "Z")) {
+				event.preventDefault();
+				if (event.shiftKey) {
+					if (gesture.current.kind === "idle" || gesture.current.kind === "pan") redoGeometry();
+					return;
 				}
+				// ⌘Z answers the trash toast first (#7), then walks the geometry stack
+				if (pendingTrashRef.current !== null) undoTrash();
+				else if (gesture.current.kind === "idle" || gesture.current.kind === "pan") undoGeometry();
 				return;
 			}
 			if (mod && (event.key === "=" || event.key === "+")) {
@@ -2049,6 +2114,8 @@ export function ProjectCanvas({
 		nudge,
 		stageTrash,
 		undoTrash,
+		undoGeometry,
+		redoGeometry,
 		cancelGesture,
 		cancelPicks,
 		toggleArrows,
