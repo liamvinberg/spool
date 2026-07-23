@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectedFrame } from "../api";
-import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
+import { MAX_SPATIAL_DISTANCE, nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 
 const frame = (name: string, x: number, y: number, w = 100, h = 100): ProjectedFrame => ({
 	name,
@@ -54,6 +54,15 @@ describe("spatial frame navigation", () => {
 		const left = frame("left", -180, 0);
 
 		expect(nextSpatialFrame(origin, [origin, left], "right")).toBeUndefined();
+	});
+
+	it("does not cross the fixed boundary of a local frame group", () => {
+		const origin = frame("origin", 0, 0);
+		const atBoundary = frame("at-boundary", origin.w + MAX_SPATIAL_DISTANCE, 0);
+		const outside = frame("outside", origin.w + MAX_SPATIAL_DISTANCE + 1, 0);
+
+		expect(nextSpatialFrame(origin, [origin, atBoundary], "right")?.name).toBe("at-boundary");
+		expect(nextSpatialFrame(origin, [origin, outside], "right")).toBeUndefined();
 	});
 
 	it("breaks equal geometry by name", () => {
