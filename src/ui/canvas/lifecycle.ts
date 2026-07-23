@@ -178,7 +178,6 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			// first click pre-boots (#8): a selected frame mounts hidden so the
 			// double-click that follows reveals an already-running frame
 			if (target === "hibernated" && selectedRef.current === frame.name) target = "warm";
-
 			// leaving live stales the thumbnail; refresh once the camera settles,
 			// while the (hidden) DOM is still mounted
 			if (current === "live" && target === "warm" && frame.kind !== "term") needsShot.current.add(frame.name);
