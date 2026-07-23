@@ -1,6 +1,6 @@
 # spool: exploration synthesis
 
-Session synthesis, 2026-07-20 (Claude Fable exploration session + Liam's refinements). The four extraction reports in this folder (01-04) are the evidence base; this file is the argument. The bank page (`~/bank/personal/wiki/projects/spool.md`) carries the running decision list; where they disagree, the bank page wins.
+Session synthesis, 2026-07-20 (Claude Fable exploration session + Liam's refinements). The four extraction reports in this folder (01-04) are the evidence base; this file is the argument. This is historical context, not current behavior; code, tests, and configuration are authoritative.
 
 ## The product in one line
 
