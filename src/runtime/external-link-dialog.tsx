@@ -119,7 +119,7 @@ export function ExternalLinkDialog({ href, onStay, onOpen }: { href: string; onS
 }
 
 function displayUrl(url: URL): string {
-	return url.href;
+	return `${url.origin}${url.pathname}${url.search}${url.hash}`;
 }
 
 const EXTERNAL_LINK_DIALOG_CSS = `

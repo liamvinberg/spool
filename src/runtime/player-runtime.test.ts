@@ -138,7 +138,7 @@ export default function Menu() {
 			<button type="button" id="typo" data-go="ghost">to ghost</button>
 			<button type="button" id="frame-top" style={{ position: "fixed", inset: 0, zIndex: 9999 }}>top layer</button>
 			<a id="external" href="https://github.com/liamvinberg/spool">github</a>
-			<a id="external-port" href="http://example.com:8080/docs">port</a>
+			<a id="external-port" href="http://user:secret@example.com:8080/docs">port</a>
 		</main>
 	);
 }
@@ -267,6 +267,7 @@ describe("the player session", () => {
 		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
 		expect(document.querySelector('[role="dialog"]')?.textContent).toContain("http://example.com:8080/docs");
 		expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Open example.com:8080");
+		expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("secret");
 		const portOpen = document.querySelector<HTMLAnchorElement>(
 			'[role="dialog"] a[href="http://example.com:8080/docs"]',
 		);

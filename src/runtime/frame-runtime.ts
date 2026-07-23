@@ -421,6 +421,8 @@ function bindExternalLinks(): void {
 		}
 		if (url.protocol !== "http:" && url.protocol !== "https:") return;
 		if (play === undefined && !embedded) return;
+		url.username = "";
+		url.password = "";
 		event.preventDefault();
 		if (play !== undefined) {
 			externalHref = url.href;
