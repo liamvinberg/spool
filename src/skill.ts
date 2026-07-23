@@ -102,7 +102,7 @@ Flows: the terminal dialect's coded walk is term.go —
 
 The map reads term.go literals from source like every arrow: solid when unconditional, faint inside a branch, unreadable destinations named by \`spool flows\`, never guessed. Walking one — from an entered terminal or in the player — verifies its edge, never draws one.
 
-In the player, a terminal frame is live: the walk attaches to the real process, output streams in place, and every key reaches it — the pill shows the one exception, the platform modifier + Escape, which hands the keyboard back to the chrome. A term.go the running TUI fires advances the walk. Arriving is entering: the screen takes the keyboard, and a dead terminal revives. The pill's restart gives the session clean runs — each terminal frame a restarted walk reaches gets a fresh process; the first load instead joins whatever already runs, so a canvas-staged demo stays staged.
+In the player, a terminal frame is live: the walk attaches to the real process, output streams in place, and the screen takes the keyboard as soon as it arrives. There is no keyboard exit state; the player controls stay clickable around it. A term.go the running TUI fires advances the walk, and a dead terminal revives on arrival. The pill's restart gives the session clean runs: each terminal frame a restarted walk reaches gets a fresh process; the first load instead joins whatever already runs, so a canvas-staged demo stays staged.
 
 One process, every surface: the canvas and any number of players attach to the same session, mirrored — output streams to all of them, input from any of them interleaves, the last resize wins, and a restart or save resets every screen. The daemon's session is the truth; no surface gets a private copy.
 

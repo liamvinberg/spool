@@ -26,12 +26,6 @@ export interface PlayerConfig {
 	scenario: string;
 	/** Every frame in the composition with its authored geometry. */
 	frames: Record<string, { w: number; h: number }>;
-	/**
-	 * Per frame, the data-spool-source stamps of elements whose code navigates
-	 * (#34): ui.go carriers the hint toggle cannot find by attribute — data-go
-	 * carriers are queried live in the DOM. Frames with none are omitted.
-	 */
-	hints: Record<string, string[]>;
 	/** Terminal frames as static grids from the daemon-held buffer (#42). */
 	terminals?: Record<string, { svg: string }>;
 }
@@ -226,7 +220,6 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 .spool-term-screen svg { display: block; }
 .spool-term-poster { position: absolute; inset: 0; }
 .spool-term-screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-.spool-term-chord { padding: 0 3px; flex: none; white-space: nowrap; }
 .spool-boot {
 	position: fixed;
 	inset: 0;
@@ -253,6 +246,7 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 	overflow: clip;
 	view-transition-name: spool-screen;
 }
+.spool-screen.is-terminal { color-scheme: dark; background: #111110; }
 /* the scroller is a separate, untransformed element: an iframe'd frame
    scrolls when its content overflows, while position: fixed stays pinned to
    the frame edge — fixed content contains to the transformed screen above,
@@ -263,6 +257,7 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 	overflow: auto;
 	overscroll-behavior: contain;
 }
+.spool-screen-scroll.is-terminal { overflow: hidden; }
 .spool-pill {
 	position: fixed;
 	bottom: 28px;
@@ -298,10 +293,6 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 .spool-stack { display: flex; align-items: center; gap: 5px; padding: 0 3px; flex: none; white-space: nowrap; }
 .spool-stack .is-current { color: #f0efed; }
 .spool-rule { width: 1px; height: 18px; background: #363636; flex: none; }
-.spool-motion, .spool-hint-toggle { padding: 4px 8px; }
-.spool-motion.is-on, .spool-hint-toggle.is-on { background: #1c1c1c; color: #f0efed; }
-/* the hint layer (#34): thread-red outlines over navigating elements — one
-   style, overlay chrome only, never a hit target */
-.spool-hints { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.spool-hint { position: absolute; box-sizing: border-box; border: 1.5px solid #f5391a; }
+.spool-motion { padding: 4px 8px; }
+.spool-motion.is-on { background: #1c1c1c; color: #f0efed; }
 `;

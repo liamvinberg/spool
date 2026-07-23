@@ -26,7 +26,6 @@ import { createChangeHub } from "./events";
 import { deriveFlows, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
-import { hintStamps } from "./nav-sites";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerEtag } from "./play";
 import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
@@ -628,12 +627,6 @@ export function createDaemonApp({
 					start,
 					scenario: scenario ?? "default",
 					frames: Object.fromEntries(projection.frames.map((entry) => [entry.name, { w: entry.w, h: entry.h }])),
-					hints: Object.fromEntries(
-						names.flatMap((frameName) => {
-							const stamps = hintStamps(project.root, frameName);
-							return stamps.length === 0 ? [] : [[frameName, stamps]];
-						}),
-					),
 					...(termFrames.length === 0 ? {} : { terminals }),
 				};
 				const etag = playerEtag(compiled.bundle, config);

@@ -32,7 +32,6 @@ export interface NavSite {
 export interface UnreadableSite {
 	path: string;
 	line: number;
-	/** the element still navigates at runtime — the hint layer wants it (#34) */
 	anchor?: { line: number; col: number };
 }
 
@@ -88,26 +87,6 @@ export function frameNavSites(root: string, frame: string): NavSites {
 		out.unreadable.push(...cached.result.unreadable);
 	}
 	return out;
-}
-
-/**
- * The stamps of elements whose code navigates (#34), for the player's hint
- * layer: ui.go carriers — readable or not, they all navigate at runtime —
- * matched by data-spool-source, while data-go carriers are found live in the
- * DOM and need no stamp here.
- */
-export function hintStamps(root: string, frame: string): string[] {
-	const { sites, unreadable } = frameNavSites(root, frame);
-	const stamps = new Set<string>();
-	for (const site of sites) {
-		if (site.via === "ui.go" && site.anchor !== undefined) {
-			stamps.add(`${site.path}:${site.anchor.line}:${site.anchor.col}`);
-		}
-	}
-	for (const site of unreadable) {
-		if (site.anchor !== undefined) stamps.add(`${site.path}:${site.anchor.line}:${site.anchor.col}`);
-	}
-	return [...stamps].sort();
 }
 
 /** Read every navigation site the source declares. Never throws: source that

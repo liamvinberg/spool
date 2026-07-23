@@ -102,8 +102,8 @@ export default function Frame() {
 	return <button onClick={() => ui.go(routeFor(ui.state))}>pay</button>;
 }
 `;
-		// the element still navigates at runtime: the anchor survives for the
-		// player's hint layer even though no arrow can draw
+		// The element still navigates at runtime: preserve its anchor even
+		// though the destination cannot become an arrow.
 		expect(parseNavSites(source, PATH)).toEqual({
 			sites: [],
 			unreadable: [{ path: PATH, line: 4, anchor: { line: 4, col: 9 } }],

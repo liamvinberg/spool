@@ -55,8 +55,6 @@ export interface PlayerConfig {
 	start: string;
 	scenario: string;
 	frames: Record<string, { w: number; h: number }>;
-	/** Stamps of coded-navigation elements per frame, for the hint layer (#34). */
-	hints: Record<string, string[]>;
 	/** Terminal frames (#42): the daemon's grid rides along as each live screen's boot poster (#44). */
 	terminals?: Record<string, { svg: string }>;
 }
@@ -440,9 +438,6 @@ function bindExternalLinks(): void {
 let arrival = 0;
 let motionOn = true;
 let externalHref: string | null = null;
-// the hint layer (#34): outlines every element that navigates. Off by default
-// — the player is the immersive stage — and never persisted.
-let hintOn = false;
 let playVersion = 0;
 const playListeners = new Set<() => void>();
 
@@ -532,18 +527,16 @@ async function ensureTermFresh(frame: string): Promise<void> {
 /**
  * The player as terminal host (#44): the embedded term document speaks the
  * same protocol it speaks to the canvas — a nav the TUI fired walks forward
- * (verifying its edge, never minting one), and the exit chord hands the
- * keyboard back to the chrome. Only the current screen's own document is
- * heard; chrome touches no other key.
+ * (verifying its edge, never minting one). Only the current screen's own
+ * document is heard; the player has no keyboard exit state.
  */
 function bindTermHost(): void {
 	window.addEventListener("message", (event) => {
-		const message = event.data as { spool?: string; target?: string; key?: string } | null;
+		const message = event.data as { spool?: string; target?: string } | null;
 		if (message === null || typeof message !== "object") return;
 		const iframe = termIframes.get(currentFrame);
 		if (iframe === undefined || event.source !== iframe.contentWindow) return;
 		if (message.spool === "go" && typeof message.target === "string") navigate(message.target);
-		else if (message.spool === "key" && message.key === "Escape") iframe.blur();
 	});
 }
 
@@ -604,23 +597,17 @@ const playerController: PlayerController = {
 		frame: currentFrame,
 		stack: [...stack],
 		motion: motionOn,
-		hint: hintOn,
 		arrival,
 		externalHref,
 	}),
 	// the fallback restates the projection's default footprint across the
 	// compile-unit boundary; unreachable while navigate guards membership
 	geometry: (frame) => play?.frames[frame] ?? { w: 390, h: 844 },
-	hintStamps: (frame) => play?.hints?.[frame] ?? [],
 	terminal: (frame) => play?.terminals?.[frame] !== undefined,
 	back,
 	restart: () => void restartSession(),
 	toggleMotion() {
 		motionOn = !motionOn;
-		notifyPlay();
-	},
-	toggleHint() {
-		hintOn = !hintOn;
 		notifyPlay();
 	},
 	dismissExternal() {

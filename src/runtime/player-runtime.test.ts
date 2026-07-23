@@ -469,7 +469,7 @@ export default function Coded() {
 		});
 	});
 
-	it("the hint toggle outlines every navigating element as overlay chrome, default off (#34)", async () => {
+	it("keeps clickable-area hints out of the player", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
 		writeFrame(
@@ -491,19 +491,10 @@ export default function Hints() {
 		await loadPlayerDocument(harness, "?frame=hints");
 		await waitForStack("hints");
 
-		// default off: the player is the immersive stage
-		expect(document.querySelector("#spool-hint")).not.toBeNull();
+		expect(document.querySelector("#spool-hint")).toBeNull();
 		expect(document.querySelectorAll(".spool-hint")).toHaveLength(0);
-
-		click("#spool-hint");
-		// both the stamped ui.go carrier and the data-go carrier get one outline
-		// each — overlay chrome only, the frame's own DOM untouched (parity law)
-		await vi.waitFor(() => expect(document.querySelectorAll(".spool-hint")).toHaveLength(2));
 		expect(document.querySelector("#coded")?.className).toBe("");
 		expect(document.querySelector("#coded")?.getAttribute("style")).toBeNull();
-
-		click("#spool-hint");
-		await vi.waitFor(() => expect(document.querySelectorAll(".spool-hint")).toHaveLength(0));
 	});
 
 	it("close closes the tab the canvas opened", async () => {
@@ -561,21 +552,24 @@ describe("live terminal screens (#44)", () => {
 
 		// A terminal player is already entered: its own chrome stays out of the
 		// way, and the terminal takes focus explicitly once its document loads.
-		expect(document.querySelector(".spool-term-chord")).toBeNull();
-		expect(document.querySelector("#spool-hint")).toBeNull();
-		expect(document.querySelector(".spool-screen-scroll")?.classList.contains("is-terminal")).toBe(true);
+		expect.soft(document.querySelector(".spool-term-chord")).toBeNull();
+		expect.soft(document.querySelector("#spool-hint")).toBeNull();
+		expect.soft(document.querySelector(".spool-screen-scroll")?.classList.contains("is-terminal")).toBe(true);
 
 		const screen = document.querySelector<HTMLElement>(".spool-screen");
-		expect(screen?.style.transform).toBe(
-			`translate(${Math.round((window.innerWidth - 720) / 2)}px, ${Math.round((window.innerHeight - 480) / 2)}px) scale(1)`,
-		);
+		expect
+			.soft(screen?.style.transform)
+			.toBe(
+				`translate(${Math.round((window.innerWidth - 720) / 2)}px, ${Math.round((window.innerHeight - 480) / 2)}px) scale(1)`,
+			);
 
-		const termWindow = iframe.contentWindow;
-		expect(termWindow).not.toBeNull();
-		if (termWindow === null) throw new Error("terminal iframe has no window");
-		const postMessage = vi.spyOn(termWindow, "postMessage");
+		const postMessage = vi.fn();
+		Object.defineProperty(iframe, "contentWindow", {
+			configurable: true,
+			value: { postMessage },
+		});
 		iframe.dispatchEvent(new Event("load"));
-		expect(postMessage).toHaveBeenCalledWith({ spool: "focus" }, "*");
+		expect.soft(postMessage).toHaveBeenCalledWith({ spool: "focus", surface: "player" }, "*");
 	});
 
 	it("a nav the TUI fired advances the walk and verifies its edge — only from the current screen", async () => {
@@ -609,19 +603,19 @@ describe("live terminal screens (#44)", () => {
 		await vi.waitFor(() => termIframe());
 	});
 
-	it("the exit chord hands the keyboard back to the chrome", async () => {
+	it("has no keyboard exit state", async () => {
 		const harness = makeHarness();
 		scaffoldTerminal(harness);
 
 		await loadPlayerDocument(harness, "?frame=dash");
 		await vi.waitFor(() => termIframe());
 
-		// arrival is the enter gesture: the screen holds the keyboard
 		const iframe = termIframe();
 		await vi.waitFor(() => expect(document.activeElement).toBe(iframe));
 
 		postFromTerm(iframe, { spool: "key", key: "Escape" });
-		await vi.waitFor(() => expect(document.activeElement).not.toBe(iframe));
+		await new Promise((resolve) => setTimeout(resolve, 25));
+		expect(document.activeElement).toBe(iframe);
 	});
 
 	it("a restarted session claims a clean process once per terminal, per epoch", async () => {

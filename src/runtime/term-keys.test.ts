@@ -26,6 +26,11 @@ describe("termKeyIntent — the parity law for keys", () => {
 		expect(termKeyIntent(key("Escape", { ctrl: true }))).toBe("exit");
 	});
 
+	it("reserves no exit key in the player", () => {
+		expect(termKeyIntent(key("Escape", { meta: true }), false)).toBe("tui");
+		expect(termKeyIntent(key("Escape", { ctrl: true }), false)).toBe("tui");
+	});
+
 	it("hands even the zoom chords to the TUI — one carve-out, not three", () => {
 		expect(termKeyIntent(key("+", { meta: true }))).toBe("tui");
 		expect(termKeyIntent(key("=", { ctrl: true }))).toBe("tui");
