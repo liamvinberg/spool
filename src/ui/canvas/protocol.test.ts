@@ -14,6 +14,9 @@ describe("external link protocol", () => {
 		expect(parseFrameMessage({ spool: "external", frame: "landing", href: 42 })).toBeUndefined();
 		expect(parseFrameMessage({ spool: "external", frame: "landing", href: "javascript:alert(1)" })).toBeUndefined();
 		expect(parseFrameMessage({ spool: "external", frame: "landing", href: "/relative" })).toBeUndefined();
+		expect(
+			parseFrameMessage({ spool: "external", frame: "landing", href: "https://user:secret@example.com" }),
+		).toBeUndefined();
 	});
 });
 

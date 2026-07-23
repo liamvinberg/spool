@@ -109,7 +109,7 @@ function webHref(value: unknown): value is string {
 	if (typeof value !== "string") return false;
 	try {
 		const url = new URL(value);
-		return url.protocol === "http:" || url.protocol === "https:";
+		return (url.protocol === "http:" || url.protocol === "https:") && url.username === "" && url.password === "";
 	} catch {
 		return false;
 	}
