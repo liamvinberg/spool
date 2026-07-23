@@ -21,3 +21,8 @@ export function termKeyIntent(event: KeyLike): TermKeyIntent {
 export function exitChipLabel(code: number): string {
 	return `exited ${code}`;
 }
+
+/** The exit chord as a given platform spells it — chrome shows a chord that works there. */
+export function exitChordLabel(platform: string): string {
+	return /Mac|iP/.test(platform) ? "⌘⎋" : "ctrl+⎋";
+}

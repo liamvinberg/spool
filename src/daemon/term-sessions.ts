@@ -191,7 +191,10 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		await settled(session.term);
 		const snapshot = session.serialize.serialize();
 		if (snapshot.length > 0) client.send(new TextEncoder().encode(snapshot));
-		if (session.state === "exited") client.send(JSON.stringify({ t: "exit", code: session.exitCode ?? 0 }));
+		// an attach-time exit is arrival state, not a death watched happen: the
+		// mark lets the enter gesture (walk arrival, canvas enter) revive it
+		if (session.state === "exited")
+			client.send(JSON.stringify({ t: "exit", code: session.exitCode ?? 0, attach: true }));
 		else client.send(JSON.stringify({ t: "state", state: "running" }));
 
 		return {
@@ -248,7 +251,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		}
 	}
 
-	async function restart(session: Session): Promise<void> {
+	async function respawn(session: Session): Promise<void> {
 		killProcess(session);
 		session.proc = undefined;
 		session.term.reset();
@@ -261,14 +264,31 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 	async function revive(root: string, frame: string): Promise<void> {
 		const session = sessions.get(key(root, frame));
 		if (session === undefined || session.state !== "exited") return;
-		await restart(session);
+		await respawn(session);
+	}
+
+	/** A play-session restart (#44): whatever the state — running, frozen, or a
+	 * corpse — the walk gets a clean run, and every mirrored surface sees it.
+	 * No live session: a hibernated corpse loses its death mark so the next
+	 * attach spawns fresh instead of restoring it; otherwise quiet no-op. */
+	async function restart(root: string, frame: string): Promise<void> {
+		const session = sessions.get(key(root, frame));
+		if (session !== undefined) {
+			await respawn(session);
+			return;
+		}
+		const persisted = readPersisted(root, frame);
+		if (persisted?.exitCode !== undefined) {
+			const { exitCode: _exitCode, ...screen } = persisted;
+			writeAtomic(termScreenFile(root, frame), `${JSON.stringify(screen)}\n`);
+		}
 	}
 
 	/** A source save: the write–save–see loop for a live process, revival for a dead one. */
 	async function handleChange(root: string, frame: string): Promise<void> {
 		const session = sessions.get(key(root, frame));
 		if (session === undefined) return;
-		await restart(session);
+		await respawn(session);
 	}
 
 	async function grid(root: string, frame: string): Promise<Grid | undefined> {
@@ -299,7 +319,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		}
 	}
 
-	return { attach, input, resize, freeze, revive, handleChange, grid, still, close };
+	return { attach, input, resize, freeze, revive, restart, handleChange, grid, still, close };
 }
 
 export type TermSessions = ReturnType<typeof createTermSessions>;

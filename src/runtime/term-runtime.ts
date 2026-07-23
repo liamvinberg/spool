@@ -68,6 +68,9 @@ const term = new Terminal({
 const host = document.getElementById("term");
 if (host === null) throw new Error("spool: the terminal document has no #term");
 term.open(host);
+// booting already focused — a player walk arriving (#44), an entered reload —
+// is the enter gesture: hand the keyboard straight to the emulator
+if (document.hasFocus()) term.focus();
 
 let exited = false;
 let chip: HTMLElement | undefined;
@@ -112,9 +115,20 @@ function connect(): void {
 	});
 	socket.addEventListener("message", (event) => {
 		if (typeof event.data === "string") {
-			const message = JSON.parse(event.data) as { t: string; code?: number; target?: string; state?: string };
-			if (message.t === "exit") showExit(message.code ?? 0);
-			else if (message.t === "restart") {
+			const message = JSON.parse(event.data) as {
+				t: string;
+				code?: number;
+				target?: string;
+				state?: string;
+				attach?: boolean;
+			};
+			if (message.t === "exit") {
+				// an attach-time corpse met with focus is being entered — a walk
+				// arrival, an entered boot — and entering revives (#44). A death
+				// watched live never respawns by itself.
+				if (message.attach === true && document.hasFocus()) control({ t: "revive" });
+				else showExit(message.code ?? 0);
+			} else if (message.t === "restart") {
 				term.reset();
 				clearExit();
 			} else if (message.t === "state") clearExit();
