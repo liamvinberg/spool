@@ -89,7 +89,7 @@ The entry is TSX against the pinned runtime (exactly these imports resolve — r
 
 Everything a TUI can be, this is: OpenTUI's <box>/<text> layout, useKeyboard for keys, ANSI color, the alternate screen. All TUI libraries paint the same cell substrate, so a screen designed here is a portable spec for Bubble Tea or ratatui the way a React prototype specs a Vue app — only tighter.
 
-Cells are the units. New terminal frames are born 80×24 — the conventional floor; design up from it. Resizing on the canvas snaps to whole cells and shows a cols×rows badge; the process receives a real terminal resize and reflows live. frame.json stays pixels (the canvas's one geometry language): one cell is 9×18px in the pinned mono (JetBrains Mono at 15px), so 80×24 = 720×432. Write w/h yourself in whole-cell multiples for an exact grid.
+Cells are the units. New terminal frames are born 80×24 — the conventional floor; design up from it. Resizing on the canvas snaps to whole cells and shows a cols×rows badge; the process receives a real terminal resize and reflows live. frame.json stays pixels (the canvas's one geometry language): one cell is 9×20px in the pinned mono (JetBrains Mono at 15px, its natural line height), so 80×24 = 720×480. Write w/h yourself in whole-cell multiples for an exact grid.
 
 Entered, a terminal owns the whole keyboard: Escape, Ctrl+C, Ctrl+Z — every key reaches the process, because those belong to the TUI. The one way out is the platform modifier + Escape (⌘esc / ctrl+esc), shown in the chip; clicking outside always works too.
 

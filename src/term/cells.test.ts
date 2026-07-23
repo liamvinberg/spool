@@ -3,6 +3,7 @@ import {
 	CELL_H,
 	CELL_W,
 	cellsForPx,
+	cellsForViewport,
 	DEFAULT_COLS,
 	DEFAULT_ROWS,
 	MIN_COLS,
@@ -42,6 +43,29 @@ describe("cellsForPx", () => {
 
 	it("never reports a grid below the floor, even for a tiny box", () => {
 		expect(cellsForPx(1, 1)).toEqual({ cols: MIN_COLS, rows: MIN_ROWS });
+	});
+});
+
+describe("cellsForViewport", () => {
+	it("reads a chrome-shaved viewport as the authored grid — a border must not cost a cell", () => {
+		// a 100×57 sidecar box behind a 1px border-box border: 2px short each way
+		const authored = pxForCells(100, 57);
+		expect(cellsForViewport(authored.w - 2, authored.h - 2)).toEqual({ cols: 100, rows: 57 });
+		expect(cellsForViewport(authored.w, authored.h)).toEqual({ cols: 100, rows: 57 });
+	});
+
+	it("agrees with the daemon's sidecar derivation even for a non-cell-aligned box", () => {
+		// a stale sidecar authored under older metrics: both ends floor to 21 rows
+		expect(cellsForPx(720, 432).rows).toBe(21);
+		expect(cellsForViewport(718, 430).rows).toBe(21);
+	});
+
+	it("still reads a genuinely smaller viewport as the grid that fits it", () => {
+		expect(cellsForViewport(714, 421)).toEqual({ cols: 79, rows: 21 });
+	});
+
+	it("never reports a grid below the floor", () => {
+		expect(cellsForViewport(1, 1)).toEqual({ cols: MIN_COLS, rows: MIN_ROWS });
 	});
 });
 

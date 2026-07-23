@@ -23,7 +23,7 @@ class FakeClient {
 function harness(options?: { detachGraceMs?: number }) {
 	const root = makeTempDir();
 	writeDesignFile(root, join("frames", "dash", "term.tsx"), "// tui\n");
-	writeDesignFile(root, join("frames", "dash", "frame.json"), `{\n\t"x": 0,\n\t"y": 0,\n\t"w": 720,\n\t"h": 432\n}\n`);
+	writeDesignFile(root, join("frames", "dash", "frame.json"), `{\n\t"x": 0,\n\t"y": 0,\n\t"w": 720,\n\t"h": 480\n}\n`);
 	const { spawned, executor } = fixtureTermExecutor();
 	const published: string[] = [];
 	const sessions = createTermSessions({
@@ -67,7 +67,7 @@ describe("attach and stream", () => {
 		sessions.resize(root, "dash", 100, 30);
 		expect(spawned[0]?.sizes).toEqual([{ cols: 100, rows: 30 }]);
 		const still = await sessions.still(root, "dash");
-		expect(still).toContain(`viewBox="0 0 ${100 * 9} ${30 * 18}"`);
+		expect(still).toContain(`viewBox="0 0 ${100 * 9} ${30 * 20}"`);
 	});
 
 	it("gives a second client the screen so far, not a blank", async () => {
