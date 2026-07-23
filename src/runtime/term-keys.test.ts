@@ -35,13 +35,13 @@ describe("termKeyIntent — the parity law for keys", () => {
 
 describe("exitChordLabel — the binding as this platform spells it", () => {
 	it("spells the command chord on Apple platforms", () => {
-		expect(exitChordLabel("MacIntel")).toBe("⌘⎋");
-		expect(exitChordLabel("iPhone")).toBe("⌘⎋");
+		expect(exitChordLabel("MacIntel")).toBe("⌘esc");
+		expect(exitChordLabel("iPhone")).toBe("⌘esc");
 	});
 
 	it("spells the control chord everywhere else, unknown platforms included", () => {
-		expect(exitChordLabel("Win32")).toBe("ctrl+⎋");
-		expect(exitChordLabel("Linux x86_64")).toBe("ctrl+⎋");
-		expect(exitChordLabel("")).toBe("ctrl+⎋");
+		expect(exitChordLabel("Win32")).toBe("ctrl+esc");
+		expect(exitChordLabel("Linux x86_64")).toBe("ctrl+esc");
+		expect(exitChordLabel("")).toBe("ctrl+esc");
 	});
 });

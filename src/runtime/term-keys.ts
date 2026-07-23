@@ -22,7 +22,9 @@ export function exitChipLabel(code: number): string {
 	return `exited ${code}`;
 }
 
-/** The exit chord as a given platform spells it — chrome shows a chord that works there. */
+/** The exit chord as a given platform spells it. "esc" is a word, not ⎋:
+ * the chrome fonts don't carry that glyph, and its system fallback renders
+ * as an unreadable slashed circle. */
 export function exitChordLabel(platform: string): string {
-	return /Mac|iP/.test(platform) ? "⌘⎋" : "ctrl+⎋";
+	return /Mac|iP/.test(platform) ? "⌘esc" : "ctrl+esc";
 }
