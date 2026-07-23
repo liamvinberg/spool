@@ -61,7 +61,7 @@ describe("gridToSvg", () => {
 		expect(gridToSvg(grid)).toBe(
 			`<svg xmlns="http://www.w3.org/2000/svg" width="${CELL_W}" height="${CELL_H}" viewBox="0 0 ${CELL_W} ${CELL_H}">` +
 				'<rect width="100%" height="100%" fill="#111110"/>' +
-				`<text x="0" y="13.5" textLength="${CELL_W}" lengthAdjust="spacingAndGlyphs" ` +
+				`<text x="0" y="15" textLength="${CELL_W}" lengthAdjust="spacingAndGlyphs" ` +
 				'font-family="JetBrains Mono, monospace" font-size="15" fill="#d8d6d0">x</text>' +
 				"</svg>",
 		);
