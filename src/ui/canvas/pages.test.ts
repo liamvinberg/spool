@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { FlowEdge, ProjectedFrame } from "../api";
 import {
 	camerasFromState,
+	frameSourcePath,
+	frameSourceRel,
 	framesOnPage,
 	pageLabel,
 	pageList,
@@ -9,6 +11,7 @@ import {
 	ROOT_PAGE,
 	resolveActivePage,
 	stateCameraSlots,
+	switchPage,
 } from "./pages";
 
 const frame = (name: string, page?: string): ProjectedFrame => ({
@@ -47,6 +50,39 @@ describe("sidebar list derivation", () => {
 	it("names the root page for chrome and pages by their folder", () => {
 		expect(pageLabel(ROOT_PAGE)).toBe("root");
 		expect(pageLabel("shop")).toBe("shop");
+	});
+
+	it("builds a frame's source path through its page", () => {
+		expect(frameSourceRel("home", ROOT_PAGE)).toBe("frames/home/frame.tsx");
+		expect(frameSourceRel("checkout", "shop")).toBe("frames/shop/checkout/frame.tsx");
+		expect(frameSourcePath("checkout", "shop")).toBe("design/frames/shop/checkout/frame.tsx");
+	});
+});
+
+describe("page switching", () => {
+	const rootCamera = { x: 1, y: 2, k: 1 };
+	const shopCamera = { x: 3, y: 4, k: 2 };
+
+	it("saves the leaving page's camera and restores the arriving page's", () => {
+		const next = switchPage({ shop: shopCamera }, ROOT_PAGE, rootCamera, "shop");
+		expect(next.cameras).toEqual({ [ROOT_PAGE]: rootCamera, shop: shopCamera });
+		expect(next.camera).toEqual(shopCamera);
+	});
+
+	it("arrives at null when the page has no stored camera — the field fits", () => {
+		const next = switchPage({}, ROOT_PAGE, rootCamera, "shop");
+		expect(next.camera).toBeNull();
+	});
+
+	it("lets a caller's arrival camera win over the stored one", () => {
+		const arriveAt = { x: 9, y: 9, k: 1 };
+		const next = switchPage({ shop: shopCamera }, ROOT_PAGE, rootCamera, "shop", arriveAt);
+		expect(next.camera).toEqual(arriveAt);
+	});
+
+	it("keeps the map untouched when the leaving page never had a camera", () => {
+		const next = switchPage({ shop: shopCamera }, ROOT_PAGE, null, "shop");
+		expect(next.cameras).toEqual({ shop: shopCamera });
 	});
 });
 

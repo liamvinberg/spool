@@ -1,5 +1,6 @@
 import type { Camera, ProjectedFrame } from "../api";
 import type { Box } from "./camera";
+import { frameSourcePath, frameSourceRel, pageOf, ROOT_PAGE } from "./pages";
 import type { PickedHit } from "./protocol";
 
 /**
@@ -78,6 +79,7 @@ export function SelectionOverlay({
 	const ringed = [...new Set(entered === null ? selected : [...selected, entered])];
 	const single = selected.length === 1 && entered === null ? frames.find((f) => f.name === selected[0]) : undefined;
 	const pickedFrame = picked === null ? undefined : frames.find((f) => f.name === picked.frame);
+	const pickedPage = pickedFrame === undefined ? ROOT_PAGE : pageOf(pickedFrame);
 
 	return (
 		<div className="pointer-events-none absolute inset-0">
@@ -194,7 +196,7 @@ export function SelectionOverlay({
 								style={{ left: rect.x, top: rect.y + rect.h + 12 }}
 								onPointerDown={(event) => event.stopPropagation()}
 							>
-								<span className="font-mono text-2xs text-muted leading-3">{chipLabel(picked)}</span>
+								<span className="font-mono text-2xs text-muted leading-3">{chipLabel(picked, pickedPage)}</span>
 								<span className="font-mono text-2xs text-muted leading-3">·</span>
 								<button
 									type="button"
@@ -220,16 +222,17 @@ export function SelectionOverlay({
 }
 
 /** "frames/cart/frame.tsx:38" — the stamp minus its column, or the frame file. */
-function chipLabel(picked: PickedSelection): string {
+function chipLabel(picked: PickedSelection, page: string): string {
 	const stamp = parseStamp(picked);
-	if (stamp === undefined) return `frames/${picked.frame}/frame.tsx`;
+	if (stamp === undefined) return frameSourceRel(picked.frame, page);
 	return `${stamp.rel}:${stamp.line}`;
 }
 
-/** The editor target off the selection (#7: path:line from the payload). */
-export function editorTarget(picked: PickedSelection): { path: string; line?: number } {
+/** The editor target off the selection (#7: path:line from the payload). The
+ * stampless fallback needs the frame's page — the folder moved with it (#39). */
+export function editorTarget(picked: PickedSelection, page: string): { path: string; line?: number } {
 	const stamp = parseStamp(picked);
-	if (stamp === undefined) return { path: `design/frames/${picked.frame}/frame.tsx` };
+	if (stamp === undefined) return { path: frameSourcePath(picked.frame, page) };
 	return { path: `design/${stamp.rel}`, line: stamp.line };
 }
 
