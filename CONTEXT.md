@@ -22,6 +22,10 @@ Spool is a local-first prototyping canvas: agents author live TSX frames on disk
 
 **Canvas**: The infinite surface where frames are arranged; a projection of the disk, never a source of truth. _Avoid_: board
 
+**Page**: A one-level subfolder of `design/frames/` grouping frames into a journey; each page is its own canvas. The flat top level is the permanent root page, and frame names stay unique across the whole project. _Avoid_: group, section, sub-page
+
+**Portal**: The chip drawn where a link leaves the active page — no arrow can reach the target, so the marker names it and its page, and activating it jumps there.
+
 **Live mode**: The default canvas mode, in which near frames actually run. _Avoid_: play mode (modes control time; gestures control intent)
 
 **Design mode**: The canvas mode in which time is frozen everywhere and clicks select elements.

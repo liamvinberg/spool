@@ -4,7 +4,7 @@ import { basename, join, relative, resolve, sep } from "node:path";
 import { build, formatMessagesSync, type Plugin } from "esbuild";
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
 import { isSafeName, readIfExists } from "./project-files";
-import { frameKind } from "./projection";
+import { describeCollision, frameKind, lookupFrame } from "./projection";
 import { buildFrameCss } from "./tailwind";
 import { assembleTermDocument, termDocumentEtag } from "./term-document";
 import { importMapPins } from "./vendor";
@@ -37,7 +37,21 @@ export function createFrameCompiler(version: string) {
 	async function getDocument(root: string, frame: string): Promise<FrameDocument> {
 		if (!isSafeName(frame)) return { kind: "missing", message: `not a frame name: "${frame}"` };
 		const designDir = join(root, "design");
-		const frameDir = join(designDir, "frames", frame);
+		const lookup = lookupFrame(root, frame);
+		if (lookup.kind === "collision") {
+			// an ambiguous name serves nobody — fail loud, name both locations (#39)
+			const message = describeCollision(frame, lookup.paths);
+			return { kind: "error", document: errorDocument(frame, message), message };
+		}
+		if (lookup.kind === "missing") {
+			return {
+				kind: "missing",
+				message: `no frame "${frame}" — expected design/frames/${frame}/frame.tsx in ${root}`,
+			};
+		}
+		const frameDir = lookup.dir;
+		// the raw entry read, not the projection's normalization: a both-entries
+		// folder must serve its error, not compile as html (#42)
 		const kind = frameKind(frameDir);
 		if (kind === undefined) {
 			return {

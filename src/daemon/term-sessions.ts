@@ -9,7 +9,7 @@ import { cellsForPx } from "../term/cells";
 import { createOscFilter } from "../term/osc";
 import type { Grid } from "../term/still";
 import { gridToSvg } from "../term/still";
-import { frameGeometry } from "./projection";
+import { frameGeometry, lookupFrame } from "./projection";
 import type { TermExecutor, TermProcess } from "./term-exec";
 import { termScreenFile } from "./thumbs";
 
@@ -93,7 +93,10 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 
 	async function spawnInto(session: Session): Promise<void> {
 		const generation = ++session.generation;
-		const frameDir = join(session.root, "design", "frames", session.frame);
+		// the frame's folder is wherever its page put it (#39) — a flat join
+		// would miss every paged terminal
+		const found = lookupFrame(session.root, session.frame);
+		const frameDir = found.kind === "found" ? found.dir : join(session.root, "design", "frames", session.frame);
 		const proc = await executor({
 			frameDir,
 			entry: join(frameDir, "term.tsx"),
