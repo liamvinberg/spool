@@ -227,7 +227,12 @@ for (;;) {
 			term.write(payload);
 		} else {
 			const message = JSON.parse(new TextDecoder().decode(payload));
-			if (message.resize) term.resize(message.resize.cols, message.resize.rows);
+			if (message.resize) {
+				term.resize(message.resize.cols, message.resize.rows);
+				// the kernel signals only the terminal's foreground group, and the
+				// spawned app may not be it — deliver the winch by hand
+				proc.kill("SIGWINCH");
+			}
 			if (message.signal) proc.kill(message.signal);
 		}
 	}
