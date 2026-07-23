@@ -318,3 +318,32 @@ describe("verified marks", () => {
 		expect(seen).toEqual({ event: "change", data: { kind: "walked" } });
 	});
 });
+
+describe("terminal frames in the flow map (#42)", () => {
+	it("derives a terminal frame's term.go sites into edges with certainty", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(
+			root,
+			join("frames", "dash", "term.tsx"),
+			`import { term } from "spool/term";
+export function onKey(key) {
+	term.go("logs");
+	if (key === "q") term.go("goodbye");
+}
+`,
+		);
+		writeDesignFile(root, join("frames", "logs", "term.tsx"), "// tui\n");
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(`/api/p/${name}/flows`);
+		const flows = (await res.json()) as Flows;
+
+		expect(flows.frames).toEqual(["dash", "logs"]);
+		const toLogs = flows.edges.find((e) => e.to === "logs");
+		expect(toLogs).toMatchObject({ from: "dash", certainty: "will" });
+		expect(toLogs?.sites[0]).toMatchObject({ via: "term.go" });
+		// a declared target no frame answers to is real information
+		expect(flows.edges.find((e) => e.to === "goodbye")).toMatchObject({ missing: true, certainty: "might" });
+	});
+});

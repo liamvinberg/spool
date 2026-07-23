@@ -1,5 +1,6 @@
-import { existsSync, watch } from "node:fs";
+import { watch } from "node:fs";
 import { join, sep } from "node:path";
+import { frameKind } from "./projection";
 
 export type ChangeEvent =
 	| { kind: "frame"; frame: string }
@@ -122,7 +123,7 @@ function classify(root: string, filename: string | null): ChangeEvent | undefine
 	const parts = filename.split(sep);
 	const [head, first] = parts;
 	if (head === "frames" && first !== undefined && first !== "") {
-		if (parts.length >= 3 && !existsSync(join(root, "design", "frames", first, "frame.tsx"))) {
+		if (parts.length >= 3 && frameKind(join(root, "design", "frames", first)) === undefined) {
 			const second = parts[2];
 			if (second === undefined || second === "") return { kind: "frame", frame: first };
 			if (parts.length === 4 && parts[3]?.startsWith("frame.json") === true) return undefined;

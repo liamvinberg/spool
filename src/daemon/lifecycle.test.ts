@@ -232,6 +232,32 @@ describe("daemon lifecycle end to end", () => {
 		expect(stopped).toEqual({ stopped: true, pid: first.pid });
 		expect(await statusDaemon(spoolDir)).toEqual({ running: false });
 	});
+
+	it("stop tears down an open app event stream", { timeout: 40_000 }, async () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+		const command = [
+			join(repoRoot, "node_modules", ".bin", "tsx"),
+			join(repoRoot, "src", "cli.ts"),
+			"serve",
+			"--foreground",
+		];
+		const env = { HOME: home, SPOOL_PORT: "0", SPOOL_DIR: "" };
+		const daemon = await ensureDaemon(spoolDir, { command, env, timeoutMs: 30_000 });
+		const stream = await fetch(`${daemon.url}/api/events`);
+		const reader = stream.body?.getReader();
+		if (reader === undefined) throw new Error("app event stream has no body");
+		onTestFinished(async () => {
+			await reader.cancel().catch(() => {});
+			await stopDaemon(spoolDir).catch(() => {});
+		});
+
+		const hello = await reader.read();
+		expect(new TextDecoder().decode(hello.value)).toContain("event: hello");
+
+		await expect(stopDaemon(spoolDir)).resolves.toEqual({ stopped: true, pid: daemon.pid });
+	});
 });
 
 describe("daemon state file", () => {

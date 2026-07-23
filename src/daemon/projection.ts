@@ -1,22 +1,32 @@
 import { type Dirent, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_COLS, DEFAULT_ROWS, pxForCells } from "../term/cells";
 import { readGeometry, writeGeometry } from "./geometry";
 import { isSafeName } from "./project-files";
-import { thumbFile } from "./thumbs";
+import { termScreenFile, thumbFile } from "./thumbs";
 
 /**
  * The canvas projection of design/frames (#22), one level of grouping deep
- * (#39): a frame is a folder holding frame.tsx at the top level (the root
+ * (#39): a frame is a folder holding a frame entry at the top level (the root
  * page) or exactly one level down (a named page). Identity is the bare leaf
  * name, unique project-wide — a name claimed twice is surfaced as a collision,
  * never resolved by guessing. Geometry is the one thing hands own; a frame
  * born without a sidecar gets one filled in here — placed beside its own
  * page's field, written to disk so placement is durable, never re-rolled per
  * request (#3: "optional frame.json, app fills in").
+ *
+ * The kind discriminant (#42) is the entry filename — frame.tsx is html,
+ * term.tsx is terminal — because a kind must stay knowable by every layer
+ * even while source is broken mid-edit; a filename survives a syntax error.
+ * Both entries in one folder is a discovery error naming the folder: it
+ * projects as html so the canvas can show the error document.
  */
+
+export type FrameKind = "html" | "term";
 
 export interface ProjectedFrame {
 	name: string;
+	kind: FrameKind;
 	/** The named page holding the frame's folder; absent on the root page. */
 	page?: string;
 	x: number;
@@ -42,14 +52,30 @@ export interface Projection {
 
 /** Where a bare frame name lands on disk — or why it cannot. */
 export type FrameLookup =
-	| { kind: "found"; dir: string; page?: string }
+	| { kind: "found"; dir: string; frameKind: FrameKind; page?: string }
 	| { kind: "missing" }
 	| { kind: "collision"; paths: string[] };
+
+export function frameKind(frameDir: string): FrameKind | "conflict" | undefined {
+	const html = existsSync(join(frameDir, "frame.tsx"));
+	const term = existsSync(join(frameDir, "term.tsx"));
+	if (html && term) return "conflict";
+	if (term) return "term";
+	if (html) return "html";
+	return undefined;
+}
+
+/** A frame's kind for root + name; conflicted folders count as html so their error shows. */
+export function projectedKind(root: string, frame: string): FrameKind | undefined {
+	const found = lookupFrame(root, frame);
+	return found.kind === "found" ? found.frameKind : undefined;
+}
 
 interface DiscoveredFrame {
 	name: string;
 	page: string | undefined;
 	dir: string;
+	kind: FrameKind;
 }
 
 interface Discovery {
@@ -63,10 +89,18 @@ const DEFAULT_W = 390;
 const DEFAULT_H = 844;
 const GUTTER = 80;
 
+/** New terminal frames start at the conventional floor, in exact cell pixels. */
+const TERM_DEFAULT = pxForCells(DEFAULT_COLS, DEFAULT_ROWS);
+
+function defaultFootprint(kind: FrameKind): { w: number; h: number } {
+	return kind === "term" ? TERM_DEFAULT : { w: DEFAULT_W, h: DEFAULT_H };
+}
+
 /**
- * One walk of design/frames: top-level folders with frame.tsx are root-page
- * frames; safe-named folders without one are pages, their frame folders one
- * level down. Deeper nesting is a frame's own business, never discovery's.
+ * One walk of design/frames: top-level folders with a frame entry are
+ * root-page frames; safe-named folders without one are pages, their frame
+ * folders one level down. Deeper nesting is a frame's own business, never
+ * discovery's.
  */
 function discover(root: string): Discovery | undefined {
 	const framesDir = join(root, "design", "frames");
@@ -76,18 +110,21 @@ function discover(root: string): Discovery | undefined {
 	} catch {
 		return undefined;
 	}
-	const claims = new Map<string, { page: string | undefined; dir: string }[]>();
-	const claim = (name: string, page: string | undefined, dir: string) => {
+	const claims = new Map<string, { page: string | undefined; dir: string; kind: FrameKind }[]>();
+	const claim = (name: string, page: string | undefined, dir: string, kind: FrameKind | "conflict") => {
+		// a both-entries folder projects as html so the error document shows (#42)
+		const entry = { page, dir, kind: kind === "conflict" ? ("html" as const) : kind };
 		const list = claims.get(name);
-		if (list === undefined) claims.set(name, [{ page, dir }]);
-		else list.push({ page, dir });
+		if (list === undefined) claims.set(name, [entry]);
+		else list.push(entry);
 	};
 	const pages: string[] = [];
 	for (const entry of entries) {
 		if (!entry.isDirectory() || !isSafeName(entry.name)) continue;
 		const dir = join(framesDir, entry.name);
-		if (existsSync(join(dir, "frame.tsx"))) {
-			claim(entry.name, undefined, dir);
+		const kind = frameKind(dir);
+		if (kind !== undefined) {
+			claim(entry.name, undefined, dir, kind);
 			continue;
 		}
 		pages.push(entry.name);
@@ -100,7 +137,8 @@ function discover(root: string): Discovery | undefined {
 		for (const sub of inner) {
 			if (!sub.isDirectory() || !isSafeName(sub.name)) continue;
 			const subDir = join(dir, sub.name);
-			if (existsSync(join(subDir, "frame.tsx"))) claim(sub.name, entry.name, subDir);
+			const subKind = frameKind(subDir);
+			if (subKind !== undefined) claim(sub.name, entry.name, subDir, subKind);
 		}
 	}
 
@@ -108,8 +146,11 @@ function discover(root: string): Discovery | undefined {
 	const collisions: FrameCollision[] = [];
 	for (const [name, list] of claims) {
 		const first = list[0];
-		if (list.length === 1 && first !== undefined) frames.push({ name, page: first.page, dir: first.dir });
-		else collisions.push({ name, paths: list.map((entry) => frameFolder(name, entry.page)).sort() });
+		if (list.length === 1 && first !== undefined) {
+			frames.push({ name, page: first.page, dir: first.dir, kind: first.kind });
+		} else {
+			collisions.push({ name, paths: list.map((entry) => frameFolder(name, entry.page)).sort() });
+		}
 	}
 	frames.sort((a, b) => a.name.localeCompare(b.name));
 	collisions.sort((a, b) => a.name.localeCompare(b.name));
@@ -131,7 +172,12 @@ export function lookupFrame(root: string, frame: string): FrameLookup {
 	if (collision !== undefined) return { kind: "collision", paths: collision.paths };
 	const found = discovery.frames.find((entry) => entry.name === frame);
 	if (found === undefined) return { kind: "missing" };
-	return { kind: "found", dir: found.dir, ...(found.page === undefined ? {} : { page: found.page }) };
+	return {
+		kind: "found",
+		dir: found.dir,
+		frameKind: found.kind,
+		...(found.page === undefined ? {} : { page: found.page }),
+	};
 }
 
 /** The collision told straight: both locations named, the law restated. */
@@ -155,9 +201,10 @@ export function listProjectFrames(root: string): Projection {
 	// top of it — and never beside another page's (#39)
 	for (const frame of unplaced) {
 		const field = placed.filter((candidate) => candidate.page === frame.page);
+		const footprint = defaultFootprint(frame.kind);
 		const cursor = field.length === 0 ? GUTTER : Math.max(...field.map((f) => f.x + f.w)) + GUTTER;
 		const baseline = field.length === 0 ? GUTTER : Math.min(...field.map((f) => f.y));
-		const geometry = { x: cursor, y: baseline, w: DEFAULT_W, h: DEFAULT_H };
+		const geometry = { x: cursor, y: baseline, ...footprint };
 		try {
 			writeGeometry(join(frame.dir, "frame.json"), geometry);
 		} catch {
@@ -177,9 +224,10 @@ function projected(
 ): ProjectedFrame {
 	return {
 		name: frame.name,
+		kind: frame.kind,
 		...(frame.page === undefined ? {} : { page: frame.page }),
 		...geometry,
-		hasThumb: hasThumb(root, frame.name),
+		hasThumb: hasThumb(root, frame.name, frame.kind),
 	};
 }
 
@@ -190,15 +238,19 @@ export function frameNames(root: string): string[] | undefined {
 	return discovery.frames.map((frame) => frame.name);
 }
 
-function hasThumb(root: string, frame: string): boolean {
+function hasThumb(root: string, frame: string, kind: FrameKind): boolean {
+	// a terminal's cover is its serialized screen, rasterized daemon-side (#42)
+	if (kind === "term") return existsSync(termScreenFile(root, frame));
 	return existsSync(thumbFile(root, frame));
 }
 
 /** One frame's geometry: its sidecar if sound, the default footprint otherwise. Never writes. */
 export function frameGeometry(root: string, frame: string): { w: number; h: number } {
 	const found = lookupFrame(root, frame);
-	const geometry = found.kind === "found" ? readGeometry(join(found.dir, "frame.json")) : undefined;
-	return geometry === undefined ? { w: DEFAULT_W, h: DEFAULT_H } : { w: geometry.w, h: geometry.h };
+	if (found.kind !== "found") return { w: DEFAULT_W, h: DEFAULT_H };
+	const geometry = readGeometry(join(found.dir, "frame.json"));
+	if (geometry !== undefined) return { w: geometry.w, h: geometry.h };
+	return defaultFootprint(found.frameKind);
 }
 
 export interface ProjectSummary {
