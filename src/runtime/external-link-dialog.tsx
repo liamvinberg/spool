@@ -127,12 +127,9 @@ const EXTERNAL_LINK_DIALOG_CSS = `
 		position: absolute;
 		inset: 0;
 		z-index: 100;
-		display: grid;
-		place-items: center;
 		box-sizing: border-box;
 		container-type: inline-size;
-		padding: clamp(16px, 5cqi, 48px);
-		background: rgb(15 15 15 / 78%);
+		background: #111110;
 		font-family: "Familjen Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
 		color: #f2f0eb;
 		pointer-events: auto;
@@ -145,19 +142,20 @@ const EXTERNAL_LINK_DIALOG_CSS = `
 	}
 
 	.spool-external-dialog {
-		width: min(520px, 100%);
+		display: grid;
+		grid-template-rows: auto 1fr;
+		width: 100%;
+		height: 100%;
 		overflow: hidden;
-		border: 1px solid #34322f;
-		border-radius: 14px;
-		background: #171716;
+		background: #111110;
 	}
 
 	.spool-external-header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		height: 52px;
-		padding: 0 14px 0 18px;
+		height: clamp(56px, 7cqi, 72px);
+		padding: 0 clamp(18px, 4cqi, 48px);
 		border-bottom: 1px solid #2d2c29;
 	}
 
@@ -218,37 +216,40 @@ const EXTERNAL_LINK_DIALOG_CSS = `
 
 	.spool-external-body {
 		display: grid;
-		gap: 28px;
-		padding: 32px;
+		align-content: center;
+		width: min(720px, 100%);
+		margin: 0 auto;
+		padding: clamp(40px, 8cqi, 96px) clamp(24px, 6cqi, 64px);
 	}
 
 	.spool-external-copy {
 		display: grid;
-		gap: 10px;
+		gap: 16px;
 	}
 
 	.spool-external-copy h2 {
 		margin: 0;
 		font: inherit;
-		font-size: 25px;
+		font-size: clamp(38px, 6.5cqi, 64px);
 		font-weight: 580;
-		line-height: 1.08;
-		letter-spacing: -0.035em;
+		line-height: 0.98;
+		letter-spacing: -0.05em;
 		color: #f2f0eb;
 	}
 
 	.spool-external-copy p {
-		max-width: 410px;
+		max-width: 520px;
 		margin: 0;
-		font-size: 14px;
-		line-height: 1.55;
+		font-size: clamp(14px, 1.8cqi, 17px);
+		line-height: 1.5;
 		color: #aaa7a0;
 	}
 
 	.spool-external-destination {
 		display: grid;
-		gap: 7px;
+		gap: 9px;
 		min-width: 0;
+		margin-top: clamp(32px, 5cqi, 52px);
 	}
 
 	.spool-external-destination span {
@@ -262,12 +263,12 @@ const EXTERNAL_LINK_DIALOG_CSS = `
 
 	.spool-external-destination strong {
 		overflow: hidden;
-		padding: 11px 12px;
+		padding: 14px 15px;
 		border: 1px solid #302f2c;
 		border-radius: 7px;
-		background: #111110;
+		background: #0d0d0c;
 		font-family: "Fragment Mono", ui-monospace, monospace;
-		font-size: 11px;
+		font-size: clamp(11px, 1.4cqi, 13px);
 		font-weight: 400;
 		line-height: 1.35;
 		color: #c9c6bf;
@@ -279,6 +280,7 @@ const EXTERNAL_LINK_DIALOG_CSS = `
 		display: flex;
 		justify-content: flex-end;
 		gap: 9px;
+		margin-top: 18px;
 	}
 
 	.spool-external-stay,
@@ -295,7 +297,14 @@ const EXTERNAL_LINK_DIALOG_CSS = `
 		font-weight: 600;
 		line-height: 1;
 		text-decoration: none;
+		transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
 		cursor: pointer;
+	}
+
+	.spool-external-close:active,
+	.spool-external-stay:active,
+	.spool-external-open:active {
+		transform: scale(0.97);
 	}
 
 	.spool-external-stay {
@@ -327,17 +336,22 @@ const EXTERNAL_LINK_DIALOG_CSS = `
 	}
 
 	@container (max-width: 430px) {
+		.spool-external-header {
+			height: 56px;
+		}
+
 		.spool-external-body {
-			gap: 22px;
-			padding: 24px;
+			align-content: start;
+			padding: 48px 24px 28px;
 		}
 
 		.spool-external-copy h2 {
-			font-size: 22px;
+			font-size: 38px;
 		}
 
 		.spool-external-actions {
 			display: grid;
+			margin-top: 16px;
 		}
 
 		.spool-external-stay,
