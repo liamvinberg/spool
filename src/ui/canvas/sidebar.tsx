@@ -1,9 +1,14 @@
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ProjectedFrame } from "../api";
 import { framesOnPage, pageLabel, pageList } from "./pages";
 
 const PANEL_WIDTH = 248;
 const STRIP_WIDTH = 44;
+const MIN_WIDTH = 200;
+const MAX_WIDTH = 480;
+const SNAP_BELOW = 144;
+const COLLAPSED_BELOW = 72;
 
 export interface SelectModifiers {
 	shift: boolean;
@@ -35,30 +40,56 @@ export function CanvasSidebar({
 	onSelectFrame: (name: string, modifiers: SelectModifiers) => void;
 	onDoubleClickFrame: (name: string) => void;
 }) {
-	const [collapsed, setCollapsed] = useState(false);
+	const [width, setWidth] = useState(PANEL_WIDTH);
+	const [dragging, setDragging] = useState(false);
 	const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+	const [pageTooltip, setPageTooltip] = useState<{ page: string; x: number; y: number } | null>(null);
+	const drag = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
+	const tooltipId = useId();
+	const collapsed = width <= COLLAPSED_BELOW;
 	const orderedPages = pageList(pages);
 
 	function activatePage(page: string) {
 		onSwitchPage(page);
 	}
 
+	function finishDrag(target: HTMLElement, pointerId: number) {
+		const current = drag.current;
+		if (current === null || current.pointerId !== pointerId) return;
+		target.releasePointerCapture(pointerId);
+		drag.current = null;
+		setDragging(false);
+		setWidth(current.latestWidth < SNAP_BELOW ? STRIP_WIDTH : Math.max(MIN_WIDTH, current.latestWidth));
+	}
+
+	function showPageTooltip(page: string, target: HTMLButtonElement) {
+		const box = target.getBoundingClientRect();
+		setPageTooltip({ page, x: box.right + 8, y: box.top + box.height / 2 });
+	}
+
 	return (
 		<aside
-			className="relative z-20 h-full shrink-0 overflow-hidden border-border border-r bg-bg transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none"
-			style={{ width: collapsed ? STRIP_WIDTH : PANEL_WIDTH }}
+			className={`relative z-20 h-full shrink-0 overflow-hidden border-border border-r bg-bg ${
+				dragging
+					? ""
+					: "transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none"
+			}`}
+			style={{ width }}
 		>
 			{collapsed ? (
 				<div className="flex h-full w-11 flex-col items-center">
 					<button
 						type="button"
 						aria-label="Expand pages"
-						onClick={() => setCollapsed(false)}
+						onClick={() => setWidth(PANEL_WIDTH)}
 						className="flex h-11 w-11 items-center justify-center text-muted/70 hover:text-text"
 					>
 						<PanelCaret dir="right" className="h-3.5 w-2.5" />
 					</button>
-					<div className="pages-scrollbar flex min-h-0 flex-1 flex-col items-center gap-0.5 overflow-y-auto pt-1">
+					<div
+						className="pages-scrollbar flex min-h-0 flex-1 flex-col items-center gap-0.5 overflow-y-auto pt-1"
+						onScroll={() => setPageTooltip(null)}
+					>
 						{orderedPages.map((page) => {
 							const active = page === activePage;
 							return (
@@ -67,8 +98,14 @@ export function CanvasSidebar({
 									type="button"
 									aria-label={`${pageLabel(page)} page`}
 									aria-current={active ? "page" : undefined}
-									title={pageLabel(page)}
+									aria-describedby={pageTooltip?.page === page ? tooltipId : undefined}
 									onClick={() => activatePage(page)}
+									onPointerEnter={(event) => showPageTooltip(page, event.currentTarget)}
+									onPointerLeave={(event) => {
+										if (document.activeElement !== event.currentTarget) setPageTooltip(null);
+									}}
+									onFocus={(event) => showPageTooltip(page, event.currentTarget)}
+									onBlur={() => setPageTooltip(null)}
 									className="relative flex h-9 w-11 items-center justify-center"
 								>
 									{active ? (
@@ -81,7 +118,7 @@ export function CanvasSidebar({
 					</div>
 				</div>
 			) : (
-				<div className="flex h-full w-[248px] flex-col">
+				<div className="flex h-full min-w-[200px] flex-col">
 					<div className="flex h-11 shrink-0 items-center justify-between border-border border-b pr-2 pl-3.5">
 						<div className="flex items-baseline gap-2">
 							<h1 className="font-semibold text-base leading-base">Pages</h1>
@@ -90,7 +127,7 @@ export function CanvasSidebar({
 						<button
 							type="button"
 							aria-label="Collapse pages"
-							onClick={() => setCollapsed(true)}
+							onClick={() => setWidth(STRIP_WIDTH)}
 							className="flex h-7 w-7 items-center justify-center rounded-sm text-muted/60 hover:text-text"
 						>
 							<PanelCaret dir="left" className="h-3.5 w-2.5" />
@@ -192,6 +229,55 @@ export function CanvasSidebar({
 					</div>
 				</div>
 			)}
+
+			{collapsed && pageTooltip !== null
+				? createPortal(
+						<span
+							id={tooltipId}
+							role="tooltip"
+							className="pointer-events-none fixed z-50 -translate-y-1/2 whitespace-nowrap rounded-md border border-border-raised bg-bg px-2 py-1 font-mono text-2xs text-text leading-3"
+							style={{ left: pageTooltip.x, top: pageTooltip.y }}
+						>
+							{pageLabel(pageTooltip.page)}
+						</span>,
+						document.body,
+					)
+				: null}
+
+			<button
+				type="button"
+				aria-label="Resize pages"
+				onKeyDown={(event) => {
+					if (event.key === "ArrowLeft") setWidth(STRIP_WIDTH);
+					if (event.key === "ArrowRight") setWidth(PANEL_WIDTH);
+				}}
+				onPointerDown={(event) => {
+					if (event.button !== 0) return;
+					event.currentTarget.setPointerCapture(event.pointerId);
+					drag.current = {
+						pointerId: event.pointerId,
+						startWidth: width,
+						startX: event.clientX,
+						latestWidth: width,
+					};
+					setDragging(true);
+				}}
+				onPointerMove={(event) => {
+					const current = drag.current;
+					if (current === null || current.pointerId !== event.pointerId) return;
+					const next = Math.min(
+						MAX_WIDTH,
+						Math.max(STRIP_WIDTH, current.startWidth + event.clientX - current.startX),
+					);
+					current.latestWidth = next;
+					setWidth(next);
+				}}
+				onPointerUp={(event) => finishDrag(event.currentTarget, event.pointerId)}
+				onPointerCancel={(event) => finishDrag(event.currentTarget, event.pointerId)}
+				className="group -right-1.5 absolute top-0 z-30 h-full w-3 cursor-col-resize touch-none outline-none"
+			>
+				<span className="absolute top-0 bottom-0 left-[5px] w-px bg-transparent group-hover:bg-thread group-focus-visible:bg-thread" />
+			</button>
 		</aside>
 	);
 }
