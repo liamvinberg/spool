@@ -191,7 +191,7 @@ The drive loop — \`spool url <frame>\` prints a player URL (append &scenario=<
 \`spool selection\` prints what the human points at — always a JSON list, empty when nothing is selected:
   frame entries      { kind: "frame", frame, path, size: { w, h } }
   element entries    { kind: "element", frame, path, lines: [start, end], selector, excerpt }
-                     — the human descended into a frame in design mode. path and lines land in source (open-in-editor exact), selector in the live DOM, excerpt is the JSX span. "generated": true marks runtime-created DOM: lines point at the nearest stamped ancestor (no stamp at all: the frame's first line), excerpt becomes live outerHTML, trust the selector.
+                     — the human selected into a frame with the Select tool. path and lines land in source (open-in-editor exact), selector in the live DOM, excerpt is the JSX span. "generated": true marks runtime-created DOM: lines point at the nearest stamped ancestor (no stamp at all: the frame's first line), excerpt becomes live outerHTML, trust the selector.
 
 \`spool flows\` prints { frames, edges, unreadable } — every edge { from, to, certainty: "will" | "might", sites: [{ path, line, conditional? }] }, "verified": true once a real session took it, "missing": true on targets no frame answers (typo'd ui.go literals included), and unreadable entries { frame, path, line } for navigation whose destination cannot be read: together, the todo list when wiring a flow.`,
 };

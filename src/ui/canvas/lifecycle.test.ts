@@ -40,10 +40,8 @@ function sweeper() {
 			camera: origin,
 			viewportWidth: 1000,
 			viewportHeight: 1000,
-			mode: "live",
 			entered: null,
-			selected: null,
-			wakeRequested: new Set(),
+			frozen: null,
 			states,
 			ready: new Set(frames.map((f) => f.name)),
 			capturing: new Set(),
@@ -113,7 +111,7 @@ describe("wake queue", () => {
 	});
 });
 
-describe("intent", () => {
+describe("entered frame", () => {
 	const inView = [
 		frame("d", 250, 450),
 		frame("a", 450, 450),
@@ -133,39 +131,45 @@ describe("intent", () => {
 		const away = sweep(inView, { entered: "e", camera: { x: -10000, y: 0, k: 1 } });
 		expect(away.states.e).toBe("live");
 	});
+});
 
-	it("admits the selected frame ahead of every non-intent frame", () => {
+describe("frozen frame", () => {
+	it("freezes only the current target and thaws the previous one", () => {
+		const frames = [frame("a", 350, 450), frame("b", 550, 450)];
 		const { sweep } = sweeper();
+		sweep(frames);
 
-		const first = sweep(inView, { selected: "e" });
-		expect(first.states).toEqual({ a: "live", b: "live", c: "hibernated", d: "hibernated", e: "live" });
+		const aFrozen = sweep(frames, { frozen: "a" });
+		expect(aFrozen.states).toEqual({ a: "warm", b: "live" });
+
+		const bFrozen = sweep(frames, { frozen: "b" });
+		expect(bFrozen.states).toEqual({ a: "live", b: "warm" });
 	});
 
-	it("pre-boots an offscreen selected frame to warm, still through the queue", () => {
+	it("keeps an entered frozen frame warm, then thaws it live", () => {
+		const frames = [frame("a", 450, 450)];
 		const { sweep } = sweeper();
 
-		const first = sweep([frame("off", 5000, 5000)], { selected: "off" });
-		expect(first.states).toEqual({ off: "warm" });
+		const frozen = sweep(frames, { entered: "a", frozen: "a" });
+		expect(frozen.states).toEqual({ a: "warm" });
+
+		const thawed = sweep(frames, { entered: "a" });
+		expect(thawed.states).toEqual({ a: "live" });
 	});
 
-	it("admits a wake-requested frame behind selected, ahead of the visible tiers (#37)", () => {
-		const { sweep } = sweeper();
+	it("rescues the frozen target from an eviction already in flight", () => {
+		const frames = strip(WARM_POOL_CAP + 1);
+		const s = sweeper();
+		tour(s, frames);
 
-		// an offscreen expand must not wait behind five visible mounts
-		const first = sweep([...inView, frame("off", 5000, 5000)], { wakeRequested: new Set(["off"]) });
-		expect(first.states.off).toBe("warm");
+		const evicting = s.sweep(frames, { camera: parked });
+		expect(evicting.exitCaptures).toEqual(["f0"]);
 
-		// selected still outranks it: with three slots, the last request waits
-		const contended = sweeper().sweep(
-			[frame("s", 5000, 5000), frame("r1", 7000, 5000), frame("r2", 9000, 5000), frame("r3", 11000, 5000)],
-			{ selected: "s", wakeRequested: new Set(["r1", "r2", "r3"]) },
-		);
-		expect(contended.states.s).toBe("warm");
-		expect(
-			Object.entries(contended.states)
-				.filter(([, state]) => state === "hibernated")
-				.map(([name]) => name),
-		).toHaveLength(1);
+		for (let i = 0; i < 3; i++) {
+			const held = s.sweep(frames, { camera: parked, frozen: "f0" });
+			expect(held.states.f0).toBe("warm");
+			expect(held.exitCaptures).toEqual([]);
+		}
 	});
 });
 
@@ -235,36 +239,6 @@ describe("warm pool", () => {
 		expect(timedOut.states.f0).toBe("hibernated");
 	});
 
-	it("never evicts the selected frame — pre-boot intent shields it until deselection", () => {
-		const frames = strip(WARM_POOL_CAP + 1);
-		const s = sweeper();
-		tour(s, frames);
-
-		// f0 is the oldest-seen, but selection shields it and the pool holds
-		const held = s.sweep(frames, { camera: parked, selected: "f0" });
-		expect(held.exitCaptures).toEqual([]);
-		expect(held.states.f0).toBe("warm");
-
-		// deselection releases it to normal pool policy
-		const released = s.sweep(frames, { camera: parked });
-		expect(released.exitCaptures).toEqual(["f0"]);
-	});
-
-	it("never evicts a wake-requested frame while the request stands (#37)", () => {
-		const frames = strip(WARM_POOL_CAP + 1);
-		const s = sweeper();
-		tour(s, frames);
-
-		// f0 is the oldest-seen, but an expanded tree row keeps it real
-		const held = s.sweep(frames, { camera: parked, wakeRequested: new Set(["f0"]) });
-		expect(held.exitCaptures).toEqual([]);
-		expect(held.states.f0).toBe("warm");
-
-		// collapsing the row releases it to normal pool policy
-		const released = s.sweep(frames, { camera: parked });
-		expect(released.exitCaptures).toEqual(["f0"]);
-	});
-
 	it("rescues an eviction mid-goodbye when its frame comes back into view", () => {
 		const frames = strip(WARM_POOL_CAP + 1);
 		const s = sweeper();
@@ -327,92 +301,5 @@ describe("thumbnail refresh", () => {
 		// settled and thumbless — but an in-flight capture holds the debt open
 		expect(s.sweep(frames, { hasThumb, capturing: new Set(["a"]) }).refreshCaptures).toEqual([]);
 		expect(s.sweep(frames, { hasThumb }).refreshCaptures).toEqual(["a"]);
-	});
-});
-
-describe("design mode", () => {
-	it("a design flip drains every hibernated frame through the queue, on- and offscreen", () => {
-		const frames = [
-			frame("a", 450, 450),
-			frame("b", 350, 450),
-			frame("c", 450, 300),
-			frame("d", 250, 450),
-			frame("e", 3000, 450),
-			frame("f", 4000, 450),
-			frame("g", 5000, 450),
-			frame("h", 6000, 450),
-		];
-		const { sweep } = sweeper();
-
-		const first = sweep(frames, { mode: "design" });
-		expect(first.states).toEqual({
-			a: "warm",
-			b: "warm",
-			c: "warm",
-			d: "hibernated",
-			e: "hibernated",
-			f: "hibernated",
-			g: "hibernated",
-			h: "hibernated",
-		});
-
-		const second = sweep(frames, { mode: "design" });
-		expect(second.states.d).toBe("warm");
-		expect(second.states.e).toBe("warm");
-		expect(second.states.f).toBe("warm");
-		expect(second.states.g).toBe("hibernated");
-
-		const third = sweep(frames, { mode: "design" });
-		expect(Object.values(third.states).every((state) => state === "warm")).toBe(true);
-	});
-
-	it("admits the margin ring before fully offscreen frames, whatever their distances", () => {
-		// the ring frame sits farther from the center (≈1273) than every
-		// offscreen frame (1150, 1200, 1250) — the tier must still win
-		const frames = [
-			frame("r1", 1600, 450),
-			frame("r2", 1650, 450),
-			frame("r3", 1700, 450),
-			frame("ring", -450, -450),
-		];
-		const { sweep } = sweeper();
-
-		const first = sweep(frames, { mode: "design" });
-		expect(first.states).toEqual({ ring: "warm", r1: "warm", r2: "warm", r3: "hibernated" });
-	});
-
-	it("never evicts in design mode; returning to live evicts back down to the cap", () => {
-		const frames = strip(WARM_POOL_CAP + 3);
-		const s = sweeper();
-
-		// nine design sweeps mount all 27 frames, three per sweep, no evictions
-		for (let i = 0; i < 9; i++) {
-			const result = s.sweep(frames, { mode: "design", camera: parked });
-			expect(result.exitCaptures).toEqual([]);
-			expect(Object.values(result.states).filter((state) => state === "hibernated")).toHaveLength(27 - 3 * (i + 1));
-		}
-
-		// back to live: three over the cap, never seen usable — frames-order ties
-		const back = s.sweep(frames, { camera: parked });
-		expect(back.exitCaptures).toEqual(["f0", "f1", "f2"]);
-	});
-
-	it("a design flip rescues an eviction mid-goodbye; leaving design restarts it cleanly", () => {
-		const frames = strip(WARM_POOL_CAP + 1);
-		const s = sweeper();
-		tour(s, frames);
-
-		const evict = s.sweep(frames, { camera: parked });
-		expect(evict.exitCaptures).toEqual(["f0"]);
-
-		// the flip cancels the goodbye — real DOM everywhere, nothing unmounts
-		const design = s.sweep(frames, { mode: "design", camera: parked });
-		expect(Object.values(design.states).every((state) => state === "warm")).toBe(true);
-
-		// back to live past the old goodbye window: a stale exit would hibernate
-		// f0 silently; a clean pool evicts it afresh, goodbye and all
-		const back = s.sweep(frames, { camera: parked });
-		expect(back.exitCaptures).toEqual(["f0"]);
-		expect(back.states.f0).toBe("warm");
 	});
 });

@@ -34,25 +34,18 @@ describe("canvas context menu", () => {
 		).toBe(true);
 	});
 
-	it("opens for a selected frame in design mode without selecting an element", async () => {
+	it("opens for a frame without selecting an element", async () => {
 		const { host, canvas } = await renderCanvas();
 		const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
 		expect(iframe?.contentWindow).not.toBeNull();
-
-		await act(async () => {
-			canvas.dispatchEvent(
-				new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
-			);
-			canvas.dispatchEvent(
-				new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
-			);
-		});
 
 		const postMessage = vi.spyOn(iframe?.contentWindow as Window, "postMessage");
 		postMessage.mockClear();
 		await openFrameMenu(canvas);
 
-		expect(host.querySelector('[role="menu"]')?.textContent).toContain("Export as PNG");
+		const menu = host.querySelector('[role="menu"]');
+		expect(menu?.textContent).toContain("Export as PNG");
+		expect(menu?.className).toContain("z-30");
 		expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ spool: "pick" }), "*");
 	});
 
@@ -63,6 +56,9 @@ describe("canvas context menu", () => {
 
 		const postMessage = vi.spyOn(iframe?.contentWindow as Window, "postMessage");
 		postMessage.mockClear();
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="select"]')?.click();
+		});
 		await act(async () => {
 			canvas.dispatchEvent(
 				new PointerEvent("pointerdown", {
@@ -118,6 +114,24 @@ describe("canvas context menu", () => {
 
 		expect(host.querySelector('[role="menu"]')?.textContent).toContain("Export as PNG");
 	});
+
+	it("does not trash a selected frame from the Delete key", async () => {
+		const { host, requests } = await renderCanvas();
+		await act(async () => {
+			window.dispatchEvent(new MessageEvent("message", { data: { spool: "key", frame: "home", key: "Escape" } }));
+		});
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+		});
+
+		expect(host.querySelector('[data-frame-label="home"]')).not.toBeNull();
+		expect(
+			requests.mock.calls.some(([input]) => {
+				const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+				return url.pathname === "/api/p/test/trash";
+			}),
+		).toBe(false);
+	});
 });
 
 async function renderCanvas(projectedFrames = frames) {
@@ -137,9 +151,18 @@ async function renderCanvas(projectedFrames = frames) {
 	});
 	const frame = projectedFrames[0];
 	if (frame === undefined) throw new Error("a canvas test needs one frame");
-	await until(() => host.querySelector(`iframe[title="${frame.name}"]`) !== null);
+	await until(() => host.querySelector(`[data-frame-label="${frame.name}"]`) !== null);
 	const canvas = host.querySelector<HTMLElement>('[role="application"]');
 	if (canvas === null) throw new Error("canvas did not render");
+	await act(async () => {
+		canvas.dispatchEvent(
+			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
+		);
+		canvas.dispatchEvent(
+			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
+		);
+	});
+	await until(() => host.querySelector(`iframe[title="${frame.name}"]`) !== null);
 	return { host, canvas, requests };
 }
 
@@ -178,7 +201,7 @@ function stubCanvasApis(projectedFrames = frames) {
 		const raw = input instanceof Request ? input.url : String(input);
 		const url = new URL(raw, window.location.href);
 		if (url.pathname.endsWith("/state")) {
-			return Response.json({ mode: "design", camera: { x: 0, y: 0, k: 1 } });
+			return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 		}
 		if (url.pathname.endsWith("/frames")) {
 			return Response.json({ root: "/project", pages: [], frames: projectedFrames, collisions: [] });
@@ -201,10 +224,7 @@ function stubCanvasApis(projectedFrames = frames) {
 			close() {}
 		},
 	);
-	vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
-		callback(performance.now() + 1000);
-		return 1;
-	});
+	vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation(() => 1);
 	vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
 	return requests;
 }

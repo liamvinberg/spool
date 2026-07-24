@@ -3,13 +3,12 @@ import type { AppType } from "../daemon/app";
 import type { EdgeSite, FlowEdge, Flows } from "../daemon/flows";
 import type { FsListing } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
-import type { Camera, CanvasMode, CanvasState } from "../daemon/project-state";
+import type { Camera, CanvasState } from "../daemon/project-state";
 import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionPut } from "../daemon/selection";
 
 export type {
 	Camera,
-	CanvasMode,
 	CanvasState,
 	EdgeSite,
 	FlowEdge,
@@ -157,17 +156,6 @@ export function beaconTrash(project: string, frames: string[]): void {
 		`/api/p/${encodeURIComponent(project)}/trash`,
 		new Blob([JSON.stringify({ frames })], { type: "application/json" }),
 	);
-}
-
-/** The tree's call-site rows (#37): each stamp's repeating call, or null. */
-export async function fetchStampLabels(project: string, stamps: string[]): Promise<Record<string, string | null>> {
-	try {
-		const res = await client.api.p[":project"]["stamp-labels"].$post({ param: { project }, json: { stamps } });
-		if (!res.ok) return {};
-		return ((await res.json()) as { labels: Record<string, string | null> }).labels;
-	} catch {
-		return {};
-	}
 }
 
 export function openInEditor(project: string, path: string, line?: number): void {

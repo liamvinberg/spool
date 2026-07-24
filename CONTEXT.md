@@ -26,17 +26,19 @@ Spool is a local-first prototyping canvas: agents author live TSX frames on disk
 
 **Portal**: The chip drawn where a link leaves the active page — no arrow can reach the target, so the marker names it and its page, and activating it jumps there.
 
-**Live mode**: The default canvas mode, in which near frames actually run. _Avoid_: play mode (modes control time; gestures control intent)
+**Interact**: The default canvas tool. A clean click enters a frame; once entered, pointer and keyboard input belong to its app.
 
-**Design mode**: The canvas mode in which time is frozen everywhere and clicks select elements.
+**Select**: The canvas tool for element selection and frame arrangement. Selecting into one frame freezes that frame in place; the rest keep their normal lifecycle.
 
-**Entered**: The state of a frame after double-click: interaction goes inside it and walks happen in place. Esc leaves an html frame; a terminal owns every key, so the platform modifier + Esc leaves it. _Avoid_: focused
+**Hand**: The canvas tool for panning with a primary-button drag; holding Space borrows it temporarily.
+
+**Entered**: The state of a frame after a clean Interact click: interaction goes inside it and walks happen in place. Esc leaves an html frame; a terminal owns every key, so the platform modifier + Esc leaves it. _Avoid_: focused
 
 **Hibernated**: A frame demoted to its still because the warm pool overflowed; it boots fresh on return. Hibernation's payoff is memory, never CPU. _Avoid_: paused
 
 **Warm pool**: The bounded set of offscreen frames kept mounted with time frozen; overflowing it, oldest-seen first, is the only path into hibernation. _Avoid_: cache
 
-**Wake queue**: The single ordered path a frame takes into the DOM, drained a few mounts per sweep — entered immediately, selected next, then wake-requested tree rows, then nearest the viewport center. Every burst site (zoom wake, design flip, page entry, tree expand) drains through it.
+**Wake queue**: The single ordered path a frame takes into the DOM, drained a few mounts per sweep — an entered frame starts immediately, then the one frozen selection target, then visible frames nearest the viewport center. Zoom and page-entry bursts drain through it.
 
 **Hands**: The human at the canvas. Hands own geometry and arrangement; agents own frame source. _Avoid_: user, designer
 

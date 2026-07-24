@@ -257,7 +257,6 @@ describe("page canvas state", () => {
 		const { spoolDir, name } = pageProject();
 		const app = makeApp(spoolDir);
 		const state = {
-			mode: "live",
 			arrows: true,
 			camera: { x: 1, y: 2, k: 1 },
 			activePage: "shop",
@@ -284,9 +283,9 @@ describe("page canvas state", () => {
 				body: JSON.stringify(body),
 			});
 
-		expect((await put({ mode: "live", activePage: "../escape" })).status).toBe(400);
-		expect((await put({ mode: "live", pageCameras: { shop: { x: 1, y: 2 } } })).status).toBe(400);
-		expect((await put({ mode: "live", pageCameras: { ".dot": { x: 1, y: 2, k: 1 } } })).status).toBe(400);
+		expect((await put({ activePage: "../escape" })).status).toBe(400);
+		expect((await put({ pageCameras: { shop: { x: 1, y: 2 } } })).status).toBe(400);
+		expect((await put({ pageCameras: { ".dot": { x: 1, y: 2, k: 1 } } })).status).toBe(400);
 	});
 });
 

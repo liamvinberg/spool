@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CanvasMode, ProjectCard } from "./api";
+import type { ProjectCard } from "./api";
 import { fetchProjects, fetchSession, postUpgrade, putSession, subscribeSse } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { Home } from "./home";
@@ -224,7 +224,6 @@ export function App() {
 						>
 							<ThreadIcon />
 						</button>
-						<ModeControl mode={chrome.mode} onMode={chrome.setMode} />
 						<span className="min-w-9 text-right font-mono text-muted text-xs leading-xs">{chrome.zoomPct}%</span>
 					</div>
 				)}
@@ -239,7 +238,12 @@ export function App() {
 			</main>
 
 			{toast !== null && (
-				<UpdateToastPill toast={toast} onUpdate={() => void startUpgrade()} onDismiss={dismissToast} />
+				<UpdateToastPill
+					toast={toast}
+					aboveCanvasTools={focusedTab !== undefined && chrome !== null}
+					onUpdate={() => void startUpgrade()}
+					onDismiss={dismissToast}
+				/>
 			)}
 
 			{picking && (
@@ -253,28 +257,6 @@ export function App() {
 					/>
 				</div>
 			)}
-		</div>
-	);
-}
-
-function ModeControl({ mode, onMode }: { mode: CanvasMode; onMode: (mode: CanvasMode) => void }) {
-	return (
-		<div className="flex items-center gap-[2px] rounded-md bg-surface p-[2px]">
-			{(["live", "design"] as const).map((option) => {
-				const active = mode === option;
-				return (
-					<button
-						key={option}
-						type="button"
-						className={`flex items-center rounded-sm px-3 py-unit font-medium text-sm leading-xs ${
-							active ? "border border-border-raised bg-raised text-text" : "text-muted hover:text-text"
-						}`}
-						onClick={() => onMode(option)}
-					>
-						{option === "live" ? "Live" : "Design"}
-					</button>
-				);
-			})}
 		</div>
 	);
 }

@@ -10,7 +10,7 @@ const frames = [
 	{ name: "right", x: 180, y: 0, w: 100, h: 100, hasThumb: false },
 ];
 
-describe("live canvas keyboard navigation", () => {
+describe("canvas keyboard navigation", () => {
 	it("returns from an entered frame, moves spatially, and enters the target without walking", async () => {
 		const requests: string[] = [];
 		vi.stubGlobal(
@@ -20,7 +20,7 @@ describe("live canvas keyboard navigation", () => {
 				const url = new URL(raw, window.location.href);
 				requests.push(url.pathname);
 				if (url.pathname.endsWith("/state")) {
-					return Response.json({ mode: "live", camera: { x: 0, y: 0, k: 1 } });
+					return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 				}
 				if (url.pathname.endsWith("/frames")) {
 					return Response.json({ root: "/project", pages: [], frames, collisions: [] });
@@ -61,7 +61,24 @@ describe("live canvas keyboard navigation", () => {
 		expect(canvas).not.toBeNull();
 
 		await act(async () => {
-			canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
+			canvas?.dispatchEvent(
+				new PointerEvent("pointerdown", {
+					bubbles: true,
+					button: 0,
+					clientX: 50,
+					clientY: 50,
+					pointerId: 1,
+				}),
+			);
+			canvas?.dispatchEvent(
+				new PointerEvent("pointerup", {
+					bubbles: true,
+					button: 0,
+					clientX: 50,
+					clientY: 50,
+					pointerId: 1,
+				}),
+			);
 		});
 		expect(labelText(host, "origin")).toContain("live · esc exits");
 

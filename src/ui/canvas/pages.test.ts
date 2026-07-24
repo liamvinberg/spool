@@ -90,7 +90,6 @@ describe("page switching", () => {
 describe("per-page camera bookkeeping", () => {
 	it("reads the root camera from the original slot and named pages from theirs", () => {
 		const cameras = camerasFromState({
-			mode: "live",
 			camera: { x: 1, y: 2, k: 1 },
 			pageCameras: { shop: { x: 3, y: 4, k: 2 } },
 		});
@@ -105,7 +104,7 @@ describe("per-page camera bookkeeping", () => {
 
 	it("survives the round trip unchanged", () => {
 		const cameras = { [ROOT_PAGE]: { x: 1, y: 2, k: 1 }, shop: { x: 3, y: 4, k: 2 } };
-		expect(camerasFromState({ mode: "live", ...stateCameraSlots(cameras) })).toEqual(cameras);
+		expect(camerasFromState(stateCameraSlots(cameras))).toEqual(cameras);
 	});
 });
 

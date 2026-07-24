@@ -4,17 +4,14 @@ import { writeAtomic } from "../atomic-write";
 import { isSafeName } from "./project-files";
 
 /**
- * Per-project canvas state in design/.spool/state.json: the mode (#7 — D
- * toggles live/design, persisted per project, never auto-switched), the
- * last settled camera (#12 — cameras are per-browser live, last-settle wins
- * the persisted slot), the arrows toggle (#34 — unset means on: the map
- * is spool's identity), and the page bookkeeping (#39 — the active page and
- * each named page's camera; the root page keeps the original camera slot, so
- * flat projects' files read unchanged). App-owned ephemera: corrupt state
- * reads as absent.
+ * Per-project canvas state in design/.spool/state.json: the last settled
+ * camera (#12 — cameras are per-browser live, last-settle wins the persisted
+ * slot), the arrows toggle (#34 — unset means on: the map is spool's
+ * identity), and the page bookkeeping (#39 — the active page and each named
+ * page's camera; the root page keeps the original camera slot, so flat
+ * projects' files read unchanged). App-owned ephemera: corrupt state reads as
+ * absent.
  */
-
-export type CanvasMode = "live" | "design";
 
 export interface Camera {
 	x: number;
@@ -23,7 +20,6 @@ export interface Camera {
 }
 
 export interface CanvasState {
-	mode: CanvasMode;
 	/** The root page's last settled camera. */
 	camera?: Camera;
 	arrows?: boolean;
@@ -33,7 +29,7 @@ export interface CanvasState {
 	pageCameras?: Record<string, Camera>;
 }
 
-const DEFAULT_STATE: CanvasState = { mode: "live" };
+const DEFAULT_STATE: CanvasState = {};
 
 function stateFile(root: string): string {
 	return join(root, "design", ".spool", "state.json");
@@ -56,10 +52,10 @@ export function writeCanvasState(root: string, state: CanvasState): void {
 
 /** Strict on the way in (PUT bodies), lenient defaults on the way out. */
 export function parseCanvasState(value: unknown): CanvasState | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
 	const record = value as Record<string, unknown>;
-	if (record.mode !== "live" && record.mode !== "design") return undefined;
-	const state: CanvasState = { mode: record.mode };
+	if ("mode" in record) return undefined;
+	const state: CanvasState = {};
 	if (record.arrows !== undefined) {
 		if (typeof record.arrows !== "boolean") return undefined;
 		state.arrows = record.arrows;

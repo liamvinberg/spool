@@ -219,12 +219,23 @@ let playerHosted = false;
 window.addEventListener(
 	"keydown",
 	(event) => {
+		if (event.key === "Meta") post({ spool: "modifier", modifier: "Meta", held: true });
 		if (termKeyIntent(event, !playerHosted) !== "exit") return;
 		event.preventDefault();
 		post({ spool: "key", key: "Escape" });
 	},
 	{ capture: true },
 );
+
+window.addEventListener(
+	"keyup",
+	(event) => {
+		if (event.key === "Meta") post({ spool: "modifier", modifier: "Meta", held: false });
+	},
+	{ capture: true },
+);
+
+window.addEventListener("blur", () => post({ spool: "modifier", modifier: "Meta", held: false }));
 
 // the emulator only suppresses the chord — the relay above already spoke
 term.attachCustomKeyEventHandler((event) => {

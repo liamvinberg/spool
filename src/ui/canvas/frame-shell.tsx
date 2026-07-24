@@ -52,7 +52,7 @@ export const FrameShell = memo(function FrameShell({
 	name,
 	state,
 	ready,
-	entered,
+	interactive,
 	docNonce,
 	thumbNonce,
 	hasThumb,
@@ -63,7 +63,8 @@ export const FrameShell = memo(function FrameShell({
 	name: string;
 	state: FrameState;
 	ready: boolean;
-	entered: boolean;
+	/** Whether the entered iframe currently owns pointer input. */
+	interactive: boolean;
 	/** Bumped by SSE source changes — a new nonce reloads the document. */
 	docNonce: number;
 	/** Bumped when the cached thumbnail changes — refreshes covers. */
@@ -125,7 +126,7 @@ export const FrameShell = memo(function FrameShell({
 					sandbox="allow-scripts"
 					src={frameDocumentUrl(project, name, docNonce)}
 					className="block h-full w-full border-0 bg-white"
-					style={{ pointerEvents: entered ? "auto" : "none" }}
+					style={{ pointerEvents: interactive ? "auto" : "none" }}
 				/>
 			)}
 			{(plan.cover || veil) && (
@@ -163,7 +164,7 @@ export const FrameShell = memo(function FrameShell({
 					)}
 				</div>
 			)}
-			{!entered && <div className="absolute inset-0" />}
+			{!interactive && <div className="absolute inset-0" />}
 		</>
 	);
 });

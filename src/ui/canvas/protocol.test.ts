@@ -43,6 +43,17 @@ describe("frame zoom protocol", () => {
 	});
 });
 
+describe("frame modifier protocol", () => {
+	it("accepts Meta hold changes and rejects malformed modifier intents", () => {
+		const held = { spool: "modifier", frame: "host", modifier: "Meta", held: true };
+
+		expect(parseFrameMessage(held)).toEqual(held);
+		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Meta" })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Control", held: true })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Meta", held: "true" })).toBeUndefined();
+	});
+});
+
 describe("site boxes protocol (#34)", () => {
 	it("accepts a shim's site-box answer and rejects a shapeless one", () => {
 		const answer = {
@@ -55,28 +66,5 @@ describe("site boxes protocol (#34)", () => {
 		expect(parseFrameMessage(answer)).toEqual(answer);
 		expect(parseFrameMessage({ spool: "site-boxes", frame: "cart", id: 3 })).toBeUndefined();
 		expect(parseFrameMessage({ spool: "site-boxes", frame: "cart", boxes: {} })).toBeUndefined();
-	});
-});
-
-describe("element tree protocol (#37)", () => {
-	it("accepts a shim's tree answer and rejects a shapeless one", () => {
-		const answer = {
-			spool: "tree",
-			frame: "cart",
-			id: 5,
-			roots: [{ tag: "main", selector: "main", source: "frames/cart/frame.tsx:3:3", text: "", children: [] }],
-		};
-
-		expect(parseFrameMessage(answer)).toEqual(answer);
-		expect(parseFrameMessage({ spool: "tree", frame: "cart", id: 5 })).toBeUndefined();
-		expect(parseFrameMessage({ spool: "tree", frame: "cart", roots: [] })).toBeUndefined();
-	});
-
-	it("accepts a shim's describe answer and rejects a shapeless one", () => {
-		const answer = { spool: "described", frame: "cart", id: 6, chains: [[], []] };
-
-		expect(parseFrameMessage(answer)).toEqual(answer);
-		expect(parseFrameMessage({ spool: "described", frame: "cart", id: 6 })).toBeUndefined();
-		expect(parseFrameMessage({ spool: "described", frame: "cart", chains: [] })).toBeUndefined();
 	});
 });
