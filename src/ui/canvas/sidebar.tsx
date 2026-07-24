@@ -1,20 +1,9 @@
-import { useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ProjectedFrame } from "../api";
-import { pageLabel, pageList } from "./pages";
-
-/**
- * The frames sidebar (#39): one collapsible navigator with pages above the
- * active page's frame list. Rows select without moving the camera and
- * double-click flies to a frame. Dragging the edge resizes; past the snap
- * threshold it collapses to the rail.
- */
+import { framesOnPage, pageLabel, pageList } from "./pages";
 
 const PANEL_WIDTH = 248;
-const RAIL_WIDTH = 44;
-const MIN_WIDTH = 200;
-const MAX_WIDTH = 320;
-const SNAP_BELOW = 144;
-const COLLAPSED_BELOW = 72;
+const STRIP_WIDTH = 44;
 
 export interface SelectModifiers {
 	shift: boolean;
@@ -26,6 +15,7 @@ const modifiersOf = (event: React.MouseEvent): SelectModifiers => ({
 	toggle: event.metaKey || event.ctrlKey,
 });
 
+/** The pages navigator: a collapsible folder tree over the full projection. */
 export function CanvasSidebar({
 	pages,
 	activePage,
@@ -38,160 +28,174 @@ export function CanvasSidebar({
 	/** Named pages, sorted; the root page is implied and listed first. */
 	pages: readonly string[];
 	activePage: string;
-	/** The active page's frames, projection order. */
+	/** Every projected frame; the canvas itself mounts only the active page. */
 	frames: readonly ProjectedFrame[];
 	selected: readonly string[];
 	onSwitchPage: (page: string) => void;
 	onSelectFrame: (name: string, modifiers: SelectModifiers) => void;
 	onDoubleClickFrame: (name: string) => void;
 }) {
-	const [width, setWidth] = useState(PANEL_WIDTH);
-	const [dragging, setDragging] = useState(false);
-	const drag = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
-	const collapsed = width <= COLLAPSED_BELOW;
+	const [collapsed, setCollapsed] = useState(false);
+	const [expanded, setExpanded] = useState<Record<string, boolean>>(() => ({ [activePage]: true }));
+	const orderedPages = pageList(pages);
+	useEffect(() => {
+		setExpanded((current) => (current[activePage] ? current : { ...current, [activePage]: true }));
+	}, [activePage]);
 
-	function finishDrag(target: HTMLElement, pointerId: number) {
-		const current = drag.current;
-		if (current === null || current.pointerId !== pointerId) return;
-		target.releasePointerCapture(pointerId);
-		drag.current = null;
-		setDragging(false);
-		setWidth(current.latestWidth < SNAP_BELOW ? RAIL_WIDTH : Math.max(MIN_WIDTH, current.latestWidth));
+	function activatePage(page: string) {
+		setExpanded((current) => ({ ...current, [page]: true }));
+		onSwitchPage(page);
 	}
 
 	return (
 		<aside
-			className={`relative z-20 h-full shrink-0 overflow-hidden border-border border-r bg-bg ${
-				dragging ? "" : "transition-[width] duration-200 motion-reduce:transition-none"
-			}`}
-			style={{ width }}
+			className="relative z-20 h-full shrink-0 overflow-hidden border-border border-r bg-bg transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none"
+			style={{ width: collapsed ? STRIP_WIDTH : PANEL_WIDTH }}
 		>
 			{collapsed ? (
-				<div className="flex h-11 w-11 items-center justify-center border-border border-b">
+				<div className="flex h-full w-11 flex-col items-center">
 					<button
 						type="button"
-						onClick={() => setWidth(PANEL_WIDTH)}
-						aria-label="Expand frames panel"
-						className="flex h-7 w-7 items-center justify-center rounded-sm text-muted hover:bg-surface hover:text-text"
+						aria-label="Expand pages"
+						onClick={() => setCollapsed(false)}
+						className="flex h-11 w-11 items-center justify-center text-muted/70 hover:text-text"
 					>
-						<PanelOpenIcon className="h-3.5 w-3.5" />
+						<PanelCaret dir="right" className="h-3.5 w-2.5" />
 					</button>
+					<div className="flex min-h-0 flex-1 flex-col items-center gap-0.5 overflow-y-auto pt-1">
+						{orderedPages.map((page) => {
+							const active = page === activePage;
+							return (
+								<button
+									key={page}
+									type="button"
+									aria-label={`${pageLabel(page)} page`}
+									aria-current={active ? "page" : undefined}
+									title={pageLabel(page)}
+									onClick={() => activatePage(page)}
+									className="relative flex h-9 w-11 items-center justify-center"
+								>
+									{active ? (
+										<span className="absolute top-2 bottom-2 left-0 w-[2px] rounded-full bg-thread" />
+									) : null}
+									<FolderIcon className={`h-4 w-4 ${active ? "text-thread" : "text-muted"}`} />
+								</button>
+							);
+						})}
+					</div>
 				</div>
 			) : (
-				<div className="flex h-full min-w-[200px] flex-col">
-					<div className="flex h-11 shrink-0 items-center justify-between border-border border-b px-3.5">
-						<div className="flex items-center gap-2.5">
-							<h1 className="font-semibold text-base leading-base">Frames</h1>
-							<span className="font-mono text-muted text-xs leading-xs">{frames.length}</span>
+				<div className="flex h-full w-[248px] flex-col">
+					<div className="flex h-11 shrink-0 items-center justify-between border-border border-b pr-2 pl-3.5">
+						<div className="flex items-baseline gap-2">
+							<h1 className="font-semibold text-base leading-base">Pages</h1>
+							<span className="font-mono text-muted text-xs leading-xs">{orderedPages.length}</span>
 						</div>
 						<button
 							type="button"
-							onClick={() => setWidth(RAIL_WIDTH)}
-							aria-label="Collapse frames panel"
-							className="flex h-6 w-6 items-center justify-center rounded-sm text-muted hover:bg-surface hover:text-text"
+							aria-label="Collapse pages"
+							onClick={() => setCollapsed(true)}
+							className="flex h-7 w-7 items-center justify-center rounded-sm text-muted/60 hover:text-text"
 						>
-							<PanelCloseIcon className="h-3.5 w-3.5" />
+							<PanelCaret dir="left" className="h-3.5 w-2.5" />
 						</button>
 					</div>
 
-					{pages.length > 0 && (
-						<div className="shrink-0 border-border border-b py-2">
-							<div className="flex h-6 items-center px-3.5 font-mono text-2xs text-muted leading-3">Pages</div>
-							{/* many pages scroll inside their cap — they never crowd out the frame list */}
-							<div className="max-h-44 overflow-y-auto">
-								{pageList(pages).map((page) => {
-									const active = page === activePage;
-									return (
+					<div className="min-h-0 flex-1 overflow-y-auto py-2">
+						{orderedPages.map((page) => {
+							const pageFrames = framesOnPage(frames, page);
+							const active = page === activePage;
+							const open = expanded[page] ?? false;
+							return (
+								<div key={page}>
+									<div
+										className={`group relative flex h-8 items-center pr-1.5 hover:bg-surface ${active ? "bg-surface" : ""}`}
+									>
+										{active ? (
+											<span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-thread" />
+										) : null}
 										<button
-											key={page}
 											type="button"
-											aria-pressed={active}
-											onClick={() => onSwitchPage(page)}
-											className={`flex h-8 w-full min-w-0 items-center gap-2 px-3 text-left font-mono text-sm leading-sm hover:bg-surface ${
-												active ? "text-text" : "text-muted"
-											}`}
+											aria-label={`${open ? "Collapse" : "Expand"} ${pageLabel(page)}`}
+											aria-expanded={open}
+											onClick={() => setExpanded((current) => ({ ...current, [page]: !open }))}
+											className="flex h-8 w-6 shrink-0 items-center justify-center"
 										>
-											<PageIcon
+											<ChevronIcon open={open} className="h-2.5 w-2.5" />
+										</button>
+										<button
+											type="button"
+											aria-label={`${pageLabel(page)} page`}
+											aria-current={active ? "page" : undefined}
+											onClick={() => activatePage(page)}
+											className="flex h-8 min-w-0 flex-1 items-center gap-2 text-left"
+										>
+											<FolderIcon
 												className={`h-3.5 w-3.5 shrink-0 ${active ? "text-thread" : "text-muted"}`}
 											/>
-											<span className="min-w-0 flex-1 truncate">{pageLabel(page)}</span>
+											<span
+												className={`min-w-0 flex-1 truncate font-mono text-sm leading-sm ${active ? "text-text" : "text-muted"}`}
+											>
+												{pageLabel(page)}
+											</span>
 										</button>
-									);
-								})}
-							</div>
-						</div>
-					)}
+										<span className="font-mono text-2xs text-muted/60 leading-3">{pageFrames.length}</span>
+									</div>
 
-					<div className="min-h-0 flex-1 overflow-y-auto py-2">
-						{frames.map((frame) => {
-							const isSelected = selected.includes(frame.name);
-							return (
-								<div
-									key={frame.name}
-									className={`group flex h-8 w-full items-center pr-2 font-mono text-sm leading-sm hover:bg-surface ${
-										isSelected ? "text-text" : "text-muted"
-									}`}
-								>
-									<span className="w-3 shrink-0" />
-									<button
-										type="button"
-										aria-pressed={isSelected}
-										onClick={(event) => onSelectFrame(frame.name, modifiersOf(event))}
-										onDoubleClick={() => onDoubleClickFrame(frame.name)}
-										className="flex h-8 min-w-0 flex-1 items-center gap-2 text-left"
+									<div
+										className={`grid transition-[grid-template-rows,opacity] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none ${
+											open
+												? "grid-rows-[1fr] opacity-100 duration-[180ms]"
+												: "grid-rows-[0fr] opacity-0 duration-[140ms]"
+										}`}
 									>
-										<FrameIcon
-											className={`h-3.5 w-3.5 shrink-0 ${isSelected ? "text-thread" : "text-muted"}`}
-										/>
-										<span className="min-w-0 flex-1 truncate">{frame.name}</span>
-										<span className="pr-1 text-2xs text-muted opacity-0 transition-opacity group-hover:opacity-100">
-											{frame.kind === "term" ? "term.tsx" : "frame.tsx"}
-										</span>
-									</button>
+										<div className="min-h-0 overflow-hidden" inert={!open} aria-hidden={!open}>
+											<div className="relative pb-0.5">
+												<span className="absolute top-0 bottom-1 left-[18px] w-px bg-border-raised" />
+												{pageFrames.map((frame) => {
+													const isSelected = selected.includes(frame.name);
+													return (
+														<div
+															key={frame.name}
+															className={`group/row relative flex h-7 items-center hover:bg-surface ${isSelected ? "bg-surface" : ""}`}
+														>
+															<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
+															<button
+																type="button"
+																aria-label={`${frame.name} frame`}
+																aria-pressed={isSelected}
+																onClick={(event) => onSelectFrame(frame.name, modifiersOf(event))}
+																onDoubleClick={() => onDoubleClickFrame(frame.name)}
+																className="flex h-7 w-full min-w-0 items-center gap-2 pr-3 pl-[34px] text-left"
+															>
+																<FrameIcon
+																	className={`h-3.5 w-3.5 shrink-0 ${isSelected ? "text-thread" : "text-muted"}`}
+																/>
+																<span
+																	className={`min-w-0 flex-1 truncate font-mono text-xs leading-xs ${isSelected ? "text-text" : "text-muted"}`}
+																>
+																	{frame.name}
+																</span>
+																<span className="pr-1 font-mono text-2xs text-muted/50 leading-3 opacity-0 transition-opacity group-hover/row:opacity-100">
+																	{frame.kind === "term" ? "term.tsx" : "frame.tsx"}
+																</span>
+															</button>
+														</div>
+													);
+												})}
+											</div>
+										</div>
+									</div>
 								</div>
 							);
 						})}
 					</div>
 
 					<div className="flex h-9 shrink-0 items-center border-border border-t px-3.5 font-mono text-2xs text-muted leading-3">
-						Shift range · ⌘/Ctrl toggle
+						folder switches page
 					</div>
 				</div>
 			)}
-
-			<button
-				type="button"
-				aria-label="Resize frames panel"
-				onKeyDown={(event) => {
-					if (event.key === "ArrowLeft") setWidth(RAIL_WIDTH);
-					if (event.key === "ArrowRight") setWidth(PANEL_WIDTH);
-				}}
-				onPointerDown={(event) => {
-					event.currentTarget.setPointerCapture(event.pointerId);
-					drag.current = {
-						pointerId: event.pointerId,
-						startWidth: width,
-						startX: event.clientX,
-						latestWidth: width,
-					};
-					setDragging(true);
-				}}
-				onPointerMove={(event) => {
-					const current = drag.current;
-					if (current === null || current.pointerId !== event.pointerId) return;
-					const next = Math.min(
-						MAX_WIDTH,
-						Math.max(RAIL_WIDTH, current.startWidth + event.clientX - current.startX),
-					);
-					current.latestWidth = next;
-					setWidth(next);
-				}}
-				onPointerUp={(event) => finishDrag(event.currentTarget, event.pointerId)}
-				onPointerCancel={(event) => finishDrag(event.currentTarget, event.pointerId)}
-				className="group -right-1.5 absolute top-0 z-30 h-full w-3 cursor-col-resize touch-none outline-none"
-			>
-				<span className="absolute top-0 bottom-0 left-[5px] w-px bg-transparent group-hover:bg-thread group-focus-visible:bg-thread" />
-			</button>
 		</aside>
 	);
 }
@@ -205,11 +209,11 @@ function FrameIcon({ className }: { className?: string }) {
 	);
 }
 
-function PageIcon({ className }: { className?: string }) {
+function FolderIcon({ className }: { className?: string }) {
 	return (
 		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
 			<path
-				d="M1.75 3.25h3.5l1.5 1.75h5.5v6H1.75z"
+				d="M1.75 3.5h3.5l1.25 1.5h5.75v5.5H1.75z"
 				stroke="currentColor"
 				strokeWidth="1.15"
 				strokeLinejoin="round"
@@ -218,20 +222,30 @@ function PageIcon({ className }: { className?: string }) {
 	);
 }
 
-function PanelCloseIcon({ className }: { className?: string }) {
+function ChevronIcon({ open, className }: { open: boolean; className?: string }) {
 	return (
-		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
-			<rect x="2" y="2.5" width="12" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.25" />
-			<path d="M6 3v10M10.5 6 8.5 8l2 2" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+		<svg
+			viewBox="0 0 12 12"
+			className={`${className ?? ""} origin-center text-muted transition-transform duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
+			fill="none"
+			aria-hidden="true"
+		>
+			<path
+				d="m4 2.5 3.5 3.5L4 9.5"
+				stroke="currentColor"
+				strokeWidth="1.25"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
 		</svg>
 	);
 }
 
-function PanelOpenIcon({ className }: { className?: string }) {
+function PanelCaret({ dir, className }: { dir: "left" | "right"; className?: string }) {
+	const d = dir === "left" ? "m7.5 3.5-4 4.5 4 4.5" : "m4.5 3.5 4 4.5-4 4.5";
 	return (
-		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
-			<rect x="2" y="2.5" width="12" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.25" />
-			<path d="M6 3v10M8.5 6l2 2-2 2" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+		<svg viewBox="0 0 12 16" className={className} fill="none" aria-hidden="true">
+			<path d={d} stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
 		</svg>
 	);
 }

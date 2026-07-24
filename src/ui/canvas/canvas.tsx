@@ -204,6 +204,7 @@ export function ProjectCanvas({
 		() => frames.filter((f) => pageOf(f) === activePage && !hidden.has(f.name)),
 		[frames, activePage, hidden],
 	);
+	const navigatorFrames = useMemo(() => frames.filter((frame) => !hidden.has(frame.name)), [frames, hidden]);
 	const exportFrames = useMemo(
 		() => (exportDialog === null ? [] : framesInCanvasOrder(visibleFrames, exportDialog)),
 		[visibleFrames, exportDialog],
@@ -794,6 +795,14 @@ export function ProjectCanvas({
 		pickGen.current++;
 	}, []);
 
+	const clearCanvasSelection = useCallback(() => {
+		cancelPicks();
+		pickedChain.current = null;
+		setSelected([]);
+		setPicked([]);
+		setPreview(null);
+	}, [cancelPicks]);
+
 	/**
 	 * Ask the frame for the element ancestry at a frame-local point. The apply
 	 * callback runs only while this pick's generation is current — a silent or
@@ -932,18 +941,25 @@ export function ProjectCanvas({
 		[beginPick, atDepthIn],
 	);
 
-	/** The panel grammar on frame rows: shift ranges, ⌘ toggles, click replaces. */
+	/** The tree grammar on frame rows: shift ranges, ⌘ toggles, click replaces. */
 	const selectFrameRow = (name: string, modifiers: SelectModifiers) => {
+		const frame = navigatorFrames.find((candidate) => candidate.name === name);
+		if (frame === undefined) return;
+		const targetPage = pageOf(frame);
+		const changedPage = targetPage !== activePageRef.current;
+		if (changedPage) switchToPage(targetPage);
 		setTool("select");
 		setPicked([]);
 		pickedChain.current = null;
 		if (modifiers.shift && frameAnchor.current !== null) {
-			const names = visibleFrames.map((f) => f.name);
+			const names = navigatorFrames
+				.filter((candidate) => pageOf(candidate) === targetPage)
+				.map((candidate) => candidate.name);
 			const a = names.indexOf(frameAnchor.current);
 			const b = names.indexOf(name);
 			if (a !== -1 && b !== -1) {
 				const range = names.slice(Math.min(a, b), Math.max(a, b) + 1);
-				setSelected(modifiers.toggle ? [...new Set([...selectedRef.current, ...range])] : range);
+				setSelected(modifiers.toggle && !changedPage ? [...new Set([...selectedRef.current, ...range])] : range);
 				return;
 			}
 		}
@@ -957,7 +973,7 @@ export function ProjectCanvas({
 
 	/** Double-click on a frame row flies the camera to the frame (#37). */
 	const flyToFrame = (name: string) => {
-		const frame = framesRef.current.find((f) => f.name === name);
+		const frame = framesRef.current.find((candidate) => candidate.name === name);
 		const viewport = viewportRef.current;
 		if (frame === undefined || viewport === null) return;
 		animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
@@ -986,12 +1002,9 @@ export function ProjectCanvas({
 			if (activePageRef.current === target) return;
 			flushNudge();
 			commitTrash();
-			cancelPicks();
+			clearCanvasSelection();
 			exitEntered();
 			setMenu(null);
-			setSelected([]);
-			setPicked([]);
-			setPreview(null);
 			setExternalLink(null);
 			stopAnimation();
 			const next = switchPage(cameras.current, activePageRef.current, cameraRef.current, target, arriveAt);
@@ -999,7 +1012,19 @@ export function ProjectCanvas({
 			setActivePage(target);
 			setCamera(next.camera);
 		},
-		[flushNudge, commitTrash, cancelPicks, exitEntered, stopAnimation],
+		[flushNudge, commitTrash, clearCanvasSelection, exitEntered, stopAnimation],
+	);
+
+	/** Page-folder clicks return selection to the page, even when it is already active. */
+	const activatePageFromTree = useCallback(
+		(target: string) => {
+			if (activePageRef.current !== target) {
+				switchToPage(target);
+				return;
+			}
+			clearCanvasSelection();
+		},
+		[clearCanvasSelection, switchToPage],
 	);
 
 	/** Follow a portal: land on the target's page with the target centered (#39). */
@@ -1960,9 +1985,9 @@ export function ProjectCanvas({
 			<CanvasSidebar
 				pages={pages}
 				activePage={activePage}
-				frames={visibleFrames}
+				frames={navigatorFrames}
 				selected={selected}
-				onSwitchPage={switchToPage}
+				onSwitchPage={activatePageFromTree}
 				onSelectFrame={selectFrameRow}
 				onDoubleClickFrame={flyToFrame}
 			/>
