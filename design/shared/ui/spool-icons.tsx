@@ -101,10 +101,111 @@ export function ThreadIcon({ className }: IconProps) {
 	);
 }
 
+export function InspectorIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+			<rect
+				x="2.5"
+				y="3.5"
+				width="11"
+				height="9"
+				rx="1.5"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="1.5"
+			/>
+			<path d="M10 4v8" stroke="currentColor" strokeWidth="1.5" />
+		</svg>
+	);
+}
+
+export function ExpandIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+			<path
+				d="M9.5 3H13v3.5M6.5 13H3V9.5"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
+export function CompressIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+			<path
+				d="M13 6.5H9.5V3M3 9.5h3.5V13"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
 export function HintIcon({ className }: IconProps) {
 	return (
 		<svg viewBox="0 0 14 14" className={className} aria-hidden="true">
 			<rect x="2" y="3.5" width="10" height="7" rx="2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+		</svg>
+	);
+}
+
+/** interact — the plain arrow cursor: clicks reach the live app. */
+export function CursorIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+			<path
+				d="M4.04 4.69a.5.5 0 0 1 .65-.65l16 6.5a.5.5 0 0 1-.06.95l-6.13 1.58a2 2 0 0 0-1.43 1.43l-1.58 6.13a.5.5 0 0 1-.95.06z"
+				fill="currentColor"
+			/>
+		</svg>
+	);
+}
+
+/** select — the inspect glyph: a cursor picking an element inside a framed region. */
+export function SelectIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M12.03 12.68a.5.5 0 0 1 .65-.65l9 3.5a.5.5 0 0 1-.03.95l-3.45 1.06a1 1 0 0 0-.66.66l-1.06 3.45a.5.5 0 0 1-.95.03z"
+				fill="currentColor"
+			/>
+			<path
+				d="M5 3a2 2 0 0 0-2 2M19 3a2 2 0 0 1 2 2M5 21a2 2 0 0 1-2-2M9 3h1M9 21h2M14 3h1M3 9v1M21 9v2M3 14v1"
+				stroke="currentColor"
+				strokeWidth="1.9"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
+/** hand — pan the canvas (H, or hold space). */
+export function HandIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8"
+				stroke="currentColor"
+				strokeWidth="1.7"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+			<path
+				d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"
+				stroke="currentColor"
+				strokeWidth="1.7"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
 		</svg>
 	);
 }

@@ -7,6 +7,8 @@ type CanvasMode = "live" | "design";
 interface SpoolShellProps {
 	activeTab?: string;
 	children: React.ReactNode;
+	/** Optional control docked at the far right of the header (e.g. inspector summon). */
+	headerAccessory?: React.ReactNode;
 	homeTarget?: string;
 	liveTarget?: string;
 	designTarget?: string;
@@ -20,6 +22,7 @@ interface SpoolShellProps {
 export function SpoolShell({
 	activeTab,
 	children,
+	headerAccessory,
 	homeTarget,
 	liveTarget,
 	designTarget,
@@ -62,39 +65,49 @@ export function SpoolShell({
 					</nav>
 				</div>
 
-				{showCanvasControls ? (
+				{showCanvasControls || headerAccessory ? (
 					<div className="flex h-full items-center gap-4">
-						<button
-							type="button"
-							data-go={playTarget}
-							className="flex h-7 w-7 items-center justify-center"
-							aria-label="Play"
-						>
-							<PlayIcon className="h-3 w-3" />
-						</button>
-						<div className="flex items-center gap-[2px] rounded-md bg-surface p-[2px]">
-							<button
-								type="button"
-								data-go={liveTarget}
-								className={cn(
-									"flex items-center rounded-sm px-3 py-unit font-medium text-sm leading-xs",
-									mode === "live" ? "border border-border-raised bg-raised text-text" : "text-muted",
-								)}
-							>
-								Live
-							</button>
-							<button
-								type="button"
-								data-go={designTarget}
-								className={cn(
-									"flex items-center rounded-sm px-3 py-unit font-medium text-sm leading-xs",
-									mode === "design" ? "border border-border-raised bg-raised text-text" : "text-muted",
-								)}
-							>
-								Design
-							</button>
-						</div>
-						<span className="min-w-7 text-right font-mono text-muted text-xs leading-xs">{zoom}</span>
+						{showCanvasControls ? (
+							<>
+								<button
+									type="button"
+									data-go={playTarget}
+									className="flex h-7 w-7 items-center justify-center"
+									aria-label="Play"
+								>
+									<PlayIcon className="h-3 w-3" />
+								</button>
+								<div className="flex items-center gap-[2px] rounded-md bg-surface p-[2px]">
+									<button
+										type="button"
+										data-go={liveTarget}
+										className={cn(
+											"flex items-center rounded-sm px-3 py-unit font-medium text-sm leading-xs",
+											mode === "live" ? "border border-border-raised bg-raised text-text" : "text-muted",
+										)}
+									>
+										Live
+									</button>
+									<button
+										type="button"
+										data-go={designTarget}
+										className={cn(
+											"flex items-center rounded-sm px-3 py-unit font-medium text-sm leading-xs",
+											mode === "design" ? "border border-border-raised bg-raised text-text" : "text-muted",
+										)}
+									>
+										Design
+									</button>
+								</div>
+								<span className="min-w-7 text-right font-mono text-muted text-xs leading-xs">{zoom}</span>
+							</>
+						) : null}
+						{headerAccessory ? (
+							<>
+								{showCanvasControls ? <span className="h-4 w-px bg-border" /> : null}
+								{headerAccessory}
+							</>
+						) : null}
 					</div>
 				) : null}
 			</header>
