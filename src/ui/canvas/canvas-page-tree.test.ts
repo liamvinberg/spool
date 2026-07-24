@@ -67,6 +67,14 @@ describe("canvas page tree", () => {
 		expect(host.querySelector('[data-frame-label="home"]')).toBeNull();
 		expect(host.querySelector('[data-frame-label="checkout"]')).not.toBeNull();
 		expect(host.querySelector('button[aria-label="checkout frame"]')?.getAttribute("aria-pressed")).toBe("true");
+		expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
+
+		await act(async () => {
+			host
+				.querySelector<HTMLButtonElement>('button[aria-label="checkout frame"]')
+				?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+		});
+		expect(host.querySelector('button[aria-label="interact"]')?.getAttribute("aria-pressed")).toBe("true");
 
 		await act(async () => {
 			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
