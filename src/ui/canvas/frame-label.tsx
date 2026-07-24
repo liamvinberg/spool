@@ -11,6 +11,7 @@ export function FrameLabel({
 	paused,
 	selected,
 	terminal = false,
+	onPlay,
 }: {
 	name: string;
 	frameWidth: number;
@@ -20,6 +21,8 @@ export function FrameLabel({
 	selected: boolean;
 	/** An entered terminal owns every key (#42) — the chip must show the one way out. */
 	terminal?: boolean;
+	/** Play this frame. Offered on the selection, where the attention already is. */
+	onPlay?: () => void;
 }) {
 	// The camera scales this after the label's 1/k counter-scale. Pre-scaling
 	// the layout width by k keeps its final screen width equal to the frame.
@@ -46,6 +49,26 @@ export function FrameLabel({
 					>
 						{name}
 					</span>
+					{/* the selection's own verb, at the far end of its own row: no
+					    travelling to a corner of the chrome to act on what is right
+					    here. Ghost until wanted — the label is not a toolbar. */}
+					{selected && onPlay !== undefined && (
+						<button
+							type="button"
+							aria-label={`Play ${name}`}
+							className="ml-auto flex shrink-0 items-center gap-1 rounded-xs px-1 font-mono text-2xs text-muted leading-3 transition-colors hover:text-thread"
+							onPointerDown={(event) => {
+								event.stopPropagation();
+								onPlay();
+							}}
+							onDoubleClick={(event) => event.stopPropagation()}
+						>
+							<svg viewBox="0 0 10 10" className="h-2 w-2" fill="currentColor" aria-hidden="true">
+								<path d="M2 1.2 8.4 5 2 8.8Z" />
+							</svg>
+							play
+						</button>
+					)}
 				</div>
 			)}
 		</div>

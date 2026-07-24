@@ -69,6 +69,18 @@ export interface FrameModifierMessage {
 	held: boolean;
 }
 
+/**
+ * A middle-button drag inside an entered frame, relayed in screen coordinates
+ * so the canvas can pan out from under it — the frame owns every other press.
+ */
+export interface FramePanMessage {
+	spool: "pan";
+	frame: string;
+	phase: "start" | "move" | "end";
+	x: number;
+	y: number;
+}
+
 /** Frame-local boxes of navigation-site elements, keyed `path:line:col` of
  * the anchor each side derives; null when no element renders for it. */
 export type SiteBoxes = Record<string, Box | null>;
@@ -91,6 +103,7 @@ export type FrameMessage =
 	| { spool: "session?"; frame: string }
 	| { spool: "key"; frame: string; key: string }
 	| FrameModifierMessage
+	| FramePanMessage
 	| FrameZoomMessage
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
 	| { spool: "tree"; frame: string; id: number; roots: RawTreeNode[] }
@@ -114,6 +127,10 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 			return typeof m.key === "string" ? (m as unknown as FrameMessage) : undefined;
 		case "modifier":
 			return m.modifier === "Meta" && typeof m.held === "boolean" ? (m as unknown as FrameMessage) : undefined;
+		case "pan":
+			return (m.phase === "start" || m.phase === "move" || m.phase === "end") && finite(m.x) && finite(m.y)
+				? (m as unknown as FrameMessage)
+				: undefined;
 		case "zoom":
 			if (m.kind === "in" || m.kind === "out") {
 				return m as unknown as FrameMessage;

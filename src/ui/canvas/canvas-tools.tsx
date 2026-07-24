@@ -1,7 +1,7 @@
 import { cn } from "../cn";
-import { CursorIcon, HandIcon, SelectIcon } from "../icons";
+import { HandIcon, SelectIcon } from "../icons";
 
-export type CanvasTool = "interact" | "select" | "hand";
+export type CanvasTool = "select" | "hand";
 
 interface ToolMeta {
 	id: CanvasTool;
@@ -11,9 +11,11 @@ interface ToolMeta {
 	Icon: (props: { className?: string }) => React.ReactNode;
 }
 
+// Select is the only pointer tool: a click takes the frame, a double-click
+// enters it, ⌘ takes the element under the cursor. ⌘ is therefore a modifier
+// inside Select, not a way to borrow it.
 const TOOLS: readonly ToolMeta[] = [
-	{ id: "interact", label: "interact", key: null, hold: null, Icon: CursorIcon },
-	{ id: "select", label: "select", key: "V", hold: "hold ⌘", Icon: SelectIcon },
+	{ id: "select", label: "select", key: "V", hold: null, Icon: SelectIcon },
 	{ id: "hand", label: "hand", key: "H", hold: "hold space", Icon: HandIcon },
 ];
 

@@ -3,14 +3,13 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import type { CanvasChrome } from "./canvas";
 import { ProjectCanvas } from "./canvas";
 
 /**
- * The selection inspector rail (#58) as the canvas drives it: the header pill
- * is its only control, it is sticky both ways, and the connections tab is the
- * complete outbound list — including the destinations that live on another
- * page, which it navigates to rather than walking.
+ * The selection inspector rail (#58) as the canvas drives it: its fixed
+ * canvas-edge strip is its control, it is sticky both ways, and the
+ * connections tab is the complete outbound list — including the destinations
+ * that live on another page, which it navigates to rather than walking.
  */
 
 const PROJECTION = {
@@ -61,7 +60,6 @@ function mount() {
 	const host = document.createElement("div");
 	document.body.append(host);
 	const root = createRoot(host);
-	let chrome: CanvasChrome | null = null;
 	onTestFinished(() => {
 		act(() => root.unmount());
 		host.remove();
@@ -70,15 +68,12 @@ function mount() {
 	});
 	return {
 		host,
-		chrome: () => chrome,
 		render: async () => {
 			await act(async () => {
 				root.render(
 					createElement(ProjectCanvas, {
 						project: "test",
-						onChrome: (next: CanvasChrome | null) => {
-							chrome = next;
-						},
+						onChrome: () => {},
 					}),
 				);
 			});
@@ -103,15 +98,17 @@ async function expandPage(host: HTMLElement, page: string): Promise<void> {
 }
 
 describe("the inspector rail", () => {
-	it("stays closed until the pill summons it, then stays open across selections", async () => {
+	it("stays collapsed until its canvas-edge control expands it, then stays open across selections", async () => {
 		const canvas = mount();
 		await canvas.render();
 
-		expect(canvas.chrome()?.inspectorOpen).toBe(false);
-		expect(rail(canvas.host)?.hasAttribute("inert")).toBe(true);
+		expect(rail(canvas.host)?.getAttribute("style")).toContain("width: 44px");
+		expect(canvas.host.querySelector('button[aria-label="Expand inspector"]')).not.toBeNull();
 
-		await act(async () => canvas.chrome()?.toggleInspector());
-		expect(canvas.chrome()?.inspectorOpen).toBe(true);
+		await act(async () => {
+			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="Expand inspector"]')?.click();
+		});
+		expect(rail(canvas.host)?.getAttribute("style")).toContain("width: 300px");
 		// nothing selected: the honest-empty line, inside the open rail
 		expect(rail(canvas.host)?.textContent).toContain("select a frame to inspect it");
 
@@ -124,18 +121,20 @@ describe("the inspector rail", () => {
 		expect(open?.textContent).toContain("design/frames/home/frame.tsx");
 		expect(open?.textContent).toContain("390 × 844");
 
-		// deselecting does not close it — the pill is the only control
+		// deselecting does not close it — the rail's own control is the only control
 		await act(async () => {
 			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="root page"]')?.click();
 		});
-		expect(canvas.chrome()?.inspectorOpen).toBe(true);
+		expect(canvas.host.querySelector('button[aria-label="Collapse inspector"]')).not.toBeNull();
 		expect(rail(canvas.host)?.textContent).toContain("select a frame to inspect it");
 	});
 
 	it("reads the entered frame: being inside a prototype is when its elements matter", async () => {
 		const canvas = mount();
 		await canvas.render();
-		await act(async () => canvas.chrome()?.toggleInspector());
+		await act(async () => {
+			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="Expand inspector"]')?.click();
+		});
 
 		const viewport = canvas.host.querySelector<HTMLElement>('[role="application"]');
 		for (const kind of ["pointerdown", "pointerup"]) {
@@ -145,31 +144,38 @@ describe("the inspector rail", () => {
 				);
 			});
 		}
+		await act(async () => {
+			viewport?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
+		});
 
 		expect(canvas.host.querySelector('[data-frame-label="home"]')?.textContent).toContain("live · esc exits");
 		expect(rail(canvas.host)?.textContent).toContain("design/frames/home/frame.tsx");
 		expect(rail(canvas.host)?.textContent).not.toContain("select a frame to inspect it");
 	});
 
-	it("carries the selected frame's outbound count while it is closed, and nothing while open", async () => {
+	it("carries the selected frame's outbound count in the collapsed strip", async () => {
 		const canvas = mount();
 		await canvas.render();
 
-		expect(canvas.chrome()?.outboundCount).toBeNull();
+		expect(canvas.host.querySelector('button[aria-label="Expand inspector"]')?.textContent).toBe("");
 
 		await act(async () => {
 			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="home frame"]')?.click();
 		});
-		expect(canvas.chrome()?.outboundCount).toBe(3);
+		expect(canvas.host.querySelector('button[aria-label="Expand inspector"]')?.textContent).toBe("3");
 
-		await act(async () => canvas.chrome()?.toggleInspector());
-		expect(canvas.chrome()?.outboundCount).toBeNull();
+		await act(async () => {
+			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="Expand inspector"]')?.click();
+		});
+		expect(canvas.host.querySelector('button[aria-label="Expand inspector"]')).toBeNull();
 	});
 
 	it("lists the whole outbound graph in the connections tab, missing destinations included", async () => {
 		const canvas = mount();
 		await canvas.render();
-		await act(async () => canvas.chrome()?.toggleInspector());
+		await act(async () => {
+			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="Expand inspector"]')?.click();
+		});
 		await act(async () => {
 			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="home frame"]')?.click();
 		});
@@ -189,7 +195,9 @@ describe("the inspector rail", () => {
 	it("navigates the canvas from an off-page connection instead of walking to it", async () => {
 		const canvas = mount();
 		await canvas.render();
-		await act(async () => canvas.chrome()?.toggleInspector());
+		await act(async () => {
+			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="Expand inspector"]')?.click();
+		});
 		await act(async () => {
 			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="home frame"]')?.click();
 		});
@@ -205,6 +213,31 @@ describe("the inspector rail", () => {
 		expect(canvas.host.querySelector('button[aria-label="checkout frame"]')?.getAttribute("aria-pressed")).toBe(
 			"true",
 		);
+	});
+
+	it("resizes up to 480 pixels and snaps to its strip below 144 pixels", async () => {
+		const canvas = mount();
+		await canvas.render();
+		const inspector = rail(canvas.host);
+		const resize = canvas.host.querySelector<HTMLButtonElement>('button[aria-label="Resize inspector"]');
+
+		expect(inspector?.getAttribute("style")).toContain("width: 44px");
+		expect(resize).not.toBeNull();
+
+		await act(async () => {
+			resize?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 0, pointerId: 1 }));
+			resize?.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: -600, pointerId: 1 }));
+			resize?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: -600, pointerId: 1 }));
+		});
+		expect(inspector?.getAttribute("style")).toContain("width: 480px");
+
+		await act(async () => {
+			resize?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 0, pointerId: 2 }));
+			resize?.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 400, pointerId: 2 }));
+			resize?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 400, pointerId: 2 }));
+		});
+		expect(inspector?.getAttribute("style")).toContain("width: 44px");
+		expect(canvas.host.querySelector('button[aria-label="Expand inspector"]')).not.toBeNull();
 	});
 });
 
