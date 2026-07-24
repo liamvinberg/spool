@@ -250,7 +250,7 @@ function HoverNote({
 	);
 }
 
-/** The ring around the frame you are looking at, in screen space. */
+/** The handles and size chip around the focused frame; it draws its own ring. */
 function FocusRing({
 	rect,
 	cam,
@@ -265,14 +265,13 @@ function FocusRing({
 	const corner = "absolute h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread";
 	return (
 		<motion.div
-			className="pointer-events-none absolute top-0 left-0 z-20"
+			className="pointer-events-none absolute top-0 left-0 z-40"
 			style={{ x, y, width: w, height: h }}
 			initial={{ opacity: 0 }}
 			animate={{ opacity: 1 }}
 			exit={{ opacity: 0 }}
 			transition={{ duration: 0.2, ease: "easeOut" }}
 		>
-			<div className="absolute inset-0 outline outline-[2px] outline-thread" />
 			<span className={cn(corner, "-left-[7px] -top-[7px]")} />
 			<span className={cn(corner, "-right-[7px] -top-[7px]")} />
 			<span className={cn(corner, "-left-[7px] -bottom-[7px]")} />
@@ -345,7 +344,6 @@ function FieldEdges({ s }: { s: MotionValue<number> }) {
 	const line = new Set(LINEAGE);
 	const hair = useTransform(s, (k) => 1.4 / k);
 	const thread = useTransform(s, (k) => 2 / k);
-	const live = useTransform(s, (k) => 2.5 / k);
 	return (
 		<svg
 			className="pointer-events-none absolute overflow-visible"
@@ -354,18 +352,21 @@ function FieldEdges({ s }: { s: MotionValue<number> }) {
 			fill="none"
 			aria-hidden="true"
 		>
-			{Object.entries(SLOTS).map(([name, r]) => (
-				<motion.rect
-					key={name}
-					x={r.x}
-					y={r.y}
-					width={r.w}
-					height={r.h}
-					stroke={name === HUB_NAME || line.has(name) ? "var(--color-thread)" : "var(--color-border-raised)"}
-					strokeOpacity={name === HUB_NAME ? 1 : line.has(name) ? 0.45 : 1}
-					strokeWidth={name === HUB_NAME ? live : line.has(name) ? thread : hair}
-				/>
-			))}
+			{Object.entries(SLOTS).map(([name, r]) =>
+				// the docked page draws its own edge, on its own layer
+				name === HUB_NAME ? null : (
+					<motion.rect
+						key={name}
+						x={r.x}
+						y={r.y}
+						width={r.w}
+						height={r.h}
+						stroke={line.has(name) ? "var(--color-thread)" : "var(--color-border-raised)"}
+						strokeOpacity={line.has(name) ? 0.45 : 1}
+						strokeWidth={line.has(name) ? thread : hair}
+					/>
+				),
+			)}
 		</svg>
 	);
 }
@@ -578,6 +579,92 @@ function FocusBar({
 				<span className="text-muted/60">{meta}</span>
 			</div>
 			<div className="max-w-[420px] font-mono text-[10px] text-muted leading-[14px]">{note}</div>
+		</motion.div>
+	);
+}
+
+/**
+ * The page itself, docked.
+ *
+ * It is deliberately NOT a passenger inside the world transform. The world is
+ * an enormous layer (the whole genealogy), and scaling it makes Chrome re-raster
+ * its tiles as the scale crosses thresholds. Every field frame is small and soft
+ * enough that the stepping does not read, but this one carries a 66px headline
+ * and starts at scale 1, so it is the one place it shows — as jitter, on the one
+ * frame the visitor is looking at.
+ *
+ * So it gets what the shipped site-hub gives it: its own element, carrying its
+ * own transform, promoted with will-change. A 1440x900 layer rasters cheaply and
+ * stably at any scale. Its ring lives on the same element rather than in the
+ * world's SVG, so ring and page share one transform and cannot disagree by the
+ * subpixel that reads as a shimmering edge.
+ */
+function DockedPage({
+	cam,
+	hint,
+	onHome,
+	catcher,
+	ringOpacity,
+}: {
+	cam: { cx: MotionValue<number>; cy: MotionValue<number>; s: MotionValue<number> };
+	hint: MotionValue<number>;
+	onHome: () => void;
+	catcher: MotionValue<string>;
+	ringOpacity: MotionValue<number>;
+}) {
+	const x = useTransform([cam.cx, cam.s], ([cx, k]: number[]) => (HUB.x - cx) * k + VIEW_W / 2);
+	const y = useTransform([cam.cy, cam.s], ([cy, k]: number[]) => (HUB.y - cy) * k + VIEW_H / 2);
+	const ring = useTransform(cam.s, (k) => 2.5 / k);
+	return (
+		<motion.div
+			className="absolute top-0 left-0 z-20 origin-top-left overflow-hidden bg-bg [will-change:transform]"
+			style={{ x, y, width: HUB.w, height: HUB.h, scale: cam.s }}
+		>
+			<LandingHero hint={hint} />
+			<motion.div
+				className="pointer-events-none absolute inset-0"
+				style={{
+					outlineStyle: "solid",
+					outlineColor: "var(--color-thread)",
+					outlineWidth: ring,
+					opacity: ringOpacity,
+				}}
+			/>
+			<motion.button
+				type="button"
+				aria-label="back to the page"
+				onClick={onHome}
+				className="absolute inset-0 cursor-pointer focus-visible:outline-none"
+				style={{ opacity: 0, pointerEvents: catcher }}
+			/>
+		</motion.div>
+	);
+}
+
+/** The frame under focus, on its own layer, alive and holding the pointer. */
+function FocusedFrame({
+	pick,
+	cam,
+}: {
+	pick: Pick;
+	cam: { cx: MotionValue<number>; cy: MotionValue<number>; s: MotionValue<number> };
+}) {
+	const x = useTransform([cam.cx, cam.s], ([cx, k]: number[]) => (pick.slot.x - cx) * k + VIEW_W / 2);
+	const y = useTransform([cam.cy, cam.s], ([cy, k]: number[]) => (pick.slot.y - cy) * k + VIEW_H / 2);
+	const ring = useTransform(cam.s, (k) => 2 / k);
+	return (
+		<motion.div
+			className="absolute top-0 left-0 z-30 origin-top-left overflow-hidden bg-bg [will-change:transform]"
+			style={{ x, y, width: pick.slot.w, height: pick.realH, scale: cam.s }}
+			initial={{ opacity: 0 }}
+			animate={{ opacity: 1 }}
+			transition={{ duration: 0.18, ease: "easeOut" }}
+		>
+			<pick.C />
+			<motion.div
+				className="pointer-events-none absolute inset-0"
+				style={{ outlineStyle: "solid", outlineColor: "var(--color-thread)", outlineWidth: ring }}
+			/>
 		</motion.div>
 	);
 }
@@ -837,49 +924,21 @@ export default function SiteHubDrafts() {
 							</motion.div>
 						</MotionConfig>
 
-						{/* The frame being looked at, lifted out of the field so it can
-						    run at full height, animate, and take the pointer. */}
-						{focusPick ? (
-							<div
-								className="absolute overflow-hidden bg-bg"
-								style={{
-									left: focusPick.slot.x,
-									top: focusPick.slot.y,
-									width: focusPick.slot.w,
-									height: focusPick.realH,
-									zIndex: 30,
-								}}
-							>
-								<focusPick.C />
-							</div>
-						) : null}
 
-						{/* The page itself, in its own slot. `contain` gives it the same
-						    paint isolation every field frame has, so its own ambient motion
-						    cannot invalidate anything outside it. Its motion is left running:
-						    stopping it would need MotionConfig to reach an already-started
-						    animation, which it does not, and remounting to force it pops the
-						    pulse in full view at the exact moment scrolling begins. */}
-						<div
-							className="absolute overflow-hidden bg-bg"
-							style={{
-								left: HUB.x,
-								top: HUB.y,
-								width: HUB.w,
-								height: HUB.h,
-								contain: "layout paint",
-							}}
-						>
-							<LandingHero hint={hint} />
-							<motion.button
-								type="button"
-								aria-label="back to the page"
-								onClick={home}
-								className="absolute inset-0 cursor-pointer focus-visible:outline-none"
-								style={{ opacity: 0, pointerEvents: homeCatcher }}
-							/>
-						</div>
 					</motion.div>
+
+					{/* The frame being read: lifted out of the field for the same reason
+					    the docked page is, and so it can run at full height, animate, and
+					    take the pointer. */}
+					{focusPick ? <FocusedFrame key={focusPick.name} pick={focusPick} cam={{ cx, cy, s }} /> : null}
+
+					<DockedPage
+						cam={{ cx, cy, s }}
+						hint={hint}
+						onHome={home}
+						catcher={homeCatcher}
+						ringOpacity={liveBase}
+					/>
 
 					<LiveChrome cam={{ cx, cy, s }} base={liveBase} detail={liveDetail} />
 					<BandLabels cam={{ cx, cy, s }} opacity={bandLabels} />
