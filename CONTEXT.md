@@ -36,9 +36,13 @@ Spool is a local-first prototyping canvas: agents author live TSX frames on disk
 
 **Hibernated**: A frame demoted to its still because the warm pool overflowed; it boots fresh on return. Hibernation's payoff is memory, never CPU. _Avoid_: paused
 
-**Warm pool**: The bounded set of offscreen frames kept mounted with time frozen; overflowing it, oldest-seen first, is the only path into hibernation. _Avoid_: cache
+**Warm pool**: The bounded set of offscreen frames kept mounted with time frozen; overflowing it, oldest-seen first, is the only path into hibernation. The frozen frame and the one an open inspector rail reads are current intent and never overflow. _Avoid_: cache
 
-**Wake queue**: The single ordered path a frame takes into the DOM, drained a few mounts per sweep — an entered frame starts immediately, then the one frozen selection target, then visible frames nearest the viewport center. Zoom and page-entry bursts drain through it.
+**Wake queue**: The single ordered path a frame takes into the DOM, drained a few mounts per sweep — an entered frame starts immediately, then the frozen selection target and the frame the inspector rail reads, then visible frames nearest the viewport center. Zoom and page-entry bursts drain through it.
+
+**Inspector rail**: The right rail reading the selected frame, closed by default and summoned only from the header pill. Two tabs: `elements` (the frame's named rows) and `connections` (its whole outbound list). Sticky both ways — selection never opens or closes it. _Avoid_: panel, properties
+
+**Named row**: An element the inspector lists: a component boundary, a call-site (with its `[n]` instances beneath it), or an element carrying text or an accessible label. Anonymous wrappers are not rows; their children promote to the nearest named one, so depth reads as authored depth.
 
 **Hands**: The human at the canvas. Hands own geometry and arrangement; agents own frame source. _Avoid_: user, designer
 

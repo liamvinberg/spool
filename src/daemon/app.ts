@@ -19,6 +19,7 @@ import { lookupProjectByName, readRegistry } from "../registry";
 import { cellsForPx } from "../term/cells";
 import { type Grid, gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
+import { stampLabels } from "./call-site";
 import { createFrameCompiler } from "./compile";
 import { errorDocument } from "./document";
 import { createChangeHub } from "./events";
@@ -494,6 +495,27 @@ export function createDaemonApp({
 				// the whole folder moves; the OS Trash owns restore from here (#7)
 				await trashImpl(dirs);
 				return c.body(null, 204);
+			},
+		)
+		.post(
+			"/api/p/:project/stamp-labels",
+			validator("json", (value, c) => {
+				const stamps =
+					typeof value === "object" && value !== null ? (value as { stamps?: unknown }).stamps : undefined;
+				if (
+					!Array.isArray(stamps) ||
+					stamps.length > 256 ||
+					!stamps.every((stamp): stamp is string => typeof stamp === "string")
+				) {
+					return c.text('stamp-labels must be { "stamps": ["frames/…:line:col", ...] }, at most 256', 400);
+				}
+				return { stamps };
+			}),
+			(c) => {
+				// the rail's call-site rows (#58): each stamp's repeating call, or null
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				return c.json({ labels: stampLabels(project.root, c.req.valid("json").stamps) });
 			},
 		)
 		.post(

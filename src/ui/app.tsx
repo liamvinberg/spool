@@ -3,7 +3,7 @@ import type { ProjectCard } from "./api";
 import { fetchProjects, fetchSession, postUpgrade, putSession, subscribeSse } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { Home } from "./home";
-import { CloseIcon, PlayIcon, PlusIcon, RibbonMark, ThreadIcon } from "./icons";
+import { CloseIcon, InspectorIcon, PlayIcon, PlusIcon, RibbonMark, ThreadIcon } from "./icons";
 import { FolderPicker } from "./picker";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
 
@@ -223,6 +223,23 @@ export function App() {
 							onClick={chrome.toggleArrows}
 						>
 							<ThreadIcon />
+						</button>
+						{/* the inspector summon (#58): the only control — no edge handle, no
+						    auto-pop. Closed on a selection, it carries that frame's outbound count. */}
+						<button
+							type="button"
+							className={`flex h-7 items-center gap-1.5 rounded-sm px-1.5 hover:bg-surface ${
+								chrome.inspectorOpen ? "bg-surface text-text" : "text-muted"
+							}`}
+							title={chrome.inspectorOpen ? "Close inspector" : "Open inspector"}
+							aria-label={chrome.inspectorOpen ? "Close inspector" : "Open inspector"}
+							aria-pressed={chrome.inspectorOpen}
+							onClick={chrome.toggleInspector}
+						>
+							<InspectorIcon />
+							{chrome.outboundCount === null ? null : (
+								<span className="font-mono text-2xs text-muted leading-3">{chrome.outboundCount}</span>
+							)}
 						</button>
 						<span className="min-w-9 text-right font-mono text-muted text-xs leading-xs">{chrome.zoomPct}%</span>
 					</div>

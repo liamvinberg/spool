@@ -13,8 +13,8 @@ import { captureMessage } from "./protocol";
  * Hibernation's payoff is memory, never CPU: only pool overflow demotes a
  * frame to its still, oldest-seen first, html frames taking a goodbye
  * self-capture on the way out. Every mount drains through the wake queue —
- * entered immediately, the freeze target next, then nearest the viewport
- * center, a few per sweep — so no burst site can land every mount in one
+ * entered immediately, the freeze target and the inspected frame next, then
+ * nearest the viewport center, a few per sweep — so no burst site can land every mount in one
  * commit. Hibernation is automatic engine lifecycle, never a tool; entering a
  * hibernated frame boots it fresh, while freezing always keeps its document.
  */
@@ -66,6 +66,8 @@ export interface SweepInput {
 	entered: string | null;
 	/** The one frame currently selected into: mounted with time frozen. */
 	frozen: string | null;
+	/** The frame an open inspector rail is reading (#58): mounted so it can answer. */
+	inspected: string | null;
 	states: Readonly<Record<string, FrameState>>;
 	/** Frames whose boot has reported loaded — the ones a capture can reach. */
 	ready: ReadonlySet<string>;
@@ -85,8 +87,20 @@ export interface SweepResult {
 }
 
 export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
-	const { frames, camera, viewportWidth, viewportHeight, entered, frozen, states, ready, capturing, hasThumb, now } =
-		input;
+	const {
+		frames,
+		camera,
+		viewportWidth,
+		viewportHeight,
+		entered,
+		frozen,
+		inspected,
+		states,
+		ready,
+		capturing,
+		hasThumb,
+		now,
+	} = input;
 
 	const prev = model.prevCamera;
 	if (prev === null || prev.x !== camera.x || prev.y !== camera.y || prev.k !== camera.k) {
@@ -119,7 +133,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		}
 		// Coming back into view or becoming the one frozen intent rescues an
 		// eviction mid-goodbye. A freeze must keep the existing document.
-		if (usable || frozen === frame.name) model.exitPending.delete(frame.name);
+		if (usable || frozen === frame.name || inspected === frame.name) model.exitPending.delete(frame.name);
 
 		let target: FrameState;
 		let wakeTo: "live" | "warm" | null = null;
@@ -130,7 +144,9 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 			target = "live";
 		} else {
 			target = "hibernated";
-			wakeTo = frozen === frame.name ? "warm" : usable ? "live" : null;
+			// an open rail is watched intent (#58): its frame mounts even offscreen,
+			// or it has no DOM to answer the elements tab with
+			wakeTo = frozen === frame.name ? "warm" : usable ? "live" : inspected === frame.name ? "warm" : null;
 		}
 
 		const entry: Entry = { frame, current, usable, target };
@@ -138,7 +154,8 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		if (wakeTo !== null) {
 			const cx = frame.x + frame.w / 2 - center.x;
 			const cy = frame.y + frame.h / 2 - center.y;
-			const tier = frozen === frame.name ? 0 : intersects(strict, frame) ? 1 : onScreen ? 2 : 3;
+			const tier =
+				frozen === frame.name || inspected === frame.name ? 0 : intersects(strict, frame) ? 1 : onScreen ? 2 : 3;
 			waiting.push({ entry, wakeTo, tier, dist: cx * cx + cy * cy });
 		}
 	}
@@ -161,7 +178,12 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	// never count, the frozen frame is current intent, and a mid-goodbye frame
 	// is already on its way out
 	const pool = entries.filter(
-		(e) => e.target === "warm" && !e.usable && e.frame.name !== frozen && !model.exitPending.has(e.frame.name),
+		(e) =>
+			e.target === "warm" &&
+			!e.usable &&
+			e.frame.name !== frozen &&
+			e.frame.name !== inspected &&
+			!model.exitPending.has(e.frame.name),
 	);
 	const overflow = pool.length - WARM_POOL_CAP;
 	if (overflow > 0) {
@@ -214,12 +236,14 @@ export interface LifecycleDeps {
 	viewportRef: RefObject<HTMLDivElement | null>;
 	entered: string | null;
 	frozen: string | null;
+	/** The frame an open inspector rail is reading (#58). */
+	inspected: string | null;
 	hasThumb: (frame: string) => boolean;
 	onShot: (frame: string, dataUrl: string) => void;
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
-	const { framesRef, cameraRef, viewportRef, entered, frozen, hasThumb, onShot } = deps;
+	const { framesRef, cameraRef, viewportRef, entered, frozen, inspected, hasThumb, onShot } = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
 	const [ready, setReady] = useState<ReadonlySet<string>>(new Set<string>());
@@ -232,6 +256,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	enteredRef.current = entered;
 	const frozenRef = useRef(frozen);
 	frozenRef.current = frozen;
+	const inspectedRef = useRef(inspected);
+	inspectedRef.current = inspected;
 	const hasThumbRef = useRef(hasThumb);
 	hasThumbRef.current = hasThumb;
 	const onShotRef = useRef(onShot);
@@ -303,6 +329,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			viewportHeight: viewport.clientHeight,
 			entered: enteredRef.current,
 			frozen: frozenRef.current,
+			inspected: inspectedRef.current,
 			states: statesRef.current,
 			ready: readyRef.current,
 			capturing: new Set(captureWaiters.current.keys()),
@@ -316,12 +343,13 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		if (result.changed) setStates(result.states);
 	}, [cameraRef, viewportRef, framesRef, requestCapture]);
 
-	// Freeze and enter doors must feel instant, not one sweep late.
+	// Freeze, enter, and summoning the rail must feel instant, not one sweep late.
 	useEffect(() => {
 		enteredRef.current = entered;
 		frozenRef.current = frozen;
+		inspectedRef.current = inspected;
 		compute();
-	}, [entered, frozen, compute]);
+	}, [entered, frozen, inspected, compute]);
 
 	useEffect(() => {
 		const sweep = setInterval(compute, SWEEP_MS);
