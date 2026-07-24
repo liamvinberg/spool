@@ -42,6 +42,7 @@ function sweeper() {
 			viewportHeight: 1000,
 			entered: null,
 			frozen: null,
+			inspected: null,
 			states,
 			ready: new Set(frames.map((f) => f.name)),
 			capturing: new Set(),
@@ -170,6 +171,32 @@ describe("frozen frame", () => {
 			expect(held.states.f0).toBe("warm");
 			expect(held.exitCaptures).toEqual([]);
 		}
+	});
+});
+
+describe("inspected frame", () => {
+	it("wakes an offscreen frame the open rail reads, and keeps it out of the pool", () => {
+		const frames = strip(WARM_POOL_CAP + 1);
+		const s = sweeper();
+		tour(s, frames);
+
+		// parked far away, f0 is nobody's neighbour: only the rail keeps it real
+		const evicting = s.sweep(frames, { camera: parked });
+		expect(evicting.exitCaptures).toEqual(["f0"]);
+
+		for (let i = 0; i < 3; i++) {
+			const held = s.sweep(frames, { camera: parked, inspected: "f0" });
+			expect(held.states.f0).toBe("warm");
+			expect(held.exitCaptures).toEqual([]);
+		}
+	});
+
+	it("mounts a hibernated frame the rail turns to, ahead of the visible queue", () => {
+		const frames = [frame("far", -9000, 0), ...strip(6)];
+		const { sweep } = sweeper();
+		const first = sweep(frames, { inspected: "far" });
+
+		expect(first.states.far).toBe("warm");
 	});
 });
 
