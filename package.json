@@ -16,7 +16,7 @@
 	},
 	"packageManager": "pnpm@11.5.3",
 	"scripts": {
-		"dev": "SPOOL_DIR=$HOME/.spool-dev SPOOL_PORT=7767 tsx src/cli.ts",
+		"dev": "SPOOL_DIR=$HOME/.spool-dev SPOOL_PORT=7767 tsx src/dev.ts",
 		"build": "rm -rf dist && tsup && vite build",
 		"prepack": "rm -rf dist && tsup && vite build",
 		"typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json --noEmit && tsc -p tsconfig.ui.json --noEmit",

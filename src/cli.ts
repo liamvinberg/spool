@@ -19,6 +19,7 @@ import {
 } from "./daemon/lifecycle";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
+import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { PortBusyError, SpoolError } from "./errors";
 import { initProject } from "./init";
 import { openProject } from "./open";
@@ -156,8 +157,10 @@ program
 	.action(async (options: { foreground?: boolean }) => {
 		if (options.foreground === true) {
 			const config = resolveServeConfig(spoolDir, process.env);
+			let uiWatcher: UiBuildWatcher | undefined;
 			let daemon: RunningDaemon;
 			try {
+				uiWatcher = await startRegisteredUiWatcher();
 				daemon = await serveDaemon({
 					spoolDir,
 					version: pkg.version,
@@ -183,14 +186,26 @@ program
 						process.stdout.write(
 							`another spool daemon already serves ${daemonUrl(config.host, config.port)} — standing down\n`,
 						);
+						await uiWatcher?.close();
 						return;
 					}
 				}
+				await uiWatcher?.close();
 				throw error;
 			}
 			process.stdout.write(`spool daemon listening at ${daemon.url} (pid ${process.pid})\n`);
+			let stopping = false;
 			const shutdown = () => {
-				void daemon.close().then(() => process.exit(0));
+				if (stopping) return;
+				stopping = true;
+				void (async () => {
+					try {
+						await uiWatcher?.close();
+					} finally {
+						await daemon.close();
+						process.exit(0);
+					}
+				})();
 			};
 			process.on("SIGTERM", shutdown);
 			process.on("SIGINT", shutdown);
