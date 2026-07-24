@@ -20,7 +20,7 @@ import {
 } from "../api";
 import { RibbonMark } from "../icons";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
-import { type CanvasTool, CanvasTools, type TransientCanvasTool } from "./canvas-tools";
+import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import { CollisionNotice } from "./collision-notice";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
@@ -232,7 +232,7 @@ export function ProjectCanvas({
 	const cameras = useRef<Record<string, Camera>>({});
 	const enteredRef = useRef(entered);
 	enteredRef.current = entered;
-	const transientTool: TransientCanvasTool = metaDown ? "select" : spaceDown ? "hand" : null;
+	const transientTool: CanvasTool | null = metaDown ? "select" : spaceDown ? "hand" : null;
 	const effectiveTool = transientTool ?? tool;
 	const toolRef = useRef(effectiveTool);
 	toolRef.current = effectiveTool;
@@ -2130,7 +2130,7 @@ export function ProjectCanvas({
 				{collisions.length > 0 && <CollisionNotice collisions={collisions} />}
 
 				{pendingTrash !== null && <TrashToast frames={pendingTrash} onUndo={undoTrash} />}
-				<CanvasTools tool={tool} transient={transientTool} onTool={setTool} />
+				<CanvasTools tool={effectiveTool} onTool={setTool} />
 			</div>
 			{exportDialog !== null && exportFrames.length > 0 ? (
 				<ExportDialog
