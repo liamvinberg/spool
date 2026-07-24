@@ -71,3 +71,21 @@ body {
 	-webkit-font-smoothing: antialiased;
 	overflow: hidden;
 }
+
+.pages-scrollbar {
+	scrollbar-color: var(--color-thread) transparent;
+	scrollbar-width: thin;
+}
+
+.pages-scrollbar::-webkit-scrollbar {
+	width: 3px;
+}
+
+.pages-scrollbar::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.pages-scrollbar::-webkit-scrollbar-thumb {
+	background: var(--color-thread);
+	border-radius: 999px;
+}
