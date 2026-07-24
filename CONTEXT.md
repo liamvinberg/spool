@@ -26,13 +26,11 @@ Spool is a local-first prototyping canvas: agents author live TSX frames on disk
 
 **Portal**: The chip drawn where a link leaves the active page — no arrow can reach the target, so the marker names it and its page, and activating it jumps there.
 
-**Interact**: The default canvas tool. A clean click enters a frame; once entered, pointer and keyboard input belong to its app.
-
-**Select**: The canvas tool for element selection and frame arrangement. Selecting into one frame freezes that frame in place; the rest keep their normal lifecycle.
+**Select**: The default and only pointer tool: a click takes the frame to arrange it, a double-click enters it, and holding the platform modifier takes the element under the cursor instead. Selecting into one frame freezes that frame in place; the rest keep their normal lifecycle. _Avoid_: interact
 
 **Hand**: The canvas tool for panning with a primary-button drag; holding Space borrows it temporarily.
 
-**Entered**: The state of a frame after a clean Interact click: interaction goes inside it and walks happen in place. Esc leaves an html frame; a terminal owns every key, so the platform modifier + Esc leaves it. _Avoid_: focused
+**Entered**: The state of a frame after a double-click: pointer and keyboard input belong to its app, and walks happen in place. Esc leaves an html frame; a terminal owns every key, so the platform modifier + Esc leaves it. Holding the platform modifier freezes the entered frame and hands the pointer back so an element can be reached. _Avoid_: focused, interact
 
 **Hibernated**: A frame demoted to its still because the warm pool overflowed; it boots fresh on return. Hibernation's payoff is memory, never CPU. _Avoid_: paused
 
