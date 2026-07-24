@@ -56,6 +56,7 @@ import {
 
 const VIEW_W = 1440;
 const VIEW_H = 900;
+const HUB_NAME = "site-hub--drafts";
 const TRACK_H = 3900; // 3000px of scroll for the two-stage pull-back
 const P1 = 0.46; // progress where the dock lands and the wide pull-back begins
 
@@ -284,11 +285,17 @@ function FocusRing({
 }
 
 /**
- * The live frame's chrome, drawn in screen space so mono stays mono at every
- * zoom. Two layers: the ring and its name tab hold all the way out to the full
- * pull-back — at that distance the red ring is the only way to find the page
- * you were just reading — while the handles and the size chip, which would
- * swamp a 115px frame, fade out as the camera passes the docked scale.
+ * The live frame's chrome: name tab, corner handles, size chip. Drawn in screen
+ * space so mono stays mono at every zoom.
+ *
+ * The ring is deliberately NOT here. It is drawn in the world with every other
+ * frame's edge (FieldEdges), because a ring in screen space and a frame in world
+ * space are two transforms computing the same position by different routes: they
+ * agree algebraically and disagree by a subpixel per frame, and a doubled edge
+ * disagreeing every frame is visible as jitter. Nothing that has to sit exactly
+ * on the frame edge belongs in screen space. The handles and chip hang outside
+ * the edge, where a subpixel is invisible, and they fade out as the camera
+ * passes the docked scale so they never swamp a 130px frame.
  */
 function LiveChrome({
 	cam,
@@ -309,7 +316,6 @@ function LiveChrome({
 			className="pointer-events-none absolute top-0 left-0 z-30"
 			style={{ x, y, width: w, height: h, opacity: base }}
 		>
-			<div className="absolute inset-0 outline outline-[2.5px] outline-thread" />
 			<div className="-top-[21px] absolute left-0 flex items-center gap-2 whitespace-nowrap font-mono text-thread text-xs leading-none">
 				<span className="text-[8px] opacity-80">{"▶"}</span>
 				<span>landing</span>
@@ -339,6 +345,7 @@ function FieldEdges({ s }: { s: MotionValue<number> }) {
 	const line = new Set(LINEAGE);
 	const hair = useTransform(s, (k) => 1.4 / k);
 	const thread = useTransform(s, (k) => 2 / k);
+	const live = useTransform(s, (k) => 2.5 / k);
 	return (
 		<svg
 			className="pointer-events-none absolute overflow-visible"
@@ -354,9 +361,9 @@ function FieldEdges({ s }: { s: MotionValue<number> }) {
 					y={r.y}
 					width={r.w}
 					height={r.h}
-					stroke={line.has(name) ? "var(--color-thread)" : "var(--color-border-raised)"}
-					strokeOpacity={line.has(name) ? 0.45 : 1}
-					strokeWidth={line.has(name) ? thread : hair}
+					stroke={name === HUB_NAME || line.has(name) ? "var(--color-thread)" : "var(--color-border-raised)"}
+					strokeOpacity={name === HUB_NAME ? 1 : line.has(name) ? 0.45 : 1}
+					strokeWidth={name === HUB_NAME ? live : line.has(name) ? thread : hair}
 				/>
 			))}
 		</svg>
@@ -812,11 +819,21 @@ export default function SiteHubDrafts() {
 							</div>
 						) : null}
 
-						{/* the page itself, in its own slot. Once it has shrunk into its
-						    frame, clicking it is the way back into it. */}
+						{/* The page itself, in its own slot. `contain` gives it the same
+						    paint isolation every field frame has, so its own ambient motion
+						    cannot invalidate anything outside it. Its motion is left running:
+						    stopping it would need MotionConfig to reach an already-started
+						    animation, which it does not, and remounting to force it pops the
+						    pulse in full view at the exact moment scrolling begins. */}
 						<div
 							className="absolute overflow-hidden bg-bg"
-							style={{ left: HUB.x, top: HUB.y, width: HUB.w, height: HUB.h }}
+							style={{
+								left: HUB.x,
+								top: HUB.y,
+								width: HUB.w,
+								height: HUB.h,
+								contain: "layout paint",
+							}}
 						>
 							<LandingHero hint={hint} />
 							<motion.button
