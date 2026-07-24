@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { FlowEdge, ProjectedFrame } from "../api";
+import type { ProjectedFrame } from "../api";
 import {
 	camerasFromState,
 	frameSourcePath,
@@ -7,7 +7,6 @@ import {
 	framesOnPage,
 	pageLabel,
 	pageList,
-	portalEdges,
 	ROOT_PAGE,
 	resolveActivePage,
 	stateCameraSlots,
@@ -24,8 +23,6 @@ const frame = (name: string, page?: string): ProjectedFrame => ({
 	h: 844,
 	hasThumb: false,
 });
-
-const edge = (from: string, to: string): FlowEdge => ({ from, to, certainty: "will", sites: [] });
 
 describe("page-switch state", () => {
 	it("keeps a stored page that still exists and falls back to root otherwise", () => {
@@ -105,25 +102,5 @@ describe("per-page camera bookkeeping", () => {
 	it("survives the round trip unchanged", () => {
 		const cameras = { [ROOT_PAGE]: { x: 1, y: 2, k: 1 }, shop: { x: 3, y: 4, k: 2 } };
 		expect(camerasFromState(stateCameraSlots(cameras))).toEqual(cameras);
-	});
-});
-
-describe("portal jump resolution", () => {
-	const frames = [frame("home"), frame("about"), frame("checkout", "shop"), frame("receipt", "shop")];
-
-	it("marks only the edges that leave the active page", () => {
-		const edges = [edge("home", "checkout"), edge("home", "about"), edge("checkout", "receipt")];
-		expect(portalEdges(edges, frames, ROOT_PAGE)).toEqual([{ from: "home", to: "checkout", toPage: "shop" }]);
-		expect(portalEdges(edges, frames, "shop")).toEqual([]);
-	});
-
-	it("marks a page frame's link back to the root page", () => {
-		const edges = [edge("receipt", "home")];
-		expect(portalEdges(edges, frames, "shop")).toEqual([{ from: "receipt", to: "home", toPage: ROOT_PAGE }]);
-	});
-
-	it("draws nothing for missing targets and self walks", () => {
-		const edges = [edge("home", "ghost"), edge("home", "home")];
-		expect(portalEdges(edges, frames, ROOT_PAGE)).toEqual([]);
 	});
 });

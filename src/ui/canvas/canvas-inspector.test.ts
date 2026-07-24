@@ -173,6 +173,8 @@ describe("the inspector rail", () => {
 	it("lists the whole outbound graph in the connections tab, missing destinations included", async () => {
 		const canvas = mount();
 		await canvas.render();
+		// Cross-page connections no longer duplicate themselves under the frame.
+		expect(canvas.host.querySelector("[data-portal]")).toBeNull();
 		await act(async () => {
 			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="Expand inspector"]')?.click();
 		});
