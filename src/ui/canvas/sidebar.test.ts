@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe("page tree", () => {
-	it("switches and opens folders, then selects frames with modifiers", async () => {
+	it("switches pages without opening folders, then expands only from the chevron", async () => {
 		const onSwitchPage = vi.fn();
 		const onSelectFrame = vi.fn();
 		const onDoubleClickFrame = vi.fn();
@@ -28,6 +28,7 @@ describe("page tree", () => {
 
 		expect(host.textContent).toContain("Pages2");
 		expect(host.textContent).toContain("folder switches page");
+		expect(host.querySelector('button[aria-label="Expand root"]')).not.toBeNull();
 		expect(host.querySelector('button[aria-label="Expand shop"]')).not.toBeNull();
 		expect(host.querySelector('button[aria-label="checkout frame"]')?.closest("[inert]")).not.toBeNull();
 
@@ -35,6 +36,12 @@ describe("page tree", () => {
 			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
 		});
 		expect(onSwitchPage).toHaveBeenCalledWith("shop");
+		expect(host.querySelector('button[aria-label="Expand shop"]')).not.toBeNull();
+		expect(host.querySelector('button[aria-label="checkout frame"]')?.closest("[inert]")).not.toBeNull();
+
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="Expand shop"]')?.click();
+		});
 		expect(host.querySelector('button[aria-label="Collapse shop"]')).not.toBeNull();
 		expect(host.querySelector('button[aria-label="checkout frame"]')?.closest("[inert]")).toBeNull();
 
@@ -69,13 +76,14 @@ describe("page tree", () => {
 		expect(onSwitchPage).toHaveBeenCalledWith("shop");
 	});
 
-	it("opens a page activated outside the tree", async () => {
+	it("does not open a page activated outside the tree", async () => {
 		const { host, rerender } = await render();
 		expect(host.querySelector('button[aria-label="Expand shop"]')).not.toBeNull();
 
 		await rerender({ activePage: "shop" });
 
-		expect(host.querySelector('button[aria-label="Collapse shop"]')).not.toBeNull();
+		expect(host.querySelector('button[aria-label="Expand shop"]')).not.toBeNull();
+		expect(host.querySelector('button[aria-label="checkout frame"]')?.closest("[inert]")).not.toBeNull();
 		expect(host.querySelector('button[aria-label="shop page"]')?.getAttribute("aria-current")).toBe("page");
 	});
 });

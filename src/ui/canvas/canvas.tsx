@@ -971,11 +971,11 @@ export function ProjectCanvas({
 		}
 	};
 
-	/** Double-click on a frame row flies the camera to the frame (#37). */
 	const flyToFrame = (name: string) => {
 		const frame = framesRef.current.find((candidate) => candidate.name === name);
 		const viewport = viewportRef.current;
 		if (frame === undefined || viewport === null) return;
+		setTool("interact");
 		animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
 	};
 

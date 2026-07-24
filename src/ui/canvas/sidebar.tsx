@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ProjectedFrame } from "../api";
 import { framesOnPage, pageLabel, pageList } from "./pages";
 
@@ -36,14 +36,10 @@ export function CanvasSidebar({
 	onDoubleClickFrame: (name: string) => void;
 }) {
 	const [collapsed, setCollapsed] = useState(false);
-	const [expanded, setExpanded] = useState<Record<string, boolean>>(() => ({ [activePage]: true }));
+	const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 	const orderedPages = pageList(pages);
-	useEffect(() => {
-		setExpanded((current) => (current[activePage] ? current : { ...current, [activePage]: true }));
-	}, [activePage]);
 
 	function activatePage(page: string) {
-		setExpanded((current) => ({ ...current, [page]: true }));
 		onSwitchPage(page);
 	}
 
