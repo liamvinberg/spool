@@ -46,6 +46,7 @@ describe("external links from an entered frame", () => {
 					pointerId: 1,
 				}),
 			);
+			canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 600, clientY: 380 }));
 		});
 		expect(labelText(host)).toContain("live · esc exits");
 

@@ -115,9 +115,10 @@ describe("the freeze shim", () => {
 			value: { postMessage: (message: unknown) => posted.push(message) },
 		});
 		window.__SPOOL__ = { project: "project", frame: "host" };
+		let dispose: (() => void) | undefined;
 
 		try {
-			runShim(shim);
+			dispose = runShim(shim);
 
 			const pinch = new WheelEvent("wheel", {
 				bubbles: true,
@@ -155,6 +156,48 @@ describe("the freeze shim", () => {
 				{ spool: "zoom", frame: "host", kind: "in" },
 			]);
 		} finally {
+			dispose?.();
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
+	it("keeps the middle-button drag for the canvas and leaves every other button to the frame", async () => {
+		const shim = await servedShim();
+		const posted: unknown[] = [];
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", {
+			configurable: true,
+			value: { postMessage: (message: unknown) => posted.push(message) },
+		});
+		window.__SPOOL__ = { project: "project", frame: "host" };
+		let dispose: (() => void) | undefined;
+
+		try {
+			dispose = runShim(shim);
+			const press = (button: number, screenX: number, screenY: number) =>
+				new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button, screenX, screenY });
+
+			// a primary press is the app's own and must reach it untouched
+			const primary = press(0, 10, 10);
+			window.dispatchEvent(primary);
+			expect(primary.defaultPrevented, "the frame owns its own clicks").toBe(false);
+
+			const middle = press(1, 100, 200);
+			window.dispatchEvent(middle);
+			window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, screenX: 130, screenY: 180 }));
+			window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 1 }));
+			// a move after the release belongs to nobody
+			window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, screenX: 999, screenY: 999 }));
+
+			expect(middle.defaultPrevented, "middle-drag must not become browser autoscroll").toBe(true);
+			expect(posted).toEqual([
+				{ spool: "pan", frame: "host", phase: "start", x: 100, y: 200 },
+				{ spool: "pan", frame: "host", phase: "move", x: 130, y: 180 },
+				{ spool: "pan", frame: "host", phase: "end", x: 0, y: 0 },
+			]);
+		} finally {
+			dispose?.();
 			delete window.__SPOOL__;
 			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
 		}

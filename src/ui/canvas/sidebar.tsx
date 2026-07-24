@@ -323,7 +323,7 @@ function ChevronIcon({ open, className }: { open: boolean; className?: string })
 	);
 }
 
-function PanelCaret({ dir, className }: { dir: "left" | "right"; className?: string }) {
+export function PanelCaret({ dir, className }: { dir: "left" | "right"; className?: string }) {
 	const d = dir === "left" ? "m7.5 3.5-4 4.5 4 4.5" : "m4.5 3.5 4 4.5-4 4.5";
 	return (
 		<svg viewBox="0 0 12 16" className={className} fill="none" aria-hidden="true">

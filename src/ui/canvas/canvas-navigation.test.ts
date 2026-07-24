@@ -79,6 +79,7 @@ describe("canvas keyboard navigation", () => {
 					pointerId: 1,
 				}),
 			);
+			canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
 		});
 		expect(labelText(host, "origin")).toContain("live · esc exits");
 
@@ -89,7 +90,7 @@ describe("canvas keyboard navigation", () => {
 		expect(labelClass(host, "origin")).toContain("text-thread");
 
 		await act(async () => {
-			window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", altKey: true }));
 		});
 		expect(labelClass(host, "right")).toContain("text-thread");
 

@@ -353,6 +353,49 @@ const canvasShimJs = `(() => {
 			window.parent.postMessage({ spool: "zoom", frame, kind }, "*");
 		}, true);
 
+	// A pointer trap is the same failure as a zoom trap: entered, the frame owns
+	// every press, so the canvas would have no way to pan out from under it. The
+	// middle button is the one gesture no app binds, so it stays the canvas's.
+	// Screen coordinates travel: the host only ever wants the delta.
+	var panning = false;
+	addEventListener("pointerdown", (event) => {
+		if (window.parent === window || event.button !== 1) return;
+		event.preventDefault();
+		panning = true;
+		window.parent.postMessage({
+			spool: "pan",
+			frame: (window.__SPOOL__ || {}).frame,
+			phase: "start",
+			x: event.screenX,
+			y: event.screenY,
+		}, "*");
+	}, true);
+
+	addEventListener("pointermove", (event) => {
+		if (!panning) return;
+		window.parent.postMessage({
+			spool: "pan",
+			frame: (window.__SPOOL__ || {}).frame,
+			phase: "move",
+			x: event.screenX,
+			y: event.screenY,
+		}, "*");
+	}, true);
+
+	var endPan = () => {
+		if (!panning) return;
+		panning = false;
+		window.parent.postMessage({
+			spool: "pan",
+			frame: (window.__SPOOL__ || {}).frame,
+			phase: "end",
+			x: 0,
+			y: 0,
+		}, "*");
+	};
+	addEventListener("pointerup", endPan, true);
+	addEventListener("pointercancel", endPan, true);
+
 	addEventListener("keyup", (event) => {
 		if (window.parent === window || event.key !== "Meta") return;
 		window.parent.postMessage({

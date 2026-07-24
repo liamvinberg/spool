@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { InspectorIcon } from "../icons";
 import type { ConnectionGroup, ConnectionRow } from "./connections";
 import { rowSelectors, type TreeRow } from "./element-tree";
 import { pickKey } from "./overlays";
 import { pageLabel } from "./pages";
-import type { SelectModifiers } from "./sidebar";
+import { PanelCaret, type SelectModifiers } from "./sidebar";
 
 /**
- * The selection inspector rail (#58): closed by default, summoned only from
- * the header pill, and sticky both ways — an open rail stays open across
- * selections and shows its honest-empty line when nothing is selected.
+ * The selection inspector rail (#58): a canvas-edge sibling of the Pages
+ * rail. It collapses to its own 44px strip, expands leftward, and stays put
+ * across selections. An open rail shows its honest-empty line when nothing is
+ * selected.
  *
  * Two tabs over one selected frame. `elements` is the resting state: the
  * frame's named rows (#55), each one a canvas selection on click and an editor
@@ -19,6 +21,12 @@ import type { SelectModifiers } from "./sidebar";
  */
 
 export const RAIL_WIDTH = 300;
+
+const STRIP_WIDTH = 44;
+const MIN_WIDTH = 200;
+const MAX_WIDTH = 480;
+const SNAP_BELOW = 144;
+const COLLAPSED_BELOW = 72;
 
 export type InspectorMode = "elements" | "connections";
 
@@ -43,9 +51,10 @@ const modifiersOf = (event: React.MouseEvent): SelectModifiers => ({
 });
 
 export function InspectorRail({
-	open,
 	mode,
 	onMode,
+	onOpenChange,
+	outboundCount,
 	target,
 	rows,
 	callSiteLabels,
@@ -60,9 +69,11 @@ export function InspectorRail({
 	onReload,
 	onOpenEditor,
 }: {
-	open: boolean;
 	mode: InspectorMode;
 	onMode: (mode: InspectorMode) => void;
+	onOpenChange: (open: boolean) => void;
+	/** The selected frame's outbound links, carried by the collapsed strip. */
+	outboundCount: number | null;
 	/** The frame the rail is reading; null is the idle rail. */
 	target: InspectorTarget | null;
 	/** The target's named rows: undefined while it wakes, null when it never answered. */
@@ -81,7 +92,25 @@ export function InspectorRail({
 	onReload: () => void;
 	onOpenEditor: () => void;
 }) {
+	const [width, setWidth] = useState(STRIP_WIDTH);
+	const [dragging, setDragging] = useState(false);
+	const drag = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
 	const rowElements = useRef(new Map<string, HTMLElement>());
+	const collapsed = width <= COLLAPSED_BELOW;
+
+	function updateWidth(next: number) {
+		setWidth(next);
+		onOpenChange(next > COLLAPSED_BELOW);
+	}
+
+	function finishDrag(target: HTMLElement, pointerId: number) {
+		const current = drag.current;
+		if (current === null || current.pointerId !== pointerId) return;
+		target.releasePointerCapture(pointerId);
+		drag.current = null;
+		setDragging(false);
+		updateWidth(current.latestWidth < SNAP_BELOW ? STRIP_WIDTH : Math.max(MIN_WIDTH, current.latestWidth));
+	}
 
 	// selection sync: the revealed row scrolls into view, never centered
 	useEffect(() => {
@@ -93,11 +122,11 @@ export function InspectorRail({
 		<aside
 			aria-label="Inspector"
 			data-inspector=""
-			inert={!open}
-			aria-hidden={!open}
-			style={{ width: RAIL_WIDTH }}
-			className={`absolute top-0 right-0 bottom-0 z-30 flex flex-col border-border border-l bg-bg transition-transform duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none ${
-				open ? "translate-x-0" : "translate-x-full"
+			style={{ width }}
+			className={`relative z-20 h-full shrink-0 overflow-hidden border-border border-l bg-bg ${
+				dragging
+					? ""
+					: "transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none"
 			}`}
 			onPointerDown={(event) => event.stopPropagation()}
 			onPointerMove={(event) => event.stopPropagation()}
@@ -107,51 +136,112 @@ export function InspectorRail({
 				event.stopPropagation();
 			}}
 		>
-			<div className="flex h-11 shrink-0 items-stretch border-border border-b px-4">
-				<div className="flex h-full items-stretch gap-5">
-					{MODES.map((candidate) => {
-						const active = mode === candidate;
-						return (
-							<button
-								key={candidate}
-								type="button"
-								aria-pressed={active}
-								onClick={() => onMode(candidate)}
-								className={`relative flex h-full items-center font-mono text-xs leading-xs transition-colors ${
-									active ? "text-text" : "text-muted/60 hover:text-muted"
-								}`}
-							>
-								{candidate}
-								{active ? <span className="absolute inset-x-0 bottom-0 h-[2px] bg-thread" /> : null}
-							</button>
-						);
-					})}
+			{collapsed ? (
+				<div className="flex h-full w-11 flex-col items-center">
+					<button
+						type="button"
+						aria-label="Expand inspector"
+						onClick={() => updateWidth(RAIL_WIDTH)}
+						className="flex h-11 w-11 items-center justify-center gap-1 text-muted/70 hover:text-text"
+					>
+						<InspectorIcon />
+						{outboundCount === null ? null : (
+							<span className="font-mono text-2xs text-muted leading-3">{outboundCount}</span>
+						)}
+					</button>
 				</div>
-			</div>
-
-			{target === null ? (
-				<IdleLine line="select a frame to inspect it" />
 			) : (
-				<div className="flex min-h-0 flex-1 flex-col">
-					<Identity target={target} onReload={onReload} onOpenEditor={onOpenEditor} />
-					{mode === "elements" ? (
-						<ElementsTab
-							terminal={target.kind === "term"}
-							rows={rows}
-							callSiteLabels={callSiteLabels}
-							expandedRows={expandedRows}
-							pickedKeys={pickedKeys}
-							frame={target.frame}
-							rowElements={rowElements.current}
-							onSelectRow={onSelectRow}
-							onDoubleClickRow={onDoubleClickRow}
-							onToggleRow={onToggleRow}
-						/>
+				<div className="flex h-full min-w-[200px] flex-col">
+					<div className="flex h-11 shrink-0 items-stretch justify-between border-border border-b pr-2 pl-4">
+						<div className="flex h-full items-stretch gap-5">
+							{MODES.map((candidate) => {
+								const active = mode === candidate;
+								return (
+									<button
+										key={candidate}
+										type="button"
+										aria-pressed={active}
+										onClick={() => onMode(candidate)}
+										className={`relative flex h-full items-center font-mono text-xs leading-xs transition-colors ${
+											active ? "text-text" : "text-muted/60 hover:text-muted"
+										}`}
+									>
+										{candidate}
+										{active ? <span className="absolute inset-x-0 bottom-0 h-[2px] bg-thread" /> : null}
+									</button>
+								);
+							})}
+						</div>
+						<button
+							type="button"
+							aria-label="Collapse inspector"
+							onClick={() => updateWidth(STRIP_WIDTH)}
+							className="flex h-11 w-7 shrink-0 items-center justify-center text-muted/60 hover:text-text"
+						>
+							<PanelCaret dir="right" className="h-3.5 w-2.5" />
+						</button>
+					</div>
+
+					{target === null ? (
+						<IdleLine line="select a frame to inspect it" />
 					) : (
-						<ConnectionsTab groups={groups} onOpenConnection={onOpenConnection} />
+						<div className="flex min-h-0 flex-1 flex-col">
+							<Identity target={target} onReload={onReload} onOpenEditor={onOpenEditor} />
+							{mode === "elements" ? (
+								<ElementsTab
+									terminal={target.kind === "term"}
+									rows={rows}
+									callSiteLabels={callSiteLabels}
+									expandedRows={expandedRows}
+									pickedKeys={pickedKeys}
+									frame={target.frame}
+									rowElements={rowElements.current}
+									onSelectRow={onSelectRow}
+									onDoubleClickRow={onDoubleClickRow}
+									onToggleRow={onToggleRow}
+								/>
+							) : (
+								<ConnectionsTab groups={groups} onOpenConnection={onOpenConnection} />
+							)}
+						</div>
 					)}
 				</div>
 			)}
+
+			<button
+				type="button"
+				aria-label="Resize inspector"
+				onKeyDown={(event) => {
+					if (event.key === "ArrowLeft") updateWidth(RAIL_WIDTH);
+					if (event.key === "ArrowRight") updateWidth(STRIP_WIDTH);
+				}}
+				onPointerDown={(event) => {
+					if (event.button !== 0) return;
+					event.currentTarget.setPointerCapture(event.pointerId);
+					drag.current = {
+						pointerId: event.pointerId,
+						startWidth: width,
+						startX: event.clientX,
+						latestWidth: width,
+					};
+					setDragging(true);
+				}}
+				onPointerMove={(event) => {
+					const current = drag.current;
+					if (current === null || current.pointerId !== event.pointerId) return;
+					const next = Math.min(
+						MAX_WIDTH,
+						Math.max(STRIP_WIDTH, current.startWidth + current.startX - event.clientX),
+					);
+					current.latestWidth = next;
+					updateWidth(next);
+				}}
+				onPointerUp={(event) => finishDrag(event.currentTarget, event.pointerId)}
+				onPointerCancel={(event) => finishDrag(event.currentTarget, event.pointerId)}
+				className="group -left-1.5 absolute top-0 z-30 h-full w-3 cursor-col-resize touch-none outline-none"
+			>
+				<span className="absolute top-0 right-[5px] bottom-0 w-px bg-transparent group-hover:bg-thread group-focus-visible:bg-thread" />
+			</button>
 		</aside>
 	);
 }

@@ -7,11 +7,11 @@ import { ProjectCanvas } from "./canvas";
 
 const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html", hasThumb: false }];
 
-it("opens in Interact and enters a frame with one clean click", async () => {
+it("opens in Select, takes a frame with one click, and enters it on a double-click", async () => {
 	const { host, canvas } = await renderCanvas();
 
-	const interact = host.querySelector<HTMLButtonElement>('button[aria-label="interact"]');
-	expect(interact?.getAttribute("aria-pressed")).toBe("true");
+	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
+	expect(host.querySelector('button[aria-label="interact"]')).toBeNull();
 
 	await act(async () => {
 		canvas?.dispatchEvent(
@@ -21,11 +21,24 @@ it("opens in Interact and enters a frame with one clean click", async () => {
 			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
 		);
 	});
+	// a bare click takes the frame and stops there
+	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
 
+	await enterHome(canvas);
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("live · esc exits");
 });
 
-it("does not enter from a dragged Interact press", async () => {
+it("keeps serving the frame you are inside, so Play and agents do not lose you", async () => {
+	const { host, canvas } = await renderCanvas();
+
+	await enterHome(canvas);
+	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("esc exits");
+	// entering clears the selection ring, but never what the canvas points at
+	await until(() => selectionPuts().at(-1)?.frames?.[0] === "home");
+	expect(selectionPuts().at(-1)).toEqual({ frames: ["home"] });
+});
+
+it("does not enter from a dragged press", async () => {
 	const { host, canvas } = await renderCanvas();
 
 	await act(async () => {
@@ -54,7 +67,7 @@ it("does not enter from a dragged Interact press", async () => {
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
 });
 
-it("does not marquee-select from an empty-canvas drag in Interact", async () => {
+it("marquee-selects from an empty-canvas drag, now that Select is the resting tool", async () => {
 	const { host, canvas } = await renderCanvas();
 
 	await act(async () => {
@@ -69,20 +82,14 @@ it("does not marquee-select from an empty-canvas drag in Interact", async () => 
 		);
 	});
 
-	expect(host.querySelector('[data-frame-label="home"] .text-thread')).toBeNull();
+	expect(host.querySelector('[data-frame-label="home"] .text-thread')).not.toBeNull();
+	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
 });
 
-it("freezes an entered frame in place while Select is active and thaws it back into play", async () => {
+it("freezes an entered frame in place while Command is held and thaws it back into play", async () => {
 	const { host, canvas } = await renderCanvas();
 
-	await act(async () => {
-		canvas?.dispatchEvent(
-			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
-		);
-		canvas?.dispatchEvent(
-			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
-		);
-	});
+	await enterHome(canvas);
 	await until(() => host.querySelector('iframe[title="home"]') !== null);
 	const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
 	expect(iframe?.contentWindow).not.toBeNull();
@@ -90,7 +97,7 @@ it("freezes an entered frame in place while Select is active and thaws it back i
 	postMessage.mockClear();
 
 	await act(async () => {
-		host.querySelector<HTMLButtonElement>('button[aria-label="select"]')?.click();
+		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
 	});
 	await until(() =>
 		postMessage.mock.calls.some(
@@ -105,11 +112,12 @@ it("freezes an entered frame in place while Select is active and thaws it back i
 	);
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("esc exits");
+	// ⌘ takes the pointer back off the frame so an element can be reached
 	expect(iframe?.style.pointerEvents).toBe("none");
 
 	postMessage.mockClear();
 	await act(async () => {
-		host.querySelector<HTMLButtonElement>('button[aria-label="interact"]')?.click();
+		window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
 	});
 	await until(() =>
 		postMessage.mock.calls.some(
@@ -124,29 +132,26 @@ it("freezes an entered frame in place while Select is active and thaws it back i
 	);
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("esc exits");
+	expect(iframe?.style.pointerEvents).toBe("auto");
 });
 
-it("borrows Select while Command is held without changing the committed Interact tool", async () => {
+it("treats Command as Select's element modifier, never as a tool of its own", async () => {
 	const { host } = await renderCanvas();
 
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
 	});
 
-	expect(host.querySelector("[data-borrow-caption]")).toBeNull();
-	expect(host.querySelector("button[data-borrowed]")).toBeNull();
-	expect(host.querySelector(".border-dashed")).toBeNull();
-	expect(host.querySelector('button[aria-label="interact"]')?.getAttribute("aria-pressed")).toBe("false");
+	// holding ⌘ reaches an element, it does not change which tool is committed
 	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
-	expect(host.querySelector('button[aria-label="select"]')?.textContent).toContain("hold ⌘");
+	expect(host.querySelector('button[aria-label="select"]')?.textContent).not.toContain("hold ⌘");
 	expect(host.querySelector('button[aria-label="hand"]')?.textContent).toContain("hold space");
 
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
 	});
 
-	expect(host.querySelector('button[aria-label="interact"]')?.getAttribute("aria-pressed")).toBe("true");
-	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("false");
+	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
 });
 
 it("keeps toolbar gestures out of the canvas beneath it", async () => {
@@ -303,9 +308,8 @@ it("clears borrowed Select previews across Command release and window blur", asy
 	});
 	expect(host.querySelector(".opacity-50")).toBeNull();
 
-	await act(async () => {
-		window.dispatchEvent(new KeyboardEvent("keydown", { key: "v", bubbles: true }));
-	});
+	// a plain click no longer reaches into the frame: elements are ⌘'s alone
+	postMessage.mockClear();
 	await act(async () => {
 		canvas?.dispatchEvent(
 			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 3 }),
@@ -314,87 +318,12 @@ it("clears borrowed Select previews across Command release and window blur", asy
 			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 3 }),
 		);
 	});
-	const selectionPick = postMessage.mock.calls
-		.map(([message]) => message)
-		.filter(
-			(message): message is { spool: "pick"; id: number } =>
-				typeof message === "object" &&
-				message !== null &&
-				"spool" in message &&
-				message.spool === "pick" &&
-				"id" in message &&
-				typeof message.id === "number",
-		)
-		.at(-1);
-	expect(selectionPick?.id).not.toBe(secondPick?.id);
-	await act(async () => {
-		window.dispatchEvent(
-			new MessageEvent("message", {
-				data: {
-					spool: "picked",
-					frame: "home",
-					id: selectionPick?.id,
-					chain: [
-						{
-							selector: "main",
-							tag: "main",
-							outerHtml: "<main><button>Open</button></main>",
-							rect: { x: 0, y: 0, w: 200, h: 120 },
-							radius: 0,
-							source: null,
-							generated: true,
-						},
-					],
-				},
-			}),
-		);
-	});
-	await act(async () => {
-		await new Promise((resolve) => setTimeout(resolve, 90));
-	});
-	await act(async () => {
-		canvas?.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 60, clientY: 60, pointerId: 4 }));
-	});
-	const thirdPick = postMessage.mock.calls
-		.map(([message]) => message)
-		.filter(
-			(message): message is { spool: "pick"; id: number } =>
-				typeof message === "object" &&
-				message !== null &&
-				"spool" in message &&
-				message.spool === "pick" &&
-				"id" in message &&
-				typeof message.id === "number",
-		)
-		.at(-1);
-	expect(thirdPick?.id).not.toBe(secondPick?.id);
-	await act(async () => {
-		window.dispatchEvent(
-			new MessageEvent("message", {
-				data: {
-					spool: "picked",
-					frame: "home",
-					id: thirdPick?.id,
-					chain: [
-						{
-							selector: "button",
-							tag: "button",
-							outerHtml: "<button>Open</button>",
-							rect: { x: 10, y: 10, w: 80, h: 30 },
-							radius: 4,
-							source: null,
-							generated: true,
-						},
-					],
-				},
-			}),
-		);
-	});
-	expect(host.querySelector(".opacity-50")).not.toBeNull();
-
-	await act(async () => {
-		window.dispatchEvent(new KeyboardEvent("keydown", { key: "h", bubbles: true }));
-	});
+	expect(
+		postMessage.mock.calls.some(
+			([message]) =>
+				typeof message === "object" && message !== null && "spool" in message && message.spool === "pick",
+		),
+	).toBe(false);
 	expect(host.querySelector(".opacity-50")).toBeNull();
 });
 
@@ -424,14 +353,14 @@ it("commits Hand with H and pans from a primary drag without entering the frame"
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
 });
 
-it("borrows Hand with Space, gives Command precedence, and clears both on blur", async () => {
+it("borrows Hand with Space, keeps it under Command, and clears it on blur", async () => {
 	const { host } = await renderCanvas();
 
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true }));
 	});
 	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("true");
-	expect(host.querySelector('button[aria-label="interact"]')?.getAttribute("aria-pressed")).toBe("false");
+	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("false");
 	const repeatedSpace = new KeyboardEvent("keydown", {
 		key: " ",
 		code: "Space",
@@ -444,11 +373,11 @@ it("borrows Hand with Space, gives Command precedence, and clears both on blur",
 	});
 	expect(repeatedSpace.defaultPrevented).toBe(true);
 
+	// ⌘ is a modifier now, so it no longer outranks the borrowed Hand
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
 	});
-	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
-	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("false");
+	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("true");
 
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
@@ -458,20 +387,13 @@ it("borrows Hand with Space, gives Command precedence, and clears both on blur",
 	await act(async () => {
 		window.dispatchEvent(new Event("blur"));
 	});
-	expect(host.querySelector('button[aria-label="interact"]')?.getAttribute("aria-pressed")).toBe("true");
+	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
 	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("false");
 });
 
-it("borrows Select from a focused frame's Command key and thaws that same document on release", async () => {
+it("freezes on a focused frame's relayed Command key and thaws that same document on release", async () => {
 	const { host, canvas } = await renderCanvas();
-	await act(async () => {
-		canvas?.dispatchEvent(
-			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
-		);
-		canvas?.dispatchEvent(
-			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
-		);
-	});
+	await enterHome(canvas);
 	await until(() => host.querySelector('iframe[title="home"]') !== null);
 	const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
 	const postMessage = vi.spyOn(iframe?.contentWindow as Window, "postMessage");
@@ -495,7 +417,6 @@ it("borrows Select from a focused frame's Command key and thaws that same docume
 				message.on === true,
 		),
 	);
-	expect(host.querySelector("[data-borrow-caption]")).toBeNull();
 	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 
@@ -519,10 +440,10 @@ it("borrows Select from a focused frame's Command key and thaws that same docume
 		),
 	);
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
-	expect(host.querySelector('button[aria-label="interact"]')?.getAttribute("aria-pressed")).toBe("true");
+	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
 });
 
-it("commits Select with V and asks the frame for the clicked element", async () => {
+it("asks the frame for the element under a ⌘-click, and for nothing under a bare one", async () => {
 	const { host, canvas } = await renderCanvas();
 	await act(async () => {
 		canvas?.dispatchEvent(
@@ -534,28 +455,59 @@ it("commits Select with V and asks the frame for the clicked element", async () 
 	});
 	await until(() => host.querySelector('iframe[title="home"]') !== null);
 	const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
-
-	await act(async () => {
-		window.dispatchEvent(new MessageEvent("message", { data: { spool: "key", frame: "home", key: "Escape" } }));
-		window.dispatchEvent(new KeyboardEvent("keydown", { key: "v", bubbles: true }));
-	});
-	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
-
 	const postMessage = vi.spyOn(iframe?.contentWindow as Window, "postMessage");
+	const asked = () =>
+		postMessage.mock.calls.some(
+			([message]) =>
+				typeof message === "object" && message !== null && "spool" in message && message.spool === "pick",
+		);
+
 	postMessage.mockClear();
 	await act(async () => {
 		canvas?.dispatchEvent(
 			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 2 }),
 		);
 	});
+	expect(asked()).toBe(false);
 
-	expect(
-		postMessage.mock.calls.some(
-			([message]) =>
-				typeof message === "object" && message !== null && "spool" in message && message.spool === "pick",
-		),
-	).toBe(true);
+	postMessage.mockClear();
+	await act(async () => {
+		canvas?.dispatchEvent(
+			new PointerEvent("pointerdown", {
+				bubbles: true,
+				button: 0,
+				clientX: 40,
+				clientY: 40,
+				pointerId: 3,
+				metaKey: true,
+			}),
+		);
+	});
+	expect(asked()).toBe(true);
 });
+
+/** Every selection the canvas has served, oldest first. */
+function selectionPuts(): { frames?: string[] }[] {
+	const calls = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL, RequestInit?][] } }).mock.calls;
+	return calls
+		.filter(([input, init]) => String(input).endsWith("/selection") && init?.method === "PUT")
+		.map(([, init]) => JSON.parse(String(init?.body)) as { frames?: string[] });
+}
+
+/** The way inside: a double-click on the frame, presses and all. */
+async function enterHome(canvas: HTMLElement, x = 40, y = 40): Promise<void> {
+	await act(async () => {
+		for (const pointerId of [91, 92]) {
+			canvas.dispatchEvent(
+				new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId }),
+			);
+			canvas.dispatchEvent(
+				new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId }),
+			);
+		}
+		canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: x, clientY: y }));
+	});
+}
 
 async function renderCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElement }> {
 	stubCanvasApis();

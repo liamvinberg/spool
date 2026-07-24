@@ -99,11 +99,12 @@ export interface CanvasChrome {
 	/** The threads toggle (#34): shown pressed while the map draws. */
 	arrowsOn: boolean;
 	toggleArrows: () => void;
-	/** The inspector rail (#58): the header pill is its only control. */
-	inspectorOpen: boolean;
-	toggleInspector: () => void;
-	/** The selected frame's outbound links, for the closed pill's quiet count. */
-	outboundCount: number | null;
+	/**
+	 * Whether this page has a thread to hide: an edge with both ends on it, or
+	 * a portal leaving it. The toggle is not drawn otherwise — a switch over
+	 * nothing is chrome pretending to be a control (#34/#39).
+	 */
+	hasThreads: boolean;
 }
 
 interface Point {
@@ -121,7 +122,6 @@ interface CanvasContextMenu {
 type Gesture =
 	| { kind: "idle" }
 	| { kind: "pan"; lastX: number; lastY: number }
-	| { kind: "enter"; frame: string; start: Point }
 	// pointer down on a frame, before the drag threshold: a clean release is a
 	// click, movement promotes to a move
 	| { kind: "pending"; names: string[]; origins: Map<string, Point>; start: Point }
@@ -141,6 +141,8 @@ const TREE_REPLY_MS = 1200;
 const STAMP_LABEL_BATCH = 256;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
+/** Entering fits the camera only below this much of the viewport (#8). */
+const ENTER_FIT_BELOW = 0.5;
 
 function spatialDirection(key: string): SpatialDirection | undefined {
 	switch (key) {
@@ -181,7 +183,7 @@ export function ProjectCanvas({
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
 	const [camera, setCamera] = useState<Camera | null>(null);
-	const [tool, setTool] = useState<CanvasTool>("interact");
+	const [tool, setTool] = useState<CanvasTool>("select");
 	const [selected, setSelected] = useState<string[]>([]);
 	const [picked, setPicked] = useState<PickedSelection[]>([]);
 	const [entered, setEntered] = useState<string | null>(null);
@@ -214,8 +216,8 @@ export function ProjectCanvas({
 	const [pages, setPages] = useState<string[]>([]);
 	const [activePage, setActivePage] = useState<string>(ROOT_PAGE);
 	const [collisions, setCollisions] = useState<FrameCollision[]>([]);
-	// the inspector rail (#58): closed by default and sticky both ways — only
-	// the header pill moves it, and elements is the resting tab
+	// the inspector rail (#58): collapsed by default and sticky both ways; its
+	// own canvas-edge strip moves it, and elements is the resting tab
 	const [railOpen, setRailOpen] = useState(false);
 	const [railMode, setRailMode] = useState<InspectorMode>("elements");
 	// the elements tab's raw walk of the inspected frame — null for a frame that
@@ -259,7 +261,13 @@ export function ProjectCanvas({
 	const cameras = useRef<Record<string, Camera>>({});
 	const enteredRef = useRef(entered);
 	enteredRef.current = entered;
-	const transientTool: CanvasTool | null = metaDown ? "select" : spaceDown ? "hand" : null;
+	const metaDownRef = useRef(metaDown);
+	metaDownRef.current = metaDown;
+	/** The last screen point a relayed middle-button drag reported (#8). */
+	const framePan = useRef<Point | null>(null);
+	// ⌘ no longer borrows Select — Select is the base, and ⌘ is its element
+	// modifier. Space is the only transient left.
+	const transientTool: CanvasTool | null = spaceDown ? "hand" : null;
 	const effectiveTool = transientTool ?? tool;
 	const toolRef = useRef(effectiveTool);
 	toolRef.current = effectiveTool;
@@ -330,11 +338,22 @@ export function ProjectCanvas({
 
 	const pickedFrame = picked[picked.length - 1]?.frame;
 	const selectedFrame = selected[selected.length - 1];
-	const frozenFrame = effectiveTool === "select" ? (pickedFrame ?? selectedFrame ?? entered ?? null) : null;
+	// Select freezes what you point at so it cannot move under the cursor. The
+	// entered frame is the exception: it runs, and only stops when ⌘ takes the
+	// pointer back off it to reach an element.
+	const frozenFrame =
+		effectiveTool === "select" ? (pickedFrame ?? selectedFrame ?? (metaDown ? entered : null)) : null;
 	// what the rail reads: the element scope's frame, else the frame selection,
 	// else the frame being used — inside a prototype its elements are the ones
 	// worth looking at, so entering must not empty the rail
 	const inspectedFrame = pickedFrame ?? selectedFrame ?? entered ?? null;
+	// a thread to hide on this page: an edge with both ends here, or a portal
+	// leaving it. Nothing to hide, no switch (#34/#39).
+	const hasThreads = useMemo(() => {
+		if (portals.length > 0) return true;
+		const here = new Set(visibleFrames.map((entry) => entry.name));
+		return edges.some((edge) => here.has(edge.from) && here.has(edge.to));
+	}, [edges, portals, visibleFrames]);
 
 	const lifecycle = useFrameLifecycle({
 		framesRef,
@@ -620,10 +639,17 @@ export function ProjectCanvas({
 			// the entered frame owns the keyboard from the first moment; a frame
 			// booting right now gets it at its loaded report instead
 			iframes.current.get(target)?.focus();
-			// entering is a focusing gesture: fit once. Walks and shell navigation
-			// preserve zoom so the field keeps its spatial continuity.
+			// Fit only what you could not otherwise use. A frame already filling
+			// the view stays exactly where it is — moving it reads as a teleport —
+			// while one you can barely read comes to you, because going inside a
+			// speck you cannot see is no use at all.
 			const viewport = viewportRef.current;
-			if (viewport !== null) animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
+			const cam = cameraRef.current;
+			if (viewport === null || cam === null) return;
+			const tooSmall =
+				frame.w * cam.k < viewport.clientWidth * ENTER_FIT_BELOW &&
+				frame.h * cam.k < viewport.clientHeight * ENTER_FIT_BELOW;
+			if (tooSmall) animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
 		},
 		[animateCamera],
 	);
@@ -646,6 +672,18 @@ export function ProjectCanvas({
 
 	const toggleArrows = useCallback(() => setArrowsOn((on) => !on), []);
 
+	/** The player's door (#13/#24): its own tab, always naming its frame. */
+	const playFrame = useCallback(
+		(name: string) => {
+			window.open(
+				`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(name)}`,
+				"_blank",
+				"noopener,noreferrer",
+			);
+		},
+		[project],
+	);
+
 	// --- selection sync (#23): what Liam points at, served to agents ------------
 
 	useEffect(() => {
@@ -661,11 +699,15 @@ export function ProjectCanvas({
 					})),
 				});
 			} else {
-				putSelection(project, { frames: selected });
+				// Entering is the strongest thing you can say about what you mean,
+				// and it clears the selection ring — so it must still be served. The
+				// rail already reads it this way; without the same fallback, agents
+				// and the player both lose you the moment you step inside a frame.
+				putSelection(project, { frames: selected.length > 0 ? selected : entered === null ? [] : [entered] });
 			}
 		}, SELECTION_PUT_MS);
 		return () => clearTimeout(timer);
-	}, [project, picked, selected]);
+	}, [project, picked, selected, entered]);
 
 	// --- geometry writes (#23): sidecars only, never source ---------------------
 
@@ -902,21 +944,6 @@ export function ProjectCanvas({
 		[pickAnchor],
 	);
 
-	/** Figma's descend: each double-click selects one level deeper under the cursor. */
-	const descendAt = useCallback(
-		(frame: string, local: Point) => {
-			beginPick(frame, local, (chain) => {
-				const anchor = pickAnchor();
-				const depth =
-					anchor !== undefined && anchor.frame === frame
-						? chain.findIndex((h) => h.selector === anchor.selector)
-						: -1;
-				applyPick(frame, chain, chain[Math.min(depth + 1, chain.length - 1)]);
-			});
-		},
-		[beginPick, applyPick, pickAnchor],
-	);
-
 	/** Figma's deep select (⌘-click, and the right-click point): the deepest element. */
 	const deepSelectAt = useCallback(
 		(frame: string, local: Point) => {
@@ -1012,7 +1039,6 @@ export function ProjectCanvas({
 		const frame = framesRef.current.find((candidate) => candidate.name === name);
 		const viewport = viewportRef.current;
 		if (frame === undefined || viewport === null) return;
-		setTool("interact");
 		animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
 	};
 
@@ -1238,6 +1264,29 @@ export function ProjectCanvas({
 				case "modifier":
 					if (enteredRef.current === message.frame) setMetaDown(message.held);
 					return;
+				case "pan": {
+					// the middle-button drag the shim kept for us: pan without leaving
+					if (enteredRef.current !== message.frame) return;
+					if (message.phase === "end") {
+						framePan.current = null;
+						setPanning(false);
+						return;
+					}
+					if (message.phase === "start") {
+						stopAnimation();
+						setMenu(null);
+						framePan.current = { x: message.x, y: message.y };
+						setPanning(true);
+						return;
+					}
+					const last = framePan.current;
+					if (last === null) return;
+					const dx = message.x - last.x;
+					const dy = message.y - last.y;
+					framePan.current = { x: message.x, y: message.y };
+					setCamera((c) => (c === null ? c : { ...c, x: c.x + dx, y: c.y + dy }));
+					return;
+				}
 				case "zoom": {
 					// Entered frames own pointer + keyboard input, and those events do
 					// not cross an iframe boundary. The frame shim claims browser-zoom
@@ -1284,8 +1333,6 @@ export function ProjectCanvas({
 		const el = viewportRef.current;
 		if (el === null) return;
 		const onWheel = (event: WheelEvent) => {
-			// the rail overlays the canvas: its own lists keep their scrolling
-			if (event.target instanceof Element && event.target.closest("[data-inspector]") !== null) return;
 			event.preventDefault();
 			stopAnimation();
 			setMenu(null);
@@ -1374,6 +1421,9 @@ export function ProjectCanvas({
 			(chain) => {
 				hoverBusy.current = false;
 				if (gesture.current.kind !== "idle" || toolRef.current !== "select") return;
+				// a deep hover is ⌘'s: let go while the frame was answering and
+				// the answer is stale, so it must not redraw the preview
+				if (deepest && !metaDownRef.current) return;
 				const target = deepest ? chain[chain.length - 1] : atDepthIn(frame, chain);
 				setPreview(
 					target === undefined
@@ -1448,7 +1498,9 @@ export function ProjectCanvas({
 			return;
 		}
 
-		if (enteredRef.current !== null && toolRef.current === "interact") {
+		// A live frame owns its own presses — the canvas only ever sees one when
+		// ⌘ has frozen it to reach an element, so ⌘ must not read as leaving.
+		if (enteredRef.current !== null && !event.metaKey) {
 			const hit = frameAtWorld(toWorld(p, cam));
 			if (hit === enteredRef.current) return; // the pointer is the frame's now
 			exitEntered();
@@ -1484,7 +1536,7 @@ export function ProjectCanvas({
 		const hit = label ?? frameAtWorld(world);
 
 		if (hit === null) {
-			if (toolRef.current !== "select") {
+			if (toolRef.current === "hand") {
 				setSelected([]);
 				setPicked([]);
 				return;
@@ -1496,11 +1548,6 @@ export function ProjectCanvas({
 				setPicked([]);
 			}
 			gesture.current = { kind: "marquee", start: p, base };
-			return;
-		}
-
-		if (toolRef.current === "interact") {
-			gesture.current = { kind: "enter", frame: hit, start: p };
 			return;
 		}
 
@@ -1527,18 +1574,20 @@ export function ProjectCanvas({
 			return;
 		}
 
-		// Select picks the frame's live DOM. The first click enters the top
-		// element scope; later clicks stay at that depth. Either can promote to
-		// a frame move when the pointer crosses the drag threshold.
+		// A bare click takes the frame and nothing inside it: elements are ⌘'s.
+		// The one exception is an element scope already open on this frame —
+		// there, plain clicks keep moving the selection at that depth (#37).
+		// Either can promote to a frame move once the pointer crosses the
+		// drag threshold.
 		const anchor = pickedRef.current[pickedRef.current.length - 1];
 		if (toolRef.current === "select" && label === null) {
-			const local = frameLocalAt(hit, world);
-			if (local !== null) {
-				if (anchor !== undefined && anchor.frame === hit) scopedSelectAt(hit, local);
-				else beginPick(hit, local, (chain) => applyPick(hit, chain, chain[0]));
+			const scoped = anchor !== undefined && anchor.frame === hit;
+			if (scoped) {
+				const local = frameLocalAt(hit, world);
+				if (local !== null) scopedSelectAt(hit, local);
 			}
 			const names = selectedRef.current.includes(hit) ? [...selectedRef.current] : [hit];
-			if (anchor === undefined || anchor.frame !== hit) {
+			if (!scoped) {
 				setSelected(names);
 				setPicked([]);
 			}
@@ -1574,13 +1623,6 @@ export function ProjectCanvas({
 			const dy = p.y - active.lastY;
 			gesture.current = { ...active, lastX: p.x, lastY: p.y };
 			setCamera((c) => (c === null ? c : { ...c, x: c.x + dx, y: c.y + dy }));
-			return;
-		}
-
-		if (active.kind === "enter") {
-			if (Math.hypot(p.x - active.start.x, p.y - active.start.y) >= DRAG_THRESHOLD_PX) {
-				gesture.current = { kind: "idle" };
-			}
 			return;
 		}
 
@@ -1705,34 +1747,32 @@ export function ProjectCanvas({
 		}
 	};
 
-	const onPointerUp = (event: React.PointerEvent) => {
+	const onPointerUp = () => {
 		const active = gesture.current;
 		gesture.current = { kind: "idle" };
 		setPanning(false);
 		setGuides(NO_GUIDES);
 		setMarquee(null);
 		setResizeCursor(null);
-		if (active.kind === "enter" && toolRef.current === "interact") {
-			const released = localPoint(event);
-			if (Math.hypot(released.x - active.start.x, released.y - active.start.y) < DRAG_THRESHOLD_PX) {
-				enterFrame(active.frame);
-			}
-		}
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
 	};
 
+	/**
+	 * Double-click is how you go inside a frame — the gesture every nested
+	 * object in software already answers to. Structural descent does not need
+	 * it: ⌘-click lands on the deepest element in one go and Escape climbs
+	 * back down, which is the same round trip in fewer gestures.
+	 */
 	const onDoubleClick = (event: React.MouseEvent) => {
 		if (exportDialogRef.current !== null) return;
 		if (toolRef.current !== "select") return;
 		const cam = cameraRef.current;
 		if (cam === null) return;
-		const world = toWorld(localPoint(event), cam);
-		const hit = frameAtWorld(world);
-		if (hit === null) return;
-		// Select goes one structural level deeper on double-click.
-		const local = frameLocalAt(hit, world);
-		if (local !== null) descendAt(hit, local);
+		const hit = datasetHit(event.target, "frame-label") ?? frameAtWorld(toWorld(localPoint(event), cam));
+		if (hit === null || hit === enteredRef.current) return;
+		cancelGesture();
+		enterFrame(hit);
 	};
 
 	const onContextMenu = (event: React.MouseEvent) => {
@@ -2012,8 +2052,6 @@ export function ProjectCanvas({
 		[switchToPage, arrivalAt, animateCamera],
 	);
 
-	const toggleInspector = useCallback(() => setRailOpen((open) => !open), []);
-
 	// --- keys -------------------------------------------------------------------
 
 	const menuOpenRef = useRef(false);
@@ -2106,10 +2144,6 @@ export function ProjectCanvas({
 				case "H":
 					setTool("hand");
 					break;
-				case "i":
-				case "I":
-					setTool("interact");
-					break;
 				case "+":
 				case "=": {
 					const c = viewportCenter();
@@ -2130,7 +2164,11 @@ export function ProjectCanvas({
 				case "ArrowDown": {
 					if (enteredRef.current !== null || selectedRef.current.length === 0) break;
 					event.preventDefault();
-					if (toolRef.current !== "select") {
+					// The tool used to split these: Interact stepped between frames,
+					// Select nudged. With one pointer tool left, bare arrows nudge
+					// the selection (Select's own business) and ⌥ steps to the
+					// neighbouring frame — which ⏎ then goes inside (#28).
+					if (event.altKey) {
 						if (selectedRef.current.length !== 1) break;
 						const current = framesRef.current.find((frame) => frame.name === selectedRef.current[0]);
 						if (current === undefined) break;
@@ -2153,19 +2191,16 @@ export function ProjectCanvas({
 					nudge(dx, dy);
 					break;
 				}
-				case "Enter":
-					if (
-						!event.repeat &&
-						toolRef.current === "interact" &&
-						enteredRef.current === null &&
-						selectedRef.current.length === 1
-					) {
-						const [target] = selectedRef.current;
-						if (target === undefined) break;
-						event.preventDefault();
-						enterFrame(target);
-					}
+				case "Enter": {
+					// ⏎ goes inside, ⇧⏎ plays it: the heavier verb takes the modifier
+					if (event.repeat || enteredRef.current !== null || selectedRef.current.length !== 1) break;
+					const [target] = selectedRef.current;
+					if (target === undefined) break;
+					event.preventDefault();
+					if (event.shiftKey) playFrame(target);
+					else enterFrame(target);
 					break;
+				}
 				case "Escape": {
 					cancelPicks();
 					setPreview(null);
@@ -2173,14 +2208,12 @@ export function ProjectCanvas({
 					else if (menuOpenRef.current) setMenu(null);
 					else if (enteredRef.current !== null) exitEntered(true);
 					else if (pickedRef.current.length > 1) {
-						setTool("interact");
 						// a multi-selection has no one ancestry: drop to its frames
 						const frames = [...new Set(pickedRef.current.map((pick) => pick.frame))];
 						pickedChain.current = null;
 						setPicked([]);
 						setSelected(frames);
 					} else if (pickedRef.current[0] !== undefined) {
-						setTool("interact");
 						// ascend the ancestry (Figma): element → parent → … → frame → clear
 						const picked = pickedRef.current[0];
 						const held = pickedChain.current;
@@ -2195,7 +2228,6 @@ export function ProjectCanvas({
 							setSelected([picked.frame]);
 						}
 					} else {
-						setTool("interact");
 						setSelected([]);
 					}
 					break;
@@ -2239,25 +2271,21 @@ export function ProjectCanvas({
 		cancelPicks,
 		toggleArrows,
 		cancelExportDialog,
+		playFrame,
 	]);
 
 	// --- chrome (top bar) -------------------------------------------------------
 
 	const zoomPct = camera === null ? 100 : Math.round(camera.k * 100);
-	// the pill's count is the closed rail's only voice: what the selected frame
-	// leads to, said quietly, and nothing at all with no selection or an open rail
-	const pillCount = railOpen || inspectedFrame === null ? null : outboundCount(inspectedFrame, edges);
 	useEffect(() => {
 		onChrome({
 			zoomPct,
 			arrowsOn,
 			toggleArrows,
-			inspectorOpen: railOpen,
-			toggleInspector,
-			outboundCount: pillCount,
+			hasThreads,
 		});
 		return () => onChrome(null);
-	}, [zoomPct, onChrome, arrowsOn, toggleArrows, railOpen, toggleInspector, pillCount]);
+	}, [zoomPct, onChrome, arrowsOn, toggleArrows, hasThreads]);
 
 	// --- render -------------------------------------------------------------------
 
@@ -2343,6 +2371,7 @@ export function ProjectCanvas({
 										paused={paused}
 										selected={isSelected}
 										terminal={frame.kind === "term"}
+										onPlay={() => playFrame(frame.name)}
 									/>
 									{framePortals.length > 0 && (
 										<PortalChips portals={framePortals} k={k} onJump={jumpToFrame} />
@@ -2356,7 +2385,7 @@ export function ProjectCanvas({
 											name={frame.name}
 											state={state}
 											ready={lifecycle.ready.has(frame.name)}
-											interactive={isEntered && effectiveTool === "interact"}
+											interactive={isEntered && !metaDown}
 											docNonce={docNonces[frame.name] ?? 0}
 											thumbNonce={thumbNonces[frame.name] ?? 0}
 											hasThumb={hasThumb(frame.name)}
@@ -2458,40 +2487,39 @@ export function ProjectCanvas({
 
 				{pendingTrash !== null && <TrashToast frames={pendingTrash} onUndo={undoTrash} />}
 				<CanvasTools tool={effectiveTool} onTool={setTool} />
-				<InspectorRail
-					open={railOpen}
-					mode={railMode}
-					onMode={setRailMode}
-					target={inspectorTarget}
-					rows={inspectedRows}
-					callSiteLabels={callSiteLabels}
-					expandedRows={expandedRows}
-					pickedKeys={pickedKeys}
-					revealKey={reveal?.key}
-					groups={connections}
-					onSelectRow={selectTreeRow}
-					onDoubleClickRow={openRowInEditor}
-					onToggleRow={toggleTreeRow}
-					onOpenConnection={openConnection}
-					onReload={() => {
-						if (inspectorTarget === null) return;
-						const frame = inspectorTarget.frame;
-						if (allFramesRef.current.find((candidate) => candidate.name === frame)?.kind === "term") {
-							void restartTerminalFrame(project, frame);
-						}
-						reloadFrameDocument(frame);
-					}}
-					onOpenEditor={() => {
-						if (inspectorTarget === null) return;
-						const pick = pickedRef.current.find((candidate) => candidate.frame === inspectorTarget.frame);
-						openEditorFor(
-							pick === undefined
-								? { path: inspectorTarget.sourcePath }
-								: editorTarget(pick, inspectorTarget.page),
-						);
-					}}
-				/>
 			</div>
+			<InspectorRail
+				mode={railMode}
+				onMode={setRailMode}
+				onOpenChange={setRailOpen}
+				outboundCount={inspectedFrame === null ? null : outboundCount(inspectedFrame, edges)}
+				target={inspectorTarget}
+				rows={inspectedRows}
+				callSiteLabels={callSiteLabels}
+				expandedRows={expandedRows}
+				pickedKeys={pickedKeys}
+				revealKey={reveal?.key}
+				groups={connections}
+				onSelectRow={selectTreeRow}
+				onDoubleClickRow={openRowInEditor}
+				onToggleRow={toggleTreeRow}
+				onOpenConnection={openConnection}
+				onReload={() => {
+					if (inspectorTarget === null) return;
+					const frame = inspectorTarget.frame;
+					if (allFramesRef.current.find((candidate) => candidate.name === frame)?.kind === "term") {
+						void restartTerminalFrame(project, frame);
+					}
+					reloadFrameDocument(frame);
+				}}
+				onOpenEditor={() => {
+					if (inspectorTarget === null) return;
+					const pick = pickedRef.current.find((candidate) => candidate.frame === inspectorTarget.frame);
+					openEditorFor(
+						pick === undefined ? { path: inspectorTarget.sourcePath } : editorTarget(pick, inspectorTarget.page),
+					);
+				}}
+			/>
 			{exportDialog !== null && exportFrames.length > 0 ? (
 				<ExportDialog
 					exporting={exporting}
