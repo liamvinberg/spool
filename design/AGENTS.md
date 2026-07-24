@@ -6,3 +6,4 @@ Run `spool skill` before working here. It is the complete contract: if it isn't 
 
 - A frame is born by writing `frames/<name>/frame.tsx` default-exporting one React component — no registration, no `spool new`. Variants are `--`-named siblings (`checkout--empty/`).
 - The one law: never write app-owned files — `canvas.json` and `.spool/` are spool's.
+- Commit completed design work atomically before handoff.
