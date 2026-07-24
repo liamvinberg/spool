@@ -355,7 +355,12 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 	padding: 0;
 	list-style: none;
 	overflow-y: auto;
+	/* a lone overflow-y computes the other axis to auto, not visible: without
+	   this the rail grows a second, sideways scrollbar the moment a row is wide */
+	overflow-x: hidden;
 	overscroll-behavior: contain;
+	scrollbar-width: thin;
+	scrollbar-color: #363636 transparent;
 }
 .spool-rail-quiet { margin: 0; padding: 16px 20px; color: #8e8c88; }
 .spool-rail-quiet:not(.is-section) { padding: 0; }
@@ -381,7 +386,15 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 .spool-rail-row.is-button { color: inherit; }
 .spool-rail-row.is-button:hover, .spool-walk-hop:hover { background: #1c1c1c; }
 /* the tape scrubs: an earlier hop is a place the session can stand again */
-.spool-walk-edge { padding-left: 12px; font-size: 10px; line-height: 14px; color: #8e8c88; }
+.spool-walk-edge {
+	padding-left: 12px;
+	font-size: 10px;
+	line-height: 14px;
+	color: #8e8c88;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 .spool-walk-hop { color: #8e8c88; }
 .spool-walk-hop:hover { color: #f0efed; }
 .spool-walk-hop:disabled { background: none; color: #f0efed; cursor: default; }
