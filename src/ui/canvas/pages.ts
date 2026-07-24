@@ -1,11 +1,11 @@
-import type { Camera, CanvasState, FlowEdge, ProjectedFrame } from "../api";
+import type { Camera, CanvasState, ProjectedFrame } from "../api";
 
 /**
  * The pure page logic (#39): which page a frame belongs to, which page the
- * canvas shows, where each page's camera rests, and which links leave the
- * page. The root page is the frames directory itself, spelled "" here — it is
- * permanent, listed first, and keeps the original camera slot in the state
- * file so flat projects' state reads unchanged.
+ * canvas shows, and where each page's camera rests. The root page is the
+ * frames directory itself, spelled "" here — it is permanent, listed first,
+ * and keeps the original camera slot in the state file so flat projects'
+ * state reads unchanged.
  */
 
 export const ROOT_PAGE = "";
@@ -77,38 +77,4 @@ export function stateCameraSlots(cameras: Record<string, Camera>): Pick<CanvasSt
 		...(root === undefined ? {} : { camera: root }),
 		...(Object.keys(named).length === 0 ? {} : { pageCameras: named }),
 	};
-}
-
-/** An edge that leaves the active page: drawn as a portal, never an arrow. */
-export interface PortalMarker {
-	from: string;
-	to: string;
-	/** The page the target lives on — where activating the portal jumps. */
-	toPage: string;
-}
-
-/**
- * The links that exit the active page, one marker per from→to pair. A target
- * no frame answers draws nothing here either — portals mark real frames on
- * other pages, missing stays the map's business.
- */
-export function portalEdges(
-	edges: readonly FlowEdge[],
-	frames: readonly ProjectedFrame[],
-	activePage: string,
-): PortalMarker[] {
-	const pageByName = new Map(frames.map((frame) => [frame.name, pageOf(frame)]));
-	const seen = new Set<string>();
-	const out: PortalMarker[] = [];
-	for (const edge of edges) {
-		if (edge.from === edge.to) continue;
-		const fromPage = pageByName.get(edge.from);
-		const toPage = pageByName.get(edge.to);
-		if (fromPage !== activePage || toPage === undefined || toPage === activePage) continue;
-		const key = `${edge.from}\0${edge.to}`;
-		if (seen.has(key)) continue;
-		seen.add(key);
-		out.push({ from: edge.from, to: edge.to, toPage });
-	}
-	return out.sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
 }

@@ -58,13 +58,11 @@ import {
 	frameSourcePath,
 	frameSourceRel,
 	pageOf,
-	portalEdges,
 	ROOT_PAGE,
 	resolveActivePage,
 	stateCameraSlots,
 	switchPage,
 } from "./pages";
-import { PortalChips } from "./portal-chips";
 import {
 	describeMessage,
 	type PickedHit,
@@ -243,16 +241,13 @@ export function ProjectCanvas({
 		setExportReturnMenu(null);
 		setExportError(undefined);
 	}, [exportDialog, exportFrames.length]);
-	// links that leave the page surface as portals at the frame edge (#39)
-	const portals = useMemo(() => portalEdges(edges, frames, activePage), [edges, frames, activePage]);
-
 	const gesture = useRef<Gesture>({ kind: "idle" });
 	const animation = useRef(0);
 	const cameraRef = useRef<Camera | null>(null);
 	cameraRef.current = camera;
 	const framesRef = useRef(visibleFrames);
 	framesRef.current = visibleFrames;
-	// the whole projection, for cross-page reads: portals, walks, editor paths
+	// the whole projection, for cross-page reads: walks, connections, editor paths
 	const allFramesRef = useRef(frames);
 	allFramesRef.current = frames;
 	const activePageRef = useRef(activePage);
@@ -347,13 +342,12 @@ export function ProjectCanvas({
 	// else the frame being used — inside a prototype its elements are the ones
 	// worth looking at, so entering must not empty the rail
 	const inspectedFrame = pickedFrame ?? selectedFrame ?? entered ?? null;
-	// a thread to hide on this page: an edge with both ends here, or a portal
-	// leaving it. Nothing to hide, no switch (#34/#39).
+	// a thread to hide on this page: a drawable, non-self edge with both ends
+	// here. Cross-page connections live in the inspector instead (#34/#39/#58).
 	const hasThreads = useMemo(() => {
-		if (portals.length > 0) return true;
 		const here = new Set(visibleFrames.map((entry) => entry.name));
-		return edges.some((edge) => here.has(edge.from) && here.has(edge.to));
-	}, [edges, portals, visibleFrames]);
+		return edges.some((edge) => edge.from !== edge.to && here.has(edge.from) && here.has(edge.to));
+	}, [edges, visibleFrames]);
 
 	const lifecycle = useFrameLifecycle({
 		framesRef,
@@ -1090,17 +1084,6 @@ export function ProjectCanvas({
 		[clearCanvasSelection, switchToPage],
 	);
 
-	/** Follow a portal: land on the target's page with the target centered (#39). */
-	const jumpToFrame = useCallback(
-		(name: string) => {
-			const frame = allFramesRef.current.find((f) => f.name === name);
-			if (frame === undefined || pageOf(frame) === activePageRef.current) return;
-			switchToPage(pageOf(frame), arrivalAt(frame));
-			setSelected([name]);
-		},
-		[switchToPage, arrivalAt],
-	);
-
 	// a page deleted on disk cannot stay active: snap back to the root page
 	useEffect(() => {
 		if (!loaded) return;
@@ -1487,8 +1470,6 @@ export function ProjectCanvas({
 		flushNudge(); // a pending nudge settles before a new gesture captures origins
 		const p = localPoint(event);
 		const panningIntent = event.button === 1 || (event.button === 0 && toolRef.current === "hand");
-		// outside Hand, a portal chip owns its click (#39)
-		if (datasetHit(event.target, "portal") !== null && !panningIntent) return;
 		viewportRef.current?.setPointerCapture(event.pointerId);
 
 		if (panningIntent) {
@@ -2349,7 +2330,6 @@ export function ProjectCanvas({
 							const isEntered = entered === frame.name;
 							const isSelected = selected.includes(frame.name);
 							const paused = state !== "live";
-							const framePortals = portals.filter((portal) => portal.from === frame.name);
 							return (
 								<div
 									key={frame.name}
@@ -2373,9 +2353,6 @@ export function ProjectCanvas({
 										terminal={frame.kind === "term"}
 										onPlay={() => playFrame(frame.name)}
 									/>
-									{framePortals.length > 0 && (
-										<PortalChips portals={framePortals} k={k} onJump={jumpToFrame} />
-									)}
 									<div
 										className="relative h-full w-full overflow-hidden"
 										style={{ borderRadius: shellRadius }}
