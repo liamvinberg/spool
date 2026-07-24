@@ -24,7 +24,7 @@ import {
 } from "./drafts";
 
 /**
- * site-hub--drafts — the landing, and the twenty-six it was chosen from.
+ * site-hub--drafts: the landing, and the twenty-six it was chosen from.
  *
  * One camera over one coordinate space. Scroll pulls it back twice:
  *
@@ -38,7 +38,7 @@ import {
  * Nothing here is a picture of the product. Every frame in the field is the
  * real component, imported from its real folder and rendered at its real width;
  * the camera is the only thing that scales. That is what lets a click simply
- * fly to a frame and hand over the pointer — landing--twohands-you is playable
+ * fly to a frame and hand over the pointer. landing--twohands-you is playable
  * in place. The field's arrangement is the one thing that is authored rather
  * than found: one band per generation (drafts.ts BANDS), because the real
  * frame.json coordinates interleave the rounds and read as noise.
@@ -152,8 +152,8 @@ function FrameShell({
 }) {
 	return (
 		<div className="absolute" style={{ left: slot.x, top: slot.y, width: slot.w, height: slot.h }}>
-			{/* Every band shows the same window onto every page — the top 1440x900,
-			    the shape of the thing they are all drafts of — so the frames are
+			{/* Every band shows the same window onto every page, the top 1440x900,
+			    the shape of the thing they are all drafts of, so the frames are
 			    comparable down a column instead of being different heights. */}
 			<div
 				className="pointer-events-none absolute inset-0 overflow-hidden bg-bg"
@@ -213,7 +213,7 @@ function HoverRing({
 
 /**
  * What the pointer is on. It takes the right-hand column, the same place the
- * closing statement sits — that column is the page's reading column, and the
+ * closing statement sits. That column is the page's reading column, and the
  * statement steps back to 12% the moment a frame is hovered. Anywhere else on
  * screen is field: the bands are tight enough that a label near a frame lands
  * on its neighbour.
@@ -336,7 +336,7 @@ function LiveChrome({
 /**
  * Every frame's edge, in one SVG in world coordinates. The stroke widths are
  * divided by the camera scale so they land on screen at a true hairline at any
- * zoom — vector-effect cannot help here, because it corrects the SVG's own
+ * zoom. vector-effect cannot help here, because it corrects the SVG's own
  * user-space transform, not the CSS scale on an ancestor. That hairline is the
  * whole difference between a canvas of objects and a soup of floating content.
  */
@@ -590,7 +590,7 @@ function FocusBar({
  * an enormous layer (the whole genealogy), and scaling it makes Chrome re-raster
  * its tiles as the scale crosses thresholds. Every field frame is small and soft
  * enough that the stepping does not read, but this one carries a 66px headline
- * and starts at scale 1, so it is the one place it shows — as jitter, on the one
+ * and starts at scale 1, so it is the one place it shows, as jitter, on the one
  * frame the visitor is looking at.
  *
  * So it gets what the shipped site-hub gives it: its own element, carrying its
@@ -709,7 +709,7 @@ export default function SiteHubDrafts() {
 
 	// Which field frames have ever been near the camera. A frame's contents are
 	// mounted the first time it comes within a viewport's margin of being seen,
-	// and never unmounted after — during the zoom-out only a frame or two is in
+	// and never unmounted after. During the zoom-out only a frame or two is in
 	// range, so the expensive phase renders almost nothing, and the rest of the
 	// DOM arrives spread across the pull-back instead of all at once. Growth
 	// only: the set never shrinks, so scrolling back up costs nothing.
