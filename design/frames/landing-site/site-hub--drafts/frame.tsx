@@ -620,7 +620,15 @@ export default function SiteHubDrafts() {
 	// behind the hand.
 	const sp = useMotionValue(0);
 
-	// The field is heavy: thirty-one real frames of real DOM. Mount it just
+	// Which field frames have ever been near the camera. A frame's contents are
+	// mounted the first time it comes within a viewport's margin of being seen,
+	// and never unmounted after — during the zoom-out only a frame or two is in
+	// range, so the expensive phase renders almost nothing, and the rest of the
+	// DOM arrives spread across the pull-back instead of all at once. Growth
+	// only: the set never shrinks, so scrolling back up costs nothing.
+	const [seen, setSeen] = useState<ReadonlySet<string>>(new Set([HUB_NAME]));
+
+	// The field is heavy: twenty-six real pages of real DOM. Mount it just
 	// after first paint so the boot frame (and `spool shot`) is the landing
 	// alone, and the cost is paid while the visitor is still reading the hero.
 	const [fieldOn, setFieldOn] = useState(false);
@@ -697,6 +705,33 @@ export default function SiteHubDrafts() {
 		camCy.set(pose.cy);
 		camLogS.set(Math.log(pose.s));
 	}, [focus, sp, applyScrollPose, camCx, camCy, camLogS]);
+
+	useEffect(() => {
+		const near = () => {
+			const k = s.get();
+			if (k <= 0) return;
+			const halfW = (VIEW_W / 2 / k) * 2.1;
+			const halfH = (VIEW_H / 2 / k) * 2.1;
+			const [x0, x1] = [cx.get() - halfW, cx.get() + halfW];
+			const [y0, y1] = [cy.get() - halfH, cy.get() + halfH];
+			setSeen((cur) => {
+				let next: Set<string> | null = null;
+				for (const f of FRAMES) {
+					if (cur.has(f.name)) continue;
+					const r = f.slot;
+					if (r.x > x1 || r.x + r.w < x0 || r.y > y1 || r.y + r.h < y0) continue;
+					next ??= new Set(cur);
+					next.add(f.name);
+				}
+				return next ?? cur;
+			});
+		};
+		near();
+		const stop = [cx.on("change", near), cy.on("change", near), s.on("change", near)];
+		return () => {
+			for (const off of stop) off();
+		};
+	}, [cx, cy, s]);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -793,7 +828,7 @@ export default function SiteHubDrafts() {
 													onHover={setHot}
 													onPick={setFocus}
 												>
-													<f.C />
+													{seen.has(f.name) ? <f.C /> : null}
 												</FrameShell>
 											),
 										)}
