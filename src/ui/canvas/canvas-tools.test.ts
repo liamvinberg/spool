@@ -133,17 +133,20 @@ it("borrows Select while Command is held without changing the committed Interact
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
 	});
 
-	expect(host.querySelector("[data-borrow-caption]")?.getAttribute("data-visible")).toBe("true");
-	expect(host.querySelector("[data-borrow-caption]")?.textContent).toContain("borrowing select while held");
-	expect(host.querySelector('button[aria-label="interact"]')?.getAttribute("aria-pressed")).toBe("true");
-	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("data-borrowed")).toBe("true");
+	expect(host.querySelector("[data-borrow-caption]")).toBeNull();
+	expect(host.querySelector("button[data-borrowed]")).toBeNull();
+	expect(host.querySelector(".border-dashed")).toBeNull();
+	expect(host.querySelector('button[aria-label="interact"]')?.getAttribute("aria-pressed")).toBe("false");
+	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
+	expect(host.querySelector('button[aria-label="select"]')?.textContent).toContain("hold ⌘");
+	expect(host.querySelector('button[aria-label="hand"]')?.textContent).toContain("hold space");
 
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
 	});
 
-	expect(host.querySelector("[data-borrow-caption]")?.getAttribute("data-visible")).toBe("false");
 	expect(host.querySelector('button[aria-label="interact"]')?.getAttribute("aria-pressed")).toBe("true");
+	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("false");
 });
 
 it("keeps toolbar gestures out of the canvas beneath it", async () => {
@@ -427,8 +430,8 @@ it("borrows Hand with Space, gives Command precedence, and clears both on blur",
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true }));
 	});
-	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("data-borrowed")).toBe("true");
-	expect(host.querySelector('button[aria-label="interact"]')?.getAttribute("aria-pressed")).toBe("true");
+	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("true");
+	expect(host.querySelector('button[aria-label="interact"]')?.getAttribute("aria-pressed")).toBe("false");
 	const repeatedSpace = new KeyboardEvent("keydown", {
 		key: " ",
 		code: "Space",
@@ -444,19 +447,19 @@ it("borrows Hand with Space, gives Command precedence, and clears both on blur",
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
 	});
-	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("data-borrowed")).toBe("true");
-	expect(host.querySelector('button[aria-label="hand"]')?.hasAttribute("data-borrowed")).toBe(false);
+	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
+	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("false");
 
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
 	});
-	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("data-borrowed")).toBe("true");
+	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("true");
 
 	await act(async () => {
 		window.dispatchEvent(new Event("blur"));
 	});
-	expect(host.querySelector("button[data-borrowed]")).toBeNull();
 	expect(host.querySelector('button[aria-label="interact"]')?.getAttribute("aria-pressed")).toBe("true");
+	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("false");
 });
 
 it("borrows Select from a focused frame's Command key and thaws that same document on release", async () => {
@@ -492,7 +495,8 @@ it("borrows Select from a focused frame's Command key and thaws that same docume
 				message.on === true,
 		),
 	);
-	expect(host.querySelector("[data-borrow-caption]")?.getAttribute("data-visible")).toBe("true");
+	expect(host.querySelector("[data-borrow-caption]")).toBeNull();
+	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 
 	postMessage.mockClear();
