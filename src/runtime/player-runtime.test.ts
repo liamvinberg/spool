@@ -132,8 +132,54 @@ async function waitForText(selector: string, text: string): Promise<void> {
 	});
 }
 
-async function waitForStack(text: string): Promise<void> {
-	await waitForText(".spool-stack", text);
+/** The slate is the only live location readout now: the frame the walk stands in. */
+async function waitForFrame(name: string): Promise<void> {
+	await waitForText(".spool-slate-frame", name);
+}
+
+/** The tape as the rail draws it: one hop row per navigation, in order. */
+function hops(): string[] {
+	return [...document.querySelectorAll(".spool-walk-hop")].map(
+		(hop) => hop.querySelector(".spool-walk-name")?.textContent ?? "",
+	);
+}
+
+/** The lines above a hop: the click that traveled it, then the keys it changed. */
+function edges(): string[] {
+	return [...document.querySelectorAll(".spool-walk-edge")].map((edge) => (edge.textContent ?? "").trim());
+}
+
+function stateRows(): string[] {
+	return [...document.querySelectorAll(".spool-rail-section .spool-rail-row")].map(
+		(row) =>
+			`${row.querySelector(".spool-rail-key")?.textContent} ${row.querySelector(".spool-rail-value")?.textContent}`,
+	);
+}
+
+function changedKeys(): string[] {
+	return [...document.querySelectorAll(".spool-rail-row")]
+		.filter((row) => row.querySelector(".spool-dash") !== null)
+		.map((row) => row.querySelector(".spool-rail-key")?.textContent ?? "");
+}
+
+function hopButton(index: number): HTMLButtonElement {
+	const hop = document.querySelectorAll<HTMLButtonElement>(".spool-walk-hop")[index];
+	expect(hop, `hop ${index}`).not.toBeUndefined();
+	return hop as HTMLButtonElement;
+}
+
+/** Where the screen sits on the stage — the rail's opening moves it. */
+function stageOffsetX(): number {
+	const transform = (document.querySelector(".spool-screen") as HTMLElement).style.transform;
+	return Number(/translate\((-?\d+(?:\.\d+)?)px/.exec(transform)?.[1]);
+}
+
+/** Method, path, and status — the ms are real elapsed time, so they stay out. */
+function mockRows(): string[] {
+	return [...document.querySelectorAll(".spool-mock li")].map((row) => {
+		const status = (row.querySelector(".spool-mock-meta")?.textContent ?? "").split(" · ")[0];
+		return `${row.querySelector(".spool-mock-method")?.textContent} ${row.querySelector(".spool-mock-path")?.textContent} ${status}`;
+	});
 }
 
 const menuTsx = `import { ui } from "spool";
@@ -209,7 +255,7 @@ describe("the player session", () => {
 		const screen = document.querySelector(".spool-screen") as HTMLElement;
 		expect(screen.style.width).toBe("390px");
 		expect(screen.style.height).toBe("844px");
-		await waitForStack("menu");
+		await waitForFrame("menu");
 		expect((document.querySelector("#spool-back") as HTMLButtonElement).disabled).toBe(true);
 	});
 
@@ -223,21 +269,21 @@ describe("the player session", () => {
 		await waitForText("output", "5");
 
 		click("#walk");
-		await waitForStack("menu/cart");
+		await waitForFrame("cart");
 		// the walked-to screen is in the same document, session state intact
 		await waitForText("output", "5");
 		expect((window as { __cartArrivals?: number }).__cartArrivals).toBe(1);
 
 		// pill back pops the name-stack; the screen script runs fresh on return
 		click("#spool-back");
-		await waitForStack("menu");
+		await waitForFrame("menu");
 		click("#walk");
-		await waitForStack("menu/cart");
+		await waitForFrame("cart");
 		expect((window as { __cartArrivals?: number }).__cartArrivals).toBe(2);
 
 		// ui.back pops too, and the player never navigates
 		click("#go-back");
-		await waitForStack("menu");
+		await waitForFrame("menu");
 		expect((document.querySelector("#spool-back") as HTMLButtonElement).disabled).toBe(true);
 		expect(assign).not.toHaveBeenCalled();
 	});
@@ -260,7 +306,7 @@ describe("the player session", () => {
 		expect(open?.target).toBe("_blank");
 		expect(open?.rel).toBe("noopener noreferrer");
 		expect(document.querySelector("output")?.textContent).toBe("5");
-		expect(document.querySelector(".spool-stack")?.textContent).toBe("menu");
+		expect(document.querySelector(".spool-slate-frame")?.textContent).toBe("menu");
 		expect((document.querySelector("#spool-restart") as HTMLButtonElement).disabled).toBe(true);
 		expect((document.querySelector(".spool-screen-scroll") as HTMLElement).style.getPropertyValue("isolation")).toBe(
 			"isolate",
@@ -271,7 +317,7 @@ describe("the player session", () => {
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
 		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
 		expect(document.querySelector("output")?.textContent).toBe("5");
-		expect(document.querySelector(".spool-stack")?.textContent).toBe("menu");
+		expect(document.querySelector(".spool-slate-frame")?.textContent).toBe("menu");
 
 		click("#external-port");
 		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
@@ -293,39 +339,44 @@ describe("the player session", () => {
 		await waitForText("output", "2");
 
 		click("#walk");
-		await waitForStack("menu/cart");
+		await waitForFrame("cart");
 		click("#walk-pay");
-		await waitForStack("menu/cart/pay--done");
+		await waitForFrame("pay--done");
 		await waitForText("h1", "paid");
 
 		click("#spool-back");
-		await waitForStack("menu/cart");
+		await waitForFrame("cart");
 		click("#spool-back");
-		await waitForStack("menu");
+		await waitForFrame("menu");
 	});
 
-	it("shows the deep stack's tail in the pill, full path on the title", async () => {
+	it("shows only the frame it stands in — the walked trail lives in the rail", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
 
 		await loadPlayerDocument(harness, "?frame=menu");
 		await waitForText("output", "2");
+		click("#spool-inspector");
 
-		// a loop-heavy session: the history is unbounded, the readout is not
+		// a loop-heavy session: the tape is unbounded and renders its loops honestly
 		click("#walk");
-		await waitForStack("menu/cart");
+		await waitForFrame("cart");
 		click("#walk-menu");
-		await waitForStack("menu/cart/menu");
+		await waitForFrame("menu");
 		click("#walk");
-		await waitForStack("menu/cart/menu/cart");
+		await waitForFrame("cart");
 		click("#walk-menu");
-		await waitForStack("…/cart/menu/cart/menu");
+		await waitForFrame("menu");
 
-		expect(document.querySelector(".spool-stack")?.getAttribute("title")).toBe("menu / cart / menu / cart / menu");
+		expect(hops()).toEqual(["menu", "cart", "menu", "cart", "menu"]);
+		// the slate is the whole live readout: no trail, buried or otherwise
+		expect(document.querySelector(".spool-slate-frame")?.textContent).toBe("menu");
+		expect(document.querySelector(".spool-slate-project")?.textContent).toBe(harness.name);
 
-		// back still pops through the buried entries one by one
+		// back still pops through the buried entries one by one, and is a hop too
 		click("#spool-back");
-		await waitForStack("menu/cart/menu/cart");
+		await waitForFrame("cart");
+		expect(hops()).toEqual(["menu", "cart", "menu", "cart", "menu", "cart"]);
 	});
 
 	it("restart re-seeds the session from a fresh scenario read at the start frame", async () => {
@@ -337,7 +388,7 @@ describe("the player session", () => {
 		click("#bump");
 		await waitForText("output", "5");
 		click("#walk");
-		await waitForStack("menu/cart");
+		await waitForFrame("cart");
 
 		// the agent edits the seed mid-session; restart reads it fresh
 		writeDesignFile(
@@ -347,7 +398,7 @@ describe("the player session", () => {
 		);
 		click("#spool-restart");
 
-		await waitForStack("menu");
+		await waitForFrame("menu");
 		await waitForText("output", "9");
 		expect((document.querySelector("#spool-back") as HTMLButtonElement).disabled).toBe(true);
 	});
@@ -362,18 +413,18 @@ describe("the player session", () => {
 
 		// data-transition rides along as an extra type over the forward direction
 		click("#walk");
-		await waitForStack("menu/cart");
+		await waitForFrame("cart");
 		expect(calls.at(-1)?.types).toEqual(["forward", "lift"]);
 
 		click("#go-back");
-		await waitForStack("menu");
+		await waitForFrame("menu");
 		expect(calls.at(-1)?.types).toEqual(["back"]);
 
 		click("#spool-restart");
 		await vi.waitFor(() => expect(calls.at(-1)?.types).toEqual(["restart"]));
 	});
 
-	it("gates motion behind the pill toggle: off swaps bare, on transitions", async () => {
+	it("gates motion behind the rail's footer toggle: off swaps bare, on transitions", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
 
@@ -381,6 +432,8 @@ describe("the player session", () => {
 		await waitForText("output", "2");
 		const calls = stubViewTransitions();
 
+		// the toggle is the footer's one job; the rail is its only home
+		click("#spool-inspector");
 		const toggle = document.querySelector("#spool-motion") as HTMLButtonElement;
 		expect(toggle.getAttribute("aria-pressed")).toBe("true");
 
@@ -389,12 +442,12 @@ describe("the player session", () => {
 
 		// motion off: the walk still lands, the API is never touched
 		click("#walk");
-		await waitForStack("menu/cart");
+		await waitForFrame("cart");
 		expect(calls).toEqual([]);
 
 		click("#spool-motion");
 		click("#go-back");
-		await waitForStack("menu");
+		await waitForFrame("menu");
 		expect(calls.at(-1)?.types).toEqual(["back"]);
 	});
 
@@ -411,7 +464,7 @@ describe("the player session", () => {
 		await vi.waitFor(() => {
 			expect(notices).toHaveBeenCalledWith(expect.stringContaining('no frame "ghost"'));
 		});
-		await waitForStack("menu");
+		await waitForFrame("menu");
 	});
 
 	it("seeds from the ?scenario= the URL names", async () => {
@@ -433,7 +486,7 @@ describe("the player session", () => {
 		await loadPlayerDocument(harness, "?frame=products");
 
 		await vi.waitFor(() => {
-			const titles = [...document.querySelectorAll("li")].map((li) => li.textContent);
+			const titles = [...document.querySelectorAll(".spool-screen li")].map((li) => li.textContent);
 			expect(titles).toEqual(["yarn", "thread"]);
 		});
 	});
@@ -456,7 +509,7 @@ export default function Coded() {
 		await vi.waitFor(() => expect(document.querySelector("#coded-walk")).not.toBeNull());
 
 		click("#coded-walk");
-		await waitForStack("coded/pay--done");
+		await waitForFrame("pay--done");
 
 		// the map already claimed this edge from source; the walk can only confirm it
 		await vi.waitFor(async () => {
@@ -489,7 +542,7 @@ export default function Hints() {
 		);
 
 		await loadPlayerDocument(harness, "?frame=hints");
-		await waitForStack("hints");
+		await waitForFrame("hints");
 
 		expect(document.querySelector("#spool-hint")).toBeNull();
 		expect(document.querySelectorAll(".spool-hint")).toHaveLength(0);
@@ -508,6 +561,202 @@ export default function Hints() {
 		click("#spool-close");
 
 		expect(close).toHaveBeenCalled();
+	});
+});
+
+describe("the session rail (#60)", () => {
+	it("names each hop by the click that traveled it, label-less from code", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+		writeFrame(
+			harness.root,
+			"coded",
+			`import { ui } from "spool";
+
+export default function Coded() {
+	return <button type="button" id="coded-walk" onClick={() => ui.go("menu")}>never read</button>;
+}
+`,
+		);
+
+		await loadPlayerDocument(harness, "?frame=coded");
+		await vi.waitFor(() => expect(document.querySelector("#coded-walk")).not.toBeNull());
+		click("#spool-inspector");
+
+		// ui.go from code has no element to read: the tape says so by staying quiet
+		click("#coded-walk");
+		await waitForFrame("menu");
+		expect(hops()).toEqual(["coded", "menu"]);
+		expect(edges()).toEqual([]);
+
+		// a data-go carrier lends its own words, trimmed
+		click("#walk");
+		await waitForFrame("cart");
+		expect(edges()).toEqual(["· to cart"]);
+	});
+
+	it("rolls a stay's writes up into the hop that ended it, and marks them live", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+
+		await loadPlayerDocument(harness, "?frame=menu");
+		await waitForText("output", "2");
+		click("#spool-inspector");
+
+		expect(stateRows()).toEqual(["count 2", 'scenario "default"']);
+		expect(changedKeys()).toEqual([]);
+
+		click("#bump");
+		await waitForText("output", "5");
+		expect(stateRows()).toEqual(["count 5", 'scenario "default"']);
+		expect(changedKeys()).toEqual(["count"]);
+
+		click("#walk");
+		await waitForFrame("cart");
+
+		// the stay's writes become the hop's changed keys, and the live marks clear
+		expect(edges()).toEqual(["· to cart", "count"]);
+		expect(changedKeys()).toEqual([]);
+	});
+
+	it("flattens the store to dotted leaves, a list being one value", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+		writeDesignFile(
+			harness.root,
+			"shared/scenarios/deep.json",
+			'{\n\t"state": { "cart": { "items": ["yarn", "thread"], "total": 90 }, "user": null },\n\t"mock": {}\n}\n',
+		);
+		writeFrame(
+			harness.root,
+			"deep",
+			`import { ui } from "spool";
+
+export default function Deep() {
+	return (
+		<main>
+			<button type="button" id="pay" onClick={() => { ui.state.cart.total = 120; }}>pay</button>
+			<button type="button" id="add" onClick={() => { ui.state.cart.items.push("kanelbulle"); }}>add</button>
+		</main>
+	);
+}
+`,
+		);
+
+		await loadPlayerDocument(harness, "?frame=deep&scenario=deep");
+		await waitForFrame("deep");
+		click("#spool-inspector");
+
+		expect(stateRows()).toEqual(['cart.items ["yarn","thread"]', "cart.total 90", "user null", 'scenario "deep"']);
+
+		// a write deep in the store still names itself by its own address
+		click("#pay");
+		await vi.waitFor(() => expect(changedKeys()).toEqual(["cart.total"]));
+		expect(stateRows()).toContain("cart.total 120");
+
+		// a list is one value the whole way down: no cart.items.2, no length
+		click("#add");
+		await vi.waitFor(() => expect(stateRows()).toContain('cart.items ["yarn","thread","kanelbulle"]'));
+		expect(changedKeys()).toEqual(["cart.items", "cart.total"]);
+	});
+
+	it("rewinds to a hop's snapshot without ever truncating the tape", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+
+		await loadPlayerDocument(harness, "?frame=menu");
+		await waitForText("output", "2");
+		click("#spool-inspector");
+		click("#bump");
+		await waitForText("output", "5");
+		click("#walk");
+		await waitForFrame("cart");
+		expect(hops()).toEqual(["menu", "cart"]);
+
+		// the hop the session stands in is where it already is: not a place to go
+		expect(hopButton(1).disabled).toBe(true);
+
+		// hop zero is the session's opening — menu, seeded, before the bump
+		hopButton(0).dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+		await waitForFrame("menu");
+		await waitForText("output", "2");
+
+		// the scrub is itself a hop: the tape grew, it did not lose the walk it had
+		expect(hops()).toEqual(["menu", "cart", "menu"]);
+		// the snapshot carried the back stack with it
+		expect((document.querySelector("#spool-back") as HTMLButtonElement).disabled).toBe(true);
+	});
+
+	it("shows mocked calls shallowly — method, path, status, never a body", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+		writeFrame(harness.root, "products", productsTsx);
+		writeDesignFile(harness.root, "shared/fixtures/products.json", '[{ "title": "yarn" }, { "title": "thread" }]\n');
+
+		await loadPlayerDocument(harness, "?frame=products");
+		await waitForFrame("products");
+		click("#spool-inspector");
+
+		await vi.waitFor(() => expect(mockRows()).toEqual(["GET /api/products 200"]));
+		expect(document.querySelector(".spool-mock")?.textContent).not.toContain("yarn");
+	});
+
+	it("recenters the stage in what the rail leaves, and reads the real scale out", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+
+		await loadPlayerDocument(harness, "?frame=menu");
+		await waitForFrame("menu");
+
+		// the stage scales a frame taller than the viewport down, and says so
+		expect(document.querySelector(".spool-readout")?.textContent).toMatch(/^390 × 844 · \d{1,3}%$/);
+
+		const before = stageOffsetX();
+		click("#spool-inspector");
+		await vi.waitFor(() => expect(stageOffsetX()).toBe(before - 160));
+
+		click("#spool-inspector");
+		await vi.waitFor(() => expect(stageOffsetX()).toBe(before));
+	});
+
+	it("sleeps when the hand stops, wakes on movement, and stays awake while the rail is open", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+
+		await loadPlayerDocument(harness, "?frame=menu");
+		await waitForFrame("menu");
+		const stage = document.querySelector(".spool-stage") as HTMLElement;
+		expect(stage.classList.contains("is-asleep")).toBe(false);
+
+		// stillness is the resting state: the chrome fades and takes the cursor
+		await vi.waitFor(() => expect(stage.classList.contains("is-asleep")).toBe(true), { timeout: 4000 });
+
+		stage.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+		await vi.waitFor(() => expect(stage.classList.contains("is-asleep")).toBe(false));
+
+		// reading is stillness: an open rail never sleeps, however long the hand rests
+		click("#spool-inspector");
+		await new Promise((resolve) => setTimeout(resolve, 2400));
+		expect(stage.classList.contains("is-asleep")).toBe(false);
+	});
+
+	it("owns no keyboard: the prototype is an app and every key belongs to it", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+
+		await loadPlayerDocument(harness, "?frame=menu");
+		await waitForFrame("menu");
+		click("#walk");
+		await waitForFrame("cart");
+
+		for (const key of ["Escape", "Backspace", "ArrowLeft", "i", "r", "f"]) {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+			document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+		}
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		expect(document.querySelector(".spool-slate-frame")?.textContent).toBe("cart");
+		expect(document.querySelector(".spool-rail")?.className).toContain("is-closed");
 	});
 });
 
@@ -582,10 +831,10 @@ describe("live terminal screens (#44)", () => {
 		// a message from anything but the current screen's own document is noise
 		window.dispatchEvent(new MessageEvent("message", { data: { spool: "go", target: "hall" }, source: window }));
 		await new Promise((r) => setTimeout(r, 50));
-		expect(document.querySelector(".spool-stack")?.textContent).toBe("dash");
+		expect(document.querySelector(".spool-slate-frame")?.textContent).toBe("dash");
 
 		postFromTerm(termIframe(), { spool: "go", target: "hall" });
-		await waitForStack("dash/hall");
+		await waitForFrame("hall");
 		await vi.waitFor(() => expect(document.querySelector("#to-dash")).not.toBeNull());
 		expect(document.querySelector(".spool-term-chord")).toBeNull();
 
@@ -599,8 +848,53 @@ describe("live terminal screens (#44)", () => {
 
 		// walking back in lands a fresh live screen, same walk
 		click("#to-dash");
-		await waitForStack("dash/hall/dash");
+		await waitForFrame("dash");
 		await vi.waitFor(() => termIframe());
+	});
+
+	it("keeps the walk in the rail and says plainly why state and mock are not there", async () => {
+		const harness = makeHarness();
+		scaffoldTerminal(harness);
+
+		await loadPlayerDocument(harness, "?frame=dash");
+		await vi.waitFor(() => termIframe());
+		click("#spool-inspector");
+
+		// the walk is the player's own record, so it stays true across the boundary
+		expect(hops()).toEqual(["dash"]);
+		expect(document.querySelector(".spool-readout")?.textContent).toBe("720 × 480 · 100%");
+
+		// the prototype runtime is not in play behind an iframe: one quiet line, no sections
+		expect(document.querySelector(".spool-mock")).toBeNull();
+		expect(stateRows()).toEqual([]);
+		expect(document.querySelector(".spool-rail-quiet")?.textContent).toBe(
+			"a terminal screen keeps its state and calls in its own process",
+		);
+
+		// walking back to an html screen brings the instruments back
+		postFromTerm(termIframe(), { spool: "go", target: "hall" });
+		await waitForFrame("hall");
+		expect(stateRows()).toEqual(['scenario "default"']);
+		expect(document.querySelector(".spool-mock")).not.toBeNull();
+	});
+
+	it("never sleeps behind a terminal screen — the hand moving there is invisible from here", async () => {
+		const harness = makeHarness();
+		scaffoldTerminal(harness);
+
+		await loadPlayerDocument(harness, "?frame=dash");
+		await vi.waitFor(() => termIframe());
+		const stage = document.querySelector(".spool-stage") as HTMLElement;
+
+		// mousemove inside the term document never reaches the stage, so stillness
+		// here means nothing — sleeping would strand the chrome with no way back
+		await new Promise((resolve) => setTimeout(resolve, 2400));
+		expect(stage.classList.contains("is-asleep")).toBe(false);
+
+		// walking out to a screen this document can watch arms sleep again
+		postFromTerm(termIframe(), { spool: "go", target: "hall" });
+		await waitForFrame("hall");
+		await vi.waitFor(() => expect(stage.classList.contains("is-asleep")).toBe(true), { timeout: 4000 });
 	});
 
 	it("has no keyboard exit state", async () => {
@@ -636,9 +930,9 @@ describe("live terminal screens (#44)", () => {
 
 		// revisiting inside the epoch joins the run it already cleaned
 		postFromTerm(termIframe(), { spool: "go", target: "hall" });
-		await waitForStack("dash/hall");
+		await waitForFrame("hall");
 		click("#to-dash");
-		await waitForStack("dash/hall/dash");
+		await waitForFrame("dash");
 		await vi.waitFor(() => termIframe());
 		expect(restarts()).toHaveLength(1);
 

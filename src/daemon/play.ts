@@ -172,7 +172,7 @@ ${transitionsBlock}<script type="importmap">${escapeJsonScript(bundle.importMap)
 `;
 }
 
-/** The chrome's one font: the pill and readouts are mono (#13 law 3). */
+/** The chrome's one font: the slate, the readouts, and the rail are mono (#13 law 3). */
 const CHROME_FONT_FILES: Record<string, string> = {
 	"fragment-mono-latin-400-normal.woff2": createRequire(import.meta.url).resolve(
 		"@fontsource/fragment-mono/files/fragment-mono-latin-400-normal.woff2",
@@ -184,11 +184,13 @@ export function chromeFontFile(name: string): string | undefined {
 }
 
 /**
- * The stage and pill, verbatim from Paper screens v1 "05 · player": near-black
- * stage, frame letterboxed at native size (top 28px) or scaled to fill when
- * the viewport is smaller, one flat raised pill bottom-center — solid fills
- * and hairlines, never blur or shadows (#13 law 4). The pill carries its own
- * view-transition-name so screen transitions never smear the chrome.
+ * The stage, the slate HUD, and the session rail, from the design canvas frame
+ * `spool-player--inspector` (#60): near-black stage, the frame letterboxed at
+ * native size or scaled to fill a smaller viewport, chrome scattered into the
+ * screen corners with no containers at all, and the session on demand as a
+ * 320px rail the stage recenters against. Solid fills and hairlines, never blur
+ * or shadows (#13 law 4). The HUD and the rail each carry a view-transition-
+ * name, so a screen transition films the screen and never smears the chrome.
  */
 const CHROME_CSS = `:root { color-scheme: dark; }
 @font-face {
@@ -230,6 +232,18 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 	font: 400 12px/18px "Fragment Mono", ui-monospace, monospace;
 }
 .spool-stage { position: relative; width: 100%; height: 100%; }
+/* the chrome's typography stops at the chrome: the stage is the screen's
+   ancestor, so anything set there would inherit into the frame and break the
+   parity law — a frame must render identically here and in a canvas iframe */
+.spool-hud, .spool-rail {
+	color: #f0efed;
+	font: 400 12px/18px "Fragment Mono", ui-monospace, monospace;
+	-webkit-font-smoothing: antialiased;
+	font-synthesis: none;
+}
+/* sleep is the resting state (#60): stillness fades every piece of chrome
+   together and takes the cursor with it; the next mousemove wakes it */
+.spool-stage.is-asleep { cursor: none; }
 .spool-screen {
 	position: absolute;
 	top: 0;
@@ -258,41 +272,124 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 	overscroll-behavior: contain;
 }
 .spool-screen-scroll.is-terminal { overflow: hidden; }
-.spool-pill {
+/* the HUD: no containers, only marks in the stage's corners */
+.spool-hud {
 	position: fixed;
-	bottom: 28px;
-	left: 50%;
-	translate: -50%;
+	inset: 0;
 	z-index: 10;
-	display: flex;
-	align-items: center;
-	gap: 3px;
-	padding: 6px 8px;
-	background: #282828;
-	border: 1px solid #363636;
-	border-radius: 8px;
-	color: #8e8c88;
-	font: 400 12px/18px "Fragment Mono", ui-monospace, monospace;
-	view-transition-name: spool-pill;
+	pointer-events: none;
+	transition: opacity 300ms ease;
+	view-transition-name: spool-hud;
 }
-.spool-pill button {
+/* asleep is gone, not merely invisible: a faded button must never take a click
+   the prototype's own top-left control was meant to get */
+.spool-stage.is-asleep .spool-hud { opacity: 0; }
+.spool-stage.is-asleep .spool-hud-lead, .spool-stage.is-asleep .spool-hud-trail { pointer-events: none; }
+.spool-hud-lead, .spool-hud-trail { position: absolute; top: 20px; display: flex; align-items: center; pointer-events: auto; }
+.spool-hud-lead { left: 24px; gap: 10px; }
+.spool-hud-trail { gap: 4px; }
+.spool-hud-verbs { display: flex; align-items: center; gap: 4px; }
+.spool-hud-button {
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	flex: none;
 	margin: 0;
-	padding: 6px;
+	padding: 0;
+	width: 28px;
+	height: 28px;
 	background: none;
 	border: 0;
 	border-radius: 6px;
-	color: inherit;
+	color: #8e8c88;
 	cursor: pointer;
 }
-.spool-pill button:hover { background: #1c1c1c; }
-.spool-pill button:disabled { background: none; opacity: 0.4; cursor: default; }
-.spool-stack { display: flex; align-items: center; gap: 5px; padding: 0 3px; flex: none; white-space: nowrap; }
-.spool-stack .is-current { color: #f0efed; }
-.spool-rule { width: 1px; height: 18px; background: #363636; flex: none; }
-.spool-motion { padding: 4px 8px; }
-.spool-motion.is-on { background: #1c1c1c; color: #f0efed; }
+.spool-hud-button:hover { background: #1c1c1c; }
+.spool-hud-button.is-on { color: #f0efed; }
+.spool-hud-button:disabled { background: none; opacity: 0.4; cursor: default; }
+/* the name slate: the project over the frame the session stands in — the only
+   live location readout there is, the walked trail lives in the rail */
+.spool-slate { display: flex; flex-direction: column; gap: 4px; white-space: nowrap; }
+.spool-slate-project { font-size: 10px; line-height: 1; color: #8e8c88; }
+.spool-slate-frame { display: flex; align-items: center; gap: 8px; line-height: 1; }
+.spool-dash { flex: none; width: 8px; height: 2px; background: #f5391a; }
+.spool-readout { position: absolute; bottom: 20px; left: 24px; font-size: 10px; line-height: 1; color: #8e8c88; }
+/* registration ticks: the screen's corners called out on the stage, the way a
+   drafting sheet marks a plate */
+.spool-ticks { position: absolute; pointer-events: none; }
+.spool-ticks i { position: absolute; width: 10px; height: 10px; border: 0 solid #363636; }
+.spool-ticks i:nth-child(1) { top: 0; left: 0; border-top-width: 1px; border-left-width: 1px; }
+.spool-ticks i:nth-child(2) { top: 0; right: 0; border-top-width: 1px; border-right-width: 1px; }
+.spool-ticks i:nth-child(3) { bottom: 0; left: 0; border-bottom-width: 1px; border-left-width: 1px; }
+.spool-ticks i:nth-child(4) { bottom: 0; right: 0; border-bottom-width: 1px; border-right-width: 1px; }
+/* the rail: the session as an instrument, closed until asked for */
+.spool-rail {
+	position: fixed;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 11;
+	display: flex;
+	flex-direction: column;
+	width: 320px;
+	overflow: hidden;
+	background: #161616;
+	border-left: 1px solid #262626;
+	transition: translate 300ms ease, opacity 300ms ease;
+	view-transition-name: spool-rail;
+}
+.spool-rail.is-closed { translate: 100% 0; opacity: 0; pointer-events: none; }
+/* sections stack from the top and give up height in the same order a reader
+   would: each list scrolls inside its own section rather than pushing the
+   others off the rail */
+.spool-rail-section { display: flex; flex-direction: column; flex: 0 1 auto; gap: 10px; padding: 16px 20px; min-height: 0; }
+.spool-rail-section + .spool-rail-section, .spool-rail-quiet.is-section { border-top: 1px solid #262626; }
+.spool-rail-head { display: flex; flex: none; align-items: center; justify-content: space-between; }
+.spool-rail-head h2 { margin: 0; font-size: 10px; line-height: 1; font-weight: 400; color: #8e8c88; }
+.spool-rail-head span { font-size: 10px; line-height: 1; color: #8e8c88; }
+.spool-rail-section ol, .spool-rail-section ul, .spool-rail-section dl {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+.spool-rail-quiet { margin: 0; padding: 16px 20px; color: #8e8c88; }
+.spool-rail-quiet:not(.is-section) { padding: 0; }
+.spool-rail-row { display: flex; align-items: center; gap: 8px; }
+.spool-rail-key { flex: none; color: #8e8c88; }
+.spool-rail-value { margin: 0 0 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* one shape for every row you can press: the hit area bleeds into the rail's
+   padding so the highlight reads as a full-width band */
+.spool-rail-row.is-button, .spool-walk-hop {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: calc(100% + 12px);
+	margin: -2px -6px;
+	padding: 2px 6px;
+	background: none;
+	border: 0;
+	border-radius: 4px;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.spool-rail-row.is-button { color: inherit; }
+.spool-rail-row.is-button:hover, .spool-walk-hop:hover { background: #1c1c1c; }
+/* the tape scrubs: an earlier hop is a place the session can stand again */
+.spool-walk-edge { padding-left: 12px; font-size: 10px; line-height: 14px; color: #8e8c88; }
+.spool-walk-hop { color: #8e8c88; }
+.spool-walk-hop:hover { color: #f0efed; }
+.spool-walk-hop:disabled { background: none; color: #f0efed; cursor: default; }
+.spool-walk-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spool-walk-at { margin-left: auto; flex: none; font-size: 10px; color: #8e8c88; }
+.spool-mock li { display: flex; align-items: center; gap: 8px; }
+.spool-mock-method { flex: none; width: 36px; color: #8e8c88; }
+.spool-mock-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spool-mock-meta { margin-left: auto; flex: none; font-size: 10px; color: #8e8c88; }
+.spool-rail-foot { margin-top: auto; padding: 16px 20px; border-top: 1px solid #262626; }
 `;
