@@ -20,7 +20,7 @@ const liveSpine: CSSProperties = {
 
 /**
  * Paste-ready copy. Frames run in null-origin sandboxed srcdoc, so the async
- * Clipboard API can reject outright — try it, then fall back to the classic
+ * Clipboard API can reject outright, so try it, then fall back to the classic
  * hidden-textarea execCommand path. Silent on both branches.
  */
 async function copyText(text: string): Promise<boolean> {

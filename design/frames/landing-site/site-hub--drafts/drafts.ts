@@ -70,12 +70,12 @@ export interface Draft {
 }
 
 export const DRAFTS: readonly Draft[] = [
-	// round 01 — the first five directions, one page each
+	// round 01: the first five directions, one page each
 	{
 		name: "landing--thread",
 		rect: { x: -320, y: -1446, w: 1440, h: 1489 },
 		round: 1,
-		note: "röda tråden made literal: one red spine, every section a node",
+		note: "the red thread made literal: one red spine, every section a node",
 		C: LandingThread,
 	},
 	{
@@ -89,7 +89,7 @@ export const DRAFTS: readonly Draft[] = [
 		name: "landing--editorial",
 		rect: { x: 4570, y: 418, w: 1440, h: 1400 },
 		round: 1,
-		note: "swiss manifesto — type is the whole hero",
+		note: "swiss manifesto: type is the whole hero",
 		C: LandingEditorial,
 	},
 	{
@@ -107,12 +107,12 @@ export const DRAFTS: readonly Draft[] = [
 		C: LandingFlow,
 	},
 
-	// round 02 — the thread won, so the thread got pushed five ways
+	// round 02: the thread won, so the thread got pushed five ways
 	{
 		name: "landing--thread-refined",
 		rect: { x: -320, y: 4598, w: 1440, h: 1470 },
 		round: 2,
-		note: "the same spine, refined — fades at the edges, stitched nodes",
+		note: "the same spine, refined: fades at the edges, stitched nodes",
 		parent: "landing--thread",
 		C: LandingThreadRefined,
 	},
@@ -120,7 +120,7 @@ export const DRAFTS: readonly Draft[] = [
 		name: "landing--thread-heroinstall",
 		rect: { x: 1220, y: 4598, w: 1440, h: 1300 },
 		round: 2,
-		note: "install inside the hero — for a dev tool the command is the cta",
+		note: "install inside the hero, because for a dev tool the command is the cta",
 		parent: "landing--thread-refined",
 		C: LandingThreadHeroinstall,
 	},
@@ -149,7 +149,7 @@ export const DRAFTS: readonly Draft[] = [
 		C: LandingThreadDense,
 	},
 
-	// graduated — the canonical page the whole set was for
+	// graduated: the canonical page the whole set was for
 	{
 		name: "landing",
 		rect: { x: -1639, y: 260, w: 1440, h: 1300 },
@@ -159,12 +159,12 @@ export const DRAFTS: readonly Draft[] = [
 		C: Landing,
 	},
 
-	// round 03 — the bar moved to stunning-first
+	// round 03: the bar moved to stunning-first
 	{
 		name: "landing--quiet",
 		rect: { x: 4576, y: 2232, w: 1440, h: 1400 },
 		round: 4,
-		note: "the restraint test — a printed manifesto alive in one spot",
+		note: "the restraint test: a printed manifesto alive in one spot",
 		parent: "landing",
 		C: LandingQuiet,
 	},
@@ -188,7 +188,7 @@ export const DRAFTS: readonly Draft[] = [
 		name: "landing--kinetic",
 		rect: { x: 1456, y: 2232, w: 1440, h: 900 },
 		round: 4,
-		note: "type cinema — the thread woven through the letterforms",
+		note: "type cinema: the thread woven through the letterforms",
 		parent: "landing",
 		C: LandingKinetic,
 	},
@@ -220,7 +220,7 @@ export const DRAFTS: readonly Draft[] = [
 		name: "landing--stage",
 		rect: { x: -104, y: 2232, w: 1440, h: 1710 },
 		round: 4,
-		note: "paper.design's formula — the product shown big and alive",
+		note: "paper.design's formula: the product shown big and alive",
 		parent: "landing",
 		C: LandingStage,
 	},
@@ -233,7 +233,7 @@ export const DRAFTS: readonly Draft[] = [
 		C: LandingSelfsource,
 	},
 
-	// round 04 — the page stops describing the product and performs it
+	// round 04: the page stops describing the product and performs it
 	{
 		name: "landing--stage-flow",
 		rect: { x: 644, y: 6942, w: 1440, h: 1710 },
@@ -262,7 +262,7 @@ export const DRAFTS: readonly Draft[] = [
 		name: "landing--twohands-you",
 		rect: { x: 5484, y: 6991, w: 1440, h: 1300 },
 		round: 5,
-		note: "you are the second hand — your cursor inspects the page itself",
+		note: "you are the second hand: your cursor inspects the page itself",
 		parent: "landing--twohands",
 		C: LandingTwohandsYou,
 	},
@@ -278,7 +278,7 @@ export const DRAFTS: readonly Draft[] = [
 		name: "landing--fourthwall-scroll",
 		rect: { x: 3848, y: 6991, w: 1440, h: 900 },
 		round: 5,
-		note: "the same reveal, driven by scroll — nobody has to opt in",
+		note: "the same reveal, driven by scroll, so nobody has to opt in",
 		parent: "landing--fourthwall",
 		C: LandingFourthwallScroll,
 	},
@@ -286,8 +286,8 @@ export const DRAFTS: readonly Draft[] = [
 
 /**
  * The descent: the chain of frames this page is actually made of, each one
- * the parent of the next. The röda tråden, at the scale of the process. It is
- * derived from `parent`, not typed twice — walking up from this page.
+ * the parent of the next. The red thread, at the scale of the process. It is
+ * derived from `parent`, not typed twice, by walking up from this page.
  */
 export const LINEAGE: readonly string[] = (() => {
 	const parentOf = new Map<string, string | undefined>([
