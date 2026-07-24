@@ -72,13 +72,8 @@ body {
 	overflow: hidden;
 }
 
-.pages-scrollbar {
-	scrollbar-color: var(--color-thread) transparent;
-	scrollbar-width: thin;
-}
-
 .pages-scrollbar::-webkit-scrollbar {
-	width: 3px;
+	width: 2px;
 }
 
 .pages-scrollbar::-webkit-scrollbar-track {
@@ -88,4 +83,11 @@ body {
 .pages-scrollbar::-webkit-scrollbar-thumb {
 	background: var(--color-thread);
 	border-radius: 999px;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+	.pages-scrollbar {
+		scrollbar-color: var(--color-thread) transparent;
+		scrollbar-width: thin;
+	}
 }
