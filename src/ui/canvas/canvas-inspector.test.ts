@@ -132,6 +132,25 @@ describe("the inspector rail", () => {
 		expect(rail(canvas.host)?.textContent).toContain("select a frame to inspect it");
 	});
 
+	it("reads the entered frame: being inside a prototype is when its elements matter", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => canvas.chrome()?.toggleInspector());
+
+		const viewport = canvas.host.querySelector<HTMLElement>('[role="application"]');
+		for (const kind of ["pointerdown", "pointerup"]) {
+			await act(async () => {
+				viewport?.dispatchEvent(
+					new PointerEvent(kind, { bubbles: true, button: 0, clientX: 50, clientY: 50, pointerId: 1 }),
+				);
+			});
+		}
+
+		expect(canvas.host.querySelector('[data-frame-label="home"]')?.textContent).toContain("live · esc exits");
+		expect(rail(canvas.host)?.textContent).toContain("design/frames/home/frame.tsx");
+		expect(rail(canvas.host)?.textContent).not.toContain("select a frame to inspect it");
+	});
+
 	it("carries the selected frame's outbound count while it is closed, and nothing while open", async () => {
 		const canvas = mount();
 		await canvas.render();
