@@ -214,57 +214,6 @@ describe("the selection API", () => {
 	});
 });
 
-describe("the stamp labels API", () => {
-	const listTsx = `const items = ["a", "b"];
-export default function Frame() {
-	return (
-		<ul>
-			{items.map((item) => (
-				<li key={item}>{item}</li>
-			))}
-		</ul>
-	);
-}
-`;
-
-	it("labels repeated stamps from their call site and nulls the rest", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeFrame(root, "list", listTsx);
-		const app = makeApp(spoolDir);
-
-		const res = await app.request(
-			`/api/p/${name}/stamp-labels`,
-			jsonPost({
-				stamps: [
-					"frames/list/frame.tsx:6:5",
-					"frames/list/frame.tsx:4:3",
-					"../../escape.tsx:1:1",
-					"frames/ghost/frame.tsx:1:1",
-				],
-			}),
-		);
-		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual({
-			labels: {
-				"frames/list/frame.tsx:6:5": "items.map(…)",
-				"frames/list/frame.tsx:4:3": null,
-				"../../escape.tsx:1:1": null,
-				"frames/ghost/frame.tsx:1:1": null,
-			},
-		});
-	});
-
-	it("rejects a shapeless ask", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { name } = makeProject(spoolDir);
-		const app = makeApp(spoolDir);
-
-		expect((await app.request(`/api/p/${name}/stamp-labels`, jsonPost({}))).status).toBe(400);
-		expect((await app.request(`/api/p/${name}/stamp-labels`, jsonPost({ stamps: [7] }))).status).toBe(400);
-	});
-});
-
 describe("the geometry API", () => {
 	it("writes moved and resized geometry to the sidecar alone — frame source untouched", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");

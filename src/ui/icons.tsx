@@ -73,3 +73,60 @@ export function CloseIcon() {
 		</svg>
 	);
 }
+
+interface CanvasToolIconProps {
+	className?: string;
+}
+
+/** Interact: the pointer that enters a live frame. */
+export function CursorIcon({ className }: CanvasToolIconProps) {
+	return (
+		<svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+			<path
+				d="M4.04 4.69a.5.5 0 0 1 .65-.65l16 6.5a.5.5 0 0 1-.06.95l-6.13 1.58a2 2 0 0 0-1.43 1.43l-1.58 6.13a.5.5 0 0 1-.95.06z"
+				fill="currentColor"
+			/>
+		</svg>
+	);
+}
+
+/** Select: a pointer choosing an element inside a frame. */
+export function SelectIcon({ className }: CanvasToolIconProps) {
+	return (
+		<svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M12.03 12.68a.5.5 0 0 1 .65-.65l9 3.5a.5.5 0 0 1-.03.95l-3.45 1.06a1 1 0 0 0-.66.66l-1.06 3.45a.5.5 0 0 1-.95.03z"
+				fill="currentColor"
+			/>
+			<path
+				d="M5 3a2 2 0 0 0-2 2M19 3a2 2 0 0 1 2 2M5 21a2 2 0 0 1-2-2M9 3h1M9 21h2M14 3h1M3 9v1M21 9v2M3 14v1"
+				stroke="currentColor"
+				strokeWidth="1.9"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
+/** Hand: the canvas panning tool. */
+export function HandIcon({ className }: CanvasToolIconProps) {
+	return (
+		<svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M18 11V6a2 2 0 0 0-4 0M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8"
+				stroke="currentColor"
+				strokeWidth="1.7"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+			<path
+				d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"
+				stroke="currentColor"
+				strokeWidth="1.7"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}

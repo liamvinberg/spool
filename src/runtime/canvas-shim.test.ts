@@ -27,9 +27,32 @@ async function servedShim(): Promise<string> {
 	return shim as string;
 }
 
-function runShim(shim: string): void {
+function runShim(shim: string): () => void {
 	// a classic script in the document realm: window-bound, module-free
+	const addEventListener = window.addEventListener.bind(window);
+	const listeners: Array<{
+		type: string;
+		listener: EventListenerOrEventListenerObject;
+		options: boolean | AddEventListenerOptions | undefined;
+	}> = [];
+	window.addEventListener = ((
+		type: string,
+		listener: EventListenerOrEventListenerObject | null,
+		options?: boolean | AddEventListenerOptions,
+	) => {
+		if (listener === null) return;
+		listeners.push({ type, listener, options });
+		if (options === undefined) addEventListener(type, listener);
+		else addEventListener(type, listener, options);
+	}) as typeof window.addEventListener;
 	new Function(shim)();
+	window.addEventListener = addEventListener;
+	return () => {
+		for (const { type, listener, options } of listeners) {
+			if (options === undefined) window.removeEventListener(type, listener);
+			else window.removeEventListener(type, listener, options);
+		}
+	};
 }
 
 /** The next reply of one spool kind — parent === window here, so it echoes back. */
@@ -48,6 +71,41 @@ function nextReply(kind: string): Promise<unknown> {
 const nextPicked = () => nextReply("picked");
 
 describe("the freeze shim", () => {
+	it("relays Meta hold changes without claiming the frame's own shortcuts", async () => {
+		const shim = await servedShim();
+		const posted: unknown[] = [];
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", {
+			configurable: true,
+			value: { postMessage: (message: unknown) => posted.push(message) },
+		});
+		window.__SPOOL__ = { project: "project", frame: "host" };
+		let dispose: (() => void) | undefined;
+
+		try {
+			dispose = runShim(shim);
+			const child = document.createElement("div");
+			document.body.append(child);
+			child.addEventListener("keydown", (event) => event.stopPropagation());
+			child.addEventListener("keyup", (event) => event.stopPropagation());
+			child.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Meta" }));
+			child.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, metaKey: true, key: "v" }));
+			child.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, metaKey: true, key: "h" }));
+			child.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Meta" }));
+			window.dispatchEvent(new Event("blur"));
+
+			expect(posted).toEqual([
+				{ spool: "modifier", frame: "host", modifier: "Meta", held: true },
+				{ spool: "modifier", frame: "host", modifier: "Meta", held: false },
+				{ spool: "modifier", frame: "host", modifier: "Meta", held: false },
+			]);
+		} finally {
+			dispose?.();
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
 	it("claims canvas zoom gestures that start inside an entered frame", async () => {
 		const shim = await servedShim();
 		const posted: unknown[] = [];
@@ -185,64 +243,6 @@ describe("the freeze shim", () => {
 		picked = nextPicked();
 		window.postMessage({ spool: "pick", x: 1, y: 1 }, "*");
 		expect(((await picked) as { chain: unknown }).chain).toEqual([]);
-	});
-
-	it("answers a tree walk with own stamps, direct text, and children in DOM order", async () => {
-		const shim = await servedShim();
-		runShim(shim);
-		document.body.innerHTML = `<div id="root"><main data-spool-source="frames/host/frame.tsx:3:3">
-			<button data-spool-source="frames/host/frame.tsx:4:4">Pay <b>now</b></button>
-			<ul data-spool-source="frames/host/frame.tsx:6:4"><li>a</li><li>b</li></ul>
-		</main></div>`;
-
-		const tree = nextReply("tree");
-		window.postMessage({ spool: "tree?", id: 9 }, "*");
-
-		const reply = (await tree) as { id: number; roots: Array<Record<string, unknown>> };
-		expect(reply.id).toBe(9);
-		expect(reply.roots).toHaveLength(1);
-		const main = reply.roots[0] as { children: Array<Record<string, unknown>> } & Record<string, unknown>;
-		expect(main).toMatchObject({ tag: "main", selector: "main", source: "frames/host/frame.tsx:3:3", text: "" });
-		expect(main.children).toHaveLength(2);
-		// direct text only — the nested <b> stays its own node, li's stay unstamped
-		expect(main.children[0]).toMatchObject({
-			tag: "button",
-			selector: "main > button",
-			source: "frames/host/frame.tsx:4:4",
-			text: "Pay",
-		});
-		expect((main.children[0] as { children: unknown[] }).children).toHaveLength(1);
-		expect(main.children[1]).toMatchObject({ tag: "ul", source: "frames/host/frame.tsx:6:4" });
-		expect((main.children[1] as { children: Array<Record<string, unknown>> }).children[1]).toMatchObject({
-			tag: "li",
-			selector: "main > ul > li:nth-of-type(2)",
-			source: null,
-			text: "b",
-		});
-	});
-
-	it("answers describe with one ancestry chain per selector, empty for a miss", async () => {
-		const shim = await servedShim();
-		runShim(shim);
-		document.body.innerHTML = `<div id="root"><main data-spool-source="frames/host/frame.tsx:3:3">
-			<button data-spool-source="frames/host/frame.tsx:4:4">Pay now</button>
-		</main></div>`;
-
-		const described = nextReply("described");
-		window.postMessage({ spool: "describe", selectors: ["main > button", "main > ghost"], id: 11 }, "*");
-
-		const reply = (await described) as { id: number; chains: Array<Array<Record<string, unknown>>> };
-		expect(reply.id).toBe(11);
-		expect(reply.chains).toHaveLength(2);
-		expect(reply.chains[0]).toHaveLength(2);
-		expect(reply.chains[0]?.[0]).toMatchObject({ selector: "main", tag: "main" });
-		expect(reply.chains[0]?.[1]).toMatchObject({
-			selector: "main > button",
-			tag: "button",
-			source: "frames/host/frame.tsx:4:4",
-			generated: false,
-		});
-		expect(reply.chains[1]).toEqual([]);
 	});
 
 	it("skips setInterval ticks while frozen", async () => {

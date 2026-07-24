@@ -3,8 +3,7 @@
  * Play from here / Open in editor / adaptive export / Move to Trash. Export
  * exists only for a frame selection: one frame downloads immediately; a
  * multi-selection opens the format choice.
- * Play is the player's door (#13/#24) — modes control time, so the canvas
- * never fakes play by entering; the player owns cinema in its own tab.
+ * Play is the player's door (#13/#24); the player owns cinema in its own tab.
  */
 
 export interface MenuPlacement {
@@ -38,7 +37,7 @@ export function ContextMenu({
 	return (
 		<div
 			role="menu"
-			className="absolute z-10 flex w-[200px] flex-col rounded-md border border-border-raised bg-raised p-unit"
+			className="absolute z-30 flex w-[200px] flex-col rounded-md border border-border-raised bg-raised p-unit"
 			style={{ left: at.x, top: at.y }}
 			onPointerDown={(event) => event.stopPropagation()}
 			onContextMenu={(event) => event.preventDefault()}

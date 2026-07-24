@@ -432,38 +432,59 @@ describe("thumbnails", () => {
 		expect((await app.request(`/api/p/${name}/thumbs/${encodeURIComponent("../../escape")}`)).status).toBe(404);
 	});
 
-	it("serves and persists per-project canvas state — mode and camera", async () => {
+	it("serves and persists per-project canvas state — camera only", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		const app = makeApp(spoolDir);
 
-		// before anything is stored: live mode (#8 default), no camera
-		expect(await (await app.request(`/api/p/${name}/state`)).json()).toEqual({ mode: "live" });
+		// before anything is stored, the state is empty
+		expect(await (await app.request(`/api/p/${name}/state`)).json()).toEqual({});
 
 		const put = await app.request(`/api/p/${name}/state`, {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ mode: "design", camera: { x: -120.5, y: 40, k: 0.72 } }),
+			body: JSON.stringify({ camera: { x: -120.5, y: 40, k: 0.72 } }),
 		});
 		expect(put.status).toBe(204);
 
 		expect(await (await app.request(`/api/p/${name}/state`)).json()).toEqual({
-			mode: "design",
 			camera: { x: -120.5, y: 40, k: 0.72 },
 		});
-		// persisted in design/.spool, surviving a daemon restart (#7: mode persists per project)
+		// persisted in design/.spool, surviving a daemon restart
 		const onDisk = JSON.parse(readFileSync(join(root, "design", ".spool", "state.json"), "utf8"));
-		expect(onDisk.mode).toBe("design");
+		expect(onDisk).toEqual({ camera: { x: -120.5, y: 40, k: 0.72 } });
 
 		expect(
 			(
 				await app.request(`/api/p/${name}/state`, {
 					method: "PUT",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ mode: "stills" }),
+					body: JSON.stringify({ mode: "design" }),
 				})
 			).status,
 		).toBe(400);
+		expect(
+			(
+				await app.request(`/api/p/${name}/state`, {
+					method: "PUT",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify([]),
+				})
+			).status,
+		).toBe(400);
+	});
+
+	it("treats persisted mode state as absent", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		mkdirSync(join(root, "design", ".spool"));
+		writeFileSync(
+			join(root, "design", ".spool", "state.json"),
+			JSON.stringify({ mode: "design", camera: { x: -120.5, y: 40, k: 0.72 } }),
+		);
+		const app = makeApp(spoolDir);
+
+		expect(await (await app.request(`/api/p/${name}/state`)).json()).toEqual({});
 	});
 
 	it("remembers the arrows toggle with the rest of the canvas state (#34)", async () => {
@@ -472,20 +493,20 @@ describe("thumbnails", () => {
 		const app = makeApp(spoolDir);
 
 		// unset means on — the map is spool's identity; a fresh project stores nothing
-		expect(await (await app.request(`/api/p/${name}/state`)).json()).toEqual({ mode: "live" });
+		expect(await (await app.request(`/api/p/${name}/state`)).json()).toEqual({});
 
 		const put = await app.request(`/api/p/${name}/state`, {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ mode: "live", arrows: false }),
+			body: JSON.stringify({ arrows: false }),
 		});
 		expect(put.status).toBe(204);
-		expect(await (await app.request(`/api/p/${name}/state`)).json()).toEqual({ mode: "live", arrows: false });
+		expect(await (await app.request(`/api/p/${name}/state`)).json()).toEqual({ arrows: false });
 
 		const bad = await app.request(`/api/p/${name}/state`, {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ mode: "live", arrows: "hidden" }),
+			body: JSON.stringify({ arrows: "hidden" }),
 		});
 		expect(bad.status).toBe(400);
 	});

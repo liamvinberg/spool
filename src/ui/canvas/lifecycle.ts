@@ -1,23 +1,22 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Camera, CanvasMode, ProjectedFrame } from "../api";
+import type { Camera, ProjectedFrame } from "../api";
 import { intersects, toWorld, visibleWorldRect } from "./camera";
 import { captureMessage } from "./protocol";
 
 /**
- * The engine lifecycle (#8, #13, #40): which frames run, which stand frozen,
- * which exist only as their still. Live mode: near frames play; tiny-rendered
- * and offscreen frames freeze (Chrome free-runs tiny live frames at 500+ Hz —
- * the zoom threshold is load-bearing) and stay mounted in the warm pool.
+ * The engine lifecycle (#8, #13, #40, #54): which frames run, which stand
+ * frozen, which exist only as their still. Near frames play; tiny-rendered,
+ * offscreen, and selected-into frames freeze (Chrome free-runs tiny frames at
+ * 500+ Hz — the zoom threshold is load-bearing) and stay mounted in the warm
+ * pool.
  * Hibernation's payoff is memory, never CPU: only pool overflow demotes a
  * frame to its still, oldest-seen first, html frames taking a goodbye
  * self-capture on the way out. Every mount drains through the wake queue —
- * entered immediately, selected next, then wake-requested rows (#37), then
- * nearest the viewport center, a few per sweep — so no burst site (zoom
- * wake, design flip, page entry) can land every mount in one commit. Design
- * mode: real DOM everywhere, time stopped, never evicted. Hibernation is
- * automatic engine lifecycle, never a user mode; double-click boots a
- * hibernated frame fresh — reset-on-return is a feature.
+ * entered immediately, the freeze target next, then nearest the viewport
+ * center, a few per sweep — so no burst site can land every mount in one
+ * commit. Hibernation is automatic engine lifecycle, never a tool; entering a
+ * hibernated frame boots it fresh, while freezing always keeps its document.
  */
 
 export type FrameState = "live" | "warm" | "hibernated";
@@ -64,11 +63,9 @@ export interface SweepInput {
 	camera: Camera;
 	viewportWidth: number;
 	viewportHeight: number;
-	mode: CanvasMode;
 	entered: string | null;
-	selected: string | null;
-	/** Frames whose tree row is expanded (#37): expand is attention — wake them. */
-	wakeRequested: ReadonlySet<string>;
+	/** The one frame currently selected into: mounted with time frozen. */
+	frozen: string | null;
 	states: Readonly<Record<string, FrameState>>;
 	/** Frames whose boot has reported loaded — the ones a capture can reach. */
 	ready: ReadonlySet<string>;
@@ -88,21 +85,8 @@ export interface SweepResult {
 }
 
 export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
-	const {
-		frames,
-		camera,
-		viewportWidth,
-		viewportHeight,
-		mode,
-		entered,
-		selected,
-		wakeRequested,
-		states,
-		ready,
-		capturing,
-		hasThumb,
-		now,
-	} = input;
+	const { frames, camera, viewportWidth, viewportHeight, entered, frozen, states, ready, capturing, hasThumb, now } =
+		input;
 
 	const prev = model.prevCamera;
 	if (prev === null || prev.x !== camera.x || prev.y !== camera.y || prev.k !== camera.k) {
@@ -132,29 +116,21 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		const usable = onScreen && camera.k >= K_MIN_LIVE;
 		if (usable) {
 			model.lastUsable.set(frame.name, now);
-			// coming back into view rescues an eviction mid-goodbye
-			model.exitPending.delete(frame.name);
 		}
+		// Coming back into view or becoming the one frozen intent rescues an
+		// eviction mid-goodbye. A freeze must keep the existing document.
+		if (usable || frozen === frame.name) model.exitPending.delete(frame.name);
 
 		let target: FrameState;
 		let wakeTo: "live" | "warm" | null = null;
-		if (mode === "design") {
-			// design: time frozen everywhere (#8), real DOM everywhere — the
-			// canvas exits any entered frame on the way into design mode
-			model.exitPending.delete(frame.name);
-			target = current === "hibernated" ? "hibernated" : "warm";
-			if (current === "hibernated") wakeTo = "warm";
-		} else if (current !== "hibernated") {
-			target = entered === frame.name || usable ? "live" : "warm";
-		} else if (entered === frame.name) {
+		if (current !== "hibernated") {
+			target = frozen === frame.name ? "warm" : entered === frame.name || usable ? "live" : "warm";
+		} else if (entered === frame.name && frozen !== frame.name) {
 			// entering mounts in its own sweep, bypassing the cap
 			target = "live";
 		} else {
 			target = "hibernated";
-			// first click pre-boots (#8): a selected frame mounts hidden so the
-			// double-click that follows reveals an already-running frame — and an
-			// expanded tree row asks the same way (#37)
-			wakeTo = usable ? "live" : selected === frame.name || wakeRequested.has(frame.name) ? "warm" : null;
+			wakeTo = frozen === frame.name ? "warm" : usable ? "live" : null;
 		}
 
 		const entry: Entry = { frame, current, usable, target };
@@ -162,16 +138,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		if (wakeTo !== null) {
 			const cx = frame.x + frame.w / 2 - center.x;
 			const cy = frame.y + frame.h / 2 - center.y;
-			const tier =
-				selected === frame.name
-					? 0
-					: wakeRequested.has(frame.name)
-						? 1
-						: intersects(strict, frame)
-							? 2
-							: onScreen
-								? 3
-								: 4;
+			const tier = frozen === frame.name ? 0 : intersects(strict, frame) ? 1 : onScreen ? 2 : 3;
 			waiting.push({ entry, wakeTo, tier, dist: cx * cx + cy * cy });
 		}
 	}
@@ -180,41 +147,33 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	for (const admitted of waiting.slice(0, MOUNTS_PER_SWEEP)) admitted.entry.target = admitted.wakeTo;
 
 	const exitCaptures: string[] = [];
-	if (mode !== "design") {
-		// resolve in-flight goodbyes: the capture landed or timed out — unmount now
-		for (const entry of entries) {
-			if (entry.target !== "warm") continue;
-			const exit = model.exitPending.get(entry.frame.name);
-			if (exit === undefined) continue;
-			if (exit.captured || now - exit.t0 >= EXIT_CAPTURE_TIMEOUT_MS) {
-				model.exitPending.delete(entry.frame.name);
-				entry.target = "hibernated";
-			}
+	// resolve in-flight goodbyes: the capture landed or timed out — unmount now
+	for (const entry of entries) {
+		if (entry.target !== "warm") continue;
+		const exit = model.exitPending.get(entry.frame.name);
+		if (exit === undefined) continue;
+		if (exit.captured || now - exit.t0 >= EXIT_CAPTURE_TIMEOUT_MS) {
+			model.exitPending.delete(entry.frame.name);
+			entry.target = "hibernated";
 		}
-		// the warm pool: only overflow hibernates, oldest-seen first — live frames
-		// never count, the selected frame is pre-boot intent (evicting it would
-		// only re-queue it), a wake-requested frame is watched intent (#37), and
-		// a mid-goodbye frame is already on its way out
-		const pool = entries.filter(
-			(e) =>
-				e.target === "warm" &&
-				!e.usable &&
-				e.frame.name !== selected &&
-				!wakeRequested.has(e.frame.name) &&
-				!model.exitPending.has(e.frame.name),
-		);
-		const overflow = pool.length - WARM_POOL_CAP;
-		if (overflow > 0) {
-			pool.sort((a, b) => (model.lastUsable.get(a.frame.name) ?? 0) - (model.lastUsable.get(b.frame.name) ?? 0));
-			for (const evicted of pool.slice(0, overflow)) {
-				if (evicted.frame.kind === "term") {
-					// a terminal's still is the daemon's grid (#42) — no goodbye capture
-					evicted.target = "hibernated";
-				} else {
-					// one goodbye self-capture while the DOM still exists
-					model.exitPending.set(evicted.frame.name, { t0: now, captured: false });
-					exitCaptures.push(evicted.frame.name);
-				}
+	}
+	// the warm pool: only overflow hibernates, oldest-seen first — live frames
+	// never count, the frozen frame is current intent, and a mid-goodbye frame
+	// is already on its way out
+	const pool = entries.filter(
+		(e) => e.target === "warm" && !e.usable && e.frame.name !== frozen && !model.exitPending.has(e.frame.name),
+	);
+	const overflow = pool.length - WARM_POOL_CAP;
+	if (overflow > 0) {
+		pool.sort((a, b) => (model.lastUsable.get(a.frame.name) ?? 0) - (model.lastUsable.get(b.frame.name) ?? 0));
+		for (const evicted of pool.slice(0, overflow)) {
+			if (evicted.frame.kind === "term") {
+				// a terminal's still is the daemon's grid (#42) — no goodbye capture
+				evicted.target = "hibernated";
+			} else {
+				// one goodbye self-capture while the DOM still exists
+				model.exitPending.set(evicted.frame.name, { t0: now, captured: false });
+				exitCaptures.push(evicted.frame.name);
 			}
 		}
 	}
@@ -253,17 +212,14 @@ export interface LifecycleDeps {
 	framesRef: RefObject<ProjectedFrame[]>;
 	cameraRef: RefObject<Camera | null>;
 	viewportRef: RefObject<HTMLDivElement | null>;
-	mode: CanvasMode;
 	entered: string | null;
-	selected: string | null;
-	/** Frames whose tree row is expanded (#37) — wake and keep them real. */
-	wakeRequested: ReadonlySet<string>;
+	frozen: string | null;
 	hasThumb: (frame: string) => boolean;
 	onShot: (frame: string, dataUrl: string) => void;
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
-	const { framesRef, cameraRef, viewportRef, mode, entered, selected, wakeRequested, hasThumb, onShot } = deps;
+	const { framesRef, cameraRef, viewportRef, entered, frozen, hasThumb, onShot } = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
 	const [ready, setReady] = useState<ReadonlySet<string>>(new Set<string>());
@@ -272,13 +228,10 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	statesRef.current = states;
 	const readyRef = useRef(ready);
 	readyRef.current = ready;
-	const modeRef = useRef(mode);
 	const enteredRef = useRef(entered);
 	enteredRef.current = entered;
-	const selectedRef = useRef(selected);
-	selectedRef.current = selected;
-	const wakeRequestedRef = useRef(wakeRequested);
-	wakeRequestedRef.current = wakeRequested;
+	const frozenRef = useRef(frozen);
+	frozenRef.current = frozen;
 	const hasThumbRef = useRef(hasThumb);
 	hasThumbRef.current = hasThumb;
 	const onShotRef = useRef(onShot);
@@ -337,7 +290,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		});
 	}, []);
 
-	// The decision function: runs on a sweep interval and on mode flips.
+	// The decision function: runs on a sweep interval and urgent intent changes.
 	const compute = useCallback(() => {
 		const camera = cameraRef.current;
 		const viewport = viewportRef.current;
@@ -348,10 +301,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			camera,
 			viewportWidth: viewport.clientWidth,
 			viewportHeight: viewport.clientHeight,
-			mode: modeRef.current,
 			entered: enteredRef.current,
-			selected: selectedRef.current,
-			wakeRequested: wakeRequestedRef.current,
+			frozen: frozenRef.current,
 			states: statesRef.current,
 			ready: readyRef.current,
 			capturing: new Set(captureWaiters.current.keys()),
@@ -365,17 +316,12 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		if (result.changed) setStates(result.states);
 	}, [cameraRef, viewportRef, framesRef, requestCapture]);
 
-	// mode flips recompute immediately — D must feel instant, not one sweep late
+	// Freeze and enter doors must feel instant, not one sweep late.
 	useEffect(() => {
-		modeRef.current = mode;
+		enteredRef.current = entered;
+		frozenRef.current = frozen;
 		compute();
-	}, [mode, compute]);
-
-	// so does an expand: the wake must start now, not one sweep late (#37)
-	useEffect(() => {
-		wakeRequestedRef.current = wakeRequested;
-		compute();
-	}, [wakeRequested, compute]);
+	}, [entered, frozen, compute]);
 
 	useEffect(() => {
 		const sweep = setInterval(compute, SWEEP_MS);

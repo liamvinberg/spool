@@ -15,15 +15,21 @@ export type UpdateToast =
 
 export function UpdateToastPill({
 	toast,
+	aboveCanvasTools = false,
 	onUpdate,
 	onDismiss,
 }: {
 	toast: UpdateToast;
+	aboveCanvasTools?: boolean;
 	onUpdate: () => void;
 	onDismiss: () => void;
 }) {
 	return (
-		<div className="-translate-x-1/2 fixed bottom-6 left-1/2 z-20 flex items-center gap-4 rounded-md border border-border-raised bg-raised px-3.5 py-2.5">
+		<div
+			className={`-translate-x-1/2 fixed left-1/2 z-20 flex items-center gap-4 rounded-md border border-border-raised bg-raised px-3.5 py-2.5 ${
+				aboveCanvasTools ? "bottom-[120px]" : "bottom-6"
+			}`}
+		>
 			{toast.kind === "offer" && (
 				<>
 					<span className="text-base text-text leading-base">Update available — v{toast.latest}</span>

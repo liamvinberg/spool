@@ -4,6 +4,22 @@ import { describe, expect, it } from "vitest";
 import { FrameLabel } from "./frame-label";
 
 describe("FrameLabel", () => {
+	it("names an entered frozen frame as paused without losing its exit door", () => {
+		const markup = renderToStaticMarkup(
+			createElement(FrameLabel, {
+				name: "checkout",
+				frameWidth: 390,
+				k: 1,
+				entered: true,
+				paused: true,
+				selected: false,
+			}),
+		);
+
+		expect(markup).toContain("paused · esc exits");
+		expect(markup).not.toContain("live · esc exits");
+	});
+
 	it("truncates within the frame's rendered width when zoomed out", () => {
 		const markup = renderToStaticMarkup(
 			createElement(FrameLabel, {

@@ -61,6 +61,7 @@ export function SelectionOverlay({
 	frames,
 	selected,
 	entered,
+	editable,
 	picked,
 	preview,
 	guides,
@@ -71,6 +72,8 @@ export function SelectionOverlay({
 	frames: ProjectedFrame[];
 	selected: readonly string[];
 	entered: string | null;
+	/** Select is the only surface that exposes arrange handles. */
+	editable: boolean;
 	picked: readonly PickedSelection[];
 	preview: ElementPreview | null;
 	guides: Guides;
@@ -94,7 +97,8 @@ export function SelectionOverlay({
 	const ringRadius = Math.min(12, shellRadius * k) + 2;
 
 	const ringed = [...new Set(entered === null ? selected : [...selected, entered])];
-	const single = selected.length === 1 && entered === null ? frames.find((f) => f.name === selected[0]) : undefined;
+	const single =
+		editable && selected.length === 1 && entered === null ? frames.find((f) => f.name === selected[0]) : undefined;
 	const previewShown =
 		preview !== null && !picked.some((pick) => pick.frame === preview.frame && pick.selector === preview.selector)
 			? preview

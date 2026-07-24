@@ -28,7 +28,24 @@ describe("external links from an entered frame", () => {
 		expect(canvas).not.toBeNull();
 
 		await act(async () => {
-			canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 600, clientY: 380 }));
+			canvas?.dispatchEvent(
+				new PointerEvent("pointerdown", {
+					bubbles: true,
+					button: 0,
+					clientX: 600,
+					clientY: 380,
+					pointerId: 1,
+				}),
+			);
+			canvas?.dispatchEvent(
+				new PointerEvent("pointerup", {
+					bubbles: true,
+					button: 0,
+					clientX: 600,
+					clientY: 380,
+					pointerId: 1,
+				}),
+			);
 		});
 		expect(labelText(host)).toContain("live · esc exits");
 
@@ -83,7 +100,7 @@ function stubCanvasApis(): void {
 			const raw = input instanceof Request ? input.url : String(input);
 			const url = new URL(raw, window.location.href);
 			if (url.pathname.endsWith("/state")) {
-				return Response.json({ mode: "live", camera: { x: 0, y: 0, k: 1 } });
+				return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			}
 			if (url.pathname.endsWith("/frames")) {
 				return Response.json({ root: "/project", pages: [], frames, collisions: [] });

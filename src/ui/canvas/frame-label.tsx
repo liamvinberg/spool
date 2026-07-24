@@ -24,6 +24,7 @@ export function FrameLabel({
 	// The camera scales this after the label's 1/k counter-scale. Pre-scaling
 	// the layout width by k keeps its final screen width equal to the frame.
 	const width = frameWidth * k;
+	const state = paused ? "paused" : "live";
 
 	return (
 		<div
@@ -34,7 +35,7 @@ export function FrameLabel({
 			{entered ? (
 				<div className="flex items-center pb-2.5">
 					<span className="rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3">
-						{terminal ? `live · ${EXIT_CHORD} exits` : "live · esc exits"}
+						{terminal ? `${state} · ${EXIT_CHORD} exits` : `${state} · esc exits`}
 					</span>
 				</div>
 			) : (
