@@ -331,8 +331,10 @@ export function ProjectCanvas({
 	const pickedFrame = picked[picked.length - 1]?.frame;
 	const selectedFrame = selected[selected.length - 1];
 	const frozenFrame = effectiveTool === "select" ? (pickedFrame ?? selectedFrame ?? entered ?? null) : null;
-	// what the rail reads: the element scope's frame, else the frame selection
-	const inspectedFrame = pickedFrame ?? selectedFrame ?? null;
+	// what the rail reads: the element scope's frame, else the frame selection,
+	// else the frame being used — inside a prototype its elements are the ones
+	// worth looking at, so entering must not empty the rail
+	const inspectedFrame = pickedFrame ?? selectedFrame ?? entered ?? null;
 
 	const lifecycle = useFrameLifecycle({
 		framesRef,
@@ -1119,6 +1121,8 @@ export function ProjectCanvas({
 				setWalkBoots((current) => ({ ...current, [target]: { still } }));
 				// screen scripts run fresh on every arrival — reboot even a warm target
 				setDocNonces((current) => ({ ...current, [target]: (current[target] ?? 0) + 1 }));
+				// the arrival is a new document: its walk is owed again
+				setTrees((current) => without(current, target));
 			})();
 		},
 		[animateCamera, switchToPage, arrivalAt],
@@ -1797,13 +1801,27 @@ export function ProjectCanvas({
 		}, TREE_REPLY_MS);
 	}, []);
 
+	/** Frames with no DOM to walk: a terminal is a cell grid (#42). */
+	const walkable = useCallback(
+		(frame: string) => allFramesRef.current.find((candidate) => candidate.name === frame)?.kind !== "term",
+		[],
+	);
+
 	// the elements tab reads one frame: the open rail's, once its boot reports
 	useEffect(() => {
-		if (!railOpen || railMode !== "elements" || inspectedFrame === null) return;
-		// a terminal has no DOM to walk (#42): its rail says so instead
-		if (frames.find((frame) => frame.name === inspectedFrame)?.kind === "term") return;
+		if (!railOpen || railMode !== "elements" || inspectedFrame === null || !walkable(inspectedFrame)) return;
 		if (trees[inspectedFrame] === undefined && lifecycle.ready.has(inspectedFrame)) requestTree(inspectedFrame);
-	}, [railOpen, railMode, inspectedFrame, frames, trees, lifecycle.ready, requestTree]);
+	}, [railOpen, railMode, inspectedFrame, trees, lifecycle.ready, requestTree, walkable]);
+
+	// looking is the refresh: a frame being used renders new DOM as it goes, so
+	// showing the tab re-reads it. The rows on screen stay until the fresh
+	// answer lands — a re-read never flashes the waking line.
+	const readyRef = useRef(lifecycle.ready);
+	readyRef.current = lifecycle.ready;
+	useEffect(() => {
+		if (!railOpen || railMode !== "elements" || inspectedFrame === null || !walkable(inspectedFrame)) return;
+		if (readyRef.current.has(inspectedFrame)) requestTree(inspectedFrame);
+	}, [railOpen, railMode, inspectedFrame, requestTree, walkable]);
 
 	// a hibernated frame's cached walk is a lie — the next look re-asks
 	useEffect(() => {
