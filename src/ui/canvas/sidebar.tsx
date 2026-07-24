@@ -58,7 +58,7 @@ export function CanvasSidebar({
 					>
 						<PanelCaret dir="right" className="h-3.5 w-2.5" />
 					</button>
-					<div className="flex min-h-0 flex-1 flex-col items-center gap-0.5 overflow-y-auto pt-1">
+					<div className="pages-scrollbar flex min-h-0 flex-1 flex-col items-center gap-0.5 overflow-y-auto pt-1">
 						{orderedPages.map((page) => {
 							const active = page === activePage;
 							return (
@@ -97,7 +97,7 @@ export function CanvasSidebar({
 						</button>
 					</div>
 
-					<div className="min-h-0 flex-1 overflow-y-auto py-2">
+					<div className="pages-scrollbar min-h-0 flex-1 overflow-y-auto py-2">
 						{orderedPages.map((page) => {
 							const pageFrames = framesOnPage(frames, page);
 							const active = page === activePage;
