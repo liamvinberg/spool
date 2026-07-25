@@ -1,5 +1,76 @@
 import { describe, expect, it } from "vitest";
-import { parseFrameMessage } from "./protocol";
+import { clipboardCopyAllowed, parseFrameMessage, walkRejectionReason } from "./protocol";
+
+describe("clipboard protocol", () => {
+	it("accepts only an exact, safe frame copy request", () => {
+		const request = { spool: "copy", frame: "landing", id: 73, text: "invite link" };
+
+		expect(parseFrameMessage(request)).toEqual(request);
+		expect(parseFrameMessage({ ...request, extra: true })).toBeUndefined();
+		expect(parseFrameMessage({ ...request, id: 0 })).toBeUndefined();
+		expect(parseFrameMessage({ ...request, id: Number.MAX_SAFE_INTEGER + 1 })).toBeUndefined();
+		expect(parseFrameMessage({ ...request, text: null })).toBeUndefined();
+	});
+
+	it("grants clipboard authority only to the entered html transport", () => {
+		expect(clipboardCopyAllowed("html", true, false)).toBe(true);
+		expect(clipboardCopyAllowed("html", false, false)).toBe(false);
+		expect(clipboardCopyAllowed("html", true, true)).toBe(false);
+		expect(clipboardCopyAllowed("term", true, false)).toBe(false);
+		expect(clipboardCopyAllowed(undefined, true, false)).toBe(false);
+	});
+});
+
+describe("canvas walk protocol", () => {
+	it("keeps terminal walks separate from exact id-bearing html walks", () => {
+		const walk = {
+			spool: "go",
+			frame: "landing",
+			target: "checkout",
+			session: { scenario: "default", state: { cart: 1 }, stack: ["home"] },
+			id: 73,
+		};
+
+		expect(parseFrameMessage(walk)).toEqual(walk);
+		expect(parseFrameMessage({ ...walk, id: Number.MAX_SAFE_INTEGER })).toEqual({
+			...walk,
+			id: Number.MAX_SAFE_INTEGER,
+		});
+		expect(parseFrameMessage({ spool: "back", frame: "landing", target: "home" })).toEqual({
+			spool: "back",
+			frame: "landing",
+			target: "home",
+		});
+		expect(parseFrameMessage({ spool: "go", frame: "landing", target: "checkout", extra: true })).toBeUndefined();
+		expect(parseFrameMessage({ ...walk, extra: true })).toBeUndefined();
+		expect(parseFrameMessage({ ...walk, id: 0 })).toBeUndefined();
+		expect(parseFrameMessage({ ...walk, id: Number.MAX_SAFE_INTEGER + 1 })).toBeUndefined();
+		expect(parseFrameMessage({ ...walk, id: "73" })).toBeUndefined();
+		expect(parseFrameMessage({ ...walk, id: undefined })).toBeUndefined();
+		expect(parseFrameMessage({ ...walk, session: null })).toBeUndefined();
+	});
+
+	it("binds sequenced walks to html and id-less walks to terminals", () => {
+		const htmlWalk = parseFrameMessage({
+			spool: "go",
+			frame: "landing",
+			target: "checkout",
+			session: { scenario: "default", state: {}, stack: [] },
+			id: 73,
+		});
+		const terminalWalk = parseFrameMessage({ spool: "back", frame: "shell", target: "home" });
+		if (htmlWalk?.spool !== "go" || terminalWalk?.spool !== "back") throw new Error("walk fixture rejected");
+
+		expect(walkRejectionReason(htmlWalk, "html", true, true, false)).toBeUndefined();
+		expect(walkRejectionReason(htmlWalk, "html", true, true, true)).toBe("inactive");
+		expect(walkRejectionReason(htmlWalk, "term", true, true, false)).toBe("inactive");
+		expect(walkRejectionReason(htmlWalk, "html", false, true, false)).toBe("inactive");
+		expect(walkRejectionReason(htmlWalk, "html", true, false, false)).toBe("missing");
+		expect(walkRejectionReason(terminalWalk, "term", true, true, false)).toBeUndefined();
+		expect(walkRejectionReason(terminalWalk, "html", true, true, false)).toBe("inactive");
+		expect(walkRejectionReason(terminalWalk, undefined, true, true, false)).toBe("inactive");
+	});
+});
 
 describe("external link protocol", () => {
 	it("accepts a resolved web destination and rejects a shapeless intent", () => {

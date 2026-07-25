@@ -54,6 +54,7 @@ async function loadFrameDocument(
 		outside?: (url: string) => Response | undefined;
 		/** Play the canvas: receive parent-bound postMessages. Makes the frame embedded. */
 		host?: (message: Record<string, unknown>) => void;
+		randomWords?: [number, number][];
 	} = {},
 ) {
 	const { app, name } = harness;
@@ -68,6 +69,16 @@ async function loadFrameDocument(
 	}
 	vi.restoreAllMocks();
 	vi.resetModules();
+	if (options.randomWords !== undefined) {
+		const words = [...options.randomWords];
+		vi.spyOn(window.crypto, "getRandomValues").mockImplementation((array) => {
+			if (!(array instanceof Uint32Array)) throw new Error("clipboard id expected Uint32Array");
+			const next = words.shift();
+			if (next === undefined) throw new Error("clipboard id consumed too many random values");
+			array.set(next);
+			return array;
+		});
+	}
 
 	happyDom().setURL(`http://run.spool.localhost:7766/p/${name}/frames/${frame}${search}`);
 	const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
@@ -93,9 +104,15 @@ async function loadFrameDocument(
 
 	// embedded means parent !== window: the host option stands in for the canvas
 	const host = options.host;
+	const parentWindow =
+		host === undefined
+			? window
+			: {
+					postMessage: (data: unknown) => host(data as Record<string, unknown>),
+				};
 	Object.defineProperty(window, "parent", {
 		configurable: true,
-		value: host === undefined ? window : { postMessage: (data: unknown) => host(data as Record<string, unknown>) },
+		value: parentWindow,
 	});
 
 	const bootJs = doc.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
@@ -104,12 +121,12 @@ async function loadFrameDocument(
 	writeFileSync(bootFile, bootJs ?? "");
 	await import(bootFile);
 
-	return { assign };
+	return { assign, parentWindow };
 }
 
 /** Answer the frame realm's message listener the way a canvas would. */
-function hostReply(data: Record<string, unknown>): void {
-	window.dispatchEvent(new MessageEvent("message", { data }));
+function hostReply(data: Record<string, unknown>, source = window.parent as WindowProxy): void {
+	window.dispatchEvent(new MessageEvent("message", { data, source }));
 }
 
 function click(selector: string): boolean {
@@ -187,6 +204,58 @@ export default function Products() {
 			.then((items: Array<{ title: string }>) => setTitles(items.map((item) => item.title)));
 	}, []);
 	return <ul>{titles.map((title) => <li key={title}>{title}</li>)}</ul>;
+}
+`;
+
+const clipboardTsx = `import { useState } from "react";
+import { ui } from "spool";
+
+function result(error: unknown) {
+	if (typeof error !== "object" || error === null) return String(error);
+	const value = error as { name?: unknown; message?: unknown };
+	return String(value.name) + ":" + String(value.message);
+}
+
+export default function Clipboard() {
+	const [first, setFirst] = useState("idle");
+	const [second, setSecond] = useState("idle");
+	const [race, setRace] = useState("idle");
+	async function copy(text: string, set: (value: string) => void) {
+		set("pending");
+		try {
+			await ui.copy(text);
+			set("copied");
+		} catch (error) {
+			set(result(error));
+		}
+	}
+	async function leaveThenCopy() {
+		setRace("pending");
+		ui.go("next");
+		try {
+			await ui.copy("must not write");
+			setRace("copied");
+		} catch (error) {
+			setRace(result(error));
+		}
+	}
+	function repeatWalks() {
+		ui.go("next");
+		ui.go("third");
+	}
+	return (
+		<main>
+			<output id="first-result">{first}</output>
+			<output id="second-result">{second}</output>
+			<output id="race-result">{race}</output>
+			<button id="copy-first" onClick={() => void copy("first text", setFirst)}>first</button>
+			<button id="copy-second" onClick={() => void copy("second text", setSecond)}>second</button>
+			<button id="leave" data-go="next">leave</button>
+			<button id="leave-then-copy" onClick={() => void leaveThenCopy()}>leave then copy</button>
+			<button id="repeat-walks" onClick={() => repeatWalks()}>repeat walks</button>
+			<button id="walk-third" onClick={() => ui.go("third")}>walk third</button>
+		</main>
+	);
 }
 `;
 
@@ -422,6 +491,245 @@ describe("the mock layer", () => {
 });
 
 describe("embedded in a canvas", () => {
+	it("routes concurrent ui.copy results by safe request id and preserves browser failures", async () => {
+		const harness = makeHarness();
+		writeFrame(harness.root, "clipboard", clipboardTsx);
+		writeFrame(harness.root, "next", "export default function Next() { return <main>next</main> }");
+		const messages: Record<string, unknown>[] = [];
+		await loadFrameDocument(harness, "clipboard", {
+			host: (message) => {
+				messages.push(message);
+				if (message.spool === "session?") hostReply({ spool: "session", record: null });
+			},
+			randomWords: [
+				[0, 17],
+				[0, 17],
+				[0, 18],
+			],
+		});
+
+		await waitForText("#first-result", "idle");
+		click("#copy-first");
+		click("#copy-second");
+		await waitForText("#first-result", "pending");
+		await waitForText("#second-result", "pending");
+		const copies = messages.filter((message) => message.spool === "copy");
+		expect(copies).toHaveLength(2);
+		expect(copies.map((message) => message.text)).toEqual(["first text", "second text"]);
+		expect(copies.every((message) => Number.isSafeInteger(message.id) && Number(message.id) > 0)).toBe(true);
+		expect(copies.map((message) => message.id)).toEqual([17, 18]);
+		expect(copies[0]).toEqual({
+			spool: "copy",
+			frame: "clipboard",
+			id: copies[0]?.id,
+			text: "first text",
+		});
+
+		hostReply({
+			spool: "copy-result",
+			frame: "clipboard",
+			id: copies[1]?.id,
+			error: { name: "NotAllowedError", message: "Write permission denied" },
+		});
+		await waitForText("#second-result", "NotAllowedError:Write permission denied");
+		expect(document.querySelector("#first-result")?.textContent).toBe("pending");
+
+		hostReply({ spool: "copy-result", frame: "clipboard", id: copies[0]?.id });
+		await waitForText("#first-result", "copied");
+	});
+
+	it("settles an exact copy success under Object.prototype error pollution", async () => {
+		const harness = makeHarness();
+		writeFrame(harness.root, "clipboard", clipboardTsx);
+		const messages: Record<string, unknown>[] = [];
+		await loadFrameDocument(harness, "clipboard", {
+			host: (message) => {
+				messages.push(message);
+				if (message.spool === "session?") hostReply({ spool: "session", record: null });
+			},
+		});
+
+		await waitForText("#first-result", "idle");
+		click("#copy-first");
+		await waitForText("#first-result", "pending");
+		const request = messages.find((message) => message.spool === "copy");
+		expect(request).toBeDefined();
+
+		Object.defineProperty(Object.prototype, "error", {
+			configurable: true,
+			value: { name: "PollutedError", message: "inherited failure" },
+		});
+		try {
+			hostReply({ spool: "copy-result", frame: "clipboard", id: request?.id });
+		} finally {
+			delete (Object.prototype as { error?: unknown }).error;
+		}
+
+		await waitForText("#first-result", "copied");
+	});
+
+	it("ignores spoofed, unknown, malformed, and duplicate copy results", async () => {
+		const harness = makeHarness();
+		writeFrame(harness.root, "clipboard", clipboardTsx);
+		const messages: Record<string, unknown>[] = [];
+		const { parentWindow } = await loadFrameDocument(harness, "clipboard", {
+			host: (message) => {
+				messages.push(message);
+				if (message.spool === "session?") hostReply({ spool: "session", record: null });
+			},
+		});
+
+		await waitForText("#first-result", "idle");
+		click("#copy-first");
+		await waitForText("#first-result", "pending");
+		const request = messages.find((message) => message.spool === "copy");
+		expect(request).toBeDefined();
+		const success = { spool: "copy-result", frame: "clipboard", id: request?.id };
+
+		hostReply(success, {} as WindowProxy);
+		hostReply({ ...success, id: Number(request?.id) + 1 }, parentWindow as WindowProxy);
+		hostReply({ ...success, extra: true }, parentWindow as WindowProxy);
+		hostReply({ ...success, frame: "other" }, parentWindow as WindowProxy);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(document.querySelector("#first-result")?.textContent).toBe("pending");
+
+		hostReply(success, parentWindow as WindowProxy);
+		await waitForText("#first-result", "copied");
+		hostReply(
+			{
+				...success,
+				error: { name: "NotAllowedError", message: "late duplicate" },
+			},
+			parentWindow as WindowProxy,
+		);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(document.querySelector("#first-result")?.textContent).toBe("copied");
+	});
+
+	it("rejects pending copy requests when a frame leaves or reloads", async () => {
+		const harness = makeHarness();
+		writeFrame(harness.root, "clipboard", clipboardTsx);
+		writeFrame(harness.root, "next", "export default function Next() { return <main>next</main> }");
+		const messages: Record<string, unknown>[] = [];
+		await loadFrameDocument(harness, "clipboard", {
+			host: (message) => {
+				messages.push(message);
+				if (message.spool === "session?") hostReply({ spool: "session", record: null });
+			},
+		});
+
+		await waitForText("#first-result", "idle");
+		click("#copy-first");
+		await waitForText("#first-result", "pending");
+		window.dispatchEvent(new PageTransitionEvent("pagehide"));
+		await waitForText("#first-result", "AbortError:Clipboard request interrupted by navigation");
+
+		click("#copy-second");
+		await waitForText("#second-result", "pending");
+		click("#leave");
+		await waitForText("#second-result", "AbortError:Clipboard request interrupted by navigation");
+		expect(messages.some((message) => message.spool === "go" && message.target === "next")).toBe(true);
+	});
+
+	it("rejects a same-tick canvas copy without posting it after a walk begins", async () => {
+		const harness = makeHarness();
+		writeFrame(harness.root, "clipboard", clipboardTsx);
+		writeFrame(harness.root, "next", "export default function Next() { return <main>next</main> }");
+		const messages: Record<string, unknown>[] = [];
+		await loadFrameDocument(harness, "clipboard", {
+			host: (message) => {
+				messages.push(message);
+				if (message.spool === "session?") hostReply({ spool: "session", record: null });
+			},
+		});
+
+		await waitForText("#race-result", "idle");
+		click("#leave-then-copy");
+		await waitForText("#race-result", "AbortError:Clipboard request interrupted by navigation");
+		expect(messages.some((message) => message.spool === "go" && message.target === "next")).toBe(true);
+		expect(messages.filter((message) => message.spool === "copy")).toHaveLength(0);
+	});
+
+	it("keeps a newer walk pending through repeated intents and stale decisions", async () => {
+		const harness = makeHarness();
+		writeFrame(harness.root, "clipboard", clipboardTsx);
+		writeFrame(harness.root, "next", "export default function Next() { return <main>next</main> }");
+		writeFrame(harness.root, "third", "export default function Third() { return <main>third</main> }");
+		const messages: Record<string, unknown>[] = [];
+		await loadFrameDocument(harness, "clipboard", {
+			host: (message) => {
+				messages.push(message);
+				if (message.spool === "session?") hostReply({ spool: "session", record: null });
+			},
+		});
+
+		await waitForText("#race-result", "idle");
+		click("#repeat-walks");
+		const firstWalks = messages.filter((message) => message.spool === "go");
+		expect(firstWalks).toHaveLength(1);
+		const firstId = firstWalks[0]?.id;
+		expect(typeof firstId === "number" && Number.isSafeInteger(firstId) && firstId > 0).toBe(true);
+
+		hostReply({ spool: "walk-decision", frame: "clipboard", id: firstId, accepted: false, reason: "inactive" });
+		click("#walk-third");
+		const walks = messages.filter((message) => message.spool === "go");
+		expect(walks).toHaveLength(2);
+		const secondId = walks[1]?.id;
+		expect(typeof secondId === "number" && Number.isSafeInteger(secondId) && secondId > 0).toBe(true);
+		expect(secondId).not.toBe(firstId);
+
+		hostReply({ spool: "walk-decision", frame: "clipboard", id: firstId, accepted: false, reason: "inactive" });
+		click("#copy-second");
+		await waitForText("#second-result", "AbortError:Clipboard request interrupted by navigation");
+		expect(messages.filter((message) => message.spool === "copy")).toHaveLength(0);
+
+		hostReply({ spool: "walk-decision", frame: "clipboard", id: secondId, accepted: false, reason: "inactive" });
+		click("#copy-first");
+		await waitForText("#first-result", "pending");
+		expect(messages.filter((message) => message.spool === "copy")).toHaveLength(1);
+	});
+
+	it("clears a canvas walk only for its exact parent decision", async () => {
+		const harness = makeHarness();
+		writeFrame(harness.root, "clipboard", clipboardTsx);
+		writeFrame(harness.root, "third", "export default function Third() { return <main>third</main> }");
+		const messages: Record<string, unknown>[] = [];
+		await loadFrameDocument(harness, "clipboard", {
+			host: (message) => {
+				messages.push(message);
+				if (message.spool === "session?") hostReply({ spool: "session", record: null });
+			},
+		});
+
+		await waitForText("#race-result", "idle");
+		click("#walk-third");
+		const walk = messages.find((message) => message.spool === "go");
+		const decision = {
+			spool: "walk-decision",
+			frame: "clipboard",
+			id: walk?.id,
+			accepted: false,
+			reason: "inactive",
+		};
+
+		hostReply(decision, {} as WindowProxy);
+		hostReply({ ...decision, frame: "other" });
+		hostReply({ ...decision, extra: true });
+		hostReply({ ...decision, id: 0 });
+		hostReply({ ...decision, accepted: "false" });
+		hostReply({ ...decision, reason: "unknown" });
+		const { reason: _reason, ...missingReason } = decision;
+		hostReply(missingReason);
+		click("#copy-second");
+		await waitForText("#second-result", "AbortError:Clipboard request interrupted by navigation");
+		expect(messages.filter((message) => message.spool === "copy")).toHaveLength(0);
+
+		hostReply(decision);
+		click("#copy-first");
+		await waitForText("#first-result", "pending");
+		expect(messages.filter((message) => message.spool === "copy")).toHaveLength(1);
+	});
+
 	it("hands an external anchor to the host without navigating the frame", async () => {
 		const harness = makeHarness();
 		scaffoldFlow(harness);
@@ -481,6 +789,103 @@ describe("embedded in a canvas", () => {
 			expect(back).toMatchObject({ target: "thread--detail", frame: "inbox" });
 			expect((back as { session: { stack: string[] } }).session.stack).toEqual([]);
 		});
+	});
+
+	it("commits embedded history only for accepted walks and missing backs", async () => {
+		const harness = makeHarness();
+		scaffoldFlow(harness);
+		const messages: Record<string, unknown>[] = [];
+		await loadFrameDocument(harness, "inbox", {
+			host: (message) => {
+				messages.push(message);
+				if (message.spool === "session?") {
+					hostReply({
+						spool: "session",
+						record: {
+							scenario: "default",
+							state: { unread: 7 },
+							stack: ["previous", "deleted"],
+						},
+					});
+				}
+			},
+		});
+		await waitForText("output", "7");
+
+		const walks = () => messages.filter((message) => message.spool === "go" || message.spool === "back");
+		const latest = () =>
+			walks().at(-1) as {
+				spool: "go" | "back";
+				frame: string;
+				id: number;
+				target: string;
+				session: { state: Record<string, unknown>; stack: string[] };
+			};
+		const reject = (message: ReturnType<typeof latest>, reason: "inactive" | "missing") => {
+			hostReply({
+				spool: "walk-decision",
+				frame: message.frame,
+				id: message.id,
+				accepted: false,
+				reason,
+			});
+		};
+
+		click("#carry");
+		const inactiveGo = latest();
+		expect(inactiveGo).toMatchObject({
+			spool: "go",
+			target: "thread--detail",
+			session: { state: { unread: 99 }, stack: ["previous", "deleted", "inbox"] },
+		});
+		reject(inactiveGo, "inactive");
+
+		click("#back-empty");
+		const inactiveBack = latest();
+		expect(inactiveBack).toMatchObject({
+			spool: "back",
+			target: "deleted",
+			session: { stack: ["previous"] },
+		});
+		reject(inactiveBack, "inactive");
+		click("#back-empty");
+		const missingBack = latest();
+		expect(missingBack.target).toBe("deleted");
+		reject(missingBack, "missing");
+
+		click("#back-empty");
+		const previousBack = latest();
+		expect(previousBack.target).toBe("previous");
+		reject(previousBack, "inactive");
+
+		click("#carry");
+		const missingGo = latest();
+		expect(missingGo.session.stack).toEqual(["previous", "inbox"]);
+		reject(missingGo, "missing");
+		click("#back-empty");
+		const afterMissingGo = latest();
+		expect(afterMissingGo.target).toBe("previous");
+		reject(afterMissingGo, "inactive");
+
+		click("#carry");
+		const acceptedGo = latest();
+		hostReply({
+			spool: "walk-decision",
+			frame: acceptedGo.frame,
+			id: acceptedGo.id,
+			accepted: true,
+		});
+		click("#back-empty");
+		const acceptedBack = latest();
+		expect(acceptedBack.target).toBe("inbox");
+		hostReply({
+			spool: "walk-decision",
+			frame: acceptedBack.frame,
+			id: acceptedBack.id,
+			accepted: true,
+		});
+		click("#back-empty");
+		expect(latest().target).toBe("previous");
 	});
 
 	it("posts go with the session snapshot instead of navigating, seeding fresh when the host has nothing", async () => {

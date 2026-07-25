@@ -1,5 +1,7 @@
 import { createElement, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
+import { fulfillClipboardCopy, rejectClipboardCopy } from "./clipboard-host";
+import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { type MockCall, Player, type PlayerController, type SessionState, type WalkEvent } from "./player-chrome";
 
 interface FrameGeometry {
@@ -369,6 +371,30 @@ export function bootPlayerShell(config: ShellConfig): void {
 	});
 
 	function handleRuntimeMessage(message: Record<string, unknown>): void {
+		const clipboard = parseClipboardCopyRequest(message);
+		if (clipboard !== undefined) {
+			const reply = postToRuntime;
+			if (reply !== undefined && config.terminals.includes(clipboard.frame)) {
+				rejectClipboardCopy(
+					clipboard,
+					reply,
+					new DOMException("Clipboard writes require an HTML frame", "NotSupportedError"),
+				);
+				return;
+			}
+			if (
+				reply === undefined ||
+				pendingNavigation !== undefined ||
+				cut !== undefined ||
+				clipboard.frame !== mountedFrame ||
+				clipboard.frame !== snapshot.frame
+			) {
+				return;
+			}
+			fulfillClipboardCopy(clipboard, reply);
+			return;
+		}
+
 		const bootstrapPending = !ready && !revealed;
 		const navigationPending = pendingNavigation !== undefined || cut !== undefined || geometrySettleRevision !== 0;
 		if (

@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import { createElement, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { type ClipboardCopyResult, parseClipboardCopyResult } from "./clipboard-protocol";
 import {
 	type MockCall,
 	Player,
@@ -11,6 +12,7 @@ import {
 	type WalkEvent,
 } from "./player-chrome";
 import type { SpoolUi } from "./spool-public";
+import { parseWalkDecision } from "./walk-protocol";
 
 /**
  * The "spool" module (#5, #16): every frame document imports it — explicitly
@@ -94,6 +96,8 @@ function projectFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Res
 
 /** Embedded in a canvas iframe: navigation is the host's job, posted over the bridge. */
 const embedded = window.parent !== window;
+let lastEmbeddedWalkId: number | undefined;
+let embeddedWalkPending: { id: number; direction: "go" | "back" } | undefined;
 
 type PlayerMessageHandler = (message: Record<string, unknown>) => void;
 let playerMessageHandler: PlayerMessageHandler | undefined;
@@ -187,7 +191,110 @@ if (play?.shell === true && embedded) {
 	addEventListener("error", (event) => reportRuntimeError(event.error ?? event.message));
 	addEventListener("unhandledrejection", (event) => reportRuntimeError(event.reason));
 }
+// --- clipboard --------------------------------------------------------------
 
+interface PendingClipboardWrite {
+	frame: string;
+	resolve(): void;
+	reject(error: unknown): void;
+}
+
+type ClipboardFailureResult = Extract<ClipboardCopyResult, { error: unknown }>;
+
+const MAX_PENDING_CLIPBOARD_WRITES = 1024;
+const pendingClipboardWrites = new Map<number, PendingClipboardWrite>();
+const fillRandom = window.crypto.getRandomValues.bind(window.crypto);
+
+function randomRequestId(inUse: (id: number) => boolean): number | undefined {
+	for (let attempt = 0; attempt < 32; attempt++) {
+		const words = new Uint32Array(2);
+		fillRandom(words);
+		const id = ((words[0] ?? 0) & 0x1f_ffff) * 0x1_0000_0000 + (words[1] ?? 0);
+		if (id > 0 && !inUse(id)) return id;
+	}
+	return undefined;
+}
+
+function clipboardRequestId(): number | undefined {
+	return randomRequestId((id) => pendingClipboardWrites.has(id));
+}
+
+function copy(text: string): Promise<void> {
+	if (typeof text !== "string") return Promise.reject(new TypeError("ui.copy text must be a string"));
+	if (!embedded) {
+		return Promise.reject(new DOMException("Clipboard writes require the canvas or player", "NotSupportedError"));
+	}
+	if (play !== undefined && play.shell !== true) {
+		return Promise.reject(new DOMException("Clipboard writes require the canvas or player", "NotSupportedError"));
+	}
+	if (
+		(play?.shell === true && pendingMount !== undefined) ||
+		(play === undefined && embeddedWalkPending !== undefined)
+	) {
+		return Promise.reject(new DOMException("Clipboard request interrupted by navigation", "AbortError"));
+	}
+	if (pendingClipboardWrites.size >= MAX_PENDING_CLIPBOARD_WRITES) {
+		return Promise.reject(new DOMException("Too many pending clipboard writes", "QuotaExceededError"));
+	}
+	const id = clipboardRequestId();
+	if (id === undefined) {
+		return Promise.reject(new DOMException("Could not allocate a clipboard request", "OperationError"));
+	}
+	const frame = play === undefined ? doc.frame : currentFrame;
+	return new Promise<void>((resolve, reject) => {
+		pendingClipboardWrites.set(id, { frame, resolve, reject });
+		if (play?.shell === true) {
+			postPlayerMessage({ spool: "copy", frame, id, text });
+		} else {
+			window.parent.postMessage({ spool: "copy", frame, id, text }, "*");
+		}
+	});
+}
+
+function settleClipboardWrite(result: ClipboardCopyResult): void {
+	const pending = pendingClipboardWrites.get(result.id);
+	if (pending === undefined || pending.frame !== result.frame) return;
+	pendingClipboardWrites.delete(result.id);
+	if (isClipboardFailureResult(result)) {
+		pending.reject(new DOMException(result.error.message, result.error.name));
+	} else {
+		pending.resolve();
+	}
+}
+
+function isClipboardFailureResult(result: ClipboardCopyResult): result is ClipboardFailureResult {
+	return Object.hasOwn(result, "error");
+}
+
+function abortClipboardWrites(): void {
+	if (pendingClipboardWrites.size === 0) return;
+	const error = new DOMException("Clipboard request interrupted by navigation", "AbortError");
+	for (const pending of pendingClipboardWrites.values()) pending.reject(error);
+	pendingClipboardWrites.clear();
+}
+
+if (play === undefined) {
+	addEventListener("message", (event) => {
+		if (event.source !== window.parent) return;
+		const result = parseClipboardCopyResult(event.data);
+		if (result !== undefined) {
+			settleClipboardWrite(result);
+			return;
+		}
+		const decision = parseWalkDecision(event.data);
+		if (decision === undefined || decision.frame !== doc.frame || decision.id !== embeddedWalkPending?.id) {
+			return;
+		}
+		const pending = embeddedWalkPending;
+		embeddedWalkPending = undefined;
+		if (decision.accepted || (decision.reason === "missing" && pending.direction === "back")) {
+			if (pending.direction === "go") stack.push(doc.frame);
+			else stack.pop();
+			persist();
+		}
+	});
+}
+addEventListener("pagehide", abortClipboardWrites);
 // --- reactive state ---------------------------------------------------------
 
 const stateTarget: SpoolState = {};
@@ -329,8 +436,8 @@ function requestHostSession(): Promise<SessionRecord | undefined> {
 }
 
 /** What the host needs to seed the next frame: storage semantics, JSON-clean. */
-function sessionSnapshot(): SessionRecord {
-	return JSON.parse(JSON.stringify({ scenario: scenarioName, state: stateTarget, stack })) as SessionRecord;
+function sessionSnapshot(history: readonly string[] = stack): SessionRecord {
+	return JSON.parse(JSON.stringify({ scenario: scenarioName, state: stateTarget, stack: history })) as SessionRecord;
 }
 
 let persistScheduled = false;
@@ -510,6 +617,7 @@ function rewindTo(index: number): void {
 	if (deferPlayerAction(() => rewindTo(index))) return;
 	const hop = walkLog[index];
 	if (hop === undefined || index === walkLog.length - 1) return;
+	abortClipboardWrites();
 	const from = currentFrame;
 	stack.length = 0;
 	stack.push(...hop.snapshot.stack);
@@ -523,6 +631,24 @@ function rewindTo(index: number): void {
 
 function post(message: Record<string, unknown>): void {
 	if (embedded) window.parent.postMessage({ ...message, frame: doc.frame }, "*");
+}
+
+function reserveEmbeddedWalk(direction: "go" | "back"): boolean {
+	if (embeddedWalkPending !== undefined) return false;
+	const id = randomRequestId((candidate) => candidate === lastEmbeddedWalkId);
+	if (id === undefined) {
+		console.error("spool: could not allocate a canvas walk");
+		return false;
+	}
+	lastEmbeddedWalkId = id;
+	embeddedWalkPending = { id, direction };
+	return true;
+}
+
+function postEmbeddedWalk(message: Record<string, unknown>): void {
+	const pending = embeddedWalkPending;
+	if (pending === undefined) return;
+	post({ ...message, id: pending.id });
 }
 
 function isFrameName(name: string): boolean {
@@ -570,6 +696,7 @@ async function walkTo(target: string, commit?: () => void): Promise<void> {
 	} catch {
 		// the probe failing is no reason to hold the walk — let the browser tell
 	}
+	abortClipboardWrites();
 	commit?.();
 	window.location.assign(url);
 }
@@ -583,6 +710,7 @@ function navigate(target: string, patch?: Record<string, unknown>, transition?: 
 	// the patch is a write like any other: it lands in the stay it belongs to,
 	// and rolls up into this hop's changed keys
 	if (patch !== undefined) Object.assign(state, patch);
+	if (play === undefined && embedded && !reserveEmbeddedWalk("go")) return;
 	if (play !== undefined) {
 		// the composition is the map: a target outside it is loud but harmless,
 		// exactly like a frame document's failed probe (#5)
@@ -590,6 +718,7 @@ function navigate(target: string, patch?: Record<string, unknown>, transition?: 
 			console.error(`spool: no frame "${target}" to walk to`);
 			return;
 		}
+		abortClipboardWrites();
 		const from = currentFrame;
 		stack.push(from);
 		reportWalk(from, target);
@@ -601,9 +730,8 @@ function navigate(target: string, patch?: Record<string, unknown>, transition?: 
 	if (embedded) {
 		// the host owns embedded walks; the snapshot rides along so it can
 		// seed the target frame's boot with this session
-		stack.push(doc.frame);
-		persist();
-		post({ spool: "go", target, session: sessionSnapshot() });
+		abortClipboardWrites();
+		postEmbeddedWalk({ spool: "go", target, session: sessionSnapshot([...stack, doc.frame]) });
 		return;
 	}
 	// the push commits only when the walk really happens, so a typo'd target
@@ -620,22 +748,27 @@ function go(target: string, patch?: Record<string, unknown>): void {
 
 function back(): void {
 	if (deferPlayerAction(back)) return;
-	const target = stack.pop();
+	const target = stack.at(-1);
 	if (target === undefined) return;
 	if (play !== undefined) {
+		stack.pop();
+		abortClipboardWrites();
 		const from = currentFrame;
 		currentFrame = target;
 		recordHop("back", from, target);
 		requestScreenSwap(from, "back");
 		return;
 	}
+	if (embedded && !reserveEmbeddedWalk("back")) return;
 	// the pop stays committed even if the frame vanished mid-session: backing
 	// past a deleted frame beats retrying it forever
-	persist();
 	if (embedded) {
-		post({ spool: "back", target, session: sessionSnapshot() });
+		abortClipboardWrites();
+		postEmbeddedWalk({ spool: "back", target, session: sessionSnapshot(stack.slice(0, -1)) });
 		return;
 	}
+	stack.pop();
+	persist();
 	void walkTo(target);
 }
 
@@ -861,6 +994,7 @@ async function restartSession(deferWhenPending = true): Promise<boolean> {
 		if (deferWhenPending) deferPlayerAction(() => void restartSession());
 		return false;
 	}
+	abortClipboardWrites();
 	mockConfig = scenario.mock;
 	const from = currentFrame;
 	stack.length = 0;
@@ -1051,6 +1185,11 @@ function followGeometry(): void {
 		});
 	};
 	receivePlayerMessages((message) => {
+		const clipboard = parseClipboardCopyResult(message);
+		if (clipboard !== undefined) {
+			settleClipboardWrite(clipboard);
+			return;
+		}
 		if (message.spool === "player-geometry") {
 			if (
 				typeof message.revision !== "number" ||
@@ -1590,7 +1729,7 @@ function useSpoolState(): SpoolState {
 	return state;
 }
 
-export const ui: SpoolUi = Object.freeze({ state, use: useSpoolState, go, back });
+export const ui: SpoolUi = Object.freeze({ state, use: useSpoolState, go, back, copy });
 
 installMock();
 bindDataGo();

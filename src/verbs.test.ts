@@ -180,6 +180,14 @@ describe("skill", () => {
 		expect(flows).toContain("pass a callback");
 	});
 
+	it("teaches clipboard writes as awaited user interactions", () => {
+		const flows = skillText("flows");
+		expect(flows).toContain("await ui.copy(text)");
+		expect(flows).toContain("click or non-reserved key handler");
+		expect(flows).toContain("Show copied state only after");
+		expect(flows).toContain("Clipboard reads and paste are not available");
+	});
+
 	it("distinguishes html browser boots from inert terminal persisted-grid shots in the overview", () => {
 		expect(skillText()).toContain(
 			"The CLI boots HTML frames in spool's own headless Chrome; it never reads the human's canvas. A terminal shot executes nothing and rasterizes only a persisted source-current grid to SVG.",

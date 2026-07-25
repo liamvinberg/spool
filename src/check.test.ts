@@ -602,6 +602,28 @@ describe("offline design checking", () => {
 		expect(messages(root)).toEqual([]);
 	});
 
+	it("types ui.copy as a Promise<void> clipboard write", () => {
+		const root = makeTempDir();
+		markProject(root);
+		writeFrame(
+			root,
+			"home",
+			'import { ui } from "spool";\nconst copied: Promise<void> = ui.copy("invite link");\nvoid copied;\n',
+		);
+
+		expect(messages(root)).toEqual([]);
+	});
+
+	it("requires ui.copy text to be a string", () => {
+		const root = makeTempDir();
+		markProject(root);
+		writeFrame(root, "home", 'import { ui } from "spool";\nui.copy(42);\n');
+
+		expect(messages(root)).toEqual([
+			"design/frames/home/frame.tsx:2:9 TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.",
+		]);
+	});
+
 	it("reports missing local CSS and JavaScript imports", () => {
 		const root = makeTempDir();
 		markProject(root);
