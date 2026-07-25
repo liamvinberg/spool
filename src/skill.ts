@@ -67,7 +67,7 @@ Pages group frames into journeys: a folder under frames/ without a frame entry (
 
 frame.json is the one file both hands write, geometry only: spool fills it in when missing (390×844, placed beside its own page's frames) and rewrites it as the human drags and resizes; write w/h yourself for an exact size. Beyond that, spool's hands touch your files exactly one more way — the human's delete moves a frame folder to the OS Trash. Source is never edited from the canvas.
 
-The component: a React function component, hooks and all, rendered into #root of a document spool assembles — finished CSS, tokens, fonts.css, the import map, and the runtime are injected; html, body, and #root have height: 100%, so h-full reaches the frame edge. Frames are blank until React commits; the canvas covers boots with thumbnails. State split: useState is what a widget feels, ui.state is what the app knows (topic: flows).
+The component: a React function component, hooks and all, rendered into #root of a document spool assembles — finished CSS, tokens, fonts.css, the import map, and the runtime are injected; html, body, and #root have height: 100%, so h-full reaches the frame edge. Nested flex-fill chains need a definite h-full at each link; min-h-full does not give flex-1 a definite height. Frames are blank until React commits; the canvas covers boots with thumbnails. State split: useState is what a widget feels, ui.state is what the app knows (topic: flows).
 
 shared/ui components take props, never knowledge — importing "spool" there fails the compile. Flow and app state live in frames; a shared component receives values and callbacks. That boundary is what keeps shared/ui able to move into a product unchanged.
 
@@ -101,6 +101,8 @@ data-go="<frame-name>" on any element walks there on click — nearest data-go a
   ui.back()             pop the stack and walk back; empty stack is a quiet no-op
   ui.state              the session's flat shared state: a plain mutable object, any write re-renders subscribers
   ui.use()              hook — subscribe the calling component to ui.state changes
+
+For a shared html component, keep the literal ui.go("target") call or data-go navigation in the frame-owned file and pass a callback or prop into shared UI. Spool does not traverse imports to guess a flow claim.
 
 Coded walks carry no transition name — data-transition rides the element, ui.go has no third argument. Walking to a frame that doesn't exist logs an error and stays put; a typo never eats the session. ui.state is schemaless and shared by every frame in the session: initialize defensively (ui.state.items ??= [...]) because any frame can be a session's first. Top-level keys are the unit of reasoning; nested writes still react.
 
@@ -138,6 +140,8 @@ Rule keys are exactly status, fixture (a fixtures/ name), latency (ms), and body
 There is no programmable mock — behavior richer than rules belongs in the frame: optimistic ui.state updates over theater requests is the idiom.`,
 
 	styling: `Tailwind v4, compiled at serve: write utility classes in JSX and the document arrives with finished CSS — theme, preflight, exactly the utilities your source uses. No config file, no directives, no build step of yours; the compiler is spool's, pinned per format version, arbitrary values and variants all working.
+
+Tailwind v4 puts important at the end: mt-3.5!, not !mt-3.5.
 
 Classes first, real CSS when classes can't say it: a <style> element in the frame for one-offs, or a plain .css import. transitions.css and fonts.css stay plain CSS.
 
