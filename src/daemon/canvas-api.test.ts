@@ -1,8 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { makeApp, makeProject, makeTempDir, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
 import { createDaemonApp } from "./app";
+import { writeSession } from "./session";
+import { createMachineStateWatchHarness } from "./session-test-harness";
 import { terminalSourceVersion } from "./term-source";
 
 /** Smallest real PNG: 1×1 transparent pixel. */
@@ -240,11 +242,6 @@ describe("the project registry for home", () => {
 		const kept = makeProject(spoolDir);
 		const gone = makeProject(spoolDir);
 		const app = makeApp(spoolDir);
-		await app.request("/api/session", {
-			method: "PUT",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ open: [kept.root, gone.root] }),
-		});
 
 		const res = await app.request("/api/projects/forget", {
 			method: "POST",
@@ -258,6 +255,114 @@ describe("the project registry for home", () => {
 		// the registry forgets; the folder is the human's, and stays
 		expect(existsSync(join(gone.root, "design"))).toBe(true);
 		expect(await (await app.request("/api/session")).json()).toEqual({ open: [kept.root] });
+	});
+
+	it("emits one registry and one session event when forgetting an open project", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const kept = makeProject(spoolDir);
+		const gone = makeProject(spoolDir);
+		const watchHarness = createMachineStateWatchHarness();
+		const app = makeApp(spoolDir, { machineStateWatchAdapter: watchHarness.adapter });
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const events = sseReader(await app.request("/api/events", { signal: controller.signal }));
+		expect((await events.next()).event).toBe("hello");
+
+		const response = await app.request("/api/projects/forget", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ root: gone.root }),
+		});
+
+		expect(response.status).toBe(204);
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "registry" } });
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "session" } });
+		expect(await (await app.request("/api/session")).json()).toEqual({ open: [kept.root] });
+
+		// The mutation publishes synchronously. Its later filesystem notifications
+		// must not replay either event through the watcher.
+		watchHarness.changed("registry.json");
+		watchHarness.changed("session.json");
+		watchHarness.flush();
+
+		writeSession(spoolDir, { open: [] });
+		watchHarness.changed("session.json");
+		watchHarness.flush();
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "session" } });
+
+		const { registerProject } = await import("../registry");
+		registerProject(spoolDir, makeTempDir());
+		watchHarness.changed("registry.json");
+		watchHarness.flush();
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "registry" } });
+		expect(await (await app.request("/api/session")).json()).toEqual({ open: [] });
+		expect((await (await app.request("/api/projects")).json()).projects).toHaveLength(2);
+	});
+
+	it("emits only a registry event when forgetting a registered closed project", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const kept = makeProject(spoolDir);
+		const gone = makeProject(spoolDir);
+		const watchHarness = createMachineStateWatchHarness();
+		const app = makeApp(spoolDir, { machineStateWatchAdapter: watchHarness.adapter });
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const events = sseReader(await app.request("/api/events", { signal: controller.signal }));
+		expect((await events.next()).event).toBe("hello");
+
+		// Closing elsewhere is already on disk, but its watcher notification has
+		// not reconciled yet when home forgets the now-closed project.
+		writeSession(spoolDir, { open: [kept.root] });
+		watchHarness.changed("session.json");
+		const response = await app.request("/api/projects/forget", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ root: gone.root }),
+		});
+
+		expect(response.status).toBe(204);
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "registry" } });
+		watchHarness.flush();
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "session" } });
+
+		watchHarness.changed("registry.json");
+		watchHarness.changed("session.json");
+		watchHarness.flush();
+
+		writeSession(spoolDir, { open: [] });
+		watchHarness.changed("session.json");
+		watchHarness.flush();
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "session" } });
+
+		const { registerProject } = await import("../registry");
+		registerProject(spoolDir, makeTempDir());
+		watchHarness.changed("registry.json");
+		watchHarness.flush();
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "registry" } });
+	});
+
+	it("does not swallow a queued registry event when forgetting an unknown root", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		makeProject(spoolDir);
+		const watchHarness = createMachineStateWatchHarness();
+		const app = makeApp(spoolDir, { machineStateWatchAdapter: watchHarness.adapter });
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const events = sseReader(await app.request("/api/events", { signal: controller.signal }));
+		expect((await events.next()).event).toBe("hello");
+
+		const { registerProject } = await import("../registry");
+		registerProject(spoolDir, makeTempDir());
+		watchHarness.changed("registry.json");
+		const response = await app.request("/api/projects/forget", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ root: "/somewhere/never-registered" }),
+		});
+
+		expect(response.status).toBe(404);
+		watchHarness.flush();
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "registry" } });
 	});
 
 	it("404s forgetting a root that was never registered", async () => {
@@ -289,30 +394,191 @@ describe("the project registry for home", () => {
 });
 
 describe("the app session", () => {
+	it("reports a post-start session read failure and observes its repair", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root } = makeProject(spoolDir);
+		const watchHarness = createMachineStateWatchHarness();
+		const failures: Error[] = [];
+		const app = makeApp(spoolDir, {
+			machineStateWatchAdapter: watchHarness.adapter,
+			onMachineStateWatchError: (error) => failures.push(error),
+		});
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const events = sseReader(await app.request("/api/events", { signal: controller.signal }));
+		expect((await events.next()).event).toBe("hello");
+
+		const sessionFile = join(spoolDir, "session.json");
+		rmSync(sessionFile);
+		mkdirSync(sessionFile);
+		watchHarness.changed("session.json");
+		watchHarness.flush();
+
+		expect(failures.at(-1)?.message).toContain(`cannot read session at ${sessionFile}`);
+		expect((await app.request("/api/health")).status).toBe(200);
+
+		const { registerProject } = await import("../registry");
+		registerProject(spoolDir, makeTempDir());
+		watchHarness.changed("registry.json");
+		watchHarness.flush();
+
+		rmSync(sessionFile, { recursive: true });
+		writeSession(spoolDir, { open: [root] });
+		watchHarness.changed("session.json");
+		watchHarness.flush();
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "registry" } });
+
+		writeSession(spoolDir, { open: [] });
+		watchHarness.changed("session.json");
+		watchHarness.flush();
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "session" } });
+	});
+
 	it("round-trips the open-tab list, admitting only registered roots", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root } = makeProject(spoolDir);
 		const app = makeApp(spoolDir);
 
-		expect(await (await app.request("/api/session")).json()).toEqual({ open: [] });
+		expect(await (await app.request("/api/session")).json()).toEqual({ open: [root] });
 
 		const put = await app.request("/api/session", {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ open: [root] }),
+			body: JSON.stringify({ root, open: false }),
 		});
 		expect(put.status).toBe(204);
-		expect(await (await app.request("/api/session")).json()).toEqual({ open: [root] });
+		expect(await (await app.request("/api/session")).json()).toEqual({ open: [] });
 
 		const rogue = await app.request("/api/session", {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ open: ["/somewhere/never-registered"] }),
+			body: JSON.stringify({ root: "/somewhere/never-registered", open: true }),
 		});
 		expect(rogue.status).toBe(400);
 	});
 
-	it("opens a background tab when a project is registered while the daemon runs", { timeout: 20_000 }, async () => {
+	it("emits every successful API session mutation inside one watcher debounce", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root } = makeProject(spoolDir);
+		const { writeSession } = await import("./session");
+		writeSession(spoolDir, { open: [root] });
+		const app = makeApp(spoolDir);
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const stream = await app.request("/api/events", { signal: controller.signal });
+		const events = sseReader(stream);
+		expect((await events.next()).event).toBe("hello");
+
+		const close = app.request("/api/session", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ root, open: false }),
+		});
+		const reopen = app.request("/api/session", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ root, open: true }),
+		});
+		expect((await close).status).toBe(204);
+		expect((await reopen).status).toBe(204);
+
+		expect(await events.next(500)).toEqual({ event: "app", data: { kind: "session" } });
+		expect(await events.next(500)).toEqual({ event: "app", data: { kind: "session" } });
+		expect(await (await app.request("/api/session")).json()).toEqual({ open: [root] });
+	});
+
+	it("emits one session event for one API mutation after its watcher settles", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root } = makeProject(spoolDir);
+		const watchHarness = createMachineStateWatchHarness();
+		const app = makeApp(spoolDir, { machineStateWatchAdapter: watchHarness.adapter });
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const stream = await app.request("/api/events", { signal: controller.signal });
+		const events = sseReader(stream);
+		expect((await events.next()).event).toBe("hello");
+
+		const put = await app.request("/api/session", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ root, open: false }),
+		});
+		expect(put.status).toBe(204);
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "session" } });
+
+		watchHarness.changed("session.json");
+		watchHarness.flush();
+		const { registerProject } = await import("../registry");
+		registerProject(spoolDir, makeTempDir());
+		watchHarness.changed("registry.json");
+		watchHarness.flush();
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "registry" } });
+	});
+
+	it("does not infer a tab from simultaneous registry and session writes", { timeout: 20_000 }, async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root } = makeProject(spoolDir);
+		const app = makeApp(spoolDir);
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const stream = await app.request("/api/events", { signal: controller.signal });
+		const events = sseReader(stream);
+		expect((await events.next()).event).toBe("hello");
+
+		const { readRegistry, registerProject } = await import("../registry");
+		let armed = false;
+		for (let attempt = 0; attempt < 20 && !armed; attempt++) {
+			registerProject(spoolDir, root);
+			armed = await events.next(500).then(
+				(event) => event.event === "app" && (event.data as { kind?: string }).kind === "registry",
+				() => false,
+			);
+		}
+		expect(armed).toBe(true);
+
+		const registeredOnly = (await import("node:fs")).realpathSync(makeTempDir());
+		const { writeSession } = await import("./session");
+		registerProject(spoolDir, registeredOnly);
+		writeSession(spoolDir, { open: [] });
+
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "registry" } });
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "session" } });
+		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([root, registeredOnly]);
+		expect(await (await app.request("/api/session")).json()).toEqual({ open: [] });
+	});
+
+	it("keeps a project open when remove is immediately followed by open", { timeout: 20_000 }, async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root } = makeProject(spoolDir);
+		const app = makeApp(spoolDir);
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const stream = await app.request("/api/events", { signal: controller.signal });
+		const events = sseReader(stream);
+		expect((await events.next()).event).toBe("hello");
+
+		const { readRegistry, registerProject } = await import("../registry");
+		let armed = false;
+		for (let attempt = 0; attempt < 20 && !armed; attempt++) {
+			registerProject(spoolDir, root);
+			armed = await events.next(500).then(
+				(event) => event.event === "app" && (event.data as { kind?: string }).kind === "registry",
+				() => false,
+			);
+		}
+		expect(armed).toBe(true);
+
+		const { removeProject } = await import("../remove");
+		const { openProject } = await import("../open");
+		expect(removeProject(root, spoolDir)).toEqual({ root, removed: true });
+		expect(openProject(root, spoolDir)).toEqual({ root });
+
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "registry" } });
+		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([root]);
+		expect(await (await app.request("/api/session")).json()).toEqual({ open: [root] });
+	});
+
+	it("notifies the running daemon when a command opens a project", { timeout: 20_000 }, async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		makeProject(spoolDir); // registry exists before the app boots
 		const app = makeApp(spoolDir);
@@ -324,18 +590,18 @@ describe("the app session", () => {
 		const events = sseReader(stream);
 		expect((await events.next()).event).toBe("hello");
 
-		// `spool open` in a shell writes only the registry (#12: open registers
-		// live via SSE) — the daemon notices and opens the tab itself
-		const { registerProject } = await import("../registry");
+		// `spool init` and `spool open` durably write both machine-state files;
+		// the daemon observes those writes and tells every already-running page.
 		const late = makeTempDir();
 		const { initProject } = await import("../init");
 		initProject(late, spoolDir);
 		const lateRoot = (await import("node:fs")).realpathSync(late);
+		const { openProject } = await import("../open");
 
 		// macOS arms fs.watch asynchronously: keep bumping openedAt until seen
 		let seen = false;
 		for (let attempt = 0; attempt < 20 && !seen; attempt++) {
-			registerProject(spoolDir, lateRoot);
+			openProject(lateRoot, spoolDir);
 			seen = await events.next(500).then(
 				(event) => event.event === "app",
 				() => false,
@@ -345,6 +611,37 @@ describe("the app session", () => {
 
 		const session = (await (await app.request("/api/session")).json()) as { open: string[] };
 		expect(session.open).toContain(lateRoot);
+	});
+
+	it("emits a session event when remove closes an unknown root while the daemon runs", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		makeProject(spoolDir);
+		const unknown = (await import("node:fs")).realpathSync(makeTempDir());
+		writeSession(spoolDir, { open: [unknown] });
+		const watchHarness = createMachineStateWatchHarness();
+		const app = makeApp(spoolDir, { machineStateWatchAdapter: watchHarness.adapter });
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+
+		const stream = await app.request("/api/events", { signal: controller.signal });
+		const events = sseReader(stream);
+		expect((await events.next()).event).toBe("hello");
+
+		const { removeProject } = await import("../remove");
+		expect(removeProject(unknown, spoolDir)).toEqual({ root: unknown, removed: false });
+
+		watchHarness.changed("session.json");
+		watchHarness.flush();
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "session" } });
+
+		const { registerProject } = await import("../registry");
+		const registryRoot = (await import("node:fs")).realpathSync(makeTempDir());
+		registerProject(spoolDir, registryRoot);
+		watchHarness.changed("registry.json");
+		watchHarness.flush();
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "registry" } });
+
+		expect(await (await app.request("/api/session")).json()).toEqual({ open: [] });
 	});
 });
 

@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { registerAndOpenProject } from "./daemon/session";
 import { SpoolError } from "./errors";
 import { realDir } from "./paths";
-import { registerProject } from "./registry";
 import { scaffoldDirs, scaffoldFiles } from "./templates";
 
 /**
- * Scaffold the design/ contract in an existing product root and register it.
+ * Scaffold the design/ contract, register the product root, and open its tab.
  * Never touches an existing design/, whoever owns it.
  */
 export function initProject(targetDir: string, spoolDir: string): { root: string } {
@@ -29,6 +29,6 @@ export function initProject(targetDir: string, spoolDir: string): { root: string
 		writeFileSync(file, content);
 	}
 
-	registerProject(spoolDir, root);
+	registerAndOpenProject(spoolDir, root);
 	return { root };
 }

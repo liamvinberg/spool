@@ -1,6 +1,7 @@
 import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readSession } from "./daemon/session";
 import { SpoolError } from "./errors";
 import { openProject } from "./open";
 import { readRegistry } from "./registry";
@@ -18,6 +19,7 @@ describe("openProject", () => {
 
 		expect(root).toBe(realpathSync(repo));
 		expect(readRegistry(spoolDir).projects.map((p) => p.root)).toEqual([root]);
+		expect(readSession(spoolDir)).toEqual({ open: [root] });
 	});
 
 	it("registers monorepo packages as separate projects", () => {

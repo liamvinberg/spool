@@ -24,6 +24,7 @@ import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
 import { PortBusyError, SpoolError } from "./errors";
 import { initProject } from "./init";
 import { openProject } from "./open";
+import { removeProject } from "./remove";
 import { skillText } from "./skill";
 import { runUpgrade } from "./upgrade";
 import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
@@ -44,7 +45,7 @@ const program = new Command("spool").description("the live prototyping canvas").
 
 program
 	.command("init")
-	.description("scaffold design/ in a product root and register it")
+	.description("scaffold design/, register the project, and open its tab")
 	.argument("[path]", "product root", ".")
 	.action((path: string) => {
 		const { root } = initProject(path, spoolDir);
@@ -53,7 +54,7 @@ program
 
 program
 	.command("open")
-	.description("resolve the project by walk-up and register it")
+	.description("resolve the project by walk-up, register it, and open its tab")
 	.argument("[path]", "where the walk-up starts", ".")
 	.action(async (path: string) => {
 		const { root } = openProject(path, spoolDir);
@@ -63,6 +64,15 @@ program
 		if (status.running) {
 			process.stdout.write(`canvas: ${status.url}/p/${encodeURIComponent(basename(root))}\n`);
 		}
+	});
+
+program
+	.command("remove")
+	.description("forget one exact registered project root without deleting it")
+	.argument("[path]", "registered project root", ".")
+	.action((path: string) => {
+		const result = removeProject(path, spoolDir);
+		process.stdout.write(result.removed ? `removed ${result.root}\n` : `${result.root} was not registered\n`);
 	});
 
 // --- agent verbs (#25): read-only, cwd-resolved, daemon auto-started ---------

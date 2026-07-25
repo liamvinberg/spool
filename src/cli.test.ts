@@ -119,6 +119,104 @@ describe("spool cli", () => {
 		expect(result.stdout).toContain(realpathSync(repo));
 	});
 
+	it("remove forgets a live project without deleting its files", () => {
+		const home = makeTempDir();
+		const project = makeTempDir();
+		spool(["init", project], home);
+
+		const result = spool(["remove", project], home);
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain(`removed ${realpathSync(project)}`);
+		expect(existsSync(join(project, "design", "canvas.json"))).toBe(true);
+		expect(JSON.parse(readFileSync(join(home, ".spool", "registry.json"), "utf8")).projects).toEqual([]);
+	});
+
+	it("remove forgets an absolute registered root after its folder vanished", () => {
+		const home = makeTempDir();
+		const project = makeTempDir();
+		spool(["init", project], home);
+		const registeredRoot = realpathSync(project);
+		rmSync(project, { recursive: true });
+
+		const result = spool(["remove", registeredRoot], home);
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain(`removed ${registeredRoot}`);
+		expect(JSON.parse(readFileSync(join(home, ".spool", "registry.json"), "utf8")).projects).toEqual([]);
+	});
+
+	it("remove treats an unknown root as an honest goal-state success", () => {
+		const project = makeTempDir();
+
+		const result = spool(["remove", project], makeTempDir());
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain(`${realpathSync(project)} was not registered`);
+	});
+
+	it("remove leaves an ancestor registered when its nested path is named", () => {
+		const home = makeTempDir();
+		const project = makeTempDir();
+		const nested = join(project, "src");
+		mkdirSync(nested);
+		spool(["init", project], home);
+
+		const result = spool(["remove", nested], home);
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain(`${realpathSync(nested)} was not registered`);
+		expect(JSON.parse(readFileSync(join(home, ".spool", "registry.json"), "utf8")).projects).toMatchObject([
+			{ root: realpathSync(project) },
+		]);
+	});
+
+	it("open registers a project again after remove", () => {
+		const home = makeTempDir();
+		const project = makeTempDir();
+		spool(["init", project], home);
+		expect(spool(["remove", project], home).status).toBe(0);
+
+		const result = spool(["open", project], home);
+
+		expect(result.status).toBe(0);
+		expect(JSON.parse(readFileSync(join(home, ".spool", "registry.json"), "utf8")).projects).toMatchObject([
+			{ root: realpathSync(project) },
+		]);
+	});
+
+	it("remove prunes the project from the machine session", () => {
+		const home = makeTempDir();
+		const project = makeTempDir();
+		const other = makeTempDir();
+		spool(["init", project], home);
+		spool(["init", other], home);
+		writeFileSync(
+			join(home, ".spool", "session.json"),
+			JSON.stringify({ open: [realpathSync(project), realpathSync(other)] }),
+		);
+
+		const result = spool(["remove", project], home);
+
+		expect(result.status).toBe(0);
+		expect(JSON.parse(readFileSync(join(home, ".spool", "session.json"), "utf8"))).toEqual({
+			open: [realpathSync(other)],
+		});
+	});
+
+	it("remove prunes an unknown project left open in the machine session", () => {
+		const home = makeTempDir();
+		const project = realpathSync(makeTempDir());
+		mkdirSync(join(home, ".spool"));
+		writeFileSync(join(home, ".spool", "session.json"), JSON.stringify({ open: [project] }));
+
+		const result = spool(["remove", project], home);
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain(`${project} was not registered`);
+		expect(JSON.parse(readFileSync(join(home, ".spool", "session.json"), "utf8"))).toEqual({ open: [] });
+	});
+
 	it("status reports a stopped daemon with a nonzero exit", () => {
 		const result = spool(["status"], makeTempDir());
 

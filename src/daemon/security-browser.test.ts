@@ -296,7 +296,7 @@ describe("hostile project browser boundary", () => {
 				"content-type": "application/json",
 				"X-Spool-Control": project.controlToken,
 			},
-			body: JSON.stringify({ open: [project.root] }),
+			body: JSON.stringify({ root: project.root, open: true }),
 		});
 		expect(session.status).toBe(204);
 

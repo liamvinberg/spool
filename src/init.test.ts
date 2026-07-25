@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readSession } from "./daemon/session";
 import { SpoolError } from "./errors";
 import { initProject } from "./init";
 import { readRegistry } from "./registry";
@@ -127,6 +128,7 @@ describe("initProject", () => {
 
 		expect(root).toBe(realpathSync(dir));
 		expect(readRegistry(spoolDir).projects.map((p) => p.root)).toEqual([root]);
+		expect(readSession(spoolDir)).toEqual({ open: [root] });
 	});
 
 	it("refuses when design/ already exists and is not a spool project", () => {

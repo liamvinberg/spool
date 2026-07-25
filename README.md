@@ -12,12 +12,19 @@ Home: [spool.page](https://spool.page). Status: wayfinding. The map lives in thi
 npm i -g spool.page
 ```
 
+If your npm setup blocks dependency install scripts, use the hardened form below. It permits only esbuild's required install script.
+
+```sh
+npm i -g spool.page --allow-scripts=esbuild
+```
+
 Node 22+. macOS-first; the canvas wants Chrome (WebKit renders transformed iframes blurry).
 
 ```sh
 cd your-product
-spool init        # scaffold design/ and register the project
-spool open        # or: register an already-scaffolded design/ on this machine
+spool init        # scaffold design/, register the project, and open its tab
+spool open        # or: register an existing project and open its tab
+spool remove      # forget the exact registered root; project files stay untouched
 spool serve       # daemon at http://localhost:7766 — any spool command starts it too
 spool autostart   # start at login (launchd); spool autostart off removes it
 ```
@@ -32,3 +39,5 @@ pnpm dev <command>   # the checkout cli — own state dir (~/.spool-dev), own po
 ```
 
 Real projects run the released version; a checkout daemon serves beside it on its own port and state dir (the `dev` script sets `SPOOL_DIR` and `SPOOL_PORT`). Shipping: conventional commits on main feed release-please; merging the release PR is the one human gate — the publish workflow re-runs the gates, then npm trusted publishing releases `spool.page`.
+
+For a disposable implementation lane, register the lane itself with `spool open <lane>` before verification, then run `spool remove <lane>` before erasing the worktree. Do not alias the lane to the registered main checkout: verification must read the lane's source.

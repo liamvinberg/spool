@@ -46,7 +46,7 @@ it("keeps authored geometry byte-identical across idle player and canvas viewpor
 			"content-type": "application/json",
 			"X-Spool-Control": project.controlToken,
 		},
-		body: JSON.stringify({ open: [project.root] }),
+		body: JSON.stringify({ root: project.root, open: true }),
 	});
 	expect(session.status).toBe(204);
 

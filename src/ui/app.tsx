@@ -144,7 +144,7 @@ export function App() {
 			if (!openRef.current.includes(project.root)) {
 				const next = [...openRef.current, project.root];
 				setOpen(next);
-				putSession(next);
+				putSession(project.root, true);
 			}
 			if (focus) focusProject(project.root);
 		},
@@ -155,7 +155,7 @@ export function App() {
 		(root: string) => {
 			const next = openRef.current.filter((r) => r !== root);
 			setOpen(next);
-			putSession(next);
+			putSession(root, false);
 			if (focused === root) focusProject(null);
 		},
 		[focused, focusProject],

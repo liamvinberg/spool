@@ -84,8 +84,8 @@ export async function fetchSession(): Promise<string[]> {
 	return ((await res.json()) as { open: string[] }).open;
 }
 
-export function putSession(open: string[]): void {
-	void client.api.session.$put({ json: { open } });
+export function putSession(root: string, open: boolean): void {
+	void client.api.session.$put({ json: { root, open } });
 }
 
 export async function fetchProjection(project: string): Promise<Projection | undefined> {
