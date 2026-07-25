@@ -25,6 +25,7 @@ import { createChangeHub } from "./events";
 import { deriveFlows, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
+import { createGoReader } from "./go-reader";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerEtag } from "./play";
 import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
@@ -36,6 +37,7 @@ import {
 	projectedKind,
 	summarizeProject,
 } from "./projection";
+import { createResolvePass } from "./resolve-pass";
 import {
 	CONTROL_HEADER,
 	createCapability,
@@ -181,6 +183,12 @@ export function createDaemonApp({
 	const healer = createThumbHealer({
 		capture: (target) => shots.capture(target),
 		stored: (root, frame) => hub.publish(root, { kind: "thumb", frame }),
+	});
+	const goReader = createGoReader();
+	const resolvePass = createResolvePass({
+		read: (target) => goReader.read(target),
+		moved: (root) => hub.publish(root, { kind: "walked" }),
+		now: () => new Date().toISOString(),
 	});
 
 	// Persisted terminal grids remain readable, but the default executor is a
@@ -503,6 +511,29 @@ export function createDaemonApp({
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			return c.json(deriveFlows(project.root));
+		})
+		.post("/api/p/:project/flows/resolve", async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			// the pass dials this daemon: before the server binds there is no
+			// origin to render from, and in-process app.request() never binds one
+			if (selfOrigin === undefined) return c.json({ skipped: 0, read: 0, unavailable: 0, ran: false });
+			const listing = listProjectFrames(project.root);
+			const frames = listing.frames
+				.filter((frame) => frame.kind === "html")
+				.map((frame) => ({ name: frame.name, width: frame.w, height: frame.h }));
+			try {
+				const result = await resolvePass.run({
+					root: project.root,
+					project: c.req.param("project"),
+					origin: selfOrigin,
+					frames,
+				});
+				return c.json({ ...result, ran: true });
+			} catch (error) {
+				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+				throw error;
+			}
 		})
 		.post(
 			"/api/p/:project/walked",
@@ -1064,6 +1095,7 @@ export function createDaemonApp({
 			hub.close();
 			updateChecker.stop();
 			void shots.close();
+			void goReader.close();
 		},
 	};
 }
