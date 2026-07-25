@@ -50,6 +50,21 @@ describe("packed install", () => {
 		expect(anchor).toContain("spool.page");
 		expect(JSON.parse(readFileSync(anchor, "utf8"))).toMatchObject({ name: "spool.page" });
 
+		const clipboardProject = makeTempDir();
+		markProject(clipboardProject);
+		writeFrame(
+			clipboardProject,
+			"home",
+			'import { ui } from "spool";\nconst copied: Promise<void> = ui.copy("packed declaration");\nvoid copied;\n',
+		);
+		const clipboardCheck = spawnSync(spoolBin, ["check", clipboardProject], {
+			encoding: "utf8",
+			env: { ...process.env, SPOOL_DIR: "" },
+		});
+		expect(clipboardCheck.status).toBe(0);
+		expect(clipboardCheck.stdout).toBe("");
+		expect(clipboardCheck.stderr).toBe("");
+
 		const project = makeTempDir();
 		markProject(project);
 		writeDesignFile(project, "shared/entry.cts", 'const dep = require("./dep");\nvoid dep;\n');

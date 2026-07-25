@@ -5,6 +5,7 @@ export interface SpoolUi {
 	use(): Record<string, unknown>;
 	go(target: string, patch?: Record<string, unknown>): void;
 	back(): void;
+	copy(text: string): Promise<void>;
 }
 
 export declare const ui: SpoolUi;

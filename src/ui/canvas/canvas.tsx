@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
+import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import { snapPxToCells } from "../../term/cells";
 import type { Camera, FlowEdge, FlowUnreadable, FrameCollision, Geometry, ProjectedFrame } from "../api";
 import {
@@ -65,6 +67,7 @@ import {
 	switchPage,
 } from "./pages";
 import {
+	clipboardCopyAllowed,
 	describeMessage,
 	type PickedHit,
 	parseFrameMessage,
@@ -76,6 +79,7 @@ import {
 	sessionReply,
 	sitesMessage,
 	treeMessage,
+	walkRejectionReason,
 } from "./protocol";
 import { CanvasSidebar, type SelectModifiers } from "./sidebar";
 import { snapEdge, snapMovedBox } from "./snap";
@@ -289,6 +293,7 @@ export function ProjectCanvas({
 	const walkSession = useRef<SessionRecord | null>(null);
 	const walkTarget = useRef<string | null>(null);
 	const walkGen = useRef(0);
+	const departedFrameDocuments = useRef(new Set<string>());
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
 	// the walk and describe round-trips (#58), pickWaiters' pattern
@@ -387,7 +392,10 @@ export function ProjectCanvas({
 
 	const onIframe = useCallback((name: string, el: HTMLIFrameElement | null) => {
 		if (el === null) iframes.current.delete(name);
-		else iframes.current.set(name, el);
+		else {
+			if (iframes.current.get(name) !== el) departedFrameDocuments.current.delete(name);
+			iframes.current.set(name, el);
+		}
 		lifecycleRef.current.onIframe(name, el);
 	}, []);
 
@@ -665,6 +673,7 @@ export function ProjectCanvas({
 		(target: string) => {
 			const frame = framesRef.current.find((candidate) => candidate.name === target);
 			if (frame === undefined) return;
+			departedFrameDocuments.current.delete(target);
 			walkTarget.current = null;
 			walkSession.current = null;
 			setEntered(target);
@@ -1253,6 +1262,26 @@ export function ProjectCanvas({
 			if (message === undefined) return;
 			if (!ownsFrameMessage(iframes.current, message.frame, event.source)) return;
 			switch (message.spool) {
+				case "copy": {
+					const source = event.source as WindowProxy;
+					const blocked = departedFrameDocuments.current.has(message.frame);
+					const sourceKind = allFramesRef.current.find((candidate) => candidate.name === message.frame)?.kind;
+					if (!clipboardCopyAllowed(sourceKind, enteredRef.current === message.frame, blocked)) {
+						rejectClipboardCopy(
+							message,
+							(result) => source.postMessage(result, "*"),
+							new DOMException(
+								blocked
+									? "Clipboard writes resume when this frame is entered again"
+									: "Clipboard writes require an entered frame",
+								"AbortError",
+							),
+						);
+						return;
+					}
+					fulfillClipboardCopy(message, (result) => source.postMessage(result, "*"));
+					return;
+				}
 				case "loaded":
 					lifecycleRef.current.noteLoaded(message.frame);
 					// a completed boot retires its walk cover — later reboots are honest
@@ -1368,10 +1397,30 @@ export function ProjectCanvas({
 				}
 				case "go":
 				case "back": {
-					if (enteredRef.current !== message.frame) return;
+					const source = event.source as WindowProxy;
+					const active = enteredRef.current === message.frame;
+					const sourceKind = allFramesRef.current.find((candidate) => candidate.name === message.frame)?.kind;
+					const targetExists = allFramesRef.current.some((candidate) => candidate.name === message.target);
+					const rejection = walkRejectionReason(
+						message,
+						sourceKind,
+						active,
+						targetExists,
+						departedFrameDocuments.current.has(message.frame),
+					);
+					if (rejection !== undefined) {
+						if (message.id !== undefined) {
+							source.postMessage(walkRejected(message.frame, message.id, rejection), "*");
+						}
+						return;
+					}
 					// a forward walk in the entered state really happened — witness it (#25)
 					if (message.spool === "go") postWalk(project, message.frame, message.target);
+					if (message.id !== undefined) departedFrameDocuments.current.add(message.frame);
 					walkTo(message.target, message.session ?? null);
+					if (message.id !== undefined) {
+						source.postMessage(walkAccepted(message.frame, message.id), "*");
+					}
 					return;
 				}
 			}

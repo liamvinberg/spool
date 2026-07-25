@@ -1,4 +1,6 @@
+import { type ClipboardCopyRequest, parseClipboardCopyRequest } from "../../runtime/clipboard-protocol";
 import type { SessionRecord } from "../../runtime/frame-runtime";
+import { isWalkId } from "../../runtime/walk-protocol";
 import type { Box } from "./camera";
 
 /**
@@ -97,6 +99,7 @@ export interface SiteAnchor {
 }
 
 export type FrameMessage =
+	| ClipboardCopyRequest
 	| { spool: "loaded"; frame: string }
 	| { spool: "error"; frame: string; error: string }
 	| { spool: "shot"; frame: string; url?: string; error?: string }
@@ -110,14 +113,16 @@ export type FrameMessage =
 	| { spool: "described"; frame: string; id: number; chains: PickedHit[][] }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
 	| { spool: "external"; frame: string; href: string }
-	| { spool: "go"; frame: string; target: string; session?: SessionRecord }
-	| { spool: "back"; frame: string; target: string; session?: SessionRecord };
+	| { spool: "go"; frame: string; target: string; session?: SessionRecord; id?: number }
+	| { spool: "back"; frame: string; target: string; session?: SessionRecord; id?: number };
 
 export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 	if (typeof data !== "object" || data === null) return undefined;
 	const m = data as Record<string, unknown>;
 	if (typeof m.spool !== "string" || typeof m.frame !== "string") return undefined;
 	switch (m.spool) {
+		case "copy":
+			return parseClipboardCopyRequest(data);
 		case "loaded":
 		case "error":
 		case "shot":
@@ -155,14 +160,61 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 		case "external":
 			return webHref(m.href) ? (m as unknown as FrameMessage) : undefined;
 		case "go":
-		case "back":
-			return typeof m.target === "string" ? (m as unknown as FrameMessage) : undefined;
+		case "back": {
+			if (typeof m.target !== "string") return undefined;
+			if (!Object.hasOwn(m, "id")) {
+				return hasExactKeys(m, ["spool", "frame", "target"]) ? (m as unknown as FrameMessage) : undefined;
+			}
+			return hasExactKeys(m, ["spool", "frame", "target", "session", "id"]) &&
+				isWalkId(m.id) &&
+				isSessionRecord(m.session)
+				? (m as unknown as FrameMessage)
+				: undefined;
+		}
 		default:
 			return undefined;
 	}
 }
 
+type WalkMessage = Extract<FrameMessage, { spool: "go" | "back" }>;
+type FrameSourceKind = "html" | "term" | undefined;
+
+export function clipboardCopyAllowed(sourceKind: FrameSourceKind, active: boolean, blocked: boolean): boolean {
+	return sourceKind === "html" && active && !blocked;
+}
+
+export function walkRejectionReason(
+	message: WalkMessage,
+	sourceKind: FrameSourceKind,
+	active: boolean,
+	targetExists: boolean,
+	blocked: boolean,
+): "inactive" | "missing" | undefined {
+	const sequenced = message.id !== undefined;
+	if (!active || (sequenced ? sourceKind !== "html" || blocked : sourceKind !== "term")) return "inactive";
+	return targetExists ? undefined : "missing";
+}
+
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+function isSessionRecord(value: unknown): value is SessionRecord {
+	if (!isRecord(value) || !hasExactKeys(value, ["scenario", "state", "stack"])) return false;
+	return (
+		typeof value.scenario === "string" &&
+		isRecord(value.state) &&
+		Array.isArray(value.stack) &&
+		value.stack.every((name) => typeof name === "string")
+	);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+	const own = Object.keys(value);
+	return own.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
 
 function webHref(value: unknown): value is string {
 	if (typeof value !== "string") return false;
