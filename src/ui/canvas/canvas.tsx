@@ -20,6 +20,7 @@ import {
 	subscribeSse,
 } from "../api";
 import { RibbonMark } from "../icons";
+import { arrange } from "./arrange";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import { CollisionNotice } from "./collision-notice";
@@ -450,6 +451,26 @@ export function ProjectCanvas({
 		[capturePng, project],
 	);
 
+	/**
+	 * The export door (#7), whether the menu or the bare key opened it: one
+	 * frame downloads as PNG, several open the format choice. `returnMenu` is
+	 * the menu to reopen if the choice is cancelled — the key has none.
+	 */
+	const openExport = useCallback(
+		(names: readonly string[], returnMenu: CanvasContextMenu | null) => {
+			if (names.length === 0) return;
+			setExportError(undefined);
+			if (names.length === 1) {
+				setExportReturnMenu(null);
+				void runExport(names, "png");
+				return;
+			}
+			setExportReturnMenu(returnMenu);
+			setExportDialog(framesInCanvasOrder(framesRef.current, names).map((frame) => frame.name));
+		},
+		[runExport],
+	);
+
 	const cancelExportDialog = useCallback(() => {
 		setExportDialog(null);
 		setExportError(undefined);
@@ -822,6 +843,29 @@ export function ProjectCanvas({
 		if (taken === undefined) return;
 		geometryHistory.current = taken.history;
 		applyRects(taken.rects);
+	}, [applyRects, flushNudge]);
+
+	// --- tidy: the layered drawing of the graph, laid over the field ------------
+
+	/**
+	 * Tidy the field: two or more selected frames tidy among themselves,
+	 * otherwise the whole page does. It writes rects like any other gesture, so
+	 * it takes exactly one undo slot and ⌘Z puts every frame back.
+	 */
+	const arrangeFrames = useCallback(() => {
+		flushNudge(); // a pending nudge is its own entry, never part of this one
+		const selection = selectedRef.current;
+		const scope =
+			selection.length > 1 ? framesRef.current.filter((frame) => selection.includes(frame.name)) : framesRef.current;
+		if (scope.length < 2) return;
+		const before = Object.fromEntries(
+			scope.map((frame) => [frame.name, { x: frame.x, y: frame.y, w: frame.w, h: frame.h }]),
+		);
+		const rects = arrange(scope, edgesRef.current);
+		const entry = entryOf(before, rects);
+		if (entry === undefined) return; // already tidy: nothing to undo
+		geometryHistory.current = record(geometryHistory.current, entry);
+		applyRects(rects);
 	}, [applyRects, flushNudge]);
 
 	// --- trash (#23): instant canvas removal, disk move deferred on the toast ---
@@ -2072,6 +2116,15 @@ export function ProjectCanvas({
 
 	useEffect(() => {
 		const pickTarget = () => [...new Set(pickedRef.current.map((pick) => pick.frame))];
+		/**
+		 * The frames a menu verb acts on from the keyboard: the selection, or
+		 * the frames behind an element pick. Inside an entered frame there are
+		 * none — the keys belong to the prototype then, never to the canvas.
+		 */
+		const verbTarget = () => {
+			if (enteredRef.current !== null) return [];
+			return selectedRef.current.length > 0 ? [...selectedRef.current] : pickTarget();
+		};
 		const isTyping = (target: EventTarget | null) =>
 			target instanceof HTMLElement &&
 			(target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
@@ -2141,6 +2194,12 @@ export function ProjectCanvas({
 				}
 				return;
 			}
+			if (!event.repeat && event.shiftKey && (event.key === "a" || event.key === "A")) {
+				// ⇧A tidies the field; one ⌘Z puts every frame back where it was
+				event.preventDefault();
+				if (gesture.current.kind === "idle" || gesture.current.kind === "pan") arrangeFrames();
+				return;
+			}
 			if (!event.repeat && !event.shiftKey && (event.key === "t" || event.key === "T")) {
 				// the threads toggle (#34): persisted per project
 				toggleArrows();
@@ -2169,6 +2228,32 @@ export function ProjectCanvas({
 				case "0":
 					resetZoom();
 					break;
+				// the menu's verbs (#7) on bare keys, each acting on the selection
+				case "p":
+				case "P": {
+					// Play from here wants one frame to open on, exactly as ⇧⏎ does
+					const targets = verbTarget();
+					const [only] = targets;
+					if (targets.length !== 1 || only === undefined) break;
+					playFrame(only);
+					break;
+				}
+				case "r":
+				case "R":
+					for (const name of verbTarget()) reloadFrameDocument(name);
+					break;
+				case "e":
+				case "E":
+					openExport(verbTarget(), null);
+					break;
+				case "Backspace":
+				case "Delete": {
+					const targets = verbTarget();
+					if (targets.length === 0) break;
+					event.preventDefault(); // ⌫ must never walk the browser back
+					stageTrash(targets);
+					break;
+				}
 				case "ArrowLeft":
 				case "ArrowRight":
 				case "ArrowUp":
@@ -2278,6 +2363,10 @@ export function ProjectCanvas({
 		undoTrash,
 		undoGeometry,
 		redoGeometry,
+		arrangeFrames,
+		reloadFrameDocument,
+		openExport,
+		stageTrash,
 		cancelGesture,
 		cancelPicks,
 		toggleArrows,
@@ -2432,6 +2521,11 @@ export function ProjectCanvas({
 				{menu !== null && (
 					<ContextMenu
 						at={menu}
+						tidyLabel={selected.length > 1 ? `Tidy ${selected.length} frames` : "Tidy page"}
+						onTidy={() => {
+							setMenu(null);
+							arrangeFrames();
+						}}
 						exportAction={
 							menu.selection === "element"
 								? null
@@ -2443,16 +2537,7 @@ export function ProjectCanvas({
 												: [menu.frame];
 											const returnMenu = menu;
 											setMenu(null);
-											setExportError(undefined);
-											if (names.length === 1) {
-												setExportReturnMenu(null);
-												void runExport(names, "png");
-												return;
-											}
-											setExportReturnMenu(returnMenu);
-											setExportDialog(
-												framesInCanvasOrder(framesRef.current, names).map((frame) => frame.name),
-											);
+											openExport(names, returnMenu);
 										},
 									}
 						}
