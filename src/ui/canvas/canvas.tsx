@@ -390,7 +390,9 @@ export function ProjectCanvas({
 	const capturePng = useCallback(
 		async (frame: ProjectedFrame): Promise<CapturedFrame> => {
 			if (frame.kind === "html") {
-				const dataUrl = await lifecycleRef.current.capture(frame.name);
+				// an export is the artifact, never the cover: 0 asks for the frame
+				// at full device resolution, losslessly
+				const dataUrl = await lifecycleRef.current.capture(frame.name, 0);
 				if (dataUrl !== undefined) {
 					const png = await pngBytesFromImageBlob(await (await fetch(dataUrl)).blob(), frame.w, frame.h);
 					return { name: frame.name, width: frame.w, height: frame.h, png };

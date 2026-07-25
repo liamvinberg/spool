@@ -1,5 +1,6 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { COVER_MAX_EDGE } from "../../cover";
 import type { Camera, ProjectedFrame } from "../api";
 import { intersects, toWorld, visibleWorldRect } from "./camera";
 import { captureMessage } from "./protocol";
@@ -295,18 +296,20 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	}, []);
 
 	/**
-	 * Ask the frame's shim for a self-capture. Resolves the data URL — or
-	 * undefined for an unmounted, unbooted, already-capturing or mute frame —
-	 * and every landed capture also persists as the thumbnail via onShot.
+	 * Ask the frame's shim for a self-capture, bounded to `maxEdge` device
+	 * pixels on its longest side (0 for the frame at full resolution).
+	 * Resolves the data URL — or undefined for an unmounted, unbooted,
+	 * already-capturing or mute frame — and every landed capture also persists
+	 * as the thumbnail via onShot.
 	 */
-	const requestCapture = useCallback((frame: string): Promise<string | undefined> => {
+	const requestCapture = useCallback((frame: string, maxEdge = COVER_MAX_EDGE): Promise<string | undefined> => {
 		const el = iframes.current.get(frame);
 		if (el?.contentWindow == null || !readyRef.current.has(frame)) return Promise.resolve(undefined);
 		const pending = captureWaiters.current.get(frame);
 		if (pending !== undefined) return Promise.resolve(undefined);
 		return new Promise((resolve) => {
 			captureWaiters.current.set(frame, resolve);
-			el.contentWindow?.postMessage(captureMessage, "*");
+			el.contentWindow?.postMessage(captureMessage(maxEdge), "*");
 			setTimeout(() => {
 				if (captureWaiters.current.get(frame) === resolve) {
 					captureWaiters.current.delete(frame);

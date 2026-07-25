@@ -52,7 +52,7 @@ import { createShotTaker } from "./shots";
 import type { TermExecutor } from "./term-exec";
 import { termFontDataCss, termFontFile } from "./term-fonts";
 import { createTermSessions } from "./term-sessions";
-import { createThumbHealer, readThumb, writeThumb } from "./thumbs";
+import { createThumbHealer, readThumb, UnknownThumbFormatError, writeThumb } from "./thumbs";
 import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
 import { createUpdateChecker } from "./update-check";
 import {
@@ -442,8 +442,8 @@ export function createDaemonApp({
 			c.header("cache-control", "no-cache");
 			if (c.req.header("if-none-match") === thumb.etag) return c.body(null, 304);
 			c.header("etag", thumb.etag);
-			c.header("content-type", "image/png");
-			return c.body(new Uint8Array(thumb.png));
+			c.header("content-type", thumb.type);
+			return c.body(new Uint8Array(thumb.bytes));
 		})
 		.get("/api/p/:project/state", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
@@ -699,12 +699,13 @@ export function createDaemonApp({
 			if (kind === "term") {
 				return c.text(`"${frame}" is a terminal frame — its stills rasterize from the grid`, 400);
 			}
-			const png = Buffer.from(await c.req.arrayBuffer());
-			if (png.byteLength === 0) return c.text("empty capture", 400);
+			const cover = Buffer.from(await c.req.arrayBuffer());
+			if (cover.byteLength === 0) return c.text("empty capture", 400);
 			try {
-				writeThumb(project.root, frame, png);
+				writeThumb(project.root, frame, cover);
 			} catch (error) {
 				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+				if (error instanceof UnknownThumbFormatError) return c.text(error.message, 400);
 				throw error;
 			}
 			hub.publish(project.root, { kind: "thumb", frame });

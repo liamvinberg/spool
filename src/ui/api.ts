@@ -219,11 +219,11 @@ export async function fetchThumb(project: string, frame: string, nonce: number):
 }
 
 /** Self-captures ride a plain PUT — binary body, outside the JSON RPC surface. */
-export async function putThumb(project: string, frame: string, png: Blob): Promise<boolean> {
+export async function putThumb(project: string, frame: string, cover: Blob): Promise<boolean> {
 	const res = await controlFetch(thumbUrl(project, frame, 0), {
 		method: "PUT",
-		headers: { "content-type": "image/png" },
-		body: png,
+		headers: { "content-type": cover.type === "" ? "application/octet-stream" : cover.type },
+		body: cover,
 	});
 	return res.ok;
 }

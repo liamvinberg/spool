@@ -175,7 +175,8 @@ function webHref(value: unknown): value is string {
 }
 
 export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const;
-export const captureMessage = { spool: "capture" } as const;
+/** `maxEdge` bounds the cover's longest side; 0 asks for full device resolution. */
+export const captureMessage = (maxEdge: number) => ({ spool: "capture", maxEdge }) as const;
 export const pickMessage = (x: number, y: number, id: number) => ({ spool: "pick", x, y, id }) as const;
 // "tree?" asks, "tree" answers — distinct kinds, so a reply can never read as a request
 export const treeMessage = (id: number) => ({ spool: "tree?", id }) as const;

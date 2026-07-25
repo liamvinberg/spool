@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { COVER_QUALITY } from "../cover";
 
 /**
  * Assembly of the served frame document. Spool owns the whole page (#16):
@@ -102,7 +103,9 @@ const canvasShimJs = `(() => {
 		if (!on) for (const cb of heldRaf.splice(0)) nativeRaf(cb);
 	}
 
-	async function selfCapture() {
+	// maxEdge bounds the longest side in device pixels — a cover asks for one,
+	// an export passes 0 and gets the frame at full device resolution.
+	async function selfCapture(maxEdge) {
 		const W = document.documentElement.clientWidth || innerWidth;
 		const H = document.documentElement.clientHeight || innerHeight;
 		const clone = document.documentElement.cloneNode(true);
@@ -127,16 +130,21 @@ const canvasShimJs = `(() => {
 		const img = new Image();
 		img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 		await img.decode();
-		const scale = Math.min(window.devicePixelRatio || 1, 2);
+		// A cover is a boot placeholder, not an artifact: bounding its longest
+		// edge turns a tall frame from a 12-megapixel lossless sheet into a few
+		// tens of kilobytes. The white fill below means it never needs alpha, so
+		// the bounded cover encodes as JPEG; an export still asks for lossless.
+		const dpr = Math.min(window.devicePixelRatio || 1, 2);
+		const scale = maxEdge > 0 ? Math.min(dpr, maxEdge / Math.max(W, H)) : dpr;
 		const cv = document.createElement("canvas");
-		cv.width = W * scale;
-		cv.height = H * scale;
+		cv.width = Math.max(1, Math.round(W * scale));
+		cv.height = Math.max(1, Math.round(H * scale));
 		const ctx = cv.getContext("2d");
 		ctx.scale(scale, scale);
 		ctx.fillStyle = "#fff";
 		ctx.fillRect(0, 0, W, H);
 		ctx.drawImage(img, 0, 0);
-		return cv.toDataURL("image/png");
+		return maxEdge > 0 ? cv.toDataURL("image/jpeg", ${COVER_QUALITY}) : cv.toDataURL("image/png");
 	}
 
 	// selector below the boot root: tags with :nth-of-type where siblings repeat
@@ -309,7 +317,7 @@ const canvasShimJs = `(() => {
 		if (m.spool !== "capture") return;
 		const frame = (window.__SPOOL__ || {}).frame;
 		try {
-			const url = await selfCapture();
+			const url = await selfCapture(Number(m.maxEdge) || 0);
 			parent.postMessage({ spool: "shot", frame, url }, "*");
 		} catch (error) {
 			parent.postMessage({ spool: "shot", frame, error: String(error) }, "*");
