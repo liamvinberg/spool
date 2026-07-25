@@ -209,3 +209,24 @@ export function HandIcon({ className }: IconProps) {
 		</svg>
 	);
 }
+
+/** dots — the per-card menu on the projects registry. */
+export function DotsIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} aria-hidden="true">
+			<circle cx="3.5" cy="8" r="1.25" fill="currentColor" />
+			<circle cx="8" cy="8" r="1.25" fill="currentColor" />
+			<circle cx="12.5" cy="8" r="1.25" fill="currentColor" />
+		</svg>
+	);
+}
+
+/** search — filters the registry by name or path. */
+export function SearchIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<circle cx="7" cy="7" r="4.25" stroke="currentColor" strokeWidth="1.4" />
+			<path d="m10.3 10.3 3.2 3.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+		</svg>
+	);
+}
