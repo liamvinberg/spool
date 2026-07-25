@@ -1,4 +1,6 @@
 import { basename } from "node:path";
+import { renderOrigin } from "./daemon/lifecycle";
+import { lookupFrame } from "./daemon/projection";
 import { SpoolError } from "./errors";
 import { readRegistry } from "./registry";
 import { resolveProjectRoot } from "./resolve";
@@ -49,13 +51,25 @@ export async function mintPlayerUrl(
 	frame: string,
 	controlToken: string,
 ): Promise<string> {
+	await assertFrameExists(daemonUrl, name, frame, controlToken);
+	return `${daemonUrl}/play/${encodeURIComponent(name)}?frame=${encodeURIComponent(frame)}`;
+}
+
+/** A direct frame document, for browser automation without player chrome. */
+export async function mintRawUrl(daemonUrl: string, name: string, frame: string, root: string): Promise<string> {
+	if (lookupFrame(root, frame).kind !== "found") {
+		throw new SpoolError(`no frame "${frame}" — a frame is born by writing design/frames/${frame}/frame.tsx`);
+	}
+	return `${renderOrigin(daemonUrl)}/p/${encodeURIComponent(name)}/frames/${encodeURIComponent(frame)}`;
+}
+
+async function assertFrameExists(daemonUrl: string, name: string, frame: string, controlToken: string): Promise<void> {
 	const projection = (await apiJson(`${daemonUrl}/api/p/${encodeURIComponent(name)}/frames`, controlToken)) as {
 		frames: { name: string }[];
 	};
 	if (!projection.frames.some((entry) => entry.name === frame)) {
 		throw new SpoolError(`no frame "${frame}" — a frame is born by writing design/frames/${frame}/frame.tsx`);
 	}
-	return `${daemonUrl}/play/${encodeURIComponent(name)}?frame=${encodeURIComponent(frame)}`;
 }
 
 async function apiJson(url: string, controlToken: string): Promise<unknown> {

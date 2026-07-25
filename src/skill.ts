@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { SpoolError } from "./errors";
 
 /**
@@ -8,6 +9,8 @@ import { SpoolError } from "./errors";
  * shipped behavior — when the runtime changes, this text changes in the same
  * commit.
  */
+
+const spoolPackageJson = fileURLToPath(new URL("../package.json", import.meta.url));
 
 const overview = `spool — the live prototyping canvas. Html frames are TSX components in design/ on disk; the canvas is a projection the human arranges and plays. You author files; spool renders, links, and verifies them.
 
@@ -26,9 +29,9 @@ Lifecycle (offline, take a path):
 Read verbs (work from any cwd inside a registered project, auto-start the daemon):
   spool selection       what the human points at: frame or element, source path and lines
   spool flows           the link graph, read from source: edges, certainty, verified walks
-  spool shot <frame>    boot the frame headless, save a screenshot, print its path
-  spool logs <frame>    the same boot's console output, cached until the document changes
-  spool url <frame>     mint a player URL to drive in your own browser
+  spool shot <frame>    boot headless; viewport, time, and scenario are selectable
+  spool logs <frame>    the same scenario boot's console, cached by compiled source
+  spool url <frame>     mint a player URL; --raw mints the bare frame document
   spool skill [topic]   this text (needs nothing)
 
 The daemon: \`spool serve\` / \`spool status\` / \`spool stop\` are the handles; \`spool autostart\` makes it start at login (macOS); \`spool upgrade\` installs the latest release and restarts it. The CLI boots your frame in spool's own headless Chrome — it never reads the human's canvas.
@@ -65,7 +68,7 @@ Names are folder names — no leading dot, no slashes. Variants are \`--\`-suffi
 
 Pages group frames into journeys: a folder under frames/ without a frame entry (frame.tsx or term.tsx) is a page, its subfolders are frames of either kind, and there is no deeper nesting. Each page is its own canvas; the flat top level is the permanent root page. Start flat — introduce pages when the project grows and flows cluster into distinct journeys. Frame names stay identity project-wide: unique across every page (two claimants is a loud error naming both), so walk targets, URLs, thumbnails, and geometry all survive moves. Create a page by creating its folder; move a frame by moving its folder — and re-aim its relative imports (shared/ sits one level further up from inside a page). The canvas reflects either kind immediately. Walks cross pages freely: the player ignores pages entirely, and the canvas draws a portal marker where an arrow cannot reach.
 
-frame.json is the one file both hands write, geometry only: spool fills it in when missing (390×844, placed beside its own page's frames) and rewrites it as the human drags and resizes; write w/h yourself for an exact size. Beyond that, spool's hands touch your files exactly one more way — the human's delete moves a frame folder to the OS Trash. Source is never edited from the canvas.
+frame.json is the one file both hands write, geometry only: the canvas projection fills it in when missing (390×844, placed beside its own page's frames) and rewrites it as the human drags and resizes; its first fill is create-only, so a sidecar you authored first wins. shot and logs only read geometry and never create this file. Write w/h yourself for an exact size. Beyond that, spool's hands touch your files exactly one more way — the human's delete moves a frame folder to the OS Trash. Source is never edited from the canvas.
 
 The component: a React function component, hooks and all, rendered into #root of a document spool assembles — finished CSS, tokens, fonts.css, the import map, and the runtime are injected; html, body, and #root have height: 100%, so h-full reaches the frame edge. Nested flex-fill chains need a definite h-full at each link; min-h-full does not give flex-1 a definite height. Frames are blank until React commits; the canvas covers boots with thumbnails. State split: useState is what a widget feels, ui.state is what the app knows (topic: flows).
 
@@ -161,20 +164,38 @@ The document's baseline: preflight (the same zero a product starts from), tokens
 
 	verbs: `The project verbs — selection, flows, shot, logs, url — resolve the project by walking up from cwd to design/canvas.json and refuse roots they don't know (\`spool open\` once per machine registers), and auto-start the daemon; \`spool status\` prints where it listens and warns when a running daemon predates the CLI (\`spool stop\`, then any verb, updates it). init and open work offline; skill needs nothing.
 
-The verify loop — shot and logs are two outputs of one boot: your frame's really-served document in spool's own headless Chrome, seeded with the default scenario (always — stage another state by making it default.json's, or see it live via url), viewport from frame.json (else 390×844) at 2×.
+The verify loop — shot and logs are two outputs of one boot: your frame's really-served document in spool's own headless Chrome, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 390×844) at 2×. Reading a missing or invalid sidecar never creates it.
 
-  spool shot <frame>   writes design/.spool/verify/<frame>.png, prints the path.
+  spool shot <frame> [--viewport <width>x<height>] [--at <milliseconds>] [--scenario <name>]
+                       writes design/.spool/verify/<frame>.png, prints the path.
+                       --viewport sets exact positive-integer CSS pixels instead of frame.json.
+                       --at sets the post-commit settle wait; the default is 300ms.
                        A terminal never executes for a shot; an already persisted grid can rasterize to <frame>.svg, otherwise there is no screen (topic: terminals).
                        Doesn't compile: the toolchain's error verbatim on stderr, exit 1, no browser.
                        Throws uncaught while booting: shot still written, errors on stderr, exit 1.
-                       Waits for #root to have children (up to 10s), settles 300ms, shoots — a frame that renders nothing still shoots.
-  spool logs <frame>   prints the same boot's console as [type] text lines, uncaught errors included.
-                       Cached against the compiled document — code and stylesheets, not data: an edit to the frame's folder, shared code, or tokens re-boots; a scenario or fixture edit alone replays stale (narrated on stderr). shot always boots fresh and refreshes the cache — after editing data, shot first, then logs.
+                       Waits for #root to have children (up to 10s), settles, shoots — a frame that renders nothing still shoots.
+  spool logs <frame> [--scenario <name>]
+                       prints the same scenario boot's console as [type] text lines, uncaught errors included.
+                       The cache identity is compiled document plus scenario name. Code and stylesheet edits re-boot; a scenario or fixture JSON edit under the same name does not. shot always boots fresh and refreshes that scenario's cache, so after editing data run shot first, then logs.
+                       A replay says "cache matches current compiled source": it is the fresh boot that shot recorded, not evidence that a source edit was ignored.
                        Scenario failures and mock 404s land here; read shot and logs together.
 
 The first shot on a machine downloads spool's pinned headless Chrome once, narrated on stderr — relay the wait, don't kill it.
 
-The drive loop — \`spool url <frame>\` prints a player URL (append &scenario=<name> to pick a seed) after checking the frame exists. Open it in your own browser and drive the real thing: click, type, walk. Walks you take flip verified marks on the map's derived edges — \`spool flows\` shows which claims a real session has confirmed, most valuable on might edges: a verified faint edge is a branch that actually fired. The player's restart re-reads the scenario, so edit-seed-restart iterates on one URL.
+The drive loop — \`spool url <frame>\` prints the player URL after checking the frame exists. Append &scenario=<name> to pick its seed. \`spool url --raw <frame>\` prints the stable bare frame document instead; append ?scenario=<name> there. Drive the player for walks, or the raw document when its chrome would get in the way.
+
+For Playwright, wait for DOMContentLoaded and then a meaningful selector from the frame. Do not wait for networkidle: Spool's live reload connection stays open. To use the dependency belonging to this exact Spool install from a repo script, copy the installed-package anchor printed below verbatim:
+
+  import { createRequire } from "node:module";
+  const requireFromSpool = createRequire(${JSON.stringify(spoolPackageJson)});
+  const { chromium } = requireFromSpool("playwright-core");
+
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+  await page.goto(rawUrl, { waitUntil: "domcontentloaded" });
+  await page.locator("[data-ready='true']").waitFor(); // use a meaningful selector
+
+Walks you take in the player flip verified marks on the map's derived edges — \`spool flows\` shows which claims a real session has confirmed, most valuable on might edges: a verified faint edge is a branch that actually fired. The player's restart re-reads the scenario, so edit-seed-restart iterates on one URL.
 
 \`spool selection\` prints what the human points at — always a JSON list, empty when nothing is selected:
   frame entries      { kind: "frame", frame, path, size: { w, h } }

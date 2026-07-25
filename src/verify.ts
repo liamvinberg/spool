@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { writeAtomic } from "./atomic-write";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./daemon/design-path";
 import { renderOrigin } from "./daemon/lifecycle";
+import { projectedKind, readFrameGeometry } from "./daemon/projection";
+import { termScreenFile } from "./daemon/thumbs";
 import { SpoolError } from "./errors";
 import { launchHeadlessShell } from "./headless-shell";
 
@@ -10,10 +12,10 @@ import { launchHeadlessShell } from "./headless-shell";
  * shot and logs (#25): two outputs of one headless scenario-seeded boot of the
  * really-served frame document in spool's own Chrome. The CLI runs your frame,
  * never reads the canvas — the boot is a fresh page, seeded like any first
- * open (default scenario, mock installed). Compile errors surface verbatim
- * before a browser ever launches; the log cache under design/.spool/verify is
- * keyed to the document's closure etag, so unchanged source replays without a
- * boot and any edit refreshes.
+ * open (named or default scenario, mock installed). Compile errors surface
+ * verbatim before a browser ever launches; the log cache under
+ * design/.spool/verify is keyed to the document's closure etag and scenario,
+ * so unchanged source in the same scenario replays without a boot.
  */
 
 export interface BootDeps {
@@ -23,7 +25,14 @@ export interface BootDeps {
 	name: string;
 	frame: string;
 	narrate: (line: string) => void;
+	viewport?: { width: number; height: number };
+	at?: number;
+	scenario?: string;
+	/** The post-commit clock seam. */
+	wait?: (milliseconds: number) => Promise<void>;
 }
+
+const DEFAULT_SETTLE_MS = 300;
 
 function controlHeaders(controlToken: string): HeadersInit {
 	return { "X-Spool-Control": controlToken };
@@ -65,7 +74,7 @@ export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
 	if (probe.kind === "error") return { kind: "broken", message: probe.message };
 	if (probe.kind === "missing") return probe;
 	const cached = readLogsCache(deps.root, deps.frame);
-	if (cached !== undefined && cached.etag === probe.etag) {
+	if (cached !== undefined && cached.etag === probe.etag && cached.scenario === scenarioName(deps)) {
 		return { kind: "logs", entries: cached.entries, replayed: true };
 	}
 	const boot = await bootFrame(deps, probe.etag);
@@ -87,12 +96,12 @@ async function termShot(deps: BootDeps): Promise<ShotOutcome> {
 }
 
 async function isTermFrame(deps: BootDeps): Promise<boolean> {
-	const res = await fetch(`${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/frames`, {
-		headers: controlHeaders(deps.controlToken),
-	});
-	if (!res.ok) throw new SpoolError(await res.text());
-	const projection = (await res.json()) as { frames?: { name: string; kind?: string }[] };
-	return projection.frames?.find((entry) => entry.name === deps.frame)?.kind === "term";
+	const kind = projectedKind(deps.root, deps.frame);
+	if (kind !== "term") return false;
+	// Resolve the persisted-screen boundary without asking the canvas projection,
+	// which would materialize a missing geometry sidecar.
+	termScreenFile(deps.root, deps.frame);
+	return true;
 }
 
 export function shotFile(root: string, frame: string): string {
@@ -133,7 +142,7 @@ async function probeCompile(deps: BootDeps): Promise<Probe> {
 type Boot = { kind: "booted"; entries: LogEntry[]; errors: string[] } | { kind: "broken"; message: string };
 
 async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
-	const { w, h } = await frameSize(deps);
+	const { w, h } = frameSize(deps);
 	const browser = await launchHeadlessShell(deps.narrate);
 	try {
 		const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 2 });
@@ -147,7 +156,8 @@ async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
 			entries.push({ type: "pageerror", text });
 		});
 
-		const url = `${renderOrigin(deps.daemonUrl)}/p/${encodeURIComponent(deps.name)}/frames/${encodeURIComponent(deps.frame)}`;
+		const scenario = deps.scenario === undefined ? "" : `?scenario=${encodeURIComponent(deps.scenario)}`;
+		const url = `${renderOrigin(deps.daemonUrl)}/p/${encodeURIComponent(deps.name)}/frames/${encodeURIComponent(deps.frame)}${scenario}`;
 		const response = await page.goto(url, { timeout: 15_000, waitUntil: "domcontentloaded" });
 		if (response !== null && response.status() >= 500) {
 			// the source broke between probe and boot — re-probe for the verbatim text
@@ -164,13 +174,13 @@ async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
 				timeout: 10_000,
 			})
 			.catch(() => {});
-		await page.waitForTimeout(300);
+		await (deps.wait?.(deps.at ?? DEFAULT_SETTLE_MS) ?? page.waitForTimeout(deps.at ?? DEFAULT_SETTLE_MS));
 		const png = await page.screenshot({ type: "png" });
 
 		writeAtomic(shotFile(deps.root, deps.frame), png);
 		writeAtomic(
 			logsFile(deps.root, deps.frame),
-			`${JSON.stringify({ etag, at: new Date().toISOString(), entries }, null, "\t")}\n`,
+			`${JSON.stringify({ etag, scenario: scenarioName(deps), at: new Date().toISOString(), entries }, null, "\t")}\n`,
 		);
 		return { kind: "booted", entries, errors };
 	} finally {
@@ -178,20 +188,21 @@ async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
 	}
 }
 
-/** The frame's own footprint for the viewport: its sidecar, else the default. */
-async function frameSize(deps: BootDeps): Promise<{ w: number; h: number }> {
-	const res = await fetch(`${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/frames`, {
-		headers: controlHeaders(deps.controlToken),
-	});
-	if (!res.ok) throw new SpoolError(await res.text());
-	const projection = (await res.json()) as { frames?: { name: string; w: number; h: number }[] };
-	const frame = projection.frames?.find((entry) => entry.name === deps.frame);
-	if (frame !== undefined) return { w: Math.round(frame.w), h: Math.round(frame.h) };
-	return { w: 390, h: 844 };
+/** An explicit viewport, else the sidecar footprint, else the narrated default. */
+function frameSize(deps: BootDeps): { w: number; h: number } {
+	if (deps.viewport !== undefined) return { w: deps.viewport.width, h: deps.viewport.height };
+	const geometry = readFrameGeometry(deps.root, deps.frame);
+	if (!geometry.persisted) {
+		deps.narrate(`no valid frame.json for "${deps.frame}" — using the ${geometry.w}×${geometry.h} default viewport`);
+	}
+	return { w: Math.round(geometry.w), h: Math.round(geometry.h) };
 }
 
 /** Machine-written cache: anything malformed reads as no cache. */
-function readLogsCache(root: string, frame: string): { etag: string; entries: LogEntry[] } | undefined {
+function readLogsCache(
+	root: string,
+	frame: string,
+): { etag: string; scenario: string; entries: LogEntry[] } | undefined {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(readFileSync(logsFile(root, frame), "utf8"));
@@ -200,8 +211,8 @@ function readLogsCache(root: string, frame: string): { etag: string; entries: Lo
 		return undefined;
 	}
 	if (typeof parsed !== "object" || parsed === null) return undefined;
-	const { etag, entries } = parsed as { etag?: unknown; entries?: unknown };
-	if (typeof etag !== "string" || !Array.isArray(entries)) return undefined;
+	const { etag, scenario, entries } = parsed as { etag?: unknown; scenario?: unknown; entries?: unknown };
+	if (typeof etag !== "string" || typeof scenario !== "string" || !Array.isArray(entries)) return undefined;
 	const sound = entries.every(
 		(entry): entry is LogEntry =>
 			typeof entry === "object" &&
@@ -209,5 +220,9 @@ function readLogsCache(root: string, frame: string): { etag: string; entries: Lo
 			typeof (entry as LogEntry).type === "string" &&
 			typeof (entry as LogEntry).text === "string",
 	);
-	return sound ? { etag, entries } : undefined;
+	return sound ? { etag, scenario, entries } : undefined;
+}
+
+function scenarioName(deps: BootDeps): string {
+	return deps.scenario ?? "default";
 }

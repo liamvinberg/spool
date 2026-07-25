@@ -2,7 +2,7 @@ import { type Dirent, existsSync, lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_COLS, DEFAULT_ROWS, pxForCells } from "../term/cells";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
-import { readGeometry, writeGeometry } from "./geometry";
+import { readGeometry, writeGeometryIfAbsent } from "./geometry";
 import { isSafeName } from "./project-files";
 import { hasThumb as storedThumb, termScreenFile, thumbModified } from "./thumbs";
 
@@ -234,7 +234,11 @@ export function listProjectFrames(root: string): Projection {
 		const baseline = field.length === 0 ? GUTTER : Math.min(...field.map((f) => f.y));
 		const geometry = { x: cursor, y: baseline, ...footprint };
 		try {
-			writeGeometry(join(frame.dir, "frame.json"), geometry, discovery.designDir);
+			const persisted = writeGeometryIfAbsent(join(frame.dir, "frame.json"), geometry, discovery.designDir);
+			if (persisted !== undefined) {
+				placed.push(projected(root, frame, persisted));
+				continue;
+			}
 		} catch (error) {
 			if (error instanceof DesignBoundaryError) throw error;
 			// read-only checkout: placement stays deterministic within this daemon run
@@ -280,18 +284,24 @@ function hasThumb(root: string, frame: string, kind: FrameKind): boolean {
 
 /** One frame's geometry: its sidecar if sound, the default footprint otherwise. Never writes. */
 export function frameGeometry(root: string, frame: string): { w: number; h: number } {
+	const geometry = readFrameGeometry(root, frame);
+	return { w: geometry.w, h: geometry.h };
+}
+
+/** A pure sidecar read for consumers that must not materialize the canvas. */
+export function readFrameGeometry(root: string, frame: string): { w: number; h: number; persisted: boolean } {
 	const found = lookupFrame(root, frame);
-	if (found.kind !== "found") return { w: DEFAULT_W, h: DEFAULT_H };
+	if (found.kind !== "found") return { w: DEFAULT_W, h: DEFAULT_H, persisted: false };
 	let designDir: string;
 	try {
 		designDir = realDesignDir(root);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
-		return { w: DEFAULT_W, h: DEFAULT_H };
+		return { w: DEFAULT_W, h: DEFAULT_H, persisted: false };
 	}
 	const geometry = readGeometry(join(found.dir, "frame.json"), designDir);
-	if (geometry !== undefined) return { w: geometry.w, h: geometry.h };
-	return defaultFootprint(found.frameKind);
+	if (geometry !== undefined) return { w: geometry.w, h: geometry.h, persisted: true };
+	return { ...defaultFootprint(found.frameKind), persisted: false };
 }
 
 export interface ProjectSummary {

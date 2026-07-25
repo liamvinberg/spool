@@ -42,8 +42,31 @@ export function parseGeometry(value: unknown): Geometry | undefined {
 
 /** The canonical sidecar bytes; geometry lands as integers. */
 export function writeGeometry(file: string, { x, y, w, h }: Geometry, designDir: string): void {
-	const rounded = { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
-	writeFileSync(resolveDesignPath(designDir, file), `${JSON.stringify(rounded, null, "\t")}\n`);
+	writeFileSync(resolveDesignPath(designDir, file), geometryBytes({ x, y, w, h }));
+}
+
+/** Fill a newly discovered frame without overwriting an authored sidecar. */
+export function writeGeometryIfAbsent(file: string, geometry: Geometry, designDir: string): Geometry | undefined {
+	const target = resolveDesignPath(designDir, file);
+	try {
+		writeFileSync(target, geometryBytes(geometry), { flag: "wx" });
+		return roundedGeometry(geometry);
+	} catch (error) {
+		if (isAlreadyExists(error)) return readGeometry(target, designDir);
+		throw error;
+	}
+}
+
+function geometryBytes(geometry: Geometry): string {
+	return `${JSON.stringify(roundedGeometry(geometry), null, "\t")}\n`;
+}
+
+function roundedGeometry({ x, y, w, h }: Geometry): Geometry {
+	return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
+}
+
+function isAlreadyExists(error: unknown): error is NodeJS.ErrnoException {
+	return typeof error === "object" && error !== null && (error as NodeJS.ErrnoException).code === "EEXIST";
 }
 
 export function isFiniteNumber(value: unknown): value is number {

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
 import { serveDaemon } from "./daemon/server";
-import { makeTempDir, markProject } from "./test-helpers";
+import { makeProject, makeTempDir, markProject, writeFrame } from "./test-helpers";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
@@ -21,7 +21,77 @@ function spool(args: string[], home: string, cwd?: string, env: Record<string, s
 	});
 }
 
+function spoolAsync(args: string[], home: string, cwd: string) {
+	return new Promise<{ status: number | null; stdout: string; stderr: string }>((done, fail) => {
+		const child = spawn(tsxBin, [cliPath, ...args], {
+			cwd,
+			env: { ...process.env, HOME: home, SPOOL_DIR: "" },
+		});
+		let stdout = "";
+		let stderr = "";
+		child.stdout.setEncoding("utf8");
+		child.stderr.setEncoding("utf8");
+		child.stdout.on("data", (chunk: string) => {
+			stdout += chunk;
+		});
+		child.stderr.on("data", (chunk: string) => {
+			stderr += chunk;
+		});
+		child.on("error", fail);
+		child.on("close", (status) => done({ status, stdout, stderr }));
+	});
+}
+
 describe("spool cli", () => {
+	it.each([
+		[["shot", "cart", "--viewport", "390-by-844"], "--viewport must be <width>x<height> with positive integers"],
+		[["shot", "cart", "--viewport", "0x844"], "--viewport must be <width>x<height> with positive integers"],
+		[["shot", "cart", "--at", "soon"], "--at must be whole milliseconds"],
+		[["shot", "cart", "--scenario", "review/error"], "--scenario must be a scenario name"],
+		[["logs", "cart", "--scenario", ".private"], "--scenario must be a scenario name"],
+	] as const)("rejects an invalid verification option before resolving the project", (args, message) => {
+		const result = spool([...args], makeTempDir());
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain(message);
+	});
+
+	it("lists every verification control on its owning command", () => {
+		const shot = spool(["shot", "--help"], makeTempDir());
+		const logs = spool(["logs", "--help"], makeTempDir());
+		const url = spool(["url", "--help"], makeTempDir());
+
+		expect(shot.stdout).toContain("--viewport <width>x<height>");
+		expect(shot.stdout).toContain("--at <milliseconds>");
+		expect(shot.stdout).toContain("--scenario <name>");
+		expect(logs.stdout).toContain("--scenario <name>");
+		expect(url.stdout).toContain("--raw");
+	});
+
+	it("says a replayed cache matches current compiled source", async () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "quiet", "export default function Quiet() { return <main>quiet</main>; }\n");
+		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
+		onTestFinished(() => daemon.close());
+		const verify = await fetch(`${daemon.url}/api/p/${name}/verify/quiet`, {
+			headers: { "X-Spool-Control": daemon.controlToken },
+		});
+		const { etag } = (await verify.json()) as { etag: string };
+		const cacheDir = join(root, "design", ".spool", "verify");
+		mkdirSync(cacheDir, { recursive: true });
+		writeFileSync(
+			join(cacheDir, "quiet.logs.json"),
+			`${JSON.stringify({ etag, scenario: "default", entries: [] })}\n`,
+		);
+
+		const result = await spoolAsync(["logs", "quiet"], home, root);
+
+		expect(result.status).toBe(0);
+		expect(result.stderr).toContain("cache matches current compiled source");
+	});
+
 	it("init scaffolds, registers and prints the root-config pointer", () => {
 		const home = makeTempDir();
 		const target = makeTempDir();
