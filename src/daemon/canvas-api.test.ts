@@ -10,6 +10,12 @@ const PNG_BYTES = Buffer.from(
 	"base64",
 );
 
+/** Smallest real JPEG: 1×1 — the encoding bounded covers arrive in. */
+const JPEG_BYTES = Buffer.from(
+	"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==",
+	"base64",
+);
+
 const frameTsx = (label: string) => `export default function Frame() {
 	return <p>${label}</p>;
 }
@@ -424,12 +430,50 @@ describe("thumbnails", () => {
 		);
 	});
 
+	it("serves a cover in the encoding that wrote it, one per frame", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "checkout", frameTsx("checkout"));
+		const app = makeApp(spoolDir);
+		const cover = (body: Buffer) =>
+			app.request(`/api/p/${name}/thumbs/checkout`, { method: "PUT", body: new Uint8Array(body) });
+		const thumbs = join(root, "design", ".spool", "thumbs");
+
+		expect((await cover(PNG_BYTES)).status).toBe(204);
+		expect(existsSync(join(thumbs, "checkout.png"))).toBe(true);
+
+		// the bounded re-capture retires the legacy cover — never two covers for
+		// one frame, or the store would keep answering with the stale one
+		expect((await cover(JPEG_BYTES)).status).toBe(204);
+		expect(existsSync(join(thumbs, "checkout.jpg"))).toBe(true);
+		expect(existsSync(join(thumbs, "checkout.png"))).toBe(false);
+
+		const got = await app.request(`/api/p/${name}/thumbs/checkout`);
+		expect(got.headers.get("content-type")).toBe("image/jpeg");
+		expect(Buffer.from(await got.arrayBuffer())).toEqual(JPEG_BYTES);
+	});
+
+	it("refuses a capture that is not an image the store can serve", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "checkout", frameTsx("checkout"));
+		const app = makeApp(spoolDir);
+
+		const put = await app.request(`/api/p/${name}/thumbs/checkout`, {
+			method: "PUT",
+			body: new Uint8Array(Buffer.from("<script>not a cover</script>")),
+		});
+
+		expect(put.status).toBe(400);
+		expect(existsSync(join(root, "design", ".spool", "thumbs"))).toBe(false);
+	});
+
 	it("lets a cover be cached and revalidated instead of re-sent", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "checkout", frameTsx("checkout"));
 		const app = makeApp(spoolDir);
-		await app.request(`/api/p/${name}/thumbs/checkout`, { method: "PUT", body: PNG_BYTES });
+		await app.request(`/api/p/${name}/thumbs/checkout`, { method: "PUT", body: new Uint8Array(JPEG_BYTES) });
 
 		const got = await app.request(`/api/p/${name}/thumbs/checkout`);
 		// covers are the canvas's bulk traffic: held by the browser, revalidated

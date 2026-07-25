@@ -1,10 +1,10 @@
-import { type Dirent, existsSync, lstatSync, readdirSync, statSync } from "node:fs";
+import { type Dirent, existsSync, lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_COLS, DEFAULT_ROWS, pxForCells } from "../term/cells";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { readGeometry, writeGeometry } from "./geometry";
 import { isSafeName } from "./project-files";
-import { termScreenFile, thumbFile } from "./thumbs";
+import { hasThumb as storedThumb, termScreenFile, thumbModified } from "./thumbs";
 
 /**
  * The canvas projection of design/frames (#22), one level of grouping deep
@@ -271,7 +271,7 @@ function hasThumb(root: string, frame: string, kind: FrameKind): boolean {
 	// a terminal's cover is its serialized screen, rasterized daemon-side (#42)
 	try {
 		if (kind === "term") return existsSync(termScreenFile(root, frame));
-		return existsSync(thumbFile(root, frame));
+		return storedThumb(root, frame);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return false;
@@ -322,7 +322,7 @@ export function summarizeProject(root: string): ProjectSummary {
 
 function thumbMtime(root: string, frame: string): number | undefined {
 	try {
-		return statSync(thumbFile(root, frame)).mtimeMs;
+		return thumbModified(root, frame);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
@@ -9,11 +9,48 @@ import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-
  * frames. Self-captures from the canvas persist here; the Playwright fallback
  * writes the same store. App-owned, gitignored, and deliberately invisible to
  * the change watcher — the store publishes its own writes on the hub.
+ *
+ * A cover's format is whatever wrote it, read back from its magic bytes: jpeg
+ * is what both capture paths produce now, png is the legacy store and stays
+ * readable until the frame next covers itself.
  */
 
-export function thumbFile(root: string, frame: string): string {
+/** Covers the store accepts, newest encoding first — the read order too. */
+const THUMB_FORMATS = [
+	{ ext: "jpg", type: "image/jpeg", magic: [0xff, 0xd8, 0xff] },
+	{ ext: "png", type: "image/png", magic: [0x89, 0x50, 0x4e, 0x47] },
+] as const;
+
+type ThumbExt = (typeof THUMB_FORMATS)[number]["ext"];
+
+export function thumbFile(root: string, frame: string, ext: ThumbExt = "jpg"): string {
 	const designDir = realDesignDir(root);
-	return resolveDesignPath(designDir, join(designDir, ".spool", "thumbs", `${frame}.png`));
+	return resolveDesignPath(designDir, join(designDir, ".spool", "thumbs", `${frame}.${ext}`));
+}
+
+/** The stored cover's path and media type, in whichever format wrote it. */
+export function findThumb(root: string, frame: string): { file: string; type: string } | undefined {
+	for (const format of THUMB_FORMATS) {
+		const file = thumbFile(root, frame, format.ext);
+		if (existsSync(file)) return { file, type: format.type };
+	}
+	return undefined;
+}
+
+/** Whether a frame has a cover at all, in any stored format. */
+export function hasThumb(root: string, frame: string): boolean {
+	return findThumb(root, frame) !== undefined;
+}
+
+/** When the stored cover was last written — undefined when there is none. */
+export function thumbModified(root: string, frame: string): number | undefined {
+	const found = findThumb(root, frame);
+	if (found === undefined) return undefined;
+	try {
+		return statSync(found.file).mtimeMs;
+	} catch {
+		return undefined;
+	}
 }
 
 /** A terminal frame's serialized screen (#42) — its still store, beside the thumbs. */
@@ -23,23 +60,57 @@ export function termScreenFile(root: string, frame: string): string {
 }
 
 export interface StoredThumb {
-	png: Buffer;
+	bytes: Buffer;
+	type: string;
 	etag: string;
 }
 
 export function readThumb(root: string, frame: string): StoredThumb | undefined {
-	let png: Buffer;
+	const found = findThumb(root, frame);
+	if (found === undefined) return undefined;
+	let bytes: Buffer;
 	try {
-		png = readFileSync(thumbFile(root, frame));
+		bytes = readFileSync(found.file);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;
 	}
-	return { png, etag: `"thumb-${createHash("sha256").update(png).digest("hex").slice(0, 32)}"` };
+	return {
+		bytes,
+		type: found.type,
+		etag: `"thumb-${createHash("sha256").update(bytes).digest("hex").slice(0, 32)}"`,
+	};
 }
 
-export function writeThumb(root: string, frame: string, png: Buffer): void {
-	writeAtomic(thumbFile(root, frame), png);
+/** The encoding a cover's leading bytes claim — undefined for anything else. */
+export function thumbFormat(bytes: Buffer): { ext: ThumbExt; type: string } | undefined {
+	for (const format of THUMB_FORMATS) {
+		if (format.magic.every((byte, i) => bytes[i] === byte)) return { ext: format.ext, type: format.type };
+	}
+	return undefined;
+}
+
+/** Throws on bytes that are not a cover this store knows how to serve. */
+export function writeThumb(root: string, frame: string, bytes: Buffer): void {
+	// Every candidate path resolves before the bytes are looked at: a cover
+	// path that escapes design/ is that fact whatever the payload turns out to
+	// be, and a format complaint must never mask it.
+	const candidates = THUMB_FORMATS.map((format) => ({ ext: format.ext, file: thumbFile(root, frame, format.ext) }));
+	const format = thumbFormat(bytes);
+	if (format === undefined) throw new UnknownThumbFormatError();
+	for (const candidate of candidates) {
+		// one cover per frame: writing this encoding retires the other, or
+		// `findThumb` would keep answering with the stale file
+		if (candidate.ext === format.ext) writeAtomic(candidate.file, bytes);
+		else rmSync(candidate.file, { force: true });
+	}
+}
+
+export class UnknownThumbFormatError extends Error {
+	constructor() {
+		super("a cover must be a PNG or JPEG image");
+		this.name = "UnknownThumbFormatError";
+	}
 }
 
 export interface HealRequest {

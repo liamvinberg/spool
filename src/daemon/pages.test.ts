@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
+	COVER_PNG,
 	makeApp,
 	makeProject,
 	makeTempDir,
@@ -175,7 +176,7 @@ describe("page-frame stores key by leaf name", () => {
 		const put = await app.request(`/api/p/${name}/thumbs/checkout`, {
 			method: "PUT",
 			headers: { "content-type": "image/png" },
-			body: new Uint8Array([1, 2, 3]),
+			body: COVER_PNG,
 		});
 
 		expect(put.status).toBe(204);

@@ -11,6 +11,14 @@ import { initProject } from "./init";
 import { lookupProjectByName } from "./registry";
 import { canvasJson } from "./templates";
 
+/** A real 1×1 PNG — the cover store only accepts bytes it can identify. */
+export const COVER_PNG = Uint8Array.from(
+	Buffer.from(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XH1dWQAAAABJRU5ErkJggg==",
+		"base64",
+	),
+);
+
 export function makeTempDir(): string {
 	const dir = mkdtempSync(join(tmpdir(), "spool-test-"));
 	onTestFinished(() => rmSync(dir, { recursive: true, force: true }));

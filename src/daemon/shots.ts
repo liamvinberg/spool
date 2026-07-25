@@ -1,5 +1,6 @@
 import type { Browser } from "playwright-core";
 import { chromium } from "playwright-core";
+import { COVER_MAX_EDGE, COVER_QUALITY } from "../cover";
 
 /**
  * Headless frame shots on playwright-core (#12): only playwright-managed
@@ -47,9 +48,13 @@ export function createShotTaker(): ShotTaker {
 		// close() racing a queued heal) must resolve undefined, never reject
 		let page: Awaited<ReturnType<Browser["newPage"]>> | undefined;
 		try {
+			const width = Math.max(1, Math.round(target.width));
+			const height = Math.max(1, Math.round(target.height));
 			page = await live.newPage({
-				viewport: { width: Math.max(1, Math.round(target.width)), height: Math.max(1, Math.round(target.height)) },
-				deviceScaleFactor: 2,
+				viewport: { width, height },
+				// the same bound the canvas's own covers use (COVER_MAX_EDGE): a
+				// healed cover must not be heavier than the one it stands in for
+				deviceScaleFactor: Math.min(2, COVER_MAX_EDGE / Math.max(width, height)),
 			});
 			await page.goto(target.url, { timeout: 10_000, waitUntil: "domcontentloaded" });
 			// frames are blank until React commits (#16) — wait for real content;
@@ -58,7 +63,7 @@ export function createShotTaker(): ShotTaker {
 				timeout: 5000,
 			});
 			await page.waitForTimeout(300);
-			return await page.screenshot({ type: "png" });
+			return await page.screenshot({ type: "jpeg", quality: Math.round(COVER_QUALITY * 100) });
 		} catch {
 			return undefined;
 		} finally {

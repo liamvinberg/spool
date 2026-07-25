@@ -59,7 +59,8 @@ describe("the thumbnail fallback", () => {
 			})
 			.toBe(200);
 		const thumb = await fetch(`${daemon.url}/api/p/${name}/thumbs/cover-me`, control);
-		expect(thumb.headers.get("content-type")).toBe("image/png");
+		// a healed cover is bounded and lossy, like the canvas's own (#8)
+		expect(thumb.headers.get("content-type")).toBe("image/jpeg");
 		expect((await thumb.arrayBuffer()).byteLength).toBeGreaterThan(1000);
 	});
 });
