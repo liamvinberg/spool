@@ -138,6 +138,21 @@ export async function fetchFlows(project: string): Promise<Flows | undefined> {
 	return (await res.json()) as Flows;
 }
 
+/**
+ * Ask the daemon to fill targets the parser could not read by rendering the
+ * frames that declare them (#34). Explicitly asked for, because it costs a page
+ * load per frame per scenario; frames whose read is already fresh cost nothing.
+ */
+export async function resolveFlows(project: string): Promise<{ read: number } | undefined> {
+	try {
+		const res = await client.api.p[":project"].flows.resolve.$post({ param: { project } });
+		if (!res.ok) return undefined;
+		return (await res.json()) as { read: number };
+	} catch {
+		return undefined;
+	}
+}
+
 /** An entered walk really happened — the canvas is the witness (#25). */
 export function postWalk(project: string, from: string, to: string): void {
 	void client.api.p[":project"].walked.$post({ param: { project }, json: { from, to } }).catch(() => {});

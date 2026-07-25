@@ -34,14 +34,16 @@ const FLOWS: Flows = {
 	unreadable: [],
 };
 
-function mount(flows: typeof FLOWS = FLOWS) {
+function mount(flows: Flows | (() => Flows) = FLOWS) {
+	const flowsNow = typeof flows === "function" ? flows : () => flows;
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) return Response.json(PROJECTION);
-			if (url.pathname.endsWith("/flows")) return Response.json(flows);
+			if (url.pathname.endsWith("/flows/resolve")) return Response.json({ skipped: 0, read: 1, unavailable: 0 });
+			if (url.pathname.endsWith("/flows")) return Response.json(flowsNow());
 			return Response.json({});
 		}),
 	);
@@ -215,6 +217,34 @@ describe("the inspector rail", () => {
 		expect(text).toContain("unreadable");
 		expect(text).toContain("shared/ui/rows.tsx:11");
 		expect(text).not.toContain("no outbound links from this frame");
+	});
+
+	it("asks for a render pass on open and shows what it filled in", async () => {
+		// the daemon answers dark before the pass and resolved after it
+		let pass = 0;
+		const canvas = mount(() => {
+			pass++;
+			return pass === 1
+				? { ...FLOWS, edges: [], unreadable: [{ frame: "home", path: "shared/ui/rows.tsx", line: 6 }] }
+				: {
+						...FLOWS,
+						edges: [{ from: "home", to: "menu", certainty: "might", sites: [], resolved: true }],
+						unreadable: [],
+					};
+		});
+		await canvas.render();
+		await act(async () => {
+			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="Expand inspector"]')?.click();
+		});
+		await act(async () => {
+			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="home frame"]')?.click();
+		});
+		await act(async () => tab(canvas.host, "connections")?.click());
+
+		// the pass ran and the graph was re-read: a real destination, not a dark site
+		const text = rail(canvas.host)?.textContent ?? "";
+		expect(canvas.host.querySelector('button[aria-label="menu connection"]')).not.toBeNull();
+		expect(text).not.toContain("unreadable");
 	});
 
 	it("navigates the canvas from an off-page connection instead of walking to it", async () => {

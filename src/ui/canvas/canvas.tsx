@@ -16,6 +16,7 @@ import {
 	putGeometry,
 	putSelection,
 	putThumb,
+	resolveFlows,
 	subscribeSse,
 } from "../api";
 import { RibbonMark } from "../icons";
@@ -493,6 +494,11 @@ export function ProjectCanvas({
 				if (camera !== undefined) setCamera(camera);
 			}
 			if (alive) await Promise.all([refetchFrames(), refetchFlows()]);
+			// dark targets get one render pass per canvas open (#34): frames whose
+			// read is already fresh cost nothing, so this is a no-op on reopen
+			if (alive && (await resolveFlows(project))?.read !== 0) {
+				if (alive) await refetchFlows();
+			}
 		})();
 		return () => {
 			alive = false;
@@ -1162,6 +1168,10 @@ export function ProjectCanvas({
 					void refetchFrames();
 					// an edit moves the graph: edges re-derive, verified marks may drop —
 					// walks themselves stay canvas-silent (#34): they cannot move the map
+					void refetchFlows();
+				} else if (event.kind === "resolved") {
+					// a render pass filled dark targets: unlike a walk, this really
+					// does add edges, so the graph must be re-read
 					void refetchFlows();
 				} else if (event.kind === "shared") {
 					// anything in shared/ can stale every document

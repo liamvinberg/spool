@@ -187,7 +187,7 @@ export function createDaemonApp({
 	const goReader = createGoReader();
 	const resolvePass = createResolvePass({
 		read: (target) => goReader.read(target),
-		moved: (root) => hub.publish(root, { kind: "walked" }),
+		moved: (root) => hub.publish(root, { kind: "resolved" }),
 		now: () => new Date().toISOString(),
 	});
 
