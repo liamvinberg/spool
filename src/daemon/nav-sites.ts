@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { parse } from "@babel/parser";
 import type { Node } from "@babel/types";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
@@ -43,20 +43,8 @@ export interface NavSites {
 
 const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 
-/** The frame is its folder — wherever pages put it: every source file in it,
- * nested ones included. An unresolvable name claims no source at all. */
-export function frameSourceFiles(root: string, frame: string): string[] {
-	const found = lookupFrame(root, frame);
-	if (found.kind !== "found") return [];
-	let designDir: string;
-	let frameDir: string;
-	try {
-		designDir = realDesignDir(root);
-		frameDir = resolveDesignPath(designDir, found.dir);
-	} catch (error) {
-		if (error instanceof DesignBoundaryError) throw error;
-		return [];
-	}
+/** Files in the frame's own folder — the roots of its source graph. */
+function frameFolderFiles(designDir: string, frameDir: string): string[] {
 	try {
 		return readdirSync(frameDir, { withFileTypes: true, recursive: true })
 			.filter(
@@ -72,42 +60,113 @@ export function frameSourceFiles(root: string, frame: string): string[] {
 					if (error instanceof DesignBoundaryError) throw error;
 					return [];
 				}
-			})
-			.sort();
+			});
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return [];
 	}
 }
 
-/** Parses survive the daemon's lifetime keyed to content — same drop-on-edit
- * freshness as the compile cache, without re-walking unchanged files. */
-const parseCache = new Map<string, { hash: string; result: NavSites }>();
+/**
+ * Where one relative specifier lands, or nothing. Bare specifiers are packages
+ * — "react", "spool" — and never project source. Extensionless imports try the
+ * source extensions then the directory's index, matching how the authored
+ * imports in design/ are actually spelled.
+ */
+function resolveLocalImport(designDir: string, fromFile: string, specifier: string): string | undefined {
+	if (!specifier.startsWith("./") && !specifier.startsWith("../")) return undefined;
+	const base = join(dirname(fromFile), specifier);
+	const candidates = [
+		base,
+		...SOURCE_EXTENSIONS.map((ext) => `${base}${ext}`),
+		...SOURCE_EXTENSIONS.map((ext) => join(base, `index${ext}`)),
+	];
+	for (const candidate of candidates) {
+		if (!SOURCE_EXTENSIONS.some((ext) => candidate.endsWith(ext))) continue;
+		try {
+			const resolved = resolveDesignPath(designDir, candidate);
+			if (statSync(resolved).isFile()) return resolved;
+		} catch (error) {
+			// a specifier escaping design/ is not project source: skip it rather
+			// than fail the whole graph, the boundary has already refused the read
+			if (error instanceof DesignBoundaryError) continue;
+		}
+	}
+	return undefined;
+}
 
 /**
- * Every navigation site a frame's folder declares, site paths design-relative
- * so they match data-spool-source stamps and the selection payload.
+ * The frame is its folder plus everything it imports from inside design/ (#34,
+ * amending #5). A shared nav bar's data-go belongs to every frame that mounts
+ * it: the site lives in one file and the walk happens on every page carrying
+ * it. Cycles terminate on the visited set; anything resolving outside design/
+ * is a package, not source. The bundler owns the real closure — this is the
+ * sync reading of it, over the relative specifiers design/ is authored with.
+ */
+export function frameSourceFiles(root: string, frame: string): string[] {
+	const found = lookupFrame(root, frame);
+	if (found.kind !== "found") return [];
+	let designDir: string;
+	let frameDir: string;
+	try {
+		designDir = realDesignDir(root);
+		frameDir = resolveDesignPath(designDir, found.dir);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return [];
+	}
+	const seen = new Set<string>();
+	const queue = frameFolderFiles(designDir, frameDir);
+	for (const file of queue) seen.add(file);
+	for (let at = 0; at < queue.length; at++) {
+		const file = queue[at];
+		if (file === undefined) continue;
+		for (const specifier of readParse(designDir, file)?.imports ?? []) {
+			const resolved = resolveLocalImport(designDir, file, specifier);
+			if (resolved === undefined || seen.has(resolved)) continue;
+			seen.add(resolved);
+			queue.push(resolved);
+		}
+	}
+	return [...seen].sort();
+}
+
+/** Parses survive the daemon's lifetime keyed to content — same drop-on-edit
+ * freshness as the compile cache, without re-walking unchanged files. */
+const parseCache = new Map<string, { hash: string; result: ParsedSource }>();
+
+/** One read-and-parse per file per content, shared by the graph walk and the
+ * site collection so following imports costs no extra parse. */
+function readParse(designDir: string, file: string): ParsedSource | undefined {
+	let content: Buffer;
+	try {
+		content = readFileSync(file);
+	} catch {
+		parseCache.delete(file);
+		return undefined;
+	}
+	const hash = createHash("sha256").update(content).digest("hex");
+	const cached = parseCache.get(file);
+	if (cached !== undefined && cached.hash === hash) return cached.result;
+	const path = relative(designDir, file).split(sep).join("/");
+	const result = parseSource(content.toString("utf8"), path);
+	parseCache.set(file, { hash, result });
+	return result;
+}
+
+/**
+ * Every navigation site a frame's source graph declares, site paths
+ * design-relative so they match data-spool-source stamps and the selection
+ * payload.
  */
 export function frameNavSites(root: string, frame: string): NavSites {
 	const designDir = realDesignDir(root);
 	const out: NavSites = { sites: [], unreadable: [] };
 	for (const file of frameSourceFiles(root, frame)) {
-		let content: Buffer;
-		try {
-			content = readFileSync(file);
-		} catch {
-			parseCache.delete(file);
-			continue;
-		}
-		const hash = createHash("sha256").update(content).digest("hex");
-		let cached = parseCache.get(file);
-		if (cached === undefined || cached.hash !== hash) {
-			const path = relative(designDir, file).split(sep).join("/");
-			cached = { hash, result: parseNavSites(content.toString("utf8"), path) };
-			parseCache.set(file, cached);
-		}
-		out.sites.push(...cached.result.sites);
-		out.unreadable.push(...cached.result.unreadable);
+		const parsed = readParse(designDir, file);
+		if (parsed === undefined) continue;
+		out.sites.push(...parsed.sites);
+		out.unreadable.push(...parsed.unreadable);
 	}
 	return out;
 }
@@ -115,7 +174,19 @@ export function frameNavSites(root: string, frame: string): NavSites {
 /** Read every navigation site the source declares. Never throws: source that
  * does not parse claims nothing — the compile surface owns reporting it. */
 export function parseNavSites(source: string, path: string): NavSites {
-	const out: NavSites = { sites: [], unreadable: [] };
+	const { sites, unreadable } = parseSource(source, path);
+	return { sites, unreadable };
+}
+
+/** What one file contributes to a frame: the walks it declares and the files
+ * it pulls in. Both come out of the single parse. */
+interface ParsedSource extends NavSites {
+	/** Every specifier the file imports, raw — resolution happens per importer. */
+	imports: string[];
+}
+
+function parseSource(source: string, path: string): ParsedSource {
+	const out: ParsedSource = { sites: [], unreadable: [], imports: [] };
 	let program: Node;
 	try {
 		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
@@ -123,6 +194,21 @@ export function parseNavSites(source: string, path: string): NavSites {
 		return out;
 	}
 	walk(program, [], (node, ancestors) => {
+		// static import/export-from and dynamic import(): every way a file names
+		// another file, type-only imports included — they carry no walk of their
+		// own but the graph is cheaper to keep whole than to prune
+		if (
+			(node.type === "ImportDeclaration" ||
+				node.type === "ExportNamedDeclaration" ||
+				node.type === "ExportAllDeclaration") &&
+			node.source?.type === "StringLiteral"
+		) {
+			out.imports.push(node.source.value);
+		}
+		if (node.type === "CallExpression" && node.callee.type === "Import") {
+			const arg = node.arguments[0] as Node | undefined;
+			if (arg?.type === "StringLiteral") out.imports.push(arg.value);
+		}
 		if (node.type === "JSXAttribute" && node.name.type === "JSXIdentifier" && node.name.name === "data-go") {
 			const line = node.loc?.start.line ?? 0;
 			const value =
