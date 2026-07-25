@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
+import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { frameNavSites, frameSourceFiles, type NavSite } from "./nav-sites";
 import { isSafeName } from "./project-files";
 import { frameNames } from "./projection";
@@ -74,7 +75,8 @@ interface VerifiedMark {
 }
 
 function walkedFile(root: string): string {
-	return join(root, "design", ".spool", "walked.json");
+	const designDir = realDesignDir(root);
+	return resolveDesignPath(designDir, join(designDir, ".spool", "walked.json"));
 }
 
 /** Machine-written cache: anything malformed reads as no marks at all. */
@@ -82,7 +84,8 @@ function readVerifiedMarks(root: string): VerifiedMark[] {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(readFileSync(walkedFile(root), "utf8"));
-	} catch {
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
 		return [];
 	}
 	if (typeof parsed !== "object" || parsed === null) return [];

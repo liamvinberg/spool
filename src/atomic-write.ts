@@ -1,4 +1,5 @@
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 /**
@@ -7,7 +8,13 @@ import { dirname } from "node:path";
  */
 export function writeAtomic(file: string, data: string | Buffer): void {
 	mkdirSync(dirname(file), { recursive: true });
-	const tmp = `${file}.tmp`;
-	writeFileSync(tmp, data);
-	renameSync(tmp, file);
+	const tmp = `${file}.${randomUUID()}.tmp`;
+	try {
+		// wx never follows a pre-planted symlink. The random name also keeps
+		// concurrent writers from sharing a staging file.
+		writeFileSync(tmp, data, { flag: "wx" });
+		renameSync(tmp, file);
+	} finally {
+		rmSync(tmp, { force: true });
+	}
 }

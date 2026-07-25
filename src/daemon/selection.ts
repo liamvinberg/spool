@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, sep } from "node:path";
+import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { extractJsxSpan } from "./jsx-span";
 import { isSafeName } from "./project-files";
 import { frameFolder, frameGeometry, lookupFrame } from "./projection";
@@ -137,9 +138,9 @@ export interface Stamp {
 }
 
 /**
- * "frames/cart/frame.tsx:4:4" → a file safely inside design/. Stamps ride
- * DOM attributes, so anything malformed or escaping design/ reads as no
- * stamp at all — the entry degrades, the read never leaves the project.
+ * "frames/cart/frame.tsx:4:4" → a file safely inside design/. Malformed or
+ * lexical traversal stamps degrade to no stamp. A symlink escape fails with
+ * the shared path-relative boundary diagnostic.
  */
 export function parseStamp(root: string, source: string): Stamp | undefined {
 	const match = source.match(/^(.+):(\d+):(\d+)$/);
@@ -150,7 +151,15 @@ export function parseStamp(root: string, source: string): Stamp | undefined {
 	const line = Number.parseInt(lineText, 10);
 	const column = Number.parseInt(columnText, 10);
 	if (line < 1 || column < 1) return undefined;
-	return { file: join(root, "design", rel), rel: rel.split(sep).join("/"), line, column };
+	let file: string;
+	try {
+		const designDir = realDesignDir(root);
+		file = resolveDesignPath(designDir, join(designDir, rel), raw);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return undefined;
+	}
+	return { file, rel: rel.split(sep).join("/"), line, column };
 }
 
 function spanOf(stamp: Stamp): { lines: [number, number]; excerpt: string } | undefined {

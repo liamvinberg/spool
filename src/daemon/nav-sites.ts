@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { parse } from "@babel/parser";
 import type { Node } from "@babel/types";
+import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { lookupFrame } from "./projection";
 
 /**
@@ -47,12 +48,34 @@ const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 export function frameSourceFiles(root: string, frame: string): string[] {
 	const found = lookupFrame(root, frame);
 	if (found.kind !== "found") return [];
+	let designDir: string;
+	let frameDir: string;
 	try {
-		return readdirSync(found.dir, { withFileTypes: true, recursive: true })
-			.filter((entry) => entry.isFile() && SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext)))
-			.map((entry) => join(entry.parentPath, entry.name))
+		designDir = realDesignDir(root);
+		frameDir = resolveDesignPath(designDir, found.dir);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return [];
+	}
+	try {
+		return readdirSync(frameDir, { withFileTypes: true, recursive: true })
+			.filter(
+				(entry) =>
+					(entry.isFile() || entry.isSymbolicLink()) && SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext)),
+			)
+			.flatMap((entry) => {
+				const file = join(entry.parentPath, entry.name);
+				try {
+					const resolved = resolveDesignPath(designDir, file);
+					return statSync(resolved).isFile() ? [resolved] : [];
+				} catch (error) {
+					if (error instanceof DesignBoundaryError) throw error;
+					return [];
+				}
+			})
 			.sort();
-	} catch {
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
 		return [];
 	}
 }
@@ -66,7 +89,7 @@ const parseCache = new Map<string, { hash: string; result: NavSites }>();
  * so they match data-spool-source stamps and the selection payload.
  */
 export function frameNavSites(root: string, frame: string): NavSites {
-	const designDir = join(root, "design");
+	const designDir = realDesignDir(root);
 	const out: NavSites = { sites: [], unreadable: [] };
 	for (const file of frameSourceFiles(root, frame)) {
 		let content: Buffer;

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { navSequence } from "../term/osc";
@@ -46,7 +46,7 @@ describe("attach and stream", () => {
 		expect(spawned[0]?.spawn).toMatchObject({
 			cols: 80,
 			rows: 24,
-			entry: join(root, "design", "frames", "dash", "term.tsx"),
+			entry: join(realpathSync(join(root, "design")), "frames", "dash", "term.tsx"),
 		});
 		// size precedes the snapshot: the client must grid its emulator before the replay
 		expect(client.controls[0]).toMatchObject({ t: "size", cols: 80, rows: 24 });
