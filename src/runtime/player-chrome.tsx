@@ -78,9 +78,12 @@ const IDLE_MS = 2000;
 export function Player({
 	frames,
 	controller,
+	host,
 }: {
 	frames: Record<string, ComponentType>;
 	controller: PlayerController;
+	/** A control-origin native iframe host in the standalone player shell. */
+	host?: ReactNode;
 }) {
 	useSyncExternalStore(controller.subscribe, controller.version);
 	useSyncExternalStore(controller.stateSubscribe, controller.stateVersion);
@@ -113,7 +116,7 @@ export function Player({
 					className={terminal ? "spool-screen-scroll is-terminal" : "spool-screen-scroll"}
 					style={{ position: "relative", zIndex: 0, isolation: "isolate" }}
 				>
-					{Screen === undefined ? null : <Screen key={arrival} />}
+					{host ?? (Screen === undefined ? null : <Screen key={arrival} />)}
 				</div>
 				{externalHref !== null && (
 					<ExternalLinkDialog
@@ -411,14 +414,20 @@ function clock(ms: number): string {
 /** A static terminal surface over its last persisted grid. */
 export function TermScreen({ src, poster, title }: { src: string; poster: string; title: string }) {
 	return (
-		<div className="spool-term-screen">
-			{/* biome-ignore lint/security/noDangerouslySetInnerHtml: the svg is the daemon's own grid rasterization, text-escaped at render */}
-			<div className="spool-term-poster" aria-hidden dangerouslySetInnerHTML={{ __html: poster }} />
+		<div className="spool-term-screen" style={{ position: "relative", height: "100%", background: "#111110" }}>
+			<img
+				className="spool-term-poster"
+				src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(poster)}`}
+				alt=""
+				aria-hidden
+				style={{ position: "absolute", inset: 0, display: "block", width: "100%", height: "100%" }}
+			/>
 			<iframe
 				ref={(el) => el?.focus()}
 				src={src}
 				title={title}
 				sandbox="allow-scripts"
+				style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
 				onLoad={(event) => {
 					event.currentTarget.focus({ preventScroll: true });
 					event.currentTarget.contentWindow?.postMessage({ spool: "focus", surface: "player" }, "*");

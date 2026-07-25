@@ -441,8 +441,22 @@ export const shimHash: string = createHash("sha256").update(canvasShimJs).digest
  * verbatim, plus the same postMessage protocol so a canvas can mark the frame
  * failed instead of waiting on a loaded report.
  */
-export function errorDocument(frame: string, message: string): string {
+export function errorDocument(frame: string, message: string, failure = "failed to compile"): string {
 	const report = `if (parent !== window) parent.postMessage({ spool: "error", frame: ${JSON.stringify(frame)}, error: ${JSON.stringify(message)} }, "*");`;
+	return failureDocument(frame, message, failure, report);
+}
+
+/**
+ * A composed player that fails after the control preflight has no runtime
+ * channel. Its document gets one separate, exact load-failure signal; a
+ * successfully connected authored runtime can never use this protocol.
+ */
+export function playerLoadErrorDocument(message: string, failure = "failed to compile"): string {
+	const report = `if (parent !== window) parent.postMessage({ spool: "player-load-error", error: ${JSON.stringify(message)} }, "*");`;
+	return failureDocument("player", message, failure, report);
+}
+
+function failureDocument(frame: string, message: string, failure: string, report: string): string {
 	return htmlShell(
 		frame,
 		`<style>
@@ -451,7 +465,7 @@ h1 { margin: 0 0 16px; font-size: 13px; font-weight: 400; color: #f5391a; }
 pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 </style>
 `,
-		`<h1>${escapeHtml(frame)} failed to compile</h1>
+		`<h1>${escapeHtml(frame)} ${escapeHtml(failure)}</h1>
 <pre>${escapeHtml(message)}</pre>
 <script>${escapeInlineScript(report)}</script>
 `,

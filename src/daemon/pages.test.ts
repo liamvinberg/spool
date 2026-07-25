@@ -353,7 +353,8 @@ describe("page-blind player", () => {
 		const doc = await res.text();
 		expect(doc).toContain("home says hi");
 		expect(doc).toContain("checkout says hi");
-		const config = JSON.parse(doc.match(/__SPOOL_PLAY__ = (.*)<\/script>/)?.[1] ?? "{}") as {
+		const serialized = doc.match(/__SPOOL_PLAY__ = JSON\.parse\(("(?:\\.|[^"\\])*")\)<\/script>/)?.[1];
+		const config = JSON.parse(JSON.parse(serialized ?? '"{}"')) as {
 			start: string;
 			frames: Record<string, unknown>;
 		};

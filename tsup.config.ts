@@ -14,11 +14,13 @@ export default defineConfig([
 		// import map pins (see daemon/vendor.ts); xterm rides inside term-runtime
 		entry: {
 			"frame-runtime": "src/runtime/frame-runtime.ts",
+			"player-shell-runtime": "src/runtime/player-shell-runtime.tsx",
 			"jsx-dev-runtime": "src/runtime/jsx-dev-runtime.ts",
 			"term-runtime": "src/runtime/term-runtime.ts",
 		},
 		format: "esm",
 		platform: "browser",
+		splitting: false,
 		target: "es2022",
 		tsconfig: "tsconfig.runtime.json",
 		external: ["react", "react/jsx-runtime", "react-dom", "react-dom/client"],

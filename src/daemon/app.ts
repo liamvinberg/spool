@@ -20,13 +20,19 @@ import { requestUpgrade } from "../upgrade";
 import { stampLabels } from "./call-site";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
-import { errorDocument, escapeHtml, escapeInlineScript, escapeJsonScript } from "./document";
+import {
+	escapeHtml,
+	escapeInlineScript,
+	escapeInlineStyle,
+	escapeJsonScript,
+	playerLoadErrorDocument,
+} from "./document";
 import { createChangeHub } from "./events";
 import { deriveFlows, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
-import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerEtag } from "./play";
+import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
 import {
@@ -59,6 +65,7 @@ import { createUpdateChecker } from "./update-check";
 import {
 	reactVersion,
 	type VendorModule,
+	vendorPlayerShellJs,
 	vendorReactJs,
 	vendorSpoolJs,
 	vendorSpoolJsxJs,
@@ -98,7 +105,16 @@ export interface DaemonOptions {
 const playParams = z.object({
 	frame: z.string().refine(isSafeName, { message: "not a frame name" }).optional(),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
+	shell: z.literal("1").optional(),
+	handoff: z
+		.string()
+		.regex(/^[A-Za-z0-9_-]{43}$/, { message: "not a shell handoff" })
+		.optional(),
 });
+
+const PLAYER_HANDOFF_TTL_MS = 30_000;
+/** Browser handoffs are deliberately short and bounded: issuing the control document is a public GET. */
+const MAX_PLAYER_HANDOFFS = 64;
 
 type LaunchEditor = (file: string, onError?: (fileName: string, message: string | null) => void) => void;
 
@@ -135,6 +151,7 @@ export function createDaemonApp({
 	let controlOrigin = `http://${controlHostname.includes(":") ? `[${controlHostname}]` : controlHostname}`;
 	let renderOrigin = renderOriginFor(controlOrigin);
 	const projectCapabilities = new Map<string, string>();
+	const playerHandoffs = new Map<string, { project: string; frame: string; scenario: string; expiresAt: number }>();
 
 	function projectCapability(root: string): string {
 		let capability = projectCapabilities.get(root);
@@ -143,6 +160,39 @@ export function createDaemonApp({
 			projectCapabilities.set(root, capability);
 		}
 		return capability;
+	}
+
+	function issuePlayerHandoff(project: string, frame: string, scenario: string): string {
+		const now = Date.now();
+		for (const [token, handoff] of playerHandoffs) {
+			if (handoff.expiresAt <= now) playerHandoffs.delete(token);
+		}
+		while (playerHandoffs.size >= MAX_PLAYER_HANDOFFS) {
+			const oldest = playerHandoffs.keys().next().value;
+			if (oldest === undefined) break;
+			playerHandoffs.delete(oldest);
+		}
+		const token = createCapability();
+		playerHandoffs.set(token, { project, frame, scenario, expiresAt: now + PLAYER_HANDOFF_TTL_MS });
+		return token;
+	}
+
+	function consumePlayerHandoff(
+		token: string | undefined,
+		project: string,
+		frame: string | undefined,
+		scenario: string,
+	): boolean {
+		if (token === undefined) return false;
+		const handoff = playerHandoffs.get(token);
+		playerHandoffs.delete(token);
+		return (
+			handoff !== undefined &&
+			handoff.expiresAt > Date.now() &&
+			handoff.project === project &&
+			handoff.frame === frame &&
+			handoff.scenario === scenario
+		);
 	}
 
 	const startedAt = new Date().toISOString();
@@ -828,74 +878,113 @@ export function createDaemonApp({
 					const issues = parsed.error.issues
 						.map((issue) => `${issue.path.join(".")}: ${issue.message}`)
 						.join("; ");
-					return c.text(`not a playable request — ${issues}`, 400);
+					const message = `not a playable request — ${issues}`;
+					return value.shell === "1" && hostClass(c.req.url) === "render"
+						? c.html(playerLoadErrorDocument(message, "failed to load"), 400)
+						: c.text(message, 400);
 				}
 				return parsed.data;
 			}),
 			async (c) => {
 				const name = c.req.param("project");
+				const { frame, scenario, shell, handoff } = c.req.valid("query");
+				const controlRequest = hostClass(c.req.url) === "control";
+				const shellRender = !controlRequest && shell === "1";
+				const shellFailure = (message: string, status: number) =>
+					new Response(playerLoadErrorDocument(message, "failed to load"), {
+						status,
+						headers: { "content-type": "text/html; charset=UTF-8" },
+					});
+				const playScenario = scenario ?? "default";
+				if (shellRender && !consumePlayerHandoff(handoff, name, frame, playScenario)) {
+					return shellFailure("invalid or expired player shell handoff", 403);
+				}
+				if (!shellRender && !controlRequest && handoff !== undefined) {
+					return c.text("a player shell handoff requires shell=1", 400);
+				}
 				const project = resolveProject(c, name);
-				if ("response" in project) return project.response;
-				const { frame, scenario } = c.req.valid("query");
+				if ("response" in project) {
+					if (shellRender) return shellFailure(await project.response.text(), project.response.status);
+					return project.response;
+				}
 				const projection = listProjectFrames(project.root);
 				const names = projection.frames.map((entry) => entry.name);
 				const first = names[0];
 				if (first === undefined) {
-					return c.text(
-						`nothing to play in "${name}" — a frame is born by writing design/frames/<name>/frame.tsx`,
-						404,
-					);
+					const message = `nothing to play in "${name}" — a frame is born by writing design/frames/<name>/frame.tsx`;
+					return shellRender ? shellFailure(message, 404) : c.text(message, 404);
 				}
 				if (frame !== undefined && !names.includes(frame)) {
-					return c.text(`no frame "${frame}" to play — expected design/frames/${frame}/frame.tsx`, 404);
+					const message = `no frame "${frame}" to play — expected design/frames/${frame}/frame.tsx`;
+					return shellRender ? shellFailure(message, 404) : c.text(message, 404);
 				}
 				// the selected-else-first start (#13): an explicit ?frame= wins, then
 				// whatever the canvas last pointed at, then the first frame by name
 				const selected = selections.get(project.root).find((entry) => names.includes(entry.frame))?.frame;
 				const start = frame ?? selected ?? first;
-				if (hostClass(c.req.url) === "control") {
-					const requestUrl = new URL(c.req.url);
-					protectControlDocument(c);
-					return c.html(
-						assemblePlayerShell({
-							project: name,
-							controlToken,
-							innerUrl: `${renderOrigin}${requestUrl.pathname}${requestUrl.search}`,
-						}),
-					);
-				}
-				// Only html frames enter the compile. Terminal frames ride the
-				// config as daemon-rendered persisted grids; project term.tsx is
-				// never compiled or executed without an OS sandbox.
+				const frames = Object.fromEntries(
+					projection.frames.map((entry) => [entry.name, { w: entry.w, h: entry.h }]),
+				);
+				if (controlRequest) protectControlDocument(c);
+				// Validate before returning the control shell. The render-origin
+				// iframe repeats this request, but the player compiler is content-
+				// cached, so project code is built only once.
 				const htmlFrames = projection.frames.filter((entry) => entry.kind === "html");
 				const termFrames = projection.frames.filter((entry) => entry.kind === "term");
 				const compiled = await playerCompiler.getBundle(project.root, htmlFrames);
-				if (compiled.kind === "error") return c.html(errorDocument("player", compiled.message), 500);
-				const terminals: Record<string, { svg: string }> = {};
+				if (compiled.kind === "error") return c.html(playerLoadErrorDocument(compiled.message), 500);
+				const terminals = Object.create(null) as Record<string, { svg: string }>;
 				for (const entry of termFrames) {
 					let screen: Awaited<ReturnType<typeof terms.screen>>;
 					try {
 						screen = await terms.screen(project.root, entry.name);
 					} catch (error) {
-						if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+						if (error instanceof DesignBoundaryError) {
+							return shellRender ? shellFailure(error.message, 400) : c.text(error.message, 400);
+						}
 						throw error;
 					}
 					if (screen.kind !== "current") {
-						return c.text(screen.message, screen.kind === "stale" ? 409 : 404);
+						return c.html(
+							playerLoadErrorDocument(screen.message, "failed to load"),
+							screen.kind === "stale" ? 409 : 404,
+						);
 					}
-					terminals[entry.name] = { svg: gridToSvg(screen.grid) };
+					terminals[entry.name] = { svg: gridToSvg(screen.grid, termFontDataCss()) };
+				}
+				if (controlRequest) {
+					const requestUrl = new URL(c.req.url);
+					requestUrl.searchParams.set("frame", start);
+					requestUrl.searchParams.set("scenario", playScenario);
+					requestUrl.searchParams.set("shell", "1");
+					requestUrl.searchParams.set("handoff", issuePlayerHandoff(name, start, playScenario));
+					return c.html(
+						assemblePlayerShell({
+							project: name,
+							start,
+							frames,
+							terminals: termFrames.map((entry) => entry.name),
+							controlToken,
+							innerUrl: `${renderOrigin}${requestUrl.pathname}${requestUrl.search}`,
+						}),
+					);
 				}
 				const config = {
 					project: name,
 					projectCapability: projectCapability(project.root),
 					start,
-					scenario: scenario ?? "default",
-					frames: Object.fromEntries(projection.frames.map((entry) => [entry.name, { w: entry.w, h: entry.h }])),
+					scenario: playScenario,
+					frames,
+					...(shell === "1" ? { shell: true as const } : {}),
 					...(termFrames.length === 0 ? {} : { terminals }),
 				};
 				const etag = playerEtag(compiled.bundle, config);
-				if (c.req.header("if-none-match") === etag) return c.body(null, 304);
-				c.header("etag", etag);
+				if (!shellRender && c.req.header("if-none-match") === etag) return c.body(null, 304);
+				if (shellRender) {
+					c.header("cache-control", "no-store");
+				} else {
+					c.header("etag", etag);
+				}
 				c.header("x-spool-cache", compiled.cache);
 				return c.html(assemblePlayerDocument(config, compiled.bundle));
 			},
@@ -952,6 +1041,22 @@ export function createDaemonApp({
 			c.header("content-type", "font/woff2");
 			return c.body(new Uint8Array(readFileSync(file)));
 		})
+		.get("/player-assets/react.js", async (c) => {
+			const etag = `"react-${reactVersion}"`;
+			if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+			c.header("etag", etag);
+			c.header("cache-control", "public, max-age=0, must-revalidate");
+			c.header("content-type", "text/javascript; charset=utf-8");
+			return c.body(await vendorReactJs());
+		})
+		.get("/player-assets/player-shell.js", (c) => serveRuntime(c, vendorPlayerShellJs, false))
+		.get("/player-assets/fonts/:file", (c) => {
+			const file = chromeFontFile(c.req.param("file"));
+			if (file === undefined) return c.text("no such font", 404);
+			c.header("cache-control", "public, max-age=0, must-revalidate");
+			c.header("content-type", "font/woff2");
+			return c.body(new Uint8Array(readFileSync(file)));
+		})
 		.get("/favicon.svg", (c) => {
 			c.header("content-type", "image/svg+xml");
 			c.header("cache-control", "no-cache");
@@ -972,8 +1077,8 @@ export function createDaemonApp({
 		throw error;
 	});
 
-	async function serveRuntime(c: Context, module: () => Promise<VendorModule>): Promise<Response> {
-		c.header("access-control-allow-origin", "*");
+	async function serveRuntime(c: Context, module: () => Promise<VendorModule>, crossOrigin = true): Promise<Response> {
+		if (crossOrigin) c.header("access-control-allow-origin", "*");
 		const runtime = await module();
 		if (c.req.header("if-none-match") === runtime.etag) return c.body(null, 304);
 		c.header("etag", runtime.etag);
@@ -1023,30 +1128,85 @@ export function createDaemonApp({
 
 	function assemblePlayerShell({
 		project,
+		start,
+		frames,
+		terminals,
 		controlToken: shellToken,
 		innerUrl,
 	}: {
 		project: string;
+		start: string;
+		frames: Record<string, { w: number; h: number }>;
+		terminals: string[];
 		controlToken: string;
 		innerUrl: string;
 	}): string {
-		const config = escapeJsonScript({ project, controlToken: shellToken });
+		const config = escapeJsonScript({ project, start, frames, terminals, innerUrl, controlToken: shellToken });
 		const bridge = `(() => {
 	const config = window.__SPOOL_SHELL__;
-	const inner = document.getElementById("spool-player");
 	const headers = { "${CONTROL_HEADER}": config.controlToken };
+	let geometryRevision = 0;
+	let geometryRequest = 0;
+	let geometrySubscribed = false;
+	function retainedGeometry() {
+		return Object.entries(config.frames).map(([name, geometry]) => ({ name, w: geometry.w, h: geometry.h }));
+	}
+	let latestGeometry = retainedGeometry();
+	function pendingGeometry() {
+		const revision = ++geometryRevision;
+		window.dispatchEvent(new CustomEvent("spool-player-geometry-pending", { detail: { revision } }));
+		return revision;
+	}
+	function announceGeometry(revision, frames) {
+		window.dispatchEvent(new CustomEvent("spool-player-geometry", { detail: { revision, frames } }));
+	}
+	function replayGeometry() {
+		const revision = pendingGeometry();
+		announceGeometry(revision, latestGeometry);
+	}
 	async function sendGeometry() {
-		const response = await fetch("/api/p/" + encodeURIComponent(config.project) + "/frames", { headers });
-		if (!response.ok) return;
-		const listing = await response.json();
-		inner.contentWindow.postMessage({ spool: "player-geometry", frames: listing.frames }, "*");
+		const request = ++geometryRequest;
+		const revision = pendingGeometry();
+		let settled = false;
+		const fallback = setTimeout(() => {
+			if (request !== geometryRequest || settled) return;
+			settled = true;
+			announceGeometry(revision, latestGeometry);
+		}, 1000);
+		try {
+			const response = await fetch("/api/p/" + encodeURIComponent(config.project) + "/frames", { headers });
+			if (!response.ok) throw new Error("geometry unavailable");
+			const listing = await response.json();
+			if (!Array.isArray(listing.frames)) throw new Error("invalid geometry");
+			if (request !== geometryRequest) return;
+			const frames = listing.frames
+				.filter((frame) => frame && typeof frame.name === "string" && Number.isInteger(frame.w) && frame.w > 0 && Number.isInteger(frame.h) && frame.h > 0)
+				.map(({ name, w, h }) => ({ name, w, h }));
+			if (frames.length !== listing.frames.length) throw new Error("invalid geometry");
+			latestGeometry = frames;
+			if (settled || revision !== geometryRevision) {
+				replayGeometry();
+			} else {
+				settled = true;
+				announceGeometry(revision, latestGeometry);
+			}
+		} catch {
+			if (request === geometryRequest && !settled) {
+				settled = true;
+				announceGeometry(revision, latestGeometry);
+			}
+		} finally {
+			clearTimeout(fallback);
+		}
 	}
 	async function followGeometry() {
+		void sendGeometry();
 		try {
 			const response = await fetch("/api/p/" + encodeURIComponent(config.project) + "/events", {
 				headers: { ...headers, accept: "text/event-stream" },
 			});
 			if (!response.ok || !response.body) return;
+			geometrySubscribed = true;
 			const reader = response.body.getReader();
 			const decoder = new TextDecoder();
 			let buffer = "";
@@ -1066,22 +1226,21 @@ export function createDaemonApp({
 				}
 			}
 		} finally {
+			geometrySubscribed = false;
 			setTimeout(followGeometry, 1000);
 		}
 	}
-	addEventListener("message", (event) => {
-		if (event.source !== inner.contentWindow || !event.data || typeof event.data !== "object") return;
-		const message = event.data;
-		if (message.spool === "player-close") {
-			window.close();
-			setTimeout(() => { if (!window.closed) location.href = "/p/" + encodeURIComponent(config.project); }, 150);
-			return;
-		}
-		if (message.spool === "player-walked" && typeof message.from === "string" && typeof message.to === "string") {
+	addEventListener("spool-player-geometry-request", () => {
+		replayGeometry();
+		if (geometrySubscribed) void sendGeometry();
+	});
+	addEventListener("spool-player-walked", (event) => {
+		const walk = event.detail;
+		if (walk && typeof walk.from === "string" && typeof walk.to === "string") {
 			void fetch("/api/p/" + encodeURIComponent(config.project) + "/walked", {
 				method: "POST",
 				headers: { ...headers, "content-type": "application/json" },
-				body: JSON.stringify({ from: message.from, to: message.to }),
+				body: JSON.stringify({ from: walk.from, to: walk.to }),
 				keepalive: true,
 			});
 		}
@@ -1094,11 +1253,14 @@ export function createDaemonApp({
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${escapeHtml(project)} · spool</title>
-<style>html, body, iframe { width: 100%; height: 100%; } body { margin: 0; overflow: hidden; background: #0e0e0e; } iframe { display: block; border: 0; }</style>
+<style>${escapeInlineStyle(playerChromeCss("/player-assets/fonts/"))}</style>
+<style>html, body, #root { width: 100%; height: 100%; } body { margin: 0; overflow: hidden; background: #0e0e0e; } .spool-screen-scroll > iframe { display: block; width: 100%; height: 100%; border: 0; }</style>
 </head>
 <body>
-<iframe id="spool-player" title="${escapeHtml(project)}" sandbox="allow-scripts" src="${escapeHtml(innerUrl)}"></iframe>
-<script>window.__SPOOL_SHELL__ = ${config};</script>
+<div id="root"></div>
+<script>window.__SPOOL_SHELL__ = JSON.parse(${escapeJsonScript(config)});</script>
+<script type="importmap">{"imports":{"react":"/player-assets/react.js","react-dom":"/player-assets/react.js","react-dom/client":"/player-assets/react.js","react/jsx-runtime":"/player-assets/react.js"}}</script>
+<script type="module">import { bootPlayerShell } from "/player-assets/player-shell.js"; bootPlayerShell(window.__SPOOL_SHELL__);</script>
 <script>${escapeInlineScript(bridge)}</script>
 </body>
 </html>
