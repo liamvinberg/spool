@@ -165,6 +165,15 @@ function wheelZoomFactor(delta: number, mode: number, pageSize: number): number 
 	return clamp(Math.exp(-wheelPixels(delta, mode, pageSize) * 0.0075), 0.5, 2);
 }
 
+/** Opaque sandbox origins identify no frame; its current iframe window does. */
+export function ownsFrameMessage(
+	iframes: ReadonlyMap<string, Pick<HTMLIFrameElement, "contentWindow">>,
+	frame: string,
+	source: MessageEventSource | null,
+): boolean {
+	return source !== null && iframes.get(frame)?.contentWindow === source;
+}
+
 export function ProjectCanvas({
 	project,
 	onChrome,
@@ -1183,6 +1192,7 @@ export function ProjectCanvas({
 		const onMessage = (event: MessageEvent) => {
 			const message = parseFrameMessage(event.data);
 			if (message === undefined) return;
+			if (!ownsFrameMessage(iframes.current, message.frame, event.source)) return;
 			switch (message.spool) {
 				case "loaded":
 					lifecycleRef.current.noteLoaded(message.frame);

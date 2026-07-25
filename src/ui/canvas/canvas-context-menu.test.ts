@@ -99,6 +99,7 @@ describe("canvas context menu", () => {
 							},
 						],
 					},
+					source: iframe?.contentWindow ?? null,
 				}),
 			);
 		});
