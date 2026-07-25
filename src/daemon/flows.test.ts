@@ -98,6 +98,83 @@ describe("flows derivation", () => {
 		]);
 	});
 
+	it("derives the same shared nav bar's edge for every frame mounting it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(
+			root,
+			"shared/ui/chrome.tsx",
+			`export function Chrome() {\n\treturn <a data-go="index">← all</a>;\n}\n`,
+		);
+		const mounts = `import { Chrome } from "../../shared/ui/chrome";\nexport default function Frame() {\n\treturn <Chrome />;\n}\n`;
+		writeFrame(root, "index", plainTsx);
+		writeFrame(root, "one", mounts);
+		writeFrame(root, "two", mounts);
+		const app = makeApp(spoolDir);
+
+		const flows = await fetchFlows(app, name);
+
+		// the site lives in one file; the walk happens on every page carrying it
+		expect(flows.edges).toEqual([
+			{
+				from: "one",
+				to: "index",
+				certainty: "will",
+				sites: [{ via: "data-go", path: "shared/ui/chrome.tsx", line: 2, anchor: { line: 2, col: 9 } }],
+			},
+			{
+				from: "two",
+				to: "index",
+				certainty: "will",
+				sites: [{ via: "data-go", path: "shared/ui/chrome.tsx", line: 2, anchor: { line: 2, col: 9 } }],
+			},
+		]);
+		expect(flows.unreadable).toEqual([]);
+	});
+
+	it("names an unreadable site in a shared component against the frame that mounts it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(
+			root,
+			"shared/ui/rows.tsx",
+			`export function Rows({ items }) {\n\treturn items.map((it) => <a key={it.id} data-go={it.frame}>{it.id}</a>);\n}\n`,
+		);
+		writeFrame(
+			root,
+			"index",
+			`import { Rows } from "../../shared/ui/rows";\nexport default function Frame() {\n\treturn <Rows items={[]} />;\n}\n`,
+		);
+		const app = makeApp(spoolDir);
+
+		const flows = await fetchFlows(app, name);
+
+		// a computed target is real information about the mounting frame, not silence
+		expect(flows.edges).toEqual([]);
+		expect(flows.unreadable).toEqual([{ frame: "index", path: "shared/ui/rows.tsx", line: 2 }]);
+	});
+
+	it("drops a verified mark when the shared component behind the edge changes", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/ui/go.tsx", `export function Go() {\n\treturn <a data-go="end">on</a>;\n}\n`);
+		writeFrame(
+			root,
+			"start",
+			`import { Go } from "../../shared/ui/go";\nexport default function Frame() {\n\treturn <Go />;\n}\n`,
+		);
+		writeFrame(root, "end", plainTsx);
+		const app = makeApp(spoolDir);
+
+		expect((await postWalked(app, name, "start", "end")).status).toBe(204);
+		expect((await fetchFlows(app, name)).edges[0]?.verified).toBe(true);
+
+		// the frame's own file is untouched; the walk it claims came from shared/
+		writeDesignFile(root, "shared/ui/go.tsx", `export function Go() {\n\treturn <a data-go="end">off</a>;\n}\n`);
+
+		expect((await fetchFlows(app, name)).edges[0]?.verified).toBeUndefined();
+	});
+
 	it("two sites claiming the same edge stay grouped on one edge", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);

@@ -247,6 +247,119 @@ describe("frameNavSites", () => {
 	});
 });
 
+describe("the source graph — a frame is its folder plus what it imports", () => {
+	it("claims a walk declared in a shared component it mounts", () => {
+		const root = makeTempDir();
+		writeDesignFile(
+			root,
+			"shared/ui/nav.tsx",
+			`export function Nav() {\n\treturn <a data-go="inbox">in</a>;\n}\n`,
+		);
+		writeDesignFile(
+			root,
+			"frames/home/frame.tsx",
+			`import { Nav } from "../../shared/ui/nav";\nexport default function Frame() {\n\treturn <Nav />;\n}\n`,
+		);
+
+		expect(frameNavSites(root, "home").sites.map((s) => `${s.path} ${s.target}`)).toEqual([
+			"shared/ui/nav.tsx inbox",
+		]);
+	});
+
+	it("shares one nav bar's walk across every frame mounting it", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, "shared/ui/back.tsx", `export function Back() {\n\treturn <a data-go="home">up</a>;\n}\n`);
+		const frame = `import { Back } from "../../shared/ui/back";\nexport default function Frame() {\n\treturn <Back />;\n}\n`;
+		writeDesignFile(root, "frames/one/frame.tsx", frame);
+		writeDesignFile(root, "frames/two/frame.tsx", frame);
+
+		expect(frameNavSites(root, "one").sites.map((s) => s.target)).toEqual(["home"]);
+		expect(frameNavSites(root, "two").sites.map((s) => s.target)).toEqual(["home"]);
+	});
+
+	it("follows a chain of imports, not just the first hop", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, "shared/ui/row.tsx", `export function Row() {\n\treturn <a data-go="deep">d</a>;\n}\n`);
+		writeDesignFile(
+			root,
+			"shared/ui/list.tsx",
+			`import { Row } from "./row";\nexport function List() {\n\treturn <Row />;\n}\n`,
+		);
+		writeDesignFile(
+			root,
+			"frames/home/frame.tsx",
+			`import { List } from "../../shared/ui/list";\nexport default function Frame() {\n\treturn <List />;\n}\n`,
+		);
+
+		expect(frameNavSites(root, "home").sites.map((s) => s.target)).toEqual(["deep"]);
+	});
+
+	it("resolves an extensionless directory import through its index", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, "shared/ui/index.tsx", `export function Kit() {\n\treturn <a data-go="kit">k</a>;\n}\n`);
+		writeDesignFile(
+			root,
+			"frames/home/frame.tsx",
+			`import { Kit } from "../../shared/ui";\nexport default function Frame() {\n\treturn <Kit />;\n}\n`,
+		);
+
+		expect(frameNavSites(root, "home").sites.map((s) => s.target)).toEqual(["kit"]);
+	});
+
+	it("terminates on an import cycle instead of walking forever", () => {
+		const root = makeTempDir();
+		writeDesignFile(
+			root,
+			"shared/ui/a.tsx",
+			`import { B } from "./b";\nexport function A() {\n\treturn <a data-go="from-a">{B()}</a>;\n}\n`,
+		);
+		writeDesignFile(
+			root,
+			"shared/ui/b.tsx",
+			`import { A } from "./a";\nexport function B() {\n\treturn <a data-go="from-b">{typeof A}</a>;\n}\n`,
+		);
+		writeDesignFile(
+			root,
+			"frames/home/frame.tsx",
+			`import { A } from "../../shared/ui/a";\nexport default function Frame() {\n\treturn <A />;\n}\n`,
+		);
+
+		expect(frameNavSites(root, "home").sites.map((s) => s.target).sort()).toEqual(["from-a", "from-b"]);
+	});
+
+	it("ignores package specifiers — they are never project source", () => {
+		const root = makeTempDir();
+		writeDesignFile(
+			root,
+			"frames/home/frame.tsx",
+			`import { ui } from "spool";\nimport { useState } from "react";\nexport default function Frame() {\n\treturn <a data-go="only">{typeof ui}{typeof useState}</a>;\n}\n`,
+		);
+
+		expect(frameNavSites(root, "home").sites.map((s) => s.target)).toEqual(["only"]);
+	});
+
+	it("reaches a walk behind a type-only import and an export-from barrel", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, "shared/ui/tile.tsx", `export function Tile() {\n\treturn <a data-go="tile">t</a>;\n}\n`);
+		writeDesignFile(root, "shared/ui/kit.tsx", `export { Tile } from "./tile";\n`);
+		writeDesignFile(
+			root,
+			"frames/home/frame.tsx",
+			`import { Tile } from "../../shared/ui/kit";\nexport default function Frame() {\n\treturn <Tile />;\n}\n`,
+		);
+
+		expect(frameNavSites(root, "home").sites.map((s) => s.target)).toEqual(["tile"]);
+	});
+
+	it("keeps an import that climbs out of design/ from claiming anything", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, "frames/home/frame.tsx", `import "../../../outside/escape";\nexport default 1;\n`);
+		writeDesignFile(root, "../outside/escape.tsx", `export const x = <a data-go="stolen">s</a>;\n`);
+
+		expect(frameNavSites(root, "home").sites).toEqual([]);
+	});
+});
+
 describe("term.go sites — the terminal dialect's coded walk (#42)", () => {
 	const TERM_PATH = "frames/dash/term.tsx";
 
