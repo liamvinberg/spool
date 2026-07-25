@@ -131,6 +131,22 @@ describe("skill", () => {
 		expect(skillText("styling")).toContain("cn() only, never template-literal class strings");
 	});
 
+	it("teaches the confirmed frame-authoring traps", () => {
+		const styling = skillText("styling");
+		expect(styling).toContain("mt-3.5!");
+		expect(styling).toContain("not !mt-3.5");
+
+		const frames = skillText("frames");
+		expect(frames).toContain("Nested flex-fill chains need a definite h-full");
+		expect(frames).toContain("min-h-full does not give flex-1 a definite height");
+
+		const flows = skillText("flows");
+		expect(flows).toContain('literal ui.go("target")');
+		expect(flows).toContain("data-go navigation");
+		expect(flows).toContain("frame-owned file");
+		expect(flows).toContain("pass a callback");
+	});
+
 	it("teaches that terminal source stays inert until it has an OS sandbox", () => {
 		expect(skillText()).toContain("static disabled surface");
 		const terminals = skillText("terminals");
