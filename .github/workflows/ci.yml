@@ -22,6 +22,7 @@ jobs:
           package-manager-cache: false
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright-core install chromium-headless-shell
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm check

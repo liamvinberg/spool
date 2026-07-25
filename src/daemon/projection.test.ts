@@ -65,4 +65,28 @@ describe("projection placement", () => {
 		expect(won).toEqual({ x: 19, y: 23, w: 640, h: 480 });
 		expect(readFileSync(sidecar, "utf8")).toBe(authored);
 	});
+
+	it("never replaces a sidecar observed during an authored partial write", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, join("frames", "authored", "frame.tsx"), "export default () => null;\n");
+		const sidecar = join(root, "design", "frames", "authored", "frame.json");
+		const partial = '{ "x": 19, "y":';
+		writeFileSync(sidecar, partial);
+
+		const duringWrite = listProjectFrames(root).frames.find((frame) => frame.name === "authored");
+
+		expect(duringWrite).toMatchObject({ w: 390, h: 844 });
+		expect(readFileSync(sidecar, "utf8")).toBe(partial);
+
+		const authored = '{ "x": 19, "y": 23, "w": 640, "h": 480 }\n';
+		writeFileSync(sidecar, authored);
+
+		expect(listProjectFrames(root).frames.find((frame) => frame.name === "authored")).toMatchObject({
+			x: 19,
+			y: 23,
+			w: 640,
+			h: 480,
+		});
+		expect(readFileSync(sidecar, "utf8")).toBe(authored);
+	});
 });
