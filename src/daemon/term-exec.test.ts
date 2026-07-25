@@ -32,21 +32,7 @@ setTimeout(() => {}, 60_000);
 
 describe.skipIf(!bunOnPath)("bun executor against the real supervisor", () => {
 	it("streams, delivers input, resizes for real, and reports the exit code", { timeout: 20_000 }, async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		// materialize only the supervisor + helpers; bun itself is the machine's
-		const paths = toolchainPaths(spoolDir);
-		mkdirSync(paths.bunDir, { recursive: true });
-		writeFileSync(paths.bunBin, "placeholder — the executor is pointed at the machine's bun\n");
-		mkdirSync(paths.packagesModules, { recursive: true });
-		writeFileSync(join(paths.packagesDir, ".ready"), "test\n");
-		const toolchain = await ensureToolchain(spoolDir, {
-			narrate: () => {},
-			download: async () => {
-				throw new Error("no downloads in tests");
-			},
-			unzip: async () => {},
-			run: async () => {},
-		});
+		const toolchain = await materializeToolchain();
 
 		const frameDir = makeTempDir();
 		const entry = join(frameDir, "term.tsx");
@@ -76,7 +62,67 @@ describe.skipIf(!bunOnPath)("bun executor against the real supervisor", () => {
 		await until(() => exitCode !== undefined);
 		expect(exitCode).toBe(3);
 	});
+
+	it("takes the project process down with the supervisor on kill", { timeout: 20_000 }, async () => {
+		const toolchain = await materializeToolchain();
+		const frameDir = makeTempDir();
+		const entry = join(frameDir, "term.tsx");
+		// an app that ignores SIGTERM and never exits on its own — the shape that
+		// left 389 processes under init when the supervisor died without it
+		writeFileSync(
+			entry,
+			`process.on("SIGTERM", () => {});
+process.stdout.write("pid:" + process.pid + "\\n");
+setInterval(() => {}, 1000);
+`,
+		);
+
+		const executor = bunExecutor(async () => ({ ...toolchain, bunBin: "bun" }));
+		const chunks: Uint8Array[] = [];
+		const proc = await executor({ frameDir, entry, cols: 40, rows: 10 });
+		proc.onData((chunk) => chunks.push(chunk));
+		const text = () => new TextDecoder().decode(Buffer.concat(chunks));
+		await until(() => /pid:\d+/.test(text()));
+		const appPid = Number(/pid:(\d+)/.exec(text())?.[1]);
+		expect(appPid).toBeGreaterThan(0);
+		expect(alive(appPid)).toBe(true);
+
+		proc.kill();
+
+		// the app must not outlive the supervisor: an orphan here holds a core
+		// forever with nothing left to read it
+		await until(() => !alive(appPid), 15_000);
+		expect(alive(appPid)).toBe(false);
+	});
 });
+
+/** Live in the sense that matters here: still a process the kernel knows. */
+function alive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** Materialize only the supervisor + helpers; bun itself is the machine's. */
+async function materializeToolchain() {
+	const spoolDir = join(makeTempDir(), ".spool");
+	const paths = toolchainPaths(spoolDir);
+	mkdirSync(paths.bunDir, { recursive: true });
+	writeFileSync(paths.bunBin, "placeholder — the executor is pointed at the machine's bun\n");
+	mkdirSync(paths.packagesModules, { recursive: true });
+	writeFileSync(join(paths.packagesDir, ".ready"), "test\n");
+	return await ensureToolchain(spoolDir, {
+		narrate: () => {},
+		download: async () => {
+			throw new Error("no downloads in tests");
+		},
+		unzip: async () => {},
+		run: async () => {},
+	});
+}
 
 async function until(condition: () => boolean, ms = 10_000): Promise<void> {
 	const start = Date.now();
