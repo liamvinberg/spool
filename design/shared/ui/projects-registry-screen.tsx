@@ -5,13 +5,10 @@ import { CloseIcon, DotsIcon, SearchIcon } from "./spool-icons";
 import { SpoolShell } from "./spool-shell";
 
 /**
- * Projects registry with per-card management: a menu that unregisters a project
- * and a filter over the list. Two axes vary across the frames on this page:
- * where the menu trigger lives, and how removal asks for permission.
+ * Projects registry with per-card management: a corner menu that unregisters a
+ * project, and a filter over the list. Removal is optimistic and reversible
+ * from the toast, because unregistering only forgets a folder.
  */
-
-export type MenuTrigger = "corner" | "meta";
-export type RemovalModel = "undo" | "confirm";
 
 interface Project {
 	name: string;
@@ -82,19 +79,12 @@ const projects: readonly Project[] = [
 interface ProjectsRegistryScreenProps {
 	/** frame the first card opens, so the map shows the door out of home */
 	canvasTarget?: string;
-	menuTrigger?: MenuTrigger;
-	removal?: RemovalModel;
 }
 
-export function ProjectsRegistryScreen({
-	canvasTarget,
-	menuTrigger = "corner",
-	removal = "undo",
-}: ProjectsRegistryScreenProps) {
+export function ProjectsRegistryScreen({ canvasTarget }: ProjectsRegistryScreenProps) {
 	const [query, setQuery] = useState("");
 	const [openMenu, setOpenMenu] = useState<string | null>(null);
 	const [removed, setRemoved] = useState<readonly string[]>([]);
-	const [pendingRemoval, setPendingRemoval] = useState<Project | null>(null);
 	const [undone, setUndone] = useState<Project | null>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 
@@ -102,7 +92,6 @@ export function ProjectsRegistryScreen({
 		function onKey(event: KeyboardEvent) {
 			if (event.key === "Escape") {
 				setOpenMenu(null);
-				setPendingRemoval(null);
 				return;
 			}
 			if (event.key === "/" && document.activeElement !== searchRef.current) {
@@ -132,18 +121,8 @@ export function ProjectsRegistryScreen({
 
 	function remove(project: Project) {
 		setOpenMenu(null);
-		setPendingRemoval(null);
 		setRemoved((prev) => [...prev, project.name]);
-		if (removal === "undo") setUndone(project);
-	}
-
-	function askToRemove(project: Project) {
-		if (removal === "confirm") {
-			setOpenMenu(null);
-			setPendingRemoval(project);
-			return;
-		}
-		remove(project);
+		setUndone(project);
 	}
 
 	return (
@@ -197,12 +176,11 @@ export function ProjectsRegistryScreen({
 										key={project.name}
 										project={project}
 										goTarget={index === 0 ? canvasTarget : undefined}
-										menuTrigger={menuTrigger}
 										menuOpen={openMenu === project.name}
 										onToggleMenu={() =>
 											setOpenMenu((prev) => (prev === project.name ? null : project.name))
 										}
-										onRemove={() => askToRemove(project)}
+										onRemove={() => remove(project)}
 									/>
 								))}
 							</AnimatePresence>
@@ -250,53 +228,6 @@ export function ProjectsRegistryScreen({
 						</motion.div>
 					)}
 				</AnimatePresence>
-
-				<AnimatePresence>
-					{pendingRemoval === null ? null : (
-						<motion.div
-							initial={{ opacity: 0 }}
-							animate={{ opacity: 1 }}
-							exit={{ opacity: 0 }}
-							transition={{ duration: 0.16 }}
-							className="absolute inset-0 z-40 flex items-center justify-center bg-bg/72"
-						>
-							<motion.div
-								initial={{ opacity: 0, scale: 0.97, y: 6 }}
-								animate={{ opacity: 1, scale: 1, y: 0 }}
-								exit={{ opacity: 0, scale: 0.98, y: 4 }}
-								transition={{ duration: 0.2, ease: [0.32, 0.72, 0, 1] }}
-								className="flex w-[400px] flex-col gap-5 rounded-lg border border-border-raised bg-raised p-5"
-							>
-								<div className="flex flex-col gap-2">
-									<h2 className="font-semibold text-md tracking-tight leading-sm">
-										Remove {pendingRemoval.name} from spool?
-									</h2>
-									<p className="text-muted text-base leading-base">
-										spool forgets the folder. Your files stay exactly where they are, and you can open
-										it again whenever you want.
-									</p>
-									<span className="font-mono text-muted text-xs leading-xs">{pendingRemoval.path}</span>
-								</div>
-								<div className="flex items-center justify-end gap-2">
-									<button
-										type="button"
-										onClick={() => setPendingRemoval(null)}
-										className="flex h-8 items-center rounded-md border border-border-raised px-3.5 text-base leading-none"
-									>
-										Cancel
-									</button>
-									<button
-										type="button"
-										onClick={() => remove(pendingRemoval)}
-										className="flex h-8 items-center rounded-md bg-thread px-3.5 font-medium text-base text-on-thread leading-none"
-									>
-										Remove
-									</button>
-								</div>
-							</motion.div>
-						</motion.div>
-					)}
-				</AnimatePresence>
 			</div>
 		</SpoolShell>
 	);
@@ -305,37 +236,16 @@ export function ProjectsRegistryScreen({
 function ProjectCard({
 	project,
 	goTarget,
-	menuTrigger,
 	menuOpen,
 	onToggleMenu,
 	onRemove,
 }: {
 	project: Project;
 	goTarget?: string;
-	menuTrigger: MenuTrigger;
 	menuOpen: boolean;
 	onToggleMenu: () => void;
 	onRemove: () => void;
 }) {
-	// the corner trigger lands on top of a cover, so it always carries a chip to
-	// stay legible over a light thumbnail; the meta trigger sits on the card
-	const dots = (
-		<button
-			type="button"
-			onClick={onToggleMenu}
-			aria-label={`Manage ${project.name}`}
-			className={cn(
-				"pointer-events-auto flex items-center justify-center rounded-sm border transition-[opacity,color,background-color] duration-150 focus-visible:opacity-100",
-				menuTrigger === "corner"
-					? "h-6 w-6 border-border-raised bg-raised"
-					: "h-5 w-5 border-transparent",
-				menuOpen ? "text-text opacity-100" : "text-muted opacity-0 hover:text-text group-hover:opacity-100",
-			)}
-		>
-			<DotsIcon className="h-3.5 w-3.5" />
-		</button>
-	);
-
 	return (
 		<motion.div
 			layout
@@ -366,40 +276,30 @@ function ProjectCard({
 					<span className="min-w-0 truncate font-semibold text-md tracking-tight leading-sm">
 						{project.name}
 					</span>
-					{menuTrigger === "meta" ? (
-						<span className="relative flex h-[18px] shrink-0 items-center justify-end whitespace-nowrap pl-4">
-							<span
-								className={cn(
-									"font-mono text-muted text-xs leading-xs transition-opacity duration-150",
-									menuOpen ? "opacity-0" : "group-hover:opacity-0",
-								)}
-							>
-								{project.count}
-							</span>
-							<span className="absolute right-0 flex h-[18px] w-6 items-center justify-end">{dots}</span>
-						</span>
-					) : (
-						<span className="font-mono text-muted text-xs leading-xs">{project.count}</span>
-					)}
+					<span className="shrink-0 pl-4 font-mono text-muted text-xs leading-xs">{project.count}</span>
 				</div>
 				<span className="truncate font-mono text-muted text-xs leading-xs">{project.path}</span>
 			</div>
 
-			{menuTrigger === "corner" ? (
-				<span className="pointer-events-none absolute top-3 right-3 z-30 flex h-6 w-6 items-center justify-center">
-					{dots}
-				</span>
-			) : null}
+			{/* the trigger lands on top of a cover, so it always carries a chip to stay legible over a light thumbnail */}
+			<button
+				type="button"
+				onClick={onToggleMenu}
+				aria-label={`Manage ${project.name}`}
+				className={cn(
+					"absolute top-3 right-3 z-30 flex h-6 w-6 items-center justify-center rounded-sm border border-border-raised bg-raised transition-[opacity,color] duration-150 focus-visible:opacity-100",
+					menuOpen ? "text-text opacity-100" : "text-muted opacity-0 hover:text-text group-hover:opacity-100",
+				)}
+			>
+				<DotsIcon className="h-3.5 w-3.5" />
+			</button>
 
 			{menuOpen ? (
 				<motion.div
-					initial={{ opacity: 0, scale: 0.97, y: menuTrigger === "corner" ? -4 : 4 }}
+					initial={{ opacity: 0, scale: 0.97, y: -4 }}
 					animate={{ opacity: 1, scale: 1, y: 0 }}
 					transition={{ duration: 0.14, ease: [0.32, 0.72, 0, 1] }}
-					className={cn(
-						"absolute right-3 z-30 flex w-[196px] origin-top-right flex-col rounded-md border border-border-raised bg-raised p-unit",
-						menuTrigger === "corner" ? "top-11" : "bottom-11",
-					)}
+					className="absolute top-11 right-3 z-30 flex w-[196px] origin-top-right flex-col rounded-md border border-border-raised bg-raised p-unit"
 				>
 					<MenuItem label="Open" />
 					<MenuItem label="Open in editor" />
