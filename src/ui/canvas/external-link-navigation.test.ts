@@ -49,6 +49,7 @@ describe("external links from an entered frame", () => {
 			canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 600, clientY: 380 }));
 		});
 		expect(labelText(host)).toContain("live · esc exits");
+		const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="origin"]');
 
 		await act(async () => {
 			window.dispatchEvent(
@@ -58,6 +59,7 @@ describe("external links from an entered frame", () => {
 						frame: "origin",
 						href: "https://github.com/liamvinberg/spool",
 					},
+					source: iframe?.contentWindow ?? null,
 				}),
 			);
 		});

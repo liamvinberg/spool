@@ -165,11 +165,16 @@ it("keeps toolbar gestures out of the canvas beneath it", async () => {
 		);
 	});
 	await until(() => host.querySelector('iframe[title="home"]') !== null);
+	const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
 	await act(async () => {
-		window.dispatchEvent(new MessageEvent("message", { data: { spool: "key", frame: "home", key: "Escape" } }));
+		window.dispatchEvent(
+			new MessageEvent("message", {
+				data: { spool: "key", frame: "home", key: "Escape" },
+				source: iframe?.contentWindow ?? null,
+			}),
+		);
 	});
 
-	const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
 	const postMessage = vi.spyOn(iframe?.contentWindow as Window, "postMessage");
 	const select = host.querySelector<HTMLButtonElement>('button[aria-label="select"]');
 	await act(async () => {
@@ -202,10 +207,15 @@ it("clears borrowed Select previews across Command release and window blur", asy
 		);
 	});
 	await until(() => host.querySelector('iframe[title="home"]') !== null);
-	await act(async () => {
-		window.dispatchEvent(new MessageEvent("message", { data: { spool: "key", frame: "home", key: "Escape" } }));
-	});
 	const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
+	await act(async () => {
+		window.dispatchEvent(
+			new MessageEvent("message", {
+				data: { spool: "key", frame: "home", key: "Escape" },
+				source: iframe?.contentWindow ?? null,
+			}),
+		);
+	});
 	const postMessage = vi.spyOn(iframe?.contentWindow as Window, "postMessage");
 
 	await act(async () => {
@@ -251,6 +261,7 @@ it("clears borrowed Select previews across Command release and window blur", asy
 						},
 					],
 				},
+				source: iframe?.contentWindow ?? null,
 			}),
 		);
 	});
@@ -298,6 +309,7 @@ it("clears borrowed Select previews across Command release and window blur", asy
 						},
 					],
 				},
+				source: iframe?.contentWindow ?? null,
 			}),
 		);
 	});
@@ -403,6 +415,7 @@ it("freezes on a focused frame's relayed Command key and thaws that same documen
 		window.dispatchEvent(
 			new MessageEvent("message", {
 				data: { spool: "modifier", frame: "home", modifier: "Meta", held: true },
+				source: iframe?.contentWindow ?? null,
 			}),
 		);
 	});
@@ -425,6 +438,7 @@ it("freezes on a focused frame's relayed Command key and thaws that same documen
 		window.dispatchEvent(
 			new MessageEvent("message", {
 				data: { spool: "modifier", frame: "home", modifier: "Meta", held: false },
+				source: iframe?.contentWindow ?? null,
 			}),
 		);
 	});

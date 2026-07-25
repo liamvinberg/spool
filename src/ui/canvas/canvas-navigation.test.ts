@@ -82,9 +82,15 @@ describe("canvas keyboard navigation", () => {
 			canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
 		});
 		expect(labelText(host, "origin")).toContain("live · esc exits");
+		const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="origin"]');
 
 		await act(async () => {
-			window.dispatchEvent(new MessageEvent("message", { data: { spool: "key", frame: "origin", key: "Escape" } }));
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: { spool: "key", frame: "origin", key: "Escape" },
+					source: iframe?.contentWindow ?? null,
+				}),
+			);
 		});
 		expect(document.activeElement).toBe(canvas);
 		expect(labelClass(host, "origin")).toContain("text-thread");
