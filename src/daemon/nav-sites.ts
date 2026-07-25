@@ -34,6 +34,8 @@ export interface UnreadableSite {
 	path: string;
 	line: number;
 	anchor?: { line: number; col: number };
+	/** The site sits under a branch — carried so a value found later inherits it. */
+	conditional?: true;
 }
 
 export interface NavSites {
@@ -256,7 +258,9 @@ function pushSites(
 			...anchor,
 		});
 	}
-	if (read.unreadable) out.unreadable.push({ path: at.path, line: at.line, ...anchor });
+	if (read.unreadable) {
+		out.unreadable.push({ path: at.path, line: at.line, ...anchor, ...(branched ? { conditional: true } : {}) });
+	}
 }
 
 function nearestOpeningElement(ancestors: readonly Node[]): Node | undefined {
