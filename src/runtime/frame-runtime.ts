@@ -10,6 +10,7 @@ import {
 	TermScreen,
 	type WalkEvent,
 } from "./player-chrome";
+import type { SpoolUi } from "./spool-public";
 
 /**
  * The "spool" module (#5, #16): every frame document imports it — explicitly
@@ -28,16 +29,7 @@ import {
 /** Session state is prototype data: schemaless JSON, keys owned by the agent. */
 type SpoolState = Record<string, unknown>;
 
-export interface SpoolUi {
-	/** One flat reactive object per play session, seeded from the scenario. */
-	readonly state: SpoolState;
-	/** Subscribe the calling component to state: re-renders on any change. */
-	use(): SpoolState;
-	/** Merge patch into state, push this frame onto the stack, walk to target. */
-	go(target: string, patch?: Record<string, unknown>): void;
-	/** Pop the stack and walk back. Empty stack: quiet no-op, never an exit. */
-	back(): void;
-}
+export type { SpoolUi } from "./spool-public";
 
 interface SpoolDocument {
 	project: string;

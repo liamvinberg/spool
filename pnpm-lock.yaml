@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@babel/parser':
-        specifier: ^8.0.4
-        version: 8.0.4
+        specifier: ^7.29.7
+        version: 7.29.7
       '@fontsource/fragment-mono':
         specifier: ^5.3.0
         version: 5.3.0
@@ -23,6 +23,12 @@ importers:
       '@tailwindcss/oxide':
         specifier: 4.3.3
         version: 4.3.3
+      '@types/react':
+        specifier: 19.2.17
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: 19.2.3
+        version: 19.2.3(@types/react@19.2.17)
       '@xterm/addon-serialize':
         specifier: ^0.14.0
         version: 0.14.0
@@ -65,6 +71,9 @@ importers:
       trash:
         specifier: ^10.1.1
         version: 10.1.1
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
       ws:
         specifier: ^8.21.1
         version: 8.21.1
@@ -73,8 +82,8 @@ importers:
         version: 4.4.3
     devDependencies:
       '@babel/types':
-        specifier: ^8.0.4
-        version: 8.0.4
+        specifier: ^7.29.7
+        version: 7.29.7
       '@biomejs/biome':
         specifier: ^2.5.5
         version: 2.5.5
@@ -87,12 +96,6 @@ importers:
       '@types/node':
         specifier: ^22.20.1
         version: 22.20.1
-      '@types/react':
-        specifier: ^19.2.17
-        version: 19.2.17
-      '@types/react-dom':
-        specifier: ^19.2.3
-        version: 19.2.3(@types/react@19.2.17)
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
@@ -108,9 +111,6 @@ importers:
       tsx:
         specifier: ^4.23.1
         version: 4.23.1
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
       vite:
         specifier: ^8.1.5
         version: 8.1.5(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)
@@ -120,22 +120,22 @@ importers:
 
 packages:
 
-  '@babel/helper-string-parser@8.0.0':
-    resolution: {integrity: sha512-6mJgmFFFIIO82vvoLt9XtRC7/TkzXfts1t/SpRX4IHSzMgqoPYCWesVu1udUPUWioAE/2fcG6WuI8zrkE1gwrg==}
-    engines: {node: ^22.18.0 || >=24.11.0}
+  '@babel/helper-string-parser@7.29.7':
+    resolution: {integrity: sha512-Pb5ijPrZ89GDH8223L4UP8i6QApWxs04RbPQJTeWDV0/keR2E36MeKnyr6LYmUUvqRRI+Iv87SuF1W6ErINzYw==}
+    engines: {node: '>=6.9.0'}
 
-  '@babel/helper-validator-identifier@8.0.4':
-    resolution: {integrity: sha512-4wFaiLd0bVo4cIoTXI3zKI038NIWE/cr3jvBjejOVYVxV/m8Ltav1USiGzG1fmS5J2RhgEOgXNNK46cRPnRsrg==}
-    engines: {node: ^22.18.0 || >=24.11.0}
+  '@babel/helper-validator-identifier@7.29.7':
+    resolution: {integrity: sha512-qehxGkRj55h/ff8EMaJ+cYhyaKlHIxqYDn682wQD7RNp9UujOQsHog2uS0r2vzr4pW+sXf90NeeayjcNaX3fFg==}
+    engines: {node: '>=6.9.0'}
 
-  '@babel/parser@8.0.4':
-    resolution: {integrity: sha512-srpptsAkEbbNIC/q8nT7o+m6CQe8CJUTV/t7MYc9NnWlgYVtHOb7JH6SorxMhN0kuRJjVqXbKClG6xSbPtzz+g==}
-    engines: {node: ^22.18.0 || >=24.11.0}
+  '@babel/parser@7.29.7':
+    resolution: {integrity: sha512-hnORnjP/1P/zFEndoeX+n+t1RwWRJiJpM/jO7FW32Kn9r5+sJB2JWOdYo4L6k78j15eCwY3Gm/7364B1EMwtNg==}
+    engines: {node: '>=6.0.0'}
     hasBin: true
 
-  '@babel/types@8.0.4':
-    resolution: {integrity: sha512-eY+Yn3dCqTGmyiq2QRU66lA5FL8lqqqvecHt0fF3uHONIa7ToYsaCiWV8lOKqAs0Rb2SjixiKFROngnulPtt2g==}
-    engines: {node: ^22.18.0 || >=24.11.0}
+  '@babel/types@7.29.7':
+    resolution: {integrity: sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==}
+    engines: {node: '>=6.9.0'}
 
   '@biomejs/biome@2.5.5':
     resolution: {integrity: sha512-r1S8nFsAG1MY+vJFZALzIvwXAJv6ejDQ0mxP21Tgr9YK3ZFtjrvbBwDdNhx1rUqvccEIeNg20cYCNzl6Cr69pQ==}
@@ -1969,18 +1969,18 @@ packages:
 
 snapshots:
 
-  '@babel/helper-string-parser@8.0.0': {}
+  '@babel/helper-string-parser@7.29.7': {}
 
-  '@babel/helper-validator-identifier@8.0.4': {}
+  '@babel/helper-validator-identifier@7.29.7': {}
 
-  '@babel/parser@8.0.4':
+  '@babel/parser@7.29.7':
     dependencies:
-      '@babel/types': 8.0.4
+      '@babel/types': 7.29.7
 
-  '@babel/types@8.0.4':
+  '@babel/types@7.29.7':
     dependencies:
-      '@babel/helper-string-parser': 8.0.0
-      '@babel/helper-validator-identifier': 8.0.4
+      '@babel/helper-string-parser': 7.29.7
+      '@babel/helper-validator-identifier': 7.29.7
 
   '@biomejs/biome@2.5.5':
     optionalDependencies:

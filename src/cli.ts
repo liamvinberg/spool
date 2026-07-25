@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
+import { checkDesign } from "./check";
 import {
 	daemonUrl,
 	ensureDaemon,
@@ -25,6 +26,7 @@ import { PortBusyError, SpoolError } from "./errors";
 import { initProject } from "./init";
 import { openProject } from "./open";
 import { removeProject } from "./remove";
+import { resolveProjectRoot } from "./resolve";
 import { skillText } from "./skill";
 import { runUpgrade } from "./upgrade";
 import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
@@ -73,6 +75,26 @@ program
 	.action((path: string) => {
 		const result = removeProject(path, spoolDir);
 		process.stdout.write(result.removed ? `removed ${result.root}\n` : `${result.root} was not registered\n`);
+	});
+
+program
+	.command("check")
+	.description("check every HTML frame offline without starting spool")
+	.argument("[path]", "where the walk-up starts", ".")
+	.action((path: string) => {
+		const root = resolveProjectRoot(path);
+		if (root === undefined) {
+			throw new SpoolError(
+				`not inside a spool project — no design/canvas.json here or above; \`spool init\` starts one`,
+			);
+		}
+		const diagnostics = checkDesign(root);
+		for (const diagnostic of diagnostics) {
+			process.stderr.write(
+				`${diagnostic.path}:${diagnostic.line}:${diagnostic.column} TS${diagnostic.code}: ${diagnostic.message}\n`,
+			);
+		}
+		if (diagnostics.length > 0) process.exitCode = 1;
 	});
 
 // --- agent verbs (#25): read-only, cwd-resolved, daemon auto-started ---------

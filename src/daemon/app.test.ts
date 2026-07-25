@@ -50,6 +50,132 @@ describe("frame documents", () => {
 		expect(importMap.imports.clsx).toContain("esm.sh");
 	});
 
+	it("compiles decorated ambient abstract class placements accepted by the checker", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		const modules = [
+			{
+				file: "ambient-named.ts",
+				declarations: [
+					"@dec declare class PlainConcrete {}",
+					"@dec declare abstract class PlainAbstract {}",
+					"@dec export declare class DecoratorExportConcrete {}",
+					"@dec export declare abstract class DecoratorExportAbstract {}",
+					"export @dec declare class ExportDecoratorConcrete {}",
+					"export @dec declare abstract class ExportDecoratorAbstract {}",
+				],
+			},
+			{
+				file: "ambient-default-named-concrete.ts",
+				declarations: ["export default @dec declare class DefaultConcrete {}"],
+			},
+			{
+				file: "ambient-default-named-abstract.ts",
+				declarations: ["export default @dec declare abstract class DefaultAbstract {}"],
+			},
+			{
+				file: "ambient-default-anonymous-concrete.ts",
+				declarations: ["export default @dec declare class {}"],
+			},
+			{
+				file: "ambient-default-anonymous-abstract.ts",
+				declarations: ["export default @dec declare abstract class {}"],
+			},
+			{
+				file: "runtime-default-named-abstract.ts",
+				declarations: ["export default @dec abstract class RuntimeDefault {}"],
+			},
+			{
+				file: "runtime-default-anonymous-abstract.ts",
+				declarations: ["export default @dec abstract class {}"],
+			},
+		];
+		for (const module of modules) {
+			writeDesignFile(
+				root,
+				`shared/${module.file}`,
+				["function dec(value: Function) {}", ...module.declarations].join("\n"),
+			);
+		}
+		const whitespace = [
+			"\u0009",
+			"\u000b",
+			"\u000c",
+			"\u0020",
+			"\u00a0",
+			"\u1680",
+			"\u2000",
+			"\u2001",
+			"\u2002",
+			"\u2003",
+			"\u2004",
+			"\u2005",
+			"\u2006",
+			"\u2007",
+			"\u2008",
+			"\u2009",
+			"\u200a",
+			"\u202f",
+			"\u205f",
+			"\u3000",
+			"\ufeff",
+		];
+		writeDesignFile(
+			root,
+			"shared/ambient-whitespace.ts",
+			[
+				"function dec(value: Function) {}",
+				...whitespace.map((gap, index) => `@dec declare${gap}abstract${gap}class Whitespace${index} {}`),
+			].join("\n"),
+		);
+		writeFrame(
+			root,
+			"abstract",
+			[
+				...modules.map((module) => `import "../../shared/${module.file}";`),
+				'import "../../shared/ambient-whitespace";',
+				"export default function Abstract() { return <main>decorated abstract live</main>; }",
+			].join("\n"),
+		);
+		const app = makeApp(spoolDir);
+
+		const response = await app.request(`/p/${name}/frames/abstract`);
+
+		expect(response.status).toBe(200);
+		expect(await response.text()).toContain("decorated abstract live");
+	});
+
+	it("bundles explicit and runtime-substituted .mts and .cts modules", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/explicit.mts", 'export const explicitMts = "explicit mts";\n');
+		writeDesignFile(root, "shared/explicit.cts", 'export const explicitCts = "explicit cts";\n');
+		writeDesignFile(root, "shared/substituted.mts", 'export const substitutedMts = "substituted mts";\n');
+		writeDesignFile(root, "shared/substituted.cts", 'export const substitutedCts = "substituted cts";\n');
+		writeFrame(
+			root,
+			"modules",
+			[
+				'import { explicitMts } from "../../shared/explicit.mts";',
+				'import { explicitCts } from "../../shared/explicit.cts";',
+				'import { substitutedMts } from "../../shared/substituted.mjs";',
+				'import { substitutedCts } from "../../shared/substituted.cjs";',
+				"export default function Modules() {",
+				"\treturn <main>{explicitMts}{explicitCts}{substitutedMts}{substitutedCts}</main>;",
+				"}",
+			].join("\n"),
+		);
+		const app = makeApp(spoolDir);
+
+		const response = await app.request(`/p/${name}/frames/modules`);
+
+		expect(response.status).toBe(200);
+		const document = await response.text();
+		for (const value of ["explicit mts", "explicit cts", "substituted mts", "substituted cts"]) {
+			expect(document).toContain(value);
+		}
+	});
+
 	it("injects preflight, tokens-driven utilities, fonts and import map in document order", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);

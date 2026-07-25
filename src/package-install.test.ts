@@ -3,7 +3,7 @@ import { cpSync, existsSync, readFileSync, symlinkSync, writeFileSync } from "no
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { makeTempDir } from "./test-helpers";
+import { makeTempDir, markProject, writeDesignFile, writeFrame } from "./test-helpers";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -14,7 +14,9 @@ function run(command: string, args: string[], cwd: string): string {
 }
 
 describe("packed install", () => {
-	it("prints its own Playwright anchor from a global-style prefix", { timeout: 180_000 }, () => {
+	it("runs the installed checker and prints its own Playwright anchor from a global-style prefix", {
+		timeout: 180_000,
+	}, () => {
 		const packageRoot = makeTempDir();
 		for (const file of [
 			"package.json",
@@ -47,6 +49,22 @@ describe("packed install", () => {
 		const anchor = JSON.parse(encodedAnchor ?? '""') as string;
 		expect(anchor).toContain("spool.page");
 		expect(JSON.parse(readFileSync(anchor, "utf8"))).toMatchObject({ name: "spool.page" });
+
+		const project = makeTempDir();
+		markProject(project);
+		writeDesignFile(project, "shared/entry.cts", 'const dep = require("./dep");\nvoid dep;\n');
+		writeDesignFile(project, "shared/dep.ts", "export const broken: string = 1;\n");
+		writeFrame(project, "home", 'import "../../shared/entry.cjs";\n');
+		const check = spawnSync(spoolBin, ["check", project], {
+			encoding: "utf8",
+			env: { ...process.env, SPOOL_DIR: "" },
+		});
+		expect(check.status).toBe(1);
+		expect(check.stdout).toBe("");
+		expect(check.stderr).toBe(
+			"design/shared/dep.ts:1:14 TS2322: Type 'number' is not assignable to type 'string'.\n",
+		);
+		expect(check.stderr).not.toContain("TS2591");
 
 		expect(existsSync(join(consumer, "node_modules", "spool.page"))).toBe(false);
 		expect(existsSync(join(consumer, "node_modules", "playwright-core"))).toBe(false);
