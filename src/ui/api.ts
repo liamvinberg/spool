@@ -1,6 +1,6 @@
 import { hc } from "hono/client";
 import type { AppType } from "../daemon/app";
-import type { EdgeSite, FlowEdge, Flows } from "../daemon/flows";
+import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsListing } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { Camera, CanvasState } from "../daemon/project-state";
@@ -20,6 +20,7 @@ export type {
 	EdgeSite,
 	FlowEdge,
 	Flows,
+	FlowUnreadable,
 	FrameCollision,
 	FsListing,
 	Geometry,

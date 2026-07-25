@@ -1,4 +1,4 @@
-import type { FlowEdge, ProjectedFrame } from "../api";
+import type { FlowEdge, FlowUnreadable, ProjectedFrame } from "../api";
 import { pageOf } from "./pages";
 
 /**
@@ -24,6 +24,27 @@ export interface ConnectionGroup {
 	/** The page these rows land on; null is the group of missing destinations. */
 	page: string | null;
 	rows: ConnectionRow[];
+}
+
+/**
+ * A walk the frame declares whose destination the parser cannot read. It has
+ * no target and so no page, which is why it cannot be a ConnectionRow: a
+ * missing destination is a name nothing answers to, this is no name at all.
+ * Naming it is the whole point — an unresolvable walk that renders as nothing
+ * is indistinguishable from a frame with no walks.
+ */
+export interface UnreadableRow {
+	/** Design-relative source file of the site. */
+	path: string;
+	line: number;
+}
+
+/** The unresolvable walks one frame declares, in source order per file. */
+export function unreadableRows(frame: string, unreadable: readonly FlowUnreadable[]): UnreadableRow[] {
+	return unreadable
+		.filter((site) => site.frame === frame)
+		.map(({ path, line }) => ({ path, line }))
+		.sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
 }
 
 /** How many destinations the rail would list for a frame — the pill's count. */

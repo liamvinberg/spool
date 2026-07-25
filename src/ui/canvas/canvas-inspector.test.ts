@@ -3,6 +3,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import type { Flows } from "../api";
 import { ProjectCanvas } from "./canvas";
 
 /**
@@ -23,7 +24,7 @@ const PROJECTION = {
 	collisions: [],
 };
 
-const FLOWS = {
+const FLOWS: Flows = {
 	frames: ["home", "menu", "checkout"],
 	edges: [
 		{ from: "home", to: "menu", certainty: "will", sites: [] },
@@ -33,14 +34,14 @@ const FLOWS = {
 	unreadable: [],
 };
 
-function mount() {
+function mount(flows: typeof FLOWS = FLOWS) {
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) return Response.json(PROJECTION);
-			if (url.pathname.endsWith("/flows")) return Response.json(FLOWS);
+			if (url.pathname.endsWith("/flows")) return Response.json(flows);
 			return Response.json({});
 		}),
 	);
@@ -192,6 +193,28 @@ describe("the inspector rail", () => {
 		// a destination no frame answers to is named, never a place to go
 		expect(rows[2]?.hasAttribute("disabled")).toBe(true);
 		expect(rail(canvas.host)?.textContent).toContain("missing");
+	});
+
+	it("names a walk whose destination cannot be read instead of showing nothing", async () => {
+		const canvas = mount({
+			...FLOWS,
+			edges: [],
+			unreadable: [{ frame: "home", path: "shared/ui/rows.tsx", line: 11 }],
+		});
+		await canvas.render();
+		await act(async () => {
+			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="Expand inspector"]')?.click();
+		});
+		await act(async () => {
+			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="home frame"]')?.click();
+		});
+		await act(async () => tab(canvas.host, "connections")?.click());
+
+		// the frame has no derivable edge at all, and that must not read as "no walks"
+		const text = rail(canvas.host)?.textContent ?? "";
+		expect(text).toContain("unreadable");
+		expect(text).toContain("shared/ui/rows.tsx:11");
+		expect(text).not.toContain("no outbound links from this frame");
 	});
 
 	it("navigates the canvas from an off-page connection instead of walking to it", async () => {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { InspectorIcon } from "../icons";
-import type { ConnectionGroup, ConnectionRow } from "./connections";
+import type { ConnectionGroup, ConnectionRow, UnreadableRow } from "./connections";
 import { rowSelectors, type TreeRow } from "./element-tree";
 import { pickKey } from "./overlays";
 import { pageLabel } from "./pages";
@@ -62,6 +62,7 @@ export function InspectorRail({
 	pickedKeys,
 	revealKey,
 	groups,
+	unreadableConnections,
 	onSelectRow,
 	onDoubleClickRow,
 	onToggleRow,
@@ -85,6 +86,8 @@ export function InspectorRail({
 	/** The row key a canvas pick wants on screen. */
 	revealKey: string | undefined;
 	groups: ConnectionGroup[];
+	/** Walks this frame declares whose destination could not be read. */
+	unreadableConnections: UnreadableRow[];
 	onSelectRow: (row: TreeRow, modifiers: SelectModifiers) => void;
 	onDoubleClickRow: (row: TreeRow) => void;
 	onToggleRow: (key: string) => void;
@@ -201,7 +204,11 @@ export function InspectorRail({
 									onToggleRow={onToggleRow}
 								/>
 							) : (
-								<ConnectionsTab groups={groups} onOpenConnection={onOpenConnection} />
+								<ConnectionsTab
+									groups={groups}
+									unreadable={unreadableConnections}
+									onOpenConnection={onOpenConnection}
+								/>
 							)}
 						</div>
 					)}
@@ -460,13 +467,15 @@ function ElementRowView({
 /** The whole outbound list, grouped by the page each link lands on. */
 function ConnectionsTab({
 	groups,
+	unreadable,
 	onOpenConnection,
 }: {
 	groups: ConnectionGroup[];
+	unreadable: UnreadableRow[];
 	onOpenConnection: (row: ConnectionRow) => void;
 }) {
 	const [query, setQuery] = useState("");
-	const total = groups.reduce((sum, group) => sum + group.rows.length, 0);
+	const total = groups.reduce((sum, group) => sum + group.rows.length, 0) + unreadable.length;
 	const q = query.trim().toLowerCase();
 	const filtered = useMemo(
 		() =>
@@ -477,6 +486,11 @@ function ConnectionsTab({
 				}))
 				.filter((group) => group.rows.length > 0),
 		[groups, q],
+	);
+	// an unreadable site has no target to match, so the filter reads its source
+	const filteredUnreadable = useMemo(
+		() => (q === "" ? unreadable : unreadable.filter((row) => row.path.toLowerCase().includes(q))),
+		[unreadable, q],
 	);
 
 	return (
@@ -515,7 +529,20 @@ function ConnectionsTab({
 								))}
 							</div>
 						))}
-						{filtered.length === 0 ? (
+						{filteredUnreadable.length > 0 ? (
+							<div className="pt-1.5">
+								<div className="flex items-center justify-between px-2 pb-1">
+									<span className="font-mono text-2xs text-muted/55 leading-3">unreadable</span>
+									<span className="font-mono text-2xs text-muted/35 leading-3">
+										{filteredUnreadable.length}
+									</span>
+								</div>
+								{filteredUnreadable.map((row) => (
+									<UnreadableRowView key={`${row.path}:${row.line}`} row={row} />
+								))}
+							</div>
+						) : null}
+						{filtered.length === 0 && filteredUnreadable.length === 0 ? (
 							<div className="px-2 pt-6 text-center font-mono text-2xs text-muted/55 leading-3">
 								no links match
 							</div>
@@ -558,6 +585,27 @@ function ConnectionRowView({ row, onOpen }: { row: ConnectionRow; onOpen: (row: 
 				</span>
 			) : null}
 		</button>
+	);
+}
+
+/**
+ * A walk with no readable destination: its source location is the only thing
+ * there is to say about it, so that is the label. Not a button — there is
+ * nowhere to go — but never absent either, which was the bug: a frame whose
+ * only walks are computed used to read as a frame with no walks at all.
+ */
+function UnreadableRowView({ row }: { row: UnreadableRow }) {
+	return (
+		<div
+			title={`${row.path}:${row.line} — spool cannot read this destination`}
+			className="flex w-full items-center gap-2 px-2 py-1.5 text-left"
+		>
+			<span className="shrink-0 text-xs text-muted/45 leading-3">⇠</span>
+			<span className="min-w-0 flex-1 truncate font-mono text-2xs text-muted/45 leading-3">
+				{row.path}:{row.line}
+			</span>
+			<span className="shrink-0 font-mono text-2xs text-muted/55 leading-3">unreadable</span>
+		</div>
 	);
 }
 

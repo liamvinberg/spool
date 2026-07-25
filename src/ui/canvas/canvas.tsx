@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { snapPxToCells } from "../../term/cells";
-import type { Camera, FlowEdge, FrameCollision, Geometry, ProjectedFrame } from "../api";
+import type { Camera, FlowEdge, FlowUnreadable, FrameCollision, Geometry, ProjectedFrame } from "../api";
 import {
 	beaconTrash,
 	fetchCanvasState,
@@ -22,7 +22,7 @@ import { RibbonMark } from "../icons";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import { CollisionNotice } from "./collision-notice";
-import { type ConnectionRow, connectionGroups, outboundCount } from "./connections";
+import { type ConnectionRow, connectionGroups, outboundCount, unreadableRows } from "./connections";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { buildTreeRows, revealKeys, rowSelectors, type TreeRow, visibleRows } from "./element-tree";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
@@ -183,6 +183,8 @@ export function ProjectCanvas({
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const [frames, setFrames] = useState<ProjectedFrame[]>([]);
 	const [edges, setEdges] = useState<FlowEdge[]>([]);
+	// walks whose destination the parser cannot read: named in the rail, never dropped
+	const [unreadable, setUnreadable] = useState<FlowUnreadable[]>([]);
 	// the arrows toggle (#34): per-project, default on — the map is spool's identity
 	const [arrowsOn, setArrowsOn] = useState(true);
 	// frame-local boxes of navigation-site elements, as each frame's shim answers
@@ -471,7 +473,9 @@ export function ProjectCanvas({
 
 	const refetchFlows = useCallback(async () => {
 		const flows = await fetchFlows(project);
-		if (flows !== undefined) setEdges(flows.edges);
+		if (flows === undefined) return;
+		setEdges(flows.edges);
+		setUnreadable(flows.unreadable);
 	}, [project]);
 
 	// boot: stored cameras + arrows + active page, the
@@ -2024,6 +2028,11 @@ export function ProjectCanvas({
 		[inspectedFrame, edges, frames],
 	);
 
+	const unreadableConnections = useMemo(
+		() => (inspectedFrame === null ? [] : unreadableRows(inspectedFrame, unreadable)),
+		[inspectedFrame, unreadable],
+	);
+
 	/** A connection row is a place on the canvas, never a walk: land there and select it. */
 	const openConnection = useCallback(
 		(row: ConnectionRow) => {
@@ -2479,6 +2488,7 @@ export function ProjectCanvas({
 				onMode={setRailMode}
 				onOpenChange={setRailOpen}
 				outboundCount={inspectedFrame === null ? null : outboundCount(inspectedFrame, edges)}
+				unreadableConnections={unreadableConnections}
 				target={inspectorTarget}
 				rows={inspectedRows}
 				callSiteLabels={callSiteLabels}

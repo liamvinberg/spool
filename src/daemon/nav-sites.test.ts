@@ -250,11 +250,7 @@ describe("frameNavSites", () => {
 describe("the source graph — a frame is its folder plus what it imports", () => {
 	it("claims a walk declared in a shared component it mounts", () => {
 		const root = makeTempDir();
-		writeDesignFile(
-			root,
-			"shared/ui/nav.tsx",
-			`export function Nav() {\n\treturn <a data-go="inbox">in</a>;\n}\n`,
-		);
+		writeDesignFile(root, "shared/ui/nav.tsx", `export function Nav() {\n\treturn <a data-go="inbox">in</a>;\n}\n`);
 		writeDesignFile(
 			root,
 			"frames/home/frame.tsx",
@@ -324,7 +320,11 @@ describe("the source graph — a frame is its folder plus what it imports", () =
 			`import { A } from "../../shared/ui/a";\nexport default function Frame() {\n\treturn <A />;\n}\n`,
 		);
 
-		expect(frameNavSites(root, "home").sites.map((s) => s.target).sort()).toEqual(["from-a", "from-b"]);
+		expect(
+			frameNavSites(root, "home")
+				.sites.map((s) => s.target)
+				.sort(),
+		).toEqual(["from-a", "from-b"]);
 	});
 
 	it("ignores package specifiers — they are never project source", () => {
