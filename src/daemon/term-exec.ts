@@ -46,7 +46,9 @@ export function bunExecutor(ensure: () => Promise<Toolchain>): TermExecutor {
 		let dataCb: (chunk: Uint8Array) => void = () => {};
 		let exitCb: (code: number) => void = () => {};
 		let exited = false;
+		let hardKill: NodeJS.Timeout | undefined;
 		const reportExit = (code: number) => {
+			if (hardKill !== undefined) clearTimeout(hardKill);
 			if (exited) return;
 			exited = true;
 			exitCb(code);
@@ -73,8 +75,14 @@ export function bunExecutor(ensure: () => Promise<Toolchain>): TermExecutor {
 			resize: (cols, rows) => child.stdin.write(encodeControl({ resize: { cols, rows } })),
 			signal: (sig) => child.stdin.write(encodeControl({ signal: sig })),
 			kill: () => {
+				// Closing stdin is the supervisor's clean way out; SIGTERM is the
+				// same request by signal. Either one has it kill the app before it
+				// goes — a supervisor that dies without doing so leaves the project
+				// process running under init forever.
 				child.stdin.end();
 				child.kill();
+				hardKill ??= setTimeout(() => child.kill("SIGKILL"), 3000);
+				hardKill.unref?.();
 			},
 			onData: (cb) => {
 				dataCb = cb;

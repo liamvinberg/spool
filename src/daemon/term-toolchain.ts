@@ -208,6 +208,23 @@ proc.exited.then((code) => {
 	term.close();
 	process.exit(0);
 });
+// The supervisor owns the app's life. Dying without taking it down leaves a
+// project process reparented to init, holding a core forever with nothing left
+// to read it — so every way this process can be told to stop kills the app
+// first, and a SIGTERM that finds it wedged still escalates.
+let leaving = false;
+function leave(code) {
+	if (leaving) return;
+	leaving = true;
+	try { proc.kill("SIGTERM"); } catch {}
+	const hard = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} }, 1000);
+	Promise.race([proc.exited, new Promise((r) => setTimeout(r, 1500))]).finally(() => {
+		clearTimeout(hard);
+		try { term.close(); } catch {}
+		process.exit(code);
+	});
+}
+for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(sig, () => leave(0));
 let pending = new Uint8Array(0);
 const reader = Bun.stdin.stream().getReader();
 for (;;) {
@@ -238,7 +255,5 @@ for (;;) {
 	}
 	pending = buffer.slice(offset);
 }
-proc.kill();
-term.close();
-process.exit(0);
+leave(0);
 `;
