@@ -6,16 +6,17 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
 import { serveDaemon } from "./daemon/server";
-import { makeProject, makeTempDir, markProject, writeFrame } from "./test-helpers";
+import { makeProject, makeTempDir, markProject, writeDesignFile, writeFrame, writePageFrame } from "./test-helpers";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
 const cliPath = join(repoRoot, "src", "cli.ts");
 
-function spool(args: string[], home: string, cwd?: string, env: Record<string, string> = {}) {
+function spool(args: string[], home: string, cwd?: string, env: Record<string, string> = {}, timeout?: number) {
 	return spawnSync(tsxBin, [cliPath, ...args], {
 		cwd: cwd ?? repoRoot,
 		encoding: "utf8",
+		timeout,
 		// SPOOL_DIR emptied so a dev shell's dogfood split cannot leak past HOME
 		env: { ...process.env, HOME: home, SPOOL_DIR: "", ...env },
 	});
@@ -43,6 +44,164 @@ function spoolAsync(args: string[], home: string, cwd: string) {
 }
 
 describe("spool cli", () => {
+	it("checks every html frame from a nested directory without registering or writing", () => {
+		const home = makeTempDir();
+		const root = makeTempDir();
+		markProject(root);
+		writeFrame(
+			root,
+			"home",
+			'import { Card } from "../../shared/ui/card";\nexport default function Home() { return <Card />; }\n',
+		);
+		writeDesignFile(
+			root,
+			"shared/ui/card.tsx",
+			'export function Card() { return <main aria-label="home">home</main>; }\n',
+		);
+		writePageFrame(root, "account", "settings", "export default function Settings() { return <p>settings</p>; }\n");
+		writeDesignFile(root, "frames/terminal/term.tsx", "this is never parsed;\n");
+		const nested = join(root, "src", "feature");
+		mkdirSync(nested, { recursive: true });
+
+		const result = spool(["check"], home, nested);
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toBe("");
+		expect(existsSync(join(home, ".spool"))).toBe(false);
+		expect(existsSync(join(root, "design", ".spool"))).toBe(false);
+		expect(existsSync(join(root, "design", "frames", "home", "frame.json"))).toBe(false);
+	});
+
+	it("refuses a FIFO frame without blocking", () => {
+		const root = makeTempDir();
+		markProject(root);
+		const frame = join(root, "design", "frames", "home", "frame.tsx");
+		mkdirSync(join(root, "design", "frames", "home"), { recursive: true });
+		const fifo = spawnSync("mkfifo", [frame], { encoding: "utf8" });
+		expect(fifo.status).toBe(0);
+
+		const result = spool(["check", root], makeTempDir(), undefined, {}, 2_000);
+
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toBe(
+			"design/frames/home/frame.tsx:1:1 TS5083: Filesystem read refused (non-regular file)\n",
+		);
+	});
+
+	it("prints sorted, deduplicated TypeScript diagnostics for frame and shared source", () => {
+		const root = makeTempDir();
+		markProject(root);
+		writeFrame(
+			root,
+			"home",
+			'import { broken } from "../../shared/ui/broken";\nexport default function Home() { return <main>{broken}</main>; }\n',
+		);
+		writePageFrame(
+			root,
+			"account",
+			"settings",
+			"export default function Settings() { return <p>{unknownName}</p>; }\n",
+		);
+		writeDesignFile(root, "shared/ui/broken.ts", "export const broken: string = 1;\n");
+
+		const result = spool(["check", root], makeTempDir());
+
+		expect(result.status).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toContain("design/frames/account/settings/frame.tsx:1:");
+		expect(result.stderr).toContain("TS2304: Cannot find name 'unknownName'.");
+		expect(result.stderr).toContain("design/shared/ui/broken.ts:1:");
+		expect(result.stderr).toContain("TS2322: Type 'number' is not assignable to type 'string'.");
+		expect(result.stderr).not.toContain(root);
+		expect(result.stderr.split("\n").filter(Boolean)).toEqual([
+			...new Set(result.stderr.split("\n").filter(Boolean)),
+		]);
+	});
+
+	it("treats import-map packages as untyped while reporting unmapped packages", () => {
+		const root = makeTempDir();
+		markProject(root);
+		writeDesignFile(
+			root,
+			"shared/importmap.json",
+			'{ "imports": { "charting": "https://example.test/charting.js" } }\n',
+		);
+		writeFrame(
+			root,
+			"home",
+			'import charting from "charting";\nimport missing from "missing";\nexport default function Home() { return <main>{String(charting ?? missing)}</main>; }\n',
+		);
+
+		const result = spool(["check", root], makeTempDir());
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("TS2307: Cannot find module 'missing'");
+		expect(result.stderr).not.toContain("charting");
+	});
+
+	it.each(['import value from "../../shared/\\0secret";\nvoid value;\n', "void import(`../../shared/\\0secret`);\n"])(
+		"reports a cooked NUL module specifier without a stack or absolute path",
+		(source) => {
+			const root = makeTempDir();
+			markProject(root);
+			writeFrame(root, "home", source);
+
+			const result = spool(["check", root], makeTempDir());
+
+			expect(result.status).toBe(1);
+			expect(result.stdout).toBe("");
+			expect(result.stderr).toContain("TS2307: Cannot find module '../../shared/\\u0000secret'");
+			expect(result.stderr).not.toContain("\0");
+			expect(result.stderr).not.toContain(root);
+			expect(result.stderr).not.toContain("ERR_INVALID_ARG_VALUE");
+			expect(result.stderr).not.toContain(" at ");
+			expect(result.stderr.split("\n").filter(Boolean)).toHaveLength(1);
+		},
+	);
+
+	it("reports parser exhaustion as one source-local diagnostic without a stack", () => {
+		const root = makeTempDir();
+		markProject(root);
+		const secret = "/private/cli-parser-exhaustion-secret.ts";
+		const nested = `${"[".repeat(500)}0${"]".repeat(500)}`;
+		writeFrame(root, "home", `const nested = ${nested};\nimport ${JSON.stringify(secret)};\nvoid nested;\n`);
+
+		const result = spool(["check", root], makeTempDir());
+
+		expect(result.status).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toBe("design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely\n");
+		expect(result.stderr).not.toContain(root);
+		expect(result.stderr).not.toContain(secret);
+		expect(result.stderr).not.toContain("RangeError");
+		expect(result.stderr).not.toContain(" at ");
+	});
+
+	it("reports policy traversal exhaustion as one source-local diagnostic without a stack", () => {
+		const root = makeTempDir();
+		markProject(root);
+		const secret = "/private/cli-traversal-exhaustion-secret.ts";
+		const memberChain = `value${".x".repeat(20_000)}`;
+		writeFrame(
+			root,
+			"home",
+			`${memberChain};\nimport ${JSON.stringify(secret)};\nexport default function Home() { return null; }\n`,
+		);
+
+		const result = spool(["check", root], makeTempDir());
+
+		expect(result.status).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toBe("design/frames/home/frame.tsx:1:1 TS1003: Source syntax cannot be inspected safely\n");
+		expect(result.stderr).not.toContain(root);
+		expect(result.stderr).not.toContain(secret);
+		expect(result.stderr).not.toContain("RangeError");
+		expect(result.stderr).not.toContain(" at ");
+	});
+
 	it.each([
 		[["shot", "cart", "--viewport", "390-by-844"], "--viewport must be <width>x<height> with positive integers"],
 		[["shot", "cart", "--viewport", "0x844"], "--viewport must be <width>x<height> with positive integers"],
