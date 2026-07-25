@@ -25,6 +25,10 @@ import { hasThumb as storedThumb, termScreenFile, thumbModified } from "./thumbs
 
 export type FrameKind = "html" | "term";
 
+export type TerminalCoverUnavailable = { kind: "stale"; message: string } | { kind: "never-run"; message: string };
+
+export type TerminalCoverState = { kind: "current" } | TerminalCoverUnavailable;
+
 export interface ProjectedFrame {
 	name: string;
 	kind: FrameKind;
@@ -35,6 +39,8 @@ export interface ProjectedFrame {
 	w: number;
 	h: number;
 	hasThumb: boolean;
+	/** Terminal-only cover truth; unavailable states carry the canvas message. */
+	terminalCover?: TerminalCoverState;
 }
 
 export interface FrameCollision {

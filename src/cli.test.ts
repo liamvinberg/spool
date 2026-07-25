@@ -254,4 +254,13 @@ describe("spool cli", () => {
 		expect(result.status).toBe(0);
 		expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
 	});
+
+	it("distinguishes html screenshots from terminal persisted-grid SVGs in shot help", () => {
+		const result = spool(["shot", "--help"], makeTempDir());
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain(
+			"save an HTML headless screenshot or a terminal source-current persisted-grid SVG",
+		);
+	});
 });

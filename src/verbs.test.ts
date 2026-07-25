@@ -173,12 +173,34 @@ describe("skill", () => {
 		expect(flows).toContain("pass a callback");
 	});
 
+	it("distinguishes html browser boots from inert terminal persisted-grid shots in the overview", () => {
+		expect(skillText()).toContain(
+			"The CLI boots HTML frames in spool's own headless Chrome; it never reads the human's canvas. A terminal shot executes nothing and rasterizes only a persisted source-current grid to SVG.",
+		);
+	});
+
+	it("keeps the detailed verify loop kind-specific", () => {
+		const verbs = skillText("verbs");
+		expect(verbs).toContain("For HTML frames, shot and logs are two outputs of one boot");
+		expect(verbs).toContain(
+			"A terminal shot does not boot or execute source; it only rasterizes a persisted source-current grid to SVG.",
+		);
+	});
+
 	it("teaches that terminal source stays inert until it has an OS sandbox", () => {
 		expect(skillText()).toContain("static disabled surface");
 		const terminals = skillText("terminals");
 		expect(terminals).toContain("does not compile, evaluate, or execute term.tsx");
 		expect(terminals).toContain("inside an OS sandbox");
 		expect(terminals).toContain("no terminal input, output, process lifecycle, restart, or shared live session");
+		expect(terminals).toContain("Saving a never-run terminal does not create a screen.");
+		expect(terminals).toContain('literal `term.go("target")` calls in term.tsx');
+		expect(terminals).toContain('`{"\\u00a0"}`');
+		expect(terminals).toContain(
+			"any stale or never-run terminal rejects the whole player request, even when the selected starting frame is HTML",
+		);
+		expect(skillText()).toContain("terminal source-current persisted-grid SVG");
+		expect(skillText("verbs")).toContain("A terminal never executes for a shot");
 	});
 
 	it("indexes every topic as its own overview row", () => {

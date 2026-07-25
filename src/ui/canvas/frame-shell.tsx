@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import type { TerminalCoverState } from "../../daemon/projection";
 import { frameDocumentUrl } from "../api";
 import { Thumbnail } from "../thumbnail";
 import type { FrameState } from "./lifecycle";
@@ -23,9 +24,10 @@ export interface WalkBoot {
 export interface CoverPlan {
 	/** The cover layer sits fully opaque over the (missing or booting) frame. */
 	cover: boolean;
-	image: "still" | "thumb" | "placeholder";
+	image: "still" | "thumb" | "placeholder" | "terminal-message";
 	/** The 55% veil + mono "booting" label — the honest boot cover. */
 	badge: boolean;
+	message?: string;
 }
 
 /**
@@ -39,8 +41,17 @@ export function coverPlan(input: {
 	ready: boolean;
 	hasThumb: boolean;
 	walk: WalkBoot | null;
+	terminalCover?: TerminalCoverState | undefined;
 }): CoverPlan {
-	const { state, ready, hasThumb, walk } = input;
+	const { state, ready, hasThumb, walk, terminalCover } = input;
+	if (terminalCover?.kind === "stale" || terminalCover?.kind === "never-run") {
+		return {
+			cover: true,
+			image: "terminal-message",
+			badge: false,
+			message: terminalCover.message,
+		};
+	}
 	return {
 		cover: state === "hibernated" || !ready,
 		image: walk?.still !== undefined ? "still" : hasThumb ? "thumb" : "placeholder",
@@ -57,6 +68,7 @@ export const FrameShell = memo(function FrameShell({
 	docNonce,
 	thumbNonce,
 	hasThumb,
+	terminalCover,
 	walkBoot,
 	onIframe,
 }: {
@@ -71,6 +83,8 @@ export const FrameShell = memo(function FrameShell({
 	/** Bumped when the cached thumbnail changes — refreshes covers. */
 	thumbNonce: number;
 	hasThumb: boolean;
+	/** Terminal-only current/stale/never-run cover truth from the projection. */
+	terminalCover: TerminalCoverState | undefined;
 	/** Set while the current boot is a walk arrival (#28) — quiet cover. */
 	walkBoot: WalkBoot | undefined;
 	onIframe: (name: string, el: HTMLIFrameElement | null) => void;
@@ -95,7 +109,8 @@ export const FrameShell = memo(function FrameShell({
 
 	// The cover: shown while nothing is mounted or a mounted frame hasn't
 	// booted, then fades — no white flash on entry (#8 thumbnail-then-hydrate).
-	const covered = state === "hibernated" || !ready;
+	const unavailableTerminal = terminalCover?.kind === "stale" || terminalCover?.kind === "never-run";
+	const covered = unavailableTerminal || state === "hibernated" || !ready;
 	const [veil, setVeil] = useState(covered);
 	useEffect(() => {
 		if (covered) {
@@ -115,7 +130,7 @@ export const FrameShell = memo(function FrameShell({
 	else if (covered && walkBoot === undefined && walkCover !== null) setWalkCover(null);
 	else if (!covered && !veil && walkCover !== null) setWalkCover(null);
 
-	const plan = coverPlan({ state, ready, hasThumb, walk: walkCover });
+	const plan = coverPlan({ state, ready, hasThumb, walk: walkCover, terminalCover });
 
 	return (
 		<>
@@ -135,7 +150,11 @@ export const FrameShell = memo(function FrameShell({
 					className="absolute inset-0"
 					style={{ opacity: plan.cover ? 1 : 0, transition: "opacity 180ms ease-out" }}
 				>
-					{plan.image === "still" ? (
+					{plan.image === "terminal-message" ? (
+						<div className="absolute inset-0 flex items-center justify-center bg-surface px-8 text-center">
+							<span className="max-w-lg font-mono text-xs leading-relaxed text-muted">{plan.message}</span>
+						</div>
+					) : plan.image === "still" ? (
 						<img
 							src={walkCover?.still}
 							alt={name}

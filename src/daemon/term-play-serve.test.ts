@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { fixtureTermExecutor, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { terminalSourceVersion } from "./term-source";
 
 /**
  * The old player restart route remains shape-compatible while terminal frames
@@ -12,6 +13,16 @@ describe("the terminal restart endpoint", () => {
 		const { spawned, executor } = fixtureTermExecutor();
 		const { root, name, url, renderUrl, controlToken } = await serveProject({ termExecutor: executor });
 		writeDesignFile(root, join("frames", "dash", "term.tsx"), "// tui\n");
+		writeDesignFile(
+			root,
+			join(".spool", "term", "dash.screen"),
+			`${JSON.stringify({
+				cols: 80,
+				rows: 24,
+				screen: "persisted screen",
+				sourceVersion: terminalSourceVersion(root, "dash"),
+			})}\n`,
+		);
 
 		const play = await fetch(`${renderUrl}/play/${encodeURIComponent(name)}?frame=dash`);
 		expect(play.status).toBe(200);

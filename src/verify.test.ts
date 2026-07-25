@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { describe, expect, it } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
+import { terminalSourceVersion } from "./daemon/term-source";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
 import { type BootDeps, logsFrame, shotFrame } from "./verify";
 
@@ -69,7 +70,12 @@ describe("shot and logs, compile paths", () => {
 		writeDesignFile(
 			root,
 			join(".spool", "term", "dash.screen"),
-			`${JSON.stringify({ cols: 80, rows: 24, screen: "persisted screen" })}\n`,
+			`${JSON.stringify({
+				cols: 80,
+				rows: 24,
+				screen: "persisted screen",
+				sourceVersion: terminalSourceVersion(root, "dash"),
+			})}\n`,
 		);
 		const outside = makeTempDir();
 		mkdirSync(join(root, "design", ".spool"), { recursive: true });

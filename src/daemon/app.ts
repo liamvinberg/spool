@@ -15,8 +15,7 @@ import { SpoolError } from "../errors";
 import { initProject } from "../init";
 import { openProject } from "../open";
 import { lookupProjectByName, readRegistry } from "../registry";
-import { cellsForPx } from "../term/cells";
-import { type Grid, gridToSvg } from "../term/still";
+import { gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
 import { stampLabels } from "./call-site";
 import { createFrameCompiler } from "./compile";
@@ -398,7 +397,24 @@ export function createDaemonApp({
 		.get("/api/p/:project/frames", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			return c.json(listProjectFrames(project.root));
+			try {
+				const projection = listProjectFrames(project.root);
+				return c.json({
+					...projection,
+					frames: projection.frames.map((frame) => {
+						if (frame.kind !== "term") return frame;
+						const terminalCover = terms.cover(project.root, frame.name);
+						return {
+							...frame,
+							hasThumb: terminalCover.kind === "current",
+							terminalCover,
+						};
+					}),
+				});
+			} catch (error) {
+				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+				throw error;
+			}
 		})
 		.get("/api/p/:project/thumbs/:frame", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
@@ -409,8 +425,17 @@ export function createDaemonApp({
 			if (kind === "term") {
 				// Terminal stills rasterize from a persisted grid in the pinned
 				// font. Reading that store never starts project code.
-				const svg = await terms.still(project.root, frame, termFontDataCss());
-				if (svg === undefined) return c.text(`no persisted screen for "${frame}"`, 404);
+				let screen: Awaited<ReturnType<typeof terms.screen>>;
+				try {
+					screen = await terms.screen(project.root, frame);
+				} catch (error) {
+					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+					throw error;
+				}
+				if (screen.kind !== "current") {
+					return c.text(screen.message, screen.kind === "stale" ? 409 : 404);
+				}
+				const svg = gridToSvg(screen.grid, termFontDataCss());
 				const etag = `"term-still-${createHash("sha256").update(svg).digest("hex").slice(0, 32)}"`;
 				// covers are the canvas's bulk traffic: let the browser hold them and
 				// revalidate, so an unchanged still costs a 304 instead of its bytes.
@@ -776,11 +801,17 @@ export function createDaemonApp({
 				if (compiled.kind === "error") return c.html(errorDocument("player", compiled.message), 500);
 				const terminals: Record<string, { svg: string }> = {};
 				for (const entry of termFrames) {
-					const shape: Grid = (await terms.grid(project.root, entry.name)) ?? {
-						...cellsForPx(entry.w, entry.h),
-						lines: [],
-					};
-					terminals[entry.name] = { svg: gridToSvg(shape) };
+					let screen: Awaited<ReturnType<typeof terms.screen>>;
+					try {
+						screen = await terms.screen(project.root, entry.name);
+					} catch (error) {
+						if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+						throw error;
+					}
+					if (screen.kind !== "current") {
+						return c.text(screen.message, screen.kind === "stale" ? 409 : 404);
+					}
+					terminals[entry.name] = { svg: gridToSvg(screen.grid) };
 				}
 				const config = {
 					project: name,
