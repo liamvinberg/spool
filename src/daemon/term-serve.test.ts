@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { fixtureTermExecutor, makeApp, makeProject, makeTempDir, serveProject, writeDesignFile } from "../test-helpers";
+import { terminalSourceVersion } from "./term-source";
 
 /**
  * Terminal frames remain discoverable and preserve their last safe still, but
@@ -116,7 +117,12 @@ describe("shot for terminal frames", () => {
 		writeDesignFile(
 			root,
 			join(".spool", "term", "dash.screen"),
-			`${JSON.stringify({ cols: 80, rows: 24, screen: "status: all systems go" })}\n`,
+			`${JSON.stringify({
+				cols: 80,
+				rows: 24,
+				screen: "status: all systems go",
+				sourceVersion: terminalSourceVersion(root, "dash"),
+			})}\n`,
 		);
 
 		const { shotFrame } = await import("../verify");
@@ -129,6 +135,105 @@ describe("shot for terminal frames", () => {
 		expect(spawned).toEqual([]);
 	});
 
+	it("rejects a versionless or source-stale persisted screen without starting a process", async () => {
+		const { spawned, executor } = fixtureTermExecutor();
+		const { root, name, url, controlToken } = await serveProject({ termExecutor: executor });
+		writeDesignFile(root, "frames/dash/term.tsx", "// v1\n");
+		writeDesignFile(root, ".spool/term/dash.screen", `${JSON.stringify({ cols: 80, rows: 24, screen: "old" })}\n`);
+		const res = await fetch(`${url}/api/p/${name}/thumbs/dash`, {
+			headers: { "X-Spool-Control": controlToken },
+		});
+		expect(res.status).toBe(409);
+		expect(await res.text()).toContain("stale after its source changed");
+
+		writeDesignFile(
+			root,
+			".spool/term/dash.screen",
+			`${JSON.stringify({
+				cols: 80,
+				rows: 24,
+				screen: "v1",
+				sourceVersion: terminalSourceVersion(root, "dash"),
+			})}\n`,
+		);
+		writeDesignFile(root, "frames/dash/term.tsx", "// v2\n");
+		const { shotFrame } = await import("../verify");
+		const outcome = await shotFrame({
+			daemonUrl: url,
+			controlToken,
+			root,
+			name,
+			frame: "dash",
+			narrate: () => {},
+		});
+		expect(outcome.kind).toBe("broken");
+		if (outcome.kind === "broken") expect(outcome.message).toContain("stale after its source changed");
+		expect(spawned).toEqual([]);
+	});
+
+	it("rejects malformed persisted dimensions at the public thumb seam", async () => {
+		const { spawned, executor } = fixtureTermExecutor();
+		const { root, name, url, controlToken } = await serveProject({ termExecutor: executor });
+		writeDesignFile(root, "frames/dash/term.tsx", "// tui\n");
+		writeDesignFile(
+			root,
+			".spool/term/dash.screen",
+			`${JSON.stringify({
+				cols: 0,
+				rows: 24,
+				screen: "invalid grid",
+				sourceVersion: terminalSourceVersion(root, "dash"),
+			})}\n`,
+		);
+
+		const res = await fetch(`${url}/api/p/${name}/thumbs/dash`, {
+			headers: { "X-Spool-Control": controlToken },
+		});
+		expect(res.status).toBe(409);
+		expect(await res.text()).toContain("stale");
+		expect(spawned).toEqual([]);
+	});
+
+	it("returns 500 for an operational persisted-store read failure", async () => {
+		const { root, name, url, controlToken } = await serveProject();
+		writeDesignFile(root, "frames/dash/term.tsx", "// tui\n");
+		mkdirSync(join(root, "design", ".spool", "term", "dash.screen"), { recursive: true });
+
+		const res = await fetch(`${url}/api/p/${name}/thumbs/dash`, {
+			headers: { "X-Spool-Control": controlToken },
+		});
+		expect(res.status).toBe(500);
+	});
+
+	it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)(
+		"returns 500 for an operational terminal source read failure",
+		async () => {
+			const { root, name, url, controlToken } = await serveProject();
+			writeDesignFile(root, "frames/dash/term.tsx", "// tui\n");
+			writeDesignFile(root, "frames/dash/private.ts", "export const privateValue = 1;\n");
+			writeDesignFile(
+				root,
+				".spool/term/dash.screen",
+				`${JSON.stringify({
+					cols: 80,
+					rows: 24,
+					screen: "current grid",
+					sourceVersion: terminalSourceVersion(root, "dash"),
+				})}\n`,
+			);
+			const source = join(root, "design", "frames", "dash", "private.ts");
+			chmodSync(source, 0);
+			try {
+				const res = await fetch(`${url}/api/p/${name}/thumbs/dash`, {
+					headers: { "X-Spool-Control": controlToken },
+				});
+				expect(res.status).toBe(500);
+			} finally {
+				chmodSync(source, 0o644);
+			}
+		},
+	);
+
 	it("names a never-run terminal honestly instead of shooting a blank", async () => {
 		const { spawned, executor } = fixtureTermExecutor();
 		const { root, name, url, controlToken } = await serveProject({ termExecutor: executor });
@@ -137,7 +242,7 @@ describe("shot for terminal frames", () => {
 		const { shotFrame } = await import("../verify");
 		const outcome = await shotFrame({ daemonUrl: url, controlToken, root, name, frame: "dash", narrate: () => {} });
 		expect(outcome.kind).toBe("broken");
-		if (outcome.kind === "broken") expect(outcome.message).toContain("no persisted screen");
+		if (outcome.kind === "broken") expect(outcome.message).toContain("saving it does not create a screen");
 		expect(spawned).toEqual([]);
 	});
 });

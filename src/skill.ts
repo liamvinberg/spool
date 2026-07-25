@@ -29,12 +29,12 @@ Lifecycle (offline, take a path):
 Read verbs (work from any cwd inside a registered project, auto-start the daemon):
   spool selection       what the human points at: frame or element, source path and lines
   spool flows           the link graph, read from source: edges, certainty, verified walks
-  spool shot <frame>    boot headless; viewport, time, and scenario are selectable
-  spool logs <frame>    the same scenario boot's console, cached by compiled source
+  spool shot <frame>    HTML headless screenshot, or terminal source-current persisted-grid SVG
+  spool logs <frame>    the same scenario HTML boot's console, cached by compiled source
   spool url <frame>     mint a player URL; --raw mints the bare frame document
   spool skill [topic]   this text (needs nothing)
 
-The daemon: \`spool serve\` / \`spool status\` / \`spool stop\` are the handles; \`spool autostart\` makes it start at login (macOS); \`spool upgrade\` installs the latest release and restarts it. The CLI boots your frame in spool's own headless Chrome — it never reads the human's canvas.
+The daemon: \`spool serve\` / \`spool status\` / \`spool stop\` are the handles; \`spool autostart\` makes it start at login (macOS); \`spool upgrade\` installs the latest release and restarts it. The CLI boots HTML frames in spool's own headless Chrome; it never reads the human's canvas. A terminal shot executes nothing and rasterizes only a persisted source-current grid to SVG.
 
 Topics — \`spool skill <topic>\`:
   frames      the design/ contract: folders, sidecars, shared/, libraries
@@ -84,16 +84,20 @@ Terminal execution is disabled until project code can run inside an OS sandbox. 
 
 New terminal frames keep their 80×24 geometry floor: one cell is 9×20px in the pinned mono, so 80×24 = 720×480. frame.json remains pixels, the canvas's one geometry language. Geometry and any already persisted grid can still be represented in whole cells, but there is no live process to resize or repaint it.
 
+A persisted terminal grid is readable only while it matches the current source in that frame's whole folder and shared/. Editing source makes the old grid stale; frame.json geometry and app-owned state do not. Saving a never-run terminal does not create a screen.
+
+Play assembles every terminal poster up front, so any stale or never-run terminal rejects the whole player request, even when the selected starting frame is HTML.
+
 The flow parser still recognizes the terminal dialect's coded walk in source:
 
   import { term } from "spool/term";
   term.go("checkout")
 
-The map reads term.go literals like every other navigation site: solid when unconditional, faint inside a branch, and unreadable destinations named by \`spool flows\`, never guessed. Because term.tsx does not run, the disabled surface cannot trigger or verify one of these edges.
+The map reads term.go literals like every other navigation site: solid when unconditional, faint inside a branch, and unreadable destinations named by \`spool flows\`, never guessed. Keep literal \`term.go("target")\` calls in term.tsx and pass callbacks into shared components, so the frame owns the claim the map reads. For nested terminal spans, use the formatter-stable inline spacing form \`{"\\u00a0"}\`. Because term.tsx does not run, the disabled surface cannot trigger or verify one of these edges.
 
 There is currently no terminal input, output, process lifecycle, restart, or shared live session. The platform modifier + Escape still leaves an entered terminal surface; no other key reaches project code.
 
-Headless verification never boots terminal project code. \`spool shot <name>\` can only rasterize an already persisted grid; a terminal without one has no screen to shoot. \`spool logs\` remains an html-frame verb.`,
+Headless verification never boots terminal project code. \`spool shot <name>\` can only rasterize a source-current persisted grid; a stale or never-run terminal is an actionable error. \`spool logs\` remains an html-frame verb.`,
 
 	flows: `Navigation is walking: a session stands in one frame and walks to another by name.
 
@@ -164,23 +168,23 @@ The document's baseline: preflight (the same zero a product starts from), tokens
 
 	verbs: `The project verbs — selection, flows, shot, logs, url — resolve the project by walking up from cwd to design/canvas.json and refuse roots they don't know (\`spool open\` once per machine registers), and auto-start the daemon; \`spool status\` prints where it listens and warns when a running daemon predates the CLI (\`spool stop\`, then any verb, updates it). init and open work offline; skill needs nothing.
 
-The verify loop — shot and logs are two outputs of one boot: your frame's really-served document in spool's own headless Chrome, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 390×844) at 2×. Reading a missing or invalid sidecar never creates it.
+The verify loop has two paths. For HTML frames, shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 390×844) at 2×. Reading a missing or invalid sidecar never creates it. A terminal shot does not boot or execute source; it only rasterizes a persisted source-current grid to SVG.
 
   spool shot <frame> [--viewport <width>x<height>] [--at <milliseconds>] [--scenario <name>]
-                       writes design/.spool/verify/<frame>.png, prints the path.
+                       HTML boots headless and writes design/.spool/verify/<frame>.png, printing the path.
                        --viewport sets exact positive-integer CSS pixels instead of frame.json.
                        --at sets the post-commit settle wait; the default is 300ms.
-                       A terminal never executes for a shot; an already persisted grid can rasterize to <frame>.svg, otherwise there is no screen (topic: terminals).
-                       Doesn't compile: the toolchain's error verbatim on stderr, exit 1, no browser.
-                       Throws uncaught while booting: shot still written, errors on stderr, exit 1.
-                       Waits for #root to have children (up to 10s), settles, shoots — a frame that renders nothing still shoots.
+                       A terminal never executes for a shot; its persisted source-current grid rasterizes to <frame>.svg, otherwise stale/never-run is reported (topic: terminals).
+                       HTML doesn't compile: the toolchain's error verbatim on stderr, exit 1, no browser.
+                       HTML throws uncaught while booting: shot still written, errors on stderr, exit 1.
+                       HTML waits for #root to have children (up to 10s), settles, then shoots; a frame that renders nothing still shoots.
   spool logs <frame> [--scenario <name>]
-                       prints the same scenario boot's console as [type] text lines, uncaught errors included.
-                       The cache identity is compiled document plus scenario name. Code and stylesheet edits re-boot; a scenario or fixture JSON edit under the same name does not. shot always boots fresh and refreshes that scenario's cache, so after editing data run shot first, then logs.
+                       HTML only: prints the same scenario boot's console as [type] text lines, uncaught errors included.
+                       The cache identity is compiled document plus scenario name. Code and stylesheet edits re-boot; a scenario or fixture JSON edit under the same name does not. An HTML shot always boots fresh and refreshes that scenario's cache, so after editing data run shot first, then logs.
                        A replay says "cache matches current compiled source": it is the fresh boot that shot recorded, not evidence that a source edit was ignored.
                        Scenario failures and mock 404s land here; read shot and logs together.
 
-The first shot on a machine downloads spool's pinned headless Chrome once, narrated on stderr — relay the wait, don't kill it.
+The first HTML browser boot on a machine downloads spool's pinned headless Chrome once, narrated on stderr — relay the wait, don't kill it.
 
 The drive loop — \`spool url <frame>\` prints the player URL after checking the frame exists. Append &scenario=<name> to pick its seed. \`spool url --raw <frame>\` prints the stable bare frame document instead; append ?scenario=<name> there. Drive the player for walks, or the raw document when its chrome would get in the way.
 

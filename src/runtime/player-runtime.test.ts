@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { terminalSourceVersion } from "../daemon/term-source";
 import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 
 /**
@@ -786,6 +787,16 @@ const hallTsx = `export default function Hall() {
 
 function scaffoldTerminal(harness: Harness): void {
 	writeDesignFile(harness.root, join("frames", "dash", "term.tsx"), "// execution disabled until OS-sandboxed\n");
+	writeDesignFile(
+		harness.root,
+		join(".spool", "term", "dash.screen"),
+		`${JSON.stringify({
+			cols: 80,
+			rows: 24,
+			screen: "persisted screen",
+			sourceVersion: terminalSourceVersion(harness.root, "dash"),
+		})}\n`,
+	);
 	writeFrame(harness.root, "hall", hallTsx);
 	writeDesignFile(harness.root, "shared/scenarios/default.json", '{\n\t"state": {},\n\t"mock": {}\n}\n');
 }

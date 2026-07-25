@@ -1,9 +1,10 @@
-import { existsSync, realpathSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { navSequence } from "../term/osc";
 import { fixtureTermExecutor, makeTempDir, writeDesignFile } from "../test-helpers";
 import { createTermSessions } from "./term-sessions";
+import { terminalSourceVersion } from "./term-source";
 import { termScreenFile } from "./thumbs";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -35,6 +36,112 @@ function harness(options?: { detachGraceMs?: number }) {
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 30));
+
+describe("terminal source versions", () => {
+	it("is deterministic regardless of directory creation order", () => {
+		const first = harness().root;
+		const second = harness().root;
+		writeDesignFile(first, "frames/dash/z.ts", "export const z = 1;\n");
+		writeDesignFile(first, "shared/a.ts", "export const a = 1;\n");
+		writeDesignFile(second, "shared/a.ts", "export const a = 1;\n");
+		writeDesignFile(second, "frames/dash/z.ts", "export const z = 1;\n");
+
+		expect(terminalSourceVersion(first, "dash")).toBe(terminalSourceVersion(second, "dash"));
+	});
+
+	it("separates NUL-containing file bytes from following source records", () => {
+		const twoFiles = harness().root;
+		const embeddedRecord = harness().root;
+		writeDesignFile(twoFiles, "frames/dash/a", "A");
+		writeDesignFile(twoFiles, "frames/dash/b", "B");
+		writeDesignFile(embeddedRecord, "frames/dash/a", "A\0file\0frames/dash/b\0B");
+
+		expect(terminalSourceVersion(twoFiles, "dash")).not.toBe(terminalSourceVersion(embeddedRecord, "dash"));
+	});
+
+	it("excludes canonical geometry and app-owned targets reached through aliases", () => {
+		const root = harness().root;
+		writeDesignFile(root, "canvas.json", '{"camera": 1}\n');
+		writeDesignFile(root, ".spool/state.json", '{"selection": 1}\n');
+		symlinkSync("frame.json", join(root, "design", "frames", "dash", "geometry-alias.json"));
+		symlinkSync("../../canvas.json", join(root, "design", "frames", "dash", "canvas-alias.json"));
+		symlinkSync("../../.spool", join(root, "design", "frames", "dash", "app-alias"), "dir");
+		const before = terminalSourceVersion(root, "dash");
+
+		writeDesignFile(root, "frames/dash/frame.json", '{"x":10,"y":20,"w":900,"h":600}\n');
+		writeDesignFile(root, "canvas.json", '{"camera": 2}\n');
+		writeDesignFile(root, ".spool/state.json", '{"selection": 2}\n');
+
+		expect(terminalSourceVersion(root, "dash")).toBe(before);
+	});
+
+	it("rejects a dangling symlink whose target escapes design", () => {
+		const root = harness().root;
+		const outside = join(makeTempDir(), "missing.ts");
+		symlinkSync(outside, join(root, "design", "frames", "dash", "escape.ts"));
+
+		expect(() => terminalSourceVersion(root, "dash")).toThrow(/design boundary/);
+	});
+});
+
+describe("persisted screen records", () => {
+	it.each([
+		["zero columns", { cols: 0 }],
+		["negative rows", { rows: -1 }],
+		["fractional columns", { cols: 80.5 }],
+		["oversized rows", { rows: 1001 }],
+		["unsafe columns", { cols: Number.MAX_SAFE_INTEGER + 1 }],
+		["fractional exit code", { exitCode: 1.5 }],
+		["unsafe exit code", { exitCode: Number.MAX_SAFE_INTEGER + 1 }],
+	])("treats %s as stale", async (_name, invalid) => {
+		const { root, sessions } = harness();
+		writeDesignFile(
+			root,
+			".spool/term/dash.screen",
+			`${JSON.stringify({
+				cols: 80,
+				rows: 24,
+				screen: "old grid",
+				sourceVersion: terminalSourceVersion(root, "dash"),
+				...invalid,
+			})}\n`,
+		);
+
+		expect(await sessions.screen(root, "dash")).toMatchObject({ kind: "stale" });
+	});
+
+	it("rethrows an operational persisted-store read failure", async () => {
+		const { root, sessions } = harness();
+		mkdirSync(termScreenFile(root, "dash"), { recursive: true });
+
+		await expect(sessions.screen(root, "dash")).rejects.toMatchObject({ code: "EISDIR" });
+	});
+
+	it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)(
+		"rethrows an operational source read failure",
+		async () => {
+			const { root, sessions } = harness();
+			const source = join(root, "design", "frames", "dash", "private.ts");
+			writeDesignFile(root, "frames/dash/private.ts", "export const privateValue = 1;\n");
+			writeDesignFile(
+				root,
+				".spool/term/dash.screen",
+				`${JSON.stringify({
+					cols: 80,
+					rows: 24,
+					screen: "current grid",
+					sourceVersion: terminalSourceVersion(root, "dash"),
+				})}\n`,
+			);
+			chmodSync(source, 0);
+			try {
+				await expect(sessions.screen(root, "dash")).rejects.toMatchObject({ code: "EACCES" });
+			} finally {
+				chmodSync(source, 0o644);
+			}
+		},
+	);
+});
 
 describe("attach and stream", () => {
 	it("spawns at the geometry's whole-cell size and streams output to the client", async () => {
@@ -249,25 +356,24 @@ describe("player restarts (#44)", () => {
 	});
 });
 
-describe("save restarts", () => {
-	it("kills and respawns on a source change, telling clients to reset", async () => {
-		const { root, spawned, sessions } = harness();
-		const client = new FakeClient();
-		await sessions.attach(root, "dash", client);
-
-		await sessions.handleChange(root, "dash");
-
-		expect(spawned[0]?.killed).toBe(true);
-		expect(spawned).toHaveLength(2);
-		expect(client.controls.some((c) => c.t === "restart")).toBe(true);
-	});
-
-	it("revives an exited session on save", async () => {
+describe("save invalidation", () => {
+	it("invalidates an in-memory screen without restarting its process", async () => {
 		const { root, spawned, sessions } = harness();
 		await sessions.attach(root, "dash", new FakeClient());
-		spawned[0]?.exit(1);
+		writeDesignFile(root, "frames/dash/term.tsx", "// changed\n");
+
 		await sessions.handleChange(root, "dash");
-		expect(spawned).toHaveLength(2);
+
+		expect(spawned).toHaveLength(1);
+		expect(spawned[0]?.killed).toBe(false);
+		expect(await sessions.screen(root, "dash")).toMatchObject({ kind: "stale" });
+	});
+
+	it("does not start a terminal that has never run", async () => {
+		const { root, spawned, sessions } = harness();
+		await sessions.handleChange(root, "dash");
+		expect(spawned).toHaveLength(0);
+		expect(await sessions.screen(root, "dash")).toMatchObject({ kind: "never-run" });
 	});
 });
 
@@ -322,6 +428,96 @@ describe("hibernation", () => {
 		await sessions.attach(root, "dash", new FakeClient());
 		expect(spawned).toHaveLength(2);
 	});
+
+	it("rejects a hibernated screen after the source that produced it changes", async () => {
+		const { root, spawned, sessions } = harness({ detachGraceMs: 10 });
+		const attached = await sessions.attach(root, "dash", new FakeClient());
+		spawned[0]?.emit("old source output");
+		await flush();
+		writeDesignFile(root, "frames/dash/term.tsx", "// changed before hibernate\n");
+		attached.detach();
+		await new Promise((r) => setTimeout(r, 60));
+
+		expect(await sessions.screen(root, "dash")).toMatchObject({ kind: "stale" });
+	});
+
+	it("invalidates for shared source and nested frame.json changes", async () => {
+		const { root, spawned, sessions } = harness({ detachGraceMs: 10 });
+		writeDesignFile(root, "frames/dash/nested/frame.json", '{"source": 1}\n');
+		writeDesignFile(root, "shared/nested/frame.json", '{"source": 1}\n');
+		const attached = await sessions.attach(root, "dash", new FakeClient());
+		spawned[0]?.emit("version one");
+		await flush();
+		attached.detach();
+		await new Promise((r) => setTimeout(r, 60));
+
+		writeDesignFile(root, "shared/nested/frame.json", '{"source": 2}\n');
+		expect(await sessions.screen(root, "dash")).toMatchObject({ kind: "stale" });
+
+		await sessions.attach(root, "dash", new FakeClient());
+		const latest = spawned.at(-1);
+		latest?.emit("version two");
+		writeDesignFile(root, "frames/dash/nested/frame.json", '{"source": 2}\n');
+		expect(await sessions.screen(root, "dash")).toMatchObject({ kind: "stale" });
+	});
+
+	it("ignores only root geometry and app-owned state", async () => {
+		const { root, spawned, sessions } = harness({ detachGraceMs: 10 });
+		const attached = await sessions.attach(root, "dash", new FakeClient());
+		spawned[0]?.emit("still current");
+		await flush();
+		attached.detach();
+		await new Promise((r) => setTimeout(r, 60));
+
+		writeDesignFile(root, "frames/dash/frame.json", '{"x":1,"y":2,"w":720,"h":480}\n');
+		writeDesignFile(root, "canvas.json", '{"format":1,"camera":{}}\n');
+		writeDesignFile(root, ".spool/state.json", '{"selection":[]}\n');
+
+		expect(await sessions.screen(root, "dash")).toMatchObject({ kind: "current" });
+	});
+
+	it("does not invalidate itself when persistence is aliased into frame source", async () => {
+		const { root, spawned, sessions } = harness({ detachGraceMs: 10 });
+		writeDesignFile(root, ".spool/term/.keep", "");
+		symlinkSync("../../.spool", join(root, "design", "frames", "dash", "app-state"), "dir");
+		const attached = await sessions.attach(root, "dash", new FakeClient());
+		spawned[0]?.emit("stable output");
+		await flush();
+		attached.detach();
+		await new Promise((r) => setTimeout(r, 60));
+
+		expect(await sessions.screen(root, "dash")).toMatchObject({ kind: "current" });
+	});
+
+	it("follows contained symlink source and handles directory cycles", async () => {
+		const { root, spawned, sessions } = harness({ detachGraceMs: 10 });
+		writeDesignFile(root, "linked/value.ts", "export const value = 1;\n");
+		symlinkSync("../../linked", join(root, "design", "frames", "dash", "linked"), "dir");
+		symlinkSync(".", join(root, "design", "frames", "dash", "loop"), "dir");
+		const attached = await sessions.attach(root, "dash", new FakeClient());
+		spawned[0]?.emit("linked output");
+		await flush();
+		attached.detach();
+		await new Promise((r) => setTimeout(r, 60));
+
+		expect(await sessions.screen(root, "dash")).toMatchObject({ kind: "current" });
+		writeDesignFile(root, "linked/value.ts", "export const value = 2;\n");
+		expect(await sessions.screen(root, "dash")).toMatchObject({ kind: "stale" });
+	});
+
+	it("rejects escaped symlink source without reading it", async () => {
+		const { root, spawned, sessions } = harness({ detachGraceMs: 10 });
+		const attached = await sessions.attach(root, "dash", new FakeClient());
+		spawned[0]?.emit("safe output");
+		await flush();
+		attached.detach();
+		await new Promise((r) => setTimeout(r, 60));
+		const outside = makeTempDir();
+		writeDesignFile(outside, "secret.ts", "outside\n");
+		symlinkSync(join(outside, "design", "secret.ts"), join(root, "design", "frames", "dash", "escape.ts"));
+
+		await expect(sessions.screen(root, "dash")).rejects.toThrow(/design boundary/);
+	});
 });
 
 describe("teardown", () => {
@@ -337,12 +533,13 @@ describe("teardown", () => {
 });
 
 describe("frozen death", () => {
-	it("continues a stopped process before killing it — death is explicit, never pending", async () => {
+	it("does not thaw or kill a frozen process for a source edit", async () => {
 		const { root, spawned, sessions } = harness();
 		await sessions.attach(root, "dash", new FakeClient());
 		sessions.freeze(root, "dash", true);
+		writeDesignFile(root, "frames/dash/term.tsx", "// changed\n");
 		await sessions.handleChange(root, "dash");
-		expect(spawned[0]?.signals).toEqual(["SIGSTOP", "SIGCONT"]);
-		expect(spawned[0]?.killed).toBe(true);
+		expect(spawned[0]?.signals).toEqual(["SIGSTOP"]);
+		expect(spawned[0]?.killed).toBe(false);
 	});
 });

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { makeApp, makeProject, makeTempDir, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
 import { createDaemonApp } from "./app";
+import { terminalSourceVersion } from "./term-source";
 
 /** Smallest real PNG: 1×1 transparent pixel. */
 const PNG_BYTES = Buffer.from(
@@ -123,6 +124,60 @@ describe("frame projection", () => {
 			frames: { hasThumb: boolean }[];
 		};
 		expect(frames[0]?.hasThumb).toBe(true);
+	});
+
+	it("projects actionable terminal cover state and refreshes it after shared source changes", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "frames/dash/term.tsx", "// current\n");
+		writeDesignFile(root, "frames/fresh/term.tsx", "// never run\n");
+		writeDesignFile(root, "shared/value.ts", "export const value = 1;\n");
+		writeDesignFile(
+			root,
+			".spool/term/dash.screen",
+			`${JSON.stringify({
+				cols: 80,
+				rows: 24,
+				screen: "current grid",
+				sourceVersion: terminalSourceVersion(root, "dash"),
+			})}\n`,
+		);
+		const app = makeApp(spoolDir);
+
+		const projected = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
+			frames: {
+				name: string;
+				hasThumb: boolean;
+				terminalCover: { kind: string; message?: string };
+			}[];
+		};
+		const first = Object.fromEntries(projected.frames.map((frame) => [frame.name, frame]));
+		expect(first.dash).toMatchObject({ hasThumb: true, terminalCover: { kind: "current" } });
+		expect(first.fresh).toMatchObject({
+			hasThumb: false,
+			terminalCover: { kind: "never-run", message: expect.stringContaining("saving it does not create a screen") },
+		});
+
+		writeDesignFile(root, "shared/value.ts", "export const value = 2;\n");
+		const refreshed = (await (await app.request(`/api/p/${name}/frames`)).json()) as typeof projected;
+		expect(refreshed.frames.find((frame) => frame.name === "dash")).toMatchObject({
+			hasThumb: false,
+			terminalCover: { kind: "stale", message: expect.stringContaining("stale after its source changed") },
+		});
+
+		writeDesignFile(
+			root,
+			".spool/term/dash.screen",
+			`${JSON.stringify({
+				cols: 80,
+				rows: 24,
+				screen: "refreshed grid",
+				sourceVersion: terminalSourceVersion(root, "dash"),
+			})}\n`,
+		);
+		writeDesignFile(root, "frames/dash/term.tsx", "// changed\n");
+		const frameRefreshed = (await (await app.request(`/api/p/${name}/frames`)).json()) as typeof projected;
+		expect(frameRefreshed.frames.find((frame) => frame.name === "dash")?.terminalCover.kind).toBe("stale");
 	});
 
 	it("lists an empty frames/ as an empty projection, even when the folder is missing", async () => {

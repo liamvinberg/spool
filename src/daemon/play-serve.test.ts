@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { terminalSourceVersion } from "./term-source";
 
 /**
  * The player page (#24), exercised at the serve seam: one light document under
@@ -271,6 +272,16 @@ describe("terminal frames in the player (#42)", () => {
 			`export default function Menu() {\n\treturn <div className="p-4">menu-screen</div>;\n}\n`,
 		);
 		writeDesignFile(root, join("frames", "dash", "term.tsx"), "// tui\n");
+		writeDesignFile(
+			root,
+			".spool/term/dash.screen",
+			`${JSON.stringify({
+				cols: 80,
+				rows: 24,
+				screen: "current grid",
+				sourceVersion: terminalSourceVersion(root, "dash"),
+			})}\n`,
+		);
 		const app = makeApp(spoolDir);
 
 		const res = await app.request(`/play/${name}`);
@@ -291,14 +302,57 @@ describe("terminal frames in the player (#42)", () => {
 		expect(boot).not.toContain("dash/term.tsx");
 	});
 
-	it("plays a project holding only terminal frames", async () => {
+	it("rejects a never-run terminal instead of inventing a blank player grid", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeDesignFile(root, join("frames", "dash", "term.tsx"), "// tui\n");
 		const app = makeApp(spoolDir);
 		const res = await app.request(`/play/${name}`);
-		expect(res.status).toBe(200);
-		const doc = await res.text();
-		expect(configOf(doc).start).toBe("dash");
+		expect(res.status).toBe(404);
+		expect(await res.text()).toContain("saving it does not create a screen");
+	});
+
+	it("rejects a source-stale terminal instead of playing its old grid", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "frames/dash/term.tsx", "// v1\n");
+		writeDesignFile(
+			root,
+			".spool/term/dash.screen",
+			`${JSON.stringify({
+				cols: 80,
+				rows: 24,
+				screen: "old grid",
+				sourceVersion: terminalSourceVersion(root, "dash"),
+			})}\n`,
+		);
+		writeDesignFile(root, "frames/dash/term.tsx", "// v2\n");
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(`/play/${name}`);
+		expect(res.status).toBe(409);
+		expect(await res.text()).toContain("stale after its source changed");
+	});
+
+	it("rejects a malformed persisted exit code instead of loading the player", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "frames/dash/term.tsx", "// tui\n");
+		writeDesignFile(
+			root,
+			".spool/term/dash.screen",
+			`${JSON.stringify({
+				cols: 80,
+				rows: 24,
+				screen: "invalid grid",
+				sourceVersion: terminalSourceVersion(root, "dash"),
+				exitCode: 1.5,
+			})}\n`,
+		);
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(`/play/${name}`);
+		expect(res.status).toBe(409);
+		expect(await res.text()).toContain("stale");
 	});
 });

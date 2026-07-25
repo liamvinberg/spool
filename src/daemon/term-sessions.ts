@@ -5,13 +5,14 @@ import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { Terminal } from "@xterm/headless";
 import { writeAtomic } from "../atomic-write";
 import { gridFromBuffer } from "../term/buffer-grid";
-import { cellsForPx } from "../term/cells";
+import { cellsForPx, MIN_COLS, MIN_ROWS } from "../term/cells";
 import { createOscFilter } from "../term/osc";
 import type { Grid } from "../term/still";
 import { gridToSvg } from "../term/still";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
-import { frameGeometry, lookupFrame } from "./projection";
+import { frameGeometry, lookupFrame, type TerminalCoverState, type TerminalCoverUnavailable } from "./projection";
 import type { TermExecutor, TermProcess } from "./term-exec";
+import { terminalSourceVersion } from "./term-source";
 import { termScreenFile } from "./thumbs";
 
 /**
@@ -22,10 +23,13 @@ import { termScreenFile } from "./thumbs";
  * comes from the grid. Lifecycle is the canvas's freeze/unmount economy made
  * kernel-real: warm = SIGSTOP, hibernated = killed with the screen kept.
  * Death is legible and never auto-healed: an exited process keeps its last
- * screen and exit code until a save or an explicit revive.
+ * screen and exit code until an explicit revive.
  */
 
 const DEFAULT_DETACH_GRACE_MS = 3000;
+/** One million cells keeps persisted still reconstruction bounded in xterm. */
+const MAX_PERSISTED_COLS = 1000;
+const MAX_PERSISTED_ROWS = 1000;
 
 /** The ways a TUI leaves the alternate screen — the wipe before its artifact vanishes. */
 const LEAVE_ALT = ["\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"].map((s) => Uint8Array.from(s, (c) => c.charCodeAt(0)));
@@ -54,8 +58,11 @@ interface PersistedScreen {
 	cols: number;
 	rows: number;
 	screen: string;
+	sourceVersion: string;
 	exitCode?: number;
 }
+
+export type TermScreen = { kind: "current"; grid: Grid } | TerminalCoverUnavailable;
 
 interface Session {
 	root: string;
@@ -76,6 +83,8 @@ interface Session {
 	detachTimer: NodeJS.Timeout | undefined;
 	cols: number;
 	rows: number;
+	/** The source snapshot this process actually started from. */
+	sourceVersion: string;
 	/** Bumped per spawn so a killed process's exit can't mark its successor dead. */
 	generation: number;
 }
@@ -123,6 +132,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 
 	async function spawnInto(session: Session): Promise<void> {
 		const generation = ++session.generation;
+		const sourceVersion = terminalSourceVersion(session.root, session.frame);
 		// the frame's folder is wherever its page put it (#39) — a flat join
 		// would miss every paged terminal
 		const found = lookupFrame(session.root, session.frame);
@@ -136,6 +146,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 			cols: session.cols,
 			rows: session.rows,
 		});
+		session.sourceVersion = sourceVersion;
 		session.proc = proc;
 		session.state = "running";
 		session.exitCode = undefined;
@@ -186,6 +197,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 			cols: session.cols,
 			rows: session.rows,
 			screen: session.serialize.serialize(),
+			sourceVersion: session.sourceVersion,
 			...(session.exitCode !== undefined ? { exitCode: session.exitCode } : {}),
 		};
 		let screenFile: string;
@@ -199,17 +211,27 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		writeAtomic(screenFile, `${JSON.stringify(record)}\n`);
 	}
 
-	function readPersisted(root: string, frame: string): PersistedScreen | undefined {
+	function readPersisted(
+		root: string,
+		frame: string,
+	): { kind: "current"; record: PersistedScreen } | { kind: "stale" } | { kind: "never-run" } {
+		let text: string;
 		try {
-			const raw = JSON.parse(readFileSync(termScreenFile(root, frame), "utf8")) as PersistedScreen;
-			if (typeof raw.cols !== "number" || typeof raw.rows !== "number" || typeof raw.screen !== "string") {
-				return undefined;
-			}
-			return raw;
+			text = readFileSync(termScreenFile(root, frame), "utf8");
 		} catch (error) {
 			if (error instanceof DesignBoundaryError) throw error;
-			return undefined;
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "never-run" };
+			throw error;
 		}
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(text);
+		} catch {
+			return { kind: "stale" };
+		}
+		const record = persistedScreen(parsed);
+		if (record === undefined || record.sourceVersion !== terminalSourceVersion(root, frame)) return { kind: "stale" };
+		return { kind: "current", record };
 	}
 
 	async function attach(root: string, frame: string, client: TermClient): Promise<{ detach: () => void }> {
@@ -233,18 +255,21 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 				detachTimer: undefined,
 				cols,
 				rows,
+				sourceVersion: terminalSourceVersion(root, frame),
 				generation: 0,
 			};
 			sessions.set(key(root, frame), session);
 			const persisted = readPersisted(root, frame);
-			if (persisted?.exitCode !== undefined) {
+			if (persisted.kind === "current" && persisted.record.exitCode !== undefined) {
+				const record = persisted.record;
 				// a corpse hibernated: restore the last screen, stay dead until revived
 				session.state = "exited";
-				session.exitCode = persisted.exitCode;
-				session.term.resize(persisted.cols, persisted.rows);
-				session.cols = persisted.cols;
-				session.rows = persisted.rows;
-				await new Promise<void>((r) => session?.term.write(persisted.screen, r));
+				session.exitCode = record.exitCode;
+				session.sourceVersion = record.sourceVersion;
+				session.term.resize(record.cols, record.rows);
+				session.cols = record.cols;
+				session.rows = record.rows;
+				await new Promise<void>((r) => session?.term.write(record.screen, r));
 			} else {
 				await spawnInto(session);
 			}
@@ -360,32 +385,49 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 			return;
 		}
 		const persisted = readPersisted(root, frame);
-		if (persisted?.exitCode !== undefined) {
-			const { exitCode: _exitCode, ...screen } = persisted;
+		if (persisted.kind === "current" && persisted.record.exitCode !== undefined) {
+			const { exitCode: _exitCode, ...screen } = persisted.record;
 			writeAtomic(termScreenFile(root, frame), `${JSON.stringify(screen)}\n`);
 		}
 	}
 
-	/** A source save: the write–save–see loop for a live process, revival for a dead one. */
-	async function handleChange(root: string, frame: string): Promise<void> {
+	/** Source changes invalidate lazily through their digest; they never start or restart code. */
+	async function handleChange(_root: string, _frame: string): Promise<void> {
+		return;
+	}
+
+	async function screen(root: string, frame: string): Promise<TermScreen> {
 		const session = sessions.get(key(root, frame));
-		if (session === undefined) return;
-		await respawn(session);
+		if (session !== undefined) {
+			if (session.sourceVersion !== terminalSourceVersion(root, frame)) return stale(frame);
+			await settled(session.term);
+			return { kind: "current", grid: gridFromBuffer(session.term) };
+		}
+		const persisted = readPersisted(root, frame);
+		if (persisted.kind === "stale") return stale(frame);
+		if (persisted.kind === "never-run") return neverRun(frame);
+		const { record } = persisted;
+		const { term } = makeEmulator(record.cols, record.rows);
+		await new Promise<void>((r) => term.write(record.screen, r));
+		const result = gridFromBuffer(term);
+		term.dispose();
+		return { kind: "current", grid: result };
+	}
+
+	function cover(root: string, frame: string): TerminalCoverState {
+		const session = sessions.get(key(root, frame));
+		if (session !== undefined) {
+			return session.sourceVersion === terminalSourceVersion(root, frame) ? { kind: "current" } : stale(frame);
+		}
+		const persisted = readPersisted(root, frame);
+		if (persisted.kind === "stale") return stale(frame);
+		if (persisted.kind === "never-run") return neverRun(frame);
+		return { kind: "current" };
 	}
 
 	async function grid(root: string, frame: string): Promise<Grid | undefined> {
-		const session = sessions.get(key(root, frame));
-		if (session !== undefined) {
-			await settled(session.term);
-			return gridFromBuffer(session.term);
-		}
-		const persisted = readPersisted(root, frame);
-		if (persisted === undefined) return undefined;
-		const { term } = makeEmulator(persisted.cols, persisted.rows);
-		await new Promise<void>((r) => term.write(persisted.screen, r));
-		const result = gridFromBuffer(term);
-		term.dispose();
-		return result;
+		const result = await screen(root, frame);
+		return result.kind === "current" ? result.grid : undefined;
 	}
 
 	async function still(root: string, frame: string, fontCss?: string): Promise<string | undefined> {
@@ -401,7 +443,41 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		}
 	}
 
-	return { attach, input, resize, freeze, revive, restart, handleChange, grid, still, close };
+	return { attach, input, resize, freeze, revive, restart, handleChange, cover, screen, grid, still, close };
+}
+
+function stale(frame: string): TerminalCoverUnavailable {
+	return {
+		kind: "stale",
+		message: `persisted screen for "${frame}" is stale after its source changed; terminal execution is disabled, so no current screen is available`,
+	};
+}
+
+function neverRun(frame: string): TerminalCoverUnavailable {
+	return {
+		kind: "never-run",
+		message: `no persisted screen for "${frame}"; it has not run yet, and saving it does not create a screen`,
+	};
 }
 
 export type TermSessions = ReturnType<typeof createTermSessions>;
+
+function persistedScreen(value: unknown): PersistedScreen | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const { cols, rows, screen, sourceVersion, exitCode } = value as Record<string, unknown>;
+	if (!supportedDimension(cols, MIN_COLS, MAX_PERSISTED_COLS)) return undefined;
+	if (!supportedDimension(rows, MIN_ROWS, MAX_PERSISTED_ROWS)) return undefined;
+	if (typeof screen !== "string" || typeof sourceVersion !== "string") return undefined;
+	if (exitCode !== undefined && (typeof exitCode !== "number" || !Number.isSafeInteger(exitCode))) return undefined;
+	return {
+		cols,
+		rows,
+		screen,
+		sourceVersion,
+		...(exitCode === undefined ? {} : { exitCode }),
+	};
+}
+
+function supportedDimension(value: unknown, min: number, max: number): value is number {
+	return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
+}

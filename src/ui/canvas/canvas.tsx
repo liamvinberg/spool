@@ -2377,6 +2377,7 @@ export function ProjectCanvas({
 											docNonce={docNonces[frame.name] ?? 0}
 											thumbNonce={thumbNonces[frame.name] ?? 0}
 											hasThumb={hasThumb(frame.name)}
+											terminalCover={frame.terminalCover}
 											walkBoot={walkBoots[frame.name]}
 											onIframe={onIframe}
 										/>
