@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
+import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { isSafeName } from "./project-files";
 
 /**
@@ -32,14 +33,16 @@ export interface CanvasState {
 const DEFAULT_STATE: CanvasState = {};
 
 function stateFile(root: string): string {
-	return join(root, "design", ".spool", "state.json");
+	const designDir = realDesignDir(root);
+	return resolveDesignPath(designDir, join(designDir, ".spool", "state.json"));
 }
 
 export function readCanvasState(root: string): CanvasState {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(readFileSync(stateFile(root), "utf8"));
-	} catch {
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
 		return DEFAULT_STATE;
 	}
 	const state = parseCanvasState(parsed);

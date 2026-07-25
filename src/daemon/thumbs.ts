@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
+import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 
 /**
  * The thumbnail cache under design/.spool (#8): boot covers for unmounted
@@ -11,12 +12,14 @@ import { writeAtomic } from "../atomic-write";
  */
 
 export function thumbFile(root: string, frame: string): string {
-	return join(root, "design", ".spool", "thumbs", `${frame}.png`);
+	const designDir = realDesignDir(root);
+	return resolveDesignPath(designDir, join(designDir, ".spool", "thumbs", `${frame}.png`));
 }
 
 /** A terminal frame's serialized screen (#42) — its still store, beside the thumbs. */
 export function termScreenFile(root: string, frame: string): string {
-	return join(root, "design", ".spool", "term", `${frame}.screen`);
+	const designDir = realDesignDir(root);
+	return resolveDesignPath(designDir, join(designDir, ".spool", "term", `${frame}.screen`));
 }
 
 export interface StoredThumb {
@@ -28,7 +31,8 @@ export function readThumb(root: string, frame: string): StoredThumb | undefined 
 	let png: Buffer;
 	try {
 		png = readFileSync(thumbFile(root, frame));
-	} catch {
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;
 	}
 	return { png, etag: `"thumb-${createHash("sha256").update(png).digest("hex").slice(0, 32)}"` };

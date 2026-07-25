@@ -9,12 +9,13 @@ import { cellsForPx } from "../term/cells";
 import { createOscFilter } from "../term/osc";
 import type { Grid } from "../term/still";
 import { gridToSvg } from "../term/still";
+import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { frameGeometry, lookupFrame } from "./projection";
 import type { TermExecutor, TermProcess } from "./term-exec";
 import { termScreenFile } from "./thumbs";
 
 /**
- * Terminal sessions (#42): the daemon owns one real process per running
+ * Dormant terminal sessions for a future OS-sandboxed executor: one process per running
  * terminal frame and holds its screen in a headless emulator, so the truth
  * about a terminal lives server-side — attach late and receive the screen so
  * far, hibernate and the buffer serializes to disk, rasterize a still and it
@@ -59,6 +60,9 @@ interface PersistedScreen {
 interface Session {
 	root: string;
 	frame: string;
+	designDir: string;
+	/** Canonical design-contained still path, fixed when the session opens. */
+	screenFile: string;
 	term: Terminal;
 	serialize: SerializeAddon;
 	filter: ReturnType<typeof createOscFilter>;
@@ -122,10 +126,13 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		// the frame's folder is wherever its page put it (#39) — a flat join
 		// would miss every paged terminal
 		const found = lookupFrame(session.root, session.frame);
-		const frameDir = found.kind === "found" ? found.dir : join(session.root, "design", "frames", session.frame);
+		const designDir = session.designDir;
+		const candidate = found.kind === "found" ? found.dir : join(designDir, "frames", session.frame);
+		const frameDir = resolveDesignPath(designDir, candidate);
+		const entry = resolveDesignPath(designDir, join(frameDir, "term.tsx"));
 		const proc = await executor({
 			frameDir,
-			entry: join(frameDir, "term.tsx"),
+			entry,
 			cols: session.cols,
 			rows: session.rows,
 		});
@@ -181,7 +188,15 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 			screen: session.serialize.serialize(),
 			...(session.exitCode !== undefined ? { exitCode: session.exitCode } : {}),
 		};
-		writeAtomic(termScreenFile(session.root, session.frame), `${JSON.stringify(record)}\n`);
+		let screenFile: string;
+		try {
+			screenFile = resolveDesignPath(session.designDir, session.screenFile);
+		} catch {
+			// A project removed while a process exits has nowhere lawful to
+			// persist. Never recreate a vanished design/ from an async tail.
+			return;
+		}
+		writeAtomic(screenFile, `${JSON.stringify(record)}\n`);
 	}
 
 	function readPersisted(root: string, frame: string): PersistedScreen | undefined {
@@ -191,7 +206,8 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 				return undefined;
 			}
 			return raw;
-		} catch {
+		} catch (error) {
+			if (error instanceof DesignBoundaryError) throw error;
 			return undefined;
 		}
 	}
@@ -201,9 +217,12 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		if (session === undefined) {
 			const { w, h } = frameGeometry(root, frame);
 			const { cols, rows } = cellsForPx(w, h);
+			const designDir = realDesignDir(root);
 			session = {
 				root,
 				frame,
+				designDir,
+				screenFile: termScreenFile(root, frame),
 				...makeEmulator(cols, rows),
 				filter: createOscFilter(),
 				proc: undefined,
