@@ -16,18 +16,21 @@ export type UpdateToast =
 export function UpdateToastPill({
 	toast,
 	aboveCanvasTools = false,
+	stacked = false,
 	onUpdate,
 	onDismiss,
 }: {
 	toast: UpdateToast;
 	aboveCanvasTools?: boolean;
+	/** another toast holds the bottom slot — sit above it rather than on it */
+	stacked?: boolean;
 	onUpdate: () => void;
 	onDismiss: () => void;
 }) {
 	return (
 		<div
 			className={`-translate-x-1/2 fixed left-1/2 z-20 flex items-center gap-4 rounded-md border border-border-raised bg-raised px-3.5 py-2.5 ${
-				aboveCanvasTools ? "bottom-[120px]" : "bottom-6"
+				aboveCanvasTools ? "bottom-[120px]" : stacked ? "bottom-[72px]" : "bottom-6"
 			}`}
 		>
 			{toast.kind === "offer" && (

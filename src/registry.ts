@@ -17,7 +17,7 @@ export interface Registry {
  * The machine-global project registry in ~/.spool. It is the only record of
  * known projects (spool never scans disk), so anything short of a cleanly
  * missing file is an error to surface, never something to silently reset.
- * Written only by init and open.
+ * Written by init, open, and home's forget.
  */
 export function readRegistry(spoolDir: string): Registry {
 	const file = join(spoolDir, "registry.json");
@@ -53,6 +53,20 @@ export function registerProject(spoolDir: string, root: string): void {
 		registry.projects.push({ root: real, openedAt });
 	}
 	writeRegistry(spoolDir, registry);
+}
+
+/**
+ * Forget a project: the registry entry goes, the folder stays. Takes the root
+ * verbatim — a forgotten project may no longer resolve on disk, and realpath
+ * on a moved folder would leave the stale entry unreachable. Returns whether
+ * there was anything to forget.
+ */
+export function unregisterProject(spoolDir: string, root: string): boolean {
+	const registry = readRegistry(spoolDir);
+	const kept = registry.projects.filter((project) => project.root !== root);
+	if (kept.length === registry.projects.length) return false;
+	writeRegistry(spoolDir, { ...registry, projects: kept });
+	return true;
 }
 
 export type ProjectLookup =
