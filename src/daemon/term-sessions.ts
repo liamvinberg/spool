@@ -6,6 +6,7 @@ import type { Terminal } from "@xterm/headless";
 import { writeAtomic } from "../atomic-write";
 import { gridFromBuffer } from "../term/buffer-grid";
 import { cellsForPx, MIN_COLS, MIN_ROWS } from "../term/cells";
+import { resetCursorVisibility, serializedCursorVisibility, trackCursorVisibility } from "../term/cursor-visibility";
 import { createOscFilter } from "../term/osc";
 import type { Grid } from "../term/still";
 import { gridToSvg } from "../term/still";
@@ -100,9 +101,12 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 	const sessions = new Map<string, Session>();
 	const grace = detachGraceMs ?? DEFAULT_DETACH_GRACE_MS;
 	const key = (root: string, frame: string) => `${root}\0${frame}`;
+	const serializeScreen = (session: Session) =>
+		session.serialize.serialize() + serializedCursorVisibility(session.term);
 
 	function makeEmulator(cols: number, rows: number): { term: Terminal; serialize: SerializeAddon } {
 		const term = new HeadlessTerminal({ cols, rows, allowProposedApi: true });
+		trackCursorVisibility(term);
 		const serialize = new Serialize();
 		term.loadAddon(serialize as Parameters<Terminal["loadAddon"]>[0]);
 		return { term, serialize };
@@ -159,7 +163,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 				const leave = lastLeaveAlt(out);
 				if (leave >= 0) {
 					session.term.write(out.subarray(0, leave), () => {
-						if (session.generation === generation) session.altStash = session.serialize.serialize();
+						if (session.generation === generation) session.altStash = serializeScreen(session);
 					});
 					session.term.write(out.subarray(leave));
 				} else {
@@ -196,7 +200,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		const record: PersistedScreen = {
 			cols: session.cols,
 			rows: session.rows,
-			screen: session.serialize.serialize(),
+			screen: serializeScreen(session),
 			sourceVersion: session.sourceVersion,
 			...(session.exitCode !== undefined ? { exitCode: session.exitCode } : {}),
 		};
@@ -285,7 +289,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		// before the snapshot lands, or a replay serialized at other columns
 		// wraps every line and shreds the screen
 		client.send(JSON.stringify({ t: "size", cols: session.cols, rows: session.rows }));
-		const snapshot = session.serialize.serialize();
+		const snapshot = serializeScreen(session);
 		if (snapshot.length > 0) client.send(new TextEncoder().encode(snapshot));
 		// an attach-time exit is arrival state, not a death watched happen: the
 		// mark lets the enter gesture (walk arrival, canvas enter) revive it
@@ -356,6 +360,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		killProcess(session);
 		session.proc = undefined;
 		session.term.reset();
+		resetCursorVisibility(session.term);
 		// a corpse resized while dead deferred the new grid to this respawn
 		if (session.term.cols !== session.cols || session.term.rows !== session.rows) {
 			session.term.resize(session.cols, session.rows);

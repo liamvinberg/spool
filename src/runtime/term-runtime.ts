@@ -1,7 +1,8 @@
 import { Terminal } from "@xterm/xterm";
 import { cellsForViewport, TERM_FONT_PX, TERM_LINE_HEIGHT } from "../term/cells";
-import { TERM_ANSI, TERM_BACKGROUND, TERM_CURSOR, TERM_FOREGROUND } from "../term/theme";
+import { TERM_ANSI, TERM_BACKGROUND, TERM_CURSOR, TERM_CURSOR_ACCENT, TERM_FOREGROUND } from "../term/theme";
 import { exitChipLabel, termKeyIntent } from "./term-keys";
+import { activateWebgl } from "./term-webgl";
 
 /**
  * Dormant browser runtime for a future OS-sandboxed terminal executor. Shipped
@@ -27,6 +28,7 @@ const theme = {
 	background: TERM_BACKGROUND,
 	foreground: TERM_FOREGROUND,
 	cursor: TERM_CURSOR,
+	cursorAccent: TERM_CURSOR_ACCENT,
 	black: TERM_ANSI[0],
 	red: TERM_ANSI[1],
 	green: TERM_ANSI[2],
@@ -60,6 +62,7 @@ const term = new Terminal({
 	letterSpacing: 0,
 	theme,
 	drawBoldTextInBrightColors: false,
+	customGlyphs: true,
 	scrollback: 1000,
 });
 
@@ -73,6 +76,10 @@ await Promise.race([
 	new Promise((resolve) => setTimeout(resolve, 1500)),
 ]);
 term.open(host);
+// WebGL is an optional acceleration layer. Open first so a failed activation
+// leaves xterm's DOM renderer alive; context loss disposes only this addon,
+// which makes xterm restore that renderer without replacing terminal state.
+await activateWebgl(term);
 // booting already focused — a player walk arriving (#44), an entered reload —
 // is the enter gesture: hand the keyboard straight to the emulator
 if (document.hasFocus()) term.focus();
