@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { ContextMenu } from "./context-menu";
 
 const callbacks = {
+	tidyLabel: "Tidy page",
+	onTidy: () => {},
 	onOpenEditor: () => {},
 	onPlay: () => {},
 	onReload: () => {},

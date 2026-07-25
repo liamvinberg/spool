@@ -118,22 +118,32 @@ describe("canvas context menu", () => {
 		expect(host.querySelector('[role="menu"]')?.textContent).toContain("Export as PNG");
 	});
 
-	it("does not trash a selected frame from the Delete key", async () => {
-		const { host, requests } = await renderCanvas();
+	it("trashes the selected frame from the Delete key", async () => {
+		const { host, canvas } = await renderCanvas();
+		// the menu's own route to the selection, so ⌫ acts on the same frames
+		await openFrameMenu(canvas);
 		await act(async () => {
-			window.dispatchEvent(new MessageEvent("message", { data: { spool: "key", frame: "home", key: "Escape" } }));
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 		});
 		await act(async () => {
 			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
 		});
 
+		expect(host.querySelector('[data-frame-label="home"]')).toBeNull();
+	});
+
+	it("leaves an entered frame alone: its keys belong to the prototype", async () => {
+		const { host, canvas } = await renderCanvas();
+		await act(async () =>
+			canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 40, clientY: 40 })),
+		);
+		for (const key of ["Delete", "Backspace", "r", "e", "p"]) {
+			await act(async () => {
+				window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+			});
+		}
+
 		expect(host.querySelector('[data-frame-label="home"]')).not.toBeNull();
-		expect(
-			requests.mock.calls.some(([input]) => {
-				const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
-				return url.pathname === "/api/p/test/trash";
-			}),
-		).toBe(false);
 	});
 });
 
@@ -178,8 +188,10 @@ async function openFrameMenu(canvas: HTMLElement): Promise<void> {
 }
 
 async function clickMenuItem(host: HTMLElement, label: string): Promise<void> {
+	// the item's own label, never its key hint — matching the whole text would
+	// break every time an item gains or loses a shortcut
 	const item = [...host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
-		(candidate) => candidate.textContent === label,
+		(candidate) => candidate.querySelector("span")?.textContent === label,
 	);
 	expect(item).toBeDefined();
 	await act(async () => item?.click());
