@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectCard } from "./api";
-import { fetchProjects, fetchSession, postUpgrade, putSession, subscribeSse } from "./api";
+import {
+	beaconForgetProject,
+	fetchProjects,
+	fetchSession,
+	postForgetProject,
+	postUpgrade,
+	putSession,
+	subscribeSse,
+} from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
+import { ForgetToast } from "./forget-toast";
 import { Home } from "./home";
 import { CloseIcon, PlusIcon, RibbonMark, ThreadIcon } from "./icons";
 import { FolderPicker } from "./picker";
@@ -19,6 +28,9 @@ interface TabProject {
 	name: string;
 }
 
+/** Same undo window the Trash toast stands for (#23) — one feel across the app. */
+const FORGET_UNDO_MS = 5000;
+
 export function App() {
 	const [projects, setProjects] = useState<ProjectCard[]>([]);
 	const [open, setOpen] = useState<string[]>([]);
@@ -28,6 +40,9 @@ export function App() {
 	const [booted, setBooted] = useState(false);
 	const [picking, setPicking] = useState(false);
 	const [chrome, setChrome] = useState<CanvasChrome | null>(null);
+	const [pendingForget, setPendingForget] = useState<TabProject | null>(null);
+	const pendingForgetRef = useRef<TabProject | null>(null);
+	const forgetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const [toast, setToast] = useState<UpdateToast | null>(null);
 	const toastRef = useRef(toast);
 	toastRef.current = toast;
@@ -146,6 +161,67 @@ export function App() {
 		[focused, focusProject],
 	);
 
+	// --- forget (#13): the card vanishes now, the registry write waits on the
+	// toast. Undo means nothing was ever written, so openedAt survives and the
+	// card returns to the slot it came from.
+
+	const commitForget = useCallback(() => {
+		const project = pendingForgetRef.current;
+		pendingForgetRef.current = null;
+		clearTimeout(forgetTimer.current);
+		setPendingForget(null);
+		if (project === null) return;
+		if (openRef.current.includes(project.root) && focused === project.root) focusProject(null);
+		void postForgetProject(project.root).then((ok) => {
+			// the registry still knows it: bring the card back rather than lose it
+			if (!ok) void refetch();
+		});
+	}, [focused, focusProject, refetch]);
+
+	const stageForget = useCallback(
+		(project: TabProject) => {
+			commitForget(); // an earlier toast still open commits now — one undo slot
+			pendingForgetRef.current = project;
+			setPendingForget(project);
+			forgetTimer.current = setTimeout(commitForget, FORGET_UNDO_MS);
+		},
+		[commitForget],
+	);
+
+	const undoForget = useCallback(() => {
+		if (pendingForgetRef.current === null) return;
+		pendingForgetRef.current = null;
+		clearTimeout(forgetTimer.current);
+		setPendingForget(null);
+	}, []);
+
+	// ⌘Z answers the toast, the way it does on the canvas (#7)
+	useEffect(() => {
+		if (pendingForget === null) return;
+		const onKey = (event: KeyboardEvent) => {
+			if (event.key.toLowerCase() !== "z" || !(event.metaKey || event.ctrlKey)) return;
+			event.preventDefault();
+			undoForget();
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [pendingForget, undoForget]);
+
+	// leaving the page mid-toast: the staged forget still happens
+	useEffect(() => {
+		const flush = () => {
+			const project = pendingForgetRef.current;
+			if (project === null) return;
+			pendingForgetRef.current = null;
+			beaconForgetProject(project.root);
+		};
+		window.addEventListener("pagehide", flush);
+		return () => {
+			window.removeEventListener("pagehide", flush);
+			flush();
+		};
+	}, []);
+
 	return (
 		<div className="flex h-full flex-col bg-bg">
 			<header className="flex h-11 shrink-0 items-center justify-between border-border border-b bg-bg px-4">
@@ -230,16 +306,26 @@ export function App() {
 
 			<main className="min-h-0 flex-1">
 				{focusedTab === undefined ? (
-					<Home projects={projects} onOpenProject={(project) => openTab(project)} />
+					<Home
+						projects={projects}
+						forgetting={pendingForget?.root ?? null}
+						onOpenProject={(project) => openTab(project)}
+						onForgetProject={(project) => stageForget(project)}
+					/>
 				) : (
 					<ProjectCanvas key={focusedTab.root} project={focusedTab.name} onChrome={setChrome} />
 				)}
 			</main>
 
+			{pendingForget !== null && (
+				<ForgetToast name={pendingForget.name} windowMs={FORGET_UNDO_MS} onUndo={undoForget} />
+			)}
+
 			{toast !== null && (
 				<UpdateToastPill
 					toast={toast}
 					aboveCanvasTools={focusedTab !== undefined && chrome !== null}
+					stacked={pendingForget !== null}
 					onUpdate={() => void startUpgrade()}
 					onDismiss={dismissToast}
 				/>

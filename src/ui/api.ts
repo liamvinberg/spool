@@ -59,6 +59,25 @@ export async function fetchProjects(): Promise<ProjectCard[]> {
 	return ((await res.json()) as { projects: ProjectCard[] }).projects;
 }
 
+/** Home's remove: the registry forgets this root, the folder stays put. */
+export async function postForgetProject(root: string): Promise<boolean> {
+	try {
+		return (await client.api.projects.forget.$post({ json: { root } })).ok;
+	} catch {
+		return false;
+	}
+}
+
+/** The page is going away mid-toast — the staged forget still has to land. */
+export function beaconForgetProject(root: string): void {
+	void controlFetch("/api/projects/forget", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ root }),
+		keepalive: true,
+	});
+}
+
 export async function fetchSession(): Promise<string[]> {
 	const res = await client.api.session.$get();
 	if (!res.ok) return [];

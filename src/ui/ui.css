@@ -51,6 +51,41 @@
 	--radius-sm: 6px;
 	--radius-md: 8px;
 	--radius-lg: 12px;
+
+	/* menus and toasts arrive; the drain shows an undo window closing */
+	--animate-menu-in: menu-in 140ms cubic-bezier(0.32, 0.72, 0, 1);
+	--animate-toast-in: toast-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+	--animate-toast-drain: toast-drain linear forwards;
+
+	@keyframes menu-in {
+		from {
+			opacity: 0;
+			transform: translateY(-4px) scale(0.97);
+		}
+	}
+
+	@keyframes toast-in {
+		from {
+			opacity: 0;
+			transform: translate(-50%, 12px);
+		}
+	}
+
+	@keyframes toast-drain {
+		from {
+			transform: scaleX(1);
+		}
+		to {
+			transform: scaleX(0);
+		}
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.animate-menu-in,
+	.animate-toast-in {
+		animation: none;
+	}
 }
 
 html,

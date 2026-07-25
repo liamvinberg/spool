@@ -234,6 +234,58 @@ describe("the project registry for home", () => {
 		expect(projects.map((p) => p.name)).toEqual([name]);
 		expect(projects[0]?.frameCount).toBe(0);
 	});
+
+	it("forgets a project without touching its folder, and closes its tab", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const kept = makeProject(spoolDir);
+		const gone = makeProject(spoolDir);
+		const app = makeApp(spoolDir);
+		await app.request("/api/session", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ open: [kept.root, gone.root] }),
+		});
+
+		const res = await app.request("/api/projects/forget", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ root: gone.root }),
+		});
+
+		expect(res.status).toBe(204);
+		const { projects } = (await (await app.request("/api/projects")).json()) as { projects: { root: string }[] };
+		expect(projects.map((p) => p.root)).toEqual([kept.root]);
+		// the registry forgets; the folder is the human's, and stays
+		expect(existsSync(join(gone.root, "design"))).toBe(true);
+		expect(await (await app.request("/api/session")).json()).toEqual({ open: [kept.root] });
+	});
+
+	it("404s forgetting a root that was never registered", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		makeProject(spoolDir);
+		const app = makeApp(spoolDir);
+
+		const res = await app.request("/api/projects/forget", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ root: "/somewhere/never-registered" }),
+		});
+
+		expect(res.status).toBe(404);
+	});
+
+	it("rejects a forget without a root", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const app = makeApp(spoolDir);
+
+		const res = await app.request("/api/projects/forget", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		expect(res.status).toBe(400);
+	});
 });
 
 describe("the app session", () => {

@@ -14,7 +14,7 @@ import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_FAVICON_SVG } from "../brand";
 import { SpoolError } from "../errors";
 import { initProject } from "../init";
 import { openProject } from "../open";
-import { lookupProjectByName, readRegistry } from "../registry";
+import { lookupProjectByName, readRegistry, unregisterProject } from "../registry";
 import { gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
 import { stampLabels } from "./call-site";
@@ -391,6 +391,32 @@ export function createDaemonApp({
 				return c.json({ error: error.message }, 409);
 			}
 		})
+		.post(
+			"/api/projects/forget",
+			validator("json", (value, c) => {
+				const root = (value as { root?: unknown }).root;
+				if (typeof root !== "string" || root === "") {
+					return c.json({ error: 'expected { "root": "/abs/dir" }' }, 400);
+				}
+				return { root };
+			}),
+			(c) => {
+				// home's remove (#13): the registry forgets, the folder is untouched —
+				// so an open tab has to go too, or the session names a stranger
+				const { root } = c.req.valid("json");
+				if (!unregisterProject(spoolDir, root)) {
+					return c.json({ error: `not a registered project root: ${root}` }, 404);
+				}
+				const session = readSession(spoolDir);
+				const open = session.open.filter((entry) => entry !== root);
+				if (open.length !== session.open.length) {
+					writeSession(spoolDir, { open });
+					emitAppEvent({ kind: "session" });
+				}
+				emitAppEvent({ kind: "registry" });
+				return c.body(null, 204);
+			},
+		)
 		.get("/api/projects", (c) => {
 			const projects: ProjectCard[] = readRegistry(spoolDir)
 				.projects.map((project) => ({

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SpoolError } from "./errors";
-import { readRegistry, registerProject } from "./registry";
+import { readRegistry, registerProject, unregisterProject } from "./registry";
 import { makeTempDir } from "./test-helpers";
 
 describe("registry", () => {
@@ -49,6 +49,30 @@ describe("registry", () => {
 		registerProject(spoolDir, b);
 
 		expect(readRegistry(spoolDir).projects.map((p) => p.root)).toEqual([realpathSync(a), realpathSync(b)]);
+	});
+
+	it("unregisters a project, leaving the others and the folder alone", () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const a = makeTempDir();
+		const b = makeTempDir();
+		registerProject(spoolDir, a);
+		registerProject(spoolDir, b);
+
+		expect(unregisterProject(spoolDir, realpathSync(a))).toBe(true);
+
+		expect(readRegistry(spoolDir).projects.map((p) => p.root)).toEqual([realpathSync(b)]);
+		expect(existsSync(a)).toBe(true);
+	});
+
+	it("reports an unregister of a root it never knew, writing nothing", () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = makeTempDir();
+		registerProject(spoolDir, root);
+		const before = readFileSync(join(spoolDir, "registry.json"), "utf8");
+
+		expect(unregisterProject(spoolDir, "/nowhere/at/all")).toBe(false);
+
+		expect(readFileSync(join(spoolDir, "registry.json"), "utf8")).toBe(before);
 	});
 
 	it("fails loudly on a corrupt registry file instead of wiping it", () => {

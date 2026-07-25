@@ -84,6 +84,27 @@ export function CloseIcon() {
 	);
 }
 
+/** The per-card menu on home. */
+export function DotsIcon() {
+	return (
+		<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+			<circle cx="3.5" cy="8" r="1.25" fill="currentColor" />
+			<circle cx="8" cy="8" r="1.25" fill="currentColor" />
+			<circle cx="12.5" cy="8" r="1.25" fill="currentColor" />
+		</svg>
+	);
+}
+
+/** Home's registry filter. */
+export function SearchIcon({ className }: { className?: string }) {
+	return (
+		<svg width="12" height="12" viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<circle cx="7" cy="7" r="4.25" stroke="currentColor" strokeWidth="1.4" />
+			<path d="m10.3 10.3 3.2 3.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+		</svg>
+	);
+}
+
 interface CanvasToolIconProps {
 	className?: string;
 }
