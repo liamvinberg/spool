@@ -14,7 +14,7 @@ import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_FAVICON_SVG } from "../brand";
 import { SpoolError } from "../errors";
 import { initProject } from "../init";
 import { openProject } from "../open";
-import { lookupProjectByName, readRegistry, unregisterProject } from "../registry";
+import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
 import { stampLabels } from "./call-site";
@@ -48,7 +48,7 @@ import {
 	renderOriginFor,
 } from "./security";
 import { createSelectionStore, parseSelectionPut } from "./selection";
-import { type AppEvent, readSession, watchRegistry, writeSession } from "./session";
+import { type AppEvent, type MachineStateWatchAdapter, readSession, updateSession, watchMachineState } from "./session";
 import { createShotTaker } from "./shots";
 import type { TermExecutor } from "./term-exec";
 import { termFontDataCss, termFontFile } from "./term-fonts";
@@ -88,6 +88,10 @@ export interface DaemonOptions {
 	upgrade?: () => { ok: true } | { ok: false; error: string };
 	/** Retained seam for dormant session tests; public daemon routes never invoke it. */
 	termExecutor?: TermExecutor;
+	/** Machine-state filesystem lifecycle boundary. */
+	machineStateWatchAdapter?: MachineStateWatchAdapter;
+	/** Machine-state observation failures stay visible without escaping a watcher callback. */
+	onMachineStateWatchError?: (error: Error) => void;
 }
 
 /** The player's params (#24): Zod-validated, path-safe names only. */
@@ -123,6 +127,8 @@ export function createDaemonApp({
 	fetchLatest,
 	upgrade,
 	termExecutor,
+	machineStateWatchAdapter,
+	onMachineStateWatchError,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
@@ -162,7 +168,12 @@ export function createDaemonApp({
 	const emitAppEvent = (event: AppEvent) => {
 		for (const listener of appListeners) listener(event);
 	};
-	const stopRegistryWatch = watchRegistry(spoolDir, emitAppEvent);
+	const machineStateWatch = watchMachineState(spoolDir, emitAppEvent, {
+		...(machineStateWatchAdapter === undefined ? {} : { adapter: machineStateWatchAdapter }),
+		onError:
+			onMachineStateWatchError ??
+			((error) => console.error(`spool: machine-state observation failed: ${error.message}`)),
+	});
 
 	// #30: the daily registry ask — constructed idle, started only by a
 	// really-listening daemon whose owner has not opted out; a check that
@@ -330,17 +341,19 @@ export function createDaemonApp({
 		.put(
 			"/api/session",
 			validator("json", (value, c) => {
-				const open = (value as { open?: unknown }).open;
-				if (!Array.isArray(open) || !open.every((root): root is string => typeof root === "string")) {
-					return c.text('session must be { "open": [root, ...] }', 400);
+				const { root, open } = value as { root?: unknown; open?: unknown };
+				if (typeof root !== "string" || typeof open !== "boolean") {
+					return c.text('session mutation must be { "root": string, "open": boolean }', 400);
 				}
-				const registered = new Set(readRegistry(spoolDir).projects.map((project) => project.root));
-				const rogue = open.find((root) => !registered.has(root));
-				if (rogue !== undefined) return c.text(`not a registered project root: ${rogue}`, 400);
-				return { open };
+				return { root, open };
 			}),
 			(c) => {
-				writeSession(spoolDir, { open: [...new Set(c.req.valid("json").open)] });
+				const { root, open } = c.req.valid("json");
+				const result = updateSession(spoolDir, root, open);
+				if (result.kind === "unregistered") {
+					return c.text(`not a registered project root: ${result.root}`, 400);
+				}
+				machineStateWatch.acknowledgeSession(result.session);
 				emitAppEvent({ kind: "session" });
 				return c.body(null, 204);
 			},
@@ -402,18 +415,20 @@ export function createDaemonApp({
 			}),
 			(c) => {
 				// home's remove (#13): the registry forgets, the folder is untouched —
-				// so an open tab has to go too, or the session names a stranger
+				// and its open tab closes in the same machine-state mutation
 				const { root } = c.req.valid("json");
-				if (!unregisterProject(spoolDir, root)) {
-					return c.json({ error: `not a registered project root: ${root}` }, 404);
+				const result = forgetResolvedProject(spoolDir, root);
+				if (result.removed) {
+					machineStateWatch.acknowledgeRegistry(result.registry);
+					emitAppEvent({ kind: "registry" });
 				}
-				const session = readSession(spoolDir);
-				const open = session.open.filter((entry) => entry !== root);
-				if (open.length !== session.open.length) {
-					writeSession(spoolDir, { open });
+				if (result.sessionChanged) {
+					machineStateWatch.acknowledgeSession(result.session);
 					emitAppEvent({ kind: "session" });
 				}
-				emitAppEvent({ kind: "registry" });
+				if (!result.removed) {
+					return c.json({ error: `not a registered project root: ${root}` }, 404);
+				}
 				return c.body(null, 204);
 			},
 		)
@@ -1116,7 +1131,7 @@ export function createDaemonApp({
 		/** Terminal sessions, exposed for the player's static grids and seam tests. */
 		terms,
 		close: () => {
-			stopRegistryWatch();
+			machineStateWatch.stop();
 			void terms.close();
 			hub.close();
 			updateChecker.stop();

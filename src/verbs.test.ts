@@ -135,7 +135,7 @@ describe("url", () => {
 describe("skill", () => {
 	it("prints the overview with every verb and the topic index", () => {
 		const text = skillText();
-		for (const verb of ["init", "open", "selection", "flows", "shot", "logs", "url", "skill"]) {
+		for (const verb of ["init", "open", "remove", "selection", "flows", "shot", "logs", "url", "skill"]) {
 			expect(text).toContain(`spool ${verb}`);
 		}
 	});
@@ -155,6 +155,13 @@ describe("skill", () => {
 		expect(skillText()).toContain("if it isn't here, spool doesn't do it");
 		expect(skillText()).toContain("never write app-owned files");
 		expect(skillText("styling")).toContain("cn() only, never template-literal class strings");
+	});
+
+	it("scopes lock-free guidance to authored frame code", () => {
+		const text = skillText();
+		expect(text).toContain("Frame authoring needs no locks or shared registries");
+		expect(text).toContain("Lifecycle commands coordinate machine-global state inside spool");
+		expect(text).not.toContain("No locks:");
 	});
 
 	it("teaches the confirmed frame-authoring traps", () => {
@@ -185,6 +192,16 @@ describe("skill", () => {
 		expect(verbs).toContain(
 			"A terminal shot does not boot or execute source; it only rasterizes a persisted source-current grid to SVG.",
 		);
+	});
+
+	it("teaches disposable lanes to register their own source for verification", () => {
+		const text = skillText();
+		expect(text).toContain("spool open <lane>");
+		expect(text).toContain("before verification");
+		expect(text).toContain("spool remove <lane>");
+		expect(text).toContain("before erasing the worktree");
+		expect(text).toContain("Never alias");
+		expect(text).toContain("main checkout");
 	});
 
 	it("teaches that terminal source stays inert until it has an OS sandbox", () => {

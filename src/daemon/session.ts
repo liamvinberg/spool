@@ -1,97 +1,174 @@
-import { readFileSync, watch } from "node:fs";
-import { join } from "node:path";
-import { writeAtomic } from "../atomic-write";
-import { readRegistry } from "../registry";
+import { mkdirSync, watch } from "node:fs";
+import { mutateMachineState, type SessionMutationResult } from "../machine-state";
+import { type AppSession, type Registry, readMachineRegistry, readMachineSession } from "../machine-state-files";
 
 /**
  * The app session in ~/.spool/session.json: which projects are open as tabs
  * (#4 — one tab per open project, session restored on relaunch; #12 — the
  * daemon page behaves like the app, so the session is machine-global while
- * focus stays per-browser). `spool open` is daemon-less and writes only the
- * registry; the daemon watches the registry file and opens the tab itself —
- * that watch is what "open registers live via SSE" rides on.
+ * focus stays per-browser). `spool init` and `spool open` write the registry
+ * and session together; the daemon watches both files only to notify pages.
  */
 
-export interface AppSession {
-	open: string[];
-}
+export type { AppSession, SessionMutationResult };
 
 const SESSION_FILE = "session.json";
 const DEBOUNCE_MS = 40;
 
 export type AppEvent = { kind: "registry" } | { kind: "session" } | { kind: "update"; latest: string };
 
+export interface MachineStateWatchAdapter {
+	subscribe(
+		spoolDir: string,
+		changed: (filename: string | null) => void,
+		failed: (error: Error) => void,
+	): { close(): void };
+	schedule(reconcile: () => void): { cancel(): void };
+}
+
+interface MachineStateWatchOptions {
+	adapter?: MachineStateWatchAdapter;
+	onError?: (error: Error) => void;
+}
+
+const nodeMachineStateWatch: MachineStateWatchAdapter = {
+	subscribe: (spoolDir, changed, failed) => {
+		const watcher = watch(spoolDir, { encoding: "utf8" }, (_type, filename) => changed(filename));
+		watcher.on("error", failed);
+		return { close: () => watcher.close() };
+	},
+	schedule: (reconcile) => {
+		const timer = setTimeout(reconcile, DEBOUNCE_MS);
+		return { cancel: () => clearTimeout(timer) };
+	},
+};
+
 export function readSession(spoolDir: string): AppSession {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(readFileSync(join(spoolDir, SESSION_FILE), "utf8"));
-	} catch {
-		return { open: [] };
-	}
-	if (typeof parsed !== "object" || parsed === null) return { open: [] };
-	const open = (parsed as Record<string, unknown>).open;
-	if (!Array.isArray(open) || !open.every((root) => typeof root === "string")) return { open: [] };
-	return { open };
+	return readMachineSession(spoolDir);
 }
 
 export function writeSession(spoolDir: string, session: AppSession): void {
-	writeAtomic(join(spoolDir, SESSION_FILE), `${JSON.stringify(session, null, "\t")}\n`);
+	mutateMachineState(spoolDir, { kind: "write-session", session });
+}
+
+/** Register one canonical project root and durably open its tab as one mutation. */
+export function registerAndOpenProject(spoolDir: string, root: string): void {
+	mutateMachineState(spoolDir, { kind: "register-and-open-project", root });
+}
+
+/** Open or close one tab against the current list, preserving concurrent changes. */
+export function updateSession(spoolDir: string, root: string, open: boolean): SessionMutationResult {
+	return mutateMachineState(spoolDir, { kind: "update-session", root, open });
 }
 
 /**
- * Watch ~/.spool for registry writes. A project whose openedAt is new or
- * bumped was just init'd or opened — ensure its tab exists (background: the
- * session gains it, no browser's focus moves) and tell every connected page.
+ * Observe ~/.spool registry and session writes and notify already-running
+ * pages. Commands own the state transition; the watcher never infers one file
+ * from the timing of the other.
  */
-export function watchRegistry(spoolDir: string, emit: (event: AppEvent) => void): () => void {
-	let snapshot = registrySnapshot(spoolDir);
-	let timer: NodeJS.Timeout | undefined;
+export function watchMachineState(
+	spoolDir: string,
+	emit: (event: AppEvent) => void,
+	options?: MachineStateWatchOptions,
+): {
+	stop(): void;
+	acknowledgeRegistry(registry: Registry): void;
+	acknowledgeSession(session: AppSession): void;
+} {
+	mkdirSync(spoolDir, { recursive: true });
+	let registry = registrySnapshot(spoolDir);
+	let session = readSession(spoolDir);
+	let pending: { cancel(): void } | undefined;
+	let subscription: { close(): void } | undefined;
+	let stopped = false;
+	const adapter = options?.adapter ?? nodeMachineStateWatch;
+	const reportError =
+		options?.onError ?? ((error: Error) => console.error(`spool: machine-state watch failed: ${error.message}`));
 
-	let watcher: ReturnType<typeof watch> | undefined;
-	try {
-		watcher = watch(spoolDir, (_type, filename) => {
-			if (filename !== null && !filename.startsWith("registry.json")) return;
-			timer ??= setTimeout(() => {
-				timer = undefined;
-				settle();
-			}, DEBOUNCE_MS);
-		});
-	} catch {
-		// ~/.spool not there yet: no registry to watch — first write recreates
-		// the daemon's interest on next boot; the API paths still work
-		return () => {};
+	const startedSubscription = adapter.subscribe(
+		spoolDir,
+		(filename) => {
+			if (stopped) return;
+			if (filename !== null && !filename.startsWith("registry.json") && !filename.startsWith(SESSION_FILE)) {
+				return;
+			}
+			if (pending === undefined) {
+				let ranSynchronously = false;
+				const scheduled = adapter.schedule(() => {
+					ranSynchronously = true;
+					pending = undefined;
+					reconcile();
+				});
+				if (!ranSynchronously) pending = scheduled;
+			}
+		},
+		(error) => {
+			if (stopped) return;
+			stop();
+			reportError(error);
+		},
+	);
+	if (stopped) startedSubscription.close();
+	else {
+		subscription = startedSubscription;
+		reconcile();
 	}
-	watcher.on("error", () => stop());
 
-	function settle(): void {
-		const next = registrySnapshot(spoolDir);
-		const opened = [...next.entries()]
-			.filter(([root, openedAt]) => snapshot.get(root) !== openedAt)
-			.map(([root]) => root);
-		if (opened.length === 0 && next.size === snapshot.size) return;
-		snapshot = next;
-		emit({ kind: "registry" });
-		const session = readSession(spoolDir);
-		const missing = opened.filter((root) => !session.open.includes(root));
-		if (missing.length > 0) {
-			writeSession(spoolDir, { open: [...session.open, ...missing] });
-			emit({ kind: "session" });
+	function reconcile(): void {
+		if (stopped) return;
+		let nextRegistry: Map<string, string>;
+		let nextSession: AppSession;
+		try {
+			nextRegistry = registrySnapshot(spoolDir);
+			nextSession = readSession(spoolDir);
+		} catch (error) {
+			reportError(error instanceof Error ? error : new Error(String(error)));
+			return;
 		}
+		const registryChanged = !sameRegistry(nextRegistry, registry);
+		const sessionChanged = !sameSession(nextSession, session);
+		registry = nextRegistry;
+		session = nextSession;
+
+		if (registryChanged) emit({ kind: "registry" });
+		if (sessionChanged) emit({ kind: "session" });
 	}
 
 	function stop(): void {
-		watcher?.close();
-		if (timer !== undefined) clearTimeout(timer);
-		timer = undefined;
+		if (stopped) return;
+		stopped = true;
+		subscription?.close();
+		subscription = undefined;
+		pending?.cancel();
+		pending = undefined;
 	}
 
-	return stop;
+	return {
+		stop,
+		// API mutations publish immediately. Keep this watcher snapshot at the exact
+		// state just written, so its later filesystem notification is not replayed.
+		// A concurrent external write remains different from this known snapshot.
+		acknowledgeRegistry: (written) => {
+			registry = registryEntries(written);
+		},
+		acknowledgeSession: (written) => {
+			session = written;
+		},
+	};
+}
+
+function sameRegistry(left: Map<string, string>, right: Map<string, string>): boolean {
+	return left.size === right.size && [...left].every(([root, openedAt]) => right.get(root) === openedAt);
+}
+
+function sameSession(left: AppSession, right: AppSession): boolean {
+	return left.open.length === right.open.length && left.open.every((root, index) => root === right.open[index]);
 }
 
 function registrySnapshot(spoolDir: string): Map<string, string> {
-	try {
-		return new Map(readRegistry(spoolDir).projects.map((project) => [project.root, project.openedAt]));
-	} catch {
-		return new Map();
-	}
+	return registryEntries(readMachineRegistry(spoolDir));
+}
+
+function registryEntries(registry: Registry): Map<string, string> {
+	return new Map(registry.projects.map((project) => [project.root, project.openedAt]));
 }

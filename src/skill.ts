@@ -16,15 +16,18 @@ const overview = `spool — the live prototyping canvas. Html frames are TSX com
 
 This skill is the complete contract: if it isn't here, spool doesn't do it.
 
-The one law: never write app-owned files — design/canvas.json and design/.spool/ are spool's. Everything else under design/ is yours to author, rename, and delete. No locks: parallel agents stay safe by writing frame folders, never shared registries.
+The one law: never write app-owned files — design/canvas.json and design/.spool/ are spool's. Everything else under design/ is yours to author, rename, and delete. Frame authoring needs no locks or shared registries: parallel agents stay safe by writing separate frame folders. Lifecycle commands coordinate machine-global state inside spool.
 
 A frame is born by writing design/frames/<name>/frame.tsx default-exporting one React component — no registration, no \`spool new\`. It appears on the canvas live. Variants are \`--\`-named sibling folders (checkout--empty). spool owns the document: pinned React, Tailwind compiled at serve, preflight, tokens, fonts, the mock and flow runtime are all injected — write only the component. Frames render nowhere outside spool.
 
 There are exactly two frame kinds, told apart by the entry filename: frame.tsx is an html frame; term.tsx remains recognized as a terminal frame, but spool renders a static disabled surface and does not execute its source until project code can run inside an OS sandbox (topic: terminals). A folder holding both entries is an error naming the folder; pick one.
 
 Lifecycle (offline, take a path):
-  spool init [path]     scaffold design/ in a product root and register it
-  spool open [path]     register an existing project by walk-up
+  spool init [path]     scaffold design/, register the project, and open its tab
+  spool open [path]     register an existing project by walk-up and open its tab
+  spool remove [path]   forget one exact registered root without deleting its files
+
+For a disposable implementation lane, run \`spool open <lane>\` before verification and \`spool remove <lane>\` before erasing the worktree. Never alias a lane to the registered main checkout: verification must read the lane's source.
 
 Read verbs (work from any cwd inside a registered project, auto-start the daemon):
   spool selection       what the human points at: frame or element, source path and lines
