@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { describe, expect, it } from "vitest";
@@ -28,13 +28,14 @@ async function serveVerifyProject() {
 	const { spoolDir, root, name, url } = await serveProject();
 	const controlToken = readDaemonState(spoolDir)?.controlToken;
 	if (controlToken === undefined) throw new Error("test daemon has no control token");
-	const deps = (frame: string): BootDeps => ({
+	const deps = (frame: string, overrides: Partial<BootDeps> = {}): BootDeps => ({
 		daemonUrl: url,
 		controlToken,
 		root,
 		name,
 		frame,
 		narrate: () => {},
+		...overrides,
 	});
 	return { root, deps };
 }
@@ -113,6 +114,7 @@ describe("the one boot smoke", () => {
 		if (!(await browserAvailable())) return; // no build on this machine: #27 covers the fetch path
 
 		const { root, deps } = await serveVerifyProject();
+		const narrations: string[] = [];
 		writeFrame(
 			root,
 			"noisy",
@@ -123,13 +125,46 @@ export default function Noisy() {
 }
 `,
 		);
+		writeFrame(root, "defaulted", "export default function Defaulted() { return <main>defaulted</main>; }\n");
+		const defaultNarrations: string[] = [];
+		const defaultWaits: number[] = [];
+		await expect(
+			shotFrame(
+				deps("defaulted", {
+					narrate: (line) => defaultNarrations.push(line),
+					wait: async (milliseconds) => {
+						defaultWaits.push(milliseconds);
+					},
+				}),
+			),
+		).resolves.toMatchObject({ kind: "shot" });
+		expect(defaultNarrations).toEqual(['no valid frame.json for "defaulted" — using the 390×844 default viewport']);
+		expect(defaultWaits).toEqual([300]);
+		expect(existsSync(join(root, "design", "frames", "defaulted", "frame.json"))).toBe(false);
 
-		const shot = await shotFrame(deps("noisy"));
+		const waits: number[] = [];
+		const shot = await shotFrame(
+			deps("noisy", {
+				viewport: { width: 160, height: 120 },
+				at: 17,
+				wait: async (milliseconds) => {
+					waits.push(milliseconds);
+				},
+				narrate: (line) => narrations.push(line),
+			}),
+		);
 		expect(shot.kind).toBe("shot");
 		const file = (shot as { file: string }).file;
 		expect(file).toBe(join(root, "design", ".spool", "verify", "noisy.png"));
 		expect(existsSync(file)).toBe(true);
 		expect((shot as { bootErrors: string[] }).bootErrors).toEqual([]);
+		expect(waits).toEqual([17]);
+		// Playwright captures at the documented 2× device scale.
+		const png = readPngSize(file);
+		expect(png).toEqual({ width: 320, height: 240 });
+		// Verification reads geometry without materializing the canvas sidecar.
+		expect(existsSync(join(root, "design", "frames", "noisy", "frame.json"))).toBe(false);
+		expect(narrations).toEqual([]);
 
 		// logs replay the shot's boot — same source, no second boot
 		const replay = await logsFrame(deps("noisy"));
@@ -139,7 +174,8 @@ export default function Noisy() {
 			text: "hello from boot",
 		});
 
-		// an edit stales the cache: logs boot fresh
+		// An edit followed by shot refreshes the boot, then logs replays that
+		// exact edited boot rather than launching a second one.
 		writeFrame(
 			root,
 			"noisy",
@@ -150,9 +186,10 @@ export default function Noisy() {
 }
 `,
 		);
-		const fresh = await logsFrame(deps("noisy"));
-		expect(fresh).toMatchObject({ kind: "logs", replayed: false });
-		expect((fresh as { entries: { type: string; text: string }[] }).entries).toContainEqual({
+		await expect(shotFrame(deps("noisy"))).resolves.toMatchObject({ kind: "shot" });
+		const editedReplay = await logsFrame(deps("noisy"));
+		expect(editedReplay).toMatchObject({ kind: "logs", replayed: true });
+		expect((editedReplay as { entries: { type: string; text: string }[] }).entries).toContainEqual({
 			type: "log",
 			text: "edited boot",
 		});
@@ -172,4 +209,35 @@ export default function Noisy() {
 		expect(errors.length).toBeGreaterThan(0);
 		expect(errors.join("\n")).toContain("boom at boot");
 	});
+
+	it("seeds and caches boots by scenario", { timeout: 180_000 }, async () => {
+		if (!(await browserAvailable())) return;
+
+		const { root, deps } = await serveVerifyProject();
+		writeDesignFile(root, "shared/scenarios/review.json", '{ "state": {}, "mock": {} }\n');
+		writeFrame(
+			root,
+			"seeded",
+			`console.log(window.location.search);
+
+export default function Seeded() {
+	return <main>seeded</main>;
+}
+`,
+		);
+
+		await expect(shotFrame(deps("seeded", { scenario: "review" }))).resolves.toMatchObject({ kind: "shot" });
+		const review = await logsFrame(deps("seeded", { scenario: "review" }));
+		expect(review).toMatchObject({ kind: "logs", replayed: true });
+		expect((review as { entries: { type: string; text: string }[] }).entries).toContainEqual({
+			type: "log",
+			text: "?scenario=review",
+		});
+		expect(await logsFrame(deps("seeded"))).toMatchObject({ kind: "logs", replayed: false });
+	});
 });
+
+function readPngSize(file: string): { width: number; height: number } {
+	const png = readFileSync(file);
+	return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
+}

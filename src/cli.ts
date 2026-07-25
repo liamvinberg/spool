@@ -17,6 +17,7 @@ import {
 	statusDaemon,
 	stopDaemon,
 } from "./daemon/lifecycle";
+import { isSafeName } from "./daemon/project-files";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
@@ -25,7 +26,7 @@ import { initProject } from "./init";
 import { openProject } from "./open";
 import { skillText } from "./skill";
 import { runUpgrade } from "./upgrade";
-import { mintPlayerUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
+import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
 import { logsFrame, shotFrame } from "./verify";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -68,6 +69,36 @@ program
 
 const narrate = (line: string) => process.stderr.write(`spool: ${line}\n`);
 
+interface VerifyOptions {
+	viewport?: { width: number; height: number };
+	at?: number;
+	scenario?: string;
+}
+
+function parseViewport(value: string): { width: number; height: number } {
+	const match = /^(\d+)x(\d+)$/.exec(value);
+	const width = match === null ? Number.NaN : Number(match[1]);
+	const height = match === null ? Number.NaN : Number(match[2]);
+	if (!Number.isSafeInteger(width) || width < 1 || !Number.isSafeInteger(height) || height < 1) {
+		throw new SpoolError(`--viewport must be <width>x<height> with positive integers, got "${value}"`);
+	}
+	return { width, height };
+}
+
+function parseMilliseconds(value: string): number {
+	if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+		throw new SpoolError(`--at must be whole milliseconds, got "${value}"`);
+	}
+	return Number(value);
+}
+
+function parseScenario(value: string): string {
+	if (!isSafeName(value)) {
+		throw new SpoolError(`--scenario must be a scenario name without a leading dot or slash, got "${value}"`);
+	}
+	return value;
+}
+
 /** Every verb's preamble: the project this cwd is inside, and a live daemon. */
 async function verbContext(): Promise<{ root: string; name: string; daemonUrl: string; controlToken: string }> {
 	const { root, name } = resolveRegisteredProject(spoolDir, process.cwd());
@@ -95,9 +126,12 @@ program
 	.command("shot")
 	.description("boot a frame headless, save a screenshot, print its path")
 	.argument("<frame>", "frame folder name")
-	.action(async (frame: string) => {
+	.option("--viewport <width>x<height>", "exact CSS viewport", parseViewport)
+	.option("--at <milliseconds>", "post-commit wait", parseMilliseconds)
+	.option("--scenario <name>", "named scenario seed", parseScenario)
+	.action(async (frame: string, options: VerifyOptions) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
-		const outcome = await shotFrame({ daemonUrl, controlToken, root, name, frame, narrate });
+		const outcome = await shotFrame({ daemonUrl, controlToken, root, name, frame, narrate, ...options });
 		if (outcome.kind === "missing") throw new SpoolError(outcome.message);
 		if (outcome.kind === "broken") {
 			// the compile or boot error verbatim — nothing of spool's in the way
@@ -116,16 +150,17 @@ program
 	.command("logs")
 	.description("print the frame's boot console output (cached until source changes)")
 	.argument("<frame>", "frame folder name")
-	.action(async (frame: string) => {
+	.option("--scenario <name>", "named scenario seed", parseScenario)
+	.action(async (frame: string, options: Pick<VerifyOptions, "scenario">) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
-		const outcome = await logsFrame({ daemonUrl, controlToken, root, name, frame, narrate });
+		const outcome = await logsFrame({ daemonUrl, controlToken, root, name, frame, narrate, ...options });
 		if (outcome.kind === "missing") throw new SpoolError(outcome.message);
 		if (outcome.kind === "broken") {
 			process.stderr.write(`${outcome.message}\n`);
 			process.exitCode = 1;
 			return;
 		}
-		if (outcome.replayed) narrate("replaying the last boot's logs — source unchanged");
+		if (outcome.replayed) narrate("replaying cached logs — cache matches current compiled source");
 		if (outcome.entries.length === 0) {
 			narrate("the boot logged nothing");
 			return;
@@ -137,9 +172,16 @@ program
 	.command("url")
 	.description("mint a player-session URL to drive in a browser")
 	.argument("<frame>", "frame folder name")
-	.action(async (frame: string) => {
-		const { name, daemonUrl, controlToken } = await verbContext();
-		process.stdout.write(`${await mintPlayerUrl(daemonUrl, name, frame, controlToken)}\n`);
+	.option("--raw", "mint the direct frame document URL")
+	.action(async (frame: string, options: { raw?: boolean }) => {
+		const { root, name, daemonUrl, controlToken } = await verbContext();
+		process.stdout.write(
+			`${
+				options.raw === true
+					? await mintRawUrl(daemonUrl, name, frame, root)
+					: await mintPlayerUrl(daemonUrl, name, frame, controlToken)
+			}\n`,
+		);
 	});
 
 program

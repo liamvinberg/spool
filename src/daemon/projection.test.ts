@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { pxForCells } from "../term/cells";
 import { makeTempDir, writeDesignFile } from "../test-helpers";
 import { realDesignDir } from "./design-path";
+import { writeGeometryIfAbsent } from "./geometry";
 import { frameKind, listProjectFrames } from "./projection";
 
 describe("frame kinds", () => {
@@ -47,5 +48,21 @@ describe("frame kinds", () => {
 		writeDesignFile(root, join("frames", "dash--empty", "term.tsx"), "// tui\n");
 		const { frames } = listProjectFrames(root);
 		expect(frames[0]).toMatchObject({ name: "dash--empty", kind: "term" });
+	});
+});
+
+describe("projection placement", () => {
+	it("preserves authored bytes when its missing-sidecar fill loses the create race", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, join("frames", "authored", "frame.tsx"), "export default () => null;\n");
+		const designDir = realDesignDir(root);
+		const sidecar = join(designDir, "frames", "authored", "frame.json");
+		const authored = '{ "x": 19, "y": 23, "w": 640, "h": 480 }\n';
+		writeFileSync(sidecar, authored);
+
+		const won = writeGeometryIfAbsent(sidecar, { x: 80, y: 80, w: 390, h: 844 }, designDir);
+
+		expect(won).toEqual({ x: 19, y: 23, w: 640, h: 480 });
+		expect(readFileSync(sidecar, "utf8")).toBe(authored);
 	});
 });

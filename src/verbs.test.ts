@@ -1,11 +1,11 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
 import { SpoolError } from "./errors";
 import { skillText } from "./skill";
-import { makeProject, makeTempDir, serveProject, writeFrame } from "./test-helpers";
-import { mintPlayerUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
+import { makeProject, makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
+import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
 
 function controlToken(spoolDir: string): string {
 	const token = readDaemonState(spoolDir)?.controlToken;
@@ -104,6 +104,32 @@ describe("url", () => {
 			/design\/frames\/ghost\/frame\.tsx/,
 		);
 	});
+
+	it("mints direct render URLs for flat and paged frames without using the control origin", async () => {
+		const { spoolDir, root, name, url, renderUrl } = await serveProject();
+		writeFrame(root, "flat", plainTsx);
+		writeDesignFile(root, "frames/journey/paged/frame.tsx", plainTsx);
+
+		const token = controlToken(spoolDir);
+		for (const frame of ["flat", "paged"]) {
+			const player = await mintPlayerUrl(url, name, frame, token);
+			const raw = await mintRawUrl(url, name, frame, root);
+			expect(player).toBe(`${url}/play/${name}?frame=${frame}`);
+			expect(raw).toBe(`${renderUrl}/p/${name}/frames/${frame}`);
+			expect((await fetch(player)).status).toBe(200);
+			expect((await fetch(raw)).status).toBe(200);
+		}
+	});
+
+	it("mints a raw URL without materializing missing geometry", async () => {
+		const { root, name, url } = await serveProject();
+		writeFrame(root, "unplaced", plainTsx);
+		const sidecar = join(root, "design", "frames", "unplaced", "frame.json");
+
+		await expect(mintRawUrl(url, name, "unplaced", root)).resolves.toContain("/frames/unplaced");
+
+		expect(existsSync(sidecar)).toBe(false);
+	});
 });
 
 describe("skill", () => {
@@ -159,5 +185,15 @@ describe("skill", () => {
 		for (const topic of ["frames", "terminals", "flows", "scenarios", "mock", "styling", "verbs"]) {
 			expect(skillText()).toMatch(new RegExp(`^  ${topic} {2,}\\S`, "m"));
 		}
+	});
+
+	it("teaches deterministic raw browser driving through Spool's installed Playwright", () => {
+		const verbs = skillText("verbs");
+		expect(verbs).toContain("spool url --raw <frame>");
+		expect(verbs).toContain('waitUntil: "domcontentloaded"');
+		expect(verbs).toContain("a meaningful selector");
+		expect(verbs).toContain("networkidle");
+		expect(verbs).toContain("live reload connection stays open");
+		expect(verbs).toMatch(/createRequire\(".*[/\\]package\.json"\)/);
 	});
 });
