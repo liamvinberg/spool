@@ -23,7 +23,7 @@ describe("scenario serve", () => {
 
 		expect(res.status).toBe(200);
 		expect(res.headers.get("content-type")).toContain("application/json");
-		expect(res.headers.get("access-control-allow-origin")).toBe("*");
+		expect(res.headers.get("access-control-allow-origin")).toBe("null");
 		expect(await res.json()).toEqual({ state: { cart: [] }, mock: { "POST /api/pay": { status: 500 } } });
 	});
 
@@ -86,7 +86,7 @@ describe("fixture serve", () => {
 		const products = await app.request(`/api/p/${name}/fixtures/products`);
 		expect(products.status).toBe(200);
 		expect(products.headers.get("content-type")).toContain("application/json");
-		expect(products.headers.get("access-control-allow-origin")).toBe("*");
+		expect(products.headers.get("access-control-allow-origin")).toBe("null");
 		expect(await products.json()).toEqual([{ id: 1, title: "yarn" }]);
 
 		const nested = await app.request(`/api/p/${name}/fixtures/users/42`);
@@ -168,7 +168,11 @@ describe("frame document flow wiring", () => {
 
 		const config = doc.match(/window\.__SPOOL__\s*=\s*(\{.*?\})<\/script>/)?.[1];
 		expect(config, "document config script").toBeDefined();
-		expect(JSON.parse(config ?? "{}")).toEqual({ project: name, frame: "inbox" });
+		expect(JSON.parse(config ?? "{}")).toEqual({
+			project: name,
+			frame: "inbox",
+			projectCapability: expect.any(String),
+		});
 		expect(doc.indexOf("window.__SPOOL__")).toBeLessThan(doc.indexOf('<script type="module">'));
 
 		const boot = doc.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1] ?? "";

@@ -1,5 +1,5 @@
 import type { ProjectCard } from "./api";
-import { thumbUrl } from "./api";
+import { Thumbnail } from "./thumbnail";
 
 /**
  * Home (#13 screens v1): registry cards from the thumbnail caches. The brand
@@ -46,8 +46,10 @@ export function Home({
 												className="aspect-[123/150] flex-1 overflow-hidden rounded-md border border-border bg-canvas"
 											>
 												{cover !== undefined && (
-													<img
-														src={thumbUrl(project.name, cover, 0)}
+													<Thumbnail
+														project={project.name}
+														frame={cover}
+														nonce={0}
 														alt={cover}
 														draggable={false}
 														className="h-full w-full object-cover object-top"

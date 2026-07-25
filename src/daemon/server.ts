@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { serve } from "@hono/node-server";
 import { PortBusyError, SpoolError } from "../errors";
 import { createDaemonApp } from "./app";
-import { clearDaemonState, daemonUrl, writeDaemonState } from "./lifecycle";
+import { assertLoopbackHost, clearDaemonState, daemonUrl, writeDaemonState } from "./lifecycle";
 import type { TermExecutor } from "./term-exec";
 
 export interface ServeDaemonOptions {
@@ -15,7 +15,7 @@ export interface ServeDaemonOptions {
 	development?: boolean | undefined;
 	/** #30 phone-home — absent means off, so tests and tools stay silent. */
 	updateCheck?: boolean | undefined;
-	/** The PTY spawn (#42) — seam tests inject a fixture. */
+	/** Retained only for dormant terminal-session seam tests. */
 	termExecutor?: TermExecutor | undefined;
 }
 
@@ -23,6 +23,8 @@ export interface RunningDaemon {
 	url: string;
 	host: string;
 	port: number;
+	/** Trusted callers only; persisted in daemon lifecycle state for the CLI. */
+	controlToken: string;
 	close(): Promise<void>;
 }
 
@@ -40,9 +42,11 @@ export function serveDaemon({
 	updateCheck,
 	termExecutor,
 }: ServeDaemonOptions): Promise<RunningDaemon> {
+	assertLoopbackHost(host);
 	const daemon = createDaemonApp({
 		spoolDir,
 		version,
+		controlHost: host,
 		uiDir,
 		development,
 		updateCheck,
@@ -51,7 +55,8 @@ export function serveDaemon({
 
 	return new Promise<RunningDaemon>((resolve, reject) => {
 		const server = serve({ fetch: daemon.app.fetch, hostname: host, port, createServer }, (info: AddressInfo) => {
-			// spool's first WebSocket (#42): terminal frames attach on /term/…
+			// Keep the raw upgrade boundary wired so every terminal socket is
+			// refused centrally until project processes have an OS sandbox.
 			server.on("upgrade", daemon.handleUpgrade);
 			// bound: the daemon can now dial itself (the thumb healer's shots)
 			daemon.setSelfOrigin(daemonUrl(host, info.port));
@@ -63,11 +68,13 @@ export function serveDaemon({
 				port: info.port,
 				version,
 				startedAt: new Date().toISOString(),
+				controlToken: daemon.controlToken,
 			});
 			resolve({
 				url: daemonUrl(host, info.port),
 				host: info.address,
 				port: info.port,
+				controlToken: daemon.controlToken,
 				close: () =>
 					new Promise<void>((done) => {
 						daemon.close();

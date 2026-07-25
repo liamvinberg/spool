@@ -9,7 +9,6 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import trash from "trash";
-import { type WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_FAVICON_SVG } from "../brand";
 import { SpoolError } from "../errors";
@@ -21,7 +20,8 @@ import { type Grid, gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
 import { stampLabels } from "./call-site";
 import { createFrameCompiler } from "./compile";
-import { errorDocument } from "./document";
+import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
+import { errorDocument, escapeHtml, escapeInlineScript, escapeJsonScript } from "./document";
 import { createChangeHub } from "./events";
 import { deriveFlows, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
@@ -37,13 +37,21 @@ import {
 	projectedKind,
 	summarizeProject,
 } from "./projection";
+import {
+	CONTROL_HEADER,
+	createCapability,
+	matchesCapability,
+	normalizeHostname,
+	PROJECT_HEADER,
+	RENDER_HOST,
+	renderOriginFor,
+} from "./security";
 import { createSelectionStore, parseSelectionPut } from "./selection";
 import { type AppEvent, readSession, watchRegistry, writeSession } from "./session";
 import { createShotTaker } from "./shots";
-import { bunExecutor, type TermExecutor } from "./term-exec";
+import type { TermExecutor } from "./term-exec";
 import { termFontDataCss, termFontFile } from "./term-fonts";
 import { createTermSessions } from "./term-sessions";
-import { ensureToolchain, toolchainEffects } from "./term-toolchain";
 import { createThumbHealer, readThumb, writeThumb } from "./thumbs";
 import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
 import { createUpdateChecker } from "./update-check";
@@ -59,6 +67,10 @@ import {
 export interface DaemonOptions {
 	spoolDir: string;
 	version: string;
+	/** Exact control virtual host. Tests use localhost; the bound daemon passes its configured loopback host. */
+	controlHost?: string | undefined;
+	/** Injectable only for deterministic seam tests. Production always generates one. */
+	controlToken?: string | undefined;
 	/** dist/ui — absent in seam tests and unbuilt checkouts. */
 	uiDir?: string | undefined;
 	/** The checkout daemon keeps its browser identity distinct from the release. */
@@ -73,7 +85,7 @@ export interface DaemonOptions {
 	fetchLatest?: () => Promise<string | undefined>;
 	/** The toast door's detached `spool upgrade` spawn — swapped out by seam tests. */
 	upgrade?: () => { ok: true } | { ok: false; error: string };
-	/** The PTY spawn (#42) — seam tests inject a fixture; CI never downloads the toolchain. */
+	/** Retained seam for dormant session tests; public daemon routes never invoke it. */
 	termExecutor?: TermExecutor;
 }
 
@@ -88,6 +100,10 @@ type LaunchEditor = (file: string, onError?: (fileName: string, message: string 
 /** launch-editor is CJS `export =` — createRequire keeps the types honest. */
 const launchEditorDefault = createRequire(import.meta.url)("launch-editor") as LaunchEditor;
 
+const disabledTermExecutor: TermExecutor = async () => {
+	throw new SpoolError("terminal execution is disabled until it can run in an OS sandbox");
+};
+
 /**
  * The daemon's Hono app, the primary seam: everything observable rides
  * app.request(), no port needed. The inferred AppType is the compile-time
@@ -96,6 +112,8 @@ const launchEditorDefault = createRequire(import.meta.url)("launch-editor") as L
 export function createDaemonApp({
 	spoolDir,
 	version,
+	controlHost,
+	controlToken: providedControlToken,
 	uiDir,
 	development,
 	moveToTrash,
@@ -105,6 +123,21 @@ export function createDaemonApp({
 	upgrade,
 	termExecutor,
 }: DaemonOptions) {
+	const controlToken = providedControlToken ?? createCapability();
+	const controlHostname = normalizeHostname(controlHost ?? "localhost");
+	let controlOrigin = `http://${controlHostname.includes(":") ? `[${controlHostname}]` : controlHostname}`;
+	let renderOrigin = renderOriginFor(controlOrigin);
+	const projectCapabilities = new Map<string, string>();
+
+	function projectCapability(root: string): string {
+		let capability = projectCapabilities.get(root);
+		if (capability === undefined) {
+			capability = createCapability();
+			projectCapabilities.set(root, capability);
+		}
+		return capability;
+	}
+
 	const startedAt = new Date().toISOString();
 	const compiler = createFrameCompiler(version);
 	const playerCompiler = createPlayerCompiler(version);
@@ -118,6 +151,10 @@ export function createDaemonApp({
 			launchEditorDefault(target, (fileName, message) =>
 				console.error(`spool: could not open an editor on ${fileName}${message === null ? "" : ` — ${message}`}`),
 			));
+
+	const frameAuthority = (root: string) => ({
+		projectCapability: projectCapability(root),
+	});
 
 	// the app-level channel: registry and session changes, fanned to every page
 	const appListeners = new Set<(event: AppEvent) => void>();
@@ -147,25 +184,12 @@ export function createDaemonApp({
 		stored: (root, frame) => hub.publish(root, { kind: "thumb", frame }),
 	});
 
-	// terminal sessions (#42): one real process per running terminal frame,
-	// provisioned toolchain by default, fixture executor in seam tests
-	const narrateTerm = (line: string) => process.stderr.write(`spool: ${line}\n`);
+	// Persisted terminal grids remain readable, but the default executor is a
+	// hard stop until project processes can run inside an OS sandbox.
 	const terms = createTermSessions({
-		executor: termExecutor ?? bunExecutor(() => ensureToolchain(spoolDir, toolchainEffects(narrateTerm))),
+		executor: termExecutor ?? disabledTermExecutor,
 		publish: (root, frame) => hub.publish(root, { kind: "thumb", frame }),
 	});
-	// a save must restart the process even when no canvas page is open — the
-	// session watches its own root through the same hub the SSE stream rides
-	const termWatches = new Map<string, () => void>();
-	function watchTermRoot(root: string): void {
-		if (termWatches.has(root)) return;
-		termWatches.set(
-			root,
-			hub.subscribe(root, (event) => {
-				if (event.kind === "frame") void terms.handleChange(root, event.frame);
-			}),
-		);
-	}
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -173,6 +197,9 @@ export function createDaemonApp({
 			return { response: c.text(`unknown project "${name}" — run \`spool open\` in its product root first`, 404) };
 		}
 		if (lookup.kind === "ambiguous") {
+			if (!c.req.path.startsWith("/api/")) {
+				return { response: c.text(`"${name}" names multiple registered projects`, 409) };
+			}
 			return {
 				response: c.text(
 					`"${name}" names ${lookup.roots.length} registered projects:\n${lookup.roots.join("\n")}`,
@@ -192,9 +219,62 @@ export function createDaemonApp({
 		return { path };
 	}
 
-	// scenario and fixture reads land in null-origin sandboxed frames — CORS open
+	type HostClass = "control" | "render" | "unexpected";
+
+	function hostClass(url: string): HostClass {
+		const hostname = normalizeHostname(new URL(url).hostname);
+		if (hostname === controlHostname) return "control";
+		if (hostname === RENDER_HOST) return "render";
+		return "unexpected";
+	}
+
+	function isProjectDataPath(path: string): boolean {
+		return /^\/api\/p\/[^/]+\/(?:scenarios\/[^/]+|fixtures\/.+)$/.test(path);
+	}
+
+	function isExecutableRenderPath(path: string): boolean {
+		return /^\/p\/[^/]+\/frames\/[^/]+$/.test(path) || path.startsWith("/play/");
+	}
+
+	function isRenderOnlyPath(path: string): boolean {
+		return /^\/p\/[^/]+\/frames\/[^/]+$/.test(path) || path.startsWith("/vendor/") || isProjectDataPath(path);
+	}
+
+	function normalizedOrigin(value: string): string | undefined {
+		try {
+			return new URL(value).origin;
+		} catch {
+			return undefined;
+		}
+	}
+
+	function registeredCapabilityRoot(capability: string | undefined): string | undefined {
+		if (capability === undefined) return undefined;
+		const registered = new Set(readRegistry(spoolDir).projects.map((project) => project.root));
+		for (const [root, expected] of projectCapabilities) {
+			if (registered.has(root) && matchesCapability(expected, capability)) return root;
+		}
+		return undefined;
+	}
+
+	function resolveProjectData(c: Context): { root: string } | { response: Response } {
+		const origin = c.req.header("origin");
+		if (origin !== "null") return { response: c.text("forbidden", 403) };
+		const supplied = c.req.header(PROJECT_HEADER);
+		const root = registeredCapabilityRoot(supplied);
+		if (root === undefined) return { response: c.text("unauthenticated", 401) };
+		if (basename(root) !== c.req.param("project")) return { response: c.text("forbidden", 403) };
+		c.header("access-control-allow-origin", "null");
+		return { root };
+	}
+
+	// scenario and fixture reads land in null-origin sandboxed frames. Their
+	// capability, not a wildcard origin, selects the one root they may read.
 	function serveProjectJson(c: Context, result: ProjectJson): Response {
-		c.header("access-control-allow-origin", "*");
+		// The same display-name URL can select different registered roots by
+		// capability. Never let an HTTP cache collapse those authorities.
+		c.header("cache-control", "no-store");
+		c.header("vary", "Origin, X-Spool-Project");
 		if (result.kind === "missing") return c.text(result.message, 404);
 		if (result.kind === "invalid") return c.text(result.message, 500);
 		c.header("content-type", "application/json; charset=utf-8");
@@ -202,6 +282,35 @@ export function createDaemonApp({
 	}
 
 	const app = new Hono()
+		.use("*", async (c, next) => {
+			const host = hostClass(c.req.url);
+			if (host === "unexpected") return c.text("unexpected host", 421);
+			const path = c.req.path;
+			if (host === "render") {
+				const allowed = isRenderOnlyPath(path) || path.startsWith("/play/") || path === "/favicon.svg";
+				if (!allowed) return c.text("not found", 404);
+				// A direct render URL must retain the opaque-origin law that its
+				// canvas and Play wrappers impose. This also keeps capabilities
+				// in one document unreadable to another project on the shared host.
+				if (isExecutableRenderPath(path)) c.header("content-security-policy", "sandbox allow-scripts");
+				await next();
+				return;
+			}
+			if (isRenderOnlyPath(path)) return c.text("not found", 404);
+			if (!path.startsWith("/api/") || path === "/api/health") {
+				await next();
+				return;
+			}
+			if (c.req.method === "OPTIONS") return c.text("forbidden", 403);
+			if (!matchesCapability(controlToken, c.req.header(CONTROL_HEADER))) {
+				return c.text("unauthenticated", 401);
+			}
+			const origin = c.req.header("origin");
+			if (origin !== undefined && normalizedOrigin(origin) !== controlOrigin) {
+				return c.text("forbidden", 403);
+			}
+			await next();
+		})
 		.get("/api/health", (c) => c.json({ name: "spool", version, pid: process.pid, startedAt }))
 		.post("/api/upgrade", (c) => {
 			// the toast door (#30): spawn the one orchestrator detached and stand
@@ -298,10 +407,10 @@ export function createDaemonApp({
 			if (!isSafeName(frame)) return c.text(`not a frame name: "${frame}"`, 404);
 			const kind = projectedKind(project.root, frame);
 			if (kind === "term") {
-				// terminal stills rasterize from the daemon-held grid in the pinned
-				// font (#42) — the DOM-clone capture cannot see emulator pixels
+				// Terminal stills rasterize from a persisted grid in the pinned
+				// font. Reading that store never starts project code.
 				const svg = await terms.still(project.root, frame, termFontDataCss());
-				if (svg === undefined) return c.text(`no still for "${frame}" — it has not run yet`, 404);
+				if (svg === undefined) return c.text(`no persisted screen for "${frame}"`, 404);
 				const etag = `"term-still-${createHash("sha256").update(svg).digest("hex").slice(0, 32)}"`;
 				if (c.req.header("if-none-match") === etag) return c.body(null, 304);
 				c.header("etag", etag);
@@ -350,7 +459,12 @@ export function createDaemonApp({
 			(c) => {
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
-				writeCanvasState(project.root, c.req.valid("json"));
+				try {
+					writeCanvasState(project.root, c.req.valid("json"));
+				} catch (error) {
+					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+					throw error;
+				}
 				return c.body(null, 204);
 			},
 		)
@@ -381,30 +495,31 @@ export function createDaemonApp({
 				}
 				// a mark that records moves the flows payload; a discarded walk is
 				// silent — the map never claims more than source (#34)
-				if (recordWalk(project.root, from, to)) hub.publish(project.root, { kind: "walked" });
+				try {
+					if (recordWalk(project.root, from, to)) hub.publish(project.root, { kind: "walked" });
+				} catch (error) {
+					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+					throw error;
+				}
 				return c.body(null, 204);
 			},
 		)
-		.post("/api/p/:project/term/:frame/restart", async (c) => {
-			// a play-session restart (#44): the walk asks for a clean run. A live
-			// session respawns — every mirrored surface (canvas included) sees the
-			// same restart: one process, one truth. A hibernated corpse loses its
-			// death mark so the next attach spawns fresh.
+		.post("/api/p/:project/term/:frame/restart", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const frame = c.req.param("frame");
 			if (!isSafeName(frame) || projectedKind(project.root, frame) !== "term") {
 				return c.text(`no terminal frame "${frame}" to restart`, 404);
 			}
-			await terms.restart(project.root, frame);
-			return c.body(null, 204);
+			return c.text("terminal execution is disabled until it can run in an OS sandbox", 409);
 		})
 		.get("/api/p/:project/verify/:frame", async (c) => {
 			// the agent's compile probe (#25): shot and logs branch on this JSON —
 			// ok hands the closure etag (the log cache key), error the text verbatim
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			const doc = await compiler.getDocument(project.root, c.req.param("frame"));
+			const frame = c.req.param("frame");
+			const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
 			if (doc.kind === "missing") return c.json({ kind: "missing", message: doc.message }, 404);
 			if (doc.kind === "error") return c.json({ kind: "error", message: doc.message }, 500);
 			return c.json({ kind: "ok", etag: doc.etag });
@@ -453,16 +568,22 @@ export function createDaemonApp({
 				if ("response" in project) return project.response;
 				const { frames } = c.req.valid("json");
 				// all-or-nothing: every frame resolved before the first sidecar write
-				const dirs = new Map<string, string>();
-				for (const name of Object.keys(frames)) {
-					const found = lookupFrame(project.root, name);
-					if (found.kind !== "found") return c.text(`no frame "${name}" to place`, 404);
-					dirs.set(name, found.dir);
+				const sidecars = new Map<string, string>();
+				const designDir = realDesignDir(project.root);
+				try {
+					for (const name of Object.keys(frames)) {
+						const found = lookupFrame(project.root, name);
+						if (found.kind !== "found") return c.text(`no frame "${name}" to place`, 404);
+						sidecars.set(name, resolveDesignPath(designDir, sidecarFileIn(found.dir)));
+					}
+				} catch (error) {
+					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+					throw error;
 				}
 				for (const [name, geometry] of Object.entries(frames)) {
-					const dir = dirs.get(name);
-					if (dir === undefined) continue;
-					writeGeometry(sidecarFileIn(dir), geometry);
+					const sidecar = sidecars.get(name);
+					if (sidecar === undefined) continue;
+					writeGeometry(sidecar, geometry, designDir);
 					hub.publish(project.root, { kind: "geometry", frame: name });
 				}
 				return c.body(null, 204);
@@ -486,11 +607,17 @@ export function createDaemonApp({
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				const dirs: string[] = [];
-				for (const name of c.req.valid("json").frames) {
-					if (!isSafeName(name)) return c.text(`not a frame name: "${name}"`, 400);
-					const found = lookupFrame(project.root, name);
-					if (found.kind !== "found") return c.text(`no frame "${name}" to trash`, 404);
-					dirs.push(found.dir);
+				try {
+					const designDir = realDesignDir(project.root);
+					for (const name of c.req.valid("json").frames) {
+						if (!isSafeName(name)) return c.text(`not a frame name: "${name}"`, 400);
+						const found = lookupFrame(project.root, name);
+						if (found.kind !== "found") return c.text(`no frame "${name}" to trash`, 404);
+						dirs.push(resolveDesignPath(designDir, found.dir));
+					}
+				} catch (error) {
+					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+					throw error;
 				}
 				// the whole folder moves; the OS Trash owns restore from here (#7)
 				await trashImpl(dirs);
@@ -542,7 +669,14 @@ export function createDaemonApp({
 				if (isAbsolute(rel) || rel.split(sep)[0] !== "design") {
 					return c.text(`not a design/ path: "${path}"`, 400);
 				}
-				const target = join(project.root, rel);
+				let target: string;
+				try {
+					const designDir = realDesignDir(project.root);
+					target = resolveDesignPath(designDir, join(designDir, ...rel.split(sep).slice(1)), path);
+				} catch (error) {
+					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+					throw error;
+				}
 				if (!existsSync(target)) return c.text(`no file at "${path}"`, 404);
 				editorImpl(line === undefined ? target : `${target}:${line}`);
 				return c.body(null, 204);
@@ -561,14 +695,20 @@ export function createDaemonApp({
 			}
 			const png = Buffer.from(await c.req.arrayBuffer());
 			if (png.byteLength === 0) return c.text("empty capture", 400);
-			writeThumb(project.root, frame, png);
+			try {
+				writeThumb(project.root, frame, png);
+			} catch (error) {
+				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+				throw error;
+			}
 			hub.publish(project.root, { kind: "thumb", frame });
 			return c.body(null, 204);
 		})
 		.get("/p/:project/frames/:frame", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			const doc = await compiler.getDocument(project.root, c.req.param("frame"));
+			const frame = c.req.param("frame");
+			const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
 			if (doc.kind === "missing") return c.text(doc.message, 404);
 			if (doc.kind === "error") return c.html(doc.document, 500);
 			if (c.req.header("if-none-match") === doc.etag) return c.body(null, 304);
@@ -609,10 +749,20 @@ export function createDaemonApp({
 				// whatever the canvas last pointed at, then the first frame by name
 				const selected = selections.get(project.root).find((entry) => names.includes(entry.frame))?.frame;
 				const start = frame ?? selected ?? first;
-				// only html frames enter the compile; terminal frames ride the config
-				// as daemon-rendered grids (#42) — their screens are live data. The
-				// player stays page-blind (#39): pages only steer where the compiler
-				// finds each frame's folder.
+				if (hostClass(c.req.url) === "control") {
+					const requestUrl = new URL(c.req.url);
+					protectControlDocument(c);
+					return c.html(
+						assemblePlayerShell({
+							project: name,
+							controlToken,
+							innerUrl: `${renderOrigin}${requestUrl.pathname}${requestUrl.search}`,
+						}),
+					);
+				}
+				// Only html frames enter the compile. Terminal frames ride the
+				// config as daemon-rendered persisted grids; project term.tsx is
+				// never compiled or executed without an OS sandbox.
 				const htmlFrames = projection.frames.filter((entry) => entry.kind === "html");
 				const termFrames = projection.frames.filter((entry) => entry.kind === "term");
 				const compiled = await playerCompiler.getBundle(project.root, htmlFrames);
@@ -627,6 +777,7 @@ export function createDaemonApp({
 				}
 				const config = {
 					project: name,
+					projectCapability: projectCapability(project.root),
 					start,
 					scenario: scenario ?? "default",
 					frames: Object.fromEntries(projection.frames.map((entry) => [entry.name, { w: entry.w, h: entry.h }])),
@@ -639,13 +790,15 @@ export function createDaemonApp({
 				return c.html(assemblePlayerDocument(config, compiled.bundle));
 			},
 		)
+		.options("/api/p/:project/scenarios/:name", (c) => serveProjectDataPreflight(c))
+		.options("/api/p/:project/fixtures/:name{.+}", (c) => serveProjectDataPreflight(c))
 		.get("/api/p/:project/scenarios/:name", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
+			const project = resolveProjectData(c);
 			if ("response" in project) return project.response;
 			return serveProjectJson(c, readScenario(project.root, c.req.param("name")));
 		})
 		.get("/api/p/:project/fixtures/:name{.+}", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
+			const project = resolveProjectData(c);
 			if ("response" in project) return project.response;
 			return serveProjectJson(c, readFixture(project.root, c.req.param("name")));
 		})
@@ -704,6 +857,11 @@ export function createDaemonApp({
 		.get("/", (c) => serveUiIndex(c))
 		.get("/p/:project", (c) => serveUiIndex(c));
 
+	app.onError((error, c) => {
+		if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+		throw error;
+	});
+
 	async function serveRuntime(c: Context, module: () => Promise<VendorModule>): Promise<Response> {
 		c.header("access-control-allow-origin", "*");
 		const runtime = await module();
@@ -714,89 +872,145 @@ export function createDaemonApp({
 		return c.body(runtime.js);
 	}
 
+	function serveProjectDataPreflight(c: Context): Response {
+		const requestedHeaders = (c.req.header("access-control-request-headers") ?? "")
+			.split(",")
+			.map((header) => header.trim().toLowerCase())
+			.filter((header) => header !== "");
+		if (
+			c.req.header("origin") !== "null" ||
+			c.req.header("access-control-request-method")?.toUpperCase() !== "GET" ||
+			requestedHeaders.length !== 1 ||
+			requestedHeaders[0] !== PROJECT_HEADER
+		) {
+			return c.text("forbidden", 403);
+		}
+		c.header("access-control-allow-origin", "null");
+		c.header("access-control-allow-methods", "GET");
+		c.header("access-control-allow-headers", PROJECT_HEADER);
+		c.header("vary", "Origin, Access-Control-Request-Headers");
+		return c.body(null, 204);
+	}
+
 	function serveUiIndex(c: Context): Response {
 		const index = readUiIndex(uiDir);
 		if (index === undefined) return c.text(UI_MISSING_NOTICE, 503);
+		protectControlDocument(c);
 		c.header("content-type", index.contentType);
-		c.header("cache-control", index.cacheControl);
-		return c.body(new Uint8Array(index.body));
+		c.header("cache-control", "no-store");
+		const boot = `<script>window.__SPOOL_CONTROL__ = ${escapeJsonScript(controlToken)}; window.__SPOOL_RENDER_ORIGIN__ = ${escapeJsonScript(renderOrigin)};</script>`;
+		const html = index.body.toString("utf8");
+		return c.body(html.includes("</head>") ? html.replace("</head>", `${boot}\n</head>`) : `${boot}\n${html}`);
 	}
 
-	// the terminal bridge (#42): spool's first WebSocket. The HTTP server hands
-	// upgrades on /term/:project/:frame here; binary frames are terminal bytes
-	// in both directions, text frames are JSON control.
-	const wss = new WebSocketServer({ noServer: true });
-	const sockets = new Set<WebSocket>();
-	function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
-		const match = /^\/term\/([^/]+)\/([^/?]+)/.exec(req.url ?? "");
-		const project = match?.[1] === undefined ? undefined : decodeURIComponent(match[1]);
-		const frame = match?.[2] === undefined ? undefined : decodeURIComponent(match[2]);
-		if (project === undefined || frame === undefined || !isSafeName(frame)) {
-			socket.destroy();
-			return;
-		}
-		const lookup = lookupProjectByName(spoolDir, project);
-		if (lookup.kind !== "found" || projectedKind(lookup.root, frame) !== "term") {
-			socket.destroy();
-			return;
-		}
-		const root = lookup.root;
-		const frameId: string = frame;
-		wss.handleUpgrade(req, socket, head, (client) => {
-			sockets.add(client);
-			watchTermRoot(root);
-			const send = (message: string | Uint8Array) => {
-				if (client.readyState === client.OPEN) client.send(message);
-			};
-			function handle(data: Buffer, isBinary: boolean): void {
-				if (isBinary) {
-					terms.input(root, frameId, new Uint8Array(data));
-					return;
-				}
-				try {
-					const message = JSON.parse(data.toString()) as {
-						t?: string;
-						cols?: number;
-						rows?: number;
-						on?: boolean;
-					};
-					if (message.t === "resize" && typeof message.cols === "number" && typeof message.rows === "number") {
-						terms.resize(root, frameId, message.cols, message.rows);
-					} else if (message.t === "freeze") terms.freeze(root, frameId, message.on === true);
-					else if (message.t === "revive") void terms.revive(root, frameId);
-				} catch {
-					// a malformed control frame is noise, never a crash
+	function protectControlDocument(c: Context): void {
+		// A foreign page must not turn the authenticated UI into a clickjacking
+		// oracle. This CSP is the modern rule; X-Frame-Options covers older engines.
+		c.header("content-security-policy", "frame-ancestors 'none'");
+		c.header("x-frame-options", "DENY");
+		c.header("cache-control", "no-store");
+	}
+
+	function assemblePlayerShell({
+		project,
+		controlToken: shellToken,
+		innerUrl,
+	}: {
+		project: string;
+		controlToken: string;
+		innerUrl: string;
+	}): string {
+		const config = escapeJsonScript({ project, controlToken: shellToken });
+		const bridge = `(() => {
+	const config = window.__SPOOL_SHELL__;
+	const inner = document.getElementById("spool-player");
+	const headers = { "${CONTROL_HEADER}": config.controlToken };
+	async function sendGeometry() {
+		const response = await fetch("/api/p/" + encodeURIComponent(config.project) + "/frames", { headers });
+		if (!response.ok) return;
+		const listing = await response.json();
+		inner.contentWindow.postMessage({ spool: "player-geometry", frames: listing.frames }, "*");
+	}
+	async function followGeometry() {
+		try {
+			const response = await fetch("/api/p/" + encodeURIComponent(config.project) + "/events", {
+				headers: { ...headers, accept: "text/event-stream" },
+			});
+			if (!response.ok || !response.body) return;
+			const reader = response.body.getReader();
+			const decoder = new TextDecoder();
+			let buffer = "";
+			for (;;) {
+				const next = await reader.read();
+				if (next.done) return;
+				buffer += decoder.decode(next.value, { stream: true });
+				const blocks = buffer.split("\\n\\n");
+				buffer = blocks.pop() || "";
+				for (const block of blocks) {
+					const raw = block.match(/^data: (.*)$/m)?.[1];
+					if (!raw) continue;
+					try {
+						const change = JSON.parse(raw);
+						if (change.kind === "geometry") void sendGeometry();
+					} catch {}
 				}
 			}
-			// listeners attach synchronously: a frame arriving while the session
-			// spawns must never be dropped — it queues until attach settles
-			const queued: [Buffer, boolean][] = [];
-			let route: typeof handle = (data, isBinary) => void queued.push([data, isBinary]);
-			let closed = false;
-			let detach = () => {};
-			client.on("message", (data: Buffer, isBinary: boolean) => route(data, isBinary));
-			client.on("close", () => {
-				sockets.delete(client);
-				closed = true;
-				detach();
+		} finally {
+			setTimeout(followGeometry, 1000);
+		}
+	}
+	addEventListener("message", (event) => {
+		if (event.source !== inner.contentWindow || !event.data || typeof event.data !== "object") return;
+		const message = event.data;
+		if (message.spool === "player-close") {
+			window.close();
+			setTimeout(() => { if (!window.closed) location.href = "/p/" + encodeURIComponent(config.project); }, 150);
+			return;
+		}
+		if (message.spool === "player-walked" && typeof message.from === "string" && typeof message.to === "string") {
+			void fetch("/api/p/" + encodeURIComponent(config.project) + "/walked", {
+				method: "POST",
+				headers: { ...headers, "content-type": "application/json" },
+				body: JSON.stringify({ from: message.from, to: message.to }),
+				keepalive: true,
 			});
-			void terms.attach(root, frameId, { send }).then((attached) => {
-				detach = attached.detach;
-				if (closed) {
-					detach();
-					return;
-				}
-				route = handle;
-				for (const [data, isBinary] of queued.splice(0)) handle(data, isBinary);
-			});
-		});
+		}
+	});
+	void followGeometry();
+})();`;
+		return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>${escapeHtml(project)} · spool</title>
+<style>html, body, iframe { width: 100%; height: 100%; } body { margin: 0; overflow: hidden; background: #0e0e0e; } iframe { display: block; border: 0; }</style>
+</head>
+<body>
+<iframe id="spool-player" title="${escapeHtml(project)}" sandbox="allow-scripts" src="${escapeHtml(innerUrl)}"></iframe>
+<script>window.__SPOOL_SHELL__ = ${config};</script>
+<script>${escapeInlineScript(bridge)}</script>
+</body>
+</html>
+`;
+	}
+
+	// Project terminal code has no OS sandbox. Refuse at the socket boundary
+	// before parsing a path, looking up a project, or touching an executor.
+	function handleUpgrade(_req: IncomingMessage, socket: Duplex, _head: Buffer): void {
+		socket.destroy();
 	}
 
 	return {
 		app,
+		controlToken,
+		/** Stable for this daemon and canonical root; rendered project code receives only its own. */
+		projectCapability,
 		/** Activate origin-dependent work (the thumb healer) once really bound. */
 		setSelfOrigin: (origin: string) => {
-			selfOrigin = origin;
+			controlOrigin = new URL(origin).origin;
+			renderOrigin = renderOriginFor(controlOrigin);
+			selfOrigin = renderOrigin;
 		},
 		/** Begin the daily phone-home — post-listen only, and only when opted in. */
 		startUpdateCheck: () => {
@@ -808,10 +1022,6 @@ export function createDaemonApp({
 		terms,
 		close: () => {
 			stopRegistryWatch();
-			for (const unsubscribe of termWatches.values()) unsubscribe();
-			termWatches.clear();
-			for (const socket of sockets) socket.terminate();
-			wss.close();
 			void terms.close();
 			hub.close();
 			updateChecker.stop();

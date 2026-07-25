@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "../cn";
+import { Thumbnail } from "../thumbnail";
 
 export type ExportFormat = "png" | "pdf";
 
 export interface ExportPreview {
 	name: string;
-	thumbnail?: string;
+	thumbnail?: {
+		project: string;
+		frame: string;
+		nonce: number;
+	};
 }
 
 export function ExportDialog({
@@ -82,7 +87,7 @@ export function ExportDialog({
 									{frame.name}
 								</span>
 							) : (
-								<img src={frame.thumbnail} alt="" className="h-full w-full object-cover object-top" />
+								<Thumbnail {...frame.thumbnail} alt="" className="h-full w-full object-cover object-top" />
 							)}
 							<span className="absolute top-0.5 right-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-bg/75 px-0.5 font-mono text-[7px] text-text leading-none">
 								{index + 1}

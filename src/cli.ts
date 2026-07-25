@@ -9,13 +9,13 @@ import {
 	daemonUrl,
 	ensureDaemon,
 	poll,
+	readDaemonState,
 	resolveServeConfig,
 	resolveSpoolDir,
 	selfCliPath,
 	spoolDaemonAt,
 	statusDaemon,
 	stopDaemon,
-	writeDaemonState,
 } from "./daemon/lifecycle";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
@@ -69,26 +69,26 @@ program
 const narrate = (line: string) => process.stderr.write(`spool: ${line}\n`);
 
 /** Every verb's preamble: the project this cwd is inside, and a live daemon. */
-async function verbContext(): Promise<{ root: string; name: string; daemonUrl: string }> {
+async function verbContext(): Promise<{ root: string; name: string; daemonUrl: string; controlToken: string }> {
 	const { root, name } = resolveRegisteredProject(spoolDir, process.cwd());
-	const { url } = await ensureDaemon(spoolDir);
-	return { root, name, daemonUrl: url };
+	const { url, controlToken } = await ensureDaemon(spoolDir);
+	return { root, name, daemonUrl: url, controlToken };
 }
 
 program
 	.command("selection")
 	.description("print the live selection payload — what the human points at")
 	.action(async () => {
-		const { name, daemonUrl } = await verbContext();
-		process.stdout.write(`${await readSelection(daemonUrl, name)}\n`);
+		const { name, daemonUrl, controlToken } = await verbContext();
+		process.stdout.write(`${await readSelection(daemonUrl, name, controlToken)}\n`);
 	});
 
 program
 	.command("flows")
 	.description("print the link graph: read from source, verified by sessions")
 	.action(async () => {
-		const { name, daemonUrl } = await verbContext();
-		process.stdout.write(`${await readFlows(daemonUrl, name)}\n`);
+		const { name, daemonUrl, controlToken } = await verbContext();
+		process.stdout.write(`${await readFlows(daemonUrl, name, controlToken)}\n`);
 	});
 
 program
@@ -96,8 +96,8 @@ program
 	.description("boot a frame headless, save a screenshot, print its path")
 	.argument("<frame>", "frame folder name")
 	.action(async (frame: string) => {
-		const { root, name, daemonUrl } = await verbContext();
-		const outcome = await shotFrame({ daemonUrl, root, name, frame, narrate });
+		const { root, name, daemonUrl, controlToken } = await verbContext();
+		const outcome = await shotFrame({ daemonUrl, controlToken, root, name, frame, narrate });
 		if (outcome.kind === "missing") throw new SpoolError(outcome.message);
 		if (outcome.kind === "broken") {
 			// the compile or boot error verbatim — nothing of spool's in the way
@@ -117,8 +117,8 @@ program
 	.description("print the frame's boot console output (cached until source changes)")
 	.argument("<frame>", "frame folder name")
 	.action(async (frame: string) => {
-		const { root, name, daemonUrl } = await verbContext();
-		const outcome = await logsFrame({ daemonUrl, root, name, frame, narrate });
+		const { root, name, daemonUrl, controlToken } = await verbContext();
+		const outcome = await logsFrame({ daemonUrl, controlToken, root, name, frame, narrate });
 		if (outcome.kind === "missing") throw new SpoolError(outcome.message);
 		if (outcome.kind === "broken") {
 			process.stderr.write(`${outcome.message}\n`);
@@ -138,8 +138,8 @@ program
 	.description("mint a player-session URL to drive in a browser")
 	.argument("<frame>", "frame folder name")
 	.action(async (frame: string) => {
-		const { name, daemonUrl } = await verbContext();
-		process.stdout.write(`${await mintPlayerUrl(daemonUrl, name, frame)}\n`);
+		const { name, daemonUrl, controlToken } = await verbContext();
+		process.stdout.write(`${await mintPlayerUrl(daemonUrl, name, frame, controlToken)}\n`);
 	});
 
 program
@@ -173,21 +173,19 @@ program
 			} catch (error) {
 				if (error instanceof PortBusyError) {
 					const sibling = await spoolDaemonAt(config.host, config.port);
-					if (sibling !== undefined) {
-						// launchd must not read an occupied port as a crash: record
-						// who answers and exit clean — KeepAlive revives real deaths
-						writeDaemonState(spoolDir, {
-							pid: sibling.pid,
-							host: config.host,
-							port: config.port,
-							version: sibling.version,
-							startedAt: sibling.startedAt,
-						});
+					const recorded = readDaemonState(spoolDir);
+					if (sibling !== undefined && recorded?.pid === sibling.pid) {
 						process.stdout.write(
 							`another spool daemon already serves ${daemonUrl(config.host, config.port)} — standing down\n`,
 						);
 						await uiWatcher?.close();
 						return;
+					}
+					if (sibling !== undefined) {
+						await uiWatcher?.close();
+						throw new SpoolError(
+							`another spool daemon already serves ${daemonUrl(config.host, config.port)}, but its control credential is unavailable — stop it or restore ${join(spoolDir, "daemon.json")}`,
+						);
 					}
 				}
 				await uiWatcher?.close();

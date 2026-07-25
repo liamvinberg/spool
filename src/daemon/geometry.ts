@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DesignBoundaryError, resolveDesignPath } from "./design-path";
 
 /**
  * The frame.json sidecar (#3): geometry only, the one file hands own. Reads
@@ -21,11 +22,12 @@ export function sidecarFileIn(frameDir: string): string {
 }
 
 /** Anything short of four finite numbers reads as unplaced — heal, don't fail. */
-export function readGeometry(file: string): Geometry | undefined {
+export function readGeometry(file: string, designDir: string): Geometry | undefined {
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(readFileSync(file, "utf8"));
-	} catch {
+		parsed = JSON.parse(readFileSync(resolveDesignPath(designDir, file), "utf8"));
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;
 	}
 	return parseGeometry(parsed);
@@ -39,9 +41,9 @@ export function parseGeometry(value: unknown): Geometry | undefined {
 }
 
 /** The canonical sidecar bytes; geometry lands as integers. */
-export function writeGeometry(file: string, { x, y, w, h }: Geometry): void {
+export function writeGeometry(file: string, { x, y, w, h }: Geometry, designDir: string): void {
 	const rounded = { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
-	writeFileSync(file, `${JSON.stringify(rounded, null, "\t")}\n`);
+	writeFileSync(resolveDesignPath(designDir, file), `${JSON.stringify(rounded, null, "\t")}\n`);
 }
 
 export function isFiniteNumber(value: unknown): value is number {

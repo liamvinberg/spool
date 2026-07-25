@@ -7,6 +7,13 @@ import type { Camera, CanvasState } from "../daemon/project-state";
 import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionPut } from "../daemon/selection";
 
+declare global {
+	interface Window {
+		__SPOOL_CONTROL__?: string;
+		__SPOOL_RENDER_ORIGIN__?: string;
+	}
+}
+
 export type {
 	Camera,
 	CanvasState,
@@ -28,7 +35,22 @@ export type {
  * types. Everything the UI asks the daemon lives here, one assumption per
  * helper.
  */
-const client = hc<AppType>("");
+const uiWindow = typeof window === "undefined" ? undefined : window;
+const controlToken = typeof uiWindow?.__SPOOL_CONTROL__ === "string" ? uiWindow.__SPOOL_CONTROL__ : "";
+const fallbackRenderOrigin =
+	uiWindow === undefined
+		? "http://run.spool.localhost"
+		: `${uiWindow.location.protocol}//run.spool.localhost${uiWindow.location.port === "" ? "" : `:${uiWindow.location.port}`}`;
+const renderOrigin =
+	typeof uiWindow?.__SPOOL_RENDER_ORIGIN__ === "string" ? uiWindow.__SPOOL_RENDER_ORIGIN__ : fallbackRenderOrigin;
+
+function controlFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+	const headers = new Headers(init?.headers);
+	headers.set("X-Spool-Control", controlToken);
+	return fetch(input, { ...init, headers });
+}
+
+const client = hc<AppType>("", { fetch: controlFetch });
 
 export async function fetchProjects(): Promise<ProjectCard[]> {
 	const res = await client.api.projects.$get();
@@ -142,20 +164,14 @@ export async function postTrash(project: string, frames: string[]): Promise<bool
 	}
 }
 
-export async function restartTerminalFrame(project: string, frame: string): Promise<boolean> {
-	try {
-		return (await client.api.p[":project"].term[":frame"].restart.$post({ param: { project, frame } })).ok;
-	} catch {
-		return false;
-	}
-}
-
-/** The page is going away — a beacon outlives it where fetch would not. */
+/** The page is going away — keepalive preserves the control credential a beacon cannot carry. */
 export function beaconTrash(project: string, frames: string[]): void {
-	navigator.sendBeacon(
-		`/api/p/${encodeURIComponent(project)}/trash`,
-		new Blob([JSON.stringify({ frames })], { type: "application/json" }),
-	);
+	void controlFetch(`/api/p/${encodeURIComponent(project)}/trash`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ frames }),
+		keepalive: true,
+	});
 }
 
 /** The rail's call-site rows (#58): each stamp's repeating call, or null. */
@@ -178,17 +194,27 @@ export function openInEditor(project: string, path: string, line?: number): void
 
 export function frameDocumentUrl(project: string, frame: string, nonce: number): string {
 	const base = `/p/${encodeURIComponent(project)}/frames/${encodeURIComponent(frame)}`;
-	return nonce === 0 ? base : `${base}?v=${nonce}`;
+	return new URL(nonce === 0 ? base : `${base}?v=${nonce}`, renderOrigin).href;
 }
 
-export function thumbUrl(project: string, frame: string, nonce: number): string {
+function thumbUrl(project: string, frame: string, nonce: number): string {
 	const base = `/api/p/${encodeURIComponent(project)}/thumbs/${encodeURIComponent(frame)}`;
 	return nonce === 0 ? base : `${base}?v=${nonce}`;
 }
 
+/** Thumbnail reads stay on the trusted host, where the control token is required. */
+export async function fetchThumb(project: string, frame: string, nonce: number): Promise<Blob | undefined> {
+	try {
+		const res = await controlFetch(thumbUrl(project, frame, nonce), { cache: "no-store" });
+		return res.ok ? await res.blob() : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** Self-captures ride a plain PUT — binary body, outside the JSON RPC surface. */
 export async function putThumb(project: string, frame: string, png: Blob): Promise<boolean> {
-	const res = await fetch(thumbUrl(project, frame, 0), {
+	const res = await controlFetch(thumbUrl(project, frame, 0), {
 		method: "PUT",
 		headers: { "content-type": "image/png" },
 		body: png,
@@ -196,17 +222,51 @@ export async function putThumb(project: string, frame: string, png: Blob): Promi
 	return res.ok;
 }
 
-/** An EventSource that hands over parsed event payloads and dies with the component. */
+/** An authenticated SSE fetch stream that dies with the component. */
 export function subscribeSse(url: string, handlers: Record<string, (data: unknown) => void>): () => void {
-	const source = new EventSource(url);
-	for (const [event, handle] of Object.entries(handlers)) {
-		source.addEventListener(event, (message) => {
-			try {
-				handle(JSON.parse((message as MessageEvent).data as string));
-			} catch {
-				// a malformed event is dropped, the stream lives on
+	const controller = new AbortController();
+	let disposed = false;
+	let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+
+	const connect = async () => {
+		try {
+			const res = await controlFetch(url, {
+				headers: { accept: "text/event-stream" },
+				signal: controller.signal,
+			});
+			if (!res.ok || res.body === null) return;
+			const reader = res.body.getReader();
+			const decoder = new TextDecoder();
+			let buffer = "";
+			for (;;) {
+				const next = await reader.read();
+				if (next.done) return;
+				buffer += decoder.decode(next.value, { stream: true });
+				const messages = buffer.split("\n\n");
+				buffer = messages.pop() ?? "";
+				for (const message of messages) {
+					const event = message.match(/^event: (.*)$/m)?.[1] ?? "message";
+					const raw = message.match(/^data: (.*)$/m)?.[1];
+					const handle = handlers[event];
+					if (raw === undefined || handle === undefined) continue;
+					try {
+						handle(JSON.parse(raw));
+					} catch {
+						// a malformed event is dropped, the stream lives on
+					}
+				}
 			}
-		});
-	}
-	return () => source.close();
+		} catch {
+			// connection failures follow the same reconnect path as a clean EOF
+		} finally {
+			if (!disposed) reconnectTimer = setTimeout(() => void connect(), 500);
+		}
+	};
+
+	void connect();
+	return () => {
+		disposed = true;
+		if (reconnectTimer !== undefined) clearTimeout(reconnectTimer);
+		controller.abort();
+	};
 }

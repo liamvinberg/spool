@@ -1,8 +1,9 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { describe, expect, it } from "vitest";
-import { serveProject, writeFrame } from "./test-helpers";
+import { readDaemonState } from "./daemon/lifecycle";
+import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
 import { type BootDeps, logsFrame, shotFrame } from "./verify";
 
 /**
@@ -24,9 +25,12 @@ async function browserAvailable(): Promise<boolean> {
 }
 
 async function serveVerifyProject() {
-	const { root, name, url } = await serveProject();
+	const { spoolDir, root, name, url } = await serveProject();
+	const controlToken = readDaemonState(spoolDir)?.controlToken;
+	if (controlToken === undefined) throw new Error("test daemon has no control token");
 	const deps = (frame: string): BootDeps => ({
 		daemonUrl: url,
+		controlToken,
 		root,
 		name,
 		frame,
@@ -56,6 +60,51 @@ describe("shot and logs, compile paths", () => {
 
 		expect(shot.kind).toBe("missing");
 		expect((shot as { message: string }).message).toContain("ghost");
+	});
+
+	it("does not write a terminal shot through an escaped verify directory", async () => {
+		const { root, deps } = await serveVerifyProject();
+		writeDesignFile(root, join("frames", "dash", "term.tsx"), "// inert terminal\n");
+		writeDesignFile(
+			root,
+			join(".spool", "term", "dash.screen"),
+			`${JSON.stringify({ cols: 80, rows: 24, screen: "persisted screen" })}\n`,
+		);
+		const outside = makeTempDir();
+		mkdirSync(join(root, "design", ".spool"), { recursive: true });
+		symlinkSync(outside, join(root, "design", ".spool", "verify"), "dir");
+
+		await expect(shotFrame(deps("dash"))).rejects.toThrow(
+			'design boundary: ".spool/verify/dash.svg" resolves outside design/',
+		);
+		expect(readdirSync(outside)).toEqual([]);
+	});
+
+	it("does not read an html log cache through an escaped verify directory", async () => {
+		const { root, deps } = await serveVerifyProject();
+		writeFrame(root, "quiet", "export default function Quiet() { return <main>quiet</main> }\n");
+		const outside = makeTempDir();
+		mkdirSync(join(root, "design", ".spool"), { recursive: true });
+		symlinkSync(outside, join(root, "design", ".spool", "verify"), "dir");
+
+		await expect(logsFrame(deps("quiet"))).rejects.toThrow(
+			'design boundary: ".spool/verify/quiet.logs.json" resolves outside design/',
+		);
+		expect(readdirSync(outside)).toEqual([]);
+	});
+
+	it("does not reclassify a terminal when its persisted-screen read escapes design", async () => {
+		const { root, deps } = await serveVerifyProject();
+		writeDesignFile(root, join("frames", "dash", "term.tsx"), "// inert terminal\n");
+		const termDir = join(root, "design", ".spool", "term");
+		mkdirSync(termDir, { recursive: true });
+		const outside = join(makeTempDir(), "dash.screen");
+		writeFileSync(outside, JSON.stringify({ cols: 80, rows: 24, screen: "outside" }));
+		symlinkSync(outside, join(termDir, "dash.screen"));
+
+		await expect(shotFrame(deps("dash"))).rejects.toThrow(
+			'design boundary: ".spool/term/dash.screen" resolves outside design/',
+		);
 	});
 });
 

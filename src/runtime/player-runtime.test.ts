@@ -3,9 +3,8 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it, onTestFinished, vi } from "vitest";
-import { createDaemonApp } from "../daemon/app";
-import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 
 /**
  * The player session (#24), exercised through the really-served /play/
@@ -17,7 +16,7 @@ import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-h
  */
 
 interface Harness {
-	app: ReturnType<typeof createDaemonApp>["app"];
+	app: ReturnType<typeof makeApp>;
 	root: string;
 	name: string;
 }
@@ -25,9 +24,7 @@ interface Harness {
 function makeHarness(): Harness {
 	const spoolDir = join(makeTempDir(), ".spool");
 	const { root, name } = makeProject(spoolDir);
-	const daemon = createDaemonApp({ spoolDir, version: "0.0.0-test" });
-	onTestFinished(() => daemon.close());
-	return { app: daemon.app, root, name };
+	return { app: makeApp(spoolDir), root, name };
 }
 
 function happyDom(): { setURL(url: string): void } {
@@ -58,7 +55,7 @@ async function loadPlayerDocument(harness: Harness, query = "") {
 	vi.resetModules();
 	delete (document as { startViewTransition?: unknown }).startViewTransition;
 
-	happyDom().setURL(`http://localhost:7766/play/${name}${query}`);
+	happyDom().setURL(`http://run.spool.localhost:7766/play/${name}${query}`);
 	const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
 	const addEventListener = document.addEventListener.bind(document);
 	vi.spyOn(document, "addEventListener").mockImplementation((type, listener, opts) => {
@@ -80,6 +77,28 @@ async function loadPlayerDocument(harness: Harness, query = "") {
 		fetched.push({ method: (init?.method ?? "GET").toUpperCase(), url });
 		return Promise.resolve(app.request(url, init));
 	}) as typeof fetch;
+	Object.defineProperty(window, "parent", {
+		configurable: true,
+		value: {
+			postMessage: (data: unknown) => {
+				const message = data as { spool?: string; from?: string; to?: string; frame?: string };
+				if (message.spool === "player-close") {
+					window.close();
+					return;
+				}
+				if (message.spool === "player-walked" && message.from !== undefined && message.to !== undefined) {
+					const url = `/api/p/${name}/walked`;
+					fetched.push({ method: "POST", url });
+					void app.request(url, {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ from: message.from, to: message.to }),
+					});
+					return;
+				}
+			},
+		},
+	});
 
 	document.body.innerHTML = doc.match(/<body>([\s\S]*?)<\/body>/)?.[1] ?? "";
 	expect(document.querySelector(".spool-boot")?.textContent, "the boot cover").toBe("booting");
@@ -766,11 +785,7 @@ const hallTsx = `export default function Hall() {
 `;
 
 function scaffoldTerminal(harness: Harness): void {
-	writeDesignFile(
-		harness.root,
-		join("frames", "dash", "term.tsx"),
-		'import { term } from "spool/term";\nexport const go = () => term.go("hall");\n',
-	);
+	writeDesignFile(harness.root, join("frames", "dash", "term.tsx"), "// execution disabled until OS-sandboxed\n");
 	writeFrame(harness.root, "hall", hallTsx);
 	writeDesignFile(harness.root, "shared/scenarios/default.json", '{\n\t"state": {},\n\t"mock": {}\n}\n');
 }
@@ -785,8 +800,8 @@ function postFromTerm(iframe: HTMLIFrameElement, data: Record<string, unknown>):
 	window.dispatchEvent(new MessageEvent("message", { data, source: iframe.contentWindow }));
 }
 
-describe("live terminal screens (#44)", () => {
-	it("hosts the term document the canvas embeds, over the daemon's grid as poster", async () => {
+describe("static terminal screens", () => {
+	it("hosts the disabled term document over the last persisted grid", async () => {
 		const harness = makeHarness();
 		scaffoldTerminal(harness);
 
@@ -799,8 +814,8 @@ describe("live terminal screens (#44)", () => {
 		expect(iframe.getAttribute("title")).toBe("dash");
 		expect(document.querySelector(".spool-term-poster svg")).not.toBeNull();
 
-		// A terminal player is already entered: its own chrome stays out of the
-		// way, and the terminal takes focus explicitly once its document loads.
+		// The static surface keeps terminal framing and takes focus explicitly
+		// once its Spool-owned document loads.
 		expect.soft(document.querySelector(".spool-term-chord")).toBeNull();
 		expect.soft(document.querySelector("#spool-hint")).toBeNull();
 		expect.soft(document.querySelector(".spool-screen-scroll")?.classList.contains("is-terminal")).toBe(true);
@@ -821,38 +836,7 @@ describe("live terminal screens (#44)", () => {
 		expect.soft(postMessage).toHaveBeenCalledWith({ spool: "focus", surface: "player" }, "*");
 	});
 
-	it("a nav the TUI fired advances the walk and verifies its edge — only from the current screen", async () => {
-		const harness = makeHarness();
-		scaffoldTerminal(harness);
-
-		await loadPlayerDocument(harness, "?frame=dash");
-		await vi.waitFor(() => termIframe());
-
-		// a message from anything but the current screen's own document is noise
-		window.dispatchEvent(new MessageEvent("message", { data: { spool: "go", target: "hall" }, source: window }));
-		await new Promise((r) => setTimeout(r, 50));
-		expect(document.querySelector(".spool-slate-frame")?.textContent).toBe("dash");
-
-		postFromTerm(termIframe(), { spool: "go", target: "hall" });
-		await waitForFrame("hall");
-		await vi.waitFor(() => expect(document.querySelector("#to-dash")).not.toBeNull());
-		expect(document.querySelector(".spool-term-chord")).toBeNull();
-
-		// the map already claimed dash → hall from term.go source; the walk confirmed it
-		await vi.waitFor(async () => {
-			const flows = (await (await harness.app.request(`/api/p/${harness.name}/flows`)).json()) as {
-				edges: { from: string; to: string; verified?: boolean }[];
-			};
-			expect(flows.edges.find((e) => e.from === "dash" && e.to === "hall")?.verified).toBe(true);
-		});
-
-		// walking back in lands a fresh live screen, same walk
-		click("#to-dash");
-		await waitForFrame("dash");
-		await vi.waitFor(() => termIframe());
-	});
-
-	it("keeps the walk in the rail and says plainly why state and mock are not there", async () => {
+	it("keeps the walk in the rail and explains why state and mock are unavailable", async () => {
 		const harness = makeHarness();
 		scaffoldTerminal(harness);
 
@@ -868,17 +852,11 @@ describe("live terminal screens (#44)", () => {
 		expect(document.querySelector(".spool-mock")).toBeNull();
 		expect(stateRows()).toEqual([]);
 		expect(document.querySelector(".spool-rail-quiet")?.textContent).toBe(
-			"a terminal screen keeps its state and calls in its own process",
+			"terminal execution is disabled until it can run in an OS sandbox",
 		);
-
-		// walking back to an html screen brings the instruments back
-		postFromTerm(termIframe(), { spool: "go", target: "hall" });
-		await waitForFrame("hall");
-		expect(stateRows()).toEqual(['scenario "default"']);
-		expect(document.querySelector(".spool-mock")).not.toBeNull();
 	});
 
-	it("never sleeps behind a terminal screen — the hand moving there is invisible from here", async () => {
+	it("keeps the player chrome awake over a static terminal surface", async () => {
 		const harness = makeHarness();
 		scaffoldTerminal(harness);
 
@@ -890,11 +868,6 @@ describe("live terminal screens (#44)", () => {
 		// here means nothing — sleeping would strand the chrome with no way back
 		await new Promise((resolve) => setTimeout(resolve, 2400));
 		expect(stage.classList.contains("is-asleep")).toBe(false);
-
-		// walking out to a screen this document can watch arms sleep again
-		postFromTerm(termIframe(), { spool: "go", target: "hall" });
-		await waitForFrame("hall");
-		await vi.waitFor(() => expect(stage.classList.contains("is-asleep")).toBe(true), { timeout: 4000 });
 	});
 
 	it("has no keyboard exit state", async () => {
@@ -910,33 +883,5 @@ describe("live terminal screens (#44)", () => {
 		postFromTerm(iframe, { spool: "key", key: "Escape" });
 		await new Promise((resolve) => setTimeout(resolve, 25));
 		expect(document.activeElement).toBe(iframe);
-	});
-
-	it("a restarted session claims a clean process once per terminal, per epoch", async () => {
-		const harness = makeHarness();
-		scaffoldTerminal(harness);
-
-		const { fetched } = await loadPlayerDocument(harness, "?frame=dash");
-		const restarts = () => fetched.filter((f) => f.method === "POST" && f.url.endsWith("/term/dash/restart"));
-
-		// the first run joins whatever runs — a canvas-staged process is the demo
-		await vi.waitFor(() => termIframe());
-		expect(restarts()).toHaveLength(0);
-
-		// restart opens a new epoch: the remounted screen asks for a clean run
-		click("#spool-restart");
-		await vi.waitFor(() => expect(restarts()).toHaveLength(1));
-		await vi.waitFor(() => termIframe());
-
-		// revisiting inside the epoch joins the run it already cleaned
-		postFromTerm(termIframe(), { spool: "go", target: "hall" });
-		await waitForFrame("hall");
-		click("#to-dash");
-		await waitForFrame("dash");
-		await vi.waitFor(() => termIframe());
-		expect(restarts()).toHaveLength(1);
-
-		click("#spool-restart");
-		await vi.waitFor(() => expect(restarts()).toHaveLength(2));
 	});
 });

@@ -26,14 +26,16 @@ export function resolveRegisteredProject(spoolDir: string, cwd: string): Project
 }
 
 /** The live selection payload (#23): what Liam points at, verbatim. */
-export async function readSelection(daemonUrl: string, name: string): Promise<string> {
-	const body = (await apiJson(`${daemonUrl}/api/p/${encodeURIComponent(name)}/selection`)) as { selection: unknown };
+export async function readSelection(daemonUrl: string, name: string, controlToken: string): Promise<string> {
+	const body = (await apiJson(`${daemonUrl}/api/p/${encodeURIComponent(name)}/selection`, controlToken)) as {
+		selection: unknown;
+	};
 	return pretty(body.selection);
 }
 
 /** The derived link graph: read from source, verified by witnessed sessions. */
-export async function readFlows(daemonUrl: string, name: string): Promise<string> {
-	return pretty(await apiJson(`${daemonUrl}/api/p/${encodeURIComponent(name)}/flows`));
+export async function readFlows(daemonUrl: string, name: string, controlToken: string): Promise<string> {
+	return pretty(await apiJson(`${daemonUrl}/api/p/${encodeURIComponent(name)}/flows`, controlToken));
 }
 
 /**
@@ -41,8 +43,13 @@ export async function readFlows(daemonUrl: string, name: string): Promise<string
  * that session are witnessed as dashed edges. The frame is checked first so
  * the printed URL never opens on a 404.
  */
-export async function mintPlayerUrl(daemonUrl: string, name: string, frame: string): Promise<string> {
-	const projection = (await apiJson(`${daemonUrl}/api/p/${encodeURIComponent(name)}/frames`)) as {
+export async function mintPlayerUrl(
+	daemonUrl: string,
+	name: string,
+	frame: string,
+	controlToken: string,
+): Promise<string> {
+	const projection = (await apiJson(`${daemonUrl}/api/p/${encodeURIComponent(name)}/frames`, controlToken)) as {
 		frames: { name: string }[];
 	};
 	if (!projection.frames.some((entry) => entry.name === frame)) {
@@ -51,8 +58,8 @@ export async function mintPlayerUrl(daemonUrl: string, name: string, frame: stri
 	return `${daemonUrl}/play/${encodeURIComponent(name)}?frame=${encodeURIComponent(frame)}`;
 }
 
-async function apiJson(url: string): Promise<unknown> {
-	const res = await fetch(url);
+async function apiJson(url: string, controlToken: string): Promise<unknown> {
+	const res = await fetch(url, { headers: { "X-Spool-Control": controlToken } });
 	if (!res.ok) throw new SpoolError(await res.text());
 	return res.json();
 }

@@ -42,6 +42,7 @@ export interface SpoolUi {
 interface SpoolDocument {
 	project: string;
 	frame: string;
+	projectCapability: string;
 }
 
 interface Scenario {
@@ -59,10 +60,11 @@ export interface SessionRecord {
 /** The /play/ document's config (#24): present only in the player page. */
 export interface PlayerConfig {
 	project: string;
+	projectCapability: string;
 	start: string;
 	scenario: string;
 	frames: Record<string, { w: number; h: number }>;
-	/** Terminal frames (#42): the daemon's grid rides along as each live screen's boot poster (#44). */
+	/** Terminal frames: the last persisted grid behind Spool's disabled surface. */
 	terminals?: Record<string, { svg: string }>;
 }
 
@@ -74,7 +76,10 @@ declare global {
 }
 
 const play = window.__SPOOL_PLAY__;
-const config = play === undefined ? window.__SPOOL__ : { project: play.project, frame: play.start };
+const config =
+	play === undefined
+		? window.__SPOOL__
+		: { project: play.project, frame: play.start, projectCapability: play.projectCapability };
 if (config === undefined) {
 	throw new Error('spool: no document config — "spool" only runs inside a spool-served document');
 }
@@ -84,6 +89,13 @@ let currentFrame = doc.frame;
 
 /** The runtime's own plumbing (scenario, fixtures) always rides the real fetch. */
 const nativeFetch = window.fetch.bind(window);
+
+/** Project data is the render document's only daemon authority. */
+function projectFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+	const headers = new Headers(init?.headers);
+	headers.set("X-Spool-Project", doc.projectCapability);
+	return nativeFetch(input, { ...init, headers });
+}
 
 /** Embedded in a canvas iframe: navigation is the host's job, posted over the bridge. */
 const embedded = window.parent !== window;
@@ -262,7 +274,7 @@ function queryScenario(): string | undefined {
 
 async function loadScenario(name: string): Promise<Scenario> {
 	try {
-		const res = await nativeFetch(`/api/p/${encodeURIComponent(doc.project)}/scenarios/${encodeURIComponent(name)}`);
+		const res = await projectFetch(`/api/p/${encodeURIComponent(doc.project)}/scenarios/${encodeURIComponent(name)}`);
 		if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
 		const value = (await res.json()) as Partial<Scenario>;
 		return { state: value.state ?? {}, mock: value.mock ?? {} };
@@ -435,12 +447,9 @@ function isFrameName(name: string): boolean {
  * mock never swallows it.
  */
 function reportWalk(from: string, to: string): void {
-	void nativeFetch(`/api/p/${encodeURIComponent(doc.project)}/walked`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ from, to }),
-		keepalive: true,
-	}).catch(() => {});
+	if (play !== undefined && embedded) {
+		window.parent.postMessage({ spool: "player-walked", from, to }, "*");
+	}
 }
 
 /** Sibling frame document, same project, same scenario query. */
@@ -644,9 +653,6 @@ function swapScreen(direction: SwapDirection, transition?: string): void {
 
 async function restartSession(): Promise<void> {
 	if (play === undefined) return;
-	// a new epoch: terminal frames the restarted walk reaches start clean (#44)
-	termEpoch++;
-	termEnsured.clear();
 	// a fresh read, so an edited seed lands without a reload
 	const scenario = await loadScenario(scenarioName);
 	mockConfig = scenario.mock;
@@ -658,93 +664,31 @@ async function restartSession(): Promise<void> {
 	swapScreen("restart");
 }
 
-// --- terminal screens (#44) --------------------------------------------------
-
 /**
- * The play session's claim to clean runs: a pill restart opens a new epoch,
- * and the first arrival at each terminal frame inside it asks the daemon for
- * a fresh process before joining. Epoch zero joins whatever already runs —
- * mirrored attach means one process, one truth, and a canvas-staged process
- * is the demo, not dirt.
- */
-let termEpoch = 0;
-const termEnsured = new Set<string>();
-/** The current screen's iframe — the only document allowed to speak for the walk. */
-const termIframes = new Map<string, HTMLIFrameElement>();
-
-async function ensureTermFresh(frame: string): Promise<void> {
-	if (termEpoch === 0 || termEnsured.has(frame)) return;
-	termEnsured.add(frame);
-	try {
-		await nativeFetch(`/api/p/${encodeURIComponent(doc.project)}/term/${encodeURIComponent(frame)}/restart`, {
-			method: "POST",
-		});
-	} catch {
-		// the walk still lands on the live session; only the clean-run ask failed
-	}
-}
-
-/**
- * The player as terminal host (#44): the embedded term document speaks the
- * same protocol it speaks to the canvas — a nav the TUI fired walks forward
- * (verifying its edge, never minting one). Only the current screen's own
- * document is heard; the player has no keyboard exit state.
- */
-function bindTermHost(): void {
-	window.addEventListener("message", (event) => {
-		const message = event.data as { spool?: string; target?: string } | null;
-		if (message === null || typeof message !== "object") return;
-		const iframe = termIframes.get(currentFrame);
-		if (iframe === undefined || event.source !== iframe.contentWindow) return;
-		if (message.spool === "go" && typeof message.target === "string") navigate(message.target);
-	});
-}
-
-/**
- * The canvas owns geometry (#44): the player follows the sidecar live over the
- * project's SSE stream, so a canvas resize re-fits the player's screens — the
- * emulator inside a re-sized terminal box re-derives its grid and every
- * mirrored surface converges on the same cells, instead of painting one grid
- * into another's box.
+ * The canvas owns geometry: the player follows sidecar changes over the
+ * control shell's bridge so every screen remains fitted to its current size.
  */
 function followGeometry(): void {
 	const config = play;
-	if (config === undefined || typeof EventSource === "undefined") return;
-	const project = encodeURIComponent(config.project);
-	const source = new EventSource(`/api/p/${project}/events`);
-	source.addEventListener("change", (event) => {
-		let change: { kind?: string };
-		try {
-			change = JSON.parse((event as MessageEvent).data) as { kind?: string };
-		} catch {
-			return;
+	if (config === undefined || !embedded) return;
+	addEventListener("message", (event) => {
+		if (event.source !== window.parent) return;
+		const message = event.data as { spool?: string; frames?: { name: string; w: number; h: number }[] } | null;
+		if (message?.spool !== "player-geometry" || !Array.isArray(message.frames)) return;
+		let moved = false;
+		for (const frame of message.frames) {
+			const known = config.frames[frame.name];
+			if (known !== undefined && (known.w !== frame.w || known.h !== frame.h)) {
+				config.frames[frame.name] = { w: frame.w, h: frame.h };
+				moved = true;
+			}
 		}
-		if (change.kind !== "geometry") return;
-		void nativeFetch(`/api/p/${project}/frames`)
-			.then((res) =>
-				res.ok ? (res.json() as Promise<{ frames?: { name: string; w: number; h: number }[] }>) : undefined,
-			)
-			.then((listing) => {
-				let moved = false;
-				for (const frame of listing?.frames ?? []) {
-					const known = config.frames[frame.name];
-					if (known !== undefined && (known.w !== frame.w || known.h !== frame.h)) {
-						config.frames[frame.name] = { w: frame.w, h: frame.h };
-						moved = true;
-					}
-				}
-				if (moved) notifyPlay();
-			})
-			.catch(() => {});
+		if (moved) notifyPlay();
 	});
 }
 
 function closePlayer(): void {
-	window.close();
-	// a tab the canvas opened closes; a phone's direct URL walks to the canvas
-	setTimeout(() => {
-		if (!window.closed) window.location.href = `/p/${encodeURIComponent(doc.project)}`;
-	}, 150);
+	if (embedded) window.parent.postMessage({ spool: "player-close" }, "*");
 }
 
 const playerController: PlayerController = {
@@ -799,8 +743,8 @@ export function bootPlayer(frames: Record<string, ComponentType>): void {
 	motionOn = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 	const root = window.document.getElementById("root");
 	if (root === null) throw new Error("spool: the player document has no #root");
-	// terminal frames are live (#44): the same term document the canvas embeds,
-	// attached to the same daemon session, over the daemon's grid as poster
+	// Terminal frames keep their screen shape and persisted poster, but their
+	// document is a Spool-owned disabled surface until an OS sandbox exists.
 	const termScreens = Object.fromEntries(
 		Object.entries(config.terminals ?? {}).map(([name, screen]) => [
 			name,
@@ -809,15 +753,9 @@ export function bootPlayer(frames: Record<string, ComponentType>): void {
 					src: `/p/${encodeURIComponent(config.project)}/frames/${encodeURIComponent(name)}`,
 					poster: screen.svg,
 					title: name,
-					ensureFresh: () => ensureTermFresh(name),
-					register: (el: HTMLIFrameElement | null) => {
-						if (el === null) termIframes.delete(name);
-						else termIframes.set(name, el);
-					},
 				}),
 		]),
 	);
-	bindTermHost();
 	followGeometry();
 	// the tape opens where the session does, so hop zero is the start frame
 	recordHop("restart", config.start, config.start);
@@ -873,7 +811,7 @@ async function ruleResponse(value: unknown): Promise<Response | undefined> {
 	if (rule === undefined) return jsonResponse(value, 200);
 	if (rule.body !== undefined) return jsonResponse(rule.body, rule.status ?? 200);
 	if (rule.fixture !== undefined) {
-		const res = await nativeFetch(fixtureUrl(rule.fixture));
+		const res = await projectFetch(fixtureUrl(rule.fixture));
 		// a configured-but-broken fixture surfaces the daemon's message verbatim
 		if (!res.ok) return new Response(await res.text(), { status: res.status });
 		return new Response(await res.text(), { status: rule.status ?? 200, headers: JSON_HEADERS });
@@ -887,7 +825,7 @@ async function conventionResponse(path: string): Promise<Response | undefined> {
 	if (!path.startsWith("/api/")) return undefined;
 	const name = path.slice("/api/".length).replace(/\/+$/, "");
 	if (name.length === 0) return undefined;
-	const res = await nativeFetch(fixtureUrl(name));
+	const res = await projectFetch(fixtureUrl(name));
 	if (res.status === 404) return undefined;
 	if (!res.ok) return new Response(await res.text(), { status: res.status });
 	return new Response(await res.text(), { status: 200, headers: JSON_HEADERS });

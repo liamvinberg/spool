@@ -8,6 +8,7 @@ import {
 	fetchFlows,
 	fetchProjection,
 	fetchStampLabels,
+	fetchThumb,
 	openInEditor,
 	postTrash,
 	postWalk,
@@ -15,9 +16,7 @@ import {
 	putGeometry,
 	putSelection,
 	putThumb,
-	restartTerminalFrame,
 	subscribeSse,
-	thumbUrl,
 } from "../api";
 import { RibbonMark } from "../icons";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
@@ -398,9 +397,9 @@ export function ProjectCanvas({
 				}
 			}
 
-			const cover = await fetch(thumbUrl(project, frame.name, Date.now()), { cache: "no-store" });
-			if (!cover.ok) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
-			const png = await pngBytesFromImageBlob(await cover.blob(), frame.w, frame.h);
+			const cover = await fetchThumb(project, frame.name, Date.now());
+			if (cover === undefined) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
+			const png = await pngBytesFromImageBlob(cover, frame.w, frame.h);
 			return { name: frame.name, width: frame.w, height: frame.h, png };
 		},
 		[project],
@@ -2454,9 +2453,6 @@ export function ProjectCanvas({
 						}}
 						onReload={() => {
 							const frame = menu.frame;
-							if (allFramesRef.current.find((candidate) => candidate.name === frame)?.kind === "term") {
-								void restartTerminalFrame(project, frame);
-							}
 							reloadFrameDocument(frame);
 							setMenu(null);
 						}}
@@ -2494,9 +2490,6 @@ export function ProjectCanvas({
 				onReload={() => {
 					if (inspectorTarget === null) return;
 					const frame = inspectorTarget.frame;
-					if (allFramesRef.current.find((candidate) => candidate.name === frame)?.kind === "term") {
-						void restartTerminalFrame(project, frame);
-					}
 					reloadFrameDocument(frame);
 				}}
 				onOpenEditor={() => {
@@ -2513,7 +2506,13 @@ export function ProjectCanvas({
 					frames={exportFrames.map((frame) => ({
 						name: frame.name,
 						...(hasThumb(frame.name)
-							? { thumbnail: thumbUrl(project, frame.name, thumbNonces[frame.name] ?? 0) }
+							? {
+									thumbnail: {
+										project,
+										frame: frame.name,
+										nonce: thumbNonces[frame.name] ?? 0,
+									},
+								}
 							: {}),
 					}))}
 					{...(exportError === undefined ? {} : { error: exportError })}

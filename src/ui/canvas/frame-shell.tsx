@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { frameDocumentUrl, thumbUrl } from "../api";
+import { frameDocumentUrl } from "../api";
+import { Thumbnail } from "../thumbnail";
 import type { FrameState } from "./lifecycle";
 import { freezeMessage } from "./protocol";
 
@@ -142,8 +143,10 @@ export const FrameShell = memo(function FrameShell({
 							className="absolute inset-0 h-full w-full object-cover object-top"
 						/>
 					) : plan.image === "thumb" ? (
-						<img
-							src={thumbUrl(project, name, thumbNonce)}
+						<Thumbnail
+							project={project}
+							frame={name}
+							nonce={thumbNonce}
 							alt={name}
 							draggable={false}
 							className="absolute inset-0 h-full w-full object-cover object-top"

@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
-import { dirname, extname, join, resolve } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Scanner } from "@tailwindcss/oxide";
 import { compile } from "tailwindcss";
+import { DesignBoundaryError, resolveDesignPath } from "./design-path";
 
 /**
  * Serve-time Tailwind (#15): frames receive finished CSS, compiled with the
@@ -11,7 +12,12 @@ import { compile } from "tailwindcss";
  * and tokens.css is the only project entry into the compile.
  */
 
-const tailwindDir = dirname(fileURLToPath(import.meta.resolve("tailwindcss/index.css")));
+const tailwindDir = realpathSync(dirname(fileURLToPath(import.meta.resolve("tailwindcss/index.css"))));
+
+function isWithin(base: string, target: string): boolean {
+	const rel = relative(base, target);
+	return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
+}
 
 const rootCss = `@import "tailwindcss";
 @import "./tokens.css";
@@ -46,8 +52,18 @@ export async function buildFrameCss(designDir: string, files: string[]): Promise
 				`unsupported import "${id}" — only tailwindcss and relative stylesheets resolve in tokens.css`,
 			);
 		}
-		// spool's own tailwind css is pinned by the spool version; project files must be hashed
-		if (!file.startsWith(tailwindDir)) projectStylesheets.add(file);
+		// Spool's pinned Tailwind install is the only non-design stylesheet
+		// root. Component-aware containment prevents prefix siblings from
+		// masquerading as package internals.
+		if (isWithin(tailwindDir, file)) {
+			file = realpathSync(file);
+			if (!isWithin(tailwindDir, file)) {
+				throw new Error(`tailwindcss import "${id}" resolves outside Spool's pinned Tailwind install`);
+			}
+		} else {
+			file = resolveDesignPath(designDir, file, id);
+			projectStylesheets.add(file);
+		}
 		return { path: file, base: dirname(file), content: readFileSync(file, "utf8") };
 	}
 
@@ -60,8 +76,9 @@ export async function buildFrameCss(designDir: string, files: string[]): Promise
 	const sources = files.flatMap((file) => {
 		let content: string;
 		try {
-			content = readFileSync(file, "utf8");
-		} catch {
+			content = readFileSync(resolveDesignPath(designDir, file), "utf8");
+		} catch (error) {
+			if (error instanceof DesignBoundaryError) throw error;
 			return [];
 		}
 		return [{ content, extension: extname(file).slice(1) }];

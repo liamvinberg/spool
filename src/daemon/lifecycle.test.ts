@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import { makeTempDir } from "../test-helpers";
 import {
 	ensureDaemon,
 	readDaemonState,
+	renderOrigin,
 	resolveServeConfig,
 	resolveSpoolDir,
 	spoolDaemonAt,
@@ -47,12 +48,12 @@ describe("resolveServeConfig", () => {
 		expect(resolveServeConfig(makeSpoolDir(), {})).toEqual({ host: "127.0.0.1", port: 7766, updateCheck: true });
 	});
 
-	it("honors the owner's explicit host and port config", () => {
+	it.each(["127.0.0.1", "localhost", "::1"])("honors the supported loopback host %s", (host) => {
 		const spoolDir = makeSpoolDir();
 		mkdirSync(spoolDir, { recursive: true });
-		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ host: "0.0.0.0", port: 7800 }));
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ host, port: 7800 }));
 
-		expect(resolveServeConfig(spoolDir, {})).toEqual({ host: "0.0.0.0", port: 7800, updateCheck: true });
+		expect(resolveServeConfig(spoolDir, {})).toEqual({ host, port: 7800, updateCheck: true });
 	});
 
 	it("lets the environment override config for checkout-on-its-own-port development", () => {
@@ -89,9 +90,37 @@ describe("resolveServeConfig", () => {
 		writeFileSync(join(outOfRange, "config.json"), JSON.stringify({ port: 99999 }));
 		expect(() => resolveServeConfig(outOfRange, {})).toThrow(/port number/);
 	});
+
+	it("refuses unsupported and non-loopback hosts from config or environment", () => {
+		const spoolDir = makeSpoolDir();
+		mkdirSync(spoolDir, { recursive: true });
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ host: "0.0.0.0" }));
+
+		expect(() => resolveServeConfig(spoolDir, {})).toThrow(/loopback/);
+		expect(() => resolveServeConfig(makeSpoolDir(), { SPOOL_HOST: "192.168.1.10" })).toThrow(/loopback/);
+		expect(() => resolveServeConfig(makeSpoolDir(), { SPOOL_HOST: "127.2.3.4" })).toThrow(/supported loopback/);
+	});
+});
+
+describe("renderOrigin", () => {
+	it("moves a control URL onto the fixed render hostname without changing its port", () => {
+		expect(renderOrigin("http://127.0.0.1:7766")).toBe("http://run.spool.localhost:7766");
+		expect(renderOrigin("http://[::1]:8123")).toBe("http://run.spool.localhost:8123");
+	});
 });
 
 describe("serveDaemon", () => {
+	it.each(["0.0.0.0", "127.2.3.4"])("refuses the unsupported bind %s below config resolution", (host) => {
+		expect(() =>
+			serveDaemon({
+				spoolDir: makeSpoolDir(),
+				version: "0.0.0-test",
+				host,
+				port: 0,
+			}),
+		).toThrow(/loopback/);
+	});
+
 	it("binds, answers health over real http, and records daemon state", async () => {
 		const spoolDir = makeSpoolDir();
 		const daemon = await makeServer(spoolDir);
@@ -100,6 +129,7 @@ describe("serveDaemon", () => {
 		const health = (await (await fetch(`${daemon.url}/api/health`)).json()) as { name: string; pid: number };
 		expect(health.name).toBe("spool");
 		expect(health.pid).toBe(process.pid);
+		expect((await fetch(`${renderOrigin(daemon.url)}/vendor/spool.js`)).status).toBe(200);
 
 		const state = readDaemonState(spoolDir);
 		expect(state).toEqual({
@@ -108,8 +138,27 @@ describe("serveDaemon", () => {
 			port: daemon.port,
 			version: "0.0.0-test",
 			startedAt: expect.any(String),
+			controlToken: expect.any(String),
 		});
+		expect(state?.controlToken.length).toBeGreaterThanOrEqual(32);
+		expect(statSync(join(spoolDir, "daemon.json")).mode & 0o777).toBe(0o600);
 	});
+
+	it.each(["127.0.0.1", "localhost", "::1"])(
+		"serves both virtual hosts through the supported bind %s",
+		async (host) => {
+			const daemon = await serveDaemon({
+				spoolDir: makeSpoolDir(),
+				version: "0.0.0-test",
+				host,
+				port: 0,
+			});
+			onTestFinished(() => daemon.close());
+
+			expect((await fetch(`${daemon.url}/api/health`)).status).toBe(200);
+			expect((await fetch(`${renderOrigin(daemon.url)}/vendor/spool.js`)).status).toBe(200);
+		},
+	);
 
 	it("clears its state on close", async () => {
 		const spoolDir = makeSpoolDir();
@@ -149,6 +198,7 @@ describe("statusDaemon", () => {
 			port: 65534,
 			version: "0.0.0",
 			startedAt: "2026-01-01T00:00:00Z",
+			controlToken: "stale-control-token",
 		};
 		writeFileSync(join(spoolDir, "daemon.json"), JSON.stringify(stale));
 
@@ -177,7 +227,7 @@ describe("ensureDaemon", () => {
 
 		const result = await ensureDaemon(spoolDir, { command: neverRun });
 
-		expect(result).toEqual({ url: daemon.url, pid: process.pid, started: false });
+		expect(result).toEqual({ url: daemon.url, pid: process.pid, started: false, controlToken: expect.any(String) });
 	});
 });
 
@@ -193,6 +243,7 @@ describe("stopDaemon", () => {
 			port: 65534,
 			version: "0.0.0",
 			startedAt: "2026-01-01T00:00:00Z",
+			controlToken: "stale-control-token",
 		};
 		writeFileSync(join(spoolDir, "daemon.json"), JSON.stringify(stale));
 		expect(await stopDaemon(spoolDir)).toEqual({ stopped: false });
@@ -223,7 +274,7 @@ describe("daemon lifecycle end to end", () => {
 		expect(first.pid).not.toBe(process.pid);
 
 		const second = await ensureDaemon(spoolDir, { command: ["/nonexistent-spool"], env });
-		expect(second).toEqual({ url: first.url, pid: first.pid, started: false });
+		expect(second).toEqual({ url: first.url, pid: first.pid, started: false, controlToken: first.controlToken });
 
 		const status = await statusDaemon(spoolDir);
 		expect(status.running).toBe(true);
@@ -245,7 +296,9 @@ describe("daemon lifecycle end to end", () => {
 		];
 		const env = { HOME: home, SPOOL_PORT: "0", SPOOL_DIR: "" };
 		const daemon = await ensureDaemon(spoolDir, { command, env, timeoutMs: 30_000 });
-		const stream = await fetch(`${daemon.url}/api/events`);
+		const stream = await fetch(`${daemon.url}/api/events`, {
+			headers: { "X-Spool-Control": daemon.controlToken },
+		});
 		const reader = stream.body?.getReader();
 		if (reader === undefined) throw new Error("app event stream has no body");
 		onTestFinished(async () => {
@@ -269,5 +322,16 @@ describe("daemon state file", () => {
 		writeFileSync(join(spoolDir, "daemon.json"), "{corrupt");
 		expect(readDaemonState(spoolDir)).toBeUndefined();
 		expect(readFileSync(join(spoolDir, "daemon.json"), "utf8")).toBe("{corrupt");
+	});
+
+	it("treats state without a control token as absent", () => {
+		const spoolDir = makeSpoolDir();
+		mkdirSync(spoolDir, { recursive: true });
+		writeFileSync(
+			join(spoolDir, "daemon.json"),
+			JSON.stringify({ pid: 1, host: "127.0.0.1", port: 7766, version: "0.0.0", startedAt: "2026-01-01T00:00:00Z" }),
+		);
+
+		expect(readDaemonState(spoolDir)).toBeUndefined();
 	});
 });

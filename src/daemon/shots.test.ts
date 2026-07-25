@@ -30,31 +30,35 @@ describe("the thumbnail fallback", () => {
 		writeFrame(root, "cover-me", frameTsx);
 		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
 		onTestFinished(() => daemon.close());
+		const control = { headers: { "X-Spool-Control": daemon.controlToken } };
 		const controller = new AbortController();
 		onTestFinished(() => controller.abort()); // LIFO: the stream lets go before the server closes
 
-		const events = await fetch(`${daemon.url}/api/p/${name}/events`, { signal: controller.signal });
+		const events = await fetch(`${daemon.url}/api/p/${name}/events`, {
+			...control,
+			signal: controller.signal,
+		});
 		const reader = sseReader(events);
 		expect((await reader.next()).event).toBe("hello");
 
-		const miss = await fetch(`${daemon.url}/api/p/${name}/thumbs/cover-me`);
+		const miss = await fetch(`${daemon.url}/api/p/${name}/thumbs/cover-me`, control);
 		expect(miss.status).toBe(404);
 
 		if (browserless) {
 			// no playwright-managed build on this machine (#25 fetches it): the
 			// healer must stay quiet — no crash, no thumb, no event
 			await reader.expectQuiet(2000);
-			expect((await fetch(`${daemon.url}/api/p/${name}/thumbs/cover-me`)).status).toBe(404);
+			expect((await fetch(`${daemon.url}/api/p/${name}/thumbs/cover-me`, control)).status).toBe(404);
 			return;
 		}
 
 		await expect
-			.poll(async () => (await fetch(`${daemon.url}/api/p/${name}/thumbs/cover-me`)).status, {
+			.poll(async () => (await fetch(`${daemon.url}/api/p/${name}/thumbs/cover-me`, control)).status, {
 				timeout: 45_000,
 				interval: 500,
 			})
 			.toBe(200);
-		const thumb = await fetch(`${daemon.url}/api/p/${name}/thumbs/cover-me`);
+		const thumb = await fetch(`${daemon.url}/api/p/${name}/thumbs/cover-me`, control);
 		expect(thumb.headers.get("content-type")).toBe("image/png");
 		expect((await thumb.arrayBuffer()).byteLength).toBeGreaterThan(1000);
 	});

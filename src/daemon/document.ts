@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 export interface FrameDocumentParts {
 	project: string;
 	frame: string;
+	projectCapability: string;
 	/** Compiled Tailwind output: theme vars, preflight, used utilities. */
 	css: string;
 	/** shared/fonts.css verbatim, when the file exists. */
@@ -23,6 +24,7 @@ export interface FrameDocumentParts {
 export function assembleFrameDocument({
 	project,
 	frame,
+	projectCapability,
 	css,
 	fonts,
 	bundledCss,
@@ -36,7 +38,7 @@ export function assembleFrameDocument({
 	// document AND inside the player's screen — one dialect for both contexts
 	return htmlShell(
 		frame,
-		`<script>window.__SPOOL__ = ${escapeJsonScript({ project, frame })}</script>
+		`<script>window.__SPOOL__ = ${escapeJsonScript({ project, frame, projectCapability })}</script>
 <script>${escapeInlineScript(canvasShimJs)}</script>
 <style>html, body, #root { height: 100%; }</style>
 <style>${escapeInlineStyle(css)}</style>
@@ -497,6 +499,6 @@ export function escapeInlineStyle(css: string): string {
 }
 
 /** JSON embedded in a script element: escaping every `<` closes all parser holes. */
-export function escapeJsonScript(value: object): string {
+export function escapeJsonScript(value: unknown): string {
 	return JSON.stringify(value).replaceAll("<", "\\u003c");
 }
