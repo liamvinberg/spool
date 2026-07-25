@@ -10,6 +10,7 @@ interface CoffeeScreenProps {
 	goTo?: string;
 	scale?: CoffeeScreenScale;
 	screen: CoffeeScreenName;
+	viewTransitionName?: string;
 }
 
 const products = [
@@ -20,17 +21,46 @@ const products = [
 
 const cart = products.slice(0, 2);
 
-export function CoffeeScreen({ actionLabel, className, goTo, scale = "canvas", screen }: CoffeeScreenProps) {
+export function CoffeeScreen({
+	actionLabel,
+	className,
+	goTo,
+	scale = "canvas",
+	screen,
+	viewTransitionName,
+}: CoffeeScreenProps) {
 	if (screen === "menu") {
-		return <CoffeeMenu actionLabel={actionLabel} className={className} goTo={goTo} scale={scale} />;
+		return (
+			<CoffeeMenu
+				actionLabel={actionLabel}
+				className={className}
+				goTo={goTo}
+				scale={scale}
+				viewTransitionName={viewTransitionName}
+			/>
+		);
 	}
 	if (screen === "cart") {
-		return <CoffeeCart actionLabel={actionLabel} className={className} goTo={goTo} scale={scale} />;
+		return (
+			<CoffeeCart
+				actionLabel={actionLabel}
+				className={className}
+				goTo={goTo}
+				scale={scale}
+				viewTransitionName={viewTransitionName}
+			/>
+		);
 	}
-	return <CoffeeReceipt className={className} scale={scale} />;
+	return <CoffeeReceipt className={className} scale={scale} viewTransitionName={viewTransitionName} />;
 }
 
-function CoffeeMenu({ actionLabel = "Till kassan", className, goTo, scale }: Omit<CoffeeScreenProps, "screen">) {
+function CoffeeMenu({
+	actionLabel = "Till kassan",
+	className,
+	goTo,
+	scale,
+	viewTransitionName,
+}: Omit<CoffeeScreenProps, "screen">) {
 	const full = scale === "full";
 	const design = scale === "design";
 	return (
@@ -40,7 +70,7 @@ function CoffeeMenu({ actionLabel = "Till kassan", className, goTo, scale }: Omi
 				full ? "rounded-lg px-6 pb-6 pt-8" : design ? "rounded-lg p-3.5" : "rounded-lg px-4 pb-4 pt-[18px]",
 				className,
 			)}
-			style={{ viewTransitionName: "coffee-screen" }}
+			style={viewTransitionName === undefined ? undefined : { viewTransitionName }}
 		>
 			<div className={cn("flex flex-col", full ? "gap-[18px]" : design ? "gap-3.5" : "gap-3")}>
 				<div className="flex flex-col gap-0.5">
@@ -111,7 +141,13 @@ function CoffeeMenu({ actionLabel = "Till kassan", className, goTo, scale }: Omi
 	);
 }
 
-function CoffeeCart({ actionLabel = "Betala", className, goTo, scale }: Omit<CoffeeScreenProps, "screen">) {
+function CoffeeCart({
+	actionLabel = "Betala",
+	className,
+	goTo,
+	scale,
+	viewTransitionName,
+}: Omit<CoffeeScreenProps, "screen">) {
 	const full = scale === "full";
 	const design = scale === "design";
 	return (
@@ -121,7 +157,7 @@ function CoffeeCart({ actionLabel = "Betala", className, goTo, scale }: Omit<Cof
 				full ? "rounded-lg px-6 pb-6 pt-8" : design ? "rounded-lg p-3.5" : "rounded-lg px-4 pb-4 pt-[18px]",
 				className,
 			)}
-			style={{ viewTransitionName: "coffee-screen" }}
+			style={viewTransitionName === undefined ? undefined : { viewTransitionName }}
 		>
 			<div className={cn("flex flex-col", full ? "gap-[18px]" : design ? "gap-3.5" : "gap-3")}>
 				<h1
@@ -202,7 +238,11 @@ function CoffeeCart({ actionLabel = "Betala", className, goTo, scale }: Omit<Cof
 	);
 }
 
-function CoffeeReceipt({ className, scale }: Omit<CoffeeScreenProps, "screen" | "goTo">) {
+function CoffeeReceipt({
+	className,
+	scale,
+	viewTransitionName,
+}: Omit<CoffeeScreenProps, "screen" | "goTo">) {
 	const full = scale === "full";
 	const design = scale === "design";
 	return (
@@ -212,7 +252,7 @@ function CoffeeReceipt({ className, scale }: Omit<CoffeeScreenProps, "screen" | 
 				full ? "gap-3 px-6" : design ? "gap-3 p-3.5" : "gap-2 px-3.5",
 				className,
 			)}
-			style={{ viewTransitionName: "coffee-screen" }}
+			style={viewTransitionName === undefined ? undefined : { viewTransitionName }}
 		>
 			<div
 				className={cn(

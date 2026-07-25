@@ -11,7 +11,12 @@ export function SpoolPlayerScreen({ backTarget, closeTarget, receiptTarget }: Sp
 	return (
 		<div className="relative h-full w-full overflow-hidden bg-bg font-sans text-text antialiased [font-synthesis:none]">
 			<div className="absolute left-[525px] top-7 h-[780px] w-[390px]">
-				<CoffeeScreen screen="cart" scale="full" goTo={receiptTarget} />
+				<CoffeeScreen
+					screen="cart"
+					scale="full"
+					goTo={receiptTarget}
+					viewTransitionName="coffee-screen"
+				/>
 			</div>
 			<div className="absolute bottom-7 left-1/2 flex -translate-x-1/2 items-center gap-[3px] rounded-md border border-border-raised bg-raised px-2 py-1.5">
 				<button
