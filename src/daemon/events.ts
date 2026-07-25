@@ -12,7 +12,10 @@ export type ChangeEvent =
 	| { kind: "geometry"; frame: string }
 	// a session witnessed an edge (#25), published by the walked API — .spool
 	// is invisible to the watcher, so the store announces its own writes
-	| { kind: "walked" };
+	| { kind: "walked" }
+	// a render pass filled dark targets (#34), published by the resolve API: the
+	// graph really did gain edges, which a witnessed walk never does
+	| { kind: "resolved" };
 type Listener = (event: ChangeEvent) => void;
 
 interface RootWatch {
