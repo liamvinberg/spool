@@ -102,10 +102,14 @@ export const vendorSpoolJs: () => Promise<VendorModule> = lazyBuild(() => vendor
 
 export const vendorSpoolJsxJs: () => Promise<VendorModule> = lazyBuild(() => vendorRuntime("jsx-dev-runtime"));
 
+export const vendorPlayerShellJs: () => Promise<VendorModule> = lazyBuild(() => vendorRuntime("player-shell-runtime"));
+
 /** The terminal runtime (#42): xterm bundled in — a terminal frame needs no import map. */
 export const vendorSpoolTermJs: () => Promise<VendorModule> = lazyBuild(() => vendorRuntime("term-runtime"));
 
-async function vendorRuntime(name: "frame-runtime" | "jsx-dev-runtime" | "term-runtime"): Promise<VendorModule> {
+async function vendorRuntime(
+	name: "frame-runtime" | "player-shell-runtime" | "jsx-dev-runtime" | "term-runtime",
+): Promise<VendorModule> {
 	const js = await runtimeJs(name);
 	return { js, etag: `"spool-${createHash("sha256").update(js).digest("hex").slice(0, 32)}"` };
 }
@@ -116,8 +120,9 @@ async function runtimeJs(name: string): Promise<string> {
 	} catch {
 		// no prebuilt module next to this file: running from source
 	}
+	const source = name === "player-shell-runtime" ? `${name}.tsx` : `${name}.ts`;
 	const result = await build({
-		entryPoints: [fileURLToPath(new URL(`../runtime/${name}.ts`, import.meta.url))],
+		entryPoints: [fileURLToPath(new URL(`../runtime/${source}`, import.meta.url))],
 		bundle: true,
 		format: "esm",
 		platform: "browser",

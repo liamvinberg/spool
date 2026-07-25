@@ -64,6 +64,11 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 	daemon.setSelfOrigin("http://localhost:7766");
 	onTestFinished(() => daemon.close());
 	return {
+		controlRequest: (input: string, init?: RequestInit) => {
+			const request = new Request(new URL(input, "http://localhost:7766"), init);
+			request.headers.set(CONTROL_HEADER, daemon.controlToken);
+			return daemon.app.fetch(request);
+		},
 		request: (input: string, init?: RequestInit) => {
 			const url = new URL(input, "http://localhost:7766");
 			const path = url.pathname;

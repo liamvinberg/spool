@@ -39,9 +39,16 @@ function configOf(doc: string): {
 	scenario: string;
 	frames: Record<string, { w: number; h: number }>;
 } {
-	const config = doc.match(/window\.__SPOOL_PLAY__\s*=\s*(\{.*?\})<\/script>/)?.[1];
+	const config = doc.match(/window\.__SPOOL_PLAY__\s*=\s*JSON\.parse\(("(?:\\.|[^"\\])*")\)<\/script>/)?.[1];
 	expect(config, "player config script").toBeDefined();
-	return JSON.parse(config ?? "{}");
+	return JSON.parse(JSON.parse(config ?? '"{}"'));
+}
+
+function shellInnerOf(doc: string): URL {
+	const serialized = doc.match(/window\.__SPOOL_SHELL__\s*=\s*JSON\.parse\(("(?:\\.|[^"\\])*")\)/)?.[1];
+	expect(serialized, "player shell config").toBeDefined();
+	const config = JSON.parse(JSON.parse(serialized ?? '"{}"')) as { innerUrl: string };
+	return new URL(config.innerUrl);
 }
 
 describe("serving the player", () => {
@@ -72,6 +79,23 @@ describe("serving the player", () => {
 
 		// the frame baseline rides along: compiled utilities, not raw classes
 		expect(doc).toContain(".p-4");
+	});
+
+	it("constructs __proto__ as an own frame in both config and compiled components", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = scaffold(spoolDir);
+		writeFrame(root, "__proto__", "export default function Proto() { return <main>proto</main>; }\n");
+		const app = makeApp(spoolDir);
+
+		const doc = await (await app.request(`/play/${name}?frame=__proto__`)).text();
+		const config = configOf(doc);
+		const boot = doc.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1] ?? "";
+
+		expect(config.start).toBe("__proto__");
+		expect(Object.hasOwn(config.frames, "__proto__")).toBe(true);
+		expect(Object.getOwnPropertyDescriptor(config.frames, "__proto__")?.value).toEqual({ w: 390, h: 844 });
+		expect(boot).toContain("Object.fromEntries");
+		expect(boot).toContain('["__proto__"');
 	});
 
 	it("pins the import map and ships none of the canvas SPA", async () => {
@@ -175,6 +199,39 @@ describe("serving the player", () => {
 		const nothing = await app.request(`/play/${empty.name}`);
 		expect(nothing.status).toBe(404);
 		expect(await nothing.text()).toContain("frame.tsx");
+	});
+
+	it("reports every rejected shell request through the player load protocol", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const empty = makeProject(spoolDir);
+		const existing = scaffold(spoolDir);
+		const app = makeApp(spoolDir);
+
+		const cases = [
+			{ path: "/play/ghost-project?shell=1", status: 403, message: "invalid or expired player shell handoff" },
+			{
+				path: `/play/${empty.name}?shell=1`,
+				status: 403,
+				message: "invalid or expired player shell handoff",
+			},
+			{
+				path: `/play/${existing.name}?frame=ghost&shell=1`,
+				status: 403,
+				message: "invalid or expired player shell handoff",
+			},
+			{
+				path: `/play/${existing.name}?scenario=${encodeURIComponent("a/b")}&shell=1`,
+				status: 400,
+				message: "not a playable request",
+			},
+		];
+		for (const entry of cases) {
+			const response = await app.request(entry.path);
+			expect(response.status).toBe(entry.status);
+			const document = await response.text();
+			expect(document).toContain(entry.message);
+			expect(document).toContain('"player-load-error"');
+		}
 	});
 
 	it("caches the composed bundle by content, re-assembling config per request", async () => {
@@ -300,6 +357,15 @@ describe("terminal frames in the player (#42)", () => {
 		expect(boot).toContain("menu-screen");
 		expect(boot).toContain("bootPlayer");
 		expect(boot).not.toContain("dash/term.tsx");
+
+		const shell = await (await app.controlRequest(`/play/${name}`)).text();
+		const inner = shellInnerOf(shell);
+		const shellInner = await (await app.request(`${inner.pathname}${inner.search}`)).text();
+		expect(config.terminals?.dash?.svg).toContain('font-family: "JetBrains Mono"');
+		expect(config.terminals?.dash?.svg).toContain("data:font/woff2;base64,");
+		expect(shellInner).not.toContain("Spool Terminal Mono");
+		expect(shellInner).not.toContain("Spool Boot Mono");
+		expect(shellInner).not.toContain(".spool-stage");
 	});
 
 	it("rejects a never-run terminal instead of inventing a blank player grid", async () => {

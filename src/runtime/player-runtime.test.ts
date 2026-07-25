@@ -102,7 +102,7 @@ async function loadPlayerDocument(harness: Harness, query = "") {
 	});
 
 	document.body.innerHTML = doc.match(/<body>([\s\S]*?)<\/body>/)?.[1] ?? "";
-	expect(document.querySelector(".spool-boot")?.textContent, "the boot cover").toBe("booting");
+	expect(document.querySelector("#root")?.textContent, "the boot cover").toBe("booting");
 
 	const configScript = doc.match(/<script>(window\.__SPOOL_PLAY__[\s\S]*?)<\/script>/)?.[1];
 	expect(configScript, "served player config").toBeDefined();
@@ -823,7 +823,9 @@ describe("static terminal screens", () => {
 		expect(iframe.getAttribute("src")).toBe(`/p/${harness.name}/frames/dash`);
 		expect(iframe.getAttribute("sandbox")).toBe("allow-scripts");
 		expect(iframe.getAttribute("title")).toBe("dash");
-		expect(document.querySelector(".spool-term-poster svg")).not.toBeNull();
+		const poster = document.querySelector<HTMLImageElement>("img.spool-term-poster");
+		expect(poster).not.toBeNull();
+		expect(decodeURIComponent(poster?.src.split(",", 2)[1] ?? "")).toContain("persisted screen");
 
 		// The static surface keeps terminal framing and takes focus explicitly
 		// once its Spool-owned document loads.

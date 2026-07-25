@@ -66,6 +66,7 @@ export interface PlayerConfig {
 	frames: Record<string, { w: number; h: number }>;
 	/** Terminal frames: the last persisted grid behind Spool's disabled surface. */
 	terminals?: Record<string, { svg: string }>;
+	shell?: true;
 }
 
 declare global {
@@ -86,6 +87,8 @@ if (config === undefined) {
 const doc: SpoolDocument = config;
 /** Where the session stands now: fixed in a frame document, walked in the player. */
 let currentFrame = doc.frame;
+/** What React has committed. Cross-size cuts keep this behind currentFrame. */
+let mountedFrame = doc.frame;
 
 /** The runtime's own plumbing (scenario, fixtures) always rides the real fetch. */
 const nativeFetch = window.fetch.bind(window);
@@ -100,6 +103,99 @@ function projectFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Res
 /** Embedded in a canvas iframe: navigation is the host's job, posted over the bridge. */
 const embedded = window.parent !== window;
 
+type PlayerMessageHandler = (message: Record<string, unknown>) => void;
+let playerMessageHandler: PlayerMessageHandler | undefined;
+const pendingPlayerMessages: Record<string, unknown>[] = [];
+let sendPlayerMessage: ((message: Record<string, unknown>) => void) | undefined;
+
+/**
+ * The composed runtime evaluates in its own earlier module script, before any
+ * authored frame module. It creates the private player channel here, binds the
+ * native port methods before authored code can patch their prototype, and
+ * transfers the other end exactly once. Neither port is placed on window.
+ */
+if (play?.shell === true && embedded) {
+	const channel = new MessageChannel();
+	const port = channel.port1;
+	const postMessage = port.postMessage.bind(port);
+	const addMessageListener = port.addEventListener.bind(port);
+	const startPort = port.start.bind(port);
+	sendPlayerMessage = (message) => postMessage(message);
+	addMessageListener("message", (event) => {
+		const message = event.data;
+		if (typeof message !== "object" || message === null || Array.isArray(message)) return;
+		if (playerMessageHandler === undefined) {
+			const pending = message as Record<string, unknown>;
+			const navigationDecision =
+				pending.spool === "player-command" &&
+				(pending.command === "transition" ||
+					pending.command === "transition-commit" ||
+					pending.command === "transition-apply" ||
+					pending.command === "prepare");
+			if (navigationDecision) {
+				const previous = pendingPlayerMessages.findIndex(
+					(candidate) =>
+						candidate.spool === "player-command" &&
+						(candidate.command === "transition" ||
+							candidate.command === "transition-commit" ||
+							candidate.command === "transition-apply" ||
+							candidate.command === "prepare"),
+				);
+				if (previous >= 0) {
+					pendingPlayerMessages.splice(previous, 1);
+				} else if (pendingPlayerMessages.length >= 32) {
+					pendingPlayerMessages.shift();
+				}
+				pendingPlayerMessages.push(pending);
+			} else if (pending.spool === "player-geometry") {
+				const previous = pendingPlayerMessages.findIndex((candidate) => candidate.spool === "player-geometry");
+				if (previous >= 0) {
+					pendingPlayerMessages.splice(previous, 1);
+				} else if (pendingPlayerMessages.length >= 32) {
+					pendingPlayerMessages.shift();
+				}
+				pendingPlayerMessages.push(pending);
+			} else if (pendingPlayerMessages.length < 32) {
+				pendingPlayerMessages.push(pending);
+			}
+			return;
+		}
+		playerMessageHandler(message as Record<string, unknown>);
+	});
+	startPort();
+	window.parent.postMessage(
+		{
+			spool: "player-connect",
+			frames: Object.entries(play.frames).map(([name, geometry]) => ({ name, ...geometry })),
+		},
+		"*",
+		[channel.port2],
+	);
+}
+
+function receivePlayerMessages(handler: PlayerMessageHandler): void {
+	playerMessageHandler = handler;
+	for (const message of pendingPlayerMessages.splice(0)) handler(message);
+}
+
+function postPlayerMessage(message: Record<string, unknown>): void {
+	sendPlayerMessage?.(message);
+}
+
+if (play?.shell === true && embedded) {
+	const reportRuntimeError = (value: unknown) => {
+		const error =
+			value instanceof Error
+				? value.stack || value.message
+				: typeof value === "string"
+					? value
+					: "the authored runtime failed";
+		postPlayerMessage({ spool: "player-runtime-error", error: error.slice(0, 100_000) });
+	};
+	addEventListener("error", (event) => reportRuntimeError(event.error ?? event.message));
+	addEventListener("unhandledrejection", (event) => reportRuntimeError(event.reason));
+}
+
 // --- reactive state ---------------------------------------------------------
 
 const stateTarget: SpoolState = {};
@@ -108,10 +204,12 @@ const proxies = new WeakMap<object, object>();
 /** Where each reactive object sits in the store, so a write knows its address. */
 const addresses = new WeakMap<object, string>();
 let version = 0;
+let playerBooted = false;
 
 function notify(): void {
 	version++;
 	for (const listener of listeners) listener();
+	if (playerBooted && play?.shell === true) postPlayerState();
 	schedulePersist();
 }
 
@@ -417,6 +515,7 @@ function sessionState(): SessionState {
  */
 function rewindTo(index: number): void {
 	if (play === undefined) return;
+	if (deferPlayerAction(() => rewindTo(index))) return;
 	const hop = walkLog[index];
 	if (hop === undefined || index === walkLog.length - 1) return;
 	const from = currentFrame;
@@ -425,7 +524,7 @@ function rewindTo(index: number): void {
 	currentFrame = hop.to;
 	seedState(hop.snapshot.state);
 	recordHop("rewind", from, hop.to);
-	swapScreen("rewind");
+	requestScreenSwap(from, "rewind");
 }
 
 // --- navigation -------------------------------------------------------------
@@ -448,7 +547,11 @@ function isFrameName(name: string): boolean {
  */
 function reportWalk(from: string, to: string): void {
 	if (play !== undefined && embedded) {
-		window.parent.postMessage({ spool: "player-walked", from, to }, "*");
+		if (play.shell === true) {
+			postPlayerMessage({ spool: "player-walked", from, to });
+		} else {
+			window.parent.postMessage({ spool: "player-walked", from, to }, "*");
+		}
 	}
 }
 
@@ -484,13 +587,14 @@ function navigate(target: string, patch?: Record<string, unknown>, transition?: 
 		console.error(`spool: not a frame name: "${target}"`);
 		return;
 	}
+	if (play !== undefined && deferPlayerAction(() => navigate(target, patch, transition, label))) return;
 	// the patch is a write like any other: it lands in the stay it belongs to,
 	// and rolls up into this hop's changed keys
 	if (patch !== undefined) Object.assign(state, patch);
 	if (play !== undefined) {
 		// the composition is the map: a target outside it is loud but harmless,
 		// exactly like a frame document's failed probe (#5)
-		if (play.frames[target] === undefined) {
+		if (!Object.hasOwn(play.frames, target)) {
 			console.error(`spool: no frame "${target}" to walk to`);
 			return;
 		}
@@ -499,7 +603,7 @@ function navigate(target: string, patch?: Record<string, unknown>, transition?: 
 		reportWalk(from, target);
 		currentFrame = target;
 		recordHop("go", from, target, label);
-		swapScreen("forward", transition);
+		requestScreenSwap(from, "forward", transition);
 		return;
 	}
 	if (embedded) {
@@ -523,13 +627,14 @@ function go(target: string, patch?: Record<string, unknown>): void {
 }
 
 function back(): void {
+	if (deferPlayerAction(back)) return;
 	const target = stack.pop();
 	if (target === undefined) return;
 	if (play !== undefined) {
 		const from = currentFrame;
 		currentFrame = target;
 		recordHop("back", from, target);
-		swapScreen("back");
+		requestScreenSwap(from, "back");
 		return;
 	}
 	// the pop stays committed even if the frame vanished mid-session: backing
@@ -607,13 +712,109 @@ let motionOn = true;
 let externalHref: string | null = null;
 let playVersion = 0;
 const playListeners = new Set<() => void>();
+let navigationGeneration = 0;
+let stateSequence = 0;
+let playerReady = play?.shell !== true;
 
 function notifyPlay(): void {
 	playVersion++;
 	for (const listener of playListeners) listener();
+	if (play?.shell === true) postPlayerState();
+}
+
+function postPlayerState(): void {
+	if (!embedded || play?.shell !== true) return;
+	const read = playerController.read();
+	postPlayerMessage({
+		spool: "player-state",
+		generation: navigationGeneration,
+		sequence: ++stateSequence,
+		state: {
+			frame: read.frame,
+			stack: read.stack,
+			motion: read.motion,
+			arrival: read.arrival,
+			externalHref: read.externalHref,
+			log: read.log.map(({ kind, from, to, label, at, changed }) => ({
+				kind,
+				from,
+				to,
+				...(label === undefined ? {} : { label }),
+				at,
+				changed,
+			})),
+			mock: read.mock.map(({ method, path, status, ms }) => ({ method, path, status, ms })),
+			elapsed: elapsed(),
+			state: sessionState(),
+		},
+	});
 }
 
 type SwapDirection = "forward" | "back" | "restart" | "rewind";
+interface PendingMount {
+	generation: number;
+	from: string;
+	to: string;
+	w: number;
+	h: number;
+	mounted: boolean;
+	decision?: "transition" | "transition-commit" | "cut" | undefined;
+	direction: SwapDirection;
+	transition?: string | undefined;
+	controllerCommand?: PlayerControllerCommand | undefined;
+}
+let pendingMount: PendingMount | undefined;
+const deferredPlayerActions: (() => void)[] = [];
+
+/**
+ * A destination effect can run after React commits the hard cut but before
+ * the shell settles it. Preserve that intent until the prior generation is
+ * closed; code still running on the unmounted source stays inert.
+ */
+function deferPlayerAction(action: () => void): boolean {
+	if (pendingMount === undefined) return false;
+	if (pendingMount.mounted) deferredPlayerActions.push(action);
+	return true;
+}
+
+function replayDeferredPlayerActions(): void {
+	while (pendingMount === undefined) {
+		const action = deferredPlayerActions.shift();
+		if (action === undefined) return;
+		action();
+	}
+}
+
+/** A viewport resize cannot join a View Transition without filming stale pixels. */
+function requestScreenSwap(fromFrame: string, direction: SwapDirection, transition?: string): void {
+	if (pendingMount?.mounted === true) pendingMount = undefined;
+	const from = play?.frames[fromFrame];
+	const to = play?.frames[currentFrame];
+	navigationGeneration++;
+	if (play?.shell === true && embedded && from !== undefined && to !== undefined) {
+		pendingMount = {
+			generation: navigationGeneration,
+			from: fromFrame,
+			to: currentFrame,
+			w: to.w,
+			h: to.h,
+			mounted: false,
+			direction,
+			transition,
+		};
+		postPlayerMessage({
+			spool: "player-navigate",
+			generation: pendingMount.generation,
+			from: pendingMount.from,
+			to: pendingMount.to,
+			w: window.innerWidth,
+			h: window.innerHeight,
+		});
+		return;
+	}
+	mountedFrame = currentFrame;
+	swapScreen(direction, transition);
+}
 
 /**
  * Swap the active screen, letting the View Transitions API film it: the
@@ -624,16 +825,21 @@ type SwapDirection = "forward" | "back" | "restart" | "rewind";
  * motion off: the swap lands bare — reduce-motion means never starting a
  * transition at all.
  */
-function swapScreen(direction: SwapDirection, transition?: string): void {
+function swapScreen(direction: SwapDirection, transition?: string, committed?: () => void): void {
 	arrival++;
 	externalHref = null;
-	const update = () => flushSync(notifyPlay);
+	const update = () => {
+		flushSync(notifyPlay);
+		committed?.();
+	};
 	const startViewTransition = (
 		window.document as {
 			startViewTransition?: (options: { update: () => void; types: string[] } | (() => void)) => unknown;
 		}
 	).startViewTransition?.bind(window.document);
-	if (!motionOn || startViewTransition === undefined) {
+	// A startup auto-walk can land before the shell has ever revealed the
+	// source. Commit it directly: there are no visible old pixels to film.
+	if (!motionOn || !playerReady || startViewTransition === undefined) {
 		update();
 		return;
 	}
@@ -651,17 +857,176 @@ function swapScreen(direction: SwapDirection, transition?: string): void {
 	}
 }
 
-async function restartSession(): Promise<void> {
-	if (play === undefined) return;
+async function restartSession(deferWhenPending = true): Promise<boolean> {
+	if (play === undefined) return true;
+	if (pendingMount !== undefined) {
+		if (deferWhenPending) deferPlayerAction(() => void restartSession());
+		return false;
+	}
 	// a fresh read, so an edited seed lands without a reload
 	const scenario = await loadScenario(scenarioName);
+	if (pendingMount !== undefined) {
+		if (deferWhenPending) deferPlayerAction(() => void restartSession());
+		return false;
+	}
 	mockConfig = scenario.mock;
 	const from = currentFrame;
 	stack.length = 0;
 	currentFrame = play.start;
 	seedState(scenario.state);
 	recordHop("restart", from, play.start);
-	swapScreen("restart");
+	requestScreenSwap(from, "restart");
+	return true;
+}
+
+interface PlayerControllerCommand {
+	request: number;
+	command: string;
+	generation: number;
+	frame: string;
+}
+
+function playerControllerCommand(
+	message: Record<string, unknown>,
+	command: string,
+	extra: string[] = [],
+): PlayerControllerCommand | undefined {
+	const required = ["spool", "command", "request", "generation", "frame", ...extra];
+	const keys = Object.keys(message);
+	if (
+		keys.length !== required.length ||
+		!required.every((key) => keys.includes(key)) ||
+		message.spool !== "player-command" ||
+		message.command !== command ||
+		typeof message.request !== "number" ||
+		!Number.isSafeInteger(message.request) ||
+		message.request <= 0 ||
+		typeof message.generation !== "number" ||
+		!Number.isInteger(message.generation) ||
+		typeof message.frame !== "string" ||
+		!(
+			(message.generation === navigationGeneration && message.frame === currentFrame) ||
+			(pendingMount !== undefined &&
+				message.generation === pendingMount.generation - 1 &&
+				message.frame === pendingMount.from)
+		)
+	) {
+		return;
+	}
+	return {
+		request: message.request,
+		command,
+		generation: message.generation,
+		frame: message.frame,
+	};
+}
+
+function completePlayerControllerCommand(command: PlayerControllerCommand, outcome: "completed" | "failed"): void {
+	postPlayerMessage({
+		spool: "player-command-complete",
+		request: command.request,
+		command: command.command,
+		generation: command.generation,
+		frame: command.frame,
+		outcome,
+	});
+}
+
+let deferredPlayerControllerCommand: (() => void) | undefined;
+
+function deferPlayerControllerCommand(action: () => void): boolean {
+	if (pendingMount === undefined) return false;
+	deferredPlayerControllerCommand = action;
+	return true;
+}
+
+function replayDeferredPlayerControllerCommand(): void {
+	if (pendingMount !== undefined) return;
+	const action = deferredPlayerControllerCommand;
+	if (action === undefined) return;
+	deferredPlayerControllerCommand = undefined;
+	action();
+}
+
+function completeAfterNavigation(command: PlayerControllerCommand): void {
+	const mount = pendingMount;
+	if (mount === undefined) {
+		completePlayerControllerCommand(command, "completed");
+		return;
+	}
+	mount.controllerCommand = command;
+}
+
+function runBackControllerCommand(command: PlayerControllerCommand): void {
+	if (deferPlayerControllerCommand(() => runBackControllerCommand(command))) return;
+	back();
+	completeAfterNavigation(command);
+}
+
+function runRewindControllerCommand(command: PlayerControllerCommand, index: number): void {
+	if (deferPlayerControllerCommand(() => runRewindControllerCommand(command, index))) return;
+	rewindTo(index);
+	completeAfterNavigation(command);
+}
+
+function runToggleMotionControllerCommand(command: PlayerControllerCommand): void {
+	if (deferPlayerControllerCommand(() => runToggleMotionControllerCommand(command))) return;
+	playerController.toggleMotion();
+	completePlayerControllerCommand(command, "completed");
+}
+
+function runDismissExternalControllerCommand(command: PlayerControllerCommand): void {
+	if (deferPlayerControllerCommand(() => runDismissExternalControllerCommand(command))) return;
+	playerController.dismissExternal();
+	completePlayerControllerCommand(command, "completed");
+}
+
+async function runRestartControllerCommand(command: PlayerControllerCommand): Promise<void> {
+	if (deferPlayerControllerCommand(() => void runRestartControllerCommand(command))) return;
+	try {
+		const restarted = await restartSession(false);
+		if (!restarted) {
+			deferPlayerControllerCommand(() => void runRestartControllerCommand(command));
+			return;
+		}
+		completeAfterNavigation(command);
+	} catch {
+		completePlayerControllerCommand(command, "failed");
+	}
+}
+
+function handlePlayerControllerCommand(message: Record<string, unknown>): boolean {
+	switch (message.command) {
+		case "back": {
+			const command = playerControllerCommand(message, "back");
+			if (command !== undefined) runBackControllerCommand(command);
+			return true;
+		}
+		case "restart": {
+			const command = playerControllerCommand(message, "restart");
+			if (command !== undefined) void runRestartControllerCommand(command);
+			return true;
+		}
+		case "rewind": {
+			const command = playerControllerCommand(message, "rewind", ["index"]);
+			if (command !== undefined && typeof message.index === "number" && Number.isInteger(message.index)) {
+				runRewindControllerCommand(command, message.index);
+			}
+			return true;
+		}
+		case "toggle-motion": {
+			const command = playerControllerCommand(message, "toggle-motion");
+			if (command !== undefined) runToggleMotionControllerCommand(command);
+			return true;
+		}
+		case "dismiss-external": {
+			const command = playerControllerCommand(message, "dismiss-external");
+			if (command !== undefined) runDismissExternalControllerCommand(command);
+			return true;
+		}
+		default:
+			return false;
+	}
 }
 
 /**
@@ -671,24 +1036,349 @@ async function restartSession(): Promise<void> {
 function followGeometry(): void {
 	const config = play;
 	if (config === undefined || !embedded) return;
-	addEventListener("message", (event) => {
-		if (event.source !== window.parent) return;
-		const message = event.data as { spool?: string; frames?: { name: string; w: number; h: number }[] } | null;
-		if (message?.spool !== "player-geometry" || !Array.isArray(message.frames)) return;
-		let moved = false;
-		for (const frame of message.frames) {
-			const known = config.frames[frame.name];
-			if (known !== undefined && (known.w !== frame.w || known.h !== frame.h)) {
-				config.frames[frame.name] = { w: frame.w, h: frame.h };
-				moved = true;
+	let geometryRevision = 0;
+	let geometryReadyScheduled = false;
+	const scheduleGeometryReady = () => {
+		if (geometryReadyScheduled || geometryRevision === 0) return;
+		geometryReadyScheduled = true;
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				geometryReadyScheduled = false;
+				const geometry = config.frames[currentFrame];
+				if (geometry === undefined || window.innerWidth !== geometry.w || window.innerHeight !== geometry.h) {
+					return;
+				}
+				postPlayerMessage({
+					spool: "player-geometry-ready",
+					revision: geometryRevision,
+					frame: currentFrame,
+					w: window.innerWidth,
+					h: window.innerHeight,
+				});
+			});
+		});
+	};
+	receivePlayerMessages((message) => {
+		if (message.spool === "player-geometry") {
+			if (
+				typeof message.revision !== "number" ||
+				!Number.isInteger(message.revision) ||
+				message.revision <= geometryRevision ||
+				!Array.isArray(message.frames)
+			) {
+				return;
+			}
+			geometryRevision = message.revision;
+			let moved = false;
+			for (const frame of message.frames) {
+				if (!isPlayerGeometry(frame)) continue;
+				const known = Object.hasOwn(config.frames, frame.name) ? config.frames[frame.name] : undefined;
+				if (known !== undefined && (known.w !== frame.w || known.h !== frame.h)) {
+					config.frames[frame.name] = { w: frame.w, h: frame.h };
+					if (pendingMount?.to === frame.name) {
+						pendingMount.w = frame.w;
+						pendingMount.h = frame.h;
+					}
+					moved = true;
+				}
+			}
+			if (moved) {
+				notifyPlay();
+				announcePendingMount();
+			}
+			scheduleGeometryReady();
+			return;
+		}
+		if (message.spool !== "player-command") return;
+		if (handlePlayerControllerCommand(message)) return;
+		if (
+			typeof message.generation !== "number" ||
+			message.generation !== navigationGeneration ||
+			message.frame !== currentFrame
+		) {
+			return;
+		}
+		switch (message.command) {
+			case "transition": {
+				const mount = pendingMount;
+				if (
+					mount === undefined ||
+					mount.mounted ||
+					mount.decision === "cut" ||
+					message.generation !== mount.generation ||
+					message.from !== mount.from ||
+					message.to !== mount.to ||
+					!isPositivePlayerInteger(message.w) ||
+					!isPositivePlayerInteger(message.h) ||
+					currentFrame !== mount.to ||
+					mountedFrame !== mount.from ||
+					message.w !== mount.w ||
+					message.h !== mount.h ||
+					window.innerWidth !== message.w ||
+					window.innerHeight !== message.h
+				) {
+					if (
+						mount !== undefined &&
+						!mount.mounted &&
+						message.generation === mount.generation &&
+						message.from === mount.from &&
+						message.to === mount.to
+					) {
+						postPlayerMessage({
+							spool: "player-transition-mismatch",
+							generation: mount.generation,
+							from: mount.from,
+							to: mount.to,
+							w: window.innerWidth,
+							h: window.innerHeight,
+						});
+					}
+					return;
+				}
+				mount.decision = "transition";
+				postPlayerMessage({
+					spool: "player-transition-ready",
+					generation: mount.generation,
+					from: mount.from,
+					to: mount.to,
+					w: mount.w,
+					h: mount.h,
+				});
+				return;
+			}
+			case "transition-commit": {
+				const mount = pendingMount;
+				if (
+					mount === undefined ||
+					mount.mounted ||
+					mount.decision !== "transition" ||
+					message.generation !== mount.generation ||
+					message.from !== mount.from ||
+					message.to !== mount.to ||
+					message.w !== mount.w ||
+					message.h !== mount.h ||
+					currentFrame !== mount.to ||
+					mountedFrame !== mount.from ||
+					window.innerWidth !== mount.w ||
+					window.innerHeight !== mount.h
+				) {
+					if (mount !== undefined && !mount.mounted && message.generation === mount.generation) {
+						postPlayerMessage({
+							spool: "player-transition-mismatch",
+							generation: mount.generation,
+							from: mount.from,
+							to: mount.to,
+							w: window.innerWidth,
+							h: window.innerHeight,
+						});
+					}
+					return;
+				}
+				mount.decision = "transition-commit";
+				postPlayerMessage({
+					spool: "player-transition-commit-ready",
+					generation: mount.generation,
+					from: mount.from,
+					to: mount.to,
+					w: mount.w,
+					h: mount.h,
+				});
+				return;
+			}
+			case "transition-apply": {
+				const mount = pendingMount;
+				if (
+					mount === undefined ||
+					mount.mounted ||
+					mount.decision !== "transition-commit" ||
+					message.generation !== mount.generation ||
+					message.from !== mount.from ||
+					message.to !== mount.to ||
+					message.w !== mount.w ||
+					message.h !== mount.h ||
+					currentFrame !== mount.to ||
+					mountedFrame !== mount.from ||
+					window.innerWidth !== mount.w ||
+					window.innerHeight !== mount.h
+				) {
+					if (mount !== undefined && !mount.mounted && message.generation === mount.generation) {
+						postPlayerMessage({
+							spool: "player-transition-mismatch",
+							generation: mount.generation,
+							from: mount.from,
+							to: mount.to,
+							w: window.innerWidth,
+							h: window.innerHeight,
+						});
+					}
+					return;
+				}
+				mount.mounted = true;
+				mountedFrame = mount.to;
+				swapScreen(mount.direction, mount.transition, () => {
+					if (pendingMount !== mount) return;
+					postPlayerMessage({
+						spool: "player-transitioned",
+						generation: mount.generation,
+						from: mount.from,
+						to: mount.to,
+						w: mount.w,
+						h: mount.h,
+					});
+					pendingMount = undefined;
+					if (mount.controllerCommand !== undefined) {
+						completePlayerControllerCommand(mount.controllerCommand, "completed");
+					}
+					replayDeferredPlayerControllerCommand();
+					replayDeferredPlayerActions();
+				});
+				return;
+			}
+			case "prepare": {
+				const mount = pendingMount;
+				if (
+					mount === undefined ||
+					mount.mounted ||
+					mount.decision === "cut" ||
+					message.generation !== mount.generation ||
+					message.from !== mount.from ||
+					message.to !== mount.to ||
+					!isPositivePlayerInteger(message.w) ||
+					!isPositivePlayerInteger(message.h) ||
+					currentFrame !== mount.to ||
+					mountedFrame !== mount.from
+				) {
+					return;
+				}
+				mount.decision = "cut";
+				mount.w = message.w;
+				mount.h = message.h;
+				config.frames[mount.to] = { w: mount.w, h: mount.h };
+				notifyPlay();
+				announcePendingMount();
+				return;
+			}
+			case "mount": {
+				const mount = pendingMount;
+				if (
+					mount === undefined ||
+					message.generation !== mount.generation ||
+					message.from !== mount.from ||
+					message.to !== mount.to ||
+					message.w !== mount.w ||
+					message.h !== mount.h ||
+					currentFrame !== mount.to ||
+					window.innerWidth !== mount.w ||
+					window.innerHeight !== mount.h
+				) {
+					return;
+				}
+				if (!mount.mounted) {
+					if (mountedFrame !== mount.from) return;
+					mount.mounted = true;
+					mountedFrame = mount.to;
+					arrival++;
+					externalHref = null;
+					flushSync(notifyPlay);
+				} else if (mountedFrame !== mount.to) {
+					return;
+				}
+				announcePendingMount();
+				return;
+			}
+			case "settle": {
+				const mount = pendingMount;
+				if (
+					mount === undefined ||
+					!mount.mounted ||
+					message.generation !== mount.generation ||
+					message.from !== mount.from ||
+					message.to !== mount.to ||
+					message.w !== window.innerWidth ||
+					message.h !== window.innerHeight ||
+					currentFrame !== mount.to ||
+					mountedFrame !== mount.to
+				) {
+					return;
+				}
+				const controllerCommand = mount.controllerCommand;
+				pendingMount = undefined;
+				if (controllerCommand !== undefined) {
+					completePlayerControllerCommand(controllerCommand, "completed");
+				}
+				replayDeferredPlayerControllerCommand();
+				replayDeferredPlayerActions();
+				return;
 			}
 		}
-		if (moved) notifyPlay();
+	});
+	if (config.shell === true) {
+		addEventListener("resize", () => {
+			announcePendingMount();
+			scheduleGeometryReady();
+		});
+		addEventListener("mousemove", () => {
+			postPlayerMessage({ spool: "player-wake" });
+		});
+	}
+}
+
+function cutMessage(
+	spool: string,
+	mount: PendingMount,
+	w = window.innerWidth,
+	h = window.innerHeight,
+): Record<string, unknown> {
+	return {
+		spool,
+		generation: mount.generation,
+		from: mount.from,
+		to: mount.to,
+		w,
+		h,
+	};
+}
+
+function announcePendingMount(): void {
+	const mount = pendingMount;
+	if (mount === undefined) return;
+	if (!mount.mounted) {
+		postPlayerMessage(cutMessage("player-viewport", mount));
+		return;
+	}
+	requestAnimationFrame(() => {
+		requestAnimationFrame(() => {
+			if (pendingMount !== mount || !mount.mounted) return;
+			postPlayerMessage(cutMessage("player-mounted", mount));
+		});
 	});
 }
 
+function isPlayerGeometry(value: unknown): value is { name: string; w: number; h: number } {
+	if (typeof value !== "object" || value === null) return false;
+	const { name, w, h } = value as { name?: unknown; w?: unknown; h?: unknown };
+	return (
+		typeof name === "string" &&
+		typeof w === "number" &&
+		Number.isInteger(w) &&
+		w > 0 &&
+		typeof h === "number" &&
+		Number.isInteger(h) &&
+		h > 0
+	);
+}
+
+function isPositivePlayerInteger(value: unknown): value is number {
+	return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
 function closePlayer(): void {
-	if (embedded) window.parent.postMessage({ spool: "player-close" }, "*");
+	if (!embedded) return;
+	if (play?.shell === true) {
+		postPlayerMessage({ spool: "player-close" });
+	} else {
+		window.parent.postMessage({ spool: "player-close" }, "*");
+	}
 }
 
 const playerController: PlayerController = {
@@ -713,8 +1403,11 @@ const playerController: PlayerController = {
 	elapsed,
 	// the fallback restates the projection's default footprint across the
 	// compile-unit boundary; unreachable while navigate guards membership
-	geometry: (frame) => play?.frames[frame] ?? { w: 390, h: 844 },
-	terminal: (frame) => play?.terminals?.[frame] !== undefined,
+	geometry: (frame) =>
+		play !== undefined && Object.hasOwn(play.frames, frame)
+			? (play.frames[frame] as { w: number; h: number })
+			: { w: 390, h: 844 },
+	terminal: (frame) => play?.terminals !== undefined && Object.hasOwn(play.terminals, frame),
 	back,
 	restart: () => void restartSession(),
 	rewind: rewindTo,
@@ -759,9 +1452,35 @@ export function bootPlayer(frames: Record<string, ComponentType>): void {
 	followGeometry();
 	// the tape opens where the session does, so hop zero is the start frame
 	recordHop("restart", config.start, config.start);
-	createRoot(root).render(
-		createElement(Player, { frames: { ...frames, ...termScreens }, controller: playerController }),
-	);
+	const screens = Object.fromEntries([...Object.entries(frames), ...Object.entries(termScreens)]);
+	playerBooted = true;
+	if (config.shell === true) {
+		const playerRoot = createRoot(root);
+		flushSync(() => playerRoot.render(createElement(PlayerDocument, { frames: screens })));
+		postPlayerState();
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				const geometry = config.frames[mountedFrame];
+				if (geometry === undefined) return;
+				playerReady = true;
+				postPlayerMessage({
+					spool: "player-ready",
+					generation: navigationGeneration,
+					frame: mountedFrame,
+					w: window.innerWidth,
+					h: window.innerHeight,
+				});
+			});
+		});
+		return;
+	}
+	createRoot(root).render(createElement(Player, { frames: screens, controller: playerController }));
+}
+
+function PlayerDocument({ frames }: { frames: Record<string, ComponentType> }) {
+	useSyncExternalStore(playerController.subscribe, playerController.version);
+	const Screen = frames[mountedFrame];
+	return Screen === undefined ? null : createElement(Screen, { key: arrival });
 }
 
 // --- mock -------------------------------------------------------------------

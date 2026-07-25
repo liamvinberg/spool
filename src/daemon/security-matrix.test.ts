@@ -40,6 +40,12 @@ function makeSecurityHarness() {
 	return { spoolDir, project, daemon, request, control, render };
 }
 
+function shellConfigOf(document: string): { innerUrl: string } {
+	const serialized = document.match(/window\.__SPOOL_SHELL__\s*=\s*JSON\.parse\(("(?:\\.|[^"\\])*")\)/)?.[1];
+	expect(serialized, "player shell config").toBeDefined();
+	return JSON.parse(JSON.parse(serialized ?? '"{}"'));
+}
+
 describe("daemon authority matrix", () => {
 	it("accepts only the configured control and render hosts", async () => {
 		const { request } = makeSecurityHarness();
@@ -151,15 +157,88 @@ describe("daemon authority matrix", () => {
 		expect(shell.status).toBe(200);
 		expect(shell.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
 		expect(shell.headers.get("x-frame-options")).toBe("DENY");
-		expect(shellHtml).toContain('sandbox="allow-scripts"');
-		expect(shellHtml).toContain(`http://${RENDER_HOST}${playPath}`);
+		const shellInner = new URL(shellConfigOf(shellHtml).innerUrl);
+		expect(`${shellInner.origin}${shellInner.pathname}`).toBe(`http://${RENDER_HOST}${playPath.split("?")[0]}`);
+		expect(shellInner.searchParams.get("frame")).toBe("home");
+		expect(shellInner.searchParams.get("scenario")).toBe("default");
+		expect(shellInner.searchParams.get("shell")).toBe("1");
+		expect(shellInner.searchParams.get("handoff")).toMatch(/^[A-Za-z0-9_-]{43}$/);
 		expect(shellHtml).not.toContain("<spool-boot>");
+		expect(shellHtml).not.toContain('message.spool === "player-close"');
+		// The trusted page owns player chrome and transforms only the native iframe
+		// host. The render document stays a composed frame document at its viewport.
+		expect(shellHtml).toContain("/player-assets/player-shell.js");
+		expect(shellHtml).toContain("/player-assets/react.js");
 
-		const inner = await render(playPath);
+		const inner = await render(`${shellInner.pathname}${shellInner.search}`);
 		const innerHtml = await inner.text();
 		expect(inner.status).toBe(200);
 		expect(inner.headers.get("content-security-policy")).toBe("sandbox allow-scripts");
 		expect(innerHtml).toContain("window.__SPOOL_PLAY__");
+	});
+
+	it("pins the resolved start frame into the render-origin player request", async () => {
+		const { project, request } = makeSecurityHarness();
+		const shell = await request(CONTROL_HOST, `/play/${encodeURIComponent(project.name)}`);
+
+		expect(shell.status).toBe(200);
+		const inner = new URL(shellConfigOf(await shell.text()).innerUrl);
+		expect(`${inner.origin}${inner.pathname}`).toBe(`http://${RENDER_HOST}/play/${encodeURIComponent(project.name)}`);
+		expect(inner.searchParams.get("frame")).toBe("home");
+		expect(inner.searchParams.get("scenario")).toBe("default");
+		expect(inner.searchParams.get("shell")).toBe("1");
+		expect(inner.searchParams.get("handoff")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+	});
+
+	it("requires one bound, one-time shell handoff on the render origin", async () => {
+		const { project, request, render } = makeSecurityHarness();
+		const playPath = `/play/${encodeURIComponent(project.name)}?frame=home`;
+
+		const plain = await render(`${playPath}&scenario=default&shell=1`);
+		expect(plain.status).toBe(403);
+		expect(await plain.text()).not.toContain("window.__SPOOL_PLAY__");
+
+		const shell = await request(CONTROL_HOST, playPath);
+		const inner = new URL(shellConfigOf(await shell.text()).innerUrl);
+		const first = await render(`${inner.pathname}${inner.search}`);
+		expect(first.status).toBe(200);
+		expect(await first.text()).toContain("window.__SPOOL_PLAY__");
+
+		const replay = await render(`${inner.pathname}${inner.search}`);
+		expect(replay.status).toBe(403);
+		expect(await replay.text()).not.toContain("window.__SPOOL_PLAY__");
+
+		for (const mutate of [
+			(url: URL) => url.searchParams.set("frame", "other"),
+			(url: URL) => url.searchParams.set("scenario", "other"),
+			(url: URL) => {
+				url.pathname = "/play/other";
+			},
+		]) {
+			const nextShell = await request(CONTROL_HOST, playPath);
+			const original = new URL(shellConfigOf(await nextShell.text()).innerUrl);
+			const wrong = new URL(original);
+			mutate(wrong);
+			expect((await render(`${wrong.pathname}${wrong.search}`)).status).toBe(403);
+			expect((await render(`${original.pathname}${original.search}`)).status).toBe(403);
+		}
+
+		expect((await render(`${playPath}&scenario=default&shell=1&handoff=malformed`)).status).toBe(400);
+	});
+
+	it("bounds outstanding shell handoffs and evicts the oldest", async () => {
+		const { project, request, render } = makeSecurityHarness();
+		const playPath = `/play/${encodeURIComponent(project.name)}?frame=home`;
+		const issued: URL[] = [];
+		for (let index = 0; index < 65; index++) {
+			const shell = await request(CONTROL_HOST, playPath);
+			issued.push(new URL(shellConfigOf(await shell.text()).innerUrl));
+		}
+
+		const oldest = issued[0] as URL;
+		const newest = issued.at(-1) as URL;
+		expect((await render(`${oldest.pathname}${oldest.search}`)).status).toBe(403);
+		expect((await render(`${newest.pathname}${newest.search}`)).status).toBe(200);
 	});
 
 	it("serves public runtime assets only from the render host", async () => {
@@ -169,6 +248,18 @@ describe("daemon authority matrix", () => {
 		expect(runtime.status).toBe(200);
 		expect(runtime.headers.get("access-control-allow-origin")).toBe("*");
 		expect((await request(CONTROL_HOST, "/vendor/spool.js")).status).toBe(404);
+		expect((await render("/vendor/player-shell.js")).status).toBe(404);
+
+		const shellRuntime = await request(CONTROL_HOST, "/player-assets/player-shell.js");
+		expect(shellRuntime.status).toBe(200);
+		expect(shellRuntime.headers.get("access-control-allow-origin")).toBeNull();
+		expect(await shellRuntime.text()).toContain("bootPlayerShell");
+		expect((await request(CONTROL_HOST, "/player-assets/react.js")).status).toBe(200);
+		expect((await request(CONTROL_HOST, "/player-assets/fonts/fragment-mono-latin-400-normal.woff2")).status).toBe(
+			200,
+		);
+		expect((await render("/player-assets/player-shell.js")).status).toBe(404);
+		expect((await render("/player-assets/react.js")).status).toBe(404);
 	});
 });
 

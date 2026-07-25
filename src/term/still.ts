@@ -2,7 +2,7 @@
  * Terminal stills (#42): a screen grid rendered to SVG in the pinned font.
  * One renderer serves every surface — canvas stills (font embedded as a data
  * URI, because an <img>-loaded SVG can reach nothing external), player
- * screens (inline SVG, the document's own @font-face applies), and shot.
+ * screens, and shot.
  * Rendering from the grid rather than capturing pixels is what makes stills
  * font-correct by construction and crisp at any zoom.
  */

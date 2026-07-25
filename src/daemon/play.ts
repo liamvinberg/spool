@@ -30,6 +30,8 @@ export interface PlayerConfig {
 	frames: Record<string, { w: number; h: number }>;
 	/** Terminal frames as static grids from the daemon-held buffer (#42). */
 	terminals?: Record<string, { svg: string }>;
+	/** The control-origin shell mounts this composed document in a native iframe. */
+	shell?: true;
 }
 
 export interface PlayerBundle {
@@ -144,10 +146,10 @@ function playerEntry(frames: PlayerFrameRef[]): string {
 	const imports = frames
 		.map((ref, i) => `import f${i} from ${JSON.stringify(`./${frameFolder(ref.name, ref.page)}/frame.tsx`)};`)
 		.join("\n");
-	const map = frames.map((ref, i) => `${JSON.stringify(ref.name)}: f${i}`).join(", ");
+	const entries = frames.map((ref, i) => `[${JSON.stringify(ref.name)}, f${i}]`).join(", ");
 	return `import { bootPlayer } from "spool";
 ${imports}
-bootPlayer({ ${map} });
+bootPlayer(Object.fromEntries([${entries}]));
 `;
 }
 
@@ -169,14 +171,16 @@ export function assemblePlayerDocument(config: PlayerConfig, bundle: PlayerBundl
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>${escapeHtml(config.project)} · spool</title>
-<script>window.__SPOOL_PLAY__ = ${escapeJsonScript(config)}</script>
+<script>window.__SPOOL_PLAY__ = JSON.parse(${escapeJsonScript(JSON.stringify(config))})</script>
+<style>html, body, #root { height: 100%; }</style>
 <style>${escapeInlineStyle(bundle.css)}</style>
-${fontsBlock}${bundledBlock}<style>${escapeInlineStyle(CHROME_CSS)}</style>
+${fontsBlock}${bundledBlock}
+${config.shell === true ? "" : `<style>${escapeInlineStyle(CHROME_CSS)}</style>`}
 ${transitionsBlock}<script type="importmap">${escapeJsonScript(bundle.importMap)}</script>
 </head>
 <body>
-<div id="root"><div class="spool-boot">booting</div></div>
-<script type="module">${escapeInlineScript(bundle.bootJs)}</script>
+<div id="root"><div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#8e8c88;font:400 12px/18px ui-monospace,monospace">booting</div></div>
+${config.shell === true ? '<script type="module">import "spool";</script>\n' : ""}<script type="module">${escapeInlineScript(bundle.bootJs)}</script>
 </body>
 </html>
 `;
@@ -202,6 +206,10 @@ export function chromeFontFile(name: string): string | undefined {
  * or shadows (#13 law 4). The HUD and the rail each carry a view-transition-
  * name, so a screen transition films the screen and never smears the chrome.
  */
+export function playerChromeCss(fontBase = "/vendor/fonts/"): string {
+	return CHROME_CSS.replaceAll("/vendor/fonts/", fontBase);
+}
+
 const CHROME_CSS = `:root { color-scheme: dark; }
 @font-face {
 	font-family: "Fragment Mono";
@@ -210,36 +218,8 @@ const CHROME_CSS = `:root { color-scheme: dark; }
 	font-display: swap;
 	src: url("/vendor/fonts/fragment-mono-latin-400-normal.woff2") format("woff2");
 }
-@font-face {
-	font-family: "JetBrains Mono";
-	font-style: normal;
-	font-weight: 400;
-	font-display: swap;
-	src: url("/vendor/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
-}
-@font-face {
-	font-family: "JetBrains Mono";
-	font-style: normal;
-	font-weight: 700;
-	font-display: swap;
-	src: url("/vendor/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
-}
 html, body, #root { height: 100%; }
 body { margin: 0; background: #0e0e0e; overflow: hidden; }
-/* a terminal screen: the static Spool-owned document over its persisted poster */
-.spool-term-screen { position: relative; height: 100%; background: #111110; }
-.spool-term-screen svg { display: block; }
-.spool-term-poster { position: absolute; inset: 0; }
-.spool-term-screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-.spool-boot {
-	position: fixed;
-	inset: 0;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	color: #8e8c88;
-	font: 400 12px/18px "Fragment Mono", ui-monospace, monospace;
-}
 .spool-stage { position: relative; width: 100%; height: 100%; }
 /* the chrome's typography stops at the chrome: the stage is the screen's
    ancestor, so anything set there would inherit into the frame and break the
@@ -251,16 +231,13 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 	font-synthesis: none;
 }
 /* sleep is the resting state (#60): stillness fades every piece of chrome
-   together and takes the cursor with it; the next mousemove wakes it */
+   together and takes the cursor with it */
 .spool-stage.is-asleep { cursor: none; }
 .spool-screen {
 	position: absolute;
 	top: 0;
 	left: 0;
 	transform-origin: top left;
-	/* a frame document's environment, reproduced: light UA defaults, black
-	   text — the same screen must render identically here and in a canvas
-	   iframe, whatever scheme the chrome runs */
 	color-scheme: light;
 	color: #000;
 	background: #fff;
@@ -270,10 +247,6 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 	view-transition-name: spool-screen;
 }
 .spool-screen.is-terminal { color-scheme: dark; background: #111110; }
-/* the scroller is a separate, untransformed element: an iframe'd frame
-   scrolls when its content overflows, while position: fixed stays pinned to
-   the frame edge — fixed content contains to the transformed screen above,
-   escaping this element's scroll exactly like it escapes a body's */
 .spool-screen-scroll {
 	width: 100%;
 	height: 100%;
@@ -281,6 +254,18 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 	overscroll-behavior: contain;
 }
 .spool-screen-scroll.is-terminal { overflow: hidden; }
+.spool-player-error {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 100%;
+	padding: 24px;
+	overflow: auto;
+	background: #111110;
+	color: #b5b3ad;
+	font: 400 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.spool-player-error strong { display: block; margin-bottom: 16px; color: #f5391a; font-weight: 400; }
+.spool-player-error pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 /* the HUD: no containers, only marks in the stage's corners */
 .spool-hud {
 	position: fixed;
@@ -364,8 +349,6 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 	padding: 0;
 	list-style: none;
 	overflow-y: auto;
-	/* a lone overflow-y computes the other axis to auto, not visible: without
-	   this the rail grows a second, sideways scrollbar the moment a row is wide */
 	overflow-x: hidden;
 	overscroll-behavior: contain;
 	scrollbar-width: thin;
@@ -376,8 +359,6 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 .spool-rail-row { display: flex; align-items: center; gap: 8px; }
 .spool-rail-key { flex: none; color: #8e8c88; }
 .spool-rail-value { margin: 0 0 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* one shape for every row you can press: the hit area bleeds into the rail's
-   padding so the highlight reads as a full-width band */
 .spool-rail-row.is-button, .spool-walk-hop {
 	display: flex;
 	align-items: center;
@@ -394,7 +375,6 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 }
 .spool-rail-row.is-button { color: inherit; }
 .spool-rail-row.is-button:hover, .spool-walk-hop:hover { background: #1c1c1c; }
-/* the tape scrubs: an earlier hop is a place the session can stand again */
 .spool-walk-edge {
 	padding-left: 12px;
 	font-size: 10px;
