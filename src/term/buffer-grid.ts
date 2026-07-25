@@ -7,6 +7,8 @@
  */
 
 import type { IBufferCell, Terminal } from "@xterm/headless";
+import { isBoxGlyph } from "./box-glyphs";
+import { cursorVisible } from "./cursor-visibility";
 import type { Grid, Run } from "./still";
 import { TERM_ANSI, TERM_BACKGROUND, TERM_FOREGROUND } from "./theme";
 
@@ -20,20 +22,38 @@ export function gridFromBuffer(term: Terminal): Grid {
 			for (let x = 0; x < term.cols; x++) {
 				const cell = line.getCell(x);
 				if (cell === undefined || cell.getWidth() === 0) continue;
-				const style = styleCell(cell);
-				const text = cell.getChars() === "" ? " " : cell.getChars();
+				const run = runFromCell(cell);
 				const previous = runs[runs.length - 1];
-				if (previous !== undefined && sameStyle(previous, style)) {
-					previous.text += text;
+				if (run.box !== true && previous !== undefined && previous.box !== true && sameStyle(previous, run)) {
+					previous.text += run.text;
 					previous.width = (previous.width ?? 0) + cell.getWidth();
 				} else {
-					runs.push({ ...style, text, width: cell.getWidth() });
+					runs.push(run);
 				}
 			}
 		}
 		lines.push(trimBareTail(runs));
 	}
-	return { cols: term.cols, rows: term.rows, lines };
+	const cursorCol = Math.min(buffer.cursorX, term.cols - 1);
+	const cursorCell = buffer.getLine(buffer.viewportY + buffer.cursorY)?.getCell(cursorCol);
+	const showCursor = cursorVisible(term) && cursorCell !== undefined && cursorCell.getWidth() !== 0;
+	return {
+		cols: term.cols,
+		rows: term.rows,
+		lines,
+		...(showCursor ? { cursor: { col: cursorCol, row: buffer.cursorY, cell: runFromCell(cursorCell) } } : {}),
+	};
+}
+
+function runFromCell(cell: IBufferCell | undefined): Run {
+	if (cell === undefined) return { text: " ", width: 1, fg: TERM_FOREGROUND };
+	const text = cell.getChars() === "" ? " " : cell.getChars();
+	return {
+		...styleCell(cell),
+		text,
+		width: Math.max(1, cell.getWidth()),
+		...(isBoxGlyph(text) ? { box: true as const } : {}),
+	};
 }
 
 /** Blank default cells padding a line's tail carry no information. */

@@ -21,8 +21,8 @@ class FakeClient {
 	}
 }
 
-function harness(options?: { detachGraceMs?: number }) {
-	const root = makeTempDir();
+function harness(options?: { detachGraceMs?: number; root?: string }) {
+	const root = options?.root ?? makeTempDir();
 	writeDesignFile(root, join("frames", "dash", "term.tsx"), "// tui\n");
 	writeDesignFile(root, join("frames", "dash", "frame.json"), `{\n\t"x": 0,\n\t"y": 0,\n\t"w": 720,\n\t"h": 480\n}\n`);
 	const { spawned, executor } = fixtureTermExecutor();
@@ -161,6 +161,26 @@ describe("attach and stream", () => {
 
 		spawned[0]?.emit("hello from tui");
 		expect(client.streamed()).toContain("hello from tui");
+	});
+
+	it("uses DECTCEM for the active terminal still's cursor", async () => {
+		const { root, spawned, sessions } = harness();
+		await sessions.attach(root, "dash", new FakeClient());
+		spawned[0]?.emit("x\x1b[?25l");
+		await flush();
+		expect(await sessions.still(root, "dash")).not.toContain('fill="#f0efeb"');
+
+		spawned[0]?.emit("\x1b[?25h");
+		await flush();
+		expect(await sessions.still(root, "dash")).toContain('fill="#f0efeb"');
+	});
+
+	it("replays DECSTR with its visible cursor state", async () => {
+		const { root, spawned, sessions } = harness();
+		await sessions.attach(root, "dash", new FakeClient());
+		spawned[0]?.emit("x\x1b[?25l\x1b[!p");
+		await flush();
+		expect(await sessions.still(root, "dash")).toContain('fill="#f0efeb"');
 	});
 
 	it("delivers input bytes to the process untouched", async () => {
@@ -400,6 +420,38 @@ describe("hibernation", () => {
 
 		expect(spawned[0]?.killed).toBe(true);
 		expect(existsSync(termScreenFile(root, "dash"))).toBe(true);
+	});
+
+	it("keeps a hidden cursor hidden when a serialized screen is replayed", async () => {
+		const { root, spawned, sessions } = harness({ detachGraceMs: 10 });
+		const attached = await sessions.attach(root, "dash", new FakeClient());
+		spawned[0]?.emit("persisted\x1b[?25l");
+		await flush();
+		attached.detach();
+		await new Promise((resolve) => setTimeout(resolve, 60));
+
+		const still = await sessions.still(root, "dash");
+		expect(still).toContain("persisted");
+		expect(still).not.toContain('fill="#f0efeb"');
+	});
+
+	it("restores DECSTR's visible cursor from a hibernated screen in a new session store", async () => {
+		const first = harness({ detachGraceMs: 10 });
+		const attached = await first.sessions.attach(first.root, "dash", new FakeClient());
+		first.spawned[0]?.emit("x\b\x1b[?25l\x1b[!p");
+		await flush();
+		attached.detach();
+		await new Promise((resolve) => setTimeout(resolve, 60));
+
+		const reloaded = harness({ root: first.root });
+		const screen = await reloaded.sessions.screen(reloaded.root, "dash");
+		expect(reloaded.spawned).toHaveLength(0);
+		expect(screen).toMatchObject({
+			kind: "current",
+			grid: {
+				cursor: { col: 0, row: 0, cell: { text: "x", width: 1, fg: "#d8d6d0" } },
+			},
+		});
 	});
 
 	it("a reattach within the grace keeps the process alive", async () => {

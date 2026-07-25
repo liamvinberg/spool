@@ -3,8 +3,16 @@
 import { describe, expect, it, vi } from "vitest";
 
 class FakeTerminal {
+	static instance: FakeTerminal | undefined;
 	cols = 80;
 	rows = 24;
+	readonly options: unknown;
+	loaded: unknown[] = [];
+
+	constructor(options: unknown) {
+		this.options = options;
+		FakeTerminal.instance = this;
+	}
 
 	open(): void {}
 	focus(): void {}
@@ -14,12 +22,42 @@ class FakeTerminal {
 	}
 	reset(): void {}
 	write(): void {}
+	loadAddon(addon: unknown): void {
+		this.loaded.push(addon);
+	}
 	onData(): void {}
 	onBinary(): void {}
 	attachCustomKeyEventHandler(): void {}
 }
 
 vi.mock("@xterm/xterm", () => ({ Terminal: FakeTerminal }));
+
+class FakeWebglAddon {
+	static instance: FakeWebglAddon | undefined;
+	static throws = false;
+	disposed = false;
+	private contextLoss: (() => void) | undefined;
+
+	constructor() {
+		if (FakeWebglAddon.throws) throw new Error("WebGL unavailable");
+		FakeWebglAddon.instance = this;
+	}
+
+	onContextLoss(listener: () => void): { dispose(): void } {
+		this.contextLoss = listener;
+		return { dispose() {} };
+	}
+
+	dispose(): void {
+		this.disposed = true;
+	}
+
+	loseContext(): void {
+		this.contextLoss?.();
+	}
+}
+
+vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: FakeWebglAddon }));
 
 class FakeWebSocket extends EventTarget {
 	static readonly OPEN = 1;
@@ -50,7 +88,17 @@ describe("the terminal runtime", () => {
 		vi.stubGlobal("WebSocket", FakeWebSocket);
 
 		try {
+			const { activateWebgl } = await import("./term-webgl");
 			await import("./term-runtime");
+			expect(FakeTerminal.instance?.options).toMatchObject({ customGlyphs: true });
+			expect(FakeTerminal.instance?.loaded).toEqual([FakeWebglAddon.instance]);
+			const terminal = FakeTerminal.instance;
+			FakeWebglAddon.instance?.loseContext();
+			expect(FakeWebglAddon.instance?.disposed).toBe(true);
+			expect(FakeTerminal.instance).toBe(terminal);
+			FakeWebglAddon.throws = true;
+			await expect(activateWebgl(terminal as FakeTerminal)).resolves.toBeUndefined();
+			FakeWebglAddon.throws = false;
 			window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Meta" }));
 			const select = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, metaKey: true, key: "v" });
 			const hand = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, metaKey: true, key: "h" });

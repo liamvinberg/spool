@@ -9,7 +9,8 @@
 		"spool": "./dist/cli.js"
 	},
 	"files": [
-		"dist"
+		"dist",
+		"THIRD_PARTY_NOTICES.md"
 	],
 	"engines": {
 		"node": ">=22"
@@ -48,8 +49,9 @@
 		"@hono/node-server": "^2.0.10",
 		"@tailwindcss/oxide": "4.3.3",
 		"@xterm/addon-serialize": "^0.14.0",
+		"@xterm/addon-webgl": "0.19.0",
 		"@xterm/headless": "^6.0.0",
-		"@xterm/xterm": "^6.0.0",
+		"@xterm/xterm": "6.0.0",
 		"commander": "^15.0.0",
 		"esbuild": "^0.28.1",
 		"hono": "^4.12.31",

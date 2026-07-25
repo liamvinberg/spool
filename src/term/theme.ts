@@ -8,6 +8,7 @@
 export const TERM_BACKGROUND = "#111110";
 export const TERM_FOREGROUND = "#d8d6d0";
 export const TERM_CURSOR = "#f0efeb";
+export const TERM_CURSOR_ACCENT = TERM_BACKGROUND;
 
 /** ANSI 0–15, normal then bright. */
 export const TERM_ANSI = [
