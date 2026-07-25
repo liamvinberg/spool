@@ -202,10 +202,16 @@ function thumbUrl(project: string, frame: string, nonce: number): string {
 	return nonce === 0 ? base : `${base}?v=${nonce}`;
 }
 
-/** Thumbnail reads stay on the trusted host, where the control token is required. */
+/**
+ * Thumbnail reads stay on the trusted host, where the control token is
+ * required. Covers are the canvas's bulk traffic and a remount asks for one it
+ * usually already holds, so this rides the HTTP cache: the daemon answers
+ * `no-cache`, every read revalidates against the stored ETag, and an unchanged
+ * cover costs a 304 instead of its megabytes.
+ */
 export async function fetchThumb(project: string, frame: string, nonce: number): Promise<Blob | undefined> {
 	try {
-		const res = await controlFetch(thumbUrl(project, frame, nonce), { cache: "no-store" });
+		const res = await controlFetch(thumbUrl(project, frame, nonce));
 		return res.ok ? await res.blob() : undefined;
 	} catch {
 		return undefined;

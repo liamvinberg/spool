@@ -424,6 +424,25 @@ describe("thumbnails", () => {
 		);
 	});
 
+	it("lets a cover be cached and revalidated instead of re-sent", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "checkout", frameTsx("checkout"));
+		const app = makeApp(spoolDir);
+		await app.request(`/api/p/${name}/thumbs/checkout`, { method: "PUT", body: PNG_BYTES });
+
+		const got = await app.request(`/api/p/${name}/thumbs/checkout`);
+		// covers are the canvas's bulk traffic: held by the browser, revalidated
+		// every read, so an unchanged cover costs a 304 rather than its bytes
+		expect(got.headers.get("cache-control")).toBe("no-cache");
+		const etag = got.headers.get("etag") ?? "";
+		expect(etag).not.toBe("");
+
+		const again = await app.request(`/api/p/${name}/thumbs/checkout`, { headers: { "if-none-match": etag } });
+		expect(again.status).toBe(304);
+		expect(again.headers.get("cache-control")).toBe("no-cache");
+	});
+
 	it("rejects thumbnails for frames that do not exist and unsafe names", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = makeProject(spoolDir);

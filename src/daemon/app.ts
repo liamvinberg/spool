@@ -412,6 +412,11 @@ export function createDaemonApp({
 				const svg = await terms.still(project.root, frame, termFontDataCss());
 				if (svg === undefined) return c.text(`no persisted screen for "${frame}"`, 404);
 				const etag = `"term-still-${createHash("sha256").update(svg).digest("hex").slice(0, 32)}"`;
+				// covers are the canvas's bulk traffic: let the browser hold them and
+				// revalidate, so an unchanged still costs a 304 instead of its bytes.
+				// Revalidation re-runs the control check, so a cache can never serve
+				// a cover the caller is no longer entitled to.
+				c.header("cache-control", "no-cache");
 				if (c.req.header("if-none-match") === etag) return c.body(null, 304);
 				c.header("etag", etag);
 				c.header("content-type", "image/svg+xml; charset=utf-8");
@@ -434,6 +439,7 @@ export function createDaemonApp({
 				}
 				return c.text(`no thumbnail for "${frame}"`, 404);
 			}
+			c.header("cache-control", "no-cache");
 			if (c.req.header("if-none-match") === thumb.etag) return c.body(null, 304);
 			c.header("etag", thumb.etag);
 			c.header("content-type", "image/png");
