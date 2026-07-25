@@ -9,7 +9,7 @@ import { SpoolError } from "./errors";
  * commit.
  */
 
-const overview = `spool — the live prototyping canvas. Frames are TSX components in design/ on disk; the canvas is a projection the human arranges and plays. You author files; spool renders, links, and verifies them.
+const overview = `spool — the live prototyping canvas. Html frames are TSX components in design/ on disk; the canvas is a projection the human arranges and plays. You author files; spool renders, links, and verifies them.
 
 This skill is the complete contract: if it isn't here, spool doesn't do it.
 
@@ -17,7 +17,7 @@ The one law: never write app-owned files — design/canvas.json and design/.spoo
 
 A frame is born by writing design/frames/<name>/frame.tsx default-exporting one React component — no registration, no \`spool new\`. It appears on the canvas live. Variants are \`--\`-named sibling folders (checkout--empty). spool owns the document: pinned React, Tailwind compiled at serve, preflight, tokens, fonts, the mock and flow runtime are all injected — write only the component. Frames render nowhere outside spool.
 
-There are exactly two frame kinds, told apart by the entry filename: frame.tsx is an html frame, term.tsx is a terminal frame — a real process in a real terminal, live on the same canvas (topic: terminals). A folder holding both entries is an error naming the folder; pick one.
+There are exactly two frame kinds, told apart by the entry filename: frame.tsx is an html frame; term.tsx remains recognized as a terminal frame, but spool renders a static disabled surface and does not execute its source until project code can run inside an OS sandbox (topic: terminals). A folder holding both entries is an error naming the folder; pick one.
 
 Lifecycle (offline, take a path):
   spool init [path]     scaffold design/ in a product root and register it
@@ -35,7 +35,7 @@ The daemon: \`spool serve\` / \`spool status\` / \`spool stop\` are the handles;
 
 Topics — \`spool skill <topic>\`:
   frames      the design/ contract: folders, sidecars, shared/, libraries
-  terminals   term.tsx: real TUIs on the canvas — cells, keys, lifecycle, term.go
+  terminals   term.tsx: recognized, but static and disabled until OS-sandboxed
   flows       data-go, ui.go/back/state/use, sessions, arrows
   scenarios   named seeds: { state, mock }
   mock        the fake backend behind relative fetch
@@ -63,7 +63,7 @@ const topics: Record<string, string> = {
 
 Names are folder names — no leading dot, no slashes. Variants are \`--\`-suffixed siblings (checkout--empty), complete frames in their own right and valid walk targets. Renaming a frame is renaming its folder: update data-go and ui.go literals that target it, or the map marks them missing. Deleting is deleting the folder.
 
-Pages group frames into journeys: a folder under frames/ without a frame entry (frame.tsx or term.tsx) is a page, its subfolders are frames of either kind, and there is no deeper nesting. Each page is its own canvas; the flat top level is the permanent root page. Start flat — introduce pages when the project grows and flows cluster into distinct journeys. Frame names stay identity project-wide: unique across every page (two claimants is a loud error naming both), so walk targets, URLs, thumbnails, and geometry all survive moves. Create a page by creating its folder; move a frame by moving its folder — and re-aim its relative imports (shared/ sits one level further up from inside a page). The canvas reflects both live. Walks cross pages freely: the player ignores pages entirely, and the canvas draws a portal marker where an arrow cannot reach.
+Pages group frames into journeys: a folder under frames/ without a frame entry (frame.tsx or term.tsx) is a page, its subfolders are frames of either kind, and there is no deeper nesting. Each page is its own canvas; the flat top level is the permanent root page. Start flat — introduce pages when the project grows and flows cluster into distinct journeys. Frame names stay identity project-wide: unique across every page (two claimants is a loud error naming both), so walk targets, URLs, thumbnails, and geometry all survive moves. Create a page by creating its folder; move a frame by moving its folder — and re-aim its relative imports (shared/ sits one level further up from inside a page). The canvas reflects either kind immediately. Walks cross pages freely: the player ignores pages entirely, and the canvas draws a portal marker where an arrow cannot reach.
 
 frame.json is the one file both hands write, geometry only: spool fills it in when missing (390×844, placed beside its own page's frames) and rewrites it as the human drags and resizes; write w/h yourself for an exact size. Beyond that, spool's hands touch your files exactly one more way — the human's delete moves a frame folder to the OS Trash. Source is never edited from the canvas.
 
@@ -75,38 +75,22 @@ Libraries: design/ never gets a package.json and nothing is npm-installed there.
 
 Static assets: project files are not served in v1 — reference images and media by absolute URL or data URI; fonts via hosted @import or absolute/data src in fonts.css. A relative <img src> has nothing to answer it.`,
 
-	terminals: `A terminal frame is born by writing design/frames/<name>/term.tsx — an OpenTUI React app spool runs as a real process in a real PTY, its cell grid painted live on the canvas. No registration, no manifest: design/ never learns a toolchain exists. The first terminal frame on a machine downloads spool's pinned bun and OpenTUI once, narrated on stderr — relay the wait, don't kill it.
+	terminals: `A terminal frame is born by writing design/frames/<name>/term.tsx. Spool still recognizes the entry as the terminal frame kind, gives it whole-cell geometry, and includes it on the canvas and in the player.
 
-The entry is TSX against the pinned runtime (exactly these imports resolve — react, @opentui/core, @opentui/react, and spool's helper):
+Terminal execution is disabled until project code can run inside an OS sandbox. The daemon does not compile, evaluate, or execute term.tsx, and it never starts Bun, OpenTUI, a shell, a PTY, or any other process for the entry. Spool renders its own static disabled surface instead; that surface contains no project code and carries no capability to control the daemon. Saving, entering, reloading, or restarting the frame cannot spawn a process.
 
-  import { createCliRenderer } from "@opentui/core";
-  import { createRoot } from "@opentui/react";
-  function App() {
-    return <box alignItems="center" justifyContent="center" flexGrow={1}><text>hello</text></box>;
-  }
-  const renderer = await createCliRenderer();
-  createRoot(renderer).render(<App />);
+New terminal frames keep their 80×24 geometry floor: one cell is 9×20px in the pinned mono, so 80×24 = 720×480. frame.json remains pixels, the canvas's one geometry language. Geometry and any already persisted grid can still be represented in whole cells, but there is no live process to resize or repaint it.
 
-Everything a TUI can be, this is: OpenTUI's <box>/<text> layout, useKeyboard for keys, ANSI color, the alternate screen. All TUI libraries paint the same cell substrate, so a screen designed here is a portable spec for Bubble Tea or ratatui the way a React prototype specs a Vue app — only tighter.
-
-Cells are the units. New terminal frames are born 80×24 — the conventional floor; design up from it. Resizing on the canvas snaps to whole cells and shows a cols×rows badge; the process receives a real terminal resize and reflows live. frame.json stays pixels (the canvas's one geometry language): one cell is 9×20px in the pinned mono (JetBrains Mono at 15px, its natural line height), so 80×24 = 720×480. Write w/h yourself in whole-cell multiples for an exact grid.
-
-Entered, a terminal owns the whole keyboard: Escape, Ctrl+C, Ctrl+Z — every key reaches the process, because those belong to the TUI. The one way out is the platform modifier + Escape (⌘esc / ctrl+esc), shown in the chip; clicking outside always works too.
-
-The loop is write–save–see: saving term.tsx kills and respawns the process. A process that exits — a crash or a designed q — keeps its last screen dimmed with an exit-code chip; it revives on save or on entering it, never by itself. Offscreen, spool freezes the process at the kernel (zero CPU) and eventually kills it with its screen serialized — scroll back and it wakes fresh. Cold boots are the contract: design TUIs that stand up their own state.
-
-Flows: the terminal dialect's coded walk is term.go —
+The flow parser still recognizes the terminal dialect's coded walk in source:
 
   import { term } from "spool/term";
-  term.go("checkout")   walk to a frame by folder name, from inside the TUI
+  term.go("checkout")
 
-The map reads term.go literals from source like every arrow: solid when unconditional, faint inside a branch, unreadable destinations named by \`spool flows\`, never guessed. Walking one — from an entered terminal or in the player — verifies its edge, never draws one.
+The map reads term.go literals like every other navigation site: solid when unconditional, faint inside a branch, and unreadable destinations named by \`spool flows\`, never guessed. Because term.tsx does not run, the disabled surface cannot trigger or verify one of these edges.
 
-In the player, a terminal frame is live: the walk attaches to the real process, output streams in place, and the screen takes the keyboard as soon as it arrives. There is no keyboard exit state; the player controls stay clickable around it. A term.go the running TUI fires advances the walk, and a dead terminal revives on arrival. The pill's restart gives the session clean runs: each terminal frame a restarted walk reaches gets a fresh process; the first load instead joins whatever already runs, so a canvas-staged demo stays staged.
+There is currently no terminal input, output, process lifecycle, restart, or shared live session. The platform modifier + Escape still leaves an entered terminal surface; no other key reaches project code.
 
-One process, every surface: the canvas and any number of players attach to the same session, mirrored — output streams to all of them, input from any of them interleaves, the last resize wins, and a restart or save resets every screen. The daemon's session is the truth; no surface gets a private copy.
-
-Verify headlessly with \`spool shot <name>\`: the daemon rasterizes the current screen grid in the pinned font to an SVG and prints its path — no browser, and honest by construction: the pixels are the process's own screen. A terminal that has never run has no screen to shoot; open it on the canvas (or save it) first. \`spool logs\` is an html-frame verb — a TUI's output is its screen.`,
+Headless verification never boots terminal project code. \`spool shot <name>\` can only rasterize an already persisted grid; a terminal without one has no screen to shoot. \`spool logs\` remains an html-frame verb.`,
 
 	flows: `Navigation is walking: a session stands in one frame and walks to another by name.
 
@@ -122,9 +106,9 @@ Coded walks carry no transition name — data-transition rides the element, ui.g
 
 The session seeds from a scenario before first render — a frame never renders unseeded (topic: scenarios). A frame document keeps its session across walks and reloads in that browser tab; ?scenario=<name> on its URL names the seed, and a name different from the running session's restarts it. On the canvas, a walk hands the session to the next frame. In the player every load is a fresh session — reload is restart.
 
-Arrows claim what the code says. Every literal data-go target, ui.go(name) call, and term.go(name) call (terminal frames — topic: terminals) anywhere in a frame's folder is an edge, drawn from the element that causes it: solid when the walk is unconditional (will go), faint when the literal sits inside a branch — ternary, if/else, switch, &&/|| (might go; ui.go(ok ? "receipt" : "topup") draws two faint arrows). A destination the parser cannot read (ui.go(routeFor(state))) draws nothing and is reported by \`spool flows\` as unreadable — prefer literal targets when you want the map to show the flow. Playing never adds or removes an arrow; real walks only flip verified marks on derived edges, dropped when the from-frame's source changes. A headless shot/logs boot never verifies anything.
+Arrows claim what the code says. Every literal data-go target, ui.go(name) call, and term.go(name) call anywhere in a frame's folder is an edge, drawn from the element that causes it: solid when the walk is unconditional (will go), faint when the literal sits inside a branch — ternary, if/else, switch, &&/|| (might go; ui.go(ok ? "receipt" : "topup") draws two faint arrows). Terminal term.go sites remain visible in this static analysis while execution is disabled, but their surface cannot take or verify the walk (topic: terminals). A destination the parser cannot read (ui.go(routeFor(state))) draws nothing and is reported by \`spool flows\` as unreadable — prefer literal targets when you want the map to show the flow. Playing never adds or removes an arrow; real walks only flip verified marks on derived edges, dropped when the from-frame's source changes. A headless shot/logs boot never verifies anything.
 
-The player composes every frame into one document, so walks are View Transitions, not navigations: crossfade by default; morphs happen wherever two frames give an element the same view-transition-name. Each swap carries its direction (forward, back, restart) plus any data-transition type — style them in shared/transitions.css with ::view-transition-* selectors, plain CSS. Reduced motion is respected, and the player pill toggles motion, walks back, restarts, and closes. Screen components mount fresh on every arrival. Terminal frames are live in the player too — typed into, navigated from, restarted with the session (topic: terminals).`,
+The player composes every html frame into one document, so walks are View Transitions, not navigations: crossfade by default; morphs happen wherever two frames give an element the same view-transition-name. Each swap carries its direction (forward, back, restart) plus any data-transition type — style them in shared/transitions.css with ::view-transition-* selectors, plain CSS. Reduced motion is respected, and the player pill toggles motion, walks back, restarts, and closes. Screen components mount fresh on every arrival. Terminal frames remain valid destinations, but the player renders their static disabled surface without executing or restarting project code (topic: terminals).`,
 
 	scenarios: `shared/scenarios/<name>.json = { "state": { ... }, "mock": { ... } } — one named way the app can be. state seeds ui.state at session start; mock configures the fake backend (topic: mock). Both keys optional; no default.json means an empty seed. Names are file names: no leading dot, no slashes.
 
@@ -176,7 +160,7 @@ The document's baseline: preflight (the same zero a product starts from), tokens
 The verify loop — shot and logs are two outputs of one boot: your frame's really-served document in spool's own headless Chrome, seeded with the default scenario (always — stage another state by making it default.json's, or see it live via url), viewport from frame.json (else 390×844) at 2×.
 
   spool shot <frame>   writes design/.spool/verify/<frame>.png, prints the path.
-                       A terminal frame shoots its live screen grid to <frame>.svg instead — no browser (topic: terminals).
+                       A terminal never executes for a shot; an already persisted grid can rasterize to <frame>.svg, otherwise there is no screen (topic: terminals).
                        Doesn't compile: the toolchain's error verbatim on stderr, exit 1, no browser.
                        Throws uncaught while booting: shot still written, errors on stderr, exit 1.
                        Waits for #root to have children (up to 10s), settles 300ms, shoots — a frame that renders nothing still shoots.

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 
 /**
  * Scenario and fixture reads for the flow runtime (#5): both are project JSON
@@ -17,8 +18,15 @@ const EMPTY_SCENARIO = `{ "state": {}, "mock": {} }`;
 
 export function readScenario(root: string, name: string): ProjectJson {
 	if (!isSafeName(name)) return { kind: "missing", message: `not a scenario name: "${name}"` };
+	const designDir = realDesignDir(root);
 	const rel = join("shared", "scenarios", `${name}.json`);
-	const raw = readIfExists(join(root, "design", rel));
+	let raw: string | undefined;
+	try {
+		raw = readIfExists(join(designDir, rel), designDir);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) return { kind: "invalid", message: error.message };
+		throw error;
+	}
 	if (raw === undefined) {
 		if (name === "default") return { kind: "ok", json: EMPTY_SCENARIO };
 		return { kind: "missing", message: `no scenario "${name}" — expected design/${rel}` };
@@ -43,8 +51,15 @@ export function readFixture(root: string, name: string): ProjectJson {
 	if (clean.length === 0 || !clean.split("/").every(isSafeName)) {
 		return { kind: "missing", message: `not a fixture name: "${name}"` };
 	}
+	const designDir = realDesignDir(root);
 	const rel = join("shared", "fixtures", `${clean}.json`);
-	const raw = readIfExists(join(root, "design", rel));
+	let raw: string | undefined;
+	try {
+		raw = readIfExists(join(designDir, rel), designDir);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) return { kind: "invalid", message: error.message };
+		throw error;
+	}
 	if (raw === undefined) return { kind: "missing", message: `no fixture "${clean}" — expected design/${rel}` };
 	const parsed = parseJson(raw, rel);
 	if (parsed.kind === "invalid") return parsed;
@@ -71,10 +86,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function readIfExists(file: string): string | undefined {
+export function readIfExists(file: string, designDir: string): string | undefined {
 	try {
-		return readFileSync(file, "utf8");
-	} catch {
+		return readFileSync(resolveDesignPath(designDir, file), "utf8");
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;
 	}
 }

@@ -3,9 +3,8 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it, onTestFinished, vi } from "vitest";
-import { createDaemonApp } from "../daemon/app";
-import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 
 /**
  * The flow runtime, exercised through really-served documents: every config
@@ -16,7 +15,7 @@ import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-h
  */
 
 interface Harness {
-	app: ReturnType<typeof createDaemonApp>["app"];
+	app: ReturnType<typeof makeApp>;
 	root: string;
 	name: string;
 }
@@ -24,9 +23,7 @@ interface Harness {
 function makeHarness(): Harness {
 	const spoolDir = join(makeTempDir(), ".spool");
 	const { root, name } = makeProject(spoolDir);
-	const daemon = createDaemonApp({ spoolDir, version: "0.0.0-test" });
-	onTestFinished(() => daemon.close());
-	return { app: daemon.app, root, name };
+	return { app: makeApp(spoolDir), root, name };
 }
 
 /** window.happyDOM is the environment's controller; not in TS DOM types. */
@@ -72,7 +69,7 @@ async function loadFrameDocument(
 	vi.restoreAllMocks();
 	vi.resetModules();
 
-	happyDom().setURL(`http://localhost:7766/p/${name}/frames/${frame}${search}`);
+	happyDom().setURL(`http://run.spool.localhost:7766/p/${name}/frames/${frame}${search}`);
 	const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
 	const addEventListener = document.addEventListener.bind(document);
 	vi.spyOn(document, "addEventListener").mockImplementation((type, listener, opts) => {

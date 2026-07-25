@@ -1,43 +1,56 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { TERM_BACKGROUND } from "../term/theme";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript } from "./document";
 import { termFontUrlCss } from "./term-fonts";
 
 /**
- * The terminal frame document (#42): an ordinary HTML page hosting the pinned
- * emulator, so canvas iframes, entering, and isolation stay exactly as the
- * canvas-iframes ADR left them. No compile — the app runs daemon-side in a
- * PTY; this document only paints the cell grid and speaks the host protocol
- * through the terminal runtime at /vendor/spool-term.js.
+ * A terminal frame is Spool-owned while project code has no OS sandbox. The
+ * document never reads or executes term.tsx and carries no daemon capability.
+ * It keeps only the small canvas protocol needed to become ready and leave an
+ * entered frame.
  */
 
-let xtermCssMemo: string | undefined;
-
-function xtermCss(): string {
-	if (xtermCssMemo === undefined) {
-		xtermCssMemo = readFileSync(createRequire(import.meta.url).resolve("@xterm/xterm/css/xterm.css"), "utf8");
-	}
-	return xtermCssMemo;
+const TERM_CSS = `html, body { height: 100%; }
+body {
+	display: grid;
+	place-items: center;
+	margin: 0;
+	padding: 32px;
+	box-sizing: border-box;
+	background: ${TERM_BACKGROUND};
+	color: #b5b3ad;
+	font: 400 14px/1.55 "JetBrains Mono", monospace;
+	text-align: center;
+	overflow: hidden;
 }
-
-const TERM_CSS = `html, body, #term { height: 100%; }
-body { margin: 0; background: ${TERM_BACKGROUND}; overflow: hidden; }
-.xterm .xterm-viewport { scrollbar-width: none; }
-.xterm .xterm-viewport::-webkit-scrollbar { display: none; }
-#term.spool-exited { opacity: 0.55; }
-.spool-exit-chip {
-	position: fixed; top: 8px; right: 8px; z-index: 10;
-	padding: 3px 8px; border-radius: 4px;
-	background: #262623; color: #b5b3ad;
-	font: 400 11px/1.3 "JetBrains Mono", monospace;
-}
-.spool-exit-chip[data-failed] { color: #f5896f; }
+main { max-width: 42rem; }
+p { margin: 0; }
 `;
 
-export function assembleTermDocument({ project, frame }: { project: string; frame: string }): string {
-	const config = `window.__SPOOL__ = ${escapeJsonScript({ project, frame })};`;
+export function assembleTermDocument({ frame }: { frame: string }): string {
+	const config = `window.__SPOOL__ = ${escapeJsonScript({ frame })};`;
+	const bridge = `(() => {
+	const frame = window.__SPOOL__.frame;
+	const post = (message) => {
+		if (parent !== window) parent.postMessage({ ...message, frame }, "*");
+	};
+	addEventListener("keydown", (event) => {
+		if (!(event.metaKey || event.ctrlKey) || event.key !== "Escape") return;
+		event.preventDefault();
+		post({ spool: "key", key: "Escape" });
+	}, { capture: true });
+	addEventListener("message", (event) => {
+		if (event.source !== parent || !event.data || typeof event.data !== "object") return;
+		const message = event.data;
+		if (message.spool === "focus") document.body.focus();
+		else if (message.spool === "pick" && typeof message.id === "number") {
+			post({ spool: "picked", id: message.id, chain: [] });
+		} else if (message.spool === "sites" && typeof message.id === "number") {
+			post({ spool: "site-boxes", id: message.id, boxes: {} });
+		}
+	});
+	post({ spool: "loaded" });
+})();`;
 	return `<!doctype html>
 <html lang="en">
 <head>
@@ -46,12 +59,11 @@ export function assembleTermDocument({ project, frame }: { project: string; fram
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>${escapeHtml(frame)} · spool</title>
 <script>${escapeInlineScript(config)}</script>
-<style>${escapeInlineStyle(xtermCss())}</style>
 <style>${escapeInlineStyle(`${termFontUrlCss()}\n${TERM_CSS}`)}</style>
 </head>
-<body>
-<div id="term"></div>
-<script type="module">import "/vendor/spool-term.js";</script>
+<body tabindex="-1">
+<main><p>terminal execution is disabled until it can run in an OS sandbox</p></main>
+<script>${escapeInlineScript(bridge)}</script>
 </body>
 </html>
 `;

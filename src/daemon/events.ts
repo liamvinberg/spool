@@ -1,5 +1,6 @@
 import { watch } from "node:fs";
 import { join, sep } from "node:path";
+import { realDesignDir } from "./design-path";
 import { frameKind } from "./projection";
 
 export type ChangeEvent =
@@ -53,8 +54,9 @@ export function createChangeHub() {
 
 		let watcher: ReturnType<typeof watch> | undefined;
 		try {
-			watcher = watch(join(root, "design"), { recursive: true }, (_type, filename) => {
-				const event = classify(root, filename);
+			const designDir = realDesignDir(root);
+			watcher = watch(designDir, { recursive: true }, (_type, filename) => {
+				const event = classify(designDir, filename);
 				if (event === undefined) return;
 				pending.set(event.kind === "frame" ? `frame ${event.frame}` : "shared", event);
 				timer ??= setTimeout(() => {
@@ -118,12 +120,12 @@ export type ChangeHub = ReturnType<typeof createChangeHub>;
  * unreadable may misname its frame — any frame event refreshes discovery, so
  * over-firing is safe and guessing wrong is cheap.
  */
-function classify(root: string, filename: string | null): ChangeEvent | undefined {
+function classify(designDir: string, filename: string | null): ChangeEvent | undefined {
 	if (filename === null) return { kind: "shared" };
 	const parts = filename.split(sep);
 	const [head, first] = parts;
 	if (head === "frames" && first !== undefined && first !== "") {
-		if (parts.length >= 3 && frameKind(join(root, "design", "frames", first)) === undefined) {
+		if (parts.length >= 3 && frameKind(join(designDir, "frames", first), designDir) === undefined) {
 			const second = parts[2];
 			if (second === undefined || second === "") return { kind: "frame", frame: first };
 			if (parts.length === 4 && parts[3]?.startsWith("frame.json") === true) return undefined;

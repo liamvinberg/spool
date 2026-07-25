@@ -79,7 +79,7 @@ describe("the freeze shim", () => {
 			configurable: true,
 			value: { postMessage: (message: unknown) => posted.push(message) },
 		});
-		window.__SPOOL__ = { project: "project", frame: "host" };
+		window.__SPOOL__ = { project: "project", frame: "host", projectCapability: "project-capability" };
 		let dispose: (() => void) | undefined;
 
 		try {
@@ -114,7 +114,7 @@ describe("the freeze shim", () => {
 			configurable: true,
 			value: { postMessage: (message: unknown) => posted.push(message) },
 		});
-		window.__SPOOL__ = { project: "project", frame: "host" };
+		window.__SPOOL__ = { project: "project", frame: "host", projectCapability: "project-capability" };
 		let dispose: (() => void) | undefined;
 
 		try {
@@ -170,7 +170,7 @@ describe("the freeze shim", () => {
 			configurable: true,
 			value: { postMessage: (message: unknown) => posted.push(message) },
 		});
-		window.__SPOOL__ = { project: "project", frame: "host" };
+		window.__SPOOL__ = { project: "project", frame: "host", projectCapability: "project-capability" };
 		let dispose: (() => void) | undefined;
 
 		try {

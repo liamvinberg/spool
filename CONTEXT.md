@@ -1,6 +1,6 @@
 # spool
 
-Spool is a local-first prototyping canvas: agents author live TSX frames on disk; people arrange them spatially and walk the flows between them. One context for the whole repo; these terms are canonical in issues, specs, tests, and code.
+Spool is a local-first prototyping canvas: agents author frame files on disk; people arrange them spatially and walk the flows between them. One context for the whole repo; these terms are canonical in issues, specs, tests, and code.
 
 ## Language
 
@@ -12,7 +12,7 @@ Spool is a local-first prototyping canvas: agents author live TSX frames on disk
 
 **Frame**: A folder under `design/frames/<name>/` holding one entry file — `frame.tsx` (html) or `term.tsx` (terminal); the unit prototypes are made of. The entry filename is the kind, and a folder holding both is a discovery error. _Avoid_: screen, artboard, mockup
 
-**Terminal frame**: A frame whose `term.tsx` is an OpenTUI app the daemon runs as a real process in a PTY; the canvas paints its cell grid live, and it is sized, frozen, and stilled in whole cells. The second and final frame kind.
+**Terminal frame**: A frame recognized by its `term.tsx` entry. Until project code can run inside an OS sandbox, spool never compiles or executes the entry; the canvas and player render a spool-owned static disabled surface instead. The second and final frame kind.
 
 **Variant**: A frame whose `--`-suffixed name marks it as an alternative take on its base frame (`home--empty`).
 
@@ -30,7 +30,7 @@ Spool is a local-first prototyping canvas: agents author live TSX frames on disk
 
 **Hand**: The canvas tool for panning with a primary-button drag; holding Space borrows it temporarily.
 
-**Entered**: The state of a frame after a double-click: pointer and keyboard input belong to its app, and walks happen in place. Esc leaves an html frame; a terminal owns every key, so the platform modifier + Esc leaves it. Holding the platform modifier freezes the entered frame and hands the pointer back so an element can be reached. _Avoid_: focused, interact
+**Entered**: The state of a frame after a double-click: pointer and keyboard input belong to its app, and walks happen in place. Esc leaves an html frame. A terminal frame currently has no TUI keyboard session because it renders a static disabled surface; the platform modifier + Esc still leaves it. Holding the platform modifier freezes the entered frame and hands the pointer back so an element can be reached. _Avoid_: focused, interact
 
 **Hibernated**: A frame demoted to its still because the warm pool overflowed; it boots fresh on return. Hibernation's payoff is memory, never CPU. _Avoid_: paused
 

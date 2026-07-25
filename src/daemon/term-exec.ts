@@ -5,9 +5,9 @@ import type { Toolchain } from "./term-toolchain";
 /**
  * The executor seam (#42): the session manager takes its spawn command as
  * input, so tests feed a fixture emitting known ANSI and CI never touches
- * bun or OpenTUI. Production wires this executor: the provisioned bun runs
- * spool's supervisor, the supervisor owns the PTY, and the daemon speaks
- * wire frames to it over plain pipes.
+ * bun or OpenTUI. The Bun implementation remains behind that seam, but the
+ * production daemon does not select it until project processes have an OS
+ * sandbox.
  */
 
 export interface TermSpawn {

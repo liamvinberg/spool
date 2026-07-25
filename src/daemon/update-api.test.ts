@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { makeApp, makeTempDir, sseReader } from "../test-helpers";
 import { createDaemonApp } from "./app";
+import { CONTROL_HEADER } from "./security";
 import { writeUpdateCache } from "./update-check";
 
 describe("POST /api/upgrade", () => {
@@ -62,7 +63,11 @@ describe("update availability over SSE", () => {
 		});
 		onTestFinished(() => daemon.close());
 
-		const events = sseReader(await daemon.app.request("/api/events"));
+		const events = sseReader(
+			await daemon.app.request("/api/events", {
+				headers: { [CONTROL_HEADER]: daemon.controlToken },
+			}),
+		);
 		expect((await events.next()).event).toBe("hello");
 
 		daemon.startUpdateCheck();

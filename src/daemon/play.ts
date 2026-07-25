@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { buildDesignEntry, describeCompileError, hashInputs, parseImportMap } from "./compile";
+import { realDesignDir } from "./design-path";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript, mergeImportMap } from "./document";
 import { readIfExists } from "./project-files";
 import { frameFolder } from "./projection";
@@ -21,6 +22,7 @@ const STDIN_NAME = "<spool-play>";
 
 export interface PlayerConfig {
 	project: string;
+	projectCapability: string;
 	/** The frame the session opens on: ?frame= else selection else first. */
 	start: string;
 	scenario: string;
@@ -74,13 +76,19 @@ export function createPlayerCompiler(version: string) {
 
 	async function getBundle(root: string, frames: PlayerFrameRef[]): Promise<PlayerCompile> {
 		const stamp = frames.map((ref) => frameFolder(ref.name, ref.page)).join("\n");
-		const cached = cache.get(root);
-		if (cached !== undefined && cached.stamp === stamp && hashInputs(version, stamp, cached.inputs) === cached.hash) {
-			return { kind: "ok", bundle: cached.bundle, cache: "hit" };
-		}
-
 		try {
-			const entry = await compilePlayer(version, root, frames, stamp);
+			// Match frame compilation: one canonical root covers imports, shared
+			// assets, Tailwind inputs, and cache revalidation for this player build.
+			const designDir = realDesignDir(root);
+			const cached = cache.get(root);
+			if (
+				cached !== undefined &&
+				cached.stamp === stamp &&
+				hashInputs(version, stamp, cached.inputs, designDir) === cached.hash
+			) {
+				return { kind: "ok", bundle: cached.bundle, cache: "hit" };
+			}
+			const entry = await compilePlayer(version, designDir, frames, stamp);
 			cache.set(root, entry);
 			return { kind: "ok", bundle: entry.bundle, cache: "miss" };
 		} catch (error) {
@@ -96,11 +104,10 @@ export type PlayerCompiler = ReturnType<typeof createPlayerCompiler>;
 
 async function compilePlayer(
 	version: string,
-	root: string,
+	designDir: string,
 	frames: PlayerFrameRef[],
 	stamp: string,
 ): Promise<PlayerCacheEntry> {
-	const designDir = join(root, "design");
 	// the same stamping compile as frame documents (#23): one dialect, one
 	// pipeline, identical semantics whether a frame renders alone or composed
 	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry({
@@ -113,9 +120,12 @@ async function compilePlayer(
 
 	const shared = join(designDir, "shared");
 	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
-	const fonts = readIfExists(join(shared, "fonts.css"));
-	const transitions = readIfExists(join(shared, "transitions.css"));
-	const importMap = mergeImportMap(parseImportMap(readIfExists(join(shared, "importmap.json"))), importMapPins());
+	const fonts = readIfExists(join(shared, "fonts.css"), designDir);
+	const transitions = readIfExists(join(shared, "transitions.css"), designDir);
+	const importMap = mergeImportMap(
+		parseImportMap(readIfExists(join(shared, "importmap.json"), designDir)),
+		importMapPins(),
+	);
 
 	const inputs = [
 		...sourceFiles,
@@ -124,7 +134,7 @@ async function compilePlayer(
 		join(shared, "transitions.css"),
 		join(shared, "importmap.json"),
 	];
-	const hash = hashInputs(version, stamp, inputs);
+	const hash = hashInputs(version, stamp, inputs, designDir);
 	const names = frames.map((ref) => ref.name);
 	return { stamp, inputs, hash, bundle: { bootJs, css, fonts, bundledCss, transitions, importMap, names, hash } };
 }
@@ -216,8 +226,7 @@ const CHROME_CSS = `:root { color-scheme: dark; }
 }
 html, body, #root { height: 100%; }
 body { margin: 0; background: #0e0e0e; overflow: hidden; }
-/* a terminal screen (#44): the live term document over the daemon's grid as
-   boot poster — the iframe covers the poster the moment it paints */
+/* a terminal screen: the static Spool-owned document over its persisted poster */
 .spool-term-screen { position: relative; height: 100%; background: #111110; }
 .spool-term-screen svg { display: block; }
 .spool-term-poster { position: absolute; inset: 0; }

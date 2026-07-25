@@ -3,9 +3,12 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { onTestFinished } from "vitest";
 import { createDaemonApp } from "./daemon/app";
+import { renderOrigin } from "./daemon/lifecycle";
+import { CONTROL_HEADER, PROJECT_HEADER, RENDER_HOST } from "./daemon/security";
 import { serveDaemon } from "./daemon/server";
 import type { TermExecutor, TermProcess, TermSpawn } from "./daemon/term-exec";
 import { initProject } from "./init";
+import { lookupProjectByName } from "./registry";
 import { canvasJson } from "./templates";
 
 export function makeTempDir(): string {
@@ -43,9 +46,42 @@ export function writePageFrame(root: string, page: string, name: string, tsx: st
 
 /** A daemon app on a given ~/.spool dir, closed with the test. */
 export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof createDaemonApp>[0]>) {
-	const daemon = createDaemonApp({ spoolDir, version: "0.0.0-test", ...options });
+	const daemon = createDaemonApp({
+		spoolDir,
+		version: "0.0.0-test",
+		controlHost: "localhost",
+		controlToken: "test-control-token",
+		...options,
+	});
+	daemon.setSelfOrigin("http://localhost:7766");
 	onTestFinished(() => daemon.close());
-	return daemon.app;
+	return {
+		request: (input: string, init?: RequestInit) => {
+			const url = new URL(input, "http://localhost:7766");
+			const path = url.pathname;
+			const projectData = /^\/api\/p\/([^/]+)\/(?:scenarios\/|fixtures\/)/.exec(path);
+			const render =
+				/^\/p\/[^/]+\/frames\/[^/]+$/.test(path) ||
+				path.startsWith("/play/") ||
+				path.startsWith("/vendor/") ||
+				projectData !== null;
+			url.hostname = render ? RENDER_HOST : "localhost";
+			const request = new Request(url.href, init);
+			if (path.startsWith("/api/") && projectData === null && path !== "/api/health") {
+				request.headers.set(CONTROL_HEADER, daemon.controlToken);
+			}
+			if (projectData !== null) {
+				const name = decodeURIComponent(projectData[1] as string);
+				const project = lookupProjectByName(spoolDir, name);
+				if (project.kind === "found") request.headers.set(PROJECT_HEADER, daemon.projectCapability(project.root));
+				// happy-dom strips the forbidden Origin header while constructing
+				// a Request. Set the browser-owned sandbox origin afterwards so
+				// this seam preserves the production request contract.
+				request.headers.set("origin", "null");
+			}
+			return daemon.app.fetch(request);
+		},
+	};
 }
 
 /** A registered project behind a really-served daemon on an ephemeral port. */
@@ -54,7 +90,14 @@ export async function serveProject(options?: Partial<Parameters<typeof serveDaem
 	const { root, name } = makeProject(spoolDir);
 	const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0, ...options });
 	onTestFinished(() => daemon.close());
-	return { spoolDir, root, name, url: daemon.url };
+	return {
+		spoolDir,
+		root,
+		name,
+		url: daemon.url,
+		renderUrl: renderOrigin(daemon.url),
+		controlToken: daemon.controlToken,
+	};
 }
 
 export interface SseEvent {
@@ -169,24 +212,6 @@ export function fixtureTermExecutor() {
 		return proc;
 	};
 	return { spawned, executor };
-}
-
-/** A terminal-bridge WebSocket client: binary frames collected as text, JSON
- * control frames parsed — the browser runtime's view of a session. */
-export function termWsClient(url: string) {
-	const socket = new WebSocket(url);
-	socket.binaryType = "arraybuffer";
-	const binary: string[] = [];
-	const controls: { t: string; [key: string]: unknown }[] = [];
-	socket.addEventListener("message", (event) => {
-		if (typeof event.data === "string") controls.push(JSON.parse(event.data));
-		else binary.push(new TextDecoder().decode(new Uint8Array(event.data as ArrayBuffer)));
-	});
-	const open = new Promise<void>((resolve, reject) => {
-		socket.addEventListener("open", () => resolve());
-		socket.addEventListener("error", () => reject(new Error("terminal socket refused")));
-	});
-	return { socket, binary, controls, open, streamed: () => binary.join("") };
 }
 
 export async function until(condition: () => boolean, ms = 8000): Promise<void> {

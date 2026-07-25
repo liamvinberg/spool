@@ -338,8 +338,11 @@ describe("serving the canvas page", () => {
 			const res = await app.request(path);
 			expect(res.status, path).toBe(200);
 			expect(res.headers.get("content-type")).toContain("text/html");
-			// the page must always be fresh — refresh = update (#12)
-			expect(res.headers.get("cache-control")).toContain("no-cache");
+			// The boot document carries the daemon token: it is never retained
+			// in an HTTP cache, and foreign pages cannot frame its authority.
+			expect(res.headers.get("cache-control")).toBe("no-store");
+			expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+			expect(res.headers.get("x-frame-options")).toBe("DENY");
 			expect(await res.text()).toContain("<div id=app>");
 		}
 
@@ -383,12 +386,11 @@ describe("serving the canvas page", () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "hello", frameTsx("hello"));
-		const daemon = createDaemonApp({ spoolDir, version: "0.0.0-test", uiDir: makeUi() });
-		onTestFinished(() => daemon.close());
+		const app = makeApp(spoolDir, { uiDir: makeUi() });
 
-		expect((await daemon.app.request(`/p/${name}/frames/hello`)).headers.get("content-type")).toContain("text/html");
-		expect(await (await daemon.app.request(`/p/${name}/frames/hello`)).text()).toContain("hello");
-		expect((await daemon.app.request("/api/health")).status).toBe(200);
+		expect((await app.request(`/p/${name}/frames/hello`)).headers.get("content-type")).toContain("text/html");
+		expect(await (await app.request(`/p/${name}/frames/hello`)).text()).toContain("hello");
+		expect((await app.request("/api/health")).status).toBe(200);
 	});
 });
 

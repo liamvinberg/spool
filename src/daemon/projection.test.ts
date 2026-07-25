@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { pxForCells } from "../term/cells";
 import { makeTempDir, writeDesignFile } from "../test-helpers";
+import { realDesignDir } from "./design-path";
 import { frameKind, listProjectFrames } from "./projection";
 
 describe("frame kinds", () => {
@@ -35,7 +36,8 @@ describe("frame kinds", () => {
 		writeDesignFile(root, join("frames", "both", "frame.tsx"), "export default () => null;\n");
 		writeDesignFile(root, join("frames", "both", "term.tsx"), "// tui\n");
 
-		expect(frameKind(join(root, "design", "frames", "both"))).toBe("conflict");
+		const designDir = realDesignDir(root);
+		expect(frameKind(join(designDir, "frames", "both"), designDir)).toBe("conflict");
 		const { frames } = listProjectFrames(root);
 		expect(frames.map((f) => f.name)).toEqual(["both"]);
 	});

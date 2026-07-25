@@ -67,6 +67,8 @@ describe("initProject", () => {
 
 		expect(readDesign(root, "AGENTS.md")).toContain("spool skill");
 		expect(readDesign(root, "AGENTS.md")).toContain("frames/<name>/frame.tsx");
+		expect(readDesign(root, "AGENTS.md")).toContain("static disabled surface");
+		expect(readDesign(root, "AGENTS.md")).toContain("inside an OS sandbox");
 		expect(readDesign(root, "AGENTS.md")).toContain("never write app-owned files");
 		expect(readDesign(root, "CLAUDE.md")).toBe("@AGENTS.md\n");
 	});

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { build, formatMessagesSync, type Plugin } from "esbuild";
+import { assertDesignFile, DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
 import { isSafeName, readIfExists } from "./project-files";
 import { describeCollision, frameKind, lookupFrame } from "./projection";
@@ -13,6 +14,10 @@ export type FrameDocument =
 	| { kind: "ok"; document: string; etag: string; cache: "hit" | "miss" }
 	| { kind: "error"; document: string; message: string }
 	| { kind: "missing"; message: string };
+
+export interface FrameAuthority {
+	projectCapability: string;
+}
 
 interface CacheEntry {
 	/** Every file the document was built from: the bundle closure plus the shared baseline. */
@@ -34,9 +39,8 @@ const VIRTUAL_OUTDIR = "<spool-out>";
 export function createFrameCompiler(version: string) {
 	const cache = new Map<string, CacheEntry>();
 
-	async function getDocument(root: string, frame: string): Promise<FrameDocument> {
+	async function getDocument(root: string, frame: string, authority: FrameAuthority): Promise<FrameDocument> {
 		if (!isSafeName(frame)) return { kind: "missing", message: `not a frame name: "${frame}"` };
-		const designDir = join(root, "design");
 		const lookup = lookupFrame(root, frame);
 		if (lookup.kind === "collision") {
 			// an ambiguous name serves nobody — fail loud, name both locations (#39)
@@ -46,17 +50,18 @@ export function createFrameCompiler(version: string) {
 		if (lookup.kind === "missing") {
 			return {
 				kind: "missing",
-				message: `no frame "${frame}" — expected design/frames/${frame}/frame.tsx in ${root}`,
+				message: `no frame "${frame}" — expected design/frames/${frame}/frame.tsx`,
 			};
 		}
 		const frameDir = lookup.dir;
+		const designDir = realDesignDir(root);
 		// the raw entry read, not the projection's normalization: a both-entries
 		// folder must serve its error, not compile as html (#42)
-		const kind = frameKind(frameDir);
+		const kind = frameKind(frameDir, designDir);
 		if (kind === undefined) {
 			return {
 				kind: "missing",
-				message: `no frame "${frame}" — expected design/frames/${frame}/frame.tsx in ${root}`,
+				message: `no frame "${frame}" — expected design/frames/${frame}/frame.tsx`,
 			};
 		}
 		if (kind === "conflict") {
@@ -64,19 +69,22 @@ export function createFrameCompiler(version: string) {
 			return { kind: "error", document: errorDocument(frame, message), message };
 		}
 		if (kind === "term") {
-			// no compile: the app runs daemon-side; the document only paints the grid
-			const document = assembleTermDocument({ project: basename(root), frame });
+			// Project terminal code stays unread and unexecuted until Spool has an
+			// OS sandbox. This static document is authored wholly by Spool.
+			const document = assembleTermDocument({ frame });
 			return { kind: "ok", document, etag: termDocumentEtag(version, document), cache: "hit" };
 		}
 
-		const key = `${root}\0${frame}`;
-		const cached = cache.get(key);
-		if (cached !== undefined && hashInputs(version, frame, cached.inputs) === cached.hash) {
-			return { kind: "ok", document: cached.document, etag: cached.etag, cache: "hit" };
-		}
-
+		const stamp = `${frame}\0${authority.projectCapability}`;
+		const key = `${root}\0${stamp}`;
 		try {
-			const entry = await compileFrame(version, basename(root), designDir, frameDir, frame);
+			// One canonical root owns the entry, every resolved import, stylesheets,
+			// direct shared reads, and cache revalidation for this document.
+			const cached = cache.get(key);
+			if (cached !== undefined && hashInputs(version, stamp, cached.inputs, designDir) === cached.hash) {
+				return { kind: "ok", document: cached.document, etag: cached.etag, cache: "hit" };
+			}
+			const entry = await compileFrame(version, basename(root), designDir, frameDir, frame, authority, stamp);
 			cache.set(key, entry);
 			return { kind: "ok", document: entry.document, etag: entry.etag, cache: "miss" };
 		} catch (error) {
@@ -150,6 +158,8 @@ async function compileFrame(
 	designDir: string,
 	frameDir: string,
 	frame: string,
+	authority: FrameAuthority,
+	stamp: string,
 ): Promise<CacheEntry> {
 	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry({
 		designDir,
@@ -161,12 +171,24 @@ async function compileFrame(
 
 	const shared = join(designDir, "shared");
 	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
-	const fonts = readIfExists(join(shared, "fonts.css"));
-	const importMap = mergeImportMap(parseImportMap(readIfExists(join(shared, "importmap.json"))), importMapPins());
+	const fonts = readIfExists(join(shared, "fonts.css"), designDir);
+	const importMap = mergeImportMap(
+		parseImportMap(readIfExists(join(shared, "importmap.json"), designDir)),
+		importMapPins(),
+	);
 
-	const document = assembleFrameDocument({ project, frame, css, importMap, bootJs, fonts, bundledCss });
+	const document = assembleFrameDocument({
+		project,
+		frame,
+		projectCapability: authority.projectCapability,
+		css,
+		importMap,
+		bootJs,
+		fonts,
+		bundledCss,
+	});
 	const inputs = [...sourceFiles, ...stylesheets, join(shared, "fonts.css"), join(shared, "importmap.json")];
-	const hash = hashInputs(version, frame, inputs);
+	const hash = hashInputs(version, stamp, inputs, designDir);
 	return { inputs, hash, etag: `"${hash.slice(0, 32)}"`, document };
 }
 
@@ -211,6 +233,17 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
 	return {
 		name: "spool-boundary",
 		setup(build) {
+			// Esbuild resolves extensions and symlinks before loading. This makes the
+			// boundary cover every local module format without reimplementing its
+			// resolver or accidentally treating packages as project source.
+			build.onLoad({ filter: /.*/ }, (args) => {
+				try {
+					assertDesignFile(designDir, args.path);
+					return null;
+				} catch (error) {
+					return { errors: [{ text: describeCompileError(error) }] };
+				}
+			});
 			build.onResolve({ filter: /^spool(\/|$)/ }, (args) => {
 				// the stamping runtime is compiler-injected, not knowledge — the
 				// boundary judges what a component's author wrote, not the toolchain
@@ -231,18 +264,19 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
 	};
 }
 
-export function hashInputs(version: string, frame: string, inputs: string[]): string {
-	const files = [...inputs].sort().map((file) => [file, hashContent(file)]);
+export function hashInputs(version: string, frame: string, inputs: string[], designDir: string): string {
+	const files = [...inputs].sort().map((file) => [file, hashContent(file, designDir)]);
 	return createHash("sha256")
 		.update(JSON.stringify([version, shimHash, frame, files]))
 		.digest("hex");
 }
 
-function hashContent(file: string): string {
+function hashContent(file: string, designDir: string): string {
 	let content: Buffer;
 	try {
-		content = readFileSync(file);
-	} catch {
+		content = readFileSync(resolveDesignPath(designDir, file));
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
 		return "absent";
 	}
 	return createHash("sha256").update(content).digest("hex");

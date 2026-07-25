@@ -63,14 +63,13 @@ describe("spool cli", () => {
 		expect(result.stdout).toContain("was not running");
 	});
 
-	it("foreground serve stands down when a spool daemon already holds the port", { timeout: 15_000 }, async () => {
+	it("foreground serve stands down when the recorded spool daemon already holds the port", {
+		timeout: 15_000,
+	}, async () => {
 		const home = makeTempDir();
 		const spoolDir = join(home, ".spool");
 		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
 		onTestFinished(() => daemon.close());
-		// state gone but the port still held: the stand-down must repair it
-		rmSync(join(spoolDir, "daemon.json"));
-
 		// spawn, not spawnSync — the port holder lives in this process and must
 		// keep answering health while the child decides to stand down
 		const result = await new Promise<{ status: number | null; stdout: string }>((done, fail) => {
@@ -90,6 +89,34 @@ describe("spool cli", () => {
 		expect(result.status).toBe(0);
 		expect(result.stdout).toContain("standing down");
 		expect(readDaemonState(spoolDir)?.pid).toBe(process.pid);
+	});
+
+	it("foreground serve refuses an occupied daemon whose credential state is missing", {
+		timeout: 15_000,
+	}, async () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
+		onTestFinished(() => daemon.close());
+		rmSync(join(spoolDir, "daemon.json"));
+
+		const result = await new Promise<{ status: number | null; stderr: string }>((done, fail) => {
+			const child = spawn(tsxBin, [cliPath, "serve", "--foreground"], {
+				cwd: repoRoot,
+				env: { ...process.env, HOME: home, SPOOL_DIR: "", SPOOL_PORT: String(daemon.port) },
+			});
+			let stderr = "";
+			child.stderr.setEncoding("utf8");
+			child.stderr.on("data", (chunk: string) => {
+				stderr += chunk;
+			});
+			child.on("error", fail);
+			child.on("close", (status) => done({ status, stderr }));
+		});
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("control credential is unavailable");
+		expect(readDaemonState(spoolDir)).toBeUndefined();
 	});
 
 	it("foreground serve still fails loud when a stranger holds the port", async () => {

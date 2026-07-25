@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "./atomic-write";
+import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./daemon/design-path";
+import { renderOrigin } from "./daemon/lifecycle";
 import { SpoolError } from "./errors";
 import { launchHeadlessShell } from "./headless-shell";
 
@@ -16,10 +18,15 @@ import { launchHeadlessShell } from "./headless-shell";
 
 export interface BootDeps {
 	daemonUrl: string;
+	controlToken: string;
 	root: string;
 	name: string;
 	frame: string;
 	narrate: (line: string) => void;
+}
+
+function controlHeaders(controlToken: string): HeadersInit {
+	return { "X-Spool-Control": controlToken };
 }
 
 export interface LogEntry {
@@ -72,30 +79,37 @@ export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
  */
 async function termShot(deps: BootDeps): Promise<ShotOutcome> {
 	const url = `${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/thumbs/${encodeURIComponent(deps.frame)}`;
-	const res = await fetch(url);
+	const res = await fetch(url, { headers: controlHeaders(deps.controlToken) });
 	if (!res.ok) return { kind: "broken", message: await res.text() };
-	const file = join(deps.root, "design", ".spool", "verify", `${deps.frame}.svg`);
+	const file = verifyFile(deps.root, deps.frame, "svg");
 	writeAtomic(file, await res.text());
 	return { kind: "shot", file, bootErrors: [] };
 }
 
 async function isTermFrame(deps: BootDeps): Promise<boolean> {
-	try {
-		const res = await fetch(`${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/frames`);
-		if (!res.ok) return false;
-		const projection = (await res.json()) as { frames?: { name: string; kind?: string }[] };
-		return projection.frames?.find((entry) => entry.name === deps.frame)?.kind === "term";
-	} catch {
-		return false;
-	}
+	const res = await fetch(`${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/frames`, {
+		headers: controlHeaders(deps.controlToken),
+	});
+	if (!res.ok) throw new SpoolError(await res.text());
+	const projection = (await res.json()) as { frames?: { name: string; kind?: string }[] };
+	return projection.frames?.find((entry) => entry.name === deps.frame)?.kind === "term";
 }
 
 export function shotFile(root: string, frame: string): string {
-	return join(root, "design", ".spool", "verify", `${frame}.png`);
+	return verifyFile(root, frame, "png");
 }
 
 function logsFile(root: string, frame: string): string {
-	return join(root, "design", ".spool", "verify", `${frame}.logs.json`);
+	return verifyFile(root, frame, "logs.json");
+}
+
+function verifyFile(root: string, frame: string, extension: string): string {
+	const designDir = realDesignDir(root);
+	return resolveDesignPath(
+		designDir,
+		join(designDir, ".spool", "verify", `${frame}.${extension}`),
+		`.spool/verify/${frame}.${extension}`,
+	);
 }
 
 type Probe = { kind: "ok"; etag: string } | { kind: "error"; message: string } | { kind: "missing"; message: string };
@@ -103,7 +117,7 @@ type Probe = { kind: "ok"; etag: string } | { kind: "error"; message: string } |
 /** The daemon compiles (cache-hit cheap); shot and logs branch on its JSON. */
 async function probeCompile(deps: BootDeps): Promise<Probe> {
 	const url = `${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/verify/${encodeURIComponent(deps.frame)}`;
-	const res = await fetch(url);
+	const res = await fetch(url, { headers: controlHeaders(deps.controlToken) });
 	const body: unknown =
 		res.headers.get("content-type")?.includes("json") === true ? await res.json() : await res.text();
 	if (typeof body === "object" && body !== null) {
@@ -133,7 +147,7 @@ async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
 			entries.push({ type: "pageerror", text });
 		});
 
-		const url = `${deps.daemonUrl}/p/${encodeURIComponent(deps.name)}/frames/${encodeURIComponent(deps.frame)}`;
+		const url = `${renderOrigin(deps.daemonUrl)}/p/${encodeURIComponent(deps.name)}/frames/${encodeURIComponent(deps.frame)}`;
 		const response = await page.goto(url, { timeout: 15_000, waitUntil: "domcontentloaded" });
 		if (response !== null && response.status() >= 500) {
 			// the source broke between probe and boot — re-probe for the verbatim text
@@ -166,16 +180,13 @@ async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
 
 /** The frame's own footprint for the viewport: its sidecar, else the default. */
 async function frameSize(deps: BootDeps): Promise<{ w: number; h: number }> {
-	try {
-		const res = await fetch(`${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/frames`);
-		if (res.ok) {
-			const projection = (await res.json()) as { frames?: { name: string; w: number; h: number }[] };
-			const frame = projection.frames?.find((entry) => entry.name === deps.frame);
-			if (frame !== undefined) return { w: Math.round(frame.w), h: Math.round(frame.h) };
-		}
-	} catch {
-		// the projection failing never blocks a shot — fall through to the default
-	}
+	const res = await fetch(`${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/frames`, {
+		headers: controlHeaders(deps.controlToken),
+	});
+	if (!res.ok) throw new SpoolError(await res.text());
+	const projection = (await res.json()) as { frames?: { name: string; w: number; h: number }[] };
+	const frame = projection.frames?.find((entry) => entry.name === deps.frame);
+	if (frame !== undefined) return { w: Math.round(frame.w), h: Math.round(frame.h) };
 	return { w: 390, h: 844 };
 }
 
@@ -184,7 +195,8 @@ function readLogsCache(root: string, frame: string): { etag: string; entries: Lo
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(readFileSync(logsFile(root, frame), "utf8"));
-	} catch {
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;
 	}
 	if (typeof parsed !== "object" || parsed === null) return undefined;

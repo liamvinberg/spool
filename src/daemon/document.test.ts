@@ -6,6 +6,7 @@ describe("assembleFrameDocument", () => {
 		const doc = assembleFrameDocument({
 			project: "demo",
 			frame: "hello",
+			projectCapability: "project-capability",
 			css: "",
 			importMap: { imports: {} },
 			bootJs: 'const markup = "</script><script>alert(1)</script>";',
@@ -19,6 +20,7 @@ describe("assembleFrameDocument", () => {
 		const doc = assembleFrameDocument({
 			project: "demo",
 			frame: "hello",
+			projectCapability: "project-capability",
 			css: "",
 			importMap: { imports: { evil: "https://x/</script>" } },
 			bootJs: "",
@@ -28,11 +30,20 @@ describe("assembleFrameDocument", () => {
 	});
 
 	it("escapes frame names in the title and the document config", () => {
-		const doc = assembleFrameDocument({ project: "demo", frame: "a<b>", css: "", importMap: {}, bootJs: "" });
+		const doc = assembleFrameDocument({
+			project: "demo",
+			frame: "a<b>",
+			projectCapability: "project-capability",
+			css: "",
+			importMap: {},
+			bootJs: "",
+		});
 
 		expect(doc).toContain("<title>a&lt;b&gt; · spool</title>");
 		expect(doc).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
-		expect(doc).toContain('window.__SPOOL__ = {"project":"demo","frame":"a\\u003cb>"}');
+		expect(doc).toContain(
+			'window.__SPOOL__ = {"project":"demo","frame":"a\\u003cb>","projectCapability":"project-capability"}',
+		);
 	});
 });
 

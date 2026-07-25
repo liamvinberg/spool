@@ -226,7 +226,7 @@ describe("frame document failure path", () => {
 		initProject(twinDir, spoolDir);
 		const ambiguous = await app.request(`/p/${a.name}/frames/hello`);
 		expect(ambiguous.status).toBe(409);
-		expect(await ambiguous.text()).toContain(a.root);
+		expect(await ambiguous.text()).not.toContain(a.root);
 	});
 });
 

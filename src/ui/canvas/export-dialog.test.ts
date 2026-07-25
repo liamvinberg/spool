@@ -4,9 +4,9 @@ import { describe, expect, it } from "vitest";
 import { ExportDialog } from "./export-dialog";
 
 const frames = [
-	{ name: "menu", thumbnail: "/thumbs/menu" },
-	{ name: "cart", thumbnail: "/thumbs/cart" },
-	{ name: "receipt", thumbnail: "/thumbs/receipt" },
+	{ name: "menu", thumbnail: { project: "demo", frame: "menu", nonce: 0 } },
+	{ name: "cart", thumbnail: { project: "demo", frame: "cart", nonce: 0 } },
+	{ name: "receipt", thumbnail: { project: "demo", frame: "receipt", nonce: 0 } },
 ];
 
 describe("ExportDialog", () => {

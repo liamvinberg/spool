@@ -221,9 +221,9 @@ export function Player({
 					>
 						<WalkSection log={log} running={rail} elapsed={controller.elapsed} onRewind={controller.rewind} />
 						{terminal ? (
-							// the iframe boundary means the prototype runtime is not in play (#44)
+							// The prototype runtime is not present in this Spool-owned surface.
 							<p className="spool-rail-quiet is-section">
-								a terminal screen keeps its state and calls in its own process
+								terminal execution is disabled until it can run in an OS sandbox
 							</p>
 						) : (
 							<Fragment>
@@ -408,57 +408,22 @@ function clock(ms: number): string {
 	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-/**
- * A live terminal screen (#44): the same term document the canvas embeds,
- * hosted over the daemon's last grid as a boot poster — parity by
- * construction, one emulator, one host protocol. The walk arriving is the
- * enter gesture, so the document is focused as soon as it exists; the runtime
- * inside relays streaming, keys, and the exit chord to this host.
- */
-export function TermScreen({
-	src,
-	poster,
-	title,
-	ensureFresh,
-	register,
-}: {
-	src: string;
-	poster: string;
-	title: string;
-	/** Resolves once the session may be joined — a restarted walk asks for a clean process first. */
-	ensureFresh: () => Promise<void>;
-	/** Scopes the walk's witness: the current screen's iframe, registered while mounted. */
-	register: (el: HTMLIFrameElement | null) => void;
-}) {
-	const [ready, setReady] = useState(false);
-	useEffect(() => {
-		let alive = true;
-		void ensureFresh().then(() => {
-			if (alive) setReady(true);
-		});
-		return () => {
-			alive = false;
-		};
-	}, [ensureFresh]);
+/** A static terminal surface over its last persisted grid. */
+export function TermScreen({ src, poster, title }: { src: string; poster: string; title: string }) {
 	return (
 		<div className="spool-term-screen">
 			{/* biome-ignore lint/security/noDangerouslySetInnerHtml: the svg is the daemon's own grid rasterization, text-escaped at render */}
 			<div className="spool-term-poster" aria-hidden dangerouslySetInnerHTML={{ __html: poster }} />
-			{ready && (
-				<iframe
-					ref={(el) => {
-						register(el);
-						el?.focus();
-					}}
-					src={src}
-					title={title}
-					sandbox="allow-scripts"
-					onLoad={(event) => {
-						event.currentTarget.focus({ preventScroll: true });
-						event.currentTarget.contentWindow?.postMessage({ spool: "focus", surface: "player" }, "*");
-					}}
-				/>
-			)}
+			<iframe
+				ref={(el) => el?.focus()}
+				src={src}
+				title={title}
+				sandbox="allow-scripts"
+				onLoad={(event) => {
+					event.currentTarget.focus({ preventScroll: true });
+					event.currentTarget.contentWindow?.postMessage({ spool: "focus", surface: "player" }, "*");
+				}}
+			/>
 		</div>
 	);
 }

@@ -1,9 +1,21 @@
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+	chmodSync,
+	closeSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { SpoolError } from "../errors";
+import { renderOriginFor } from "./security";
 
 /**
  * Daemon lifecycle around ~/.spool: config resolves what `serve` binds,
@@ -95,7 +107,20 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 		port = parsed;
 	}
 
+	assertLoopbackHost(host);
+
 	return { host, port, updateCheck };
+}
+
+export function assertLoopbackHost(host: string): void {
+	if (isLoopbackHost(host)) return;
+	throw new SpoolError(
+		`Spool daemon host must be a supported loopback host (127.0.0.1, localhost, or ::1), got "${host}"`,
+	);
+}
+
+function isLoopbackHost(host: string): boolean {
+	return host === "127.0.0.1" || host === "localhost" || host === "::1";
 }
 
 export interface DaemonState {
@@ -104,6 +129,8 @@ export interface DaemonState {
 	port: number;
 	version: string;
 	startedAt: string;
+	/** Per-daemon credential for trusted UI and CLI control requests. */
+	controlToken: string;
 }
 
 const STATE_FILE = "daemon.json";
@@ -129,19 +156,33 @@ export function readDaemonState(spoolDir: string): DaemonState | undefined {
 		typeof state.host !== "string" ||
 		typeof state.port !== "number" ||
 		typeof state.version !== "string" ||
-		typeof state.startedAt !== "string"
+		typeof state.startedAt !== "string" ||
+		typeof state.controlToken !== "string" ||
+		state.controlToken.length === 0
 	) {
 		return undefined;
 	}
-	return { pid: state.pid, host: state.host, port: state.port, version: state.version, startedAt: state.startedAt };
+	return {
+		pid: state.pid,
+		host: state.host,
+		port: state.port,
+		version: state.version,
+		startedAt: state.startedAt,
+		controlToken: state.controlToken,
+	};
 }
 
 export function writeDaemonState(spoolDir: string, state: DaemonState): void {
 	mkdirSync(spoolDir, { recursive: true });
 	const file = join(spoolDir, STATE_FILE);
-	const tmp = `${file}.tmp`;
-	writeFileSync(tmp, `${JSON.stringify(state, null, "\t")}\n`);
-	renameSync(tmp, file);
+	const tmp = `${file}.${randomUUID()}.tmp`;
+	try {
+		writeFileSync(tmp, `${JSON.stringify(state, null, "\t")}\n`, { flag: "wx", mode: 0o600 });
+		renameSync(tmp, file);
+		chmodSync(file, 0o600);
+	} finally {
+		rmSync(tmp, { force: true });
+	}
 }
 
 /** Remove daemon.json, but never a successor's: only when the pid matches. */
@@ -160,6 +201,11 @@ export function connectHost(host: string): string {
 export function daemonUrl(host: string, port: number): string {
 	const dialable = connectHost(host);
 	return dialable.includes(":") ? `http://[${dialable}]:${port}` : `http://${dialable}:${port}`;
+}
+
+/** The untrusted render virtual host on the daemon's loopback listener. */
+export function renderOrigin(controlUrl: string): string {
+	return renderOriginFor(controlUrl);
 }
 
 export interface DaemonHealth {
@@ -245,6 +291,7 @@ export interface EnsureResult {
 	url: string;
 	pid: number;
 	started: boolean;
+	controlToken: string;
 }
 
 /**
@@ -254,7 +301,7 @@ export interface EnsureResult {
 export async function ensureDaemon(spoolDir: string, options: EnsureOptions = {}): Promise<EnsureResult> {
 	const existing = await liveDaemon(spoolDir);
 	if (existing !== undefined) {
-		return { url: existing.url, pid: existing.state.pid, started: false };
+		return { url: existing.url, pid: existing.state.pid, started: false, controlToken: existing.state.controlToken };
 	}
 
 	const command = options.command ?? defaultServeCommand();
@@ -273,7 +320,8 @@ export async function ensureDaemon(spoolDir: string, options: EnsureOptions = {}
 	closeSync(log);
 
 	const live = await poll(options.timeoutMs ?? 10_000, () => liveDaemon(spoolDir));
-	if (live !== undefined) return { url: live.url, pid: live.state.pid, started: true };
+	if (live !== undefined)
+		return { url: live.url, pid: live.state.pid, started: true, controlToken: live.state.controlToken };
 	throw new SpoolError(`spool daemon did not come up — see ${logFile}`);
 }
 

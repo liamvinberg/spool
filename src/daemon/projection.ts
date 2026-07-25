@@ -1,6 +1,7 @@
-import { type Dirent, existsSync, readdirSync, statSync } from "node:fs";
+import { type Dirent, existsSync, lstatSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_COLS, DEFAULT_ROWS, pxForCells } from "../term/cells";
+import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { readGeometry, writeGeometry } from "./geometry";
 import { isSafeName } from "./project-files";
 import { termScreenFile, thumbFile } from "./thumbs";
@@ -56,9 +57,27 @@ export type FrameLookup =
 	| { kind: "missing" }
 	| { kind: "collision"; paths: string[] };
 
-export function frameKind(frameDir: string): FrameKind | "conflict" | undefined {
-	const html = existsSync(join(frameDir, "frame.tsx"));
-	const term = existsSync(join(frameDir, "term.tsx"));
+export function frameKind(frameDir: string, designDir: string): FrameKind | "conflict" | undefined {
+	let directory: string;
+	try {
+		directory = resolveDesignPath(designDir, frameDir);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return undefined;
+	}
+	const present = (entry: string): boolean => {
+		try {
+			// Kind is a lexical source marker. Following its symlink here would
+			// hide an escaped entry as a missing frame before the compiler or
+			// terminal launcher can report the boundary violation.
+			lstatSync(join(directory, entry));
+			return true;
+		} catch {
+			return false;
+		}
+	};
+	const html = present("frame.tsx");
+	const term = present("term.tsx");
 	if (html && term) return "conflict";
 	if (term) return "term";
 	if (html) return "html";
@@ -79,6 +98,7 @@ interface DiscoveredFrame {
 }
 
 interface Discovery {
+	designDir: string;
 	/** Collision-free frames, sorted by name. */
 	frames: DiscoveredFrame[];
 	pages: string[];
@@ -103,7 +123,15 @@ function defaultFootprint(kind: FrameKind): { w: number; h: number } {
  * discovery's.
  */
 function discover(root: string): Discovery | undefined {
-	const framesDir = join(root, "design", "frames");
+	let designDir: string;
+	let framesDir: string;
+	try {
+		designDir = realDesignDir(root);
+		framesDir = resolveDesignPath(designDir, join(designDir, "frames"));
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return undefined;
+	}
 	let entries: Dirent[];
 	try {
 		entries = readdirSync(framesDir, { withFileTypes: true });
@@ -122,7 +150,7 @@ function discover(root: string): Discovery | undefined {
 	for (const entry of entries) {
 		if (!entry.isDirectory() || !isSafeName(entry.name)) continue;
 		const dir = join(framesDir, entry.name);
-		const kind = frameKind(dir);
+		const kind = frameKind(dir, designDir);
 		if (kind !== undefined) {
 			claim(entry.name, undefined, dir, kind);
 			continue;
@@ -137,7 +165,7 @@ function discover(root: string): Discovery | undefined {
 		for (const sub of inner) {
 			if (!sub.isDirectory() || !isSafeName(sub.name)) continue;
 			const subDir = join(dir, sub.name);
-			const subKind = frameKind(subDir);
+			const subKind = frameKind(subDir, designDir);
 			if (subKind !== undefined) claim(sub.name, entry.name, subDir, subKind);
 		}
 	}
@@ -155,7 +183,7 @@ function discover(root: string): Discovery | undefined {
 	frames.sort((a, b) => a.name.localeCompare(b.name));
 	collisions.sort((a, b) => a.name.localeCompare(b.name));
 	pages.sort((a, b) => a.localeCompare(b));
-	return { frames, pages, collisions };
+	return { designDir, frames, pages, collisions };
 }
 
 /** The design-relative folder a frame name resolves to, wire-format slashes —
@@ -192,7 +220,7 @@ export function listProjectFrames(root: string): Projection {
 	const placed: ProjectedFrame[] = [];
 	const unplaced: DiscoveredFrame[] = [];
 	for (const frame of discovery.frames) {
-		const geometry = readGeometry(join(frame.dir, "frame.json"));
+		const geometry = readGeometry(join(frame.dir, "frame.json"), discovery.designDir);
 		if (geometry === undefined) unplaced.push(frame);
 		else placed.push(projected(root, frame, geometry));
 	}
@@ -206,8 +234,9 @@ export function listProjectFrames(root: string): Projection {
 		const baseline = field.length === 0 ? GUTTER : Math.min(...field.map((f) => f.y));
 		const geometry = { x: cursor, y: baseline, ...footprint };
 		try {
-			writeGeometry(join(frame.dir, "frame.json"), geometry);
-		} catch {
+			writeGeometry(join(frame.dir, "frame.json"), geometry, discovery.designDir);
+		} catch (error) {
+			if (error instanceof DesignBoundaryError) throw error;
 			// read-only checkout: placement stays deterministic within this daemon run
 		}
 		placed.push(projected(root, frame, geometry));
@@ -240,15 +269,27 @@ export function frameNames(root: string): string[] | undefined {
 
 function hasThumb(root: string, frame: string, kind: FrameKind): boolean {
 	// a terminal's cover is its serialized screen, rasterized daemon-side (#42)
-	if (kind === "term") return existsSync(termScreenFile(root, frame));
-	return existsSync(thumbFile(root, frame));
+	try {
+		if (kind === "term") return existsSync(termScreenFile(root, frame));
+		return existsSync(thumbFile(root, frame));
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return false;
+	}
 }
 
 /** One frame's geometry: its sidecar if sound, the default footprint otherwise. Never writes. */
 export function frameGeometry(root: string, frame: string): { w: number; h: number } {
 	const found = lookupFrame(root, frame);
 	if (found.kind !== "found") return { w: DEFAULT_W, h: DEFAULT_H };
-	const geometry = readGeometry(join(found.dir, "frame.json"));
+	let designDir: string;
+	try {
+		designDir = realDesignDir(root);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return { w: DEFAULT_W, h: DEFAULT_H };
+	}
+	const geometry = readGeometry(join(found.dir, "frame.json"), designDir);
 	if (geometry !== undefined) return { w: geometry.w, h: geometry.h };
 	return defaultFootprint(found.frameKind);
 }
@@ -282,7 +323,8 @@ export function summarizeProject(root: string): ProjectSummary {
 function thumbMtime(root: string, frame: string): number | undefined {
 	try {
 		return statSync(thumbFile(root, frame)).mtimeMs;
-	} catch {
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;
 	}
 }

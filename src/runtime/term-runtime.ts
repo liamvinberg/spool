@@ -4,13 +4,8 @@ import { TERM_ANSI, TERM_BACKGROUND, TERM_CURSOR, TERM_FOREGROUND } from "../ter
 import { exitChipLabel, termKeyIntent } from "./term-keys";
 
 /**
- * The terminal runtime (#42): the browser half of a terminal frame. It paints
- * the daemon's PTY stream through the pinned emulator and speaks the host
- * protocol a canvas expects — loaded, key, zoom, pick, sites — while honoring
- * the parity law for keys: an entered terminal owns the whole keyboard,
- * Escape and Ctrl+C included, because those belong to the TUI. The one way
- * out is the platform modifier + Escape, a chord terminals have never
- * transmitted to apps, so no TUI can want it.
+ * Dormant browser runtime for a future OS-sandboxed terminal executor. Shipped
+ * terminal documents never import this module.
  *
  * Freeze is relayed to the daemon (SIGSTOP — kernel-frozen, zero CPU) rather
  * than shimmed: a real process has no timers to wrap.
