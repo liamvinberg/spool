@@ -335,8 +335,7 @@ describe("hostile project browser boundary", () => {
 		await canvasFrame.locator("#walk").click();
 		const nextLabel = canvasPage.locator('[data-frame-label="next"]');
 		await expect.poll(() => nextLabel.innerText()).toContain("live");
-		const walkedCanvasFrame = await childFrame(canvasPage, 'iframe[title="next"]');
-		await walkedCanvasFrame.locator("#next").waitFor();
+		await canvasPage.frameLocator('iframe[title="next"]').locator("#next").waitFor();
 
 		const playPage = await context.newPage();
 		await playPage.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=hostile`);

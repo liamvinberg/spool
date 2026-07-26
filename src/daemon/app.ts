@@ -21,6 +21,8 @@ import { stampLabels } from "./call-site";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import {
+	captureWorkerCsp,
+	captureWorkerDocument,
 	escapeHtml,
 	escapeInlineScript,
 	escapeInlineStyle,
@@ -45,7 +47,9 @@ import {
 } from "./projection";
 import { createResolvePass } from "./resolve-pass";
 import {
+	CAPTURE_HOST,
 	CONTROL_HEADER,
+	captureOriginFor,
 	createCapability,
 	matchesCapability,
 	normalizeHostname,
@@ -151,6 +155,7 @@ export function createDaemonApp({
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
 	let controlOrigin = `http://${controlHostname.includes(":") ? `[${controlHostname}]` : controlHostname}`;
 	let renderOrigin = renderOriginFor(controlOrigin);
+	let captureOrigin = captureOriginFor(controlOrigin);
 	const projectCapabilities = new Map<string, string>();
 	const playerHandoffs = new Map<string, { project: string; frame: string; scenario: string; expiresAt: number }>();
 
@@ -213,6 +218,7 @@ export function createDaemonApp({
 
 	const frameAuthority = (root: string) => ({
 		projectCapability: projectCapability(root),
+		controlOrigin,
 	});
 
 	// the app-level channel: registry and session changes, fanned to every page
@@ -289,12 +295,13 @@ export function createDaemonApp({
 		return { path };
 	}
 
-	type HostClass = "control" | "render" | "unexpected";
+	type HostClass = "control" | "render" | "capture" | "unexpected";
 
 	function hostClass(url: string): HostClass {
 		const hostname = normalizeHostname(new URL(url).hostname);
 		if (hostname === controlHostname) return "control";
 		if (hostname === RENDER_HOST) return "render";
+		if (hostname === CAPTURE_HOST) return "capture";
 		return "unexpected";
 	}
 
@@ -356,6 +363,14 @@ export function createDaemonApp({
 			const host = hostClass(c.req.url);
 			if (host === "unexpected") return c.text("unexpected host", 421);
 			const path = c.req.path;
+			if (host === "capture") {
+				const url = new URL(c.req.url);
+				if (c.req.method !== "GET" || url.pathname !== "/capture" || url.search !== "") {
+					return c.text("not found", 404);
+				}
+				await next();
+				return;
+			}
 			if (host === "render") {
 				const allowed = isRenderOnlyPath(path) || path.startsWith("/play/") || path === "/favicon.svg";
 				if (!allowed) return c.text("not found", 404);
@@ -366,7 +381,7 @@ export function createDaemonApp({
 				await next();
 				return;
 			}
-			if (isRenderOnlyPath(path)) return c.text("not found", 404);
+			if (isRenderOnlyPath(path) || path === "/capture") return c.text("not found", 404);
 			if (!path.startsWith("/api/") || path === "/api/health") {
 				await next();
 				return;
@@ -380,6 +395,12 @@ export function createDaemonApp({
 				return c.text("forbidden", 403);
 			}
 			await next();
+		})
+		.get("/capture", (c) => {
+			c.header("cache-control", "no-store");
+			c.header("content-security-policy", captureWorkerCsp(controlOrigin));
+			c.header("x-content-type-options", "nosniff");
+			return c.html(captureWorkerDocument(controlOrigin));
 		})
 		.get("/api/health", (c) => c.json({ name: "spool", version, pid: process.pid, startedAt }))
 		.post("/api/upgrade", (c) => {
@@ -1130,7 +1151,7 @@ export function createDaemonApp({
 		protectControlDocument(c);
 		c.header("content-type", index.contentType);
 		c.header("cache-control", "no-store");
-		const boot = `<script>window.__SPOOL_CONTROL__ = ${escapeJsonScript(controlToken)}; window.__SPOOL_RENDER_ORIGIN__ = ${escapeJsonScript(renderOrigin)};</script>`;
+		const boot = `<script>window.__SPOOL_CONTROL__ = ${escapeJsonScript(controlToken)}; window.__SPOOL_RENDER_ORIGIN__ = ${escapeJsonScript(renderOrigin)}; window.__SPOOL_CAPTURE_ORIGIN__ = ${escapeJsonScript(captureOrigin)};</script>`;
 		const html = index.body.toString("utf8");
 		return c.body(html.includes("</head>") ? html.replace("</head>", `${boot}\n</head>`) : `${boot}\n${html}`);
 	}
@@ -1299,6 +1320,7 @@ export function createDaemonApp({
 		setSelfOrigin: (origin: string) => {
 			controlOrigin = new URL(origin).origin;
 			renderOrigin = renderOriginFor(controlOrigin);
+			captureOrigin = captureOriginFor(controlOrigin);
 			selfOrigin = renderOrigin;
 		},
 		/** Begin the daily phone-home — post-listen only, and only when opted in. */

@@ -1,5 +1,43 @@
 import { describe, expect, it } from "vitest";
-import { clipboardCopyAllowed, parseFrameMessage, walkRejectionReason } from "./protocol";
+import { captureMessage, clipboardCopyAllowed, parseFrameMessage, walkRejectionReason } from "./protocol";
+
+describe("trusted capture source protocol", () => {
+	const id = "0123456789abcdef0123456789abcdef";
+	const svg = new Blob(["<svg/>"], { type: "image/svg+xml" });
+	const source = {
+		spool: "capture-source",
+		frame: "landing",
+		id,
+		svg,
+		width: 390,
+		height: 844,
+		dpr: 2,
+		maxEdge: 1200,
+	};
+
+	it("carries the request id and accepts only an exact bounded SVG source", () => {
+		expect(captureMessage(id, 1200, 900)).toEqual({ spool: "capture", id, maxEdge: 1200, settleMs: 900 });
+		expect(parseFrameMessage(source)).toEqual(source);
+		expect(parseFrameMessage({ ...source, extra: true })).toBeUndefined();
+		expect(parseFrameMessage({ ...source, id: "1" })).toBeUndefined();
+		expect(parseFrameMessage({ ...source, svg: new Blob(["<svg/>"], { type: "text/plain" }) })).toBeUndefined();
+		expect(parseFrameMessage({ ...source, svg: new Blob([], { type: "image/svg+xml" }) })).toBeUndefined();
+		expect(parseFrameMessage({ ...source, width: 0 })).toBeUndefined();
+		expect(parseFrameMessage({ ...source, height: 32769 })).toBeUndefined();
+		expect(parseFrameMessage({ ...source, dpr: 2.1 })).toBeUndefined();
+		expect(parseFrameMessage({ ...source, maxEdge: 16385 })).toBeUndefined();
+		expect(parseFrameMessage({ ...source, width: 32768, height: 32768, dpr: 2, maxEdge: 0 })).toBeUndefined();
+	});
+
+	it("accepts only an exact, correlated bounded source error", () => {
+		const error = { spool: "capture-source", frame: "landing", id, error: "capture source too large" };
+
+		expect(parseFrameMessage(error)).toEqual(error);
+		expect(parseFrameMessage({ ...error, extra: true })).toBeUndefined();
+		expect(parseFrameMessage({ ...error, id: "late" })).toBeUndefined();
+		expect(parseFrameMessage({ ...error, error: "x".repeat(241) })).toBeUndefined();
+	});
+});
 
 describe("clipboard protocol", () => {
 	it("accepts only an exact, safe frame copy request", () => {

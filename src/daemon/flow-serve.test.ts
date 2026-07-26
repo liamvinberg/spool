@@ -172,6 +172,7 @@ describe("frame document flow wiring", () => {
 			project: name,
 			frame: "inbox",
 			projectCapability: expect.any(String),
+			controlOrigin: "http://localhost:7766",
 		});
 		expect(doc.indexOf("window.__SPOOL__")).toBeLessThan(doc.indexOf('<script type="module">'));
 

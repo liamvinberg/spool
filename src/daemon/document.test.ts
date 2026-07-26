@@ -1,12 +1,36 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { assembleFrameDocument, errorDocument, mergeImportMap } from "./document";
+import {
+	assembleFrameDocument,
+	captureWorkerCsp,
+	captureWorkerDocument,
+	errorDocument,
+	mergeImportMap,
+} from "./document";
 
 describe("assembleFrameDocument", () => {
+	it("emits syntactically valid classic boot scripts", () => {
+		const document = assembleFrameDocument({
+			project: "demo",
+			frame: "hello",
+			projectCapability: "project-capability",
+			controlOrigin: "http://localhost:7766",
+			css: "",
+			importMap: { imports: {} },
+			bootJs: "",
+		});
+		const scripts = [...document.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1] ?? "");
+
+		expect(scripts.length).toBeGreaterThanOrEqual(2);
+		for (const script of scripts) expect(() => new Function(script)).not.toThrow();
+	});
+
 	it("keeps a </script> inside frame code from ending the boot module", () => {
 		const doc = assembleFrameDocument({
 			project: "demo",
 			frame: "hello",
 			projectCapability: "project-capability",
+			controlOrigin: "http://localhost:7766",
 			css: "",
 			importMap: { imports: {} },
 			bootJs: 'const markup = "</script><script>alert(1)</script>";',
@@ -21,6 +45,7 @@ describe("assembleFrameDocument", () => {
 			project: "demo",
 			frame: "hello",
 			projectCapability: "project-capability",
+			controlOrigin: "http://localhost:7766",
 			css: "",
 			importMap: { imports: { evil: "https://x/</script>" } },
 			bootJs: "",
@@ -34,6 +59,7 @@ describe("assembleFrameDocument", () => {
 			project: "demo",
 			frame: "a<b>",
 			projectCapability: "project-capability",
+			controlOrigin: "http://localhost:7766",
 			css: "",
 			importMap: {},
 			bootJs: "",
@@ -42,8 +68,28 @@ describe("assembleFrameDocument", () => {
 		expect(doc).toContain("<title>a&lt;b&gt; · spool</title>");
 		expect(doc).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
 		expect(doc).toContain(
-			'window.__SPOOL__ = {"project":"demo","frame":"a\\u003cb>","projectCapability":"project-capability"}',
+			'window.__SPOOL__ = {"project":"demo","frame":"a\\u003cb>","projectCapability":"project-capability","controlOrigin":"http://localhost:7766"}',
 		);
+	});
+});
+
+describe("captureWorkerDocument", () => {
+	it("pins its only inline script with a CSP hash", () => {
+		const document = captureWorkerDocument("http://127.0.0.1:7766");
+		const script = document.match(/<script>([\s\S]*)<\/script>/)?.[1];
+		expect(script).toBeDefined();
+		const hash = createHash("sha256")
+			.update(script ?? "")
+			.digest("base64");
+
+		const csp = captureWorkerCsp("http://127.0.0.1:7766");
+		expect(csp).toContain(`script-src 'sha256-${hash}'`);
+		expect(csp).toContain("frame-ancestors http://127.0.0.1:7766");
+		expect(csp).toContain("font-src data:");
+		expect(csp).not.toContain("'unsafe-inline'");
+		expect(csp).not.toContain("sandbox");
+		expect(document).not.toContain("parent.postMessage");
+		expect(document).toContain('<meta name="spool-control-origin" content="http://127.0.0.1:7766">');
 	});
 });
 
