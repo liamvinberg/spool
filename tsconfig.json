@@ -14,8 +14,11 @@
 		"noImplicitOverride": true,
 		"noFallthroughCasesInSwitch": true,
 		"noEmit": true,
+		// bench/ runs under node's own type stripping, which resolves ESM
+		// specifiers verbatim and so needs the .ts extension written out
+		"allowImportingTsExtensions": true,
 		"skipLibCheck": true
 	},
-	"include": ["src", "tsup.config.ts", "vitest.config.ts", "vite.config.ts"],
+	"include": ["src", "bench", "tsup.config.ts", "vitest.config.ts", "vite.config.ts"],
 	"exclude": ["src/runtime", "src/ui"]
 }
