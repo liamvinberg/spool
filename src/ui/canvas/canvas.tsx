@@ -144,8 +144,6 @@ const TREE_REPLY_MS = 1200;
 const STAMP_LABEL_BATCH = 256;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
-/** How long after the last camera change the frames stay stilled. */
-const CAMERA_GLIDE_MS = 140;
 
 function spatialDirection(key: string): SpatialDirection | undefined {
 	switch (key) {
@@ -209,12 +207,6 @@ export function ProjectCanvas({
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
 	const [camera, setCamera] = useState<Camera | null>(null);
-	// Whether the camera is mid-move. Measured on a 56-frame canvas: painting
-	// mounted iframe documents at each new scale is the whole of the zoom
-	// stutter (p95 17 ms, worst frame 192 ms, 19 dropped frames per gesture);
-	// with the documents unpainted the same gesture drops none. So the camera
-	// says when it is moving and frames answer with their stills.
-	const [gliding, setGliding] = useState(false);
 	const [tool, setTool] = useState<CanvasTool>("select");
 	const [selected, setSelected] = useState<string[]>([]);
 	const [picked, setPicked] = useState<PickedSelection[]>([]);
@@ -279,15 +271,6 @@ export function ProjectCanvas({
 	const animation = useRef(0);
 	const cameraRef = useRef<Camera | null>(null);
 	cameraRef.current = camera;
-	// One place, so every camera mover is covered: wheel, drag, key, flight.
-	// The tail outlasts the gaps between wheel events in one gesture, and is
-	// short enough that letting go reads as the documents coming straight back.
-	useEffect(() => {
-		if (camera === null) return;
-		setGliding(true);
-		const stop = setTimeout(() => setGliding(false), CAMERA_GLIDE_MS);
-		return () => clearTimeout(stop);
-	}, [camera]);
 	const framesRef = useRef(visibleFrames);
 	framesRef.current = visibleFrames;
 	// the whole projection, for cross-page reads: walks, connections, editor paths
@@ -2554,9 +2537,6 @@ export function ProjectCanvas({
 											name={frame.name}
 											state={state}
 											ready={lifecycle.ready.has(frame.name)}
-											// the entered frame is the one you are using: it keeps
-											// painting. A frame with no still has nothing to swap to.
-											stilled={gliding && !isEntered && hasThumb(frame.name)}
 											interactive={isEntered && !metaDown}
 											docNonce={docNonces[frame.name] ?? 0}
 											thumbNonce={thumbNonces[frame.name] ?? 0}

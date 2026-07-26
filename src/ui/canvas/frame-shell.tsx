@@ -64,7 +64,6 @@ export const FrameShell = memo(function FrameShell({
 	name,
 	state,
 	ready,
-	stilled,
 	interactive,
 	docNonce,
 	thumbNonce,
@@ -77,13 +76,6 @@ export const FrameShell = memo(function FrameShell({
 	name: string;
 	state: FrameState;
 	ready: boolean;
-	/**
-	 * The camera is moving and this frame has a still to stand in for it.
-	 * Painting a mounted document at each new scale is what makes a canvas
-	 * stutter; the still is one texture the compositor already knows how to
-	 * scale, and it is a picture of this frame, so the swap is invisible.
-	 */
-	stilled: boolean;
 	/** Whether the entered iframe currently owns pointer input. */
 	interactive: boolean;
 	/** Bumped by SSE source changes — a new nonce reloads the document. */
@@ -150,29 +142,7 @@ export const FrameShell = memo(function FrameShell({
 					sandbox="allow-scripts"
 					src={frameDocumentUrl(project, name, docNonce)}
 					className="block h-full w-full border-0 bg-white"
-					style={{
-						pointerEvents: interactive ? "auto" : "none",
-						// skips painting the document without unmounting it: the
-						// frame keeps its state, its scroll, and its boot
-						contentVisibility: stilled ? "hidden" : "visible",
-					}}
-				/>
-			)}
-			{/* The stand-in, mounted for as long as the document is. A still first
-			    mounted when the gesture starts is still fetching its blob when it
-			    is needed, and the frame shows blank instead — so it waits here,
-			    loaded and unpainted, and a gesture only flips it visible. No fade
-			    either way: it is the same picture, and a transition between them
-			    would only ever read as a ghost of one over the other. */}
-			{state !== "hibernated" && hasThumb && (
-				<Thumbnail
-					project={project}
-					frame={name}
-					nonce={thumbNonce}
-					alt={name}
-					draggable={false}
-					className="pointer-events-none absolute inset-0 h-full w-full object-cover object-top"
-					style={{ visibility: stilled ? "visible" : "hidden" }}
+					style={{ pointerEvents: interactive ? "auto" : "none" }}
 				/>
 			)}
 			{(plan.cover || veil) && (

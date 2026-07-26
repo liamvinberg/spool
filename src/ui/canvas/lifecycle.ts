@@ -7,13 +7,15 @@ import { captureMessage } from "./protocol";
 
 /**
  * The engine lifecycle (#8, #13, #40, #54): which frames run, which stand
- * frozen, which exist only as their still. Exactly one frame runs — the one
- * you entered. Every other mounted frame stands frozen, real DOM crisp at any
- * zoom: a canvas where twenty renderers animate at once stutters under every
- * pan, and no zoom arithmetic fixes that. Time starts when you go inside, and
- * stops when you leave. Zoom decides mounting alone (K_MIN_MOUNT), never
- * running: an overview mounts nothing, because a frame drawn smaller than its
- * own still gains nothing from being real.
+ * frozen, which exist only as their still. Near frames play; tiny-rendered,
+ * offscreen, and selected-into frames freeze (Chrome free-runs tiny frames at
+ * 500+ Hz — the zoom threshold is load-bearing) and stay mounted in the warm
+ * pool. K_MIN_MOUNT is that threshold, and it gates both: a frame drawn
+ * smaller than its own still is not worth a renderer, so an overview of a
+ * large canvas mounts nothing at all.
+ * Freezing is never a saving to reach for. A frozen frame's rAF is held, so
+ * content that animates itself in never arrives and its still records the
+ * absence — which is why only frames you cannot read stop.
  * Hibernation's payoff is memory, never CPU: only pool overflow demotes a
  * frame to its still, oldest-seen first, html frames taking a goodbye
  * self-capture on the way out. Every mount drains through the wake queue —
@@ -149,21 +151,24 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		// eviction mid-goodbye. A freeze must keep the existing document.
 		if (mountable || frozen === frame.name || inspected === frame.name) model.exitPending.delete(frame.name);
 
-		// The one frame that runs is the one you entered, and even that stands
-		// frozen while ⌘ holds the pointer off it to reach an element.
-		const runs = entered === frame.name && frozen !== frame.name;
+		// A frame you can read runs. Freezing one that is merely on screen
+		// looks like a saving and is not: frames animate their content in, and
+		// a shim that holds rAF holds them at the opacity they started from —
+		// the text never arrives, and the still captured from that frame
+		// records the absence. Time stops where it cannot be seen to stop:
+		// offscreen, too small to read, or deliberately frozen to be picked at.
 		let target: FrameState;
 		let wakeTo: "live" | "warm" | null = null;
 		if (current !== "hibernated") {
-			target = runs ? "live" : "warm";
-		} else if (runs) {
+			target = frozen === frame.name ? "warm" : entered === frame.name || mountable ? "live" : "warm";
+		} else if (entered === frame.name && frozen !== frame.name) {
 			// entering mounts in its own sweep, bypassing the cap
 			target = "live";
 		} else {
 			target = "hibernated";
 			// an open rail is watched intent (#58): its frame mounts even offscreen,
 			// or it has no DOM to answer the elements tab with
-			wakeTo = mountable || frozen === frame.name || inspected === frame.name ? "warm" : null;
+			wakeTo = frozen === frame.name ? "warm" : mountable ? "live" : inspected === frame.name ? "warm" : null;
 		}
 
 		const entry: Entry = { frame, current, mountable, target };
