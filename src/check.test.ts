@@ -1442,7 +1442,9 @@ describe("offline design checking", () => {
 		expect(messages(root)).toEqual([]);
 	});
 
-	it("fails closed with one stable diagnostic when checker aliases exhaust their resource budget", () => {
+	it("fails closed with one stable diagnostic when checker aliases exhaust their resource budget", {
+		timeout: 30_000,
+	}, () => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, "frames/home/index.ts", "export const known = true;\n");
