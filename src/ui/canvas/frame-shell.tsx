@@ -31,19 +31,24 @@ export interface CoverPlan {
 }
 
 /**
- * The cover law (#8, #28): a boot is covered until its loaded report. A
- * standard boot wears the veil + "booting" badge; a walk arrival never does —
- * it holds the freshest still it has (the just-taken capture, else the cached
- * thumbnail) so the screen settles into life instead of visibly reloading.
+ * The cover law (#8, #28): a boot is covered until its loaded report. The veil
+ * + "booting" badge belongs to a boot somebody asked for — going inside, or a
+ * frame with nothing at all to stand in for it. The canvas mounts frames of its
+ * own accord all the time, a few per sweep, and announcing those is how one
+ * arrival turns into seconds of badges rolling across the screen; an ambient
+ * mount holds its still instead and simply becomes real. A walk arrival has
+ * always worked this way, on the freshest still it has.
  */
 export function coverPlan(input: {
 	state: FrameState;
 	ready: boolean;
 	hasThumb: boolean;
+	/** Whether this boot is one the person asked for by going inside. */
+	entered: boolean;
 	walk: WalkBoot | null;
 	terminalCover?: TerminalCoverState | undefined;
 }): CoverPlan {
-	const { state, ready, hasThumb, walk, terminalCover } = input;
+	const { state, ready, hasThumb, entered, walk, terminalCover } = input;
 	if (terminalCover?.kind === "stale" || terminalCover?.kind === "never-run") {
 		return {
 			cover: true,
@@ -55,7 +60,7 @@ export function coverPlan(input: {
 	return {
 		cover: state === "hibernated" || !ready,
 		image: walk?.still !== undefined ? "still" : hasThumb ? "thumb" : "placeholder",
-		badge: state !== "hibernated" && !ready && walk === null,
+		badge: state !== "hibernated" && !ready && walk === null && (entered || !hasThumb),
 	};
 }
 
@@ -64,6 +69,8 @@ export const FrameShell = memo(function FrameShell({
 	name,
 	state,
 	ready,
+	entered,
+	stilled,
 	interactive,
 	docNonce,
 	thumbNonce,
@@ -76,6 +83,16 @@ export const FrameShell = memo(function FrameShell({
 	name: string;
 	state: FrameState;
 	ready: boolean;
+	/** Whether this is the frame gone inside — its boot is announced, and it never stills. */
+	entered: boolean;
+	/**
+	 * The camera is changing zoom and this frame has a still sharp enough to
+	 * stand in for it. Painting a mounted document at each new scale is the
+	 * whole of the zoom stutter; the still is one texture the compositor
+	 * already knows how to scale, and it is a picture of this frame, so the
+	 * swap is invisible.
+	 */
+	stilled: boolean;
 	/** Whether the entered iframe currently owns pointer input. */
 	interactive: boolean;
 	/** Bumped by SSE source changes — a new nonce reloads the document. */
@@ -130,7 +147,7 @@ export const FrameShell = memo(function FrameShell({
 	else if (covered && walkBoot === undefined && walkCover !== null) setWalkCover(null);
 	else if (!covered && !veil && walkCover !== null) setWalkCover(null);
 
-	const plan = coverPlan({ state, ready, hasThumb, walk: walkCover, terminalCover });
+	const plan = coverPlan({ state, ready, hasThumb, entered, walk: walkCover, terminalCover });
 
 	return (
 		<>
@@ -142,7 +159,32 @@ export const FrameShell = memo(function FrameShell({
 					sandbox="allow-scripts"
 					src={frameDocumentUrl(project, name, docNonce)}
 					className="block h-full w-full border-0 bg-white"
-					style={{ pointerEvents: interactive ? "auto" : "none" }}
+					style={{
+						pointerEvents: interactive ? "auto" : "none",
+						// unpainted, not unmounted: the document keeps its state,
+						// its scroll, and its boot, and comes straight back
+						visibility: stilled ? "hidden" : "visible",
+					}}
+				/>
+			)}
+			{/* The stand-in, mounted for as long as the document is. A still first
+			    mounted when the gesture starts is still decoding when it is needed,
+			    and the frame shows blank instead — so it waits here, loaded and
+			    unpainted, and a gesture only flips it visible. No fade either way:
+			    it is the same picture, and a transition between them would only
+			    ever read as a ghost of one over the other. */}
+			{state !== "hibernated" && hasThumb && (
+				<Thumbnail
+					project={project}
+					frame={name}
+					nonce={thumbNonce}
+					alt={name}
+					draggable={false}
+					// a fresh capture replaces this image while the canvas is in
+					// use; decoding it off the main thread keeps that invisible
+					decoding="async"
+					className="pointer-events-none absolute inset-0 h-full w-full object-cover object-top"
+					style={{ visibility: stilled ? "visible" : "hidden" }}
 				/>
 			)}
 			{(plan.cover || veil) && (

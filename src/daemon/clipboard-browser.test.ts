@@ -454,6 +454,9 @@ it("can copy after the canvas ignores an automatic walk from the same warm frame
 	await label.dispatchEvent("dblclick");
 	await expect.poll(() => label.innerText()).toContain("esc exits");
 	expect(await frame.evaluate(() => (window as unknown as { __warmBoots?: number }).__warmBoots)).toBe(1);
+	// entering is instant and the camera flight that follows is not: a button's
+	// box read mid-flight names a point the click would land beside
+	await page.waitForTimeout(300);
 
 	await page.evaluate(() => navigator.clipboard.writeText("accepted walk baseline"));
 	const resumedCopyBox = await frame.locator("#copy").boundingBox();
@@ -507,19 +510,23 @@ it("blocks self-walk clipboard writes until the frame document is replaced", { t
 	await expect
 		.poll(() => page.locator('iframe[title="self"]').evaluate((element) => getComputedStyle(element).pointerEvents))
 		.toBe("auto");
+	// the first still waits for the frame to finish arriving (#80), so this
+	// outlasts a default poll
 	await expect
-		.poll(() =>
-			page.evaluate(() =>
-				(window as unknown as { __spoolSelfMessages: unknown[] }).__spoolSelfMessages.some(
-					(message) =>
-						typeof message === "object" &&
-						message !== null &&
-						"spool" in message &&
-						message.spool === "shot" &&
-						"frame" in message &&
-						message.frame === "self",
+		.poll(
+			() =>
+				page.evaluate(() =>
+					(window as unknown as { __spoolSelfMessages: unknown[] }).__spoolSelfMessages.some(
+						(message) =>
+							typeof message === "object" &&
+							message !== null &&
+							"spool" in message &&
+							message.spool === "shot" &&
+							"frame" in message &&
+							message.frame === "self",
+					),
 				),
-			),
+			{ timeout: 10_000 },
 		)
 		.toBe(true);
 	const documentId = await frame.evaluate(() => (window as unknown as { __documentId?: string }).__documentId);

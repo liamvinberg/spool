@@ -25,9 +25,30 @@ import { captureMessage } from "./protocol";
  * fires a rasterization storm. Hibernation is automatic engine lifecycle,
  * never a tool; entering a hibernated frame boots it fresh, while freezing
  * always keeps its document.
+ *
+ * A moving camera owns the whole timetable (#80). Mounts wait for it to hold
+ * still, because a booting document paints and a paint under a moving camera
+ * is the stutter; captures wait for it to settle, and for the frame itself to
+ * have finished arriving, because the still they take is what the canvas
+ * stands in for that frame every time the camera moves after.
  */
 
 export type FrameState = "live" | "warm" | "hibernated";
+
+/**
+ * The zoom past which a frame's still is coarser than the frame itself. A
+ * cover is rasterized to at most COVER_MAX_EDGE device pixels on its longest
+ * side, and never above 2× — beyond that, standing the still in for the
+ * document would visibly soften it, and a swap you can see is the flicker the
+ * swap exists to remove. Below it the still is downscaled, which hides its own
+ * compression, so the exchange is invisible in both directions.
+ */
+export function stillSharpUntil(w: number, h: number, devicePixelRatio: number): number {
+	const dpr = Math.max(1, devicePixelRatio);
+	const edge = Math.max(w, h);
+	const captured = Math.min(edge * Math.min(dpr, 2), COVER_MAX_EDGE);
+	return captured / (edge * dpr);
+}
 
 const MARGIN_FRACTION = 0.5; // extra viewport fractions kept mounted around the screen
 /**
@@ -41,6 +62,20 @@ const EXIT_CAPTURE_TIMEOUT_MS = 600; // how long an eviction waits for the goodb
 const CAMERA_SETTLE_MS = 400; // capture on settle, never mid-gesture
 const SWEEP_MS = 300;
 const CAPTURE_REPLY_TIMEOUT_MS = 3000;
+/**
+ * How long a booted frame runs before its still is worth taking. Frames animate
+ * their content in; a capture fired on the loaded report records the frame
+ * mid-arrival, and that half-drawn picture is what the canvas then shows in the
+ * frame's place while the camera moves. The shim waits for its own animations
+ * too — this is the outer bound, for the entry animations no timing API sees.
+ */
+export const CAPTURE_AFTER_READY_MS = 1500;
+/**
+ * How long a frame may wait, inside the capture itself, for its fonts to load
+ * and its entry animations to finish before it photographs itself. A walk asks
+ * for less: its cover is wanted inside the arrival it belongs to.
+ */
+export const CAPTURE_SETTLE_BUDGET_MS = 900;
 export const MOUNTS_PER_SWEEP = 3; // wake-queue drain rate: 3 × ~8 ms ≈ one skipped paint per sweep at worst
 export const CAPTURES_PER_SWEEP = 2; // still-refresh drain rate: a self-capture is a whole-document rasterization
 export const WARM_POOL_CAP = 24; // offscreen warm frames kept mounted; each holds ~4.6 MB and a renderer
@@ -53,6 +88,8 @@ export interface LifecycleModel {
 	exitPending: Map<string, { t0: number; captured: boolean }>;
 	/** Frames whose still went stale — a source edit, or leaving live. */
 	staleStills: Set<string>;
+	/** Frames that have run long enough since booting to be worth photographing. */
+	arrived: Set<string>;
 	prevCamera: Camera | null;
 	lastCameraMove: number;
 }
@@ -62,6 +99,7 @@ export function createLifecycleModel(): LifecycleModel {
 		lastSeen: new Map(),
 		exitPending: new Map(),
 		staleStills: new Set(),
+		arrived: new Set(),
 		prevCamera: null,
 		lastCameraMove: 0,
 	};
@@ -84,8 +122,8 @@ export interface SweepInput {
 	/** The frame an open inspector rail is reading (#58): mounted so it can answer. */
 	inspected: string | null;
 	states: Readonly<Record<string, FrameState>>;
-	/** Frames whose boot has reported loaded — the ones a capture can reach. */
-	ready: ReadonlySet<string>;
+	/** Frames whose boot has reported loaded, and when — the ones a capture can reach. */
+	ready: ReadonlyMap<string, number>;
 	/** Frames with a capture already in flight. */
 	capturing: ReadonlySet<string>;
 	hasThumb: (frame: string) => boolean;
@@ -118,11 +156,17 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	} = input;
 
 	const prev = model.prevCamera;
-	if (prev === null || prev.x !== camera.x || prev.y !== camera.y || prev.k !== camera.k) {
+	const shifted = prev !== null && (prev.x !== camera.x || prev.y !== camera.y || prev.k !== camera.k);
+	if (prev === null || shifted) {
 		model.prevCamera = { ...camera };
 		model.lastCameraMove = now;
 	}
 	const settled = now - model.lastCameraMove > CAMERA_SETTLE_MS;
+	// Mounting waits only for the camera to hold still from one sweep to the
+	// next — a booting document paints, and a paint under a moving camera is
+	// the stutter. First sight of a camera is not a movement, so a canvas
+	// opening mounts straight away.
+	const holding = !shifted;
 
 	const margined = visibleWorldRect(camera, viewportWidth, viewportHeight, MARGIN_FRACTION);
 	const strict = visibleWorldRect(camera, viewportWidth, viewportHeight, 0);
@@ -182,8 +226,10 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		}
 	}
 
+	// The queue holds while the camera moves and drains the sweep after it
+	// stops. Entering never queues, so going inside stays instant at any moment.
 	waiting.sort((a, b) => a.tier - b.tier || a.dist - b.dist);
-	for (const admitted of waiting.slice(0, MOUNTS_PER_SWEEP)) admitted.entry.target = admitted.wakeTo;
+	if (holding) for (const admitted of waiting.slice(0, MOUNTS_PER_SWEEP)) admitted.entry.target = admitted.wakeTo;
 
 	const exitCaptures: string[] = [];
 	// resolve in-flight goodbyes: the capture landed or timed out — unmount now
@@ -231,14 +277,31 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		// leaving live stales the still; refresh once the camera settles,
 		// while the (hidden) DOM is still mounted
 		if (current === "live" && target === "warm" && frame.kind !== "term") model.staleStills.add(frame.name);
+		// A still is only worth what the frame was doing when it was taken. A
+		// frame that booted a moment ago is still arriving, and one that never
+		// ran never arrived at all — both photograph as an absence, and the
+		// canvas would then show that absence in the frame's own place. Having
+		// run long enough once is remembered: an offscreen frame's still stays
+		// refreshable, a frame frozen mid-entry never becomes one.
+		const readyAt = ready.get(frame.name);
+		if (readyAt === undefined) model.arrived.delete(frame.name);
+		else if (target === "live" && now - readyAt >= CAPTURE_AFTER_READY_MS && !model.arrived.has(frame.name)) {
+			// First arrival is the one moment a still is certainly owed. A stored
+			// still is a picture of some earlier render — an older document, an
+			// older capture, a frame caught mid-entry — and the canvas is about to
+			// stand it in for this one every time the camera moves. One capture
+			// per boot, drained like every other, makes the two the same picture.
+			model.arrived.add(frame.name);
+			model.staleStills.add(frame.name);
+		}
 		if (
 			frame.kind !== "term" &&
-			target !== "hibernated" &&
 			settled &&
+			target !== "hibernated" &&
+			model.arrived.has(frame.name) &&
 			(model.staleStills.has(frame.name) || !hasThumb(frame.name)) &&
 			!capturing.has(frame.name) &&
-			!model.exitPending.has(frame.name) &&
-			ready.has(frame.name)
+			!model.exitPending.has(frame.name)
 		) {
 			const cx = frame.x + frame.w / 2 - center.x;
 			const cy = frame.y + frame.h / 2 - center.y;
@@ -277,7 +340,9 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	const { framesRef, cameraRef, viewportRef, entered, frozen, inspected, hasThumb, onShot } = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
-	const [ready, setReady] = useState<ReadonlySet<string>>(new Set<string>());
+	// when each frame reported loaded, not merely that it did: a still is only
+	// worth taking once the frame has had time to finish arriving
+	const [ready, setReady] = useState<ReadonlyMap<string, number>>(new Map<string, number>());
 
 	const statesRef = useRef(states);
 	statesRef.current = states;
@@ -307,7 +372,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		// unmount (or reload) drops the boot: the cover returns until the next loaded report
 		setReady((current) => {
 			if (!current.has(frame)) return current;
-			const next = new Set(current);
+			const next = new Map(current);
 			next.delete(frame);
 			return next;
 		});
@@ -315,7 +380,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 	/** The frame's loaded report (commit-time effect, #17) — routed in by the canvas's message listener. */
 	const noteLoaded = useCallback((frame: string) => {
-		setReady((current) => (current.has(frame) ? current : new Set(current).add(frame)));
+		setReady((current) => (current.has(frame) ? current : new Map(current).set(frame, performance.now())));
 	}, []);
 
 	/** A shot reply from the frame's shim: resolve the waiter, persist upward. */
@@ -327,27 +392,31 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 	/**
 	 * Ask the frame's shim for a self-capture, bounded to `maxEdge` device
-	 * pixels on its longest side (0 for the frame at full resolution).
+	 * pixels on its longest side (0 for the frame at full resolution) and
+	 * allowing it `settleMs` to finish arriving before it photographs itself.
 	 * Resolves the data URL — or undefined for an unmounted, unbooted,
 	 * already-capturing or mute frame — and every landed capture also persists
 	 * as the thumbnail via onShot.
 	 */
-	const requestCapture = useCallback((frame: string, maxEdge = COVER_MAX_EDGE): Promise<string | undefined> => {
-		const el = iframes.current.get(frame);
-		if (el?.contentWindow == null || !readyRef.current.has(frame)) return Promise.resolve(undefined);
-		const pending = captureWaiters.current.get(frame);
-		if (pending !== undefined) return Promise.resolve(undefined);
-		return new Promise((resolve) => {
-			captureWaiters.current.set(frame, resolve);
-			el.contentWindow?.postMessage(captureMessage(maxEdge), "*");
-			setTimeout(() => {
-				if (captureWaiters.current.get(frame) === resolve) {
-					captureWaiters.current.delete(frame);
-					resolve(undefined);
-				}
-			}, CAPTURE_REPLY_TIMEOUT_MS);
-		});
-	}, []);
+	const requestCapture = useCallback(
+		(frame: string, maxEdge = COVER_MAX_EDGE, settleMs = CAPTURE_SETTLE_BUDGET_MS): Promise<string | undefined> => {
+			const el = iframes.current.get(frame);
+			if (el?.contentWindow == null || !readyRef.current.has(frame)) return Promise.resolve(undefined);
+			const pending = captureWaiters.current.get(frame);
+			if (pending !== undefined) return Promise.resolve(undefined);
+			return new Promise((resolve) => {
+				captureWaiters.current.set(frame, resolve);
+				el.contentWindow?.postMessage(captureMessage(maxEdge, settleMs), "*");
+				setTimeout(() => {
+					if (captureWaiters.current.get(frame) === resolve) {
+						captureWaiters.current.delete(frame);
+						resolve(undefined);
+					}
+				}, CAPTURE_REPLY_TIMEOUT_MS + settleMs);
+			});
+		},
+		[],
+	);
 
 	// The decision function: runs on a sweep interval and urgent intent changes.
 	const compute = useCallback(() => {

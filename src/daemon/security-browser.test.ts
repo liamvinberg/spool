@@ -211,10 +211,16 @@ export default function Hostile() {
 }
 
 async function childFrame(page: Page, selector: string): Promise<Frame> {
-	const element = await page.waitForSelector(selector);
-	const frame = await element.contentFrame();
-	if (frame === null) throw new Error(`${selector} has no content frame`);
-	return frame;
+	// A walk arrival replaces its target's document (#28) and a moving camera
+	// swaps a frame for its still (#80): both mean the element found a moment
+	// ago can be between documents. Ask again rather than read a stale handle.
+	for (let attempt = 0; ; attempt++) {
+		const element = await page.waitForSelector(selector);
+		const frame = await element.contentFrame();
+		if (frame !== null) return frame;
+		if (attempt >= 20) throw new Error(`${selector} has no content frame`);
+		await page.waitForTimeout(100);
+	}
 }
 
 async function readHostileResult(frame: Frame): Promise<HostileResult> {
@@ -323,6 +329,9 @@ describe("hostile project browser boundary", () => {
 		const hostileLabel = canvasPage.locator('[data-frame-label="hostile"]');
 		await hostileLabel.dispatchEvent("dblclick");
 		await expect.poll(() => hostileLabel.innerText()).toContain("live");
+		// entering is instant and the camera flight that follows is not: a click
+		// aimed mid-flight lands where the button was, not where it is
+		await canvasPage.waitForTimeout(400);
 		await canvasFrame.locator("#walk").click();
 		const nextLabel = canvasPage.locator('[data-frame-label="next"]');
 		await expect.poll(() => nextLabel.innerText()).toContain("live");
