@@ -10,6 +10,7 @@ export function FrameLabel({
 	entered,
 	paused,
 	selected,
+	hovered,
 	terminal = false,
 	onPlay,
 }: {
@@ -19,6 +20,7 @@ export function FrameLabel({
 	entered: boolean;
 	paused: boolean;
 	selected: boolean;
+	hovered: boolean;
 	/** An entered terminal owns every key (#42) — the chip must show the one way out. */
 	terminal?: boolean;
 	/** Play this frame. Offered on the selection, where the attention already is. */
@@ -45,7 +47,9 @@ export function FrameLabel({
 				<div className="flex w-full min-w-0 items-center gap-1.5 pb-2.5">
 					{paused && <span className="shrink-0 font-mono text-2xs text-muted leading-3">▸</span>}
 					<span
-						className={`min-w-0 truncate font-mono text-sm leading-4 ${selected ? "text-thread" : "text-muted"}`}
+						className={`min-w-0 truncate font-mono text-sm leading-4 ${
+							selected ? "text-thread" : hovered ? "text-text" : "text-muted"
+						}`}
 					>
 						{name}
 					</span>

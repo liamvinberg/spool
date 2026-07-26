@@ -7,6 +7,43 @@ import { ProjectCanvas } from "./canvas";
 
 const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html", hasThumb: false }];
 
+it("previews a hovered frame without selecting it", async () => {
+	const { host, canvas } = await renderCanvas();
+
+	await act(async () => {
+		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 1 }));
+	});
+
+	const hover = host.querySelector<HTMLElement>('[data-frame-hover="home"]');
+	expect(hover?.style.opacity).toBe("1");
+	expect(hover?.classList.contains("border-border-raised")).toBe(true);
+	expect(host.querySelector('[data-frame-label="home"] .text-text')).not.toBeNull();
+	expect(host.querySelector('[data-frame-label="home"] .text-thread')).toBeNull();
+
+	await act(async () => {
+		canvas.dispatchEvent(
+			new PointerEvent("pointermove", { bubbles: true, clientX: 400, clientY: 300, pointerId: 1 }),
+		);
+	});
+
+	expect(hover?.style.opacity).toBe("0");
+	expect(hover?.style.transition).toBe("opacity 80ms ease-out");
+	expect(host.querySelector('[data-frame-label="home"] .text-muted')).not.toBeNull();
+
+	await act(async () => {
+		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 1 }));
+		canvas.dispatchEvent(
+			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
+		);
+		canvas.dispatchEvent(
+			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 40, clientY: 40, pointerId: 1 }),
+		);
+	});
+
+	expect(host.querySelector('[data-frame-hover="home"]')).toBeNull();
+	expect(host.querySelector('[data-frame-label="home"] .text-thread')).not.toBeNull();
+});
+
 it("opens in Select, takes a frame with one click, and enters it on a double-click", async () => {
 	const { host, canvas } = await renderCanvas();
 
