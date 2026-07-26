@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { Camera, ProjectedFrame } from "../api";
 import type { FrameState, SweepInput } from "./lifecycle";
-import { createLifecycleModel, MOUNTS_PER_SWEEP, noteExitCapture, sweepLifecycle, WARM_POOL_CAP } from "./lifecycle";
+import {
+	CAPTURES_PER_SWEEP,
+	createLifecycleModel,
+	MOUNTS_PER_SWEEP,
+	noteExitCapture,
+	sweepLifecycle,
+	WARM_POOL_CAP,
+} from "./lifecycle";
 
 /**
  * The lifecycle decision function (#40): fabricated frames and camera in,
@@ -81,11 +88,40 @@ describe("wake queue", () => {
 		const { sweep } = sweeper();
 
 		const first = sweep(frames);
-		expect(first.states).toEqual({ a: "live", b: "live", c: "live", d: "hibernated", e: "hibernated" });
+		expect(first.states).toEqual({ a: "warm", b: "warm", c: "warm", d: "hibernated", e: "hibernated" });
 		expect(MOUNTS_PER_SWEEP).toBe(3);
 
 		const second = sweep(frames);
-		expect(second.states).toEqual({ a: "live", b: "live", c: "live", d: "live", e: "live" });
+		expect(second.states).toEqual({ a: "warm", b: "warm", c: "warm", d: "warm", e: "warm" });
+	});
+
+	it("mounts nothing at an overview zoom, where a frame draws smaller than its own still", () => {
+		const frames = [frame("a", 450, 450), frame("b", 350, 450), frame("c", 450, 300)];
+		const { sweep } = sweeper();
+
+		// the whole canvas fitted on screen: real DOM here buys no crispness and
+		// costs a renderer apiece, so the stills carry the view
+		const overview: Camera = { x: 0, y: 0, k: 0.02 };
+		for (let i = 0; i < 4; i++) {
+			expect(Object.values(sweep(frames, { camera: overview }).states)).toEqual([
+				"hibernated",
+				"hibernated",
+				"hibernated",
+			]);
+		}
+
+		// zooming in past the gate mounts them, frozen
+		expect(Object.values(sweep(frames).states)).toEqual(["warm", "warm", "warm"]);
+	});
+
+	it("still mounts the entered frame at an overview zoom", () => {
+		const frames = [frame("a", 450, 450), frame("b", 350, 450)];
+		const { sweep } = sweeper();
+		const overview: Camera = { x: 0, y: 0, k: 0.02 };
+
+		// zoom gates mounting, never the frame you are actually inside
+		const entered = sweep(frames, { camera: overview, entered: "a" });
+		expect(entered.states).toEqual({ a: "live", b: "hibernated" });
 	});
 
 	it("admits every strictly-visible frame before the margin ring, however near the ring frame sits", () => {
@@ -101,14 +137,14 @@ describe("wake queue", () => {
 
 		const first = sweep(frames);
 		expect(first.states).toEqual({
-			"ring-near": "live",
+			"ring-near": "warm",
 			"ring-far": "hibernated",
-			"corner-a": "live",
-			"corner-b": "live",
+			"corner-a": "warm",
+			"corner-b": "warm",
 		});
 
 		const second = sweep(frames);
-		expect(second.states["ring-far"]).toBe("live");
+		expect(second.states["ring-far"]).toBe("warm");
 	});
 });
 
@@ -124,27 +160,37 @@ describe("entered frame", () => {
 	it("mounts the entered frame in its own sweep regardless of queue depth, and keeps it live offscreen", () => {
 		const { sweep } = sweeper();
 
-		// e sits farthest from the center, yet enters alongside a full queue
+		// e sits farthest from the center, yet enters alongside a full queue —
+		// and is the only frame running: its neighbours mount frozen
 		const first = sweep(inView, { entered: "e" });
-		expect(first.states).toEqual({ a: "live", b: "live", c: "live", d: "hibernated", e: "live" });
+		expect(first.states).toEqual({ a: "warm", b: "warm", c: "warm", d: "hibernated", e: "live" });
 
 		// entered survives leaving the view
 		const away = sweep(inView, { entered: "e", camera: { x: -10000, y: 0, k: 1 } });
 		expect(away.states.e).toBe("live");
 	});
+
+	it("stops the frame it left, whatever the zoom", () => {
+		const { sweep } = sweeper();
+		sweep(inView, { entered: "a" });
+
+		// leaving is the whole of it: no zoom keeps a frame running
+		expect(sweep(inView, { entered: null }).states.a).toBe("warm");
+		expect(sweep(inView, { entered: null, camera: { x: 0, y: 0, k: 4 } }).states.a).toBe("warm");
+	});
 });
 
 describe("frozen frame", () => {
-	it("freezes only the current target and thaws the previous one", () => {
+	it("moves nothing on the canvas: an unentered frame was never running", () => {
 		const frames = [frame("a", 350, 450), frame("b", 550, 450)];
 		const { sweep } = sweeper();
 		sweep(frames);
 
 		const aFrozen = sweep(frames, { frozen: "a" });
-		expect(aFrozen.states).toEqual({ a: "warm", b: "live" });
+		expect(aFrozen.states).toEqual({ a: "warm", b: "warm" });
 
 		const bFrozen = sweep(frames, { frozen: "b" });
-		expect(bFrozen.states).toEqual({ a: "live", b: "warm" });
+		expect(bFrozen.states).toEqual({ a: "warm", b: "warm" });
 	});
 
 	it("keeps an entered frozen frame warm, then thaws it live", () => {
@@ -201,7 +247,7 @@ describe("inspected frame", () => {
 });
 
 describe("warm pool", () => {
-	it("a zoom round trip within capacity only freezes and unfreezes — no hibernation, ever", () => {
+	it("a zoom round trip within capacity never hibernates and never remounts", () => {
 		const frames = [
 			frame("a", 450, 450),
 			frame("b", 350, 450),
@@ -209,24 +255,25 @@ describe("warm pool", () => {
 			frame("d", 250, 450),
 			frame("e", 450, 150),
 		];
+		const allWarm = ["warm", "warm", "warm", "warm", "warm"];
 		const { sweep } = sweeper();
 		sweep(frames);
 		sweep(frames);
 
-		// zoom far below the live threshold: everything freezes in place
 		const zoomedOut: Camera = { x: 450, y: 450, k: 0.1 };
-		const frozen = sweep(frames, { camera: zoomedOut });
-		expect(Object.values(frozen.states)).toEqual(["warm", "warm", "warm", "warm", "warm"]);
+		expect(Object.values(sweep(frames, { camera: zoomedOut }).states)).toEqual(allWarm);
 
 		// hold for 6 s — far past the retired grace window — and nothing hibernates
 		for (let i = 0; i < 20; i++) {
 			const later = sweep(frames, { camera: zoomedOut });
-			expect(Object.values(later.states)).toEqual(["warm", "warm", "warm", "warm", "warm"]);
+			expect(Object.values(later.states)).toEqual(allWarm);
 		}
 
-		// zooming back unfreezes every frame in one sweep — no queue, no remount
+		// zooming back is a camera move and nothing else: no queue, no remount,
+		// and no frame woken into running by the zoom alone
 		const back = sweep(frames);
-		expect(Object.values(back.states)).toEqual(["live", "live", "live", "live", "live"]);
+		expect(Object.values(back.states)).toEqual(allWarm);
+		expect(back.changed).toBe(false);
 	});
 
 	it("overflow evicts the oldest-seen html frame; its goodbye landing unmounts it", () => {
@@ -276,7 +323,7 @@ describe("warm pool", () => {
 
 		// the camera returns to f0 before its goodbye resolves
 		const rescued = s.sweep(frames, { camera: over(frame("f0", 0, 0)) });
-		expect(rescued.states.f0).toBe("live");
+		expect(rescued.states.f0).toBe("warm");
 		expect(rescued.exitCaptures).toEqual([]);
 
 		// leaving again, past the old goodbye window: f0 is now the newest-seen
@@ -303,10 +350,10 @@ describe("thumbnail refresh", () => {
 	it("a frame leaving live refreshes its still once the camera settles", () => {
 		const frames = [frame("a", 450, 450)];
 		const s = sweeper();
-		s.sweep(frames);
+		s.sweep(frames, { entered: "a" });
 
 		// leaving live stales the still, but the camera just moved — no shot yet
-		const left = s.sweep(frames, { camera: parked });
+		const left = s.sweep(frames, { entered: null, camera: parked });
 		expect(left.states.a).toBe("warm");
 		expect(left.refreshCaptures).toEqual([]);
 
@@ -328,5 +375,28 @@ describe("thumbnail refresh", () => {
 		// settled and thumbless — but an in-flight capture holds the debt open
 		expect(s.sweep(frames, { hasThumb, capturing: new Set(["a"]) }).refreshCaptures).toEqual([]);
 		expect(s.sweep(frames, { hasThumb }).refreshCaptures).toEqual(["a"]);
+	});
+
+	it("drains the refresh queue a couple per settled sweep, nearest the center first", () => {
+		// five thumbless frames in view; centers sit 0/100/150/200/300 from the
+		// viewport center, so a settle owes five whole-document rasterizations
+		const frames = [
+			frame("d", 250, 450),
+			frame("a", 450, 450),
+			frame("e", 450, 150),
+			frame("b", 350, 450),
+			frame("c", 450, 300),
+		];
+		const s = sweeper();
+		const hasThumb = () => false;
+		s.sweep(frames, { hasThumb });
+		s.sweep(frames, { hasThumb });
+
+		// settled at last, and the burst is refused: the nearest two go now
+		expect(CAPTURES_PER_SWEEP).toBe(2);
+		expect(s.sweep(frames, { hasThumb }).refreshCaptures).toEqual(["a", "b"]);
+
+		// the rest kept their debt rather than firing into one commit
+		expect(s.sweep(frames, { hasThumb, capturing: new Set(["a", "b"]) }).refreshCaptures).toEqual(["c", "d"]);
 	});
 });

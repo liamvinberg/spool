@@ -7,34 +7,46 @@ import { captureMessage } from "./protocol";
 
 /**
  * The engine lifecycle (#8, #13, #40, #54): which frames run, which stand
- * frozen, which exist only as their still. Near frames play; tiny-rendered,
- * offscreen, and selected-into frames freeze (Chrome free-runs tiny frames at
- * 500+ Hz — the zoom threshold is load-bearing) and stay mounted in the warm
- * pool.
+ * frozen, which exist only as their still. Exactly one frame runs — the one
+ * you entered. Every other mounted frame stands frozen, real DOM crisp at any
+ * zoom: a canvas where twenty renderers animate at once stutters under every
+ * pan, and no zoom arithmetic fixes that. Time starts when you go inside, and
+ * stops when you leave. Zoom decides mounting alone (K_MIN_MOUNT), never
+ * running: an overview mounts nothing, because a frame drawn smaller than its
+ * own still gains nothing from being real.
  * Hibernation's payoff is memory, never CPU: only pool overflow demotes a
  * frame to its still, oldest-seen first, html frames taking a goodbye
  * self-capture on the way out. Every mount drains through the wake queue —
  * entered immediately, the freeze target and the inspected frame next, then
  * nearest the viewport center, a few per sweep — so no burst site can land every mount in one
- * commit. Hibernation is automatic engine lifecycle, never a tool; entering a
- * hibernated frame boots it fresh, while freezing always keeps its document.
+ * commit. Stills refresh under the same discipline, so a settling camera never
+ * fires a rasterization storm. Hibernation is automatic engine lifecycle,
+ * never a tool; entering a hibernated frame boots it fresh, while freezing
+ * always keeps its document.
  */
 
 export type FrameState = "live" | "warm" | "hibernated";
 
 const MARGIN_FRACTION = 0.5; // extra viewport fractions kept mounted around the screen
-const K_MIN_LIVE = 0.15; // below this zoom nothing is interactable anyway
+/**
+ * Below this zoom a frame renders smaller than the still it already has, so
+ * real DOM buys nothing and costs a renderer: an overview of a large canvas
+ * mounts nothing at all. This gates mounting, never running — running is the
+ * entered frame's alone, at any zoom.
+ */
+const K_MIN_MOUNT = 0.15;
 const EXIT_CAPTURE_TIMEOUT_MS = 600; // how long an eviction waits for the goodbye shot
 const CAMERA_SETTLE_MS = 400; // capture on settle, never mid-gesture
 const SWEEP_MS = 300;
 const CAPTURE_REPLY_TIMEOUT_MS = 3000;
 export const MOUNTS_PER_SWEEP = 3; // wake-queue drain rate: 3 × ~8 ms ≈ one skipped paint per sweep at worst
+export const CAPTURES_PER_SWEEP = 2; // still-refresh drain rate: a self-capture is a whole-document rasterization
 export const WARM_POOL_CAP = 24; // offscreen warm frames kept mounted; each holds ~4.6 MB and a renderer
 
 /** The decision function's persistent bookkeeping, owned by the hook, fabricated by tests. */
 export interface LifecycleModel {
-	/** When each frame was last usable — the warm pool evicts oldest-seen first. */
-	lastUsable: Map<string, number>;
+	/** When each frame was last on screen — the warm pool evicts oldest-seen first. */
+	lastSeen: Map<string, number>;
 	/** Evictions mid-goodbye: the frame stays warm until its capture lands or times out. */
 	exitPending: Map<string, { t0: number; captured: boolean }>;
 	/** Frames whose still went stale — a source edit, or leaving live. */
@@ -45,7 +57,7 @@ export interface LifecycleModel {
 
 export function createLifecycleModel(): LifecycleModel {
 	return {
-		lastUsable: new Map(),
+		lastSeen: new Map(),
 		exitPending: new Map(),
 		staleStills: new Set(),
 		prevCamera: null,
@@ -117,7 +129,8 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	interface Entry {
 		frame: ProjectedFrame;
 		current: FrameState;
-		usable: boolean;
+		/** On screen and rendered big enough that real DOM beats the still. */
+		mountable: boolean;
 		target: FrameState;
 	}
 	const entries: Entry[] = [];
@@ -128,29 +141,32 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	for (const frame of frames) {
 		const current = states[frame.name] ?? "hibernated";
 		const onScreen = intersects(margined, frame);
-		const usable = onScreen && camera.k >= K_MIN_LIVE;
-		if (usable) {
-			model.lastUsable.set(frame.name, now);
+		const mountable = onScreen && camera.k >= K_MIN_MOUNT;
+		if (mountable) {
+			model.lastSeen.set(frame.name, now);
 		}
 		// Coming back into view or becoming the one frozen intent rescues an
 		// eviction mid-goodbye. A freeze must keep the existing document.
-		if (usable || frozen === frame.name || inspected === frame.name) model.exitPending.delete(frame.name);
+		if (mountable || frozen === frame.name || inspected === frame.name) model.exitPending.delete(frame.name);
 
+		// The one frame that runs is the one you entered, and even that stands
+		// frozen while ⌘ holds the pointer off it to reach an element.
+		const runs = entered === frame.name && frozen !== frame.name;
 		let target: FrameState;
 		let wakeTo: "live" | "warm" | null = null;
 		if (current !== "hibernated") {
-			target = frozen === frame.name ? "warm" : entered === frame.name || usable ? "live" : "warm";
-		} else if (entered === frame.name && frozen !== frame.name) {
+			target = runs ? "live" : "warm";
+		} else if (runs) {
 			// entering mounts in its own sweep, bypassing the cap
 			target = "live";
 		} else {
 			target = "hibernated";
 			// an open rail is watched intent (#58): its frame mounts even offscreen,
 			// or it has no DOM to answer the elements tab with
-			wakeTo = frozen === frame.name ? "warm" : usable ? "live" : inspected === frame.name ? "warm" : null;
+			wakeTo = mountable || frozen === frame.name || inspected === frame.name ? "warm" : null;
 		}
 
-		const entry: Entry = { frame, current, usable, target };
+		const entry: Entry = { frame, current, mountable, target };
 		entries.push(entry);
 		if (wakeTo !== null) {
 			const cx = frame.x + frame.w / 2 - center.x;
@@ -181,14 +197,14 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	const pool = entries.filter(
 		(e) =>
 			e.target === "warm" &&
-			!e.usable &&
+			!e.mountable &&
 			e.frame.name !== frozen &&
 			e.frame.name !== inspected &&
 			!model.exitPending.has(e.frame.name),
 	);
 	const overflow = pool.length - WARM_POOL_CAP;
 	if (overflow > 0) {
-		pool.sort((a, b) => (model.lastUsable.get(a.frame.name) ?? 0) - (model.lastUsable.get(b.frame.name) ?? 0));
+		pool.sort((a, b) => (model.lastSeen.get(a.frame.name) ?? 0) - (model.lastSeen.get(b.frame.name) ?? 0));
 		for (const evicted of pool.slice(0, overflow)) {
 			if (evicted.frame.kind === "term") {
 				// a terminal's still is the daemon's grid (#42) — no goodbye capture
@@ -201,7 +217,9 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		}
 	}
 
-	const refreshCaptures: string[] = [];
+	// the refresh queue, drained like the wake queue: nearest the viewport
+	// center first, a couple per sweep
+	const owed: { name: string; dist: number }[] = [];
 	const next: Record<string, FrameState> = {};
 	let changed = false;
 	for (const { frame, current, target } of entries) {
@@ -217,12 +235,19 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 			!model.exitPending.has(frame.name) &&
 			ready.has(frame.name)
 		) {
-			model.staleStills.delete(frame.name);
-			refreshCaptures.push(frame.name);
+			const cx = frame.x + frame.w / 2 - center.x;
+			const cy = frame.y + frame.h / 2 - center.y;
+			owed.push({ name: frame.name, dist: cx * cx + cy * cy });
 		}
 		next[frame.name] = target;
 		if (target !== current) changed = true;
 	}
+	// A self-capture serializes and rasterizes a whole document. Every mounted
+	// frame in debt firing into the sweep that follows a settling camera is a
+	// stutter exactly where the eye is: the debt is kept, not the burst.
+	owed.sort((a, b) => a.dist - b.dist);
+	const refreshCaptures = owed.slice(0, CAPTURES_PER_SWEEP).map((entry) => entry.name);
+	for (const name of refreshCaptures) model.staleStills.delete(name);
 	return {
 		states: next,
 		changed: changed || Object.keys(states).length !== frames.length,

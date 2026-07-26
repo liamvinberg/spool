@@ -21,6 +21,14 @@ export interface Point {
 export const K_MIN = 0.02;
 export const K_MAX = 32;
 
+/**
+ * One press of the zoom keys. Doubling, not nudging: tldraw's ladder
+ * (0.05 · 0.1 · 0.25 · 0.5 · 1 · 2 · 4 · 8) moves a full octave per press, and
+ * anything gentler turns "get me out of here" into four keystrokes. Zoom out is
+ * the exact reciprocal, so in-then-out returns to the zoom you started at.
+ */
+export const K_STEP = 2;
+
 export const clamp = (value: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, value));
 
 export const toWorld = (p: Point, camera: Camera): Point => ({

@@ -23,7 +23,7 @@ import {
 } from "../api";
 import { RibbonMark } from "../icons";
 import { arrange } from "./arrange";
-import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, toWorld, zoomAt } from "./camera";
+import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, K_STEP, toWorld, zoomAt } from "./camera";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import { CollisionNotice } from "./collision-notice";
 import { type ConnectionRow, connectionGroups, outboundCount, unreadableRows } from "./connections";
@@ -144,8 +144,8 @@ const TREE_REPLY_MS = 1200;
 const STAMP_LABEL_BATCH = 256;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
-/** Entering fits the camera only below this much of the viewport (#8). */
-const ENTER_FIT_BELOW = 0.5;
+/** How long after the last camera change the frames stay stilled. */
+const CAMERA_GLIDE_MS = 140;
 
 function spatialDirection(key: string): SpatialDirection | undefined {
 	switch (key) {
@@ -166,8 +166,20 @@ function wheelPixels(delta: number, mode: number, pageSize: number): number {
 	return delta * (mode === 1 ? 16 : mode === 2 ? pageSize : 1);
 }
 
+/**
+ * Pinch sensitivity: zoom per pixel of wheel travel. Exponential, so a given
+ * finger movement changes zoom by the same *ratio* at every zoom level — the
+ * property that makes deep zoom feel the same as shallow zoom. Excalidraw's
+ * linear step needs a log10 term bolted on to fake this; we get it for free.
+ *
+ * The clamp is a teleport guard, not a speed limit. A trackpad sends many small
+ * deltas per second and never reaches it; one mouse notch (deltaY 100) does, and
+ * capping that notch at 2× is exactly what you want.
+ */
+const WHEEL_ZOOM_RATE = 0.011;
+
 function wheelZoomFactor(delta: number, mode: number, pageSize: number): number {
-	return clamp(Math.exp(-wheelPixels(delta, mode, pageSize) * 0.0075), 0.5, 2);
+	return clamp(Math.exp(-wheelPixels(delta, mode, pageSize) * WHEEL_ZOOM_RATE), 0.5, 2);
 }
 
 /** Opaque sandbox origins identify no frame; its current iframe window does. */
@@ -197,6 +209,12 @@ export function ProjectCanvas({
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
 	const [camera, setCamera] = useState<Camera | null>(null);
+	// Whether the camera is mid-move. Measured on a 56-frame canvas: painting
+	// mounted iframe documents at each new scale is the whole of the zoom
+	// stutter (p95 17 ms, worst frame 192 ms, 19 dropped frames per gesture);
+	// with the documents unpainted the same gesture drops none. So the camera
+	// says when it is moving and frames answer with their stills.
+	const [gliding, setGliding] = useState(false);
 	const [tool, setTool] = useState<CanvasTool>("select");
 	const [selected, setSelected] = useState<string[]>([]);
 	const [picked, setPicked] = useState<PickedSelection[]>([]);
@@ -261,6 +279,15 @@ export function ProjectCanvas({
 	const animation = useRef(0);
 	const cameraRef = useRef<Camera | null>(null);
 	cameraRef.current = camera;
+	// One place, so every camera mover is covered: wheel, drag, key, flight.
+	// The tail outlasts the gaps between wheel events in one gesture, and is
+	// short enough that letting go reads as the documents coming straight back.
+	useEffect(() => {
+		if (camera === null) return;
+		setGliding(true);
+		const stop = setTimeout(() => setGliding(false), CAMERA_GLIDE_MS);
+		return () => clearTimeout(stop);
+	}, [camera]);
 	const framesRef = useRef(visibleFrames);
 	framesRef.current = visibleFrames;
 	// the whole projection, for cross-page reads: walks, connections, editor paths
@@ -683,17 +710,14 @@ export function ProjectCanvas({
 			// the entered frame owns the keyboard from the first moment; a frame
 			// booting right now gets it at its loaded report instead
 			iframes.current.get(target)?.focus();
-			// Fit only what you could not otherwise use. A frame already filling
-			// the view stays exactly where it is — moving it reads as a teleport —
-			// while one you can barely read comes to you, because going inside a
-			// speck you cannot see is no use at all.
+			// Going inside always brings the frame to you. A zoom threshold here
+			// only ever surprises: the same double-click lands you in a neighbour
+			// at one zoom and leaves the camera behind at another, and no rule
+			// you cannot see is worth that. The sidebar's flight already works
+			// this way.
 			const viewport = viewportRef.current;
-			const cam = cameraRef.current;
-			if (viewport === null || cam === null) return;
-			const tooSmall =
-				frame.w * cam.k < viewport.clientWidth * ENTER_FIT_BELOW &&
-				frame.h * cam.k < viewport.clientHeight * ENTER_FIT_BELOW;
-			if (tooSmall) animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
+			if (viewport === null) return;
+			animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
 		},
 		[animateCamera],
 	);
@@ -1392,7 +1416,7 @@ export function ProjectCanvas({
 						return;
 					}
 					const c = viewportCenter();
-					zoomAtPoint(c.x, c.y, message.kind === "in" ? 1.25 : 0.8, true);
+					zoomAtPoint(c.x, c.y, message.kind === "in" ? K_STEP : 1 / K_STEP, true);
 					return;
 				}
 				case "go":
@@ -2210,13 +2234,13 @@ export function ProjectCanvas({
 			if (mod && (event.key === "=" || event.key === "+")) {
 				event.preventDefault();
 				const c = viewportCenter();
-				zoomAtPoint(c.x, c.y, 1.25, true);
+				zoomAtPoint(c.x, c.y, K_STEP, true);
 				return;
 			}
 			if (mod && event.key === "-") {
 				event.preventDefault();
 				const c = viewportCenter();
-				zoomAtPoint(c.x, c.y, 0.8, true);
+				zoomAtPoint(c.x, c.y, 1 / K_STEP, true);
 				return;
 			}
 			if (mod && event.key === "Escape") {
@@ -2266,12 +2290,12 @@ export function ProjectCanvas({
 				case "+":
 				case "=": {
 					const c = viewportCenter();
-					zoomAtPoint(c.x, c.y, 1.25, true);
+					zoomAtPoint(c.x, c.y, K_STEP, true);
 					break;
 				}
 				case "-": {
 					const c = viewportCenter();
-					zoomAtPoint(c.x, c.y, 0.8, true);
+					zoomAtPoint(c.x, c.y, 1 / K_STEP, true);
 					break;
 				}
 				case "0":
@@ -2530,6 +2554,9 @@ export function ProjectCanvas({
 											name={frame.name}
 											state={state}
 											ready={lifecycle.ready.has(frame.name)}
+											// the entered frame is the one you are using: it keeps
+											// painting. A frame with no still has nothing to swap to.
+											stilled={gliding && !isEntered && hasThumb(frame.name)}
 											interactive={isEntered && !metaDown}
 											docNonce={docNonces[frame.name] ?? 0}
 											thumbNonce={thumbNonces[frame.name] ?? 0}
