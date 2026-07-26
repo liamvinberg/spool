@@ -56,8 +56,11 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * timers are wrapped before frame code can take references. Speaks the host
  * protocol: {spool:"freeze"} stops time cooperatively — rAF callbacks held,
  * interval ticks skipped, running animations paused — so warm frames stay
- * real DOM, crisp at any zoom; {spool:"capture"} answers with a foreignObject
- * self-rasterization, the ambient thumbnail path (Playwright is the fallback);
+ * real DOM, crisp at any zoom; {spool:"capture", maxEdge, settleMs} answers
+ * with a foreignObject self-rasterization, the ambient thumbnail path
+ * (Playwright is the fallback) — the frame waits out its own fonts and entry
+ * animations first, and carries the faces it loaded in as data URIs, because
+ * that rasterization runs with every external resource blocked;
  * {spool:"pick", x, y} answers with the element ancestry at that frame-local
  * point — top-level element down to the deepest, each with its selector,
  * geometry, and nearest data-spool-source stamp (#23) — the canvas walks it
@@ -78,6 +81,10 @@ const canvasShimJs = `(() => {
 	let paused = [];
 	const heldRaf = [];
 	const nativeRaf = window.requestAnimationFrame.bind(window);
+	// Taken before any module evaluates, because the frame runtime's mock layer
+	// replaces fetch and answers 404 to every route a scenario never declared —
+	// the shim's own reads are spool's, not the frame's.
+	const nativeFetch = window.fetch.bind(window);
 	window.requestAnimationFrame = (cb) => {
 		if (frozen) { heldRaf.push(cb); return 0; }
 		return nativeRaf(cb);
@@ -103,12 +110,180 @@ const canvasShimJs = `(() => {
 		if (!on) for (const cb of heldRaf.splice(0)) nativeRaf(cb);
 	}
 
+	// The characters this document actually shows — a face whose unicode-range
+	// covers none of them is bytes nobody would ever see.
+	function documentCodepoints() {
+		const seen = new Set();
+		const text = document.documentElement.textContent || "";
+		for (const ch of text) seen.add(ch.codePointAt(0));
+		return seen;
+	}
+
+	// "U+0-10FFFF", "U+0102-0103", "U+30??" — any spelling, one question:
+	// does this face carry a character on the page?
+	function rangeWanted(spec, codes) {
+		if (!spec) return true;
+		for (const part of spec.split(",")) {
+			const token = part.trim().replace(/^u\\+/i, "");
+			if (token === "") continue;
+			let lo;
+			let hi;
+			if (token.indexOf("?") >= 0) {
+				lo = parseInt(token.replace(/\\?/g, "0"), 16);
+				hi = parseInt(token.replace(/\\?/g, "F"), 16);
+			} else {
+				const ends = token.split("-");
+				lo = parseInt(ends[0], 16);
+				hi = ends.length > 1 ? parseInt(ends[1], 16) : lo;
+			}
+			if (!isFinite(lo) || !isFinite(hi)) continue;
+			for (const code of codes) if (code >= lo && code <= hi) return true;
+		}
+		return false;
+	}
+
+	function bareFamily(name) {
+		return String(name || "").trim().replace(/^["']|["']$/g, "").toLowerCase();
+	}
+
+	const fontDataUrls = new Map();
+	async function asDataUrl(url) {
+		let held = fontDataUrls.get(url);
+		if (held === undefined) {
+			held = nativeFetch(url)
+				.then((response) => (response.ok ? response.blob() : Promise.reject(new Error(String(response.status)))))
+				.then((blob) => new Promise((resolve, reject) => {
+					const reader = new FileReader();
+					reader.onload = () => resolve(reader.result);
+					reader.onerror = () => reject(reader.error || new Error("font read failed"));
+					reader.readAsDataURL(blob);
+				}));
+			fontDataUrls.set(url, held);
+			held.catch(() => fontDataUrls.delete(url));
+		}
+		return held;
+	}
+
+	/**
+	 * The fonts a still can actually draw. An SVG foreignObject rasterized
+	 * through an <img> loads nothing external, so every webface would fall back
+	 * to a system font and the text would rewrap under its own headings. The
+	 * faces the document really loaded go in as data URIs instead — only those,
+	 * and only the subsets its characters need, because a whole family is
+	 * megabytes and a still is a placeholder.
+	 */
+	async function inlineFontFaces() {
+		const loaded = new Set();
+		try {
+			for (const face of document.fonts) if (face.status === "loaded") loaded.add(bareFamily(face.family));
+		} catch {}
+		if (loaded.size === 0) return "";
+		const codes = documentCodepoints();
+		const wanted = [];
+		for (const sheet of Array.from(document.styleSheets)) {
+			let rules;
+			// a stylesheet this document cannot read has nothing to give
+			try { rules = sheet.cssRules; } catch { continue; }
+			for (const rule of Array.from(rules || [])) {
+				if (rule.constructor.name !== "CSSFontFaceRule" && rule.type !== 5) continue;
+				const style = rule.style;
+				if (!loaded.has(bareFamily(style.fontFamily))) continue;
+				const range = style.unicodeRange || "";
+				if (!rangeWanted(range, codes)) continue;
+				const url = (/url\\(\\s*["']?([^"')]+)["']?\\s*\\)/.exec(style.src || "") || [])[1];
+				if (!url || url.slice(0, 5) === "data:") continue;
+				wanted.push({ style, range, url });
+			}
+		}
+		const inlined = await Promise.all(wanted.map((face) => asDataUrl(face.url).catch(() => undefined)));
+		let css = "";
+		wanted.forEach((face, i) => {
+			const data = inlined[i];
+			if (data === undefined) return;
+			css += "@font-face{font-family:" + face.style.fontFamily
+				+ ";font-style:" + (face.style.fontStyle || "normal")
+				+ ";font-weight:" + (face.style.fontWeight || "400")
+				+ (face.style.fontStretch ? ";font-stretch:" + face.style.fontStretch : "")
+				+ (face.style.fontVariationSettings ? ";font-variation-settings:" + face.style.fontVariationSettings : "")
+				+ ";font-display:block;src:url(" + data + ")"
+				+ (face.range ? ";unicode-range:" + face.range : "")
+				+ "}";
+		});
+		return css;
+	}
+
+	/**
+	 * A still is a picture of a frame that has finished arriving. Frames animate
+	 * their content in, so capturing the instant a boot reports loaded records
+	 * whatever had not faded in yet — and that missing content is what the
+	 * canvas would then show in the frame's place. Waiting costs one settle and
+	 * buys a still that matches. A looping animation never finishes, so the
+	 * wait is bounded and infinite iterations are not waited on at all.
+	 */
+	async function settle(budgetMs) {
+		if (!(budgetMs > 0)) return;
+		const deadline = performance.now() + budgetMs;
+		try { await document.fonts.ready; } catch {}
+		while (performance.now() < deadline) {
+			let arriving = 0;
+			try {
+				for (const animation of document.getAnimations()) {
+					if (animation.playState !== "running") continue;
+					let iterations = 1;
+					try { iterations = animation.effect.getComputedTiming().iterations; } catch {}
+					// a loop never finishes; waiting on one would only time out
+					if (iterations !== Infinity) arriving++;
+				}
+			} catch {}
+			if (arriving === 0) break;
+			await new Promise((resolve) => setTimeout(resolve, 60));
+		}
+		// Most of what a frame animates, no timing API reports: a spring is
+		// rAF-driven inline style writes, and getAnimations() has never heard of
+		// it. A quiet DOM is the signal that works whatever the library — wait
+		// for nothing to change for a beat, and give up at the budget so a frame
+		// that animates forever still gets photographed.
+		await new Promise((resolve) => {
+			let quiet = 0;
+			const observer = new MutationObserver(() => {
+				clearTimeout(quiet);
+				quiet = setTimeout(done, 120);
+			});
+			const cap = setTimeout(done, Math.max(0, deadline - performance.now()));
+			function done() {
+				clearTimeout(quiet);
+				clearTimeout(cap);
+				try { observer.disconnect(); } catch {}
+				resolve();
+			}
+			try {
+				observer.observe(document.documentElement, { attributes: true, childList: true, subtree: true, characterData: true });
+			} catch { done(); return; }
+			quiet = setTimeout(done, 120);
+		});
+		// Two native frames, so a rAF-driven entry animation's last commit lands.
+		// Chrome holds rAF entirely in an offscreen iframe, and the frames being
+		// captured on their way out of the warm pool are exactly those — the race
+		// is what keeps a goodbye shot inside its deadline.
+		await new Promise((resolve) => {
+			const timer = setTimeout(resolve, Math.max(0, Math.min(100, deadline - performance.now())));
+			nativeRaf(() => nativeRaf(() => { clearTimeout(timer); resolve(); }));
+		});
+	}
+
 	// maxEdge bounds the longest side in device pixels — a cover asks for one,
 	// an export passes 0 and gets the frame at full device resolution.
-	async function selfCapture(maxEdge) {
+	async function selfCapture(maxEdge, settleMs) {
+		await settle(settleMs);
+		const fontCss = await inlineFontFaces();
 		const W = document.documentElement.clientWidth || innerWidth;
 		const H = document.documentElement.clientHeight || innerHeight;
 		const clone = document.documentElement.cloneNode(true);
+		if (fontCss !== "") {
+			const style = document.createElement("style");
+			style.textContent = fontCss;
+			(clone.querySelector("head") || clone).appendChild(style);
+		}
 		clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
 		const srcInputs = document.querySelectorAll("input, textarea");
 		const dstInputs = clone.querySelectorAll("input, textarea");
@@ -317,7 +492,7 @@ const canvasShimJs = `(() => {
 		if (m.spool !== "capture") return;
 		const frame = (window.__SPOOL__ || {}).frame;
 		try {
-			const url = await selfCapture(Number(m.maxEdge) || 0);
+			const url = await selfCapture(Number(m.maxEdge) || 0, Number(m.settleMs) || 0);
 			parent.postMessage({ spool: "shot", frame, url }, "*");
 		} catch (error) {
 			parent.postMessage({ spool: "shot", frame, error: String(error) }, "*");

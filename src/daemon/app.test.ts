@@ -201,8 +201,9 @@ describe("frame documents", () => {
 			expect(index, marker).toBeGreaterThan(-1);
 			return index;
 		};
-		expect(at("box-sizing: border-box")).toBeLessThan(at("@font-face"));
-		expect(at("@font-face")).toBeLessThan(at('<script type="importmap">'));
+		// the project's own face, not the shim's own inlining of loaded ones
+		expect(at("box-sizing: border-box")).toBeLessThan(at('font-family: "Familjen Grotesk"'));
+		expect(at('font-family: "Familjen Grotesk"')).toBeLessThan(at('<script type="importmap">'));
 		expect(at('<script type="importmap">')).toBeLessThan(at('<script type="module">'));
 	});
 

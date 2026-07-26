@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { COVER_MAX_EDGE } from "../../cover";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
@@ -43,7 +44,7 @@ import { FrameLabel } from "./frame-label";
 import { FrameShell, type WalkBoot } from "./frame-shell";
 import { emptyHistory, entryOf, record, takeRedo, takeUndo } from "./history";
 import { type InspectorMode, InspectorRail, type InspectorTarget } from "./inspector";
-import { useFrameLifecycle } from "./lifecycle";
+import { stillSharpUntil, useFrameLifecycle } from "./lifecycle";
 import {
 	type ElementPreview,
 	editorTarget,
@@ -144,6 +145,8 @@ const TREE_REPLY_MS = 1200;
 const STAMP_LABEL_BATCH = 256;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
+/** How long after the last zoom change the frames keep showing their stills. */
+const ZOOM_GLIDE_MS = 140;
 
 function spatialDirection(key: string): SpatialDirection | undefined {
 	switch (key) {
@@ -207,6 +210,13 @@ export function ProjectCanvas({
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
 	const [camera, setCamera] = useState<Camera | null>(null);
+	// Whether the camera is mid-zoom. Measured on a 56-frame canvas: painting
+	// every mounted document at each new scale is the whole of the zoom
+	// stutter, and with the documents unpainted the same gesture drops none.
+	// So the camera says when its zoom is changing and frames answer with
+	// their stills. Panning is not in this: a translate is the compositor's
+	// alone, it never re-rasterizes, and it measures perfectly smooth.
+	const [zooming, setZooming] = useState(false);
 	const [tool, setTool] = useState<CanvasTool>("select");
 	const [selected, setSelected] = useState<string[]>([]);
 	const [picked, setPicked] = useState<PickedSelection[]>([]);
@@ -271,6 +281,17 @@ export function ProjectCanvas({
 	const animation = useRef(0);
 	const cameraRef = useRef<Camera | null>(null);
 	cameraRef.current = camera;
+	// One place, so every zoom mover is covered: wheel, keys, flights, fits.
+	// The tail outlasts the gaps between wheel events inside one gesture, and
+	// is short enough that letting go reads as the documents coming straight
+	// back rather than as a delay.
+	const zoom = camera?.k;
+	useEffect(() => {
+		if (zoom === undefined) return;
+		setZooming(true);
+		const stop = setTimeout(() => setZooming(false), ZOOM_GLIDE_MS);
+		return () => clearTimeout(stop);
+	}, [zoom]);
 	const framesRef = useRef(visibleFrames);
 	framesRef.current = visibleFrames;
 	// the whole projection, for cross-page reads: walks, connections, editor paths
@@ -1201,7 +1222,10 @@ export function ProjectCanvas({
 				// fresh boot's loaded report. Bounded — a mute frame cannot stall the
 				// walk, and its late reply still lands as the thumbnail via onShot.
 				const still = await Promise.race([
-					lifecycleRef.current.capture(target),
+					// the target has been running since it mounted, so it has nothing
+					// left to settle — and a cover that misses its own arrival is no
+					// cover at all
+					lifecycleRef.current.capture(target, COVER_MAX_EDGE, 0),
 					new Promise<undefined>((resolve) => setTimeout(resolve, WALK_STILL_MS)),
 				]);
 				// only the newest walk reboots (pickGen's pattern): a superseding walk
@@ -2537,6 +2561,16 @@ export function ProjectCanvas({
 											name={frame.name}
 											state={state}
 											ready={lifecycle.ready.has(frame.name)}
+											entered={isEntered}
+											// The frame you are inside keeps painting: it is the one
+											// you are using. A frame with no still, or one drawn
+											// larger than its still is sharp, has nothing to swap to.
+											stilled={
+												zooming &&
+												!isEntered &&
+												hasThumb(frame.name) &&
+												k <= stillSharpUntil(frame.w, frame.h, devicePixelRatio)
+											}
 											interactive={isEntered && !metaDown}
 											docNonce={docNonces[frame.name] ?? 0}
 											thumbNonce={thumbNonces[frame.name] ?? 0}

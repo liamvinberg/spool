@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { Camera, ProjectedFrame } from "../api";
 import type { FrameState, SweepInput } from "./lifecycle";
 import {
+	CAPTURE_AFTER_READY_MS,
 	CAPTURES_PER_SWEEP,
 	createLifecycleModel,
 	MOUNTS_PER_SWEEP,
 	noteExitCapture,
+	stillSharpUntil,
 	sweepLifecycle,
 	WARM_POOL_CAP,
 } from "./lifecycle";
@@ -35,7 +37,11 @@ const origin: Camera = { x: 0, y: 0, k: 1 };
 /** The camera panned (k=1) so the frame sits centered in the viewport. */
 const over = (f: ProjectedFrame): Camera => ({ k: 1, x: 500 - f.x - f.w / 2, y: 500 - f.y - f.h / 2 });
 
-/** Threads states and a fake clock through consecutive sweeps of one model. */
+/**
+ * Threads states and a fake clock through consecutive sweeps of one model.
+ * Every frame reports loaded at time 0, so by the first sweep they are all
+ * long past the settle a capture waits for; a test about that wait says so.
+ */
 function sweeper() {
 	const model = createLifecycleModel();
 	let now = 0;
@@ -51,7 +57,7 @@ function sweeper() {
 			frozen: null,
 			inspected: null,
 			states,
-			ready: new Set(frames.map((f) => f.name)),
+			ready: new Map(frames.map((f) => [f.name, -CAPTURE_AFTER_READY_MS])),
 			capturing: new Set(),
 			hasThumb: () => true,
 			now,
@@ -60,16 +66,23 @@ function sweeper() {
 		states = result.states;
 		return result;
 	};
-	return { sweep, model, states: () => states };
+	return { sweep, model, states: () => states, clock: () => now };
 }
 
 /** One frame per 2000 world units: the camera parked over one sees only it. */
 const strip = (count: number, kind: "html" | "term" = "html") =>
 	Array.from({ length: count }, (_, i) => frame(`f${i}`, i * 2000, 0, kind));
 
-/** Mounts each frame in turn, giving strictly ascending last-usable times. */
+/**
+ * Mounts each frame in turn, giving strictly ascending last-usable times. Two
+ * sweeps per stop: the camera arriving, then the camera holding still — only a
+ * sweep that finds the camera where it left it drains the wake queue.
+ */
 const tour = (s: ReturnType<typeof sweeper>, frames: ProjectedFrame[]) => {
-	for (const f of frames) s.sweep(frames, { camera: over(f) });
+	for (const f of frames) {
+		s.sweep(frames, { camera: over(f) });
+		s.sweep(frames, { camera: over(f) });
+	}
 };
 
 const parked: Camera = { x: -10_000_000, y: 0, k: 1 };
@@ -110,8 +123,22 @@ describe("wake queue", () => {
 			]);
 		}
 
-		// zooming in past the gate mounts them, and they run
+		// zooming in past the gate mounts them, once the zoom stops
+		expect(Object.values(sweep(frames).states)).toEqual(["hibernated", "hibernated", "hibernated"]);
 		expect(Object.values(sweep(frames).states)).toEqual(["live", "live", "live"]);
+	});
+
+	it("holds every mount while the camera moves, and drains the sweep after it stops", () => {
+		const frames = [frame("a", 450, 450), frame("b", 350, 450)];
+		const { sweep } = sweeper();
+		// a document booting paints, and a paint under a moving camera is the
+		// stutter this whole lifecycle exists to keep off the screen
+		const drifting = (step: number): Camera => ({ x: -step, y: 0, k: 1 });
+		sweep([], { camera: drifting(0) }); // the camera exists before it moves
+		for (let step = 1; step <= 4; step++) {
+			expect(Object.values(sweep(frames, { camera: drifting(step) }).states)).toEqual(["hibernated", "hibernated"]);
+		}
+		expect(Object.values(sweep(frames, { camera: drifting(4) }).states)).toEqual(["live", "live"]);
 	});
 
 	it("still mounts the entered frame at an overview zoom", () => {
@@ -353,6 +380,57 @@ describe("thumbnail refresh", () => {
 		expect(s.sweep(frames, { camera: parked }).refreshCaptures).toEqual([]);
 	});
 
+	it("waits for a fresh boot to finish arriving before photographing it", () => {
+		// Frames animate their content in. A capture fired on the loaded report
+		// records the frame mid-arrival, and that half-drawn picture is what the
+		// canvas would then show in the frame's own place while the camera moves.
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		const hasThumb = () => false;
+		const bootedAt = s.clock();
+		const booting = { hasThumb, ready: new Map([["a", bootedAt]]) };
+		while (s.clock() + SWEEP_MS - bootedAt < CAPTURE_AFTER_READY_MS) {
+			expect(s.sweep(frames, booting).refreshCaptures).toEqual([]);
+		}
+		expect(s.sweep(frames, booting).refreshCaptures).toEqual(["a"]);
+	});
+
+	it("never photographs a frame that has not run: no boot, or frozen since it booted", () => {
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		const hasThumb = () => false;
+
+		// mounted but never reported loaded — there is nothing to photograph
+		const unbooted = { hasThumb, ready: new Map<string, number>() };
+		for (let sweeps = 0; sweeps < 4; sweeps++) {
+			expect(s.sweep(frames, unbooted).refreshCaptures).toEqual([]);
+		}
+
+		// booted long ago, but held frozen ever since: its entry animation never
+		// ran, and its still would record that absence
+		const frozen = { hasThumb, frozen: "a", ready: new Map([["a", -CAPTURE_AFTER_READY_MS]]) };
+		for (let sweeps = 0; sweeps < 4; sweeps++) {
+			expect(s.sweep(frames, frozen).refreshCaptures).toEqual([]);
+		}
+
+		// let it run, and the debt is payable again
+		s.sweep(frames, { hasThumb });
+		expect(s.sweep(frames, { hasThumb }).refreshCaptures).toEqual(["a"]);
+	});
+
+	it("keeps refreshing a frame that ran once and then went offscreen", () => {
+		// running long enough is remembered: an offscreen frame is frozen, but
+		// its content arrived while it was on screen and its still is still true
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		s.sweep(frames);
+		s.sweep(frames);
+		const left = s.sweep(frames, { camera: parked });
+		expect(left.states.a).toBe("warm");
+		s.sweep(frames, { camera: parked });
+		expect(s.sweep(frames, { camera: parked }).refreshCaptures).toEqual(["a"]);
+	});
+
 	it("a missing still backfills when settled, unless a capture is already in flight", () => {
 		const frames = [frame("a", 450, 450)];
 		const s = sweeper();
@@ -386,5 +464,61 @@ describe("thumbnail refresh", () => {
 
 		// the rest kept their debt rather than firing into one commit
 		expect(s.sweep(frames, { hasThumb, capturing: new Set(["a", "b"]) }).refreshCaptures).toEqual(["c", "d"]);
+	});
+});
+
+describe("stillSharpUntil", () => {
+	/**
+	 * A still stands in for its frame only while it is at least as sharp as the
+	 * frame is drawn. Past that, the swap would soften the frame — and a swap
+	 * you can see is the flicker the swap exists to remove.
+	 */
+	it("lets a still stand in right up to where the frame outgrows it", () => {
+		// a 390×844 phone frame on a retina canvas: its cover is 1200 device
+		// pixels tall, the frame at k needs 844·k·2 of them
+		expect(stillSharpUntil(390, 844, 2)).toBeCloseTo(1200 / (844 * 2), 6);
+		// a 1500-wide sheet outgrows its cover much sooner
+		expect(stillSharpUntil(1500, 900, 2)).toBeCloseTo(1200 / (1500 * 2), 6);
+	});
+
+	it("never claims a still is sharper than the frame it was taken from", () => {
+		// a small frame's cover is bounded by the frame, not by COVER_MAX_EDGE
+		expect(stillSharpUntil(200, 300, 2)).toBe(1);
+		expect(stillSharpUntil(200, 300, 1)).toBe(1);
+	});
+
+	it("accounts for a capture that was itself capped at 2×", () => {
+		// covers rasterize at min(dpr, 2); a denser screen draws finer than that
+		expect(stillSharpUntil(200, 300, 3)).toBeCloseTo(2 / 3, 6);
+	});
+});
+
+describe("first arrival", () => {
+	it("re-photographs every frame once it has arrived, however old its stored still", () => {
+		// The canvas stands the stored still in for the document every time the
+		// camera moves. That still was taken by some earlier render — an older
+		// document, an older capture — so the first thing a booted frame owes is
+		// a picture of itself as it is now.
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		s.sweep(frames);
+		s.sweep(frames);
+		expect(s.sweep(frames).refreshCaptures).toEqual(["a"]);
+		// and only once: a settled frame is not re-photographed every sweep
+		expect(s.sweep(frames).refreshCaptures).toEqual([]);
+		expect(s.sweep(frames).refreshCaptures).toEqual([]);
+	});
+
+	it("owes a fresh still again after a reload drops the boot", () => {
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		s.sweep(frames);
+		s.sweep(frames);
+		expect(s.sweep(frames).refreshCaptures).toEqual(["a"]);
+		// the document was replaced: no loaded report, so nothing to photograph
+		const unbooted = { ready: new Map<string, number>() };
+		expect(s.sweep(frames, unbooted).refreshCaptures).toEqual([]);
+		// and the new boot owes its own
+		expect(s.sweep(frames).refreshCaptures).toEqual(["a"]);
 	});
 });
