@@ -9,6 +9,7 @@ import { describeCollision, frameKind, lookupFrame } from "./projection";
 import { buildFrameCss } from "./tailwind";
 import { assembleTermDocument, termDocumentEtag } from "./term-document";
 import { importMapPins } from "./vendor";
+import { inertWebfonts, type Webfonts } from "./webfonts";
 
 export type FrameDocument =
 	| { kind: "ok"; document: string; etag: string; cache: "hit" | "miss" }
@@ -25,6 +26,8 @@ interface CacheEntry {
 	hash: string;
 	etag: string;
 	document: string;
+	/** The webfont resolution this document was assembled from (#80). */
+	fonts: number;
 }
 
 const STDIN_NAME = "<spool-boot>";
@@ -36,7 +39,7 @@ const VIRTUAL_OUTDIR = "<spool-out>";
  * document byte-for-byte when nothing changed. Compile failures are never
  * cached — a broken frame recompiles per request and recovers instantly.
  */
-export function createFrameCompiler(version: string) {
+export function createFrameCompiler(version: string, webfonts: Webfonts = inertWebfonts()) {
 	const cache = new Map<string, CacheEntry>();
 
 	async function getDocument(root: string, frame: string, authority: FrameAuthority): Promise<FrameDocument> {
@@ -80,11 +83,27 @@ export function createFrameCompiler(version: string) {
 		try {
 			// One canonical root owns the entry, every resolved import, stylesheets,
 			// direct shared reads, and cache revalidation for this document.
+			// A machine that comes back online resolves webfonts it could not reach
+			// before, and the revision it was built at retires it (#80) — read after
+			// the compile, because the compile is what moves it.
 			const cached = cache.get(key);
-			if (cached !== undefined && hashInputs(version, stamp, cached.inputs, designDir) === cached.hash) {
+			if (
+				cached !== undefined &&
+				cached.fonts === webfonts.revision() &&
+				hashInputs(version, stamp, cached.inputs, designDir) === cached.hash
+			) {
 				return { kind: "ok", document: cached.document, etag: cached.etag, cache: "hit" };
 			}
-			const entry = await compileFrame(version, basename(root), designDir, frameDir, frame, authority, stamp);
+			const entry = await compileFrame({
+				version,
+				project: basename(root),
+				designDir,
+				frameDir,
+				frame,
+				authority,
+				stamp,
+				webfonts,
+			});
 			cache.set(key, entry);
 			return { kind: "ok", document: entry.document, etag: entry.etag, cache: "miss" };
 		} catch (error) {
@@ -152,15 +171,27 @@ export async function buildDesignEntry(options: {
 	return { sourceFiles, bootJs, bundledCss };
 }
 
-async function compileFrame(
-	version: string,
-	project: string,
-	designDir: string,
-	frameDir: string,
-	frame: string,
-	authority: FrameAuthority,
-	stamp: string,
-): Promise<CacheEntry> {
+interface FrameCompile {
+	version: string;
+	project: string;
+	designDir: string;
+	frameDir: string;
+	frame: string;
+	authority: FrameAuthority;
+	stamp: string;
+	webfonts: Webfonts;
+}
+
+async function compileFrame({
+	version,
+	project,
+	designDir,
+	frameDir,
+	frame,
+	authority,
+	stamp,
+	webfonts,
+}: FrameCompile): Promise<CacheEntry> {
 	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry({
 		designDir,
 		resolveDir: frameDir,
@@ -171,7 +202,9 @@ async function compileFrame(
 
 	const shared = join(designDir, "shared");
 	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
-	const fonts = readIfExists(join(shared, "fonts.css"), designDir);
+	// The stills' fonts (#80): remote faces resolved to this daemon so a
+	// capture can inline them, the file as written whenever that fails.
+	const fonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
 	const importMap = mergeImportMap(
 		parseImportMap(readIfExists(join(shared, "importmap.json"), designDir)),
 		importMapPins(),
@@ -189,7 +222,7 @@ async function compileFrame(
 	});
 	const inputs = [...sourceFiles, ...stylesheets, join(shared, "fonts.css"), join(shared, "importmap.json")];
 	const hash = hashInputs(version, stamp, inputs, designDir);
-	return { inputs, hash, etag: `"${hash.slice(0, 32)}"`, document };
+	return { inputs, hash, etag: `"${hash.slice(0, 32)}"`, document, fonts: webfonts.revision() };
 }
 
 /**

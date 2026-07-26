@@ -71,6 +71,7 @@ import {
 	vendorSpoolJsxJs,
 	vendorSpoolTermJs,
 } from "./vendor";
+import { createWebfonts } from "./webfonts";
 
 export interface DaemonOptions {
 	spoolDir: string;
@@ -196,8 +197,9 @@ export function createDaemonApp({
 	}
 
 	const startedAt = new Date().toISOString();
-	const compiler = createFrameCompiler(version);
-	const playerCompiler = createPlayerCompiler(version);
+	const webfonts = createWebfonts({ cacheDir: join(spoolDir, "webfonts") });
+	const compiler = createFrameCompiler(version, webfonts);
+	const playerCompiler = createPlayerCompiler(version, webfonts);
 	const hub = createChangeHub();
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
@@ -1040,6 +1042,21 @@ export function createDaemonApp({
 			c.header("cache-control", "public, max-age=0, must-revalidate");
 			c.header("content-type", "font/woff2");
 			return c.body(new Uint8Array(readFileSync(file)));
+		})
+		.get("/vendor/webfont/:key", async (c) => {
+			// A project's own fonts.css named this file's URL and nothing else can
+			// (#80): the key is content-addressed and only a resolved stylesheet
+			// puts one in reach. Null-origin sandboxed frames fetch it under CORS,
+			// both to render and to inline into their own stills.
+			const file = await webfonts.read(c.req.param("key"));
+			if (file === undefined) return c.text("no such font", 404);
+			c.header("access-control-allow-origin", "*");
+			const etag = `"webfont-${c.req.param("key")}"`;
+			if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+			c.header("etag", etag);
+			c.header("cache-control", "public, max-age=0, must-revalidate");
+			c.header("content-type", file.type);
+			return c.body(new Uint8Array(file.bytes));
 		})
 		.get("/player-assets/react.js", async (c) => {
 			const etag = `"react-${reactVersion}"`;

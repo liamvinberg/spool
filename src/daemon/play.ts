@@ -8,6 +8,7 @@ import { readIfExists } from "./project-files";
 import { frameFolder } from "./projection";
 import { buildFrameCss } from "./tailwind";
 import { importMapPins } from "./vendor";
+import { inertWebfonts, type Webfonts } from "./webfonts";
 
 /**
  * The player page (#24): one light document under /play/ composing every frame
@@ -62,6 +63,8 @@ interface PlayerCacheEntry {
 	inputs: string[];
 	hash: string;
 	bundle: PlayerBundle;
+	/** The webfont resolution this bundle was assembled from (#80). */
+	fonts: number;
 }
 
 /**
@@ -73,7 +76,7 @@ interface PlayerCacheEntry {
  * bundle. The player itself is page-blind: pages shape import paths here and
  * nothing else.
  */
-export function createPlayerCompiler(version: string) {
+export function createPlayerCompiler(version: string, webfonts: Webfonts = inertWebfonts()) {
 	const cache = new Map<string, PlayerCacheEntry>();
 
 	async function getBundle(root: string, frames: PlayerFrameRef[]): Promise<PlayerCompile> {
@@ -82,15 +85,18 @@ export function createPlayerCompiler(version: string) {
 			// Match frame compilation: one canonical root covers imports, shared
 			// assets, Tailwind inputs, and cache revalidation for this player build.
 			const designDir = realDesignDir(root);
+			// The webfont revision this bundle was built at retires it once a
+			// machine that was offline resolves the faces it could not reach (#80).
 			const cached = cache.get(root);
 			if (
 				cached !== undefined &&
 				cached.stamp === stamp &&
+				cached.fonts === webfonts.revision() &&
 				hashInputs(version, stamp, cached.inputs, designDir) === cached.hash
 			) {
 				return { kind: "ok", bundle: cached.bundle, cache: "hit" };
 			}
-			const entry = await compilePlayer(version, designDir, frames, stamp);
+			const entry = await compilePlayer(version, designDir, frames, stamp, webfonts);
 			cache.set(root, entry);
 			return { kind: "ok", bundle: entry.bundle, cache: "miss" };
 		} catch (error) {
@@ -109,6 +115,7 @@ async function compilePlayer(
 	designDir: string,
 	frames: PlayerFrameRef[],
 	stamp: string,
+	webfonts: Webfonts,
 ): Promise<PlayerCacheEntry> {
 	// the same stamping compile as frame documents (#23): one dialect, one
 	// pipeline, identical semantics whether a frame renders alone or composed
@@ -122,7 +129,7 @@ async function compilePlayer(
 
 	const shared = join(designDir, "shared");
 	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
-	const fonts = readIfExists(join(shared, "fonts.css"), designDir);
+	const fonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
 	const transitions = readIfExists(join(shared, "transitions.css"), designDir);
 	const importMap = mergeImportMap(
 		parseImportMap(readIfExists(join(shared, "importmap.json"), designDir)),
@@ -138,7 +145,13 @@ async function compilePlayer(
 	];
 	const hash = hashInputs(version, stamp, inputs, designDir);
 	const names = frames.map((ref) => ref.name);
-	return { stamp, inputs, hash, bundle: { bootJs, css, fonts, bundledCss, transitions, importMap, names, hash } };
+	return {
+		stamp,
+		inputs,
+		hash,
+		fonts: webfonts.revision(),
+		bundle: { bootJs, css, fonts, bundledCss, transitions, importMap, names, hash },
+	};
 }
 
 /** The composition: every frame imported, handed to the runtime's player boot. */
