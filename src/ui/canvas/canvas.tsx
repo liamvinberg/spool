@@ -48,6 +48,7 @@ import { stillSharpUntil, useFrameLifecycle } from "./lifecycle";
 import {
 	type ElementPreview,
 	editorTarget,
+	type FrameHover,
 	type Guides,
 	HANDLE_CURSORS,
 	type Handle,
@@ -221,6 +222,7 @@ export function ProjectCanvas({
 	const [selected, setSelected] = useState<string[]>([]);
 	const [picked, setPicked] = useState<PickedSelection[]>([]);
 	const [entered, setEntered] = useState<string | null>(null);
+	const [hovered, setHovered] = useState<FrameHover | null>(null);
 	// the hover preview (#37): the element a click would target, outlined live
 	const [preview, setPreview] = useState<ElementPreview | null>(null);
 	const [externalLink, setExternalLink] = useState<{ frame: string; href: string } | null>(null);
@@ -313,9 +315,16 @@ export function ProjectCanvas({
 	const effectiveTool = transientTool ?? tool;
 	const toolRef = useRef(effectiveTool);
 	toolRef.current = effectiveTool;
+	const hideFrameHover = useCallback(() => {
+		setHovered((current) =>
+			current === null || !current.visible ? current : { frame: current.frame, visible: false },
+		);
+	}, []);
 	useEffect(() => {
-		if (effectiveTool !== "select") setPreview(null);
-	}, [effectiveTool]);
+		if (effectiveTool === "select") return;
+		setPreview(null);
+		hideFrameHover();
+	}, [effectiveTool, hideFrameHover]);
 	const selectedRef = useRef(selected);
 	selectedRef.current = selected;
 	const pickedRef = useRef(picked);
@@ -1618,6 +1627,7 @@ export function ProjectCanvas({
 		stopAnimation();
 		setMenu(null);
 		setPreview(null); // the press supersedes the hover; its own answer redraws
+		hideFrameHover();
 		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
 		flushNudge(); // a pending nudge settles before a new gesture captures origins
 		const p = localPoint(event);
@@ -1744,10 +1754,24 @@ export function ProjectCanvas({
 		const p = localPoint(event);
 
 		if (active.kind === "idle") {
-			// idle motion is the element-preview surface — Select only
-			if (toolRef.current !== "select" || menuOpenRef.current) return;
+			// idle motion previews the frame and, under ⌘ or a scope, its element
+			if (toolRef.current !== "select" || menuOpenRef.current || event.pointerType === "touch") {
+				hideFrameHover();
+				return;
+			}
 			const world = toWorld(p, cam);
-			hoverPickAt(frameAtWorld(world), world, event.metaKey);
+			const label = datasetHit(event.target, "frame-label");
+			const frame = label ?? frameAtWorld(world);
+			setHovered((current) =>
+				frame === null
+					? current === null || !current.visible
+						? current
+						: { frame: current.frame, visible: false }
+					: current?.frame === frame && current.visible
+						? current
+						: { frame, visible: true },
+			);
+			hoverPickAt(label === null ? frame : null, world, event.metaKey);
 			return;
 		}
 
@@ -1916,6 +1940,8 @@ export function ProjectCanvas({
 		const p = localPoint(event);
 		const world = toWorld(p, cam);
 		const hit = datasetHit(event.target, "frame-label") ?? frameAtWorld(world);
+		hideFrameHover();
+		setPreview(null);
 		if (hit === null) {
 			setMenu(null);
 			return;
@@ -2516,7 +2542,10 @@ export function ProjectCanvas({
 				onPointerMove={onPointerMove}
 				onPointerUp={onPointerUp}
 				onPointerCancel={cancelGesture}
-				onPointerLeave={() => setPreview(null)}
+				onPointerLeave={() => {
+					setPreview(null);
+					hideFrameHover();
+				}}
 				onDoubleClick={onDoubleClick}
 				onContextMenu={onContextMenu}
 			>
@@ -2531,6 +2560,8 @@ export function ProjectCanvas({
 							const state = lifecycle.states[frame.name] ?? "hibernated";
 							const isEntered = entered === frame.name;
 							const isSelected = selected.includes(frame.name);
+							const isHovered =
+								effectiveTool === "select" && hovered?.visible === true && hovered.frame === frame.name;
 							const paused = state !== "live";
 							return (
 								<div
@@ -2552,6 +2583,7 @@ export function ProjectCanvas({
 										entered={isEntered}
 										paused={paused}
 										selected={isSelected}
+										hovered={isHovered}
 										terminal={frame.kind === "term"}
 										onPlay={() => playFrame(frame.name)}
 									/>
@@ -2602,6 +2634,7 @@ export function ProjectCanvas({
 						frames={visibleFrames}
 						selected={selected}
 						entered={entered}
+						hovered={effectiveTool === "select" ? hovered : null}
 						editable={effectiveTool === "select"}
 						picked={picked}
 						preview={effectiveTool === "select" ? preview : null}

@@ -6,11 +6,12 @@ import { type PickedHit, parseStampRef } from "./protocol";
 
 /**
  * Screen-space selection furniture (#23), drawn over the transformed field so
- * strokes stay hairline at any zoom. The system page's laws verbatim: ring
- * 1.5px thread at 3px offset radius +2; handles 8px on-thread fill with
- * thread border; readout thread fill, on-thread mono 10; element outline 1px
- * thread at 2px offset, no handles. Knobs render on corners only — the sides
- * carry invisible grab bands, Figma's pattern for single-axis resize.
+ * strokes stay hairline at any zoom. The system page's laws verbatim: hover
+ * 1px neutral at 3px offset; ring 1.5px thread at 3px offset radius +2;
+ * handles 8px on-thread fill with thread border; readout thread fill,
+ * on-thread mono 10; element outline 1px thread at 2px offset, no handles.
+ * Knobs render on corners only — the sides carry invisible grab bands,
+ * Figma's pattern for single-axis resize.
  */
 
 export interface PickedSelection extends PickedHit {
@@ -26,6 +27,12 @@ export interface ElementPreview {
 	selector: string;
 	rect: { x: number; y: number; w: number; h: number };
 	radius: number;
+}
+
+/** The frame under the pointer. Hidden hovers linger only to fade their ring. */
+export interface FrameHover {
+	frame: string;
+	visible: boolean;
 }
 
 export interface Guides {
@@ -61,6 +68,7 @@ export function SelectionOverlay({
 	frames,
 	selected,
 	entered,
+	hovered,
 	editable,
 	picked,
 	preview,
@@ -72,6 +80,7 @@ export function SelectionOverlay({
 	frames: ProjectedFrame[];
 	selected: readonly string[];
 	entered: string | null;
+	hovered: FrameHover | null;
 	/** Select is the only surface that exposes arrange handles. */
 	editable: boolean;
 	picked: readonly PickedSelection[];
@@ -97,6 +106,10 @@ export function SelectionOverlay({
 	const ringRadius = Math.min(12, shellRadius * k) + 2;
 
 	const ringed = [...new Set(entered === null ? selected : [...selected, entered])];
+	const hoveredFrame =
+		hovered !== null && !ringed.includes(hovered.frame)
+			? frames.find((frame) => frame.name === hovered.frame)
+			: undefined;
 	const single =
 		editable && selected.length === 1 && entered === null ? frames.find((f) => f.name === selected[0]) : undefined;
 	const previewShown =
@@ -113,6 +126,26 @@ export function SelectionOverlay({
 			{guides.h.map((y) => (
 				<div key={`h${y}`} className="absolute inset-x-0 h-px bg-thread" style={{ top: y * k + camera.y }} />
 			))}
+
+			{hoveredFrame !== undefined &&
+				(() => {
+					const rect = screenRect(hoveredFrame);
+					return (
+						<div
+							data-frame-hover={hoveredFrame.name}
+							className="absolute border border-border-raised"
+							style={{
+								left: rect.x - 3,
+								top: rect.y - 3,
+								width: rect.w + 6,
+								height: rect.h + 6,
+								borderRadius: ringRadius,
+								opacity: hovered?.visible === true ? 1 : 0,
+								transition: hovered?.visible === true ? "none" : "opacity 80ms ease-out",
+							}}
+						/>
+					);
+				})()}
 
 			{ringed.map((name) => {
 				const frame = frames.find((f) => f.name === name);

@@ -13,6 +13,7 @@ describe("FrameLabel", () => {
 				entered: true,
 				paused: true,
 				selected: false,
+				hovered: false,
 			}),
 		);
 
@@ -29,6 +30,7 @@ describe("FrameLabel", () => {
 				entered: false,
 				paused: true,
 				selected: false,
+				hovered: false,
 			}),
 		);
 
