@@ -22,13 +22,14 @@ import {
  * power state: a rate reproduces on any machine, and turns "it felt slow once"
  * into a headroom number, the multiplier at which a bar first misses.
  *
- * The rate is applied to every frame's process as well as the page's. In a real
- * browser the frames are out-of-process — 35 mounted frames measured as 35
- * iframe targets across 3 renderers — so throttling the page alone would model
- * a slow canvas driving fast frames, which is not a machine anyone owns.
- * `chromium-headless-shell` does not do out-of-process iframes at all and puts
- * everything in one renderer, which is why the two modes disagree so sharply;
- * headed is the one to believe.
+ * The rate is applied to every frame as well as the page. In a real browser the
+ * frames do not share the page's renderer, so throttling the page alone would
+ * model a slow canvas driving fast frames, which is not a machine anyone owns.
+ * They do share one renderer with *each other*: `bench/frame-cost.ts` (#85) read
+ * Chromium's own process list and found every count from 1 to 80 mounted frames
+ * adding exactly one renderer process. `chromium-headless-shell` instead puts
+ * the frames in the page's own renderer, which is why the two modes disagree so
+ * sharply; headed is the one to believe.
  *
  * The run never touches the project it measures. `design/` is copied to a
  * temporary root with its own daemon, spool dir and port, so the source canvas
@@ -225,8 +226,8 @@ interface RunResult {
 	rate: number;
 	refreshMs: number;
 	idleMounted: number;
-	/** Mounted frames Chromium gave a process of their own, and so a throttle of their own. */
-	outOfProcess: number;
+	/** Mounted frames that accepted a CDP session, and so were throttled by name. */
+	throttledFrames: number;
 	pan: GestureStats;
 	zoom: GestureStats;
 	arrivalP50: number;
@@ -237,26 +238,31 @@ interface RunResult {
 }
 
 /**
- * Throttling the page target reaches the canvas UI's renderer and nothing else.
- * In a real browser the frames are out-of-process — 35 mounted frames measured
- * as 35 iframe targets across 3 renderers — so a page-only throttle models a
- * slow canvas driving fast frames, which is not a machine anyone owns. Each
- * frame gets the same rate; the ones that share the page's process reject the
- * session and are already covered by it.
+ * Throttling the page target reaches the canvas UI's renderer and nothing else,
+ * and the frames are not in it — so a page-only throttle models a slow canvas
+ * driving fast frames, which is not a machine anyone owns. Every frame is named
+ * explicitly; the ones already covered by the page session reject it.
+ *
+ * The count this returns is **not** a count of frames in their own process, and
+ * an earlier version of this file said it was. `newCDPSession` attaches to a
+ * frame whether or not Chromium gave it a process, so the 35 it reports at 35
+ * mounted frames says only that all 35 were throttled. For process structure,
+ * `bench/frame-cost.ts` reads `SystemInfo.getProcessInfo` directly, and finds
+ * all mounted frames sharing a single renderer.
  */
 async function throttleEveryFrame(context: BrowserContext, page: Page, rate: number): Promise<number> {
-	let separate = 0;
+	let throttled = 0;
 	for (const frame of page.frames()) {
 		if (frame === page.mainFrame()) continue;
 		try {
 			const session = await context.newCDPSession(frame);
 			await session.send("Emulation.setCPUThrottlingRate", { rate });
-			separate++;
+			throttled++;
 		} catch {
-			// same-process frame: the page session already throttles it
+			// already covered by the page session
 		}
 	}
-	return separate;
+	return throttled;
 }
 
 async function measure(
@@ -282,11 +288,11 @@ async function measure(
 	const settled = await settle(page, 1000, 30_000);
 	const idleMounted = settled.count;
 	const reloadMs = settled.stableAt - reloadStart;
-	const outOfProcess = await throttleEveryFrame(context, page, rate);
+	const throttledFrames = await throttleEveryFrame(context, page, rate);
 
 	const state0 = await read(page);
 	process.stderr.write(
-		`bench:   settled ${idleMounted} mounted (${outOfProcess} out-of-process), ${state0.raf.length} animation frames sampled\n`,
+		`bench:   settled ${idleMounted} mounted (${throttledFrames} throttled by name), ${state0.raf.length} animation frames sampled\n`,
 	);
 	// the display's own cadence, measured rather than assumed: the p95 bar is
 	// "within one refresh plus slack", and a 120 Hz panel is not a 60 Hz one
@@ -399,7 +405,7 @@ async function measure(
 		rate,
 		refreshMs,
 		idleMounted,
-		outOfProcess,
+		throttledFrames,
 		pan,
 		zoom,
 		arrivalP50: quantile(arrivals, 0.5),
@@ -423,7 +429,7 @@ function table(results: RunResult[]): string {
 		`| double-click to clickable | ${results.map((r) => (Number.isFinite(r.enterMs) ? ms(r.enterMs) : "never")).join(" | ")} |`,
 		`| reload to settled | ${results.map((r) => ms(r.reloadMs)).join(" | ")} |`,
 		`| documents mounted (idle / peak) | ${results.map((r) => `${r.idleMounted} / ${Math.max(r.pan.mountedPeak, r.zoom.mountedPeak)}`).join(" | ")} |`,
-		`| of those, out-of-process | ${results.map((r) => String(r.outOfProcess)).join(" | ")} |`,
+		`| of those, throttled by name | ${results.map((r) => String(r.throttledFrames)).join(" | ")} |`,
 	];
 	return rows.join("\n");
 }
