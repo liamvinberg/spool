@@ -11,6 +11,7 @@ declare global {
 	interface Window {
 		__SPOOL_CONTROL__?: string;
 		__SPOOL_RENDER_ORIGIN__?: string;
+		__SPOOL_CAPTURE_ORIGIN__?: string;
 	}
 }
 
@@ -44,6 +45,12 @@ const fallbackRenderOrigin =
 		: `${uiWindow.location.protocol}//run.spool.localhost${uiWindow.location.port === "" ? "" : `:${uiWindow.location.port}`}`;
 const renderOrigin =
 	typeof uiWindow?.__SPOOL_RENDER_ORIGIN__ === "string" ? uiWindow.__SPOOL_RENDER_ORIGIN__ : fallbackRenderOrigin;
+const fallbackCaptureOrigin =
+	uiWindow === undefined
+		? "http://capture-spool.localhost"
+		: `${uiWindow.location.protocol}//capture-spool.localhost${uiWindow.location.port === "" ? "" : `:${uiWindow.location.port}`}`;
+export const captureOrigin =
+	typeof uiWindow?.__SPOOL_CAPTURE_ORIGIN__ === "string" ? uiWindow.__SPOOL_CAPTURE_ORIGIN__ : fallbackCaptureOrigin;
 
 function controlFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
 	const headers = new Headers(init?.headers);

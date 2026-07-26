@@ -369,8 +369,8 @@ export function ProjectCanvas({
 		(frame: string, dataUrl: string) => {
 			void (async () => {
 				try {
-					const png = await (await fetch(dataUrl)).blob();
-					if (await putThumb(project, frame, png)) noteThumb(frame);
+					const cover = await (await fetch(dataUrl)).blob();
+					if (await putThumb(project, frame, cover)) noteThumb(frame);
 				} catch {
 					// a lost capture is re-taken on the next settle
 				}
@@ -1322,8 +1322,11 @@ export function ProjectCanvas({
 					// a fresh document renders fresh elements: re-anchor its arrows (#34)
 					requestSiteBoxes(message.frame);
 					return;
+				case "capture-source":
+					lifecycleRef.current.noteCaptureSource(message, event.source);
+					return;
 				case "shot":
-					lifecycleRef.current.noteShot(message.frame, message.url);
+					// Pre-ID capture replies cannot complete an ID-bound request.
 					return;
 				case "error":
 					console.warn(`spool: frame "${message.frame}" reported:`, message.error);

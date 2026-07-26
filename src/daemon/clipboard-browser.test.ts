@@ -521,9 +521,18 @@ it("blocks self-walk clipboard writes until the frame document is replaced", { t
 							typeof message === "object" &&
 							message !== null &&
 							"spool" in message &&
-							message.spool === "shot" &&
+							message.spool === "capture-source" &&
 							"frame" in message &&
-							message.frame === "self",
+							message.frame === "self" &&
+							"id" in message &&
+							typeof message.id === "string" &&
+							/^[0-9a-f]{32}$/.test(message.id) &&
+							"svg" in message &&
+							message.svg instanceof Blob &&
+							message.svg.type === "image/svg+xml" &&
+							message.svg.size > 0 &&
+							"maxEdge" in message &&
+							message.maxEdge === 1200,
 					),
 				),
 			{ timeout: 10_000 },
@@ -548,11 +557,14 @@ it("blocks self-walk clipboard writes until the frame document is replaced", { t
 	await expect.poll(() => frame.locator("#result").innerText()).toBe("copied");
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("self walk clipboard value");
 	await frame.evaluate(() => {
-		const nativeDecode = HTMLImageElement.prototype.decode;
-		HTMLImageElement.prototype.decode = async function delayedDecode() {
-			await new Promise((resolve) => setTimeout(resolve, 1_000));
-			return nativeDecode.call(this);
+		const delay = document.createElement("canvas");
+		delay.width = 1;
+		delay.height = 1;
+		const nativeToBlob = delay.toBlob;
+		delay.toBlob = function delayedToBlob(callback, type, quality) {
+			setTimeout(() => nativeToBlob.call(this, callback, type, quality), 1_000);
 		};
+		document.body.append(delay);
 	});
 	await page.evaluate(() => navigator.clipboard.writeText("self walk baseline"));
 	const walkBox = await frame.locator("#self-walk").boundingBox();

@@ -98,11 +98,32 @@ export interface SiteAnchor {
 	target?: string;
 }
 
+export interface CaptureSourceMessage {
+	spool: "capture-source";
+	frame: string;
+	id: string;
+	svg: Blob;
+	width: number;
+	height: number;
+	dpr: number;
+	maxEdge: number;
+}
+
+export interface CaptureSourceErrorMessage {
+	spool: "capture-source";
+	frame: string;
+	id: string;
+	error: string;
+}
+
+export type CaptureSourceReply = CaptureSourceMessage | CaptureSourceErrorMessage;
+
 export type FrameMessage =
 	| ClipboardCopyRequest
 	| { spool: "loaded"; frame: string }
 	| { spool: "error"; frame: string; error: string }
 	| { spool: "shot"; frame: string; url?: string; error?: string }
+	| CaptureSourceReply
 	| { spool: "session?"; frame: string }
 	| { spool: "key"; frame: string; key: string }
 	| FrameModifierMessage
@@ -128,6 +149,10 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 		case "shot":
 		case "session?":
 			return m as unknown as FrameMessage;
+		case "capture-source":
+			return captureSourceMessage(m) || captureSourceErrorMessage(m)
+				? (m as unknown as CaptureSourceReply)
+				: undefined;
 		case "key":
 			return typeof m.key === "string" ? (m as unknown as FrameMessage) : undefined;
 		case "modifier":
@@ -196,6 +221,57 @@ export function walkRejectionReason(
 }
 
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const CAPTURE_ID = /^[0-9a-f]{32}$/;
+const MAX_CAPTURE_SVG_BYTES = 16 * 1024 * 1024;
+const MAX_CAPTURE_SOURCE_EDGE = 32 * 1024;
+const MAX_CAPTURE_EDGE = 16 * 1024;
+const MAX_CAPTURE_PIXELS = 32 * 1024 * 1024;
+
+function captureSourceMessage(message: Record<string, unknown>): boolean {
+	if (
+		!hasExactKeys(message, ["spool", "frame", "id", "svg", "width", "height", "dpr", "maxEdge"]) ||
+		typeof message.id !== "string" ||
+		!CAPTURE_ID.test(message.id) ||
+		!(message.svg instanceof Blob) ||
+		message.svg.type !== "image/svg+xml" ||
+		message.svg.size === 0 ||
+		message.svg.size > MAX_CAPTURE_SVG_BYTES ||
+		!boundedInteger(message.width, 1, MAX_CAPTURE_SOURCE_EDGE) ||
+		!boundedInteger(message.height, 1, MAX_CAPTURE_SOURCE_EDGE) ||
+		!finite(message.dpr) ||
+		message.dpr <= 0 ||
+		message.dpr > 2 ||
+		!boundedInteger(message.maxEdge, 0, MAX_CAPTURE_EDGE)
+	) {
+		return false;
+	}
+	const scale =
+		message.maxEdge > 0
+			? Math.min(message.dpr, message.maxEdge / Math.max(message.width, message.height))
+			: message.dpr;
+	const outputWidth = Math.max(1, Math.round(message.width * scale));
+	const outputHeight = Math.max(1, Math.round(message.height * scale));
+	return (
+		Number.isSafeInteger(outputWidth) &&
+		Number.isSafeInteger(outputHeight) &&
+		outputWidth * outputHeight <= MAX_CAPTURE_PIXELS
+	);
+}
+
+function captureSourceErrorMessage(message: Record<string, unknown>): boolean {
+	return (
+		hasExactKeys(message, ["spool", "frame", "id", "error"]) &&
+		typeof message.id === "string" &&
+		CAPTURE_ID.test(message.id) &&
+		typeof message.error === "string" &&
+		message.error.length > 0 &&
+		message.error.length <= 240
+	);
+}
+
+function boundedInteger(value: unknown, min: number, max: number): value is number {
+	return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
+}
 
 function isSessionRecord(value: unknown): value is SessionRecord {
 	if (!isRecord(value) || !hasExactKeys(value, ["scenario", "state", "stack"])) return false;
@@ -229,12 +305,14 @@ function webHref(value: unknown): value is string {
 export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const;
 /**
  * `maxEdge` bounds the cover's longest side; 0 asks for full device resolution.
+ * `id` binds the reply to the exact request and frame document.
  * `settleMs` is how long the frame may wait for its own fonts and entry
  * animations before it photographs itself — the caller owns that budget,
  * because a walk's cover is wanted inside its own arrival and an ambient
  * refresh can afford to wait for the truth.
  */
-export const captureMessage = (maxEdge: number, settleMs: number) => ({ spool: "capture", maxEdge, settleMs }) as const;
+export const captureMessage = (id: string, maxEdge: number, settleMs: number) =>
+	({ spool: "capture", id, maxEdge, settleMs }) as const;
 export const pickMessage = (x: number, y: number, id: number) => ({ spool: "pick", x, y, id }) as const;
 // "tree?" asks, "tree" answers — distinct kinds, so a reply can never read as a request
 export const treeMessage = (id: number) => ({ spool: "tree?", id }) as const;

@@ -1,9 +1,10 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { COVER_MAX_EDGE } from "../../cover";
-import type { Camera, ProjectedFrame } from "../api";
+import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
 import { intersects, toWorld, visibleWorldRect } from "./camera";
-import { captureMessage } from "./protocol";
+import { captureRequestId, rasterCaptureSource } from "./capture-broker";
+import { type CaptureSourceReply, captureMessage } from "./protocol";
 
 /**
  * The engine lifecycle (#8, #13, #40, #54): which frames run, which stand
@@ -361,61 +362,127 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
 	const model = useRef(createLifecycleModel());
-	const captureWaiters = useRef(new Map<string, (url: string | undefined) => void>());
+	interface PendingCapture {
+		id: string;
+		maxEdge: number;
+		sourceWindow: WindowProxy;
+		resolve: (url: string | undefined) => void;
+		timeout: ReturnType<typeof setTimeout>;
+		rasterStarted: boolean;
+		abort: AbortController;
+	}
+	const captureWaiters = useRef(new Map<string, PendingCapture>());
 
-	const onIframe = useCallback((frame: string, el: HTMLIFrameElement | null) => {
-		if (el !== null) {
-			iframes.current.set(frame, el);
-			return;
-		}
-		iframes.current.delete(frame);
-		// unmount (or reload) drops the boot: the cover returns until the next loaded report
-		setReady((current) => {
-			if (!current.has(frame)) return current;
-			const next = new Map(current);
-			next.delete(frame);
-			return next;
-		});
+	/** Resolve exactly the request that produced this shot; stale work cannot satisfy its successor. */
+	const noteShot = useCallback((frame: string, id: string, url: string | undefined) => {
+		const pending = captureWaiters.current.get(frame);
+		if (pending?.id !== id) return;
+		clearTimeout(pending.timeout);
+		captureWaiters.current.delete(frame);
+		pending.abort.abort();
+		pending.resolve(url);
+		// Full-resolution PNG is an export artifact, never a replacement cover.
+		if (url !== undefined && pending.maxEdge > 0) onShotRef.current(frame, url);
 	}, []);
+
+	const onIframe = useCallback(
+		(frame: string, el: HTMLIFrameElement | null) => {
+			const current = iframes.current.get(frame);
+			if (current !== undefined && current !== el) {
+				const pending = captureWaiters.current.get(frame);
+				if (pending !== undefined) noteShot(frame, pending.id, undefined);
+			}
+			if (el !== null) {
+				iframes.current.set(frame, el);
+				return;
+			}
+			iframes.current.delete(frame);
+			// unmount (or reload) drops the boot: the cover returns until the next loaded report
+			setReady((current) => {
+				if (!current.has(frame)) return current;
+				const next = new Map(current);
+				next.delete(frame);
+				return next;
+			});
+		},
+		[noteShot],
+	);
 
 	/** The frame's loaded report (commit-time effect, #17) — routed in by the canvas's message listener. */
 	const noteLoaded = useCallback((frame: string) => {
 		setReady((current) => (current.has(frame) ? current : new Map(current).set(frame, performance.now())));
 	}, []);
 
-	/** A shot reply from the frame's shim: resolve the waiter, persist upward. */
-	const noteShot = useCallback((frame: string, url: string | undefined) => {
-		captureWaiters.current.get(frame)?.(url);
-		captureWaiters.current.delete(frame);
-		if (url !== undefined) onShotRef.current(frame, url);
-	}, []);
+	/**
+	 * Accept a source only from the current window that received this exact
+	 * request, then launch one raster. Canvas performs the same WindowProxy
+	 * ownership check before routing here; retaining it here binds completion
+	 * to the document that was current when capture began.
+	 */
+	const noteCaptureSource = useCallback(
+		(message: CaptureSourceReply, source: MessageEventSource | null) => {
+			const pending = captureWaiters.current.get(message.frame);
+			if (
+				pending === undefined ||
+				pending.id !== message.id ||
+				pending.sourceWindow !== source ||
+				iframes.current.get(message.frame)?.contentWindow !== source
+			) {
+				return;
+			}
+			if ("error" in message) {
+				noteShot(message.frame, message.id, undefined);
+				return;
+			}
+			if (pending.maxEdge !== message.maxEdge || pending.rasterStarted) return;
+			pending.rasterStarted = true;
+			void rasterCaptureSource({ ...message, maxEdge: pending.maxEdge }, captureOrigin, pending.abort.signal).then(
+				(url) => noteShot(message.frame, message.id, url),
+				() => noteShot(message.frame, message.id, undefined),
+			);
+		},
+		[noteShot],
+	);
 
 	/**
 	 * Ask the frame's shim for a self-capture, bounded to `maxEdge` device
 	 * pixels on its longest side (0 for the frame at full resolution) and
 	 * allowing it `settleMs` to finish arriving before it photographs itself.
 	 * Resolves the data URL — or undefined for an unmounted, unbooted,
-	 * already-capturing or mute frame — and every landed capture also persists
-	 * as the thumbnail via onShot.
+	 * already-capturing or mute frame. Bounded captures persist as thumbnails;
+	 * a full-resolution export returns only to its caller.
 	 */
 	const requestCapture = useCallback(
 		(frame: string, maxEdge = COVER_MAX_EDGE, settleMs = CAPTURE_SETTLE_BUDGET_MS): Promise<string | undefined> => {
+			if (!Number.isSafeInteger(maxEdge) || maxEdge < 0 || maxEdge > 16 * 1024) return Promise.resolve(undefined);
 			const el = iframes.current.get(frame);
-			if (el?.contentWindow == null || !readyRef.current.has(frame)) return Promise.resolve(undefined);
+			const sourceWindow = el?.contentWindow;
+			if (sourceWindow == null || !readyRef.current.has(frame)) return Promise.resolve(undefined);
 			const pending = captureWaiters.current.get(frame);
 			if (pending !== undefined) return Promise.resolve(undefined);
 			return new Promise((resolve) => {
-				captureWaiters.current.set(frame, resolve);
-				el.contentWindow?.postMessage(captureMessage(maxEdge, settleMs), "*");
-				setTimeout(() => {
-					if (captureWaiters.current.get(frame) === resolve) {
-						captureWaiters.current.delete(frame);
-						resolve(undefined);
-					}
-				}, CAPTURE_REPLY_TIMEOUT_MS + settleMs);
+				const id = captureRequestId();
+				const timeout = setTimeout(() => noteShot(frame, id, undefined), CAPTURE_REPLY_TIMEOUT_MS + settleMs);
+				captureWaiters.current.set(frame, {
+					id,
+					maxEdge,
+					sourceWindow,
+					resolve,
+					timeout,
+					rasterStarted: false,
+					abort: new AbortController(),
+				});
+				sourceWindow.postMessage(captureMessage(id, maxEdge, settleMs), "*");
 			});
 		},
-		[],
+		[noteShot],
+	);
+
+	useEffect(
+		() => () => {
+			for (const [frame, pending] of [...captureWaiters.current]) noteShot(frame, pending.id, undefined);
+		},
+		[noteShot],
 	);
 
 	// The decision function: runs on a sweep interval and urgent intent changes.
@@ -463,5 +530,5 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		model.current.staleStills.add(frame);
 	}, []);
 
-	return { states, ready, onIframe, noteLoaded, noteShot, markStale, capture: requestCapture };
+	return { states, ready, onIframe, noteLoaded, noteCaptureSource, markStale, capture: requestCapture };
 }

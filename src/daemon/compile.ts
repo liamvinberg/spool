@@ -18,6 +18,7 @@ export type FrameDocument =
 
 export interface FrameAuthority {
 	projectCapability: string;
+	controlOrigin: string;
 }
 
 interface CacheEntry {
@@ -78,7 +79,7 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 			return { kind: "ok", document, etag: termDocumentEtag(version, document), cache: "hit" };
 		}
 
-		const stamp = `${frame}\0${authority.projectCapability}`;
+		const stamp = `${frame}\0${authority.projectCapability}\0${authority.controlOrigin}`;
 		const key = `${root}\0${stamp}`;
 		try {
 			// One canonical root owns the entry, every resolved import, stylesheets,
@@ -214,6 +215,7 @@ async function compileFrame({
 		project,
 		frame,
 		projectCapability: authority.projectCapability,
+		controlOrigin: authority.controlOrigin,
 		css,
 		importMap,
 		bootJs,

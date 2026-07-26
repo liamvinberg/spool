@@ -9,6 +9,10 @@ async function loadApi() {
 		configurable: true,
 		value: "http://run.spool.localhost:7766",
 	});
+	Object.defineProperty(window, "__SPOOL_CAPTURE_ORIGIN__", {
+		configurable: true,
+		value: "http://capture-spool.localhost:7766",
+	});
 	return import("./api");
 }
 
@@ -21,6 +25,7 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 	delete (window as Window & { __SPOOL_CONTROL__?: string }).__SPOOL_CONTROL__;
 	delete (window as Window & { __SPOOL_RENDER_ORIGIN__?: string }).__SPOOL_RENDER_ORIGIN__;
+	delete (window as Window & { __SPOOL_CAPTURE_ORIGIN__?: string }).__SPOOL_CAPTURE_ORIGIN__;
 });
 
 describe("trusted UI API client", () => {
@@ -47,6 +52,12 @@ describe("trusted UI API client", () => {
 		expect(frameDocumentUrl("demo project", "home/card", 2)).toBe(
 			"http://run.spool.localhost:7766/p/demo%20project/frames/home%2Fcard?v=2",
 		);
+	});
+
+	it("reads the isolated capture host from trusted boot config", async () => {
+		const { captureOrigin } = await loadApi();
+
+		expect(captureOrigin).toBe("http://capture-spool.localhost:7766");
 	});
 
 	it("reads thumbnails through the authenticated control client", async () => {

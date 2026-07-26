@@ -1,12 +1,13 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { initProject } from "../init";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { createDaemonApp } from "./app";
+import { captureWorkerCsp } from "./document";
+import { CAPTURE_HOST, RENDER_HOST } from "./security";
 
 const CONTROL_HOST = "localhost";
-const RENDER_HOST = "run.spool.localhost";
 const CONTROL_TOKEN = "control-token-for-tests";
 
 function makeSecurityHarness() {
@@ -36,8 +37,9 @@ function makeSecurityHarness() {
 			headers: { "x-spool-control": CONTROL_TOKEN, ...Object.fromEntries(new Headers(init.headers)) },
 		});
 	const render = (path: string, init?: RequestInit) => request(RENDER_HOST, path, init);
+	const capture = (path: string, init?: RequestInit) => request(CAPTURE_HOST, path, init);
 
-	return { spoolDir, project, daemon, request, control, render };
+	return { spoolDir, project, daemon, request, control, render, capture };
 }
 
 function shellConfigOf(document: string): { innerUrl: string } {
@@ -47,13 +49,84 @@ function shellConfigOf(document: string): { innerUrl: string } {
 }
 
 describe("daemon authority matrix", () => {
-	it("accepts only the configured control and render hosts", async () => {
+	it.each([
+		["IPv4", "127.0.0.1", "http://127.0.0.1:7788"],
+		["IPv6", "::1", "http://[::1]:7788"],
+	])("injects the bound capture origin for %s control hosts", async (_label, controlHost, origin) => {
+		const spoolDir = makeTempDir();
+		const uiDir = makeTempDir();
+		writeFileSync(join(uiDir, "index.html"), "<!doctype html><html><head></head><body></body></html>");
+		const daemon = createDaemonApp({
+			spoolDir,
+			uiDir,
+			version: "0.0.0-test",
+			controlHost,
+			controlToken: CONTROL_TOKEN,
+		});
+		daemon.setSelfOrigin(origin);
+		onTestFinished(() => daemon.close());
+
+		const response = await daemon.app.request(`${origin}/`);
+		expect(response.status).toBe(200);
+		const document = await response.text();
+		expect(document).toContain(`window.__SPOOL_CAPTURE_ORIGIN__ = "http://capture-spool.localhost:7788"`);
+	});
+
+	it("accepts only the configured control, render, and capture hosts", async () => {
 		const { request } = makeSecurityHarness();
 
 		expect((await request(CONTROL_HOST, "/api/health")).status).toBe(200);
 		expect((await request(RENDER_HOST, "/api/health")).status).toBe(404);
+		expect((await request(CAPTURE_HOST, "/api/health")).status).toBe(404);
 		expect((await request("attacker.example", "/api/health")).status).toBe(421);
 		expect((await request("spool.localhost.attacker.example", "/")).status).toBe(421);
+	});
+
+	it("serves only the static worker route from the capture host", async () => {
+		const { project, capture, control, render, request } = makeSecurityHarness();
+
+		const worker = await capture("/capture");
+		expect(worker.status).toBe(200);
+		expect(worker.headers.get("content-type")).toContain("text/html");
+		expect(worker.headers.get("cache-control")).toBe("no-store");
+		expect(worker.headers.get("content-security-policy")).toBe(captureWorkerCsp(`http://${CONTROL_HOST}`));
+		expect(worker.headers.get("x-content-type-options")).toBe("nosniff");
+		expect(await worker.text()).toContain("spool-capture-bootstrap-v1");
+
+		expect((await control("/capture")).status).toBe(404);
+		expect((await render("/capture")).status).toBe(404);
+		expect((await capture("/capture?unexpected=1")).status).toBe(404);
+		expect((await capture("/capture/")).status).toBe(404);
+		expect((await capture("/capt%75re")).status).toBe(404);
+		for (const path of [
+			"/",
+			"/api/health",
+			"/vendor/spool.js",
+			`/p/${encodeURIComponent(project.name)}/frames/home`,
+		]) {
+			expect((await capture(path)).status).toBe(404);
+		}
+		for (const method of ["POST", "HEAD", "OPTIONS"]) {
+			expect((await capture("/capture", { method })).status).toBe(404);
+		}
+		expect((await request("capture-spool.localhost.attacker.example", "/capture")).status).toBe(421);
+	});
+
+	it("rebuilds cached frame authority when the bound control origin changes", async () => {
+		const { project, daemon, render } = makeSecurityHarness();
+		const path = `/p/${encodeURIComponent(project.name)}/frames/home`;
+
+		const first = await render(path);
+		expect(first.headers.get("x-spool-cache")).toBe("miss");
+		const firstEtag = first.headers.get("etag");
+		expect(firstEtag).not.toBeNull();
+		expect(await first.text()).toContain('"controlOrigin":"http://localhost"');
+
+		daemon.setSelfOrigin("http://localhost:8899");
+		const rebound = await render(path);
+		expect(rebound.headers.get("x-spool-cache")).toBe("miss");
+		expect(rebound.headers.get("etag")).not.toBe(firstEtag);
+		expect(await rebound.text()).toContain('"controlOrigin":"http://localhost:8899"');
 	});
 
 	it("authenticates every control API before resolving sensitive targets", async () => {

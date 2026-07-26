@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 
 export const CONTROL_HEADER = "x-spool-control";
 export const PROJECT_HEADER = "x-spool-project";
+export const CAPTURE_HOST = "capture-spool.localhost";
 export const RENDER_HOST = "run.spool.localhost";
 
 /** A daemon-lifetime bearer capability. URL-safe keeps header transport plain. */
@@ -27,5 +28,12 @@ export function normalizeHostname(hostname: string): string {
 export function renderOriginFor(controlOrigin: string): string {
 	const url = new URL(controlOrigin);
 	url.hostname = RENDER_HOST;
+	return url.origin;
+}
+
+/** The isolated raster worker shares only the listener's scheme and port. */
+export function captureOriginFor(controlOrigin: string): string {
+	const url = new URL(controlOrigin);
+	url.hostname = CAPTURE_HOST;
 	return url.origin;
 }
