@@ -23,6 +23,15 @@ interface RootWatch {
 	stop(): void;
 }
 
+export interface ChangeHubDeps {
+	/**
+	 * The frames whose source graph reaches one design-relative shared/ file, or
+	 * nothing when nobody has read the graph yet. Not knowing is not the same as
+	 * nobody using it, so nothing means every frame.
+	 */
+	framesUsing(root: string, path: string): string[] | undefined;
+}
+
 const DEBOUNCE_MS = 40;
 
 /**
@@ -32,7 +41,7 @@ const DEBOUNCE_MS = 40;
  * request and never depends on these events — a missed event costs a refresh,
  * never a stale document.
  */
-export function createChangeHub() {
+export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undefined }) {
 	const roots = new Map<string, RootWatch>();
 
 	function subscribe(root: string, listener: Listener): () => void {
@@ -59,9 +68,11 @@ export function createChangeHub() {
 		try {
 			const designDir = realDesignDir(root);
 			watcher = watch(designDir, { recursive: true }, (_type, filename) => {
-				const event = classify(designDir, filename);
-				if (event === undefined) return;
-				pending.set(event.kind === "frame" ? `frame ${event.frame}` : "shared", event);
+				const events = classify(designDir, filename, (path) => deps.framesUsing(root, path));
+				if (events.length === 0) return;
+				for (const event of events) {
+					pending.set(event.kind === "frame" ? `frame ${event.frame}` : "shared", event);
+				}
 				timer ??= setTimeout(() => {
 					timer = undefined;
 					const batch = [...pending.values()];
@@ -122,21 +133,33 @@ export type ChangeHub = ReturnType<typeof createChangeHub>;
  * and the sidecar exemption moves down with them. A path a delete has made
  * unreadable may misname its frame — any frame event refreshes discovery, so
  * over-firing is safe and guessing wrong is cheap.
+ *
+ * A shared file the link graph has already read names its own readers (#109),
+ * so editing one component wakes the frames that mount it instead of every
+ * document in the project. Anything the graph does not know — a stylesheet, a
+ * scenario, a file nobody imports yet — keeps the whole-project hammer, because
+ * "no frame listed" and "nobody asked yet" are the same answer.
  */
-function classify(designDir: string, filename: string | null): ChangeEvent | undefined {
-	if (filename === null) return { kind: "shared" };
+function classify(
+	designDir: string,
+	filename: string | null,
+	framesUsing: (path: string) => string[] | undefined,
+): ChangeEvent[] {
+	if (filename === null) return [{ kind: "shared" }];
 	const parts = filename.split(sep);
 	const [head, first] = parts;
 	if (head === "frames" && first !== undefined && first !== "") {
 		if (parts.length >= 3 && frameKind(join(designDir, "frames", first), designDir) === undefined) {
 			const second = parts[2];
-			if (second === undefined || second === "") return { kind: "frame", frame: first };
-			if (parts.length === 4 && parts[3]?.startsWith("frame.json") === true) return undefined;
-			return { kind: "frame", frame: second };
+			if (second === undefined || second === "") return [{ kind: "frame", frame: first }];
+			if (parts.length === 4 && parts[3]?.startsWith("frame.json") === true) return [];
+			return [{ kind: "frame", frame: second }];
 		}
-		if (parts.length === 3 && parts[2]?.startsWith("frame.json") === true) return undefined;
-		return { kind: "frame", frame: first };
+		if (parts.length === 3 && parts[2]?.startsWith("frame.json") === true) return [];
+		return [{ kind: "frame", frame: first }];
 	}
-	if (head === "shared") return { kind: "shared" };
-	return undefined;
+	if (head !== "shared") return [];
+	const readers = framesUsing(parts.join("/"));
+	if (readers === undefined) return [{ kind: "shared" }];
+	return readers.map((frame) => ({ kind: "frame", frame }));
 }
