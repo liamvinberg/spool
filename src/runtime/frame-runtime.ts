@@ -188,8 +188,33 @@ if (play?.shell === true && embedded) {
 					: "the authored runtime failed";
 		postPlayerMessage({ spool: "player-runtime-error", error: error.slice(0, 100_000) });
 	};
-	addEventListener("error", (event) => reportRuntimeError(event.error ?? event.message));
-	addEventListener("unhandledrejection", (event) => reportRuntimeError(event.reason));
+	addEventListener("error", (event) => {
+		if (thrownByAnExtension(event.filename, event.error)) return;
+		reportRuntimeError(event.error ?? event.message);
+	});
+	addEventListener("unhandledrejection", (event) => {
+		if (thrownByAnExtension(undefined, event.reason)) return;
+		reportRuntimeError(event.reason);
+	});
+}
+
+/** No authored frame is ever served from one of these, so a throw site here is not the frame's. */
+const EXTENSION_SCRIPT =
+	/^(?:chrome-extension|moz-extension|safari-web-extension|safari-extension|webkit-masked-url):\/\//;
+
+/**
+ * A browser extension's content script runs inside this document and its own
+ * failures land on these listeners — MetaMask's inpage.js is the usual one, and
+ * it used to take the whole player down with it. Chrome exempts content scripts
+ * from page CSP and from the sandbox attribute, so refusing to blame the frame
+ * is the only move spool has. Judged by throw site, not by the whole stack: an
+ * extension calling into frame code still reports the frame's fault.
+ */
+function thrownByAnExtension(filename: string | undefined, value: unknown): boolean {
+	if (filename !== undefined && filename !== "") return EXTENSION_SCRIPT.test(filename);
+	if (!(value instanceof Error) || value.stack === undefined) return false;
+	const site = value.stack.match(/[a-z-]+:\/\/[^\s)]+/)?.[0];
+	return site !== undefined && EXTENSION_SCRIPT.test(site);
 }
 // --- clipboard --------------------------------------------------------------
 
