@@ -230,3 +230,38 @@ export function SearchIcon({ className }: IconProps) {
 		</svg>
 	);
 }
+
+export function FolderIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M1.75 3.5h3.5l1.25 1.5h5.75v5.5H1.75z"
+				stroke="currentColor"
+				strokeWidth="1.15"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
+export function ChevronIcon({ open, className }: IconProps & { open?: boolean }) {
+	return (
+		<svg
+			viewBox="0 0 12 12"
+			className={`${className ?? ""} origin-center transition-transform duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none ${open === true ? "rotate-90" : ""}`}
+			fill="none"
+			aria-hidden="true"
+		>
+			<path d="m4 2.5 3.5 3.5L4 9.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+		</svg>
+	);
+}
+
+export function PanelCaret({ dir, className }: IconProps & { dir: "left" | "right" }) {
+	const d = dir === "left" ? "m7.5 3.5-4 4.5 4 4.5" : "m4.5 3.5 4 4.5-4 4.5";
+	return (
+		<svg viewBox="0 0 12 16" className={className} fill="none" aria-hidden="true">
+			<path d={d} stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+		</svg>
+	);
+}

@@ -1,36 +1,41 @@
 import { cn } from "../lib/utils";
-import { PlayIcon, PlusIcon } from "./spool-icons";
+import { CloseIcon, PlusIcon, ThreadIcon } from "./spool-icons";
 import { SpoolMark } from "./spool-mark";
 
-type CanvasMode = "live" | "design";
+/**
+ * The app shell: one 44px bar over everything — brand lockup as the home door,
+ * one tab per open project, "+" for the folder picker, and on the right the
+ * threads toggle and the zoom readout, both of which belong to the focused
+ * canvas and vanish on home.
+ *
+ * There is no mode switch and no play button here. Select is the only pointer
+ * tool, so "design mode" has nothing left to mean, and play lives on the
+ * selection — a bar button could only guess which frame you meant.
+ */
 
 interface SpoolShellProps {
-	activeTab?: string;
 	children: React.ReactNode;
-	/** Optional control docked at the far right of the header (e.g. inspector summon). */
-	headerAccessory?: React.ReactNode;
-	homeTarget?: string;
-	liveTarget?: string;
-	designTarget?: string;
-	mode?: CanvasMode;
-	playTarget?: string;
-	showCanvasControls?: boolean;
-	tabs?: readonly string[];
-	zoom?: string;
+	/** the focused project tab; absent on home, where no canvas is focused */
+	activeTab?: string | undefined;
+	tabs?: readonly string[] | undefined;
+	homeTarget?: string | undefined;
+	/** canvas-only controls: the right side of the bar is empty on home */
+	canvasControls?: boolean | undefined;
+	zoom?: string | undefined;
+	arrowsOn?: boolean | undefined;
+	/** an exploration's own control, docked at the far right — proposals only */
+	headerAccessory?: React.ReactNode | undefined;
 }
 
 export function SpoolShell({
-	activeTab,
 	children,
-	headerAccessory,
+	activeTab,
+	tabs = ["spool", "kaffe"],
 	homeTarget,
-	liveTarget,
-	designTarget,
-	mode = "live",
-	playTarget,
-	showCanvasControls = true,
-	tabs = ["kaffe", "tretolv"],
+	canvasControls = true,
 	zoom = "72%",
+	arrowsOn = true,
+	headerAccessory,
 }: SpoolShellProps) {
 	return (
 		<div className="flex h-full w-full flex-col overflow-hidden bg-bg font-sans text-text antialiased [font-synthesis:none]">
@@ -41,73 +46,59 @@ export function SpoolShell({
 						<span className="font-semibold text-md tracking-tight leading-sm">spool</span>
 					</button>
 					<nav className="flex items-center gap-unit" aria-label="Projects">
-						{tabs.map((tab) => (
-							<button
-								key={tab}
-								type="button"
-								className={cn(
-									"flex h-[26px] items-center rounded-md px-3 text-base leading-none",
-									tab === activeTab
-										? "border border-border-raised bg-raised font-medium text-text"
-										: "text-muted",
-								)}
-							>
-								{tab}
-							</button>
-						))}
+						{tabs.map((tab) => {
+							const active = tab === activeTab;
+							return (
+								<div
+									key={tab}
+									className={cn(
+										"group flex h-[26px] items-center rounded-md",
+										active && "border border-border-raised bg-raised",
+									)}
+								>
+									<span
+										className={cn(
+											"h-full pl-3 pr-1 text-base leading-[24px]",
+											active ? "font-medium text-text" : "text-muted",
+										)}
+									>
+										{tab}
+									</span>
+									<span className="flex h-full w-5 items-center justify-center pr-1 text-muted opacity-0 group-hover:opacity-100">
+										<CloseIcon className="h-2.5 w-2.5" />
+									</span>
+								</div>
+							);
+						})}
 						<button
 							type="button"
-							className="flex h-[26px] w-[26px] items-center justify-center rounded-sm text-muted"
-							aria-label="Open project"
+							className="flex h-[26px] w-[26px] items-center justify-center rounded-sm text-muted hover:bg-surface"
+							aria-label="Open a project folder"
 						>
 							<PlusIcon className="h-2.5 w-2.5" />
 						</button>
 					</nav>
 				</div>
 
-				{showCanvasControls || headerAccessory ? (
+				{canvasControls || headerAccessory !== undefined ? (
 					<div className="flex h-full items-center gap-4">
-						{showCanvasControls ? (
+						{canvasControls ? (
 							<>
 								<button
 									type="button"
-									data-go={playTarget}
-									className="flex h-7 w-7 items-center justify-center"
-									aria-label="Play"
+									aria-label="Threads"
+									aria-pressed={arrowsOn}
+									className={cn(
+										"flex h-7 w-7 items-center justify-center rounded-sm hover:bg-surface",
+										arrowsOn ? "text-text" : "text-muted",
+									)}
 								>
-									<PlayIcon className="h-3 w-3" />
+									<ThreadIcon className="h-3.5 w-3.5" />
 								</button>
-								<div className="flex items-center gap-[2px] rounded-md bg-surface p-[2px]">
-									<button
-										type="button"
-										data-go={liveTarget}
-										className={cn(
-											"flex items-center rounded-sm px-3 py-unit font-medium text-sm leading-xs",
-											mode === "live" ? "border border-border-raised bg-raised text-text" : "text-muted",
-										)}
-									>
-										Live
-									</button>
-									<button
-										type="button"
-										data-go={designTarget}
-										className={cn(
-											"flex items-center rounded-sm px-3 py-unit font-medium text-sm leading-xs",
-											mode === "design" ? "border border-border-raised bg-raised text-text" : "text-muted",
-										)}
-									>
-										Design
-									</button>
-								</div>
-								<span className="min-w-7 text-right font-mono text-muted text-xs leading-xs">{zoom}</span>
+								<span className="min-w-9 text-right font-mono text-muted text-xs leading-xs">{zoom}</span>
 							</>
 						) : null}
-						{headerAccessory ? (
-							<>
-								{showCanvasControls ? <span className="h-4 w-px bg-border" /> : null}
-								{headerAccessory}
-							</>
-						) : null}
+						{headerAccessory}
 					</div>
 				) : null}
 			</header>

@@ -1,173 +1,166 @@
 import { useState } from "react";
 import { cn } from "../lib/utils";
-import { CoffeeScreen, type CoffeeScreenName, type CoffeeScreenScale } from "./coffee-screens";
+import { CanvasChrome, type PageRow } from "./spool-canvas-chrome";
+import { CoffeeScreen, type CoffeeScreenName } from "./coffee-screens";
 import { SpoolShell } from "./spool-shell";
 
-export type CanvasSpecimen = "live" | "design" | "zoomed-out" | "menu-toast";
+/**
+ * The canvas: the app's main surface. Pages rail, the frames on their field
+ * with the threads under them, the tool bar floating at the bottom, and the
+ * inspector reading whatever is selected.
+ *
+ * Two specimens, because two are all the canvas really has: `rest` is the
+ * working state, `menu` is the right-click menu and the undo toast it leaves
+ * behind. There is no design mode — select is the only pointer tool, and ⌘ is
+ * a modifier inside it rather than a mode you leave.
+ */
+
+export type CanvasSpecimen = "rest" | "menu";
+
+const PAGES: readonly PageRow[] = [
+	{ name: "app", frames: ["menu", "cart", "receipt"], active: true, open: true },
+	{ name: "site", frames: [] },
+	{ name: "directing", frames: [] },
+];
 
 interface SpoolCanvasScreenProps {
-	designTarget?: string;
-	homeTarget?: string;
-	liveTarget?: string;
-	playTarget?: string;
 	variant: CanvasSpecimen;
+	homeTarget?: string | undefined;
+	playTarget?: string | undefined;
 }
 
-export function SpoolCanvasScreen({
-	designTarget,
-	homeTarget,
-	liveTarget,
-	playTarget,
-	variant,
-}: SpoolCanvasScreenProps) {
-	const design = variant === "design";
+export function SpoolCanvasScreen({ variant, homeTarget, playTarget }: SpoolCanvasScreenProps) {
 	return (
-		<SpoolShell
-			activeTab="kaffe"
-			homeTarget={homeTarget}
-			liveTarget={liveTarget}
-			designTarget={designTarget}
-			mode={design ? "design" : "live"}
-			playTarget={playTarget}
-			zoom={variant === "zoomed-out" ? "54%" : "72%"}
-		>
-			<CanvasStage playTarget={playTarget} variant={variant} />
+		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} homeTarget={homeTarget} zoom="72%">
+			<CanvasChrome
+				pages={PAGES}
+				selected="cart"
+				inspector={variant === "menu" ? "connections" : "elements"}
+				tool="select"
+			>
+				<CanvasStage variant={variant} playTarget={playTarget} />
+			</CanvasChrome>
 		</SpoolShell>
 	);
 }
 
-function CanvasStage({ playTarget, variant }: { playTarget?: string; variant: CanvasSpecimen }) {
+function CanvasStage({ variant, playTarget }: { variant: CanvasSpecimen; playTarget?: string | undefined }) {
 	const [toastVisible, setToastVisible] = useState(true);
-	if (variant === "menu-toast") {
+	if (variant === "menu") {
 		return (
-			<div className="relative h-full overflow-hidden bg-canvas">
+			<>
 				<ThreadSvg variant={variant} />
-				<CanvasFrame left={180} top={120} screen="menu" paused />
-				<CanvasFrame left={640} top={100} screen="receipt" paused />
-				<div className="absolute left-[896px] top-[320px] flex w-[200px] flex-col rounded-md border border-border-raised bg-raised p-unit">
-					<button
-						type="button"
-						data-go={playTarget}
-						className="flex h-[30px] items-center rounded-sm px-3 text-left text-base leading-[14px]"
-					>
+				<CanvasFrame left={40} top={130} screen="menu" paused />
+				<CanvasFrame left={340} top={100} screen="receipt" paused />
+				<div className="absolute top-[250px] left-[630px] flex w-[220px] flex-col rounded-md border border-border-raised bg-raised p-unit">
+					<MenuItem go={playTarget} keys="P">
 						Play from here
-					</button>
-					<button
-						type="button"
-						className="flex h-[30px] items-center rounded-sm bg-surface px-3 text-left text-base leading-[14px]"
-					>
-						Open in editor
-					</button>
-					<div className="mx-auto h-px w-[176px] bg-border-raised" />
-					<button
-						type="button"
-						onClick={() => setToastVisible(true)}
-						className="flex h-[30px] items-center rounded-sm px-3 text-left text-base leading-[14px]"
-					>
+					</MenuItem>
+					<MenuItem>Open in editor</MenuItem>
+					<MenuItem keys="R">Reload frame</MenuItem>
+					<MenuDivider />
+					<MenuItem keys="⇧A">Tidy page</MenuItem>
+					<MenuItem>Export as PNG</MenuItem>
+					<MenuDivider />
+					<MenuItem keys="⌫" onClick={() => setToastVisible(true)}>
 						Move to Trash
-					</button>
+					</MenuItem>
 				</div>
 				{toastVisible ? (
-					<div className="absolute left-[610px] top-[786px] flex items-center gap-4 rounded-md border border-border-raised bg-raised px-3.5 py-2.5">
+					<div className="absolute bottom-24 left-1/2 flex -translate-x-1/2 items-center gap-4 rounded-md border border-border-raised bg-raised px-3.5 py-2.5">
 						<span className="text-base leading-base">Moved cart to Trash</span>
 						<button
 							type="button"
 							onClick={() => setToastVisible(false)}
-							className="font-medium text-base text-thread leading-base"
+							className="cursor-pointer font-medium text-base text-thread leading-base"
 						>
 							Undo
 						</button>
 						<span className="font-mono text-muted text-xs leading-xs">⌘Z</span>
 					</div>
 				) : null}
-			</div>
+			</>
 		);
 	}
-
-	const scale: CoffeeScreenScale = variant === "design" ? "design" : "canvas";
-	const gap = variant === "zoomed-out" ? 10 : 6;
 	return (
-		<div className="relative h-full overflow-hidden bg-canvas">
+		<>
 			<ThreadSvg variant={variant} />
-			<CanvasFrame
-				left={140}
-				top={variant === "design" ? 128 : 150}
-				gap={gap}
-				screen="menu"
-				scale={scale}
-				paused={variant !== "design"}
-			/>
-			<CanvasFrame
-				left={600}
-				top={variant === "design" ? 168 : 190}
-				gap={gap}
-				screen="cart"
-				scale={scale}
-				selected={variant === "live"}
-				elementSelected={variant === "design"}
-				booting={variant === "zoomed-out"}
-				paused={variant === "zoomed-out"}
-			/>
-			<CanvasFrame
-				left={1060}
-				top={variant === "design" ? 108 : 130}
-				gap={gap}
-				screen="receipt"
-				scale={scale}
-				paused={variant !== "design"}
-			/>
-		</div>
+			<CanvasFrame left={25} top={130} screen="menu" paused />
+			<CanvasFrame left={325} top={170} screen="cart" selected playTarget={playTarget} />
+			<CanvasFrame left={625} top={110} screen="receipt" paused />
+		</>
 	);
 }
 
-function CanvasFrame({
-	booting = false,
-	elementSelected = false,
-	gap = 6,
-	left,
-	paused = false,
-	scale = "canvas",
-	screen,
-	selected = false,
-	top,
+function MenuItem({
+	children,
+	keys,
+	go,
+	onClick,
 }: {
-	booting?: boolean;
-	elementSelected?: boolean;
-	gap?: number;
-	left: number;
-	paused?: boolean;
-	scale?: CoffeeScreenScale;
-	screen: CoffeeScreenName;
-	selected?: boolean;
-	top: number;
+	children: React.ReactNode;
+	keys?: string;
+	go?: string | undefined;
+	onClick?: () => void;
 }) {
 	return (
-		<div className="absolute flex flex-col" style={{ left, top, gap }}>
-			<div className="flex h-4 items-center gap-1.5 font-mono text-sm leading-xs">
-				{paused ? <span className="text-2xs text-muted">▸</span> : null}
-				<span className={cn(selected ? "text-thread" : "text-muted")}>{screen}</span>
+		<button
+			type="button"
+			data-go={go}
+			onClick={onClick}
+			className="flex h-[30px] items-center rounded-sm px-3 text-left text-base leading-[14px] hover:bg-surface"
+		>
+			{children}
+			{keys === undefined ? null : (
+				<span className="ml-auto font-mono text-2xs text-muted leading-3">{keys}</span>
+			)}
+		</button>
+	);
+}
+
+function MenuDivider() {
+	return <div className="mx-auto my-unit h-px w-[196px] bg-border-raised" />;
+}
+
+function CanvasFrame({
+	left,
+	top,
+	screen,
+	paused = false,
+	selected = false,
+	playTarget,
+}: {
+	left: number;
+	top: number;
+	screen: CoffeeScreenName;
+	paused?: boolean;
+	selected?: boolean;
+	playTarget?: string | undefined;
+}) {
+	return (
+		<div className="absolute flex flex-col gap-1.5" style={{ left, top }}>
+			<div className="flex w-[240px] min-w-0 items-center gap-1.5 font-mono text-sm leading-4">
+				{paused ? <span className="shrink-0 text-2xs text-muted leading-3">▸</span> : null}
+				<span className={cn("min-w-0 truncate", selected ? "text-thread" : "text-muted")}>{screen}</span>
+				{/* the selection's own verb, at the far end of its own row (#13/#24):
+				    play never lived in the bar, where it could only guess the frame */}
+				{selected ? (
+					<button
+						type="button"
+						data-go={playTarget}
+						aria-label={`Play ${screen}`}
+						className="ml-auto flex shrink-0 cursor-pointer items-center gap-1 rounded-xs px-1 font-mono text-2xs text-muted leading-3 transition-colors hover:text-thread"
+					>
+						<svg viewBox="0 0 10 10" className="h-2 w-2" fill="currentColor" aria-hidden="true">
+							<path d="M2 1.2 8.4 5 2 8.8Z" />
+						</svg>
+						play
+					</button>
+				) : null}
 			</div>
 			<div className="relative h-[520px] w-[240px]">
-				<CoffeeScreen screen={screen} scale={scale} />
+				<CoffeeScreen screen={screen} />
 				{selected ? <FrameSelection /> : null}
-				{elementSelected ? (
-					<>
-						<div className="pointer-events-none absolute bottom-[13px] left-[13px] h-[42px] w-[214px] rounded-[10px] border border-thread" />
-						<div className="absolute left-0 top-[532px] flex items-center gap-1.5 rounded-xs border border-border-raised bg-raised px-2 py-unit font-mono text-2xs leading-[14px] whitespace-nowrap">
-							<span className="text-muted">frames/cart/frame.tsx:38</span>
-							<span className="text-muted">·</span>
-							<span>Open in editor</span>
-						</div>
-					</>
-				) : null}
-				{booting ? (
-					<>
-						<div className="absolute inset-0 rounded-lg bg-bg opacity-55" />
-						<div className="absolute inset-0 flex items-center justify-center font-mono text-text text-xs leading-[14px]">
-							booting
-						</div>
-					</>
-				) : null}
 			</div>
 		</div>
 	);
@@ -188,7 +181,7 @@ function FrameSelection() {
 					className={cn("absolute h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread", position)}
 				/>
 			))}
-			<div className="absolute left-[88px] top-[534px] rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3">
+			<div className="absolute top-[534px] left-[88px] rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3">
 				390 × 844
 			</div>
 		</>
@@ -196,35 +189,30 @@ function FrameSelection() {
 }
 
 function ThreadSvg({ variant }: { variant: CanvasSpecimen }) {
-	if (variant === "menu-toast") {
+	if (variant === "menu") {
 		return (
 			<svg
 				className="pointer-events-none absolute inset-0 h-full w-full"
-				viewBox="0 0 1440 856"
+				viewBox="0 0 892 856"
 				fill="none"
 				aria-hidden="true"
 			>
-				<path d="M422 400C498 412 562 372 634 384" stroke="var(--color-thread)" strokeWidth="1.5" />
-				<path d="m640 384-10-5v10Z" fill="var(--color-thread)" />
+				<path d="M284 420C306 420 314 392 332 392" stroke="var(--color-thread)" strokeWidth="1.5" />
+				<path d="m340 392-9-5v10Z" fill="var(--color-thread)" />
 			</svg>
 		);
 	}
 	return (
 		<svg
 			className="pointer-events-none absolute inset-0 h-full w-full"
-			viewBox="0 0 1440 856"
+			viewBox="0 0 892 856"
 			fill="none"
 			aria-hidden="true"
 		>
-			<path d="M384 434C470 432 505 472 588 470" stroke="var(--color-thread)" strokeWidth="1.5" />
-			<path d="m598 470-10-5v10Z" fill="var(--color-thread)" />
-			<path
-				d="M844 470C930 468 965 414 1048 414"
-				stroke="var(--color-thread)"
-				strokeWidth="1.5"
-				strokeDasharray="5 5"
-			/>
-			<path d="m1058 414-10-5v10Z" fill="var(--color-thread)" />
+			<path d="M269 412C291 412 299 452 317 452" stroke="var(--color-thread)" strokeWidth="1.5" />
+			<path d="m325 452-9-5v10Z" fill="var(--color-thread)" />
+			<path d="M569 452C591 452 599 392 617 392" stroke="var(--color-thread)" strokeWidth="1.5" strokeDasharray="5 5" />
+			<path d="m625 392-9-5v10Z" fill="var(--color-thread)" />
 		</svg>
 	);
 }
