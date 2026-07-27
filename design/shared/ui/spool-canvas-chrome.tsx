@@ -28,6 +28,9 @@ export function CanvasChrome({
 	selected,
 	inspector = "elements",
 	tool = "select",
+	rail,
+	railWidth = INSPECTOR_W,
+	railLabel = "Inspector",
 	children,
 }: {
 	pages: readonly PageRow[];
@@ -35,6 +38,12 @@ export function CanvasChrome({
 	selected?: string | undefined;
 	inspector?: "elements" | "connections" | undefined;
 	tool?: "select" | "hand" | undefined;
+	/** an exploration's own right rail, taking the inspector's place — proposals only */
+	rail?: ReactNode | undefined;
+	/** the right rail's width; the shipped inspector is 300 */
+	railWidth?: number | undefined;
+	/** what the rail slot announces itself as; a proposal rail is not the inspector */
+	railLabel?: string | undefined;
 	children?: ReactNode;
 }) {
 	return (
@@ -44,7 +53,17 @@ export function CanvasChrome({
 				{children}
 				<CanvasTools tool={tool} />
 			</div>
-			<InspectorRail mode={inspector} selected={selected} />
+			{rail === undefined ? (
+				<InspectorRail mode={inspector} selected={selected} />
+			) : (
+				<aside
+					aria-label={railLabel}
+					className="flex shrink-0 flex-col border-border border-l bg-bg"
+					style={{ width: railWidth }}
+				>
+					{rail}
+				</aside>
+			)}
 		</div>
 	);
 }
@@ -144,6 +163,34 @@ function CanvasTools({ tool }: { tool: "select" | "hand" }) {
 	);
 }
 
+/**
+ * The right rail's tab strip. Two tabs as it shipped; a proposal that adds a
+ * tab passes its own list, and the strip stays the same strip.
+ */
+export function RailTabs({ tabs, active }: { tabs: readonly string[]; active: string }) {
+	return (
+		<div className="flex h-11 shrink-0 items-stretch justify-between border-border border-b pr-2 pl-4">
+			<div className="flex h-full items-stretch gap-5">
+				{tabs.map((candidate) => (
+					<span
+						key={candidate}
+						className={cn(
+							"relative flex h-full items-center font-mono text-xs leading-xs",
+							active === candidate ? "text-text" : "text-muted/60",
+						)}
+					>
+						{candidate}
+						{active === candidate ? <span className="absolute inset-x-0 bottom-0 h-[2px] bg-thread" /> : null}
+					</span>
+				))}
+			</div>
+			<span className="flex h-11 w-7 shrink-0 items-center justify-center text-muted/60">
+				<PanelCaret dir="right" className="h-3.5 w-2.5" />
+			</span>
+		</div>
+	);
+}
+
 function InspectorRail({ mode, selected }: { mode: "elements" | "connections"; selected?: string | undefined }) {
 	return (
 		<aside
@@ -151,25 +198,7 @@ function InspectorRail({ mode, selected }: { mode: "elements" | "connections"; s
 			className="flex shrink-0 flex-col border-border border-l bg-bg"
 			style={{ width: INSPECTOR_W }}
 		>
-			<div className="flex h-11 shrink-0 items-stretch justify-between border-border border-b pr-2 pl-4">
-				<div className="flex h-full items-stretch gap-5">
-					{(["elements", "connections"] as const).map((candidate) => (
-						<span
-							key={candidate}
-							className={cn(
-								"relative flex h-full items-center font-mono text-xs leading-xs",
-								mode === candidate ? "text-text" : "text-muted/60",
-							)}
-						>
-							{candidate}
-							{mode === candidate ? <span className="absolute inset-x-0 bottom-0 h-[2px] bg-thread" /> : null}
-						</span>
-					))}
-				</div>
-				<span className="flex h-11 w-7 shrink-0 items-center justify-center text-muted/60">
-					<PanelCaret dir="right" className="h-3.5 w-2.5" />
-				</span>
-			</div>
+			<RailTabs tabs={["elements", "connections"]} active={mode} />
 			{selected === undefined ? (
 				<p className="px-4 pt-3 font-mono text-2xs text-muted/55 leading-4">select a frame to inspect it</p>
 			) : mode === "elements" ? (
