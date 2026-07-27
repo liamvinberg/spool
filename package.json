@@ -4,12 +4,14 @@
 	"description": "Live prototyping canvas: agent-authored TSX frames on an infinite canvas, repo-native.",
 	"repository": "github:liamvinberg/spool",
 	"homepage": "https://spool.page",
+	"license": "MIT",
 	"type": "module",
 	"bin": {
 		"spool": "./dist/cli.js"
 	},
 	"files": [
 		"dist",
+		"LICENSE.md",
 		"THIRD_PARTY_NOTICES.md"
 	],
 	"engines": {
