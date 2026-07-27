@@ -4,16 +4,41 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   gates:
-    # macOS: the suite is macOS-validated only, and macOS is the platform
-    # spool targets first (launchd autostart, OS Trash, install-as-app).
-    runs-on: macos-latest
+    # Linux: the suite is portable, and macOS bills at roughly ten times the
+    # rate. The four darwin-only tests self-skip here; `darwin-gates` and the
+    # release gate in publish.yml are where they run.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
       group: ci-${{ github.ref }}
       cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      # --with-deps: the browser tests launch headless-shell, and the runner
+      # image does not carry every shared library it links against.
+      - run: pnpm exec playwright-core install --with-deps chromium-headless-shell
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm check
+      - run: pnpm build
+
+  darwin-gates:
+    # The darwin-only coverage (launchd plist validation, machine state) on
+    # demand. Every release already reruns the full suite on macOS before it
+    # publishes, so this is for checking a change between releases.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
