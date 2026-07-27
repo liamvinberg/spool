@@ -11,6 +11,7 @@ import { validator } from "hono/validator";
 import trash from "trash";
 import { z } from "zod";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_FAVICON_SVG } from "../brand";
+import { COVER_MAX_EDGE, COVER_RUNGS, type Cover } from "../cover";
 import { SpoolError } from "../errors";
 import { initProject } from "../init";
 import { openProject } from "../open";
@@ -38,6 +39,7 @@ import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChr
 import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
 import {
+	type FrameKind,
 	frameGeometry,
 	listProjectFrames,
 	lookupFrame,
@@ -63,7 +65,14 @@ import { createShotTaker } from "./shots";
 import type { TermExecutor } from "./term-exec";
 import { termFontDataCss, termFontFile } from "./term-fonts";
 import { createTermSessions } from "./term-sessions";
-import { createThumbHealer, readThumb, UnknownThumbFormatError, writeThumb } from "./thumbs";
+import {
+	type CoverRungWrite,
+	createThumbHealer,
+	isCoverHash,
+	readCoverRung,
+	UnservableCoverError,
+	writeCover,
+} from "./thumbs";
 import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
 import { createUpdateChecker } from "./update-check";
 import {
@@ -253,7 +262,7 @@ export function createDaemonApp({
 	const shots = createShotTaker();
 	const healer = createThumbHealer({
 		capture: (target) => shots.capture(target),
-		stored: (root, frame) => hub.publish(root, { kind: "thumb", frame }),
+		stored: (root, frame, cover) => hub.publish(root, { kind: "thumb", frame, cover }),
 	});
 	const goReader = createGoReader();
 	const resolvePass = createResolvePass({
@@ -267,7 +276,12 @@ export function createDaemonApp({
 	// hard stop until project processes can run inside an OS sandbox.
 	const terms = createTermSessions({
 		executor: termExecutor ?? disabledTermExecutor,
-		publish: (root, frame) => hub.publish(root, { kind: "thumb", frame }),
+		// a persisted screen is a new cover: name its ladder in the event, so the
+		// canvas swaps addresses without a projection read
+		publish: (root, frame) => {
+			const { cover } = terms.cover(root, frame);
+			hub.publish(root, { kind: "thumb", frame, ...(cover === undefined ? {} : { cover }) });
+		},
 	});
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
@@ -287,6 +301,56 @@ export function createDaemonApp({
 			};
 		}
 		return { root: lookup.root };
+	}
+
+	/** The most one rung of an uploaded ladder may weigh. */
+	const MAX_RUNG_BYTES = 16 * 1024 * 1024;
+
+	/**
+	 * Ask the headless fallback for a frame's cover. The healer holds the
+	 * per-frame cooldown and runs one shot at a time, so calling this for every
+	 * uncovered frame in a projection read costs a queue, never a stampede.
+	 */
+	function requestHeal(root: string, name: string, frame: string, geometry?: { w: number; h: number }): void {
+		if (selfOrigin === undefined) return;
+		const { w, h } = geometry ?? frameGeometry(root, frame);
+		healer.request({
+			root,
+			frame,
+			url: `${selfOrigin}/p/${encodeURIComponent(name)}/frames/${encodeURIComponent(frame)}`,
+			width: w,
+			height: h,
+		});
+	}
+
+	/** Every rung a ladder upload declared, by the width its field name names. Throws on anything else. */
+	async function parseLadder(c: Context): Promise<CoverRungWrite[]> {
+		const form = await c.req.formData();
+		const rungs: CoverRungWrite[] = [];
+		for (const [key, value] of form.entries()) {
+			const width = /^w([1-9][0-9]*)$/.exec(key)?.[1];
+			if (width === undefined || typeof value === "string") throw new Error("not a rung");
+			const declared = Number(width);
+			if (declared > COVER_MAX_EDGE || value.size === 0 || value.size > MAX_RUNG_BYTES) {
+				throw new Error("not a rung");
+			}
+			rungs.push({ width: declared, bytes: Buffer.from(await value.arrayBuffer()) });
+		}
+		if (rungs.length > COVER_RUNGS || new Set(rungs.map((rung) => rung.width)).size !== rungs.length) {
+			throw new Error("not a ladder");
+		}
+		return rungs;
+	}
+
+	/**
+	 * Headers for a cover. The hash in the URL is the content, so the answer can
+	 * never go stale: the browser holds it for a year and revalidates nothing,
+	 * and a changed cover arrives as a different address.
+	 */
+	function immutableCover(c: Context, type: string): void {
+		c.header("cache-control", "private, max-age=31536000, immutable");
+		c.header("content-type", type);
+		c.header("x-content-type-options", "nosniff");
 	}
 
 	/** Body of the picker's POSTs: { path } — anything else is a 400. */
@@ -520,20 +584,24 @@ export function createDaemonApp({
 			return c.json({ projects });
 		})
 		.get("/api/p/:project/frames", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
+			const name = c.req.param("project");
+			const project = resolveProject(c, name);
 			if ("response" in project) return project.response;
 			try {
 				const projection = listProjectFrames(project.root);
 				return c.json({
 					...projection,
 					frames: projection.frames.map((frame) => {
-						if (frame.kind !== "term") return frame;
-						const terminalCover = terms.cover(project.root, frame.name);
-						return {
-							...frame,
-							hasThumb: terminalCover.kind === "current",
-							terminalCover,
-						};
+						if (frame.kind === "html") {
+							// This read is the moment a canvas learns a frame has no cover
+							// to show, and a frame with none renders its placeholder and
+							// asks for nothing (#111). So the heal is enqueued here rather
+							// than waiting for a request that will never come.
+							if (frame.cover === undefined) requestHeal(project.root, name, frame.name, frame);
+							return frame;
+						}
+						const { state, cover } = terms.cover(project.root, frame.name);
+						return { ...frame, ...(cover === undefined ? {} : { cover }), terminalCover: state };
 					}),
 				});
 			} catch (error) {
@@ -542,58 +610,71 @@ export function createDaemonApp({
 			}
 		})
 		.get("/api/p/:project/thumbs/:frame", async (c) => {
+			// A terminal frame's still, for `spool shot` and `spool verify` (#42):
+			// rasterized from the persisted grid in the pinned font, which never
+			// starts project code. The canvas reads covers from /covers instead —
+			// this door exists because the CLI has a control token and no ladder.
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const frame = c.req.param("frame");
 			if (!isSafeName(frame)) return c.text(`not a frame name: "${frame}"`, 404);
-			const kind = projectedKind(project.root, frame);
-			if (kind === "term") {
-				// Terminal stills rasterize from a persisted grid in the pinned
-				// font. Reading that store never starts project code.
-				let screen: Awaited<ReturnType<typeof terms.screen>>;
-				try {
-					screen = await terms.screen(project.root, frame);
-				} catch (error) {
-					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-					throw error;
-				}
-				if (screen.kind !== "current") {
-					return c.text(screen.message, screen.kind === "stale" ? 409 : 404);
-				}
-				const svg = gridToSvg(screen.grid, termFontDataCss());
-				const etag = `"term-still-${createHash("sha256").update(svg).digest("hex").slice(0, 32)}"`;
-				// covers are the canvas's bulk traffic: let the browser hold them and
-				// revalidate, so an unchanged still costs a 304 instead of its bytes.
-				// Revalidation re-runs the control check, so a cache can never serve
-				// a cover the caller is no longer entitled to.
-				c.header("cache-control", "no-cache");
-				if (c.req.header("if-none-match") === etag) return c.body(null, 304);
-				c.header("etag", etag);
-				c.header("content-type", "image/svg+xml; charset=utf-8");
-				return c.body(svg);
+			if (projectedKind(project.root, frame) !== "term") {
+				return c.text(`"${frame}" is not a terminal frame — its cover is a stored ladder, not a grid`, 404);
 			}
-			const thumb = readThumb(project.root, frame);
-			if (thumb === undefined) {
-				// a missing cover heals itself: enqueue the Playwright fallback and
-				// let the thumb event tell the canvas to look again
-				if (selfOrigin !== undefined && kind === "html") {
-					const name = c.req.param("project");
-					const { w, h } = frameGeometry(project.root, frame);
-					healer.request({
-						root: project.root,
-						frame,
-						url: `${selfOrigin}/p/${encodeURIComponent(name)}/frames/${encodeURIComponent(frame)}`,
-						width: w,
-						height: h,
-					});
-				}
-				return c.text(`no thumbnail for "${frame}"`, 404);
+			let screen: Awaited<ReturnType<typeof terms.screen>>;
+			try {
+				screen = await terms.screen(project.root, frame);
+			} catch (error) {
+				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+				throw error;
 			}
+			if (screen.kind !== "current") return c.text(screen.message, screen.kind === "stale" ? 409 : 404);
+			const still = gridToSvg(screen.grid, termFontDataCss());
+			const etag = `"term-still-${createHash("sha256").update(still).digest("hex").slice(0, 32)}"`;
 			c.header("cache-control", "no-cache");
-			if (c.req.header("if-none-match") === thumb.etag) return c.body(null, 304);
-			c.header("etag", thumb.etag);
-			c.header("content-type", thumb.type);
-			return c.body(new Uint8Array(thumb.bytes));
+			if (c.req.header("if-none-match") === etag) return c.body(null, 304);
+			c.header("etag", etag);
+			c.header("content-type", "image/svg+xml; charset=utf-8");
+			return c.body(still);
+		})
+		.get("/covers/:project/:frame/:hash/:width", async (c) => {
+			// One rung of one cover (#111). The hash addresses the ladder's exact
+			// content, which makes the URL both the credential — an <img> cannot
+			// carry the control header — and an immutable cache key, so a warm
+			// reload fetches none of them.
+			const name = c.req.param("project");
+			const project = resolveProject(c, name);
+			if ("response" in project) return project.response;
+			const frame = c.req.param("frame");
+			const hash = c.req.param("hash");
+			const width = Number(c.req.param("width"));
+			if (!isSafeName(frame) || !isCoverHash(hash) || !Number.isSafeInteger(width) || width < 1) {
+				return c.text("no such cover", 404);
+			}
+			let kind: FrameKind | undefined;
+			try {
+				kind = projectedKind(project.root, frame);
+				if (kind === "term") {
+					if (terms.cover(project.root, frame).cover?.hash !== hash) return c.text("no such cover", 404);
+					const still = await terms.persistedStill(project.root, frame);
+					if (still === undefined) return c.text("no such cover", 404);
+					immutableCover(c, "image/svg+xml; charset=utf-8");
+					return c.body(still);
+				}
+				const rung = kind === "html" ? readCoverRung(project.root, frame, hash, width) : undefined;
+				if (rung !== undefined) {
+					immutableCover(c, rung.type);
+					return c.body(new Uint8Array(rung.bytes));
+				}
+			} catch (error) {
+				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+				throw error;
+			}
+			// The address named a cover this frame does not have. Heal it: the shot
+			// lands, the thumb event carries the new ladder, and the canvas asks
+			// again at the address that now exists.
+			if (kind === "html") requestHeal(project.root, name, frame);
+			return c.text("no such cover", 404);
 		})
 		.get("/api/p/:project/state", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
@@ -862,6 +943,11 @@ export function createDaemonApp({
 			},
 		)
 		.put("/api/p/:project/thumbs/:frame", async (c) => {
+			// A self-capture arrives as a whole ladder, one form field per rung named
+			// for its width in device pixels — the daemon has no image library, so the
+			// realm that rasterized them is the only one that can say how wide they
+			// are. The answer is the ladder's address, so the canvas can put the new
+			// cover on screen without re-reading the projection.
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const frame = c.req.param("frame");
@@ -872,17 +958,23 @@ export function createDaemonApp({
 			if (kind === "term") {
 				return c.text(`"${frame}" is a terminal frame — its stills rasterize from the grid`, 400);
 			}
-			const cover = Buffer.from(await c.req.arrayBuffer());
-			if (cover.byteLength === 0) return c.text("empty capture", 400);
+			let rungs: CoverRungWrite[];
 			try {
-				writeThumb(project.root, frame, cover);
+				rungs = await parseLadder(c);
+			} catch {
+				return c.text("a cover is one to three rungs, each a form field named for its width", 400);
+			}
+			if (rungs.length === 0) return c.text("empty capture", 400);
+			let cover: Cover;
+			try {
+				cover = writeCover(project.root, frame, rungs);
 			} catch (error) {
 				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-				if (error instanceof UnknownThumbFormatError) return c.text(error.message, 400);
+				if (error instanceof UnservableCoverError) return c.text(error.message, 400);
 				throw error;
 			}
-			hub.publish(project.root, { kind: "thumb", frame });
-			return c.body(null, 204);
+			hub.publish(project.root, { kind: "thumb", frame, cover });
+			return c.json(cover);
 		})
 		.get("/p/:project/frames/:frame", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));

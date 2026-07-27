@@ -26,8 +26,10 @@ const source: CaptureSourceMessage = {
 	width: 390,
 	height: 844,
 	dpr: 2,
-	maxEdge: 1200,
+	maxEdge: 4096,
 };
+
+const rung = (width: number, height: number) => ({ url: "data:image/jpeg;base64,eA==", width, height });
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -78,11 +80,13 @@ describe("trusted capture broker", () => {
 			maxEdge: source.maxEdge,
 		});
 
+		const rungs = [rung(780, 1688), rung(390, 844), rung(195, 422)];
 		channel.port1.onmessage?.({
-			data: { spool: "spool-capture-result-v1", id: source.id, url: "data:image/jpeg;base64,eA==" },
+			data: { spool: "spool-capture-result-v1", id: source.id, rungs },
 		} as MessageEvent);
 
-		await expect(capture).resolves.toBe("data:image/jpeg;base64,eA==");
+		// the whole ladder off one snapshot, each rung carrying the size it came out
+		await expect(capture).resolves.toEqual(rungs);
 		expect(iframe.src).toBe("about:blank");
 		expect(remove).toHaveBeenCalledOnce();
 		expect(channel.port1.close).toHaveBeenCalledOnce();
@@ -99,8 +103,7 @@ describe("trusted capture broker", () => {
 			data: {
 				spool: "spool-capture-result-v1",
 				id: source.id,
-				url: "data:image/jpeg;base64,eA==",
-				extra: true,
+				rungs: [{ ...rung(780, 1688), extra: true }],
 			},
 		} as MessageEvent);
 

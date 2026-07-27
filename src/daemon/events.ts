@@ -1,5 +1,6 @@
 import { watch } from "node:fs";
 import { join, sep } from "node:path";
+import type { Cover } from "../cover";
 import { realDesignDir } from "./design-path";
 import { frameKind } from "./projection";
 
@@ -22,7 +23,10 @@ export interface FrameChange {
 export type ChangeEvent =
 	| FrameChange
 	| SharedChange
-	| { kind: "thumb"; frame: string }
+	// a cover was written: the ladder rides along, so a canvas can swap addresses
+	// without re-reading the projection. Absent means it could not be read back,
+	// and the canvas falls back to a frames read.
+	| { kind: "thumb"; frame: string; cover?: Cover }
 	// a hands write to a frame.json sidecar (#23), published by the geometry
 	// API so other browsers see the move — never emitted by the fs watcher
 	| { kind: "geometry"; frame: string }

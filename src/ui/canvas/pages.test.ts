@@ -21,7 +21,6 @@ const frame = (name: string, page?: string): ProjectedFrame => ({
 	y: 0,
 	w: 390,
 	h: 844,
-	hasThumb: false,
 });
 
 describe("page-switch state", () => {

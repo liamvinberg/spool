@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type Browser, type BrowserContext, type CDPSession, chromium, type Frame, type Page } from "playwright-core";
 import {
@@ -43,12 +43,13 @@ import {
  *     cache hits and transferred bytes — which Resource Timing cannot, because
  *     a frame document is cross-origin and reports zero bytes to the page.
  *
- * **Where the cover actually is.** #98 cites `frame-shell.tsx:177`, which is the
- * *stilled* thumbnail and is gated on `state !== "hibernated"`. On reload every
- * frame is hibernated, so that element does not exist. The cover a reloaded
- * frame shows is the second `<Thumbnail>`, inside the `plan.cover` block, and
- * that is what this waits for. Both carry `alt={name}`, so the watcher keys on
- * the frame name and takes the first load per name.
+ * **Where the cover actually is.** #98 cites the *stilled* thumbnail, which is
+ * gated on `state !== "hibernated"`. On reload every frame is hibernated, so that
+ * element does not exist. The cover a reloaded frame shows is the second
+ * `<Thumbnail>`, inside the `plan.cover` block, and that is what this waits for.
+ * Both carry `alt={name}`, so the watcher keys on the frame name and takes the
+ * first load per name — and since #111 both name the same addresses, so the two
+ * elements are one request rather than two.
  *
  * **A frame with no stored cover never gets a picture.** On matmannen's densest
  * page that is one frame of 41: it renders the placeholder, not an `<img>`.
@@ -77,6 +78,12 @@ interface Options {
  * nothing else. The canvas tolerates it by design — `canvas.tsx:546` returns
  * early when the fetch gives back nothing, so the arrows are missing and every
  * other thing on screen is identical.
+ *
+ * Read the warm row of `stock` only. Routing a request disables the page's HTTP
+ * cache in Chromium, so `flows blocked` fetches every cover on both of its
+ * passes and its "warm" row is a cold measurement wearing the wrong label. The
+ * null control is there to name a cause in the cold numbers, which it still
+ * does; caching is the other arm's to report.
  */
 const ARMS = [
 	{ label: "stock", blockFlows: false },
@@ -123,19 +130,24 @@ function parseArgs(argv: string[]): Options {
 
 /**
  * The frames that can show a picture at all, read from disk rather than from the
- * canvas. `projection.ts:280` calls a frame covered when it has a stored thumb
- * in either format, or — for a terminal — a serialized screen beside them.
+ * canvas. A frame is covered when its cover folder holds at least one rung of a
+ * hashed ladder (#111) or — for a terminal — a serialized screen sits beside it.
+ * A bare `<frame>.jpg` from the pre-ladder store is not a cover and never shows.
  */
 function splitByCover(root: string, frames: FrameBox[]): { covered: string[]; bare: string[] } {
 	const thumbs = join(root, "design", ".spool", "thumbs");
 	const screens = join(root, "design", ".spool", "term");
+	const rung = /^[0-9a-f]{32}\.[1-9][0-9]*\.(?:jpg|png)$/;
 	const covered: string[] = [];
 	const bare: string[] = [];
 	for (const frame of frames) {
-		const has =
-			existsSync(join(thumbs, `${frame.name}.jpg`)) ||
-			existsSync(join(thumbs, `${frame.name}.png`)) ||
-			existsSync(join(screens, `${frame.name}.screen`));
+		let ladder: string[] = [];
+		try {
+			ladder = readdirSync(join(thumbs, frame.name));
+		} catch {
+			ladder = [];
+		}
+		const has = ladder.some((file) => rung.test(file)) || existsSync(join(screens, `${frame.name}.screen`));
 		(has ? covered : bare).push(frame.name);
 	}
 	return { covered, bare };
@@ -152,9 +164,9 @@ interface CoverWatch {
 
 /**
  * Installed before any page script and re-installed on every navigation. Cover
- * images do not exist at document start — `thumbnail.tsx:39` renders `null`
- * until its `fetch` resolves and `createObjectURL` runs — so this observes the
- * document rather than querying it once.
+ * images do not exist at document start — a frame's shell mounts one only once
+ * the projection has told it the cover's address — so this observes the document
+ * rather than querying it once.
  *
  * `load` says the bytes arrived; `decode()` says the bitmap is ready to paint.
  * The bar is what a person sees, so completion is the decode, and both are kept
@@ -211,19 +223,20 @@ interface CoverResponse {
  * The cover fetches as the page timed them. Same-origin, so `responseEnd` is
  * real and sits in the same `performance.now()` timebase as the marks above —
  * which is what makes "network, then decode" a subtraction rather than a guess.
- * The `<img>` src is a blob URL, so the network entry is the `fetch` in
- * `api.ts:254`, not the image.
+ * Since #111 the `<img>` fetches its own rung, so the network entry *is* the
+ * image, and its address is /covers/<project>/<frame>/<hash>/<width>.
  */
 const readCoverResponses = (page: Page): Promise<CoverResponse[]> =>
 	page.evaluate(() =>
 		performance
 			.getEntriesByType("resource")
-			.filter((entry) => entry.name.includes("/thumbs/"))
+			.filter((entry) => entry.name.includes("/covers/"))
 			.map((entry) => {
 				const timing = entry as PerformanceResourceTiming;
-				const path = timing.name.split("?")[0] ?? "";
+				const parts = (timing.name.split("?")[0] ?? "").split("/");
 				return {
-					frame: decodeURIComponent(path.slice(path.lastIndexOf("/") + 1)),
+					// .../covers/<project>/<frame>/<hash>/<width>
+					frame: decodeURIComponent(parts[parts.length - 3] ?? ""),
 					responseEnd: timing.responseEnd,
 					transferSize: timing.transferSize,
 					encodedBodySize: timing.encodedBodySize,
@@ -348,7 +361,7 @@ async function watchNetwork(context: BrowserContext, page: Page): Promise<CdpWat
 type Bucket = "cover" | "frame document" | "canvas app" | "other";
 
 function bucketOf(url: string): Bucket {
-	if (url.includes("/thumbs/")) return "cover";
+	if (url.includes("/covers/")) return "cover";
 	if (/\/p\/[^/]+\/frames\//.test(url)) return "frame document";
 	if (url.includes("/api/") || /\/assets\/|\.js$|\.css$/.test(url)) return "canvas app";
 	return "other";
@@ -576,7 +589,7 @@ function report(runs: Run[], expected: string[], bare: string[], page: string): 
 	for (const run of runs) {
 		const last = run.samples.at(-1);
 		if (last === undefined) continue;
-		const covers = last.wire.filter((entry) => entry.url.includes("/thumbs/"));
+		const covers = last.wire.filter((entry) => entry.url.includes("/covers/"));
 		const directives = new Set(covers.map((entry) => entry.cacheControl).filter((value) => value !== undefined));
 		lines.push(
 			`| ${run.arm} | ${run.cache} | ${covers.length} | ${covers.filter((entry) => entry.sentIfNoneMatch === true).length} | ${covers.filter((entry) => entry.gotEtag === true).length} | ${covers.filter((entry) => entry.status === 304).length} | ${directives.size === 0 ? "—" : [...directives].join(", ")} |`,

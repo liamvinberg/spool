@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { ProjectCanvas } from "./canvas";
 
-const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html", hasThumb: false }];
+const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html" }];
 
 it("previews a hovered frame without selecting it", async () => {
 	const { host, canvas } = await renderCanvas();

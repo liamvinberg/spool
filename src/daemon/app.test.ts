@@ -436,7 +436,7 @@ describe("change events", () => {
 		await nextMatching({ event: "change", data: { kind: "shared", frames: ["hello"] } });
 
 		await events.drain(300);
-		writeDesignFile(root, ".spool/thumbs/hello.png", "not really a png");
+		writeDesignFile(root, ".spool/thumbs/hello/deadbeefdeadbeefdeadbeefdeadbeef.195.png", "not really a png");
 		await events.expectQuiet(400);
 
 		// geometry is hands-owned, never a source edit — no reload for a sidecar

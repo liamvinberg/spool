@@ -60,32 +60,42 @@ describe("trusted UI API client", () => {
 		expect(captureOrigin).toBe("http://capture-spool.localhost:7766");
 	});
 
-	it("reads thumbnails through the authenticated control client", async () => {
-		const png = new Blob(["png"], { type: "image/png" });
-		const fetchMock = vi.fn().mockResolvedValue(new Response(png, { status: 200 }));
+	it("reads a cover with no credential but its own address", async () => {
+		const jpeg = new Blob(["jpeg"], { type: "image/jpeg" });
+		const fetchMock = vi.fn().mockResolvedValue(new Response(jpeg, { status: 200 }));
 		vi.stubGlobal("fetch", fetchMock);
-		const { fetchThumb } = await loadApi();
+		const { fetchCover } = await loadApi();
+		const hash = "b".repeat(32);
 
-		await expect(fetchThumb("demo project", "home/card", 3)).resolves.toBeInstanceOf(Blob);
+		await expect(fetchCover("demo project", "home/card", { hash, widths: [780, 390] })).resolves.toBeInstanceOf(Blob);
 
 		const call = fetchMock.mock.calls[0] ?? [];
-		expect(new URL(String(call[0]), window.location.href).pathname).toBe("/api/p/demo%20project/thumbs/home%2Fcard");
-		expect(new URL(String(call[0]), window.location.href).search).toBe("?v=3");
-		expect(headersOf(call).get("x-spool-control")).toBe("control-test-token");
+		expect(new URL(String(call[0]), window.location.href).pathname).toBe(
+			`/covers/demo%20project/home%2Fcard/${hash}/780`,
+		);
+		// the hash is the credential: an <img> cannot carry the control header
+		expect(headersOf(call).get("x-spool-control")).toBeNull();
 	});
 
-	it("uses authenticated keepalive fetches for binary writes and staged trash", async () => {
-		const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+	it("uses authenticated keepalive fetches for cover ladders and staged trash", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(new Response(JSON.stringify({ hash: "c".repeat(32), widths: [195] }), { status: 200 }));
 		vi.stubGlobal("fetch", fetchMock);
-		const { beaconTrash, putThumb } = await loadApi();
+		const { beaconTrash, putCover } = await loadApi();
 
-		await putThumb("demo", "home", new Blob(["png"]));
+		await expect(putCover("demo", "home", [{ width: 195, bytes: new Blob(["jpeg"]) }])).resolves.toEqual({
+			hash: "c".repeat(32),
+			widths: [195],
+		});
 		beaconTrash("demo", ["home"]);
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
 		for (const call of fetchMock.mock.calls) {
 			expect(headersOf(call).get("x-spool-control")).toBe("control-test-token");
 		}
+		const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+		expect([...body.keys()]).toEqual(["w195"]);
 		expect((fetchMock.mock.calls[1]?.[1] as RequestInit | undefined)?.keepalive).toBe(true);
 	});
 

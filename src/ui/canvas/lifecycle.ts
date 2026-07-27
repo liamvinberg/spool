@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { COVER_MAX_EDGE } from "../../cover";
 import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
 import { intersects, toWorld, visibleWorldRect } from "./camera";
-import { captureRequestId, rasterCaptureSource } from "./capture-broker";
+import { CAPTURE_WORKER_TIMEOUT_MS, type CoverRaster, captureRequestId, rasterCaptureSource } from "./capture-broker";
 import { type CaptureSourceReply, captureMessage } from "./protocol";
 
 /**
@@ -36,21 +36,6 @@ import { type CaptureSourceReply, captureMessage } from "./protocol";
 
 export type FrameState = "live" | "warm" | "hibernated";
 
-/**
- * The zoom past which a frame's still is coarser than the frame itself. A
- * cover is rasterized to at most COVER_MAX_EDGE device pixels on its longest
- * side, and never above 2× — beyond that, standing the still in for the
- * document would visibly soften it, and a swap you can see is the flicker the
- * swap exists to remove. Below it the still is downscaled, which hides its own
- * compression, so the exchange is invisible in both directions.
- */
-export function stillSharpUntil(w: number, h: number, devicePixelRatio: number): number {
-	const dpr = Math.max(1, devicePixelRatio);
-	const edge = Math.max(w, h);
-	const captured = Math.min(edge * Math.min(dpr, 2), COVER_MAX_EDGE);
-	return captured / (edge * dpr);
-}
-
 const MARGIN_FRACTION = 0.5; // extra viewport fractions kept mounted around the screen
 /**
  * Below this zoom a frame renders smaller than the still it already has, so
@@ -62,7 +47,12 @@ const K_MIN_MOUNT = 0.15;
 const EXIT_CAPTURE_TIMEOUT_MS = 600; // how long an eviction waits for the goodbye shot
 const CAMERA_SETTLE_MS = 400; // capture on settle, never mid-gesture
 const SWEEP_MS = 300;
-const CAPTURE_REPLY_TIMEOUT_MS = 3000;
+/**
+ * How long a whole self-capture may take: the shim's serialization, the hops
+ * between three realms, and the worker's own ladder budget. It has to outlast
+ * the worker's, or this timer retires a capture that was still working.
+ */
+export const CAPTURE_REPLY_TIMEOUT_MS = CAPTURE_WORKER_TIMEOUT_MS + 3000;
 /**
  * How long a booted frame runs before its still is worth taking. Frames animate
  * their content in; a capture fired on the loaded report records the frame
@@ -161,7 +151,7 @@ export interface SweepInput {
 	ready: ReadonlyMap<string, number>;
 	/** Frames with a capture already in flight. */
 	capturing: ReadonlySet<string>;
-	hasThumb: (frame: string) => boolean;
+	hasCover: (frame: string) => boolean;
 	now: number;
 }
 
@@ -186,7 +176,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		states,
 		ready,
 		capturing,
-		hasThumb,
+		hasCover,
 		now,
 	} = input;
 
@@ -334,7 +324,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 			settled &&
 			target !== "hibernated" &&
 			model.arrived.has(frame.name) &&
-			(model.staleStills.has(frame.name) || !hasThumb(frame.name)) &&
+			(model.staleStills.has(frame.name) || !hasCover(frame.name)) &&
 			!capturing.has(frame.name) &&
 			!model.exitPending.has(frame.name)
 		) {
@@ -367,12 +357,12 @@ export interface LifecycleDeps {
 	frozen: string | null;
 	/** The frame an open inspector rail is reading (#58). */
 	inspected: string | null;
-	hasThumb: (frame: string) => boolean;
-	onShot: (frame: string, dataUrl: string) => void;
+	hasCover: (frame: string) => boolean;
+	onShot: (frame: string, rungs: CoverRaster[]) => void;
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
-	const { framesRef, cameraRef, viewportRef, entered, frozen, inspected, hasThumb, onShot } = deps;
+	const { framesRef, cameraRef, viewportRef, entered, frozen, inspected, hasCover, onShot } = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
 	// when each frame reported loaded, not merely that it did: a still is only
@@ -389,8 +379,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	frozenRef.current = frozen;
 	const inspectedRef = useRef(inspected);
 	inspectedRef.current = inspected;
-	const hasThumbRef = useRef(hasThumb);
-	hasThumbRef.current = hasThumb;
+	const hasCoverRef = useRef(hasCover);
+	hasCoverRef.current = hasCover;
 	const onShotRef = useRef(onShot);
 	onShotRef.current = onShot;
 
@@ -400,7 +390,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		id: string;
 		maxEdge: number;
 		sourceWindow: WindowProxy;
-		resolve: (url: string | undefined) => void;
+		resolve: (rungs: CoverRaster[] | undefined) => void;
 		timeout: ReturnType<typeof setTimeout>;
 		rasterStarted: boolean;
 		abort: AbortController;
@@ -408,15 +398,15 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	const captureWaiters = useRef(new Map<string, PendingCapture>());
 
 	/** Resolve exactly the request that produced this shot; stale work cannot satisfy its successor. */
-	const noteShot = useCallback((frame: string, id: string, url: string | undefined) => {
+	const noteShot = useCallback((frame: string, id: string, rungs: CoverRaster[] | undefined) => {
 		const pending = captureWaiters.current.get(frame);
 		if (pending?.id !== id) return;
 		clearTimeout(pending.timeout);
 		captureWaiters.current.delete(frame);
 		pending.abort.abort();
-		pending.resolve(url);
+		pending.resolve(rungs);
 		// Full-resolution PNG is an export artifact, never a replacement cover.
-		if (url !== undefined && pending.maxEdge > 0) onShotRef.current(frame, url);
+		if (rungs !== undefined && pending.maxEdge > 0) onShotRef.current(frame, rungs);
 	}, []);
 
 	const onIframe = useCallback(
@@ -471,7 +461,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			if (pending.maxEdge !== message.maxEdge || pending.rasterStarted) return;
 			pending.rasterStarted = true;
 			void rasterCaptureSource({ ...message, maxEdge: pending.maxEdge }, captureOrigin, pending.abort.signal).then(
-				(url) => noteShot(message.frame, message.id, url),
+				(rungs) => noteShot(message.frame, message.id, rungs),
 				() => noteShot(message.frame, message.id, undefined),
 			);
 		},
@@ -479,15 +469,20 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	);
 
 	/**
-	 * Ask the frame's shim for a self-capture, bounded to `maxEdge` device
-	 * pixels on its longest side (0 for the frame at full resolution) and
-	 * allowing it `settleMs` to finish arriving before it photographs itself.
-	 * Resolves the data URL — or undefined for an unmounted, unbooted,
-	 * already-capturing or mute frame. Bounded captures persist as thumbnails;
-	 * a full-resolution export returns only to its caller.
+	 * Ask the frame's shim for a self-capture whose top rung is bounded to
+	 * `maxEdge` device pixels on its longest side (0 for the frame at full
+	 * resolution, one rung, lossless), allowing it `settleMs` to finish arriving
+	 * before it photographs itself. Resolves every rung the capture host
+	 * produced — or undefined for an unmounted, unbooted, already-capturing or
+	 * mute frame. A bounded capture persists as the frame's cover ladder; a
+	 * full-resolution export returns only to its caller.
 	 */
 	const requestCapture = useCallback(
-		(frame: string, maxEdge = COVER_MAX_EDGE, settleMs = CAPTURE_SETTLE_BUDGET_MS): Promise<string | undefined> => {
+		(
+			frame: string,
+			maxEdge = COVER_MAX_EDGE,
+			settleMs = CAPTURE_SETTLE_BUDGET_MS,
+		): Promise<CoverRaster[] | undefined> => {
 			if (!Number.isSafeInteger(maxEdge) || maxEdge < 0 || maxEdge > 16 * 1024) return Promise.resolve(undefined);
 			const el = iframes.current.get(frame);
 			const sourceWindow = el?.contentWindow;
@@ -536,11 +531,11 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			states: statesRef.current,
 			ready: readyRef.current,
 			capturing: new Set(captureWaiters.current.keys()),
-			hasThumb: hasThumbRef.current,
+			hasCover: hasCoverRef.current,
 			now: performance.now(),
 		});
 		for (const frame of result.exitCaptures) {
-			void requestCapture(frame).then((url) => noteExitCapture(model.current, frame, url !== undefined));
+			void requestCapture(frame).then((rungs) => noteExitCapture(model.current, frame, rungs !== undefined));
 		}
 		for (const frame of result.refreshCaptures) void requestCapture(frame);
 		if (result.changed) setStates(result.states);

@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ProjectCanvas } from "./canvas";
 
-const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html", hasThumb: false }];
+const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html" }];
 
 describe("canvas context menu", () => {
 	it("reloads a frame with a fresh document", async () => {
@@ -21,7 +21,7 @@ describe("canvas context menu", () => {
 
 	it("reloads a static terminal frame without asking the daemon to execute it", async () => {
 		const { host, canvas, requests } = await renderCanvas([
-			{ name: "shell", x: 0, y: 0, w: 320, h: 240, kind: "term", hasThumb: false },
+			{ name: "shell", x: 0, y: 0, w: 320, h: 240, kind: "term" },
 		]);
 		const firstDocument = host.querySelector<HTMLIFrameElement>('iframe[title="shell"]');
 		await reloadFromMenu(host, canvas);

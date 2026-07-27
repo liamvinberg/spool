@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ProjectCanvas } from "./canvas";
 
-const frames = [{ name: "origin", x: 0, y: 0, w: 1200, h: 760, hasThumb: false }];
+const frames = [{ name: "origin", x: 0, y: 0, w: 1200, h: 760 }];
 
 describe("external links from an entered frame", () => {
 	it("confirms above the untouched frame and Escape stays in the prototype", async () => {

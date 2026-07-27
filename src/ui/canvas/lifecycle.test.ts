@@ -7,7 +7,6 @@ import {
 	createLifecycleModel,
 	MOUNTS_PER_SWEEP,
 	noteExitCapture,
-	stillSharpUntil,
 	sweepLifecycle,
 	WARM_POOL_CAP,
 } from "./lifecycle";
@@ -29,7 +28,7 @@ const frame = (name: string, x: number, y: number, kind: "html" | "term" = "html
 	y,
 	w: 100,
 	h: 100,
-	hasThumb: true,
+	cover: { hash: "0".repeat(32), widths: [200, 100, 50] },
 });
 
 const origin: Camera = { x: 0, y: 0, k: 1 };
@@ -59,7 +58,7 @@ function sweeper() {
 			states,
 			ready: new Map(frames.map((f) => [f.name, -CAPTURE_AFTER_READY_MS])),
 			capturing: new Set(),
-			hasThumb: () => true,
+			hasCover: () => true,
 			now,
 			...input,
 		});
@@ -386,9 +385,9 @@ describe("thumbnail refresh", () => {
 		// canvas would then show in the frame's own place while the camera moves.
 		const frames = [frame("a", 450, 450)];
 		const s = sweeper();
-		const hasThumb = () => false;
+		const hasCover = () => false;
 		const bootedAt = s.clock();
-		const booting = { hasThumb, ready: new Map([["a", bootedAt]]) };
+		const booting = { hasCover, ready: new Map([["a", bootedAt]]) };
 		while (s.clock() + SWEEP_MS - bootedAt < CAPTURE_AFTER_READY_MS) {
 			expect(s.sweep(frames, booting).refreshCaptures).toEqual([]);
 		}
@@ -398,24 +397,24 @@ describe("thumbnail refresh", () => {
 	it("never photographs a frame that has not run: no boot, or frozen since it booted", () => {
 		const frames = [frame("a", 450, 450)];
 		const s = sweeper();
-		const hasThumb = () => false;
+		const hasCover = () => false;
 
 		// mounted but never reported loaded — there is nothing to photograph
-		const unbooted = { hasThumb, ready: new Map<string, number>() };
+		const unbooted = { hasCover, ready: new Map<string, number>() };
 		for (let sweeps = 0; sweeps < 4; sweeps++) {
 			expect(s.sweep(frames, unbooted).refreshCaptures).toEqual([]);
 		}
 
 		// booted long ago, but held frozen ever since: its entry animation never
 		// ran, and its still would record that absence
-		const frozen = { hasThumb, frozen: "a", ready: new Map([["a", -CAPTURE_AFTER_READY_MS]]) };
+		const frozen = { hasCover, frozen: "a", ready: new Map([["a", -CAPTURE_AFTER_READY_MS]]) };
 		for (let sweeps = 0; sweeps < 4; sweeps++) {
 			expect(s.sweep(frames, frozen).refreshCaptures).toEqual([]);
 		}
 
 		// let it run, and the debt is payable again
-		s.sweep(frames, { hasThumb });
-		expect(s.sweep(frames, { hasThumb }).refreshCaptures).toEqual(["a"]);
+		s.sweep(frames, { hasCover });
+		expect(s.sweep(frames, { hasCover }).refreshCaptures).toEqual(["a"]);
 	});
 
 	it("keeps refreshing a frame that ran once and then went offscreen", () => {
@@ -434,13 +433,13 @@ describe("thumbnail refresh", () => {
 	it("a missing still backfills when settled, unless a capture is already in flight", () => {
 		const frames = [frame("a", 450, 450)];
 		const s = sweeper();
-		const hasThumb = () => false;
-		s.sweep(frames, { hasThumb });
-		expect(s.sweep(frames, { hasThumb }).refreshCaptures).toEqual([]);
+		const hasCover = () => false;
+		s.sweep(frames, { hasCover });
+		expect(s.sweep(frames, { hasCover }).refreshCaptures).toEqual([]);
 
 		// settled and thumbless — but an in-flight capture holds the debt open
-		expect(s.sweep(frames, { hasThumb, capturing: new Set(["a"]) }).refreshCaptures).toEqual([]);
-		expect(s.sweep(frames, { hasThumb }).refreshCaptures).toEqual(["a"]);
+		expect(s.sweep(frames, { hasCover, capturing: new Set(["a"]) }).refreshCaptures).toEqual([]);
+		expect(s.sweep(frames, { hasCover }).refreshCaptures).toEqual(["a"]);
 	});
 
 	it("drains the refresh queue a couple per settled sweep, nearest the center first", () => {
@@ -454,42 +453,16 @@ describe("thumbnail refresh", () => {
 			frame("c", 450, 300),
 		];
 		const s = sweeper();
-		const hasThumb = () => false;
-		s.sweep(frames, { hasThumb });
-		s.sweep(frames, { hasThumb });
+		const hasCover = () => false;
+		s.sweep(frames, { hasCover });
+		s.sweep(frames, { hasCover });
 
 		// settled at last, and the burst is refused: the nearest two go now
 		expect(CAPTURES_PER_SWEEP).toBe(2);
-		expect(s.sweep(frames, { hasThumb }).refreshCaptures).toEqual(["a", "b"]);
+		expect(s.sweep(frames, { hasCover }).refreshCaptures).toEqual(["a", "b"]);
 
 		// the rest kept their debt rather than firing into one commit
-		expect(s.sweep(frames, { hasThumb, capturing: new Set(["a", "b"]) }).refreshCaptures).toEqual(["c", "d"]);
-	});
-});
-
-describe("stillSharpUntil", () => {
-	/**
-	 * A still stands in for its frame only while it is at least as sharp as the
-	 * frame is drawn. Past that, the swap would soften the frame — and a swap
-	 * you can see is the flicker the swap exists to remove.
-	 */
-	it("lets a still stand in right up to where the frame outgrows it", () => {
-		// a 390×844 phone frame on a retina canvas: its cover is 1200 device
-		// pixels tall, the frame at k needs 844·k·2 of them
-		expect(stillSharpUntil(390, 844, 2)).toBeCloseTo(1200 / (844 * 2), 6);
-		// a 1500-wide sheet outgrows its cover much sooner
-		expect(stillSharpUntil(1500, 900, 2)).toBeCloseTo(1200 / (1500 * 2), 6);
-	});
-
-	it("never claims a still is sharper than the frame it was taken from", () => {
-		// a small frame's cover is bounded by the frame, not by COVER_MAX_EDGE
-		expect(stillSharpUntil(200, 300, 2)).toBe(1);
-		expect(stillSharpUntil(200, 300, 1)).toBe(1);
-	});
-
-	it("accounts for a capture that was itself capped at 2×", () => {
-		// covers rasterize at min(dpr, 2); a denser screen draws finer than that
-		expect(stillSharpUntil(200, 300, 3)).toBeCloseTo(2 / 3, 6);
+		expect(s.sweep(frames, { hasCover, capturing: new Set(["a", "b"]) }).refreshCaptures).toEqual(["c", "d"]);
 	});
 });
 

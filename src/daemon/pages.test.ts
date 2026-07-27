@@ -168,21 +168,19 @@ describe("page-frame stores key by leaf name", () => {
 		expect(JSON.parse(readFileSync(sidecar, "utf8"))).toEqual({ x: 10, y: 20, w: 390, h: 844 });
 	});
 
-	it("stores and serves a page frame's thumbnail under its leaf name", async () => {
+	it("stores and serves a page frame's cover under its leaf name", async () => {
 		const { spoolDir, root, name } = pageProject();
 		writePageFrame(root, "shop", "checkout", label("checkout"));
 		const app = makeApp(spoolDir);
+		const body = new FormData();
+		body.append("w195", new Blob([COVER_PNG]));
 
-		const put = await app.request(`/api/p/${name}/thumbs/checkout`, {
-			method: "PUT",
-			headers: { "content-type": "image/png" },
-			body: COVER_PNG,
-		});
+		const put = await app.request(`/api/p/${name}/thumbs/checkout`, { method: "PUT", body });
 
-		expect(put.status).toBe(204);
-		expect(existsSync(join(root, "design", ".spool", "thumbs", "checkout.png"))).toBe(true);
-		const got = await app.request(`/api/p/${name}/thumbs/checkout`);
-		expect(got.status).toBe(200);
+		expect(put.status).toBe(200);
+		const { hash } = (await put.json()) as { hash: string };
+		expect(existsSync(join(root, "design", ".spool", "thumbs", "checkout", `${hash}.195.png`))).toBe(true);
+		expect((await app.request(`/covers/${name}/checkout/${hash}/195`)).status).toBe(200);
 	});
 
 	it("moves a trashed page frame's folder", async () => {

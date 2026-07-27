@@ -1,10 +1,11 @@
-import { type Dirent, existsSync, lstatSync, readdirSync } from "node:fs";
+import { type Dirent, lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import type { Cover } from "../cover";
 import { DEFAULT_COLS, DEFAULT_ROWS, pxForCells } from "../term/cells";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { readGeometry, writeGeometryIfAbsent } from "./geometry";
 import { isSafeName } from "./project-files";
-import { hasThumb as storedThumb, termScreenFile, thumbModified } from "./thumbs";
+import { coverModified, scanCovers } from "./thumbs";
 
 /**
  * The canvas projection of design/frames (#22), one level of grouping deep
@@ -29,6 +30,17 @@ export type TerminalCoverUnavailable = { kind: "stale"; message: string } | { ki
 
 export type TerminalCoverState = { kind: "current" } | TerminalCoverUnavailable;
 
+/**
+ * One read of a terminal's persisted screen, answering both things the canvas
+ * needs: whether it is current, and what addresses it. The ladder is absent
+ * until a screen has been persisted once — a live session that has never saved
+ * has nothing a reboot would land in.
+ */
+export interface TerminalCover {
+	state: TerminalCoverState;
+	cover?: Cover;
+}
+
 export interface ProjectedFrame {
 	name: string;
 	kind: FrameKind;
@@ -38,7 +50,12 @@ export interface ProjectedFrame {
 	y: number;
 	w: number;
 	h: number;
-	hasThumb: boolean;
+	/**
+	 * The frame's cover ladder (#111) — absent when it has none, which is what
+	 * the canvas reads as "show the placeholder". Terminal frames are filled in
+	 * from their persisted screen, which only the session store can address.
+	 */
+	cover?: Cover;
 	/** Terminal-only cover truth; unavailable states carry the canvas message. */
 	terminalCover?: TerminalCoverState;
 }
@@ -235,12 +252,16 @@ export function listProjectFrames(root: string): Projection {
 	const discovery = discover(root);
 	if (discovery === undefined) return { root, pages: [], frames: [], collisions: [] };
 
+	// one sweep of the cover store answers every frame: the rung filenames are the
+	// manifest, so this costs a readdir per frame folder and opens no image
+	const covers = readCovers(root);
+
 	const placed: ProjectedFrame[] = [];
 	const unplaced: DiscoveredFrame[] = [];
 	for (const frame of discovery.frames) {
 		const geometry = readGeometry(join(frame.dir, "frame.json"), discovery.designDir);
 		if (geometry === undefined) unplaced.push(frame);
-		else placed.push(projected(root, frame, geometry));
+		else placed.push(projected(frame, geometry, covers.get(frame.name)));
 	}
 
 	// a new frame lands beside its own page's field, on its top line, never on
@@ -254,14 +275,14 @@ export function listProjectFrames(root: string): Projection {
 		try {
 			const persisted = writeGeometryIfAbsent(join(frame.dir, "frame.json"), geometry, discovery.designDir);
 			if (persisted !== undefined) {
-				placed.push(projected(root, frame, persisted));
+				placed.push(projected(frame, persisted, covers.get(frame.name)));
 				continue;
 			}
 		} catch (error) {
 			if (error instanceof DesignBoundaryError) throw error;
 			// read-only checkout: placement stays deterministic within this daemon run
 		}
-		placed.push(projected(root, frame, geometry));
+		placed.push(projected(frame, geometry, covers.get(frame.name)));
 	}
 
 	placed.sort((a, b) => a.name.localeCompare(b.name));
@@ -269,16 +290,18 @@ export function listProjectFrames(root: string): Projection {
 }
 
 function projected(
-	root: string,
 	frame: DiscoveredFrame,
 	geometry: { x: number; y: number; w: number; h: number },
+	cover: Cover | undefined,
 ): ProjectedFrame {
 	return {
 		name: frame.name,
 		kind: frame.kind,
 		...(frame.page === undefined ? {} : { page: frame.page }),
 		...geometry,
-		hasThumb: hasThumb(root, frame.name, frame.kind),
+		// a terminal's cover is its persisted screen, which only the session store
+		// can hash and size — the frames read fills those in (#42)
+		...(frame.kind === "term" || cover === undefined ? {} : { cover }),
 	};
 }
 
@@ -300,14 +323,12 @@ export function frameDirectories(root: string): Map<string, string> {
 	return new Map(discovery.frames.map((frame) => [frame.name, frame.dir]));
 }
 
-function hasThumb(root: string, frame: string, kind: FrameKind): boolean {
-	// a terminal's cover is its serialized screen, rasterized daemon-side (#42)
+function readCovers(root: string): Map<string, Cover> {
 	try {
-		if (kind === "term") return existsSync(termScreenFile(root, frame));
-		return storedThumb(root, frame);
+		return scanCovers(root);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
-		return false;
+		return new Map();
 	}
 }
 
@@ -333,10 +354,16 @@ export function readFrameGeometry(root: string, frame: string): { w: number; h: 
 	return { ...defaultFootprint(found.frameKind), persisted: false };
 }
 
+/** One card slot: the frame, and the ladder its picture comes off. */
+export interface CoveredFrame {
+	frame: string;
+	cover: Cover;
+}
+
 export interface ProjectSummary {
 	frameCount: number;
-	/** Up to three thumbnail-backed frame names, freshest capture first. */
-	covers: string[];
+	/** Up to three covered frames, freshest capture first. */
+	covers: CoveredFrame[];
 }
 
 /** One home card (#13): registry identity plus the summary scan. */
@@ -350,18 +377,21 @@ export interface ProjectCard extends ProjectSummary {
 export function summarizeProject(root: string): ProjectSummary {
 	const names = frameNames(root);
 	if (names === undefined) return { frameCount: 0, covers: [] };
+	const held = readCovers(root);
 	const covers = names
-		.map((name) => ({ name, shotAt: thumbMtime(root, name) }))
-		.filter((cover) => cover.shotAt !== undefined)
-		.sort((a, b) => (b.shotAt as number) - (a.shotAt as number))
+		.flatMap((frame) => {
+			const cover = held.get(frame);
+			return cover === undefined ? [] : [{ frame, cover, shotAt: coverMtime(root, frame) ?? 0 }];
+		})
+		.sort((a, b) => b.shotAt - a.shotAt)
 		.slice(0, 3)
-		.map((cover) => cover.name);
+		.map(({ frame, cover }) => ({ frame, cover }));
 	return { frameCount: names.length, covers };
 }
 
-function thumbMtime(root: string, frame: string): number | undefined {
+function coverMtime(root: string, frame: string): number | undefined {
 	try {
-		return thumbModified(root, frame);
+		return coverModified(root, frame);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;

@@ -1,18 +1,21 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { Terminal } from "@xterm/headless";
 import { writeAtomic } from "../atomic-write";
+import type { Cover } from "../cover";
 import { gridFromBuffer } from "../term/buffer-grid";
-import { cellsForPx, MIN_COLS, MIN_ROWS } from "../term/cells";
+import { CELL_W, cellsForPx, MIN_COLS, MIN_ROWS } from "../term/cells";
 import { resetCursorVisibility, serializedCursorVisibility, trackCursorVisibility } from "../term/cursor-visibility";
 import { createOscFilter } from "../term/osc";
 import type { Grid } from "../term/still";
 import { gridToSvg } from "../term/still";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
-import { frameGeometry, lookupFrame, type TerminalCoverState, type TerminalCoverUnavailable } from "./projection";
+import { frameGeometry, lookupFrame, type TerminalCover, type TerminalCoverUnavailable } from "./projection";
 import type { TermExecutor, TermProcess } from "./term-exec";
+import { termFontDataCss } from "./term-fonts";
 import { terminalSourceVersion } from "./term-source";
 import { termScreenFile } from "./thumbs";
 
@@ -218,7 +221,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 	function readPersisted(
 		root: string,
 		frame: string,
-	): { kind: "current"; record: PersistedScreen } | { kind: "stale" } | { kind: "never-run" } {
+	): { kind: "current"; record: PersistedScreen; raw: string } | { kind: "stale" } | { kind: "never-run" } {
 		let text: string;
 		try {
 			text = readFileSync(termScreenFile(root, frame), "utf8");
@@ -235,7 +238,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		}
 		const record = persistedScreen(parsed);
 		if (record === undefined || record.sourceVersion !== terminalSourceVersion(root, frame)) return { kind: "stale" };
-		return { kind: "current", record };
+		return { kind: "current", record, raw: text };
 	}
 
 	async function attach(root: string, frame: string, client: TermClient): Promise<{ detach: () => void }> {
@@ -411,23 +414,37 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		const persisted = readPersisted(root, frame);
 		if (persisted.kind === "stale") return stale(frame);
 		if (persisted.kind === "never-run") return neverRun(frame);
-		const { record } = persisted;
-		const { term } = makeEmulator(record.cols, record.rows);
-		await new Promise<void>((r) => term.write(record.screen, r));
-		const result = gridFromBuffer(term);
-		term.dispose();
-		return { kind: "current", grid: result };
+		return { kind: "current", grid: await replay(persisted.record) };
 	}
 
-	function cover(root: string, frame: string): TerminalCoverState {
+	/** A persisted screen back as a grid: one throwaway emulator, written and read. */
+	async function replay(record: PersistedScreen): Promise<Grid> {
+		const { term } = makeEmulator(record.cols, record.rows);
+		await new Promise<void>((r) => term.write(record.screen, r));
+		const shape = gridFromBuffer(term);
+		term.dispose();
+		return shape;
+	}
+
+	/**
+	 * A terminal's cover truth, and the ladder that addresses it. The picture is
+	 * the *persisted* screen even while a session runs: a live terminal is
+	 * mounted and painting for real, and its cover is only ever what a reboot
+	 * would land in. That is what makes the address immutable — the served SVG
+	 * is a pure function of the record on disk and the pinned font.
+	 */
+	function cover(root: string, frame: string): TerminalCover {
 		const session = sessions.get(key(root, frame));
-		if (session !== undefined) {
-			return session.sourceVersion === terminalSourceVersion(root, frame) ? { kind: "current" } : stale(frame);
+		if (session !== undefined && session.sourceVersion !== terminalSourceVersion(root, frame)) {
+			return { state: stale(frame) };
 		}
 		const persisted = readPersisted(root, frame);
-		if (persisted.kind === "stale") return stale(frame);
-		if (persisted.kind === "never-run") return neverRun(frame);
-		return { kind: "current" };
+		if (session === undefined) {
+			if (persisted.kind === "stale") return { state: stale(frame) };
+			if (persisted.kind === "never-run") return { state: neverRun(frame) };
+		}
+		if (persisted.kind !== "current") return { state: { kind: "current" } };
+		return { state: { kind: "current" }, cover: screenCover(persisted.raw, persisted.record) };
 	}
 
 	async function grid(root: string, frame: string): Promise<Grid | undefined> {
@@ -440,6 +457,18 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		return shape === undefined ? undefined : gridToSvg(shape, fontCss);
 	}
 
+	/**
+	 * The cover behind the ladder `cover` addresses: the persisted record alone,
+	 * in the pinned font alone. Both are what the hash is taken over, so neither
+	 * is the caller's to vary — reading the live screen or another font here would
+	 * let one immutable address answer with two different pictures.
+	 */
+	async function persistedStill(root: string, frame: string): Promise<string | undefined> {
+		const persisted = readPersisted(root, frame);
+		if (persisted.kind !== "current") return undefined;
+		return gridToSvg(await replay(persisted.record), termFontDataCss());
+	}
+
 	async function close(): Promise<void> {
 		for (const session of [...sessions.values()]) {
 			if (session.detachTimer !== undefined) clearTimeout(session.detachTimer);
@@ -448,7 +477,38 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 		}
 	}
 
-	return { attach, input, resize, freeze, revive, restart, handleChange, cover, screen, grid, still, close };
+	return {
+		attach,
+		input,
+		resize,
+		freeze,
+		revive,
+		restart,
+		handleChange,
+		cover,
+		screen,
+		grid,
+		still,
+		persistedStill,
+		close,
+	};
+}
+
+let fontToken: string | undefined;
+
+/**
+ * A terminal cover's ladder: one rung, because the still is an SVG and needs no
+ * second — the browser rasterizes it at whatever size the canvas draws it. The
+ * hash covers the record and the pinned font, which are the whole of what
+ * `gridToSvg` reads, so a screen that has not changed keeps its address and an
+ * upgrade that repins the font retires it.
+ */
+function screenCover(raw: string, record: PersistedScreen): Cover {
+	fontToken ??= createHash("sha256").update(termFontDataCss()).digest("hex").slice(0, 16);
+	return {
+		hash: createHash("sha256").update(fontToken).update("\0").update(raw).digest("hex").slice(0, 32),
+		widths: [record.cols * CELL_W],
+	};
 }
 
 function stale(frame: string): TerminalCoverUnavailable {

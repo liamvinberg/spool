@@ -5,6 +5,7 @@ import { fixtureTermExecutor, makeApp, makeProject, makeTempDir, writeDesignFile
 import { createTermSessions } from "./term-sessions";
 
 const SENTINEL = "outside-design-sentinel";
+const HASH = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4";
 
 function json(method: "POST" | "PUT", body: unknown): RequestInit {
 	return {
@@ -43,32 +44,38 @@ describe("project filesystem sinks", () => {
 		expect(readFileSync(outside, "utf8")).toBe(sentinel);
 	});
 
-	it("does not read or write app state and thumbs through escaped cache symlinks", async () => {
+	it("does not read or write app state and covers through escaped cache symlinks", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "checkout", "export default function Frame() { return <p>inside</p> }\n");
 		const cache = join(root, "design", ".spool");
 		mkdirSync(join(cache, "thumbs"), { recursive: true });
 		const outsideState = join(root, "outside-state.json");
-		const outsideThumb = join(root, "outside-thumb.png");
+		const outsideCovers = join(root, "outside-covers");
+		mkdirSync(outsideCovers, { recursive: true });
 		writeFileSync(outsideState, JSON.stringify({ arrows: false, secret: SENTINEL }));
-		writeFileSync(outsideThumb, SENTINEL);
+		writeFileSync(join(outsideCovers, `${HASH}.195.png`), SENTINEL);
 		symlinkSync(outsideState, join(cache, "state.json"));
-		symlinkSync(outsideThumb, join(cache, "thumbs", "checkout.png"));
+		// a frame's cover folder is where the ladder lives, so that is the entry an
+		// escape would come through
+		symlinkSync(outsideCovers, join(cache, "thumbs", "checkout"));
 		const app = makeApp(spoolDir);
 
 		await expectBoundary(await app.request(`/api/p/${name}/state`), ".spool/state.json", root);
-		await expectBoundary(await app.request(`/api/p/${name}/thumbs/checkout`), ".spool/thumbs/checkout.png", root);
+		await expectBoundary(await app.request(`/covers/${name}/checkout/${HASH}/195`), ".spool/thumbs/checkout", root);
 		const stateWrite = await app.request(`/api/p/${name}/state`, json("PUT", { camera: { x: 1, y: 2, k: 1 } }));
 		await expectBoundary(stateWrite, ".spool/state.json", root);
-		const thumbWrite = await app.request(`/api/p/${name}/thumbs/checkout`, {
-			method: "PUT",
-			headers: { "content-type": "image/png" },
-			body: new Uint8Array([1, 2, 3]),
-		});
-		await expectBoundary(thumbWrite, ".spool/thumbs/checkout.png", root);
+		const body = new FormData();
+		body.append("w195", new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2])]));
+		const coverWrite = await app.request(`/api/p/${name}/thumbs/checkout`, { method: "PUT", body });
+		await expectBoundary(coverWrite, ".spool/thumbs/checkout", root);
 		expect(readFileSync(outsideState, "utf8")).toContain(SENTINEL);
-		expect(readFileSync(outsideThumb, "utf8")).toBe(SENTINEL);
+		expect(readFileSync(join(outsideCovers, `${HASH}.195.png`), "utf8")).toBe(SENTINEL);
+		// and the projection reads past it rather than through it
+		const { frames } = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
+			frames: { name: string; cover?: unknown }[];
+		};
+		expect(frames[0]?.cover).toBeUndefined();
 	});
 
 	it("does not follow a pre-planted atomic-write staging symlink", async () => {

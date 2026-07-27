@@ -3,10 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ExportDialog } from "./export-dialog";
 
+const cover = { hash: "e".repeat(32), widths: [780, 390, 195] };
 const frames = [
-	{ name: "menu", thumbnail: { project: "demo", frame: "menu", nonce: 0 } },
-	{ name: "cart", thumbnail: { project: "demo", frame: "cart", nonce: 0 } },
-	{ name: "receipt", thumbnail: { project: "demo", frame: "receipt", nonce: 0 } },
+	{ name: "menu", thumbnail: { project: "demo", frame: "menu", cover } },
+	{ name: "cart", thumbnail: { project: "demo", frame: "cart", cover } },
+	{ name: "receipt", thumbnail: { project: "demo", frame: "receipt", cover } },
 ];
 
 describe("ExportDialog", () => {

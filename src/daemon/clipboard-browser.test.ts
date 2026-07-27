@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { type Browser, chromium, type Frame, type Page } from "playwright-core";
 import { build as buildUi } from "vite";
 import { expect, it, onTestFinished } from "vitest";
+import { COVER_MAX_EDGE } from "../cover";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { terminalSourceVersion } from "./term-source";
 
@@ -495,25 +496,27 @@ it("replaces a self-walked document before it can walk or copy again", { timeout
 	await expect
 		.poll(
 			() =>
-				page.evaluate(() =>
-					(window as unknown as { __spoolSelfMessages: unknown[] }).__spoolSelfMessages.some(
-						(message) =>
-							typeof message === "object" &&
-							message !== null &&
-							"spool" in message &&
-							message.spool === "capture-source" &&
-							"frame" in message &&
-							message.frame === "self" &&
-							"id" in message &&
-							typeof message.id === "string" &&
-							/^[0-9a-f]{32}$/.test(message.id) &&
-							"svg" in message &&
-							message.svg instanceof Blob &&
-							message.svg.type === "image/svg+xml" &&
-							message.svg.size > 0 &&
-							"maxEdge" in message &&
-							message.maxEdge === 1200,
-					),
+				page.evaluate(
+					(maxEdge) =>
+						(window as unknown as { __spoolSelfMessages: unknown[] }).__spoolSelfMessages.some(
+							(message) =>
+								typeof message === "object" &&
+								message !== null &&
+								"spool" in message &&
+								message.spool === "capture-source" &&
+								"frame" in message &&
+								message.frame === "self" &&
+								"id" in message &&
+								typeof message.id === "string" &&
+								/^[0-9a-f]{32}$/.test(message.id) &&
+								"svg" in message &&
+								message.svg instanceof Blob &&
+								message.svg.type === "image/svg+xml" &&
+								message.svg.size > 0 &&
+								"maxEdge" in message &&
+								message.maxEdge === maxEdge,
+						),
+					COVER_MAX_EDGE,
 				),
 			{ timeout: 10_000 },
 		)

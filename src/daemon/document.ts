@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { COVER_QUALITY } from "../cover";
+import { COVER_QUALITY, COVER_RUNGS } from "../cover";
 
 /**
  * Assembly of the served frame document. Spool owns the whole page (#16):
@@ -160,7 +160,13 @@ const captureWorkerJs = `(() => {
 		) {
 			throw new Error("invalid capture SVG");
 		}
-		const scale = maxEdge > 0 ? Math.min(dpr, maxEdge / Math.max(width, height)) : dpr;
+		// A cover's ladder belongs to the frame, not to the monitor that photographed
+		// it: the top rung is the frame's long edge at 2×, under the cap. Scaling by
+		// the capturing realm's own ratio instead would make a cover taken on a 1×
+		// display soft at 100% zoom on a 2× one — and a sandboxed frame does not
+		// always report the ratio its canvas has. An export is the other contract,
+		// and says so: the frame at full device resolution.
+		const scale = maxEdge > 0 ? Math.min(2, maxEdge / Math.max(width, height)) : dpr;
 		const outputWidth = Math.max(1, Math.round(width * scale));
 		const outputHeight = Math.max(1, Math.round(height * scale));
 		if (
@@ -175,6 +181,8 @@ const captureWorkerJs = `(() => {
 			maxEdge,
 			outputWidth,
 			outputHeight,
+			// a cover is a ladder; an export is the one sheet its caller asked for
+			rungs: maxEdge > 0 ? ${COVER_RUNGS} : 1,
 		};
 	}
 
@@ -199,25 +207,36 @@ const captureWorkerJs = `(() => {
 		});
 	}
 
+	// Every rung off one parsed snapshot: the source is validated once and decoded
+	// once, and each rung below the top is the same picture drawn smaller. Each
+	// answer carries the size it actually came out, because the daemon has no
+	// image library and takes this realm's word for how wide a rung is.
 	async function raster(value, requestId) {
 		const canvas = document.querySelector("canvas");
 		if (!canvas) throw new Error("capture canvas unavailable");
 		const image = new Image();
 		try {
 			const job = await validateJob(value, requestId);
-			canvas.width = job.outputWidth;
-			canvas.height = job.outputHeight;
 			const context = canvas.getContext("2d");
 			if (!context) throw new Error("capture canvas unavailable");
-			context.fillStyle = "#fff";
-			context.fillRect(0, 0, job.outputWidth, job.outputHeight);
 			image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(job.svg);
 			await image.decode();
-			context.drawImage(image, 0, 0, job.outputWidth, job.outputHeight);
-			const blob = job.maxEdge > 0
-				? await canvasBlob(canvas, "image/jpeg", ${COVER_QUALITY})
-				: await canvasBlob(canvas, "image/png");
-			return await blobDataUrl(blob);
+			const rungs = [];
+			for (let index = 0; index < job.rungs; index++) {
+				const step = 2 ** index;
+				const width = Math.max(1, Math.round(job.outputWidth / step));
+				const height = Math.max(1, Math.round(job.outputHeight / step));
+				canvas.width = width;
+				canvas.height = height;
+				context.fillStyle = "#fff";
+				context.fillRect(0, 0, width, height);
+				context.drawImage(image, 0, 0, width, height);
+				const blob = job.maxEdge > 0
+					? await canvasBlob(canvas, "image/jpeg", ${COVER_QUALITY})
+					: await canvasBlob(canvas, "image/png");
+				rungs.push({ url: await blobDataUrl(blob), width: width, height: height });
+			}
+			return rungs;
 		} finally {
 			image.src = "";
 			canvas.width = 0;
@@ -257,8 +276,8 @@ const captureWorkerJs = `(() => {
 			void (async () => {
 				let reply;
 				try {
-					const url = await raster(message.data, requestId);
-					reply = { spool: RESULT, id: requestId, url };
+					const rungs = await raster(message.data, requestId);
+					reply = { spool: RESULT, id: requestId, rungs };
 				} catch (error) {
 					const text = error instanceof Error ? error.message : String(error);
 					reply = { spool: RESULT, id: requestId, error: text.slice(0, 240) };
@@ -728,6 +747,8 @@ const canvasShimJs = `(() => {
 		// edge turns a tall frame from a 12-megapixel lossless sheet into a few
 		// tens of kilobytes. The white fill below means it never needs alpha, so
 		// the bounded cover encodes as JPEG; an export still asks for lossless.
+		// This ratio is the export's: a cover's rungs come off the frame's own
+		// long edge, so what this document's window reports cannot soften them.
 		const dpr = Math.min(window.devicePixelRatio || 1, 2);
 		const source = new Blob([svg], { type: "image/svg+xml" });
 		if (source.size > 16 * 1024 * 1024) throw new Error("capture source too large");

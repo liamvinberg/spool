@@ -9,7 +9,7 @@ import { connectionGroups, outboundCount } from "./connections";
  */
 
 function frame(name: string, page?: string): ProjectedFrame {
-	return { name, kind: "html", x: 0, y: 0, w: 100, h: 100, hasThumb: false, ...(page === undefined ? {} : { page }) };
+	return { name, kind: "html", x: 0, y: 0, w: 100, h: 100, ...(page === undefined ? {} : { page }) };
 }
 
 function edge(from: string, to: string, extra: Partial<FlowEdge> = {}): FlowEdge {

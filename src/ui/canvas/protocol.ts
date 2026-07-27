@@ -1,3 +1,4 @@
+import { coverTopScale } from "../../cover";
 import { type ClipboardCopyRequest, parseClipboardCopyRequest } from "../../runtime/clipboard-protocol";
 import type { SessionRecord } from "../../runtime/frame-runtime";
 import { isWalkId } from "../../runtime/walk-protocol";
@@ -245,10 +246,10 @@ function captureSourceMessage(message: Record<string, unknown>): boolean {
 	) {
 		return false;
 	}
+	// the same rule the capture host rasters by: a cover's rungs come off the
+	// frame's own long edge, an export off the display's ratio
 	const scale =
-		message.maxEdge > 0
-			? Math.min(message.dpr, message.maxEdge / Math.max(message.width, message.height))
-			: message.dpr;
+		message.maxEdge > 0 ? coverTopScale(message.maxEdge, Math.max(message.width, message.height)) : message.dpr;
 	const outputWidth = Math.max(1, Math.round(message.width * scale));
 	const outputHeight = Math.max(1, Math.round(message.height * scale));
 	return (

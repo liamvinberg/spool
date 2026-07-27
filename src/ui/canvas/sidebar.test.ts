@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CanvasSidebar } from "./sidebar";
 
 const frames = [
-	{ name: "home", kind: "html" as const, x: 0, y: 0, w: 390, h: 844, hasThumb: false },
-	{ name: "checkout", page: "shop", kind: "html" as const, x: 0, y: 0, w: 390, h: 844, hasThumb: false },
+	{ name: "home", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+	{ name: "checkout", page: "shop", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
 ];
 
 const mounted: Array<{ root: ReturnType<typeof createRoot>; host: HTMLElement }> = [];

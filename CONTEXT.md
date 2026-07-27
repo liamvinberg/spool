@@ -32,7 +32,9 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Entered**: The state of a frame after a double-click: pointer and keyboard input belong to its app, and walks happen in place. Esc leaves an html frame. A terminal frame currently has no TUI keyboard session because it renders a static disabled surface; the platform modifier + Esc still leaves it. Holding the platform modifier freezes the entered frame and hands the pointer back so an element can be reached. _Avoid_: focused, interact
 
-**Still**: The stored picture of a frame, taken by the frame itself once it has finished arriving — its own fonts, its content settled. It stands in for a frame that is not mounted, covers a boot, and replaces every mounted document while the camera zooms, which is what keeps a zoom off forty live documents at once. A still is a placeholder, not an artifact: it is bounded in size, so a frame drawn larger than its still keeps painting instead of standing in. _Avoid_: screenshot, snapshot
+**Still**: The stored picture of a frame, taken by the frame itself once it has finished arriving — its own fonts, its content settled. It stands in for a frame that is not mounted, covers a boot, and replaces every mounted document while the camera zooms, which is what keeps a zoom off forty live documents at once. A still is a placeholder, not an artifact: it stands in up to 100% zoom, and past 100% you go inside rather than look closer. _Avoid_: screenshot, snapshot
+
+**Ladder**: What a still is stored as: several **rungs** of one picture, the top at the frame's long edge doubled and each below it half the one above, addressed together by one hash of their content. The frame's geometry sets the sizes, never the display that photographed it. The canvas names the rung a zoom asks for, because only the canvas can see the camera. A short ladder is a normal cover — the headless fallback can only make its bottom rung. _Avoid_: variant, size, resolution
 
 **Hibernated**: A frame demoted to its still because the warm pool overflowed; it boots fresh on return. Hibernation's payoff is memory, never CPU. _Avoid_: paused
 

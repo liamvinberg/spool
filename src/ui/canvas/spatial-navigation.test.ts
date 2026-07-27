@@ -9,7 +9,6 @@ const frame = (name: string, x: number, y: number, w = 100, h = 100): ProjectedF
 	y,
 	w,
 	h,
-	hasThumb: false,
 });
 
 describe("spatial frame navigation", () => {
