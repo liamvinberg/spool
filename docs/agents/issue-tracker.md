@@ -21,11 +21,3 @@ Create a GitHub issue in `liamvinberg/spool`.
 ## When a skill says "fetch the relevant ticket"
 
 Read the GitHub issue body, comments, and labels.
-
-## Wayfinding operations
-
-- A wayfinder map is one issue labelled `wayfinder:map`.
-- Decision tickets are child issues using the matching `wayfinder:<type>` label.
-- Use GitHub's native sub-issue and dependency relationships where available.
-- Fall back to task-list and `Blocked by:` references only when the native relationship is unavailable.
-- Claim work by assigning the issue to the driving developer.
