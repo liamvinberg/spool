@@ -1,22 +1,24 @@
 import { describe, expect, it } from "vitest";
-import type { Camera, ProjectedFrame } from "../api";
+import type { ProjectedFrame } from "../api";
 import type { FrameState, SweepInput } from "./lifecycle";
 import {
 	CAPTURE_AFTER_READY_MS,
 	createLifecycleModel,
-	noteRefreshShot,
+	ERRAND_DEADLINE_MS,
+	ERRANDS_IN_FLIGHT,
+	noteErrandShot,
 	PICTURE_TRIES,
-	REFRESH_ERRAND_MS,
-	REFRESH_JOBS_IN_FLIGHT,
 	sweepLifecycle,
 } from "./lifecycle";
 
 /**
- * The lifecycle decision function (#40, #112): fabricated frames and camera in,
- * per-sweep states out — no browser, no real timers. Mounting is caused, so
- * these tests are a list of causes: you went to a frame, its picture is
- * missing, its picture is wrong. Where a frame sits and how big it draws are
- * not among them, and several tests below exist only to hold that line.
+ * The lifecycle decision function (#40, #112): fabricated frames in, per-sweep
+ * states out — no browser, no real timers, and no camera, because the decision
+ * does not have one. Mounting is caused, so these tests are a list of causes:
+ * you went to a frame, its picture is missing, its picture is wrong. Where a
+ * frame sits, how big it draws and whether the camera is moving are not among
+ * them — `SweepInput` cannot express them, which is the strongest form the
+ * claim can take.
  */
 
 const SWEEP_MS = 300;
@@ -31,26 +33,20 @@ const frame = (name: string, x: number, y: number, kind: "html" | "term" = "html
 	cover: { hash: "0".repeat(32), widths: [200, 100, 50] },
 });
 
-const origin: Camera = { x: 0, y: 0, k: 1 };
-
 /**
  * Threads states and a fake clock through consecutive sweeps of one model.
  * Every frame reports loaded at time 0, so by the first sweep they are all long
- * past the settle a capture waits for, and the camera starts long since
- * stopped, so a sweep may borrow a frame straight away. The tests that are
- * about either wait move the camera or set the clock themselves.
+ * past the wait a capture makes for a frame to finish arriving; the test that
+ * is about that wait sets the clock itself.
  */
 function sweeper() {
 	const model = createLifecycleModel();
-	model.prevCamera = { ...origin };
-	model.lastCameraMove = -100_000;
 	let now = 0;
 	let states: Record<string, FrameState> = {};
 	const sweep = (frames: ProjectedFrame[], input: Partial<Omit<SweepInput, "frames">> = {}) => {
 		now += SWEEP_MS;
 		const result = sweepLifecycle(model, {
 			frames,
-			camera: origin,
 			entered: null,
 			frozen: null,
 			inspected: null,
@@ -82,20 +78,11 @@ describe("being on screen is not a cause", () => {
 		}
 	});
 
-	it("mounts nothing at any zoom, near or far", () => {
-		const frames = [frame("a", 450, 450), frame("b", 350, 450)];
+	it("mounts nothing for thirty covered frames, wherever they sit", () => {
+		const frames = Array.from({ length: 30 }, (_, i) => frame(`f${i}`, i * 120, i * 7));
 		const s = sweeper();
-		for (const k of [0.02, 0.16, 0.5, 1, 4]) {
-			expect(mounted(s.sweep(frames, { camera: { x: 0, y: 0, k } }).states)).toEqual([]);
-		}
-	});
-
-	it("mounts nothing while the camera pans across thirty frames", () => {
-		const frames = Array.from({ length: 30 }, (_, i) => frame(`f${i}`, i * 120, 0));
-		const s = sweeper();
-		for (let step = 0; step < 30; step++) {
-			const panning: Camera = { x: -step * 120, y: 0, k: 1 };
-			expect(mounted(s.sweep(frames, { camera: panning }).states)).toEqual([]);
+		for (let sweeps = 0; sweeps < 30; sweeps++) {
+			expect(mounted(s.sweep(frames).states)).toEqual([]);
 		}
 	});
 });
@@ -106,17 +93,7 @@ describe("you went to it", () => {
 		const s = sweeper();
 
 		expect(s.sweep(frames, { entered: "a" }).states).toEqual({ a: "live", b: "picture" });
-
-		const away = s.sweep(frames, { entered: "a", camera: { x: -10_000, y: 0, k: 1 } });
-		expect(away.states.a).toBe("live");
-	});
-
-	it("mounts the entered frame at an overview zoom, where nothing else exists as DOM", () => {
-		const frames = [frame("a", 450, 450), frame("b", 350, 450)];
-		const s = sweeper();
-		const overview: Camera = { x: 0, y: 0, k: 0.02 };
-
-		expect(s.sweep(frames, { camera: overview, entered: "a" }).states).toEqual({ a: "live", b: "picture" });
+		expect(s.sweep(frames, { entered: "a" }).states.a).toBe("live");
 	});
 
 	it("hands the frame back to its picture when you leave, and owes it a fresh one", () => {
@@ -148,7 +125,7 @@ describe("its picture is missing", () => {
 
 		// the shot lands; the frame goes straight back to being a picture, even
 		// though the cover is still on its way to disk
-		noteRefreshShot(s.model, "a", true);
+		noteErrandShot(s.model, "a", true);
 		expect(s.sweep(frames, uncovered).states.a).toBe("picture");
 	});
 
@@ -171,7 +148,7 @@ describe("its picture is missing", () => {
 		for (let tries = 0; tries < PICTURE_TRIES; tries++) {
 			s.sweep(frames, uncovered);
 			expect(s.sweep(frames, uncovered).refreshCaptures).toEqual(["a"]);
-			noteRefreshShot(s.model, "a", false);
+			noteErrandShot(s.model, "a", false);
 		}
 
 		// out of tries: a frame that cannot be photographed keeps its placeholder
@@ -187,7 +164,7 @@ describe("its picture is missing", () => {
 		for (let tries = 0; tries < PICTURE_TRIES; tries++) {
 			s.sweep(frames, uncovered);
 			s.sweep(frames, uncovered);
-			noteRefreshShot(s.model, "a", false);
+			noteErrandShot(s.model, "a", false);
 		}
 		expect(s.sweep(frames, uncovered).states.a).toBe("picture");
 
@@ -208,21 +185,56 @@ describe("its picture is wrong", () => {
 		expect(s.sweep(frames).states.a).toBe("refreshing");
 		expect(s.sweep(frames).refreshCaptures).toEqual(["a"]);
 
-		noteRefreshShot(s.model, "a", true);
+		noteErrandShot(s.model, "a", true);
 		expect(s.sweep(frames).states.a).toBe("picture");
 	});
 
-	it("keeps the old picture when the errand comes back empty-handed", () => {
-		// It has a picture. It is out of date, and out of date beats absent —
-		// the next real change asks again.
+	it("tries again when the errand comes back empty-handed, then keeps the old picture", () => {
+		// Its picture is still wrong — that is not made false by the capture
+		// meant to fix it failing. So it is worth another errand, and then a
+		// third, and then it stops: out of date beats booting forever, and the
+		// next real change asks again.
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		s.model.stale.add("a");
+
+		for (let tries = 0; tries < PICTURE_TRIES; tries++) {
+			expect(s.sweep(frames).states.a).toBe("refreshing");
+			expect(s.sweep(frames).refreshCaptures).toEqual(["a"]);
+			noteErrandShot(s.model, "a", false);
+		}
+
+		for (let i = 0; i < 5; i++) expect(s.sweep(frames).states.a).toBe("picture");
+	});
+
+	it("clears the debt outright when the picture lands", () => {
 		const frames = [frame("a", 450, 450)];
 		const s = sweeper();
 		s.model.stale.add("a");
 		s.sweep(frames);
 		expect(s.sweep(frames).refreshCaptures).toEqual(["a"]);
 
-		noteRefreshShot(s.model, "a", false);
+		noteErrandShot(s.model, "a", true);
 		for (let i = 0; i < 5; i++) expect(s.sweep(frames).states.a).toBe("picture");
+		expect(s.model.stale.has("a")).toBe(false);
+	});
+
+	it("notices a picture that goes missing again after one landed", () => {
+		// The flag that bridges "shot resolved" and "cover on disk" must not
+		// outlive the cover it was waiting for.
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		const uncovered = { hasCover: () => false };
+		s.sweep(frames, uncovered);
+		s.sweep(frames, uncovered);
+		noteErrandShot(s.model, "a", true);
+
+		// the cover lands, so the bridge retires
+		expect(s.sweep(frames).states.a).toBe("picture");
+		expect(s.model.photographed.has("a")).toBe(false);
+
+		// and if it later goes missing, the frame is owed one again
+		expect(s.sweep(frames, uncovered).states.a).toBe("refreshing");
 	});
 });
 
@@ -231,16 +243,16 @@ describe("the cap on frames borrowed at once", () => {
 		const frames = Array.from({ length: 8 }, (_, i) => frame(`f${i}`, i * 200, 0));
 		const s = sweeper();
 		const uncovered = { hasCover: () => false };
-		expect(REFRESH_JOBS_IN_FLIGHT).toBe(3);
+		expect(ERRANDS_IN_FLIGHT).toBe(3);
 
 		for (let i = 0; i < 6; i++) {
-			expect(mounted(s.sweep(frames, uncovered).states)).toHaveLength(REFRESH_JOBS_IN_FLIGHT);
+			expect(mounted(s.sweep(frames, uncovered).states)).toHaveLength(ERRANDS_IN_FLIGHT);
 		}
 
 		// one comes home, and exactly one more goes out
-		noteRefreshShot(s.model, "f0", true);
+		noteErrandShot(s.model, "f0", true);
 		const next = mounted(s.sweep(frames, uncovered).states);
-		expect(next).toHaveLength(REFRESH_JOBS_IN_FLIGHT);
+		expect(next).toHaveLength(ERRANDS_IN_FLIGHT);
 		expect(next).not.toContain("f0");
 	});
 
@@ -250,7 +262,7 @@ describe("the cap on frames borrowed at once", () => {
 		const busy = { hasCover: () => false, entered: "f0", frozen: "f1", inspected: "f2" };
 
 		for (let i = 0; i < 8; i++) {
-			expect(mounted(s.sweep(frames, busy).states)).toHaveLength(3 + REFRESH_JOBS_IN_FLIGHT);
+			expect(mounted(s.sweep(frames, busy).states)).toHaveLength(3 + ERRANDS_IN_FLIGHT);
 		}
 	});
 });
@@ -332,8 +344,8 @@ describe("what is worth photographing", () => {
 		expect(s.states().a).toBe("refreshing");
 
 		// the deadline is the only thing that can end an errand nobody can finish
-		while (s.model.errands.has("a") && s.clock() < REFRESH_ERRAND_MS * 2) s.sweep(frames, unbooted);
-		expect(s.clock()).toBeGreaterThanOrEqual(REFRESH_ERRAND_MS);
+		while (s.model.errands.has("a") && s.clock() < ERRAND_DEADLINE_MS * 2) s.sweep(frames, unbooted);
+		expect(s.clock()).toBeGreaterThanOrEqual(ERRAND_DEADLINE_MS);
 		expect(s.model.tries.get("a")).toBe(1);
 	});
 
@@ -350,28 +362,36 @@ describe("what is worth photographing", () => {
 	});
 });
 
-describe("the camera", () => {
-	it("holds errands while it moves, and lets one already out ride the gesture through", () => {
+describe("what an errand waits for", () => {
+	it("is not the camera", () => {
+		// #80 made mounting wait for a still camera, on the theory that a booting
+		// document's paint is the stutter. #94 disproved that outright and #112
+		// deleted the gate rather than reverting it: the cap is the pacing, and a
+		// capped errand is no burst. There is nothing left to wait for, and no
+		// camera in `SweepInput` to wait on.
 		const frames = [frame("a", 450, 450), frame("b", 350, 450)];
 		const s = sweeper();
 		const uncovered = { hasCover: () => false };
-		const drifting = (step: number): Camera => ({ x: -step, y: 0, k: 1 });
 
-		for (let step = 1; step <= 5; step++) {
-			expect(mounted(s.sweep(frames, { ...uncovered, camera: drifting(step) }).states)).toEqual([]);
+		expect(mounted(s.sweep(frames, uncovered).states)).toEqual(["a", "b"]);
+	});
+
+	it("is a boot somebody is waiting on", () => {
+		// A page switch puts a screenful of frames that owe pictures on screen at
+		// the moment the walk's target is booting, and an errand wants the same
+		// daemon, the same connection pool and the same compile. It is never
+		// urgent; an arrival is.
+		const frames = [frame("target", 0, 0), frame("a", 450, 450), frame("b", 350, 450)];
+		const s = sweeper();
+		const arriving = { hasCover: () => false, entered: "target", ready: new Map<string, number>() };
+
+		for (let sweeps = 0; sweeps < 4; sweeps++) {
+			expect(mounted(s.sweep(frames, arriving).states)).toEqual(["target"]);
 		}
 
-		// stopped: the camera counts as settled a couple of sweeps later, and both
-		// frames go out
-		s.sweep(frames, { ...uncovered, camera: drifting(5) });
-		s.sweep(frames, { ...uncovered, camera: drifting(5) });
-		expect(mounted(s.states())).toEqual(["a", "b"]);
-
-		// a fresh gesture does not recall an errand already out: the boot is paid
-		// for, and throwing it away would only mean paying for it again
-		for (let step = 6; step <= 9; step++) {
-			expect(mounted(s.sweep(frames, { ...uncovered, camera: drifting(step) }).states)).toEqual(["a", "b"]);
-		}
+		// the arrival lands, and the rest of the page fills itself in behind it
+		const arrived = { hasCover: () => false, entered: "target" };
+		expect(mounted(s.sweep(frames, arrived).states)).toEqual(["a", "b", "target"]);
 	});
 });
 

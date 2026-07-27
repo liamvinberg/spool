@@ -16,6 +16,12 @@ import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-
  * This is the test that says the shim may stay out of it. Nothing else in the
  * suite can: happy-dom implements neither the lock nor the throttling it
  * causes, and a claim about an engine has to be made against one.
+ *
+ * It runs in `chromium-headless-shell`, which puts the frames in the page's own
+ * renderer rather than out of process — so read it as "the lock works", not as
+ * a measurement. The size of what it buys was taken headed, by
+ * `bench/frame-cost.ts` on 24 real frames: 41.4% idle cpu live, 37.6% under the
+ * shim's cooperative freeze, and 4.1% under this lock against a 4.2% floor.
  */
 
 const ticker = `import { useEffect } from "react";

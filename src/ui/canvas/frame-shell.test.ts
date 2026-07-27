@@ -29,11 +29,11 @@ vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
  */
 
 const plan = (over: Partial<Parameters<typeof coverPlan>[0]>) =>
-	coverPlan({ state: "live", ready: false, covered: true, walk: false, ...over });
+	coverPlan({ state: "live", ready: false, entered: true, covered: true, walk: false, ...over });
 
 describe("coverPlan", () => {
 	it("covers a frame standing as its picture, no badge", () => {
-		expect(plan({ state: "picture" })).toEqual({ cover: true, image: "cover", badge: false });
+		expect(plan({ state: "picture", entered: false })).toEqual({ cover: true, image: "cover", badge: false });
 	});
 
 	it("badges the boot you asked for by going inside", () => {
@@ -41,16 +41,28 @@ describe("coverPlan", () => {
 	});
 
 	it("leaves a borrowed frame to boot behind its own still, badgeless", () => {
-		expect(plan({ state: "refreshing" })).toEqual({ cover: true, image: "cover", badge: false });
-		expect(plan({ state: "refreshing", ready: true })).toEqual({ cover: true, image: "cover", badge: false });
+		const borrowed = { state: "refreshing", entered: false } as const;
+		expect(plan(borrowed)).toEqual({ cover: true, image: "cover", badge: false });
+		expect(plan({ ...borrowed, ready: true })).toEqual({ cover: true, image: "cover", badge: false });
 	});
 
 	it("keeps a held frame behind its still: real DOM to read, a picture to look at", () => {
-		expect(plan({ state: "held", ready: true })).toEqual({ cover: true, image: "cover", badge: false });
+		expect(plan({ state: "held", entered: false, ready: true })).toEqual({
+			cover: true,
+			image: "cover",
+			badge: false,
+		});
+	});
+
+	it("keeps showing the frame you are inside while the modifier holds its time still", () => {
+		// ⌘ over an entered frame freezes it so an element can be reached, and the
+		// lifecycle calls that `held` — but you are still looking at it, and its
+		// stored still is a picture of a state you have since walked away from.
+		expect(plan({ state: "held", ready: true }).cover).toBe(false);
 	});
 
 	it("shows the placeholder for a frame with nothing to stand in for it", () => {
-		expect(plan({ state: "picture", covered: false })).toEqual({
+		expect(plan({ state: "picture", entered: false, covered: false })).toEqual({
 			cover: true,
 			image: "placeholder",
 			badge: false,
@@ -76,15 +88,16 @@ describe("coverPlan", () => {
 	});
 
 	it("never uncovers a frame you are not inside, however booted", () => {
-		expect(plan({ state: "refreshing", ready: true }).cover).toBe(true);
-		expect(plan({ state: "held", ready: true }).cover).toBe(true);
-		expect(plan({ state: "picture", ready: true }).cover).toBe(true);
+		for (const state of ["refreshing", "held", "picture"] as const) {
+			expect(plan({ state, entered: false, ready: true }).cover).toBe(true);
+		}
 	});
 
 	it("lets an unavailable terminal message override a cached image", () => {
 		expect(
 			plan({
 				state: "picture",
+				entered: false,
 				terminalCover: { kind: "never-run", message: "saving it does not create a screen" },
 			}),
 		).toEqual({
@@ -101,6 +114,7 @@ describe("FrameShell documents", () => {
 		project: "demo",
 		name: "hero",
 		ready: true,
+		entered: false,
 		interactive: false,
 		terminal: false,
 		docNonce: 0,
@@ -142,7 +156,7 @@ describe("FrameShell documents", () => {
 	});
 
 	it("shows the document only for the frame you went inside", async () => {
-		const { host, root, again } = await render({ state: "live" });
+		const { host, root, again } = await render({ state: "live", entered: true });
 		const wrapper = host.querySelector("iframe")?.parentElement;
 		expect(wrapper?.style.visibility).toBe("visible");
 
@@ -167,6 +181,17 @@ describe("FrameShell documents", () => {
 		// a borrowed frame has to run to finish arriving: hidden, never stopped
 		await again({ state: "refreshing", ready: true });
 		expect(host.querySelector("iframe")?.parentElement?.style.contentVisibility).toBe("visible");
+		act(() => root.unmount());
+	});
+
+	it("never puts a still over the frame you are inside, even while it is held", async () => {
+		// ⌘ over an entered frame freezes it so an element can be reached. Locking
+		// it would also blind it, and you would be picking against live DOM with
+		// a picture of some earlier state under the cursor.
+		const { host, root } = await render({ state: "held", entered: true, ready: true });
+		const wrapper = host.querySelector("iframe")?.parentElement;
+		expect(wrapper?.style.visibility).toBe("visible");
+		expect(wrapper?.style.contentVisibility).toBe("visible");
 		act(() => root.unmount());
 	});
 
@@ -225,6 +250,7 @@ describe("FrameShell terminal covers", () => {
 			name: "dash",
 			state: "picture" as const,
 			ready: false,
+			entered: false,
 			interactive: false,
 			terminal: true,
 			docNonce: 0,
@@ -265,6 +291,7 @@ describe("FrameShell terminal covers", () => {
 			name: "dash",
 			state: "held" as const,
 			ready: true,
+			entered: false,
 			interactive: false,
 			terminal: true,
 			docNonce: 0,

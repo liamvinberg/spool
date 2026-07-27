@@ -49,13 +49,15 @@ export interface CoverPlan {
 export function coverPlan(input: {
 	state: FrameState;
 	ready: boolean;
+	/** Whether this is the frame you went inside — looked at whether or not its time runs. */
+	entered: boolean;
 	/** Whether the frame has a cover to stand in for it at all. */
 	covered: boolean;
 	/** Whether this boot is a walk arrival — quiet, however it ends up covered. */
 	walk: boolean;
 	terminalCover?: TerminalCoverState | undefined;
 }): CoverPlan {
-	const { state, ready, covered, walk, terminalCover } = input;
+	const { state, ready, entered, covered, walk, terminalCover } = input;
 	if (terminalCover?.kind === "stale" || terminalCover?.kind === "never-run") {
 		return {
 			cover: true,
@@ -65,13 +67,14 @@ export function coverPlan(input: {
 		};
 	}
 	return {
-		cover: state !== "live" || !ready,
+		// The frame you went inside is the one document anybody looks at, and it
+		// stays that while ⌘ holds its time still.
+		cover: (state !== "live" && !entered) || !ready,
 		image: covered ? "cover" : "placeholder",
-		// `live` is the frame you went inside and nothing else, so it is the
-		// whole of "a boot somebody asked for". A borrowed frame boots out of
-		// sight, and badging those is how one arrival becomes seconds of badges
-		// rolling across the screen.
-		badge: state === "live" && !ready && !walk,
+		// Going inside is the whole of "a boot somebody asked for". A borrowed
+		// frame boots out of sight, and badging those is how one arrival becomes
+		// seconds of badges rolling across the screen.
+		badge: entered && !ready && !walk,
 	};
 }
 
@@ -80,6 +83,7 @@ export const FrameShell = memo(function FrameShell({
 	name,
 	state,
 	ready,
+	entered,
 	interactive,
 	docNonce,
 	cover,
@@ -93,6 +97,13 @@ export const FrameShell = memo(function FrameShell({
 	name: string;
 	state: FrameState;
 	ready: boolean;
+	/**
+	 * Whether this is the frame you went inside. It outlives `live`: holding the
+	 * platform modifier freezes the frame you are in so an element can be reached
+	 * without it moving, and a frame you are inside is one you are looking at
+	 * however its time is running.
+	 */
+	entered: boolean;
 	/** Whether the entered iframe currently owns pointer input. */
 	interactive: boolean;
 	/** A terminal frame: its freeze is a SIGSTOP the daemon owns, not a CSS lock. */
@@ -134,7 +145,7 @@ export const FrameShell = memo(function FrameShell({
 	// one until it boots, then fades — no white flash on entry (#8
 	// thumbnail-then-hydrate).
 	const unavailableTerminal = terminalCover?.kind === "stale" || terminalCover?.kind === "never-run";
-	const covered = unavailableTerminal || state !== "live" || !ready;
+	const covered = unavailableTerminal || (state !== "live" && !entered) || !ready;
 	const [veil, setVeil] = useState(covered);
 	useEffect(() => {
 		if (covered) {
@@ -149,7 +160,7 @@ export const FrameShell = memo(function FrameShell({
 	// the badge is already gone by the time the cover fades. A marker the parent
 	// retires while the frame is still covered — a broken boot, an edit mid-walk
 	// — brings the honest cover straight back, which is the point.
-	const plan = coverPlan({ state, ready, covered: cover !== undefined, walk: walkArrival, terminalCover });
+	const plan = coverPlan({ state, ready, entered, covered: cover !== undefined, walk: walkArrival, terminalCover });
 
 	return (
 		<>
@@ -160,14 +171,18 @@ export const FrameShell = memo(function FrameShell({
 						// Unpainted, not unmounted. Only the frame you went inside is
 						// ever looked at; a borrowed frame has to run to finish
 						// arriving, so it is hidden rather than stopped, and a held one
-						// is stopped outright below.
-						visibility: state === "live" ? "visible" : "hidden",
+						// you are not inside is stopped outright below.
+						visibility: state === "live" || entered ? "visible" : "hidden",
 						// Time stopped at engine level (#84), which is strictly more
-						// than the shim's own freeze could hold. It waits for the boot:
-						// a document locked before it ever laid out has no size to lay
-						// out into, and the rail and the Select tool would find nothing
-						// in it to read.
-						contentVisibility: state === "held" && ready ? "hidden" : "visible",
+						// than the shim's own freeze could hold. Two conditions on it.
+						// It waits for the boot, because a document locked before it
+						// ever laid out has no size to lay out into and the rail would
+						// find nothing in it to read. And it never locks the frame you
+						// are inside: the lock is also a blindfold, and freezing that
+						// one would put its old still under your cursor while you pick
+						// against the DOM behind it. ⌘ over an entered frame takes the
+						// pointer back and leaves its time running.
+						contentVisibility: state === "held" && ready && !entered ? "hidden" : "visible",
 					}}
 				>
 					<iframe
@@ -187,7 +202,7 @@ export const FrameShell = memo(function FrameShell({
 			    addresses as the cover layer below, so the two are one request: the
 			    browser caches a cover by URL, and both ask for the rung the same
 			    `sizes` selects (#111). */}
-			{state === "live" && cover !== undefined && (
+			{(state === "live" || entered) && cover !== undefined && (
 				<Thumbnail
 					project={project}
 					frame={name}

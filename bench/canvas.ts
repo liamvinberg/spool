@@ -5,10 +5,13 @@ import {
 	copyProject,
 	DEFAULT_ZOOM,
 	densestPage,
+	framesOnCanvas,
 	freePort,
+	mountedCount,
 	ms,
 	planCamera,
 	quantile,
+	quiet,
 	startDaemon,
 	VIEWPORT,
 	writeCamera,
@@ -204,30 +207,6 @@ function windowStats(state: BenchState, from: number, to: number): GestureStats 
 const now = (page: Page): Promise<number> => page.evaluate(() => performance.now());
 const read = (page: Page): Promise<BenchState> =>
 	page.evaluate(() => (globalThis as unknown as { __bench: BenchState }).__bench);
-const mountedCount = (page: Page): Promise<number> => page.evaluate(() => document.querySelectorAll("iframe").length);
-
-/** Frames the canvas is drawing, mounted or not — a settled canvas holds no documents at all (#112). */
-const framesOnCanvas = (page: Page): Promise<number> =>
-	page.evaluate(() => document.querySelectorAll("[data-frame-cover]").length);
-
-/**
- * Hold until the canvas is holding no document at all: every picture it was
- * owed has been taken, and nothing is being borrowed. That is the resting state
- * of the model (#112), and the one an entry has to be measured from — otherwise
- * the frame the double-click lands on may be one that happens to be booted
- * already, and the bar defends a case that has stopped existing.
- */
-async function quiet(page: Page, timeoutMs: number): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if ((await mountedCount(page)) === 0) return;
-		await page.waitForTimeout(250);
-	}
-	process.stderr.write(
-		"bench:   canvas still borrowing frames after 120 s — the entry below starts from a busy canvas\n",
-	);
-}
-
 /**
  * Hold until the canvas stops mounting: the count unchanged across `stableMs`.
  * Reports when it stopped changing, not when the waiting ended, so "looks
