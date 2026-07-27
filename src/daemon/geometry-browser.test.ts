@@ -112,7 +112,16 @@ it("keeps authored geometry byte-identical across idle player and canvas viewpor
 	surfaces.set(canvas, "canvas-only");
 	gestures.set(canvas, "idle");
 	await canvas.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
-	await canvas.frameLocator('iframe[title="authored"]').locator("#geometry-probe").waitFor();
+	// Go inside it. On the canvas a frame stands as its own still and holds no
+	// document unless something asks for one (#112), and the frame you went
+	// inside is the one that holds a live document through every resize below —
+	// which is the document this leg is about.
+	const authoredStill = canvas.locator('[data-frame-cover="authored"]');
+	await authoredStill.waitFor({ timeout: 30_000 });
+	const stillBox = await authoredStill.boundingBox();
+	if (stillBox === null) throw new Error("the frame's own still is not on the canvas");
+	await canvas.mouse.dblclick(stillBox.x + stillBox.width / 2, stillBox.y + Math.min(stillBox.height / 2, 200));
+	await canvas.frameLocator('iframe[title="authored"]').locator("#geometry-probe").waitFor({ timeout: 30_000 });
 	assertAuthored("canvas load at 900px");
 	for (const height of [700, 1100, 1668]) {
 		await canvas.setViewportSize({ width: 1280, height });

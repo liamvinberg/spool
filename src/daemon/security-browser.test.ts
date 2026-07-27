@@ -211,11 +211,12 @@ export default function Hostile() {
 }
 
 async function childFrame(page: Page, selector: string): Promise<Frame> {
-	// A walk arrival replaces its target's document (#28) and a moving camera
-	// swaps a frame for its still (#80): both mean the element found a moment
-	// ago can be between documents. Ask again rather than read a stale handle.
+	// A walk arrival replaces its target's document (#28), so the element found
+	// a moment ago can be between documents: ask again rather than read a stale
+	// handle. Attached, not visible — the only document the canvas ever shows is
+	// the one you went inside (#112).
 	for (let attempt = 0; ; attempt++) {
-		const element = await page.waitForSelector(selector);
+		const element = await page.waitForSelector(selector, { state: "attached" });
 		const frame = await element.contentFrame();
 		if (frame !== null) return frame;
 		if (attempt >= 20) throw new Error(`${selector} has no content frame`);
@@ -335,7 +336,7 @@ describe("hostile project browser boundary", () => {
 		await canvasFrame.locator("#walk").click();
 		const nextLabel = canvasPage.locator('[data-frame-label="next"]');
 		await expect.poll(() => nextLabel.innerText()).toContain("live");
-		await canvasPage.frameLocator('iframe[title="next"]').locator("#next").waitFor();
+		await canvasPage.frameLocator('iframe[title="next"]').locator("#next").waitFor({ state: "attached" });
 
 		const playPage = await context.newPage();
 		await playPage.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=hostile`);

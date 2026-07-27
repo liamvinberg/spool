@@ -26,21 +26,23 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Portal**: The chip drawn where a link leaves the active page — no arrow can reach the target, so the marker names it and its page, and activating it jumps there.
 
-**Select**: The default and only pointer tool: a click takes the frame to arrange it, a double-click enters it, and holding the platform modifier takes the element under the cursor instead. Selecting into one frame freezes that frame in place; the rest keep their normal lifecycle. _Avoid_: interact
+**Select**: The default and only pointer tool: a click takes the frame to arrange it, a double-click enters it, and holding the platform modifier takes the element under the cursor instead. Selecting into one frame holds that frame with its time stopped; the rest keep their normal lifecycle. _Avoid_: interact
 
 **Hand**: The canvas tool for panning with a primary-button drag; holding Space borrows it temporarily.
 
 **Entered**: The state of a frame after a double-click: pointer and keyboard input belong to its app, and walks happen in place. Esc leaves an html frame. A terminal frame currently has no TUI keyboard session because it renders a static disabled surface; the platform modifier + Esc still leaves it. Holding the platform modifier freezes the entered frame and hands the pointer back so an element can be reached. _Avoid_: focused, interact
 
-**Still**: The stored picture of a frame, taken by the frame itself once it has finished arriving — its own fonts, its content settled. It stands in for a frame that is not mounted, covers a boot, and replaces every mounted document while the camera zooms, which is what keeps a zoom off forty live documents at once. A still is a placeholder, not an artifact: it stands in up to 100% zoom, and past 100% you go inside rather than look closer. _Avoid_: screenshot, snapshot
+**Still**: The stored picture of a frame, taken by the frame itself once it has finished arriving — its own fonts, its content settled. It is what the canvas draws for every frame but the one you went inside, at every zoom, and it covers that one until it boots. A still is a placeholder, not an artifact: it stands in up to 100% zoom, and past 100% you go inside rather than look closer. _Avoid_: screenshot, snapshot
 
 **Ladder**: What a still is stored as: several **rungs** of one picture, the top at the frame's long edge doubled and each below it half the one above, addressed together by one hash of their content. The frame's geometry sets the sizes, never the display that photographed it. The canvas names the rung a zoom asks for, because only the canvas can see the camera. A short ladder is a normal cover — the headless fallback can only make its bottom rung. _Avoid_: variant, size, resolution
 
-**Hibernated**: A frame demoted to its still because the warm pool overflowed; it boots fresh on return. Hibernation's payoff is memory, never CPU. _Avoid_: paused
+**Picture**: The resting state of every frame but the one you went inside: its still on screen and no document behind it, at any zoom, for as long as nothing asks for one. _Avoid_: hibernated, unmounted, cold
 
-**Warm pool**: The bounded set of offscreen frames kept mounted with time frozen; overflowing it, oldest-seen first, is the only path into hibernation. The frozen frame and the one an open inspector rail reads are current intent and never overflow. _Avoid_: cache
+**Caused mounting**: Why a frame holds a document at all, and the only three reasons: you went inside it, its picture is missing, or its picture is wrong. Being on screen is not one, so panning mounts nothing and the document count is flat in frame count and in zoom — one typically, six at worst. Intent holds a document too, one frame at a time: the frozen selection target and the frame an open inspector rail reads. _Avoid_: warm pool, wake queue, hibernation
 
-**Wake queue**: The single ordered path a frame takes into the DOM, drained a few mounts per sweep — an entered frame starts immediately, then the frozen selection target and the frame the inspector rail reads, then visible frames nearest the viewport center. Zoom and page-entry bursts drain through it.
+**Errand**: The canvas borrowing a frame to photograph it — mount out of sight behind its own still, run, capture, hand the document back. Three at once at most, and that count is the whole of the pacing. _Avoid_: refresh queue, job
+
+**Held**: A frame mounted with its own time stopped, so the Select tool and the inspector rail have real DOM to read. Frozen by `content-visibility: hidden` at engine level, which suspends the nested document's frames, style, layout and paint; a terminal's freeze is a SIGSTOP on its real process instead, which no CSS can reach. _Avoid_: warm, paused
 
 **Inspector rail**: The right rail reading the selected frame, closed by default and summoned only from the header pill. Two tabs: `elements` (the frame's named rows) and `connections` (its whole outbound list). Sticky both ways — selection never opens or closes it. _Avoid_: panel, properties
 

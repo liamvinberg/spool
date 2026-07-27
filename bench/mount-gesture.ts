@@ -1,5 +1,5 @@
-import { writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { type Browser, type BrowserContext, chromium, type Page } from "playwright-core";
 import {
 	copyProject,
@@ -15,34 +15,32 @@ import {
 } from "./harness.ts";
 
 /**
- * The mount-during-gesture benchmark (#94). #87 deletes the #80 gate that made
- * mounting wait for a camera held byte-identical between sweeps, on the claim
- * that a frame mounting while the camera moves costs the gesture nothing. #82
- * never tested that: it panned a canvas whose frames were already mounted. This
- * measures the untested case, and the parent-side work the claim does not
- * cover — the React commit that inserts an iframe, the layout it forces, and a
- * new compositor surface arriving mid-gesture.
+ * The mount-during-gesture benchmark (#94, #112). Mounting a document while the
+ * camera moves is claimed to cost the gesture nothing; #82 never tested it,
+ * because it panned a canvas whose frames were already mounted. This measures
+ * the untested case, and the parent-side work the claim does not cover — the
+ * React commit that inserts an iframe, the layout it forces, a new compositor
+ * surface arriving mid-gesture, and the discard at the other end.
  *
- * Three arms, because "mounting" means two different things either side of #87:
+ * Three arms, and the first of them is the one #112 was waiting for:
  *
- *   mount   frames mounting through the canvas's own React tree while the
- *           camera moves. Zoom in across K_MIN_MOUNT so a whole screen of
- *           frames becomes mountable inside the gesture, then pan while the
- *           queue is still draining. Independent variable: admissions per
- *           sweep. This arm also runs the stock gate as a null control: zero
- *           inserts in window is the proof the gate is real and that the
- *           instrument can tell the difference.
+ *   canvas  the canvas's own refresh errands, through its own React tree, while
+ *           the camera moves. The subject is copied without its stills, so
+ *           every frame on the page owes a picture and the canvas borrows them
+ *           three at a time for the whole run: real inserts, real commits, real
+ *           discards, in the realm that pays for them. Independent variable:
+ *           the in-flight cap.
  *
- *           It needs a hook this repo does not carry. `sweepLifecycle` has to
- *           read `globalThis.__spoolBench` — `{ gate, admit }`, gate false
- *           deleting the #80 camera gate and admit <= 0 meaning unbounded —
- *           and the UI has to be rebuilt with it. Without the hook the arm
- *           throws rather than reporting a null run as a pass.
- *   jobs    #87's actual model: refresh jobs in flight behind the pictures
- *           while the camera moves over a settled canvas. Nothing enters the
- *           screen; documents boot, are photographed and are discarded out of
- *           sight. Independent variable: the in-flight cap, which is what #87
- *           says paces mounting. Needs no patched build.
+ *           It needs one hook the shipped canvas would not otherwise carry.
+ *           `sweepLifecycle` reads `globalThis.__spoolBench` — `{ errands }`,
+ *           the in-flight cap, unbounded at 0 or below — and the UI has to be
+ *           rebuilt with it. Without the hook the arm throws rather than
+ *           reporting a null run as a pass.
+ *   jobs    the same pressure staged by hand: documents inserted into a fixed
+ *           overlay above the transforming canvas rather than through React.
+ *           This is the weaker arm and is kept only to be compared against the
+ *           first — #94 rested its churn finding on it, and it produced no
+ *           stable number across four runs.
  *   cost    one refresh job priced leg by leg — insert, loaded report,
  *           photograph, discard — so the cap has a duration behind it.
  *
@@ -61,7 +59,7 @@ import {
  */
 
 /** A cap of 0 on the command line means unbounded. */
-type Arm = "mount" | "jobs" | "cost";
+type Arm = "canvas" | "jobs" | "cost";
 
 interface Options {
 	project: string;
@@ -71,24 +69,18 @@ interface Options {
 	/**
 	 * Chromium's CPU throttling rate, applied to the canvas page and to every
 	 * frame by name — #82's pressure axis. A cost that only appears on a slow
-	 * machine is still a cost, and #87 deletes the gate for every machine.
+	 * machine is still a cost, and the model ships to every machine.
 	 */
 	throttle: number;
-	/** Below K_MIN_MOUNT: the canvas mounts nothing at all, so the zoom-in is the whole burst. */
-	zoomLow: number;
 	out: string | undefined;
 }
 
 function parseArgs(argv: string[]): Options {
 	let project = "";
 	let caps = [1, 3, 8, 0];
-	let arms: Arm[] = ["mount", "jobs", "cost"];
+	let arms: Arm[] = ["canvas", "jobs", "cost"];
 	let headed = false;
 	let throttle = 1;
-	// just under K_MIN_MOUNT: the canvas mounts nothing here, and three wheel
-	// events of the zoom-in are enough to cross it, so the rest of the gesture
-	// runs with mounting in flight rather than ending as it starts
-	let zoomLow = 0.145;
 	let out: string | undefined;
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
@@ -105,9 +97,6 @@ function parseArgs(argv: string[]): Options {
 		} else if (arg === "--throttle" && next !== undefined) {
 			throttle = Number(next);
 			i++;
-		} else if (arg === "--zoom-low" && next !== undefined) {
-			zoomLow = Number(next);
-			i++;
 		} else if (arg === "--out" && next !== undefined) {
 			out = resolve(next);
 			i++;
@@ -123,11 +112,10 @@ function parseArgs(argv: string[]): Options {
 	if (caps.some((cap) => !Number.isInteger(cap) || cap < 0))
 		throw new Error("--caps takes integers >= 0 (0 = unbounded)");
 	for (const arm of arms) {
-		if (arm !== "mount" && arm !== "jobs" && arm !== "cost") throw new Error(`unknown arm ${arm}`);
+		if (arm !== "canvas" && arm !== "jobs" && arm !== "cost") throw new Error(`unknown arm ${arm}`);
 	}
 	if (!Number.isFinite(throttle) || throttle < 1) throw new Error("--throttle takes a rate >= 1");
-	if (!Number.isFinite(zoomLow) || zoomLow <= 0) throw new Error("--zoom-low takes a positive scale");
-	return { project, caps, arms, headed, throttle, zoomLow, out };
+	return { project, caps, arms, headed, throttle, out };
 }
 
 interface Sample {
@@ -545,6 +533,9 @@ const now = (page: Page): Promise<number> => page.evaluate(() => performance.now
 const read = (page: Page): Promise<BenchState> =>
 	page.evaluate(() => (globalThis as unknown as { __bench: BenchState }).__bench);
 const mountedCount = (page: Page): Promise<number> => page.evaluate(() => document.querySelectorAll("iframe").length);
+/** Frames the canvas is drawing, mounted or not — a settled canvas holds no documents at all (#112). */
+const framesOnCanvas = (page: Page): Promise<number> =>
+	page.evaluate(() => document.querySelectorAll("[data-frame-cover]").length);
 
 async function settle(page: Page, stableMs: number, timeoutMs: number): Promise<number> {
 	const deadline = Date.now() + timeoutMs;
@@ -631,7 +622,7 @@ function refreshInterval(state: BenchState): number {
 }
 
 interface OpenOptions {
-	hooks: { gate: boolean; admit: number } | null;
+	hooks: { errands: number } | null;
 	captureIdle: number;
 	throttle: number;
 }
@@ -688,28 +679,33 @@ async function open(
 }
 
 /**
- * Frames mounting through the canvas's own React tree while the camera moves.
+ * The canvas's own refresh errands, through its own React tree, while the camera
+ * moves.
  *
- * The canvas opens below K_MIN_MOUNT, where it mounts nothing at all, so the
- * hot zoom is the whole burst: one gesture takes a screen of frames from "not
- * worth a renderer" to "mountable", and the admission size decides how much of
- * that lands per sweep. The pan that follows overlaps whatever is left
- * draining. Both are then repeated against the settled canvas as the control.
+ * The subject arrives without its stills, so every frame on the page owes a
+ * picture and the canvas keeps `cap` of them borrowed for the whole run: a
+ * document inserted, booted, photographed and discarded, over and over, in the
+ * realm that pays for it. That is the arm #94 could not build, and the one its
+ * churn finding needed — the overlay arm below stages the same pressure by
+ * hand, outside React, and produced no stable number.
+ *
+ * Both gestures then run again over the same canvas once every frame has its
+ * picture and nothing is borrowed any more. That is the control, and the
+ * hot-minus-quiet delta is the answer.
  */
-async function mountArm(
+async function canvasArm(
 	browser: Browser,
 	url: string,
 	resetCamera: () => void,
-	admit: number,
-	gate: boolean,
+	cap: number,
 	rate: number,
 ): Promise<ArmRow> {
 	resetCamera();
-	const label = gate ? "gate intact (stock, null control)" : admit > 0 ? `${admit} per sweep` : "unbounded";
-	const { context, page } = await open(browser, url, { hooks: { gate, admit }, captureIdle: 0, throttle: rate });
-	// below K_MIN_MOUNT the canvas mounts nothing, so this settles at zero by
-	// design — the one place in these benchmarks where an empty canvas is right
-	await settle(page, 800, 20_000);
+	const label = cap > 0 ? `${cap} borrowed at once` : "unbounded";
+	const { context, page } = await open(browser, url, { hooks: { errands: cap }, captureIdle: 0, throttle: rate });
+	// errands start once the camera holds still, and keep coming while any frame
+	// on the page is still owed a picture
+	await page.waitForFunction(() => document.querySelectorAll("iframe").length > 0, undefined, { timeout: 60_000 });
 	const before = await mountedCount(page);
 	const state0 = await read(page);
 	const refreshMs = refreshInterval(state0);
@@ -718,13 +714,12 @@ async function mountArm(
 	const cx = Math.round(size.width / 2);
 	const cy = Math.round(size.height / 2);
 
-	const hotZoomWindow = await zoom(page, cx, cy, false);
+	const hotZoomWindow = await zoom(page, cx, cy, true);
 	const hotPanWindow = await pan(page, cx, cy);
-	const mountedAfter = await settle(page, 800, 40_000);
-	// the frames that arrived during the gesture were throttled as they attached;
-	// this catches any whose process was not ready in time for that
-	await throttleEveryFrame(context, page, rate);
 
+	// every frame photographed, nothing borrowed: the canvas at rest
+	const mountedAfter = await settle(page, 2000, 180_000);
+	await throttleEveryFrame(context, page, rate);
 	const quietZoomWindow = await zoom(page, cx, cy, true);
 	await page.waitForTimeout(600);
 	const quietPanWindow = await pan(page, cx, cy);
@@ -733,22 +728,21 @@ async function mountArm(
 	await context.close();
 	const hotZoom = windowStats(state, hotZoomWindow.from, hotZoomWindow.to);
 	const hotPan = windowStats(state, hotPanWindow.from, hotPanWindow.to);
-	// The gate-deleted rows are the whole measurement, and with no #94 hook in
-	// `sweepLifecycle` they quietly become the null control — a gesture over a
-	// canvas that mounted nothing, which reads as "mounting is free" for the one
-	// reason that proves nothing. This map has already shipped that mistake twice.
-	if (!gate && hotZoom.inserts === 0 && hotPan.inserts === 0) {
+	// A gesture over a canvas that borrowed nothing reads as "mounting is free"
+	// for the one reason that proves nothing. This map has shipped that mistake
+	// twice; the arm says so out loud rather than reporting a null run as a pass.
+	if (hotZoom.inserts === 0 && hotPan.inserts === 0) {
 		throw new Error(
-			"no frame mounted inside either hot gesture with the gate supposedly deleted — the #94 hook is missing from the built UI, so this row would report a null run as a pass",
+			"no frame was borrowed inside either hot gesture — either the subject arrived with its stills or the #112 hook is missing from the built UI, and this row would report a null run as a pass",
 		);
 	}
 	process.stderr.write(
-		`bench:   mount/${label}: ${before} mounted before, ${mountedAfter} after; zoom ${hotZoom.inserts} inserts over ${ms(
-			hotZoom.wallMs,
-		)} ms, pan ${hotPan.inserts} over ${ms(hotPan.wallMs)} ms\n`,
+		`bench:   canvas/${label}: ${before} borrowed at the start, ${mountedAfter} once every picture is taken; zoom ${
+			hotZoom.inserts
+		} inserts over ${ms(hotZoom.wallMs)} ms, pan ${hotPan.inserts} over ${ms(hotPan.wallMs)} ms\n`,
 	);
 	return {
-		arm: "mount",
+		arm: "canvas",
 		label,
 		rate,
 		refreshMs,
@@ -763,11 +757,11 @@ async function mountArm(
 }
 
 /**
- * #87's model: refresh jobs in flight behind the pictures while the camera
- * moves. Nothing enters the screen and nothing the canvas shows changes — the
- * documents boot, photograph themselves and are discarded under an opaque lid.
- * The independent variable is the in-flight cap, which is the thing #87 says
- * paces mounting.
+ * The same pressure staged by hand: documents inserted into a fixed overlay
+ * above the transforming canvas, booted, photographed and discarded under an
+ * opaque lid, while the camera moves. Nothing the canvas shows changes. Kept
+ * only to be read against the arm above — this is the path #94 measured, it is
+ * not the canvas's own, and it never produced a stable number.
  */
 async function jobsArm(
 	browser: Browser,
@@ -784,10 +778,13 @@ async function jobsArm(
 		discard ? "" : ", kept not discarded"
 	}`;
 	const { context, page } = await open(browser, url, { hooks: null, captureIdle: 0, throttle: rate });
+	// A settled canvas holds no documents at all now, so the thing to insist on
+	// is that it is drawing frames: a run over an empty page would report a
+	// perfectly smooth gesture over nothing.
 	const mountedAfter = await settle(page, 1000, 40_000);
-	if (mountedAfter === 0) {
+	if ((await framesOnCanvas(page)) === 0) {
 		await context.close();
-		throw new Error("the canvas settled with no documents mounted — this run would measure an empty screen");
+		throw new Error("the canvas settled with no frames on screen — this run would measure an empty screen");
 	}
 	await throttleEveryFrame(context, page, rate);
 	const state0 = await read(page);
@@ -868,10 +865,10 @@ async function costArm(
 ): Promise<CostRow> {
 	resetCamera();
 	const { context, page } = await open(browser, url, { hooks: null, captureIdle: 0, throttle: rate });
-	const mounted = await settle(page, 1000, 40_000);
-	if (mounted === 0) {
+	await settle(page, 1000, 40_000);
+	if ((await framesOnCanvas(page)) === 0) {
 		await context.close();
-		throw new Error("the canvas settled with no documents mounted — this run would price a job on an empty screen");
+		throw new Error("the canvas settled with no frames on screen — this run would price a job on an empty screen");
 	}
 	await throttleEveryFrame(context, page, rate);
 	const legs: JobLeg[] = [];
@@ -975,7 +972,6 @@ async function main(): Promise<void> {
 			throw new Error(`frame documents are not where this benchmark thinks: ${probe.url} → ${response.status}`);
 	}
 
-	const low = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, options.zoomLow);
 	const readable = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, 0.16);
 	process.stderr.write(
 		`bench: ${url} (copy of ${options.project}, page "${canvasPage === "" ? "root" : canvasPage}", ${
@@ -1005,12 +1001,6 @@ async function main(): Promise<void> {
 		await new Promise((wait) => setTimeout(wait, 1500));
 
 		const rate = options.throttle;
-		if (options.arms.includes("mount")) {
-			process.stderr.write("bench: arm mount — frames mounting through React while the camera moves\n");
-			const resetLow = (): void => writeCamera(root, low, canvasPage);
-			rows.push(await mountArm(browser, url, resetLow, 3, true, rate));
-			for (const cap of options.caps) rows.push(await mountArm(browser, url, resetLow, cap, false, rate));
-		}
 		const resetReadable = (): void => writeCamera(root, readable, canvasPage);
 		if (options.arms.includes("jobs")) {
 			process.stderr.write("bench: arm jobs — refresh jobs in flight behind the pictures\n");
@@ -1037,6 +1027,14 @@ async function main(): Promise<void> {
 			costs.push(await costArm(browser, url, resetReadable, sample, 0, false, rate));
 			costs.push(await costArm(browser, url, resetReadable, sample, 0, true, rate));
 			costs.push(await costArm(browser, url, resetReadable, sample, 900, true, rate));
+		}
+		// Last, and it has to be: every frame owes a picture only if it has none,
+		// so this arm takes the subject's stills away — and every arm above stands
+		// on them.
+		if (options.arms.includes("canvas")) {
+			process.stderr.write("bench: arm canvas — the canvas's own errands through React while the camera moves\n");
+			rmSync(join(root, "design", ".spool", "thumbs"), { recursive: true, force: true });
+			for (const cap of options.caps) rows.push(await canvasArm(browser, url, resetReadable, cap, rate));
 		}
 	} finally {
 		await browser?.close();

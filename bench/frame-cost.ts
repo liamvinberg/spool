@@ -40,9 +40,13 @@ import { copyProject, densestPage, type FrameBox, freePort, ms, quantile, startD
  * Run it with node's own type stripping, not tsx — see bench/harness.ts.
  */
 
-/** The zoom bench/canvas.ts measures at: just above lifecycle's K_MIN_MOUNT. */
+/** The readable zoom bench/canvas.ts measures at. */
 const ZOOM = 0.16;
-/** lifecycle.ts's WARM_POOL_CAP — the count whose price this ticket is about. */
+/**
+ * The warm pool's cap, as it stood when this benchmark priced it. #112 deleted
+ * the pool on the strength of these numbers; the count stays here as the size of
+ * the thing that was being held, so a later run can say what came back.
+ */
 const POOL_CAP = 24;
 /** How long each configuration sits untouched while its idle cost is sampled. */
 const IDLE_MS = 6000;

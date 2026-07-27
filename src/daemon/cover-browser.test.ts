@@ -101,11 +101,12 @@ it("takes the rung the zoom asks for, at the ratio the display has", { timeout: 
 
 	/**
 	 * The frame's own cover on the canvas: the still that stands in for the
-	 * document, which sits directly after its iframe. Named this precisely because
-	 * the shell shows home for a moment on the way here, and a home card's cover
-	 * of the same frame carries the same alt text and a slot width of its own.
+	 * document, and with #112 the only thing on the canvas that ever draws this
+	 * frame. Named by the shell's own cover layer because the shell shows home for
+	 * a moment on the way here, and a home card's cover of the same frame carries
+	 * the same alt text and a slot width of its own.
 	 */
-	const cover = (page: Page) => page.locator('iframe[title="covered"] + img');
+	const cover = (page: Page) => page.locator('[data-frame-cover="covered"] img');
 	const resolved = (page: Page) =>
 		cover(page).evaluate((element) => Number((element as HTMLImageElement).currentSrc.split("/").pop()));
 
@@ -116,8 +117,6 @@ it("takes the rung the zoom asks for, at the ratio the display has", { timeout: 
 		onTestFinished(() => context.close());
 		const page = await context.newPage();
 		await page.goto(canvas);
-		// attached, not visible: the still waits behind the live document, unpainted,
-		// so that a zoom only has to flip it — see FrameShell
 		await cover(page).waitFor({ state: "attached", timeout: 30_000 });
 		return { page, close: () => context.close() };
 	};

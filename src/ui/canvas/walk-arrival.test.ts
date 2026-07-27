@@ -17,7 +17,10 @@ import { ProjectCanvas } from "./canvas";
 const COVER = { hash: "b".repeat(32), widths: [200, 100, 50] };
 const frames = [
 	{ name: "origin", x: 0, y: 0, w: 100, h: 100, kind: "html", cover: COVER },
-	{ name: "right", x: 180, y: 0, w: 100, h: 100, kind: "html", cover: COVER },
+	// no cover, so the canvas borrows it to make one: the only way a frame you
+	// are not inside holds a document at all (#112), and the mounted, booted
+	// target this test is about
+	{ name: "right", x: 180, y: 0, w: 100, h: 100, kind: "html" },
 ];
 
 describe("walk arrival", () => {
@@ -49,8 +52,8 @@ describe("walk arrival", () => {
 			return 1;
 		});
 		vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
-		// happy-dom lays nothing out, and the mount sweep reads the viewport's own
-		// box: a zero-sized viewport puts no frame on screen, so none ever mounts
+		// happy-dom lays nothing out, and the canvas reads the viewport's own box
+		// for its camera fit
 		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
 		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
 
@@ -68,7 +71,8 @@ describe("walk arrival", () => {
 			root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} }));
 		});
 		// the target has to be mounted before the walk: an unmounted one answers no
-		// capture at all, and the dear case is the one that would have answered
+		// capture at all, and the dear case is the one that would have answered.
+		// A borrowed frame is that case — it has a document and it has booted.
 		await until(() => host.querySelector('iframe[title="right"]') !== null);
 
 		const canvas = host.querySelector<HTMLElement>('[role="application"]');

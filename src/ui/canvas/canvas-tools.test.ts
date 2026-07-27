@@ -129,44 +129,23 @@ it("freezes an entered frame in place while Command is held and thaws it back in
 	await enterHome(canvas);
 	await until(() => host.querySelector('iframe[title="home"]') !== null);
 	const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
-	expect(iframe?.contentWindow).not.toBeNull();
-	const postMessage = vi.spyOn(iframe?.contentWindow as Window, "postMessage");
-	postMessage.mockClear();
+	await reportLoaded(iframe);
+	// the wrapper carries the lock; the engine reads it through the iframe (#84)
+	const wrapper = () => host.querySelector<HTMLIFrameElement>('iframe[title="home"]')?.parentElement;
 
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
 	});
-	await until(() =>
-		postMessage.mock.calls.some(
-			([message]) =>
-				typeof message === "object" &&
-				message !== null &&
-				"spool" in message &&
-				message.spool === "freeze" &&
-				"on" in message &&
-				message.on === true,
-		),
-	);
+	await until(() => wrapper()?.style.contentVisibility === "hidden");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("esc exits");
 	// ⌘ takes the pointer back off the frame so an element can be reached
 	expect(iframe?.style.pointerEvents).toBe("none");
 
-	postMessage.mockClear();
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
 	});
-	await until(() =>
-		postMessage.mock.calls.some(
-			([message]) =>
-				typeof message === "object" &&
-				message !== null &&
-				"spool" in message &&
-				message.spool === "freeze" &&
-				"on" in message &&
-				message.on === false,
-		),
-	);
+	await until(() => wrapper()?.style.contentVisibility === "visible");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("esc exits");
 	expect(iframe?.style.pointerEvents).toBe("auto");
@@ -445,8 +424,8 @@ it("freezes on a focused frame's relayed Command key and thaws that same documen
 	await enterHome(canvas);
 	await until(() => host.querySelector('iframe[title="home"]') !== null);
 	const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
-	const postMessage = vi.spyOn(iframe?.contentWindow as Window, "postMessage");
-	postMessage.mockClear();
+	await reportLoaded(iframe);
+	const wrapper = () => host.querySelector<HTMLIFrameElement>('iframe[title="home"]')?.parentElement;
 
 	await act(async () => {
 		window.dispatchEvent(
@@ -456,21 +435,10 @@ it("freezes on a focused frame's relayed Command key and thaws that same documen
 			}),
 		);
 	});
-	await until(() =>
-		postMessage.mock.calls.some(
-			([message]) =>
-				typeof message === "object" &&
-				message !== null &&
-				"spool" in message &&
-				message.spool === "freeze" &&
-				"on" in message &&
-				message.on === true,
-		),
-	);
+	await until(() => wrapper()?.style.contentVisibility === "hidden");
 	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 
-	postMessage.mockClear();
 	await act(async () => {
 		window.dispatchEvent(
 			new MessageEvent("message", {
@@ -479,19 +447,8 @@ it("freezes on a focused frame's relayed Command key and thaws that same documen
 			}),
 		);
 	});
-	await until(() =>
-		postMessage.mock.calls.some(
-			([message]) =>
-				typeof message === "object" &&
-				message !== null &&
-				"spool" in message &&
-				message.spool === "freeze" &&
-				"on" in message &&
-				message.on === false,
-		),
-	);
+	await until(() => wrapper()?.style.contentVisibility === "visible");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
-	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
 });
 
 it("asks the frame for the element under a ⌘-click, and for nothing under a bare one", async () => {
@@ -615,6 +572,18 @@ function stubCanvasApis(): void {
 	);
 	vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation(() => 1);
 	vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+}
+
+/** The frame's own boot report — happy-dom loads no document, so the test is the frame. */
+async function reportLoaded(iframe: HTMLIFrameElement | null): Promise<void> {
+	await act(async () => {
+		window.dispatchEvent(
+			new MessageEvent("message", {
+				data: { spool: "loaded", frame: iframe?.title },
+				source: iframe?.contentWindow ?? null,
+			}),
+		);
+	});
 }
 
 async function until(done: () => boolean): Promise<void> {

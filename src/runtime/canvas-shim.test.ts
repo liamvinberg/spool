@@ -1,14 +1,15 @@
 // @vitest-environment happy-dom
 
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { makeApp, makeProject, makeTempDir, writeFrame } from "../test-helpers";
 
 /**
  * The canvas shim rides every served frame document as a classic script so it
- * wraps timers before any module evaluates (#8: warm = real DOM with time
- * stopped inside). Here the served shim is extracted from a real document and
- * run in the happy-dom realm — freeze semantics are behavior, not text.
+ * holds native references before any module evaluates. It does not stop time:
+ * a held frame is frozen by `content-visibility: hidden` on the canvas side
+ * (#112), at engine level. Here the served shim is extracted from a real
+ * document and run in the happy-dom realm — its answers are behavior, not text.
  */
 
 const frameTsx = `export default function Frame() {
@@ -70,7 +71,7 @@ function nextReply(kind: string): Promise<unknown> {
 
 const nextPicked = () => nextReply("picked");
 
-describe("the freeze shim", () => {
+describe("the canvas shim", () => {
 	it("relays Meta hold changes without claiming the frame's own shortcuts", async () => {
 		const shim = await servedShim();
 		const posted: unknown[] = [];
@@ -203,22 +204,6 @@ describe("the freeze shim", () => {
 		}
 	});
 
-	it("holds rAF callbacks while frozen and releases them on thaw", async () => {
-		const shim = await servedShim();
-		runShim(shim);
-
-		const ran: string[] = [];
-		window.postMessage({ spool: "freeze", on: true }, "*");
-		await vi.waitFor(() => {
-			// the message listener is async; freezing is observable once rAF stops scheduling
-			window.requestAnimationFrame(() => ran.push("frozen"));
-			expect(ran).toEqual([]);
-		});
-
-		window.postMessage({ spool: "freeze", on: false }, "*");
-		await vi.waitFor(() => expect(ran).toContain("frozen"));
-	});
-
 	it("answers a pick with the ancestry down to the element at the point", async () => {
 		const shim = await servedShim();
 		runShim(shim);
@@ -336,24 +321,17 @@ describe("the freeze shim", () => {
 		expect(reply.chains[1]).toEqual([]);
 	});
 
-	it("skips setInterval ticks while frozen", async () => {
+	it("leaves the frame's own timers and frames alone", async () => {
+		// The shim used to wrap rAF and setInterval to hold a frozen frame still.
+		// The engine does that now, without the frame's cooperation and without a
+		// cross-origin condition (#84), so wrapping them would only be a second
+		// mechanism to keep in step with the first.
 		const shim = await servedShim();
+		const nativeRaf = window.requestAnimationFrame;
+		const nativeInterval = window.setInterval;
 		runShim(shim);
 
-		let ticks = 0;
-		const interval = window.setInterval(() => {
-			ticks++;
-		}, 5);
-		await vi.waitFor(() => expect(ticks).toBeGreaterThan(0));
-
-		window.postMessage({ spool: "freeze", on: true }, "*");
-		await new Promise((resolve) => setTimeout(resolve, 30));
-		const frozenAt = ticks;
-		await new Promise((resolve) => setTimeout(resolve, 40));
-		expect(ticks).toBe(frozenAt);
-
-		window.postMessage({ spool: "freeze", on: false }, "*");
-		await vi.waitFor(() => expect(ticks).toBeGreaterThan(frozenAt));
-		window.clearInterval(interval);
+		expect(window.requestAnimationFrame).toBe(nativeRaf);
+		expect(window.setInterval).toBe(nativeInterval);
 	});
 });
