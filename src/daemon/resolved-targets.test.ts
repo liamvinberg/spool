@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
-import { type Flows, frameSourceHash } from "./flows";
+import { createFlowGraph, type Flows, frameSourceHash } from "./flows";
 import { createResolvePass } from "./resolve-pass";
 import { projectScenarios, type RenderedTarget } from "./resolved-targets";
 
@@ -165,6 +165,9 @@ describe("a render fills a dark target", () => {
 });
 
 describe("the pass", () => {
+	// the pass reads the source half from the graph the daemon keeps, as it does
+	// in the daemon — one store across a describe, so repeat runs hit the cache
+	const { sources } = createFlowGraph();
 	const frames = [
 		{ name: "index", width: 390, height: 844 },
 		{ name: "one", width: 390, height: 844 },
@@ -181,6 +184,7 @@ describe("the pass", () => {
 				urls.push(target.url);
 				return [{ target: "one", path: "shared/ui/rows.tsx", line: 3, col: 3 }];
 			},
+			sources,
 			moved: () => {},
 			now: () => "2026-07-25T00:00:00.000Z",
 		});
@@ -200,6 +204,7 @@ describe("the pass", () => {
 		const moved: string[] = [];
 		const pass = createResolvePass({
 			read: async () => [{ target: "one", path: "shared/ui/rows.tsx", line: 3, col: 3 }],
+			sources,
 			moved: (at) => moved.push(at),
 			now: () => "2026-07-25T00:00:00.000Z",
 		});
@@ -216,6 +221,7 @@ describe("the pass", () => {
 		const { root, name, app } = seedProject();
 		const pass = createResolvePass({
 			read: async () => undefined,
+			sources,
 			moved: () => {},
 			now: () => "2026-07-25T00:00:00.000Z",
 		});
@@ -233,6 +239,7 @@ describe("the pass", () => {
 		writeCache(root, "deleted-frame", [{ target: "one", path: "shared/ui/rows.tsx", line: 3, col: 3 }]);
 		const pass = createResolvePass({
 			read: async () => [{ target: "one", path: "shared/ui/rows.tsx", line: 3, col: 3 }],
+			sources,
 			moved: () => {},
 			now: () => "2026-07-25T00:00:00.000Z",
 		});

@@ -71,6 +71,16 @@ export function frameKind(frameDir: string, designDir: string): FrameKind | "con
 		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;
 	}
+	return entryKind(directory);
+}
+
+/**
+ * The kind marker inside a folder already known to sit in design/. Callers that
+ * built the path from a resolved parent and a `readdirSync` entry that reports
+ * itself a directory — a symlink never does — have nothing left to resolve, and
+ * resolving anyway costs two `realpath` calls per frame on every discovery.
+ */
+function entryKind(directory: string): FrameKind | "conflict" | undefined {
 	const present = (entry: string): boolean => {
 		try {
 			// Kind is a lexical source marker. Following its symlink here would
@@ -153,10 +163,12 @@ function discover(root: string): Discovery | undefined {
 		else list.push(entry);
 	};
 	const pages: string[] = [];
+	// framesDir is resolved, and a directory entry is never a symlink, so every
+	// path built from here down is inside design/ without asking again
 	for (const entry of entries) {
 		if (!entry.isDirectory() || !isSafeName(entry.name)) continue;
 		const dir = join(framesDir, entry.name);
-		const kind = frameKind(dir, designDir);
+		const kind = entryKind(dir);
 		if (kind !== undefined) {
 			claim(entry.name, undefined, dir, kind);
 			continue;
@@ -171,7 +183,7 @@ function discover(root: string): Discovery | undefined {
 		for (const sub of inner) {
 			if (!sub.isDirectory() || !isSafeName(sub.name)) continue;
 			const subDir = join(dir, sub.name);
-			const subKind = frameKind(subDir, designDir);
+			const subKind = entryKind(subDir);
 			if (subKind !== undefined) claim(sub.name, entry.name, subDir, subKind);
 		}
 	}
@@ -275,6 +287,17 @@ export function frameNames(root: string): string[] | undefined {
 	const discovery = discover(root);
 	if (discovery === undefined) return undefined;
 	return discovery.frames.map((frame) => frame.name);
+}
+
+/**
+ * Every unambiguous frame's folder, keyed by name, in name order — one
+ * discovery for a whole project-wide read. Asking `lookupFrame` per frame
+ * re-walks design/frames once per frame, which a 145-frame read pays 145 times.
+ */
+export function frameDirectories(root: string): Map<string, string> {
+	const discovery = discover(root);
+	if (discovery === undefined) return new Map();
+	return new Map(discovery.frames.map((frame) => [frame.name, frame.dir]));
 }
 
 function hasThumb(root: string, frame: string, kind: FrameKind): boolean {

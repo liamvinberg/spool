@@ -126,10 +126,25 @@ export function liveRenderedTargets(
 	sourceHash: string,
 	scenariosHash: string,
 ): RenderedTarget[] {
-	const record = readRecords(root).find((candidate) => candidate.frame === frame);
-	if (record === undefined) return [];
-	if (record.hash !== sourceHash || record.scenarios !== scenariosHash) return [];
-	return record.targets;
+	return createRenderedReader(root)(frame, sourceHash, scenariosHash);
+}
+
+/**
+ * The same read, over one load of the cache file. A project-wide derivation asks
+ * per frame, and re-reading and re-parsing the whole file each time is a cost
+ * with no answer behind it (#109).
+ */
+export function createRenderedReader(
+	root: string,
+): (frame: string, sourceHash: string, scenariosHash: string) => RenderedTarget[] {
+	let records: FrameRecord[] | undefined;
+	return (frame, sourceHash, scenariosHash) => {
+		records ??= readRecords(root);
+		const record = records.find((candidate) => candidate.frame === frame);
+		if (record === undefined) return [];
+		if (record.hash !== sourceHash || record.scenarios !== scenariosHash) return [];
+		return record.targets;
+	};
 }
 
 /**
