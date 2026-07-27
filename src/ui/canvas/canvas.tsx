@@ -562,7 +562,10 @@ export function ProjectCanvas({
 				const camera = cameras.current[page];
 				if (camera !== undefined) setCamera(camera);
 			}
-			if (alive) await Promise.all([refetchFrames(), refetchFlows()]);
+			// arrows arrive when they arrive (#109): the canvas opens on frames and
+			// cameras, and nothing on screen waits for the link graph
+			if (alive) void refetchFlows();
+			if (alive) await refetchFrames();
 			// dark targets get one render pass per canvas open (#34): frames whose
 			// read is already fresh cost nothing, so this is a no-op on reopen
 			if (alive && (await resolveFlows(project))?.read !== 0) {
