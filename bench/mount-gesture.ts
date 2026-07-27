@@ -22,6 +22,23 @@ import {
  * React commit that inserts an iframe, the layout it forces, a new compositor
  * surface arriving mid-gesture, and the discard at the other end.
  *
+ * What it answered for #112, on matmannen's densest page at 6x throttle, with
+ * the canvas's own errands running through its own React tree:
+ *
+ *   | borrowed at once | zoom p95 hot / quiet | pan p95 hot / quiet | loafs |
+ *   |---|---|---|---|
+ *   | 1 | 16.7 / 10.1 | 10.2 / 10.1 | 0 |
+ *   | 3 | 16.7 / 10.1 | 10.2 / 10.0 | 0 |
+ *   | 8 | 16.0 / 10.3 | 10.4 / 10.1 | 0 |
+ *
+ * No dropped frames at any of them, and the pan is the quiet canvas to within
+ * noise. The zoom sits about 6 ms above its control and is **flat in the
+ * number in flight** — 16.7 at one, 16.0 at eight — so whatever it is, it is
+ * not the churn. So: insert/discard churn does not cost a gesture, and the
+ * in-flight cap needs no companion rate. The cap stays at three because the
+ * errands are not urgent and six documents is what the model promises at worst,
+ * not because eight was found to hurt.
+ *
  * Three arms, and the first of them is the one #112 was waiting for:
  *
  *   canvas  the canvas's own refresh errands, through its own React tree, while
@@ -252,12 +269,22 @@ function instrument(config: { captureIdle: number }): void {
 		true,
 	);
 
+	// One entry per document, not per mutation record. A frame reaching the DOM
+	// arrives as a container and, inside it, the wrapper the freeze lock lives on
+	// (#112): both are added nodes in the same batch, and walking each for nested
+	// iframes finds the same one twice.
+	const counted = new WeakSet<HTMLIFrameElement>();
 	const noteIframe = (node: Node): void => {
-		if (node instanceof HTMLIFrameElement) state.inserted.push({ frame: node.title, t: performance.now() });
-		else if (node instanceof HTMLElement) {
-			for (const nested of node.querySelectorAll("iframe")) {
-				state.inserted.push({ frame: nested.title, t: performance.now() });
-			}
+		const found =
+			node instanceof HTMLIFrameElement
+				? [node]
+				: node instanceof HTMLElement
+					? node.querySelectorAll("iframe")
+					: [];
+		for (const el of found) {
+			if (counted.has(el)) continue;
+			counted.add(el);
+			state.inserted.push({ frame: el.title, t: performance.now() });
 		}
 	};
 	// document, not documentElement: an init script runs before <html> exists
@@ -537,6 +564,23 @@ const mountedCount = (page: Page): Promise<number> => page.evaluate(() => docume
 const framesOnCanvas = (page: Page): Promise<number> =>
 	page.evaluate(() => document.querySelectorAll("[data-frame-cover]").length);
 
+/**
+ * Hold until the canvas is holding no document at all: every picture it was
+ * owed has been taken. That is the resting state of the model (#112) and the
+ * only state a control gesture can be measured in.
+ */
+async function quiet(page: Page, timeoutMs: number): Promise<number> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const count = await mountedCount(page);
+		if (count === 0) return 0;
+		await page.waitForTimeout(500);
+	}
+	const left = await mountedCount(page);
+	process.stderr.write(`bench:   canvas still borrowing ${left} frames — the control below is not a quiet one\n`);
+	return left;
+}
+
 async function settle(page: Page, stableMs: number, timeoutMs: number): Promise<number> {
 	const deadline = Date.now() + timeoutMs;
 	let count = await mountedCount(page);
@@ -717,8 +761,11 @@ async function canvasArm(
 	const hotZoomWindow = await zoom(page, cx, cy, true);
 	const hotPanWindow = await pan(page, cx, cy);
 
-	// every frame photographed, nothing borrowed: the canvas at rest
-	const mountedAfter = await settle(page, 2000, 180_000);
+	// Every frame photographed and nothing borrowed: the canvas at rest, which is
+	// the only honest control. Waiting for the count to merely hold still would
+	// wait for a canvas pinned at the cap and call that quiet, and the whole
+	// answer here is hot minus quiet.
+	const mountedAfter = await quiet(page, 600_000);
 	await throttleEveryFrame(context, page, rate);
 	const quietZoomWindow = await zoom(page, cx, cy, true);
 	await page.waitForTimeout(600);
@@ -737,7 +784,7 @@ async function canvasArm(
 		);
 	}
 	process.stderr.write(
-		`bench:   canvas/${label}: ${before} borrowed at the start, ${mountedAfter} once every picture is taken; zoom ${
+		`bench:   canvas/${label}: ${before} borrowed at the start, ${mountedAfter} left when the control ran; zoom ${
 			hotZoom.inserts
 		} inserts over ${ms(hotZoom.wallMs)} ms, pan ${hotPan.inserts} over ${ms(hotPan.wallMs)} ms\n`,
 	);

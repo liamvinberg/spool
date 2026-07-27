@@ -150,12 +150,22 @@ function collector(): void {
 		true,
 	);
 
+	// One entry per document, not per mutation record. A frame reaching the DOM
+	// arrives as a container and, inside it, the wrapper the freeze lock lives on
+	// (#112): both are added nodes in the same batch, and walking each for nested
+	// iframes finds the same one twice.
+	const counted = new WeakSet<HTMLIFrameElement>();
 	const noteIframe = (node: Node): void => {
-		if (node instanceof HTMLIFrameElement) state.inserted.push({ frame: node.title, t: performance.now() });
-		else if (node instanceof HTMLElement) {
-			for (const nested of node.querySelectorAll("iframe")) {
-				state.inserted.push({ frame: nested.title, t: performance.now() });
-			}
+		const found =
+			node instanceof HTMLIFrameElement
+				? [node]
+				: node instanceof HTMLElement
+					? node.querySelectorAll("iframe")
+					: [];
+		for (const el of found) {
+			if (counted.has(el)) continue;
+			counted.add(el);
+			state.inserted.push({ frame: el.title, t: performance.now() });
 		}
 	};
 	// document, not documentElement: an init script runs before <html> exists
@@ -195,6 +205,28 @@ const now = (page: Page): Promise<number> => page.evaluate(() => performance.now
 const read = (page: Page): Promise<BenchState> =>
 	page.evaluate(() => (globalThis as unknown as { __bench: BenchState }).__bench);
 const mountedCount = (page: Page): Promise<number> => page.evaluate(() => document.querySelectorAll("iframe").length);
+
+/** Frames the canvas is drawing, mounted or not — a settled canvas holds no documents at all (#112). */
+const framesOnCanvas = (page: Page): Promise<number> =>
+	page.evaluate(() => document.querySelectorAll("[data-frame-cover]").length);
+
+/**
+ * Hold until the canvas is holding no document at all: every picture it was
+ * owed has been taken, and nothing is being borrowed. That is the resting state
+ * of the model (#112), and the one an entry has to be measured from — otherwise
+ * the frame the double-click lands on may be one that happens to be booted
+ * already, and the bar defends a case that has stopped existing.
+ */
+async function quiet(page: Page, timeoutMs: number): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if ((await mountedCount(page)) === 0) return;
+		await page.waitForTimeout(250);
+	}
+	process.stderr.write(
+		"bench:   canvas still borrowing frames after 120 s — the entry below starts from a busy canvas\n",
+	);
+}
 
 /**
  * Hold until the canvas stops mounting: the count unchanged across `stableMs`.
@@ -288,21 +320,25 @@ async function measure(
 	const settled = await settle(page, 1000, 30_000);
 	const idleMounted = settled.count;
 	const reloadMs = settled.stableAt - reloadStart;
-	// A canvas that mounted nothing is fast at everything, and every bar below
-	// would report a pass over an empty screen. The camera is planned over real
-	// frames, so this only happens when the canvas opened somewhere else — the
-	// warm pass's own persisted state landing after the planned camera was
-	// written. Loud, because the numbers would otherwise look like good news.
-	if (settled.count === 0) {
+	// A canvas showing nothing is fast at everything, and every bar below would
+	// report a pass over an empty screen. The camera is planned over real frames,
+	// so this only happens when the canvas opened somewhere else — the warm
+	// pass's own persisted state landing after the planned camera was written.
+	// Loud, because the numbers would otherwise look like good news.
+	//
+	// Frames, not documents: a settled canvas holds no documents at all (#112).
+	// What it must have is stills on screen.
+	const framesShown = await framesOnCanvas(page);
+	if (framesShown === 0) {
 		throw new Error(
-			"the canvas settled with no documents mounted — the planned camera did not take, so this run would measure an empty screen",
+			"the canvas settled with no frames on screen — the planned camera did not take, so this run would measure an empty screen",
 		);
 	}
 	const throttledFrames = await throttleEveryFrame(context, page, rate);
 
 	const state0 = await read(page);
 	process.stderr.write(
-		`bench:   settled ${idleMounted} mounted (${throttledFrames} throttled by name), ${state0.raf.length} animation frames sampled\n`,
+		`bench:   settled ${idleMounted} borrowed, ${framesShown} frames on screen (${throttledFrames} throttled by name), ${state0.raf.length} animation frames sampled\n`,
 	);
 	// the display's own cadence, measured rather than assumed: the p95 bar is
 	// "within one refresh plus slack", and a 120 Hz panel is not a 60 Hz one
@@ -347,11 +383,19 @@ async function measure(
 	await settle(page, 800, 20_000);
 
 	// --- double-click into the frame nearest the middle ----------------------
-	// the frame showing the most of itself: a partly-offscreen frame's centre can
-	// sit outside the window, and a double-click there enters nothing
+	// Nothing the canvas is doing on its own may still be in flight. Under #112
+	// the only frames holding a document are the ones being borrowed for a
+	// picture, and entering one of those would measure a boot that had already
+	// happened — which is exactly the reading this bar carried before, when
+	// being on screen mounted a frame and this walked `iframe` to find one.
+	await quiet(page, 120_000);
+
+	// The frame showing the most of itself, found by its own still, because a
+	// still is what every frame on this canvas is. A partly-offscreen frame's
+	// centre can sit outside the window, and a double-click there enters nothing.
 	const target = await page.evaluate(() => {
 		let best: { x: number; y: number; area: number } | null = null;
-		for (const frame of document.querySelectorAll("iframe")) {
+		for (const frame of document.querySelectorAll("[data-frame-cover]")) {
 			const box = frame.getBoundingClientRect();
 			const left = Math.max(0, box.left);
 			const top = Math.max(0, box.top);

@@ -238,10 +238,24 @@ function hostCollector(): void {
 		true,
 	);
 
+	// One entry per document, not per mutation record. A frame arriving on a page
+	// switch reaches the DOM as a container and, inside it, the wrapper the freeze
+	// lock lives on (#112): both are added nodes in the same batch, and walking
+	// each for nested iframes finds the same one twice. Counted twice, one walk
+	// arrival reads as two documents — which is the exact claim these benchmarks
+	// are here to settle.
+	const counted = new WeakSet<HTMLIFrameElement>();
 	const noteIframe = (node: Node): void => {
-		if (node instanceof HTMLIFrameElement) state.inserted.push({ frame: node.title, t: at() });
-		else if (node instanceof HTMLElement) {
-			for (const nested of node.querySelectorAll("iframe")) state.inserted.push({ frame: nested.title, t: at() });
+		const found =
+			node instanceof HTMLIFrameElement
+				? [node]
+				: node instanceof HTMLElement
+					? node.querySelectorAll("iframe")
+					: [];
+		for (const el of found) {
+			if (counted.has(el)) continue;
+			counted.add(el);
+			state.inserted.push({ frame: el.title, t: at() });
 		}
 	};
 	// document, not documentElement: an init script runs before <html> exists
@@ -508,27 +522,21 @@ async function runWalk(context: BrowserContext, url: string, plan: Plan): Promis
 	try {
 		await page.goto(url, { waitUntil: "domcontentloaded" });
 
-		// the source frame has to be real and finished before its own click can be
-		// timed: a click into a booting document measures the boot, not the walk
-		const iframe = `iframe[title=${JSON.stringify(plan.from)}]`;
-		await page.waitForSelector(iframe, { timeout: ENTER_TIMEOUT_MS });
-		await page
-			.waitForFunction(
-				(name) =>
-					(globalThis as unknown as { __walk: HostState }).__walk.loaded.some((entry) => entry.frame === name),
-				plan.from,
-				{ timeout: ENTER_TIMEOUT_MS },
-			)
-			.catch(() => undefined);
-		// and the canvas has to have stopped mounting around it, or the walk is
-		// priced against a canvas still draining its own queue
-		await settle(page, 1200, 15_000);
+		// The source frame is a still until somebody goes inside it (#112), so it
+		// is found by the still and the canvas has to have stopped borrowing
+		// frames around it first — a walk priced while the canvas is still filling
+		// its own pictures in is priced against the wrong canvas.
+		const still = `[data-frame-cover=${JSON.stringify(plan.from)}]`;
+		await page.waitForSelector(still, { timeout: ENTER_TIMEOUT_MS });
+		await settle(page, 1200, 60_000);
 
 		// --- enter, because a walk from an unentered frame is rejected ----------
 		// `walkRejectionReason` (protocol.ts:211) turns a `go` from any frame that
 		// is not the entered one into "inactive" — going inside is what makes a
-		// frame's links live at all.
-		const box = await page.locator(iframe).boundingBox();
+		// frame's links live at all. It is also what gives it a document: the
+		// boot the double-click starts is part of what the entry costs, and the
+		// walk below is timed from its own click, after it.
+		const box = await page.locator(still).boundingBox();
 		if (box === null) return await fail("source frame has no box");
 		await page.mouse.dblclick(Math.round(box.x + box.width / 2), Math.round(box.y + box.height / 2));
 		const entered = await page

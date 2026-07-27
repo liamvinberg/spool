@@ -58,8 +58,16 @@ export const CAPTURE_REPLY_TIMEOUT_MS = CAPTURE_WORKER_TIMEOUT_MS + 3000;
 export const CAPTURE_AFTER_READY_MS = 1500;
 /**
  * How long a frame may wait, inside the capture itself, for its fonts to load
- * and its entry animations to finish before it photographs itself. A walk asks
- * for less: its cover is wanted inside the arrival it belongs to.
+ * and its entry animations to finish before it photographs itself.
+ *
+ * It is the dominant term in an errand — #94 priced one at 130 to 170 ms booted
+ * and discarded, 389 to 570 photographed, and 660 to 1437 with this budget on
+ * top — and it stays, because what it costs has changed hands. It used to be
+ * paid by whoever was waiting for the picture; a walk paid it on arrival until
+ * #110 moved the walk off the capture entirely, and the sweep paid it on a
+ * mounted frame you could see. Now it is paid out of an errand slot nobody is
+ * waiting on, behind a still that is already on screen. The only thing it buys
+ * is a truer picture, and the picture is the only thing anyone looks at.
  */
 export const CAPTURE_SETTLE_BUDGET_MS = 900;
 /**
@@ -71,6 +79,30 @@ export const CAPTURE_SETTLE_BUDGET_MS = 900;
  * it breaks reproducibly above 3 and never at or below it.
  */
 export const REFRESH_JOBS_IN_FLIGHT = 3;
+/**
+ * The measurement hook (#108, #112), and the only temporary code the canvas
+ * carries. `bench/mount-gesture.ts`'s canvas arm sweeps the cap above and below
+ * its shipped value to show where a gesture starts paying for the errands
+ * behind it, and the alternative is a second lifecycle model living in the
+ * bench, which is strictly worse. The bench throws rather than running without
+ * it: a gesture over a canvas that borrowed nothing reads as "mounting is free"
+ * for the one reason that proves nothing.
+ *
+ * `globalThis.__spoolBench` is `{ errands }` — the cap, unbounded at 0 or
+ * below. Read once at module load, because playwright's init script runs before
+ * this bundle evaluates and nothing else ever writes it, so an unset hook
+ * leaves the sweep comparing against the same constant it always did.
+ *
+ * It lives only while the cap is a constant. If the cap ever becomes something
+ * the canvas derives, this goes with it.
+ */
+const benchCap = (globalThis as unknown as { __spoolBench?: { errands?: number } }).__spoolBench?.errands;
+const ERRAND_CAP =
+	benchCap === undefined
+		? REFRESH_JOBS_IN_FLIGHT
+		: benchCap > 0
+			? benchCap
+			: Number.POSITIVE_INFINITY;
 /**
  * How many times a frame with no picture at all asks for one before it stops
  * asking. Without a bound, a frame whose capture cannot land — a document that
@@ -228,7 +260,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	// a picture the whole time.
 	if (settled) {
 		for (const name of candidates) {
-			if (model.errands.size >= REFRESH_JOBS_IN_FLIGHT) break;
+			if (model.errands.size >= ERRAND_CAP) break;
 			model.errands.set(name, now);
 		}
 	}
