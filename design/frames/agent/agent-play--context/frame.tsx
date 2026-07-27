@@ -1,8 +1,11 @@
+import { useState } from "react";
+import { contextLine } from "../../../shared/lib/agent-selection";
 import { railEntries, useCapture, useTurnScript } from "../../../shared/lib/claude-turn";
+import { CHECKOUT_BAR, CHECKOUT_BAR_BOX } from "../../../shared/lib/pointed-fixtures";
 import { useTicker, useTurn } from "../../../shared/lib/turn-play";
 import { CanvasChrome, type PageRow } from "../../../shared/ui/spool-canvas-chrome";
-import { PlayField } from "../../../shared/ui/spool-play-field";
-import { PlayRail } from "../../../shared/ui/spool-play-rail";
+import { type Outline, PlayField } from "../../../shared/ui/spool-play-field";
+import { COMPOSER_W, PlayRail } from "../../../shared/ui/spool-play-rail";
 import { SpoolShell } from "../../../shared/ui/spool-shell";
 
 /**
@@ -15,7 +18,11 @@ import { SpoolShell } from "../../../shared/ui/spool-shell";
  * the canvas at the same time.
  *
  * Chip and outline are one object, which is why they are the only accent on
- * screen. Everything the agent does stays colourless.
+ * screen and why hovering either one lights the other. Everything the agent does
+ * stays colourless.
+ *
+ * Selection has always been a list; this is the list at one (#116). The plural
+ * frames are to the right — the same strip at three, and at five.
  *
  * The turn is the capture's verify loop, which is the one slice of a real session
  * that is entirely about looking at a frame: the agent shoots it, then reads the
@@ -34,12 +41,14 @@ import { SpoolShell } from "../../../shared/ui/spool-shell";
  * no text to show, so the line carries a duration and nothing else.
  */
 
-const SELECTION = "cart · checkout-bar · 34-41";
-
 const PAGES: readonly PageRow[] = [
 	{ name: "app", frames: ["cart", "menu", "receipt"], active: true, open: true },
 	{ name: "site", frames: [] },
 	{ name: "directing", frames: [] },
+];
+
+const OUTLINES: readonly Outline[] = [
+	{ id: "bar", frame: "cart", box: CHECKOUT_BAR_BOX, label: "checkout-bar" },
 ];
 
 export default function AgentPlayContextFrame() {
@@ -48,6 +57,8 @@ export default function AgentPlayContextFrame() {
 	const turn = useTurn(script.cues);
 	const elapsed = useTicker(turn.run, script.total);
 	const ready = script.cues.length > 0;
+	const [lit, setLit] = useState<string | null>(null);
+	const context = contextLine(CHECKOUT_BAR, COMPOSER_W);
 
 	return (
 		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
@@ -59,16 +70,18 @@ export default function AgentPlayContextFrame() {
 				railLabel="Agent"
 				rail={
 					<PlayRail
-						entries={railEntries(script, turn, elapsed, SELECTION)}
+						entries={railEntries(script, turn, elapsed, context)}
 						phase={turn.phase}
-						chip={SELECTION}
+						selection={CHECKOUT_BAR}
+						lit={lit}
+						onLight={setLit}
 						run={turn.run}
 						onSend={ready ? turn.send : () => {}}
 						onReplay={turn.replay}
 					/>
 				}
 			>
-				<PlayField selection />
+				<PlayField outlines={OUTLINES} lit={lit} onLight={setLit} />
 			</CanvasChrome>
 		</SpoolShell>
 	);

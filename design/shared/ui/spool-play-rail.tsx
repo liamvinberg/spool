@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { type ReactNode, type RefObject, useRef, useState } from "react";
+import { type Pointed, type Strip, stripOf } from "../lib/agent-selection";
 import { cn } from "../lib/utils";
 import type { PlayEntry, RowState, TurnPhase } from "../lib/turn-play";
 import { RailTabs } from "./spool-canvas-chrome";
@@ -123,18 +124,35 @@ function Caret() {
 
 /* ---------- the rail ---------- */
 
+/** the composer's inner width at a 420 rail: less the panel padding and the box's own */
+export const COMPOSER_W = 420 - 28 - 24;
+
 export function PlayRail({
 	entries,
 	phase,
-	chip,
+	selection = [],
+	rule = "fit",
+	lit,
+	onLight,
+	onDrop,
 	run,
 	onSend,
 	onReplay,
 }: {
 	entries: readonly PlayEntry[];
 	phase: TurnPhase;
-	/** the selection riding in the composer, when there is one */
-	chip?: string | undefined;
+	/** what the hands are pointing at, riding in the composer — always a list */
+	selection?: readonly Pointed[];
+	/**
+	 * which strip this frame is arguing for. `fit` is the one-line rule; `chips`
+	 * forces a chip per entry however many there are, so the frame that rejects
+	 * that can show what it costs.
+	 */
+	rule?: "fit" | "chips";
+	/** the entry the pointer is over, in the rail or out on the canvas */
+	lit?: string | null | undefined;
+	onLight?: ((id: string | null) => void) | undefined;
+	onDrop?: ((id: string | null) => void) | undefined;
 	run: number;
 	onSend: (text: string) => void;
 	onReplay: () => void;
@@ -149,7 +167,17 @@ export function PlayRail({
 		<>
 			<RailTabs tabs={["agent", "connections"]} active="agent" />
 			<Transcript entries={entries} run={run} onReach={reach} />
-			<Composer field={field} chip={chip} phase={phase} onSend={onSend} onReplay={onReplay} onReach={reach} />
+			<Composer
+				field={field}
+				strip={stripOf(selection, rule === "chips" ? Number.POSITIVE_INFINITY : COMPOSER_W)}
+				lit={lit ?? null}
+				onLight={onLight}
+				onDrop={onDrop}
+				phase={phase}
+				onSend={onSend}
+				onReplay={onReplay}
+				onReach={reach}
+			/>
 		</>
 	);
 }
@@ -374,14 +402,20 @@ const MAX_H = 160;
 
 function Composer({
 	field,
-	chip,
+	strip,
+	lit,
+	onLight,
+	onDrop,
 	phase,
 	onSend,
 	onReplay,
 	onReach,
 }: {
 	field: RefObject<HTMLTextAreaElement | null>;
-	chip: string | undefined;
+	strip: Strip;
+	lit: string | null;
+	onLight: ((id: string | null) => void) | undefined;
+	onDrop: ((id: string | null) => void) | undefined;
 	phase: TurnPhase;
 	onSend: (text: string) => void;
 	onReplay: () => void;
@@ -398,7 +432,7 @@ function Composer({
 	return (
 		<div className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5" onMouseDown={onReach}>
 			<div className="flex flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5 transition-colors duration-150 focus-within:border-muted/45">
-				{chip === undefined ? null : <SelectionChip label={chip} />}
+				<SelectionStrip strip={strip} lit={lit} onLight={onLight} onDrop={onDrop} />
 				<textarea
 					ref={field}
 					value={value}
@@ -441,17 +475,158 @@ function Composer({
 
 /**
  * The selection, sitting in the composer and going out with the message without
- * being asked for. Its accent is the same one the element wears out on the
- * canvas, because the chip and the outline are one object.
+ * being asked for. Its accent is the same one the entry wears out on the canvas,
+ * because the chip and the outline are one object — which is why hovering either
+ * one lights the other, and why a chip that cannot be paired with a box out there
+ * is a chip that should not be drawn.
+ *
+ * One line, always. Either the chips fit on it or the strip is a count; the
+ * composer never grows downward to make room for context, because the space
+ * below is the prompt's. Opening the count is the human asking for the list, and
+ * then it is a list: hoverable, individually droppable, capped at five rows
+ * before it scrolls inside itself.
  */
-function SelectionChip({ label }: { label: string }) {
-	return (
-		<span className="flex h-6 w-fit max-w-full items-center gap-2 overflow-hidden rounded-sm border border-border-raised bg-raised pr-1 pl-2">
-			<span className="h-3 w-[2px] shrink-0 rounded-full bg-thread" />
-			<span className="min-w-0 truncate font-mono text-text/85 text-xs leading-4">{label}</span>
-			<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/50">
-				<CloseIcon className="h-2 w-2" />
+function SelectionStrip({
+	strip,
+	lit,
+	onLight,
+	onDrop,
+}: {
+	strip: Strip;
+	lit: string | null;
+	onLight: ((id: string | null) => void) | undefined;
+	onDrop: ((id: string | null) => void) | undefined;
+}) {
+	const still = useReducedMotion() === true;
+	const [open, setOpen] = useState(false);
+	if (strip.kind === "none") return null;
+
+	if (strip.kind === "chips") {
+		return (
+			<span className="flex min-w-0 flex-wrap items-center gap-1.5">
+				{strip.chips.map((chip) => (
+					<Chip
+						key={chip.id}
+						label={chip.label}
+						lit={lit === chip.id}
+						onLight={() => onLight?.(chip.id)}
+						onLeave={() => onLight?.(null)}
+						onDrop={() => onDrop?.(chip.id)}
+					/>
+				))}
 			</span>
+		);
+	}
+
+	return (
+		<span className="flex min-w-0 flex-col gap-1.5">
+			<span className="flex min-w-0 items-center">
+				<Chip
+					label={strip.label}
+					lit={lit !== null}
+					open={open}
+					onOpen={() => setOpen(!open)}
+					onLight={() => onLight?.("*")}
+					onLeave={() => onLight?.(null)}
+					onDrop={() => onDrop?.(null)}
+				/>
+			</span>
+			<AnimatePresence initial={false}>
+				{open ? (
+					<motion.span
+						className="block overflow-hidden"
+						initial={{ height: 0, opacity: 0 }}
+						animate={{ height: "auto", opacity: 1 }}
+						exit={{ height: 0, opacity: 0 }}
+						transition={still ? { duration: 0 } : { duration: 0.24, ease: ARRIVE }}
+					>
+						{/* five rows and then it scrolls: the list is for reaching one
+						    member, never for reading forty */}
+						<span className="flex max-h-[130px] flex-col overflow-y-auto pb-0.5">
+							{strip.chips.map((chip) => (
+								<button
+									key={chip.id}
+									type="button"
+									onMouseEnter={() => onLight?.(chip.id)}
+									onMouseLeave={() => onLight?.(null)}
+									onClick={() => onDrop?.(chip.id)}
+									className={cn(
+										"group -mx-1 flex h-[26px] shrink-0 items-center gap-2 rounded-xs px-1 text-left",
+										lit === chip.id && "bg-surface",
+									)}
+								>
+									<span
+										className={cn(
+											"h-2.5 w-[2px] shrink-0 rounded-full",
+											lit === chip.id ? "bg-thread" : "bg-thread/40",
+										)}
+									/>
+									<span className="min-w-0 flex-1 truncate font-mono text-text/80 text-xs leading-4">
+										{chip.label}
+									</span>
+									<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/0 group-hover:text-muted/60">
+										<CloseIcon className="h-2 w-2" />
+									</span>
+								</button>
+							))}
+						</span>
+					</motion.span>
+				) : null}
+			</AnimatePresence>
+		</span>
+	);
+}
+
+function Chip({
+	label,
+	lit,
+	open,
+	onOpen,
+	onLight,
+	onLeave,
+	onDrop,
+}: {
+	label: string;
+	lit: boolean;
+	open?: boolean;
+	onOpen?: (() => void) | undefined;
+	onLight: () => void;
+	onLeave: () => void;
+	onDrop: () => void;
+}) {
+	const body = (
+		<>
+			<span className={cn("h-3 w-[2px] shrink-0 rounded-full", lit ? "bg-thread" : "bg-thread/55")} />
+			<span className="min-w-0 truncate font-mono text-text/85 text-xs leading-4">{label}</span>
+			{onOpen === undefined ? null : (
+				<ChevronIcon open={open ?? false} className="h-2.5 w-2.5 shrink-0 text-muted/40" />
+			)}
+		</>
+	);
+	return (
+		<span
+			className={cn(
+				"flex h-6 min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-sm border bg-raised pr-1 pl-2 transition-colors duration-150",
+				lit ? "border-thread/45" : "border-border-raised",
+			)}
+			onMouseEnter={onLight}
+			onMouseLeave={onLeave}
+		>
+			{onOpen === undefined ? (
+				body
+			) : (
+				<button type="button" onClick={onOpen} className="flex min-w-0 items-center gap-2 text-left">
+					{body}
+				</button>
+			)}
+			<button
+				type="button"
+				onClick={onDrop}
+				aria-label={`drop ${label}`}
+				className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/50 transition-colors duration-150 hover:bg-surface hover:text-text"
+			>
+				<CloseIcon className="h-2 w-2" />
+			</button>
 		</span>
 	);
 }

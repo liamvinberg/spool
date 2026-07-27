@@ -64,30 +64,72 @@ const TAKES: Record<string, () => ReactNode> = {
 	"cart--empty-c": CartEmptyExpressive,
 };
 
+/**
+ * One thing the hands are pointing at, where it lives. `box` is in the frame's
+ * own 240×520 coordinates; a mark with no box is the whole frame, which is what
+ * a frame selection is.
+ */
+export interface Outline {
+	readonly id: string;
+	readonly frame: string;
+	readonly box?: { readonly x: number; readonly y: number; readonly w: number; readonly h: number } | undefined;
+	readonly label?: string | undefined;
+}
+
 export function PlayField({
-	selection = false,
+	outlines = [],
+	lit = null,
+	onLight,
 	base = BASE,
 	takes = [],
 }: {
-	selection?: boolean;
+	/** what the composer's chips name, drawn where the human can tell them apart */
+	outlines?: readonly Outline[];
+	lit?: string | null | undefined;
+	onLight?: ((id: string | null) => void) | undefined;
 	/** the project's own frames, on the top row in canvas order */
 	base?: readonly BaseFrame[];
 	/** the row below, one entry per frame the turn is writing */
 	takes?: readonly TakeState[];
 }) {
+	// A lone mark carries its name unprompted, because nothing else on screen
+	// says it. Past one, nothing does: the labels sit above their boxes and two
+	// picks in one list are close enough that a badge lands on its neighbour. The
+	// chip already holds the name — out here the job is only which one, and full
+	// opacity against faint says that without a word.
+	const named = outlines.length === 1;
 	return (
 		<div className="absolute inset-0">
 			<Threads base={base} />
 			{base.map((frame, index) => {
-				const held = selection && frame.name === "cart";
+				const mine = outlines.filter((mark) => mark.frame === frame.name);
+				const whole = mine.find((mark) => mark.box === undefined);
+				const parts = mine.filter((mark) => mark.box !== undefined);
 				return (
 					<Slot
 						key={frame.name}
 						left={COLS[index] ?? 0}
 						top={ROW_1}
 						name={frame.name}
-						selected={held}
-						overlay={held ? <ElementOutline /> : null}
+						selected={whole !== undefined}
+						lit={whole !== undefined && (lit === whole.id || lit === "*")}
+						onLight={whole === undefined || onLight === undefined ? undefined : () => onLight(whole.id)}
+						onLeave={onLight === undefined ? undefined : () => onLight(null)}
+						overlay={
+							parts.length === 0 ? null : (
+								<>
+									{parts.map((mark) => (
+										<ElementOutline
+											key={mark.id}
+											mark={mark}
+											lit={lit === mark.id || lit === "*"}
+											named={named}
+											onLight={onLight}
+										/>
+									))}
+								</>
+							)
+						}
 					>
 						<div className="origin-top-left" style={{ width: NAT_W, height: NAT_H, transform: `scale(${S})` }}>
 							<CoffeeScreen screen={frame.screen} />
@@ -107,6 +149,9 @@ function Slot({
 	top,
 	name,
 	selected = false,
+	lit = false,
+	onLight,
+	onLeave,
 	overlay,
 	children,
 }: {
@@ -114,11 +159,19 @@ function Slot({
 	top: number;
 	name: string;
 	selected?: boolean;
+	lit?: boolean;
+	onLight?: (() => void) | undefined;
+	onLeave?: (() => void) | undefined;
 	overlay?: ReactNode;
 	children: ReactNode;
 }) {
 	return (
-		<div className="absolute flex flex-col" style={{ left, top: top - LABEL_LIFT, width: FW }}>
+		<div
+			className="absolute flex flex-col"
+			style={{ left, top: top - LABEL_LIFT, width: FW }}
+			onMouseEnter={onLight}
+			onMouseLeave={onLeave}
+		>
 			<div className="flex h-[22px] min-w-0 items-center font-mono text-xs leading-3">
 				<span className={cn("min-w-0 truncate", selected ? "text-thread" : "text-text")}>{name}</span>
 			</div>
@@ -126,6 +179,15 @@ function Slot({
 				<div className="overflow-hidden rounded-lg" style={{ width: FW, height: FH }}>
 					{children}
 				</div>
+				{selected ? (
+					<span
+						className={cn(
+							"pointer-events-none absolute rounded-lg border border-thread transition-opacity duration-150",
+							lit ? "opacity-100" : "opacity-55",
+						)}
+						style={{ inset: -1 }}
+					/>
+				) : null}
 				{overlay}
 			</div>
 		</div>
@@ -186,21 +248,49 @@ function Take({ left, take }: { left: number; take: TakeState }) {
 }
 
 /**
- * The element the chip names, outlined where it lives. Selection chrome is
- * spool's, so it is drawn over the scaled frame at screen scale and stays a
- * hairline however far out the canvas is zoomed.
+ * The element a chip names, outlined where it lives. Selection chrome is spool's,
+ * so it is drawn over the scaled frame at screen scale and stays a hairline
+ * however far out the canvas is zoomed.
+ *
+ * Five of these is the case the composer cannot hold, and it is also the case
+ * that proves the canvas can: two picks of the same list row are one string in
+ * the rail and two boxes forty pixels apart out here. So the lit one is the loud
+ * one and it is the only one wearing its name — the rest stay drawn but quiet,
+ * which is what a selection of five has to look like to still read as five.
  */
-function ElementOutline() {
-	const box = { left: 14 * S, top: 440 * S, width: 212 * S, height: 66 * S };
+function ElementOutline({
+	mark,
+	lit,
+	named,
+	onLight,
+}: {
+	mark: Outline;
+	lit: boolean;
+	named: boolean;
+	onLight?: ((id: string | null) => void) | undefined;
+}) {
+	const source = mark.box;
+	if (source === undefined) return null;
+	const box = { left: source.x * S, top: source.y * S, width: source.w * S, height: source.h * S };
 	return (
 		<>
-			<span className="pointer-events-none absolute rounded-[3px] border border-thread" style={box} />
 			<span
-				className="pointer-events-none absolute whitespace-nowrap rounded-xs bg-thread px-1.5 py-[2px] font-mono text-2xs text-on-thread leading-3"
-				style={{ left: box.left, top: box.top - 17 }}
-			>
-				checkout-bar
-			</span>
+				className={cn(
+					"absolute rounded-[3px] border border-thread transition-opacity duration-150",
+					lit ? "opacity-100" : "opacity-45",
+				)}
+				style={box}
+				onMouseEnter={onLight === undefined ? undefined : () => onLight(mark.id)}
+				onMouseLeave={onLight === undefined ? undefined : () => onLight(null)}
+			/>
+			{named && mark.label !== undefined ? (
+				<span
+					className="pointer-events-none absolute whitespace-nowrap rounded-xs bg-thread px-1.5 py-[2px] font-mono text-2xs text-on-thread leading-3"
+					style={{ left: box.left, top: box.top - 17 }}
+				>
+					{mark.label}
+				</span>
+			) : null}
 		</>
 	);
 }
