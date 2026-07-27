@@ -131,7 +131,6 @@ export function PlayRail({
 	entries,
 	phase,
 	selection = [],
-	rule = "fit",
 	lit,
 	onLight,
 	onDrop,
@@ -143,12 +142,6 @@ export function PlayRail({
 	phase: TurnPhase;
 	/** what the hands are pointing at, riding in the composer — always a list */
 	selection?: readonly Pointed[];
-	/**
-	 * which strip this frame is arguing for. `fit` is the one-line rule; `chips`
-	 * forces a chip per entry however many there are, so the frame that rejects
-	 * that can show what it costs.
-	 */
-	rule?: "fit" | "chips";
 	/** the entry the pointer is over, in the rail or out on the canvas */
 	lit?: string | null | undefined;
 	onLight?: ((id: string | null) => void) | undefined;
@@ -169,7 +162,7 @@ export function PlayRail({
 			<Transcript entries={entries} run={run} onReach={reach} />
 			<Composer
 				field={field}
-				strip={stripOf(selection, rule === "chips" ? Number.POSITIVE_INFINITY : COMPOSER_W)}
+				strip={stripOf(selection, COMPOSER_W)}
 				lit={lit ?? null}
 				onLight={onLight}
 				onDrop={onDrop}
@@ -505,9 +498,12 @@ function SelectionStrip({
 	const [open, setOpen] = useState(false);
 	if (strip.kind === "none") return null;
 
+	// no wrap: the strip is chips because they fit on one line, and a second line
+	// would be the rule breaking quietly rather than the count taking over. If the
+	// estimate is off by a few pixels a chip truncates instead
 	if (strip.kind === "chips") {
 		return (
-			<span className="flex min-w-0 flex-wrap items-center gap-1.5">
+			<span className="flex min-w-0 items-center gap-1.5">
 				{strip.chips.map((chip) => (
 					<Chip
 						key={chip.id}
