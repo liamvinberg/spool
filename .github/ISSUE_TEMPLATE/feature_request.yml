@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a capability spool does not have
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read [what gets merged](https://github.com/liamvinberg/spool/blob/main/CONTRIBUTING.md#what-gets-merged) first. Canvas interactions, new tools, and UI changes are deliberate design decisions and are unlikely to be accepted from a request alone, though the reasoning behind one is still useful to hear.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: |
+        What were you trying to do when you hit this? Describe the situation rather than the feature you have in mind. The underlying problem is what gets solved; the specific solution may end up being something else.
+      placeholder: |
+        I keep losing track of which frames I have already reviewed when
+        walking a long flow, because ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do instead today
+      description: How you currently work around it, if you do. "Nothing, I gave up" is a useful answer.
+    validations:
+      required: false
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you had in mind
+      description: Optional. If you already have a shape in mind, describe it here.
+    validations:
+      required: false

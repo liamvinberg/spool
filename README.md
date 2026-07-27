@@ -4,7 +4,7 @@ A canvas where the frames are alive.
 
 Agent-authored TSX frames on an infinite canvas: arrange them spatially, link them into walkable flows, and feel an app (interactions, motion, state, real inputs) before it exists. Code is the document; the canvas is a projection of it. A design space is just a `design/` folder inside your product repo: local-first, git-tracked, no cloud.
 
-Home: [spool.page](https://spool.page). Status: wayfinding. The map lives in this repo's issues (`wayfinder:map`); exploration research lives in `research/`.
+Home: [spool.page](https://spool.page). Pre-1.0: published, dogfooded daily, and still moving. Exploration research lives in `research/`.
 
 ## Install
 
@@ -40,4 +40,12 @@ pnpm dev <command>   # the checkout cli — own state dir (~/.spool-dev), own po
 
 Real projects run the released version; a checkout daemon serves beside it on its own port and state dir (the `dev` script sets `SPOOL_DIR` and `SPOOL_PORT`). Shipping: conventional commits on main feed release-please; merging the release PR is the one human gate — the publish workflow re-runs the gates, then npm trusted publishing releases `spool.page`.
 
-For a disposable implementation lane, register the lane itself with `spool open <lane>` before verification, then run `spool remove <lane>` before erasing the worktree. Do not alias the lane to the registered main checkout: verification must read the lane's source.
+[`CONTRIBUTING.md`](CONTRIBUTING.md) covers the gates, what gets merged, and how to find your way around the source. [`CONTEXT.md`](CONTEXT.md) is the canonical vocabulary and [`docs/adr/`](docs/adr/) records why the load-bearing decisions went the way they did.
+
+## License
+
+[MIT](LICENSE.md). Fork it, rework it, rename it, ship it. It is a tool for designing things; make it your own if you want to.
+
+Third-party components keep their own licenses, listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+Security issues go to [`SECURITY.md`](SECURITY.md), never to a public issue.
