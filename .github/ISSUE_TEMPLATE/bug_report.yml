@@ -1,0 +1,86 @@
+name: Bug report
+description: Something in spool behaves incorrectly
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security vulnerabilities do not go here. See [SECURITY.md](https://github.com/liamvinberg/spool/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, and what spool did instead of what you expected.
+      placeholder: |
+        I double-clicked a frame to enter it, and the canvas kept panning
+        instead of handing input to the frame.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: |
+        The steps that reliably trigger it. If it only happens with a particular frame, the smallest `frame.tsx` that shows the problem is the single most useful thing you can include.
+      placeholder: |
+        1. spool init in an empty directory
+        2. Add a frame with ...
+        3. Open the canvas and ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Spool version
+      description: Output of `spool --version`. If you are running from a checkout, say so and give the commit.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node --version`. Spool requires 22 or newer.
+      placeholder: "v22.11.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser
+      description: |
+        The canvas is developed against Chrome. Safari and other WebKit browsers render transformed iframes blurry, which is a known browser limitation rather than a spool bug.
+      options:
+        - Chrome
+        - Arc, Brave, Edge, or another Chromium browser
+        - Safari or another WebKit browser
+        - Firefox
+        - Not applicable, this is a CLI issue
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console or terminal output
+      description: Anything the daemon printed, or errors from the browser console. Paste as text rather than a screenshot where you can.
+      render: shell
+    validations:
+      required: false
