@@ -35,7 +35,7 @@ import { copyProject, densestPage, type FrameBox, freePort, ms, quantile, startD
  * once per frame in the process.
  *
  *   pnpm build
- *   node bench/frame-cost.ts --project ~/projects/matmannen --headed --out cost.json
+ *   node bench/frame-cost.ts --project ~/projects/matmannen-fc63dba --headed --out cost.json
  *
  * Run it with node's own type stripping, not tsx — see bench/harness.ts.
  */
@@ -632,7 +632,7 @@ function frameUrl(renderUrl: string, project: string, frame: string): string {
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	const { root, name, spoolDir } = copyProject(options.project);
-	const boxes = densestPage(root);
+	const { frames: boxes } = densestPage(root);
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
 	const port = await freePort();
 	const daemon = await startDaemon(spoolDir, root, port);

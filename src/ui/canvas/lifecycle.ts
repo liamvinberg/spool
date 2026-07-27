@@ -81,6 +81,40 @@ export const MOUNTS_PER_SWEEP = 3; // wake-queue drain rate: 3 × ~8 ms ≈ one 
 export const CAPTURES_PER_SWEEP = 2; // still-refresh drain rate: a self-capture is a whole-document rasterization
 export const WARM_POOL_CAP = 24; // offscreen warm frames kept mounted; each holds ~4.6 MB and a renderer
 
+/**
+ * The measurement hook (#108), and the only temporary code the canvas carries.
+ * `bench/mount-gesture.ts` (#94) has to drive this function into states the
+ * shipped canvas will not produce on demand — a gesture with mounting
+ * deliberately in flight — and the alternative is a second lifecycle model
+ * living in the bench, which is strictly worse. The bench throws rather than
+ * running without it: a gesture over a canvas that mounted nothing reads as
+ * "mounting is free" for the one reason that proves nothing.
+ *
+ * `globalThis.__spoolBench` is `{ gate, admit }`. `gate: false` deletes the #80
+ * camera gate so mounting no longer waits for a still camera; `admit` is the
+ * admissions-per-sweep cap, unbounded at 0 or below. Read once at module load,
+ * because playwright's init script runs before this bundle evaluates and
+ * nothing else ever writes it — so an unset hook leaves the sweep comparing
+ * against the same two constants it always did.
+ *
+ * #112 deletes the `holding` gate outright and owns removing `gate` in that
+ * same diff: there will be no gate left to override. `admit` survives only
+ * while the in-flight cap is a constant, and #112 files the follow-up if it
+ * outlives that.
+ */
+const benchHooks = (globalThis as unknown as { __spoolBench?: { gate?: boolean; admit?: number } }).__spoolBench;
+
+/** The #80 camera gate, intact unless a bench asked for it gone. */
+const BENCH_GATE = benchHooks?.gate ?? true;
+
+/** Admissions per sweep: the shipped cap, a bench's own, or unbounded at 0 or below. */
+const BENCH_ADMIT =
+	benchHooks?.admit === undefined
+		? MOUNTS_PER_SWEEP
+		: benchHooks.admit > 0
+			? benchHooks.admit
+			: Number.POSITIVE_INFINITY;
+
 /** The decision function's persistent bookkeeping, owned by the hook, fabricated by tests. */
 export interface LifecycleModel {
 	/** When each frame was last on screen — the warm pool evicts oldest-seen first. */
@@ -167,7 +201,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	// next — a booting document paints, and a paint under a moving camera is
 	// the stutter. First sight of a camera is not a movement, so a canvas
 	// opening mounts straight away.
-	const holding = !shifted;
+	const holding = !shifted || !BENCH_GATE;
 
 	const margined = visibleWorldRect(camera, viewportWidth, viewportHeight, MARGIN_FRACTION);
 	const strict = visibleWorldRect(camera, viewportWidth, viewportHeight, 0);
@@ -230,7 +264,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	// The queue holds while the camera moves and drains the sweep after it
 	// stops. Entering never queues, so going inside stays instant at any moment.
 	waiting.sort((a, b) => a.tier - b.tier || a.dist - b.dist);
-	if (holding) for (const admitted of waiting.slice(0, MOUNTS_PER_SWEEP)) admitted.entry.target = admitted.wakeTo;
+	if (holding) for (const admitted of waiting.slice(0, BENCH_ADMIT)) admitted.entry.target = admitted.wakeTo;
 
 	const exitCaptures: string[] = [];
 	// resolve in-flight goodbyes: the capture landed or timed out — unmount now
