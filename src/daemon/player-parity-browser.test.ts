@@ -812,6 +812,61 @@ it("recovers the player when the browser refetches the inner frame", { timeout: 
 	expect(await player.locator(".spool-player-error").count()).toBe(0);
 });
 
+it("plays on when a browser extension's script throws inside the frame", { timeout: 60_000 }, async () => {
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const project = await serveProject();
+	// What MetaMask's inpage.js does to every page it is injected into. It runs in
+	// this document's realm, so its rejection lands on spool's listeners.
+	writeFrame(
+		project.root,
+		"home",
+		`const failure = new Error("Failed to connect to MetaMask");
+failure.stack = 'i: Failed to connect to MetaMask\\n    at Object.connect (chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn/scripts/inpage.js:7:84179)';
+dispatchEvent(new PromiseRejectionEvent("unhandledrejection", { promise: Promise.resolve(), reason: failure }));
+
+export default function Home() {
+	return <main id="home">home</main>;
+}
+`,
+	);
+
+	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	onTestFinished(() => context.close());
+	const player = await context.newPage();
+	await player.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=home`);
+
+	await player.frameLocator("#spool-player").locator("#home").waitFor();
+	expect(await player.locator(".spool-player-error").count()).toBe(0);
+});
+
+it("still blames the frame for a failure thrown by its own code", { timeout: 60_000 }, async () => {
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const project = await serveProject();
+	writeFrame(
+		project.root,
+		"home",
+		`dispatchEvent(new PromiseRejectionEvent("unhandledrejection", {
+	promise: Promise.resolve(),
+	reason: new Error("the frame's own fault"),
+}));
+
+export default function Home() {
+	return <main id="home">home</main>;
+}
+`,
+	);
+
+	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	onTestFinished(() => context.close());
+	const player = await context.newPage();
+	await player.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=home`);
+
+	await expect.poll(() => player.locator(".spool-player-error").count()).toBe(1);
+	expect(await player.locator(".spool-player-error").innerText()).toContain("the frame's own fault");
+});
+
 it("ignores an authored exact resize while real runtime navigation still works", { timeout: 60_000 }, async () => {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());
