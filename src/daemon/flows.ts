@@ -353,7 +353,8 @@ export function createFlowGraph() {
 	const kept = new Map<string, Map<string, FrameEntry>>();
 	/** design-relative shared/ path → the frames whose graph reaches it. */
 	const users = new Map<string, Map<string, string[]>>();
-	const chains = new Map<string, Promise<unknown>>();
+	const running = new Map<string, Promise<Built>>();
+	const queued = new Map<string, Promise<Built>>();
 
 	function graphFor(
 		pass: SourcePass,
@@ -439,22 +440,34 @@ export function createFlowGraph() {
 	}
 
 	/**
-	 * One build at a time per project. A request arriving mid-build waits for a
-	 * pass of its own rather than being answered from one that began before it:
-	 * overlapping builds would double the work and could hand back a read that
-	 * predates the edit that asked for it.
+	 * At most one build running and one waiting, per project.
+	 *
+	 * No request is ever answered from a pass that began before it arrived — that
+	 * would hand back a graph predating the edit that asked for the read — so a
+	 * request landing mid-build waits for the next one. But every request landing
+	 * during the same build wants the same next build, and one pass serves them
+	 * all: a burst of edits costs two reads of the project, not one per event.
 	 */
 	function queue(root: string): Promise<Built> {
-		const previous = chains.get(root) ?? Promise.resolve();
-		const next = previous.then(() => build(root));
-		chains.set(
-			root,
-			next.then(
-				() => undefined,
-				() => undefined,
-			),
+		const inflight = running.get(root);
+		if (inflight === undefined) return start(root);
+		const waiting = queued.get(root);
+		if (waiting !== undefined) return waiting;
+		const next = inflight.then(
+			() => start(root),
+			() => start(root),
 		);
+		queued.set(root, next);
 		return next;
+	}
+
+	function start(root: string): Promise<Built> {
+		queued.delete(root);
+		const run = build(root).finally(() => {
+			if (running.get(root) === run) running.delete(root);
+		});
+		running.set(root, run);
+		return run;
 	}
 
 	return {
