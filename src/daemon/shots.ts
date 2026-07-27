@@ -1,6 +1,6 @@
 import type { Browser } from "playwright-core";
 import { chromium } from "playwright-core";
-import { COVER_MAX_EDGE, COVER_QUALITY } from "../cover";
+import { COVER_HEAL_RUNG, COVER_QUALITY, coverRungScale } from "../cover";
 
 /**
  * Headless frame shots on playwright-core (#12): only playwright-managed
@@ -52,9 +52,11 @@ export function createShotTaker(): ShotTaker {
 			const height = Math.max(1, Math.round(target.height));
 			page = await live.newPage({
 				viewport: { width, height },
-				// the same bound the canvas's own covers use (COVER_MAX_EDGE): a
-				// healed cover must not be heavier than the one it stands in for
-				deviceScaleFactor: Math.min(2, COVER_MAX_EDGE / Math.max(width, height)),
+				// One shot, at the ladder's bottom rung (#111). There is no image
+				// library here to resample it into the rungs above, and the rung a
+				// heal can honestly claim is the one it actually rasterized — the
+				// frame's own next self-capture writes the rest.
+				deviceScaleFactor: coverRungScale(width, height, COVER_HEAL_RUNG),
 			});
 			await page.goto(target.url, { timeout: 10_000, waitUntil: "domcontentloaded" });
 			// frames are blank until React commits (#16) — wait for real content;

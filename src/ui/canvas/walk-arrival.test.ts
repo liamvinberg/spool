@@ -14,9 +14,10 @@ import { ProjectCanvas } from "./canvas";
  * is where the walk lands (#5).
  */
 
+const COVER = { hash: "b".repeat(32), widths: [200, 100, 50] };
 const frames = [
-	{ name: "origin", x: 0, y: 0, w: 100, h: 100, kind: "html", hasThumb: true },
-	{ name: "right", x: 180, y: 0, w: 100, h: 100, kind: "html", hasThumb: true },
+	{ name: "origin", x: 0, y: 0, w: 100, h: 100, kind: "html", cover: COVER },
+	{ name: "right", x: 180, y: 0, w: 100, h: 100, kind: "html", cover: COVER },
 ];
 
 describe("walk arrival", () => {

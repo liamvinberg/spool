@@ -17,8 +17,8 @@ describe("canvas page tree", () => {
 						root: "/project",
 						pages: ["shop"],
 						frames: [
-							{ name: "home", kind: "html", x: 0, y: 0, w: 100, h: 100, hasThumb: false },
-							{ name: "checkout", page: "shop", kind: "html", x: 160, y: 0, w: 100, h: 100, hasThumb: false },
+							{ name: "home", kind: "html", x: 0, y: 0, w: 100, h: 100 },
+							{ name: "checkout", page: "shop", kind: "html", x: 160, y: 0, w: 100, h: 100 },
 						],
 						collisions: [],
 					});

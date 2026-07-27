@@ -15,7 +15,6 @@ const frame = (name: string, x = 0, y = 0, w = 1440, h = 900): ProjectedFrame =>
 	y,
 	w,
 	h,
-	hasThumb: false,
 });
 
 const edge = (from: string, to: string): FlowEdge => ({ from, to, certainty: "will", sites: [] });

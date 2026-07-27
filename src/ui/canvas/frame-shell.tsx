@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import type { Cover } from "../../cover";
 import type { TerminalCoverState } from "../../daemon/projection";
 import { frameDocumentUrl } from "../api";
 import { Thumbnail } from "../thumbnail";
@@ -18,7 +19,7 @@ import { freezeMessage } from "./protocol";
 export interface CoverPlan {
 	/** The cover layer sits fully opaque over the (missing or booting) frame. */
 	cover: boolean;
-	image: "thumb" | "placeholder" | "terminal-message";
+	image: "cover" | "placeholder" | "terminal-message";
 	/** The 55% veil + mono "booting" label — the honest boot cover. */
 	badge: boolean;
 	message?: string;
@@ -37,14 +38,15 @@ export interface CoverPlan {
 export function coverPlan(input: {
 	state: FrameState;
 	ready: boolean;
-	hasThumb: boolean;
+	/** Whether the frame has a cover to stand in for it at all. */
+	covered: boolean;
 	/** Whether this boot is one the person asked for by going inside. */
 	entered: boolean;
 	/** Whether this boot is a walk arrival — quiet, however it ends up covered. */
 	walk: boolean;
 	terminalCover?: TerminalCoverState | undefined;
 }): CoverPlan {
-	const { state, ready, hasThumb, entered, walk, terminalCover } = input;
+	const { state, ready, covered, entered, walk, terminalCover } = input;
 	if (terminalCover?.kind === "stale" || terminalCover?.kind === "never-run") {
 		return {
 			cover: true,
@@ -55,8 +57,8 @@ export function coverPlan(input: {
 	}
 	return {
 		cover: state === "hibernated" || !ready,
-		image: hasThumb ? "thumb" : "placeholder",
-		badge: state !== "hibernated" && !ready && !walk && (entered || !hasThumb),
+		image: covered ? "cover" : "placeholder",
+		badge: state !== "hibernated" && !ready && !walk && (entered || !covered),
 	};
 }
 
@@ -69,8 +71,8 @@ export const FrameShell = memo(function FrameShell({
 	stilled,
 	interactive,
 	docNonce,
-	thumbNonce,
-	hasThumb,
+	cover,
+	coverSizes,
 	terminalCover,
 	walkArrival,
 	onIframe,
@@ -93,9 +95,10 @@ export const FrameShell = memo(function FrameShell({
 	interactive: boolean;
 	/** Bumped by SSE source changes — a new nonce reloads the document. */
 	docNonce: number;
-	/** Bumped when the cached thumbnail changes — refreshes covers. */
-	thumbNonce: number;
-	hasThumb: boolean;
+	/** The frame's cover ladder (#111) — absent when it has none to show. */
+	cover: Cover | undefined;
+	/** The rung the camera asks for, as a CSS length, quantized to the rung boundaries. */
+	coverSizes: string | undefined;
 	/** Terminal-only current/stale/never-run cover truth from the projection. */
 	terminalCover: TerminalCoverState | undefined;
 	/** Set while the current boot is a walk arrival (#28) — quiet cover. */
@@ -138,7 +141,7 @@ export const FrameShell = memo(function FrameShell({
 	// the badge is already gone by the time the cover fades. A marker the parent
 	// retires while the frame is still covered — a broken boot, an edit mid-walk
 	// — brings the honest cover straight back, which is the point.
-	const plan = coverPlan({ state, ready, hasThumb, entered, walk: walkArrival, terminalCover });
+	const plan = coverPlan({ state, ready, covered: cover !== undefined, entered, walk: walkArrival, terminalCover });
 
 	return (
 		<>
@@ -163,12 +166,16 @@ export const FrameShell = memo(function FrameShell({
 			    and the frame shows blank instead — so it waits here, loaded and
 			    unpainted, and a gesture only flips it visible. No fade either way:
 			    it is the same picture, and a transition between them would only
-			    ever read as a ghost of one over the other. */}
-			{state !== "hibernated" && hasThumb && (
+			    ever read as a ghost of one over the other.
+			    It names the same addresses as the cover layer below, so the two
+			    elements are one request: the browser caches a cover by URL, and
+			    both of them ask for the rung the same `sizes` selects (#111). */}
+			{state !== "hibernated" && cover !== undefined && (
 				<Thumbnail
 					project={project}
 					frame={name}
-					nonce={thumbNonce}
+					cover={cover}
+					sizes={coverSizes}
 					alt={name}
 					draggable={false}
 					// a fresh capture replaces this image while the canvas is in
@@ -187,11 +194,12 @@ export const FrameShell = memo(function FrameShell({
 						<div className="absolute inset-0 flex items-center justify-center bg-surface px-8 text-center">
 							<span className="max-w-lg font-mono text-xs leading-relaxed text-muted">{plan.message}</span>
 						</div>
-					) : plan.image === "thumb" ? (
+					) : plan.image === "cover" && cover !== undefined ? (
 						<Thumbnail
 							project={project}
 							frame={name}
-							nonce={thumbNonce}
+							cover={cover}
+							sizes={coverSizes}
 							alt={name}
 							draggable={false}
 							className="absolute inset-0 h-full w-full object-cover object-top"

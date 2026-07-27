@@ -173,10 +173,13 @@ function ProjectTile({
 							{cover !== undefined && (
 								<Thumbnail
 									project={project.name}
-									frame={cover}
-									nonce={0}
-									alt={cover}
+									frame={cover.frame}
+									cover={cover.cover}
+									alt={cover.frame}
 									draggable={false}
+									// a card slot is a third of a 380 px card: the bottom rung is
+									// all it can show, and a home with ten cards holds ten of them
+									sizes="120px"
 									className="h-full w-full object-cover object-top"
 								/>
 							)}

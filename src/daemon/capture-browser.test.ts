@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { chromium, type Frame, type Page } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
+import { COVER_MAX_EDGE } from "../cover";
 import { assembleFrameDocument, captureWorkerCsp, captureWorkerDocument } from "./document";
 import { CAPTURE_HOST, RENDER_HOST } from "./security";
 
@@ -256,7 +257,7 @@ async function requestCapture(page: Page, captureOrigin: string, maxEdge: number
 				});
 				if (timeoutId !== undefined) window.clearTimeout(timeoutId);
 				if (sourceListener !== undefined) window.removeEventListener("message", sourceListener);
-				const url = await new Promise<string>((resolve, reject) => {
+				const rungs = await new Promise<{ url: string; width: number; height: number }[]>((resolve, reject) => {
 					timeoutId = window.setTimeout(() => reject(new Error("worker timed out")), 2400);
 					worker.hidden = true;
 					worker.setAttribute("sandbox", "allow-scripts allow-same-origin");
@@ -267,12 +268,13 @@ async function requestCapture(page: Page, captureOrigin: string, maxEdge: number
 							const value = event.data as {
 								spool?: unknown;
 								id?: unknown;
-								url?: unknown;
+								rungs?: unknown;
 								error?: unknown;
 							};
 							if (value.spool !== "spool-capture-result-v1" || value.id !== id) return;
 							resultReplies += 1;
-							if (typeof value.url === "string") resolve(value.url);
+							if (Array.isArray(value.rungs))
+								resolve(value.rungs as { url: string; width: number; height: number }[]);
 							else reject(new Error(String(value.error)));
 						};
 						channel.port1.onmessageerror = () => reject(new Error("invalid worker reply"));
@@ -288,7 +290,7 @@ async function requestCapture(page: Page, captureOrigin: string, maxEdge: number
 					};
 					document.body.append(worker);
 				});
-				return { url, resultReplies };
+				return { rungs, resultReplies };
 			} finally {
 				cleanup();
 			}
@@ -379,15 +381,24 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	await authored.locator("main").waitFor();
 	await authored.evaluate(() => document.fonts.ready);
 
-	const cover = await requestCapture(page, captureOrigin.origin, 1200);
+	// one reply, the whole ladder: the top rung is the 800×600 frame's long edge
+	// at 2×, then half, then quarter — all off one parse and one decode
+	const cover = await requestCapture(page, captureOrigin.origin, COVER_MAX_EDGE);
 	expect(cover.resultReplies).toBe(1);
-	const coverImage = await readImage(cover.url, page);
-	expect(coverImage).toMatchObject({
-		type: "image/jpeg",
-		width: 1200,
-		height: 900,
-		magic: [255, 216, 255, 224, 0, 16, 74, 70],
-	});
+	expect(cover.rungs.map((rung) => [rung.width, rung.height])).toEqual([
+		[1600, 1200],
+		[800, 600],
+		[400, 300],
+	]);
+	const rungImages = [];
+	for (const rung of cover.rungs) rungImages.push(await readImage(rung.url, page));
+	expect(rungImages.map((image) => [image.type, image.width, image.height])).toEqual([
+		["image/jpeg", 1600, 1200],
+		["image/jpeg", 800, 600],
+		["image/jpeg", 400, 300],
+	]);
+	const coverImage = rungImages[1] as (typeof rungImages)[number];
+	expect(coverImage.magic).toEqual([255, 216, 255, 224, 0, 16, 74, 70]);
 	expect(coverImage.center[0]).toBeGreaterThanOrEqual(240);
 	expect(coverImage.center[1]).toBeGreaterThanOrEqual(52);
 	expect(coverImage.center[1]).toBeLessThanOrEqual(62);
@@ -413,7 +424,9 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	await startTargetPerformance(authored);
 	const exported = await requestCapture(page, captureOrigin.origin, 0);
 	expect(exported.resultReplies).toBe(1);
-	expect(await readImage(exported.url, page)).toEqual({
+	// an export is one lossless sheet, never a ladder
+	expect(exported.rungs).toHaveLength(1);
+	expect(await readImage(exported.rungs[0]?.url ?? "", page)).toEqual({
 		type: "image/png",
 		width: 1600,
 		height: 1200,
@@ -483,7 +496,7 @@ it("captures through the isolated worker while preserving output and cleanup", {
 		spool: "spool-capture-result-v1",
 		id: "0123456789abcdef0123456789abcdef",
 	});
-	expect(retried.reply.url).toMatch(/^data:image\/jpeg;base64,/);
+	expect((retried.reply.rungs as { url: string }[])[0]?.url).toMatch(/^data:image\/jpeg;base64,/);
 	const retriedWorker = page.frames().find((frame) => frame.url() === `${captureOrigin.origin}/capture`);
 	if (retriedWorker === undefined) throw new Error("retried worker disappeared before cleanup inspection");
 	expect(

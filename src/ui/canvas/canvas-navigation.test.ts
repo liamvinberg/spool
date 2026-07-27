@@ -6,8 +6,8 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ProjectCanvas } from "./canvas";
 
 const frames = [
-	{ name: "origin", x: 0, y: 0, w: 100, h: 100, hasThumb: false },
-	{ name: "right", x: 180, y: 0, w: 100, h: 100, hasThumb: false },
+	{ name: "origin", x: 0, y: 0, w: 100, h: 100 },
+	{ name: "right", x: 180, y: 0, w: 100, h: 100 },
 ];
 
 describe("canvas keyboard navigation", () => {

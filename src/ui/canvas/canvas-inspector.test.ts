@@ -17,9 +17,9 @@ const PROJECTION = {
 	root: "/project",
 	pages: ["shop"],
 	frames: [
-		{ name: "home", kind: "html", x: 0, y: 0, w: 390, h: 844, hasThumb: false },
-		{ name: "menu", kind: "html", x: 500, y: 0, w: 390, h: 844, hasThumb: false },
-		{ name: "checkout", page: "shop", kind: "html", x: 0, y: 0, w: 390, h: 844, hasThumb: false },
+		{ name: "home", kind: "html", x: 0, y: 0, w: 390, h: 844 },
+		{ name: "menu", kind: "html", x: 500, y: 0, w: 390, h: 844 },
+		{ name: "checkout", page: "shop", kind: "html", x: 0, y: 0, w: 390, h: 844 },
 	],
 	collisions: [],
 };

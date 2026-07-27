@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type Cover, coverSizes } from "../../cover";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
@@ -7,17 +8,17 @@ import type { Camera, FlowEdge, FlowUnreadable, FrameCollision, Geometry, Projec
 import {
 	beaconTrash,
 	fetchCanvasState,
+	fetchCover,
 	fetchFlows,
 	fetchProjection,
 	fetchStampLabels,
-	fetchThumb,
 	openInEditor,
 	postTrash,
 	postWalk,
 	putCanvasState,
+	putCover,
 	putGeometry,
 	putSelection,
-	putThumb,
 	resolveFlows,
 	subscribeSse,
 } from "../api";
@@ -25,6 +26,7 @@ import { RibbonMark } from "../icons";
 import { arrange } from "./arrange";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, K_STEP, toWorld, zoomAt } from "./camera";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
+import type { CoverRaster } from "./capture-broker";
 import { CollisionNotice } from "./collision-notice";
 import { type ConnectionRow, connectionGroups, outboundCount, unreadableRows } from "./connections";
 import { ContextMenu, contextMenuSize } from "./context-menu";
@@ -43,7 +45,7 @@ import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
 import { emptyHistory, entryOf, record, takeRedo, takeUndo } from "./history";
 import { type InspectorMode, InspectorRail, type InspectorTarget } from "./inspector";
-import { stillSharpUntil, useFrameLifecycle } from "./lifecycle";
+import { useFrameLifecycle } from "./lifecycle";
 import {
 	type ElementPreview,
 	editorTarget,
@@ -243,8 +245,6 @@ export function ProjectCanvas({
 	const [docNonces, setDocNonces] = useState<Record<string, number>>({});
 	// frames whose current boot is a walk arrival (#28): quiet cover, no veil
 	const [walkArrivals, setWalkArrivals] = useState<ReadonlySet<string>>(new Set<string>());
-	const [thumbNonces, setThumbNonces] = useState<Record<string, number>>({});
-	const [freshThumbs, setFreshThumbs] = useState<ReadonlySet<string>>(new Set<string>());
 	// pages (#39): the named pages on disk, the one the canvas shows, and the
 	// names discovery refuses to resolve
 	const [pages, setPages] = useState<string[]>([]);
@@ -358,31 +358,42 @@ export function ProjectCanvas({
 	// the geometry undo/redo stacks: per window, in memory, hands' writes only
 	const geometryHistory = useRef(emptyHistory());
 
-	const hasThumb = useCallback(
-		(name: string) => freshThumbs.has(name) || (framesRef.current.find((f) => f.name === name)?.hasThumb ?? false),
-		[freshThumbs],
+	// the lifecycle only asks whether a frame has a still worth standing in for it
+	const hasCover = useCallback(
+		(name: string) => framesRef.current.some((f) => f.name === name && f.cover !== undefined),
+		[],
 	);
-	const hasThumbRef = useRef(hasThumb);
-	hasThumbRef.current = hasThumb;
 
-	const noteThumb = useCallback((frame: string) => {
-		setFreshThumbs((current) => (current.has(frame) ? current : new Set(current).add(frame)));
-		setThumbNonces((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
+	/**
+	 * A cover was written — ours or another browser's. The ladder is the frame's
+	 * own state, so it is patched in place rather than held beside the projection:
+	 * the hash is the address, so a new one is a new URL and the swap needs no
+	 * nonce of its own.
+	 */
+	const noteCover = useCallback((frame: string, cover: Cover) => {
+		setFrames((current) =>
+			current.map((entry) =>
+				entry.name === frame && entry.cover?.hash !== cover.hash ? { ...entry, cover } : entry,
+			),
+		);
 	}, []);
 
-	// a settled self-capture persists into design/.spool and refreshes covers
+	// a settled self-capture persists into design/.spool as the frame's whole ladder
 	const onShot = useCallback(
-		(frame: string, dataUrl: string) => {
+		(frame: string, rungs: CoverRaster[]) => {
 			void (async () => {
 				try {
-					const cover = await (await fetch(dataUrl)).blob();
-					if (await putThumb(project, frame, cover)) noteThumb(frame);
+					const uploads = await Promise.all(
+						rungs.map(async (rung) => ({ width: rung.width, bytes: await (await fetch(rung.url)).blob() })),
+					);
+					const cover = await putCover(project, frame, uploads);
+					if (cover !== undefined) noteCover(frame, cover);
 				} catch {
 					// a lost capture is re-taken on the next settle
 				}
 			})();
 		},
-		[project, noteThumb],
+		[project, noteCover],
 	);
 
 	const pickedFrame = picked[picked.length - 1]?.frame;
@@ -410,7 +421,7 @@ export function ProjectCanvas({
 		entered,
 		frozen: frozenFrame,
 		inspected: railOpen ? inspectedFrame : null,
-		hasThumb: (name) => hasThumbRef.current(name),
+		hasCover: hasCover,
 		onShot,
 	});
 	const lifecycleRef = useRef(lifecycle);
@@ -440,17 +451,20 @@ export function ProjectCanvas({
 		async (frame: ProjectedFrame): Promise<CapturedFrame> => {
 			if (frame.kind === "html") {
 				// an export is the artifact, never the cover: 0 asks for the frame
-				// at full device resolution, losslessly
-				const dataUrl = await lifecycleRef.current.capture(frame.name, 0);
-				if (dataUrl !== undefined) {
-					const png = await pngBytesFromImageBlob(await (await fetch(dataUrl)).blob(), frame.w, frame.h);
+				// at full device resolution, losslessly, as one rung
+				const rungs = await lifecycleRef.current.capture(frame.name, 0);
+				const sheet = rungs?.[0];
+				if (sheet !== undefined) {
+					const png = await pngBytesFromImageBlob(await (await fetch(sheet.url)).blob(), frame.w, frame.h);
 					return { name: frame.name, width: frame.w, height: frame.h, png };
 				}
 			}
 
-			const cover = await fetchThumb(project, frame.name, Date.now());
-			if (cover === undefined) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
-			const png = await pngBytesFromImageBlob(cover, frame.w, frame.h);
+			// nothing live to photograph (a terminal, or a frame that would not
+			// answer): fall back to the sharpest rung of its stored cover
+			const stored = frame.cover === undefined ? undefined : await fetchCover(project, frame.name, frame.cover);
+			if (stored === undefined) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
+			const png = await pngBytesFromImageBlob(stored, frame.w, frame.h);
 			return { name: frame.name, width: frame.w, height: frame.h, png };
 		},
 		[project],
@@ -1244,7 +1258,7 @@ export function ProjectCanvas({
 	useEffect(() => {
 		return subscribeSse(`/api/p/${encodeURIComponent(project)}/events`, {
 			change: (data) => {
-				const event = data as { kind: string; frame?: string; frames?: string[] };
+				const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
 				if (event.kind === "frame" && event.frame !== undefined) {
 					const frame = event.frame;
 					reloadFrameDocument(frame);
@@ -1286,11 +1300,14 @@ export function ProjectCanvas({
 						void refetchFrames();
 					}
 				} else if (event.kind === "thumb" && event.frame !== undefined) {
-					noteThumb(event.frame);
+					// the ladder rides the event; only a cover the daemon could not
+					// read back costs a projection read
+					if (event.cover !== undefined) noteCover(event.frame, event.cover);
+					else void refetchFrames();
 				}
 			},
 		});
-	}, [project, refetchFrames, refetchFlows, noteThumb, reloadFrameDocument]);
+	}, [project, refetchFrames, refetchFlows, noteCover, reloadFrameDocument]);
 
 	// the frame protocol: loaded/error/shot route into the lifecycle, session?
 	// answers with the carried walk session, go/back move the entered state
@@ -2602,18 +2619,18 @@ export function ProjectCanvas({
 											ready={lifecycle.ready.has(frame.name)}
 											entered={isEntered}
 											// The frame you are inside keeps painting: it is the one
-											// you are using. A frame with no still, or one drawn
-											// larger than its still is sharp, has nothing to swap to.
-											stilled={
-												zooming &&
-												!isEntered &&
-												hasThumb(frame.name) &&
-												k <= stillSharpUntil(frame.w, frame.h, devicePixelRatio)
-											}
+											// you are using. Everything else swaps to its still up to
+											// 100%, which is as sharp as a cover is ever asked to be —
+											// past it you go inside (#111).
+											stilled={zooming && !isEntered && frame.cover !== undefined && k <= 1}
 											interactive={isEntered && !metaDown}
 											docNonce={docNonces[frame.name] ?? 0}
-											thumbNonce={thumbNonces[frame.name] ?? 0}
-											hasThumb={hasThumb(frame.name)}
+											cover={frame.cover}
+											coverSizes={
+												frame.cover === undefined
+													? undefined
+													: coverSizes(frame.cover.widths, frame.w, k, devicePixelRatio)
+											}
 											terminalCover={frame.terminalCover}
 											walkArrival={walkArrivals.has(frame.name)}
 											onIframe={onIframe}
@@ -2743,15 +2760,9 @@ export function ProjectCanvas({
 					exporting={exporting}
 					frames={exportFrames.map((frame) => ({
 						name: frame.name,
-						...(hasThumb(frame.name)
-							? {
-									thumbnail: {
-										project,
-										frame: frame.name,
-										nonce: thumbNonces[frame.name] ?? 0,
-									},
-								}
-							: {}),
+						...(frame.cover === undefined
+							? {}
+							: { thumbnail: { project, frame: frame.name, cover: frame.cover } }),
 					}))}
 					{...(exportError === undefined ? {} : { error: exportError })}
 					onCancel={cancelExportDialog}

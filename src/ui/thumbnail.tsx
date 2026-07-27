@@ -1,41 +1,42 @@
-import { useEffect, useState } from "react";
-import { fetchThumb } from "./api";
+import type { Cover } from "../cover";
+import { coverSrcSet, coverUrl } from "./api";
 
-type ThumbnailSource = {
-	project: string;
-	frame: string;
-	nonce: number;
-	url: string;
-};
-
+/**
+ * A frame's cover, as a plain image element (#111). No fetch, no blob URL, no
+ * effect: the ladder's addresses are known the moment the projection is, so the
+ * browser owns the whole job — it starts loading at commit instead of after an
+ * effect, caches by URL across every element that names one, upgrades a rung in
+ * place, and evicts decodes on its own terms.
+ *
+ * `sizes` is the one thing the browser cannot work out for itself. The camera is
+ * a CSS transform and `srcset` resolves against layout size, so the caller
+ * computes it from the zoom (`coverSizes`) and quantizes it to the rung
+ * boundaries; left alone, every cover would take its top rung at every zoom.
+ */
 export function Thumbnail({
 	project,
 	frame,
-	nonce,
+	cover,
 	alt,
+	sizes,
 	...image
-}: Omit<React.ComponentPropsWithoutRef<"img">, "src" | "nonce" | "alt"> & {
+}: Omit<React.ComponentPropsWithoutRef<"img">, "src" | "srcSet" | "alt"> & {
 	project: string;
 	frame: string;
-	nonce: number;
+	cover: Cover;
 	alt: string;
+	/** The rung the camera asks for, as a CSS length — the narrowest one still sharp. */
+	sizes?: string | undefined;
 }) {
-	const [source, setSource] = useState<ThumbnailSource>();
-
-	useEffect(() => {
-		let active = true;
-		let objectUrl: string | undefined;
-		void fetchThumb(project, frame, nonce).then((blob) => {
-			if (!active || blob === undefined) return;
-			objectUrl = URL.createObjectURL(blob);
-			setSource({ project, frame, nonce, url: objectUrl });
-		});
-		return () => {
-			active = false;
-			if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl);
-		};
-	}, [project, frame, nonce]);
-
-	if (source?.project !== project || source.frame !== frame || source.nonce !== nonce) return null;
-	return <img {...image} src={source.url} alt={alt} />;
+	const widest = cover.widths[0];
+	if (widest === undefined) return null;
+	return (
+		<img
+			{...image}
+			src={coverUrl(project, frame, cover.hash, widest)}
+			srcSet={coverSrcSet(project, frame, cover)}
+			{...(sizes === undefined ? {} : { sizes })}
+			alt={alt}
+		/>
+	);
 }

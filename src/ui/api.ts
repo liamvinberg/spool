@@ -1,4 +1,5 @@
 import { hc } from "hono/client";
+import type { Cover } from "../cover";
 import type { AppType } from "../daemon/app";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsListing } from "../daemon/fs-list";
@@ -18,6 +19,7 @@ declare global {
 export type {
 	Camera,
 	CanvasState,
+	Cover,
 	EdgeSite,
 	FlowEdge,
 	Flows,
@@ -239,35 +241,63 @@ export function frameDocumentUrl(project: string, frame: string, nonce: number):
 	return new URL(nonce === 0 ? base : `${base}?v=${nonce}`, renderOrigin).href;
 }
 
-function thumbUrl(project: string, frame: string, nonce: number): string {
-	const base = `/api/p/${encodeURIComponent(project)}/thumbs/${encodeURIComponent(frame)}`;
-	return nonce === 0 ? base : `${base}?v=${nonce}`;
+/**
+ * One rung of one cover (#111). The hash addresses the ladder's exact content,
+ * which is what lets an `<img>` reach it at all: an image element cannot carry
+ * the control header, so the unguessable address is the credential. It is also
+ * why the daemon can answer immutable — a changed cover is a changed URL, so a
+ * warm reload fetches none of them and there is no validator to revalidate.
+ */
+export function coverUrl(project: string, frame: string, hash: string, width: number): string {
+	return `/covers/${encodeURIComponent(project)}/${encodeURIComponent(frame)}/${hash}/${width}`;
+}
+
+/** The whole ladder as `srcset` — the browser picks a rung, upgrades in place, and evicts decodes. */
+export function coverSrcSet(project: string, frame: string, cover: Cover): string {
+	return cover.widths.map((width) => `${coverUrl(project, frame, cover.hash, width)} ${width}w`).join(", ");
 }
 
 /**
- * Thumbnail reads stay on the trusted host, where the control token is
- * required. Covers are the canvas's bulk traffic and a remount asks for one it
- * usually already holds, so this rides the HTTP cache: the daemon answers
- * `no-cache`, every read revalidates against the stored ETag, and an unchanged
- * cover costs a 304 instead of its megabytes.
+ * A cover's sharpest rung as bytes, for the one caller that needs them in hand
+ * rather than on screen: an export of a frame nothing live will photograph. A
+ * plain fetch, because the address is the credential.
  */
-export async function fetchThumb(project: string, frame: string, nonce: number): Promise<Blob | undefined> {
+export async function fetchCover(project: string, frame: string, cover: Cover): Promise<Blob | undefined> {
+	const widest = cover.widths[0];
+	if (widest === undefined) return undefined;
 	try {
-		const res = await controlFetch(thumbUrl(project, frame, nonce));
+		const res = await fetch(coverUrl(project, frame, cover.hash, widest));
 		return res.ok ? await res.blob() : undefined;
 	} catch {
 		return undefined;
 	}
 }
 
-/** Self-captures ride a plain PUT — binary body, outside the JSON RPC surface. */
-export async function putThumb(project: string, frame: string, cover: Blob): Promise<boolean> {
-	const res = await controlFetch(thumbUrl(project, frame, 0), {
+/**
+ * A self-capture rides a plain PUT, one form field per rung named for its width
+ * in device pixels: the daemon has no image library, so the realm that
+ * rasterized them is the only one that can say how wide they are. The answer is
+ * the ladder's address, which the canvas puts on screen straight away.
+ */
+export async function putCover(
+	project: string,
+	frame: string,
+	rungs: readonly CoverUpload[],
+): Promise<Cover | undefined> {
+	const body = new FormData();
+	for (const rung of rungs) body.append(`w${rung.width}`, rung.bytes);
+	const res = await controlFetch(`/api/p/${encodeURIComponent(project)}/thumbs/${encodeURIComponent(frame)}`, {
 		method: "PUT",
-		headers: { "content-type": cover.type === "" ? "application/octet-stream" : cover.type },
-		body: cover,
+		body,
 	});
-	return res.ok;
+	if (!res.ok) return undefined;
+	return (await res.json()) as Cover;
+}
+
+/** One rung on its way to the store. */
+export interface CoverUpload {
+	width: number;
+	bytes: Blob;
 }
 
 /** An authenticated SSE fetch stream that dies with the component. */

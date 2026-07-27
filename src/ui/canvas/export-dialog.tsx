@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { Cover } from "../../cover";
 import { cn } from "../cn";
 import { Thumbnail } from "../thumbnail";
 
@@ -9,7 +10,7 @@ export interface ExportPreview {
 	thumbnail?: {
 		project: string;
 		frame: string;
-		nonce: number;
+		cover: Cover;
 	};
 }
 
@@ -87,7 +88,14 @@ export function ExportDialog({
 									{frame.name}
 								</span>
 							) : (
-								<Thumbnail {...frame.thumbnail} alt="" className="h-full w-full object-cover object-top" />
+								<Thumbnail
+									{...frame.thumbnail}
+									alt=""
+									// the strip's own slot, so the row of previews takes the
+									// bottom rung instead of one full cover each
+									sizes="40px"
+									className="h-full w-full object-cover object-top"
+								/>
 							)}
 							<span className="absolute top-0.5 right-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-bg/75 px-0.5 font-mono text-[7px] text-text leading-none">
 								{index + 1}
