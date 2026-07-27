@@ -780,6 +780,38 @@ it("does not hand a private player port to foreign or replayed shell embeds", { 
 	}
 });
 
+it("recovers the player when the browser refetches the inner frame", { timeout: 60_000 }, async () => {
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const project = await serveProject();
+	writeFrame(project.root, "home", 'export default function Home() { return <main id="home">home</main>; }\n');
+
+	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	onTestFinished(() => context.close());
+	const player = await context.newPage();
+	await player.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=home`);
+	await player.frameLocator("#spool-player").locator("#home").waitFor();
+
+	// The exact death in #88: anything that refetches the inner URL spends a
+	// one-time handoff, and the player used to stay dead until a human reloaded.
+	await player.evaluate(() => {
+		(window as unknown as { __beforeRepair?: true }).__beforeRepair = true;
+	});
+	await player.evaluate(() => {
+		const frame = document.querySelector<HTMLIFrameElement>("#spool-player");
+		if (frame === null) return;
+		// Re-assigning the same address is the browser fetching this document a
+		// second time, which is all the issue's repro needs.
+		const source = frame.src;
+		frame.src = source;
+	});
+
+	// A repaired shell serves itself again, which is what mints the fresh handoff.
+	await player.waitForFunction(() => (window as unknown as { __beforeRepair?: true }).__beforeRepair === undefined);
+	await player.frameLocator("#spool-player").locator("#home").waitFor();
+	expect(await player.locator(".spool-player-error").count()).toBe(0);
+});
+
 it("ignores an authored exact resize while real runtime navigation still works", { timeout: 60_000 }, async () => {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());
