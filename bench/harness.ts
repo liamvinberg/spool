@@ -6,14 +6,15 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * The plumbing both benchmarks share: a private copy of a real spool project,
+ * The plumbing the six benchmarks share: a private copy of a real spool project,
  * a daemon of its own, and the geometry reading that decides what to measure.
  *
  * Sharing it is not tidiness. `bench/canvas.ts` (#82) and `bench/frame-cost.ts`
  * (#85) quote numbers at each other — a per-frame cost against a per-frame
  * arrival — and two copies of "start a daemon" would eventually diverge in some
  * detail (a warmed compile cache, an update check, a leftover camera) that
- * silently makes those numbers incomparable.
+ * silently makes those numbers incomparable. `copyProject` below says which
+ * canvas they all measure, and why it is a frozen one.
  *
  * Run both with node's own type stripping, not tsx: in-page collectors are
  * serialized into the browser by playwright, and esbuild's keep-names transform
@@ -25,7 +26,30 @@ export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** A 14-inch MacBook Pro's default scaled window, in CSS pixels. */
 export const VIEWPORT = { width: 1512, height: 945 };
 
-/** A private copy of the project, so a run leaves the real canvas untouched. */
+/**
+ * A private copy of the project, so a run leaves the real canvas untouched.
+ *
+ * The subject is frozen, and has to be. Every number the six benchmarks have
+ * produced comes from one canvas, reconstructed rather than checked out:
+ *
+ *   subject=~/projects/matmannen-fc63dba
+ *   mkdir -p "$subject" && git -C ~/projects/matmannen archive fc63dba design | tar -x -C "$subject"
+ *   mkdir -p "$subject/design/.spool" && cp -R ~/projects/matmannen/design/.spool/thumbs "$subject/design/.spool/"
+ *
+ * That is 11 pages and 145 frames, densest page `skrivbord` at 41 with 40 of
+ * them covered. The archive rebuilds the geometry at `fc63dba` without touching
+ * matmannen's working tree; the covers have to come from the live `.spool`,
+ * which is gitignored and so in no commit, and they still land because a cover
+ * is keyed by bare frame name (`daemon/thumbs.ts`) — the page migration moved
+ * frames without renaming them.
+ *
+ * A live canvas is not a benchmark subject. Frame count, cover coverage and
+ * which page is densest are all inputs here, and all three move whenever
+ * someone opens the canvas and works: pointing `--project` at the live one has
+ * already changed what a run measured twice, without the run saying so.
+ * matmannen's `HEAD` is now a 24-frame single-page restructure, and
+ * reconstructs a different canvas entirely.
+ */
 export function copyProject(source: string): { root: string; name: string; spoolDir: string } {
 	const design = join(source, "design");
 	if (!existsSync(join(design, "canvas.json"))) throw new Error(`${source} has no design/canvas.json`);
@@ -105,9 +129,15 @@ export interface Box {
 	h: number;
 }
 
-/** A frame as the benchmarks need it: where it sits, how big it was authored. */
+/**
+ * A frame as the benchmarks need it: where it sits, how big it was authored.
+ * `name` is the bare leaf, because that is a frame's identity everywhere else —
+ * the iframe's title, and the last segment of its document URL. The page it
+ * sits on is a separate field, exactly as `projection.ts` keeps it.
+ */
 export interface FrameBox extends Box {
 	name: string;
+	page: string;
 }
 
 function readBox(file: string): Box | undefined {
@@ -125,21 +155,33 @@ function readBox(file: string): Box | undefined {
 	return { x: frame.x, y: frame.y, w: frame.w, h: frame.h };
 }
 
+/** The root page is the frames directory itself, spelled "" — `ui/canvas/pages.ts`. */
+export const ROOT_PAGE = "";
+
+/** One page's frames, and the page they sit on — what a single camera can show. */
+export interface Page {
+	page: string;
+	frames: FrameBox[];
+}
+
 /**
  * The frames sharing one camera. Both layouts are read: `frames/<frame>/`
  * today, and `frames/<page>/<frame>/` after #89's hard cut, which would
  * otherwise leave this finding nothing and planning a camera over an empty
  * canvas. A page is the larger group under the page layout, since that is the
  * one canvas a single camera can put the most documents on screen at once.
+ *
+ * The root page wins outright when it holds anything, because a canvas opens
+ * there unless its state says otherwise.
  */
-export function densestPage(root: string): FrameBox[] {
+export function readPages(root: string): Page[] {
 	const dir = join(root, "design", "frames");
 	const flat: FrameBox[] = [];
-	const pages = new Map<string, FrameBox[]>();
+	const pages: Page[] = [];
 	for (const name of readdirSync(dir)) {
 		const direct = readBox(join(dir, name, "frame.json"));
 		if (direct !== undefined) {
-			flat.push({ ...direct, name });
+			flat.push({ ...direct, name, page: ROOT_PAGE });
 			continue;
 		}
 		let nested: string[];
@@ -151,14 +193,26 @@ export function densestPage(root: string): FrameBox[] {
 		const boxes: FrameBox[] = [];
 		for (const child of nested) {
 			const box = readBox(join(dir, name, child, "frame.json"));
-			if (box !== undefined) boxes.push({ ...box, name: `${name}/${child}` });
+			if (box !== undefined) boxes.push({ ...box, name: child, page: name });
 		}
-		if (boxes.length > 0) pages.set(name, boxes);
+		if (boxes.length > 0) pages.push({ page: name, frames: boxes });
 	}
-	if (flat.length > 0) return flat;
-	let widest: FrameBox[] = [];
-	for (const boxes of pages.values()) if (boxes.length > widest.length) widest = boxes;
+	// the root page wins outright when it holds anything, because a canvas opens
+	// there unless its state says otherwise
+	return flat.length > 0 ? [{ page: ROOT_PAGE, frames: flat }] : pages;
+}
+
+export function densestPage(root: string): Page {
+	let widest: Page = { page: ROOT_PAGE, frames: [] };
+	for (const page of readPages(root)) if (page.frames.length > widest.frames.length) widest = page;
 	return widest;
+}
+
+/** One named page — a sweep whose interesting distribution is not on the densest one. */
+export function namedPage(root: string, name: string): Page {
+	const found = readPages(root).find((page) => page.page === name);
+	if (found === undefined) throw new Error(`no page "${name}" in ${root}/design/frames`);
+	return found;
 }
 
 /** Just above lifecycle's K_MIN_MOUNT of 0.15: the zoom that mounts the most. */
@@ -198,11 +252,20 @@ export function planCamera(boxes: Box[], width: number, height: number, k: numbe
  * Rewrite the persisted camera before every run: the canvas saves its own on
  * settle, so a second run would otherwise open where the first one's gestures
  * left off rather than where the measurement was planned.
+ *
+ * The page has to be written with it. `resolveActivePage` falls back to the
+ * root page when the state does not name one, so a state file carrying only a
+ * camera opens a migrated project on a root page that holds no frames — the
+ * canvas mounts nothing and the run measures an empty screen rather than
+ * failing. `camerasFromState` reads the root page's camera from the original
+ * `camera` slot and every named page's from `pageCameras`, so which slot the
+ * planned camera goes in follows the page.
  */
-export function writeCamera(root: string, camera: Camera): void {
+export function writeCamera(root: string, camera: Camera, page: string = ROOT_PAGE): void {
+	const slots = page === ROOT_PAGE ? { camera } : { activePage: page, pageCameras: { [page]: camera } };
 	writeFileSync(
 		join(root, "design", ".spool", "state.json"),
-		`${JSON.stringify({ camera, arrows: true }, null, "\t")}\n`,
+		`${JSON.stringify({ ...slots, arrows: true }, null, "\t")}\n`,
 	);
 }
 

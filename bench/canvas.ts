@@ -35,7 +35,7 @@ import {
  * temporary root with its own daemon, spool dir and port, so the source canvas
  * keeps its camera, its stills and its uncommitted work.
  *
- *   pnpm build && node bench/canvas.ts --project ~/projects/matmannen
+ *   pnpm build && node bench/canvas.ts --project ~/projects/matmannen-fc63dba
  *   node bench/canvas.ts --project <path> --throttle 1,2,4,6 --headed --out run.json
  *
  * Run it with node's own type stripping, not tsx: the collector below is
@@ -288,6 +288,16 @@ async function measure(
 	const settled = await settle(page, 1000, 30_000);
 	const idleMounted = settled.count;
 	const reloadMs = settled.stableAt - reloadStart;
+	// A canvas that mounted nothing is fast at everything, and every bar below
+	// would report a pass over an empty screen. The camera is planned over real
+	// frames, so this only happens when the canvas opened somewhere else — the
+	// warm pass's own persisted state landing after the planned camera was
+	// written. Loud, because the numbers would otherwise look like good news.
+	if (settled.count === 0) {
+		throw new Error(
+			"the canvas settled with no documents mounted — the planned camera did not take, so this run would measure an empty screen",
+		);
+	}
 	const throttledFrames = await throttleEveryFrame(context, page, rate);
 
 	const state0 = await read(page);
@@ -437,18 +447,20 @@ function table(results: RunResult[]): string {
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	const { root, name, spoolDir } = copyProject(options.project);
-	const boxes = densestPage(root);
+	const { page: canvasPage, frames: boxes } = densestPage(root);
 	// a camera planned over nothing is a run that measures an empty canvas and
 	// reports it as fast, which is the one failure this whole ticket exists to avoid
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
 	const camera = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, options.zoom);
 	// rewritten before every run: the canvas persists its camera on settle, so
 	// each rate would otherwise start where the last one's gestures left off
-	const resetCamera = (): void => writeCamera(root, camera);
+	const resetCamera = (): void => writeCamera(root, camera, canvasPage);
 	const port = await freePort();
 	const daemon = await startDaemon(spoolDir, root, port);
 	const url = `${daemon.url}/p/${encodeURIComponent(name)}`;
-	process.stderr.write(`bench: ${url} (copy of ${options.project}, ${boxes.length} frames, k=${options.zoom})\n`);
+	process.stderr.write(
+		`bench: ${url} (copy of ${options.project}, page "${canvasPage === "" ? "root" : canvasPage}", ${boxes.length} frames, k=${options.zoom})\n`,
+	);
 
 	let browser: Browser | undefined;
 	const results: RunResult[] = [];
@@ -467,6 +479,10 @@ async function main(): Promise<void> {
 		await warmPage.goto(url, { waitUntil: "domcontentloaded" });
 		await settle(warmPage, 1500, 60_000);
 		await warm.close();
+		// The canvas persists its own camera through the daemon on settle, so a
+		// save in flight when the context closed can land *after* the planned
+		// camera is written and quietly reopen the next run somewhere empty.
+		await new Promise((wait) => setTimeout(wait, 1500));
 
 		for (const rate of options.throttle) {
 			resetCamera();
