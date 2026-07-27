@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { COVER_MAX_EDGE } from "../../cover";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
@@ -41,7 +40,7 @@ import {
 	pngBytesFromImageBlob,
 } from "./frame-export";
 import { FrameLabel } from "./frame-label";
-import { FrameShell, type WalkBoot } from "./frame-shell";
+import { FrameShell } from "./frame-shell";
 import { emptyHistory, entryOf, record, takeRedo, takeUndo } from "./history";
 import { type InspectorMode, InspectorRail, type InspectorTarget } from "./inspector";
 import { stillSharpUntil, useFrameLifecycle } from "./lifecycle";
@@ -135,7 +134,6 @@ type Gesture =
 	| { kind: "resize"; frame: string; handle: Handle; anchor: Point; origin: Box };
 
 const SETTLE_PERSIST_MS = 600;
-const WALK_STILL_MS = 450;
 const DRAG_THRESHOLD_PX = 3;
 const SNAP_THRESHOLD_PX = 8;
 const MIN_FRAME_SIZE = 40;
@@ -244,7 +242,7 @@ export function ProjectCanvas({
 	const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set<string>());
 	const [docNonces, setDocNonces] = useState<Record<string, number>>({});
 	// frames whose current boot is a walk arrival (#28): quiet cover, no veil
-	const [walkBoots, setWalkBoots] = useState<Record<string, WalkBoot>>({});
+	const [walkArrivals, setWalkArrivals] = useState<ReadonlySet<string>>(new Set<string>());
 	const [thumbNonces, setThumbNonces] = useState<Record<string, number>>({});
 	const [freshThumbs, setFreshThumbs] = useState<ReadonlySet<string>>(new Set<string>());
 	// pages (#39): the named pages on disk, the one the canvas shows, and the
@@ -332,7 +330,6 @@ export function ProjectCanvas({
 	// the walk session mirror: what the last go/back carried, owed to the next boot
 	const walkSession = useRef<SessionRecord | null>(null);
 	const walkTarget = useRef<string | null>(null);
-	const walkGen = useRef(0);
 	const departedFrameDocuments = useRef(new Set<string>());
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
@@ -421,7 +418,7 @@ export function ProjectCanvas({
 
 	const reloadFrameDocument = useCallback((frame: string) => {
 		setDocNonces((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
-		setWalkBoots((current) => without(current, frame));
+		setWalkArrivals((current) => withoutFrame(current, frame));
 		// a fresh document renders fresh elements: the cached walk is a lie
 		setTrees((current) => without(current, frame));
 		setPicked((current) => current.filter((pick) => pick.frame !== frame));
@@ -637,12 +634,11 @@ export function ProjectCanvas({
 	// its boot ever reported loaded re-mounts ambiently, and that boot is
 	// honest — only the current walk target keeps its marker (#28)
 	useEffect(() => {
-		setWalkBoots((current) => {
-			const dead = Object.keys(current).filter(
-				(name) => name !== walkTarget.current && (lifecycle.states[name] ?? "hibernated") === "hibernated",
+		setWalkArrivals((current) => {
+			const alive = [...current].filter(
+				(name) => name === walkTarget.current || (lifecycle.states[name] ?? "hibernated") !== "hibernated",
 			);
-			if (dead.length === 0) return current;
-			return Object.fromEntries(Object.entries(current).filter(([name]) => !dead.includes(name)));
+			return alive.length === current.size ? current : new Set(alive);
 		});
 	}, [lifecycle.states]);
 
@@ -1218,9 +1214,8 @@ export function ProjectCanvas({
 			}
 			walkSession.current = session;
 			walkTarget.current = target;
-			const gen = ++walkGen.current;
 			// arrival is instant — entered (and its chip) must name the frame whose
-			// time runs the moment the walk lands, not after the capture below
+			// time runs the moment the walk lands
 			setEntered(target);
 			setSelected([]);
 			setPicked([]);
@@ -1230,27 +1225,17 @@ export function ProjectCanvas({
 			if (frame !== undefined && viewport !== null && cam !== null) {
 				animateCamera(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
 			}
-			void (async () => {
-				// the reboot must not read as a reload (#28): self-capture the target
-				// just before rebooting and hold that still, uncovered, until the
-				// fresh boot's loaded report. Bounded — a mute frame cannot stall the
-				// walk, and its late reply still lands as the thumbnail via onShot.
-				const still = await Promise.race([
-					// the target has been running since it mounted, so it has nothing
-					// left to settle — and a cover that misses its own arrival is no
-					// cover at all
-					lifecycleRef.current.capture(target, COVER_MAX_EDGE, 0),
-					new Promise<undefined>((resolve) => setTimeout(resolve, WALK_STILL_MS)),
-				]);
-				// only the newest walk reboots (pickGen's pattern): a superseding walk
-				// or an exit mid-capture voids this one
-				if (walkGen.current !== gen || walkTarget.current !== target) return;
-				setWalkBoots((current) => ({ ...current, [target]: { still } }));
-				// screen scripts run fresh on every arrival — reboot even a warm target
-				setDocNonces((current) => ({ ...current, [target]: (current[target] ?? 0) + 1 }));
-				// the arrival is a new document: its walk is owed again
-				setTrees((current) => without(current, target));
-			})();
+			// The reboot must not read as a reload (#28), and nothing stands between
+			// the click and it (#110): the arrival's cover is the target's *stored*
+			// still, which coverPlan already reaches for. A capture taken here would
+			// cost the walk a mounted target's whole settle window, and hold up the
+			// state you are leaving — #5 reboots the target, so the stored still, a
+			// picture of a freshly booted frame, is the one that tells the truth.
+			setWalkArrivals((current) => (current.has(target) ? current : new Set(current).add(target)));
+			// screen scripts run fresh on every arrival — reboot even a warm target
+			setDocNonces((current) => ({ ...current, [target]: (current[target] ?? 0) + 1 }));
+			// the arrival is a new document: its walk is owed again
+			setTrees((current) => without(current, target));
 		},
 		[animateCamera, switchToPage, arrivalAt],
 	);
@@ -1281,7 +1266,7 @@ export function ProjectCanvas({
 							for (const frame of framesRef.current) next[frame.name] = (next[frame.name] ?? 0) + 1;
 							return next;
 						});
-						setWalkBoots((current) => (Object.keys(current).length === 0 ? current : {}));
+						setWalkArrivals((current) => (current.size === 0 ? current : new Set<string>()));
 						setTrees((current) => (Object.keys(current).length === 0 ? current : {}));
 						setPicked([]);
 						pickedChain.current = null;
@@ -1338,7 +1323,7 @@ export function ProjectCanvas({
 				case "loaded":
 					lifecycleRef.current.noteLoaded(message.frame);
 					// a completed boot retires its walk cover — later reboots are honest
-					setWalkBoots((current) => without(current, message.frame));
+					setWalkArrivals((current) => withoutFrame(current, message.frame));
 					// the keyboard follows the walk: an entered frame owns it (#28)
 					if (enteredRef.current === message.frame) iframes.current.get(message.frame)?.focus();
 					// a fresh document renders fresh elements: re-anchor its arrows (#34)
@@ -1354,7 +1339,7 @@ export function ProjectCanvas({
 					console.warn(`spool: frame "${message.frame}" reported:`, message.error);
 					// a walk boot that broke falls back to the honest cover: the quiet
 					// still must not dress a dead document as a settled one (#28)
-					setWalkBoots((current) => without(current, message.frame));
+					setWalkArrivals((current) => withoutFrame(current, message.frame));
 					return;
 				case "session?": {
 					const record = walkTarget.current === message.frame ? walkSession.current : null;
@@ -2630,7 +2615,7 @@ export function ProjectCanvas({
 											thumbNonce={thumbNonces[frame.name] ?? 0}
 											hasThumb={hasThumb(frame.name)}
 											terminalCover={frame.terminalCover}
-											walkBoot={walkBoots[frame.name]}
+											walkArrival={walkArrivals.has(frame.name)}
 											onIframe={onIframe}
 										/>
 										{externalLink?.frame === frame.name && (
@@ -2815,6 +2800,14 @@ function chunked<T>(items: readonly T[], size: number): T[][] {
 function without<T>(record: Record<string, T>, key: string): Record<string, T> {
 	if (!(key in record)) return record;
 	return Object.fromEntries(Object.entries(record).filter(([k]) => k !== key));
+}
+
+/** The frame names without one of them — same set back when it is absent. */
+function withoutFrame(names: ReadonlySet<string>, frame: string): ReadonlySet<string> {
+	if (!names.has(frame)) return names;
+	const next = new Set(names);
+	next.delete(frame);
+	return next;
 }
 
 /** "frame-label" → "frameLabel": dataset keys camel-case their attribute. */

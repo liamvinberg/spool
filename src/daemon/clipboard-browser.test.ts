@@ -156,23 +156,8 @@ export default function WarmNavigationClipboardFrame() {
 const selfWalkClipboardFrame = `import { useState } from "react";
 import { ui } from "spool";
 
-const probe = window as unknown as {
-	__documentId?: string;
-	__selfCopy?: string;
-	__walkDecisions?: Array<{ accepted: boolean; reason?: string }>;
-};
+const probe = window as unknown as { __documentId?: string };
 probe.__documentId = crypto.randomUUID();
-probe.__selfCopy = "idle";
-probe.__walkDecisions = [];
-window.addEventListener("message", (event) => {
-	const message = event.data as { spool?: unknown; accepted?: unknown; reason?: unknown };
-	if (message?.spool !== "walk-decision") return;
-	probe.__walkDecisions?.push(
-		message.accepted === true
-			? { accepted: true }
-			: { accepted: false, reason: typeof message.reason === "string" ? message.reason : undefined },
-	);
-});
 
 export default function SelfWalkClipboardFrame() {
 	const [result, setResult] = useState("idle");
@@ -187,18 +172,13 @@ export default function SelfWalkClipboardFrame() {
 		}
 	}
 	async function selfWalk() {
-		probe.__selfCopy = "pending";
 		ui.go("self");
+		// neither of these can reach the canvas: the arrival above replaces this
+		// document on the click, and a document that is gone runs no more lines
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		ui.go("self");
 		await new Promise((resolve) => setTimeout(resolve, 50));
-		try {
-			await ui.copy("must not write before self reboot");
-			probe.__selfCopy = "copied";
-		} catch (error) {
-			const value = error as { name?: unknown; message?: unknown };
-			probe.__selfCopy = String(value.name) + ":" + String(value.message);
-		}
+		await ui.copy("must not write before self reboot").catch(() => {});
 	}
 	function forgedTerminalSelfWalk() {
 		window.parent.postMessage({ spool: "go", frame: "self", target: "self" }, "*");
@@ -466,7 +446,7 @@ it("can copy after the canvas ignores an automatic walk from the same warm frame
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("warm frame clipboard value");
 });
 
-it("blocks self-walk clipboard writes until the frame document is replaced", { timeout: 90_000 }, async () => {
+it("replaces a self-walked document before it can walk or copy again", { timeout: 90_000 }, async () => {
 	const browser = await launchBrowser();
 	if (browser === undefined) return;
 	onTestFinished(() => browser.close());
@@ -556,30 +536,32 @@ it("blocks self-walk clipboard writes until the frame document is replaced", { t
 	);
 	await expect.poll(() => frame.locator("#result").innerText()).toBe("copied");
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("self walk clipboard value");
-	await frame.evaluate(() => {
-		const delay = document.createElement("canvas");
-		delay.width = 1;
-		delay.height = 1;
-		const nativeToBlob = delay.toBlob;
-		delay.toBlob = function delayedToBlob(callback, type, quality) {
-			setTimeout(() => nativeToBlob.call(this, callback, type, quality), 1_000);
-		};
-		document.body.append(delay);
-	});
 	await page.evaluate(() => navigator.clipboard.writeText("self walk baseline"));
+	const sentBeforeWalk = await page.evaluate(
+		() => (window as unknown as { __spoolSelfMessages: unknown[] }).__spoolSelfMessages.length,
+	);
 	const walkBox = await frame.locator("#self-walk").boundingBox();
 	if (walkBox === null) throw new Error("self walk button has no box");
 	await page.mouse.click(walkBox.x + walkBox.width / 2, walkBox.y + walkBox.height / 2);
 
-	await expect
-		.poll(() => frame.evaluate(() => (window as unknown as { __walkDecisions?: unknown[] }).__walkDecisions))
-		.toEqual([{ accepted: true }, { accepted: false, reason: "inactive" }]);
-	await expect
-		.poll(() => frame.evaluate(() => (window as unknown as { __selfCopy?: string }).__selfCopy), {
-			interval: 20,
-			timeout: 350,
-		})
-		.toBe("AbortError:Clipboard writes resume when this frame is entered again");
+	// #110: the arrival reboots on the click, with no self-capture in front of
+	// it, so the departed document dies inside its own first 50 ms wait — the
+	// second walk it tries and the copy after it never reach the canvas at all.
+	// The margin is real, not hoped for: bench/walk.ts measures click → target
+	// document at 5.8 ms p50 and 9.6 ms worst, headed. Both marks are well past
+	// by the time this returns.
+	await page.waitForTimeout(300);
+	expect(
+		await page.evaluate((from: number) => {
+			const sent = (window as unknown as { __spoolSelfMessages: unknown[] }).__spoolSelfMessages
+				.slice(from)
+				.filter((message): message is { spool: string } => typeof message === "object" && message !== null);
+			return {
+				go: sent.filter((message) => message.spool === "go").length,
+				copy: sent.filter((message) => message.spool === "copy").length,
+			};
+		}, sentBeforeWalk),
+	).toEqual({ go: 1, copy: 0 });
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("self walk baseline");
 
 	await expect
