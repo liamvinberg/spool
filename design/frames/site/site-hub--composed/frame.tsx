@@ -1,6 +1,7 @@
 import {
 	AnimatePresence,
 	type MotionValue,
+	animate,
 	motion,
 	useMotionValue,
 	useReducedMotion,
@@ -54,16 +55,28 @@ import { SpoolMark } from "../../../shared/ui/spool-mark";
  * install is this page's primary call to action and in every other take it goes
  * out of reach the instant you pull back. From site-hub--clone, the threads
  * between the frames, its geometry exactly, 1.5px bowing off the edge they
- * leave. The four arrows drawn are the four walks this frame declares, so the
- * map on screen and the map `spool flows` reads are the same map.
+ * leave, and its Entered state.
  *
- * Dropped on purpose: the floating select/hand tool bar, and every affordance
- * that would have to be drawn as a lie. A control you cannot use is what tips
- * this from application into costume.
+ * Entering happens in place, CONTEXT.md's own word for it: a double-click flies
+ * the camera to fit the frame, the frame becomes the live thing, its name tab
+ * swaps for the live · esc exits chip, the canvas behind it recedes and the
+ * scroll arc is handed over, because input belongs to the frame you are inside.
+ * Esc flies back. Nothing here walks to another frame, so this frame declares no
+ * edges and contributes nothing to `spool flows` — the arrows on the field are
+ * the site's own link graph, drawn, not derived.
  *
- * Going inside the landing is the one walk that is not a walk. You are already
- * on it, so a double-click scrolls the arc back to the top and hands you the
- * page at full size, which is what "inside" means here.
+ * The rule about affordances is not "draw fewer", it is "nothing drawn that
+ * does not work". So the chrome is here and all of it works: the project tab
+ * with its "+", which opens an empty project and hands you the two commands
+ * that fill it; both folders in the rail, which collapse and expand; and the
+ * second page, drafts, which is a real page switch — press it and the landing
+ * and its four sections leave and twenty-five earlier takes stand in their
+ * place. Those takes are sketches, not live frames, and they are drawn as
+ * sketches. Still dropped: the inspector rail and the floating tool bar.
+ *
+ * Going inside the landing is the one enter that is not a camera move. You are
+ * already on it, so a double-click scrolls the arc back to the top and hands you
+ * the page at full size, which is what "inside" means here.
  */
 
 /* ---------- fixed coordinate space + camera constants ---------- */
@@ -72,6 +85,9 @@ const VIEW_W = 1440;
 const VIEW_H = 900;
 const TRACK_H = 2900; // scroll room; scroll distance = TRACK_H - VIEW_H = 2000px
 const RAIL_W = 248; // spool's shipped pages rail
+const BAR_H = 44; // spool's shipped app bar
+const FIELD_W = VIEW_W - RAIL_W;
+const FIELD_H = VIEW_H - BAR_H;
 
 /** the landing's docked rect, in stage coordinates: clear of the rail. */
 const LIVE = { x: 580, y: 306, w: 440, h: 275 };
@@ -95,6 +111,40 @@ const zAt = (v: number) => smooth(clamp01(v / P1));
 const scaleAt = (v: number) => 1 + (SCALE - 1) * zAt(v);
 const rampAt = (v: number, a: number, b: number) => smooth(clamp01((v - a) / (b - a)));
 const pullAt = (v: number) => rampAt(v, REVEAL + 0.01, 1);
+
+/** the canvas camera: one scale about the top-left, one translation. */
+interface Cam {
+	x: number;
+	y: number;
+	k: number;
+}
+
+/**
+ * camera.ts's fitCamera, ported: frame the box with 128px of breathing room and
+ * never past 100%, then offset into the field, which starts under the bar and
+ * to the right of the rail. The clamp is the whole reason entering reads the way
+ * it does today — the section stand-ins are drawn small, so fitting them lands
+ * on 1:1 and the move is a pan. When real 1440x900 pages take their place the
+ * same call will fit them at 74% and fill the field, which is clone's move.
+ */
+function fitCamera(box: Rect): Cam {
+	const raw = Math.min((FIELD_W - 128) / box.w, (FIELD_H - 128) / box.h);
+	const k = raw < 0.02 ? 0.02 : raw > 1 ? 1 : raw;
+	return {
+		k,
+		x: RAIL_W + (FIELD_W - box.w * k) / 2 - box.x * k,
+		y: BAR_H + (FIELD_H - box.h * k) / 2 - box.y * k,
+	};
+}
+
+/**
+ * The camera the scroll asks for, written top-left instead of as an origin, so
+ * one pair of motion values carries both it and the entered flight.
+ */
+function scrollCam(v: number): Cam {
+	const k = 1 - (1 - MIN_ZOOM) * pullAt(v);
+	return { k, x: FIELD_CX * (1 - k), y: FIELD_CY * (1 - k) };
+}
 
 const dotGrid: CSSProperties = {
 	backgroundImage:
@@ -320,6 +370,27 @@ function FolderGlyph({ className }: { className?: string }) {
 				stroke="currentColor"
 				strokeWidth="1.15"
 				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
+function PlusGlyph({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 12 12" className={className} fill="none" aria-hidden="true">
+			<path d="M6 2.25v7.5M2.25 6h7.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+		</svg>
+	);
+}
+
+function CloseGlyph({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 12 12" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M3.25 3.25 8.75 8.75M8.75 3.25 3.25 8.75"
+				stroke="currentColor"
+				strokeWidth="1.25"
+				strokeLinecap="round"
 			/>
 		</svg>
 	);
@@ -836,6 +907,184 @@ const GHOSTS: readonly GhostSpec[] = [
 	{ name: "landing--specimen", x: 700, y: 902, w: 152, h: 96, at: 0.66 },
 ];
 
+/* ---------- the drafts page ---------- */
+
+/**
+ * The second page, and what the rail's "25" is a promise of. Twenty-five takes
+ * at one page, the five the pull-back parks at the edges of the site page
+ * leading. They are sketches: the files went to the trash weeks ago, so nothing
+ * here pretends to be a live frame — no hover ring, no cursor, no double-click
+ * that could only fail. The page switch is the thing that works.
+ */
+const DRAFTS: readonly string[] = [
+	"landing--quiet",
+	"landing--terminal",
+	"landing--editorial",
+	"landing--kinetic",
+	"landing--specimen",
+	"landing--ribbon",
+	"landing--split",
+	"landing--marquee",
+	"landing--grid",
+	"landing--mono",
+	"landing--stacked",
+	"landing--poster",
+	"landing--index",
+	"landing--ticker",
+	"landing--slab",
+	"landing--brief",
+	"landing--film",
+	"landing--manual",
+	"landing--plain",
+	"landing--letter",
+	"landing--gallery",
+	"landing--console",
+	"landing--atlas",
+	"landing--drift",
+	"landing--wide",
+];
+
+const DRAFT_COLS = 5;
+const DRAFT_W = 168;
+const DRAFT_H = 104;
+const DRAFT_X0 = 332;
+const DRAFT_Y0 = 116;
+const DRAFT_PITCH_X = 214;
+const DRAFT_PITCH_Y = 154;
+
+/** five skeletons on rotation, so twenty-five takes do not read as one take. */
+function DraftSkeleton({ shape }: { shape: number }) {
+	if (shape === 1) {
+		return (
+			<div className="flex h-full flex-col items-center justify-center gap-2">
+				<div className="h-2 w-[46%] rounded-[1px] bg-raised/70" />
+				<Bar w="34%" className="bg-border-raised/60" />
+				<div className="mt-1 h-2 w-[26%] rounded-[1px] bg-thread/25" />
+			</div>
+		);
+	}
+	if (shape === 2) {
+		return (
+			<div className="flex h-full gap-2">
+				<div className="flex-1 space-y-1.5">
+					<div className="h-2 w-[70%] rounded-[1px] bg-raised/70" />
+					<Bar w="88%" className="bg-border-raised/60" />
+					<Bar w="60%" className="bg-border-raised/60" />
+					<div className="mt-2 h-2 w-[44%] rounded-[1px] bg-thread/25" />
+				</div>
+				<div className="w-[38%] rounded-[2px] border border-border" />
+			</div>
+		);
+	}
+	if (shape === 3) {
+		return (
+			<div className="space-y-[7px]">
+				<div className="h-2 w-[40%] rounded-[1px] bg-raised/70" />
+				<Bar w="92%" className="bg-border-raised/60" />
+				<Bar w="86%" className="bg-border-raised/60" />
+				<Bar w="90%" className="bg-border-raised/60" />
+				<Bar w="52%" className="bg-thread/25" />
+			</div>
+		);
+	}
+	if (shape === 4) {
+		return (
+			<div className="flex h-full flex-col">
+				<div className="h-[46%] rounded-[2px] bg-raised/50" />
+				<div className="mt-2 space-y-1.5">
+					<Bar w="72%" className="bg-border-raised/60" />
+					<Bar w="48%" className="bg-border-raised/60" />
+				</div>
+			</div>
+		);
+	}
+	return (
+		<>
+			<div className="h-2 w-[62%] rounded-[1px] bg-raised/70" />
+			<div className="mt-2 space-y-1.5">
+				<Bar w="84%" className="bg-border-raised/70" />
+				<Bar w="58%" className="bg-border-raised/70" />
+			</div>
+			<div className="mt-2.5 h-2 w-[38%] rounded-[1px] bg-thread/25" />
+		</>
+	);
+}
+
+function DraftTile({ name, index, shown }: { name: string; index: number; shown: boolean }) {
+	const x = DRAFT_X0 + (index % DRAFT_COLS) * DRAFT_PITCH_X;
+	const y = DRAFT_Y0 + Math.floor(index / DRAFT_COLS) * DRAFT_PITCH_Y;
+	return (
+		<motion.div
+			className="pointer-events-none absolute"
+			style={{ left: x, top: y - 16, width: DRAFT_W }}
+			initial={false}
+			animate={{ opacity: shown ? 1 : 0, y: shown ? 0 : 10 }}
+			transition={{ duration: shown ? 0.34 : 0.2, ease: EASE, delay: shown ? index * 0.012 : 0 }}
+		>
+			<div className="mb-1 truncate font-mono text-[9px] text-muted/70 leading-none">▸ {name}</div>
+			<div
+				className="overflow-hidden rounded-[5px] border border-border bg-surface p-2.5"
+				style={{ width: DRAFT_W, height: DRAFT_H }}
+			>
+				<DraftSkeleton shape={index % 5} />
+			</div>
+		</motion.div>
+	);
+}
+
+function DraftsField({ shown }: { shown: boolean }) {
+	return (
+		<div className="pointer-events-none absolute top-0 left-0" style={{ width: VIEW_W, height: VIEW_H }}>
+			{DRAFTS.map((name, i) => (
+				<DraftTile key={name} name={name} index={i} shown={shown} />
+			))}
+			<motion.div
+				className="absolute font-mono text-muted/70 text-xs leading-4"
+				style={{ left: DRAFT_X0, top: 862 }}
+				initial={false}
+				animate={{ opacity: shown ? 1 : 0 }}
+				transition={{ duration: 0.3, ease: EASE, delay: shown ? 0.34 : 0 }}
+			>
+				25 takes at one page. sketches, not live frames.
+			</motion.div>
+		</div>
+	);
+}
+
+/* ---------- the second project: open, and empty ---------- */
+
+/**
+ * What "+" opens. A registered project with nothing in it is a real state of the
+ * app and the most useful thing this page can hand a visitor: the two commands
+ * that fill it, in the same copyable line as the hero's.
+ */
+function EmptyProject({ shown }: { shown: boolean }) {
+	return (
+		<motion.div
+			className="absolute flex flex-col items-center"
+			style={{ left: RAIL_W, top: BAR_H, width: FIELD_W, height: FIELD_H, pointerEvents: shown ? "auto" : "none" }}
+			initial={false}
+			animate={{ opacity: shown ? 1 : 0, y: shown ? 0 : 8 }}
+			transition={{ duration: shown ? 0.36 : 0.2, ease: EASE }}
+		>
+			<div className="flex h-full flex-col items-center justify-center gap-4 pb-16">
+				<SpoolMark className="h-7 w-[22px] text-thread opacity-40" />
+				<h2 className="font-medium text-base leading-base">No frames yet.</h2>
+				<div className="mt-1 flex gap-4">
+					<span className="w-px shrink-0 self-stretch bg-thread/70" />
+					<div className="w-[300px] font-mono text-sm leading-[26px]">
+						<CommandLine prompt="~/your-app $" command="spool init" />
+						<CommandLine prompt="~/your-app $" command="spool serve" />
+					</div>
+				</div>
+				<p className="mt-1 font-mono text-muted text-xs leading-4">
+					then your agent writes the first frame and it lands here.
+				</p>
+			</div>
+		</motion.div>
+	);
+}
+
 /* ---------- the threads, clone's geometry exactly ---------- */
 
 type Side = "n" | "e" | "s" | "w";
@@ -857,9 +1106,12 @@ interface EdgeSpec {
 }
 
 /**
- * Exactly the walks this frame declares, and no others: four doors out of the
- * landing. The back walks belong to the section frames and are drawn by them,
- * so nothing here claims an edge that `spool flows` cannot find in this folder.
+ * The site's own link graph: four doors out of the landing, which is what
+ * spool.page will really link. They used to be this frame's ui.go calls too, so
+ * `spool flows` read them back; entering in place retired the calls, and the
+ * arrows are now an illustration of the site rather than a derivation of this
+ * file. They stay because the claim they make is about the site and is true, and
+ * because a canvas with no threads on it is not showing you what spool does.
  * Sides and lanes are fixed rather than routed, because the field is fixed too,
  * and they turn one way round the landing so no arrow crosses a name tab: the
  * top pair enter from underneath, the bottom pair from the side.
@@ -1038,7 +1290,7 @@ function MarginNote({ shown, text }: { shown: boolean; text: string }) {
 
 const RING_CORNER = "absolute h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread";
 
-function RingBody() {
+function RingBody({ size = true }: { size?: boolean }) {
 	return (
 		<>
 			<div className="-inset-[3px] absolute rounded-[9px] border-[1.5px] border-thread" />
@@ -1046,9 +1298,11 @@ function RingBody() {
 			<span className={cn(RING_CORNER, "-right-[7px] -top-[7px]")} />
 			<span className={cn(RING_CORNER, "-left-[7px] -bottom-[7px]")} />
 			<span className={cn(RING_CORNER, "-right-[7px] -bottom-[7px]")} />
-			<div className="-bottom-[9px] -translate-x-1/2 absolute left-1/2 rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-none">
-				{PAGE_SIZE}
-			</div>
+			{size ? (
+				<div className="-bottom-[9px] -translate-x-1/2 absolute left-1/2 rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-none">
+					{PAGE_SIZE}
+				</div>
+			) : null}
 		</>
 	);
 }
@@ -1079,7 +1333,7 @@ function ZoomRing({ sp }: { sp: MotionValue<number> }) {
  * now a selection, springing from whatever it was on to whatever you picked.
  * The handover is invisible because both phases sit on the identical rect.
  */
-function SelectRing({ rect }: { rect: Rect }) {
+function SelectRing({ rect, size = true }: { rect: Rect; size?: boolean }) {
 	return (
 		<motion.div
 			className="pointer-events-none absolute top-0 left-0 z-30"
@@ -1087,14 +1341,25 @@ function SelectRing({ rect }: { rect: Rect }) {
 			animate={{ x: rect.x, y: rect.y, width: rect.w, height: rect.h }}
 			transition={{ type: "spring", stiffness: 260, damping: 30, mass: 0.9 }}
 		>
-			<RingBody />
+			<RingBody size={size} />
 		</motion.div>
 	);
 }
 
 /* ---------- name tabs ---------- */
 
-function NameTab({ name, sub, lit }: { name: string; sub: string; lit: boolean }) {
+function NameTab({ name, sub, lit, entered = false }: { name: string; sub: string; lit: boolean; entered?: boolean }) {
+	// clone's chip, verbatim: inside a frame the name is no longer the useful
+	// thing to say, the way out is.
+	if (entered) {
+		return (
+			<div className="flex h-[26px] items-start select-none pl-0.5">
+				<span className="rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3">
+					live · esc exits
+				</span>
+			</div>
+		);
+	}
 	return (
 		<div className="h-[26px] select-none pl-0.5">
 			<div className="flex items-center gap-1.5 font-mono text-xs leading-none">
@@ -1136,6 +1401,7 @@ function SectionTile({
 	spec,
 	sp,
 	selected,
+	entered,
 	live,
 	onSelect,
 	onOpen,
@@ -1144,6 +1410,7 @@ function SectionTile({
 	spec: SectionSpec;
 	sp: MotionValue<number>;
 	selected: boolean;
+	entered: boolean;
 	live: boolean;
 	onSelect: (id: FrameId) => void;
 	onOpen: () => void;
@@ -1159,33 +1426,41 @@ function SectionTile({
 				width: spec.w,
 				opacity,
 				y,
+				// the frame you are inside stands over the scrim; the rest sits under it
+				zIndex: entered ? 26 : undefined,
 				pointerEvents: live ? "auto" : "none",
 			}}
 		>
 			<div className="mb-1">
-				<NameTab name={spec.id} sub={spec.sub} lit={selected} />
+				<NameTab name={spec.id} sub={spec.sub} lit={selected} entered={entered} />
 			</div>
 
 			<motion.div
 				role="link"
 				tabIndex={live ? 0 : -1}
-				aria-label={`${spec.id}, double-click to go inside`}
-				className="relative block cursor-pointer text-left focus-visible:outline-none"
+				aria-label={entered ? `${spec.id}, live, escape exits` : `${spec.id}, double-click to go inside`}
+				className={cn(
+					"relative block text-left focus-visible:outline-none",
+					entered ? "cursor-default" : "cursor-pointer",
+				)}
 				style={{ width: spec.w, height: spec.h }}
-				whileHover={{ scale: 1.012 }}
+				whileHover={entered ? undefined : { scale: 1.012 }}
 				transition={{ type: "spring", stiffness: 300, damping: 24 }}
 				onPointerEnter={() => onFirstHover(spec.id)}
 				onFocus={() => onFirstHover(spec.id)}
 				onClick={(e) => {
 					e.stopPropagation();
+					// you are already inside this one: a click is not a selection
+					if (entered) return;
 					onSelect(spec.id);
 				}}
 				onDoubleClick={(e) => {
 					e.stopPropagation();
+					if (entered) return;
 					onOpen();
 				}}
 				onKeyDown={(e) => {
-					if (e.key === "Enter") {
+					if (e.key === "Enter" && !entered) {
 						e.preventDefault();
 						onOpen();
 					}
@@ -1194,7 +1469,7 @@ function SectionTile({
 				<div className="absolute inset-0 overflow-hidden rounded-[6px] border border-border-raised bg-surface">
 					<spec.Wire />
 				</div>
-				{selected ? null : (
+				{selected || entered ? null : (
 					<div className="-inset-px pointer-events-none absolute rounded-[7px] border border-thread/70 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
 				)}
 			</motion.div>
@@ -1228,21 +1503,145 @@ function Ghost({ spec, sp }: { spec: GhostSpec; sp: MotionValue<number> }) {
 	);
 }
 
+/* ---------- the app bar: brand lockup, project tabs, "+" ---------- */
+
+type ProjectId = "spool" | "your-app";
+
+/**
+ * spool's 44px bar, and the two controls on it that this page can honestly
+ * carry. The tab switches projects, "+" opens one — the second project is the
+ * visitor's own, named the way the hero's prompt names it, and it opens empty
+ * because it is. Its close button closes it. The brand lockup is a lockup and
+ * not a door, because there is nowhere on this page for a door to lead.
+ */
+function ProjectBar({
+	sp,
+	projects,
+	active,
+	onPick,
+	onAdd,
+	onClose,
+}: {
+	sp: MotionValue<number>;
+	projects: readonly ProjectId[];
+	active: ProjectId;
+	onPick: (id: ProjectId) => void;
+	onAdd: () => void;
+	onClose: (id: ProjectId) => void;
+}) {
+	const y = useTransform(sp, (v) => -BAR_H * (1 - rampAt(v, 0.32, 0.54)));
+	return (
+		<motion.header
+			className="absolute top-0 left-0 z-50 flex items-center border-border border-b bg-bg px-4"
+			style={{ width: VIEW_W, height: BAR_H, y }}
+			// chrome, like the rail: a press up here is never a press on the canvas
+			onClick={(e) => e.stopPropagation()}
+		>
+			<div className="flex h-full items-center gap-5">
+				<span className="flex select-none items-center gap-2">
+					<SpoolMark className="h-[18px] w-3.5 text-thread" title="spool" />
+					<span className="font-semibold text-md leading-sm tracking-tight">spool</span>
+				</span>
+				<nav aria-label="Projects" className="flex items-center gap-1">
+					<AnimatePresence initial={false}>
+						{projects.map((name) => {
+							const on = name === active;
+							const closable = name !== "spool";
+							return (
+								<motion.div
+									key={name}
+									layout
+									initial={{ opacity: 0, scale: 0.94 }}
+									animate={{ opacity: 1, scale: 1 }}
+									exit={{ opacity: 0, scale: 0.94, transition: { duration: 0.14 } }}
+									transition={{ duration: 0.22, ease: EASE }}
+									className={cn(
+										"group flex h-[26px] items-center rounded-md",
+										on && "border border-border-raised bg-raised",
+									)}
+								>
+									<button
+										type="button"
+										aria-pressed={on}
+										onClick={() => onPick(name)}
+										className={cn(
+											"h-full cursor-pointer text-base leading-[24px] transition-colors duration-150 focus-visible:outline-none",
+											closable ? "pr-1 pl-3" : "px-3",
+											on ? "font-medium text-text" : "text-muted hover:text-text",
+										)}
+									>
+										{name}
+									</button>
+									{closable ? (
+										<button
+											type="button"
+											aria-label={`Close ${name}`}
+											onClick={() => onClose(name)}
+											className="flex h-full w-5 cursor-pointer items-center justify-center pr-1 text-muted opacity-0 transition-opacity duration-150 hover:text-text focus-visible:opacity-100 group-hover:opacity-100"
+										>
+											<CloseGlyph className="h-2.5 w-2.5" />
+										</button>
+									) : null}
+								</motion.div>
+							);
+						})}
+					</AnimatePresence>
+					<motion.button
+						type="button"
+						layout
+						aria-label="Open a project"
+						onClick={onAdd}
+						className="flex h-[26px] w-[26px] cursor-pointer items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text focus-visible:outline-none"
+						transition={{ duration: 0.22, ease: EASE }}
+					>
+						<PlusGlyph className="h-2.5 w-2.5" />
+					</motion.button>
+				</nav>
+			</div>
+		</motion.header>
+	);
+}
+
 /* ---------- the left rail: the site's pages, spool's own shape ---------- */
 
 const PAGE_FRAMES: readonly FrameId[] = ["landing", "frames", "flows", "states", "disk"];
 
+type PageId = "site" | "drafts";
+
+interface PageSpec {
+	id: PageId;
+	name: string;
+	count: number;
+}
+
+const PAGES: readonly PageSpec[] = [
+	{ id: "site", name: "spool.page", count: PAGE_FRAMES.length },
+	{ id: "drafts", name: "drafts", count: DRAFTS.length },
+];
+
+/** the tree's two controls, split the way a tree splits them: the caret opens
+ *  the folder, the name opens the page. Both are real, so both are drawn. */
 function Rail({
 	sp,
+	project,
+	page,
+	open,
 	selected,
 	draftsLit,
+	onToggle,
+	onPage,
 	onSelect,
 	onOpen,
 	onDwell,
 }: {
 	sp: MotionValue<number>;
+	project: ProjectId;
+	page: PageId;
+	open: Record<PageId, boolean>;
 	selected: FrameId | null;
 	draftsLit: boolean;
+	onToggle: (id: PageId) => void;
+	onPage: (id: PageId) => void;
 	onSelect: (id: FrameId) => void;
 	onOpen: (id: FrameId) => void;
 	onDwell: () => void;
@@ -1271,90 +1670,131 @@ function Rail({
 	return (
 		<motion.aside
 			aria-label="Pages"
-			className="absolute top-0 left-0 z-40 flex h-full flex-col border-border border-r bg-bg"
-			style={{ width: RAIL_W, x }}
+			className="absolute left-0 z-40 flex flex-col border-border border-r bg-bg"
+			style={{ top: BAR_H, width: RAIL_W, height: FIELD_H, x }}
 			onPointerEnter={handleEnter}
 			onPointerLeave={handleLeave}
 			// the rail is chrome, not field: a click in here is never a click on the
 			// canvas, so it must not reach the background's deselect
 			onClick={(e) => e.stopPropagation()}
 		>
-			<div className="flex h-11 shrink-0 items-center gap-2.5 border-border border-b pl-3.5">
-				<SpoolMark className="h-4 w-4 text-thread" title="spool" />
-				<span className="font-semibold text-base leading-base tracking-tight">spool</span>
-			</div>
-
 			<div className="flex h-11 shrink-0 items-baseline gap-2 border-border border-b pl-3.5">
 				<h2 className="self-center font-semibold text-base leading-base">Pages</h2>
-				<span className="self-center font-mono text-muted text-xs leading-xs">2</span>
+				<span className="self-center font-mono text-muted text-xs leading-xs">
+					{project === "spool" ? PAGES.length : 0}
+				</span>
 			</div>
 
-			<div className="min-h-0 flex-1 overflow-hidden py-2">
-				<div className="relative flex h-8 items-center bg-surface pr-2">
-					<span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-thread" />
-					<span className="flex h-8 w-6 shrink-0 items-center justify-center text-muted">
-						<Caret open className="h-2.5 w-2.5" />
-					</span>
-					<span className="flex h-8 min-w-0 flex-1 items-center gap-2">
-						<FolderGlyph className="h-3.5 w-3.5 shrink-0 text-thread" />
-						<span className="min-w-0 flex-1 truncate font-mono text-sm text-text leading-sm">
-							spool.page
-						</span>
-					</span>
-					<span className="font-mono text-2xs text-muted/60 leading-3">5</span>
-				</div>
-
-				<div className="relative pb-0.5">
-					<span className="absolute top-0 bottom-1 left-[18px] w-px bg-border-raised" />
-					{PAGE_FRAMES.map((id) => {
-						const active = id === selected;
+			{/* twenty-five draft rows outrun the rail, so the list scrolls, and it keeps
+			    its overscroll to itself rather than stealing the arc's last stretch */}
+			<div
+				className="min-h-0 flex-1 overflow-y-auto py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+				style={{ overscrollBehavior: "contain" }}
+			>
+				{project !== "spool" ? (
+					<div className="px-3.5 py-1 font-mono text-muted/60 text-sm leading-sm">no pages yet</div>
+				) : (
+					PAGES.map((p) => {
+						const here = p.id === page;
 						return (
-							<button
-								key={id}
-								type="button"
-								aria-pressed={active}
-								className={cn(
-									"relative flex h-7 w-full cursor-pointer items-center text-left transition-colors duration-150 focus-visible:outline-none",
-									active ? "bg-surface" : "hover:bg-surface/50",
-								)}
-								onClick={() => onSelect(id)}
-								onDoubleClick={() => onOpen(id)}
-							>
-								<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
-								<span
-									className={cn(
-										"truncate pl-[34px] font-mono text-sm leading-sm transition-colors duration-150",
-										active ? "text-thread" : "text-muted",
-									)}
-								>
-									{id}
-								</span>
-							</button>
-						);
-					})}
-				</div>
+							<div key={p.id} className={p.id === "site" ? undefined : "mt-1"}>
+								<div className={cn("relative flex h-8 items-center pr-2", here && "bg-surface")}>
+									{here ? (
+										<span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-thread" />
+									) : null}
+									<button
+										type="button"
+										aria-label={`${open[p.id] ? "Collapse" : "Expand"} ${p.name}`}
+										aria-expanded={open[p.id]}
+										onClick={() => onToggle(p.id)}
+										className="flex h-8 w-6 shrink-0 cursor-pointer items-center justify-center text-muted/70 transition-colors duration-150 hover:text-text focus-visible:outline-none"
+									>
+										<Caret open={open[p.id]} className="h-2.5 w-2.5" />
+									</button>
+									<button
+										type="button"
+										aria-pressed={here}
+										onClick={() => onPage(p.id)}
+										className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 text-left focus-visible:outline-none"
+									>
+										<FolderGlyph
+											className={cn("h-3.5 w-3.5 shrink-0", here ? "text-thread" : "text-muted")}
+										/>
+										<span
+											className={cn(
+												"min-w-0 flex-1 truncate font-mono text-sm leading-sm transition-colors duration-150",
+												here ? "text-text" : "text-muted hover:text-text",
+											)}
+										>
+											{p.name}
+										</span>
+									</button>
+									<span
+										className={cn(
+											"font-mono text-2xs leading-3 transition-colors duration-500",
+											p.id === "drafts" && draftsLit ? "text-thread" : "text-muted/60",
+										)}
+									>
+										{p.count}
+									</span>
+								</div>
 
-				{/* the second page, shut. its count is the only claim it makes, and the
-				    last stretch of scroll is where that claim gets paid. */}
-				<div className="relative mt-1 flex h-8 items-center pr-2">
-					<span className="flex h-8 w-6 shrink-0 items-center justify-center text-muted/70">
-						<Caret open={false} className="h-2.5 w-2.5" />
-					</span>
-					<span className="flex h-8 min-w-0 flex-1 items-center gap-2">
-						<FolderGlyph className="h-3.5 w-3.5 shrink-0 text-muted" />
-						<span className="min-w-0 flex-1 truncate font-mono text-muted text-sm leading-sm">
-							drafts
-						</span>
-					</span>
-					<span
-						className={cn(
-							"font-mono text-2xs leading-3 transition-colors duration-500",
-							draftsLit ? "text-thread" : "text-muted/60",
-						)}
-					>
-						25
-					</span>
-				</div>
+								<AnimatePresence initial={false}>
+									{open[p.id] ? (
+										<motion.div
+											key="rows"
+											className="relative overflow-hidden"
+											initial={{ height: 0, opacity: 0 }}
+											animate={{ height: "auto", opacity: 1 }}
+											exit={{ height: 0, opacity: 0 }}
+											transition={{ duration: 0.24, ease: EASE }}
+										>
+											<div className="relative pb-0.5">
+												<span className="absolute top-0 bottom-1 left-[18px] w-px bg-border-raised" />
+												{p.id === "site"
+													? PAGE_FRAMES.map((id) => {
+															const active = id === selected;
+															return (
+																<button
+																	key={id}
+																	type="button"
+																	aria-pressed={active}
+																	className={cn(
+																		"relative flex h-7 w-full cursor-pointer items-center text-left transition-colors duration-150 focus-visible:outline-none",
+																		active ? "bg-surface" : "hover:bg-surface/50",
+																	)}
+																	onClick={() => onSelect(id)}
+																	onDoubleClick={() => onOpen(id)}
+																>
+																	<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
+																	<span
+																		className={cn(
+																			"truncate pl-[34px] font-mono text-sm leading-sm transition-colors duration-150",
+																			active ? "text-thread" : "text-muted",
+																		)}
+																	>
+																		{id}
+																	</span>
+																</button>
+															);
+														})
+													: DRAFTS.map((name) => (
+															// sketches, not frames: listed, never operable
+															<div key={name} className="relative flex h-7 items-center">
+																<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
+																<span className="truncate pl-[34px] font-mono text-muted/45 text-sm leading-sm">
+																	{name}
+																</span>
+															</div>
+														))}
+											</div>
+										</motion.div>
+									) : null}
+								</AnimatePresence>
+							</div>
+						);
+					})
+				)}
 			</div>
 
 			{/* the install line, permanently in reach. site-hub--shell found the hole:
@@ -1397,24 +1837,34 @@ function Rail({
 
 /* ---------- the zoom readout: the camera's real scale, never a decal ---------- */
 
-function ZoomReadout({ sp }: { sp: MotionValue<number> }) {
+function ZoomReadout({
+	sp,
+	enteredK,
+	landing,
+}: {
+	sp: MotionValue<number>;
+	enteredK: number | null;
+	/** whether the landing, the one frame here with a real document scale, is on
+	 *  screen. On any other page the reading is the camera's own. */
+	landing: boolean;
+}) {
 	const opacity = useTransform(sp, (v) => rampAt(v, 0.5, 0.66));
 	const [pct, setPct] = useState(100);
 	useEffect(() => {
 		const next = (v: number) => {
-			const k = scaleAt(v) * (1 - (1 - MIN_ZOOM) * pullAt(v));
+			const k = (landing ? scaleAt(v) : 1) * scrollCam(v).k;
 			const rounded = Math.round(k * 100);
 			setPct((prev) => (prev === rounded ? prev : rounded));
 		};
 		next(sp.get());
 		return sp.on("change", next);
-	}, [sp]);
+	}, [sp, landing]);
 	return (
 		<motion.div
 			className="pointer-events-none absolute right-5 bottom-5 z-40 font-mono text-muted/70 text-xs leading-4 tabular-nums"
 			style={{ opacity }}
 		>
-			{pct}%
+			{enteredK === null ? pct : Math.round(enteredK * 100)}%
 		</motion.div>
 	);
 }
@@ -1441,6 +1891,13 @@ export default function SiteHubComposed() {
 	const [live, setLive] = useState(returning.current);
 	const [selected, setSelected] = useState<FrameId | null>("landing");
 	const [hovered, setHovered] = useState<FrameId | null>(null);
+	// which frame owns input. null is the canvas.
+	const [entered, setEntered] = useState<FrameId | null>(null);
+	const enteredRef = useRef<FrameId | null>(null);
+	const [openProjects, setOpenProjects] = useState<readonly ProjectId[]>(["spool"]);
+	const [project, setProject] = useState<ProjectId>("spool");
+	const [page, setPage] = useState<PageId>("site");
+	const [treeOpen, setTreeOpen] = useState<Record<PageId, boolean>>({ site: true, drafts: false });
 	// the frame the "go inside" leader hangs off: the first section pointed at, and
 	// it stays put after that so the label never chases the cursor.
 	const [openAnchor, setOpenAnchor] = useState<FrameId | null>(null);
@@ -1531,6 +1988,13 @@ export default function SiteHubComposed() {
 		setSelected("landing");
 		setHovered(null);
 		setOpenAnchor(null);
+		enteredRef.current = null;
+		setEntered(null);
+		// the top of the arc is always the landing at full size, so scrolling back
+		// into it is also the way back to its page and its project. The tab you
+		// opened stays open; it just stops being the one you are looking at.
+		setPage("site");
+		setProject("spool");
 	}, [live]);
 
 	const scrollHome = useCallback(() => {
@@ -1539,51 +2003,156 @@ export default function SiteHubComposed() {
 		el.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
 	}, [reduce]);
 
-	// One literal, unconditional call each, so the parser reads four solid edges
-	// instead of an unreadable destination. site-hub does the dynamic version off
-	// an array and `spool flows` calls it unreadable, which is why its arrows have
-	// never drawn. The four here are exactly the four threads on the field.
-	const openFlows = useCallback(() => {
-		learn("open");
-		setSelected("flows");
-		ui.go("site-flows");
-	}, [learn]);
+	/** scrollHome's mirror: chrome pressed mid-arc pulls the camera out first, so
+	 *  nothing the visitor asks for happens somewhere they cannot see. */
+	const scrollCanvas = useCallback(() => {
+		const el = scrollRef.current;
+		if (!el) return;
+		const max = el.scrollHeight - el.clientHeight;
+		if (max <= 0) return;
+		el.scrollTo({ top: max * RETURN_AT, behavior: reduce ? "auto" : "smooth" });
+	}, [reduce]);
 
-	const openFrames = useCallback(() => {
-		learn("open");
-		setSelected("frames");
-		ui.go("site-frames");
-	}, [learn]);
+	/* ---- the camera: one pair of values, two owners ---- */
 
-	const openStates = useCallback(() => {
-		learn("open");
-		setSelected("states");
-		ui.go("site-states");
-	}, [learn]);
+	const boot = scrollCam(returning.current ? RETURN_AT : 0);
+	const camX = useMotionValue(boot.x);
+	const camY = useMotionValue(boot.y);
+	const camK = useMotionValue(boot.k);
+	const flying = useRef(false);
 
-	const openDisk = useCallback(() => {
-		learn("open");
-		setSelected("disk");
-		ui.go("site-disk");
-	}, [learn]);
+	// the scroll owns the camera while you are on the canvas and lets go the
+	// moment you are inside a frame, which is also when the arc stops scrolling.
+	useEffect(() => {
+		const apply = (v: number) => {
+			if (enteredRef.current !== null || flying.current) return;
+			const cam = scrollCam(v);
+			camX.set(cam.x);
+			camY.set(cam.y);
+			camK.set(cam.k);
+		};
+		apply(sp.get());
+		return sp.on("change", apply);
+	}, [sp, camX, camY, camK]);
 
-	// going inside the landing is the one move that is not a walk: you are already
-	// standing on it, so the arc runs backwards and hands it back at full size.
+	/** canvas.tsx's flight: 220ms, cubic out, no spring. */
+	const flyTo = useCallback(
+		(cam: Cam) => {
+			flying.current = true;
+			const spec = { duration: reduce ? 0 : 0.22, ease: [0, 0, 0.2, 1] as const };
+			animate(camX, cam.x, spec);
+			animate(camY, cam.y, spec);
+			animate(camK, cam.k, {
+				...spec,
+				onComplete: () => {
+					flying.current = false;
+				},
+			});
+		},
+		[camX, camY, camK, reduce],
+	);
+
+	/**
+	 * Entering, CONTEXT.md's Entered: the camera flies to fit, the frame becomes
+	 * the live thing and takes the input, and esc comes back. No walk, so no edge:
+	 * a walk out of here would strand the visitor, because the section frames'
+	 * back chips go to site-hub and site-hub is not this composition.
+	 */
+	const enterFrame = useCallback(
+		(id: Exclude<FrameId, "landing">) => {
+			learn("open");
+			enteredRef.current = id;
+			setEntered(id);
+			setSelected(null);
+			setHovered(null);
+			flyTo(fitCamera(rectOf(id)));
+		},
+		[flyTo, learn],
+	);
+
+	/** leaving always leaves you standing on what you were inside. */
+	const leaveFrame = useCallback(() => {
+		const was = enteredRef.current;
+		if (was === null) return false;
+		enteredRef.current = null;
+		setEntered(null);
+		setSelected(was);
+		flyTo(scrollCam(sp.get()));
+		return true;
+	}, [flyTo, sp]);
+
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key !== "Escape") return;
+			if (leaveFrame()) e.preventDefault();
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [leaveFrame]);
+
+	const selectFrame = useCallback(
+		(id: FrameId) => {
+			leaveFrame();
+			setSelected(id);
+		},
+		[leaveFrame],
+	);
+
+	// going inside the landing is the one enter that is not a camera move: you are
+	// already standing on it, so the arc runs backwards and hands it back at full
+	// size, which is what being inside the landing means.
 	const openLanding = useCallback(() => {
 		learn("open");
+		leaveFrame();
 		setSelected("landing");
 		scrollHome();
-	}, [learn, scrollHome]);
+	}, [learn, leaveFrame, scrollHome]);
 
 	const openers = useMemo<Record<FrameId, () => void>>(
 		() => ({
 			landing: openLanding,
-			flows: openFlows,
-			frames: openFrames,
-			states: openStates,
-			disk: openDisk,
+			flows: () => enterFrame("flows"),
+			frames: () => enterFrame("frames"),
+			states: () => enterFrame("states"),
+			disk: () => enterFrame("disk"),
 		}),
-		[openLanding, openFlows, openFrames, openStates, openDisk],
+		[openLanding, enterFrame],
+	);
+
+	/* ---- switching what the canvas is showing ---- */
+
+	const switchPage = useCallback(
+		(next: PageId) => {
+			leaveFrame();
+			setPage(next);
+			if (!live) scrollCanvas();
+		},
+		[leaveFrame, live, scrollCanvas],
+	);
+
+	const switchProject = useCallback(
+		(next: ProjectId) => {
+			leaveFrame();
+			setProject(next);
+			if (!live) scrollCanvas();
+		},
+		[leaveFrame, live, scrollCanvas],
+	);
+
+	// "+" is the folder picker in the app; here the folder is the one the hero's
+	// prompt already named, and opening it twice just brings it forward.
+	const addProject = useCallback(() => {
+		setOpenProjects((prev) => (prev.includes("your-app") ? prev : [...prev, "your-app"]));
+		switchProject("your-app");
+	}, [switchProject]);
+
+	const closeProject = useCallback(
+		(id: ProjectId) => {
+			if (id === "spool") return;
+			setOpenProjects((prev) => prev.filter((p) => p !== id));
+			switchProject("spool");
+		},
+		[switchProject],
 	);
 
 	const handleFirstHover = useCallback((id: FrameId) => {
@@ -1597,9 +2166,6 @@ export default function SiteHubComposed() {
 	const frameY = useTransform(sp, (v) => LIVE.y * zAt(v));
 	const frameRadius = useTransform(sp, (v) => 44 * zAt(v));
 
-	// the last stretch of scroll widens the camera around the field, which is what
-	// brings the drafts in from outside it.
-	const sceneScale = useTransform(sp, (v) => 1 - (1 - MIN_ZOOM) * pullAt(v));
 	const gridOpacity = useTransform(sp, (v) => clamp01(v / 0.16));
 
 	// the scroll hint fades the instant the zoom begins.
@@ -1607,6 +2173,13 @@ export default function SiteHubComposed() {
 
 	const anchorSpec = SECTIONS.find((s) => s.id === openAnchor);
 	const selectedRect = selected === null ? null : rectOf(selected);
+	const enteredRect = entered === null ? null : rectOf(entered);
+	// one ring, springing from what you picked to what you went inside
+	const ringRect = enteredRect ?? selectedRect;
+	// what the canvas is showing, and so what may be touched
+	const onSite = project === "spool" && page === "site";
+	const onDrafts = project === "spool" && page === "drafts";
+	const siteLive = live && onSite;
 	const [draftsLit, setDraftsLit] = useState(false);
 	useEffect(() => {
 		const next = (v: number) => {
@@ -1621,136 +2194,188 @@ export default function SiteHubComposed() {
 		<div
 			ref={scrollRef}
 			className="h-full w-full overflow-y-auto overflow-x-hidden bg-canvas [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+			// inside a frame the wheel belongs to the frame, so the arc holds still
+			style={{ overflowY: entered === null ? "auto" : "hidden" }}
 		>
 			<div style={{ height: TRACK_H }}>
 				{/* the pinned stage: the camera holds here while the track scrolls */}
 				<div
 					className="sticky top-0 h-[900px] w-full overflow-hidden bg-canvas font-sans text-text antialiased [font-synthesis:none]"
 					onClick={() => {
-						if (live) setSelected(null);
+						if (!live) return;
+						if (!leaveFrame()) setSelected(null);
 					}}
 					onKeyDown={(e) => {
-						if (live && e.key === "Escape") setSelected(null);
+						if (live && e.key === "Escape" && entered === null) setSelected(null);
 					}}
 					role="presentation"
 				>
 					{/* the scene: everything that belongs to the canvas moves with the camera */}
 					<motion.div
-						className="absolute inset-0"
-						style={{ scale: sceneScale, transformOrigin: `${FIELD_CX}px ${FIELD_CY}px` }}
+						className="absolute inset-0 origin-top-left"
+						style={{ x: camX, y: camY, scale: camK }}
 					>
 						<motion.div className="absolute inset-[-600px]" style={{ ...dotGrid, opacity: gridOpacity }} />
 
-						{GHOSTS.map((g) => (
-							<Ghost key={g.name} spec={g} sp={sp} />
-						))}
-
-						<Threads sp={sp} />
-
-						{SECTIONS.map((spec) => (
-							<SectionTile
-								key={spec.id}
-								spec={spec}
-								sp={sp}
-								selected={selected === spec.id}
-								live={live}
-								onSelect={setSelected}
-								onOpen={openers[spec.id]}
-								onFirstHover={handleFirstHover}
-							/>
-						))}
-
-						{/* the landing: one wrapper, transform-only zoom, the real page inside */}
+						{/* the site page. it stays mounted through a page switch so the arc's
+						    motion values never restart; what leaves is its opacity and its
+						    right to be touched. */}
 						<motion.div
-							className="absolute inset-0 z-10 origin-top-left overflow-hidden bg-bg [will-change:transform]"
-							style={{ x: frameX, y: frameY, scale: frameScale, borderRadius: frameRadius }}
+							className="pointer-events-none absolute inset-0"
+							initial={false}
+							animate={{ opacity: onSite ? 1 : 0 }}
+							transition={{ duration: onSite ? 0.4 : 0.26, ease: EASE }}
 						>
-							<div className="h-full w-full" style={{ pointerEvents: live ? "none" : "auto" }}>
-								<LandingContent hint={hint} />
-							</div>
+							{GHOSTS.map((g) => (
+								<Ghost key={g.name} spec={g} sp={sp} />
+							))}
+
+							<Threads sp={sp} />
+
+							{SECTIONS.map((spec) => (
+								<SectionTile
+									key={spec.id}
+									spec={spec}
+									sp={sp}
+									selected={selected === spec.id}
+									entered={entered === spec.id}
+									live={siteLive}
+									onSelect={selectFrame}
+									onOpen={openers[spec.id]}
+									onFirstHover={handleFirstHover}
+								/>
+							))}
+
+							{/* the landing: one wrapper, transform-only zoom, the real page inside */}
+							<motion.div
+								className="absolute inset-0 z-10 origin-top-left overflow-hidden bg-bg [will-change:transform]"
+								style={{ x: frameX, y: frameY, scale: frameScale, borderRadius: frameRadius }}
+							>
+								<div className="h-full w-full" style={{ pointerEvents: live ? "none" : "auto" }}>
+									<LandingContent hint={hint} />
+								</div>
+							</motion.div>
+
+							{/* on the canvas the docked page is a frame, so it takes the canvas
+							    gestures: a click selects it, a double-click goes inside it */}
+							{siteLive ? (
+								<div
+									role="link"
+									tabIndex={0}
+									aria-label="landing, double-click to go inside"
+									className="pointer-events-auto absolute z-20 cursor-pointer focus-visible:outline-none"
+									style={{ left: LIVE.x, top: LIVE.y, width: LIVE.w, height: LIVE.h }}
+									onPointerEnter={() => setHovered("landing")}
+									onPointerLeave={() => setHovered((c) => (c === "landing" ? null : c))}
+									onClick={(e) => {
+										e.stopPropagation();
+										selectFrame("landing");
+									}}
+									onDoubleClick={(e) => {
+										e.stopPropagation();
+										openLanding();
+									}}
+									onKeyDown={(e) => {
+										if (e.key === "Enter") {
+											e.preventDefault();
+											openLanding();
+										}
+									}}
+								>
+									{hovered === "landing" && selected !== "landing" ? (
+										<div className="-inset-px pointer-events-none absolute rounded-[7px] border border-thread/70" />
+									) : null}
+								</div>
+							) : null}
+
+							<LandingTab sp={sp} lit={selected === "landing"} />
+
+							{/* inside a frame, the canvas behind it steps back. it is still there,
+							    it is just not the thing you are in. */}
+							<motion.div
+								className="pointer-events-none absolute inset-[-1200px] bg-canvas"
+								style={{ zIndex: 25 }}
+								initial={false}
+								animate={{ opacity: entered === null ? 0 : 0.84 }}
+								transition={{ duration: 0.26, ease: EASE }}
+							/>
+
+							{siteLive && ringRect !== null ? (
+								<SelectRing rect={ringRect} size={entered === null} />
+							) : null}
+							{live ? null : <ZoomRing sp={sp} />}
+
+							{/* annotations that point at things on the drawing live on the drawing.
+							    the "go inside" one has no place to be until the visitor points at a
+							    section, so it does not exist until then. */}
+							<AnimatePresence>
+								{siteLive && entered === null && !done.open && anchorSpec !== undefined ? (
+									<Annotation
+										key="open"
+										ax={anchorSpec.anno.ax}
+										ay={anchorSpec.anno.ay}
+										ex={anchorSpec.anno.ex}
+										ey={anchorSpec.anno.ey}
+										sx={anchorSpec.anno.sx}
+										verb="double-click"
+										rest=" to go inside"
+									/>
+								) : null}
+							</AnimatePresence>
+
+							<AnimatePresence initial={false}>
+								{siteLive && entered === null && !done.pullback ? (
+									<Annotation
+										key="pullback"
+										ax={740}
+										ay={640}
+										ex={780}
+										ey={676}
+										sx={960}
+										verb="scroll"
+										rest=" to pull back further"
+									/>
+								) : null}
+							</AnimatePresence>
 						</motion.div>
 
-						{/* on the canvas the docked page is a frame, so it takes the canvas
-						    gestures: a click selects it, a double-click walks back into it */}
-						{live ? (
-							<div
-								role="link"
-								tabIndex={0}
-								aria-label="landing, double-click to go inside"
-								className="absolute z-20 cursor-pointer focus-visible:outline-none"
-								style={{ left: LIVE.x, top: LIVE.y, width: LIVE.w, height: LIVE.h }}
-								onPointerEnter={() => setHovered("landing")}
-								onPointerLeave={() => setHovered((c) => (c === "landing" ? null : c))}
-								onClick={(e) => {
-									e.stopPropagation();
-									setSelected("landing");
-								}}
-								onDoubleClick={(e) => {
-									e.stopPropagation();
-									openLanding();
-								}}
-								onKeyDown={(e) => {
-									if (e.key === "Enter") {
-										e.preventDefault();
-										openLanding();
-									}
-								}}
-							>
-								{hovered === "landing" && selected !== "landing" ? (
-									<div className="-inset-px pointer-events-none absolute rounded-[7px] border border-thread/70" />
-								) : null}
-							</div>
-						) : null}
+						{/* the second page, standing on the same field, at the same camera */}
+						<DraftsField shown={onDrafts} />
 
-						<LandingTab sp={sp} lit={selected === "landing"} />
-
-						{live && selectedRect !== null ? <SelectRing rect={selectedRect} /> : null}
-						{live ? null : <ZoomRing sp={sp} />}
-
-						{/* annotations that point at things on the drawing live on the drawing.
-						    the "go inside" one has no place to be until the visitor points at a
-						    section, so it does not exist until then. */}
-						<AnimatePresence>
-							{live && !done.open && anchorSpec !== undefined ? (
-								<Annotation
-									key="open"
-									ax={anchorSpec.anno.ax}
-									ay={anchorSpec.anno.ay}
-									ex={anchorSpec.anno.ex}
-									ey={anchorSpec.anno.ey}
-									sx={anchorSpec.anno.sx}
-									verb="double-click"
-									rest=" to go inside"
-								/>
-							) : null}
-						</AnimatePresence>
-
-						<AnimatePresence initial={false}>
-							{live && !done.pullback ? (
-								<Annotation
-									key="pullback"
-									ax={740}
-									ay={640}
-									ex={780}
-									ey={676}
-									sx={960}
-									verb="scroll"
-									rest=" to pull back further"
-								/>
-							) : null}
-						</AnimatePresence>
+						{/* the second project, which has no pages at all */}
+						<EmptyProject shown={project === "your-app"} />
 					</motion.div>
+
+					<ProjectBar
+						sp={sp}
+						projects={openProjects}
+						active={project}
+						onPick={switchProject}
+						onAdd={addProject}
+						onClose={closeProject}
+					/>
 
 					<Rail
 						sp={sp}
-						selected={selected}
+						project={project}
+						page={page}
+						open={treeOpen}
+						// a selection belongs to its page: it waits, unlit, while you are
+						// looking at another one
+						selected={onSite ? selected : null}
 						draftsLit={draftsLit}
-						onSelect={setSelected}
+						onToggle={(id) => setTreeOpen((prev) => ({ ...prev, [id]: !prev[id] }))}
+						onPage={switchPage}
+						onSelect={selectFrame}
 						onOpen={(id) => openers[id]()}
 						onDwell={() => learn("rail")}
 					/>
 
-					<ZoomReadout sp={sp} />
+					<ZoomReadout
+						sp={sp}
+						enteredK={enteredRect === null ? null : fitCamera(enteredRect).k}
+						landing={onSite}
+					/>
 
 					{/* the rail annotation touches chrome, so it is drawn in chrome space and
 					    never moves with the camera */}
@@ -1759,7 +2384,7 @@ export default function SiteHubComposed() {
 						style={{ width: VIEW_W, height: VIEW_H }}
 					>
 						<AnimatePresence initial={false}>
-							{live && !done.rail ? (
+							{siteLive && entered === null && !done.rail ? (
 								<Annotation
 									key="rail"
 									ax={RAIL_W}
@@ -1772,7 +2397,7 @@ export default function SiteHubComposed() {
 							) : null}
 						</AnimatePresence>
 
-						<MarginNote shown={noteShown} text="25 drafts, still on the canvas" />
+						<MarginNote shown={noteShown && onSite} text="25 drafts, still on the canvas" />
 					</div>
 				</div>
 			</div>
