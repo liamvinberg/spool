@@ -421,8 +421,19 @@ describe("change events", () => {
 		writeFrame(root, "hello", helloTsx.replace("hello from spool", "hello edited"));
 		await nextMatching({ event: "change", data: { kind: "frame", frame: "hello" } });
 
+		// a stylesheet is nobody's import: it can stale every document, so it
+		// still wakes the whole project
 		writeDesignFile(root, "shared/tokens.css", "@theme {\n\t--color-thread: #222222;\n}\n");
 		await nextMatching({ event: "change", data: { kind: "shared" } });
+
+		// a shared component the link graph has read names its own readers (#109)
+		writeDesignFile(root, "shared/ui/badge.tsx", "export const Badge = () => <b>one</b>;\n");
+		writeFrame(root, "hello", `import { Badge } from "../../shared/ui/badge";\n${helloTsx}`);
+		expect((await app.request(`/api/p/${name}/flows`)).status).toBe(200);
+		await events.drain(300);
+
+		writeDesignFile(root, "shared/ui/badge.tsx", "export const Badge = () => <b>two</b>;\n");
+		await nextMatching({ event: "change", data: { kind: "frame", frame: "hello" } });
 
 		await events.drain(300);
 		writeDesignFile(root, ".spool/thumbs/hello.png", "not really a png");

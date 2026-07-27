@@ -206,7 +206,8 @@ export function createDaemonApp({
 	const compiler = createFrameCompiler(version, webfonts);
 	const playerCompiler = createPlayerCompiler(version, webfonts);
 	const flowGraph = createFlowGraph();
-	const hub = createChangeHub();
+	// a shared/ edit wakes the frames whose graph reaches it, not every document
+	const hub = createChangeHub({ framesUsing: (root, path) => flowGraph.framesUsing(root, path) });
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
 	const trashImpl = moveToTrash ?? (async (paths: string[]) => void (await trash(paths)));
