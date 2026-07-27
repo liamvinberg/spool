@@ -433,7 +433,7 @@ describe("change events", () => {
 		await events.drain(300);
 
 		writeDesignFile(root, "shared/ui/badge.tsx", "export const Badge = () => <b>two</b>;\n");
-		await nextMatching({ event: "change", data: { kind: "frame", frame: "hello" } });
+		await nextMatching({ event: "change", data: { kind: "shared", frames: ["hello"] } });
 
 		await events.drain(300);
 		writeDesignFile(root, ".spool/thumbs/hello.png", "not really a png");
