@@ -28,6 +28,7 @@ import {
 	escapeInlineScript,
 	escapeInlineStyle,
 	escapeJsonScript,
+	playerHandoffRejectedDocument,
 	playerLoadErrorDocument,
 } from "./document";
 import { createChangeHub } from "./events";
@@ -1008,14 +1009,17 @@ export function createDaemonApp({
 				const { frame, scenario, shell, handoff } = c.req.valid("query");
 				const controlRequest = hostClass(c.req.url) === "control";
 				const shellRender = !controlRequest && shell === "1";
+				const shellDocument = (body: string, status: number) =>
+					new Response(body, { status, headers: { "content-type": "text/html; charset=UTF-8" } });
 				const shellFailure = (message: string, status: number) =>
-					new Response(playerLoadErrorDocument(message, "failed to load"), {
-						status,
-						headers: { "content-type": "text/html; charset=UTF-8" },
-					});
+					shellDocument(playerLoadErrorDocument(message, "failed to load"), status);
 				const playScenario = scenario ?? "default";
 				if (shellRender && !consumePlayerHandoff(handoff, name, frame, playScenario)) {
-					return shellFailure("invalid or expired player shell handoff", 403);
+					// Single-use stays: a leaked shell URL must not be re-embeddable, since
+					// shell mode is what hands a live player port to its parent. This is
+					// the one failure the outer page repairs by reloading, so it reports
+					// through its own signal rather than the generic load error (#88).
+					return shellDocument(playerHandoffRejectedDocument("invalid or expired player shell handoff"), 403);
 				}
 				if (!shellRender && !controlRequest && handoff !== undefined) {
 					return c.text("a player shell handoff requires shell=1", 400);

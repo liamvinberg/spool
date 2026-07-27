@@ -65,6 +65,14 @@ interface ActiveControllerCommand extends QueuedControllerCommand {
 }
 
 const MAX_PENDING_CONTROLLER_COMMANDS = 32;
+/**
+ * How long a self-reload counts as already attempted (#88). Serving the control
+ * document mints a fresh handoff, so reloading is the repair for a spent one.
+ * Rate-limiting it keeps a daemon that rejects every handoff from looping the
+ * page, while still letting a tab restored much later repair itself.
+ */
+const HANDOFF_RELOAD_COOLDOWN_MS = 10_000;
+const HANDOFF_RELOAD_KEY = "spool:player-handoff-reload";
 
 declare global {
 	interface Window {
@@ -126,6 +134,36 @@ export function bootPlayerShell(config: ShellConfig): void {
 			geometryReadyRevision === geometryRevision
 		);
 		if (!hidden) revealed = true;
+	};
+	/**
+	 * Reload once per cooldown to earn a fresh handoff, reporting whether the
+	 * reload was taken. Storage is per tab and survives the reload, which is what
+	 * makes the cooldown outlive the document that set it.
+	 */
+	const reloadForHandoff = (): boolean => {
+		let last = 0;
+		try {
+			last = Number(window.sessionStorage.getItem(HANDOFF_RELOAD_KEY)) || 0;
+		} catch {
+			// A tab that denies storage still deserves one attempt per load.
+		}
+		const now = Date.now();
+		if (last !== 0 && now - last < HANDOFF_RELOAD_COOLDOWN_MS) return false;
+		try {
+			window.sessionStorage.setItem(HANDOFF_RELOAD_KEY, String(now));
+		} catch {
+			// Losing the marker risks a slow reload loop, not a broken player.
+		}
+		window.location.reload();
+		return true;
+	};
+	/** An inner document that handshakes proves its handoff was taken, so the cooldown has nothing left to suppress. */
+	const clearHandoffReload = () => {
+		try {
+			window.sessionStorage.removeItem(HANDOFF_RELOAD_KEY);
+		} catch {
+			// Nothing to clear when storage is denied.
+		}
 	};
 	const host = () => document.querySelector<HTMLIFrameElement>("#spool-player");
 	const postCommand = (command: string, extra: Record<string, unknown> = {}) =>
@@ -335,6 +373,7 @@ export function bootPlayerShell(config: ShellConfig): void {
 			const addMessageListener = port.addEventListener.bind(port);
 			const startPort = port.start.bind(port);
 			runtimePort = port;
+			clearHandoffReload();
 			postToRuntime = (outbound) => postMessage(outbound);
 			config.frames = frames;
 			if (latestGeometry !== undefined) applyGeometry(latestGeometry.frames);
@@ -363,6 +402,27 @@ export function bootPlayerShell(config: ShellConfig): void {
 			) {
 				return;
 			}
+			loadError = message.error;
+			hidden = true;
+			notify();
+			return;
+		}
+
+		if (message.spool === "player-handoff-rejected") {
+			if (
+				loadError !== undefined ||
+				!hasOnly(message, ["spool", "error"]) ||
+				typeof message.error !== "string" ||
+				message.error.length === 0 ||
+				message.error.length > 100_000
+			) {
+				return;
+			}
+			// The browser refetched the inner document on its own — a restored tab, an
+			// iframe it discarded, a reloaded frame — and its handoff had expired or
+			// been evicted. Serving this page again mints a new one, and a reload is
+			// what the player already means by a restart (#88).
+			if (reloadForHandoff()) return;
 			loadError = message.error;
 			hidden = true;
 			notify();

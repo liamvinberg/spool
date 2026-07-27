@@ -1100,7 +1100,20 @@ export function errorDocument(frame: string, message: string, failure = "failed 
  * successfully connected authored runtime can never use this protocol.
  */
 export function playerLoadErrorDocument(message: string, failure = "failed to compile"): string {
-	const report = `if (parent !== window) parent.postMessage({ spool: "player-load-error", error: ${JSON.stringify(message)} }, "*");`;
+	return playerFailureDocument(message, failure, "player-load-error");
+}
+
+/**
+ * A rejected handoff is the one player failure the outer shell can repair, so it
+ * gets its own message (#88): the shell mints a fresh token and reloads, and a
+ * frame whose code simply will not compile never enters that retry.
+ */
+export function playerHandoffRejectedDocument(message: string): string {
+	return playerFailureDocument(message, "failed to load", "player-handoff-rejected");
+}
+
+function playerFailureDocument(message: string, failure: string, spool: string): string {
+	const report = `if (parent !== window) parent.postMessage({ spool: ${JSON.stringify(spool)}, error: ${JSON.stringify(message)} }, "*");`;
 	return failureDocument("player", message, failure, report);
 }
 

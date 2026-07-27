@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { initProject } from "../init";
 import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { createDaemonApp } from "./app";
@@ -300,9 +300,13 @@ describe("daemon authority matrix", () => {
 		expect(first.status).toBe(200);
 		expect(await first.text()).toContain("window.__SPOOL_PLAY__");
 
+		// Single-use is what keeps a leaked shell URL from being re-embedded, so a
+		// replay stays dead. The outer page repairs a legitimate refetch by
+		// reloading itself for a fresh token instead (#88).
 		const replay = await render(`${inner.pathname}${inner.search}`);
 		expect(replay.status).toBe(403);
 		expect(await replay.text()).not.toContain("window.__SPOOL_PLAY__");
+		expect(await (await render(`${inner.pathname}${inner.search}`)).text()).toContain('"player-handoff-rejected"');
 
 		for (const mutate of [
 			(url: URL) => url.searchParams.set("frame", "other"),
@@ -320,6 +324,20 @@ describe("daemon authority matrix", () => {
 		}
 
 		expect((await render(`${playPath}&scenario=default&shell=1&handoff=malformed`)).status).toBe(400);
+	});
+
+	it("expires a shell handoff and reports it through the signal the shell repairs", async () => {
+		const { project, request, render } = makeSecurityHarness();
+		const shell = await request(CONTROL_HOST, `/play/${encodeURIComponent(project.name)}?frame=home`);
+		const inner = new URL(shellConfigOf(await shell.text()).innerUrl);
+
+		const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+		onTestFinished(() => clock.mockRestore());
+		const expired = await render(`${inner.pathname}${inner.search}`);
+		expect(expired.status).toBe(403);
+		const document = await expired.text();
+		expect(document).not.toContain("window.__SPOOL_PLAY__");
+		expect(document).toContain('"player-handoff-rejected"');
 	});
 
 	it("bounds outstanding shell handoffs and evicts the oldest", async () => {

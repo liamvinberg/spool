@@ -207,22 +207,32 @@ describe("serving the player", () => {
 		const existing = scaffold(spoolDir);
 		const app = makeApp(spoolDir);
 
+		// A rejected handoff reports through its own signal, because that is the one
+		// failure the outer shell repairs by reloading for a fresh token (#88).
 		const cases = [
-			{ path: "/play/ghost-project?shell=1", status: 403, message: "invalid or expired player shell handoff" },
+			{
+				path: "/play/ghost-project?shell=1",
+				status: 403,
+				message: "invalid or expired player shell handoff",
+				signal: "player-handoff-rejected",
+			},
 			{
 				path: `/play/${empty.name}?shell=1`,
 				status: 403,
 				message: "invalid or expired player shell handoff",
+				signal: "player-handoff-rejected",
 			},
 			{
 				path: `/play/${existing.name}?frame=ghost&shell=1`,
 				status: 403,
 				message: "invalid or expired player shell handoff",
+				signal: "player-handoff-rejected",
 			},
 			{
 				path: `/play/${existing.name}?scenario=${encodeURIComponent("a/b")}&shell=1`,
 				status: 400,
 				message: "not a playable request",
+				signal: "player-load-error",
 			},
 		];
 		for (const entry of cases) {
@@ -230,7 +240,7 @@ describe("serving the player", () => {
 			expect(response.status).toBe(entry.status);
 			const document = await response.text();
 			expect(document).toContain(entry.message);
-			expect(document).toContain('"player-load-error"');
+			expect(document).toContain(`"${entry.signal}"`);
 		}
 	});
 
