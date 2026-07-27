@@ -15,16 +15,10 @@ import { freezeMessage } from "./protocol";
  * reconciling an iframe whose src changed reloads it and resets its state.
  */
 
-/** A walk arrival's cover (#28): the still taken just before the reboot. */
-export interface WalkBoot {
-	/** The self-capture data URL — absent when the target had none to give. */
-	still?: string | undefined;
-}
-
 export interface CoverPlan {
 	/** The cover layer sits fully opaque over the (missing or booting) frame. */
 	cover: boolean;
-	image: "still" | "thumb" | "placeholder" | "terminal-message";
+	image: "thumb" | "placeholder" | "terminal-message";
 	/** The 55% veil + mono "booting" label — the honest boot cover. */
 	badge: boolean;
 	message?: string;
@@ -37,7 +31,8 @@ export interface CoverPlan {
  * own accord all the time, a few per sweep, and announcing those is how one
  * arrival turns into seconds of badges rolling across the screen; an ambient
  * mount holds its still instead and simply becomes real. A walk arrival has
- * always worked this way, on the freshest still it has.
+ * always worked this way, on the freshest still it has — its stored one (#110),
+ * a picture of a freshly booted frame and so of the state a reboot lands in.
  */
 export function coverPlan(input: {
 	state: FrameState;
@@ -45,7 +40,8 @@ export function coverPlan(input: {
 	hasThumb: boolean;
 	/** Whether this boot is one the person asked for by going inside. */
 	entered: boolean;
-	walk: WalkBoot | null;
+	/** Whether this boot is a walk arrival — quiet, however it ends up covered. */
+	walk: boolean;
 	terminalCover?: TerminalCoverState | undefined;
 }): CoverPlan {
 	const { state, ready, hasThumb, entered, walk, terminalCover } = input;
@@ -59,8 +55,8 @@ export function coverPlan(input: {
 	}
 	return {
 		cover: state === "hibernated" || !ready,
-		image: walk?.still !== undefined ? "still" : hasThumb ? "thumb" : "placeholder",
-		badge: state !== "hibernated" && !ready && walk === null && (entered || !hasThumb),
+		image: hasThumb ? "thumb" : "placeholder",
+		badge: state !== "hibernated" && !ready && !walk && (entered || !hasThumb),
 	};
 }
 
@@ -76,7 +72,7 @@ export const FrameShell = memo(function FrameShell({
 	thumbNonce,
 	hasThumb,
 	terminalCover,
-	walkBoot,
+	walkArrival,
 	onIframe,
 }: {
 	project: string;
@@ -103,7 +99,7 @@ export const FrameShell = memo(function FrameShell({
 	/** Terminal-only current/stale/never-run cover truth from the projection. */
 	terminalCover: TerminalCoverState | undefined;
 	/** Set while the current boot is a walk arrival (#28) — quiet cover. */
-	walkBoot: WalkBoot | undefined;
+	walkArrival: boolean;
 	onIframe: (name: string, el: HTMLIFrameElement | null) => void;
 }) {
 	// stable ref callback: an inline arrow re-attaches per render, and the
@@ -138,16 +134,11 @@ export const FrameShell = memo(function FrameShell({
 		return () => clearTimeout(linger);
 	}, [covered]);
 
-	// The walk marker is latched for the cover's whole appearance: the parent
-	// retires it on the loaded report, but the still must survive the fade.
-	// A marker retired while the frame is still covered (a broken boot, an
-	// edit mid-walk) drops the latch — the honest cover returns.
-	const [walkCover, setWalkCover] = useState<WalkBoot | null>(null);
-	if ((covered || veil) && walkBoot !== undefined && walkCover !== walkBoot) setWalkCover(walkBoot);
-	else if (covered && walkBoot === undefined && walkCover !== null) setWalkCover(null);
-	else if (!covered && !veil && walkCover !== null) setWalkCover(null);
-
-	const plan = coverPlan({ state, ready, hasThumb, entered, walk: walkCover, terminalCover });
+	// The marker needs no latch of its own: it only ever silences the badge, and
+	// the badge is already gone by the time the cover fades. A marker the parent
+	// retires while the frame is still covered — a broken boot, an edit mid-walk
+	// — brings the honest cover straight back, which is the point.
+	const plan = coverPlan({ state, ready, hasThumb, entered, walk: walkArrival, terminalCover });
 
 	return (
 		<>
@@ -196,13 +187,6 @@ export const FrameShell = memo(function FrameShell({
 						<div className="absolute inset-0 flex items-center justify-center bg-surface px-8 text-center">
 							<span className="max-w-lg font-mono text-xs leading-relaxed text-muted">{plan.message}</span>
 						</div>
-					) : plan.image === "still" ? (
-						<img
-							src={walkCover?.still}
-							alt={name}
-							draggable={false}
-							className="absolute inset-0 h-full w-full object-cover object-top"
-						/>
 					) : plan.image === "thumb" ? (
 						<Thumbnail
 							project={project}

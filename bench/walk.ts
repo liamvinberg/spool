@@ -31,8 +31,9 @@ import { type Camera, copyProject, freePort, ms, quantile, startDaemon, VIEWPORT
  * than an import: that file is a script that runs on import, and the one phase
  * this run actually cares about is one arrival.ts does not have — the distance
  * from the click to the target document existing at all, which is where the
- * canvas's own walk machinery lives (`WALK_STILL_MS` and the self-capture race
- * #93 decided to delete).
+ * canvas's own walk machinery lives. That distance was the whole of the same-page
+ * miss: a self-capture race charged a mounted target 450 ms before its reboot,
+ * and #110 deleted it in favour of the target's stored still.
  *
  *   pnpm build
  *   node bench/walk.ts --project ~/projects/matmannen-fc63dba --headed
@@ -48,10 +49,11 @@ interface Options {
 	/** How many walks to attempt per case. */
 	walks: number;
 	/**
-	 * How many times to run each walk. Not tidiness: the cost of a walk whose
-	 * target is already mounted is bimodal, because `walkTo` races the target's
-	 * self-capture against `WALK_STILL_MS = 450` and either wins it in a few
-	 * milliseconds or pays the whole timeout. One sample of that lands anywhere.
+	 * How many times to run each walk. Not tidiness: a mounted target's cost used
+	 * to be bimodal, because `walkTo` raced its self-capture against a 450 ms
+	 * timeout and either won it in a few milliseconds or paid the whole thing, so
+	 * one sample landed anywhere. #110 deleted that race; repeats remain the way
+	 * to tell a settled cost from a lucky one.
 	 */
 	repeat: number;
 	/**
@@ -314,8 +316,7 @@ function phasesFor(clickAt: number, loadedAt: number, timeline: FrameTimeline): 
 	const phases: Phases = {
 		total: loadedAt - clickAt,
 		// the whole of the canvas's contribution: the go message's hop, walkTo,
-		// the WALK_STILL_MS self-capture race, the docNonce bump, and the browser
-		// starting the new document
+		// the docNonce bump, and the browser starting the new document
 		decide: origin - clickAt,
 		document: docEnd - origin,
 		parse: moduleStart - docEnd,

@@ -25,7 +25,7 @@ vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
  */
 
 const plan = (over: Partial<Parameters<typeof coverPlan>[0]>) =>
-	coverPlan({ state: "live", ready: false, hasThumb: true, entered: false, walk: null, ...over });
+	coverPlan({ state: "live", ready: false, hasThumb: true, entered: false, walk: false, ...over });
 
 describe("coverPlan", () => {
 	it("covers a hibernated frame with its thumbnail, no badge", () => {
@@ -44,22 +44,26 @@ describe("coverPlan", () => {
 		expect(plan({ hasThumb: false })).toEqual({ cover: true, image: "placeholder", badge: true });
 	});
 
-	it("holds the just-taken still for a walk boot, no veil, no badge", () => {
-		expect(plan({ walk: { still: "data:," } })).toEqual({ cover: true, image: "still", badge: false });
+	it("covers a walk arrival with the target's stored still, no veil, no badge", () => {
+		// #110: the stored still is a picture of a freshly booted frame, which is
+		// where the walk lands — a capture taken just before the reboot would hold
+		// up the one state the arrival is not in
+		expect(plan({ walk: true })).toEqual({ cover: true, image: "thumb", badge: false });
 	});
 
-	it("falls back to the thumbnail when a walk arrival had no still to take", () => {
-		// a hibernated target cannot answer a capture — its cached thumb is the still
-		expect(plan({ walk: {} })).toEqual({ cover: true, image: "thumb", badge: false });
+	it("stays quiet on a walk arrival even though the target is entered", () => {
+		// every arrival is entered the moment it lands; the badge belongs to a
+		// boot asked for by going inside, and a walk is not one
+		expect(plan({ entered: true, walk: true })).toEqual({ cover: true, image: "thumb", badge: false });
 	});
 
 	it("stays quiet even down to the placeholder on a walk boot", () => {
-		expect(plan({ hasThumb: false, walk: {} })).toEqual({ cover: true, image: "placeholder", badge: false });
+		expect(plan({ hasThumb: false, walk: true })).toEqual({ cover: true, image: "placeholder", badge: false });
 	});
 
 	it("uncovers once the boot reports loaded, walk or not", () => {
 		expect(plan({ ready: true }).cover).toBe(false);
-		expect(plan({ ready: true, walk: { still: "data:," } }).cover).toBe(false);
+		expect(plan({ ready: true, walk: true }).cover).toBe(false);
 	});
 
 	it("never badges a frame that is not mounted", () => {
@@ -97,7 +101,7 @@ describe("FrameShell stills", () => {
 		thumbNonce: 0,
 		hasThumb: true,
 		terminalCover: undefined,
-		walkBoot: undefined,
+		walkArrival: false,
 		onIframe: vi.fn(),
 	};
 
@@ -151,7 +155,7 @@ describe("FrameShell terminal covers", () => {
 			docNonce: 0,
 			thumbNonce: 0,
 			hasThumb: true,
-			walkBoot: undefined,
+			walkArrival: false,
 			onIframe: vi.fn(),
 		};
 
@@ -192,7 +196,7 @@ describe("FrameShell terminal covers", () => {
 			docNonce: 0,
 			thumbNonce: 0,
 			hasThumb: true,
-			walkBoot: undefined,
+			walkArrival: false,
 			onIframe: vi.fn(),
 		};
 
