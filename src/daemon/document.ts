@@ -364,11 +364,13 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
 }
 
 /**
- * The canvas shim (#8/#22), a classic script installed before any module so
- * timers are wrapped before frame code can take references. Speaks the host
- * protocol: {spool:"freeze"} stops time cooperatively — rAF callbacks held,
- * interval ticks skipped, running animations paused — so warm frames stay
- * real DOM, crisp at any zoom; {spool:"capture", id, maxEdge, settleMs}
+ * The canvas shim (#8/#22), a classic script installed before any module so it
+ * holds native references before frame code can replace them. It no longer
+ * stops time: a held frame is frozen by `content-visibility: hidden` on the
+ * canvas side (#112), which suspends this document's rAF, style, layout and
+ * paint at engine level — strictly more than a cooperative freeze could hold,
+ * and one mechanism rather than two. Speaks the host protocol:
+ * {spool:"capture", id, maxEdge, settleMs}
  * answers with a sanitized foreignObject source for the trusted capture host
  * to rasterize off this frame's main thread. The frame waits out its own fonts
  * and entry animations first, and carries the faces it loaded in as data URIs,
@@ -389,38 +391,12 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * scroll surfaces remain real.
  */
 const canvasShimJs = `(() => {
-	let frozen = false;
-	let paused = [];
-	const heldRaf = [];
-	const nativeRaf = window.requestAnimationFrame.bind(window);
-	// Taken before any module evaluates, because the frame runtime's mock layer
-	// replaces fetch and answers 404 to every route a scenario never declared —
-	// the shim's own reads are spool's, not the frame's.
+	// Both taken before any module evaluates, because frame code may replace
+	// either: the runtime's mock layer answers 404 to every route a scenario
+	// never declared, and an animation library may own rAF outright. The shim's
+	// own reads and its own frames are spool's, not the frame's.
 	const nativeFetch = window.fetch.bind(window);
-	window.requestAnimationFrame = (cb) => {
-		if (frozen) { heldRaf.push(cb); return 0; }
-		return nativeRaf(cb);
-	};
-	const nativeSetInterval = window.setInterval.bind(window);
-	window.setInterval = (fn, ms, ...args) => {
-		if (typeof fn !== "function") return nativeSetInterval(fn, ms, ...args);
-		return nativeSetInterval((...a) => { if (!frozen) fn(...a); }, ms, ...args);
-	};
-
-	function setFrozen(on) {
-		if (frozen === on) return;
-		frozen = on;
-		try {
-			if (on) {
-				paused = document.getAnimations().filter((a) => a.playState === "running");
-				for (const a of paused) a.pause();
-			} else {
-				for (const a of paused) { try { a.play(); } catch {} }
-				paused = [];
-			}
-		} catch {}
-		if (!on) for (const cb of heldRaf.splice(0)) nativeRaf(cb);
-	}
+	const nativeRaf = window.requestAnimationFrame.bind(window);
 
 	function yieldCaptureTask() {
 		if (typeof scheduler !== "undefined" && typeof scheduler.yield === "function") return scheduler.yield();
@@ -597,9 +573,9 @@ const canvasShimJs = `(() => {
 			quiet = setTimeout(done, 120);
 		});
 		// Two native frames, so a rAF-driven entry animation's last commit lands.
-		// Chrome holds rAF entirely in an offscreen iframe, and the frames being
-		// captured on their way out of the warm pool are exactly those — the race
-		// is what keeps a goodbye shot inside its deadline.
+		// Chrome holds rAF entirely in an offscreen iframe, and a frame borrowed
+		// for a picture may be one — the race with the timer is what keeps a
+		// capture inside its deadline either way.
 		await new Promise((resolve) => {
 			const timer = setTimeout(resolve, Math.max(0, Math.min(100, deadline - performance.now())));
 			nativeRaf(() => nativeRaf(() => { clearTimeout(timer); resolve(); }));
@@ -884,7 +860,6 @@ const canvasShimJs = `(() => {
 	addEventListener("message", async (event) => {
 		const m = event.data;
 		if (!m || typeof m !== "object") return;
-		if (m.spool === "freeze") { setFrozen(!!m.on); return; }
 		if (m.spool === "pick") {
 			const frame = (window.__SPOOL__ || {}).frame;
 			let chain = [];

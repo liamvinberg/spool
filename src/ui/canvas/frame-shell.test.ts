@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { coverPlan, FrameShell } from "./frame-shell";
+import type { FrameState } from "./lifecycle";
 
 vi.mock("../thumbnail", async () => {
 	const { createElement } = await import("react");
@@ -19,67 +20,71 @@ const COVER = { hash: "d".repeat(32), widths: [780, 390, 195] };
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
 /**
- * The cover law (#8, #28, #80): a boot is covered until its loaded report. The
- * veil + "booting" badge belongs to a boot somebody asked for — going inside,
- * or a frame with nothing to stand in for it. An ambient mount and a walk
- * arrival both hold their still instead, so a canvas filling itself in behind
- * you never turns into a run of badges.
+ * The cover law (#8, #28, #112): the still covers every frame but the one you
+ * went inside, and covers that one until its loaded report. The veil +
+ * "booting" badge belongs to that boot alone. A frame borrowed to be
+ * photographed boots out of sight behind its own still, and a walk arrival is
+ * quiet the same way, so a canvas filling itself in behind you never turns into
+ * a run of badges.
  */
 
 const plan = (over: Partial<Parameters<typeof coverPlan>[0]>) =>
-	coverPlan({ state: "live", ready: false, covered: true, entered: false, walk: false, ...over });
+	coverPlan({ state: "live", ready: false, covered: true, walk: false, ...over });
 
 describe("coverPlan", () => {
-	it("covers a hibernated frame with its thumbnail, no badge", () => {
-		expect(plan({ state: "hibernated" })).toEqual({ cover: true, image: "cover", badge: false });
+	it("covers a frame standing as its picture, no badge", () => {
+		expect(plan({ state: "picture" })).toEqual({ cover: true, image: "cover", badge: false });
 	});
 
 	it("badges the boot you asked for by going inside", () => {
-		expect(plan({ entered: true })).toEqual({ cover: true, image: "cover", badge: true });
+		expect(plan({})).toEqual({ cover: true, image: "cover", badge: true });
 	});
 
-	it("leaves an ambient mount to fill itself in behind its own still", () => {
-		expect(plan({})).toEqual({ cover: true, image: "cover", badge: false });
+	it("leaves a borrowed frame to boot behind its own still, badgeless", () => {
+		expect(plan({ state: "refreshing" })).toEqual({ cover: true, image: "cover", badge: false });
+		expect(plan({ state: "refreshing", ready: true })).toEqual({ cover: true, image: "cover", badge: false });
 	});
 
-	it("badges any boot with nothing to show, asked for or not", () => {
-		expect(plan({ covered: false })).toEqual({ cover: true, image: "placeholder", badge: true });
+	it("keeps a held frame behind its still: real DOM to read, a picture to look at", () => {
+		expect(plan({ state: "held", ready: true })).toEqual({ cover: true, image: "cover", badge: false });
 	});
 
-	it("covers a walk arrival with the target's stored still, no veil, no badge", () => {
-		// #110: the stored still is a picture of a freshly booted frame, which is
-		// where the walk lands — a capture taken just before the reboot would hold
-		// up the one state the arrival is not in
-		expect(plan({ walk: true })).toEqual({ cover: true, image: "cover", badge: false });
-	});
-
-	it("stays quiet on a walk arrival even though the target is entered", () => {
-		// every arrival is entered the moment it lands; the badge belongs to a
-		// boot asked for by going inside, and a walk is not one
-		expect(plan({ entered: true, walk: true })).toEqual({ cover: true, image: "cover", badge: false });
-	});
-
-	it("stays quiet even down to the placeholder on a walk boot", () => {
-		expect(plan({ covered: false, walk: true })).toEqual({ cover: true, image: "placeholder", badge: false });
-	});
-
-	it("uncovers once the boot reports loaded, walk or not", () => {
-		expect(plan({ ready: true }).cover).toBe(false);
-		expect(plan({ ready: true, walk: true }).cover).toBe(false);
-	});
-
-	it("never badges a frame that is not mounted", () => {
-		expect(plan({ state: "hibernated", covered: false })).toEqual({
+	it("shows the placeholder for a frame with nothing to stand in for it", () => {
+		expect(plan({ state: "picture", covered: false })).toEqual({
 			cover: true,
 			image: "placeholder",
 			badge: false,
 		});
 	});
 
+	it("covers a walk arrival with the target's stored still, no veil, no badge", () => {
+		// #110: the stored still is a picture of a freshly booted frame, which is
+		// where the walk lands — a capture taken just before the reboot would hold
+		// up the one state the arrival is not in. Every arrival is entered the
+		// moment it lands, and the badge belongs to a boot asked for by going
+		// inside; a walk is not one.
+		expect(plan({ walk: true })).toEqual({ cover: true, image: "cover", badge: false });
+	});
+
+	it("stays quiet even down to the placeholder on a walk boot", () => {
+		expect(plan({ covered: false, walk: true })).toEqual({ cover: true, image: "placeholder", badge: false });
+	});
+
+	it("uncovers the frame you went inside once its boot reports loaded, walk or not", () => {
+		expect(plan({ ready: true }).cover).toBe(false);
+		expect(plan({ ready: true, walk: true }).cover).toBe(false);
+	});
+
+	it("never uncovers a frame you are not inside, however booted", () => {
+		expect(plan({ state: "refreshing", ready: true }).cover).toBe(true);
+		expect(plan({ state: "held", ready: true }).cover).toBe(true);
+		expect(plan({ state: "picture", ready: true }).cover).toBe(true);
+	});
+
 	it("lets an unavailable terminal message override a cached image", () => {
 		expect(
 			plan({
-				state: "hibernated",
+				state: "picture",
 				terminalCover: { kind: "never-run", message: "saving it does not create a screen" },
 			}),
 		).toEqual({
@@ -91,14 +96,13 @@ describe("coverPlan", () => {
 	});
 });
 
-describe("FrameShell stills", () => {
-	const mounted = {
+describe("FrameShell documents", () => {
+	const props: Omit<Parameters<typeof FrameShell>[0], "state"> = {
 		project: "demo",
 		name: "hero",
-		state: "live" as const,
 		ready: true,
-		entered: false,
 		interactive: false,
+		terminal: false,
 		docNonce: 0,
 		cover: COVER,
 		coverSizes: "390px",
@@ -107,38 +111,108 @@ describe("FrameShell stills", () => {
 		onIframe: vi.fn(),
 	};
 
-	it("swaps the document for its still without unmounting either", async () => {
+	const render = async (over: Partial<typeof props> & { state: FrameState }) => {
 		const host = document.createElement("div");
+		// attached, because an iframe outside the document has no contentWindow
+		document.body.append(host);
 		const root = createRoot(host);
 		await act(async () => {
-			root.render(createElement(FrameShell, { ...mounted, stilled: false }));
+			root.render(createElement(FrameShell, { ...props, ...over }));
 		});
+		return {
+			host,
+			root: {
+				unmount: () => {
+					root.unmount();
+					host.remove();
+				},
+			},
+			again: async (next: Partial<typeof props> & { state: FrameState }) => {
+				await act(async () => {
+					root.render(createElement(FrameShell, { ...props, ...next }));
+				});
+			},
+		};
+	};
+
+	it("keeps no document at all for a frame standing as its picture", async () => {
+		const { host, root } = await render({ state: "picture" });
+		expect(host.querySelector("iframe")).toBeNull();
+		act(() => root.unmount());
+	});
+
+	it("shows the document only for the frame you went inside", async () => {
+		const { host, root, again } = await render({ state: "live" });
+		const wrapper = host.querySelector("iframe")?.parentElement;
+		expect(wrapper?.style.visibility).toBe("visible");
+
+		// borrowed and held frames both have a document and neither is looked at:
+		// the still is what the canvas draws in their place
+		for (const state of ["refreshing", "held"] as const) {
+			await again({ state });
+			expect(host.querySelector("iframe")?.parentElement?.style.visibility).toBe("hidden");
+		}
+		act(() => root.unmount());
+	});
+
+	it("stops a held frame's time at engine level, but never before its boot lands", async () => {
+		// A document locked before it ever laid out has no size to lay out into,
+		// and the rail and the Select tool would find nothing in it to read.
+		const { host, root, again } = await render({ state: "held", ready: false });
+		expect(host.querySelector("iframe")?.parentElement?.style.contentVisibility).toBe("visible");
+
+		await again({ state: "held", ready: true });
+		expect(host.querySelector("iframe")?.parentElement?.style.contentVisibility).toBe("hidden");
+
+		// a borrowed frame has to run to finish arriving: hidden, never stopped
+		await again({ state: "refreshing", ready: true });
+		expect(host.querySelector("iframe")?.parentElement?.style.contentVisibility).toBe("visible");
+		act(() => root.unmount());
+	});
+
+	it("keeps the same document across every state that has one", async () => {
+		// React reconciling an iframe whose src changed reloads it, and a frame
+		// that reboots when you freeze it is a frame you cannot pick at
+		const { host, root, again } = await render({ state: "live" });
 		const iframe = host.querySelector("iframe");
-		const still = host.querySelector("img");
-		expect(iframe?.style.visibility).toBe("visible");
-		expect(still?.style.visibility).toBe("hidden");
-
-		await act(async () => {
-			root.render(createElement(FrameShell, { ...mounted, stilled: true }));
-		});
-		// the same elements, only their visibility exchanged: a still mounted at
-		// the gesture would still be decoding, and the document would reload
+		await again({ state: "held" });
+		await again({ state: "refreshing" });
 		expect(host.querySelector("iframe")).toBe(iframe);
-		expect(host.querySelector("img")).toBe(still);
-		expect(iframe?.style.visibility).toBe("hidden");
-		expect(still?.style.visibility).toBe("visible");
+		act(() => root.unmount());
+	});
 
+	it("decodes the still while you are inside, for the instant you leave", async () => {
+		const { host, root } = await render({ state: "live" });
+		const still = host.querySelector("img");
+		expect(still?.style.visibility).toBe("hidden");
 		act(() => root.unmount());
 	});
 
 	it("keeps the still out of the DOM for a frame that has none", async () => {
-		const host = document.createElement("div");
-		const root = createRoot(host);
-		await act(async () => {
-			root.render(createElement(FrameShell, { ...mounted, cover: undefined, stilled: false }));
-		});
+		const { host, root } = await render({ state: "live", cover: undefined });
 		expect(host.querySelector("img")).toBeNull();
 		act(() => root.unmount());
+	});
+
+	it("asks a terminal for the freeze no CSS can reach, and never asks an html frame", async () => {
+		const { host, root, again } = await render({ state: "live", terminal: true });
+		const post = vi.fn();
+		const window = host.querySelector("iframe")?.contentWindow;
+		if (window === null || window === undefined) throw new Error("no frame window");
+		window.postMessage = post;
+
+		await again({ state: "held", terminal: true });
+		expect(post).toHaveBeenCalledWith({ spool: "freeze", on: true }, "*");
+		act(() => root.unmount());
+
+		const html = await render({ state: "live" });
+		const htmlPost = vi.fn();
+		const htmlWindow = html.host.querySelector("iframe")?.contentWindow;
+		if (htmlWindow === null || htmlWindow === undefined) throw new Error("no frame window");
+		htmlWindow.postMessage = htmlPost;
+		await html.again({ state: "held" });
+		expect(htmlPost).not.toHaveBeenCalled();
+		act(() => html.root.unmount());
 	});
 });
 
@@ -149,11 +223,10 @@ describe("FrameShell terminal covers", () => {
 		const props = {
 			project: "demo",
 			name: "dash",
-			state: "hibernated" as const,
+			state: "picture" as const,
 			ready: false,
-			entered: false,
-			stilled: false,
 			interactive: false,
+			terminal: true,
 			docNonce: 0,
 			cover: COVER,
 			coverSizes: "390px",
@@ -190,11 +263,10 @@ describe("FrameShell terminal covers", () => {
 		const props = {
 			project: "demo",
 			name: "dash",
-			state: "warm" as const,
+			state: "held" as const,
 			ready: true,
-			entered: false,
-			stilled: false,
 			interactive: false,
+			terminal: true,
 			docNonce: 0,
 			cover: COVER,
 			coverSizes: "390px",

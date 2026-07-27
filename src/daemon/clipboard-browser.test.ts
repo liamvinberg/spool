@@ -15,10 +15,17 @@ async function launchBrowser(): Promise<Browser | undefined> {
 }
 
 async function childFrame(page: Page, selector: string): Promise<Frame> {
-	const element = await page.waitForSelector(selector);
-	const frame = await element.contentFrame();
-	if (frame === null) throw new Error(`${selector} has no content frame`);
-	return frame;
+	// Attached, not visible: the only document the canvas ever shows is the one
+	// you went inside (#112) — every other frame is behind its own still. An
+	// element found a moment ago can also be between documents, so ask again
+	// rather than read a stale handle.
+	for (let attempt = 0; ; attempt++) {
+		const element = await page.waitForSelector(selector, { state: "attached" });
+		const frame = await element.contentFrame();
+		if (frame !== null) return frame;
+		if (attempt >= 20) throw new Error(`${selector} has no content frame`);
+		await page.waitForTimeout(100);
+	}
 }
 
 const clipboardFrame = `import { useState } from "react";
@@ -45,19 +52,27 @@ export default function ClipboardFrame() {
 }
 `;
 
+// The outcome is posted outward as well as recorded locally. On the canvas the
+// walk this frame starts is also the moment nothing is inside it any more, so
+// its document is handed back at once (#112) — the only reliable reader of a
+// probe on a document that is going away is somebody else.
 const navigationClipboardFrame = `import { ui } from "spool";
 
 export default function NavigationClipboardFrame() {
 	async function leaveThenCopy() {
 		const probe = window as unknown as { __copyRace: string };
-		probe.__copyRace = "pending";
+		const record = (value: string) => {
+			probe.__copyRace = value;
+			window.parent.postMessage({ copyRace: value }, "*");
+		};
+		record("pending");
 		ui.go("other");
 		try {
 			await ui.copy("must not write");
-			probe.__copyRace = "copied";
+			record("copied");
 		} catch (error) {
 			const value = error as { name?: unknown; message?: unknown };
-			probe.__copyRace = String(value.name) + ":" + String(value.message);
+			record(String(value.name) + ":" + String(value.message));
 		}
 	}
 	return <button id="leave-then-copy" onClick={() => void leaveThenCopy()}>leave</button>;
@@ -319,7 +334,7 @@ it("rejects retained html clipboard writes after the player enters a terminal fr
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("terminal boundary baseline");
 });
 
-it("can copy after the canvas ignores an automatic walk from the same warm frame", { timeout: 90_000 }, async () => {
+it("can copy after the canvas ignores an automatic walk from the same held frame", { timeout: 90_000 }, async () => {
 	const browser = await launchBrowser();
 	if (browser === undefined) return;
 	onTestFinished(() => browser.close());
@@ -357,8 +372,18 @@ it("can copy after the canvas ignores an automatic walk from the same warm frame
 	});
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	const label = page.locator('[data-frame-label="warm"]');
+	// Take the frame with one click. Select freezes what you point at, and a
+	// frozen frame is the model's own "mounted, and not the one you are inside"
+	// (#112): it holds real DOM for the tools to read, its boot runs, and it
+	// stays for as long as the selection does — which is what makes the walk it
+	// tries on its own way in observable at all.
+	const still = page.locator('[data-frame-cover="warm"]');
+	await still.waitFor({ timeout: 30_000 });
+	const stillBox = await still.boundingBox();
+	if (stillBox === null) throw new Error("the frame's own still is not on the canvas");
+	await page.mouse.click(stillBox.x + stillBox.width / 2, stillBox.y + stillBox.height / 2);
 	const frame = await childFrame(page, 'iframe[title="warm"]');
-	await frame.locator("#copy").waitFor();
+	await frame.locator("#copy").waitFor({ state: "attached" });
 	await page.waitForTimeout(100);
 	expect(await label.innerText()).not.toContain("esc exits");
 	expect(await page.locator('[data-frame-label="other"]').innerText()).not.toContain("esc exits");
@@ -414,37 +439,25 @@ it("can copy after the canvas ignores an automatic walk from the same warm frame
 	await expect.poll(() => frame.locator("#result").innerText()).toBe("copied");
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("warm frame clipboard value");
 
+	await page.evaluate(() => navigator.clipboard.writeText("walked-away baseline"));
 	const goBox = await frame.locator("#go-other").boundingBox();
 	if (goBox === null) throw new Error("warm walk button has no box");
 	await page.mouse.click(goBox.x + goBox.width / 2, goBox.y + goBox.height / 2);
 	await expect.poll(() => page.locator('[data-frame-label="other"]').innerText()).toContain("esc exits");
-	await page.waitForTimeout(100);
-	await page.evaluate(() => navigator.clipboard.writeText("unentered source baseline"));
-	expect(
-		await frame.evaluate(
-			async () =>
-				await (
-					window as unknown as {
-						__copyWhileUnentered: () => Promise<string>;
-					}
-				).__copyWhileUnentered(),
-		),
-	).toBe("AbortError:Clipboard writes resume when this frame is entered again");
-	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("unentered source baseline");
 
-	await label.dispatchEvent("dblclick");
-	await expect.poll(() => label.innerText()).toContain("esc exits");
-	expect(await frame.evaluate(() => (window as unknown as { __warmBoots?: number }).__warmBoots)).toBe(1);
-	// entering is instant and the camera flight that follows is not: a button's
-	// box read mid-flight names a point the click would land beside
-	await page.waitForTimeout(300);
+	// The source is handed back to its picture the moment the walk lands: the
+	// walk cleared the selection and you are inside the target now, so nothing
+	// asks for the source's document any more (#112). Its refusal to copy from
+	// there is `clipboardCopyAllowed` in `protocol.test.ts`; here the stronger
+	// fact is that there is no document left to try it from.
+	await expect.poll(() => page.locator('iframe[title="warm"]').count(), { timeout: 30_000 }).toBe(0);
+	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("walked-away baseline");
 
-	await page.evaluate(() => navigator.clipboard.writeText("accepted walk baseline"));
-	const resumedCopyBox = await frame.locator("#copy").boundingBox();
-	if (resumedCopyBox === null) throw new Error("resumed warm copy button has no box");
-	await page.mouse.click(resumedCopyBox.x + resumedCopyBox.width / 2, resumedCopyBox.y + resumedCopyBox.height / 2);
-	await expect.poll(() => frame.locator("#result").innerText()).toBe("copied");
-	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("warm frame clipboard value");
+	// Going back in would boot it fresh (#5) — and this frame walks away on
+	// every boot, so re-entering it lands on "other" again. That is the fixture
+	// being honest about what `ui.go` at module scope means, not a gap: the
+	// copy this test is named for is the one above, taken while inside the
+	// document whose automatic walk the canvas had already refused.
 });
 
 it("replaces a self-walked document before it can walk or copy again", { timeout: 90_000 }, async () => {
@@ -484,15 +497,10 @@ it("replaces a self-walked document before it can walk or copy again", { timeout
 	});
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	const label = page.locator('[data-frame-label="self"]');
-	await label.dispatchEvent("dblclick");
-	await expect.poll(() => label.innerText()).toContain("esc exits");
-	const frame = await childFrame(page, 'iframe[title="self"]');
-	await frame.locator("#self-walk").waitFor();
-	await expect
-		.poll(() => page.locator('iframe[title="self"]').evaluate((element) => getComputedStyle(element).pointerEvents))
-		.toBe("auto");
-	// the first still waits for the frame to finish arriving (#80), so this
-	// outlasts a default poll
+	// The frame has no still yet, so the canvas borrows it to make one (#112) —
+	// out of sight, before anybody goes inside. That capture is the sync point
+	// here, and it waits for the frame to finish arriving first, so it outlasts
+	// a default poll.
 	await expect
 		.poll(
 			() =>
@@ -518,9 +526,17 @@ it("replaces a self-walked document before it can walk or copy again", { timeout
 						),
 					COVER_MAX_EDGE,
 				),
-			{ timeout: 10_000 },
+			{ timeout: 30_000 },
 		)
 		.toBe(true);
+
+	await label.dispatchEvent("dblclick");
+	await expect.poll(() => label.innerText()).toContain("esc exits");
+	const frame = await childFrame(page, 'iframe[title="self"]');
+	await frame.locator("#self-walk").waitFor();
+	await expect
+		.poll(() => page.locator('iframe[title="self"]').evaluate((element) => getComputedStyle(element).pointerEvents))
+		.toBe("auto");
 	const documentId = await frame.evaluate(() => (window as unknown as { __documentId?: string }).__documentId);
 	const forgedWalkBox = await frame.locator("#forged-terminal-walk").boundingBox();
 	if (forgedWalkBox === null) throw new Error("forged terminal walk button has no box");
@@ -647,7 +663,16 @@ it("rejects same-tick canvas and player copies when their walks have already beg
 	if (canvasRaceBox === null) throw new Error("canvas race button has no box");
 	await page.mouse.click(canvasRaceBox.x + canvasRaceBox.width / 2, canvasRaceBox.y + canvasRaceBox.height / 2);
 	await expect
-		.poll(() => canvasFrame.evaluate(() => (window as unknown as { __copyRace?: string }).__copyRace))
+		.poll(() =>
+			page.evaluate(() => {
+				const posted = (window as unknown as { __spoolCanvasMessages: unknown[] }).__spoolCanvasMessages
+					.filter((message): message is { copyRace: string } => {
+						return typeof message === "object" && message !== null && "copyRace" in message;
+					})
+					.map((message) => message.copyRace);
+				return posted.at(-1);
+			}),
+		)
 		.toBe("AbortError:Clipboard request interrupted by navigation");
 	expect(
 		await page.evaluate(

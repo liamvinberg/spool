@@ -215,7 +215,13 @@ export function namedPage(root: string, name: string): Page {
 	return found;
 }
 
-/** Just above lifecycle's K_MIN_MOUNT of 0.15: the zoom that mounts the most. */
+/**
+ * The readable zoom every benchmark shares. It was chosen as "just above
+ * `K_MIN_MOUNT`", the threshold below which the canvas mounted nothing; #112
+ * deleted that threshold along with mounting-from-being-on-screen, and the
+ * number stays because every figure these benchmarks have produced was taken at
+ * it and a moved subject makes them incomparable.
+ */
 export const DEFAULT_ZOOM = 0.16;
 
 export interface Camera {
@@ -225,27 +231,30 @@ export interface Camera {
 }
 
 /**
- * The camera a whole-canvas run starts from: the most frames this canvas can be
- * asked to mount at once. Below K_MIN_MOUNT a frame renders smaller than its own
- * still and the canvas mounts nothing at all, so the worst case sits just above
- * that threshold, centred on the densest band. Left to its own saved camera a
- * project opens wherever it was last dragged — four documents on matmannen,
- * which measures an idle canvas rather than the one the map is about.
+ * The camera a whole-canvas run starts from: the densest band of this canvas,
+ * centred on the frame with the most neighbours inside one screen. Left to its
+ * own saved camera a project opens wherever it was last dragged, which measures
+ * an idle canvas rather than the one the map is about.
  */
 export function planCamera(boxes: Box[], width: number, height: number, k: number): Camera {
 	const spanX = width / k;
 	const spanY = height / k;
-	let best: { y: number; count: number } | null = null;
+	let best: { x: number; y: number; count: number } | null = null;
 	const centres = boxes.map((box) => ({ x: box.x + box.w / 2, y: box.y + box.h / 2 }));
 	for (const candidate of centres) {
 		const count = centres.filter(
 			(centre) => Math.abs(centre.y - candidate.y) <= spanY / 2 && Math.abs(centre.x - candidate.x) <= spanX / 2,
 		).length;
-		if (best === null || count > best.count) best = { y: candidate.y, count };
+		if (best === null || count > best.count) best = { x: candidate.x, y: candidate.y, count };
 	}
-	const midX = centres.reduce((sum, centre) => sum + centre.x, 0) / Math.max(1, centres.length);
-	const midY = best?.y ?? 0;
-	return { x: width / 2 - midX * k, y: height / 2 - midY * k, k };
+	// Both coordinates come from the winning frame's own centre. Taking x from
+	// the mean of every centre instead put the camera between the frames on any
+	// canvas wider than the window: above about k = 0.6 it aimed at empty world
+	// and the run measured a screen with nothing on it. `bench/arrival.ts`
+	// caught that at k = 1.0 with a guard of its own; #112's overview-zoom bar
+	// walks into it head-on, because entering from an overview is the case it
+	// makes ordinary.
+	return { x: width / 2 - (best?.x ?? 0) * k, y: height / 2 - (best?.y ?? 0) * k, k };
 }
 
 /**

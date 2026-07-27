@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { type Cover, coverSizes } from "../../cover";
+import { COVER_RUNGS, type Cover, coverSizes } from "../../cover";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
@@ -147,7 +147,6 @@ const STAMP_LABEL_BATCH = 256;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
 /** How long after the last zoom change the frames keep showing their stills. */
-const ZOOM_GLIDE_MS = 140;
 
 function spatialDirection(key: string): SpatialDirection | undefined {
 	switch (key) {
@@ -211,13 +210,6 @@ export function ProjectCanvas({
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
 	const [camera, setCamera] = useState<Camera | null>(null);
-	// Whether the camera is mid-zoom. Measured on a 56-frame canvas: painting
-	// every mounted document at each new scale is the whole of the zoom
-	// stutter, and with the documents unpainted the same gesture drops none.
-	// So the camera says when its zoom is changing and frames answer with
-	// their stills. Panning is not in this: a translate is the compositor's
-	// alone, it never re-rasterizes, and it measures perfectly smooth.
-	const [zooming, setZooming] = useState(false);
 	const [tool, setTool] = useState<CanvasTool>("select");
 	const [selected, setSelected] = useState<string[]>([]);
 	const [picked, setPicked] = useState<PickedSelection[]>([]);
@@ -281,17 +273,6 @@ export function ProjectCanvas({
 	const animation = useRef(0);
 	const cameraRef = useRef<Camera | null>(null);
 	cameraRef.current = camera;
-	// One place, so every zoom mover is covered: wheel, keys, flights, fits.
-	// The tail outlasts the gaps between wheel events inside one gesture, and
-	// is short enough that letting go reads as the documents coming straight
-	// back rather than as a delay.
-	const zoom = camera?.k;
-	useEffect(() => {
-		if (zoom === undefined) return;
-		setZooming(true);
-		const stop = setTimeout(() => setZooming(false), ZOOM_GLIDE_MS);
-		return () => clearTimeout(stop);
-	}, [zoom]);
 	const framesRef = useRef(visibleFrames);
 	framesRef.current = visibleFrames;
 	// the whole projection, for cross-page reads: walks, connections, editor paths
@@ -358,9 +339,19 @@ export function ProjectCanvas({
 	// the geometry undo/redo stacks: per window, in memory, hands' writes only
 	const geometryHistory = useRef(emptyHistory());
 
-	// the lifecycle only asks whether a frame has a still worth standing in for it
+	/**
+	 * Whether a frame has a still worth standing in for it — the only thing the
+	 * lifecycle asks about a picture. A whole ladder, not merely a cover: the
+	 * daemon's headless fallback writes one rung, because it has no image library
+	 * and cannot resample (#111), and the canvas stands a frame's still in for it
+	 * at every zoom now (#112). A frame carrying only the healed rung is soft
+	 * everywhere above it, so it is still owed a picture of its own.
+	 */
 	const hasCover = useCallback(
-		(name: string) => framesRef.current.some((f) => f.name === name && f.cover !== undefined),
+		(name: string) =>
+			framesRef.current.some(
+				(f) => f.name === name && f.cover !== undefined && f.cover.widths.length >= COVER_RUNGS,
+			),
 		[],
 	);
 
@@ -417,7 +408,6 @@ export function ProjectCanvas({
 	const lifecycle = useFrameLifecycle({
 		framesRef,
 		cameraRef,
-		viewportRef,
 		entered,
 		frozen: frozenFrame,
 		inspected: railOpen ? inspectedFrame : null,
@@ -599,8 +589,9 @@ export function ProjectCanvas({
 
 	/**
 	 * Ask one frame's shim where its navigation-site elements sit. Only the
-	 * newest request per frame applies; a hibernated frame has no document to
-	 * ask and its arrows keep the frame-edge fallback.
+	 * newest request per frame applies; a frame standing as its picture has no
+	 * document to ask and its arrows keep the frame-edge fallback until the next
+	 * time something borrows it.
 	 */
 	const requestSiteBoxes = useCallback((frame: string) => {
 		const target = iframes.current.get(frame)?.contentWindow;
@@ -644,13 +635,13 @@ export function ProjectCanvas({
 		});
 	}, [frames]);
 
-	// a walk marker must not outlive its walk: a frame that hibernated before
-	// its boot ever reported loaded re-mounts ambiently, and that boot is
-	// honest — only the current walk target keeps its marker (#28)
+	// a walk marker must not outlive its walk: a frame dropped back to its
+	// picture before its boot ever reported loaded is borrowed again later, and
+	// that boot is honest — only the current walk target keeps its marker (#28)
 	useEffect(() => {
 		setWalkArrivals((current) => {
 			const alive = [...current].filter(
-				(name) => name === walkTarget.current || (lifecycle.states[name] ?? "hibernated") !== "hibernated",
+				(name) => name === walkTarget.current || (lifecycle.states[name] ?? "picture") !== "picture",
 			);
 			return alive.length === current.size ? current : new Set(alive);
 		});
@@ -2037,10 +2028,10 @@ export function ProjectCanvas({
 		if (readyRef.current.has(inspectedFrame)) requestTree(inspectedFrame);
 	}, [railOpen, railMode, inspectedFrame, requestTree, walkable]);
 
-	// a hibernated frame's cached walk is a lie — the next look re-asks
+	// an unmounted frame's cached walk is a lie — the next look re-asks
 	useEffect(() => {
 		setTrees((current) => {
-			const dead = Object.keys(current).filter((name) => (lifecycle.states[name] ?? "hibernated") === "hibernated");
+			const dead = Object.keys(current).filter((name) => (lifecycle.states[name] ?? "picture") === "picture");
 			if (dead.length === 0) return current;
 			return Object.fromEntries(Object.entries(current).filter(([name]) => !dead.includes(name)));
 		});
@@ -2578,7 +2569,7 @@ export function ProjectCanvas({
 						{/* the threads live under the frames: the map, never a hit target */}
 						{arrowsOn && <FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} k={k} />}
 						{visibleFrames.map((frame) => {
-							const state = lifecycle.states[frame.name] ?? "hibernated";
+							const state = lifecycle.states[frame.name] ?? "picture";
 							const isEntered = entered === frame.name;
 							const isSelected = selected.includes(frame.name);
 							const isHovered =
@@ -2617,13 +2608,8 @@ export function ProjectCanvas({
 											name={frame.name}
 											state={state}
 											ready={lifecycle.ready.has(frame.name)}
-											entered={isEntered}
-											// The frame you are inside keeps painting: it is the one
-											// you are using. Everything else swaps to its still up to
-											// 100%, which is as sharp as a cover is ever asked to be —
-											// past it you go inside (#111).
-											stilled={zooming && !isEntered && frame.cover !== undefined && k <= 1}
 											interactive={isEntered && !metaDown}
+											terminal={frame.kind === "term"}
 											docNonce={docNonces[frame.name] ?? 0}
 											cover={frame.cover}
 											coverSizes={

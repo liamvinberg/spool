@@ -965,14 +965,12 @@ const sum = <T>(items: T[], pick: (item: T) => number): number => items.reduce((
  * contention cost falls with it. `mounted` is what the canvas actually opened,
  * never what the zoom was expected to give.
  *
- * Two limits this sweep has, both found by running it. **Do not sweep above
- * about k = 0.6**: `planCamera` takes its y from a real frame's centre but its x
- * from the mean of every centre, so once the viewport is narrow in world space
- * it aims between the frames and mounts nothing — at k = 1.0 on `skrivbord` it
- * mounted zero, and only the guard in `main` stopped that being reported as a
- * very fast canvas. And zoom is not a clean handle on the count: it changes how
- * large each frame renders and what else the canvas is asking the daemon for, so
- * a row far down the column differs from the top one in more than simultaneity.
+ * One limit this sweep has, found by running it: zoom is not a clean handle on
+ * the count. It changes how large each frame renders and what else the canvas is
+ * asking the daemon for, so a row far down the column differs from the top one
+ * in more than simultaneity. It used to have a second — `planCamera` aimed
+ * between the frames above about k = 0.6 and mounted nothing, caught only by the
+ * guard in `main` — and #112 fixed the camera rather than the guard.
  */
 function seedSweep(results: RunResult[]): string {
 	const lines = [

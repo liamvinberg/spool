@@ -54,13 +54,11 @@ function source(id: string, maxEdge: number): CaptureSourceMessage {
 async function mountLifecycle(onShot: (frame: string, rungs: CoverRaster[]) => void) {
 	const framesRef = { current: [] } as unknown as RefObject<ProjectedFrame[]>;
 	const cameraRef = { current: null } as RefObject<Camera | null>;
-	const viewportRef = { current: null } as RefObject<HTMLDivElement | null>;
 	let lifecycle: Lifecycle | undefined;
 	function Harness() {
 		lifecycle = useFrameLifecycle({
 			framesRef,
 			cameraRef,
-			viewportRef,
 			entered: null,
 			frozen: null,
 			inspected: null,
