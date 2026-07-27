@@ -5,10 +5,13 @@ import {
 	copyProject,
 	densestPage,
 	type FrameBox,
+	framesOnCanvas,
 	freePort,
+	mountedCount,
 	ms,
 	planCamera,
 	quantile,
+	quiet,
 	startDaemon,
 	VIEWPORT,
 	writeCamera,
@@ -25,19 +28,22 @@ import {
  * What it answered for #112, on matmannen's densest page at 6x throttle, with
  * the canvas's own errands running through its own React tree:
  *
- *   | borrowed at once | zoom p95 hot / quiet | pan p95 hot / quiet | loafs |
+ *   | borrowed at once | inserts in the pan | pan p95 hot / quiet | loafs |
  *   |---|---|---|---|
- *   | 1 | 16.7 / 10.1 | 10.2 / 10.1 | 0 |
- *   | 3 | 16.7 / 10.1 | 10.2 / 10.0 | 0 |
- *   | 8 | 16.0 / 10.3 | 10.4 / 10.1 | 0 |
+ *   | 1 | 1  | 10.1 / 10.1 | 0 |
+ *   | 3 | 6  | 10.1 / 10.0 | 0 |
+ *   | 8 | 16 | 10.3 / 10.1 | 1, blocking 9.7 ms |
  *
- * No dropped frames at any of them, and the pan is the quiet canvas to within
- * noise. The zoom sits about 6 ms above its control and is **flat in the
- * number in flight** — 16.7 at one, 16.0 at eight — so whatever it is, it is
- * not the churn. So: insert/discard churn does not cost a gesture, and the
- * in-flight cap needs no companion rate. The cap stays at three because the
- * errands are not urgent and six documents is what the model promises at worst,
- * not because eight was found to hurt.
+ * At and below three, a gesture with real documents inserting, booting,
+ * photographing and being discarded underneath it is its own control: no
+ * dropped frames, and a p95 inside the display's cadence. At eight it drops
+ * one. Zoom p95 sits at 16.6 in every row including the controls, so it is the
+ * gesture, not the errands.
+ *
+ * So: insert/discard churn does not cost a gesture at the shipped cap, and the
+ * cap needs no companion rate to go with it — the count is the pacing. Three is
+ * where it stays, and #94's sweep and this one agree on where it stops being
+ * free.
  *
  * Three arms, and the first of them is the one #112 was waiting for:
  *
@@ -559,28 +565,6 @@ function windowStats(state: BenchState, from: number, to: number): GestureStats 
 const now = (page: Page): Promise<number> => page.evaluate(() => performance.now());
 const read = (page: Page): Promise<BenchState> =>
 	page.evaluate(() => (globalThis as unknown as { __bench: BenchState }).__bench);
-const mountedCount = (page: Page): Promise<number> => page.evaluate(() => document.querySelectorAll("iframe").length);
-/** Frames the canvas is drawing, mounted or not — a settled canvas holds no documents at all (#112). */
-const framesOnCanvas = (page: Page): Promise<number> =>
-	page.evaluate(() => document.querySelectorAll("[data-frame-cover]").length);
-
-/**
- * Hold until the canvas is holding no document at all: every picture it was
- * owed has been taken. That is the resting state of the model (#112) and the
- * only state a control gesture can be measured in.
- */
-async function quiet(page: Page, timeoutMs: number): Promise<number> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		const count = await mountedCount(page);
-		if (count === 0) return 0;
-		await page.waitForTimeout(500);
-	}
-	const left = await mountedCount(page);
-	process.stderr.write(`bench:   canvas still borrowing ${left} frames — the control below is not a quiet one\n`);
-	return left;
-}
-
 async function settle(page: Page, stableMs: number, timeoutMs: number): Promise<number> {
 	const deadline = Date.now() + timeoutMs;
 	let count = await mountedCount(page);
@@ -600,10 +584,9 @@ const PAN_EVENTS = 90;
 const PAN_STEP_PX = 26;
 /**
  * Trackpad-sized, and long on purpose: the canvas zooms by exp(-px * 0.011) per
- * event, so 30 one-way events of 1 px is ~1.4x — enough to carry the camera from
- * just under K_MIN_MOUNT to comfortably over it, while spanning several 300 ms
- * sweeps. A shorter, coarser gesture crosses the threshold on its last event and
- * the mounting it causes lands after the window closes, which reads as "mounting
+ * event, so 60 events of 1 px is a gesture that spans several 300 ms sweeps
+ * rather than one. A short, coarse gesture is over before the errands running
+ * behind it have done anything inside the window, which reads as "mounting
  * costs nothing" for the wrong reason.
  */
 const ZOOM_EVENTS = 60;
@@ -621,12 +604,7 @@ async function pan(page: Page, cx: number, cy: number): Promise<{ from: number; 
 	return { from, to: await now(page) };
 }
 
-/**
- * Zoom in, and optionally back out. The mount arm wants the one-way version:
- * crossing K_MIN_MOUNT upward is what makes a whole screen of frames mountable
- * inside the gesture, and zooming back out would unmount them again before the
- * pan that follows can overlap the drain.
- */
+/** Zoom in, and optionally back out — a round trip ends where it started. */
 async function zoom(page: Page, cx: number, cy: number, roundTrip: boolean): Promise<{ from: number; to: number }> {
 	await page.mouse.move(cx, cy);
 	await page.waitForTimeout(300);
@@ -740,16 +718,34 @@ async function open(
 async function canvasArm(
 	browser: Browser,
 	url: string,
+	root: string,
 	resetCamera: () => void,
 	cap: number,
 	rate: number,
 ): Promise<ArmRow> {
+	// Per row, not once for the arm: a run photographs the whole page, so the
+	// next cap would open on a canvas that owes nothing and measure an idle one.
+	rmSync(join(root, "design", ".spool", "thumbs"), { recursive: true, force: true });
 	resetCamera();
 	const label = cap > 0 ? `${cap} borrowed at once` : "unbounded";
 	const { context, page } = await open(browser, url, { hooks: { errands: cap }, captureIdle: 0, throttle: rate });
-	// errands start once the camera holds still, and keep coming while any frame
-	// on the page is still owed a picture
-	await page.waitForFunction(() => document.querySelectorAll("iframe").length > 0, undefined, { timeout: 60_000 });
+	// errands keep coming while any frame on the page is still owed a picture
+	const borrowing = await page
+		.waitForFunction(() => document.querySelectorAll("iframe").length > 0, undefined, { timeout: 60_000 })
+		.then(
+			() => true,
+			() => false,
+		);
+	if (!borrowing) {
+		const shape = await page.evaluate(() => ({
+			frames: document.querySelectorAll("[data-frame-cover]").length,
+			images: document.querySelectorAll("[data-frame-cover] img").length,
+		}));
+		await context.close();
+		throw new Error(
+			`the canvas borrowed nothing in 60 s: ${shape.frames} frames on screen, ${shape.images} of them showing a stored still — either the subject kept its ladders or the #112 hook is missing from the built UI`,
+		);
+	}
 	const before = await mountedCount(page);
 	const state0 = await read(page);
 	const refreshMs = refreshInterval(state0);
@@ -1080,8 +1076,7 @@ async function main(): Promise<void> {
 		// on them.
 		if (options.arms.includes("canvas")) {
 			process.stderr.write("bench: arm canvas — the canvas's own errands through React while the camera moves\n");
-			rmSync(join(root, "design", ".spool", "thumbs"), { recursive: true, force: true });
-			for (const cap of options.caps) rows.push(await canvasArm(browser, url, resetReadable, cap, rate));
+			for (const cap of options.caps) rows.push(await canvasArm(browser, url, root, resetReadable, cap, rate));
 		}
 	} finally {
 		await browser?.close();

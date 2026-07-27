@@ -123,32 +123,34 @@ it("marquee-selects from an empty-canvas drag, now that Select is the resting to
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
 });
 
-it("freezes an entered frame in place while Command is held and thaws it back into play", async () => {
+it("hands the pointer back while Command is held without taking the frame off the screen", async () => {
 	const { host, canvas } = await renderCanvas();
 
 	await enterHome(canvas);
 	await until(() => host.querySelector('iframe[title="home"]') !== null);
 	const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
 	await reportLoaded(iframe);
-	// the wrapper carries the lock; the engine reads it through the iframe (#84)
 	const wrapper = () => host.querySelector<HTMLIFrameElement>('iframe[title="home"]')?.parentElement;
 
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
 	});
-	await until(() => wrapper()?.style.contentVisibility === "hidden");
+	// ⌘ takes the pointer back off the frame so an element can be reached
+	await until(() => iframe?.style.pointerEvents === "none");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("esc exits");
-	// ⌘ takes the pointer back off the frame so an element can be reached
-	expect(iframe?.style.pointerEvents).toBe("none");
+	// and leaves it painted: the engine-level freeze is also a blindfold (#112),
+	// so the frame you are inside keeps its own document under the cursor rather
+	// than swapping to a still of some state you have already left
+	expect(wrapper()?.style.visibility).toBe("visible");
+	expect(wrapper()?.style.contentVisibility).toBe("visible");
 
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
 	});
-	await until(() => wrapper()?.style.contentVisibility === "visible");
+	await until(() => iframe?.style.pointerEvents === "auto");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("esc exits");
-	expect(iframe?.style.pointerEvents).toBe("auto");
 });
 
 it("treats Command as Select's element modifier, never as a tool of its own", async () => {
@@ -419,13 +421,12 @@ it("borrows Hand with Space, keeps it under Command, and clears it on blur", asy
 	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("false");
 });
 
-it("freezes on a focused frame's relayed Command key and thaws that same document on release", async () => {
+it("takes the pointer back on a focused frame's relayed Command key and returns it on release", async () => {
 	const { host, canvas } = await renderCanvas();
 	await enterHome(canvas);
 	await until(() => host.querySelector('iframe[title="home"]') !== null);
 	const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="home"]');
 	await reportLoaded(iframe);
-	const wrapper = () => host.querySelector<HTMLIFrameElement>('iframe[title="home"]')?.parentElement;
 
 	await act(async () => {
 		window.dispatchEvent(
@@ -435,7 +436,7 @@ it("freezes on a focused frame's relayed Command key and thaws that same documen
 			}),
 		);
 	});
-	await until(() => wrapper()?.style.contentVisibility === "hidden");
+	await until(() => iframe?.style.pointerEvents === "none");
 	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 
@@ -447,7 +448,7 @@ it("freezes on a focused frame's relayed Command key and thaws that same documen
 			}),
 		);
 	});
-	await until(() => wrapper()?.style.contentVisibility === "visible");
+	await until(() => iframe?.style.pointerEvents === "auto");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 });
 

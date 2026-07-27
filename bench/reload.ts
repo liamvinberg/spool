@@ -19,13 +19,14 @@ import {
  * Reload to canvas looking complete (#98). The map's reload row has never been
  * measured; this run gives it a number.
  *
- * **Why `settle` could not.** `bench/canvas.ts:204` defines settled as the
- * iframe count holding still for a second, so its `reloadMs` is by construction
- * when the wake queue finished draining — 100 ms per frame against
- * `MOUNTS_PER_SWEEP = 3` every `SWEEP_MS = 300`, which is the constant it was
- * told rather than anything it found. The bar is *reload to canvas looking
- * complete*, and on reload every frame is hibernated, so what a person sees is a
- * wall of stored covers. Nobody had timed the covers.
+ * **Why `settle` could not.** `bench/canvas.ts` defines settled as the iframe
+ * count holding still for a second, so its `reloadMs` was by construction when
+ * the wake queue finished draining — a constant it was told rather than
+ * anything it found. #112 deleted that queue, and with it the whole idea that a
+ * reload ends when the canvas has finished mounting: a settled canvas mounts
+ * nothing at all now. The bar is *reload to canvas looking complete*, and what
+ * a person sees on reload is a wall of stored covers. Nobody had timed the
+ * covers.
  *
  * **The completion condition.** `settle` had to guess when things had stopped
  * because it did not know what it was waiting for. This one knows the target:
@@ -43,10 +44,10 @@ import {
  *     cache hits and transferred bytes — which Resource Timing cannot, because
  *     a frame document is cross-origin and reports zero bytes to the page.
  *
- * **Where the cover actually is.** #98 cites the *stilled* thumbnail, which is
- * gated on `state !== "hibernated"`. On reload every frame is hibernated, so that
- * element does not exist. The cover a reloaded frame shows is the second
- * `<Thumbnail>`, inside the `plan.cover` block, and that is what this waits for.
+ * **Where the cover actually is.** #98 cites the stand-in thumbnail the shell
+ * keeps decoded beside a live document; a reloaded canvas is inside nothing, so
+ * that element does not exist. The cover a reloaded frame shows is the
+ * `<Thumbnail>` inside the `plan.cover` block, and that is what this waits for.
  * Both carry `alt={name}`, so the watcher keys on the frame name and takes the
  * first load per name — and since #111 both name the same addresses, so the two
  * elements are one request rather than two.

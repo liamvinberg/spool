@@ -1,7 +1,7 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { COVER_MAX_EDGE } from "../../cover";
-import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
+import { captureOrigin, type ProjectedFrame } from "../api";
 import { CAPTURE_WORKER_TIMEOUT_MS, type CoverRaster, captureRequestId, rasterCaptureSource } from "./capture-broker";
 import { type CaptureSourceReply, captureMessage } from "./protocol";
 
@@ -40,7 +40,6 @@ import { type CaptureSourceReply, captureMessage } from "./protocol";
 
 export type FrameState = "picture" | "refreshing" | "held" | "live";
 
-const CAMERA_SETTLE_MS = 400; // borrow a frame on settle, never mid-gesture
 const SWEEP_MS = 300;
 /**
  * How long a whole self-capture may take: the shim's serialization, the hops
@@ -71,14 +70,14 @@ export const CAPTURE_AFTER_READY_MS = 1500;
  */
 export const CAPTURE_SETTLE_BUDGET_MS = 900;
 /**
- * How many frames may be borrowed for a picture at once. This is the whole of
- * the pacing, and it is a count of jobs in flight rather than a rate per tick:
- * a rate is a hardcoded guess at how long a mount takes, and the guess this
- * replaces was out by a factor of thirteen (#94). A count adapts to the daemon
- * and the connection pool on its own. #94 swept it under 6x throttle and found
- * it breaks reproducibly above 3 and never at or below it.
+ * How many frames may be borrowed for a picture at once — the whole of the
+ * pacing, and a count in flight rather than a rate per tick: a rate is a
+ * hardcoded guess at how long a mount takes, and the guess this replaces was
+ * out by a factor of thirteen (#94). A count adapts to the daemon and the
+ * connection pool on its own. #94 swept it under 6x throttle and found it
+ * breaks reproducibly above 3 and never at or below it.
  */
-export const REFRESH_JOBS_IN_FLIGHT = 3;
+const SHIPPED_ERRANDS_IN_FLIGHT = 3;
 /**
  * The measurement hook (#108, #112), and the only temporary code the canvas
  * carries. `bench/mount-gesture.ts`'s canvas arm sweeps the cap above and below
@@ -93,23 +92,20 @@ export const REFRESH_JOBS_IN_FLIGHT = 3;
  * this bundle evaluates and nothing else ever writes it, so an unset hook
  * leaves the sweep comparing against the same constant it always did.
  *
- * It lives only while the cap is a constant. If the cap ever becomes something
- * the canvas derives, this goes with it.
+ * It folds into the exported cap rather than shadowing it, so the sweep and
+ * every test read the one number the decision actually uses. It lives only
+ * while that cap is a constant; if the canvas ever derives it, this goes too.
  */
-const benchCap = (globalThis as unknown as { __spoolBench?: { errands?: number } }).__spoolBench?.errands;
-const ERRAND_CAP =
-	benchCap === undefined
-		? REFRESH_JOBS_IN_FLIGHT
-		: benchCap > 0
-			? benchCap
-			: Number.POSITIVE_INFINITY;
+const benchErrands = (globalThis as unknown as { __spoolBench?: { errands?: number } }).__spoolBench?.errands;
+export const ERRANDS_IN_FLIGHT =
+	benchErrands === undefined ? SHIPPED_ERRANDS_IN_FLIGHT : benchErrands > 0 ? benchErrands : Number.POSITIVE_INFINITY;
 /**
- * How many times a frame with no picture at all asks for one before it stops
- * asking. Without a bound, a frame whose capture cannot land — a document that
- * never boots, a shim that never answers — would mount, fail, unmount and mount
- * again forever, because "it has no picture" stays true however many times it
- * is acted on. Anything that changes the frame (a source edit, leaving it, a
- * fresh boot) clears the count and the frame asks again.
+ * How many errands a frame gets for one debt before it stops asking. Without a
+ * bound, a frame whose capture cannot land — a document that never boots, a
+ * shim that never answers — would mount, fail, unmount and mount again forever,
+ * because neither "it has no picture" nor "its picture is wrong" stops being
+ * true by being acted on. Anything that changes the frame (a source edit,
+ * leaving it, a fresh boot) clears the count and the frame asks again.
  */
 export const PICTURE_TRIES = 3;
 /**
@@ -120,7 +116,7 @@ export const PICTURE_TRIES = 3;
  * the frame to finish arriving, and the capture's own outer bound — a deadline
  * that retires working captures would be a slow leak of pictures, not a guard.
  */
-export const REFRESH_ERRAND_MS = 20_000 + CAPTURE_AFTER_READY_MS + CAPTURE_REPLY_TIMEOUT_MS + CAPTURE_SETTLE_BUDGET_MS;
+export const ERRAND_DEADLINE_MS = 20_000 + CAPTURE_AFTER_READY_MS + CAPTURE_REPLY_TIMEOUT_MS + CAPTURE_SETTLE_BUDGET_MS;
 
 /** The decision function's persistent bookkeeping, owned by the hook, fabricated by tests. */
 export interface LifecycleModel {
@@ -130,10 +126,10 @@ export interface LifecycleModel {
 	arrived: Set<string>;
 	/** Frames borrowed to be photographed, and when the errand began. */
 	errands: Map<string, number>;
-	/** Errands a frame with no picture has already been given, capped at PICTURE_TRIES. */
+	/** Frames whose last errand came back with a picture — the cover may still be in flight to disk. */
+	photographed: Set<string>;
+	/** Errands a frame has already been given for the picture it owes, capped at PICTURE_TRIES. */
 	tries: Map<string, number>;
-	prevCamera: Camera | null;
-	lastCameraMove: number;
 }
 
 export function createLifecycleModel(): LifecycleModel {
@@ -141,9 +137,8 @@ export function createLifecycleModel(): LifecycleModel {
 		stale: new Set(),
 		arrived: new Set(),
 		errands: new Map(),
+		photographed: new Set(),
 		tries: new Map(),
-		prevCamera: null,
-		lastCameraMove: 0,
 	};
 }
 
@@ -153,15 +148,23 @@ export function createLifecycleModel(): LifecycleModel {
  * `hasCover` is briefly still false and must not start the errand over. A
  * picture that never came counts as one try.
  */
-export function noteRefreshShot(model: LifecycleModel, frame: string, captured: boolean): void {
+export function noteErrandShot(model: LifecycleModel, frame: string, captured: boolean): void {
 	model.errands.delete(frame);
-	model.tries.set(frame, captured ? PICTURE_TRIES : (model.tries.get(frame) ?? 0) + 1);
+	if (captured) {
+		model.stale.delete(frame);
+		model.photographed.add(frame);
+		model.tries.delete(frame);
+		return;
+	}
+	// The debt stands. A frame whose picture is wrong is still wrong when the
+	// capture that was going to fix it came back empty-handed, so the errand is
+	// worth trying again — bounded, because "its picture is wrong" would
+	// otherwise stay true however many times it is acted on.
+	model.tries.set(frame, (model.tries.get(frame) ?? 0) + 1);
 }
 
 export interface SweepInput {
 	frames: readonly ProjectedFrame[];
-	/** Read only to tell a moving camera from a settled one — no frame's state depends on it. */
-	camera: Camera;
 	entered: string | null;
 	/** The one frame currently selected into: mounted with time frozen. */
 	frozen: string | null;
@@ -184,21 +187,10 @@ export interface SweepResult {
 }
 
 export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
-	const { frames, camera, entered, frozen, inspected, states, ready, capturing, hasCover, now } = input;
-
-	const prev = model.prevCamera;
-	const shifted = prev !== null && (prev.x !== camera.x || prev.y !== camera.y || prev.k !== camera.k);
-	if (prev === null || shifted) {
-		model.prevCamera = { ...camera };
-		model.lastCameraMove = now;
-	}
-	// Borrowing a frame boots a document. Nothing about a picture is urgent, so
-	// the errand waits for the camera to stop — one already in flight rides the
-	// gesture out rather than throwing away the boot it has already paid for.
-	const settled = now - model.lastCameraMove > CAMERA_SETTLE_MS;
+	const { frames, entered, frozen, inspected, states, ready, capturing, hasCover, now } = input;
 
 	for (const [name, startedAt] of [...model.errands]) {
-		if (now - startedAt >= REFRESH_ERRAND_MS) noteRefreshShot(model, name, false);
+		if (now - startedAt >= ERRAND_DEADLINE_MS) noteErrandShot(model, name, false);
 	}
 
 	interface Entry {
@@ -212,6 +204,8 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	const entries: Entry[] = [];
 	const candidates: string[] = [];
 	const alive = new Set<string>();
+	/** A frame mounted because somebody asked for it, still waiting on its boot. */
+	let awaited = false;
 
 	for (const frame of frames) {
 		const name = frame.name;
@@ -241,14 +235,24 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		// A frame with no picture, or the wrong one, is worth a document for as
 		// long as it takes to photograph it. Terminals are out: their still is
 		// the daemon's grid (#42), never a self-capture.
+		// A picture that landed clears `photographed` the moment the projection
+		// catches up: the flag only ever bridges the gap between a shot resolving
+		// and its cover reaching disk, and holding it any longer would mean a
+		// cover deleted later never being noticed.
+		if (model.photographed.has(name) && hasCover(name)) model.photographed.delete(name);
 		const debt =
 			frame.kind !== "term" &&
-			(model.stale.has(name) || (!hasCover(name) && (model.tries.get(name) ?? 0) < PICTURE_TRIES));
+			!model.photographed.has(name) &&
+			(model.tries.get(name) ?? 0) < PICTURE_TRIES &&
+			(model.stale.has(name) || !hasCover(name));
 
 		// Intent takes a borrowed frame back: it now has a document for a reason
 		// somebody asked for, so the errand hands its slot over and the debt
 		// stands until the frame is free again.
-		if (intent !== null) model.errands.delete(name);
+		if (intent !== null) {
+			model.errands.delete(name);
+			if (readyAt === undefined) awaited = true;
+		}
 
 		entries.push({ frame, current, intent, debt });
 		if (intent === null && debt && !model.errands.has(name)) candidates.push(name);
@@ -258,9 +262,23 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	// whoever is owed a picture when a slot frees takes it. There is no order
 	// worth imposing, because no order is visible — every one of them is showing
 	// a picture the whole time.
-	if (settled) {
+	//
+	// And no camera gate. #80 made mounting wait for a still camera on the theory
+	// that a booting document's paint is the stutter; #94 disproved that outright
+	// and #112 deleted the gate rather than reverting it. A gesture over frames
+	// being borrowed underneath it drops nothing, measured at 6x throttle in
+	// `bench/mount-gesture.ts`.
+	//
+	// What an errand does have to stay out of the way of is a boot somebody is
+	// waiting on. Not for the paint — for the daemon, the connection pool and the
+	// compile the arriving document needs, all of which an errand is asking for
+	// too. Deleting the camera gate without this cost a cross-page walk 73 ms of
+	// its 220 ms bar (`bench/walk.ts`, 266.7 p50 against 193.9), because a page
+	// switch puts a screenful of frames that owe pictures on screen at the exact
+	// moment the target is booting. An errand is never urgent; an arrival is.
+	if (!awaited) {
 		for (const name of candidates) {
-			if (model.errands.size >= ERRAND_CAP) break;
+			if (model.errands.size >= ERRANDS_IN_FLIGHT) break;
 			model.errands.set(name, now);
 		}
 	}
@@ -275,7 +293,6 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		// borrowed document has run long enough to be worth one.
 		if (target === "refreshing" && debt && model.arrived.has(name) && !capturing.has(name)) {
 			refreshCaptures.push(name);
-			model.stale.delete(name);
 		}
 		next[name] = target;
 		if (target !== current) changed = true;
@@ -284,6 +301,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	// Frames that left the projection take their bookkeeping with them.
 	for (const name of [...model.stale]) if (!alive.has(name)) model.stale.delete(name);
 	for (const name of [...model.arrived]) if (!alive.has(name)) model.arrived.delete(name);
+	for (const name of [...model.photographed]) if (!alive.has(name)) model.photographed.delete(name);
 	for (const name of [...model.errands.keys()]) if (!alive.has(name)) model.errands.delete(name);
 	for (const name of [...model.tries.keys()]) if (!alive.has(name)) model.tries.delete(name);
 
@@ -300,12 +318,12 @@ const running = (state: FrameState): boolean => state === "live" || state === "r
 /** Something changed about the frame: its picture is wrong, and it may ask again. */
 function markPictureWrong(model: LifecycleModel, frame: string): void {
 	model.stale.add(frame);
+	model.photographed.delete(frame);
 	model.tries.delete(frame);
 }
 
 export interface LifecycleDeps {
 	framesRef: RefObject<ProjectedFrame[]>;
-	cameraRef: RefObject<Camera | null>;
 	entered: string | null;
 	frozen: string | null;
 	/** The frame an open inspector rail is reading (#58). */
@@ -315,7 +333,7 @@ export interface LifecycleDeps {
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
-	const { framesRef, cameraRef, entered, frozen, inspected, hasCover, onShot } = deps;
+	const { framesRef, entered, frozen, inspected, hasCover, onShot } = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
 	// when each frame reported loaded, not merely that it did: a still is only
@@ -469,12 +487,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 	// The decision function: runs on a sweep interval and urgent intent changes.
 	const compute = useCallback(() => {
-		const camera = cameraRef.current;
-		const frames = framesRef.current;
-		if (camera === null) return;
 		const result = sweepLifecycle(model.current, {
-			frames,
-			camera,
+			frames: framesRef.current,
 			entered: enteredRef.current,
 			frozen: frozenRef.current,
 			inspected: inspectedRef.current,
@@ -485,10 +499,10 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			now: performance.now(),
 		});
 		for (const frame of result.refreshCaptures) {
-			void requestCapture(frame).then((rungs) => noteRefreshShot(model.current, frame, rungs !== undefined));
+			void requestCapture(frame).then((rungs) => noteErrandShot(model.current, frame, rungs !== undefined));
 		}
 		if (result.changed) setStates(result.states);
-	}, [cameraRef, framesRef, requestCapture]);
+	}, [framesRef, requestCapture]);
 
 	// Freeze, enter, and summoning the rail must feel instant, not one sweep late.
 	useEffect(() => {

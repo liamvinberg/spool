@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Page as BrowserPage } from "playwright-core";
 
 /**
  * The plumbing the six benchmarks share: a private copy of a real spool project,
@@ -158,7 +159,11 @@ function readBox(file: string): Box | undefined {
 /** The root page is the frames directory itself, spelled "" — `ui/canvas/pages.ts`. */
 export const ROOT_PAGE = "";
 
-/** One page's frames, and the page they sit on — what a single camera can show. */
+/**
+ * One page's frames, and the page they sit on — what a single camera can show.
+ * Not playwright's `Page`, which is imported above under another name for
+ * exactly this reason.
+ */
 export interface Page {
 	page: string;
 	frames: FrameBox[];
@@ -285,3 +290,33 @@ export function quantile(sorted: number[], q: number): number {
 }
 
 export const ms = (value: number): string => (Number.isFinite(value) ? value.toFixed(1) : "—");
+
+/** Documents the canvas is holding right now. */
+export const mountedCount = (page: BrowserPage): Promise<number> =>
+	page.evaluate(() => document.querySelectorAll("iframe").length);
+
+/** Frames the canvas is drawing, mounted or not — a settled canvas holds no documents at all (#112). */
+export const framesOnCanvas = (page: BrowserPage): Promise<number> =>
+	page.evaluate(() => document.querySelectorAll("[data-frame-cover]").length);
+
+/**
+ * Hold until the canvas is holding no document at all: every picture it was
+ * owed has been taken and nothing is being borrowed. That is the resting state
+ * of the model (#112), and the one both a cold entry and a control gesture have
+ * to be measured from — a canvas pinned at the errand cap holds still without
+ * being quiet, so waiting for the count to stop changing would wait for the
+ * wrong thing. Returns what was left if the wait ran out, and says so.
+ */
+export async function quiet(page: BrowserPage, timeoutMs: number): Promise<number> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const count = await mountedCount(page);
+		if (count === 0) return 0;
+		await page.waitForTimeout(250);
+	}
+	const left = await mountedCount(page);
+	process.stderr.write(
+		`bench:   canvas still borrowing ${left} frames — whatever runs next is not measured from rest\n`,
+	);
+	return left;
+}

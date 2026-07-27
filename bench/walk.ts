@@ -1,7 +1,17 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { type Browser, type BrowserContext, chromium, type Page } from "playwright-core";
-import { type Camera, copyProject, freePort, ms, quantile, startDaemon, VIEWPORT, writeCamera } from "./harness.ts";
+import { type Browser, type BrowserContext, chromium } from "playwright-core";
+import {
+	type Camera,
+	copyProject,
+	freePort,
+	ms,
+	quantile,
+	quiet,
+	startDaemon,
+	VIEWPORT,
+	writeCamera,
+} from "./harness.ts";
 
 /**
  * What following a link costs (#96). #93 set the bar at 220 ms — the duration
@@ -523,12 +533,14 @@ async function runWalk(context: BrowserContext, url: string, plan: Plan): Promis
 		await page.goto(url, { waitUntil: "domcontentloaded" });
 
 		// The source frame is a still until somebody goes inside it (#112), so it
-		// is found by the still and the canvas has to have stopped borrowing
-		// frames around it first — a walk priced while the canvas is still filling
-		// its own pictures in is priced against the wrong canvas.
+		// is found by the still — and the canvas has to be holding no document at
+		// all before the click. Not "stopped changing": a canvas working through
+		// the pictures it owes sits pinned at the errand cap and holds perfectly
+		// still while competing with the arrival for the daemon, which is a walk
+		// priced against the wrong canvas.
 		const still = `[data-frame-cover=${JSON.stringify(plan.from)}]`;
 		await page.waitForSelector(still, { timeout: ENTER_TIMEOUT_MS });
-		await settle(page, 1200, 60_000);
+		await quiet(page, 300_000);
 
 		// --- enter, because a walk from an unentered frame is rejected ----------
 		// `walkRejectionReason` (protocol.ts:211) turns a `go` from any frame that
@@ -747,23 +759,6 @@ async function runWalk(context: BrowserContext, url: string, plan: Plan): Promis
 		};
 	} catch (error) {
 		return await fail(`threw — ${String(error).slice(0, 140)}`);
-	}
-}
-
-/** Hold until the canvas stops inserting iframes. */
-async function settle(page: Page, quietMs: number, timeoutMs: number): Promise<void> {
-	let count = -1;
-	let since = Date.now();
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		await page.waitForTimeout(150);
-		const next = await page.evaluate(() => document.querySelectorAll("iframe").length);
-		if (next !== count) {
-			count = next;
-			since = Date.now();
-			continue;
-		}
-		if (Date.now() - since >= quietMs) return;
 	}
 }
 

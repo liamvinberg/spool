@@ -3,7 +3,7 @@
 import { act, createElement, type RefObject } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Camera, ProjectedFrame } from "../api";
+import type { ProjectedFrame } from "../api";
 import type { CoverRaster } from "./capture-broker";
 import type { CaptureSourceMessage } from "./protocol";
 
@@ -53,12 +53,10 @@ function source(id: string, maxEdge: number): CaptureSourceMessage {
 
 async function mountLifecycle(onShot: (frame: string, rungs: CoverRaster[]) => void) {
 	const framesRef = { current: [] } as unknown as RefObject<ProjectedFrame[]>;
-	const cameraRef = { current: null } as RefObject<Camera | null>;
 	let lifecycle: Lifecycle | undefined;
 	function Harness() {
 		lifecycle = useFrameLifecycle({
 			framesRef,
-			cameraRef,
 			entered: null,
 			frozen: null,
 			inspected: null,

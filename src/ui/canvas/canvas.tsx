@@ -146,7 +146,6 @@ const TREE_REPLY_MS = 1200;
 const STAMP_LABEL_BATCH = 256;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
-/** How long after the last zoom change the frames keep showing their stills. */
 
 function spatialDirection(key: string): SpatialDirection | undefined {
 	switch (key) {
@@ -407,7 +406,6 @@ export function ProjectCanvas({
 
 	const lifecycle = useFrameLifecycle({
 		framesRef,
-		cameraRef,
 		entered,
 		frozen: frozenFrame,
 		inspected: railOpen ? inspectedFrame : null,
@@ -2608,6 +2606,7 @@ export function ProjectCanvas({
 											name={frame.name}
 											state={state}
 											ready={lifecycle.ready.has(frame.name)}
+											entered={isEntered}
 											interactive={isEntered && !metaDown}
 											terminal={frame.kind === "term"}
 											docNonce={docNonces[frame.name] ?? 0}
