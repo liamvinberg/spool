@@ -276,7 +276,11 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
 					assertDesignFile(designDir, args.path);
 					return null;
 				} catch (error) {
-					return { errors: [{ text: describeCompileError(error) }] };
+					// The cause rides along in detail, which esbuild hands back to the JS
+					// API and never prints. Reading outside design/ is not an authoring
+					// mistake one frame can be left holding, and callers need to tell it
+					// apart from this plugin's other, ordinary complaint.
+					return { errors: [{ text: describeCompileError(error), detail: error }] };
 				}
 			});
 			build.onResolve({ filter: /^spool(\/|$)/ }, (args) => {
@@ -324,6 +328,25 @@ export function parseImportMap(raw: string | undefined): unknown {
 	} catch (error) {
 		throw new Error(`shared/importmap.json: ${(error as Error).message}`);
 	}
+}
+
+/**
+ * True when a build failed because something reached outside design/. The one
+ * compile failure that is a filesystem boundary rather than bad authoring, so the
+ * one the player must refuse whole instead of pinning on a single frame.
+ */
+export function isDesignBoundaryFailure(error: unknown): boolean {
+	if (error instanceof DesignBoundaryError) return true;
+	if (typeof error !== "object" || error === null || !("errors" in error) || !Array.isArray(error.errors)) {
+		return false;
+	}
+	return error.errors.some(
+		(message: unknown) =>
+			typeof message === "object" &&
+			message !== null &&
+			"detail" in message &&
+			(message as { detail: unknown }).detail instanceof DesignBoundaryError,
+	);
 }
 
 export function describeCompileError(error: unknown): string {

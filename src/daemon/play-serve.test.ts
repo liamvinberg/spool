@@ -279,7 +279,7 @@ describe("serving the player", () => {
 		expect(configOf(await grown.text()).frames.receipt).toBeDefined();
 	});
 
-	it("serves the compile failure as a loud document naming the file", async () => {
+	it("keeps the player playable when one frame will not compile", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = scaffold(spoolDir);
 		writeFrame(root, "broken", "export default function Broken() { return <p>oops</p>;\n");
@@ -287,10 +287,51 @@ describe("serving the player", () => {
 
 		const res = await app.request(`/play/${name}`);
 
-		expect(res.status).toBe(500);
+		// The broken frame costs its own screen and nothing else: every healthy
+		// frame is still in the composition, and its error rides along to be shown
+		// when someone walks to it.
+		expect(res.status).toBe(200);
 		const doc = await res.text();
-		expect(doc).toContain("failed to compile");
+		expect(Object.keys(configOf(doc).frames).sort()).toEqual(["broken", "cart", "menu", "pay--done"]);
+		expect(doc).toContain("brokenFrame");
+		expect(doc).toContain("design/frames/broken/frame.tsx");
+		// The error travels with the stub so the screen can show it on arrival.
 		expect(doc).toContain("frames/broken/frame.tsx");
+		// The healthy frames are really compiled, not stubbed alongside it.
+		expect(doc).toContain("menu-screen");
+		expect(doc).toContain("cart-screen");
+	});
+
+	it("recompiles a stubbed player until the broken frame is fixed", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = scaffold(spoolDir);
+		writeFrame(root, "broken", "export default function Broken() { return <p>oops</p>;\n");
+		const app = makeApp(spoolDir);
+
+		const stubbed = await app.request(`/play/${name}`);
+		expect(stubbed.status).toBe(200);
+		// Never cached, so the fix cannot be stranded behind a stale bundle.
+		expect(stubbed.headers.get("x-spool-cache")).toBe("miss");
+		expect((await app.request(`/play/${name}`)).headers.get("x-spool-cache")).toBe("miss");
+
+		writeFrame(root, "broken", "export default function Broken() { return <p>mended-screen</p>; }\n");
+		const mended = await app.request(`/play/${name}`);
+		expect(mended.status).toBe(200);
+		const doc = await mended.text();
+		expect(doc).toContain("mended-screen");
+		expect(doc).not.toContain("brokenFrame");
+	});
+
+	it("still fails the whole player when nothing frame-shaped is to blame", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = scaffold(spoolDir);
+		writeDesignFile(root, "shared/importmap.json", "{ not json");
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(`/play/${name}`);
+
+		expect(res.status).toBe(500);
+		expect(await res.text()).toContain("failed to compile");
 	});
 
 	it("holds the shared/ui boundary in the player compile too", async () => {
@@ -310,8 +351,14 @@ describe("serving the player", () => {
 
 		const res = await app.request(`/play/${name}`);
 
-		expect(res.status).toBe(500);
-		expect(await res.text()).toContain("props");
+		// The rule still refuses to compile the frame that broke it. What changed is
+		// that it no longer takes the frames that kept to it down as well.
+		expect(res.status).toBe(200);
+		const doc = await res.text();
+		expect(doc).toContain("brokenFrame");
+		expect(doc).toContain("props");
+		expect(doc).toContain("design/frames/menu/frame.tsx");
+		expect(doc).toContain("cart-screen");
 	});
 });
 

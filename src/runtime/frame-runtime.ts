@@ -4,6 +4,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { type ClipboardCopyResult, parseClipboardCopyResult } from "./clipboard-protocol";
 import {
+	BrokenFrame,
 	type MockCall,
 	Player,
 	type PlayerController,
@@ -1578,6 +1579,16 @@ const playerController: PlayerController = {
 	},
 	close: closePlayer,
 };
+
+/**
+ * Stands in for a frame the player could not compile. The served composition
+ * calls this instead of importing that frame, so one bad import costs its own
+ * screen and nothing else. Not in spool-public.d.ts on purpose: generated
+ * composition code reaches for it, authored frames have no business with it.
+ */
+export function brokenFrame(details: { frame: string; file: string; error: string }): ComponentType {
+	return () => createElement(BrokenFrame, details);
+}
 
 /**
  * Boot the /play/ document (#24): called by the served composition with every

@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { buildDesignEntry, describeCompileError, hashInputs, parseImportMap } from "./compile";
+import {
+	buildDesignEntry,
+	type DesignBundle,
+	describeCompileError,
+	hashInputs,
+	isDesignBoundaryFailure,
+	parseImportMap,
+} from "./compile";
 import { realDesignDir } from "./design-path";
 import { escapeHtml, escapeInlineScript, escapeInlineStyle, escapeJsonScript, mergeImportMap } from "./document";
 import { readIfExists } from "./project-files";
@@ -65,6 +72,8 @@ interface PlayerCacheEntry {
 	bundle: PlayerBundle;
 	/** The webfont resolution this bundle was assembled from (#80). */
 	fonts: number;
+	/** Frames serving a compile error in their own place rather than the player's. */
+	broken: string[];
 }
 
 /**
@@ -97,7 +106,12 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 				return { kind: "ok", bundle: cached.bundle, cache: "hit" };
 			}
 			const entry = await compilePlayer(version, designDir, frames, stamp, webfonts);
-			cache.set(root, entry);
+			// Match the frame compiler: a compile failure is never cached, so the
+			// player recovers the instant the frame does. A stubbed build's inputs
+			// cannot cover the broken frame's own closure, so revalidating against
+			// them would strand the stub after the fix lands.
+			if (entry.broken.length === 0) cache.set(root, entry);
+			else cache.delete(root);
 			return { kind: "ok", bundle: entry.bundle, cache: "miss" };
 		} catch (error) {
 			cache.delete(root);
@@ -119,13 +133,8 @@ async function compilePlayer(
 ): Promise<PlayerCacheEntry> {
 	// the same stamping compile as frame documents (#23): one dialect, one
 	// pipeline, identical semantics whether a frame renders alone or composed
-	const { sourceFiles, bootJs, bundledCss } = await buildDesignEntry({
-		designDir,
-		resolveDir: designDir,
-		sourcefile: STDIN_NAME,
-		contents: playerEntry(frames),
-		label: "the player",
-	});
+	const composed = await composePlayer(designDir, frames);
+	const { sourceFiles, bootJs, bundledCss } = composed.bundle;
 
 	const shared = join(designDir, "shared");
 	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
@@ -150,18 +159,92 @@ async function compilePlayer(
 		inputs,
 		hash,
 		fonts: webfonts.revision(),
+		broken: [...composed.broken.keys()],
 		bundle: { bootJs, css, fonts, bundledCss, transitions, importMap, names, hash },
 	};
 }
 
-/** The composition: every frame imported, handed to the runtime's player boot. */
-function playerEntry(frames: PlayerFrameRef[]): string {
-	const imports = frames
-		.map((ref, i) => `import f${i} from ${JSON.stringify(`./${frameFolder(ref.name, ref.page)}/frame.tsx`)};`)
-		.join("\n");
+/**
+ * Builds the composition, and when it will not build, works out which frames are
+ * to blame and stands each of them down in its own place. One bad import used to
+ * cost the whole player, including every frame that compiled perfectly well.
+ *
+ * The whole-project build is tried first and unchanged, so a healthy project pays
+ * nothing for this. Blame is settled by compiling each frame alone rather than by
+ * reading esbuild's error locations: a broken file under shared/ belongs to every
+ * frame that reaches it, and only a real build knows which those are.
+ */
+async function composePlayer(
+	designDir: string,
+	frames: PlayerFrameRef[],
+): Promise<{ bundle: DesignBundle; broken: Map<string, string> }> {
+	const build = (broken: Map<string, string>) =>
+		buildDesignEntry({
+			designDir,
+			resolveDir: designDir,
+			sourcefile: STDIN_NAME,
+			contents: playerEntry(frames, broken),
+			label: "the player",
+		});
+	const none = new Map<string, string>();
+	try {
+		return { bundle: await build(none), broken: none };
+	} catch (error) {
+		// A design-boundary escape is not an authoring mistake to be shown on one
+		// screen. It fails the player whole and says nothing about what it read.
+		if (isDesignBoundaryFailure(error)) throw error;
+		const broken = await blameFrames(designDir, frames);
+		// Nothing frame-shaped to blame — a broken importmap, a Tailwind failure —
+		// so the player fails whole, as it should.
+		if (broken.size === 0) throw error;
+		return { bundle: await build(broken), broken };
+	}
+}
+
+/** Compiles each frame alone to find the ones that cannot build, with their errors. */
+async function blameFrames(designDir: string, frames: PlayerFrameRef[]): Promise<Map<string, string>> {
+	const verdicts = await Promise.all(
+		frames.map(async (ref) => {
+			const folder = frameFolder(ref.name, ref.page);
+			try {
+				await buildDesignEntry({
+					designDir,
+					resolveDir: designDir,
+					sourcefile: STDIN_NAME,
+					// The default export is what the composition takes, so take it here too.
+					contents: `import frame from ${JSON.stringify(`./${folder}/frame.tsx`)};\nexport default frame;\n`,
+					label: `frame "${ref.name}"`,
+				});
+				return undefined;
+			} catch (error) {
+				return [ref.name, describeCompileError(error)] as const;
+			}
+		}),
+	);
+	return new Map(verdicts.filter((verdict): verdict is readonly [string, string] => verdict !== undefined));
+}
+
+/**
+ * The composition: every frame imported, handed to the runtime's player boot. A
+ * frame that would not compile is not imported at all — it arrives as the runtime
+ * stand-in carrying its own error, which is what makes the failure local to it.
+ */
+function playerEntry(frames: PlayerFrameRef[], broken: Map<string, string>): string {
+	const bindings = frames.map((ref, i) => {
+		const folder = frameFolder(ref.name, ref.page);
+		const error = broken.get(ref.name);
+		if (error === undefined) {
+			return { import: `import f${i} from ${JSON.stringify(`./${folder}/frame.tsx`)};`, stub: undefined };
+		}
+		const details = { frame: ref.name, file: `design/${folder}/frame.tsx`, error };
+		return { import: undefined, stub: `const f${i} = brokenFrame(${JSON.stringify(details)});` };
+	});
+	const imported = bindings.flatMap((binding) => (binding.import === undefined ? [] : [binding.import]));
+	const stubs = bindings.flatMap((binding) => (binding.stub === undefined ? [] : [binding.stub]));
+	const boot = broken.size === 0 ? "bootPlayer" : "bootPlayer, brokenFrame";
 	const entries = frames.map((ref, i) => `[${JSON.stringify(ref.name)}, f${i}]`).join(", ");
-	return `import { bootPlayer } from "spool";
-${imports}
+	return `import { ${boot} } from "spool";
+${[...imported, ...stubs].join("\n")}
 bootPlayer(Object.fromEntries([${entries}]));
 `;
 }
