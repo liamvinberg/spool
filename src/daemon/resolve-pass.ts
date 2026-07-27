@@ -1,7 +1,6 @@
-import { frameSourceHash } from "./flows";
-import { frameNavSites } from "./nav-sites";
+import type { FrameGraph } from "./flows";
 import type { RenderedTarget } from "./resolved-targets";
-import { liveRenderedTargets, projectScenarios, recordRenderedTargets } from "./resolved-targets";
+import { createRenderedReader, projectScenarios, recordRenderedTargets } from "./resolved-targets";
 
 /**
  * The value-filling pass (#34): render the frames whose walks the parser could
@@ -32,6 +31,8 @@ export interface ResolvePassRequest {
 
 export interface ResolvePassDeps {
 	read(target: { url: string; width: number; height: number }): Promise<RenderedTarget[] | undefined>;
+	/** The kept graph's source half — whose sites are dark, and at what bytes. */
+	sources(root: string): Promise<Map<string, FrameGraph>>;
 	/** Announce that the graph moved, once, after the whole pass. */
 	moved(root: string): void;
 	now(): string;
@@ -48,8 +49,8 @@ export interface ResolvePassResult {
 
 /** A frame with an unresolvable site the render could speak to: no anchor
  * means no element to match a rendered attribute against, so nothing to fill. */
-function wantsRender(root: string, frame: string): boolean {
-	return frameNavSites(root, frame).unreadable.some((site) => site.anchor !== undefined);
+function wantsRender(graph: FrameGraph): boolean {
+	return graph.unreadable.some((site) => site.anchor !== undefined);
 }
 
 export function createResolvePass(deps: ResolvePassDeps) {
@@ -62,11 +63,16 @@ export function createResolvePass(deps: ResolvePassDeps) {
 		const alive = request.frames.map((frame) => frame.name);
 		const result: ResolvePassResult = { skipped: 0, read: 0, unavailable: 0 };
 		let moved = false;
+		// the graph the daemon keeps already read every frame's source: asking it
+		// per frame walked the whole project once per frame (#109)
+		const graphs = await deps.sources(root);
+		const rendered = createRenderedReader(root);
 
 		for (const frame of request.frames) {
-			if (!wantsRender(root, frame.name)) continue;
-			const sourceHash = frameSourceHash(root, frame.name);
-			if (liveRenderedTargets(root, frame.name, sourceHash, scenarios.hash).length > 0) {
+			const graph = graphs.get(frame.name);
+			if (graph === undefined || !wantsRender(graph)) continue;
+			const sourceHash = graph.hash;
+			if (rendered(frame.name, sourceHash, scenarios.hash).length > 0) {
 				result.skipped++;
 				continue;
 			}

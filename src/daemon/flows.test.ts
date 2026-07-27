@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeApp, makeProject, makeTempDir, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
@@ -299,6 +299,78 @@ export default function Frame() {
 		writeFrame(root, "cart", plainTsx);
 
 		expect((await fetchFlows(app, name)).edges).toEqual([]);
+	});
+});
+
+/**
+ * The daemon keeps each frame's source half between reads (#109) and checks it
+ * on read rather than trusting the watcher. These are the ways a frame's graph
+ * moves without any file it already held changing its bytes.
+ */
+describe("the kept graph", () => {
+	it("picks up a file dropped into a frame's folder", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", plainTsx);
+		writeFrame(root, "checkout", plainTsx);
+		const app = makeApp(spoolDir);
+		expect((await fetchFlows(app, name)).edges).toEqual([]);
+
+		// nothing imports it: the frame is its folder, so the file is a root of
+		// its own and no file already read has moved
+		writeDesignFile(root, "frames/cart/parts/row.tsx", `export const Row = () => <a data-go="checkout">go</a>;\n`);
+
+		expect((await fetchFlows(app, name)).edges).toMatchObject([{ from: "cart", to: "checkout" }]);
+	});
+
+	it("drops a file deleted from a frame's folder", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", plainTsx);
+		writeDesignFile(root, "frames/cart/parts/row.tsx", `export const Row = () => <a data-go="checkout">go</a>;\n`);
+		writeFrame(root, "checkout", plainTsx);
+		const app = makeApp(spoolDir);
+		expect((await fetchFlows(app, name)).edges).toHaveLength(1);
+
+		rmSync(join(root, "design", "frames", "cart", "parts"), { recursive: true });
+
+		expect((await fetchFlows(app, name)).edges).toEqual([]);
+	});
+
+	it("re-reads a frame when a shared file it imports changes", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "shared/ui/go.tsx", `export const Go = () => <a data-go="one">on</a>;\n`);
+		writeFrame(
+			root,
+			"start",
+			`import { Go } from "../../shared/ui/go";\nexport default function Frame() {\n\treturn <Go />;\n}\n`,
+		);
+		writeFrame(root, "one", plainTsx);
+		writeFrame(root, "two", plainTsx);
+		const app = makeApp(spoolDir);
+		expect((await fetchFlows(app, name)).edges).toMatchObject([{ from: "start", to: "one" }]);
+
+		// the frame's own file never changes — only a file two hops out
+		writeDesignFile(root, "shared/ui/go.tsx", `export const Go = () => <a data-go="two">on</a>;\n`);
+
+		expect((await fetchFlows(app, name)).edges).toMatchObject([{ from: "start", to: "two" }]);
+	});
+
+	it("forgets a frame that is gone and keeps the rest", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", goTsx(["checkout"]));
+		writeFrame(root, "checkout", goTsx(["cart"]));
+		const app = makeApp(spoolDir);
+		expect((await fetchFlows(app, name)).edges).toHaveLength(2);
+
+		rmSync(join(root, "design", "frames", "checkout"), { recursive: true });
+
+		const flows = await fetchFlows(app, name);
+		expect(flows.frames).toEqual(["cart"]);
+		// the survivor still claims the walk; the target is simply gone now
+		expect(flows.edges).toMatchObject([{ from: "cart", to: "checkout", missing: true }]);
 	});
 });
 

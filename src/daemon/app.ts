@@ -30,7 +30,7 @@ import {
 	playerLoadErrorDocument,
 } from "./document";
 import { createChangeHub } from "./events";
-import { deriveFlows, recordWalk } from "./flows";
+import { createFlowGraph, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
@@ -205,6 +205,7 @@ export function createDaemonApp({
 	const webfonts = createWebfonts({ cacheDir: join(spoolDir, "webfonts") });
 	const compiler = createFrameCompiler(version, webfonts);
 	const playerCompiler = createPlayerCompiler(version, webfonts);
+	const flowGraph = createFlowGraph();
 	const hub = createChangeHub();
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
@@ -256,6 +257,7 @@ export function createDaemonApp({
 	const goReader = createGoReader();
 	const resolvePass = createResolvePass({
 		read: (target) => goReader.read(target),
+		sources: (root) => flowGraph.sources(root),
 		moved: (root) => hub.publish(root, { kind: "resolved" }),
 		now: () => new Date().toISOString(),
 	});
@@ -621,10 +623,10 @@ export function createDaemonApp({
 				return c.body(null, 204);
 			},
 		)
-		.get("/api/p/:project/flows", (c) => {
+		.get("/api/p/:project/flows", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			return c.json(deriveFlows(project.root));
+			return c.json(await flowGraph.flows(project.root));
 		})
 		.post("/api/p/:project/flows/resolve", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));

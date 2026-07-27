@@ -97,6 +97,112 @@ function resolveLocalImport(designDir: string, fromFile: string, specifier: stri
 	return undefined;
 }
 
+/** Parses survive the daemon's lifetime keyed to content — same drop-on-edit
+ * freshness as the compile cache, without re-walking unchanged files. */
+const parseCache = new Map<string, { hash: string; result: ParsedSource }>();
+
+/** A file no read could reach: one spelling for the hash and the digest. */
+const ABSENT = "absent";
+
+interface FileRead {
+	/** The file's bytes, or nothing when no read could reach it. */
+	bytes: Buffer | undefined;
+	digest: string;
+	parsed?: ParsedSource | undefined;
+}
+
+/**
+ * One read per file, one resolution per specifier, one listing per folder, for
+ * as long as the caller holds the pass (#109).
+ *
+ * Frames overlap heavily — every frame mounting a shared nav bar walks the same
+ * files — so a project-wide read that made its own reads per frame did 8,412
+ * `readFileSync` calls over 199 files. A pass collapses that to one each.
+ *
+ * The memo is also a snapshot: a file edited mid-pass reads as the bytes the
+ * pass started with, so one derivation sees one consistent project. The next
+ * pass reads the edit.
+ */
+export function createSourcePass(designDir: string) {
+	const files = new Map<string, FileRead>();
+	const specifiers = new Map<string, string | undefined>();
+	const folders = new Map<string, string[]>();
+
+	function read(file: string): FileRead {
+		const known = files.get(file);
+		if (known !== undefined) return known;
+		let bytes: Buffer | undefined;
+		try {
+			bytes = readFileSync(file);
+		} catch {
+			bytes = undefined;
+		}
+		const fresh: FileRead = {
+			bytes,
+			digest: bytes === undefined ? ABSENT : createHash("sha256").update(bytes).digest("hex"),
+		};
+		files.set(file, fresh);
+		return fresh;
+	}
+
+	return {
+		designDir,
+
+		/** The file's bytes, or nothing — the input the source hash is defined over. */
+		bytes: (file: string): Buffer | undefined => read(file).bytes,
+
+		/** The file's content hash, `absent` when unreadable — the cheap identity. */
+		digest: (file: string): string => read(file).digest,
+
+		/** One parse per file per content, shared by the graph walk and the sites. */
+		parsed(file: string): ParsedSource | undefined {
+			const found = read(file);
+			if (found.bytes === undefined) {
+				parseCache.delete(file);
+				return undefined;
+			}
+			if (found.parsed !== undefined) return found.parsed;
+			const cached = parseCache.get(file);
+			const result =
+				cached !== undefined && cached.hash === found.digest
+					? cached.result
+					: parseSource(found.bytes.toString("utf8"), relative(designDir, file).split(sep).join("/"));
+			parseCache.set(file, { hash: found.digest, result });
+			found.parsed = result;
+			return result;
+		},
+
+		/** Where one import lands, resolved once per importing folder. */
+		resolve(fromFile: string, specifier: string): string | undefined {
+			const key = `${dirname(fromFile)}\0${specifier}`;
+			const known = specifiers.get(key);
+			if (known !== undefined || specifiers.has(key)) return known;
+			const found = resolveLocalImport(designDir, fromFile, specifier);
+			specifiers.set(key, found);
+			return found;
+		},
+
+		/** The frame folder's own source files, sorted — the roots of its graph. */
+		folder(frameDir: string): string[] {
+			const known = folders.get(frameDir);
+			if (known !== undefined) return known;
+			const found = frameFolderFiles(designDir, frameDir).sort();
+			folders.set(frameDir, found);
+			return found;
+		},
+	};
+}
+
+export type SourcePass = ReturnType<typeof createSourcePass>;
+
+/** One frame's source graph, read once: the files and everything they declare. */
+export interface FrameSource extends NavSites {
+	/** Every source file in the graph, sorted. */
+	files: string[];
+	/** The frame folder's own files, sorted — a new one joins the graph. */
+	folder: string[];
+}
+
 /**
  * The frame is its folder plus everything it imports from inside design/ (#34,
  * amending #5). A shared nav bar's data-go belongs to every frame that mounts
@@ -104,56 +210,59 @@ function resolveLocalImport(designDir: string, fromFile: string, specifier: stri
  * it. Cycles terminate on the visited set; anything resolving outside design/
  * is a package, not source. The bundler owns the real closure — this is the
  * sync reading of it, over the relative specifiers design/ is authored with.
+ *
+ * The files and the sites come out of one walk: they are the same parse read
+ * twice, and separating them cost a project-wide read four walks per frame.
  */
-export function frameSourceFiles(root: string, frame: string): string[] {
-	const found = lookupFrame(root, frame);
-	if (found.kind !== "found") return [];
-	let designDir: string;
-	let frameDir: string;
-	try {
-		designDir = realDesignDir(root);
-		frameDir = resolveDesignPath(designDir, found.dir);
-	} catch (error) {
-		if (error instanceof DesignBoundaryError) throw error;
-		return [];
-	}
-	const seen = new Set<string>();
-	const queue = frameFolderFiles(designDir, frameDir);
-	for (const file of queue) seen.add(file);
+export function frameSourceIn(pass: SourcePass, frameDir: string): FrameSource {
+	const folder = pass.folder(frameDir);
+	const seen = new Set(folder);
+	const queue = [...folder];
 	for (let at = 0; at < queue.length; at++) {
 		const file = queue[at];
 		if (file === undefined) continue;
-		for (const specifier of readParse(designDir, file)?.imports ?? []) {
-			const resolved = resolveLocalImport(designDir, file, specifier);
+		for (const specifier of pass.parsed(file)?.imports ?? []) {
+			const resolved = pass.resolve(file, specifier);
 			if (resolved === undefined || seen.has(resolved)) continue;
 			seen.add(resolved);
 			queue.push(resolved);
 		}
 	}
-	return [...seen].sort();
+	// sites read in sorted-file order, so a graph reached by two routes still
+	// reports its sites in one order
+	const files = [...seen].sort();
+	const source: FrameSource = { files, folder, sites: [], unreadable: [] };
+	for (const file of files) {
+		const parsed = pass.parsed(file);
+		if (parsed === undefined) continue;
+		source.sites.push(...parsed.sites);
+		source.unreadable.push(...parsed.unreadable);
+	}
+	return source;
 }
 
-/** Parses survive the daemon's lifetime keyed to content — same drop-on-edit
- * freshness as the compile cache, without re-walking unchanged files. */
-const parseCache = new Map<string, { hash: string; result: ParsedSource }>();
-
-/** One read-and-parse per file per content, shared by the graph walk and the
- * site collection so following imports costs no extra parse. */
-function readParse(designDir: string, file: string): ParsedSource | undefined {
-	let content: Buffer;
+/** Where a frame's folder really sits, or nothing when the name does not resolve. */
+export function resolveFrameDir(root: string, frame: string): { designDir: string; frameDir: string } | undefined {
+	const found = lookupFrame(root, frame);
+	if (found.kind !== "found") return undefined;
 	try {
-		content = readFileSync(file);
-	} catch {
-		parseCache.delete(file);
+		const designDir = realDesignDir(root);
+		return { designDir, frameDir: resolveDesignPath(designDir, found.dir) };
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
 		return undefined;
 	}
-	const hash = createHash("sha256").update(content).digest("hex");
-	const cached = parseCache.get(file);
-	if (cached !== undefined && cached.hash === hash) return cached.result;
-	const path = relative(designDir, file).split(sep).join("/");
-	const result = parseSource(content.toString("utf8"), path);
-	parseCache.set(file, { hash, result });
-	return result;
+}
+
+/** One frame's graph on a pass of its own — the standalone read. */
+export function frameSource(root: string, frame: string): FrameSource {
+	const at = resolveFrameDir(root, frame);
+	if (at === undefined) return { files: [], folder: [], sites: [], unreadable: [] };
+	return frameSourceIn(createSourcePass(at.designDir), at.frameDir);
+}
+
+export function frameSourceFiles(root: string, frame: string): string[] {
+	return frameSource(root, frame).files;
 }
 
 /**
@@ -162,15 +271,8 @@ function readParse(designDir: string, file: string): ParsedSource | undefined {
  * payload.
  */
 export function frameNavSites(root: string, frame: string): NavSites {
-	const designDir = realDesignDir(root);
-	const out: NavSites = { sites: [], unreadable: [] };
-	for (const file of frameSourceFiles(root, frame)) {
-		const parsed = readParse(designDir, file);
-		if (parsed === undefined) continue;
-		out.sites.push(...parsed.sites);
-		out.unreadable.push(...parsed.unreadable);
-	}
-	return out;
+	const { sites, unreadable } = frameSource(root, frame);
+	return { sites, unreadable };
 }
 
 /** Read every navigation site the source declares. Never throws: source that
