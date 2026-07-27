@@ -483,9 +483,13 @@ function Composer({
  * One line, always. Either the chips fit on it or the strip is a count; the
  * composer never grows downward to make room for context, because the space
  * below is the prompt's. Opening the count is the human asking for the list, and
- * then it is a list: hoverable, individually droppable, capped at five rows
- * before it scrolls inside itself.
+ * then it is a list: hoverable, individually droppable, eight rows before it
+ * scrolls inside itself and no bar when it does.
  */
+
+/** rows the open list shows before it starts scrolling under a fade */
+const ROWS_SHOWN = 8;
+
 function SelectionStrip({
 	strip,
 	lit,
@@ -540,35 +544,45 @@ function SelectionStrip({
 						exit={{ height: 0, opacity: 0 }}
 						transition={still ? { duration: 0 } : { duration: 0.24, ease: ARRIVE }}
 					>
-						{/* five rows and then it scrolls: the list is for reaching one
-						    member, never for reading forty */}
-						<span className="flex max-h-[130px] flex-col overflow-y-auto pb-0.5">
-							{strip.chips.map((chip) => (
-								<button
-									key={chip.id}
-									type="button"
-									onMouseEnter={() => onLight?.(chip.id)}
-									onMouseLeave={() => onLight?.(null)}
-									onClick={() => onDrop?.(chip.id)}
-									className={cn(
-										"group -mx-1 flex h-[26px] shrink-0 items-center gap-2 rounded-xs px-1 text-left",
-										lit === chip.id && "bg-surface",
-									)}
-								>
-									<span
+						{/* Eight rows and then it scrolls, and it scrolls without a bar:
+						    the list is for reaching one member, never for reading forty,
+						    and a native scrollbar in a 420 rail is a grey slab across the
+						    only accent on screen. The fade says there is more the way the
+						    transcript's does. Rows keep their padding inside the box
+						    rather than hanging off it on a negative margin, or the box
+						    grows a second bar for content it made itself. */}
+						<span className="relative flex flex-col">
+							<span className="flex max-h-[208px] flex-col overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+								{strip.chips.map((chip) => (
+									<button
+										key={chip.id}
+										type="button"
+										onMouseEnter={() => onLight?.(chip.id)}
+										onMouseLeave={() => onLight?.(null)}
+										onClick={() => onDrop?.(chip.id)}
 										className={cn(
-											"h-2.5 w-[2px] shrink-0 rounded-full",
-											lit === chip.id ? "bg-thread" : "bg-thread/40",
+											"group flex h-[26px] shrink-0 items-center gap-2 rounded-xs px-1 text-left",
+											lit === chip.id && "bg-surface",
 										)}
-									/>
-									<span className="min-w-0 flex-1 truncate font-mono text-text/80 text-xs leading-4">
-										{chip.label}
-									</span>
-									<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/0 group-hover:text-muted/60">
-										<CloseIcon className="h-2 w-2" />
-									</span>
-								</button>
-							))}
+									>
+										<span
+											className={cn(
+												"h-2.5 w-[2px] shrink-0 rounded-full",
+												lit === chip.id ? "bg-thread" : "bg-thread/40",
+											)}
+										/>
+										<span className="min-w-0 flex-1 truncate font-mono text-text/80 text-xs leading-4">
+											{chip.label}
+										</span>
+										<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/0 group-hover:text-muted/60">
+											<CloseIcon className="h-2 w-2" />
+										</span>
+									</button>
+								))}
+							</span>
+							{strip.chips.length > ROWS_SHOWN ? (
+								<span className="pointer-events-none absolute inset-x-0 bottom-0 h-7 bg-gradient-to-t from-surface to-transparent" />
+							) : null}
 						</span>
 					</motion.span>
 				) : null}
