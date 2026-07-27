@@ -120,23 +120,14 @@ export function projectScenarios(root: string): { names: string[]; hash: string 
  * source and the scenario set are the ones that were rendered. Same drop-on-edit
  * freshness as a verified mark, one file over.
  */
-export function liveRenderedTargets(
-	root: string,
-	frame: string,
-	sourceHash: string,
-	scenariosHash: string,
-): RenderedTarget[] {
-	return createRenderedReader(root)(frame, sourceHash, scenariosHash);
-}
+export type RenderedReader = (frame: string, sourceHash: string, scenariosHash: string) => RenderedTarget[];
 
 /**
- * The same read, over one load of the cache file. A project-wide derivation asks
- * per frame, and re-reading and re-parsing the whole file each time is a cost
- * with no answer behind it (#109).
+ * That read over one load of the cache file. A project-wide derivation asks per
+ * frame, and re-reading and re-parsing the whole file each time is a cost with
+ * no answer behind it (#109).
  */
-export function createRenderedReader(
-	root: string,
-): (frame: string, sourceHash: string, scenariosHash: string) => RenderedTarget[] {
+export function createRenderedReader(root: string): RenderedReader {
 	let records: FrameRecord[] | undefined;
 	return (frame, sourceHash, scenariosHash) => {
 		records ??= readRecords(root);

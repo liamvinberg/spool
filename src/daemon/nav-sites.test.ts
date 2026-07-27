@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeTempDir, writeDesignFile } from "../test-helpers";
-import { frameNavSites, parseNavSites } from "./nav-sites";
+import { frameSource, parseNavSites } from "./nav-sites";
 
 /**
  * The claim reader (#34): arrows claim what the code says, so this parser is
@@ -218,7 +218,7 @@ export default function Frame() {
 	});
 });
 
-describe("frameNavSites", () => {
+describe("frameSource", () => {
 	it("reads every source file in the folder, paths design-relative, and follows edits", () => {
 		const root = makeTempDir();
 		writeDesignFile(
@@ -232,7 +232,7 @@ describe("frameNavSites", () => {
 			`export function Nav() {\n\treturn <a data-go="archive">arc</a>;\n}\n`,
 		);
 
-		expect(frameNavSites(root, "home").sites.map((s) => `${s.path} ${s.target}`)).toEqual([
+		expect(frameSource(root, "home").sites.map((s) => `${s.path} ${s.target}`)).toEqual([
 			"frames/home/frame.tsx inbox",
 			"frames/home/parts/nav.tsx archive",
 		]);
@@ -243,7 +243,7 @@ describe("frameNavSites", () => {
 			"frames/home/frame.tsx",
 			`export default function Frame() {\n\treturn <main>quiet</main>;\n}\n`,
 		);
-		expect(frameNavSites(root, "home").sites.map((s) => s.target)).toEqual(["archive"]);
+		expect(frameSource(root, "home").sites.map((s) => s.target)).toEqual(["archive"]);
 	});
 });
 
@@ -257,9 +257,7 @@ describe("the source graph — a frame is its folder plus what it imports", () =
 			`import { Nav } from "../../shared/ui/nav";\nexport default function Frame() {\n\treturn <Nav />;\n}\n`,
 		);
 
-		expect(frameNavSites(root, "home").sites.map((s) => `${s.path} ${s.target}`)).toEqual([
-			"shared/ui/nav.tsx inbox",
-		]);
+		expect(frameSource(root, "home").sites.map((s) => `${s.path} ${s.target}`)).toEqual(["shared/ui/nav.tsx inbox"]);
 	});
 
 	it("shares one nav bar's walk across every frame mounting it", () => {
@@ -269,8 +267,8 @@ describe("the source graph — a frame is its folder plus what it imports", () =
 		writeDesignFile(root, "frames/one/frame.tsx", frame);
 		writeDesignFile(root, "frames/two/frame.tsx", frame);
 
-		expect(frameNavSites(root, "one").sites.map((s) => s.target)).toEqual(["home"]);
-		expect(frameNavSites(root, "two").sites.map((s) => s.target)).toEqual(["home"]);
+		expect(frameSource(root, "one").sites.map((s) => s.target)).toEqual(["home"]);
+		expect(frameSource(root, "two").sites.map((s) => s.target)).toEqual(["home"]);
 	});
 
 	it("follows a chain of imports, not just the first hop", () => {
@@ -287,7 +285,7 @@ describe("the source graph — a frame is its folder plus what it imports", () =
 			`import { List } from "../../shared/ui/list";\nexport default function Frame() {\n\treturn <List />;\n}\n`,
 		);
 
-		expect(frameNavSites(root, "home").sites.map((s) => s.target)).toEqual(["deep"]);
+		expect(frameSource(root, "home").sites.map((s) => s.target)).toEqual(["deep"]);
 	});
 
 	it("resolves an extensionless directory import through its index", () => {
@@ -299,7 +297,7 @@ describe("the source graph — a frame is its folder plus what it imports", () =
 			`import { Kit } from "../../shared/ui";\nexport default function Frame() {\n\treturn <Kit />;\n}\n`,
 		);
 
-		expect(frameNavSites(root, "home").sites.map((s) => s.target)).toEqual(["kit"]);
+		expect(frameSource(root, "home").sites.map((s) => s.target)).toEqual(["kit"]);
 	});
 
 	it("terminates on an import cycle instead of walking forever", () => {
@@ -321,7 +319,7 @@ describe("the source graph — a frame is its folder plus what it imports", () =
 		);
 
 		expect(
-			frameNavSites(root, "home")
+			frameSource(root, "home")
 				.sites.map((s) => s.target)
 				.sort(),
 		).toEqual(["from-a", "from-b"]);
@@ -335,7 +333,7 @@ describe("the source graph — a frame is its folder plus what it imports", () =
 			`import { ui } from "spool";\nimport { useState } from "react";\nexport default function Frame() {\n\treturn <a data-go="only">{typeof ui}{typeof useState}</a>;\n}\n`,
 		);
 
-		expect(frameNavSites(root, "home").sites.map((s) => s.target)).toEqual(["only"]);
+		expect(frameSource(root, "home").sites.map((s) => s.target)).toEqual(["only"]);
 	});
 
 	it("reaches a walk behind a type-only import and an export-from barrel", () => {
@@ -348,7 +346,7 @@ describe("the source graph — a frame is its folder plus what it imports", () =
 			`import { Tile } from "../../shared/ui/kit";\nexport default function Frame() {\n\treturn <Tile />;\n}\n`,
 		);
 
-		expect(frameNavSites(root, "home").sites.map((s) => s.target)).toEqual(["tile"]);
+		expect(frameSource(root, "home").sites.map((s) => s.target)).toEqual(["tile"]);
 	});
 
 	it("keeps an import that climbs out of design/ from claiming anything", () => {
@@ -356,7 +354,7 @@ describe("the source graph — a frame is its folder plus what it imports", () =
 		writeDesignFile(root, "frames/home/frame.tsx", `import "../../../outside/escape";\nexport default 1;\n`);
 		writeDesignFile(root, "../outside/escape.tsx", `export const x = <a data-go="stolen">s</a>;\n`);
 
-		expect(frameNavSites(root, "home").sites).toEqual([]);
+		expect(frameSource(root, "home").sites).toEqual([]);
 	});
 });
 

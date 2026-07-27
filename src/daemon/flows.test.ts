@@ -357,6 +357,26 @@ describe("the kept graph", () => {
 		expect((await fetchFlows(app, name)).edges).toMatchObject([{ from: "start", to: "two" }]);
 	});
 
+	it("resolves an import that only lands once the file it names exists", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		// the importer is written before the file it imports — the ordinary way an
+		// agent writes two files
+		writeDesignFile(root, "shared/ui/go.tsx", `import { Row } from "./row";\nexport const Go = () => <Row />;\n`);
+		writeFrame(
+			root,
+			"start",
+			`import { Go } from "../../shared/ui/go";\nexport default function Frame() {\n\treturn <Go />;\n}\n`,
+		);
+		writeFrame(root, "end", plainTsx);
+		const app = makeApp(spoolDir);
+		expect((await fetchFlows(app, name)).edges).toEqual([]);
+
+		writeDesignFile(root, "shared/ui/row.tsx", `export const Row = () => <a data-go="end">go</a>;\n`);
+
+		expect((await fetchFlows(app, name)).edges).toMatchObject([{ from: "start", to: "end" }]);
+	});
+
 	it("forgets a frame that is gone and keeps the rest", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);

@@ -195,12 +195,27 @@ export function createSourcePass(designDir: string) {
 
 export type SourcePass = ReturnType<typeof createSourcePass>;
 
+/** Where one import landed, or that it landed nowhere. */
+export interface ImportEdge {
+	/** The importing file — resolution is relative to its folder. */
+	from: string;
+	specifier: string;
+	to: string | undefined;
+}
+
 /** One frame's source graph, read once: the files and everything they declare. */
 export interface FrameSource extends NavSites {
 	/** Every source file in the graph, sorted. */
 	files: string[];
 	/** The frame folder's own files, sorted — a new one joins the graph. */
 	folder: string[];
+	/**
+	 * Every import the walk followed, landing or not. A specifier that starts
+	 * landing somewhere — the file it names finally written, or a nearer
+	 * candidate appearing beside the one it found — moves the graph in a way no
+	 * file already in it can show.
+	 */
+	imports: ImportEdge[];
 }
 
 /**
@@ -218,20 +233,22 @@ export function frameSourceIn(pass: SourcePass, frameDir: string): FrameSource {
 	const folder = pass.folder(frameDir);
 	const seen = new Set(folder);
 	const queue = [...folder];
+	const imports: ImportEdge[] = [];
 	for (let at = 0; at < queue.length; at++) {
 		const file = queue[at];
 		if (file === undefined) continue;
 		for (const specifier of pass.parsed(file)?.imports ?? []) {
-			const resolved = pass.resolve(file, specifier);
-			if (resolved === undefined || seen.has(resolved)) continue;
-			seen.add(resolved);
-			queue.push(resolved);
+			const to = pass.resolve(file, specifier);
+			imports.push({ from: file, specifier, to });
+			if (to === undefined || seen.has(to)) continue;
+			seen.add(to);
+			queue.push(to);
 		}
 	}
 	// sites read in sorted-file order, so a graph reached by two routes still
 	// reports its sites in one order
 	const files = [...seen].sort();
-	const source: FrameSource = { files, folder, sites: [], unreadable: [] };
+	const source: FrameSource = { files, folder, imports, sites: [], unreadable: [] };
 	for (const file of files) {
 		const parsed = pass.parsed(file);
 		if (parsed === undefined) continue;
@@ -257,22 +274,8 @@ export function resolveFrameDir(root: string, frame: string): { designDir: strin
 /** One frame's graph on a pass of its own — the standalone read. */
 export function frameSource(root: string, frame: string): FrameSource {
 	const at = resolveFrameDir(root, frame);
-	if (at === undefined) return { files: [], folder: [], sites: [], unreadable: [] };
+	if (at === undefined) return { files: [], folder: [], imports: [], sites: [], unreadable: [] };
 	return frameSourceIn(createSourcePass(at.designDir), at.frameDir);
-}
-
-export function frameSourceFiles(root: string, frame: string): string[] {
-	return frameSource(root, frame).files;
-}
-
-/**
- * Every navigation site a frame's source graph declares, site paths
- * design-relative so they match data-spool-source stamps and the selection
- * payload.
- */
-export function frameNavSites(root: string, frame: string): NavSites {
-	const { sites, unreadable } = frameSource(root, frame);
-	return { sites, unreadable };
 }
 
 /** Read every navigation site the source declares. Never throws: source that
