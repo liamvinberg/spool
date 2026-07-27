@@ -437,6 +437,49 @@ export function TermScreen({ src, poster, title }: { src: string; poster: string
 	);
 }
 
+/**
+ * A frame that would not compile, standing in its own place instead of taking
+ * the whole player down with it. Inline styles throughout: the shell serves this
+ * document without the chrome stylesheet, so a class would land unstyled there.
+ */
+export function BrokenFrame({ frame, file, error }: { frame: string; file: string; error: string }) {
+	const prompt = `Fix the compile error in ${file}:\n\n${error}`;
+	return (
+		<div
+			className="spool-broken-frame"
+			style={{
+				height: "100%",
+				overflow: "auto",
+				boxSizing: "border-box",
+				padding: 24,
+				background: "#111110",
+				color: "#b5b3ad",
+				font: "400 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace",
+			}}
+		>
+			<strong style={{ display: "block", marginBottom: 16, fontWeight: 400, color: "#f5391a" }}>
+				{frame} failed to compile
+			</strong>
+			<pre style={{ margin: "0 0 24px", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{error}</pre>
+			<div style={{ marginBottom: 8, color: "#8e8c88" }}>hand this to your agent</div>
+			<pre
+				// Selecting the whole prompt is one click, which is the point of it.
+				style={{
+					margin: 0,
+					padding: 16,
+					border: "1px solid #262626",
+					whiteSpace: "pre-wrap",
+					wordBreak: "break-word",
+					color: "#f0efed",
+					userSelect: "all",
+				}}
+			>
+				{prompt}
+			</pre>
+		</div>
+	);
+}
+
 interface Viewport {
 	vw: number;
 	vh: number;

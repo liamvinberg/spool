@@ -812,6 +812,38 @@ it("recovers the player when the browser refetches the inner frame", { timeout: 
 	expect(await player.locator(".spool-player-error").count()).toBe(0);
 });
 
+it("plays the healthy frames and errors only on the broken one", { timeout: 60_000 }, async () => {
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const project = await serveProject();
+	writeFrame(
+		project.root,
+		"home",
+		'export default function Home() { return <button id="home" data-go="broken">home</button>; }\n',
+	);
+	writeFrame(project.root, "broken", 'import { missing } from "../../shared/lib/absent";\nexport default missing;\n');
+
+	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	onTestFinished(() => context.close());
+	const player = await context.newPage();
+	await player.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=home`);
+
+	// The healthy frame plays, though a sibling cannot compile at all.
+	const inner = player.frameLocator("#spool-player");
+	await inner.locator("#home").waitFor();
+	expect(await player.locator(".spool-player-error").count()).toBe(0);
+
+	// Walking to the broken one is where its failure finally shows up.
+	await inner.locator("#home").click();
+	const card = inner.locator(".spool-broken-frame");
+	await card.waitFor();
+	const text = await card.innerText();
+	expect(text).toContain("broken failed to compile");
+	expect(text).toContain("Fix the compile error in design/frames/broken/frame.tsx");
+	// The player itself never failed, so the shell shows no load error.
+	expect(await player.locator(".spool-player-error").count()).toBe(0);
+});
+
 it("plays on when a browser extension's script throws inside the frame", { timeout: 60_000 }, async () => {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());
@@ -3221,10 +3253,15 @@ it("shows a broken player frame instead of a hidden shell", { timeout: 60_000 },
 	onTestFinished(() => page.close());
 	const response = await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=broken`);
 
-	expect(response?.status()).toBe(500);
-	await page.getByRole("heading", { name: "player failed to compile" }).waitFor();
-	expect(await page.locator("body").innerText()).toContain("Unexpected end of file");
-	expect(await page.locator("#spool-player").count()).toBe(0);
+	// The player itself compiles now — the frame that will not is the only thing
+	// that fails, and it says so in its own place rather than blanking the shell.
+	expect(response?.status()).toBe(200);
+	const card = page.frameLocator("#spool-player").locator(".spool-broken-frame");
+	await card.waitFor();
+	const text = await card.innerText();
+	expect(text).toContain("Unexpected end of file");
+	expect(text).toContain("Fix the compile error in design/frames/broken/frame.tsx");
+	expect(await page.locator('[role="alert"]').count()).toBe(0);
 });
 
 it("shows a frame that breaks between the shell preflight and render load", { timeout: 60_000 }, async () => {
@@ -3255,9 +3292,12 @@ it("shows a frame that breaks between the shell preflight and render load", { ti
 	const response = await navigation;
 
 	expect(response?.status()).toBe(200);
-	await page.locator('[role="alert"]').waitFor({ timeout: 5_000 });
-	expect(await page.locator('[role="alert"]').innerText()).toContain("Unexpected end of file");
-	expect(await page.locator("#spool-player").count()).toBe(0);
+	// Broken after the preflight said it was fine, so the render-origin compile is
+	// where it is caught — and it lands on that frame alone.
+	const card = page.frameLocator("#spool-player").locator(".spool-broken-frame");
+	await card.waitFor({ timeout: 10_000 });
+	expect(await card.innerText()).toContain("Unexpected end of file");
+	expect(await page.locator('[role="alert"]').count()).toBe(0);
 });
 
 it("shows an explicit frame deleted between the shell preflight and render load", { timeout: 60_000 }, async () => {
