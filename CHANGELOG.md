@@ -1,5 +1,74 @@
 # Changelog
 
+## [0.4.0](https://github.com/liamvinberg/spool/compare/v0.3.0...v0.4.0) (2026-07-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* isolate project execution from spool authority
+* replace canvas modes with tools
+
+### Features
+
+* add annotate tool for marking canvas elements with numbered orders ([5350cf3](https://github.com/liamvinberg/spool/commit/5350cf334128075f4ca6feea072c8f060973fcde))
+* add custom scrollbar styling to sidebar pages list ([3eb78b6](https://github.com/liamvinberg/spool/commit/3eb78b6a01f8dabb7e5a18ff162e6f5c65b19ed5))
+* add frame clipboard writes ([00f6896](https://github.com/liamvinberg/spool/commit/00f68967c8644a47b876c3c1539bc30d933a24ae))
+* add frame hover preview to canvas selection ([85b4b58](https://github.com/liamvinberg/spool/commit/85b4b581e3300c6ee7de9b33227874d8a3fcea64))
+* add offline design checking ([1fc375c](https://github.com/liamvinberg/spool/commit/1fc375c3b3c0777d990f689bbc0c8ec27c884157))
+* add stilled prop to frame shell for thumbnail swap during camera movement ([7acc60c](https://github.com/liamvinberg/spool/commit/7acc60c3d8e7b44162c54155e0a248f460ad7d6a))
+* add the selection inspector rail ([04d461c](https://github.com/liamvinberg/spool/commit/04d461c72948b48f26b462a0ebc6e8b2ec5755ab))
+* add tidy and bare keys for the menu's verbs ([8f46726](https://github.com/liamvinberg/spool/commit/8f46726fd98f449baec48f6d241c6797c17cbf39))
+* address a cover as a ladder of rungs under one content hash ([2ce7ef2](https://github.com/liamvinberg/spool/commit/2ce7ef274090c0f7477b3c15845fb6dba58c995f))
+* fill dark navigation targets when a canvas opens ([8dc4c50](https://github.com/liamvinberg/spool/commit/8dc4c50aff33e75df9c4fca9852353faf1c6fb05))
+* make agent verification deterministic ([09e8bf3](https://github.com/liamvinberg/spool/commit/09e8bf3038e48210f64d964730f927c00668e298))
+* read the entered frame in the inspector rail ([638b2b6](https://github.com/liamvinberg/spool/commit/638b2b66d9bea448f63d23231bf21a692038197b))
+* remove and search projects on home ([fcdf282](https://github.com/liamvinberg/spool/commit/fcdf282ebb1c35f4e3f2a98533a274b36119a414))
+* remove camera glide stilling and simplify frame lifecycle states ([84e686e](https://github.com/liamvinberg/spool/commit/84e686e7a8acb4742434fc066ab7d789545cbf37))
+* remove registered projects ([f27990c](https://github.com/liamvinberg/spool/commit/f27990cf03509937d0e8f8a4862fff97b3046094))
+* replace canvas modes with tools ([02de89f](https://github.com/liamvinberg/spool/commit/02de89f1bdb9cf4d0fb89d49560ad35ac2c2f238))
+* replace canvas sidebar with page tree ([73e22dd](https://github.com/liamvinberg/spool/commit/73e22ddeb3c19110c978a14addbd7a25a1f895dd))
+* resolve computed navigation targets by reading a rendered frame ([b10d3b6](https://github.com/liamvinberg/spool/commit/b10d3b66118b5fe97f23f4f5afe80d1c7640fcd6))
+* rework the player as slate chrome and a session rail ([37ef162](https://github.com/liamvinberg/spool/commit/37ef16296f154ff47f13a08e93512e0d1503ccca))
+* serve project webfonts from the daemon ([92d9813](https://github.com/liamvinberg/spool/commit/92d9813b4c169203e4f244370331cc285466e193))
+
+
+### Bug fixes
+
+* adjust scrollbar width and add fallback for non-webkit browsers ([db4e8b5](https://github.com/liamvinberg/spool/commit/db4e8b5eb09ebd7bc42c27af51644cbd913cc298))
+* bound boot covers instead of storing them at full resolution ([1911b1e](https://github.com/liamvinberg/spool/commit/1911b1e3e469823353bba83e7ca203fa4f18bf0b))
+* bring the player back when its inner frame reloads ([949229a](https://github.com/liamvinberg/spool/commit/949229aae93ac899306e6e68130fb53d720b5239))
+* confine project file access to design ([36050bb](https://github.com/liamvinberg/spool/commit/36050bb79692a2cd2a761dbfc997fe38e1bf3374))
+* derive connections from navigation sites in imported files ([de05e92](https://github.com/liamvinberg/spool/commit/de05e92d7270775449658df47a4cc1cc169101cc))
+* isolate frame still rasterization ([ffad4dd](https://github.com/liamvinberg/spool/commit/ffad4ddbc32e2df2640e0ec685cb2aa2afa620b9))
+* isolate project execution from spool authority ([76d98eb](https://github.com/liamvinberg/spool/commit/76d98eb8c1328dca40458fea08ff1fbceba7be5f))
+* join terminal box glyphs ([38f2048](https://github.com/liamvinberg/spool/commit/38f20485d005a3b6322cc9731bf91ca824a94e6c))
+* keep canvas movement free of stutter and flicker ([aab9239](https://github.com/liamvinberg/spool/commit/aab9239cea73c75eac78c212becfa94d26d49a75))
+* keep page tree navigation explicit ([9c95b58](https://github.com/liamvinberg/spool/commit/9c95b58452c508f7e0478718705c0f63dae337f2))
+* keep terminal screens source-fresh ([af5fbd2](https://github.com/liamvinberg/spool/commit/af5fbd226bfc6cda36326774bdf8f28d18b97740))
+* keep the player playable when one frame will not compile ([89fd2b9](https://github.com/liamvinberg/spool/commit/89fd2b96e3752c73690f9a39ecbb2b035bf44c21))
+* keep the player rail from growing a sideways scrollbar ([8cbee32](https://github.com/liamvinberg/spool/commit/8cbee3279b2116c6c9dc7d77b601bdf65c38e3be))
+* let boot covers be cached and revalidated ([7724174](https://github.com/liamvinberg/spool/commit/772417425a72e79041b33da5d744a8d61f8a0705))
+* name unresolvable navigation targets in the connections rail ([390b220](https://github.com/liamvinberg/spool/commit/390b220d33f1110eb637421da0d6495b54bc186d))
+* preserve player frame geometry ([8dc5b5c](https://github.com/liamvinberg/spool/commit/8dc5b5c23fec6d7886c716a225785887e8ce86b9))
+* rebuild a frame's graph when an import finds the file it names ([610d256](https://github.com/liamvinberg/spool/commit/610d256f66dd6494fcceff2f48300fe81dbe040d))
+* reject spoofed canvas frame messages ([421c245](https://github.com/liamvinberg/spool/commit/421c2454246ec2ad27e11f36fece43776d4fc186))
+* restore resizable page tree ([394c3d8](https://github.com/liamvinberg/spool/commit/394c3d86bf7002d6174ebf44ef1139e839632315))
+* stop a browser extension's error from killing the player ([b6041d8](https://github.com/liamvinberg/spool/commit/b6041d886626fbff2a1c8198cc25766b4d530018))
+* take the terminal app down with its supervisor ([b6e6438](https://github.com/liamvinberg/spool/commit/b6e64383b4c6755f2e312c66927b1fe4dadc11a7))
+
+
+### Polish
+
+* hold a document only for a frame something asks for ([aebfb83](https://github.com/liamvinberg/spool/commit/aebfb8328d85f8d1860a48a14fffa6b49fa52c3e))
+* keep an errand out of the way of a boot somebody asked for ([f39a844](https://github.com/liamvinberg/spool/commit/f39a844d7693644e30ac7f4a22d751c3e811786e))
+* keep the flow graph in the daemon instead of rebuilding it per read ([bc17b93](https://github.com/liamvinberg/spool/commit/bc17b9337f6d929e971d95322dfd6b9e3e872e47))
+* land a walk without waiting to capture the target ([b2891d4](https://github.com/liamvinberg/spool/commit/b2891d4d726dbbf983d35cb73b2285f60c5c3152))
+* open the canvas without waiting on the link graph ([fcabe9d](https://github.com/liamvinberg/spool/commit/fcabe9da4428f68f6d6d756b8b6b920e3c2d2ef7))
+* send one shared-edit wake naming the frames it reaches ([23c847d](https://github.com/liamvinberg/spool/commit/23c847d546cb8cafcbcbbfce5be35f6dca48580a))
+* share one flow build across the reads a burst of edits asks for ([fc42f9d](https://github.com/liamvinberg/spool/commit/fc42f9d11b5a5d76a9492f43a4694f7390327845))
+* simplify temporary tool feedback ([b4ede14](https://github.com/liamvinberg/spool/commit/b4ede1464ef9902ee32d9ca2e8bdde5b95f4b0c7))
+* wake only the frames a shared edit reaches ([d6a9b6c](https://github.com/liamvinberg/spool/commit/d6a9b6c9d8e47117fc0709c9f0751d2126dceddd))
+
 ## [0.3.0](https://github.com/liamvinberg/spool/compare/v0.2.0...v0.3.0) (2026-07-23)
 
 
