@@ -2,3 +2,9 @@
 node_modules/
 dist/
 .boot-tmp/
+.tmp/
+
+# Maintainer-local agent context. Never ships.
+.claude/local.md
+.claude/settings.local.json
+.codex/
