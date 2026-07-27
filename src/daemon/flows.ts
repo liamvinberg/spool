@@ -8,6 +8,7 @@ import {
 	type FrameSource,
 	frameSource,
 	frameSourceIn,
+	type ImportEdge,
 	type NavSite,
 	resolveFrameDir,
 	type SourcePass,
@@ -15,7 +16,7 @@ import {
 } from "./nav-sites";
 import { isSafeName } from "./project-files";
 import { frameDirectories, frameNames } from "./projection";
-import { createRenderedReader, projectScenarios, type RenderedTarget } from "./resolved-targets";
+import { createRenderedReader, projectScenarios, type RenderedReader } from "./resolved-targets";
 
 /**
  * The link graph (#34, amending #5): the map is read, not walked. Every edge
@@ -79,10 +80,13 @@ export function sourceHash(pass: SourcePass, files: readonly string[]): string {
 	return hash.digest("hex");
 }
 
+/** What a frame with no readable source hashes to — a name that resolves nowhere. */
+const EMPTY_SOURCE_HASH = createHash("sha256").digest("hex");
+
 /** One frame's source hash on a pass of its own — the standalone read. */
 export function frameSourceHash(root: string, frame: string): string {
 	const at = resolveFrameDir(root, frame);
-	if (at === undefined) return sourceHash(createSourcePass(root), []);
+	if (at === undefined) return EMPTY_SOURCE_HASH;
 	const pass = createSourcePass(at.designDir);
 	return sourceHash(pass, frameSourceIn(pass, at.frameDir).files);
 }
@@ -184,10 +188,10 @@ export function recordWalk(root: string, from: string, to: string): boolean {
  * can both add the edges and stop reporting the sites as dark.
  */
 function resolvedBySite(
-	rendered: (frame: string, sourceHash: string, scenariosHash: string) => RenderedTarget[],
+	rendered: RenderedReader,
 	frame: string,
 	dark: readonly UnreadableSite[],
-	sourceHash: string,
+	hash: string,
 	scenariosHash: string,
 ): Map<string, { targets: Set<string>; site: UnreadableSite }> {
 	if (dark.length === 0) return new Map();
@@ -197,7 +201,7 @@ function resolvedBySite(
 		byAnchor.set(`${site.path}:${site.anchor.line}:${site.anchor.col}`, { targets: new Set(), site });
 	}
 	if (byAnchor.size === 0) return new Map();
-	for (const filled of rendered(frame, sourceHash, scenariosHash)) {
+	for (const filled of rendered(frame, hash, scenariosHash)) {
 		if (!isSafeName(filled.target)) continue;
 		byAnchor.get(`${filled.path}:${filled.line}:${filled.col}`)?.targets.add(filled.target);
 	}
@@ -215,7 +219,7 @@ export interface FrameGraph extends FrameSource {
 export interface FlowContext {
 	exists: ReadonlySet<string>;
 	verified: (from: string, to: string, hash: string) => boolean;
-	rendered: (frame: string, sourceHash: string, scenariosHash: string) => RenderedTarget[];
+	rendered: RenderedReader;
 	scenarios: string;
 }
 
@@ -283,6 +287,8 @@ interface FrameEntry {
 	/** The frame folder's own files when built — a new one joins the graph. */
 	folder: string[];
 	files: string[];
+	/** Where every import landed — a specifier that starts landing is a move. */
+	imports: ImportEdge[];
 	/** Names and content digests: the cheap "did any of this move". */
 	fingerprint: string;
 	/** Names and bytes: what walked.json and resolved.json are keyed to. */
@@ -307,6 +313,24 @@ function fingerprintOf(pass: SourcePass, files: readonly string[]): string {
 
 function sameFiles(a: readonly string[], b: readonly string[]): boolean {
 	return a.length === b.length && a.every((file, at) => file === b[at]);
+}
+
+/**
+ * Every import still lands where it did. The bytes of a graph cannot show a
+ * file being written next to it: an import naming a file that did not exist
+ * yet — the ordinary order an agent writes two files in — starts landing
+ * without a single file in the graph changing. Resolution is memoized per pass,
+ * so a project asks this once per folder and specifier however many frames
+ * share it.
+ */
+function sameImports(pass: SourcePass, imports: readonly ImportEdge[]): boolean {
+	return imports.every((edge) => pass.resolve(edge.from, edge.specifier) === edge.to);
+}
+
+/** One read of the whole project: the wire shape and the source half behind it. */
+interface Built {
+	flows: Flows;
+	graphs: Map<string, FrameGraph>;
 }
 
 /** Back to the event loop, so a project-wide build is never one block. */
@@ -339,7 +363,7 @@ export function createFlowGraph() {
 	): FrameGraph {
 		if (frameDir === undefined) {
 			entries.delete(frame);
-			return { frame, files: [], folder: [], sites: [], unreadable: [], hash: sourceHash(pass, []) };
+			return { frame, files: [], folder: [], imports: [], sites: [], unreadable: [], hash: EMPTY_SOURCE_HASH };
 		}
 		const known = entries.get(frame);
 		const folder = pass.folder(frameDir);
@@ -347,16 +371,18 @@ export function createFlowGraph() {
 			known !== undefined &&
 			known.dir === frameDir &&
 			sameFiles(known.folder, folder) &&
-			fingerprintOf(pass, known.files) === known.fingerprint
+			fingerprintOf(pass, known.files) === known.fingerprint &&
+			sameImports(pass, known.imports)
 		) {
-			const { files, sites, unreadable, hash } = known;
-			return { frame, files, folder, sites, unreadable, hash };
+			const { files, imports, sites, unreadable, hash } = known;
+			return { frame, files, folder, imports, sites, unreadable, hash };
 		}
 		const source = frameSourceIn(pass, frameDir);
 		const entry: FrameEntry = {
 			dir: frameDir,
 			folder: source.folder,
 			files: source.files,
+			imports: source.imports,
 			fingerprint: fingerprintOf(pass, source.files),
 			hash: sourceHash(pass, source.files),
 			sites: source.sites,
@@ -381,7 +407,7 @@ export function createFlowGraph() {
 		users.set(root, index);
 	}
 
-	async function build(root: string): Promise<{ flows: Flows; graphs: Map<string, FrameGraph> }> {
+	async function build(root: string): Promise<Built> {
 		const dirs = frameDirectories(root);
 		const frames = [...dirs.keys()];
 		const alive = new Set(frames);
@@ -418,7 +444,7 @@ export function createFlowGraph() {
 	 * overlapping builds would double the work and could hand back a read that
 	 * predates the edit that asked for it.
 	 */
-	function queue(root: string): Promise<{ flows: Flows; graphs: Map<string, FrameGraph> }> {
+	function queue(root: string): Promise<Built> {
 		const previous = chains.get(root) ?? Promise.resolve();
 		const next = previous.then(() => build(root));
 		chains.set(
