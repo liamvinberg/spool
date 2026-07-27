@@ -564,8 +564,10 @@ export function ProjectCanvas({
 			}
 			// arrows arrive when they arrive (#109): the canvas opens on frames and
 			// cameras, and nothing on screen waits for the link graph
-			if (alive) void refetchFlows();
-			if (alive) await refetchFrames();
+			if (alive) {
+				void refetchFlows();
+				await refetchFrames();
+			}
 			// dark targets get one render pass per canvas open (#34): frames whose
 			// read is already fresh cost nothing, so this is a no-op on reopen
 			if (alive && (await resolveFlows(project))?.read !== 0) {
@@ -1257,7 +1259,7 @@ export function ProjectCanvas({
 	useEffect(() => {
 		return subscribeSse(`/api/p/${encodeURIComponent(project)}/events`, {
 			change: (data) => {
-				const event = data as { kind: string; frame?: string };
+				const event = data as { kind: string; frame?: string; frames?: string[] };
 				if (event.kind === "frame" && event.frame !== undefined) {
 					const frame = event.frame;
 					reloadFrameDocument(frame);
@@ -1270,17 +1272,25 @@ export function ProjectCanvas({
 					// does add edges, so the graph must be re-read
 					void refetchFlows();
 				} else if (event.kind === "shared") {
-					// anything in shared/ can stale every document
-					setDocNonces((current) => {
-						const next: Record<string, number> = { ...current };
-						for (const frame of framesRef.current) next[frame.name] = (next[frame.name] ?? 0) + 1;
-						return next;
-					});
-					setWalkBoots((current) => (Object.keys(current).length === 0 ? current : {}));
-					setTrees((current) => (Object.keys(current).length === 0 ? current : {}));
-					setPicked([]);
-					pickedChain.current = null;
+					// a shared file the link graph has read names its own readers (#109);
+					// anything it could not name can stale every document
+					const staled = event.frames;
+					if (staled === undefined) {
+						setDocNonces((current) => {
+							const next: Record<string, number> = { ...current };
+							for (const frame of framesRef.current) next[frame.name] = (next[frame.name] ?? 0) + 1;
+							return next;
+						});
+						setWalkBoots((current) => (Object.keys(current).length === 0 ? current : {}));
+						setTrees((current) => (Object.keys(current).length === 0 ? current : {}));
+						setPicked([]);
+						pickedChain.current = null;
+					} else {
+						for (const frame of staled) reloadFrameDocument(frame);
+					}
 					void refetchFrames();
+					// a shared source file moves the graph as surely as a frame's own
+					void refetchFlows();
 				} else if (event.kind === "geometry") {
 					// another browser's hands (or our own echo); ours are the truth
 					// while a gesture or an un-flushed nudge is in flight
@@ -2539,7 +2549,13 @@ export function ProjectCanvas({
 				aria-label={`${project} canvas`}
 				// biome-ignore lint/a11y/noNoninteractiveTabindex: the canvas is one keyboard composite; focus returns here from its iframe
 				tabIndex={0}
-				className="relative h-full min-w-0 flex-1 touch-none select-none overflow-hidden bg-canvas outline-none"
+				// clip, never hidden: hidden still leaves a scroll container, and the
+				// frame layer gives it thousands of pixels to scroll. Anything a frame
+				// document focuses — an authored autoFocus, a tab into an iframe — has
+				// the browser reveal it by scrolling this box, which carries the canvas
+				// chrome away and offsets every pointer coordinate from the camera's.
+				// The camera owns where the canvas sits; nothing else may move it.
+				className="relative h-full min-w-0 flex-1 touch-none select-none overflow-clip bg-canvas outline-none"
 				style={{ cursor }}
 				onPointerDown={onPointerDown}
 				onPointerMove={onPointerMove}

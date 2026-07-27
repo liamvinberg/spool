@@ -3,9 +3,25 @@ import { join, sep } from "node:path";
 import { realDesignDir } from "./design-path";
 import { frameKind } from "./projection";
 
+/**
+ * Something outside a frame folder moved. `frames` names the frames whose source
+ * graph reaches it (#109); absent means the link graph could not say, and every
+ * document is stale — a stylesheet, a scenario, a file nobody imports yet.
+ */
+export interface SharedChange {
+	kind: "shared";
+	frames?: string[];
+}
+
+/** One frame's own folder moved. */
+export interface FrameChange {
+	kind: "frame";
+	frame: string;
+}
+
 export type ChangeEvent =
-	| { kind: "frame"; frame: string }
-	| { kind: "shared" }
+	| FrameChange
+	| SharedChange
 	| { kind: "thumb"; frame: string }
 	// a hands write to a frame.json sidecar (#23), published by the geometry
 	// API so other browsers see the move — never emitted by the fs watcher
@@ -68,11 +84,10 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 		try {
 			const designDir = realDesignDir(root);
 			watcher = watch(designDir, { recursive: true }, (_type, filename) => {
-				const events = classify(designDir, filename, (path) => deps.framesUsing(root, path));
-				if (events.length === 0) return;
-				for (const event of events) {
-					pending.set(event.kind === "frame" ? `frame ${event.frame}` : "shared", event);
-				}
+				const event = classify(designDir, filename, (path) => deps.framesUsing(root, path));
+				if (event === undefined) return;
+				if (event.kind === "frame") pending.set(`frame ${event.frame}`, event);
+				else pending.set("shared", mergeShared(pending.get("shared"), event));
 				timer ??= setTimeout(() => {
 					timer = undefined;
 					const batch = [...pending.values()];
@@ -144,22 +159,29 @@ function classify(
 	designDir: string,
 	filename: string | null,
 	framesUsing: (path: string) => string[] | undefined,
-): ChangeEvent[] {
-	if (filename === null) return [{ kind: "shared" }];
+): FrameChange | SharedChange | undefined {
+	if (filename === null) return { kind: "shared" };
 	const parts = filename.split(sep);
 	const [head, first] = parts;
 	if (head === "frames" && first !== undefined && first !== "") {
 		if (parts.length >= 3 && frameKind(join(designDir, "frames", first), designDir) === undefined) {
 			const second = parts[2];
-			if (second === undefined || second === "") return [{ kind: "frame", frame: first }];
-			if (parts.length === 4 && parts[3]?.startsWith("frame.json") === true) return [];
-			return [{ kind: "frame", frame: second }];
+			if (second === undefined || second === "") return { kind: "frame", frame: first };
+			if (parts.length === 4 && parts[3]?.startsWith("frame.json") === true) return undefined;
+			return { kind: "frame", frame: second };
 		}
-		if (parts.length === 3 && parts[2]?.startsWith("frame.json") === true) return [];
-		return [{ kind: "frame", frame: first }];
+		if (parts.length === 3 && parts[2]?.startsWith("frame.json") === true) return undefined;
+		return { kind: "frame", frame: first };
 	}
-	if (head !== "shared") return [];
+	if (head !== "shared") return undefined;
 	const readers = framesUsing(parts.join("/"));
-	if (readers === undefined) return [{ kind: "shared" }];
-	return readers.map((frame) => ({ kind: "frame", frame }));
+	return readers === undefined ? { kind: "shared" } : { kind: "shared", frames: readers };
+}
+
+/** Two shared edits in one window are one wake: the union of who they reach, and
+ * the whole project the moment either of them cannot say. */
+function mergeShared(held: ChangeEvent | undefined, next: SharedChange): SharedChange {
+	if (held?.kind !== "shared") return next;
+	if (held.frames === undefined || next.frames === undefined) return { kind: "shared" };
+	return { kind: "shared", frames: [...new Set([...held.frames, ...next.frames])] };
 }
