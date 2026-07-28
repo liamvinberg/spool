@@ -591,7 +591,11 @@ const canvasShimJs = `(() => {
 			element.remove();
 		}
 		for (const style of clone.querySelectorAll("style")) {
-			if (unsafeCaptureCss(style.textContent || "")) style.remove();
+			const css = style.textContent || "";
+			if (!unsafeCaptureCss(css)) continue;
+			const rewritten = rewriteCaptureStyle(css);
+			if (rewritten === null) style.remove();
+			else style.textContent = rewritten;
 		}
 		const urlAttributes = new Set([
 			"action", "background", "cite", "data", "formaction", "href",
@@ -618,11 +622,45 @@ const canvasShimJs = `(() => {
 		}
 	}
 
-	function unsafeCaptureCss(value) {
-		const normalized = value
+	function rewriteCaptureStyle(value) {
+		// replaceSync silently drops @import rules. Only unsafe URL-bearing CSS
+		// takes the rewrite path; import-only styles keep the old removal path.
+		if (!hasUnsafeCaptureUrl(normalizeCaptureCss(value))) return null;
+		const sheet = new CSSStyleSheet();
+		try {
+			sheet.replaceSync(value);
+		} catch {
+			return null;
+		}
+		stripUnsafeCaptureRules(sheet);
+		const rewritten = Array.from(sheet.cssRules, (rule) => rule.cssText).join("\\n");
+		return unsafeCaptureCss(rewritten) ? null : rewritten;
+	}
+
+	function stripUnsafeCaptureRules(parent) {
+		for (let index = parent.cssRules.length - 1; index >= 0; index--) {
+			const rule = parent.cssRules[index];
+			if (rule.cssRules) stripUnsafeCaptureRules(rule);
+			stripUnsafeCaptureDeclarations(rule);
+			if (unsafeCaptureCss(rule.cssText)) parent.deleteRule(index);
+		}
+	}
+
+	function stripUnsafeCaptureDeclarations(rule) {
+		if (!rule.style) return;
+		for (const property of Array.from(rule.style)) {
+			const declaration = property + ":" + rule.style.getPropertyValue(property);
+			if (unsafeCaptureCss(declaration)) rule.style.removeProperty(property);
+		}
+	}
+
+	function normalizeCaptureCss(value) {
+		return value
 			.replace(/\\\\([0-9a-f]{1,6})\\s?/gi, (_match, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
 			.replace(/\\\\([^\\n\\r\\f])/g, "$1");
-		if (/@import/i.test(normalized)) return true;
+	}
+
+	function hasUnsafeCaptureUrl(normalized) {
 		let unsafe = false;
 		const remainder = normalized.replace(/url\\s*\\(\\s*([^)]*)\\)/gi, (_match, raw) => {
 			let target = raw.trim();
@@ -638,6 +676,11 @@ const canvasShimJs = `(() => {
 			return "";
 		});
 		return unsafe || /url\\s*\\(/i.test(remainder);
+	}
+
+	function unsafeCaptureCss(value) {
+		const normalized = normalizeCaptureCss(value);
+		return /@import/i.test(normalized) || hasUnsafeCaptureUrl(normalized);
 	}
 
 	// maxEdge bounds the longest side in device pixels — a cover asks for one,
