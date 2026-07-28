@@ -4,7 +4,7 @@ A canvas where the frames are alive.
 
 Agent-authored TSX frames on an infinite canvas: arrange them spatially, link them into walkable flows, and feel an app (interactions, motion, state, real inputs) before it exists. Code is the document; the canvas is a projection of it. A design space is just a `design/` folder inside your product repo: local-first, git-tracked, no cloud.
 
-Home: [spool.page](https://spool.page). Pre-1.0: published, dogfooded daily, and still moving. Exploration research lives in `research/`.
+Home: [spool.page](https://spool.page). Pre-1.0: published, dogfooded daily, and still moving.
 
 ## Install
 
