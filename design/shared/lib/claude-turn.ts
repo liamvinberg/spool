@@ -440,7 +440,7 @@ type Timeline = ReturnType<typeof timeline>;
  * which is the only window in the repo where a plan is written, worked and
  * ticked off rather than written and abandoned.
  */
-export type Slice = "plan" | "verify" | "session" | "mcp" | "ask" | "say";
+export type Slice = "plan" | "verify" | "session" | "mcp" | "ask" | "say" | "stop";
 
 /**
  * How much of a repeated act one row holds.
@@ -579,9 +579,19 @@ export interface Script {
 	readonly cues: readonly Cue[];
 	readonly rows: readonly ScriptRow[];
 	readonly total: number;
+	/**
+	 * The moment the capture's own interrupt landed (#165), on the replay's clock.
+	 *
+	 * Only the `stop` slice has one. It exists so a frame nobody touches still ends
+	 * the way the recording ended — the turn cuts itself at 17.9s — while a press
+	 * arriving sooner cuts it sooner, down the same path. Both are the same state,
+	 * which is the point: where the stop lands is the person's, what it leaves is
+	 * the capture's.
+	 */
+	readonly cut: string | null;
 }
 
-const EMPTY: Script = { cues: [], rows: [], total: 0 };
+const EMPTY: Script = { cues: [], rows: [], total: 0, cut: null };
 
 /**
  * A frame a sub-agent wrote, and everything the capture knows about it after
@@ -1012,6 +1022,29 @@ export function projectTurn(events: readonly CaptureEvent[], slice: Slice, colla
 			fromParent(event) &&
 			blocksOf(event).some((block) => block.type === "text" && block.text !== undefined && block.text.length > 1000),
 	);
+	/**
+	 * The stop, and the window is everything before it (#165).
+	 *
+	 * The marker is the binary's own and it is addressed to the model, not to the
+	 * developer: `Jse({toolUse})` in 2.1.220 posts `[Request interrupted by user]`
+	 * as a synthetic `user` text block so the agent's next turn knows why its work
+	 * ends mid-sentence — `[Request interrupted by user for tool use]` is the same
+	 * function's other branch, taken when the abort lands during the tool batch
+	 * (`aborted_tools`) rather than while the model is still writing.
+	 *
+	 * Everything from the marker back to the last real wire event is the aftermath
+	 * the binary *synthesises*, not the turn: the rejected `tool_result` and the
+	 * control receipt. None of it is projected, because the rail derives the same
+	 * state from where the clock stopped — which is the only way a press landing at
+	 * an arbitrary second can leave the same thing behind as the capture's own.
+	 */
+	const marker = events.findIndex(
+		(event) =>
+			event.type === "user" &&
+			blocksOf(event).some((block) => block.type === "text" && (block.text ?? "").startsWith("[Request interrupted by user")),
+	);
+	let inflight = marker - 1;
+	while (inflight > 0 && wireOf(events[inflight] as CaptureEvent) === undefined) inflight -= 1;
 	const bounds: Record<Slice, readonly [number, number]> = {
 		plan: [0, firstText],
 		verify: [request(shot), events.length - 1],
@@ -1019,6 +1052,7 @@ export function projectTurn(events: readonly CaptureEvent[], slice: Slice, colla
 		mcp: [request(searched), answered[2] ?? -1],
 		ask: [request(asked), recovered],
 		say: [request(wrote), reported],
+		stop: [0, marker < 0 ? -1 : inflight],
 	};
 	const [from, to] = bounds[slice];
 	if (from < 0 || to < 0 || from > to) return EMPTY;
@@ -1029,6 +1063,8 @@ export function projectTurn(events: readonly CaptureEvent[], slice: Slice, colla
 		marks.add(value);
 		return value;
 	};
+	// the capture's own stop, registered as a beat so the replay can land on it
+	const cutAt = slice === "stop" && marker >= 0 ? mark(at[marker] as number) : null;
 
 	const drafts: Draft[] = [];
 	const streamed = new Map<number, Streamed>();
@@ -1270,7 +1306,8 @@ export function projectTurn(events: readonly CaptureEvent[], slice: Slice, colla
 	const first = [...marks].sort((a, b) => a - b)[0] ?? 0;
 	const shown = timeline(marks, first - (slice === "plan" ? median : 0), squeeze);
 	const rows = emitRows(drafts, shown);
-	return { cues: shown.cues, rows, total: shown.cues.reduce((last, entry) => Math.max(last, entry.at), 0) };
+	const cut = cutAt === null ? null : shown.cue("cut", cutAt);
+	return { cues: shown.cues, rows, total: shown.cues.reduce((last, entry) => Math.max(last, entry.at), 0), cut };
 }
 
 /** the projection, memoised against the capture so useTurn's cue array stays stable */
@@ -1551,6 +1588,8 @@ export function projectFanout(events: readonly CaptureEvent[]): FanoutScript {
 			})(),
 		})),
 		total: shown.cues.reduce((last, entry) => Math.max(last, entry.at), 0),
+		// a fan-out has no stop in it: `claude-fanout.json` runs to completion
+		cut: null,
 	};
 }
 
@@ -1594,6 +1633,16 @@ export function railEntries(
 ): PlayEntry[] {
 	const entries: PlayEntry[] = [];
 	if (turn.phase === "idle") return entries;
+	/**
+	 * The turn was stopped, so nothing that had not landed ever will (#165).
+	 *
+	 * This is the whole of the aftermath and it is derived rather than projected:
+	 * every row still open when the clock stopped is a row that never finished, and
+	 * which rows those are depends entirely on the second the person pressed. The
+	 * capture cannot hold that, because in the recording the stop landed at 17.9s
+	 * and here it lands wherever the hand does.
+	 */
+	const cut = turn.phase === "stopped";
 	entries.push({ key: "user", kind: "user", text: turn.prompt, ...(context === undefined ? {} : { context }) });
 	for (const row of script.rows) {
 		if (!turn.at(row.cue)) continue;
@@ -1605,7 +1654,7 @@ export function railEntries(
 				key: row.key,
 				kind: "line",
 				quiet: true,
-				state: done ? "done" : "running",
+				state: done ? "done" : cut ? "stopped" : "running",
 				verb: "thinking",
 				subject: duration(done ? row.realMs : row.realMs * part),
 			});
@@ -1678,7 +1727,7 @@ export function railEntries(
 		entries.push({
 			key: row.key,
 			kind: "line",
-			state: settled ? (row.failed ? "failed" : "done") : "running",
+			state: settled ? (row.failed ? "failed" : "done") : cut ? "stopped" : "running",
 			verb: row.verb,
 			...(row.foreign === null ? {} : { foreign: row.foreign }),
 			...(shows ? { subject: row.counts || row.runs ? counted : row.subject } : {}),
@@ -1694,6 +1743,21 @@ export function railEntries(
 			...(row.openCue !== null && turn.at(row.openCue) ? { open: true } : {}),
 		});
 	}
+	/*
+	 * Where the turn ended, in spool's own words rather than the binary's.
+	 *
+	 * #127's rule is to quote the binary where it can be, and this is the case where
+	 * it cannot: `[Request interrupted by user]` is not a line the CLI shows anyone,
+	 * it is a synthetic `user` block posted into the conversation so the *model*
+	 * knows why its work ends mid-sentence. Echoing it back at the developer reports
+	 * their own press to them as news, in the voice of the person who made it — and
+	 * the rail draws the human's words with a 2px accent rail, so a message nobody
+	 * typed would arrive wearing the human's own mark.
+	 *
+	 * It is a `rule` because a stop is a boundary and not a reply: everything above
+	 * it happened, nothing below it did, and the next thing in the log is a new turn.
+	 */
+	if (cut) entries.push({ key: "cut", kind: "note", text: "stopped", rule: true });
 	return entries;
 }
 
