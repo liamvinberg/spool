@@ -10,8 +10,9 @@ import { FolderIcon } from "./sidebar";
  * viewport, filtering every frame on every page. Arrows move the pick, Enter
  * lands the camera on it, Escape closes.
  *
- * `/` rather than a chord, because Home already binds it — "`/` is the
- * filter's door" — and one app should not teach the same idea twice. The
+ * `/` because Home already binds it — "`/` is the filter's door" — and one
+ * app should not teach the same idea twice; ⌘K beside it, because that is
+ * the chord every other palette taught, and both spell the same door. The
  * overlay stops at the rails on purpose: it covers the canvas because the
  * canvas is what Enter is about to move, and it leaves the Pages rail at full
  * strength because the rail is answering at the same time, lighting the page
