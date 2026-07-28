@@ -1054,9 +1054,9 @@ function DraftsField({ shown }: { shown: boolean }) {
 /* ---------- the second project: open, and empty ---------- */
 
 /**
- * What "+" opens. A registered project with nothing in it is a real state of the
- * app and the most useful thing this page can hand a visitor: the two commands
- * that fill it, in the same copyable line as the hero's.
+ * The site demonstrates what "+" does without pretending spool.page owns the
+ * project. Real projects open from disk in the local canvas and stay in their
+ * repo.
  */
 function EmptyProject({ shown }: { shown: boolean }) {
 	return (
@@ -1069,7 +1069,10 @@ function EmptyProject({ shown }: { shown: boolean }) {
 		>
 			<div className="flex h-full flex-col items-center justify-center gap-4 pb-16">
 				<SpoolMark className="h-7 w-[22px] text-thread opacity-40" />
-				<h2 className="font-medium text-base leading-base">No frames yet.</h2>
+				<h2 className="font-medium text-base leading-base">Open a project locally.</h2>
+				<p className="w-[380px] text-center font-mono text-muted text-xs leading-5">
+					this page is a preview. in spool, + opens a project folder from your machine.
+				</p>
 				<div className="mt-1 flex gap-4">
 					<span className="w-px shrink-0 self-stretch bg-thread/70" />
 					<div className="w-[300px] font-mono text-sm leading-[26px]">
@@ -1077,8 +1080,9 @@ function EmptyProject({ shown }: { shown: boolean }) {
 						<CommandLine prompt="~/your-app $" command="spool serve" />
 					</div>
 				</div>
-				<p className="mt-1 font-mono text-muted text-xs leading-4">
-					then your agent writes the first frame and it lands here.
+				<p className="mt-1 w-[440px] text-center font-mono text-muted text-xs leading-5">
+					open <span className="text-text">localhost:7766</span>. your frames appear in that local canvas as your
+					agent writes them.
 				</p>
 			</div>
 		</motion.div>
