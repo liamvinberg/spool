@@ -38,7 +38,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Picture**: A frame below readable size or outside the viewport ring: its still on screen and no document behind it, for as long as nothing asks for one. _Avoid_: hibernated, unmounted, cold
 
-**Caused mounting**: Why a frame holds a document at all: you went inside it, its picture is missing, its picture is wrong, or it draws at least 400 CSS px wide inside a viewport expanded by 25% on every side. The readable condition bounds documents by viewport area rather than frame count. Intent holds a document too, one frame at a time: the selection target and the frame an open inspector rail reads. _Avoid_: warm pool, wake queue, hibernation
+**Caused mounting**: Why a frame holds a document at all: you went inside it, its picture is missing, its picture is wrong, or it draws at least 400 CSS px wide inside a viewport expanded by 25% on every side. The readable condition bounds documents by viewport area rather than frame count. Intent holds documents too: every frame represented by the current element selection. With no element picks, Select instead holds the selected frame, or the entered frame while its modifier is down. The frame an open inspector rail reads is held separately. _Avoid_: warm pool, wake queue, hibernation
 
 **Errand**: The canvas borrowing a frame to photograph it — mount out of sight behind its own still, run, capture, hand the document back. The frame is _refreshing_ while it holds the borrowed document. Three at once at most, and that count is the whole of the pacing. _Avoid_: refresh queue, job
 

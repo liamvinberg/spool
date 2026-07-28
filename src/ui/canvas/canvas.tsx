@@ -95,9 +95,9 @@ import { TrashToast } from "./trash-toast";
  * clean click; Select picks live DOM and arranges frames; Hand pans. Command
  * and Space borrow Select and Hand while held. Selection keeps Figma's scope
  * grammar: double-click descends, Command-click jumps deepest, Shift toggles,
- * hover previews, and Esc ascends. Selecting into one frame makes it the
- * selection target. Geometry sidecars are the only canvas writes; frame
- * source remains agent-owned.
+ * hover previews, and Esc ascends. Every frame represented by element picks
+ * stays mounted for the selection. Geometry sidecars are the only canvas
+ * writes; frame source remains agent-owned.
  */
 
 export interface CanvasChrome {
@@ -381,10 +381,14 @@ export function ProjectCanvas({
 
 	const pickedFrame = picked[picked.length - 1]?.frame;
 	const selectedFrame = selected[selected.length - 1];
-	// Select owns the selected frame so it can reach its elements. Readable HTML
-	// remains live while the pointer is ours; unreadable frames stay behind stills.
-	const selectionTarget =
-		effectiveTool === "select" ? (pickedFrame ?? selectedFrame ?? (metaDown ? entered : null)) : null;
+	// Select owns every frame represented by its element picks. Without picks,
+	// the selected frame and entered-frame modifier keep their existing intent.
+	const selectionTargets = useMemo(() => {
+		if (picked.length > 0) return new Set(picked.map((pick) => pick.frame));
+		if (effectiveTool !== "select") return new Set<string>();
+		const fallback = selectedFrame ?? (metaDown ? entered : null);
+		return fallback === null ? new Set<string>() : new Set([fallback]);
+	}, [effectiveTool, picked, selectedFrame, metaDown, entered]);
 	// what the rail reads: the element scope's frame, else the frame selection,
 	// else the frame being used — inside a prototype its elements are the ones
 	// worth looking at, so entering must not empty the rail
@@ -399,7 +403,7 @@ export function ProjectCanvas({
 	const lifecycle = useFrameLifecycle({
 		framesRef,
 		entered,
-		selectionTarget,
+		selectionTargets,
 		inspected: railOpen ? inspectedFrame : null,
 		hasCover: hasCover,
 		onShot,
@@ -2114,7 +2118,7 @@ export function ProjectCanvas({
 	 * The tree grammar on element rows: shift ranges over the frame's visible
 	 * rows, ⌘/Ctrl toggles, a plain click replaces. Selecting an element is
 	 * Select's business (#54), so the row takes the tool with it — and the
-	 * frame it selects into becomes the selection target.
+	 * frame it selects into joins the selection intent.
 	 */
 	const selectTreeRow = (row: TreeRow, modifiers: SelectModifiers) => {
 		const frame = inspectedFrame;
