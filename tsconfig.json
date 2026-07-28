@@ -20,5 +20,5 @@
 		"skipLibCheck": true
 	},
 	"include": ["src", "bench", "tsup.config.ts", "vitest.config.ts", "vite.config.ts"],
-	"exclude": ["src/runtime", "src/ui"]
+	"exclude": ["bench/evidence", "src/runtime", "src/ui"]
 }
