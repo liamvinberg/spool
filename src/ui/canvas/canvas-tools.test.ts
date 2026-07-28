@@ -139,11 +139,10 @@ it("hands the pointer back while Command is held without taking the frame off th
 	await until(() => iframe?.style.pointerEvents === "none");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("esc exits");
-	// and leaves it painted: the engine-level freeze is also a blindfold (#112),
-	// so the frame you are inside keeps its own document under the cursor rather
-	// than swapping to a still of some state you have already left
+	// and leaves it painted: Select owns the pointer, but the readable frame
+	// keeps running rather than swapping to a stale still.
 	expect(wrapper()?.style.visibility).toBe("visible");
-	expect(wrapper()?.style.contentVisibility).toBe("visible");
+	expect(wrapper()?.style.contentVisibility).toBe("");
 
 	await act(async () => {
 		window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));

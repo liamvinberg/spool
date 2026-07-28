@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { FrameLabel } from "./frame-label";
 
 describe("FrameLabel", () => {
-	it("names an entered frozen frame as paused without losing its exit door", () => {
+	it("names a held terminal as paused without losing its exit door", () => {
 		const markup = renderToStaticMarkup(
 			createElement(FrameLabel, {
 				name: "checkout",
@@ -14,11 +14,12 @@ describe("FrameLabel", () => {
 				paused: true,
 				selected: false,
 				hovered: false,
+				terminal: true,
 			}),
 		);
 
-		expect(markup).toContain("paused · esc exits");
-		expect(markup).not.toContain("live · esc exits");
+		expect(markup).toContain("paused · ⌘esc exits");
+		expect(markup).not.toContain("live · ⌘esc exits");
 	});
 
 	it("truncates within the frame's rendered width when zoomed out", () => {

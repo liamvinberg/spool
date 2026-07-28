@@ -11,14 +11,29 @@ import { createShotTaker } from "./shots";
  *
  * A frames read is where a canvas learns a frame has no cover, so it is also
  * where the heal is asked for (#111) — a frame with none asks for nothing on its
- * own. What lands is a one-rung ladder at the bottom rung: the daemon has no
- * image library to make the rungs above it.
+ * own. What lands is the same one-image cover shape the frame writes itself.
  */
 
 const frameTsx = `export default function Frame() {
 	return <main style={{ background: "#f5391a", width: "100%", height: "100vh" }}>shot me</main>;
 }
 `;
+
+function jpegSize(bytes: Uint8Array): [number, number] | undefined {
+	for (let index = 2; index + 8 < bytes.length; ) {
+		if (bytes[index] !== 0xff) return undefined;
+		const marker = bytes[index + 1];
+		const length = (bytes[index + 2] ?? 0) * 256 + (bytes[index + 3] ?? 0);
+		if (marker !== undefined && marker >= 0xc0 && marker <= 0xc3) {
+			return [
+				(bytes[index + 7] ?? 0) * 256 + (bytes[index + 8] ?? 0),
+				(bytes[index + 5] ?? 0) * 256 + (bytes[index + 6] ?? 0),
+			];
+		}
+		index += 2 + length;
+	}
+	return undefined;
+}
 
 describe("the thumbnail fallback", () => {
 	it("heals a missing cover through a headless shot, or no-ops without a browser", {
@@ -46,10 +61,10 @@ describe("the thumbnail fallback", () => {
 		const reader = sseReader(events);
 		expect((await reader.next()).event).toBe("hello");
 
-		const coverOf = async (): Promise<{ hash: string; widths: number[] } | undefined> => {
+		const coverOf = async (): Promise<{ hash: string } | undefined> => {
 			const res = await fetch(`${daemon.url}/api/p/${name}/frames`, control);
 			const { frames } = (await res.json()) as {
-				frames: { name: string; cover?: { hash: string; widths: number[] } }[];
+				frames: { name: string; cover?: { hash: string } }[];
 			};
 			return frames.find((frame) => frame.name === "cover-me")?.cover;
 		};
@@ -65,14 +80,12 @@ describe("the thumbnail fallback", () => {
 			return;
 		}
 
-		// one rung, at the bottom of the ladder a self-capture would write: a
-		// 390×844 frame's top rung is 780 wide, so a heal writes 195
-		await expect.poll(async () => (await coverOf())?.widths, { timeout: 45_000, interval: 500 }).toEqual([195]);
+		await expect.poll(coverOf, { timeout: 45_000, interval: 500 }).toMatchObject({ hash: expect.any(String) });
 		const cover = await coverOf();
-		const rung = await fetch(`${daemon.url}/covers/${name}/cover-me/${cover?.hash}/195`);
+		const image = await fetch(`${daemon.url}/covers/${name}/cover-me/${cover?.hash}`);
 		// a healed cover is bounded and lossy, like the canvas's own (#8)
-		expect(rung.headers.get("content-type")).toBe("image/jpeg");
-		expect(rung.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
-		expect((await rung.arrayBuffer()).byteLength).toBeGreaterThan(100);
+		expect(image.headers.get("content-type")).toBe("image/jpeg");
+		expect(image.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+		expect(jpegSize(new Uint8Array(await image.arrayBuffer()))).toEqual([800, 1731]);
 	});
 });

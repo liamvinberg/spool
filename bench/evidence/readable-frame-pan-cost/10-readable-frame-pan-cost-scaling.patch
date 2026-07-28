@@ -1,0 +1,32 @@
+diff --git a/src/ui/canvas/lifecycle.ts b/src/ui/canvas/lifecycle.ts
+index f26a30f..ece9d11 100644
+--- a/src/ui/canvas/lifecycle.ts
++++ b/src/ui/canvas/lifecycle.ts
+@@ -217,0 +218,5 @@
++const debugLiveMinCssPx = (globalThis as unknown as { __debug132LiveMinCssPx?: number }).__debug132LiveMinCssPx;
++const debugLiveCap = (globalThis as unknown as { __debug132LiveCap?: number }).__debug132LiveCap;
++const measuredLiveMinCssPx = debugLiveMinCssPx ?? LIVE_MIN_CSS_PX;
++const measuredLiveCap = debugLiveCap ?? Number.POSITIVE_INFINITY;
++
+@@ -224 +229 @@ function isFrameLive(
+-	if (frame.w * camera.k < LIVE_MIN_CSS_PX) return false;
++	if (frame.w * camera.k < measuredLiveMinCssPx) return false;
+@@ -267,0 +273,15 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
++	const eligibleLive = frames.filter((frame) => isFrameLive(frame, camera, viewport));
++	if (camera !== null && viewport !== null) {
++		const centerX = (viewport.width / 2 - camera.x) / camera.k;
++		const centerY = (viewport.height / 2 - camera.y) / camera.k;
++		eligibleLive.sort((left, right) => {
++			const leftX = left.x + left.w / 2 - centerX;
++			const leftY = left.y + left.h / 2 - centerY;
++			const rightX = right.x + right.w / 2 - centerX;
++			const rightY = right.y + right.h / 2 - centerY;
++			const distance = leftX * leftX + leftY * leftY - (rightX * rightX + rightY * rightY);
++			return Math.abs(distance) < 0.001 ? left.name.localeCompare(right.name) : distance;
++		});
++	}
++	const cappedLive = new Set(eligibleLive.slice(0, measuredLiveCap).map((frame) => frame.name));
++
+@@ -276 +296 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
+-		const modelLive = isFrameLive(frame, camera, viewport);
++		const modelLive = cappedLive.has(name);

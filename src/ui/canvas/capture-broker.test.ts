@@ -26,10 +26,10 @@ const source: CaptureSourceMessage = {
 	width: 390,
 	height: 844,
 	dpr: 2,
-	maxEdge: 4096,
+	targetWidth: 400,
 };
 
-const rung = (width: number, height: number) => ({ url: "data:image/jpeg;base64,eA==", width, height });
+const image = (width: number, height: number) => ({ url: "data:image/jpeg;base64,eA==", width, height });
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -77,16 +77,15 @@ describe("trusted capture broker", () => {
 			width: source.width,
 			height: source.height,
 			dpr: source.dpr,
-			maxEdge: source.maxEdge,
+			targetWidth: source.targetWidth,
 		});
 
-		const rungs = [rung(780, 1688), rung(390, 844), rung(195, 422)];
+		const imageResult = image(800, 1731);
 		channel.port1.onmessage?.({
-			data: { spool: "spool-capture-result-v1", id: source.id, rungs },
+			data: { spool: "spool-capture-result-v1", id: source.id, image: imageResult },
 		} as MessageEvent);
 
-		// the whole ladder off one snapshot, each rung carrying the size it came out
-		await expect(capture).resolves.toEqual(rungs);
+		await expect(capture).resolves.toEqual(imageResult);
 		expect(iframe.src).toBe("about:blank");
 		expect(remove).toHaveBeenCalledOnce();
 		expect(channel.port1.close).toHaveBeenCalledOnce();
@@ -103,7 +102,7 @@ describe("trusted capture broker", () => {
 			data: {
 				spool: "spool-capture-result-v1",
 				id: source.id,
-				rungs: [{ ...rung(780, 1688), extra: true }],
+				image: { ...image(800, 1731), extra: true },
 			},
 		} as MessageEvent);
 
@@ -113,11 +112,53 @@ describe("trusted capture broker", () => {
 		expect(channel.port2.close).toHaveBeenCalledOnce();
 	});
 
+	it("uses the shared output-pixel budget for tall worker replies", async () => {
+		const { rasterCaptureSource } = await import("./capture-broker");
+		const acceptedHarness = harness();
+		const accepted = rasterCaptureSource(
+			{ ...source, width: 40, height: 1000 },
+			captureOrigin,
+			undefined,
+			acceptedHarness.platform,
+		);
+		acceptedHarness.iframe.dispatchEvent(new Event("load"));
+		acceptedHarness.channel.port1.onmessage?.({
+			data: { spool: "spool-capture-result-v1", id: source.id, image: image(800, 20_000) },
+		} as MessageEvent);
+		await expect(accepted).resolves.toEqual(image(800, 20_000));
+
+		const rejectedHarness = harness();
+		const rejected = rasterCaptureSource(
+			{ ...source, width: 40, height: 10_000 },
+			captureOrigin,
+			undefined,
+			rejectedHarness.platform,
+		);
+		rejectedHarness.iframe.dispatchEvent(new Event("load"));
+		rejectedHarness.channel.port1.onmessage?.({
+			data: { spool: "spool-capture-result-v1", id: source.id, image: image(800, 200_000) },
+		} as MessageEvent);
+		await expect(rejected).rejects.toThrow("invalid capture worker reply");
+	});
+
+	it("rejects fractional worker reply dimensions", async () => {
+		const { rasterCaptureSource } = await import("./capture-broker");
+		const { channel, iframe, platform } = harness();
+		const capture = rasterCaptureSource(source, captureOrigin, undefined, platform);
+		iframe.dispatchEvent(new Event("load"));
+
+		channel.port1.onmessage?.({
+			data: { spool: "spool-capture-result-v1", id: source.id, image: image(800.5, 1731) },
+		} as MessageEvent);
+
+		await expect(capture).rejects.toThrow("invalid capture worker reply");
+	});
+
 	it("aborts with immediate complete cleanup", async () => {
 		const { rasterCaptureSource } = await import("./capture-broker");
 		const controller = new AbortController();
 		const { channel, iframe, platform, remove } = harness();
-		const capture = rasterCaptureSource({ ...source, maxEdge: 0 }, captureOrigin, controller.signal, platform);
+		const capture = rasterCaptureSource({ ...source, targetWidth: 0 }, captureOrigin, controller.signal, platform);
 		iframe.dispatchEvent(new Event("load"));
 
 		controller.abort();

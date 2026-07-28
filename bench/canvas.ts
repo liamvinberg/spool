@@ -11,6 +11,7 @@ import {
 	ms,
 	namedPage,
 	planCamera,
+	prepareCurrentCovers,
 	quantile,
 	quiet,
 	startDaemon,
@@ -26,6 +27,20 @@ import {
  * power state: a rate reproduces on any machine, and turns "it felt slow once"
  * into a headroom number, the multiplier at which a bar first misses.
  *
+ * Wheel input is paced at 60 events per second. A burst can make a browser
+ * benchmark measure its driver instead of a trackpad gesture. The report keeps
+ * p95, worst, and intervals above the #132 rare-interval threshold separate.
+ *
+ * #132's 20 balanced pairs put readable minus picture p95 at -0.050 ms,
+ * with a paired bootstrap interval of -0.105 to +0.010 ms. The old 5 to 8 ms
+ * penalty is absent. Rare intervals above 12 ms remain separate: 0/20 picture
+ * runs and 4/20 readable runs untraced, then 2/50 and 4/50 in a separate traced
+ * sample. Only selected readable pairs 3, 11, 17, and 33 support the scoped
+ * child-renderer/GPU raster synchronization attribution. Count and full
+ * area were confounded, and viewport area was observed only at the endpoints,
+ * so the evidence supports no scaling or knee claim. #140 owns the
+ * equal-geometry animation question.
+ *
  * The rate is applied to every frame as well as the page. In a real browser the
  * frames do not share the page's renderer, so throttling the page alone would
  * model a slow canvas driving fast frames, which is not a machine anyone owns.
@@ -39,8 +54,12 @@ import {
  * temporary root with its own daemon, spool dir and port, so the source canvas
  * keeps its camera, its stills and its uncommitted work.
  *
- *   pnpm build && node bench/canvas.ts --project ~/projects/matmannen-fc63dba
+ *   pnpm build && node bench/canvas.ts --project <spool-bench>
+ *   node bench/canvas.ts --project <spool-bench> --zoom 0.16 --headed
  *   node bench/canvas.ts --project <path> --throttle 1,2,4,6 --headed --out run.json
+ *
+ * The default measures entry into a readable document. The 0.16 command keeps
+ * the historical cold overview-entry route visible.
  *
  * Run it with node's own type stripping, not tsx: the collector below is
  * serialized into the page by playwright, and esbuild's keep-names transform
@@ -55,33 +74,18 @@ interface Options {
 	out: string | undefined;
 	/** Which page to measure; the densest one when unnamed. */
 	page: string | undefined;
-	/**
-	 * TEMPORARY, and it dies with `CANVAS_ARM_KEY` in `src/ui/canvas/lifecycle.ts`.
-	 * Which of the three models to measure: `pictures` is the shipped one,
-	 * `live` mounts the whole page, `readable` mounts what is drawn big enough to
-	 * read. The bench holds the arm at runtime rather than the shipped code
-	 * carrying three models, exactly as the errand cap is swept through
-	 * `globalThis.__spoolBench`.
-	 *
-	 * `readable` only means anything above the zoom where a frame reaches
-	 * `LIVE_MIN_CSS_PX`. At the default k it mounts nothing and measures the
-	 * shipped arm wearing another name, so pass `--zoom` with it.
-	 */
-	arm: BenchArm;
 }
 
-type BenchArm = "pictures" | "live" | "readable";
-
-const ARMS: readonly BenchArm[] = ["pictures", "live", "readable"];
+/** Generated frames draw 540 CSS px wide here, above the 400 px readable threshold. */
+const CANVAS_ZOOM = 0.45;
 
 function parseArgs(argv: string[]): Options {
 	let project = "";
 	let throttle = [1, 2, 4, 6];
 	let headed = false;
-	let zoom = DEFAULT_ZOOM;
+	let zoom = CANVAS_ZOOM;
 	let out: string | undefined;
 	let page: string | undefined;
-	let arm: BenchArm = "pictures";
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		const next = argv[i + 1];
@@ -100,11 +104,6 @@ function parseArgs(argv: string[]): Options {
 		} else if (arg === "--page" && next !== undefined) {
 			page = next;
 			i++;
-		} else if (arg === "--arm" && next !== undefined) {
-			const named = ARMS.find((candidate) => candidate === next);
-			if (named === undefined) throw new Error(`--arm takes one of ${ARMS.join(", ")}, got "${next}"`);
-			arm = named;
-			i++;
 		} else if (arg === "--headed") {
 			headed = true;
 		} else if (arg === "--headless") {
@@ -116,7 +115,7 @@ function parseArgs(argv: string[]): Options {
 	if (project === "") throw new Error("--project <path to a spool project root> is required");
 	if (throttle.some((rate) => !Number.isFinite(rate) || rate < 1)) throw new Error("--throttle takes rates >= 1");
 	if (!Number.isFinite(zoom) || zoom <= 0) throw new Error("--zoom takes a positive scale");
-	return { project, throttle, headed, zoom, out, page, arm };
+	return { project, throttle, headed, zoom, out, page };
 }
 
 interface Sample {
@@ -211,12 +210,15 @@ interface GestureStats {
 	p50: number;
 	p95: number;
 	worst: number;
+	rareIntervals: number;
 	loafs: number;
 	loafWorstBlocking: number;
 	frames: number;
 	mountedPeak: number;
 	wallMs: number;
 }
+
+const RARE_INTERVAL_MS = 12;
 
 function windowStats(state: BenchState, from: number, to: number): GestureStats {
 	const inside = state.raf.filter((sample) => sample.t >= from && sample.t <= to);
@@ -226,6 +228,7 @@ function windowStats(state: BenchState, from: number, to: number): GestureStats 
 		p50: quantile(deltas, 0.5),
 		p95: quantile(deltas, 0.95),
 		worst: deltas.at(-1) ?? Number.NaN,
+		rareIntervals: deltas.filter((delta) => delta > RARE_INTERVAL_MS).length,
 		loafs: loafs.length,
 		loafWorstBlocking: loafs.reduce((worst, entry) => Math.max(worst, entry.blocking), 0),
 		frames: deltas.length,
@@ -237,6 +240,42 @@ function windowStats(state: BenchState, from: number, to: number): GestureStats 
 const now = (page: Page): Promise<number> => page.evaluate(() => performance.now());
 const read = (page: Page): Promise<BenchState> =>
 	page.evaluate(() => (globalThis as unknown as { __bench: BenchState }).__bench);
+
+/** Wait until every document mounted now has completed its latest boot. */
+async function waitForMountedFramesLoaded(page: Page, timeoutMs: number): Promise<void> {
+	const pending = async (): Promise<string[]> =>
+		page.evaluate(() => {
+			const state = (globalThis as unknown as { __bench: BenchState }).__bench;
+			const latest = (stamps: Stamped[]): Map<string, number> => {
+				const byFrame = new Map<string, number>();
+				for (const stamp of stamps) {
+					byFrame.set(stamp.frame, Math.max(byFrame.get(stamp.frame) ?? -Infinity, stamp.t));
+				}
+				return byFrame;
+			};
+			const inserted = latest(state.inserted);
+			const loaded = latest(state.loaded);
+			const mounted = new Set([...document.querySelectorAll("iframe")].map((frame) => frame.title));
+			return [...mounted].filter((name) => {
+				const insertedAt = inserted.get(name);
+				return insertedAt === undefined || (loaded.get(name) ?? -Infinity) < insertedAt;
+			});
+		});
+
+	const deadline = Date.now() + timeoutMs;
+	let names = await pending();
+	while (names.length > 0 && Date.now() < deadline) {
+		await page.waitForTimeout(150);
+		names = await pending();
+	}
+	if (names.length === 0) return;
+	const sample = names.slice(0, 6).join(", ");
+	throw new Error(
+		`${names.length} mounted documents did not report loaded after their latest insertion within ${timeoutMs / 1000} s` +
+			` (${sample}${names.length > 6 ? ", …" : ""})`,
+	);
+}
+
 /**
  * Hold until the canvas stops mounting: the count unchanged across `stableMs`.
  * Reports when it stopped changing, not when the waiting ended, so "looks
@@ -261,7 +300,18 @@ const PAN_EVENTS = 90;
 const PAN_STEP_PX = 26;
 const ZOOM_EVENTS = 60;
 const ZOOM_STEP_PX = 4; // ~3.7x in and back out across the gesture
+const WHEEL_INTERVAL_MS = 1000 / 60;
 const ENTER_TIMEOUT_MS = 8000; // 20x the bar: past this it did not happen at all
+
+async function driveRoundTripWheel(page: Page, steps: number, deltaX: number, deltaY: number): Promise<void> {
+	const started = performance.now();
+	for (let step = 0; step < steps; step++) {
+		const direction = step < steps / 2 ? 1 : -1;
+		await page.mouse.wheel(direction * deltaX, direction * deltaY);
+		const delay = started + (step + 1) * WHEEL_INTERVAL_MS - performance.now();
+		if (delay > 0) await page.waitForTimeout(delay);
+	}
+}
 
 interface RunResult {
 	rate: number;
@@ -306,21 +356,12 @@ async function throttleEveryFrame(context: BrowserContext, page: Page, rate: num
 	return throttled;
 }
 
-/**
- * What counts as a frame being on screen, which the two arms spell differently:
- * the shipped canvas draws a still for every frame, and the all-live arm draws
- * no stills at all because every frame is its own document.
- */
-const framesVisible = (page: Page, arm: BenchArm): Promise<number> =>
-	arm === "live" ? mountedCount(page) : framesOnCanvas(page);
-
 async function measure(
 	page: Page,
 	context: BrowserContext,
 	cdp: CDPSession,
 	rate: number,
 	url: string,
-	arm: BenchArm,
 ): Promise<RunResult> {
 	await cdp.send("Emulation.setCPUThrottlingRate", { rate });
 	// frames mounted mid-run are throttled as they attach; the sweep after the
@@ -336,27 +377,30 @@ async function measure(
 	const reloadStart = Date.now();
 	await page.goto(url, { waitUntil: "domcontentloaded" });
 	const settled = await settle(page, 1000, 30_000);
-	const idleMounted = settled.count;
 	const reloadMs = settled.stableAt - reloadStart;
+	const borrowedAfterReload = await quiet(page, 120_000);
+	if (borrowedAfterReload !== 0) throw new Error(`${borrowedAfterReload} picture errands remained after reload`);
+	const idleMounted = await mountedCount(page);
 	// A canvas showing nothing is fast at everything, and every bar below would
 	// report a pass over an empty screen. The camera is planned over real frames,
 	// so this only happens when the canvas opened somewhere else — the warm
 	// pass's own persisted state landing after the planned camera was written.
 	// Loud, because the numbers would otherwise look like good news.
 	//
-	// Frames, not documents: a settled canvas holds no documents at all (#112).
-	// What it must have is stills on screen.
-	const framesShown = await framesVisible(page, arm);
+	// Frames, not documents: a valid readable canvas can hold documents or
+	// stills, and an empty one makes every row look fast.
+	const framesShown = await framesOnCanvas(page);
 	if (framesShown === 0) {
 		throw new Error(
 			"the canvas settled with no frames on screen — the planned camera did not take, so this run would measure an empty screen",
 		);
 	}
 	const throttledFrames = await throttleEveryFrame(context, page, rate);
+	await waitForMountedFramesLoaded(page, 120_000);
 
 	const state0 = await read(page);
 	process.stderr.write(
-		`bench:   settled ${idleMounted} borrowed, ${framesShown} frames on screen (${throttledFrames} throttled by name), ${state0.raf.length} animation frames sampled\n`,
+		`bench:   settled ${idleMounted} documents, ${framesShown} frames on the page (${throttledFrames} throttled by name), ${state0.raf.length} animation frames sampled\n`,
 	);
 	// the display's own cadence, measured rather than assumed: the p95 bar is
 	// "within one refresh plus slack", and a 120 Hz panel is not a 60 Hz one
@@ -378,10 +422,7 @@ async function measure(
 	await page.mouse.move(cx, cy);
 	await page.waitForTimeout(400);
 	const panFrom = await now(page);
-	for (let i = 0; i < PAN_EVENTS; i++) {
-		const away = i < PAN_EVENTS / 2 ? 1 : -1;
-		await page.mouse.wheel(away * PAN_STEP_PX, away * PAN_STEP_PX);
-	}
+	await driveRoundTripWheel(page, PAN_EVENTS, PAN_STEP_PX, PAN_STEP_PX);
 	const panTo = await now(page);
 
 	await page.waitForTimeout(800);
@@ -392,38 +433,25 @@ async function measure(
 	// gesture and lands somewhere no person would ever be.
 	await page.keyboard.down("Control");
 	const zoomFrom = await now(page);
-	for (let i = 0; i < ZOOM_EVENTS; i++) {
-		await page.mouse.wheel(0, (i < ZOOM_EVENTS / 2 ? -1 : 1) * ZOOM_STEP_PX);
-	}
+	await driveRoundTripWheel(page, ZOOM_EVENTS, 0, -ZOOM_STEP_PX);
 	const zoomTo = await now(page);
 	await page.keyboard.up("Control");
 
 	await settle(page, 800, 20_000);
 
 	// --- double-click into the frame nearest the middle ----------------------
-	// Nothing the canvas is doing on its own may still be in flight. Under #112
-	// the only frames holding a document are the ones being borrowed for a
-	// picture, and entering one of those would measure a boot that had already
-	// happened — which is exactly the reading this bar carried before, when
-	// being on screen mounted a frame and this walked `iframe` to find one.
-	// The all-live arm has no such resting state: every frame on the page holds a
-	// document for as long as it is on the page, so waiting for the count to
-	// reach zero would wait out the whole timeout and prove nothing. Its entry
-	// measurement is a different bar for the same reason — the target is already
-	// booted, and what is being timed is the canvas handing it the pointer.
-	if (arm === "pictures") await quiet(page, 120_000);
+	// Nothing the canvas is doing on its own may still be in flight. Readable
+	// documents remain mounted; only hidden picture errands have to finish.
+	const borrowedBeforeEntry = await quiet(page, 120_000);
+	if (borrowedBeforeEntry !== 0) throw new Error(`${borrowedBeforeEntry} picture errands remained before entry`);
+	await waitForMountedFramesLoaded(page, 120_000);
 
-	// The frame showing the most of itself. Which element stands for a frame is
-	// the arm's business: a still under `pictures`, a document under `live`, and
-	// either one under `readable`, where the biggest thing on screen is usually
-	// the document and looking only for stills aims at the edge of the window. A
-	// partly-offscreen frame's centre can sit outside it, and a double-click
-	// there enters nothing.
-	const selector =
-		arm === "live" ? "iframe" : arm === "readable" ? "[data-frame-cover], iframe" : "[data-frame-cover]";
-	const target = await page.evaluate((query: string) => {
+	// The frame showing the most of itself. A readable frame draws its document;
+	// the rest draw stills. A partly-offscreen frame's centre can sit outside the
+	// window.
+	const target = await page.evaluate(() => {
 		let best: { x: number; y: number; area: number } | null = null;
-		for (const frame of document.querySelectorAll(query)) {
+		for (const frame of document.querySelectorAll("[data-frame-cover], iframe")) {
 			const box = frame.getBoundingClientRect();
 			const left = Math.max(0, box.left);
 			const top = Math.max(0, box.top);
@@ -434,7 +462,7 @@ async function measure(
 			if (best === null || area > best.area) best = { x: (left + right) / 2, y: (top + bottom) / 2, area };
 		}
 		return best;
-	}, selector);
+	});
 
 	// clickable = the entered document owns pointer input
 	const clickable = () =>
@@ -498,36 +526,25 @@ async function measure(
 	};
 }
 
-function table(results: RunResult[]): string {
+function table(results: RunResult[], zoom: number): string {
+	const entryScope = zoom === CANVAS_ZOOM ? `readable at k=${zoom}` : `k=${zoom}`;
 	const rows = [
 		`| bar | ${results.map((r) => `${r.rate}x`).join(" | ")} |`,
 		`|---|${results.map(() => "---|").join("")}`,
 		`| refresh interval (idle p50) | ${results.map((r) => ms(r.refreshMs)).join(" | ")} |`,
 		`| pan p50 / p95 / worst | ${results.map((r) => `${ms(r.pan.p50)} / ${ms(r.pan.p95)} / ${ms(r.pan.worst)}`).join(" | ")} |`,
+		`| pan intervals > ${RARE_INTERVAL_MS} ms | ${results.map((r) => `${r.pan.rareIntervals} / ${r.pan.frames}`).join(" | ")} |`,
 		`| pan long-animation frames | ${results.map((r) => `${r.pan.loafs} (worst block ${ms(r.pan.loafWorstBlocking)})`).join(" | ")} |`,
 		`| zoom p50 / p95 / worst | ${results.map((r) => `${ms(r.zoom.p50)} / ${ms(r.zoom.p95)} / ${ms(r.zoom.worst)}`).join(" | ")} |`,
+		`| zoom intervals > ${RARE_INTERVAL_MS} ms | ${results.map((r) => `${r.zoom.rareIntervals} / ${r.zoom.frames}`).join(" | ")} |`,
 		`| zoom long-animation frames | ${results.map((r) => `${r.zoom.loafs} (worst block ${ms(r.zoom.loafWorstBlocking)})`).join(" | ")} |`,
 		`| frame arrival p50 / worst | ${results.map((r) => `${ms(r.arrivalP50)} / ${ms(r.arrivalWorst)}`).join(" | ")} |`,
-		`| double-click to clickable | ${results.map((r) => (Number.isFinite(r.enterMs) ? ms(r.enterMs) : "never")).join(" | ")} |`,
+		`| double-click to clickable (${entryScope}) | ${results.map((r) => (Number.isFinite(r.enterMs) ? ms(r.enterMs) : "never")).join(" | ")} |`,
 		`| reload to settled | ${results.map((r) => ms(r.reloadMs)).join(" | ")} |`,
 		`| documents mounted (idle / peak) | ${results.map((r) => `${r.idleMounted} / ${Math.max(r.pan.mountedPeak, r.zoom.mountedPeak)}`).join(" | ")} |`,
 		`| of those, throttled by name | ${results.map((r) => String(r.throttledFrames)).join(" | ")} |`,
 	];
 	return rows.join("\n");
-}
-
-/**
- * TEMPORARY, alongside `--all-live`: the canvas reads its arm out of storage at
- * mount, so the switch has to be in place before the bundle evaluates.
- *
- * Top document only. An init script runs in every frame too, and a frame is
- * sandboxed without `allow-same-origin`, so merely naming `localStorage` there
- * throws a SecurityError — a hundred of them per run, inside the documents
- * whose cost is what is being measured.
- */
-function armInitScript(arm: string): void {
-	if (window !== window.top) return;
-	window.localStorage.setItem("spool:canvas-arm", arm);
 }
 
 async function main(): Promise<void> {
@@ -556,13 +573,16 @@ async function main(): Promise<void> {
 			channel: options.headed ? "chromium" : "chromium-headless-shell",
 			headless: !options.headed,
 		});
+		writeCamera(root, planCamera(boxes, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM), canvasPage);
+		await prepareCurrentCovers(browser, url, root, boxes);
+		resetCamera();
+
 		// One discarded pass first. A fresh daemon compiles every frame it is
 		// asked for, and a first-ever boot measures the toolchain rather than the
 		// canvas — arrivals came out at 4.2 s cold against 0.2 s warm.
 		process.stderr.write("bench: warming the daemon\n");
 		resetCamera();
 		const warm = await browser.newContext({ viewport: VIEWPORT });
-		if (options.arm !== "pictures") await warm.addInitScript(armInitScript, options.arm);
 		const warmPage = await warm.newPage();
 		await warmPage.goto(url, { waitUntil: "domcontentloaded" });
 		await settle(warmPage, 1500, 60_000);
@@ -576,13 +596,12 @@ async function main(): Promise<void> {
 			resetCamera();
 			const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
 			await context.addInitScript(collector);
-			if (options.arm !== "pictures") await context.addInitScript(armInitScript, options.arm);
 			const page = await context.newPage();
 			// a canvas that threw is not a canvas that was fast: never report over a broken run
 			page.on("pageerror", (error) => process.stderr.write(`bench: page error — ${String(error).slice(0, 200)}\n`));
 			const cdp = await context.newCDPSession(page);
 			process.stderr.write(`bench: throttle ${rate}x\n`);
-			results.push(await measure(page, context, cdp, rate, url, options.arm));
+			results.push(await measure(page, context, cdp, rate, url));
 			await context.close();
 		}
 	} finally {
@@ -590,7 +609,7 @@ async function main(): Promise<void> {
 		daemon.stop();
 	}
 
-	const report = table(results);
+	const report = table(results, options.zoom);
 	process.stdout.write(`${report}\n`);
 	if (options.out !== undefined) {
 		writeFileSync(

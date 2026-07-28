@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { COVER_RUNGS, type Cover, coverSizes } from "../../cover";
+import type { Cover } from "../../cover";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
@@ -45,7 +45,7 @@ import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
 import { emptyHistory, entryOf, record, takeRedo, takeUndo } from "./history";
 import { type InspectorMode, InspectorRail, type InspectorTarget } from "./inspector";
-import { CANVAS_ARM_KEY, CANVAS_ARMS, type CanvasArm, useFrameLifecycle } from "./lifecycle";
+import { useFrameLifecycle } from "./lifecycle";
 import {
 	type ElementPreview,
 	editorTarget,
@@ -95,9 +95,9 @@ import { TrashToast } from "./trash-toast";
  * clean click; Select picks live DOM and arranges frames; Hand pans. Command
  * and Space borrow Select and Hand while held. Selection keeps Figma's scope
  * grammar: double-click descends, Command-click jumps deepest, Shift toggles,
- * hover previews, and Esc ascends. Selecting into one frame freezes only that
- * document in place. Geometry sidecars are the only canvas writes; frame
- * source remains agent-owned.
+ * hover previews, and Esc ascends. Every frame represented by element picks
+ * stays mounted for the selection. Geometry sidecars are the only canvas
+ * writes; frame source remains agent-owned.
  */
 
 export interface CanvasChrome {
@@ -136,6 +136,7 @@ type Gesture =
 	| { kind: "resize"; frame: string; handle: Handle; anchor: Point; origin: Box };
 
 const SETTLE_PERSIST_MS = 600;
+const LIFECYCLE_CAMERA_SETTLE_MS = 100;
 const DRAG_THRESHOLD_PX = 3;
 const SNAP_THRESHOLD_PX = 8;
 const MIN_FRAME_SIZE = 40;
@@ -205,18 +206,6 @@ export function ProjectCanvas({
 	const [unreadable, setUnreadable] = useState<FlowUnreadable[]>([]);
 	// the arrows toggle (#34): per-project, default on — the map is spool's identity
 	const [arrowsOn, setArrowsOn] = useState(true);
-	// TEMPORARY (#107 follow-up, see CANVAS_ARM_KEY): ⇧L cycles the whole page
-	// through the three models, so they can be compared by feel rather than only
-	// by benchmark. Read from storage at mount so a reload — which is half of
-	// what there is to compare — stays in the arm you were testing.
-	const [arm, setArm] = useState<CanvasArm>(() => {
-		try {
-			const stored = window.localStorage.getItem(CANVAS_ARM_KEY);
-			return CANVAS_ARMS.find((candidate) => candidate === stored) ?? "pictures";
-		} catch {
-			return "pictures";
-		}
-	});
 	// frame-local boxes of navigation-site elements, as each frame's shim answers
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
@@ -284,6 +273,7 @@ export function ProjectCanvas({
 	const animation = useRef(0);
 	const cameraRef = useRef<Camera | null>(null);
 	cameraRef.current = camera;
+	const settledCameraRef = useRef<Camera | null>(null);
 	const framesRef = useRef(visibleFrames);
 	framesRef.current = visibleFrames;
 	// the whole projection, for cross-page reads: walks, connections, editor paths
@@ -352,22 +342,16 @@ export function ProjectCanvas({
 
 	/**
 	 * Whether a frame has a still worth standing in for it — the only thing the
-	 * lifecycle asks about a picture. A whole ladder, not merely a cover: the
-	 * daemon's headless fallback writes one rung, because it has no image library
-	 * and cannot resample (#111), and the canvas stands a frame's still in for it
-	 * at every zoom now (#112). A frame carrying only the healed rung is soft
-	 * everywhere above it, so it is still owed a picture of its own.
+	 * lifecycle asks about a picture. The headless fallback and self-capture both
+	 * write the same one-image shape, so any stored cover is enough.
 	 */
 	const hasCover = useCallback(
-		(name: string) =>
-			framesRef.current.some(
-				(f) => f.name === name && f.cover !== undefined && f.cover.widths.length >= COVER_RUNGS,
-			),
+		(name: string) => framesRef.current.some((f) => f.name === name && f.cover !== undefined),
 		[],
 	);
 
 	/**
-	 * A cover was written — ours or another browser's. The ladder is the frame's
+	 * A cover was written by us or another browser. The image is the frame's
 	 * own state, so it is patched in place rather than held beside the projection:
 	 * the hash is the address, so a new one is a new URL and the swap needs no
 	 * nonce of its own.
@@ -380,15 +364,12 @@ export function ProjectCanvas({
 		);
 	}, []);
 
-	// a settled self-capture persists into design/.spool as the frame's whole ladder
+	// a settled self-capture persists into design/.spool as one immutable image
 	const onShot = useCallback(
-		(frame: string, rungs: CoverRaster[]) => {
+		(frame: string, image: CoverRaster) => {
 			void (async () => {
 				try {
-					const uploads = await Promise.all(
-						rungs.map(async (rung) => ({ width: rung.width, bytes: await (await fetch(rung.url)).blob() })),
-					);
-					const cover = await putCover(project, frame, uploads);
+					const cover = await putCover(project, frame, await (await fetch(image.url)).blob());
 					if (cover !== undefined) noteCover(frame, cover);
 				} catch {
 					// a lost capture is re-taken on the next settle
@@ -400,11 +381,14 @@ export function ProjectCanvas({
 
 	const pickedFrame = picked[picked.length - 1]?.frame;
 	const selectedFrame = selected[selected.length - 1];
-	// Select freezes what you point at so it cannot move under the cursor. The
-	// entered frame is the exception: it runs, and only stops when ⌘ takes the
-	// pointer back off it to reach an element.
-	const frozenFrame =
-		effectiveTool === "select" ? (pickedFrame ?? selectedFrame ?? (metaDown ? entered : null)) : null;
+	// Select owns every frame represented by its element picks. Without picks,
+	// the selected frame and entered-frame modifier keep their existing intent.
+	const selectionTargets = useMemo(() => {
+		if (picked.length > 0) return new Set(picked.map((pick) => pick.frame));
+		if (effectiveTool !== "select") return new Set<string>();
+		const fallback = selectedFrame ?? (metaDown ? entered : null);
+		return fallback === null ? new Set<string>() : new Set([fallback]);
+	}, [effectiveTool, picked, selectedFrame, metaDown, entered]);
 	// what the rail reads: the element scope's frame, else the frame selection,
 	// else the frame being used — inside a prototype its elements are the ones
 	// worth looking at, so entering must not empty the rail
@@ -419,18 +403,16 @@ export function ProjectCanvas({
 	const lifecycle = useFrameLifecycle({
 		framesRef,
 		entered,
-		frozen: frozenFrame,
+		selectionTargets,
 		inspected: railOpen ? inspectedFrame : null,
 		hasCover: hasCover,
 		onShot,
-		arm,
-		cameraRef,
+		cameraRef: settledCameraRef,
 		viewportRef,
 	});
 	const lifecycleRef = useRef(lifecycle);
 	lifecycleRef.current = lifecycle;
-	/** TEMPORARY (CANVAS_ARM_KEY): documents held right now, for the arm's own readout. */
-	const liveCount = Object.values(lifecycle.states).filter((state) => state === "live").length;
+	const sweepLifecycle = lifecycle.sweep;
 
 	const reloadFrameDocument = useCallback((frame: string) => {
 		setDocNonces((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
@@ -455,18 +437,14 @@ export function ProjectCanvas({
 	const capturePng = useCallback(
 		async (frame: ProjectedFrame): Promise<CapturedFrame> => {
 			if (frame.kind === "html") {
-				// an export is the artifact, never the cover: 0 asks for the frame
-				// at full device resolution, losslessly, as one rung
-				const rungs = await lifecycleRef.current.capture(frame.name, 0);
-				const sheet = rungs?.[0];
-				if (sheet !== undefined) {
-					const png = await pngBytesFromImageBlob(await (await fetch(sheet.url)).blob(), frame.w, frame.h);
-					return { name: frame.name, width: frame.w, height: frame.h, png };
-				}
+				const sheet = await lifecycleRef.current.captureExport(frame.name);
+				if (sheet === undefined) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
+				const png = await pngBytesFromImageBlob(await (await fetch(sheet.url)).blob(), frame.w, frame.h);
+				return { name: frame.name, width: frame.w, height: frame.h, png };
 			}
 
-			// nothing live to photograph (a terminal, or a frame that would not
-			// answer): fall back to the sharpest rung of its stored cover
+			// A terminal has no HTML document to mount, so its stored cover is
+			// the export source.
 			const stored = frame.cover === undefined ? undefined : await fetchCover(project, frame.name, frame.cover);
 			if (stored === undefined) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
 			const png = await pngBytesFromImageBlob(stored, frame.w, frame.h);
@@ -773,18 +751,6 @@ export function ProjectCanvas({
 	}, []);
 
 	const toggleArrows = useCallback(() => setArrowsOn((on) => !on), []);
-	/** TEMPORARY (CANVAS_ARM_KEY): ⇧L, remembered across a reload. */
-	const cycleArm = useCallback(() => {
-		setArm((current) => {
-			const next = CANVAS_ARMS[(CANVAS_ARMS.indexOf(current) + 1) % CANVAS_ARMS.length] ?? "pictures";
-			try {
-				window.localStorage.setItem(CANVAS_ARM_KEY, next);
-			} catch {
-				// a storage the browser refuses costs the memory of the arm, nothing else
-			}
-			return next;
-		});
-	}, []);
 
 	/** The player's door (#13/#24): its own tab, always naming its frame. */
 	const playFrame = useCallback(
@@ -1318,7 +1284,7 @@ export function ProjectCanvas({
 						void refetchFrames();
 					}
 				} else if (event.kind === "thumb" && event.frame !== undefined) {
-					// the ladder rides the event; only a cover the daemon could not
+					// the image rides the event; only a cover the daemon could not
 					// read back costs a projection read
 					if (event.cover !== undefined) noteCover(event.frame, event.cover);
 					else void refetchFrames();
@@ -1532,6 +1498,18 @@ export function ProjectCanvas({
 		return () => el.removeEventListener("wheel", onWheel);
 	}, [stopAnimation, zoomAtPoint]);
 
+	// Camera motion is a React value for drawing only. The lifecycle reads its ref
+	// after this short quiet window, so frames mount where the camera stopped
+	// rather than throughout the gesture.
+	useEffect(() => {
+		if (camera === null) return;
+		const settle = setTimeout(() => {
+			settledCameraRef.current = camera;
+			sweepLifecycle();
+		}, LIFECYCLE_CAMERA_SETTLE_MS);
+		return () => clearTimeout(settle);
+	}, [camera, sweepLifecycle]);
+
 	// persist arrows + the page bookkeeping on settle: last-settle wins
 	// the stored slot (#12); each page keeps its own camera, and the active
 	// page rides along so reopening resumes it (#39)
@@ -1674,8 +1652,8 @@ export function ProjectCanvas({
 			return;
 		}
 
-		// A live frame owns its own presses — the canvas only ever sees one when
-		// ⌘ has frozen it to reach an element, so ⌘ must not read as leaving.
+		// A live frame owns its own presses. The canvas only sees one when ⌘ has
+		// borrowed its pointer to reach an element, so ⌘ must not read as leaving.
 		if (enteredRef.current !== null && !event.metaKey) {
 			const hit = frameAtWorld(toWorld(p, cam));
 			if (hit === enteredRef.current) return; // the pointer is the frame's now
@@ -2140,7 +2118,7 @@ export function ProjectCanvas({
 	 * The tree grammar on element rows: shift ranges over the frame's visible
 	 * rows, ⌘/Ctrl toggles, a plain click replaces. Selecting an element is
 	 * Select's business (#54), so the row takes the tool with it — and the
-	 * frame it selects into is the one that freezes.
+	 * frame it selects into joins the selection intent.
 	 */
 	const selectTreeRow = (row: TreeRow, modifiers: SelectModifiers) => {
 		const frame = inspectedFrame;
@@ -2342,12 +2320,6 @@ export function ProjectCanvas({
 				if (gesture.current.kind === "idle" || gesture.current.kind === "pan") arrangeFrames();
 				return;
 			}
-			if (!event.repeat && event.shiftKey && (event.key === "l" || event.key === "L")) {
-				// TEMPORARY (CANVAS_ARM_KEY): pictures → live → readable → pictures
-				event.preventDefault();
-				cycleArm();
-				return;
-			}
 			if (!event.repeat && !event.shiftKey && (event.key === "t" || event.key === "T")) {
 				// the threads toggle (#34): persisted per project
 				toggleArrows();
@@ -2518,7 +2490,6 @@ export function ProjectCanvas({
 		cancelGesture,
 		cancelPicks,
 		toggleArrows,
-		cycleArm,
 		cancelExportDialog,
 		playFrame,
 	]);
@@ -2608,7 +2579,7 @@ export function ProjectCanvas({
 							const isSelected = selected.includes(frame.name);
 							const isHovered =
 								effectiveTool === "select" && hovered?.visible === true && hovered.frame === frame.name;
-							const paused = state !== "live";
+							const paused = frame.kind === "term" && state === "held";
 							return (
 								<div
 									key={frame.name}
@@ -2619,9 +2590,8 @@ export function ProjectCanvas({
 										height: frame.h,
 									}}
 								>
-									{/* the label: mono, muted; thread when selected; ▸ = paused (system
-									    page). Entered swaps it for the state chip (#28): time is
-									    running under the pointer, and esc is the way out. */}
+									{/* the label: mono, muted; thread when selected; ▸ only marks a
+									    terminal SIGSTOP. Entered swaps it for the state chip (#28). */}
 									<FrameLabel
 										name={frame.name}
 										frameWidth={frame.w}
@@ -2647,11 +2617,6 @@ export function ProjectCanvas({
 											terminal={frame.kind === "term"}
 											docNonce={docNonces[frame.name] ?? 0}
 											cover={frame.cover}
-											coverSizes={
-												frame.cover === undefined
-													? undefined
-													: coverSizes(frame.cover.widths, frame.w, k, devicePixelRatio)
-											}
 											terminalCover={frame.terminalCover}
 											walkArrival={walkArrivals.has(frame.name)}
 											onIframe={onIframe}
@@ -2667,17 +2632,6 @@ export function ProjectCanvas({
 								</div>
 							);
 						})}
-					</div>
-				)}
-
-				{/* TEMPORARY (CANVAS_ARM_KEY): never drawn in the shipped arm, so the
-				    canvas you are judging carries no new chrome of its own, and a
-				    reload cannot leave you guessing which arm the thing you just felt
-				    belonged to. The live count is the whole claim `readable` makes:
-				    it should stay in the low tens at every zoom, on every page. */}
-				{arm !== "pictures" && (
-					<div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-surface px-2 py-1 font-mono text-[11px] text-muted">
-						{arm} · {liveCount} live · ⇧L
 					</div>
 				)}
 

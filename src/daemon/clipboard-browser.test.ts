@@ -2,8 +2,7 @@ import { join } from "node:path";
 import { type Browser, chromium, type Frame, type Page } from "playwright-core";
 import { build as buildUi } from "vite";
 import { expect, it, onTestFinished } from "vitest";
-import { COVER_MAX_EDGE } from "../cover";
-import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
+import { COVER_PNG, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
 import { terminalSourceVersion } from "./term-source";
 
 async function launchBrowser(): Promise<Browser | undefined> {
@@ -15,10 +14,8 @@ async function launchBrowser(): Promise<Browser | undefined> {
 }
 
 async function childFrame(page: Page, selector: string): Promise<Frame> {
-	// Attached, not visible: the only document the canvas ever shows is the one
-	// you went inside (#112) — every other frame is behind its own still. An
-	// element found a moment ago can also be between documents, so ask again
-	// rather than read a stale handle.
+	// Documents may be hidden or between boots. Wait for attachment, then ask
+	// again if the element has not received its current document yet.
 	for (let attempt = 0; ; attempt++) {
 		const element = await page.waitForSelector(selector, { state: "attached" });
 		const frame = await element.contentFrame();
@@ -372,11 +369,10 @@ it("can copy after the canvas ignores an automatic walk from the same held frame
 	});
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	const label = page.locator('[data-frame-label="warm"]');
-	// Take the frame with one click. Select freezes what you point at, and a
-	// frozen frame is the model's own "mounted, and not the one you are inside"
-	// (#112): it holds real DOM for the tools to read, its boot runs, and it
-	// stays for as long as the selection does — which is what makes the walk it
-	// tries on its own way in observable at all.
+	// Take the frame with one click. The selection target is mounted without
+	// being entered (#112): it holds real DOM for the tools to read, its boot
+	// runs, and it stays for as long as the selection does, which is what makes
+	// the walk it tries on its own observable at all.
 	const still = page.locator('[data-frame-cover="warm"]');
 	await still.waitFor({ timeout: 30_000 });
 	const stillBox = await still.boundingBox();
@@ -482,6 +478,14 @@ it("replaces a self-walked document before it can walk or copy again", { timeout
 		body: JSON.stringify({ root: project.root, open: true }),
 	});
 	expect(session.status).toBe(204);
+	const coverBody = new FormData();
+	coverBody.append("cover", new Blob([COVER_PNG]));
+	const stored = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/thumbs/self`, {
+		method: "PUT",
+		headers: { "X-Spool-Control": project.controlToken },
+		body: coverBody,
+	});
+	expect(stored.status).toBe(200);
 
 	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 	onTestFinished(() => context.close());
@@ -497,38 +501,8 @@ it("replaces a self-walked document before it can walk or copy again", { timeout
 	});
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	const label = page.locator('[data-frame-label="self"]');
-	// The frame has no still yet, so the canvas borrows it to make one (#112) —
-	// out of sight, before anybody goes inside. That capture is the sync point
-	// here, and it waits for the frame to finish arriving first, so it outlasts
-	// a default poll.
-	await expect
-		.poll(
-			() =>
-				page.evaluate(
-					(maxEdge) =>
-						(window as unknown as { __spoolSelfMessages: unknown[] }).__spoolSelfMessages.some(
-							(message) =>
-								typeof message === "object" &&
-								message !== null &&
-								"spool" in message &&
-								message.spool === "capture-source" &&
-								"frame" in message &&
-								message.frame === "self" &&
-								"id" in message &&
-								typeof message.id === "string" &&
-								/^[0-9a-f]{32}$/.test(message.id) &&
-								"svg" in message &&
-								message.svg instanceof Blob &&
-								message.svg.type === "image/svg+xml" &&
-								message.svg.size > 0 &&
-								"maxEdge" in message &&
-								message.maxEdge === maxEdge,
-						),
-					COVER_MAX_EDGE,
-				),
-			{ timeout: 30_000 },
-		)
-		.toBe(true);
+	await label.waitFor();
+	await expect.poll(() => page.locator('iframe[title="self"]').count(), { timeout: 30_000 }).toBe(0);
 
 	await label.dispatchEvent("dblclick");
 	await expect.poll(() => label.innerText()).toContain("esc exits");

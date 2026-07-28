@@ -13,12 +13,9 @@ import {
 
 /**
  * The lifecycle decision function (#40, #112): fabricated frames in, per-sweep
- * states out — no browser, no real timers, and no camera, because the decision
- * does not have one. Mounting is caused, so these tests are a list of causes:
- * you went to a frame, its picture is missing, its picture is wrong. Where a
- * frame sits, how big it draws and whether the camera is moving are not among
- * them — `SweepInput` cannot express them, which is the strongest form the
- * claim can take.
+ * states out, with no browser and no real timers. Mounting is caused: you went to
+ * a frame, its picture is missing, its picture is wrong, or it is readable on
+ * the resting canvas. The named camera and viewport make the last cause plain.
  */
 
 const SWEEP_MS = 300;
@@ -30,7 +27,7 @@ const frame = (name: string, x: number, y: number, kind: "html" | "term" = "html
 	y,
 	w: 100,
 	h: 100,
-	cover: { hash: "0".repeat(32), widths: [200, 100, 50] },
+	cover: { hash: "0".repeat(32) },
 });
 
 /**
@@ -48,13 +45,15 @@ function sweeper() {
 		const result = sweepLifecycle(model, {
 			frames,
 			entered: null,
-			frozen: null,
+			selectionTargets: new Set(),
 			inspected: null,
 			states,
 			ready: new Map(frames.map((f) => [f.name, -CAPTURE_AFTER_READY_MS])),
 			capturing: new Set(),
 			hasCover: () => true,
 			now,
+			camera: { x: 0, y: 0, k: 1 },
+			viewport: { width: 1000, height: 1000 },
 			...input,
 		});
 		states = result.states;
@@ -256,10 +255,15 @@ describe("the cap on frames borrowed at once", () => {
 		expect(next).not.toContain("f0");
 	});
 
-	it("holds the worst case to six documents: entered, frozen, inspected and the cap", () => {
+	it("adds entered, selected and inspected intent to the capped errands", () => {
 		const frames = Array.from({ length: 40 }, (_, i) => frame(`f${i}`, i * 200, 0));
 		const s = sweeper();
-		const busy = { hasCover: () => false, entered: "f0", frozen: "f1", inspected: "f2" };
+		const busy = {
+			hasCover: () => false,
+			entered: "f0",
+			selectionTargets: new Set(["f1"]),
+			inspected: "f2",
+		};
 
 		for (let i = 0; i < 8; i++) {
 			expect(mounted(s.sweep(frames, busy).states)).toHaveLength(3 + ERRANDS_IN_FLIGHT);
@@ -268,12 +272,86 @@ describe("the cap on frames borrowed at once", () => {
 });
 
 describe("intent", () => {
-	it("holds the frozen selection target, and thaws the previous one", () => {
+	it("holds every unreadable frame represented by a multi-frame element selection", () => {
+		const frames = [frame("a", 350, 450), frame("b", 550, 450), frame("c", 750, 450)];
+		const s = sweeper();
+
+		expect(s.sweep(frames, { selectionTargets: new Set(["a", "b", "c"]) }).states).toEqual({
+			a: "held",
+			b: "held",
+			c: "held",
+		});
+	});
+
+	it("keeps every readable HTML pick live", () => {
+		const frames = [frame("a", 0, 0), frame("b", 100, 0), frame("c", 200, 0)];
+		const s = sweeper();
+
+		expect(
+			s.sweep(frames, {
+				selectionTargets: new Set(["a", "b", "c"]),
+				camera: { x: 0, y: 0, k: 4 },
+				viewport: { width: 1000, height: 1000 },
+			}).states,
+		).toEqual({ a: "live", b: "live", c: "live" });
+	});
+
+	it("releases only picks no longer represented, then releases the whole selection", () => {
+		const frames = [frame("a", 350, 450), frame("b", 550, 450), frame("c", 750, 450)];
+		const s = sweeper();
+		s.sweep(frames, { selectionTargets: new Set(["a", "b", "c"]) });
+
+		expect(s.sweep(frames, { selectionTargets: new Set(["a", "c"]) }).states).toEqual({
+			a: "held",
+			b: "picture",
+			c: "held",
+		});
+		expect(s.sweep(frames, { selectionTargets: new Set() }).states).toEqual({
+			a: "picture",
+			b: "picture",
+			c: "picture",
+		});
+	});
+
+	it("unites picked-frame intent with the frame an open rail reads", () => {
+		const frames = [frame("a", 350, 450), frame("b", 550, 450), frame("rail", 750, 450)];
+		const s = sweeper();
+
+		expect(
+			s.sweep(frames, {
+				selectionTargets: new Set(["a", "b"]),
+				inspected: "rail",
+			}).states,
+		).toEqual({ a: "held", b: "held", rail: "held" });
+	});
+
+	it("leaves a readable HTML selection live while Select and the inspector read it", () => {
+		const frames = [frame("a", 0, 0), frame("terminal", 200, 0, "term")];
+		const s = sweeper();
+
+		expect(
+			s.sweep(frames, {
+				selectionTargets: new Set(["a"]),
+				inspected: "a",
+				camera: { x: 0, y: 0, k: 4 },
+				viewport: { width: 1000, height: 1000 },
+			}).states,
+		).toEqual({ a: "live", terminal: "live" });
+		expect(
+			s.sweep(frames, {
+				selectionTargets: new Set(["terminal"]),
+				camera: { x: 0, y: 0, k: 4 },
+				viewport: { width: 1000, height: 1000 },
+			}).states.terminal,
+		).toBe("held");
+	});
+
+	it("keeps an unreadable selection held behind its still", () => {
 		const frames = [frame("a", 350, 450), frame("b", 550, 450)];
 		const s = sweeper();
 
-		expect(s.sweep(frames, { frozen: "a" }).states).toEqual({ a: "held", b: "picture" });
-		expect(s.sweep(frames, { frozen: "b" }).states).toEqual({ a: "picture", b: "held" });
+		expect(s.sweep(frames, { selectionTargets: new Set(["a"]) }).states).toEqual({ a: "held", b: "picture" });
+		expect(s.sweep(frames, { selectionTargets: new Set(["b"]) }).states).toEqual({ a: "picture", b: "held" });
 	});
 
 	it("holds the frame an open rail reads, wherever the camera is", () => {
@@ -283,11 +361,11 @@ describe("intent", () => {
 		expect(s.sweep(frames, { inspected: "far" }).states.far).toBe("held");
 	});
 
-	it("freezes the entered frame rather than running it, then thaws it live", () => {
+	it("keeps an unreadable entered selection held, then returns it live", () => {
 		const frames = [frame("a", 450, 450)];
 		const s = sweeper();
 
-		expect(s.sweep(frames, { entered: "a", frozen: "a" }).states).toEqual({ a: "held" });
+		expect(s.sweep(frames, { entered: "a", selectionTargets: new Set(["a"]) }).states).toEqual({ a: "held" });
 		expect(s.sweep(frames, { entered: "a" }).states).toEqual({ a: "live" });
 	});
 
@@ -410,113 +488,95 @@ describe("frames that leave the projection", () => {
 	});
 });
 
-// TEMPORARY (CANVAS_ARM_KEY, #107 follow-up). Deleted with the arms themselves.
-//
 // `frame()` above builds 100x100 boxes, so LIVE_MIN_CSS_PX is reached at k = 4
 // and missed below it. The viewport is named per sweep rather than inferred.
-describe("the canvas arms", () => {
+describe("a readable frame", () => {
 	const view = { width: 1000, height: 1000 };
 	const at = (k: number) => ({ camera: { x: 0, y: 0, k }, viewport: view });
 
-	describe("live", () => {
-		it("runs every frame on the page and photographs none of them", () => {
-			const frames = [frame("a", 0, 0), frame("b", 450, 0), frame("c", 900, 0)];
-			const s = sweeper();
-			// uncovered, which under the shipped model is the whole of a page's debt
-			const result = s.sweep(frames, { hasCover: () => false, arm: "live" });
+	it("runs a frame drawn big enough and inside the ring", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
 
-			expect(result.states).toEqual({ a: "live", b: "live", c: "live" });
-			expect(result.refreshCaptures).toEqual([]);
-			expect(s.model.errands.size).toBe(0);
-		});
-
-		it("keeps freezing and entering above it", () => {
-			const frames = [frame("a", 0, 0), frame("b", 450, 0)];
-			const s = sweeper();
-			// ⌘ over a frame still stops it, or it moves under the cursor mid-pick
-			const result = s.sweep(frames, { arm: "live", frozen: "a", entered: "b" });
-
-			expect(result.states).toEqual({ a: "held", b: "live" });
-		});
+		expect(s.sweep(frames, at(4)).states).toEqual({ a: "live" });
 	});
 
-	describe("readable", () => {
-		it("runs a frame drawn big enough and inside the ring", () => {
-			const frames = [frame("a", 0, 0)];
-			const s = sweeper();
+	it("leaves a frame drawn too small to read as its picture", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
 
-			expect(s.sweep(frames, { arm: "readable", ...at(4) }).states).toEqual({ a: "live" });
-		});
-
-		it("leaves a frame drawn too small to read as its picture", () => {
-			const frames = [frame("a", 0, 0)];
-			const s = sweeper();
-
-			// 100px wide at k = 1: legible as a still, not worth a document
-			expect(s.sweep(frames, { arm: "readable", ...at(1) }).states).toEqual({ a: "picture" });
-		});
-
-		it("leaves a frame far outside the viewport as its picture, however big it draws", () => {
-			const frames = [frame("near", 0, 0), frame("far", 100_000, 0)];
-			const s = sweeper();
-
-			expect(s.sweep(frames, { arm: "readable", ...at(4) }).states).toEqual({ near: "live", far: "picture" });
-		});
-
-		it("bounds the live count by the viewport rather than by the page", () => {
-			// two hundred frames in a row: the ring admits a fixed span of world,
-			// and the page's own size never enters the arithmetic
-			const many = Array.from({ length: 200 }, (_, index) => frame(`f${index}`, index * 150, 0));
-			const s = sweeper();
-			const live = Object.values(s.sweep(many, { arm: "readable", ...at(4) }).states).filter(
-				(state) => state === "live",
-			);
-
-			expect(live.length).toBeGreaterThan(0);
-			expect(live.length).toBeLessThan(30);
-		});
-
-		it("still photographs the frames it is not running", () => {
-			const frames = [frame("a", 0, 0), frame("b", 100_000, 0)];
-			const s = sweeper();
-			// the still is what a frame below the threshold draws, so the debt stands
-			const result = s.sweep(frames, { arm: "readable", hasCover: () => false, ...at(4) });
-
-			expect(result.states.b).toBe("refreshing");
-		});
+		// 100px wide at k = 1: legible as a still, not worth a document
+		expect(s.sweep(frames, at(1)).states).toEqual({ a: "picture" });
 	});
 
-	describe("what a frame owes when it stops being live", () => {
-		it("owes nothing when the arm was what made it live", () => {
-			const frames = [frame("a", 0, 0)];
-			const s = sweeper();
-			s.sweep(frames, { arm: "readable", ...at(4) });
+	it("leaves a frame far outside the viewport as its picture, however big it draws", () => {
+		const frames = [frame("near", 0, 0), frame("far", 100_000, 0)];
+		const s = sweeper();
 
-			// zooming past a frame is not using it: a still of a frame that booted
-			// and did nothing is still true of it
-			const out = s.sweep(frames, { arm: "readable", ...at(1) });
-			expect(out.states).toEqual({ a: "picture" });
-			expect(s.model.stale.size).toBe(0);
-		});
+		expect(s.sweep(frames, at(4)).states).toEqual({ near: "live", far: "picture" });
+	});
 
-		it("owes nothing when the arm is switched off underneath it", () => {
-			const frames = [frame("a", 0, 0), frame("b", 450, 0)];
-			const s = sweeper();
-			s.sweep(frames, { arm: "live" });
+	it("keeps a frame in the viewport's 25% ring live", () => {
+		const frames = [frame("ring", 300, 0)];
+		const s = sweeper();
 
-			const off = s.sweep(frames);
-			expect(off.states).toEqual({ a: "picture", b: "picture" });
-			expect(s.model.stale.size).toBe(0);
-			expect(s.model.errands.size).toBe(0);
-		});
+		expect(s.sweep(frames, at(4)).states).toEqual({ ring: "live" });
+	});
 
-		it("owes a fresh picture for the frame you actually went inside", () => {
-			const frames = [frame("a", 0, 0), frame("b", 450, 0)];
-			const s = sweeper();
-			s.sweep(frames, { entered: "a" });
-			s.sweep(frames);
+	it("bounds natural live frames by the viewport and adds only explicit selection", () => {
+		// two hundred frames in a row: the ring admits a fixed span of world,
+		// and the page's own size never enters the arithmetic
+		const many = Array.from({ length: 200 }, (_, index) => frame(`f${index}`, index * 150, 0));
+		const s = sweeper();
+		const view = at(4);
+		const natural = mounted(s.sweep(many, view).states);
 
-			expect(s.model.stale.has("a")).toBe(true);
-		});
+		expect(natural.length).toBeGreaterThan(0);
+		expect(natural.length).toBeLessThan(30);
+		const additions = ["f50", "f100", "f199"];
+		const withSelection = mounted(s.sweep(many, { ...view, selectionTargets: new Set(additions) }).states);
+
+		expect(withSelection).toEqual([...natural, ...additions].sort());
+	});
+
+	it("still photographs a frame below the threshold when its picture is missing", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
+		// the still is what a frame below the threshold draws, so the debt stands
+		const result = s.sweep(frames, { hasCover: () => false, ...at(1) });
+
+		expect(result.states.a).toBe("refreshing");
+	});
+
+	it("owes nothing when the model made it live", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
+		s.sweep(frames, at(4));
+
+		// zooming past a frame is not using it: a still of a frame that booted
+		// and did nothing is still true of it
+		const out = s.sweep(frames, at(1));
+		expect(out.states).toEqual({ a: "picture" });
+		expect(s.model.stale.size).toBe(0);
+	});
+
+	it("owes a fresh picture for the frame you actually went inside", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
+		s.sweep(frames, at(4));
+		s.sweep(frames, { entered: "a", ...at(4) });
+		s.sweep(frames, at(1));
+
+		expect(s.model.stale.has("a")).toBe(true);
+	});
+
+	it("owes a fresh picture after leaving an entered frame at readable size", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
+		s.sweep(frames, at(4));
+		s.sweep(frames, { entered: "a", ...at(4) });
+		s.sweep(frames, at(4));
+
+		expect(s.sweep(frames, at(1)).states.a).toBe("refreshing");
 	});
 });

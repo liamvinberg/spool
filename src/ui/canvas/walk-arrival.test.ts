@@ -14,7 +14,7 @@ import { ProjectCanvas } from "./canvas";
  * is where the walk lands (#5).
  */
 
-const COVER = { hash: "b".repeat(32), widths: [200, 100, 50] };
+const COVER = { hash: "b".repeat(32) };
 const frames = [
 	{ name: "origin", x: 0, y: 0, w: 100, h: 100, kind: "html", cover: COVER },
 	// no cover, so the canvas borrows it to make one: the only way a frame you

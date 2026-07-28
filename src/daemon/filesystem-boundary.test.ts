@@ -54,23 +54,23 @@ describe("project filesystem sinks", () => {
 		const outsideCovers = join(root, "outside-covers");
 		mkdirSync(outsideCovers, { recursive: true });
 		writeFileSync(outsideState, JSON.stringify({ arrows: false, secret: SENTINEL }));
-		writeFileSync(join(outsideCovers, `${HASH}.195.png`), SENTINEL);
+		writeFileSync(join(outsideCovers, `${HASH}.png`), SENTINEL);
 		symlinkSync(outsideState, join(cache, "state.json"));
-		// a frame's cover folder is where the ladder lives, so that is the entry an
+		// a frame's cover folder is where its image lives, so that is the entry an
 		// escape would come through
 		symlinkSync(outsideCovers, join(cache, "thumbs", "checkout"));
 		const app = makeApp(spoolDir);
 
 		await expectBoundary(await app.request(`/api/p/${name}/state`), ".spool/state.json", root);
-		await expectBoundary(await app.request(`/covers/${name}/checkout/${HASH}/195`), ".spool/thumbs/checkout", root);
+		await expectBoundary(await app.request(`/covers/${name}/checkout/${HASH}`), ".spool/thumbs/checkout", root);
 		const stateWrite = await app.request(`/api/p/${name}/state`, json("PUT", { camera: { x: 1, y: 2, k: 1 } }));
 		await expectBoundary(stateWrite, ".spool/state.json", root);
 		const body = new FormData();
-		body.append("w195", new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2])]));
+		body.append("cover", new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2])]));
 		const coverWrite = await app.request(`/api/p/${name}/thumbs/checkout`, { method: "PUT", body });
 		await expectBoundary(coverWrite, ".spool/thumbs/checkout", root);
 		expect(readFileSync(outsideState, "utf8")).toContain(SENTINEL);
-		expect(readFileSync(join(outsideCovers, `${HASH}.195.png`), "utf8")).toBe(SENTINEL);
+		expect(readFileSync(join(outsideCovers, `${HASH}.png`), "utf8")).toBe(SENTINEL);
 		// and the projection reads past it rather than through it
 		const { frames } = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
 			frames: { name: string; cover?: unknown }[];

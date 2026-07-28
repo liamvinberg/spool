@@ -1,14 +1,14 @@
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { type Browser, type BrowserContext, type CDPSession, chromium, type Frame, type Page } from "playwright-core";
 import {
 	copyProject,
 	DEFAULT_ZOOM,
 	densestPage,
-	type FrameBox,
 	freePort,
 	ms,
 	planCamera,
+	prepareCurrentCovers,
 	quantile,
 	startDaemon,
 	VIEWPORT,
@@ -22,11 +22,10 @@ import {
  * **Why `settle` could not.** `bench/canvas.ts` defines settled as the iframe
  * count holding still for a second, so its `reloadMs` was by construction when
  * the wake queue finished draining — a constant it was told rather than
- * anything it found. #112 deleted that queue, and with it the whole idea that a
- * reload ends when the canvas has finished mounting: a settled canvas mounts
- * nothing at all now. The bar is *reload to canvas looking complete*, and what
- * a person sees on reload is a wall of stored covers. Nobody had timed the
- * covers.
+ * anything it found. #112 deleted that queue, and #128 later made readable,
+ * nearby frames live. Neither document count says when the canvas looks
+ * complete. A person sees stored covers until readable documents arrive, and
+ * nobody had timed those covers.
  *
  * **The completion condition.** `settle` had to guess when things had stopped
  * because it did not know what it was waiting for. This one knows the target:
@@ -52,12 +51,13 @@ import {
  * first load per name — and since #111 both name the same addresses, so the two
  * elements are one request rather than two.
  *
- * **A frame with no stored cover never gets a picture.** On matmannen's densest
- * page that is one frame of 41: it renders the placeholder, not an `<img>`.
- * Waiting for it would hang forever and counting it complete would be a lie, so
- * the expected set is read from disk and the bare frames are reported by name.
+ * **The setup is not part of the timing.** The canonical subject has no
+ * app-owned state. This script first lets the canvas at picture zoom create
+ * exactly one current cover for every measured frame in its private copy, fails
+ * if that coverage does not complete, then opens a fresh context for the
+ * existing reload path.
  *
- *   pnpm build && node bench/reload.ts --project ~/projects/matmannen-fc63dba
+ *   pnpm build && node bench/reload.ts --project <spool-bench>
  *   node bench/reload.ts --project <path> --repeats 5 --out reload.json
  *
  * Run it with node's own type stripping, not tsx: the watcher below is
@@ -127,31 +127,6 @@ function parseArgs(argv: string[]): Options {
 	if (project === "") throw new Error("--project <path to a spool project> is required");
 	if (!Number.isFinite(repeats) || repeats < 1) throw new Error("--repeats must be a positive integer");
 	return { project, repeats, headed, zoom, out };
-}
-
-/**
- * The frames that can show a picture at all, read from disk rather than from the
- * canvas. A frame is covered when its cover folder holds at least one rung of a
- * hashed ladder (#111) or — for a terminal — a serialized screen sits beside it.
- * A bare `<frame>.jpg` from the pre-ladder store is not a cover and never shows.
- */
-function splitByCover(root: string, frames: FrameBox[]): { covered: string[]; bare: string[] } {
-	const thumbs = join(root, "design", ".spool", "thumbs");
-	const screens = join(root, "design", ".spool", "term");
-	const rung = /^[0-9a-f]{32}\.[1-9][0-9]*\.(?:jpg|png)$/;
-	const covered: string[] = [];
-	const bare: string[] = [];
-	for (const frame of frames) {
-		let ladder: string[] = [];
-		try {
-			ladder = readdirSync(join(thumbs, frame.name));
-		} catch {
-			ladder = [];
-		}
-		const has = ladder.some((file) => rung.test(file)) || existsSync(join(screens, `${frame.name}.screen`));
-		(has ? covered : bare).push(frame.name);
-	}
-	return { covered, bare };
 }
 
 interface CoverMark {
@@ -224,8 +199,8 @@ interface CoverResponse {
  * The cover fetches as the page timed them. Same-origin, so `responseEnd` is
  * real and sits in the same `performance.now()` timebase as the marks above —
  * which is what makes "network, then decode" a subtraction rather than a guess.
- * Since #111 the `<img>` fetches its own rung, so the network entry *is* the
- * image, and its address is /covers/<project>/<frame>/<hash>/<width>.
+ * The `<img>` fetches its own image, so the network entry *is* the image and
+ * its address is /covers/<project>/<frame>/<hash>.
  */
 const readCoverResponses = (page: Page): Promise<CoverResponse[]> =>
 	page.evaluate(() =>
@@ -236,8 +211,8 @@ const readCoverResponses = (page: Page): Promise<CoverResponse[]> =>
 				const timing = entry as PerformanceResourceTiming;
 				const parts = (timing.name.split("?")[0] ?? "").split("/");
 				return {
-					// .../covers/<project>/<frame>/<hash>/<width>
-					frame: decodeURIComponent(parts[parts.length - 3] ?? ""),
+					// .../covers/<project>/<frame>/<hash>
+					frame: decodeURIComponent(parts[parts.length - 2] ?? ""),
 					responseEnd: timing.responseEnd,
 					transferSize: timing.transferSize,
 					encodedBodySize: timing.encodedBodySize,
@@ -502,14 +477,11 @@ interface Run {
 const flowsOf = (sample: Sample): WireRequest | undefined =>
 	sample.wire.find((entry) => /\/flows$/.test(entry.url.split("?")[0] ?? ""));
 
-function report(runs: Run[], expected: string[], bare: string[], page: string): string {
+function report(runs: Run[], expected: string[], page: string): string {
 	const lines: string[] = [];
 	const column = (rows: Sample[], pick: (row: Sample) => number): number[] => rows.map(pick).sort((a, b) => a - b);
 	const p50 = (rows: Sample[], pick: (row: Sample) => number): number => quantile(column(rows, pick), 0.5);
-	lines.push(
-		`page "${page === "" ? "root" : page}" — ${expected.length} frames with a stored cover` +
-			`${bare.length > 0 ? `, ${bare.length} with none (${bare.join(", ")})` : ""}`,
-	);
+	lines.push(`page "${page === "" ? "root" : page}": ${expected.length} frames with a stored cover`);
 	lines.push("");
 	lines.push("### reload to canvas looking complete");
 	lines.push("");
@@ -614,20 +586,13 @@ async function main(): Promise<void> {
 	const { root, name, spoolDir } = copyProject(options.project);
 	const { page: canvasPage, frames: boxes } = densestPage(root);
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
-	const { covered, bare } = splitByCover(root, boxes);
-	// every bar below would report a pass over a canvas that shows nothing
-	if (covered.length === 0) {
-		throw new Error(`no frame on page "${canvasPage}" has a stored cover — this run would measure an empty canvas`);
-	}
+	const frameNames = boxes.map((box) => box.name);
 	const camera = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, options.zoom);
-	writeCamera(root, camera, canvasPage);
+	const pictureCamera = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM);
+	writeCamera(root, pictureCamera, canvasPage);
 	const port = await freePort();
 	const daemon = await startDaemon(spoolDir, root, port);
 	const url = `${daemon.url}/p/${encodeURIComponent(name)}`;
-	process.stderr.write(
-		`bench: ${url} (copy of ${options.project}, page "${canvasPage === "" ? "root" : canvasPage}", ` +
-			`${boxes.length} frames, ${covered.length} covered, ${bare.length} bare)\n`,
-	);
 
 	let browser: Browser | undefined;
 	try {
@@ -635,6 +600,13 @@ async function main(): Promise<void> {
 			channel: options.headed ? "chromium" : "chromium-headless-shell",
 			headless: !options.headed,
 		});
+		await prepareCurrentCovers(browser, url, root, boxes);
+		writeCamera(root, camera, canvasPage);
+		process.stderr.write(
+			`bench: ${url} (copy of ${options.project}, page "${canvasPage === "" ? "root" : canvasPage}", ` +
+				`${frameNames.length} frames, all covered)\n`,
+		);
+
 		const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
 		const page = await context.newPage();
 		await page.addInitScript(watchCovers);
@@ -648,7 +620,7 @@ async function main(): Promise<void> {
 		// cache below gives.
 		process.stderr.write("bench: warming the daemon\n");
 		await page.goto(url, { waitUntil: "commit" });
-		await waitComplete(page, covered, 90_000);
+		await waitComplete(page, frameNames, 90_000);
 
 		const session = await context.newCDPSession(page);
 		const runs: Run[] = [];
@@ -661,7 +633,7 @@ async function main(): Promise<void> {
 				const samples: Sample[] = [];
 				for (let i = 0; i < options.repeats; i++) {
 					if (cache === "cold") await session.send("Network.clearBrowserCache");
-					const taken = await sample(page, watch, covered);
+					const taken = await sample(page, watch, frameNames);
 					process.stderr.write(
 						`bench: ${arm.label} / ${cache} ${i + 1}/${options.repeats} — ${ms(taken.decodeCompleteMs)} ms\n`,
 					);
@@ -672,10 +644,10 @@ async function main(): Promise<void> {
 			if (arm.blockFlows) await page.unroute(/\/api\/p\/[^/]+\/flows$/);
 		}
 
-		const text = report(runs, covered, bare, canvasPage);
+		const text = report(runs, frameNames, canvasPage);
 		process.stdout.write(`${text}\n`);
 		if (options.out !== undefined) {
-			writeFileSync(options.out, `${JSON.stringify({ page: canvasPage, covered, bare, runs }, null, "\t")}\n`);
+			writeFileSync(options.out, `${JSON.stringify({ page: canvasPage, frames: frameNames, runs }, null, "\t")}\n`);
 			process.stderr.write(`bench: wrote ${options.out}\n`);
 		}
 	} finally {

@@ -1,0 +1,1947 @@
+{
+	"schemaVersion": 1,
+	"extractor": "10-readable-frame-pan-cost-trace.ts",
+	"extractorSha256": "f5ddf2eadd52326ed9323414226b5fafd1462482cbb708376a7848474c8e518f",
+	"runsFile": "10-readable-frame-pan-cost-trace-runs.ndjson",
+	"runsSha256": "0c3f7f129c78325394f671b8fde5f838653bb71f785c767ac6a8656101bd859c",
+	"cliSha256": "c0b55ea073f42e4960da791f81455f71b786efbecf4b783e2962725a89f2d660",
+	"distTreeSha256": "fe0601d66d944a5bb4b9f136331522310d12805a595dcdabcc2c424cdc6aec40",
+	"driverSha256": "98aefa6f0939465d736916a9b5fbed36d62b9bf96ffa138279677c2f152860f2",
+	"fixedPoint": "2665510d6561f4f8b79ce71a2b1e621ce2f89024",
+	"rareIntervalMs": 12,
+	"subjectDesignTreeSha256": "2047b256d67bc6e4de35bad28d0c56cc43fc5faca277ba81f977e6014bc21d5f",
+	"wheelScheduleSha256": "52333faefbba16154ac59593206878be2776264d99e0734ba449fb6d22d22de0",
+	"selectedReadableRareIntervals": 4,
+	"pairs": [
+		{
+			"pair": 3,
+			"order": "AB",
+			"pictureTraceId": "pair-03-picture",
+			"readableTraceId": "pair-03-readable"
+		},
+		{
+			"pair": 11,
+			"order": "AB",
+			"pictureTraceId": "pair-11-picture",
+			"readableTraceId": "pair-11-readable"
+		},
+		{
+			"pair": 17,
+			"order": "AB",
+			"pictureTraceId": "pair-17-picture",
+			"readableTraceId": "pair-17-readable"
+		},
+		{
+			"pair": 33,
+			"order": "AB",
+			"pictureTraceId": "pair-33-picture",
+			"readableTraceId": "pair-33-readable"
+		}
+	],
+	"traces": [
+		{
+			"traceId": "pair-03-picture",
+			"pair": 3,
+			"order": "AB",
+			"arm": "picture",
+			"traceFile": "pair-03-AB-1-picture-attempt-1.json.gz",
+			"archiveSha256": "e60290ef028de09cabdf87d3dc9337bbf8414cfbbfa38a52ea6c0e4df49c0d7d",
+			"rawJsonSha256": "39bec802e37f94357105442eb261f13c61c06093eb7697cc955f9e500fbc0a07",
+			"rafWorstMs": 16.6,
+			"worstRaf": {
+				"binding": "gap-marker",
+				"pageFromOffsetMs": 155.8,
+				"pageToOffsetMs": 172.4,
+				"durationMs": 16.6,
+				"traceFromUs": 487320664237,
+				"traceToUs": 487320680837,
+				"markerName": "DEBUG132_RAF_GAP|1532.400|1549.000|16.600"
+			},
+			"gapMarkerCount": 1,
+			"processRoles": [
+				{
+					"pid": 36880,
+					"roles": [
+						"gpu"
+					]
+				},
+				{
+					"pid": 38514,
+					"roles": [
+						"canvas-renderer"
+					]
+				}
+			],
+			"selectedEventCounts": {
+				"metadata": 11,
+				"marker": 4,
+				"x": 406,
+				"flow": 96,
+				"functionCall": 0
+			},
+			"eventTotals": [
+				{
+					"name": "RunTask",
+					"count": 64,
+					"durationTotalMs": 25.057,
+					"windowOverlapTotalMs": 19.254
+				},
+				{
+					"name": "ProxyMain::BeginMainFrame",
+					"count": 4,
+					"durationTotalMs": 12.393,
+					"windowOverlapTotalMs": 6.883
+				},
+				{
+					"name": "Scheduler::RunTask",
+					"count": 4,
+					"durationTotalMs": 6.665,
+					"windowOverlapTotalMs": 6.665
+				},
+				{
+					"name": "GpuChannel::ExecuteDeferredRequest",
+					"count": 2,
+					"durationTotalMs": 6.016,
+					"windowOverlapTotalMs": 6.016
+				},
+				{
+					"name": "GPUTask",
+					"count": 2,
+					"durationTotalMs": 6.004,
+					"windowOverlapTotalMs": 6.004
+				},
+				{
+					"name": "RendererRasterWorker",
+					"count": 2,
+					"durationTotalMs": 5.984,
+					"windowOverlapTotalMs": 5.984
+				},
+				{
+					"name": "CommandBuffer::Flush",
+					"count": 2,
+					"durationTotalMs": 5.981,
+					"windowOverlapTotalMs": 5.981
+				},
+				{
+					"name": "CommandBufferStub::OnAsyncFlush",
+					"count": 2,
+					"durationTotalMs": 5.98,
+					"windowOverlapTotalMs": 5.98
+				},
+				{
+					"name": "CommandBufferService:PutChanged",
+					"count": 2,
+					"durationTotalMs": 5.972,
+					"windowOverlapTotalMs": 5.972
+				},
+				{
+					"name": "Commit",
+					"count": 3,
+					"durationTotalMs": 9.756,
+					"windowOverlapTotalMs": 5.872
+				},
+				{
+					"name": "LayerTreeHost::WaitForCommitCompletion",
+					"count": 3,
+					"durationTotalMs": 9.611,
+					"windowOverlapTotalMs": 5.763
+				},
+				{
+					"name": "ProxyMain::BeginMainFrame::commit",
+					"count": 1,
+					"durationTotalMs": 9.61,
+					"windowOverlapTotalMs": 5.758
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM",
+					"count": 4,
+					"durationTotalMs": 5.349,
+					"windowOverlapTotalMs": 5.349
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM::Flush",
+					"count": 4,
+					"durationTotalMs": 5.276,
+					"windowOverlapTotalMs": 5.276
+				},
+				{
+					"name": "FunctionCall",
+					"count": 11,
+					"durationTotalMs": 2.476,
+					"windowOverlapTotalMs": 2.379
+				},
+				{
+					"name": "ProxyImpl::ReadyToCommit",
+					"count": 1,
+					"durationTotalMs": 2.432,
+					"windowOverlapTotalMs": 2.163
+				},
+				{
+					"name": "ProxyImpl::Commit",
+					"count": 1,
+					"durationTotalMs": 2.277,
+					"windowOverlapTotalMs": 2.038
+				},
+				{
+					"name": "LayerTreeHostImpl::FinishCommit",
+					"count": 1,
+					"durationTotalMs": 2.256,
+					"windowOverlapTotalMs": 2.031
+				},
+				{
+					"name": "LayerTreeImpl::PullProperties",
+					"count": 1,
+					"durationTotalMs": 2.254,
+					"windowOverlapTotalMs": 2.03
+				},
+				{
+					"name": "DiscardableImageMap::Generate",
+					"count": 1,
+					"durationTotalMs": 2.202,
+					"windowOverlapTotalMs": 2.021
+				},
+				{
+					"name": "Display::DrawAndSwap",
+					"count": 1,
+					"durationTotalMs": 0.224,
+					"windowOverlapTotalMs": 0.224
+				},
+				{
+					"name": "CommandBufferProxyImpl::WaitForGetOffset",
+					"count": 0,
+					"durationTotalMs": 0,
+					"windowOverlapTotalMs": 0
+				},
+				{
+					"name": "RasterImplementation::Finish",
+					"count": 0,
+					"durationTotalMs": 0,
+					"windowOverlapTotalMs": 0
+				}
+			],
+			"threadBusyUnions": [
+				{
+					"pid": 36880,
+					"tid": 53702054,
+					"processName": "GPU Process",
+					"threadName": "CrGpuMain",
+					"runTaskCount": 12,
+					"busyUnionMs": 6.712
+				},
+				{
+					"pid": 36880,
+					"tid": 53702116,
+					"processName": "GPU Process",
+					"threadName": "VizCompositorThread",
+					"runTaskCount": 13,
+					"busyUnionMs": 0.411
+				},
+				{
+					"pid": 38514,
+					"tid": 53705947,
+					"processName": "Renderer",
+					"threadName": "CrRendererMain",
+					"runTaskCount": 16,
+					"busyUnionMs": 9.079
+				},
+				{
+					"pid": 38514,
+					"tid": 53705969,
+					"processName": "Renderer",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 3,
+					"busyUnionMs": 0.026
+				},
+				{
+					"pid": 38514,
+					"tid": 53705974,
+					"processName": "Renderer",
+					"threadName": "Compositor",
+					"runTaskCount": 20,
+					"busyUnionMs": 3.026
+				}
+			],
+			"functionCallUrls": []
+		},
+		{
+			"traceId": "pair-03-readable",
+			"pair": 3,
+			"order": "AB",
+			"arm": "readable",
+			"traceFile": "pair-03-AB-2-readable-attempt-1.json.gz",
+			"archiveSha256": "b017a008fc915ecbdd466b65153357090ec4c187309196d3722904be0d23911f",
+			"rawJsonSha256": "3a5051e432ee4b62af4e6ecbe2f432c3f70895bbb70cd40734c786e298f8548d",
+			"rafWorstMs": 17,
+			"worstRaf": {
+				"binding": "gap-marker",
+				"pageFromOffsetMs": 1253,
+				"pageToOffsetMs": 1270,
+				"durationMs": 17,
+				"traceFromUs": 487326506846,
+				"traceToUs": 487326523846,
+				"markerName": "DEBUG132_RAF_GAP|3410.200|3427.200|17.000"
+			},
+			"gapMarkerCount": 1,
+			"processRoles": [
+				{
+					"pid": 36880,
+					"roles": [
+						"gpu"
+					]
+				},
+				{
+					"pid": 38797,
+					"roles": [
+						"child-frame-renderer"
+					]
+				},
+				{
+					"pid": 38798,
+					"roles": [
+						"canvas-renderer"
+					]
+				}
+			],
+			"selectedEventCounts": {
+				"metadata": 14,
+				"marker": 4,
+				"x": 800,
+				"flow": 500,
+				"functionCall": 1
+			},
+			"eventTotals": [
+				{
+					"name": "RunTask",
+					"count": 387,
+					"durationTotalMs": 31.608,
+					"windowOverlapTotalMs": 30.115
+				},
+				{
+					"name": "Scheduler::RunTask",
+					"count": 25,
+					"durationTotalMs": 11.945,
+					"windowOverlapTotalMs": 11.383
+				},
+				{
+					"name": "GpuChannel::ExecuteDeferredRequest",
+					"count": 19,
+					"durationTotalMs": 10.078,
+					"windowOverlapTotalMs": 10.078
+				},
+				{
+					"name": "GPUTask",
+					"count": 17,
+					"durationTotalMs": 9.763,
+					"windowOverlapTotalMs": 9.763
+				},
+				{
+					"name": "CommandBuffer::Flush",
+					"count": 17,
+					"durationTotalMs": 9.683,
+					"windowOverlapTotalMs": 9.683
+				},
+				{
+					"name": "CommandBufferStub::OnAsyncFlush",
+					"count": 17,
+					"durationTotalMs": 9.677,
+					"windowOverlapTotalMs": 9.677
+				},
+				{
+					"name": "CommandBufferService:PutChanged",
+					"count": 17,
+					"durationTotalMs": 9.65,
+					"windowOverlapTotalMs": 9.65
+				},
+				{
+					"name": "RendererMainThread",
+					"count": 11,
+					"durationTotalMs": 6.882,
+					"windowOverlapTotalMs": 6.882
+				},
+				{
+					"name": "RasterImplementation::Finish",
+					"count": 4,
+					"durationTotalMs": 6.834,
+					"windowOverlapTotalMs": 6.834
+				},
+				{
+					"name": "CommandBufferHelper::Finish",
+					"count": 4,
+					"durationTotalMs": 6.821,
+					"windowOverlapTotalMs": 6.821
+				},
+				{
+					"name": "CommandBufferProxyImpl::WaitForGetOffset",
+					"count": 4,
+					"durationTotalMs": 6.786,
+					"windowOverlapTotalMs": 6.786
+				},
+				{
+					"name": "ProxyMain::BeginMainFrame",
+					"count": 13,
+					"durationTotalMs": 5.796,
+					"windowOverlapTotalMs": 4.878
+				},
+				{
+					"name": "RendererRasterWorker",
+					"count": 6,
+					"durationTotalMs": 2.814,
+					"windowOverlapTotalMs": 2.814
+				},
+				{
+					"name": "Graphics.Pipeline",
+					"count": 17,
+					"durationTotalMs": 2.628,
+					"windowOverlapTotalMs": 2.628
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM",
+					"count": 26,
+					"durationTotalMs": 2.444,
+					"windowOverlapTotalMs": 2.444
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM::Flush",
+					"count": 24,
+					"durationTotalMs": 2.263,
+					"windowOverlapTotalMs": 2.263
+				},
+				{
+					"name": "LocalFrameView::RunPaintLifecyclePhase",
+					"count": 5,
+					"durationTotalMs": 1.709,
+					"windowOverlapTotalMs": 1.618
+				},
+				{
+					"name": "ProxyImpl::ScheduledActionDraw",
+					"count": 9,
+					"durationTotalMs": 1.138,
+					"windowOverlapTotalMs": 1.138
+				},
+				{
+					"name": "MainFrame.Draw",
+					"count": 9,
+					"durationTotalMs": 1.136,
+					"windowOverlapTotalMs": 1.136
+				},
+				{
+					"name": "RasterDecoderImpl::DoRasterCHROMIUM",
+					"count": 15,
+					"durationTotalMs": 1.087,
+					"windowOverlapTotalMs": 1.087
+				},
+				{
+					"name": "Display::DrawAndSwap",
+					"count": 2,
+					"durationTotalMs": 0.787,
+					"windowOverlapTotalMs": 0.787
+				}
+			],
+			"threadBusyUnions": [
+				{
+					"pid": 36880,
+					"tid": 53702054,
+					"processName": "GPU Process",
+					"threadName": "CrGpuMain",
+					"runTaskCount": 46,
+					"busyUnionMs": 11.558
+				},
+				{
+					"pid": 36880,
+					"tid": 53702115,
+					"processName": "GPU Process",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 6,
+					"busyUnionMs": 0.042
+				},
+				{
+					"pid": 36880,
+					"tid": 53702116,
+					"processName": "GPU Process",
+					"threadName": "VizCompositorThread",
+					"runTaskCount": 35,
+					"busyUnionMs": 1.571
+				},
+				{
+					"pid": 38797,
+					"tid": 53706539,
+					"processName": "Renderer",
+					"threadName": "CrRendererMain",
+					"runTaskCount": 78,
+					"busyUnionMs": 12.322
+				},
+				{
+					"pid": 38797,
+					"tid": 53706563,
+					"processName": "Renderer",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 61,
+					"busyUnionMs": 0.164
+				},
+				{
+					"pid": 38797,
+					"tid": 53706569,
+					"processName": "Renderer",
+					"threadName": "Compositor",
+					"runTaskCount": 105,
+					"busyUnionMs": 2.25
+				},
+				{
+					"pid": 38798,
+					"tid": 53706540,
+					"processName": "Renderer",
+					"threadName": "CrRendererMain",
+					"runTaskCount": 12,
+					"busyUnionMs": 1.487
+				},
+				{
+					"pid": 38798,
+					"tid": 53706562,
+					"processName": "Renderer",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 27,
+					"busyUnionMs": 0.108
+				},
+				{
+					"pid": 38798,
+					"tid": 53706568,
+					"processName": "Renderer",
+					"threadName": "Compositor",
+					"runTaskCount": 17,
+					"busyUnionMs": 0.613
+				}
+			],
+			"functionCallUrls": [
+				"http://run.spool.localhost:49426/p/spool-bench/frames/n100-056"
+			]
+		},
+		{
+			"traceId": "pair-11-picture",
+			"pair": 11,
+			"order": "AB",
+			"arm": "picture",
+			"traceFile": "pair-11-AB-1-picture-attempt-1.json.gz",
+			"archiveSha256": "c9153428317116c5b2a14c4fe81e5d0b2cbbb3551433d00791bc8101131bdba9",
+			"rawJsonSha256": "e3be9f3b3e42ffc50e2b58d030fd9bb57899842103a5119e0a78676add30989e",
+			"rafWorstMs": 10.3,
+			"worstRaf": {
+				"binding": "first-wheel-offset",
+				"pageFromOffsetMs": 1034.9,
+				"pageToOffsetMs": 1045.2,
+				"durationMs": 10.3,
+				"traceFromUs": 487412395054.00006,
+				"traceToUs": 487412405354.00006,
+				"markerName": null
+			},
+			"gapMarkerCount": 0,
+			"processRoles": [
+				{
+					"pid": 36880,
+					"roles": [
+						"gpu"
+					]
+				},
+				{
+					"pid": 44157,
+					"roles": [
+						"canvas-renderer"
+					]
+				}
+			],
+			"selectedEventCounts": {
+				"metadata": 11,
+				"marker": 3,
+				"x": 306,
+				"flow": 90,
+				"functionCall": 0
+			},
+			"eventTotals": [
+				{
+					"name": "RunTask",
+					"count": 40,
+					"durationTotalMs": 2.675,
+					"windowOverlapTotalMs": 2.675
+				},
+				{
+					"name": "Scheduler::RunTask",
+					"count": 5,
+					"durationTotalMs": 1.075,
+					"windowOverlapTotalMs": 1.075
+				},
+				{
+					"name": "GpuChannel::ExecuteDeferredRequest",
+					"count": 3,
+					"durationTotalMs": 0.837,
+					"windowOverlapTotalMs": 0.837
+				},
+				{
+					"name": "GPUTask",
+					"count": 3,
+					"durationTotalMs": 0.831,
+					"windowOverlapTotalMs": 0.831
+				},
+				{
+					"name": "ProxyMain::BeginMainFrame",
+					"count": 1,
+					"durationTotalMs": 0.825,
+					"windowOverlapTotalMs": 0.825
+				},
+				{
+					"name": "CommandBuffer::Flush",
+					"count": 3,
+					"durationTotalMs": 0.796,
+					"windowOverlapTotalMs": 0.796
+				},
+				{
+					"name": "RendererRasterWorker",
+					"count": 3,
+					"durationTotalMs": 0.796,
+					"windowOverlapTotalMs": 0.796
+				},
+				{
+					"name": "CommandBufferStub::OnAsyncFlush",
+					"count": 3,
+					"durationTotalMs": 0.794,
+					"windowOverlapTotalMs": 0.794
+				},
+				{
+					"name": "CommandBufferService:PutChanged",
+					"count": 3,
+					"durationTotalMs": 0.787,
+					"windowOverlapTotalMs": 0.787
+				},
+				{
+					"name": "Graphics.Pipeline",
+					"count": 11,
+					"durationTotalMs": 0.492,
+					"windowOverlapTotalMs": 0.492
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM",
+					"count": 4,
+					"durationTotalMs": 0.423,
+					"windowOverlapTotalMs": 0.423
+				},
+				{
+					"name": "LocalFrameView::RunPaintLifecyclePhase",
+					"count": 1,
+					"durationTotalMs": 0.415,
+					"windowOverlapTotalMs": 0.415
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM::Flush",
+					"count": 4,
+					"durationTotalMs": 0.406,
+					"windowOverlapTotalMs": 0.406
+				},
+				{
+					"name": "SkiaOutputSurfaceImplOnGpu::SwapBuffers",
+					"count": 1,
+					"durationTotalMs": 0.184,
+					"windowOverlapTotalMs": 0.184
+				},
+				{
+					"name": "RasterDecoderImpl::DoRasterCHROMIUM",
+					"count": 4,
+					"durationTotalMs": 0.171,
+					"windowOverlapTotalMs": 0.171
+				},
+				{
+					"name": "RasterDecoderImpl::DoRasterCHROMIUM::Deserializing",
+					"count": 4,
+					"durationTotalMs": 0.168,
+					"windowOverlapTotalMs": 0.168
+				},
+				{
+					"name": "ProxyImpl::ReadyToCommit",
+					"count": 1,
+					"durationTotalMs": 0.166,
+					"windowOverlapTotalMs": 0.166
+				},
+				{
+					"name": "Paint",
+					"count": 6,
+					"durationTotalMs": 0.152,
+					"windowOverlapTotalMs": 0.152
+				},
+				{
+					"name": "Layerize",
+					"count": 1,
+					"durationTotalMs": 0.144,
+					"windowOverlapTotalMs": 0.144
+				},
+				{
+					"name": "Commit",
+					"count": 1,
+					"durationTotalMs": 0.143,
+					"windowOverlapTotalMs": 0.143
+				},
+				{
+					"name": "Display::DrawAndSwap",
+					"count": 1,
+					"durationTotalMs": 0.118,
+					"windowOverlapTotalMs": 0.118
+				},
+				{
+					"name": "CommandBufferProxyImpl::WaitForGetOffset",
+					"count": 0,
+					"durationTotalMs": 0,
+					"windowOverlapTotalMs": 0
+				},
+				{
+					"name": "RasterImplementation::Finish",
+					"count": 0,
+					"durationTotalMs": 0,
+					"windowOverlapTotalMs": 0
+				}
+			],
+			"threadBusyUnions": [
+				{
+					"pid": 36880,
+					"tid": 53702054,
+					"processName": "GPU Process",
+					"threadName": "CrGpuMain",
+					"runTaskCount": 11,
+					"busyUnionMs": 1.099
+				},
+				{
+					"pid": 36880,
+					"tid": 53702116,
+					"processName": "GPU Process",
+					"threadName": "VizCompositorThread",
+					"runTaskCount": 6,
+					"busyUnionMs": 0.232
+				},
+				{
+					"pid": 44157,
+					"tid": 53718748,
+					"processName": "Renderer",
+					"threadName": "CrRendererMain",
+					"runTaskCount": 5,
+					"busyUnionMs": 0.854
+				},
+				{
+					"pid": 44157,
+					"tid": 53718797,
+					"processName": "Renderer",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 4,
+					"busyUnionMs": 0.029
+				},
+				{
+					"pid": 44157,
+					"tid": 53718806,
+					"processName": "Renderer",
+					"threadName": "Compositor",
+					"runTaskCount": 14,
+					"busyUnionMs": 0.461
+				}
+			],
+			"functionCallUrls": []
+		},
+		{
+			"traceId": "pair-11-readable",
+			"pair": 11,
+			"order": "AB",
+			"arm": "readable",
+			"traceFile": "pair-11-AB-2-readable-attempt-1.json.gz",
+			"archiveSha256": "1bbca1a7cf2cef78912fc3921ec9ece51e11bf9922c0feca018f87e214d9a39e",
+			"rawJsonSha256": "59997283f013c992a85098e825255bae352d8b4e2285b65f5d26f7508ebc0616",
+			"rafWorstMs": 16.6,
+			"worstRaf": {
+				"binding": "gap-marker",
+				"pageFromOffsetMs": 489.2,
+				"pageToOffsetMs": 505.8,
+				"durationMs": 16.6,
+				"traceFromUs": 487416556063,
+				"traceToUs": 487416572663,
+				"markerName": "DEBUG132_RAF_GAP|2635.300|2651.900|16.600"
+			},
+			"gapMarkerCount": 1,
+			"processRoles": [
+				{
+					"pid": 36880,
+					"roles": [
+						"gpu"
+					]
+				},
+				{
+					"pid": 44315,
+					"roles": [
+						"child-frame-renderer"
+					]
+				},
+				{
+					"pid": 44316,
+					"roles": [
+						"canvas-renderer"
+					]
+				}
+			],
+			"selectedEventCounts": {
+				"metadata": 16,
+				"marker": 4,
+				"x": 800,
+				"flow": 284,
+				"functionCall": 1
+			},
+			"eventTotals": [
+				{
+					"name": "RunTask",
+					"count": 191,
+					"durationTotalMs": 20.142,
+					"windowOverlapTotalMs": 18.272
+				},
+				{
+					"name": "Scheduler::RunTask",
+					"count": 11,
+					"durationTotalMs": 7.146,
+					"windowOverlapTotalMs": 6.984
+				},
+				{
+					"name": "GpuChannel::ExecuteDeferredRequest",
+					"count": 7,
+					"durationTotalMs": 6.592,
+					"windowOverlapTotalMs": 6.431
+				},
+				{
+					"name": "GPUTask",
+					"count": 9,
+					"durationTotalMs": 6.577,
+					"windowOverlapTotalMs": 6.417
+				},
+				{
+					"name": "CommandBuffer::Flush",
+					"count": 7,
+					"durationTotalMs": 6.537,
+					"windowOverlapTotalMs": 6.378
+				},
+				{
+					"name": "CommandBufferStub::OnAsyncFlush",
+					"count": 7,
+					"durationTotalMs": 6.535,
+					"windowOverlapTotalMs": 6.376
+				},
+				{
+					"name": "CommandBufferService:PutChanged",
+					"count": 7,
+					"durationTotalMs": 6.521,
+					"windowOverlapTotalMs": 6.363
+				},
+				{
+					"name": "CommandBufferHelper::Finish",
+					"count": 1,
+					"durationTotalMs": 6.025,
+					"windowOverlapTotalMs": 6.025
+				},
+				{
+					"name": "RasterImplementation::Finish",
+					"count": 1,
+					"durationTotalMs": 6.025,
+					"windowOverlapTotalMs": 6.025
+				},
+				{
+					"name": "CommandBufferProxyImpl::WaitForGetOffset",
+					"count": 1,
+					"durationTotalMs": 6.013,
+					"windowOverlapTotalMs": 6.013
+				},
+				{
+					"name": "RendererMainThread",
+					"count": 5,
+					"durationTotalMs": 6.124,
+					"windowOverlapTotalMs": 5.965
+				},
+				{
+					"name": "ProxyMain::BeginMainFrame",
+					"count": 7,
+					"durationTotalMs": 3.609,
+					"windowOverlapTotalMs": 2.047
+				},
+				{
+					"name": "Graphics.Pipeline",
+					"count": 44,
+					"durationTotalMs": 1.785,
+					"windowOverlapTotalMs": 1.657
+				},
+				{
+					"name": "LatencyInfo.Flow",
+					"count": 5,
+					"durationTotalMs": 0.829,
+					"windowOverlapTotalMs": 0.829
+				},
+				{
+					"name": "WidgetBaseInputHandler::OnHandleInputEvent",
+					"count": 1,
+					"durationTotalMs": 0.787,
+					"windowOverlapTotalMs": 0.787
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM",
+					"count": 8,
+					"durationTotalMs": 0.628,
+					"windowOverlapTotalMs": 0.601
+				},
+				{
+					"name": "HitTest",
+					"count": 1,
+					"durationTotalMs": 0.572,
+					"windowOverlapTotalMs": 0.572
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM::Flush",
+					"count": 8,
+					"durationTotalMs": 0.588,
+					"windowOverlapTotalMs": 0.571
+				},
+				{
+					"name": "ProxyImpl::ScheduledActionDraw",
+					"count": 6,
+					"durationTotalMs": 0.648,
+					"windowOverlapTotalMs": 0.518
+				},
+				{
+					"name": "MainFrame.Draw",
+					"count": 6,
+					"durationTotalMs": 0.645,
+					"windowOverlapTotalMs": 0.516
+				},
+				{
+					"name": "Display::DrawAndSwap",
+					"count": 1,
+					"durationTotalMs": 0.336,
+					"windowOverlapTotalMs": 0.336
+				}
+			],
+			"threadBusyUnions": [
+				{
+					"pid": 36880,
+					"tid": 53702054,
+					"processName": "GPU Process",
+					"threadName": "CrGpuMain",
+					"runTaskCount": 20,
+					"busyUnionMs": 7.033
+				},
+				{
+					"pid": 36880,
+					"tid": 53702115,
+					"processName": "GPU Process",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 2,
+					"busyUnionMs": 0.044
+				},
+				{
+					"pid": 36880,
+					"tid": 53702116,
+					"processName": "GPU Process",
+					"threadName": "VizCompositorThread",
+					"runTaskCount": 17,
+					"busyUnionMs": 0.684
+				},
+				{
+					"pid": 44315,
+					"tid": 53719163,
+					"processName": "Renderer",
+					"threadName": "CrRendererMain",
+					"runTaskCount": 36,
+					"busyUnionMs": 7.878
+				},
+				{
+					"pid": 44315,
+					"tid": 53719180,
+					"processName": "Renderer",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 19,
+					"busyUnionMs": 0.061
+				},
+				{
+					"pid": 44315,
+					"tid": 53719196,
+					"processName": "Renderer",
+					"threadName": "Compositor",
+					"runTaskCount": 54,
+					"busyUnionMs": 0.853
+				},
+				{
+					"pid": 44316,
+					"tid": 53719164,
+					"processName": "Renderer",
+					"threadName": "CrRendererMain",
+					"runTaskCount": 12,
+					"busyUnionMs": 1.206
+				},
+				{
+					"pid": 44316,
+					"tid": 53719185,
+					"processName": "Renderer",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 21,
+					"busyUnionMs": 0.061
+				},
+				{
+					"pid": 44316,
+					"tid": 53719189,
+					"processName": "Renderer",
+					"threadName": "Compositor",
+					"runTaskCount": 10,
+					"busyUnionMs": 0.452
+				}
+			],
+			"functionCallUrls": [
+				"http://run.spool.localhost:49426/p/spool-bench/frames/n100-056"
+			]
+		},
+		{
+			"traceId": "pair-17-picture",
+			"pair": 17,
+			"order": "AB",
+			"arm": "picture",
+			"traceFile": "pair-17-AB-1-picture-attempt-1.json.gz",
+			"archiveSha256": "95dd5d65ce76d2fbdd79f585f160a560a2394d616b2c50e814fb8a303a5dd03f",
+			"rawJsonSha256": "e4b228adae775477cbe04d890651cb791ddcd952c5dcf71875aba643af9a750b",
+			"rafWorstMs": 10.4,
+			"worstRaf": {
+				"binding": "first-wheel-offset",
+				"pageFromOffsetMs": 445.5,
+				"pageToOffsetMs": 455.9,
+				"durationMs": 10.4,
+				"traceFromUs": 487479411151.00006,
+				"traceToUs": 487479421551.00006,
+				"markerName": null
+			},
+			"gapMarkerCount": 0,
+			"processRoles": [
+				{
+					"pid": 36880,
+					"roles": [
+						"gpu"
+					]
+				},
+				{
+					"pid": 47945,
+					"roles": [
+						"canvas-renderer"
+					]
+				}
+			],
+			"selectedEventCounts": {
+				"metadata": 10,
+				"marker": 3,
+				"x": 168,
+				"flow": 48,
+				"functionCall": 0
+			},
+			"eventTotals": [
+				{
+					"name": "RunTask",
+					"count": 32,
+					"durationTotalMs": 5.811,
+					"windowOverlapTotalMs": 4.602
+				},
+				{
+					"name": "FunctionCall",
+					"count": 9,
+					"durationTotalMs": 2.203,
+					"windowOverlapTotalMs": 2.203
+				},
+				{
+					"name": "Scheduler::RunTask",
+					"count": 4,
+					"durationTotalMs": 2.684,
+					"windowOverlapTotalMs": 1.477
+				},
+				{
+					"name": "GpuChannel::ExecuteDeferredRequest",
+					"count": 2,
+					"durationTotalMs": 2.191,
+					"windowOverlapTotalMs": 0.984
+				},
+				{
+					"name": "GPUTask",
+					"count": 2,
+					"durationTotalMs": 2.183,
+					"windowOverlapTotalMs": 0.978
+				},
+				{
+					"name": "RendererRasterWorker",
+					"count": 2,
+					"durationTotalMs": 2.143,
+					"windowOverlapTotalMs": 0.941
+				},
+				{
+					"name": "CommandBuffer::Flush",
+					"count": 2,
+					"durationTotalMs": 2.14,
+					"windowOverlapTotalMs": 0.939
+				},
+				{
+					"name": "CommandBufferStub::OnAsyncFlush",
+					"count": 2,
+					"durationTotalMs": 2.14,
+					"windowOverlapTotalMs": 0.939
+				},
+				{
+					"name": "CommandBufferService:PutChanged",
+					"count": 2,
+					"durationTotalMs": 2.134,
+					"windowOverlapTotalMs": 0.935
+				},
+				{
+					"name": "ProxyMain::BeginMainFrame",
+					"count": 1,
+					"durationTotalMs": 0.803,
+					"windowOverlapTotalMs": 0.803
+				},
+				{
+					"name": "LatencyInfo.Flow",
+					"count": 5,
+					"durationTotalMs": 0.653,
+					"windowOverlapTotalMs": 0.653
+				},
+				{
+					"name": "WidgetBaseInputHandler::OnHandleInputEvent",
+					"count": 1,
+					"durationTotalMs": 0.622,
+					"windowOverlapTotalMs": 0.622
+				},
+				{
+					"name": "Graphics.Pipeline",
+					"count": 7,
+					"durationTotalMs": 0.445,
+					"windowOverlapTotalMs": 0.445
+				},
+				{
+					"name": "HitTest",
+					"count": 1,
+					"durationTotalMs": 0.427,
+					"windowOverlapTotalMs": 0.427
+				},
+				{
+					"name": "SkiaOutputSurfaceImplOnGpu::SwapBuffers",
+					"count": 1,
+					"durationTotalMs": 0.41,
+					"windowOverlapTotalMs": 0.41
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM",
+					"count": 2,
+					"durationTotalMs": 0.377,
+					"windowOverlapTotalMs": 0.377
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM::Flush",
+					"count": 2,
+					"durationTotalMs": 0.37,
+					"windowOverlapTotalMs": 0.37
+				},
+				{
+					"name": "SkiaOutputDevice->ScheduleOverlays()",
+					"count": 1,
+					"durationTotalMs": 0.263,
+					"windowOverlapTotalMs": 0.263
+				},
+				{
+					"name": "IOSurfaceImageBacking::WaitForCommandsToBeScheduled",
+					"count": 3,
+					"durationTotalMs": 0.251,
+					"windowOverlapTotalMs": 0.251
+				},
+				{
+					"name": "IOSurfaceImageBacking::WaitForCommandsToBeScheduled::Dawn",
+					"count": 1,
+					"durationTotalMs": 0.247,
+					"windowOverlapTotalMs": 0.247
+				},
+				{
+					"name": "CommandBufferProxyImpl::WaitForGetOffset",
+					"count": 0,
+					"durationTotalMs": 0,
+					"windowOverlapTotalMs": 0
+				},
+				{
+					"name": "Display::DrawAndSwap",
+					"count": 0,
+					"durationTotalMs": 0,
+					"windowOverlapTotalMs": 0
+				},
+				{
+					"name": "RasterImplementation::Finish",
+					"count": 0,
+					"durationTotalMs": 0,
+					"windowOverlapTotalMs": 0
+				}
+			],
+			"threadBusyUnions": [
+				{
+					"pid": 36880,
+					"tid": 53702054,
+					"processName": "GPU Process",
+					"threadName": "CrGpuMain",
+					"runTaskCount": 10,
+					"busyUnionMs": 1.51
+				},
+				{
+					"pid": 36880,
+					"tid": 53702116,
+					"processName": "GPU Process",
+					"threadName": "VizCompositorThread",
+					"runTaskCount": 6,
+					"busyUnionMs": 0.068
+				},
+				{
+					"pid": 47945,
+					"tid": 53727590,
+					"processName": "Renderer",
+					"threadName": "CrRendererMain",
+					"runTaskCount": 6,
+					"busyUnionMs": 2.893
+				},
+				{
+					"pid": 47945,
+					"tid": 53727611,
+					"processName": "Renderer",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 1,
+					"busyUnionMs": 0.01
+				},
+				{
+					"pid": 47945,
+					"tid": 53727616,
+					"processName": "Renderer",
+					"threadName": "Compositor",
+					"runTaskCount": 9,
+					"busyUnionMs": 0.121
+				}
+			],
+			"functionCallUrls": []
+		},
+		{
+			"traceId": "pair-17-readable",
+			"pair": 17,
+			"order": "AB",
+			"arm": "readable",
+			"traceFile": "pair-17-AB-2-readable-attempt-1.json.gz",
+			"archiveSha256": "bf68dacb18f80ba02de81979c4556029cc861a053223ddb47ef01ce3a4668c99",
+			"rawJsonSha256": "47364c74cf118811a67c8867da3bde8a5ceaecbc5ce7746975fcaf98e9b1127e",
+			"rafWorstMs": 16.6,
+			"worstRaf": {
+				"binding": "gap-marker",
+				"pageFromOffsetMs": 1255.6,
+				"pageToOffsetMs": 1272.2,
+				"durationMs": 16.6,
+				"traceFromUs": 487484984894,
+				"traceToUs": 487485001494,
+				"markerName": "DEBUG132_RAF_GAP|3449.300|3465.900|16.600"
+			},
+			"gapMarkerCount": 1,
+			"processRoles": [
+				{
+					"pid": 36880,
+					"roles": [
+						"gpu"
+					]
+				},
+				{
+					"pid": 48223,
+					"roles": [
+						"child-frame-renderer"
+					]
+				},
+				{
+					"pid": 48224,
+					"roles": [
+						"canvas-renderer"
+					]
+				}
+			],
+			"selectedEventCounts": {
+				"metadata": 14,
+				"marker": 4,
+				"x": 800,
+				"flow": 484,
+				"functionCall": 1
+			},
+			"eventTotals": [
+				{
+					"name": "RunTask",
+					"count": 226,
+					"durationTotalMs": 31.04,
+					"windowOverlapTotalMs": 29.865
+				},
+				{
+					"name": "Scheduler::RunTask",
+					"count": 25,
+					"durationTotalMs": 12.239,
+					"windowOverlapTotalMs": 11.783
+				},
+				{
+					"name": "GpuChannel::ExecuteDeferredRequest",
+					"count": 17,
+					"durationTotalMs": 9.889,
+					"windowOverlapTotalMs": 9.889
+				},
+				{
+					"name": "GPUTask",
+					"count": 14,
+					"durationTotalMs": 9.367,
+					"windowOverlapTotalMs": 9.367
+				},
+				{
+					"name": "CommandBuffer::Flush",
+					"count": 14,
+					"durationTotalMs": 9.276,
+					"windowOverlapTotalMs": 9.276
+				},
+				{
+					"name": "CommandBufferStub::OnAsyncFlush",
+					"count": 14,
+					"durationTotalMs": 9.271,
+					"windowOverlapTotalMs": 9.271
+				},
+				{
+					"name": "CommandBufferService:PutChanged",
+					"count": 14,
+					"durationTotalMs": 9.236,
+					"windowOverlapTotalMs": 9.236
+				},
+				{
+					"name": "RasterImplementation::Finish",
+					"count": 2,
+					"durationTotalMs": 7.343,
+					"windowOverlapTotalMs": 7.343
+				},
+				{
+					"name": "CommandBufferHelper::Finish",
+					"count": 2,
+					"durationTotalMs": 7.341,
+					"windowOverlapTotalMs": 7.341
+				},
+				{
+					"name": "CommandBufferProxyImpl::WaitForGetOffset",
+					"count": 2,
+					"durationTotalMs": 7.321,
+					"windowOverlapTotalMs": 7.321
+				},
+				{
+					"name": "RendererMainThread",
+					"count": 10,
+					"durationTotalMs": 5.42,
+					"windowOverlapTotalMs": 5.42
+				},
+				{
+					"name": "ProxyMain::BeginMainFrame",
+					"count": 8,
+					"durationTotalMs": 4.783,
+					"windowOverlapTotalMs": 4.08
+				},
+				{
+					"name": "Graphics.Pipeline",
+					"count": 43,
+					"durationTotalMs": 3.973,
+					"windowOverlapTotalMs": 3.973
+				},
+				{
+					"name": "RendererRasterWorker",
+					"count": 4,
+					"durationTotalMs": 3.874,
+					"windowOverlapTotalMs": 3.874
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM",
+					"count": 36,
+					"durationTotalMs": 3.207,
+					"windowOverlapTotalMs": 3.207
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM::Flush",
+					"count": 36,
+					"durationTotalMs": 2.912,
+					"windowOverlapTotalMs": 2.912
+				},
+				{
+					"name": "RasterDecoderImpl::DoRasterCHROMIUM",
+					"count": 21,
+					"durationTotalMs": 1.635,
+					"windowOverlapTotalMs": 1.635
+				},
+				{
+					"name": "RasterDecoderImpl::DoRasterCHROMIUM::Deserializing",
+					"count": 21,
+					"durationTotalMs": 1.612,
+					"windowOverlapTotalMs": 1.612
+				},
+				{
+					"name": "DisplayScheduler::OnBeginFrameDeadline",
+					"count": 3,
+					"durationTotalMs": 1.362,
+					"windowOverlapTotalMs": 1.362
+				},
+				{
+					"name": "DisplayScheduler::DrawAndSwap",
+					"count": 3,
+					"durationTotalMs": 1.358,
+					"windowOverlapTotalMs": 1.358
+				},
+				{
+					"name": "Display::DrawAndSwap",
+					"count": 3,
+					"durationTotalMs": 1.353,
+					"windowOverlapTotalMs": 1.353
+				}
+			],
+			"threadBusyUnions": [
+				{
+					"pid": 36880,
+					"tid": 53702054,
+					"processName": "GPU Process",
+					"threadName": "CrGpuMain",
+					"runTaskCount": 41,
+					"busyUnionMs": 11.942
+				},
+				{
+					"pid": 36880,
+					"tid": 53702115,
+					"processName": "GPU Process",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 5,
+					"busyUnionMs": 0.045
+				},
+				{
+					"pid": 36880,
+					"tid": 53702116,
+					"processName": "GPU Process",
+					"threadName": "VizCompositorThread",
+					"runTaskCount": 28,
+					"busyUnionMs": 2.107
+				},
+				{
+					"pid": 48223,
+					"tid": 53728196,
+					"processName": "Renderer",
+					"threadName": "CrRendererMain",
+					"runTaskCount": 34,
+					"busyUnionMs": 12.149
+				},
+				{
+					"pid": 48223,
+					"tid": 53728207,
+					"processName": "Renderer",
+					"threadName": "PerfettoTrace",
+					"runTaskCount": 3,
+					"busyUnionMs": 0.06
+				},
+				{
+					"pid": 48223,
+					"tid": 53728219,
+					"processName": "Renderer",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 18,
+					"busyUnionMs": 0.108
+				},
+				{
+					"pid": 48223,
+					"tid": 53728224,
+					"processName": "Renderer",
+					"threadName": "Compositor",
+					"runTaskCount": 81,
+					"busyUnionMs": 2.354
+				},
+				{
+					"pid": 48224,
+					"tid": 53728197,
+					"processName": "Renderer",
+					"threadName": "CrRendererMain",
+					"runTaskCount": 5,
+					"busyUnionMs": 0.989
+				},
+				{
+					"pid": 48224,
+					"tid": 53728214,
+					"processName": "Renderer",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 3,
+					"busyUnionMs": 0.008
+				},
+				{
+					"pid": 48224,
+					"tid": 53728225,
+					"processName": "Renderer",
+					"threadName": "Compositor",
+					"runTaskCount": 8,
+					"busyUnionMs": 0.103
+				}
+			],
+			"functionCallUrls": [
+				"http://run.spool.localhost:49426/p/spool-bench/frames/n100-056"
+			]
+		},
+		{
+			"traceId": "pair-33-picture",
+			"pair": 33,
+			"order": "AB",
+			"arm": "picture",
+			"traceFile": "pair-33-AB-1-picture-attempt-1.json.gz",
+			"archiveSha256": "fc3dd4c4b8847c7d22a5cb8ff5a0cf8a86f3eb3c9af9903b47143f56a775beea",
+			"rawJsonSha256": "0f14f5ef8d1876db4bd431d1868f4cfd091b7d5d071b9071fe0c3c3f914a49d3",
+			"rafWorstMs": 10.3,
+			"worstRaf": {
+				"binding": "first-wheel-offset",
+				"pageFromOffsetMs": 880.4,
+				"pageToOffsetMs": 890.7,
+				"durationMs": 10.3,
+				"traceFromUs": 487660376598.00006,
+				"traceToUs": 487660386898.00006,
+				"markerName": null
+			},
+			"gapMarkerCount": 0,
+			"processRoles": [
+				{
+					"pid": 36880,
+					"roles": [
+						"gpu"
+					]
+				},
+				{
+					"pid": 59341,
+					"roles": [
+						"canvas-renderer"
+					]
+				}
+			],
+			"selectedEventCounts": {
+				"metadata": 8,
+				"marker": 3,
+				"x": 95,
+				"flow": 20,
+				"functionCall": 0
+			},
+			"eventTotals": [
+				{
+					"name": "RunTask",
+					"count": 22,
+					"durationTotalMs": 2.903,
+					"windowOverlapTotalMs": 2.878
+				},
+				{
+					"name": "FunctionCall",
+					"count": 10,
+					"durationTotalMs": 2.07,
+					"windowOverlapTotalMs": 2.07
+				},
+				{
+					"name": "ProxyMain::BeginMainFrame",
+					"count": 1,
+					"durationTotalMs": 0.746,
+					"windowOverlapTotalMs": 0.746
+				},
+				{
+					"name": "LatencyInfo.Flow",
+					"count": 5,
+					"durationTotalMs": 0.602,
+					"windowOverlapTotalMs": 0.602
+				},
+				{
+					"name": "WidgetBaseInputHandler::OnHandleInputEvent",
+					"count": 1,
+					"durationTotalMs": 0.574,
+					"windowOverlapTotalMs": 0.574
+				},
+				{
+					"name": "HitTest",
+					"count": 1,
+					"durationTotalMs": 0.383,
+					"windowOverlapTotalMs": 0.383
+				},
+				{
+					"name": "TimerFire",
+					"count": 1,
+					"durationTotalMs": 0.165,
+					"windowOverlapTotalMs": 0.165
+				},
+				{
+					"name": "EventDispatch",
+					"count": 1,
+					"durationTotalMs": 0.13,
+					"windowOverlapTotalMs": 0.13
+				},
+				{
+					"name": "Graphics.Pipeline",
+					"count": 5,
+					"durationTotalMs": 0.11,
+					"windowOverlapTotalMs": 0.095
+				},
+				{
+					"name": "FireAnimationFrame",
+					"count": 1,
+					"durationTotalMs": 0.07,
+					"windowOverlapTotalMs": 0.07
+				},
+				{
+					"name": "ExternalBeginFrameSource::OnBeginFrame",
+					"count": 3,
+					"durationTotalMs": 0.089,
+					"windowOverlapTotalMs": 0.069
+				},
+				{
+					"name": "ProxyImpl::BeginMainFrameAbortedOnImplThread",
+					"count": 1,
+					"durationTotalMs": 0.044,
+					"windowOverlapTotalMs": 0.044
+				},
+				{
+					"name": "UpdateLayoutTree",
+					"count": 1,
+					"durationTotalMs": 0.042,
+					"windowOverlapTotalMs": 0.042
+				},
+				{
+					"name": "Commit",
+					"count": 1,
+					"durationTotalMs": 0.041,
+					"windowOverlapTotalMs": 0.041
+				},
+				{
+					"name": "auto cc::Scheduler::SendDidNotProduceFrame(const viz::BeginFrameArgs &, FrameSkippedReason)::(lambda)::operator()()::(lambda)::operator()(uint32_t) const",
+					"count": 1,
+					"durationTotalMs": 0.038,
+					"windowOverlapTotalMs": 0.038
+				},
+				{
+					"name": "ExternalBeginFrameSourceMac::OnDisplayLinkCallback",
+					"count": 2,
+					"durationTotalMs": 0.061,
+					"windowOverlapTotalMs": 0.038
+				},
+				{
+					"name": "LayerTreeHostImpl::DidNotProduceFrame",
+					"count": 1,
+					"durationTotalMs": 0.037,
+					"windowOverlapTotalMs": 0.037
+				},
+				{
+					"name": "Scheduler::BeginFrame",
+					"count": 1,
+					"durationTotalMs": 0.029,
+					"windowOverlapTotalMs": 0.029
+				},
+				{
+					"name": "Scheduler::BeginImplFrame",
+					"count": 1,
+					"durationTotalMs": 0.025,
+					"windowOverlapTotalMs": 0.025
+				},
+				{
+					"name": "CVDisplayLinkCallback",
+					"count": 3,
+					"durationTotalMs": 0.02,
+					"windowOverlapTotalMs": 0.02
+				},
+				{
+					"name": "CommandBufferProxyImpl::WaitForGetOffset",
+					"count": 0,
+					"durationTotalMs": 0,
+					"windowOverlapTotalMs": 0
+				},
+				{
+					"name": "Display::DrawAndSwap",
+					"count": 0,
+					"durationTotalMs": 0,
+					"windowOverlapTotalMs": 0
+				},
+				{
+					"name": "RasterImplementation::Finish",
+					"count": 0,
+					"durationTotalMs": 0,
+					"windowOverlapTotalMs": 0
+				}
+			],
+			"threadBusyUnions": [
+				{
+					"pid": 36880,
+					"tid": 53702054,
+					"processName": "GPU Process",
+					"threadName": "CrGpuMain",
+					"runTaskCount": 4,
+					"busyUnionMs": 0.015
+				},
+				{
+					"pid": 36880,
+					"tid": 53702116,
+					"processName": "GPU Process",
+					"threadName": "VizCompositorThread",
+					"runTaskCount": 5,
+					"busyUnionMs": 0.054
+				},
+				{
+					"pid": 59341,
+					"tid": 53753415,
+					"processName": "Renderer",
+					"threadName": "CrRendererMain",
+					"runTaskCount": 8,
+					"busyUnionMs": 2.726
+				},
+				{
+					"pid": 59341,
+					"tid": 53753442,
+					"processName": "Renderer",
+					"threadName": "Compositor",
+					"runTaskCount": 5,
+					"busyUnionMs": 0.083
+				}
+			],
+			"functionCallUrls": []
+		},
+		{
+			"traceId": "pair-33-readable",
+			"pair": 33,
+			"order": "AB",
+			"arm": "readable",
+			"traceFile": "pair-33-AB-2-readable-attempt-1.json.gz",
+			"archiveSha256": "622c971db0a30d5189a152c054411c095c2f90c1e29e77825000d6df923b155d",
+			"rawJsonSha256": "e1eee511fb707a3f8cecee5190b32fb4caeb3d66282e22a30cabac496fa31ed3",
+			"rafWorstMs": 17,
+			"worstRaf": {
+				"binding": "gap-marker",
+				"pageFromOffsetMs": 1153.1,
+				"pageToOffsetMs": 1170.1,
+				"durationMs": 17,
+				"traceFromUs": 487665404868,
+				"traceToUs": 487665421868,
+				"markerName": "DEBUG132_RAF_GAP|3347.000|3364.000|17.000"
+			},
+			"gapMarkerCount": 1,
+			"processRoles": [
+				{
+					"pid": 36880,
+					"roles": [
+						"gpu"
+					]
+				},
+				{
+					"pid": 59619,
+					"roles": [
+						"child-frame-renderer"
+					]
+				},
+				{
+					"pid": 59620,
+					"roles": [
+						"canvas-renderer"
+					]
+				}
+			],
+			"selectedEventCounts": {
+				"metadata": 14,
+				"marker": 4,
+				"x": 800,
+				"flow": 451,
+				"functionCall": 1
+			},
+			"eventTotals": [
+				{
+					"name": "RunTask",
+					"count": 289,
+					"durationTotalMs": 23.793,
+					"windowOverlapTotalMs": 22.028
+				},
+				{
+					"name": "Scheduler::RunTask",
+					"count": 19,
+					"durationTotalMs": 9.173,
+					"windowOverlapTotalMs": 9.076
+				},
+				{
+					"name": "GpuChannel::ExecuteDeferredRequest",
+					"count": 16,
+					"durationTotalMs": 7.954,
+					"windowOverlapTotalMs": 7.954
+				},
+				{
+					"name": "GPUTask",
+					"count": 14,
+					"durationTotalMs": 7.677,
+					"windowOverlapTotalMs": 7.677
+				},
+				{
+					"name": "CommandBuffer::Flush",
+					"count": 13,
+					"durationTotalMs": 7.58,
+					"windowOverlapTotalMs": 7.58
+				},
+				{
+					"name": "CommandBufferStub::OnAsyncFlush",
+					"count": 13,
+					"durationTotalMs": 7.572,
+					"windowOverlapTotalMs": 7.572
+				},
+				{
+					"name": "CommandBufferService:PutChanged",
+					"count": 13,
+					"durationTotalMs": 7.543,
+					"windowOverlapTotalMs": 7.543
+				},
+				{
+					"name": "RendererMainThread",
+					"count": 7,
+					"durationTotalMs": 4.915,
+					"windowOverlapTotalMs": 4.915
+				},
+				{
+					"name": "RasterImplementation::Finish",
+					"count": 2,
+					"durationTotalMs": 4.206,
+					"windowOverlapTotalMs": 4.206
+				},
+				{
+					"name": "CommandBufferHelper::Finish",
+					"count": 2,
+					"durationTotalMs": 4.204,
+					"windowOverlapTotalMs": 4.204
+				},
+				{
+					"name": "CommandBufferProxyImpl::WaitForGetOffset",
+					"count": 2,
+					"durationTotalMs": 4.186,
+					"windowOverlapTotalMs": 4.186
+				},
+				{
+					"name": "Graphics.Pipeline",
+					"count": 38,
+					"durationTotalMs": 3.542,
+					"windowOverlapTotalMs": 3.448
+				},
+				{
+					"name": "ProxyMain::BeginMainFrame",
+					"count": 10,
+					"durationTotalMs": 4.985,
+					"windowOverlapTotalMs": 3.375
+				},
+				{
+					"name": "RendererRasterWorker",
+					"count": 6,
+					"durationTotalMs": 2.675,
+					"windowOverlapTotalMs": 2.675
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM",
+					"count": 34,
+					"durationTotalMs": 2.279,
+					"windowOverlapTotalMs": 2.279
+				},
+				{
+					"name": "RasterDecoderImpl::DoEndRasterCHROMIUM::Flush",
+					"count": 34,
+					"durationTotalMs": 2.148,
+					"windowOverlapTotalMs": 2.148
+				},
+				{
+					"name": "ProxyImpl::ScheduledActionDraw",
+					"count": 9,
+					"durationTotalMs": 1.094,
+					"windowOverlapTotalMs": 1.094
+				},
+				{
+					"name": "MainFrame.Draw",
+					"count": 9,
+					"durationTotalMs": 1.088,
+					"windowOverlapTotalMs": 1.088
+				},
+				{
+					"name": "RasterDecoderImpl::DoRasterCHROMIUM",
+					"count": 15,
+					"durationTotalMs": 1.021,
+					"windowOverlapTotalMs": 1.021
+				},
+				{
+					"name": "RasterDecoderImpl::DoRasterCHROMIUM::Deserializing",
+					"count": 15,
+					"durationTotalMs": 1.012,
+					"windowOverlapTotalMs": 1.012
+				},
+				{
+					"name": "Display::DrawAndSwap",
+					"count": 2,
+					"durationTotalMs": 0.707,
+					"windowOverlapTotalMs": 0.707
+				}
+			],
+			"threadBusyUnions": [
+				{
+					"pid": 36880,
+					"tid": 53702054,
+					"processName": "GPU Process",
+					"threadName": "CrGpuMain",
+					"runTaskCount": 31,
+					"busyUnionMs": 9.186
+				},
+				{
+					"pid": 36880,
+					"tid": 53702115,
+					"processName": "GPU Process",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 3,
+					"busyUnionMs": 0.026
+				},
+				{
+					"pid": 36880,
+					"tid": 53702116,
+					"processName": "GPU Process",
+					"threadName": "VizCompositorThread",
+					"runTaskCount": 20,
+					"busyUnionMs": 1.306
+				},
+				{
+					"pid": 59619,
+					"tid": 53754026,
+					"processName": "Renderer",
+					"threadName": "CrRendererMain",
+					"runTaskCount": 59,
+					"busyUnionMs": 7.914
+				},
+				{
+					"pid": 59619,
+					"tid": 53754044,
+					"processName": "Renderer",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 29,
+					"busyUnionMs": 0.095
+				},
+				{
+					"pid": 59619,
+					"tid": 53754055,
+					"processName": "Renderer",
+					"threadName": "Compositor",
+					"runTaskCount": 88,
+					"busyUnionMs": 1.896
+				},
+				{
+					"pid": 59620,
+					"tid": 53754027,
+					"processName": "Renderer",
+					"threadName": "CrRendererMain",
+					"runTaskCount": 13,
+					"busyUnionMs": 1.002
+				},
+				{
+					"pid": 59620,
+					"tid": 53754049,
+					"processName": "Renderer",
+					"threadName": "Chrome_ChildIOThread",
+					"runTaskCount": 27,
+					"busyUnionMs": 0.08
+				},
+				{
+					"pid": 59620,
+					"tid": 53754053,
+					"processName": "Renderer",
+					"threadName": "Compositor",
+					"runTaskCount": 19,
+					"busyUnionMs": 0.523
+				}
+			],
+			"functionCallUrls": [
+				"http://run.spool.localhost:49426/p/spool-bench/frames/n100-056"
+			]
+		}
+	]
+}

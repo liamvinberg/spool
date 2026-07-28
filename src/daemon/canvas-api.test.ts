@@ -24,10 +24,10 @@ const frameTsx = (label: string) => `export default function Frame() {
 }
 `;
 
-/** A cover arrives as a ladder: one form field per rung, named for its width. */
-function ladder(...rungs: { width: number; bytes: Buffer }[]): FormData {
+/** A cover arrives as one image. */
+function coverBody(bytes: Buffer): FormData {
 	const body = new FormData();
-	for (const rung of rungs) body.append(`w${rung.width}`, new Blob([new Uint8Array(rung.bytes)]));
+	body.append("cover", new Blob([new Uint8Array(bytes)]));
 	return body;
 }
 
@@ -36,7 +36,6 @@ const putCover = (app: ReturnType<typeof makeApp>, name: string, frame: string, 
 
 interface Cover {
 	hash: string;
-	widths: number[];
 }
 
 describe("frame projection", () => {
@@ -129,19 +128,14 @@ describe("frame projection", () => {
 		expect((await app.request("/api/p/ghost/frames")).status).toBe(404);
 	});
 
-	it("hands each covered frame the ladder that addresses its cover", async () => {
+	it("hands each covered frame the immutable image that addresses its cover", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "covered", frameTsx("covered"));
 		writeFrame(root, "bare", frameTsx("bare"));
 		const app = makeApp(spoolDir);
 
-		const put = await putCover(
-			app,
-			name,
-			"covered",
-			ladder({ width: 390, bytes: JPEG_BYTES }, { width: 195, bytes: PNG_BYTES }),
-		);
+		const put = await putCover(app, name, "covered", coverBody(JPEG_BYTES));
 		expect(put.status).toBe(200);
 
 		const { frames } = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
@@ -149,12 +143,11 @@ describe("frame projection", () => {
 		};
 		const byName = Object.fromEntries(frames.map((frame) => [frame.name, frame]));
 		expect(byName.covered?.cover).toEqual(await put.json());
-		expect(byName.covered?.cover?.widths).toEqual([390, 195]);
 		// a frame with no cover simply has none: the canvas shows its placeholder
 		expect(byName.bare?.cover).toBeUndefined();
 	});
 
-	it("does not see the pre-ladder store's bare file as a cover", async () => {
+	it("does not see the pre-image-store bare file as a cover", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "checkout", frameTsx("checkout"));
@@ -194,9 +187,8 @@ describe("frame projection", () => {
 			}[];
 		};
 		const first = Object.fromEntries(projected.frames.map((frame) => [frame.name, frame]));
-		// a terminal's cover is its persisted screen: one rung, because the still
-		// is an SVG and the browser rasterizes it at whatever size it is drawn
-		expect(first.dash?.cover?.widths).toEqual([80 * 9]);
+		// a terminal's persisted screen is one immutable image.
+		expect(first.dash?.cover?.hash).toMatch(/^[0-9a-f]{32}$/);
 		expect(first.dash?.terminalCover).toEqual({ kind: "current" });
 		expect(first.fresh?.cover).toBeUndefined();
 		expect(first.fresh).toMatchObject({
@@ -251,7 +243,7 @@ describe("the project registry for home", () => {
 		writeFrame(newer.root, "checkout", frameTsx("checkout"));
 		writeFrame(newer.root, "cart", frameTsx("cart"));
 		const app = makeApp(spoolDir);
-		const put = await putCover(app, newer.name, "cart", ladder({ width: 195, bytes: PNG_BYTES }));
+		const put = await putCover(app, newer.name, "cart", coverBody(PNG_BYTES));
 
 		const res = await app.request("/api/projects");
 
@@ -860,34 +852,23 @@ describe("serving the canvas page", () => {
 });
 
 describe("thumbnails", () => {
-	it("round-trips a whole ladder through the .spool store, each rung at its own address", async () => {
+	it("round-trips one immutable image through the .spool store", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "checkout", frameTsx("checkout"));
 		const app = makeApp(spoolDir);
 
-		const put = await putCover(
-			app,
-			name,
-			"checkout",
-			ladder({ width: 780, bytes: JPEG_BYTES }, { width: 390, bytes: JPEG_BYTES }, { width: 195, bytes: PNG_BYTES }),
-		);
+		const put = await putCover(app, name, "checkout", coverBody(JPEG_BYTES));
 		expect(put.status).toBe(200);
 		const cover = (await put.json()) as Cover;
 		expect(cover.hash).toMatch(/^[0-9a-f]{32}$/);
-		expect(cover.widths).toEqual([780, 390, 195]);
 		// persisted under design/.spool — app-owned, gitignored, never an SSE change event
-		expect(existsSync(join(root, "design", ".spool", "thumbs", "checkout", `${cover.hash}.390.jpg`))).toBe(true);
+		expect(existsSync(join(root, "design", ".spool", "thumbs", "checkout", `${cover.hash}.jpg`))).toBe(true);
 
-		const got = await app.request(`/covers/${name}/checkout/${cover.hash}/390`);
+		const got = await app.request(`/covers/${name}/checkout/${cover.hash}`);
 		expect(got.status).toBe(200);
 		expect(got.headers.get("content-type")).toBe("image/jpeg");
 		expect(Buffer.from(await got.arrayBuffer())).toEqual(JPEG_BYTES);
-
-		// each rung keeps the encoding that wrote it
-		const bottom = await app.request(`/covers/${name}/checkout/${cover.hash}/195`);
-		expect(bottom.headers.get("content-type")).toBe("image/png");
-		expect(Buffer.from(await bottom.arrayBuffer())).toEqual(PNG_BYTES);
 	});
 
 	it("serves a cover with no credential but its own address, and goes immutable", async () => {
@@ -895,12 +876,12 @@ describe("thumbnails", () => {
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "checkout", frameTsx("checkout"));
 		const app = makeApp(spoolDir);
-		const put = await putCover(app, name, "checkout", ladder({ width: 390, bytes: JPEG_BYTES }));
+		const put = await putCover(app, name, "checkout", coverBody(JPEG_BYTES));
 		const { hash } = (await put.json()) as Cover;
 
 		// the harness credentials /api/ paths and nothing else, so this read carries
 		// no control header — an <img> cannot, which is why the hash is the credential
-		const got = await app.request(`/covers/${name}/checkout/${hash}/390`);
+		const got = await app.request(`/covers/${name}/checkout/${hash}`);
 		expect(got.status).toBe(200);
 		expect(got.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
 		// no validator to offer: a changed cover is a changed address, so a warm
@@ -908,49 +889,40 @@ describe("thumbnails", () => {
 		expect(got.headers.get("etag")).toBeNull();
 	});
 
-	it("retires the ladder it replaces, so no address can answer with a stale rung", async () => {
+	it("retires the image it replaces, so no stale address answers", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "checkout", frameTsx("checkout"));
 		const app = makeApp(spoolDir);
 
-		const stale = (await (
-			await putCover(app, name, "checkout", ladder({ width: 390, bytes: PNG_BYTES }))
-		).json()) as Cover;
-		const fresh = (await (
-			await putCover(app, name, "checkout", ladder({ width: 390, bytes: JPEG_BYTES }))
-		).json()) as Cover;
+		const stale = (await (await putCover(app, name, "checkout", coverBody(PNG_BYTES))).json()) as Cover;
+		const fresh = (await (await putCover(app, name, "checkout", coverBody(JPEG_BYTES))).json()) as Cover;
 		expect(fresh.hash).not.toBe(stale.hash);
 
-		expect((await app.request(`/covers/${name}/checkout/${stale.hash}/390`)).status).toBe(404);
-		const got = await app.request(`/covers/${name}/checkout/${fresh.hash}/390`);
+		expect((await app.request(`/covers/${name}/checkout/${stale.hash}`)).status).toBe(404);
+		const got = await app.request(`/covers/${name}/checkout/${fresh.hash}`);
 		expect(Buffer.from(await got.arrayBuffer())).toEqual(JPEG_BYTES);
 	});
 
-	it("refuses a rung that is not an image the store can serve", async () => {
+	it("refuses an image the store cannot serve", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "checkout", frameTsx("checkout"));
 		const app = makeApp(spoolDir);
 
-		const put = await putCover(
-			app,
-			name,
-			"checkout",
-			ladder({ width: 390, bytes: Buffer.from("<script>no</script>") }),
-		);
+		const put = await putCover(app, name, "checkout", coverBody(Buffer.from("<script>no</script>")));
 
 		expect(put.status).toBe(400);
 		expect(existsSync(join(root, "design", ".spool", "thumbs", "checkout"))).toBe(false);
 	});
 
-	it("refuses a ladder whose rungs do not name their widths", async () => {
+	it("refuses a request that is not exactly one cover image", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "checkout", frameTsx("checkout"));
 		const app = makeApp(spoolDir);
 		const mislabelled = new FormData();
-		mislabelled.append("cover", new Blob([new Uint8Array(JPEG_BYTES)]));
+		mislabelled.append("w390", new Blob([new Uint8Array(JPEG_BYTES)]));
 
 		expect((await putCover(app, name, "checkout", mislabelled)).status).toBe(400);
 		expect((await putCover(app, name, "checkout", new FormData())).status).toBe(400);
@@ -962,12 +934,10 @@ describe("thumbnails", () => {
 		const app = makeApp(spoolDir);
 		const hash = "f".repeat(32);
 
-		expect((await putCover(app, name, "ghost", ladder({ width: 390, bytes: JPEG_BYTES }))).status).toBe(404);
-		expect((await app.request(`/covers/${name}/ghost/${hash}/390`)).status).toBe(404);
-		expect((await app.request(`/covers/${name}/${encodeURIComponent("../../escape")}/${hash}/390`)).status).toBe(404);
-		// the address has to be one: a bad hash or width is not a cover request
-		expect((await app.request(`/covers/${name}/ghost/nothex/390`)).status).toBe(404);
-		expect((await app.request(`/covers/${name}/ghost/${hash}/0`)).status).toBe(404);
+		expect((await putCover(app, name, "ghost", coverBody(JPEG_BYTES))).status).toBe(404);
+		expect((await app.request(`/covers/${name}/ghost/${hash}`)).status).toBe(404);
+		expect((await app.request(`/covers/${name}/${encodeURIComponent("../../escape")}/${hash}`)).status).toBe(404);
+		expect((await app.request(`/covers/${name}/ghost/nothex`)).status).toBe(404);
 	});
 
 	it("serves and persists per-project canvas state — camera only", async () => {
@@ -1061,9 +1031,9 @@ describe("thumbnails", () => {
 		const events = sseReader(stream);
 		expect((await events.next()).event).toBe("hello");
 
-		const put = await putCover(app, name, "checkout", ladder({ width: 390, bytes: PNG_BYTES }));
+		const put = await putCover(app, name, "checkout", coverBody(PNG_BYTES));
 
-		// the ladder rides the event, so another browser swaps addresses without a
+		// the image rides the event, so another browser swaps addresses without a
 		// projection read of its own
 		expect(await events.next()).toEqual({
 			event: "change",

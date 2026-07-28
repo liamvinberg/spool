@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { COVER_QUALITY, COVER_RUNGS } from "../cover";
+import { COVER_DEVICE_SCALE, COVER_QUALITY, LIVE_MIN_CSS_PX, MAX_CAPTURE_OUTPUT_PIXELS } from "../cover";
 import { CAPTURE_IMAGE_TYPES } from "./assets";
 
 /**
@@ -32,7 +32,7 @@ const captureWorkerJs = `(() => {
 	const MAX_SVG_CHARS = 16 * 1024 * 1024;
 	const MAX_SOURCE_EDGE = 32 * 1024;
 	const MAX_SVG_NODES = 50002;
-	const MAX_OUTPUT_PIXELS = 32 * 1024 * 1024;
+	const MAX_CAPTURE_OUTPUT_PIXELS = ${MAX_CAPTURE_OUTPUT_PIXELS};
 	const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 	const REQUEST_ID = /^[0-9a-f]{32}$/;
 	const SAFE_FONT_DATA_URL = /^data:font\\/(?:otf|ttf|woff2?);base64,[a-z0-9+/]+={0,2}$/i;
@@ -130,13 +130,13 @@ const captureWorkerJs = `(() => {
 	async function validateJob(value, requestId) {
 		if (
 			!record(value) ||
-			!exactKeys(value, ["dpr", "height", "id", "maxEdge", "spool", "svg", "width"]) ||
+			!exactKeys(value, ["dpr", "height", "id", "spool", "svg", "targetWidth", "width"]) ||
 			value.spool !== RASTER ||
 			value.id !== requestId
 		) {
 			throw new Error("invalid capture request");
 		}
-		const { width, height, dpr, maxEdge } = value;
+		const { width, height, dpr, targetWidth } = value;
 		if (
 			typeof width !== "number" ||
 			!Number.isFinite(width) ||
@@ -152,11 +152,10 @@ const captureWorkerJs = `(() => {
 			!Number.isFinite(dpr) ||
 			dpr <= 0 ||
 			dpr > 2 ||
-			typeof maxEdge !== "number" ||
-			!Number.isFinite(maxEdge) ||
-			!Number.isInteger(maxEdge) ||
-			maxEdge < 0 ||
-			maxEdge > 16384
+			typeof targetWidth !== "number" ||
+			!Number.isFinite(targetWidth) ||
+			!Number.isInteger(targetWidth) ||
+			(targetWidth !== 0 && targetWidth !== ${LIVE_MIN_CSS_PX})
 		) {
 			throw new Error("invalid capture dimensions");
 		}
@@ -168,29 +167,21 @@ const captureWorkerJs = `(() => {
 		) {
 			throw new Error("invalid capture SVG");
 		}
-		// A cover's ladder belongs to the frame, not to the monitor that photographed
-		// it: the top rung is the frame's long edge at 2×, under the cap. Scaling by
-		// the capturing realm's own ratio instead would make a cover taken on a 1×
-		// display soft at 100% zoom on a 2× one — and a sandboxed frame does not
-		// always report the ratio its canvas has. An export is the other contract,
-		// and says so: the frame at full device resolution.
-		const scale = maxEdge > 0 ? Math.min(2, maxEdge / Math.max(width, height)) : dpr;
+		const scale = targetWidth > 0 ? (${LIVE_MIN_CSS_PX} * ${COVER_DEVICE_SCALE}) / width : dpr;
 		const outputWidth = Math.max(1, Math.round(width * scale));
 		const outputHeight = Math.max(1, Math.round(height * scale));
 		if (
 			!Number.isSafeInteger(outputWidth) ||
 			!Number.isSafeInteger(outputHeight) ||
-			outputWidth * outputHeight > MAX_OUTPUT_PIXELS
+			outputWidth * outputHeight > MAX_CAPTURE_OUTPUT_PIXELS
 		) {
 			throw new Error("capture output too large");
 		}
 		return {
 			svg: validateSvg(await value.svg.text(), width, height),
-			maxEdge,
+			targetWidth,
 			outputWidth,
 			outputHeight,
-			// a cover is a ladder; an export is the one sheet its caller asked for
-			rungs: maxEdge > 0 ? ${COVER_RUNGS} : 1,
 		};
 	}
 
@@ -215,10 +206,7 @@ const captureWorkerJs = `(() => {
 		});
 	}
 
-	// Every rung off one parsed snapshot: the source is validated once and decoded
-	// once, and each rung below the top is the same picture drawn smaller. Each
-	// answer carries the size it actually came out, because the daemon has no
-	// image library and takes this realm's word for how wide a rung is.
+	// One image off one parsed snapshot; the daemon stores the reported raster as-is.
 	async function raster(value, requestId) {
 		const canvas = document.querySelector("canvas");
 		if (!canvas) throw new Error("capture canvas unavailable");
@@ -229,22 +217,15 @@ const captureWorkerJs = `(() => {
 			if (!context) throw new Error("capture canvas unavailable");
 			image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(job.svg);
 			await image.decode();
-			const rungs = [];
-			for (let index = 0; index < job.rungs; index++) {
-				const step = 2 ** index;
-				const width = Math.max(1, Math.round(job.outputWidth / step));
-				const height = Math.max(1, Math.round(job.outputHeight / step));
-				canvas.width = width;
-				canvas.height = height;
-				context.fillStyle = "#fff";
-				context.fillRect(0, 0, width, height);
-				context.drawImage(image, 0, 0, width, height);
-				const blob = job.maxEdge > 0
-					? await canvasBlob(canvas, "image/jpeg", ${COVER_QUALITY})
-					: await canvasBlob(canvas, "image/png");
-				rungs.push({ url: await blobDataUrl(blob), width: width, height: height });
-			}
-			return rungs;
+			canvas.width = job.outputWidth;
+			canvas.height = job.outputHeight;
+			context.fillStyle = "#fff";
+			context.fillRect(0, 0, job.outputWidth, job.outputHeight);
+			context.drawImage(image, 0, 0, job.outputWidth, job.outputHeight);
+			const blob = job.targetWidth > 0
+				? await canvasBlob(canvas, "image/jpeg", ${COVER_QUALITY})
+				: await canvasBlob(canvas, "image/png");
+			return { url: await blobDataUrl(blob), width: job.outputWidth, height: job.outputHeight };
 		} finally {
 			image.src = "";
 			canvas.width = 0;
@@ -284,8 +265,8 @@ const captureWorkerJs = `(() => {
 			void (async () => {
 				let reply;
 				try {
-					const rungs = await raster(message.data, requestId);
-					reply = { spool: RESULT, id: requestId, rungs };
+					const image = await raster(message.data, requestId);
+					reply = { spool: RESULT, id: requestId, image };
 				} catch (error) {
 					const text = error instanceof Error ? error.message : String(error);
 					reply = { spool: RESULT, id: requestId, error: text.slice(0, 240) };
@@ -373,12 +354,10 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
 
 /**
  * The canvas shim (#8/#22), a classic script installed before any module so it
- * holds native references before frame code can replace them. It no longer
- * stops time: a held frame is frozen by `content-visibility: hidden` on the
- * canvas side (#112), which suspends this document's rAF, style, layout and
- * paint at engine level — strictly more than a cooperative freeze could hold,
- * and one mechanism rather than two. Speaks the host protocol:
- * {spool:"capture", id, maxEdge, settleMs}
+ * holds native references before frame code can replace them. HTML frames keep
+ * running when Select owns the pointer; terminal freeze lives in the terminal
+ * runtime. Speaks the host protocol:
+ * {spool:"capture", id, targetWidth, settleMs}
  * answers with a sanitized foreignObject source for the trusted capture host
  * to rasterize off this frame's main thread. The frame waits out its own fonts
  * and entry animations first, and carries the faces it loaded in as data URIs,
@@ -690,9 +669,8 @@ const canvasShimJs = `(() => {
 		return /@import/i.test(normalized) || hasUnsafeCaptureUrl(normalized);
 	}
 
-	// maxEdge bounds the longest side in device pixels — a cover asks for one,
-	// an export passes 0 and gets the frame at full device resolution.
-	async function captureSource(maxEdge, settleMs) {
+	// The live threshold asks for a still; zero asks for a full-resolution export.
+	async function captureSource(targetWidth, settleMs) {
 		await settle(settleMs);
 		const W = document.documentElement.clientWidth || innerWidth;
 		const H = document.documentElement.clientHeight || innerHeight;
@@ -769,16 +747,12 @@ const canvasShimJs = `(() => {
 		const xml = new XMLSerializer().serializeToString(clone);
 		const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '">'
 			+ '<foreignObject width="100%" height="100%">' + xml + "</foreignObject></svg>";
-		// A cover is a boot placeholder, not an artifact: bounding its longest
-		// edge turns a tall frame from a 12-megapixel lossless sheet into a few
-		// tens of kilobytes. The white fill below means it never needs alpha, so
-		// the bounded cover encodes as JPEG; an export still asks for lossless.
-		// This ratio is the export's: a cover's rungs come off the frame's own
-		// long edge, so what this document's window reports cannot soften them.
+		// A cover is a boot placeholder, not an artifact. The worker rasterizes it
+		// at the shared readable width; an export remains lossless and full-size.
 		const dpr = Math.min(window.devicePixelRatio || 1, 2);
 		const source = new Blob([svg], { type: "image/svg+xml" });
 		if (source.size > 16 * 1024 * 1024) throw new Error("capture source too large");
-		return { svg: source, width: W, height: H, dpr, maxEdge };
+		return { svg: source, width: W, height: H, dpr, targetWidth };
 	}
 
 	// selector below the boot root: tags with :nth-of-type where siblings repeat
@@ -969,14 +943,13 @@ const canvasShimJs = `(() => {
 		}
 		captureInFlight = true;
 		try {
-			const maxEdge = m.maxEdge;
+			const targetWidth = m.targetWidth;
 			const settleMs = m.settleMs;
 			if (
-				typeof maxEdge !== "number" ||
-				!Number.isFinite(maxEdge) ||
-				!Number.isInteger(maxEdge) ||
-				maxEdge < 0 ||
-				maxEdge > 16384 ||
+				typeof targetWidth !== "number" ||
+				!Number.isFinite(targetWidth) ||
+				!Number.isInteger(targetWidth) ||
+				(targetWidth !== 0 && targetWidth !== ${LIVE_MIN_CSS_PX}) ||
 				typeof settleMs !== "number" ||
 				!Number.isFinite(settleMs) ||
 				!Number.isInteger(settleMs) ||
@@ -985,7 +958,7 @@ const canvasShimJs = `(() => {
 			) {
 				throw new Error("invalid capture dimensions");
 			}
-			const source = await captureSource(maxEdge, settleMs);
+			const source = await captureSource(targetWidth, settleMs);
 			parent.postMessage({ spool: "capture-source", frame, id, ...source }, config.controlOrigin);
 		} catch (error) {
 			parent.postMessage(

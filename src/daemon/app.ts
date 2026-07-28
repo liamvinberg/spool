@@ -11,7 +11,7 @@ import { validator } from "hono/validator";
 import trash from "trash";
 import { z } from "zod";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_FAVICON_SVG } from "../brand";
-import { COVER_MAX_EDGE, COVER_RUNGS, type Cover } from "../cover";
+import type { Cover } from "../cover";
 import { SpoolError } from "../errors";
 import { initProject } from "../init";
 import { openProject } from "../open";
@@ -66,14 +66,7 @@ import { createShotTaker } from "./shots";
 import type { TermExecutor } from "./term-exec";
 import { termFontDataCss, termFontFile } from "./term-fonts";
 import { createTermSessions } from "./term-sessions";
-import {
-	type CoverRungWrite,
-	createThumbHealer,
-	isCoverHash,
-	readCoverRung,
-	UnservableCoverError,
-	writeCover,
-} from "./thumbs";
+import { createThumbHealer, isCoverHash, readCoverImage, UnservableCoverError, writeCover } from "./thumbs";
 import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
 import { createUpdateChecker } from "./update-check";
 import {
@@ -277,7 +270,7 @@ export function createDaemonApp({
 	// hard stop until project processes can run inside an OS sandbox.
 	const terms = createTermSessions({
 		executor: termExecutor ?? disabledTermExecutor,
-		// a persisted screen is a new cover: name its ladder in the event, so the
+		// a persisted screen is a new cover: name its image in the event, so the
 		// canvas swaps addresses without a projection read
 		publish: (root, frame) => {
 			const { cover } = terms.cover(root, frame);
@@ -304,8 +297,8 @@ export function createDaemonApp({
 		return { root: lookup.root };
 	}
 
-	/** The most one rung of an uploaded ladder may weigh. */
-	const MAX_RUNG_BYTES = 16 * 1024 * 1024;
+	/** The most the one uploaded cover image may weigh. */
+	const MAX_COVER_BYTES = 16 * 1024 * 1024;
 
 	/**
 	 * Ask the headless fallback for a frame's cover. The healer holds the
@@ -324,23 +317,22 @@ export function createDaemonApp({
 		});
 	}
 
-	/** Every rung a ladder upload declared, by the width its field name names. Throws on anything else. */
-	async function parseLadder(c: Context): Promise<CoverRungWrite[]> {
+	/** The capture protocol carries exactly one image. */
+	async function parseCover(c: Context): Promise<Buffer> {
 		const form = await c.req.formData();
-		const rungs: CoverRungWrite[] = [];
-		for (const [key, value] of form.entries()) {
-			const width = /^w([1-9][0-9]*)$/.exec(key)?.[1];
-			if (width === undefined || typeof value === "string") throw new Error("not a rung");
-			const declared = Number(width);
-			if (declared > COVER_MAX_EDGE || value.size === 0 || value.size > MAX_RUNG_BYTES) {
-				throw new Error("not a rung");
-			}
-			rungs.push({ width: declared, bytes: Buffer.from(await value.arrayBuffer()) });
+		const entries = [...form.entries()];
+		const [key, value] = entries[0] ?? [];
+		if (
+			entries.length !== 1 ||
+			key !== "cover" ||
+			value === undefined ||
+			typeof value === "string" ||
+			value.size === 0 ||
+			value.size > MAX_COVER_BYTES
+		) {
+			throw new Error("not a cover");
 		}
-		if (rungs.length > COVER_RUNGS || new Set(rungs.map((rung) => rung.width)).size !== rungs.length) {
-			throw new Error("not a ladder");
-		}
-		return rungs;
+		return Buffer.from(await value.arrayBuffer());
 	}
 
 	/**
@@ -614,13 +606,13 @@ export function createDaemonApp({
 			// A terminal frame's still, for `spool shot` and `spool verify` (#42):
 			// rasterized from the persisted grid in the pinned font, which never
 			// starts project code. The canvas reads covers from /covers instead —
-			// this door exists because the CLI has a control token and no ladder.
+			// this door exists because the CLI has a control token and no image URL.
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
 			const frame = c.req.param("frame");
 			if (!isSafeName(frame)) return c.text(`not a frame name: "${frame}"`, 404);
 			if (projectedKind(project.root, frame) !== "term") {
-				return c.text(`"${frame}" is not a terminal frame — its cover is a stored ladder, not a grid`, 404);
+				return c.text(`"${frame}" is not a terminal frame; its cover is a stored image, not a grid`, 404);
 			}
 			let screen: Awaited<ReturnType<typeof terms.screen>>;
 			try {
@@ -638,18 +630,16 @@ export function createDaemonApp({
 			c.header("content-type", "image/svg+xml; charset=utf-8");
 			return c.body(still);
 		})
-		.get("/covers/:project/:frame/:hash/:width", async (c) => {
-			// One rung of one cover (#111). The hash addresses the ladder's exact
-			// content, which makes the URL both the credential — an <img> cannot
-			// carry the control header — and an immutable cache key, so a warm
+		.get("/covers/:project/:frame/:hash", async (c) => {
+			// The hash addresses the image content, which makes the URL both the credential because an <img> cannot
+			// carry the control header, and an immutable cache key, so a warm
 			// reload fetches none of them.
 			const name = c.req.param("project");
 			const project = resolveProject(c, name);
 			if ("response" in project) return project.response;
 			const frame = c.req.param("frame");
 			const hash = c.req.param("hash");
-			const width = Number(c.req.param("width"));
-			if (!isSafeName(frame) || !isCoverHash(hash) || !Number.isSafeInteger(width) || width < 1) {
+			if (!isSafeName(frame) || !isCoverHash(hash)) {
 				return c.text("no such cover", 404);
 			}
 			let kind: FrameKind | undefined;
@@ -662,17 +652,17 @@ export function createDaemonApp({
 					immutableCover(c, "image/svg+xml; charset=utf-8");
 					return c.body(still);
 				}
-				const rung = kind === "html" ? readCoverRung(project.root, frame, hash, width) : undefined;
-				if (rung !== undefined) {
-					immutableCover(c, rung.type);
-					return c.body(new Uint8Array(rung.bytes));
+				const image = kind === "html" ? readCoverImage(project.root, frame, hash) : undefined;
+				if (image !== undefined) {
+					immutableCover(c, image.type);
+					return c.body(new Uint8Array(image.bytes));
 				}
 			} catch (error) {
 				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
 				throw error;
 			}
 			// The address named a cover this frame does not have. Heal it: the shot
-			// lands, the thumb event carries the new ladder, and the canvas asks
+			// lands, the thumb event carries the new image, and the canvas asks
 			// again at the address that now exists.
 			if (kind === "html") requestHeal(project.root, name, frame);
 			return c.text("no such cover", 404);
@@ -944,10 +934,7 @@ export function createDaemonApp({
 			},
 		)
 		.put("/api/p/:project/thumbs/:frame", async (c) => {
-			// A self-capture arrives as a whole ladder, one form field per rung named
-			// for its width in device pixels — the daemon has no image library, so the
-			// realm that rasterized them is the only one that can say how wide they
-			// are. The answer is the ladder's address, so the canvas can put the new
+			// A self-capture arrives as one image. The answer is its immutable address, so the canvas can put the new
 			// cover on screen without re-reading the projection.
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
@@ -959,16 +946,15 @@ export function createDaemonApp({
 			if (kind === "term") {
 				return c.text(`"${frame}" is a terminal frame — its stills rasterize from the grid`, 400);
 			}
-			let rungs: CoverRungWrite[];
+			let image: Buffer;
 			try {
-				rungs = await parseLadder(c);
+				image = await parseCover(c);
 			} catch {
-				return c.text("a cover is one to three rungs, each a form field named for its width", 400);
+				return c.text("a cover is one image in the cover field", 400);
 			}
-			if (rungs.length === 0) return c.text("empty capture", 400);
 			let cover: Cover;
 			try {
-				cover = writeCover(project.root, frame, rungs);
+				cover = writeCover(project.root, frame, image);
 			} catch (error) {
 				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
 				if (error instanceof UnservableCoverError) return c.text(error.message, 400);

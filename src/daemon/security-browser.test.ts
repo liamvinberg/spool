@@ -213,8 +213,7 @@ export default function Hostile() {
 async function childFrame(page: Page, selector: string): Promise<Frame> {
 	// A walk arrival replaces its target's document (#28), so the element found
 	// a moment ago can be between documents: ask again rather than read a stale
-	// handle. Attached, not visible — the only document the canvas ever shows is
-	// the one you went inside (#112).
+	// handle. Wait for attachment because a document may be hidden while it boots.
 	for (let attempt = 0; ; attempt++) {
 		const element = await page.waitForSelector(selector, { state: "attached" });
 		const frame = await element.contentFrame();
