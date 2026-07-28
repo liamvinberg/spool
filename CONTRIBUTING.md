@@ -58,14 +58,23 @@ All three must pass. Run `pnpm test` rather than a single file when your change 
 
 Two things about the edit loop:
 
-- **UI changes.** `pnpm dev serve --foreground` starts a Vite watcher that rebuilds the canvas automatically. Any other invocation does not, so run `pnpm build:ui` after editing `src/ui/` if you are not serving in the foreground.
-- **Daemon and CLI changes.** Nothing watches these. Restart the daemon after editing `src/daemon/`, `src/cli.ts`, or `src/runtime/`.
+- **UI changes.** Every dev daemon watches `src/ui/` and rebuilds the canvas automatically — the auto-started one included, since it respawns through the same dev entry. Reload the tab to pick a rebuild up; `pnpm build:ui` exists for building without a daemon.
+- **Daemon, CLI, and runtime changes.** These run straight from source, so there is nothing to rebuild — but nothing restarts the daemon for you. After editing `src/daemon/`, `src/cli.ts`, or `src/runtime/`, run `pnpm dev stop`; the next verb starts a fresh daemon and the canvas reconnects on its own.
 
-Your checkout runs fully isolated from an installed spool: `pnpm dev` sets `SPOOL_DIR` and `SPOOL_PORT`, so it keeps its own project registry on its own port, and the canvas favicon turns blue instead of red. You never need to `npm link` anything.
+Your checkout runs fully isolated from an installed spool: the dev entry pins `SPOOL_DIR` and `SPOOL_PORT`, so it keeps its own project registry on its own port, and the canvas favicon turns blue instead of red. You never need to `npm link` anything.
+
+To drive the checkout from another project — dogfooding unreleased spool on real design work — put a one-line shim on your PATH and use it where you would use `spool`:
+
+```sh
+#!/bin/sh
+exec "$HOME/path/to/spool/node_modules/.bin/tsx" "$HOME/path/to/spool/src/dev.ts" "$@"
+```
+
+It stays on the dev instance and keeps your working directory, which is how the verbs resolve which project you mean. (`npm link` would run the built `dist` against the installed spool's state — the one pairing to avoid.)
 
 ### Working in a git worktree
 
-If you develop in a disposable worktree, register the lane itself with `spool open <lane>` before verifying, and run `spool remove <lane>` before deleting the worktree. Do not point the lane at your main checkout: verification has to read the lane's own source, or you will be testing the wrong code.
+If you develop in a disposable worktree, register the lane itself with `pnpm dev open <lane>` before verifying, and run `pnpm dev remove <lane>` before deleting the worktree — from inside the lane, so it is the lane's own CLI. Do not point the lane at your main checkout: verification has to read the lane's own source, or you will be testing the wrong code.
 
 ## Finding your way around
 

@@ -6,7 +6,8 @@ Spool is a local-first prototyping canvas. Agents author live TSX frames; people
 - Start at `src/cli.ts` for commands, `src/daemon/` for local server and project state, `src/ui/` for the canvas, and `src/runtime/` for code injected into frames and the player.
 - Changesets derive versions and changelog entries from `.changeset/` files, never from commit messages. When a change alters published behavior, land a changeset with it per `docs/releases.md`; work confined to `design/`, docs, tests, or internals ships none.
 - Keep a session to one non-research ticket. Use Node 22+ and pnpm. Before handoff, run the relevant tests, `pnpm typecheck`, and `pnpm check`; run `pnpm test` for changes with broader behavioral reach.
-- `design/` is Spool's dogfood canvas. Run `spool skill` before working there; its nested `AGENTS.md` governs that folder.
+- The spool CLI in this checkout is `pnpm dev <verb>`: the checkout is its own instance (state `~/.spool-dev`, port 7767). Never drive the installed `spool` from here — it is a different instance on a different version.
+- `design/` is Spool's dogfood canvas. Run `pnpm dev skill` before working there; its nested `AGENTS.md` governs that folder.
 - Treat working-tree changes confined to `design/` as live canvas work. They do not block landing unrelated work whose paths do not overlap them.
 
 ## Agent skills
