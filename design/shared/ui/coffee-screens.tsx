@@ -284,7 +284,7 @@ function CoffeeReceipt({
 						full ? "text-[13px] leading-[18px]" : design ? "text-2xs leading-3" : "text-[9px] leading-3",
 					)}
 				>
-					Receipt sent to your email
+					Your receipt is on its way by email
 				</p>
 			</div>
 		</div>
