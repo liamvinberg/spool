@@ -1,5 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import { type Cue, duration, type PlayEntry, type RowChild, type RowState, type ShotRef, type Turn } from "./turn-play";
+import { drawnBy } from "./say-pace";
+import {
+	type AskOption,
+	type Connector,
+	type Cue,
+	duration,
+	type Foreign,
+	type Plan,
+	type PlayEntry,
+	type Question,
+	type RowChild,
+	type RowState,
+	type ShotRef,
+	type Turn,
+} from "./turn-play";
 
 /**
  * Replaying a real Claude Code session.
@@ -58,15 +72,22 @@ interface StreamEvent {
 	readonly content_block?: { readonly type: string; readonly name?: string };
 }
 
+/** a tool's arguments, as an object on the wire and as text in the older fixtures */
+type ToolInput = string | Readonly<Record<string, unknown>> | undefined;
+
 interface Block {
 	readonly type: string;
 	readonly name?: string;
 	readonly id?: string;
 	readonly text?: string;
-	readonly input?: string;
+	readonly input?: string | Readonly<Record<string, unknown>>;
 	readonly tool_use_id?: string;
 	readonly source?: { readonly media_type?: string };
 	readonly content?: string | readonly Block[];
+	/** the call came back a failure: the server refused it, errored, or never ran it */
+	readonly is_error?: boolean;
+	/** how `ToolSearch` answers — a deferred tool it has now loaded, by wire name */
+	readonly tool_name?: string;
 }
 
 export interface CaptureEvent {
@@ -86,6 +107,31 @@ export interface CaptureEvent {
 	readonly cwd?: string;
 	/** the runtime's own id for a delegated task; task_updated arrives carrying only this */
 	readonly task_id?: string;
+	/**
+	 * What the binary calls a tool that is not its own, per call (#142). Rides on the
+	 * same `assistant` event as the `tool_use` block and is keyed by that block's id,
+	 * so a call is foreign exactly when it has an entry here.
+	 */
+	readonly tool_use_meta?: readonly {
+		readonly id: string;
+		readonly display_name?: string;
+		readonly server_display_name?: string;
+		readonly icon_url?: string;
+	}[];
+	/**
+	 * Why a result carries no execution. `permission-rule` means a rule refused the
+	 * call and the server was never asked, which is a different fact from the server
+	 * failing and is the one the developer caused.
+	 */
+	readonly tool_result_meta?: readonly { readonly id: string; readonly non_execution_kind?: string }[];
+	/** a control command's answer; `mcp_status` is the only one this projection reads */
+	readonly response?: {
+		readonly response?: {
+			readonly mcpServers?: readonly { readonly name: string; readonly status: string; readonly error?: string }[];
+		};
+	};
+	/** what `init` thought the estate was, which #141 measured is racy and not the inventory */
+	readonly mcp_servers?: readonly { readonly name: string; readonly status: string }[];
 }
 
 /** the mock answers relative URLs out of shared/fixtures, so the capture is one fetch away */
@@ -123,9 +169,17 @@ const fromParent = (event: CaptureEvent): boolean => (event.parent_tool_use_id ?
  * A field out of a tool's input. The capture elides long values, which leaves
  * some inputs invalid JSON, so this reads the string by hand rather than parsing
  * and losing the whole call.
+ *
+ * A tool_use carries its input either way. On the wire it is an object, and the
+ * two older fixtures hold it serialised because their splice serialised it — so
+ * this takes both rather than making a third fixture pretend to be the first two.
  */
-function field(raw: string | undefined, key: string): string | null {
+function field(raw: ToolInput, key: string): string | null {
 	if (raw === undefined) return null;
+	if (typeof raw !== "string") {
+		const value = raw[key];
+		return typeof value === "string" ? value : value === undefined ? null : JSON.stringify(value);
+	}
 	const quoted = `"${key}"`;
 	const found = raw.indexOf(quoted);
 	if (found < 0) return null;
@@ -380,7 +434,30 @@ type Timeline = ReturnType<typeof timeline>;
 
 /* ---------- the script ---------- */
 
-export type Slice = "plan" | "verify";
+/**
+ * `plan` and `verify` are the two ends of claude-turn.json. `session` is the
+ * whole of claude-plan.json — the same nine minutes with the middle left in,
+ * which is the only window in the repo where a plan is written, worked and
+ * ticked off rather than written and abandoned.
+ */
+export type Slice = "plan" | "verify" | "session" | "mcp" | "ask" | "say";
+
+/**
+ * How much of a repeated act one row holds.
+ *
+ * Measured across both parent captures: 51 writes make 29 runs, and every run
+ * longer than one call is a run of writes to a single frame — no run in either
+ * capture ever spans two files, because the agent does not interleave. What ends
+ * a run is not time. Within-run gaps reach 15.2s and the shortest gap between
+ * two runs is 17.5s, so no threshold separates them; what actually sits in every
+ * one of those gaps is the agent going and looking at what it just changed.
+ *
+ *   none  every call is a row, which is what the rail does today
+ *   run   consecutive writes to one frame are one row, closed by the next row
+ *   pass  the run swallows the `spool shot` and the look that close it, so one
+ *         row is one make-it-and-look-at-it loop and the picture is its payload
+ */
+export type Collapse = "none" | "run" | "pass";
 
 export interface ScriptChild {
 	readonly key: string;
@@ -400,14 +477,42 @@ export interface ToolRow {
 	readonly cue: string;
 	readonly verb: string;
 	readonly subject: string;
+	/**
+	 * The frame the subject names, or null when the subject is a file that is not one
+	 * (#143). A run carries the frame all its calls touched, which is well defined
+	 * because #135 measured that a run never spans two files.
+	 */
+	readonly frame: string | null;
 	readonly subjectCue: string | null;
 	readonly doneCue: string | null;
+	/** the call the server was never asked to make, or made and failed (#142) */
+	readonly failed: boolean;
+	/** set when the tool belongs to a server that is not spool's, with every name the binary gave it */
+	readonly foreign: Foreign | null;
+	/**
+	 * The row is the binary loading its own tools rather than work on the project.
+	 *
+	 * MCP tools are deferred — `init.tools` offers zero `mcp__*` entries against
+	 * 58,732 tokens of them held back — so every foreign call is a two-step: a
+	 * `ToolSearch` for the tool, then the tool. Whether that first step is a row is
+	 * #142's second question, so the projection carries it either way and marks it.
+	 */
+	readonly finds: boolean;
 	readonly detail: string | null;
 	readonly shot: ShotRef | null;
 	readonly children: readonly ScriptChild[];
 	readonly openCue: string | null;
 	/** the subject counts its children in, because a plan's size is not known until it is written */
 	readonly counts: boolean;
+	/**
+	 * Several writes to one frame, drawn as one row that counts them.
+	 *
+	 * Same machinery as the plan — a child per call, so the count climbs off the
+	 * capture's own cues rather than arriving whole — but the children are never
+	 * listed. There is nothing to list: they are the same verb on the same frame,
+	 * and the count is the entire difference between them.
+	 */
+	readonly runs: boolean;
 	/**
 	 * A delegated task's live step. task_progress is a snapshot rather than a log
 	 * entry, so the row holds the step it is on and drops it the moment the task
@@ -431,10 +536,44 @@ export interface ProseRow {
 	readonly key: string;
 	readonly cue: string;
 	readonly text: string;
-	readonly chunks: readonly { readonly cue: string; readonly upto: number }[];
+	/**
+	 * Every delta, as the cue that fires it and the moment it lands.
+	 *
+	 * `at` is redundant with the cue's own time and is carried anyway, because #149's pace
+	 * needs the *spacing* between deltas rather than the fact that one has fired: the drain
+	 * reads how far behind the edge is, which is arithmetic over arrival times. The cue
+	 * survives alongside it so a held turn still gates the row (#145) — a parked clock must
+	 * not drain prose it has not reached.
+	 */
+	readonly chunks: readonly { readonly cue: string; readonly at: number; readonly upto: number }[];
 }
 
-export type ScriptRow = ToolRow | ThinkRow | ProseRow;
+/**
+ * The one row that is a question rather than a receipt (#145).
+ *
+ * Four beats, all of them measured: the block opens, the question's own sentence
+ * arrives, the options arrive, and it resolves. The third and fourth are separate
+ * because they are 84ms apart in the capture and would be minutes apart in front
+ * of a person — that gap is the whole of the state this row exists to draw.
+ */
+export interface AskRow {
+	readonly kind: "ask";
+	readonly key: string;
+	readonly cue: string;
+	readonly ask: Question;
+	/** the fragment that first carried the question's own sentence */
+	readonly saidCue: string | null;
+	/** the fragment that completed the option list, so there is something to press */
+	readonly liveCue: string | null;
+	readonly doneCue: string | null;
+	/** nobody answered, and the binary said so */
+	readonly dropped: boolean;
+	/** the window the sentence types itself in over, on the replay's clock */
+	readonly shownFrom: number;
+	readonly shownFor: number;
+}
+
+export type ScriptRow = ToolRow | ThinkRow | ProseRow | AskRow;
 
 export interface Script {
 	readonly cues: readonly Cue[];
@@ -475,24 +614,102 @@ const EMPTY_FANOUT: FanoutScript = { ...EMPTY, takes: [] };
  * it is doing, because the capture supplies those and inventing friendlier ones
  * would be putting words in its mouth.
  */
-function label(tool: string, input: string | undefined): { verb: string; subject: string } {
+function label(tool: string, input: ToolInput): { verb: string; subject: string; frame: string | null } {
 	if (tool === "Bash") {
 		const command = field(input, "command") ?? "";
 		// a compound command is several calls and it ends on its point, so the last spool
 		// verb in it is the one worth a row: `spool status; ...; spool shot cart` went to look at cart
 		const last = command.split(/\s*(?:&&|\|\||[;|])\s*/).filter((part) => /^spool\s/.test(part)).at(-1);
 		const spool = last === undefined ? null : /^spool\s+(\w+)\s*(.*)$/.exec(last);
-		if (spool !== null) return { verb: spool[1] ?? "run", subject: (spool[2] ?? "").split(/\s*\d*>/)[0]?.trim() ?? "" };
-		return { verb: "run", subject: field(input, "description") ?? "" };
+		if (spool !== null) {
+			const verb = spool[1] ?? "run";
+			const subject = (spool[2] ?? "").split(/\s*\d*>/)[0]?.trim() ?? "";
+			return { verb, subject, frame: TAKES_FRAME.has(verb) && /^[\w-]+$/.test(subject) ? subject : null };
+		}
+		return { verb: "run", subject: field(input, "description") ?? "", frame: null };
 	}
-	if (tool === "Read" || tool === "Write") {
-		const leaf = (field(input, "file_path") ?? "").split("/").pop() ?? "";
-		if (tool === "Write") return { verb: "write", subject: leaf };
-		return { verb: /\.(?:png|jpe?g|webp|gif|svg)$/i.test(leaf) ? "look" : "read", subject: leaf };
+	if (tool === "Read" || tool === "Write" || tool === "Edit") {
+		const path = field(input, "file_path") ?? "";
+		const leaf = path.split("/").pop() ?? "";
+		const frame = frameOf(path);
+		if (tool === "Write") return { verb: "write", subject: nameOf(path), frame };
+		if (tool === "Edit") return { verb: "edit", subject: nameOf(path), frame };
+		return { verb: /\.(?:png|jpe?g|webp|gif|svg)$/i.test(leaf) ? "look" : "read", subject: nameOf(path), frame };
 	}
-	if (tool === "Agent") return { verb: "delegate", subject: field(input, "description") ?? "" };
-	return { verb: tool.toLowerCase(), subject: "" };
+	if (tool === "Agent") return { verb: "delegate", subject: field(input, "description") ?? "", frame: null };
+	// the agent going to fetch a deferred tool before it can call it. Its own words are
+	// the query, the way a Bash row's are its description — spool knows no better noun
+	// for a search whose subject is a tool that is not spool's
+	if (tool === "ToolSearch") return { verb: "find", subject: field(input, "query") ?? "", frame: null };
+	return { verb: tool.toLowerCase(), subject: "", frame: null };
 }
+
+/**
+ * A foreign call's row, in the one name of the three that reads like a place every
+ * time (#142).
+ *
+ * `ask` because the row has to say the agent left the building, and the server is
+ * where it went. The server name keeps the capital the binary sent it with: every
+ * other subject on this rail is lowercase because it is spool's own noun, so a
+ * capital is the whole of the mark that says this one is somebody else's and Spool
+ * is quoting it. No icon and no badge — `icon_url` is a Google favicon service, and
+ * a local-first canvas that fetches one per row tells a third party which
+ * connectors the developer has.
+ */
+function askOf(meta: { readonly display_name?: string; readonly server_display_name?: string }, raw: string): Foreign {
+	const parts = /^mcp__(.+?)__(.+)$/.exec(raw);
+	return {
+		server: meta.server_display_name ?? parts?.[1] ?? raw,
+		tool: meta.display_name ?? parts?.[2] ?? raw,
+		raw,
+	};
+}
+
+/**
+ * The read verbs whose one argument is a frame, from `spool skill`: `spool shot
+ * <frame>`, `spool logs <frame>`, `spool url <frame>`. `selection` and `flows`
+ * take none and `init`/`open` take a path, so a subject that came from those is
+ * not a frame however much it looks like a name.
+ */
+const TAKES_FRAME = new Set(["shot", "logs", "url"]);
+
+/**
+ * The frame a path names, or null when the path is a file that is not one (#143).
+ *
+ * `nameOf` answers what to print and always answers something; this answers
+ * whether the thing printed is a frame, which is a different question and the one
+ * a row has to settle before it can offer to take you there. `pnpm-lock.yaml` and
+ * `src/daemon/lifecycle.ts` print their leaf and name no frame at all.
+ */
+function frameOf(path: string): string | null {
+	const frame = /(?:^|\/)frames\/([^/]+)\/frame\.(?:tsx|json)$/.exec(path);
+	const shot = /(?:^|\/)\.spool\/verify\/(.+)\.png$/.exec(path);
+	return frame?.[1] ?? shot?.[1] ?? null;
+}
+
+/**
+ * What a path is called on this rail.
+ *
+ * A frame lives at `frames/<name>/frame.tsx` with its geometry in the sidecar
+ * beside it, so both files are the frame and neither is worth saying `frame.tsx`
+ * about — twelve rows in the fan-out capture would otherwise all read `write
+ * frame.tsx`, which names nothing. A verify shot is the same frame from the other
+ * end, which is #117's finding: 18 of 18 images in both parents came back from
+ * `.spool/verify/<frame>.png`, so the rail never has to say `.png` either.
+ * Everything else is a file and keeps its leaf.
+ */
+function nameOf(path: string): string {
+	return frameOf(path) ?? path.split("/").pop() ?? "";
+}
+
+/**
+ * The calls that change a file, which are the ones a run is made of.
+ *
+ * A run is not a run of `Edit`s. In the fan-out capture a delegate fixing one
+ * frame goes `Edit, Edit, Write` and then `Edit, Write` — it switches to
+ * rewriting the file whole partway through and that is still one act.
+ */
+const MUTATES = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
 interface Streamed {
 	readonly index: number;
@@ -516,14 +733,20 @@ interface ToolDraft {
 	at: number;
 	verb: string;
 	subject: string;
+	/** the frame the subject names, when it names one */
+	frame: string | null;
 	subjectAt: number | null;
 	doneAt: number | null;
+	failed: boolean;
+	foreign: Foreign | null;
+	finds: boolean;
 	detail: string | null;
 	shot: ShotRef | null;
 	children: ChildDraft[];
 	steps: { at: number; text: string }[];
 	openAt: number | null;
 	counts: boolean;
+	runs: boolean;
 	block: Streamed | null;
 	id: string | null;
 }
@@ -531,23 +754,85 @@ interface ToolDraft {
 type Draft =
 	| ToolDraft
 	| { kind: "think"; at: number; ended: number; ms: number }
-	| { kind: "prose"; at: number; text: string; chunks: { at: number; upto: number }[] };
+	| { kind: "prose"; at: number; text: string; chunks: { at: number; upto: number }[] }
+	| {
+			kind: "ask";
+			at: number;
+			ask: Question;
+			saidAt: number | null;
+			liveAt: number | null;
+			doneAt: number | null;
+			dropped: boolean;
+			id: string | null;
+	  };
+
+/**
+ * A picture the agent read back, and which frame it is of.
+ *
+ * `spool shot` writes to `.spool/verify/<frame>.png` and that is where every
+ * image in both parent captures came from — 18 of 18, no reference images, no
+ * attachments, nothing from outside the project. So a picture in this rail is
+ * always a picture of a frame that is on the canvas, and the path can always be
+ * turned back into the frame's own name.
+ */
+function shotOf(path: string, media: string | undefined): ShotRef {
+	const found = /(?:^|\/)\.spool\/verify\/(.+)\.png$/.exec(path);
+	return { path, media: media ?? "image", frame: found?.[1] ?? null };
+}
+
+/**
+ * The question out of an `AskUserQuestion` input (#145).
+ *
+ * The schema takes one to four questions per call and the capture's one call
+ * carries one, so this reads the first and nothing pretends otherwise. A call
+ * with two is undrawn rather than half-drawn.
+ *
+ * Nothing here supplies wording. `header`, `question`, every `label` and every
+ * `description` are the agent's, and `multiSelect` is the agent's too — the rail
+ * has no default to fall back on and does not want one.
+ */
+function askedOf(input: ToolInput): Question | null {
+	const asked = input === undefined || input === null ? undefined : (input as { questions?: unknown }).questions;
+	if (!Array.isArray(asked)) return null;
+	const first = asked[0] as
+		| { question?: unknown; header?: unknown; multiSelect?: unknown; options?: unknown }
+		| undefined;
+	if (first === undefined || typeof first.question !== "string") return null;
+	const offered = Array.isArray(first.options) ? first.options : [];
+	const options: AskOption[] = offered
+		.filter((option): option is { label: string; description?: unknown } => typeof option?.label === "string")
+		.map((option) => ({
+			label: option.label,
+			description: typeof option.description === "string" ? option.description : "",
+		}));
+	return {
+		header: typeof first.header === "string" ? first.header : "",
+		question: first.question,
+		options,
+		multi: first.multiSelect === true,
+	};
+}
 
 /** an empty tool row, so the two projections open one the same way */
-function toolDraft(at: number, verb: string, subject: string): ToolDraft {
+function toolDraft(at: number, verb: string, subject: string, frame: string | null = null): ToolDraft {
 	return {
 		kind: "tool",
 		at,
 		verb,
 		subject,
+		frame,
 		subjectAt: null,
 		doneAt: null,
+		failed: false,
+		foreign: null,
+		finds: false,
 		detail: null,
 		shot: null,
 		children: [],
 		steps: [],
 		openAt: null,
 		counts: false,
+		runs: false,
 		block: null,
 		id: null,
 	};
@@ -600,7 +885,26 @@ function emitRows(drafts: readonly Draft[], shown: Timeline): ScriptRow[] {
 					key,
 					cue: cue(key, draft.at),
 					text: draft.text,
-					chunks: draft.chunks.map((chunk, part) => ({ cue: cue(`${key}:p${part}`, chunk.at), upto: chunk.upto })),
+					chunks: draft.chunks.map((chunk, part) => ({
+						cue: cue(`${key}:p${part}`, chunk.at),
+						at: chunk.at,
+						upto: chunk.upto,
+					})),
+				});
+				return;
+			}
+			if (draft.kind === "ask") {
+				rows.push({
+					kind: "ask",
+					key,
+					cue: cue(key, draft.at),
+					ask: draft.ask,
+					saidCue: draft.saidAt === null ? null : cue(`${key}:q`, draft.saidAt),
+					liveCue: draft.liveAt === null ? null : cue(`${key}:l`, draft.liveAt),
+					doneCue: draft.doneAt === null ? null : cue(`${key}:d`, draft.doneAt),
+					dropped: draft.dropped,
+					shownFrom: shownAt(draft.at),
+					shownFor: Math.max(1, shownAt(draft.saidAt ?? draft.at) - shownAt(draft.at)),
 				});
 				return;
 			}
@@ -610,12 +914,17 @@ function emitRows(drafts: readonly Draft[], shown: Timeline): ScriptRow[] {
 				cue: cue(key, draft.at),
 				verb: draft.verb,
 				subject: draft.subject,
+				frame: draft.frame,
 				subjectCue: draft.subjectAt === null ? null : cue(`${key}:s`, draft.subjectAt),
 				doneCue: draft.doneAt === null ? null : cue(`${key}:d`, draft.doneAt),
+				failed: draft.failed,
+				foreign: draft.foreign,
+				finds: draft.finds,
 				detail: draft.detail,
 				shot: draft.shot,
 				openCue: draft.openAt === null ? null : cue(`${key}:o`, draft.openAt),
 				counts: draft.counts,
+				runs: draft.runs,
 				steps: draft.steps.map((step, part) => ({ cue: cue(`${key}:t${part}`, step.at), text: step.text })),
 				children: draft.children
 					.filter((child) => child.at > 0)
@@ -633,7 +942,7 @@ function emitRows(drafts: readonly Draft[], shown: Timeline): ScriptRow[] {
 	return rows;
 }
 
-export function projectTurn(events: readonly CaptureEvent[], slice: Slice): Script {
+export function projectTurn(events: readonly CaptureEvent[], slice: Slice, collapse: Collapse = "none"): Script {
 	if (events.length === 0) return EMPTY;
 	const { at, pace, ttft } = place(events);
 	const thought = thoughts(events, at);
@@ -653,9 +962,63 @@ export function projectTurn(events: readonly CaptureEvent[], slice: Slice): Scri
 		for (let back = index; back >= 0; back -= 1) if (isRequest(events[back] as CaptureEvent)) return back;
 		return 0;
 	};
+	// the first reach outside spool, and the third foreign result to land after it. Three
+	// is where the window has every state the question has: a call allowed and answered,
+	// a call a rule refused, and a search for a tool that is not there to be found
+	const searched = events.findIndex(
+		(event) =>
+			event.type === "assistant" && blocksOf(event).some((block) => block.type === "tool_use" && block.name === "ToolSearch"),
+	);
+	const outside = new Set(events.flatMap((event) => (event.tool_use_meta ?? []).map((meta) => meta.id)));
+	const answered: number[] = [];
+	events.forEach((event, index) => {
+		if (event.type !== "user") return;
+		for (const block of blocksOf(event))
+			if (block.type === "tool_result" && outside.has(block.tool_use_id ?? "")) answered.push(index);
+	});
+	// the one question in either parent capture, and the beat after it. The window has to
+	// reach past the unanswered result, because what the agent does next is the finding:
+	// it does not stall and it does not retry, it picks the cautious option for you and
+	// says so — `Understood, I'll leave your install alone.`
+	const asked = events.findIndex(
+		(event) =>
+			event.type === "assistant" &&
+			blocksOf(event).some((block) => block.type === "tool_use" && block.name === "AskUserQuestion"),
+	);
+	const recovered = events.findIndex(
+		(event, index) =>
+			index > asked &&
+			asked >= 0 &&
+			event.type === "assistant" &&
+			fromParent(event) &&
+			blocksOf(event).some((block) => block.type === "text"),
+	);
+	// the work, then the report on it (#148). The long message in this capture is
+	// 3,372 characters and it is the last thing the agent says before it stops to
+	// ask — every other window in this file ends before it, which is why the
+	// question of how much room prose may take had never been drawn. It starts at
+	// the first Write because a report is what closes a piece of work: three writes,
+	// four verbs that all come back `spool: unauthenticated`, and then the agent
+	// explaining what it built and why it could not check it.
+	const wrote = events.findIndex(
+		(event) =>
+			event.type === "assistant" &&
+			fromParent(event) &&
+			blocksOf(event).some((block) => block.type === "tool_use" && block.name === "Write"),
+	);
+	const reported = events.findIndex(
+		(event) =>
+			event.type === "assistant" &&
+			fromParent(event) &&
+			blocksOf(event).some((block) => block.type === "text" && block.text !== undefined && block.text.length > 1000),
+	);
 	const bounds: Record<Slice, readonly [number, number]> = {
 		plan: [0, firstText],
 		verify: [request(shot), events.length - 1],
+		session: [0, events.length - 1],
+		mcp: [request(searched), answered[2] ?? -1],
+		ask: [request(asked), recovered],
+		say: [request(wrote), reported],
 	};
 	const [from, to] = bounds[slice];
 	if (from < 0 || to < 0 || from > to) return EMPTY;
@@ -671,6 +1034,10 @@ export function projectTurn(events: readonly CaptureEvent[], slice: Slice): Scri
 	const streamed = new Map<number, Streamed>();
 	let plan: ToolDraft | null = null;
 	let prose: Extract<Draft, { kind: "prose" }> | null = null;
+	/** the run of writes to one frame that is still open, if there is one */
+	let run: ToolDraft | null = null;
+	/** what each Read went to fetch, so an image result knows which file it is of */
+	const read = new Map<string, string>();
 
 	for (let index = from; index <= to; index += 1) {
 		const event = events[index] as CaptureEvent;
@@ -747,15 +1114,94 @@ export function projectTurn(events: readonly CaptureEvent[], slice: Slice): Scri
 					});
 					continue;
 				}
-				const named = label(block.name ?? "", block.input);
+				if (block.name === "TaskUpdate") {
+					// A task starting or landing is the list changing, not a call worth a row
+					// of its own — so it moves the plan and logs nothing. `taskId` is the
+					// position in the list the creates wrote, counted from one.
+					const which = Number.parseInt(field(block.input, "taskId") ?? "", 10);
+					const child = plan?.children[which - 1];
+					const status = field(block.input, "status");
+					if (child !== undefined && status === "in_progress") child.runAt = mark(now);
+					if (child !== undefined && status === "completed") child.doneAt = mark(now);
+					continue;
+				}
+				// the turn stopping to ask (#145). Not a call the log is a receipt for, so it
+				// never reaches label() and never becomes a line — the question is the object,
+				// the same way the plan is
+				if (block.name === "AskUserQuestion") {
+					const question = askedOf(block.input);
+					if (question !== null) {
+						drafts.push({
+							kind: "ask",
+							at: mark(claimed?.at ?? now - pace),
+							ask: question,
+							saidAt: mark(lands(claimed, question.question) ?? now),
+							// the options are the last thing in the payload, so the ask is answerable
+							// exactly when its arguments have finished arriving
+							liveAt: mark(claimed?.fragments.at(-1)?.at ?? now),
+							doneAt: null,
+							dropped: false,
+							id: block.id ?? null,
+						});
+					}
+					continue;
+				}
+				// a call is foreign exactly when the binary sent a name for it, so nothing here
+				// parses `mcp__` to find out and nothing invents a noun for a server Spool has
+				// never heard of
+				const meta = (event.tool_use_meta ?? []).find((entry) => entry.id === block.id);
+				const outsider = meta === undefined ? null : askOf(meta, block.name ?? "");
+				const named =
+					outsider === null
+						? label(block.name ?? "", block.input)
+						: { verb: "ask", subject: outsider.server, frame: null };
 				const path = field(block.input, "file_path");
-				const draft = toolDraft(mark(claimed?.at ?? now - pace), named.verb, named.subject);
+				const opened = mark(claimed?.at ?? now - pace);
+				if (block.name === "Read" && path !== null) read.set(block.id ?? "", relative(path, root));
+
+				const writes = collapse !== "none" && MUTATES.has(block.name ?? "") && named.subject !== "";
+				const sameFrame = run !== null && named.subject === run.subject;
+
+				// another write to the frame the open run is already about: the run counts it
+				// and takes over its id, because the result that lands next is this call's
+				if (run !== null && writes && sameFrame) {
+					run.children.push({ text: named.verb, running: null, at: opened, runAt: null, doneAt: null, arrives: "done" });
+					run.id = block.id ?? null;
+					continue;
+				}
+				// a pass is the whole loop, so the shot and the look that close the run are
+				// the run: the picture becomes its payload and the run ends on the look
+				if (collapse === "pass" && run !== null && sameFrame && (named.verb === "shot" || named.verb === "look")) {
+					run.id = block.id ?? null;
+					if (named.verb === "look") run = null;
+					continue;
+				}
+
+				run = null;
+				const draft = toolDraft(opened, named.verb, named.subject, named.frame);
+				// the raw request, one line, the way a path or a command is one line. For a
+				// foreign call that is the wire name and not the arguments: #120 settled that
+				// this disclosure is never payload, and the wire name is the whole of what the
+				// receipt above it is standing in for
 				draft.detail =
-					block.name === "Bash" ? (field(block.input, "command") ?? null) : path === null ? null : relative(path, root);
+					outsider !== null
+						? outsider.raw
+						: block.name === "Bash"
+							? (field(block.input, "command") ?? null)
+							: path === null
+								? null
+								: relative(path, root);
+				draft.foreign = outsider;
+				draft.finds = block.name === "ToolSearch";
 				draft.block = claimed;
 				draft.id = block.id ?? null;
 				const landed = lands(claimed, named.subject);
 				if (landed !== null) draft.subjectAt = mark(landed);
+				if (writes) {
+					draft.runs = true;
+					draft.children.push({ text: named.verb, running: null, at: opened, runAt: null, doneAt: null, arrives: "done" });
+					run = draft;
+				}
 				drafts.push(draft);
 			}
 			continue;
@@ -772,6 +1218,14 @@ export function projectTurn(events: readonly CaptureEvent[], slice: Slice): Scri
 					plan.doneAt = mark(now);
 					continue;
 				}
+				// a question's result is the one result that is not a receipt for work: it is
+				// either the answer or the binary saying nobody gave one
+				const asking = drafts.find((draft) => draft.kind === "ask" && draft.id !== null && draft.id === block.tool_use_id);
+				if (asking !== undefined && asking.kind === "ask") {
+					asking.doneAt = mark(now);
+					asking.dropped = text.startsWith("The user did not answer");
+					continue;
+				}
 				const owner =
 					drafts.find(
 						(draft): draft is ToolDraft => draft.kind === "tool" && draft.id !== null && draft.id === block.tool_use_id,
@@ -781,9 +1235,29 @@ export function projectTurn(events: readonly CaptureEvent[], slice: Slice): Scri
 					? block.content.find((part) => part.type === "image")
 					: undefined;
 				if (picture !== undefined) {
-					// the agent read a shot of its own frame back; the payload is elided, the moment is not
-					owner.shot = { path: owner.detail ?? "", media: picture.source?.media_type ?? "image" };
+					// the agent read a shot of its own frame back; the payload is elided, the moment is not.
+					// The path is the Read's own, not the row's: a pass row was opened by a write
+					// and its detail is the source file, while the picture is the verify shot.
+					owner.shot = shotOf(read.get(block.tool_use_id ?? "") ?? owner.detail ?? "", picture.source?.media_type);
 					owner.openAt = mark(now);
+				}
+				// a search that loaded no tool is the only place a connector nobody has signed in
+				// to is visible at all: it offers no failing tool, it offers no tool. So the count
+				// is the answer, and none is a failure rather than a quiet zero
+				if (owner.finds) {
+					const loaded = Array.isArray(block.content)
+						? block.content.filter((part) => part.type === "tool_reference").length
+						: 0;
+					owner.failed = loaded === 0;
+					owner.detail = loaded === 0 ? (typeof block.content === "string" ? block.content : "nothing") : `${loaded} tools`;
+				}
+				// an errored result has always been in the capture and has always drawn a check.
+				// Where a rule refused the call, the content is the developer's own sentence, and
+				// it outranks the wire name the row was holding
+				if (block.is_error === true) {
+					owner.failed = true;
+					const said = typeof block.content === "string" ? block.content.trim() : "";
+					if (said !== "") owner.detail = said;
 				}
 				owner.doneAt = mark(now);
 			}
@@ -800,8 +1274,8 @@ export function projectTurn(events: readonly CaptureEvent[], slice: Slice): Scri
 }
 
 /** the projection, memoised against the capture so useTurn's cue array stays stable */
-export function useTurnScript(events: readonly CaptureEvent[] | undefined, slice: Slice): Script {
-	return useMemo(() => (events === undefined ? EMPTY : projectTurn(events, slice)), [events, slice]);
+export function useTurnScript(events: readonly CaptureEvent[] | undefined, slice: Slice, collapse: Collapse = "none"): Script {
+	return useMemo(() => (events === undefined ? EMPTY : projectTurn(events, slice, collapse)), [events, slice, collapse]);
 }
 
 /* ---------- the fan-out ----------
@@ -1017,7 +1491,7 @@ export function projectFanout(events: readonly CaptureEvent[]): FanoutScript {
 				if (owner === null) continue;
 				const picture = Array.isArray(block.content) ? block.content.find((part) => part.type === "image") : undefined;
 				if (picture !== undefined) {
-					owner.shot = { path: owner.detail ?? "", media: picture.source?.media_type ?? "image" };
+					owner.shot = shotOf(owner.detail ?? "", picture.source?.media_type);
 					owner.openAt = mark(now);
 				}
 				// the Agent tool returns the instant the sub-agent is launched, and the task
@@ -1099,12 +1573,31 @@ function childState(child: ScriptChild, at: (cue: string) => boolean): RowState 
  * arrived in, and a thinking line carrying the duration the capture measured
  * rather than the duration the replay took.
  */
-export function railEntries(script: Script, turn: Turn, elapsed: number, context?: string): PlayEntry[] {
+export function railEntries(
+	script: Script,
+	turn: Turn,
+	elapsed: number,
+	context?: string,
+	/** `lifted` leaves the plan's one line in the log and hands the list to the rail */
+	plan: "log" | "lifted" = "log",
+	/**
+	 * Whether the search that loads a deferred tool is a row of its own (#142).
+	 *
+	 *   none   never. The log holds work on the project and a tool being loaded is
+	 *          not that, so a foreign call is one row like every other call.
+	 *   empty  only when it came back with nothing, which is the one case that is
+	 *          not machinery: a connector nobody has signed in to offers no tool at
+	 *          all, so an empty search is the only trace it leaves anywhere.
+	 *   all    always, so the two-step reads as two steps.
+	 */
+	find: "none" | "empty" | "all" = "empty",
+): PlayEntry[] {
 	const entries: PlayEntry[] = [];
 	if (turn.phase === "idle") return entries;
 	entries.push({ key: "user", kind: "user", text: turn.prompt, ...(context === undefined ? {} : { context }) });
 	for (const row of script.rows) {
 		if (!turn.at(row.cue)) continue;
+		if (row.kind === "tool" && row.finds && (find === "none" || (find === "empty" && !row.failed))) continue;
 		if (row.kind === "think") {
 			const done = turn.at(row.doneCue);
 			const part = Math.max(0, Math.min(1, (elapsed - row.shownAt) / row.shownMs));
@@ -1119,8 +1612,41 @@ export function railEntries(script: Script, turn: Turn, elapsed: number, context
 			continue;
 		}
 		if (row.kind === "prose") {
-			const upto = row.chunks.reduce((seen, chunk) => (turn.at(chunk.cue) ? chunk.upto : seen), 0);
+			/*
+			 * #149's pace. A delta is not a step: the backlog sets the rate, so a chunk that
+			 * lands whole is drawn out over the following frames — `min(83 c/s, 250ms ÷ pending)`,
+			 * closed-form in `say-pace.ts`. What was here before drew each chunk the instant its
+			 * cue fired, which measured 96% of frames with nothing on them and the rest carrying
+			 * up to three lines each.
+			 *
+			 * The cue still gates which deltas exist, so a held turn (#145) cannot drain prose
+			 * the clock has not reached; `elapsed` then paces the ones it has.
+			 */
+			const upto = drawnBy(
+				row.chunks.filter((chunk) => turn.at(chunk.cue)),
+				elapsed,
+			);
 			entries.push({ key: row.key, kind: "prose", full: row.text, shown: row.text.slice(0, upto) });
+			continue;
+		}
+		if (row.kind === "ask") {
+			// the question types itself in between the block opening and its arguments
+			// finishing, which is the same three beats every tool call gets — so the ask
+			// is not answerable for the beat where it is still arriving
+			const said = row.saidCue !== null && turn.at(row.saidCue);
+			const live = row.liveCue !== null && turn.at(row.liveCue);
+			const settled = row.doneCue !== null && turn.at(row.doneCue);
+			const part = said ? 1 : Math.max(0, Math.min(1, (elapsed - row.shownFrom) / Math.max(1, row.shownFor)));
+			entries.push({
+				key: row.key,
+				kind: "ask",
+				// a question nobody answered is not done, and the binary agrees: it comes back
+				// `The user did not answer the questions.` rather than with an answer
+				state: settled ? (row.dropped ? "failed" : "done") : "running",
+				ask: row.ask,
+				shown: row.ask.question.slice(0, Math.round(row.ask.question.length * part)),
+				live: live && !settled,
+			});
 			continue;
 		}
 		const children: RowChild[] = row.children
@@ -1133,8 +1659,17 @@ export function railEntries(script: Script, turn: Turn, elapsed: number, context
 					state,
 				};
 			});
-		const counted = `${children.length} task${children.length === 1 ? "" : "s"}`;
-		const shows = row.counts ? children.length > 0 : row.subjectCue === null || turn.at(row.subjectCue);
+		// a lifted plan still gets its line in the log, because the log's job is to say
+		// what happened and writing the plan happened — it just no longer holds the list.
+		// A run's children are never listed: they are the same verb on the same frame,
+		// and the count in the subject is the whole of what tells them apart.
+		const listed = (row.counts && plan === "lifted") || row.runs ? [] : children;
+		const counted = row.runs
+			? children.length > 1
+				? `${row.subject} ×${children.length}`
+				: row.subject
+			: `${children.length} task${children.length === 1 ? "" : "s"}`;
+		const shows = row.counts || row.runs ? children.length > 0 : row.subjectCue === null || turn.at(row.subjectCue);
 		const settled = row.doneCue !== null && turn.at(row.doneCue);
 		// a delegate's step is where it is, not where it has been, and once it lands
 		// there is nothing more to say: the frame it wrote is out on the canvas
@@ -1143,14 +1678,70 @@ export function railEntries(script: Script, turn: Turn, elapsed: number, context
 		entries.push({
 			key: row.key,
 			kind: "line",
-			state: settled ? "done" : "running",
+			state: settled ? (row.failed ? "failed" : "done") : "running",
 			verb: row.verb,
-			...(shows ? { subject: row.counts ? counted : row.subject } : {}),
+			...(row.foreign === null ? {} : { foreign: row.foreign }),
+			...(shows ? { subject: row.counts || row.runs ? counted : row.subject } : {}),
+			// the frame rides with the row whether or not the subject has landed yet: a
+			// tool block opens with an empty input, so for a beat the row knows the frame
+			// it is about before it can print it, and drawing a target with nothing under
+			// it is worse than waiting
+			...(row.frame === null || !shows ? {} : { frame: row.frame }),
+			...(row.runs && children.length > 1 ? { count: children.length } : {}),
 			...(detail === null ? {} : { detail }),
 			...(row.shot === null ? {} : { shot: row.shot }),
-			...(children.length > 0 ? { children } : {}),
+			...(listed.length > 0 ? { children: listed } : {}),
 			...(row.openCue !== null && turn.at(row.openCue) ? { open: true } : {}),
 		});
 	}
 	return entries;
+}
+
+/**
+ * The developer's whole MCP estate, off `mcp_status` rather than off `init` (#142).
+ *
+ * Session state and not turn state, so it is read from the capture whole and has
+ * nothing to do with which slice is playing — a connector's status is true before
+ * the first keystroke and does not change because a row landed. `init.mcp_servers`
+ * is the fallback and it is a bad one: in this capture it reports two servers
+ * where `mcp_status` reports fifteen.
+ */
+export function connectorsOf(events: readonly CaptureEvent[] | undefined): readonly Connector[] {
+	if (events === undefined) return [];
+	const answered = events.find((event) => event.type === "control_response" && event.response?.response?.mcpServers !== undefined);
+	const listed =
+		answered?.response?.response?.mcpServers ?? events.find((event) => event.subtype === "init")?.mcp_servers ?? [];
+	const known = new Set(["connected", "needs-auth", "failed", "pending"]);
+	return listed.map((server) => ({
+		name: server.name,
+		status: (known.has(server.status) ? server.status : "pending") as Connector["status"],
+		...("error" in server && typeof server.error === "string" ? { error: server.error } : {}),
+	}));
+}
+
+/**
+ * The plan, lifted out of the transcript.
+ *
+ * Same children the row would have shown, read at the same instant off the same
+ * cues — the difference is only where they are drawn, which is the whole of what
+ * this is for.
+ */
+export function planOf(script: Script, turn: Turn): Plan | null {
+	if (turn.phase === "idle") return null;
+	const row = script.rows.find((entry): entry is ToolRow => entry.kind === "tool" && entry.counts);
+	if (row === undefined || !turn.at(row.cue)) return null;
+	const children: RowChild[] = row.children
+		.filter((child) => turn.at(child.cue))
+		.map((child) => {
+			const state = childState(child, turn.at);
+			return { id: child.cue, name: state === "running" && child.running !== null ? child.running : child.text, state };
+		});
+	if (children.length === 0) return null;
+	const running = children.find((child) => child.state === "running") ?? null;
+	return {
+		total: children.length,
+		done: children.filter((child) => child.state === "done").length,
+		running: running === null ? null : running.name,
+		children,
+	};
 }

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
+import type { Life } from "../lib/agent-threads";
 import { cn } from "../lib/utils";
 import { ChevronIcon, FolderIcon, HandIcon, PanelCaret, SelectIcon } from "./spool-icons";
+import { ThreadMark } from "./spool-thread-mark";
 
 /**
  * The canvas chrome: the Pages rail on the left, the viewport between, the
@@ -21,6 +23,14 @@ export interface PageRow {
 	/** the page whose canvas is on screen — one thread-coloured spine */
 	active?: boolean;
 	open?: boolean;
+	/**
+	 * A conversation lives on this page and is doing something you cannot see: it
+	 * turns while it runs, and settles to a dot once it has finished unread. Absent
+	 * unless a proposal puts agent state out here.
+	 */
+	mark?: Life | undefined;
+	/** paired with something outside this rail that is pointing at the same page */
+	lit?: boolean | undefined;
 }
 
 export function CanvasChrome({
@@ -31,6 +41,7 @@ export function CanvasChrome({
 	rail,
 	railWidth = INSPECTOR_W,
 	railLabel = "Inspector",
+	targets,
 	children,
 }: {
 	pages: readonly PageRow[];
@@ -40,22 +51,24 @@ export function CanvasChrome({
 	tool?: "select" | "hand" | undefined;
 	/** an exploration's own right rail, taking the inspector's place — proposals only */
 	rail?: ReactNode | undefined;
-	/** the right rail's width; the shipped inspector is 300 */
+	/** the right rail's width; the shipped inspector is 300, and 0 draws no rail at all */
 	railWidth?: number | undefined;
 	/** what the rail slot announces itself as; a proposal rail is not the inspector */
 	railLabel?: string | undefined;
+	/** where the selected frame's walks land, drawn in the tree rather than in a rail (#144) */
+	targets?: readonly Target[] | undefined;
 	children?: ReactNode;
 }) {
 	return (
 		<div className="flex h-full w-full overflow-hidden bg-bg">
-			<PagesRail pages={pages} selected={selected} />
+			<PagesRail pages={pages} selected={selected} targets={targets} />
 			<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">
 				{children}
 				<CanvasTools tool={tool} />
 			</div>
 			{rail === undefined ? (
 				<InspectorRail mode={inspector} selected={selected} />
-			) : (
+			) : railWidth === 0 ? null : (
 				<aside
 					aria-label={railLabel}
 					className="flex shrink-0 flex-col border-border border-l bg-bg"
@@ -68,7 +81,29 @@ export function CanvasChrome({
 	);
 }
 
-function PagesRail({ pages, selected }: { pages: readonly PageRow[]; selected?: string | undefined }) {
+/**
+ * One destination of the selected frame, drawn where the frame itself is listed.
+ *
+ * `connections.ts` groups a frame's walks by the page they land on, and this rail is
+ * already that grouping — every frame, under its page. A `might` edge is faint out on
+ * the canvas and faint here; a name nothing answers to has no row to draw at all, so
+ * it lands on the page group as a count of what is broken.
+ */
+export interface Target {
+	readonly frame: string;
+	readonly certainty: "will" | "might";
+}
+
+function PagesRail({
+	pages,
+	selected,
+	targets = [],
+}: {
+	pages: readonly PageRow[];
+	selected?: string | undefined;
+	targets?: readonly Target[] | undefined;
+}) {
+	const reached = new Map(targets.map((target) => [target.frame, target]));
 	return (
 		<aside className="flex shrink-0 flex-col border-border border-r bg-bg" style={{ width: PAGES_W }}>
 			<div className="flex h-11 shrink-0 items-center justify-between border-border border-b pr-2 pl-3.5">
@@ -83,7 +118,12 @@ function PagesRail({ pages, selected }: { pages: readonly PageRow[]; selected?: 
 			<div className="min-h-0 flex-1 overflow-hidden py-2">
 				{pages.map((page) => (
 					<div key={page.name}>
-						<div className={cn("group relative flex h-8 items-center pr-1.5", page.active === true && "bg-surface")}>
+						<div
+							className={cn(
+								"group relative flex h-8 items-center pr-1.5",
+								(page.active === true || page.lit === true) && "bg-surface",
+							)}
+						>
 							{page.active === true ? (
 								<span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-thread" />
 							) : null}
@@ -103,33 +143,60 @@ function PagesRail({ pages, selected }: { pages: readonly PageRow[]; selected?: 
 									{page.name}
 								</span>
 							</span>
+							{page.mark === undefined ? null : <ThreadMark life={page.mark} className="mr-1.5" />}
+							{/* a collapsed page says only *that* it is walked to: how many is one row of
+							    grey away, and two numbers side by side read as one wrong number */}
+							{page.open === true || !page.frames.some((frame) => reached.has(frame)) ? null : (
+								<WalkTick className="mr-2 h-2 w-2.5 text-thread" />
+							)}
 							<span className="font-mono text-2xs text-muted/60 leading-3">{page.frames.length}</span>
 						</div>
 						{page.open === true ? (
 							<div className="relative pb-0.5">
 								<span className="absolute top-0 bottom-1 left-[18px] w-px bg-border-raised" />
-								{page.frames.map((frame) => (
-									<div
-										key={frame}
-										className={cn("relative flex h-7 items-center", frame === selected && "bg-surface")}
-									>
-										<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
-										<span
-											className={cn(
-												"truncate pl-[34px] font-mono text-sm leading-sm",
-												frame === selected ? "text-text" : "text-muted",
-											)}
+								{page.frames.map((frame) => {
+									const target = reached.get(frame);
+									return (
+										<div
+											key={frame}
+											className={cn("relative flex h-7 items-center", frame === selected && "bg-surface")}
 										>
-											{frame}
-										</span>
-									</div>
-								))}
+											<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
+											<span
+												className={cn(
+													"min-w-0 truncate pl-[34px] font-mono text-sm leading-sm",
+													frame === selected ? "text-text" : target === undefined ? "text-muted" : "text-text/85",
+												)}
+											>
+												{frame}
+											</span>
+											{target === undefined ? null : (
+												<WalkTick
+													className={cn(
+														"mr-2 ml-auto h-2 w-2.5 shrink-0 text-thread",
+														target.certainty === "might" && "opacity-45",
+													)}
+												/>
+											)}
+										</div>
+									);
+								})}
 							</div>
 						) : null}
 					</div>
 				))}
 			</div>
 		</aside>
+	);
+}
+
+/** the arrow a walked-to frame wears in the tree: the canvas's own edge, one row long */
+function WalkTick({ className }: { className?: string | undefined }) {
+	return (
+		<svg viewBox="0 0 10 8" className={className} fill="none" aria-hidden="true">
+			<path d="M0.5 4h6" stroke="currentColor" strokeWidth="1.5" />
+			<path d="m9.5 4-3-1.8v3.6Z" fill="currentColor" />
+		</svg>
 	);
 }
 

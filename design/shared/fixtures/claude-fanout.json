@@ -16,27 +16,27 @@
         "status": "failed"
       },
       {
-        "name": "claude.ai SentinelOne MCP",
+        "name": "claude.ai Sentry",
         "status": "pending"
       },
       {
-        "name": "claude.ai Eidra Slides",
+        "name": "claude.ai Slides",
         "status": "pending"
       },
       {
-        "name": "claude.ai Vibed Application Platform for Eidra (VAPE)",
+        "name": "claude.ai Internal Platform",
         "status": "needs-auth"
       },
       {
-        "name": "claude.ai Eidra Artifacts Stage",
+        "name": "claude.ai Artifacts Stage",
         "status": "needs-auth"
       },
       {
-        "name": "claude.ai Eidra Artifacts",
+        "name": "claude.ai Artifacts",
         "status": "pending"
       },
       {
-        "name": "claude.ai Finance Reporting",
+        "name": "claude.ai Reporting",
         "status": "needs-auth"
       },
       {
@@ -44,7 +44,7 @@
         "status": "pending"
       },
       {
-        "name": "claude.ai Float MCP",
+        "name": "claude.ai Float",
         "status": "needs-auth"
       },
       {
@@ -7916,27 +7916,27 @@
         "status": "failed"
       },
       {
-        "name": "claude.ai SentinelOne MCP",
+        "name": "claude.ai Sentry",
         "status": "connected"
       },
       {
-        "name": "claude.ai Eidra Slides",
+        "name": "claude.ai Slides",
         "status": "connected"
       },
       {
-        "name": "claude.ai Vibed Application Platform for Eidra (VAPE)",
+        "name": "claude.ai Internal Platform",
         "status": "needs-auth"
       },
       {
-        "name": "claude.ai Eidra Artifacts Stage",
+        "name": "claude.ai Artifacts Stage",
         "status": "needs-auth"
       },
       {
-        "name": "claude.ai Eidra Artifacts",
+        "name": "claude.ai Artifacts",
         "status": "connected"
       },
       {
-        "name": "claude.ai Finance Reporting",
+        "name": "claude.ai Reporting",
         "status": "needs-auth"
       },
       {
@@ -7944,7 +7944,7 @@
         "status": "connected"
       },
       {
-        "name": "claude.ai Float MCP",
+        "name": "claude.ai Float",
         "status": "needs-auth"
       },
       {

@@ -110,3 +110,14 @@ export const THREE_FRAMES: readonly Pointed[] = ["menu", "cart", "receipt"].map(
 	path: `design/frames/app/${frame}/frame.tsx`,
 	size: { w: 390, h: 844 },
 }));
+
+/**
+ * The frame the hands are inside (#139), which is a list of one and can never be
+ * longer: `canvas.tsx:820` only reaches for `entered` after picks and selections
+ * have both come up empty, and a press anywhere else on the canvas leaves the
+ * frame before it can add a second. Byte for byte it is the chip to its left —
+ * the daemon serves a frame the same way whether it was clicked or stepped into.
+ */
+export function enteredFrame(name: string | null): readonly Pointed[] {
+	return THREE_FRAMES.filter((entry) => entry.frame === name);
+}

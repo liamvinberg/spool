@@ -101,6 +101,41 @@ export function ThreadIcon({ className }: IconProps) {
 	);
 }
 
+/**
+ * agent — a mark and a line, twice: the rail drawn as itself (#144).
+ *
+ * It says what the pane is rather than who is answering in it. #115 ships three
+ * adapters behind the same rail, so a glyph borrowed from one vendor's mark would be
+ * wrong on the day the second one lands — and a speech bubble was drawn first and
+ * lost for being somebody else's product rather than this one's.
+ */
+export function AgentIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<circle cx="3.2" cy="5.4" r="1.15" fill="currentColor" />
+			<circle cx="3.2" cy="10.6" r="1.15" fill="currentColor" />
+			<path d="M6.4 5.4h7.2M6.4 10.6h4.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+		</svg>
+	);
+}
+
+/**
+ * connections — two frames and the walk between them (#144).
+ *
+ * The flow arrow was the obvious borrow and it is already the header's threads
+ * toggle, so it would mean two things in one window. This draws what the pane
+ * actually lists instead: a frame, another frame, and the edge that joins them.
+ */
+export function ConnectionsIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<circle cx="4.2" cy="4.6" r="1.9" stroke="currentColor" strokeWidth="1.5" />
+			<circle cx="11.8" cy="11.4" r="1.9" stroke="currentColor" strokeWidth="1.5" />
+			<path d="M5.7 6.1 10.3 9.9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+		</svg>
+	);
+}
+
 export function InspectorIcon({ className }: IconProps) {
 	return (
 		<svg viewBox="0 0 16 16" className={className} aria-hidden="true">
