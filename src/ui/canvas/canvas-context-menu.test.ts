@@ -3,7 +3,11 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { accelKeyName } from "../../runtime/platform-keys";
 import { ProjectCanvas } from "./canvas";
+
+/** The deep-select modifier as this environment binds it — ctrl under happy-dom, ⌘ on a Mac. */
+const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
 const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html" }];
 
@@ -68,7 +72,7 @@ describe("canvas context menu", () => {
 					button: 0,
 					clientX: 40,
 					clientY: 40,
-					metaKey: true,
+					...ACCEL,
 					pointerId: 1,
 				}),
 			);

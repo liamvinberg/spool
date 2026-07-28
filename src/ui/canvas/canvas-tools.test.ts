@@ -3,7 +3,16 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { accelKeyName } from "../../runtime/platform-keys";
 import { ProjectCanvas } from "./canvas";
+
+/**
+ * The accel modifier as this environment binds it. Asserting against ⌘ would
+ * only test the Mac: happy-dom reports a non-Apple platform, so these events
+ * hold ctrl here and ⌘ in a real Mac browser, which is the point.
+ */
+const ACCEL_KEY = accelKeyName();
+const ACCEL = ACCEL_KEY === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
 const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html" }];
 
@@ -133,7 +142,7 @@ it("hands the pointer back while Command is held without taking the frame off th
 	const wrapper = () => host.querySelector<HTMLIFrameElement>('iframe[title="home"]')?.parentElement;
 
 	await act(async () => {
-		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
+		window.dispatchEvent(new KeyboardEvent("keydown", { key: ACCEL_KEY, ...ACCEL, bubbles: true }));
 	});
 	// ⌘ takes the pointer back off the frame so an element can be reached
 	await until(() => iframe?.style.pointerEvents === "none");
@@ -145,7 +154,7 @@ it("hands the pointer back while Command is held without taking the frame off th
 	expect(wrapper()?.style.contentVisibility).toBe("");
 
 	await act(async () => {
-		window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
+		window.dispatchEvent(new KeyboardEvent("keyup", { key: ACCEL_KEY, bubbles: true }));
 	});
 	await until(() => iframe?.style.pointerEvents === "auto");
 	expect(host.querySelector('iframe[title="home"]')).toBe(iframe);
@@ -156,7 +165,7 @@ it("treats Command as Select's element modifier, never as a tool of its own", as
 	const { host } = await renderCanvas();
 
 	await act(async () => {
-		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
+		window.dispatchEvent(new KeyboardEvent("keydown", { key: ACCEL_KEY, ...ACCEL, bubbles: true }));
 	});
 
 	// holding ⌘ reaches an element, it does not change which tool is committed
@@ -165,7 +174,7 @@ it("treats Command as Select's element modifier, never as a tool of its own", as
 	expect(host.querySelector('button[aria-label="hand"]')?.textContent).toContain("hold space");
 
 	await act(async () => {
-		window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
+		window.dispatchEvent(new KeyboardEvent("keyup", { key: ACCEL_KEY, bubbles: true }));
 	});
 
 	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
@@ -201,7 +210,7 @@ it("keeps toolbar gestures out of the canvas beneath it", async () => {
 
 	await act(async () => {
 		select?.dispatchEvent(
-			new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 2, metaKey: true }),
+			new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 2, ...ACCEL }),
 		);
 		select?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 40, clientY: 40 }));
 		select?.dispatchEvent(
@@ -236,11 +245,11 @@ it("clears borrowed Select previews across Command release and window blur", asy
 	const postMessage = vi.spyOn(iframe?.contentWindow as Window, "postMessage");
 
 	await act(async () => {
-		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
+		window.dispatchEvent(new KeyboardEvent("keydown", { key: ACCEL_KEY, ...ACCEL, bubbles: true }));
 	});
 	await act(async () => {
 		canvas?.dispatchEvent(
-			new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 1, metaKey: true }),
+			new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 1, ...ACCEL }),
 		);
 	});
 	const pick = postMessage.mock.calls
@@ -257,7 +266,7 @@ it("clears borrowed Select previews across Command release and window blur", asy
 	expect(pick).toBeDefined();
 
 	await act(async () => {
-		window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
+		window.dispatchEvent(new KeyboardEvent("keyup", { key: ACCEL_KEY, bubbles: true }));
 	});
 	await act(async () => {
 		window.dispatchEvent(
@@ -286,12 +295,12 @@ it("clears borrowed Select previews across Command release and window blur", asy
 	expect(host.querySelector(".opacity-50")).toBeNull();
 
 	await act(async () => {
-		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
+		window.dispatchEvent(new KeyboardEvent("keydown", { key: ACCEL_KEY, ...ACCEL, bubbles: true }));
 		await new Promise((resolve) => setTimeout(resolve, 90));
 	});
 	await act(async () => {
 		canvas?.dispatchEvent(
-			new PointerEvent("pointermove", { bubbles: true, clientX: 50, clientY: 50, pointerId: 2, metaKey: true }),
+			new PointerEvent("pointermove", { bubbles: true, clientX: 50, clientY: 50, pointerId: 2, ...ACCEL }),
 		);
 	});
 	const secondPick = postMessage.mock.calls
@@ -404,12 +413,12 @@ it("borrows Hand with Space, keeps it under Command, and clears it on blur", asy
 
 	// ⌘ is a modifier now, so it no longer outranks the borrowed Hand
 	await act(async () => {
-		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
+		window.dispatchEvent(new KeyboardEvent("keydown", { key: ACCEL_KEY, ...ACCEL, bubbles: true }));
 	});
 	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("true");
 
 	await act(async () => {
-		window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
+		window.dispatchEvent(new KeyboardEvent("keyup", { key: ACCEL_KEY, bubbles: true }));
 	});
 	expect(host.querySelector('button[aria-label="hand"]')?.getAttribute("aria-pressed")).toBe("true");
 
@@ -430,7 +439,7 @@ it("takes the pointer back on a focused frame's relayed Command key and returns 
 	await act(async () => {
 		window.dispatchEvent(
 			new MessageEvent("message", {
-				data: { spool: "modifier", frame: "home", modifier: "Meta", held: true },
+				data: { spool: "modifier", frame: "home", modifier: ACCEL_KEY, held: true },
 				source: iframe?.contentWindow ?? null,
 			}),
 		);
@@ -442,7 +451,7 @@ it("takes the pointer back on a focused frame's relayed Command key and returns 
 	await act(async () => {
 		window.dispatchEvent(
 			new MessageEvent("message", {
-				data: { spool: "modifier", frame: "home", modifier: "Meta", held: false },
+				data: { spool: "modifier", frame: "home", modifier: ACCEL_KEY, held: false },
 				source: iframe?.contentWindow ?? null,
 			}),
 		);
@@ -487,7 +496,7 @@ it("asks the frame for the element under a ⌘-click, and for nothing under a ba
 				clientX: 40,
 				clientY: 40,
 				pointerId: 3,
-				metaKey: true,
+				...ACCEL,
 			}),
 		);
 	});

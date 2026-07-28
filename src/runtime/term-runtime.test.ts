@@ -119,7 +119,9 @@ describe("the terminal runtime", () => {
 				{ spool: "modifier", frame: "term", modifier: "Meta", held: true },
 				{ spool: "key", frame: "term", key: "Escape" },
 				{ spool: "modifier", frame: "term", modifier: "Meta", held: false },
+				// blur releases both candidates so neither platform's can stick
 				{ spool: "modifier", frame: "term", modifier: "Meta", held: false },
+				{ spool: "modifier", frame: "term", modifier: "Control", held: false },
 			]);
 		} finally {
 			vi.unstubAllGlobals();

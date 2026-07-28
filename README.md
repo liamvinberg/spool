@@ -18,7 +18,7 @@ If your npm setup blocks dependency install scripts, use the hardened form below
 npm i -g spool.page --allow-scripts=esbuild
 ```
 
-Node 22+. macOS-first; the canvas wants Chrome (WebKit renders transformed iframes blurry).
+Node 22+, and the canvas wants Chrome (WebKit renders transformed iframes blurry). macOS and Linux; on Windows, use WSL. `spool autostart` is launchd-backed, so it is macOS-only.
 
 ```sh
 cd your-product

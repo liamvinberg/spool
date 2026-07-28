@@ -992,8 +992,10 @@ const canvasShimJs = `(() => {
 	addEventListener("keydown", (event) => {
 		if (window.parent === window) return;
 		const frame = (window.__SPOOL__ || {}).frame;
-		if (event.key === "Meta") {
-			window.parent.postMessage({ spool: "modifier", frame, modifier: "Meta", held: true }, "*");
+		// which key is the accel modifier is the canvas's rule, not the frame's:
+		// report the key that moved and let the canvas decide it counts
+		if (event.key === "Meta" || event.key === "Control") {
+			window.parent.postMessage({ spool: "modifier", frame, modifier: event.key, held: true }, "*");
 			return;
 		}
 		if (event.key === "Escape") {
@@ -1053,23 +1055,24 @@ const canvasShimJs = `(() => {
 	addEventListener("pointercancel", endPan, true);
 
 	addEventListener("keyup", (event) => {
-		if (window.parent === window || event.key !== "Meta") return;
+		if (window.parent === window) return;
+		if (event.key !== "Meta" && event.key !== "Control") return;
 		window.parent.postMessage({
 			spool: "modifier",
 			frame: (window.__SPOOL__ || {}).frame,
-			modifier: "Meta",
+			modifier: event.key,
 				held: false,
 			}, "*");
 		}, true);
 
+	// losing focus releases both candidates: the canvas owns the accel rule, so
+	// naming only one would leave the other platform's modifier stuck down
 	addEventListener("blur", () => {
 		if (window.parent === window) return;
-		window.parent.postMessage({
-			spool: "modifier",
-			frame: (window.__SPOOL__ || {}).frame,
-			modifier: "Meta",
-			held: false,
-		}, "*");
+		const frame = (window.__SPOOL__ || {}).frame;
+		for (const modifier of ["Meta", "Control"]) {
+			window.parent.postMessage({ spool: "modifier", frame, modifier, held: false }, "*");
+		}
 	});
 })();
 `;

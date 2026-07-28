@@ -1,6 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { cellsForViewport, TERM_FONT_PX, TERM_LINE_HEIGHT } from "../term/cells";
 import { TERM_ANSI, TERM_BACKGROUND, TERM_CURSOR, TERM_CURSOR_ACCENT, TERM_FOREGROUND } from "../term/theme";
+import { isAccelKeyName } from "./platform-keys";
 import { exitChipLabel, termKeyIntent } from "./term-keys";
 import { activateWebgl } from "./term-webgl";
 
@@ -221,7 +222,7 @@ let playerHosted = false;
 window.addEventListener(
 	"keydown",
 	(event) => {
-		if (event.key === "Meta") post({ spool: "modifier", modifier: "Meta", held: true });
+		if (isAccelKeyName(event.key)) post({ spool: "modifier", modifier: event.key, held: true });
 		if (termKeyIntent(event, !playerHosted) !== "exit") return;
 		event.preventDefault();
 		post({ spool: "key", key: "Escape" });
@@ -232,12 +233,17 @@ window.addEventListener(
 window.addEventListener(
 	"keyup",
 	(event) => {
-		if (event.key === "Meta") post({ spool: "modifier", modifier: "Meta", held: false });
+		if (isAccelKeyName(event.key)) post({ spool: "modifier", modifier: event.key, held: false });
 	},
 	{ capture: true },
 );
 
-window.addEventListener("blur", () => post({ spool: "modifier", modifier: "Meta", held: false }));
+// losing focus releases both candidates: the canvas owns the accel rule, so
+// naming only one would leave the other platform's modifier stuck down
+window.addEventListener("blur", () => {
+	post({ spool: "modifier", modifier: "Meta", held: false });
+	post({ spool: "modifier", modifier: "Control", held: false });
+});
 
 // the emulator only suppresses the chord — the relay above already spoke
 term.attachCustomKeyEventHandler((event) => {

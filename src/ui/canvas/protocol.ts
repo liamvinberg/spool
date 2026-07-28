@@ -1,6 +1,7 @@
 import { captureRasterSize, coverCaptureScale, LIVE_MIN_CSS_PX } from "../../cover";
 import { type ClipboardCopyRequest, parseClipboardCopyRequest } from "../../runtime/clipboard-protocol";
 import type { SessionRecord } from "../../runtime/frame-runtime";
+import type { AccelKeyName } from "../../runtime/platform-keys";
 import { isWalkId } from "../../runtime/walk-protocol";
 import type { Box } from "./camera";
 
@@ -66,10 +67,15 @@ interface FrameWheelZoomMessage {
 
 export type FrameZoomMessage = FrameWheelZoomMessage | { spool: "zoom"; frame: string; kind: "in" | "out" };
 
+/**
+ * A frame reporting a modifier key it saw move. The frame does not decide which
+ * one is the platform's accel modifier — it names what happened and the canvas
+ * applies the rule, so the platform question stays in one place.
+ */
 export interface FrameModifierMessage {
 	spool: "modifier";
 	frame: string;
-	modifier: "Meta";
+	modifier: AccelKeyName;
 	held: boolean;
 }
 
@@ -158,7 +164,9 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 		case "key":
 			return typeof m.key === "string" ? (m as unknown as FrameMessage) : undefined;
 		case "modifier":
-			return m.modifier === "Meta" && typeof m.held === "boolean" ? (m as unknown as FrameMessage) : undefined;
+			return (m.modifier === "Meta" || m.modifier === "Control") && typeof m.held === "boolean"
+				? (m as unknown as FrameMessage)
+				: undefined;
 		case "pan":
 			return (m.phase === "start" || m.phase === "move" || m.phase === "end") && finite(m.x) && finite(m.y)
 				? (m as unknown as FrameMessage)
