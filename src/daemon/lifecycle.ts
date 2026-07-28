@@ -30,6 +30,8 @@ export interface ServeConfig {
 	port: number;
 	/** #30: false silences the daily registry ask and the update toast */
 	updateCheck: boolean;
+	/** what was in the config and could not be honored, for the caller to narrate */
+	notices: readonly string[];
 }
 
 export const DEFAULT_HOST = "127.0.0.1";
@@ -49,12 +51,24 @@ export function resolveSpoolDir(env: Record<string, string | undefined>): string
  * localhost:7766 unless the owner explicitly says otherwise: config.json
  * {host, port} in ~/.spool, SPOOL_HOST/SPOOL_PORT on top for the
  * develop-from-checkout-on-its-own-port case.
+ *
+ * The loopback rule is applied to the two sources differently on purpose, and it
+ * is the difference between a stored value and a live instruction. `SPOOL_HOST`
+ * is someone asking right now, so an off-loopback one is refused and explained.
+ * A config file is a value written in the past, and `76d98eb` made a value that
+ * used to be legal illegal — a machine carrying one had every verb die, because
+ * the config is read before anything runs and the throw took the daemon with it.
+ * So a stale host is ignored rather than fatal: the daemon comes up on loopback
+ * and the notice says which file to edit. Nothing rewrites the file, because
+ * spool has never written config.json and a program editing a config it does not
+ * own is worse than a line of output.
  */
 export function resolveServeConfig(spoolDir: string, env: Record<string, string | undefined>): ServeConfig {
 	const file = join(spoolDir, "config.json");
 	let host = DEFAULT_HOST;
 	let port = DEFAULT_PORT;
 	let updateCheck = true;
+	const notices: string[] = [];
 
 	let raw: string | undefined;
 	try {
@@ -77,7 +91,13 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 			if (typeof config.host !== "string" || config.host === "") {
 				throw new SpoolError(`config at ${file}: "host" must be a non-empty string`);
 			}
-			host = config.host;
+			if (isLoopbackHost(config.host)) {
+				host = config.host;
+			} else {
+				notices.push(
+					`ignoring "host": "${config.host}" in ${file} — the daemon binds 127.0.0.1, localhost or ::1 only, so it is on ${DEFAULT_HOST} instead. Remove the key to silence this.`,
+				);
+			}
 		}
 		if (config.port !== undefined) {
 			if (
@@ -107,9 +127,11 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 		port = parsed;
 	}
 
+	// the env override has not been through the loopback rule yet, and it is the
+	// one source that gets refused rather than ignored
 	assertLoopbackHost(host);
 
-	return { host, port, updateCheck };
+	return { host, port, updateCheck, notices };
 }
 
 export function assertLoopbackHost(host: string): void {

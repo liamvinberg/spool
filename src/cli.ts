@@ -231,6 +231,9 @@ program
 	.action(async (options: { foreground?: boolean }) => {
 		if (options.foreground === true) {
 			const config = resolveServeConfig(spoolDir, process.env);
+			// a detached spawn's stderr is daemon.log, which is where anyone chasing a
+			// host that stopped working already ends up
+			for (const notice of config.notices) narrate(notice);
 			let uiWatcher: UiBuildWatcher | undefined;
 			let daemon: RunningDaemon;
 			try {

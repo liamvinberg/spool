@@ -45,7 +45,12 @@ describe("resolveSpoolDir", () => {
 
 describe("resolveServeConfig", () => {
 	it("defaults to localhost:7766 — exposure is never implicit", () => {
-		expect(resolveServeConfig(makeSpoolDir(), {})).toEqual({ host: "127.0.0.1", port: 7766, updateCheck: true });
+		expect(resolveServeConfig(makeSpoolDir(), {})).toEqual({
+			host: "127.0.0.1",
+			port: 7766,
+			updateCheck: true,
+			notices: [],
+		});
 	});
 
 	it.each(["127.0.0.1", "localhost", "::1"])("honors the supported loopback host %s", (host) => {
@@ -53,7 +58,7 @@ describe("resolveServeConfig", () => {
 		mkdirSync(spoolDir, { recursive: true });
 		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ host, port: 7800 }));
 
-		expect(resolveServeConfig(spoolDir, {})).toEqual({ host, port: 7800, updateCheck: true });
+		expect(resolveServeConfig(spoolDir, {})).toEqual({ host, port: 7800, updateCheck: true, notices: [] });
 	});
 
 	it("lets the environment override config for checkout-on-its-own-port development", () => {
@@ -63,7 +68,7 @@ describe("resolveServeConfig", () => {
 
 		const config = resolveServeConfig(spoolDir, { SPOOL_PORT: "7801", SPOOL_HOST: "::1" });
 
-		expect(config).toEqual({ host: "::1", port: 7801, updateCheck: true });
+		expect(config).toEqual({ host: "::1", port: 7801, updateCheck: true, notices: [] });
 	});
 
 	it("honors the phone-home opt-out and rejects a non-boolean one (#30)", () => {
@@ -91,14 +96,51 @@ describe("resolveServeConfig", () => {
 		expect(() => resolveServeConfig(outOfRange, {})).toThrow(/port number/);
 	});
 
-	it("refuses unsupported and non-loopback hosts from config or environment", () => {
+	it("refuses an off-loopback SPOOL_HOST, because that is someone asking right now", () => {
+		expect(() => resolveServeConfig(makeSpoolDir(), { SPOOL_HOST: "192.168.1.10" })).toThrow(/loopback/);
+		expect(() => resolveServeConfig(makeSpoolDir(), { SPOOL_HOST: "127.2.3.4" })).toThrow(/supported loopback/);
+		expect(() => resolveServeConfig(makeSpoolDir(), { SPOOL_HOST: "0.0.0.0" })).toThrow(/loopback/);
+	});
+
+	/**
+	 * A host that was legal before `76d98eb` must not brick the install. The config
+	 * is read before anything runs, so throwing here took every verb down with it
+	 * and left no way out but hand-editing a file the error did not name.
+	 */
+	// 100.64.0.1 is the shape that caused this: a tailnet address, reachable and
+	// dialable, which is exactly why the daemon must not bind it
+	it.each(["0.0.0.0", "127.2.3.4", "100.64.0.1"])("ignores the stale config host %s and says so", (host) => {
+		const spoolDir = makeSpoolDir();
+		mkdirSync(spoolDir, { recursive: true });
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ host, port: 7800 }));
+
+		const config = resolveServeConfig(spoolDir, {});
+
+		expect(config.host).toBe("127.0.0.1");
+		expect(config.port).toBe(7800);
+		expect(config.notices).toHaveLength(1);
+		expect(config.notices[0]).toContain(host);
+		expect(config.notices[0]).toContain(join(spoolDir, "config.json"));
+	});
+
+	it("leaves the config file alone rather than healing it behind the owner's back", () => {
+		const spoolDir = makeSpoolDir();
+		mkdirSync(spoolDir, { recursive: true });
+		const file = join(spoolDir, "config.json");
+		const before = JSON.stringify({ host: "0.0.0.0", port: 7800 });
+		writeFileSync(file, before);
+
+		resolveServeConfig(spoolDir, {});
+
+		expect(readFileSync(file, "utf8")).toBe(before);
+	});
+
+	it("still refuses an off-loopback SPOOL_HOST over a stale config host", () => {
 		const spoolDir = makeSpoolDir();
 		mkdirSync(spoolDir, { recursive: true });
 		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ host: "0.0.0.0" }));
 
-		expect(() => resolveServeConfig(spoolDir, {})).toThrow(/loopback/);
-		expect(() => resolveServeConfig(makeSpoolDir(), { SPOOL_HOST: "192.168.1.10" })).toThrow(/loopback/);
-		expect(() => resolveServeConfig(makeSpoolDir(), { SPOOL_HOST: "127.2.3.4" })).toThrow(/supported loopback/);
+		expect(() => resolveServeConfig(spoolDir, { SPOOL_HOST: "10.0.0.4" })).toThrow(/loopback/);
 	});
 });
 
