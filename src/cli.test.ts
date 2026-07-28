@@ -468,7 +468,7 @@ describe("spool cli", () => {
 		expect(result.stderr).toContain('"on" or "off"');
 	});
 
-	it("autostart refuses a dogfood-split environment", () => {
+	it.runIf(process.platform === "darwin")("autostart refuses a dogfood-split environment", () => {
 		const result = spool(["autostart"], makeTempDir(), undefined, { SPOOL_DIR: makeTempDir() });
 
 		expect(result.status).toBe(1);
