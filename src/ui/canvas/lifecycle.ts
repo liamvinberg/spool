@@ -270,7 +270,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		if (entered === name && frame.kind !== "term") model.wentInside.add(name);
 		const modelLive = isFrameLive(frame, camera, viewport);
 		const selected = selectionTargets.has(name);
-		if (modelLive && !selected && entered !== name && !model.wentInside.has(name)) {
+		if (modelLive && entered !== name && !model.wentInside.has(name)) {
 			model.modelLive.add(name);
 		}
 		let intent: FrameState | null;
