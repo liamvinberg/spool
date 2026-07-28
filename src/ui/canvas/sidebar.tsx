@@ -30,6 +30,7 @@ export function CanvasSidebar({
 	onSwitchPage,
 	onSelectFrame,
 	onDoubleClickFrame,
+	litPage = null,
 }: {
 	/** Named pages, sorted; the root page is implied and listed first. */
 	pages: readonly string[];
@@ -40,6 +41,8 @@ export function CanvasSidebar({
 	onSwitchPage: (page: string) => void;
 	onSelectFrame: (name: string, modifiers: SelectModifiers) => void;
 	onDoubleClickFrame: (name: string) => void;
+	/** The page holding the finder's pick — its row lights while the palette is up. */
+	litPage?: string | null;
 }) {
 	const [width, setWidth] = useState(PANEL_WIDTH);
 	const [dragging, setDragging] = useState(false);
@@ -143,7 +146,7 @@ export function CanvasSidebar({
 							return (
 								<div key={page}>
 									<div
-										className={`group relative flex h-8 items-center pr-1.5 hover:bg-surface ${active ? "bg-surface" : ""}`}
+										className={`group relative flex h-8 items-center pr-1.5 hover:bg-surface ${active || page === litPage ? "bg-surface" : ""}`}
 									>
 										{active ? (
 											<span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-thread" />
@@ -292,7 +295,7 @@ function FrameIcon({ className }: { className?: string }) {
 	);
 }
 
-function FolderIcon({ className }: { className?: string }) {
+export function FolderIcon({ className }: { className?: string }) {
 	return (
 		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
 			<path

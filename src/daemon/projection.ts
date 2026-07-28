@@ -51,6 +51,11 @@ export interface ProjectedFrame {
 	w: number;
 	h: number;
 	/**
+	 * When the frame's folder appeared on disk, ms epoch — the finder's
+	 * newest-first order. Absent when the filesystem cannot say.
+	 */
+	born?: number;
+	/**
 	 * The frame's cover image. It is absent when it has none, which is what
 	 * the canvas reads as "show the placeholder". Terminal frames are filled in
 	 * from their persisted screen, which only the session store can address.
@@ -294,15 +299,28 @@ function projected(
 	geometry: { x: number; y: number; w: number; h: number },
 	cover: Cover | undefined,
 ): ProjectedFrame {
+	const born = folderBorn(frame.dir);
 	return {
 		name: frame.name,
 		kind: frame.kind,
 		...(frame.page === undefined ? {} : { page: frame.page }),
 		...geometry,
+		...(born === undefined ? {} : { born }),
 		// a terminal's cover is its persisted screen, which only the session store
 		// can hash and size — the frames read fills those in (#42)
 		...(frame.kind === "term" || cover === undefined ? {} : { cover }),
 	};
+}
+
+/** The folder's birth time, its mtime where the filesystem never recorded one. */
+function folderBorn(dir: string): number | undefined {
+	try {
+		const stat = lstatSync(dir);
+		const millis = stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
+		return Math.round(millis);
+	} catch {
+		return undefined;
+	}
 }
 
 /** Every unambiguous frame name, sorted; undefined when frames/ is unreadable. */

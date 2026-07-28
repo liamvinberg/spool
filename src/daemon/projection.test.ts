@@ -51,6 +51,19 @@ describe("frame kinds", () => {
 	});
 });
 
+describe("frame birth", () => {
+	it("carries the folder's birth time so the finder can sort newest first", () => {
+		const root = makeTempDir();
+		const before = Date.now();
+		writeDesignFile(root, join("frames", "fresh", "frame.tsx"), "export default () => null;\n");
+
+		const { frames } = listProjectFrames(root);
+		const born = frames[0]?.born ?? 0;
+		expect(born).toBeGreaterThanOrEqual(before - 2000);
+		expect(born).toBeLessThanOrEqual(Date.now() + 2000);
+	});
+});
+
 describe("projection placement", () => {
 	it("preserves authored bytes when its missing-sidecar fill loses the create race", () => {
 		const root = makeTempDir();

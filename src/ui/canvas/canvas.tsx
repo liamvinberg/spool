@@ -34,6 +34,7 @@ import { ContextMenu, contextMenuSize } from "./context-menu";
 import { buildTreeRows, revealKeys, rowSelectors, type TreeRow, visibleRows } from "./element-tree";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { type ExportNotice, ExportToast } from "./export-toast";
+import { FindPalette } from "./find-palette";
 import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
 import {
 	buildFramePdf,
@@ -233,6 +234,11 @@ export function ProjectCanvas({
 	const [exportNotice, setExportNotice] = useState<ExportNotice | null>(null);
 	const exportDialogRef = useRef(exportDialog);
 	exportDialogRef.current = exportDialog;
+	// the frame finder (/): a palette over the viewport, and the page its pick lights
+	const [finding, setFinding] = useState(false);
+	const [findLit, setFindLit] = useState<string | null>(null);
+	const findingRef = useRef(finding);
+	findingRef.current = finding;
 	const [pendingTrash, setPendingTrash] = useState<string[] | null>(null);
 	const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set<string>());
 	const [docNonces, setDocNonces] = useState<Record<string, number>>({});
@@ -2214,11 +2220,10 @@ export function ProjectCanvas({
 		[inspectedFrame, unreadable],
 	);
 
-	/** A connection row is a place on the canvas, never a walk: land there and select it. */
-	const openConnection = useCallback(
-		(row: ConnectionRow) => {
-			if (row.missing) return;
-			const frame = allFramesRef.current.find((candidate) => candidate.name === row.target);
+	/** Land on a frame by name: switch page if needed, select it, centre the camera. */
+	const landOnFrame = useCallback(
+		(name: string) => {
+			const frame = allFramesRef.current.find((candidate) => candidate.name === name);
 			if (frame === undefined) return;
 			if (pageOf(frame) !== activePageRef.current) switchToPage(pageOf(frame), arrivalAt(frame));
 			setPicked([]);
@@ -2232,6 +2237,15 @@ export function ProjectCanvas({
 			}
 		},
 		[switchToPage, arrivalAt, animateCamera],
+	);
+
+	/** A connection row is a place on the canvas, never a walk: land there and select it. */
+	const openConnection = useCallback(
+		(row: ConnectionRow) => {
+			if (row.missing) return;
+			landOnFrame(row.target);
+		},
+		[landOnFrame],
 	);
 
 	// --- keys -------------------------------------------------------------------
@@ -2261,6 +2275,14 @@ export function ProjectCanvas({
 				if (event.key === "Escape" && !exportingRef.current) {
 					event.preventDefault();
 					cancelExportDialog();
+				}
+				return;
+			}
+			if (findingRef.current) {
+				// the finder owns the keys while it is up, exactly as the export dialog does
+				if (event.key === "Escape") {
+					event.preventDefault();
+					setFinding(false);
 				}
 				return;
 			}
@@ -2330,6 +2352,13 @@ export function ProjectCanvas({
 			if (!event.repeat && !event.shiftKey && (event.key === "t" || event.key === "T")) {
 				// the threads toggle (#34): persisted per project
 				toggleArrows();
+				return;
+			}
+			if (!event.repeat && event.key === "/" && enteredRef.current === null) {
+				// "/" is the filter's door here as on Home: the finder over the canvas.
+				// No shift gate — some layouts spell "/" with it.
+				event.preventDefault();
+				setFinding(true);
 				return;
 			}
 			switch (event.key) {
@@ -2547,6 +2576,7 @@ export function ProjectCanvas({
 				onSwitchPage={activatePageFromTree}
 				onSelectFrame={selectFrameRow}
 				onDoubleClickFrame={flyToFrame}
+				litPage={finding ? findLit : null}
 			/>
 			<div
 				ref={viewportRef}
@@ -2717,6 +2747,17 @@ export function ProjectCanvas({
 
 				{pendingTrash !== null && <TrashToast frames={pendingTrash} onUndo={undoTrash} />}
 				<CanvasTools tool={effectiveTool} onTool={setTool} />
+				{finding ? (
+					<FindPalette
+						frames={navigatorFrames}
+						onPick={setFindLit}
+						onClose={() => setFinding(false)}
+						onLand={(name) => {
+							setFinding(false);
+							landOnFrame(name);
+						}}
+					/>
+				) : null}
 			</div>
 			<InspectorRail
 				mode={railMode}
