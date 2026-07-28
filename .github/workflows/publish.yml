@@ -50,6 +50,17 @@ jobs:
       - id: tag
         if: steps.changesets.outputs.published == 'true'
         run: echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      # The action's title input is static and its body opens with bot
+      # boilerplate; name the PR after the version it proposes and keep
+      # only the releases. Reapplied after every action update.
+      - if: steps.changesets.outputs.pullRequestNumber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pr=${{ steps.changesets.outputs.pullRequestNumber }}
+          version=$(gh api "repos/${{ github.repository }}/contents/package.json?ref=changeset-release/main" --jq .content | base64 -d | jq -r .version)
+          gh pr edit "$pr" --title "release: spool.page $version"
+          gh pr view "$pr" --json body -q .body | sed -n '/^# Releases/,$p' | gh pr edit "$pr" --body-file -
 
   publish:
     needs: release
