@@ -560,6 +560,22 @@ describe("a readable frame", () => {
 		expect(s.model.stale.size).toBe(0);
 	});
 
+	it("keeps natural live provenance while selection carries it below readable size", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
+		s.sweep(frames, at(4));
+		s.sweep(frames, { selectionTargets: new Set(["a"]), ...at(4) });
+
+		const held = s.sweep(frames, { selectionTargets: new Set(["a"]), ...at(1) });
+		expect(held.states.a).toBe("held");
+		expect(s.model.stale.has("a")).toBe(false);
+
+		const released = s.sweep(frames, at(1));
+		expect(released.states.a).toBe("picture");
+		expect(released.refreshCaptures).toEqual([]);
+		expect(s.model.stale.has("a")).toBe(false);
+	});
+
 	it("owes a fresh picture for the frame you actually went inside", () => {
 		const frames = [frame("a", 0, 0)];
 		const s = sweeper();
