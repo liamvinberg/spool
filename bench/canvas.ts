@@ -9,6 +9,7 @@ import {
 	freePort,
 	mountedCount,
 	ms,
+	namedPage,
 	planCamera,
 	quantile,
 	quiet,
@@ -52,7 +53,26 @@ interface Options {
 	headed: boolean;
 	zoom: number;
 	out: string | undefined;
+	/** Which page to measure; the densest one when unnamed. */
+	page: string | undefined;
+	/**
+	 * TEMPORARY, and it dies with `CANVAS_ARM_KEY` in `src/ui/canvas/lifecycle.ts`.
+	 * Which of the three models to measure: `pictures` is the shipped one,
+	 * `live` mounts the whole page, `readable` mounts what is drawn big enough to
+	 * read. The bench holds the arm at runtime rather than the shipped code
+	 * carrying three models, exactly as the errand cap is swept through
+	 * `globalThis.__spoolBench`.
+	 *
+	 * `readable` only means anything above the zoom where a frame reaches
+	 * `LIVE_MIN_CSS_PX`. At the default k it mounts nothing and measures the
+	 * shipped arm wearing another name, so pass `--zoom` with it.
+	 */
+	arm: BenchArm;
 }
+
+type BenchArm = "pictures" | "live" | "readable";
+
+const ARMS: readonly BenchArm[] = ["pictures", "live", "readable"];
 
 function parseArgs(argv: string[]): Options {
 	let project = "";
@@ -60,6 +80,8 @@ function parseArgs(argv: string[]): Options {
 	let headed = false;
 	let zoom = DEFAULT_ZOOM;
 	let out: string | undefined;
+	let page: string | undefined;
+	let arm: BenchArm = "pictures";
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		const next = argv[i + 1];
@@ -75,6 +97,14 @@ function parseArgs(argv: string[]): Options {
 		} else if (arg === "--out" && next !== undefined) {
 			out = resolve(next);
 			i++;
+		} else if (arg === "--page" && next !== undefined) {
+			page = next;
+			i++;
+		} else if (arg === "--arm" && next !== undefined) {
+			const named = ARMS.find((candidate) => candidate === next);
+			if (named === undefined) throw new Error(`--arm takes one of ${ARMS.join(", ")}, got "${next}"`);
+			arm = named;
+			i++;
 		} else if (arg === "--headed") {
 			headed = true;
 		} else if (arg === "--headless") {
@@ -86,7 +116,7 @@ function parseArgs(argv: string[]): Options {
 	if (project === "") throw new Error("--project <path to a spool project root> is required");
 	if (throttle.some((rate) => !Number.isFinite(rate) || rate < 1)) throw new Error("--throttle takes rates >= 1");
 	if (!Number.isFinite(zoom) || zoom <= 0) throw new Error("--zoom takes a positive scale");
-	return { project, throttle, headed, zoom, out };
+	return { project, throttle, headed, zoom, out, page, arm };
 }
 
 interface Sample {
@@ -276,12 +306,21 @@ async function throttleEveryFrame(context: BrowserContext, page: Page, rate: num
 	return throttled;
 }
 
+/**
+ * What counts as a frame being on screen, which the two arms spell differently:
+ * the shipped canvas draws a still for every frame, and the all-live arm draws
+ * no stills at all because every frame is its own document.
+ */
+const framesVisible = (page: Page, arm: BenchArm): Promise<number> =>
+	arm === "live" ? mountedCount(page) : framesOnCanvas(page);
+
 async function measure(
 	page: Page,
 	context: BrowserContext,
 	cdp: CDPSession,
 	rate: number,
 	url: string,
+	arm: BenchArm,
 ): Promise<RunResult> {
 	await cdp.send("Emulation.setCPUThrottlingRate", { rate });
 	// frames mounted mid-run are throttled as they attach; the sweep after the
@@ -307,7 +346,7 @@ async function measure(
 	//
 	// Frames, not documents: a settled canvas holds no documents at all (#112).
 	// What it must have is stills on screen.
-	const framesShown = await framesOnCanvas(page);
+	const framesShown = await framesVisible(page, arm);
 	if (framesShown === 0) {
 		throw new Error(
 			"the canvas settled with no frames on screen — the planned camera did not take, so this run would measure an empty screen",
@@ -367,14 +406,24 @@ async function measure(
 	// picture, and entering one of those would measure a boot that had already
 	// happened — which is exactly the reading this bar carried before, when
 	// being on screen mounted a frame and this walked `iframe` to find one.
-	await quiet(page, 120_000);
+	// The all-live arm has no such resting state: every frame on the page holds a
+	// document for as long as it is on the page, so waiting for the count to
+	// reach zero would wait out the whole timeout and prove nothing. Its entry
+	// measurement is a different bar for the same reason — the target is already
+	// booted, and what is being timed is the canvas handing it the pointer.
+	if (arm === "pictures") await quiet(page, 120_000);
 
-	// The frame showing the most of itself, found by its own still, because a
-	// still is what every frame on this canvas is. A partly-offscreen frame's
-	// centre can sit outside the window, and a double-click there enters nothing.
-	const target = await page.evaluate(() => {
+	// The frame showing the most of itself. Which element stands for a frame is
+	// the arm's business: a still under `pictures`, a document under `live`, and
+	// either one under `readable`, where the biggest thing on screen is usually
+	// the document and looking only for stills aims at the edge of the window. A
+	// partly-offscreen frame's centre can sit outside it, and a double-click
+	// there enters nothing.
+	const selector =
+		arm === "live" ? "iframe" : arm === "readable" ? "[data-frame-cover], iframe" : "[data-frame-cover]";
+	const target = await page.evaluate((query: string) => {
 		let best: { x: number; y: number; area: number } | null = null;
-		for (const frame of document.querySelectorAll("[data-frame-cover]")) {
+		for (const frame of document.querySelectorAll(query)) {
 			const box = frame.getBoundingClientRect();
 			const left = Math.max(0, box.left);
 			const top = Math.max(0, box.top);
@@ -385,7 +434,7 @@ async function measure(
 			if (best === null || area > best.area) best = { x: (left + right) / 2, y: (top + bottom) / 2, area };
 		}
 		return best;
-	});
+	}, selector);
 
 	// clickable = the entered document owns pointer input
 	const clickable = () =>
@@ -467,10 +516,25 @@ function table(results: RunResult[]): string {
 	return rows.join("\n");
 }
 
+/**
+ * TEMPORARY, alongside `--all-live`: the canvas reads its arm out of storage at
+ * mount, so the switch has to be in place before the bundle evaluates.
+ *
+ * Top document only. An init script runs in every frame too, and a frame is
+ * sandboxed without `allow-same-origin`, so merely naming `localStorage` there
+ * throws a SecurityError — a hundred of them per run, inside the documents
+ * whose cost is what is being measured.
+ */
+function armInitScript(arm: string): void {
+	if (window !== window.top) return;
+	window.localStorage.setItem("spool:canvas-arm", arm);
+}
+
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	const { root, name, spoolDir } = copyProject(options.project);
-	const { page: canvasPage, frames: boxes } = densestPage(root);
+	const { page: canvasPage, frames: boxes } =
+		options.page === undefined ? densestPage(root) : namedPage(root, options.page);
 	// a camera planned over nothing is a run that measures an empty canvas and
 	// reports it as fast, which is the one failure this whole ticket exists to avoid
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
@@ -498,6 +562,7 @@ async function main(): Promise<void> {
 		process.stderr.write("bench: warming the daemon\n");
 		resetCamera();
 		const warm = await browser.newContext({ viewport: VIEWPORT });
+		if (options.arm !== "pictures") await warm.addInitScript(armInitScript, options.arm);
 		const warmPage = await warm.newPage();
 		await warmPage.goto(url, { waitUntil: "domcontentloaded" });
 		await settle(warmPage, 1500, 60_000);
@@ -511,12 +576,13 @@ async function main(): Promise<void> {
 			resetCamera();
 			const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
 			await context.addInitScript(collector);
+			if (options.arm !== "pictures") await context.addInitScript(armInitScript, options.arm);
 			const page = await context.newPage();
 			// a canvas that threw is not a canvas that was fast: never report over a broken run
 			page.on("pageerror", (error) => process.stderr.write(`bench: page error — ${String(error).slice(0, 200)}\n`));
 			const cdp = await context.newCDPSession(page);
 			process.stderr.write(`bench: throttle ${rate}x\n`);
-			results.push(await measure(page, context, cdp, rate, url));
+			results.push(await measure(page, context, cdp, rate, url, options.arm));
 			await context.close();
 		}
 	} finally {
