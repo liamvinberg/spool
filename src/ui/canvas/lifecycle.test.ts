@@ -45,7 +45,7 @@ function sweeper() {
 		const result = sweepLifecycle(model, {
 			frames,
 			entered: null,
-			selectionTarget: null,
+			selectionTargets: new Set(),
 			inspected: null,
 			states,
 			ready: new Map(frames.map((f) => [f.name, -CAPTURE_AFTER_READY_MS])),
@@ -255,10 +255,15 @@ describe("the cap on frames borrowed at once", () => {
 		expect(next).not.toContain("f0");
 	});
 
-	it("holds the worst case to six documents: entered, selected, inspected and the cap", () => {
+	it("adds entered, selected and inspected intent to the capped errands", () => {
 		const frames = Array.from({ length: 40 }, (_, i) => frame(`f${i}`, i * 200, 0));
 		const s = sweeper();
-		const busy = { hasCover: () => false, entered: "f0", selectionTarget: "f1", inspected: "f2" };
+		const busy = {
+			hasCover: () => false,
+			entered: "f0",
+			selectionTargets: new Set(["f1"]),
+			inspected: "f2",
+		};
 
 		for (let i = 0; i < 8; i++) {
 			expect(mounted(s.sweep(frames, busy).states)).toHaveLength(3 + ERRANDS_IN_FLIGHT);
@@ -267,13 +272,66 @@ describe("the cap on frames borrowed at once", () => {
 });
 
 describe("intent", () => {
+	it("holds every unreadable frame represented by a multi-frame element selection", () => {
+		const frames = [frame("a", 350, 450), frame("b", 550, 450), frame("c", 750, 450)];
+		const s = sweeper();
+
+		expect(s.sweep(frames, { selectionTargets: new Set(["a", "b", "c"]) }).states).toEqual({
+			a: "held",
+			b: "held",
+			c: "held",
+		});
+	});
+
+	it("keeps every readable HTML pick live", () => {
+		const frames = [frame("a", 0, 0), frame("b", 100, 0), frame("c", 200, 0)];
+		const s = sweeper();
+
+		expect(
+			s.sweep(frames, {
+				selectionTargets: new Set(["a", "b", "c"]),
+				camera: { x: 0, y: 0, k: 4 },
+				viewport: { width: 1000, height: 1000 },
+			}).states,
+		).toEqual({ a: "live", b: "live", c: "live" });
+	});
+
+	it("releases only picks no longer represented, then releases the whole selection", () => {
+		const frames = [frame("a", 350, 450), frame("b", 550, 450), frame("c", 750, 450)];
+		const s = sweeper();
+		s.sweep(frames, { selectionTargets: new Set(["a", "b", "c"]) });
+
+		expect(s.sweep(frames, { selectionTargets: new Set(["a", "c"]) }).states).toEqual({
+			a: "held",
+			b: "picture",
+			c: "held",
+		});
+		expect(s.sweep(frames, { selectionTargets: new Set() }).states).toEqual({
+			a: "picture",
+			b: "picture",
+			c: "picture",
+		});
+	});
+
+	it("unites picked-frame intent with the frame an open rail reads", () => {
+		const frames = [frame("a", 350, 450), frame("b", 550, 450), frame("rail", 750, 450)];
+		const s = sweeper();
+
+		expect(
+			s.sweep(frames, {
+				selectionTargets: new Set(["a", "b"]),
+				inspected: "rail",
+			}).states,
+		).toEqual({ a: "held", b: "held", rail: "held" });
+	});
+
 	it("leaves a readable HTML selection live while Select and the inspector read it", () => {
 		const frames = [frame("a", 0, 0), frame("terminal", 200, 0, "term")];
 		const s = sweeper();
 
 		expect(
 			s.sweep(frames, {
-				selectionTarget: "a",
+				selectionTargets: new Set(["a"]),
 				inspected: "a",
 				camera: { x: 0, y: 0, k: 4 },
 				viewport: { width: 1000, height: 1000 },
@@ -281,7 +339,7 @@ describe("intent", () => {
 		).toEqual({ a: "live", terminal: "live" });
 		expect(
 			s.sweep(frames, {
-				selectionTarget: "terminal",
+				selectionTargets: new Set(["terminal"]),
 				camera: { x: 0, y: 0, k: 4 },
 				viewport: { width: 1000, height: 1000 },
 			}).states.terminal,
@@ -292,8 +350,8 @@ describe("intent", () => {
 		const frames = [frame("a", 350, 450), frame("b", 550, 450)];
 		const s = sweeper();
 
-		expect(s.sweep(frames, { selectionTarget: "a" }).states).toEqual({ a: "held", b: "picture" });
-		expect(s.sweep(frames, { selectionTarget: "b" }).states).toEqual({ a: "picture", b: "held" });
+		expect(s.sweep(frames, { selectionTargets: new Set(["a"]) }).states).toEqual({ a: "held", b: "picture" });
+		expect(s.sweep(frames, { selectionTargets: new Set(["b"]) }).states).toEqual({ a: "picture", b: "held" });
 	});
 
 	it("holds the frame an open rail reads, wherever the camera is", () => {
@@ -307,7 +365,7 @@ describe("intent", () => {
 		const frames = [frame("a", 450, 450)];
 		const s = sweeper();
 
-		expect(s.sweep(frames, { entered: "a", selectionTarget: "a" }).states).toEqual({ a: "held" });
+		expect(s.sweep(frames, { entered: "a", selectionTargets: new Set(["a"]) }).states).toEqual({ a: "held" });
 		expect(s.sweep(frames, { entered: "a" }).states).toEqual({ a: "live" });
 	});
 
@@ -465,15 +523,20 @@ describe("a readable frame", () => {
 		expect(s.sweep(frames, at(4)).states).toEqual({ ring: "live" });
 	});
 
-	it("bounds the live count by the viewport rather than by the page", () => {
+	it("bounds natural live frames by the viewport and adds only explicit selection", () => {
 		// two hundred frames in a row: the ring admits a fixed span of world,
 		// and the page's own size never enters the arithmetic
 		const many = Array.from({ length: 200 }, (_, index) => frame(`f${index}`, index * 150, 0));
 		const s = sweeper();
-		const live = Object.values(s.sweep(many, at(4)).states).filter((state) => state === "live");
+		const view = at(4);
+		const natural = mounted(s.sweep(many, view).states);
 
-		expect(live.length).toBeGreaterThan(0);
-		expect(live.length).toBeLessThan(30);
+		expect(natural.length).toBeGreaterThan(0);
+		expect(natural.length).toBeLessThan(30);
+		const additions = ["f50", "f100", "f199"];
+		const withSelection = mounted(s.sweep(many, { ...view, selectionTargets: new Set(additions) }).states);
+
+		expect(withSelection).toEqual([...natural, ...additions].sort());
 	});
 
 	it("still photographs a frame below the threshold when its picture is missing", () => {

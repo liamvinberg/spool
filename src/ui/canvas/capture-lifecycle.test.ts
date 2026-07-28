@@ -53,7 +53,7 @@ async function mountLifecycle(onShot: (frame: string, image: CoverRaster) => voi
 		lifecycle = useFrameLifecycle({
 			framesRef,
 			entered: null,
-			selectionTarget: null,
+			selectionTargets: new Set(),
 			inspected: null,
 			hasCover: (frame) => frames.some((candidate) => candidate.name === frame && candidate.cover !== undefined),
 			onShot,

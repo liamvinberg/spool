@@ -19,9 +19,10 @@ import { type CaptureSourceReply, captureMessage } from "./protocol";
  * and 3 are the same errand — borrow the frame long enough to photograph it —
  * and the sweep hands it out a couple at a time.
  *
- * Intent holds a document too, one frame at a time and never a pool: the
- * selection target and the frame an open inspector rail reads (#58) both need
- * real DOM to answer picks and tree walks. A readable selected HTML frame stays
+ * Intent holds a document too: every frame represented by the element
+ * selection. With no element picks, Select instead holds the selected frame,
+ * or the entered frame while its modifier is down. The frame an open inspector
+ * rail reads (#58) is held separately. A readable selected HTML frame stays
  * live; an unreadable one stays held behind its still and keeps running.
  *
  * A picture stands in below the readable threshold. Above it, a nearby frame
@@ -183,8 +184,8 @@ export function noteErrandShot(model: LifecycleModel, frame: string, captured: b
 export interface SweepInput {
 	frames: readonly ProjectedFrame[];
 	entered: string | null;
-	/** The one frame Select currently owns: mounted for the selection. */
-	selectionTarget: string | null;
+	/** Every frame Select currently owns: mounted for the element selection. */
+	selectionTargets: ReadonlySet<string>;
 	/** The frame an open inspector rail is reading (#58): mounted so it can answer. */
 	inspected: string | null;
 	states: Readonly<Record<string, FrameState>>;
@@ -234,7 +235,7 @@ export interface SweepResult {
 }
 
 export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
-	const { frames, entered, selectionTarget, inspected, states, ready, capturing, hasCover, now, camera, viewport } =
+	const { frames, entered, selectionTargets, inspected, states, ready, capturing, hasCover, now, camera, viewport } =
 		input;
 	// A frame going back to its picture can be told from a frame you left.
 	// Zooming out must not bill a screenful of frames for a fresh still; going
@@ -268,13 +269,14 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		// element. A readable HTML frame remains the live thing it is showing.
 		if (entered === name && frame.kind !== "term") model.wentInside.add(name);
 		const modelLive = isFrameLive(frame, camera, viewport);
-		if (modelLive && selectionTarget !== name && entered !== name && !model.wentInside.has(name)) {
+		const selected = selectionTargets.has(name);
+		if (modelLive && !selected && entered !== name && !model.wentInside.has(name)) {
 			model.modelLive.add(name);
 		}
 		let intent: FrameState | null;
-		if (selectionTarget === name && frame.kind === "html" && modelLive) {
+		if (selected && frame.kind === "html" && modelLive) {
 			intent = "live";
-		} else if (selectionTarget === name) {
+		} else if (selected) {
 			intent = "held";
 		} else if (entered === name || modelLive) {
 			intent = "live";
@@ -401,7 +403,7 @@ function markPictureWrong(model: LifecycleModel, frame: string): void {
 export interface LifecycleDeps {
 	framesRef: RefObject<ProjectedFrame[]>;
 	entered: string | null;
-	selectionTarget: string | null;
+	selectionTargets: ReadonlySet<string>;
 	/** The frame an open inspector rail is reading (#58). */
 	inspected: string | null;
 	hasCover: (frame: string) => boolean;
@@ -420,7 +422,7 @@ export interface LifecycleDeps {
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
-	const { framesRef, entered, selectionTarget, inspected, hasCover, onShot, cameraRef, viewportRef } = deps;
+	const { framesRef, entered, selectionTargets, inspected, hasCover, onShot, cameraRef, viewportRef } = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
 	// when each frame reported loaded, not merely that it did: a still is only
@@ -433,8 +435,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	readyRef.current = ready;
 	const enteredRef = useRef(entered);
 	enteredRef.current = entered;
-	const selectionTargetRef = useRef(selectionTarget);
-	selectionTargetRef.current = selectionTarget;
+	const selectionTargetsRef = useRef(selectionTargets);
+	selectionTargetsRef.current = selectionTargets;
 	const inspectedRef = useRef(inspected);
 	inspectedRef.current = inspected;
 	const hasCoverRef = useRef(hasCover);
@@ -604,7 +606,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		const result = sweepLifecycle(model.current, {
 			frames: framesRef.current,
 			entered: enteredRef.current,
-			selectionTarget: selectionTargetRef.current,
+			selectionTargets: selectionTargetsRef.current,
 			inspected: exportFrame.current ?? inspectedRef.current,
 			states: statesRef.current,
 			ready: readyRef.current,
@@ -698,10 +700,10 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	// Selection, entering, and summoning the rail must feel instant, not one sweep late.
 	useEffect(() => {
 		enteredRef.current = entered;
-		selectionTargetRef.current = selectionTarget;
+		selectionTargetsRef.current = selectionTargets;
 		inspectedRef.current = inspected;
 		compute();
-	}, [entered, selectionTarget, inspected, compute]);
+	}, [entered, selectionTargets, inspected, compute]);
 
 	useEffect(() => {
 		const sweep = setInterval(compute, SWEEP_MS);
