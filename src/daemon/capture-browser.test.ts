@@ -68,11 +68,25 @@ async function serveCapture(): Promise<ServedCapture> {
 		projectCapability: "capture-test",
 		controlOrigin,
 		css: `@font-face { font-family: "Capture Test"; src: url(data:font/woff2;base64,${captureFont}); }
-			main { font-family: "Capture Test"; }`,
+			main {
+				font-family: "Capture Test";
+			}
+			.capture-style-probe {
+				position: absolute;
+				inset: 25%;
+				background-color: #f5391a;
+				background-image: url(/hero.png);
+			}`,
+		// If this import-only sheet survives, its important green wins visibly.
+		fonts: `@import "/theme.css";
+			main { background-color: #18a957 !important; }`,
+		// A URL import is removed while its ordinary blue rule survives.
+		bundledCss: `@import url("/theme.css");
+			main { background-color: #2474ff; }`,
 		importMap: { imports: {} },
 		bootJs: `
 			const heavyText = "x".repeat(65_535) + "😀" + "x".repeat(1_034_463);
-			document.getElementById("root").innerHTML = '<main style="position: relative; width: 100%; height: 100%; background: #f5391a">capture<input value="live"><canvas width="20" height="10" style="position: absolute; left: 10px; top: 10px; width: 20px; height: 10px"></canvas><canvas width="20" height="10" style="position: absolute; left: 40px; top: 10px; width: 20px; height: 10px"></canvas><span hidden>' + heavyText + '</span></main>';
+			document.getElementById("root").innerHTML = '<main style="position: relative; width: 100%; height: 100%">capture<input value="live"><span class="capture-style-probe"></span><canvas width="20" height="10" style="position: absolute; left: 10px; top: 10px; width: 20px; height: 10px"></canvas><canvas width="20" height="10" style="position: absolute; left: 40px; top: 10px; width: 20px; height: 10px"></canvas><span hidden>' + heavyText + '</span></main>';
 			document.querySelectorAll("canvas").forEach((canvas, index) => {
 				const context = canvas.getContext("2d");
 				context.fillStyle = index === 0 ? "#fff" : "#000";
@@ -124,6 +138,7 @@ async function readImage(url: string, page: Page) {
 			center: Array.from(
 				context.getImageData(Math.floor(image.naturalWidth / 2), Math.floor(image.naturalHeight / 2), 1, 1).data,
 			),
+			bottomRight: Array.from(context.getImageData(image.naturalWidth - 20, image.naturalHeight - 20, 1, 1).data),
 		};
 	}, url);
 }
@@ -405,6 +420,12 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	expect(coverImage.center[2]).toBeGreaterThanOrEqual(20);
 	expect(coverImage.center[2]).toBeLessThanOrEqual(32);
 	expect(coverImage.center[3]).toBe(255);
+	expect(coverImage.bottomRight[0]).toBeGreaterThanOrEqual(28);
+	expect(coverImage.bottomRight[0]).toBeLessThanOrEqual(44);
+	expect(coverImage.bottomRight[1]).toBeGreaterThanOrEqual(108);
+	expect(coverImage.bottomRight[1]).toBeLessThanOrEqual(124);
+	expect(coverImage.bottomRight[2]).toBeGreaterThanOrEqual(247);
+	expect(coverImage.bottomRight[3]).toBe(255);
 	expect(await page.locator(`iframe[src^="${captureOrigin.origin}"]`).count()).toBe(0);
 	expect(
 		await authored.evaluate(() =>
@@ -432,6 +453,7 @@ it("captures through the isolated worker while preserving output and cleanup", {
 		height: 1200,
 		magic: [137, 80, 78, 71, 13, 10, 26, 10],
 		center: [245, 57, 26, 255],
+		bottomRight: [36, 116, 255, 255],
 	});
 	expect(await stopTargetPerformance(authored)).toEqual({ supported: true, longTasks: [], rafGaps: [] });
 	expect(await page.locator(`iframe[src^="${captureOrigin.origin}"]`).count()).toBe(0);
