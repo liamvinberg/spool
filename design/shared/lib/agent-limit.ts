@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { PlayEntry } from "./turn-play";
+import type { Cue, PlayEntry } from "./turn-play";
 
 /**
  * The usage window, and who decides which one you are looking at.
@@ -21,10 +21,17 @@ import type { PlayEntry } from "./turn-play";
  * `-representative-claim` naming the one that speaks for the account. The CLI
  * then walks its claims in order and emits the **first** one carrying a
  * `-surpassed-threshold` header; failing that, the first whose utilization has
- * crossed a threshold *for how little of the window is left*. That second test is
- * the interesting one: 92% used is alarming with a day and a half of the week to
- * go and unremarkable with twenty minutes to go, and the binary already weighs
- * both before it says anything.
+ * crossed a threshold *for how little of the window is left*:
+ *
+ *   five_hour   18000s    0.90 used by 72% elapsed
+ *   seven_day   604800s   0.75 used by 60% elapsed
+ *                         0.50 used by 35% elapsed
+ *                         0.25 used by 15% elapsed
+ *
+ * That is a burn rate rather than a level. A quarter of the week spent in the
+ * first day of it is worth saying; ninety per cent spent on the last afternoon of
+ * it is not. Which is the entire judgement a usage surface would otherwise have
+ * to make, already made, in a table Spool does not have to own.
  *
  * So there is nothing to average, nothing to rank and nothing to pick. Spool
  * renders the window it is handed. A surface that drew "the five-hour window"
@@ -76,6 +83,12 @@ export interface RateLimitInfo {
 	readonly surpassedThreshold?: number;
 	readonly overageStatus?: string;
 	readonly overageDisabledReason?: string;
+	/**
+	 * The wind-down. Parsed from `anthropic-ratelimit-unified-grace-status` and
+	 * carried on the same object; never seen in a capture, because grace was never
+	 * open during either session.
+	 */
+	readonly rateLimitGraceActive?: boolean;
 }
 
 /**
@@ -228,15 +241,40 @@ export const WARNED: RateLimitInfo = {
 export const WARNED_AGAIN: RateLimitInfo = { ...WARNED, utilization: 0.93 };
 
 /**
+ * Reaching the limit is not a wall, and this is the find that redrew the frame.
+ *
+ * The binary carries this string, and injects it into the running conversation:
+ *
+ *   [Usage limit reached — grace window active. Wrap up: finish or checkpoint;
+ *    don't start subagents or long work.]
+ *
+ * So the shape of running out mid-session is a **wind-down**, not a cut. The
+ * agent is told, in the conversation, to land what it is holding and start
+ * nothing new. Alongside it are `anthropic-ratelimit-unified-grace-status` and a
+ * per-claim `-grace-5h-utilization` / `-grace-7d-utilization`, and
+ * `rateLimitGraceActive` on the parsed info the SDK stream carries.
+ *
+ * This matters more than the refusal it precedes. The moment a developer needs
+ * explaining is not the one where nothing happens — it is the one where the agent
+ * announces a delegation and then quietly does not delegate. Without the grace
+ * line on screen that reads as the agent losing the thread. With it, it reads as
+ * the agent doing exactly what it was told.
+ */
+export const GRACE = "Usage limit reached — grace window active";
+
+/**
  * The refusal, which is drawn rather than captured, and says so.
  *
  * Neither parent capture contains a `rejected` event, because reaching one means
  * spending a week's allowance to take a screenshot. What is not invented is its
  * shape: `status: "rejected"` is one of the three values the binary's header
- * parser produces, and `You've hit your ${label}` and `Switch models to keep
- * working.` are its own strings for that state. The payload below is those facts
- * with the capture's own window and reset time carried over.
+ * parser produces, `429` and `"type":"rate_limit_error"` are what it watches for
+ * on the wire, and `You've hit your ${label}` and `Switch models to keep
+ * working.` are its own strings for that state. The payloads below are those
+ * facts with the capture's own window and reset time carried over.
  */
+export const GRACED: RateLimitInfo = { ...WARNED, status: "rejected", rateLimitGraceActive: true };
+
 export const REFUSED: RateLimitInfo = { ...WARNED, status: "rejected", utilization: 1 };
 
 /** the capture's own clock: 2026-07-27T19:01Z, so "wed 09:00" is 38 hours out */
@@ -249,6 +287,27 @@ const SECOND_AT = 4200;
 
 /** the measured median ttft, so a refusal arrives when the first token would have */
 const REFUSE_AT = 1569;
+
+/**
+ * The turn, cut where the window closed, obeying the grace rule.
+ *
+ * Everything already in flight keeps its cues and finishes. Nothing that had not
+ * started gets to start. That is not a staging convenience, it is the injected
+ * instruction rendered as behaviour: *finish or checkpoint; don't start subagents
+ * or long work*.
+ *
+ * `keep` is the set of row keys that were already running when it closed, and a
+ * cue belongs to a row when it is that row's key or is prefixed by it and a
+ * colon: `r1`, `r1:d`, `r1:c3:r`.
+ */
+export function graceCues(
+	cues: readonly Cue[],
+	at: number,
+	keep: readonly string[],
+): readonly Cue[] {
+	const mine = (name: string) => keep.some((key) => name === key || name.startsWith(`${key}:`));
+	return cues.filter((cue) => cue.at < at || mine(cue.name));
+}
 
 export interface LimitDeck {
 	readonly info: RateLimitInfo;
@@ -264,29 +323,32 @@ export interface LimitDeck {
  * The readout is already there before the first send, because the fact is: it
  * came back on the message before this one and it will still be true tomorrow.
  * All the turn does is move it a point.
+ *
+ * `closesAt` is the ms into the turn where the window shuts. Given one, the deck
+ * plays the wind-down: the grace line lands, the standing readout goes to hit,
+ * and the refusal itself is only felt on the next send.
  */
-export function useLimit(run: number, hits = false): LimitDeck {
+export function useLimit(run: number, closesAt: number | null = null): LimitDeck {
 	const [info, setInfo] = useState<RateLimitInfo>(WARNED);
 	const [notes, setNotes] = useState<readonly PlayEntry[]>([]);
 
 	useEffect(() => {
 		if (run === 0) return;
+		setNotes([]);
+		setInfo(WARNED);
 		const timers = [window.setTimeout(() => setInfo(WARNED_AGAIN), SECOND_AT)];
-		if (hits) {
+		if (closesAt !== null) {
 			timers.push(
 				window.setTimeout(() => {
-					setInfo(REFUSED);
-					setNotes([
-						{ key: "limit-rule", kind: "note", text: limitSentence(REFUSED, CAPTURED_NOW), rule: true },
-						{ key: "limit-say", kind: "note", text: LIMIT_SUBLINE },
-					]);
-				}, SECOND_AT + 900),
+					setInfo(GRACED);
+					setNotes([{ key: "limit-grace", kind: "note", text: GRACE, rule: true }]);
+				}, closesAt),
 			);
 		}
 		return () => {
 			for (const timer of timers) window.clearTimeout(timer);
 		};
-	}, [run, hits]);
+	}, [run, closesAt]);
 
 	/**
 	 * Once it has refused, a send does not become a turn.
@@ -305,9 +367,11 @@ export function useLimit(run: number, hits = false): LimitDeck {
 			if (info.status !== "rejected") return false;
 			setNotes((prev) => [...prev, { key: `limit-said-${prev.length}`, kind: "user", text }]);
 			window.setTimeout(() => {
+				setInfo(REFUSED);
 				setNotes((prev) => [
 					...prev,
-					{ key: `limit-again-${prev.length}`, kind: "note", text: limitSentence(info, CAPTURED_NOW) },
+					{ key: `limit-again-${prev.length}`, kind: "note", text: limitSentence(REFUSED, CAPTURED_NOW) },
+					{ key: `limit-say-${prev.length}`, kind: "note", text: LIMIT_SUBLINE },
 				]);
 			}, REFUSE_AT);
 			return true;
