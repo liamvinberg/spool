@@ -14,9 +14,9 @@ interface CoffeeScreenProps {
 }
 
 const products = [
-	{ name: "Cortado", price: "42 kr" },
-	{ name: "Flat white", price: "48 kr" },
-	{ name: "Filterkaffe", price: "32 kr" },
+	{ name: "Cortado", price: "$4.20" },
+	{ name: "Flat white", price: "$4.80" },
+	{ name: "Filter coffee", price: "$3.20" },
 ] as const;
 
 const cart = products.slice(0, 2);
@@ -55,7 +55,7 @@ export function CoffeeScreen({
 }
 
 function CoffeeMenu({
-	actionLabel = "Till kassan",
+	actionLabel = "Checkout",
 	className,
 	goTo,
 	scale,
@@ -142,7 +142,7 @@ function CoffeeMenu({
 }
 
 function CoffeeCart({
-	actionLabel = "Betala",
+	actionLabel = "Pay",
 	className,
 	goTo,
 	scale,
@@ -166,7 +166,7 @@ function CoffeeCart({
 						full ? "text-[22px] leading-7" : design ? "text-[15px] leading-[18px]" : "text-md leading-sm",
 					)}
 				>
-					Din varukorg
+					Your cart
 				</h1>
 				<div className="flex flex-col gap-2">
 					{cart.map((product) => (
@@ -209,7 +209,7 @@ function CoffeeCart({
 									: "text-2xs leading-3 text-[#86868B]",
 						)}
 					>
-						Totalt
+						Total
 					</span>
 					<span
 						className={cn(
@@ -217,7 +217,7 @@ function CoffeeCart({
 							full ? "text-[17px] leading-md" : design ? "text-base leading-4" : "text-xs leading-[14px]",
 						)}
 					>
-						90 kr
+						$9.00
 					</span>
 				</div>
 				<CoffeeAction
@@ -263,7 +263,7 @@ function CoffeeReceipt({
 				<CheckIcon className={cn(full ? "h-6 w-6" : design ? "h-5 w-5" : "h-[18px] w-[18px]")} />
 			</div>
 			<h1 className={cn("font-semibold tracking-tight", full ? "text-[22px] leading-7" : "text-[16px] leading-5")}>
-				Tack!
+				Thanks!
 			</h1>
 			<div className={cn("flex flex-col items-center", design || full ? "gap-unit" : "gap-2")}>
 				<p
@@ -284,7 +284,7 @@ function CoffeeReceipt({
 						full ? "text-[13px] leading-[18px]" : design ? "text-2xs leading-3" : "text-[9px] leading-3",
 					)}
 				>
-					Kvittot är skickat till din mejl
+					Receipt sent to your email
 				</p>
 			</div>
 		</div>
