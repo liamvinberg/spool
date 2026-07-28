@@ -2319,6 +2319,14 @@ export function ProjectCanvas({
 				zoomAtPoint(c.x, c.y, 1 / K_STEP, true);
 				return;
 			}
+			if (mod && (event.key === "k" || event.key === "K")) {
+				// ⌘K beside "/" — the chord every other palette taught, same door
+				if (enteredRef.current === null) {
+					event.preventDefault();
+					setFinding(true);
+				}
+				return;
+			}
 			if (mod && event.key === "Escape") {
 				// the terminal exit chord (#42) landing canvas-side: focus can sit
 				// here instead of inside the entered frame, and the frame cannot
