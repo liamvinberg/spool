@@ -1,4 +1,4 @@
-import { motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { cn } from "../../../shared/lib/utils";
 import { CoffeeScreen, type CoffeeScreenName } from "../../../shared/ui/coffee-screens";
@@ -502,18 +502,26 @@ function Plate({ active, beat }: { active: number; beat: number }) {
 				className="absolute overflow-hidden rounded-lg border border-[#E4E4E7] bg-[#FEFEFE]"
 				style={{ left: PLATE_X, top: PLATE_Y, width: PLATE_W, height: PLATE_H }}
 			>
-				<motion.div
-					key={`${active}:${beat}`}
-					className="h-full w-full"
-					initial={beat > 0 ? { opacity: 0, y: 10 } : false}
-					animate={{ opacity: 1, y: 0 }}
-					transition={{ duration: 0.46, ease: EASE, delay: 0.46 }}
-				>
-					{/* the plate is 250x540 and "full" is styled for a 390px phone, so full-scale
-				    type overflowed it: the longer english names wrapped to two lines and the
-				    rows crowded. "design" is the tier built for this size. */}
-				<CoffeeScreen screen={frame.screen} scale="design" className="border-transparent" />
-				</motion.div>
+				{/* The screens crossfade rather than swap. A bare key change unmounts the old
+				    screen the instant the beat ticks, and the new one waits out the comet's
+				    0.46s at opacity 0 — so the plate sat blank for half a second on every
+				    walk, which is the flicker. Holding both mounted lets the outgoing screen
+				    carry that delay and hand over on a fade. */}
+				<AnimatePresence initial={false}>
+					<motion.div
+						key={`${active}:${beat}`}
+						className="absolute inset-0 h-full w-full"
+						initial={beat > 0 ? { opacity: 0, y: 10 } : false}
+						animate={{ opacity: 1, y: 0 }}
+						exit={{ opacity: 0 }}
+						transition={{ duration: 0.46, ease: EASE, delay: 0.46 }}
+					>
+						{/* the plate is 250x540 and "full" is styled for a 390px phone, so full-scale
+					    type overflowed it: the longer english names wrapped to two lines and the
+					    rows crowded. "design" is the tier built for this size. */}
+						<CoffeeScreen screen={frame.screen} scale="design" className="border-transparent" />
+					</motion.div>
+				</AnimatePresence>
 			</div>
 		</>
 	);
