@@ -4,8 +4,11 @@ import { type Browser, type BrowserContext, chromium } from "playwright-core";
 import {
 	type Camera,
 	copyProject,
+	DEFAULT_ZOOM,
 	freePort,
 	ms,
+	planCamera,
+	prepareCurrentCovers,
 	quantile,
 	quiet,
 	startDaemon,
@@ -46,7 +49,7 @@ import {
  * and #110 deleted it in favour of the target's stored still.
  *
  *   pnpm build
- *   node bench/walk.ts --project ~/projects/matmannen-fc63dba --headed
+ *   node bench/walk.ts --project <spool-bench> --headed
  *   node bench/walk.ts --project <path> --walks 6 --out walk.json
  *
  * Run it with node's own type stripping, not tsx: the collectors below are
@@ -532,23 +535,26 @@ async function runWalk(context: BrowserContext, url: string, plan: Plan): Promis
 	try {
 		await page.goto(url, { waitUntil: "domcontentloaded" });
 
-		// The source frame is a still until somebody goes inside it (#112), so it
-		// is found by the still — and the canvas has to be holding no document at
-		// all before the click. Not "stopped changing": a canvas working through
-		// the pictures it owes sits pinned at the errand cap and holds perfectly
-		// still while competing with the arrival for the daemon, which is a walk
-		// priced against the wrong canvas.
-		const still = `[data-frame-cover=${JSON.stringify(plan.from)}]`;
-		await page.waitForSelector(still, { timeout: ENTER_TIMEOUT_MS });
-		await quiet(page, 300_000);
+		// Find the source by its label so the benchmark works whether the readable
+		// frame currently draws its document or its still. Picture errands must be
+		// done before entry; a canvas pinned at their cap can keep a stable count
+		// while still competing with the walk for the daemon.
+		const sourceLabel = `[data-frame-label=${JSON.stringify(plan.from)}]`;
+		await page.waitForSelector(sourceLabel, { timeout: ENTER_TIMEOUT_MS });
+		const borrowedBeforeEntry = await quiet(page, 300_000);
+		if (borrowedBeforeEntry !== 0) {
+			throw new Error(`${borrowedBeforeEntry} picture errands remained before walk`);
+		}
 
 		// --- enter, because a walk from an unentered frame is rejected ----------
 		// `walkRejectionReason` (protocol.ts:211) turns a `go` from any frame that
 		// is not the entered one into "inactive" — going inside is what makes a
-		// frame's links live at all. It is also what gives it a document: the
-		// boot the double-click starts is part of what the entry costs, and the
-		// walk below is timed from its own click, after it.
-		const box = await page.locator(still).boundingBox();
+		// frame's links live at all. A readable source already has its document;
+		// below the threshold this double-click also pays for its boot.
+		const box = await page.locator(sourceLabel).evaluate((label) => {
+			const bounds = label.parentElement?.getBoundingClientRect();
+			return bounds === undefined ? null : { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+		});
 		if (box === null) return await fail("source frame has no box");
 		await page.mouse.dblclick(Math.round(box.x + box.width / 2), Math.round(box.y + box.height / 2));
 		const entered = await page
@@ -920,6 +926,14 @@ async function main(): Promise<void> {
 			`bench: ${flows.edges.length} edges in the graph, ${plans.length} walks planned (${same} same-page, ${plans.length - same} cross-page; ${plans.filter((plan) => plan.injected).length} injected out of ${anchorFrame?.name})\n`,
 		);
 		if (plans.length === 0) throw new Error("the project's link graph has no walkable edge");
+
+		const measuredPages = [...new Set(plans.flatMap((plan) => [plan.fromPage, plan.toPage]))].sort();
+		for (const pageName of measuredPages) {
+			const pageFrames = frames.filter((frame) => frame.page === pageName);
+			if (pageFrames.length === 0) throw new Error(`walk plan names empty page "${pageName}"`);
+			writeCamera(root, planCamera(pageFrames, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM), pageName);
+			await prepareCurrentCovers(browser, url, root, pageFrames);
+		}
 
 		// One discarded pass. A fresh daemon compiles every frame it is asked for,
 		// and a first-ever boot measures the toolchain rather than the walk.

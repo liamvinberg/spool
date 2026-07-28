@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Page as BrowserPage } from "playwright-core";
+import type { Browser, Page as BrowserPage } from "playwright-core";
 
 /**
  * The plumbing the six benchmarks share: a private copy of a real spool project,
@@ -30,26 +30,19 @@ export const VIEWPORT = { width: 1512, height: 945 };
 /**
  * A private copy of the project, so a run leaves the real canvas untouched.
  *
- * The subject is frozen, and has to be. Every number the six benchmarks have
- * produced comes from one canvas, reconstructed rather than checked out:
+ * The subject is generated, and has to be. Make a fresh detached copy from any
+ * directory so neither unknown pages nor ignored app state can follow it:
  *
- *   subject=~/projects/matmannen-fc63dba
- *   mkdir -p "$subject" && git -C ~/projects/matmannen archive fc63dba design | tar -x -C "$subject"
- *   mkdir -p "$subject/design/.spool" && cp -R ~/projects/matmannen/design/.spool/thumbs "$subject/design/.spool/"
+ *   git -C <spool-bench-source> worktree add --detach <spool-bench> 4bb16401b0e38e67bd44116c5ccc17b4e6281e6e
+ *   node <spool-bench>/generate.mjs
  *
- * That is 11 pages and 145 frames, densest page `skrivbord` at 41 with 40 of
- * them covered. The archive rebuilds the geometry at `fc63dba` without touching
- * matmannen's working tree; the covers have to come from the live `.spool`,
- * which is gitignored and so in no commit, and they still land because a cover
- * is keyed by bare frame name (`daemon/thumbs.ts`) — the page migration moved
- * frames without renaming them.
+ * At the pinned commit, `generate.mjs` writes 437 frames across six pages from
+ * fixed seeds, geometry, and archetype rotation. Pass that fresh project root
+ * as `--project <spool-bench>`.
  *
- * A live canvas is not a benchmark subject. Frame count, cover coverage and
- * which page is densest are all inputs here, and all three move whenever
- * someone opens the canvas and works: pointing `--project` at the live one has
- * already changed what a run measured twice, without the run saying so.
- * matmannen's `HEAD` is now a 24-frame single-page restructure, and
- * reconstructs a different canvas entirely.
+ * A live canvas is not a benchmark subject. Frame count and which page is
+ * densest move whenever someone works. App-owned state is excluded below; each
+ * benchmark establishes the state it needs inside the temporary copy.
  */
 export function copyProject(source: string): { root: string; name: string; spoolDir: string } {
 	const design = join(source, "design");
@@ -58,6 +51,9 @@ export function copyProject(source: string): { root: string; name: string; spool
 	const root = join(work, basename(source));
 	mkdirSync(root, { recursive: true });
 	cpSync(design, join(root, "design"), { recursive: true });
+	const copiedState = join(root, "design", ".spool");
+	rmSync(copiedState, { recursive: true, force: true });
+	mkdirSync(copiedState, { recursive: true });
 	const spoolDir = join(work, "spool");
 	mkdirSync(spoolDir, { recursive: true });
 	// the update check would put a network fetch inside the measurement
@@ -103,7 +99,14 @@ export async function startDaemon(spoolDir: string, root: string, port: number):
 	if (!existsSync(cli)) throw new Error(`${cli} is missing — run pnpm build first`);
 	const env = { SPOOL_DIR: spoolDir, SPOOL_PORT: String(port) };
 	await run(process.execPath, [cli, "open", root], env);
-	const child = spawn(process.execPath, [cli, "serve", "--foreground"], { env: { ...process.env, ...env } });
+	// Only the benchmark daemon sees this empty browser store. Its headless
+	// healer stays unavailable, so the canvas lifecycle is the sole cover
+	// writer and prepareCurrentCovers's exact-one check is the barrier.
+	const emptyBrowserStore = mkdtempSync(join(spoolDir, "no-headless-"));
+	const daemonEnv = { ...env, PLAYWRIGHT_BROWSERS_PATH: emptyBrowserStore };
+	const child = spawn(process.execPath, [cli, "serve", "--foreground"], {
+		env: { ...process.env, ...daemonEnv },
+	});
 	const url = `http://127.0.0.1:${port}`;
 	// frames never share the canvas's origin (daemon/security.ts): they are
 	// served from a virtual host with no access to the control capability, so a
@@ -139,6 +142,89 @@ export interface Box {
 export interface FrameBox extends Box {
 	name: string;
 	page: string;
+}
+
+const COVER_SETUP_TIMEOUT_MS = 600_000;
+const CURRENT_COVER = /^[0-9a-f]{32}\.(?:jpg|png)$/;
+
+/** Remove only the copied project's cover store. The source project is never passed here. */
+export function clearCopiedCovers(root: string): void {
+	rmSync(join(root, "design", ".spool", "thumbs"), { recursive: true, force: true });
+}
+
+function frameDirectory(root: string, frame: { name: string; page: string }): string {
+	return join(root, "design", "frames", ...(frame.page === ROOT_PAGE ? [] : [frame.page]), frame.name);
+}
+
+function assertHtmlFrames(root: string, frames: readonly { name: string; page: string }[]): void {
+	const terminals = frames.filter((frame) => existsSync(join(frameDirectory(root, frame), "term.tsx")));
+	if (terminals.length === 0) return;
+	const sample = terminals
+		.slice(0, 6)
+		.map((frame) => frame.name)
+		.join(", ");
+	throw new Error(
+		`cover setup cannot create images for ${terminals.length} terminal frames` +
+			` (${sample}${terminals.length > 6 ? ", …" : ""})`,
+	);
+}
+
+function missingCurrentCoverNames(root: string, frames: readonly { name: string }[]): string[] {
+	const thumbs = join(root, "design", ".spool", "thumbs");
+	const missing: string[] = [];
+	for (const frame of frames) {
+		let files: string[] = [];
+		try {
+			files = readdirSync(join(thumbs, frame.name));
+		} catch {
+			files = [];
+		}
+		const images = files.filter((file) => CURRENT_COVER.test(file));
+		if (files.length !== 1 || images.length !== 1) missing.push(frame.name);
+	}
+	return missing;
+}
+
+/**
+ * Let the shipped canvas build one current cover per frame in the private copy.
+ * `startDaemon` disables its fallback healer, so exact-one completion proves the
+ * canvas lifecycle wrote every cover. The caller sets that page's picture-zoom
+ * camera before entry and resets its measurement camera after this returns.
+ */
+export async function prepareCurrentCovers(
+	browser: Browser,
+	url: string,
+	root: string,
+	frames: readonly { name: string; page: string }[],
+): Promise<void> {
+	assertHtmlFrames(root, frames);
+	const pageName = frames[0]?.page === ROOT_PAGE ? "root" : (frames[0]?.page ?? "unknown");
+	process.stderr.write(`bench: preparing ${frames.length} current covers on page "${pageName}"\n`);
+	const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+	const page = await context.newPage();
+	try {
+		await page.goto(url, { waitUntil: "domcontentloaded" });
+		const deadline = Date.now() + COVER_SETUP_TIMEOUT_MS;
+		let missing = missingCurrentCoverNames(root, frames);
+		while (missing.length > 0 && Date.now() < deadline) {
+			await page.waitForTimeout(250);
+			missing = missingCurrentCoverNames(root, frames);
+		}
+		if (missing.length > 0) {
+			const sample = missing.slice(0, 6).join(", ");
+			throw new Error(
+				`cover setup timed out after ${COVER_SETUP_TIMEOUT_MS / 1000} s: ` +
+					`${missing.length} of ${frames.length} frames still lacked one current image` +
+					` (${sample}${missing.length > 6 ? ", …" : ""})`,
+			);
+		}
+		process.stderr.write(`bench: prepared ${frames.length} current covers on page "${pageName}"\n`);
+	} finally {
+		await context.close();
+		// A closing canvas can still have its camera save in flight. Let it land
+		// before the caller writes the measurement camera.
+		await new Promise((wait) => setTimeout(wait, 1500));
+	}
 }
 
 function readBox(file: string): Box | undefined {
@@ -221,11 +307,9 @@ export function namedPage(root: string, name: string): Page {
 }
 
 /**
- * The readable zoom every benchmark shares. It was chosen as "just above
- * `K_MIN_MOUNT`", the threshold below which the canvas mounted nothing; #112
- * deleted that threshold along with mounting-from-being-on-screen, and the
- * number stays because every figure these benchmarks have produced was taken at
- * it and a moved subject makes them incomparable.
+ * The picture zoom used while benchmarks populate covers. Reload also keeps it
+ * as its historical measurement default; readable arrival and canvas runs own
+ * their separate defaults.
  */
 export const DEFAULT_ZOOM = 0.16;
 
@@ -295,26 +379,33 @@ export const ms = (value: number): string => (Number.isFinite(value) ? value.toF
 export const mountedCount = (page: BrowserPage): Promise<number> =>
 	page.evaluate(() => document.querySelectorAll("iframe").length);
 
-/** Frames the canvas is drawing, mounted or not — a settled canvas holds no documents at all (#112). */
+/** Documents hidden behind a still. With no selection intent, these are picture errands. */
+const hiddenDocumentCount = (page: BrowserPage): Promise<number> =>
+	page.evaluate(
+		() =>
+			[...document.querySelectorAll("iframe")].filter((frame) => getComputedStyle(frame).visibility === "hidden")
+				.length,
+	);
+
+/** One label per frame shell, independent of its live or picture substrate. */
 export const framesOnCanvas = (page: BrowserPage): Promise<number> =>
-	page.evaluate(() => document.querySelectorAll("[data-frame-cover]").length);
+	page.evaluate(() => document.querySelectorAll("[data-frame-label]").length);
 
 /**
- * Hold until the canvas is holding no document at all: every picture it was
- * owed has been taken and nothing is being borrowed. That is the resting state
- * of the model (#112), and the one both a cold entry and a control gesture have
- * to be measured from — a canvas pinned at the errand cap holds still without
- * being quiet, so waiting for the count to stop changing would wait for the
- * wrong thing. Returns what was left if the wait ran out, and says so.
+ * Hold until no hidden document is being borrowed for a picture. Readable
+ * documents stay visible at rest, so a zero-document check would never finish.
+ * A canvas pinned at the errand cap can keep the same total count while the
+ * borrowed frames change, so a stable-count check would finish too early.
+ * Returns the borrowed count left at timeout.
  */
 export async function quiet(page: BrowserPage, timeoutMs: number): Promise<number> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
-		const count = await mountedCount(page);
+		const count = await hiddenDocumentCount(page);
 		if (count === 0) return 0;
 		await page.waitForTimeout(250);
 	}
-	const left = await mountedCount(page);
+	const left = await hiddenDocumentCount(page);
 	process.stderr.write(
 		`bench:   canvas still borrowing ${left} frames — whatever runs next is not measured from rest\n`,
 	);

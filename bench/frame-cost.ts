@@ -35,12 +35,12 @@ import { copyProject, densestPage, type FrameBox, freePort, ms, quantile, startD
  * once per frame in the process.
  *
  *   pnpm build
- *   node bench/frame-cost.ts --project ~/projects/matmannen-fc63dba --headed --out cost.json
+ *   node bench/frame-cost.ts --project <spool-bench> --headed --out cost.json
  *
  * Run it with node's own type stripping, not tsx — see bench/harness.ts.
  */
 
-/** The readable zoom bench/canvas.ts measures at. */
+/** The zoom at which #85's recorded comparisons were taken. */
 const ZOOM = 0.16;
 /**
  * The warm pool's cap, as it stood when this benchmark priced it. #112 deleted
