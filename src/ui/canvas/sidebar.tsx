@@ -1,5 +1,6 @@
 import { useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { accelPressed } from "../../runtime/platform-keys";
 import type { ProjectedFrame } from "../api";
 import { framesOnPage, pageLabel, pageList } from "./pages";
 
@@ -17,7 +18,7 @@ export interface SelectModifiers {
 
 const modifiersOf = (event: React.MouseEvent): SelectModifiers => ({
 	shift: event.shiftKey,
-	toggle: event.metaKey || event.ctrlKey,
+	toggle: accelPressed(event),
 });
 
 /** The pages navigator: a collapsible folder tree over the full projection. */

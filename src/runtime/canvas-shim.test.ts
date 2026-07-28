@@ -92,12 +92,20 @@ describe("the canvas shim", () => {
 			child.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, metaKey: true, key: "v" }));
 			child.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, metaKey: true, key: "h" }));
 			child.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Meta" }));
+			// the shim names the key it saw rather than assuming ⌘: off the Mac,
+			// ctrl is the accel modifier and the canvas is what knows that
+			child.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Control" }));
+			child.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Control" }));
 			window.dispatchEvent(new Event("blur"));
 
 			expect(posted).toEqual([
 				{ spool: "modifier", frame: "host", modifier: "Meta", held: true },
 				{ spool: "modifier", frame: "host", modifier: "Meta", held: false },
+				{ spool: "modifier", frame: "host", modifier: "Control", held: true },
+				{ spool: "modifier", frame: "host", modifier: "Control", held: false },
+				// blur releases both candidates so neither platform's can stick
 				{ spool: "modifier", frame: "host", modifier: "Meta", held: false },
+				{ spool: "modifier", frame: "host", modifier: "Control", held: false },
 			]);
 		} finally {
 			dispose?.();

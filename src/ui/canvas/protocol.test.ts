@@ -159,12 +159,16 @@ describe("frame zoom protocol", () => {
 });
 
 describe("frame modifier protocol", () => {
-	it("accepts Meta hold changes and rejects malformed modifier intents", () => {
+	it("accepts either accel key's hold changes and rejects malformed modifier intents", () => {
 		const held = { spool: "modifier", frame: "host", modifier: "Meta", held: true };
+		const ctrlHeld = { spool: "modifier", frame: "host", modifier: "Control", held: true };
 
+		// both names are valid on the wire: a frame reports the key it saw and the
+		// canvas decides which one this platform binds accel to
 		expect(parseFrameMessage(held)).toEqual(held);
+		expect(parseFrameMessage(ctrlHeld)).toEqual(ctrlHeld);
 		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Meta" })).toBeUndefined();
-		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Control", held: true })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Shift", held: true })).toBeUndefined();
 		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Meta", held: "true" })).toBeUndefined();
 	});
 });

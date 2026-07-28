@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { accelPressed } from "../../runtime/platform-keys";
 import { InspectorIcon } from "../icons";
 import type { ConnectionGroup, ConnectionRow, UnreadableRow } from "./connections";
 import { rowSelectors, type TreeRow } from "./element-tree";
@@ -47,7 +48,7 @@ export interface InspectorTarget {
 
 const modifiersOf = (event: React.MouseEvent): SelectModifiers => ({
 	shift: event.shiftKey,
-	toggle: event.metaKey || event.ctrlKey,
+	toggle: accelPressed(event),
 });
 
 export function InspectorRail({

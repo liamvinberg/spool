@@ -5,6 +5,10 @@
  * ever left the folder (#7: ⌘Z answers the toast ahead of the geometry undo).
  */
 
+import { accelLabel } from "../../runtime/platform-keys";
+
+const UNDO_CHORD = `${accelLabel()}Z`;
+
 export function TrashToast({ frames, onUndo }: { frames: readonly string[]; onUndo: () => void }) {
 	const [first] = frames;
 	const subject = frames.length === 1 && first !== undefined ? first : `${frames.length} frames`;
@@ -17,7 +21,7 @@ export function TrashToast({ frames, onUndo }: { frames: readonly string[]; onUn
 			<button type="button" className="font-medium text-base text-thread leading-base" onClick={onUndo}>
 				Undo
 			</button>
-			<span className="font-mono text-muted text-xs leading-xs">⌘Z</span>
+			<span className="font-mono text-muted text-xs leading-xs">{UNDO_CHORD}</span>
 		</div>
 	);
 }

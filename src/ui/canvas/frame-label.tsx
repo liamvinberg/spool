@@ -1,7 +1,7 @@
 import { exitChordLabel } from "../../runtime/term-keys";
 
 /** The exit binding as this platform spells it — the chip must show a chord that works here. */
-const EXIT_CHORD = exitChordLabel(typeof navigator === "undefined" ? "Mac" : navigator.platform);
+const EXIT_CHORD = exitChordLabel();
 
 export function FrameLabel({
 	name,

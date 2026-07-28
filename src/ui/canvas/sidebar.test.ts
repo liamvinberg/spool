@@ -3,7 +3,11 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { accelKeyName } from "../../runtime/platform-keys";
 import { CanvasSidebar } from "./sidebar";
+
+/** The toggle modifier as this environment binds it — ctrl under happy-dom, ⌘ on a Mac. */
+const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
 const frames = [
 	{ name: "home", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
@@ -48,7 +52,7 @@ describe("page tree", () => {
 		await act(async () => {
 			host
 				.querySelector<HTMLButtonElement>('button[aria-label="checkout frame"]')
-				?.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true, metaKey: true }));
+				?.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true, ...ACCEL }));
 		});
 		expect(onSelectFrame).toHaveBeenCalledWith("checkout", { shift: true, toggle: true });
 		await act(async () => {

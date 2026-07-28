@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Cover } from "../../cover";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
+import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import { snapPxToCells } from "../../term/cells";
 import type { Camera, FlowEdge, FlowUnreadable, FrameCollision, Geometry, ProjectedFrame } from "../api";
@@ -218,7 +219,7 @@ export function ProjectCanvas({
 	// the hover preview (#37): the element a click would target, outlined live
 	const [preview, setPreview] = useState<ElementPreview | null>(null);
 	const [externalLink, setExternalLink] = useState<{ frame: string; href: string } | null>(null);
-	const [metaDown, setMetaDown] = useState(false);
+	const [accelDown, setAccelDown] = useState(false);
 	const [spaceDown, setSpaceDown] = useState(false);
 	const [panning, setPanning] = useState(false);
 	const [resizeCursor, setResizeCursor] = useState<string | null>(null);
@@ -285,8 +286,8 @@ export function ProjectCanvas({
 	const cameras = useRef<Record<string, Camera>>({});
 	const enteredRef = useRef(entered);
 	enteredRef.current = entered;
-	const metaDownRef = useRef(metaDown);
-	metaDownRef.current = metaDown;
+	const accelDownRef = useRef(accelDown);
+	accelDownRef.current = accelDown;
 	/** The last screen point a relayed middle-button drag reported (#8). */
 	const framePan = useRef<Point | null>(null);
 	// ⌘ no longer borrows Select — Select is the base, and ⌘ is its element
@@ -386,9 +387,9 @@ export function ProjectCanvas({
 	const selectionTargets = useMemo(() => {
 		if (picked.length > 0) return new Set(picked.map((pick) => pick.frame));
 		if (effectiveTool !== "select") return new Set<string>();
-		const fallback = selectedFrame ?? (metaDown ? entered : null);
+		const fallback = selectedFrame ?? (accelDown ? entered : null);
 		return fallback === null ? new Set<string>() : new Set([fallback]);
-	}, [effectiveTool, picked, selectedFrame, metaDown, entered]);
+	}, [effectiveTool, picked, selectedFrame, accelDown, entered]);
 	// what the rail reads: the element scope's frame, else the frame selection,
 	// else the frame being used — inside a prototype its elements are the ones
 	// worth looking at, so entering must not empty the rail
@@ -737,7 +738,7 @@ export function ProjectCanvas({
 	const exitEntered = useCallback((retainFrame = false) => {
 		const frame = enteredRef.current;
 		setEntered(null);
-		setMetaDown(false);
+		setAccelDown(false);
 		setExternalLink(null);
 		walkTarget.current = null;
 		walkSession.current = null;
@@ -1385,7 +1386,11 @@ export function ProjectCanvas({
 					if (message.key === "Escape" && enteredRef.current !== null) exitEntered(true);
 					return;
 				case "modifier":
-					if (enteredRef.current === message.frame) setMetaDown(message.held);
+					// the frame names the key that moved; which one is accel is the
+					// canvas's rule, so the other platform's modifier is ignored here
+					if (enteredRef.current === message.frame && message.modifier === accelKeyName()) {
+						setAccelDown(message.held);
+					}
 					return;
 				case "pan": {
 					// the middle-button drag the shim kept for us: pan without leaving
@@ -1578,7 +1583,7 @@ export function ProjectCanvas({
 				if (gesture.current.kind !== "idle" || toolRef.current !== "select") return;
 				// a deep hover is ⌘'s: let go while the frame was answering and
 				// the answer is stale, so it must not redraw the preview
-				if (deepest && !metaDownRef.current) return;
+				if (deepest && !accelDownRef.current) return;
 				const target = deepest ? chain[chain.length - 1] : atDepthIn(frame, chain);
 				setPreview(
 					target === undefined
@@ -1652,9 +1657,10 @@ export function ProjectCanvas({
 			return;
 		}
 
-		// A live frame owns its own presses. The canvas only sees one when ⌘ has
-		// borrowed its pointer to reach an element, so ⌘ must not read as leaving.
-		if (enteredRef.current !== null && !event.metaKey) {
+		// A live frame owns its own presses. The canvas only sees one when the
+		// accel modifier has borrowed its pointer to reach an element, so that
+		// modifier must not read as leaving.
+		if (enteredRef.current !== null && !accelPressed(event)) {
 			const hit = frameAtWorld(toWorld(p, cam));
 			if (hit === enteredRef.current) return; // the pointer is the frame's now
 			exitEntered();
@@ -1706,10 +1712,10 @@ export function ProjectCanvas({
 		}
 
 		// inside an element scope, shift toggles membership (#37): the at-depth
-		// target under the cursor, or with ⌘ the deepest — the two hover previews
+		// target under the cursor, or with accel the deepest — the two hover previews
 		if (toolRef.current === "select" && event.shiftKey && pickedRef.current.length > 0 && label === null) {
 			const local = frameLocalAt(hit, world);
-			if (local !== null) togglePickAt(hit, local, event.metaKey);
+			if (local !== null) togglePickAt(hit, local, accelPressed(event));
 			return;
 		}
 
@@ -1720,9 +1726,10 @@ export function ProjectCanvas({
 			return;
 		}
 
-		// ⌘-click in Select deep-selects the element under the cursor (Figma);
-		// meta only — on the Mac, ctrl-click is the context menu's
-		if (toolRef.current === "select" && event.metaKey && label === null) {
+		// accel-click in Select deep-selects the element under the cursor (Figma).
+		// The modifier is exclusive, never a union: on the Mac ctrl-click is the
+		// context menu's, so accepting either would fire both.
+		if (toolRef.current === "select" && accelPressed(event) && label === null) {
 			const local = frameLocalAt(hit, world);
 			if (local !== null) deepSelectAt(hit, local);
 			return;
@@ -1782,7 +1789,7 @@ export function ProjectCanvas({
 						? current
 						: { frame, visible: true },
 			);
-			hoverPickAt(label === null ? frame : null, world, event.metaKey);
+			hoverPickAt(label === null ? frame : null, world, accelPressed(event));
 			return;
 		}
 
@@ -2258,8 +2265,8 @@ export function ProjectCanvas({
 				return;
 			}
 			const mod = event.metaKey || event.ctrlKey;
-			if (event.key === "Meta") {
-				setMetaDown(true);
+			if (event.key === accelKeyName()) {
+				setAccelDown(true);
 				return;
 			}
 			if (event.code === "Space") {
@@ -2452,14 +2459,14 @@ export function ProjectCanvas({
 		};
 		const onKeyUp = (event: KeyboardEvent) => {
 			if (event.code === "Space") setSpaceDown(false);
-			// releasing ⌘ outside an element scope ends the deep-hover preview
-			if (event.key === "Meta") {
-				setMetaDown(false);
+			// releasing accel outside an element scope ends the deep-hover preview
+			if (event.key === accelKeyName()) {
+				setAccelDown(false);
 				setPreview(null);
 			}
 		};
 		const clearModifiers = () => {
-			setMetaDown(false);
+			setAccelDown(false);
 			setSpaceDown(false);
 			setPreview(null);
 		};
@@ -2613,7 +2620,7 @@ export function ProjectCanvas({
 											state={state}
 											ready={lifecycle.ready.has(frame.name)}
 											entered={isEntered}
-											interactive={isEntered && !metaDown}
+											interactive={isEntered && !accelDown}
 											terminal={frame.kind === "term"}
 											docNonce={docNonces[frame.name] ?? 0}
 											cover={frame.cover}
