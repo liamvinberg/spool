@@ -84,11 +84,11 @@ Tests sit next to what they test, as `<module>.test.ts`. If you are changing beh
 
 `design/` is spool's own dogfood canvas, built in spool. Changes confined to it are live design work and follow the rules in its nested `AGENTS.md`.
 
-## Commits
+## Commits and changesets
 
-Spool uses Conventional Commits, and Release Please derives versions and the changelog from them. The important idea: **the commit type describes the effect on people using the published package, not the kind of work you did.** A large refactor that changes no published behavior is `refactor:`, not `feat:`.
+Commit messages describe the work; they never drive a release. When a change alters what someone running the published package sees, land a changeset file with it: the bump level and one honest sentence written for the changelog. Work confined to `design/`, docs, tests, or internals ships no changeset.
 
-`docs/releases.md` has the full table. Read it before choosing a type.
+`docs/releases.md` has the whole model. Read it before opening a PR that changes published behavior.
 
 ## Reporting bugs
 

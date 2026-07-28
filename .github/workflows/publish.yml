@@ -3,28 +3,58 @@ name: publish
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish to npm (recovery for a release whose publish was refused)"
+        required: true
+        type: string
+
+# Queue runs instead of cancelling: a run may be mid-publish.
+concurrency:
+  group: publish
+  cancel-in-progress: false
 
 jobs:
-  release-please:
-    if: github.repository == 'liamvinberg/spool'
+  release:
+    if: github.repository == 'liamvinberg/spool' && github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      published: ${{ steps.changesets.outputs.published }}
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - id: release
-        uses: googleapis/release-please-action@v4
+      - uses: actions/checkout@v6
         with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      # `changeset tag` only tags and cuts the GitHub release; npm publish
+      # happens in the gated job below, from the frozen tag.
+      - id: changesets
+        uses: changesets/action@v1
+        with:
+          version: pnpm changeset version
+          publish: pnpm changeset tag
+          commit: "release: version spool.page"
+          title: "release: spool.page"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - id: tag
+        if: steps.changesets.outputs.published == 'true'
+        run: echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
   publish:
-    needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
-    # macOS to match ci.yml: the release gate reruns the macOS-validated suite.
+    needs: release
+    if: ${{ !cancelled() && github.repository == 'liamvinberg/spool' && (needs.release.outputs.published == 'true' || github.event_name == 'workflow_dispatch') }}
+    # macOS: the release gate reruns the darwin-only coverage ci.yml skips.
     runs-on: macos-latest
     timeout-minutes: 20
     permissions:
@@ -33,7 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release.outputs.tag }}
       - uses: actions/setup-node@v6
         with:
           node-version: "22"

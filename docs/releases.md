@@ -1,49 +1,43 @@
 # Releases
 
-Spool uses Semantic Versioning, Conventional Commits, and Release Please to publish `spool.page`. Commit types describe the effect on people using the published package, not the files changed or the implementation work performed.
+Spool uses Semantic Versioning and Changesets to publish `spool.page`. Release impact and changelog text live in `.changeset/` files; commit messages describe the work and never drive a release.
 
-## Classify a change
+## Add a changeset
 
-| Type | Use when | Release effect | Changelog |
-| --- | --- | --- | --- |
-| `feat:` | The published product gains a capability | Minor | Features |
-| `fix:` | Published behavior is incorrect and becomes correct | Patch | Bug fixes |
-| `polish:` | Published behavior is visibly refined without adding a capability or correcting a defect | None by itself | Polish in the next release |
-| `design:` | The change is confined to the `design/` dogfood canvas | None | Omitted |
-| `refactor:` | Internal structure changes without changing published behavior | None | Omitted |
-| `docs:`, `test:`, `chore:`, `build:`, `ci:` | The published product does not change | None | Omitted |
+When a change alters what someone running the published package sees, land a changeset in the same commit:
 
-Add `!` after any type, or a `BREAKING CHANGE:` footer, when the public contract becomes incompatible. Before `1.0.0`, Spool's Release Please configuration treats a breaking change as a minor bump. From `1.0.0` onward, it is a major bump.
+```md
+---
+"spool.page": minor
+---
 
-Classify the net user-visible result. A scope does not change the release effect, so `feat(design):` is still a minor release. Split mixed changes into atomic commits; if a squash title represents several changes, use the highest release impact among them.
-
-Examples:
-
-```text
-feat: add automatic update checks
-fix: keep canvas zoom inside entered frames
-polish: tighten update toast spacing
-design: explore compact update toast
-refactor: extract frame label component
+Added the frame finder: press `/` to search frames by name and jump to one.
 ```
+
+| Bump | Use when |
+| --- | --- |
+| `patch` | Published behavior was wrong or rough and is now right |
+| `minor` | The published product gains a capability |
+| `major` | The public contract becomes incompatible (from `1.0.0`; see below) |
+
+Write the prose for someone reading the changelog, not for a reviewer: what they can do now, or what stopped being broken. One coherent change per file, and several commits may share one changeset. Name the file after the change (`frame-finder.md`), or let `pnpm changeset` scaffold one.
+
+Work with no published effect ships no changeset: the `design/` canvas, docs, tests, CI, refactors, benchmarks.
+
+## Before 1.0.0
+
+Declare a breaking change as `minor` and open its prose with "Breaking:". `1.0.0` is cut deliberately with a `major` changeset when spool is declared stable, never as a side effect of one change.
 
 ## Choose the version
 
-Release Please reads commits on `main` since the previous release and applies the highest required bump:
-
-- only fixes produce a patch release
-- any feature produces a minor release
-- any breaking change produces a major release, except for Spool's pre-`1.0.0` rule above
-- commits with no release effect do not open or bump a release by themselves
-
-Do not edit the generated version, manifest, or changelog to counteract a misclassified commit. Correct the classification before merging when possible; use Release Please's explicit `Release-As:` override only when the intended version cannot be expressed by the commit history.
+The next version applies the highest bump among pending changesets: any pending minor makes a minor release, otherwise a patch release. No pending changesets, no release PR. Do not edit the generated version or changelog on `main` to counteract a misjudged entry; correct the pending `.changeset/` file instead, on the release PR when it is already open.
 
 ## Publish a release
 
-1. Changes land on `main` with correctly classified commit or squash titles.
-2. The publish workflow creates or updates one release PR containing the next version, manifest, and changelog.
-3. The release PR stays open while more changes accumulate. Merging it is the human release gate.
-4. Release Please creates the Git tag and GitHub release from the merged release PR.
-5. The publish job checks out that tag, runs the full gates, and publishes `spool.page` to npm through trusted publishing.
+1. Changes land on `main`, each carrying its changeset when published behavior changed.
+2. The publish workflow keeps one release PR open ("release: spool.page"); its diff is the version bump and the changelog assembled from pending changesets.
+3. The release PR stays open while changes accumulate. Editing the pending changeset files is the editorial pass; merging the PR is the human release gate.
+4. The merge run tags `vX.Y.Z` and creates the GitHub release.
+5. The publish job checks out that tag, reruns the full gates on macOS, and publishes `spool.page` to npm through trusted publishing.
 
-If the publish gates fail, the Git tag and GitHub release may exist while npm remains unpublished. Fix the failure and rerun the publish job for that release rather than creating a new version.
+If the publish gates fail, the Git tag and GitHub release may exist while npm remains unpublished. Fix the failure, then publish that tag by hand with `gh workflow run publish.yml -f tag=vX.Y.Z` rather than creating a new version.

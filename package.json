@@ -30,6 +30,7 @@
 	"devDependencies": {
 		"@babel/types": "^7.29.7",
 		"@biomejs/biome": "^2.5.5",
+		"@changesets/cli": "^2.31.1",
 		"@fontsource-variable/familjen-grotesk": "^5.3.0",
 		"@tailwindcss/vite": "4.3.3",
 		"@types/node": "^22.20.1",
