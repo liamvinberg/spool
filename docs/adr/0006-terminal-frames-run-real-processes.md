@@ -1,5 +1,9 @@
 # Terminal frames run real processes
 
+> This is the terminal-frame ADR. A numbering collision also assigned 0006 to
+> [the warm-pool ADR](./0006-warm-pool-and-wake-queue-replace-the-hibernation-timer.md).
+> Both filenames stay unchanged so existing links keep working.
+>
 > Superseded by the project-code isolation boundary in
 > [issue #41](https://github.com/liamvinberg/spool/issues/41). Terminal frames
 > remain discoverable, but Spool renders a static disabled surface and never

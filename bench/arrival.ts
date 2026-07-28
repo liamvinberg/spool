@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { type Browser, type BrowserContext, type CDPSession, chromium, type Frame, type Page } from "playwright-core";
 import {
 	type Page as CanvasPage,
@@ -10,6 +10,7 @@ import {
 	ms,
 	namedPage,
 	planCamera,
+	prepareCurrentCovers,
 	quantile,
 	startDaemon,
 	VIEWPORT,
@@ -51,10 +52,17 @@ import {
  * silently fell back to the shipped document would report the payload
  * comparison as a wash. Name the arms that exist to run today.
  *
+ * Every run uses a private copy. Before compiler warmup, the shipped canvas at
+ * picture zoom writes exactly one current cover per frame while the benchmark
+ * daemon's headless healer is unavailable. Warm and measured passes keep those
+ * covers and default to readable zoom, so documents arrive because the shipped
+ * viewport bound makes them live, not because background cover work mounted
+ * them.
+ *
  *   pnpm build
- *   node bench/arrival.ts --project ~/projects/matmannen-fc63dba --headed --arms stock,shipped
+ *   node bench/arrival.ts --project <spool-bench> --headed --arms stock,shipped
  *   node bench/arrival.ts --project <path> --arms stock,shipped --repeats 2
- *   node bench/arrival.ts --project <path> --zoom 0.16,0.36 --out arrival.json
+ *   node bench/arrival.ts --project <path> --zoom 0.45,0.6,0.8 --out arrival.json
  *
  * Run it with node's own type stripping, not tsx: the collector below is
  * serialized into the page by playwright, and esbuild's keep-names transform
@@ -63,10 +71,6 @@ import {
 
 interface Options {
 	project: string;
-	/** Use the project where it stands instead of copying it. */
-	inPlace: boolean;
-	/** A spool dir to reuse, so a sweep's arms share one warm webfont cache. */
-	spoolDir: string | undefined;
 	/** Measure this page rather than the one holding the most frames. */
 	page: string | undefined;
 	zooms: number[];
@@ -112,12 +116,13 @@ const ALL_ARMS: Arm[] = [
 /** #106's question is what the payload buys, so the two payload arms are the default. */
 const DEFAULT_ARMS: Arm[] = ALL_ARMS.filter((arm) => arm.label !== "stock");
 
+/** Generated frames draw 540 CSS px wide here, above the shipped readable bound. */
+const ARRIVAL_ZOOM = 0.45;
+
 function parseArgs(argv: string[]): Options {
 	let project = "";
-	let inPlace = false;
-	let spoolDir: string | undefined;
 	let page: string | undefined;
-	let zooms = [DEFAULT_ZOOM];
+	let zooms = [ARRIVAL_ZOOM];
 	let headed = true;
 	let arms = DEFAULT_ARMS;
 	let repeats = 1;
@@ -127,9 +132,6 @@ function parseArgs(argv: string[]): Options {
 		const next = argv[i + 1];
 		if (arg === "--project" && next !== undefined) {
 			project = resolve(next);
-			i++;
-		} else if (arg === "--spool-dir" && next !== undefined) {
-			spoolDir = resolve(next);
 			i++;
 		} else if (arg === "--page" && next !== undefined) {
 			page = next;
@@ -151,8 +153,6 @@ function parseArgs(argv: string[]): Options {
 			}
 			arms = wanted.map((label) => ALL_ARMS.find((arm) => arm.label === label) as Arm);
 			i++;
-		} else if (arg === "--in-place") {
-			inPlace = true;
 		} else if (arg === "--headed") {
 			headed = true;
 		} else if (arg === "--headless") {
@@ -164,28 +164,7 @@ function parseArgs(argv: string[]): Options {
 	if (project === "") throw new Error("--project <path to a spool project root> is required");
 	if (zooms.some((zoom) => !Number.isFinite(zoom) || zoom <= 0)) throw new Error("--zoom takes positive scales");
 	if (!Number.isInteger(repeats) || repeats < 1) throw new Error("--repeats takes a positive whole number");
-	return { project, inPlace, spoolDir, page, zooms, headed, arms, repeats, out };
-}
-
-/**
- * The subject, and where its daemon keeps state. A sweep wants both pinned:
- * copying per arm gives each one a cold webfont cache, so the stock arm has the
- * daemon fetching Google mid-measurement while an inlined arm paid for it during
- * its warm pass. Sharing a spool dir across *copies* does not work either — each
- * copy registers the same project name and the daemon then answers 409 — so
- * sharing the cache means using one root.
- */
-function subject(options: Options): { root: string; name: string; spoolDir: string } {
-	if (!options.inPlace) {
-		const copied = copyProject(options.project);
-		return options.spoolDir === undefined ? copied : { ...copied, spoolDir: options.spoolDir };
-	}
-	const root = options.project;
-	if (!existsSync(join(root, "design", "canvas.json"))) throw new Error(`${root} has no design/canvas.json`);
-	const spoolDir = options.spoolDir ?? join(root, ".spool-bench");
-	mkdirSync(spoolDir, { recursive: true });
-	writeFileSync(join(spoolDir, "config.json"), `${JSON.stringify({ updateCheck: false })}\n`);
-	return { root, name: basename(root), spoolDir };
+	return { project, page, zooms, headed, arms, repeats, out };
 }
 
 const pageToMeasure = (root: string, name: string | undefined): CanvasPage =>
@@ -925,14 +904,15 @@ async function measure(
 }
 
 /**
- * #103's answer in one table: what arrival is with the flows call in front of it
- * and what it is with that one request aborted, per pass, against the 1 s bar.
- * Every pass is printed rather than averaged — #98's headline replicated across
- * two runs and that is the check worth keeping, not a mean that hides a split.
+ * #103's answer in one table: what readable-document arrival is with the flows
+ * call in front of it and what it is with that one request aborted, per pass,
+ * against the 1 s bar. Every pass is printed rather than averaged. #98's
+ * headline replicated across two runs, and that is the check worth keeping
+ * instead of a mean that hides a split.
  */
 function headline(results: RunResult[]): string {
 	const lines = [
-		`\n## Arrival, by arm (bar: 1 s)\n`,
+		`\n## Readable document arrival, by arm (bar: 1 s)\n`,
 		`| zoom | arm | pass | mounted | decomposed | reqs/frame | doc KB | arrival p50 | p95 | worst | bar |`,
 		`|---|---|---|---|---|---|---|---|---|---|---|`,
 	];
@@ -960,10 +940,10 @@ const RENDER_GROUP = /^(frame document|vendor |scenario)/;
 const sum = <T>(items: T[], pick: (item: T) => number): number => items.reduce((total, item) => total + pick(item), 0);
 
 /**
- * #105's sweep in one table: the same page at descending zoom mounts fewer
- * frames at once, so a per-frame cost holds still down the column while a
- * contention cost falls with it. `mounted` is what the canvas actually opened,
- * never what the zoom was expected to give.
+ * #105's sweep in one table: the same page at different readable zooms yields
+ * different mounted counts, so the rows show whether per-frame cost holds still
+ * as count changes. `mounted` is what the canvas actually opened, never what the
+ * zoom was expected to give.
  *
  * One limit this sweep has, found by running it: zoom is not a clean handle on
  * the count. It changes how large each frame renders and what else the canvas is
@@ -997,14 +977,14 @@ function seedSweep(results: RunResult[]): string {
 
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
-	const { root, name, spoolDir } = subject(options);
+	const { root, name, spoolDir } = copyProject(options.project);
 	const { page: canvasPage, frames: boxes } = pageToMeasure(root, options.page);
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
 	const port = await freePort();
 	const daemon = await startDaemon(spoolDir, root, port);
 	const url = `${daemon.url}/p/${encodeURIComponent(name)}`;
 	process.stderr.write(
-		`bench: ${url} (${options.inPlace ? "in place" : "copy"} of ${options.project}, page "${canvasPage === "" ? "root" : canvasPage}", ${boxes.length} frames, arms: ${options.arms.map((arm) => arm.label).join(" / ")}, ${options.repeats} pass${options.repeats === 1 ? "" : "es"} each)\n`,
+		`bench: ${url} (copy of ${options.project}, page "${canvasPage === "" ? "root" : canvasPage}", ${boxes.length} frames, arms: ${options.arms.map((arm) => arm.label).join(" / ")}, ${options.repeats} pass${options.repeats === 1 ? "" : "es"} each)\n`,
 	);
 
 	let browser: Browser | undefined;
@@ -1014,6 +994,11 @@ async function main(): Promise<void> {
 			channel: options.headed ? "chromium" : "chromium-headless-shell",
 			headless: !options.headed,
 		});
+		const firstCamera = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, options.zooms[0] ?? ARRIVAL_ZOOM);
+		writeCamera(root, planCamera(boxes, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM), canvasPage);
+		await prepareCurrentCovers(browser, url, root, boxes);
+		writeCamera(root, firstCamera, canvasPage);
+
 		// One discarded pass per payload shape. A fresh daemon compiles every frame
 		// it is asked for, and a first-ever boot measures the toolchain rather than
 		// the canvas — and the two shapes are separately cached (the arm rides in
@@ -1022,11 +1007,7 @@ async function main(): Promise<void> {
 		for (const shape of [...new Set(options.arms.map((arm) => arm.inline))]) {
 			process.stderr.write(`bench: warming the daemon (${shape ? "inlined" : "shipped"} document)\n`);
 			await setInline(daemon.url, shape);
-			writeCamera(
-				root,
-				planCamera(boxes, VIEWPORT.width, VIEWPORT.height, options.zooms[0] ?? DEFAULT_ZOOM),
-				canvasPage,
-			);
+			writeCamera(root, firstCamera, canvasPage);
 			const warm = await browser.newContext({ viewport: VIEWPORT });
 			const warmPage = await warm.newPage();
 			await warmPage.goto(url, { waitUntil: "domcontentloaded" });
@@ -1049,6 +1030,8 @@ async function main(): Promise<void> {
 					// so the *previous* pass's camera is on disk by now and a run that
 					// planned once per zoom would open where the last one finished.
 					writeCamera(root, planCamera(boxes, VIEWPORT.width, VIEWPORT.height, zoom), canvasPage);
+					// Covers remain current. At readable zoom, iframe insertion is the
+					// shipped live-document path; no picture job or daemon healer competes.
 					const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
 					await context.addInitScript(hostCollector);
 					await context.addInitScript(frameCollector);
@@ -1061,10 +1044,12 @@ async function main(): Promise<void> {
 					process.stderr.write(
 						`bench:   ${result.mounted} mounted, ${result.measured} arrivals decomposed, ${result.wireSeen} requests seen\n`,
 					);
-					// nothing mounted is not a fast canvas, it is a canvas that opened
-					// somewhere with no frames — an empty table would read as a measurement
+					// Nothing mounted is not a fast canvas. The zoom may leave every
+					// frame below the live bound, or the planned camera may have missed.
 					if (result.mounted === 0) {
-						throw new Error("the canvas mounted no documents — the planned camera did not take");
+						throw new Error(
+							`no readable documents mounted at zoom ${zoom}; choose a zoom that makes these frames live, then verify the planned camera if it still mounts none`,
+						);
 					}
 					results.push(result);
 					await context.close();
