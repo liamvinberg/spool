@@ -13,12 +13,9 @@ import {
 
 /**
  * The lifecycle decision function (#40, #112): fabricated frames in, per-sweep
- * states out — no browser, no real timers, and no camera, because the decision
- * does not have one. Mounting is caused, so these tests are a list of causes:
- * you went to a frame, its picture is missing, its picture is wrong. Where a
- * frame sits, how big it draws and whether the camera is moving are not among
- * them — `SweepInput` cannot express them, which is the strongest form the
- * claim can take.
+ * states out — no browser and no real timers. Mounting is caused: you went to
+ * a frame, its picture is missing, its picture is wrong, or it is readable on
+ * the resting canvas. The named camera and viewport make the last cause plain.
  */
 
 const SWEEP_MS = 300;
@@ -55,6 +52,8 @@ function sweeper() {
 			capturing: new Set(),
 			hasCover: () => true,
 			now,
+			camera: { x: 0, y: 0, k: 1 },
+			viewport: { width: 1000, height: 1000 },
 			...input,
 		});
 		states = result.states;
@@ -410,113 +409,90 @@ describe("frames that leave the projection", () => {
 	});
 });
 
-// TEMPORARY (CANVAS_ARM_KEY, #107 follow-up). Deleted with the arms themselves.
-//
 // `frame()` above builds 100x100 boxes, so LIVE_MIN_CSS_PX is reached at k = 4
 // and missed below it. The viewport is named per sweep rather than inferred.
-describe("the canvas arms", () => {
+describe("a readable frame", () => {
 	const view = { width: 1000, height: 1000 };
 	const at = (k: number) => ({ camera: { x: 0, y: 0, k }, viewport: view });
 
-	describe("live", () => {
-		it("runs every frame on the page and photographs none of them", () => {
-			const frames = [frame("a", 0, 0), frame("b", 450, 0), frame("c", 900, 0)];
-			const s = sweeper();
-			// uncovered, which under the shipped model is the whole of a page's debt
-			const result = s.sweep(frames, { hasCover: () => false, arm: "live" });
+	it("runs a frame drawn big enough and inside the ring", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
 
-			expect(result.states).toEqual({ a: "live", b: "live", c: "live" });
-			expect(result.refreshCaptures).toEqual([]);
-			expect(s.model.errands.size).toBe(0);
-		});
-
-		it("keeps freezing and entering above it", () => {
-			const frames = [frame("a", 0, 0), frame("b", 450, 0)];
-			const s = sweeper();
-			// ⌘ over a frame still stops it, or it moves under the cursor mid-pick
-			const result = s.sweep(frames, { arm: "live", frozen: "a", entered: "b" });
-
-			expect(result.states).toEqual({ a: "held", b: "live" });
-		});
+		expect(s.sweep(frames, at(4)).states).toEqual({ a: "live" });
 	});
 
-	describe("readable", () => {
-		it("runs a frame drawn big enough and inside the ring", () => {
-			const frames = [frame("a", 0, 0)];
-			const s = sweeper();
+	it("leaves a frame drawn too small to read as its picture", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
 
-			expect(s.sweep(frames, { arm: "readable", ...at(4) }).states).toEqual({ a: "live" });
-		});
-
-		it("leaves a frame drawn too small to read as its picture", () => {
-			const frames = [frame("a", 0, 0)];
-			const s = sweeper();
-
-			// 100px wide at k = 1: legible as a still, not worth a document
-			expect(s.sweep(frames, { arm: "readable", ...at(1) }).states).toEqual({ a: "picture" });
-		});
-
-		it("leaves a frame far outside the viewport as its picture, however big it draws", () => {
-			const frames = [frame("near", 0, 0), frame("far", 100_000, 0)];
-			const s = sweeper();
-
-			expect(s.sweep(frames, { arm: "readable", ...at(4) }).states).toEqual({ near: "live", far: "picture" });
-		});
-
-		it("bounds the live count by the viewport rather than by the page", () => {
-			// two hundred frames in a row: the ring admits a fixed span of world,
-			// and the page's own size never enters the arithmetic
-			const many = Array.from({ length: 200 }, (_, index) => frame(`f${index}`, index * 150, 0));
-			const s = sweeper();
-			const live = Object.values(s.sweep(many, { arm: "readable", ...at(4) }).states).filter(
-				(state) => state === "live",
-			);
-
-			expect(live.length).toBeGreaterThan(0);
-			expect(live.length).toBeLessThan(30);
-		});
-
-		it("still photographs the frames it is not running", () => {
-			const frames = [frame("a", 0, 0), frame("b", 100_000, 0)];
-			const s = sweeper();
-			// the still is what a frame below the threshold draws, so the debt stands
-			const result = s.sweep(frames, { arm: "readable", hasCover: () => false, ...at(4) });
-
-			expect(result.states.b).toBe("refreshing");
-		});
+		// 100px wide at k = 1: legible as a still, not worth a document
+		expect(s.sweep(frames, at(1)).states).toEqual({ a: "picture" });
 	});
 
-	describe("what a frame owes when it stops being live", () => {
-		it("owes nothing when the arm was what made it live", () => {
-			const frames = [frame("a", 0, 0)];
-			const s = sweeper();
-			s.sweep(frames, { arm: "readable", ...at(4) });
+	it("leaves a frame far outside the viewport as its picture, however big it draws", () => {
+		const frames = [frame("near", 0, 0), frame("far", 100_000, 0)];
+		const s = sweeper();
 
-			// zooming past a frame is not using it: a still of a frame that booted
-			// and did nothing is still true of it
-			const out = s.sweep(frames, { arm: "readable", ...at(1) });
-			expect(out.states).toEqual({ a: "picture" });
-			expect(s.model.stale.size).toBe(0);
-		});
+		expect(s.sweep(frames, at(4)).states).toEqual({ near: "live", far: "picture" });
+	});
 
-		it("owes nothing when the arm is switched off underneath it", () => {
-			const frames = [frame("a", 0, 0), frame("b", 450, 0)];
-			const s = sweeper();
-			s.sweep(frames, { arm: "live" });
+	it("keeps a frame in the viewport's 25% ring live", () => {
+		const frames = [frame("ring", 300, 0)];
+		const s = sweeper();
 
-			const off = s.sweep(frames);
-			expect(off.states).toEqual({ a: "picture", b: "picture" });
-			expect(s.model.stale.size).toBe(0);
-			expect(s.model.errands.size).toBe(0);
-		});
+		expect(s.sweep(frames, at(4)).states).toEqual({ ring: "live" });
+	});
 
-		it("owes a fresh picture for the frame you actually went inside", () => {
-			const frames = [frame("a", 0, 0), frame("b", 450, 0)];
-			const s = sweeper();
-			s.sweep(frames, { entered: "a" });
-			s.sweep(frames);
+	it("bounds the live count by the viewport rather than by the page", () => {
+		// two hundred frames in a row: the ring admits a fixed span of world,
+		// and the page's own size never enters the arithmetic
+		const many = Array.from({ length: 200 }, (_, index) => frame(`f${index}`, index * 150, 0));
+		const s = sweeper();
+		const live = Object.values(s.sweep(many, at(4)).states).filter((state) => state === "live");
 
-			expect(s.model.stale.has("a")).toBe(true);
-		});
+		expect(live.length).toBeGreaterThan(0);
+		expect(live.length).toBeLessThan(30);
+	});
+
+	it("still photographs a frame below the threshold when its picture is missing", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
+		// the still is what a frame below the threshold draws, so the debt stands
+		const result = s.sweep(frames, { hasCover: () => false, ...at(1) });
+
+		expect(result.states.a).toBe("refreshing");
+	});
+
+	it("owes nothing when the model made it live", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
+		s.sweep(frames, at(4));
+
+		// zooming past a frame is not using it: a still of a frame that booted
+		// and did nothing is still true of it
+		const out = s.sweep(frames, at(1));
+		expect(out.states).toEqual({ a: "picture" });
+		expect(s.model.stale.size).toBe(0);
+	});
+
+	it("owes a fresh picture for the frame you actually went inside", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
+		s.sweep(frames, at(4));
+		s.sweep(frames, { entered: "a", ...at(4) });
+		s.sweep(frames, at(1));
+
+		expect(s.model.stale.has("a")).toBe(true);
+	});
+
+	it("owes a fresh picture after leaving an entered frame at readable size", () => {
+		const frames = [frame("a", 0, 0)];
+		const s = sweeper();
+		s.sweep(frames, at(4));
+		s.sweep(frames, { entered: "a", ...at(4) });
+		s.sweep(frames, at(4));
+
+		expect(s.sweep(frames, at(1)).states.a).toBe("refreshing");
 	});
 });
