@@ -2,7 +2,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { type ReactNode, type RefObject, useRef, useState } from "react";
 import { type Pointed, type Strip, stripOf } from "../lib/agent-selection";
 import { cn } from "../lib/utils";
-import type { PlayEntry, RowState, TurnPhase } from "../lib/turn-play";
+import type { Plan, PlayEntry, RowState, ShotRef, TurnPhase } from "../lib/turn-play";
 import { RailTabs } from "./spool-canvas-chrome";
 import { ChevronIcon, CloseIcon } from "./spool-icons";
 
@@ -127,9 +127,23 @@ function Caret() {
 /** the composer's inner width at a 420 rail: less the panel padding and the box's own */
 export const COMPOSER_W = 420 - 28 - 24;
 
+/**
+ * Where a picture goes, when every other row is one line.
+ *
+ * `well` holds the picture's place and draws nothing in it, which is all a
+ * capture with its payloads elided can honestly supply on its own. The other
+ * three are the three answers: behind the disclosure, in the row itself, or
+ * nowhere at all because the frame it is a picture of is on the canvas already.
+ */
+export type ShotMode = "well" | "open" | "inline" | "line";
+
 export function PlayRail({
 	entries,
 	phase,
+	plan = null,
+	shot = "well",
+	shotView,
+	model,
 	selection = [],
 	lit,
 	onLight,
@@ -140,6 +154,13 @@ export function PlayRail({
 }: {
 	entries: readonly PlayEntry[];
 	phase: TurnPhase;
+	/** the plan, lifted out of the transcript into a header of its own */
+	plan?: Plan | null;
+	shot?: ShotMode;
+	/** the picture itself, drawn and sized by whoever knows what the frame looks like */
+	shotView?: ((shot: ShotRef) => ReactNode) | undefined;
+	/** whatever says which model is answering, sitting where the send hint sits */
+	model?: ReactNode;
 	/** what the hands are pointing at, riding in the composer — always a list */
 	selection?: readonly Pointed[];
 	/** the entry the pointer is over, in the rail or out on the canvas */
@@ -159,10 +180,12 @@ export function PlayRail({
 	return (
 		<>
 			<RailTabs tabs={["agent", "connections"]} active="agent" />
-			<Transcript entries={entries} run={run} onReach={reach} />
+			{plan === null ? null : <PlanStrip plan={plan} />}
+			<Transcript entries={entries} run={run} shot={shot} shotView={shotView} onReach={reach} />
 			<Composer
 				field={field}
 				strip={stripOf(selection, COMPOSER_W)}
+				model={model}
 				lit={lit ?? null}
 				onLight={onLight}
 				onDrop={onDrop}
@@ -184,10 +207,14 @@ export function PlayRail({
 function Transcript({
 	entries,
 	run,
+	shot,
+	shotView,
 	onReach,
 }: {
 	entries: readonly PlayEntry[];
 	run: number;
+	shot: ShotMode;
+	shotView: ((shot: ShotRef) => ReactNode) | undefined;
 	onReach: (event: { target: EventTarget | null }) => void;
 }) {
 	return (
@@ -195,7 +222,7 @@ function Transcript({
 			<div key={run} className="flex min-h-0 flex-1 flex-col justify-end overflow-hidden px-3.5 pt-6 pb-4">
 				{entries.map((entry, index) => (
 					<Arrive key={entry.key} gap={gapBefore(entries[index - 1], entry)}>
-						<Entry entry={entry} />
+						<Entry entry={entry} shot={shot} shotView={shotView} />
 					</Arrive>
 				))}
 			</div>
@@ -236,7 +263,15 @@ function Arrive({ gap, children }: { gap: number; children: ReactNode }) {
 	);
 }
 
-function Entry({ entry }: { entry: PlayEntry }) {
+function Entry({
+	entry,
+	shot,
+	shotView,
+}: {
+	entry: PlayEntry;
+	shot: ShotMode;
+	shotView: ((shot: ShotRef) => ReactNode) | undefined;
+}) {
 	if (entry.kind === "user") {
 		return (
 			<div className="relative flex flex-col gap-1.5 pl-3.5">
@@ -245,6 +280,28 @@ function Entry({ entry }: { entry: PlayEntry }) {
 				{entry.context === undefined ? null : (
 					<span className="truncate font-mono text-2xs text-muted/55 leading-3">{entry.context}</span>
 				)}
+			</div>
+		);
+	}
+	if (entry.kind === "note") {
+		// a boundary reaches across the rail because what it says applies to
+		// everything under it; a reply is only itself, so it sits in the same quiet
+		// mono the composer's own hints use and takes the width it needs
+		if (entry.rule === true) {
+			return (
+				<div className="flex items-center gap-2.5 py-0.5">
+					<span className="h-px flex-1 bg-border" />
+					<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3">{entry.text}</span>
+					<span className="h-px flex-1 bg-border" />
+				</div>
+			);
+		}
+		return (
+			<div className="flex flex-col gap-0.5">
+				{entry.said === undefined ? null : (
+					<p className="font-mono text-2xs text-text/70 leading-4">{entry.said}</p>
+				)}
+				<p className="whitespace-pre-wrap font-mono text-2xs text-muted/55 leading-4">{entry.text}</p>
 			</div>
 		);
 	}
@@ -264,7 +321,7 @@ function Entry({ entry }: { entry: PlayEntry }) {
 			</p>
 		);
 	}
-	return <Line entry={entry} />;
+	return <Line entry={entry} shot={shot} shotView={shotView} />;
 }
 
 /* ---------- one line ----------
@@ -272,11 +329,26 @@ function Entry({ entry }: { entry: PlayEntry }) {
  * is how it arrives on the wire: the tool block opens with a name and an empty
  * input, and its argument streams in behind. */
 
-function Line({ entry }: { entry: Extract<PlayEntry, { kind: "line" }> }) {
+function Line({
+	entry,
+	shot,
+	shotView,
+}: {
+	entry: Extract<PlayEntry, { kind: "line" }>;
+	shot: ShotMode;
+	shotView: ((shot: ShotRef) => ReactNode) | undefined;
+}) {
 	const still = useReducedMotion() === true;
 	const [clicked, setClicked] = useState<boolean | undefined>(undefined);
-	const expandable = entry.detail !== undefined || entry.children !== undefined || entry.shot !== undefined;
-	const open = expandable && (clicked ?? entry.open ?? false);
+	// a picture drawn in the row, or not drawn at all, leaves the disclosure holding
+	// what it holds for every other row: the path. And a disclosure with only a path
+	// in it is not worth opening on the turn's say-so, so the auto-open goes with it.
+	const held = shot === "well" || shot === "open" ? entry.shot : undefined;
+	const expandable = entry.detail !== undefined || entry.children !== undefined || held !== undefined;
+	const open = expandable && (clicked ?? (held === undefined ? false : (entry.open ?? false)));
+	// the picture is of a frame, and the capture's path always names it, so the row
+	// can say which frame the agent looked at instead of which file it opened
+	const named = shot === "line" && entry.shot?.frame != null ? entry.shot.frame : entry.subject;
 
 	const body = (
 		<>
@@ -290,7 +362,7 @@ function Line({ entry }: { entry: Extract<PlayEntry, { kind: "line" }> }) {
 				>
 					{entry.verb}
 				</span>
-				{entry.subject === undefined ? null : (
+				{named === undefined ? null : (
 					<motion.span
 						className={cn(
 							"min-w-0 truncate font-mono text-sm leading-4",
@@ -300,7 +372,7 @@ function Line({ entry }: { entry: Extract<PlayEntry, { kind: "line" }> }) {
 						animate={{ opacity: 1, x: 0 }}
 						transition={still ? { duration: 0 } : { duration: 0.3, ease: ARRIVE }}
 					>
-						{entry.subject}
+						{named}
 					</motion.span>
 				)}
 			</span>
@@ -319,6 +391,14 @@ function Line({ entry }: { entry: Extract<PlayEntry, { kind: "line" }> }) {
 			) : (
 				<div className={row}>{body}</div>
 			)}
+			{/* the row's own picture, hanging off the line rather than behind it */}
+			{entry.shot !== undefined && shot === "inline" ? (
+				<Arrive gap={0}>
+					<div className="pt-1 pb-1" style={{ paddingLeft: INDENT }}>
+						<Frame>{shotView?.(entry.shot)}</Frame>
+					</div>
+				</Arrive>
+			) : null}
 			<AnimatePresence initial={false}>
 				{open ? (
 					<motion.div
@@ -329,8 +409,8 @@ function Line({ entry }: { entry: Extract<PlayEntry, { kind: "line" }> }) {
 						transition={still ? { duration: 0 } : { duration: 0.24, ease: ARRIVE }}
 					>
 						<div className="pt-0.5 pb-1" style={{ paddingLeft: INDENT }}>
-							{entry.shot !== undefined ? (
-								<Picture path={entry.shot.path} media={entry.shot.media} />
+							{held !== undefined ? (
+								<Picture shot={held} view={shot === "open" ? shotView : undefined} />
 							) : entry.children === undefined ? (
 								<span className="block truncate font-mono text-2xs text-muted/55 leading-4">
 									{entry.detail}
@@ -364,23 +444,91 @@ function Line({ entry }: { entry: Extract<PlayEntry, { kind: "line" }> }) {
 /**
  * The agent read a picture back.
  *
- * `spool shot home` writes a PNG and the next thing the agent does is Read it, so
- * a tool_result comes back holding an image block instead of text. A log that says
- * `look home.png` and nothing else loses the only moment in a turn where the
- * agent is looking at its own work, so the disclosure holds the picture's place: a
- * frame-shaped well at the ratio spool shoots, and the path beside it. The well
- * stays empty because the capture elides the base64 payload — it is a place the
- * picture was, not a thumbnail pretending to be one.
+ * `spool shot cart` writes a PNG and the next thing the agent does is Read it, so
+ * a tool_result comes back holding an image block instead of text. With no view
+ * to draw, the disclosure holds the picture's place and says where it was: a
+ * frame-shaped well at the ratio spool shoots, and the path beside it. Hand it a
+ * view and the well holds the frame itself, and the media type goes — `image/png`
+ * is a fact about a file, and this rail speaks frames.
  */
-function Picture({ path, media }: { path: string; media: string }) {
-	return (
-		<span className="flex items-start gap-2.5 pt-0.5">
-			<span className="h-[74px] w-[34px] shrink-0 rounded-xs border border-border-raised bg-surface" />
-			<span className="flex min-w-0 flex-col gap-1 pt-px">
-				<span className="truncate font-mono text-2xs text-muted/55 leading-4">{path}</span>
-				<span className="font-mono text-2xs text-muted/35 leading-4">{media}</span>
+function Picture({ shot, view }: { shot: ShotRef; view: ((shot: ShotRef) => ReactNode) | undefined }) {
+	if (view === undefined) {
+		return (
+			<span className="flex items-start gap-2.5 pt-0.5">
+				<span className="h-[74px] w-[34px] shrink-0 rounded-xs border border-border-raised bg-surface" />
+				<span className="flex min-w-0 flex-col gap-1 pt-px">
+					<span className="truncate font-mono text-2xs text-muted/55 leading-4">{shot.path}</span>
+					<span className="font-mono text-2xs text-muted/35 leading-4">{shot.media}</span>
+				</span>
 			</span>
-		</span>
+		);
+	}
+	return (
+		<div className="flex flex-col gap-1.5 pt-0.5">
+			<Frame>{view(shot)}</Frame>
+			<span className="truncate font-mono text-2xs text-muted/45 leading-4">{shot.frame ?? shot.path}</span>
+		</div>
+	);
+}
+
+/** the picture's own edge, so a frame in the rail is bounded the way one on the canvas is */
+function Frame({ children }: { children: ReactNode }) {
+	return <div className="w-fit overflow-hidden rounded-xs border border-border-raised bg-bg">{children}</div>;
+}
+
+/* ---------- the plan, out of the log ----------
+ * A transcript is a log and a log scrolls. Everything else in one is finished the
+ * moment it is drawn, so scrolling costs nothing; the plan is the exception,
+ * because it goes on changing for the rest of the session. In the Streak capture
+ * it is written at row 17 and its first task does not land until row 45, nine
+ * minutes and twenty-eight rows later — by which point a transcript has carried
+ * it off the top and the tick lands where nobody is looking.
+ *
+ * So it comes out of the log and sits above it, and it obeys the one-line rule
+ * while it does: a count, and the agent's own present-participle phrasing for
+ * whatever is running. The list is a click away and is not the resting state.
+ */
+function PlanStrip({ plan }: { plan: Plan }) {
+	const still = useReducedMotion() === true;
+	const [open, setOpen] = useState(false);
+	return (
+		<div className="flex shrink-0 flex-col border-border border-b">
+			<button
+				type="button"
+				onClick={() => setOpen(!open)}
+				className="flex h-[34px] w-full items-center gap-2.5 px-3.5 text-left transition-colors duration-150 hover:bg-surface"
+			>
+				<span className="shrink-0 font-mono text-muted text-sm leading-4">plan</span>
+				<span className="shrink-0 font-mono text-muted/60 text-sm tabular-nums leading-4">
+					{plan.done}/{plan.total}
+				</span>
+				{plan.running === null ? null : (
+					<span className="min-w-0 flex-1 truncate font-mono text-sm text-text/85 leading-4">{plan.running}</span>
+				)}
+				<ChevronIcon open={open} className="ml-auto h-2.5 w-2.5 shrink-0 text-muted/35" />
+			</button>
+			<AnimatePresence initial={false}>
+				{open ? (
+					<motion.div
+						className="overflow-hidden"
+						initial={{ height: 0, opacity: 0 }}
+						animate={{ height: "auto", opacity: 1 }}
+						exit={{ height: 0, opacity: 0 }}
+						transition={still ? { duration: 0 } : { duration: 0.24, ease: ARRIVE }}
+					>
+						<div className="relative flex flex-col pb-2 pl-[18px]">
+							<span className="absolute top-1 bottom-3 left-[18px] w-px bg-border-raised" />
+							{plan.children.map((child) => (
+								<span key={child.id} className="flex h-[22px] items-center gap-2 pl-2.5">
+									<StateMark state={child.state} className="h-3 w-3" />
+									<span className="truncate font-mono text-2xs text-muted leading-3">{child.name}</span>
+								</span>
+							))}
+						</div>
+					</motion.div>
+				) : null}
+			</AnimatePresence>
+		</div>
 	);
 }
 
@@ -396,6 +544,7 @@ const MAX_H = 160;
 function Composer({
 	field,
 	strip,
+	model,
 	lit,
 	onLight,
 	onDrop,
@@ -406,6 +555,7 @@ function Composer({
 }: {
 	field: RefObject<HTMLTextAreaElement | null>;
 	strip: Strip;
+	model: ReactNode;
 	lit: string | null;
 	onLight: ((id: string | null) => void) | undefined;
 	onDrop: ((id: string | null) => void) | undefined;
@@ -450,8 +600,11 @@ function Composer({
 					style={{ height: MIN_H }}
 				/>
 			</div>
-			<div className="flex h-[18px] items-center justify-between">
-				<span className="font-mono text-2xs text-muted/45 leading-3">{busy ? "" : "enter to send"}</span>
+			{/* the model takes the hint's place rather than sitting beside it: an 18px
+			    line has room for one quiet thing on the left, and which model is
+			    answering outranks a keyboard hint you learn once */}
+			<div className="relative flex h-[18px] items-center justify-between">
+				{model ?? <span className="font-mono text-2xs text-muted/45 leading-3">{busy ? "" : "enter to send"}</span>}
 				{phase === "settled" ? (
 					<button
 						type="button"
