@@ -62,7 +62,6 @@ async function mountLifecycle(onShot: (frame: string, rungs: CoverRaster[]) => v
 			inspected: null,
 			hasCover: () => false,
 			onShot,
-			arm: "pictures",
 			cameraRef: { current: null },
 			viewportRef: { current: null },
 		});

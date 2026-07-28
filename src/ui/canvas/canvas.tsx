@@ -45,7 +45,7 @@ import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
 import { emptyHistory, entryOf, record, takeRedo, takeUndo } from "./history";
 import { type InspectorMode, InspectorRail, type InspectorTarget } from "./inspector";
-import { CANVAS_ARM_KEY, CANVAS_ARMS, type CanvasArm, useFrameLifecycle } from "./lifecycle";
+import { useFrameLifecycle } from "./lifecycle";
 import {
 	type ElementPreview,
 	editorTarget,
@@ -136,6 +136,7 @@ type Gesture =
 	| { kind: "resize"; frame: string; handle: Handle; anchor: Point; origin: Box };
 
 const SETTLE_PERSIST_MS = 600;
+const LIFECYCLE_CAMERA_SETTLE_MS = 100;
 const DRAG_THRESHOLD_PX = 3;
 const SNAP_THRESHOLD_PX = 8;
 const MIN_FRAME_SIZE = 40;
@@ -205,18 +206,6 @@ export function ProjectCanvas({
 	const [unreadable, setUnreadable] = useState<FlowUnreadable[]>([]);
 	// the arrows toggle (#34): per-project, default on — the map is spool's identity
 	const [arrowsOn, setArrowsOn] = useState(true);
-	// TEMPORARY (#107 follow-up, see CANVAS_ARM_KEY): ⇧L cycles the whole page
-	// through the three models, so they can be compared by feel rather than only
-	// by benchmark. Read from storage at mount so a reload — which is half of
-	// what there is to compare — stays in the arm you were testing.
-	const [arm, setArm] = useState<CanvasArm>(() => {
-		try {
-			const stored = window.localStorage.getItem(CANVAS_ARM_KEY);
-			return CANVAS_ARMS.find((candidate) => candidate === stored) ?? "pictures";
-		} catch {
-			return "pictures";
-		}
-	});
 	// frame-local boxes of navigation-site elements, as each frame's shim answers
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
@@ -284,6 +273,7 @@ export function ProjectCanvas({
 	const animation = useRef(0);
 	const cameraRef = useRef<Camera | null>(null);
 	cameraRef.current = camera;
+	const settledCameraRef = useRef<Camera | null>(null);
 	const framesRef = useRef(visibleFrames);
 	framesRef.current = visibleFrames;
 	// the whole projection, for cross-page reads: walks, connections, editor paths
@@ -423,14 +413,12 @@ export function ProjectCanvas({
 		inspected: railOpen ? inspectedFrame : null,
 		hasCover: hasCover,
 		onShot,
-		arm,
-		cameraRef,
+		cameraRef: settledCameraRef,
 		viewportRef,
 	});
 	const lifecycleRef = useRef(lifecycle);
 	lifecycleRef.current = lifecycle;
-	/** TEMPORARY (CANVAS_ARM_KEY): documents held right now, for the arm's own readout. */
-	const liveCount = Object.values(lifecycle.states).filter((state) => state === "live").length;
+	const sweepLifecycle = lifecycle.sweep;
 
 	const reloadFrameDocument = useCallback((frame: string) => {
 		setDocNonces((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
@@ -773,18 +761,6 @@ export function ProjectCanvas({
 	}, []);
 
 	const toggleArrows = useCallback(() => setArrowsOn((on) => !on), []);
-	/** TEMPORARY (CANVAS_ARM_KEY): ⇧L, remembered across a reload. */
-	const cycleArm = useCallback(() => {
-		setArm((current) => {
-			const next = CANVAS_ARMS[(CANVAS_ARMS.indexOf(current) + 1) % CANVAS_ARMS.length] ?? "pictures";
-			try {
-				window.localStorage.setItem(CANVAS_ARM_KEY, next);
-			} catch {
-				// a storage the browser refuses costs the memory of the arm, nothing else
-			}
-			return next;
-		});
-	}, []);
 
 	/** The player's door (#13/#24): its own tab, always naming its frame. */
 	const playFrame = useCallback(
@@ -1531,6 +1507,18 @@ export function ProjectCanvas({
 		el.addEventListener("wheel", onWheel, { passive: false });
 		return () => el.removeEventListener("wheel", onWheel);
 	}, [stopAnimation, zoomAtPoint]);
+
+	// Camera motion is a React value for drawing only. The lifecycle reads its ref
+	// after this short quiet window, so frames mount where the camera stopped
+	// rather than throughout the gesture.
+	useEffect(() => {
+		if (camera === null) return;
+		const settle = setTimeout(() => {
+			settledCameraRef.current = camera;
+			sweepLifecycle();
+		}, LIFECYCLE_CAMERA_SETTLE_MS);
+		return () => clearTimeout(settle);
+	}, [camera, sweepLifecycle]);
 
 	// persist arrows + the page bookkeeping on settle: last-settle wins
 	// the stored slot (#12); each page keeps its own camera, and the active
@@ -2342,12 +2330,6 @@ export function ProjectCanvas({
 				if (gesture.current.kind === "idle" || gesture.current.kind === "pan") arrangeFrames();
 				return;
 			}
-			if (!event.repeat && event.shiftKey && (event.key === "l" || event.key === "L")) {
-				// TEMPORARY (CANVAS_ARM_KEY): pictures → live → readable → pictures
-				event.preventDefault();
-				cycleArm();
-				return;
-			}
 			if (!event.repeat && !event.shiftKey && (event.key === "t" || event.key === "T")) {
 				// the threads toggle (#34): persisted per project
 				toggleArrows();
@@ -2518,7 +2500,6 @@ export function ProjectCanvas({
 		cancelGesture,
 		cancelPicks,
 		toggleArrows,
-		cycleArm,
 		cancelExportDialog,
 		playFrame,
 	]);
@@ -2667,17 +2648,6 @@ export function ProjectCanvas({
 								</div>
 							);
 						})}
-					</div>
-				)}
-
-				{/* TEMPORARY (CANVAS_ARM_KEY): never drawn in the shipped arm, so the
-				    canvas you are judging carries no new chrome of its own, and a
-				    reload cannot leave you guessing which arm the thing you just felt
-				    belonged to. The live count is the whole claim `readable` makes:
-				    it should stay in the low tens at every zoom, on every page. */}
-				{arm !== "pictures" && (
-					<div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-surface px-2 py-1 font-mono text-[11px] text-muted">
-						{arm} · {liveCount} live · ⇧L
 					</div>
 				)}
 
