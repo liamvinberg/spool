@@ -170,6 +170,42 @@ describe("the canvas shim", () => {
 		}
 	});
 
+	it("relays the jump chords and eats the browser's open-file dialog", async () => {
+		const shim = await servedShim();
+		const posted: unknown[] = [];
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", {
+			configurable: true,
+			value: { postMessage: (message: unknown) => posted.push(message) },
+		});
+		window.__SPOOL__ = { project: "project", frame: "host", projectCapability: "project-capability" };
+		let dispose: (() => void) | undefined;
+
+		try {
+			dispose = runShim(shim);
+
+			const back = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ctrlKey: true, key: "o" });
+			window.dispatchEvent(back);
+			const forward = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ctrlKey: true, key: "i" });
+			window.dispatchEvent(forward);
+			// without the modifier the key is the frame's own, untouched
+			const plain = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "o" });
+			window.dispatchEvent(plain);
+
+			expect(back.defaultPrevented, "⌃O must not become the browser's open-file dialog").toBe(true);
+			expect(forward.defaultPrevented).toBe(true);
+			expect(plain.defaultPrevented).toBe(false);
+			expect(posted).toEqual([
+				{ spool: "key", frame: "host", key: "ctrl+o" },
+				{ spool: "key", frame: "host", key: "ctrl+i" },
+			]);
+		} finally {
+			dispose?.();
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
 	it("keeps the middle-button drag for the canvas and leaves every other button to the frame", async () => {
 		const shim = await servedShim();
 		const posted: unknown[] = [];

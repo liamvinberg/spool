@@ -47,6 +47,7 @@ import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
 import { emptyHistory, entryOf, record, takeRedo, takeUndo } from "./history";
 import { type InspectorMode, InspectorRail, type InspectorTarget } from "./inspector";
+import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import { useFrameLifecycle } from "./lifecycle";
 import {
 	type ElementPreview,
@@ -288,6 +289,8 @@ export function ProjectCanvas({
 	allFramesRef.current = frames;
 	const activePageRef = useRef(activePage);
 	activePageRef.current = activePage;
+	const pagesRef = useRef(pages);
+	pagesRef.current = pages;
 	// every page's last known camera this session, keyed by page (#39)
 	const cameras = useRef<Record<string, Camera>>({});
 	const enteredRef = useRef(entered);
@@ -346,6 +349,8 @@ export function ProjectCanvas({
 	const pendingTrashRef = useRef<string[] | null>(null);
 	// the geometry undo/redo stacks: per window, in memory, hands' writes only
 	const geometryHistory = useRef(emptyHistory());
+	// the jump list (jumps.ts): the spots teleports left, the hands' travel only
+	const jumpList = useRef(emptyJumps());
 
 	/**
 	 * Whether a frame has a still worth standing in for it — the only thing the
@@ -713,6 +718,22 @@ export function ProjectCanvas({
 		const w = toWorld(c, cam);
 		animateCamera({ k: 1, x: c.x - w.x, y: c.y - w.y });
 	}, [animateCamera, viewportCenter]);
+
+	/**
+	 * The jump list's one rule (jumps.ts): a move that takes you somewhere — a
+	 * finder pick, a walk, a connection row, a page switch, a sidebar flight —
+	 * records the spot it left through recordDeparture; a move that reframes
+	 * where you already are — pan, zoom, fit, enter — never does.
+	 */
+	const jumpSpot = useCallback((): JumpEntry | undefined => {
+		const cam = cameraRef.current;
+		return cam === null ? undefined : { page: activePageRef.current, camera: { x: cam.x, y: cam.y, k: cam.k } };
+	}, []);
+
+	const recordDeparture = useCallback(() => {
+		const from = jumpSpot();
+		if (from !== undefined) jumpList.current = recordJump(jumpList.current, from);
+	}, [jumpSpot]);
 
 	/** Enter one frame as a fresh preview root: no carried session, no witnessed edge. */
 	const enterFrame = useCallback(
@@ -1121,7 +1142,10 @@ export function ProjectCanvas({
 		if (frame === undefined) return;
 		const targetPage = pageOf(frame);
 		const changedPage = targetPage !== activePageRef.current;
-		if (changedPage) switchToPage(targetPage);
+		if (changedPage) {
+			recordDeparture();
+			switchToPage(targetPage);
+		}
 		setTool("select");
 		setPicked([]);
 		pickedChain.current = null;
@@ -1149,6 +1173,7 @@ export function ProjectCanvas({
 		const frame = framesRef.current.find((candidate) => candidate.name === name);
 		const viewport = viewportRef.current;
 		if (frame === undefined || viewport === null) return;
+		recordDeparture();
 		animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
 	};
 
@@ -1192,12 +1217,13 @@ export function ProjectCanvas({
 	const activatePageFromTree = useCallback(
 		(target: string) => {
 			if (activePageRef.current !== target) {
+				recordDeparture();
 				switchToPage(target);
 				return;
 			}
 			clearCanvasSelection();
 		},
-		[clearCanvasSelection, switchToPage],
+		[clearCanvasSelection, recordDeparture, switchToPage],
 	);
 
 	// a page deleted on disk cannot stay active: snap back to the root page
@@ -1213,6 +1239,7 @@ export function ProjectCanvas({
 	 */
 	const walkTo = useCallback(
 		(target: string, session: SessionRecord | null) => {
+			recordDeparture();
 			const across = allFramesRef.current.find((f) => f.name === target);
 			if (across !== undefined && pageOf(across) !== activePageRef.current) {
 				switchToPage(pageOf(across), arrivalAt(across));
@@ -1242,8 +1269,40 @@ export function ProjectCanvas({
 			// the arrival is a new document: its walk is owed again
 			setTrees((current) => without(current, target));
 		},
-		[animateCamera, switchToPage, arrivalAt],
+		[recordDeparture, animateCamera, switchToPage, arrivalAt],
 	);
+
+	/** Land a jump: another page arrives through switchToPage; the same page flies, leaving any entered frame. */
+	const arriveAtJump = useCallback(
+		(entry: JumpEntry) => {
+			if (entry.page !== activePageRef.current) {
+				switchToPage(entry.page, entry.camera);
+				return;
+			}
+			if (enteredRef.current !== null) exitEntered();
+			setMenu(null);
+			animateCamera(entry.camera);
+		},
+		[switchToPage, exitEntered, animateCamera],
+	);
+
+	const jumpBack = useCallback(() => {
+		const from = jumpSpot();
+		if (from === undefined) return;
+		const taken = takeBack(jumpList.current, from, new Set([ROOT_PAGE, ...pagesRef.current]));
+		if (taken === undefined) return;
+		jumpList.current = taken.jumps;
+		arriveAtJump(taken.entry);
+	}, [jumpSpot, arriveAtJump]);
+
+	const jumpForward = useCallback(() => {
+		const from = jumpSpot();
+		if (from === undefined) return;
+		const taken = takeForward(jumpList.current, from, new Set([ROOT_PAGE, ...pagesRef.current]));
+		if (taken === undefined) return;
+		jumpList.current = taken.jumps;
+		arriveAtJump(taken.entry);
+	}, [jumpSpot, arriveAtJump]);
 
 	// SSE: the agent loop (#22) — source edits update the canvas without reload
 	useEffect(() => {
@@ -1386,10 +1445,14 @@ export function ProjectCanvas({
 					return;
 				}
 				case "key":
-					// an entered frame owns the keyboard; the shim forwards the exit
-					// key — from any frame: a walked-away source legitimately still
-					// holds focus, and its Esc means the same thing (#28)
+					// an entered frame owns the keyboard; the shim forwards what the
+					// canvas must never lose — from any frame: a walked-away source
+					// legitimately still holds focus, and its chord means the same
+					// thing (#28). The jump chords join Esc there (#166): mid-walk,
+					// inside a frame, is exactly where ctrl+o is owed.
 					if (message.key === "Escape" && enteredRef.current !== null) exitEntered(true);
+					else if (message.key === "ctrl+o") jumpBack();
+					else if (message.key === "ctrl+i") jumpForward();
 					return;
 				case "modifier":
 					// the frame names the key that moved; which one is accel is the
@@ -1480,7 +1543,17 @@ export function ProjectCanvas({
 		};
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
-	}, [project, walkTo, exitEntered, stopAnimation, zoomAtPoint, viewportCenter, requestSiteBoxes]);
+	}, [
+		project,
+		walkTo,
+		exitEntered,
+		stopAnimation,
+		zoomAtPoint,
+		viewportCenter,
+		requestSiteBoxes,
+		jumpBack,
+		jumpForward,
+	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
 	useEffect(() => {
@@ -2225,6 +2298,7 @@ export function ProjectCanvas({
 		(name: string) => {
 			const frame = allFramesRef.current.find((candidate) => candidate.name === name);
 			if (frame === undefined) return;
+			recordDeparture();
 			if (pageOf(frame) !== activePageRef.current) switchToPage(pageOf(frame), arrivalAt(frame));
 			setPicked([]);
 			pickedChain.current = null;
@@ -2236,7 +2310,7 @@ export function ProjectCanvas({
 				animateCamera(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
 			}
 		},
-		[switchToPage, arrivalAt, animateCamera],
+		[recordDeparture, switchToPage, arrivalAt, animateCamera],
 	);
 
 	/** A connection row is a place on the canvas, never a walk: land there and select it. */
@@ -2294,6 +2368,21 @@ export function ProjectCanvas({
 			if (event.code === "Space") {
 				if (!event.repeat) setSpaceDown(true);
 				event.preventDefault();
+				return;
+			}
+			if (
+				event.ctrlKey &&
+				!event.metaKey &&
+				!event.altKey &&
+				!event.shiftKey &&
+				(event.key === "o" || event.key === "i")
+			) {
+				// the jump list rides the literal control key on every platform —
+				// vim's own chords, the keyboard-first story's first landing (#166)
+				// — and ⌃O must eat the browser's open-file dialog
+				event.preventDefault();
+				if (event.key === "o") jumpBack();
+				else jumpForward();
 				return;
 			}
 			if (mod && (event.key === "z" || event.key === "Z")) {
@@ -2536,6 +2625,8 @@ export function ProjectCanvas({
 		toggleArrows,
 		cancelExportDialog,
 		playFrame,
+		jumpBack,
+		jumpForward,
 	]);
 
 	// --- chrome (top bar) -------------------------------------------------------

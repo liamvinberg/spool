@@ -1002,6 +1002,13 @@ const canvasShimJs = `(() => {
 			window.parent.postMessage({ spool: "key", frame, key: "Escape" }, "*");
 			return;
 		}
+		// the jump chords are the canvas's on every platform (#166): relay the
+		// literal control chord and eat the browser's open-file dialog
+		if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && (event.key === "o" || event.key === "i")) {
+			event.preventDefault();
+			window.parent.postMessage({ spool: "key", frame, key: "ctrl+" + event.key }, "*");
+			return;
+		}
 		if (!event.metaKey && !event.ctrlKey) return;
 		let kind;
 		if (event.key === "+" || event.key === "=") kind = "in";
