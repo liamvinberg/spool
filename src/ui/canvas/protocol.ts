@@ -6,9 +6,10 @@ import type { Box } from "./camera";
 
 /**
  * The postMessage bridge between canvas and frames. The frame side lives in
- * the served document (freeze/capture/key shim in daemon/document.ts, session
- * and walks in runtime/frame-runtime.ts); this is the canvas's vocabulary for
- * it. SessionRecord is the runtime's own type — one shape, both realms.
+ * the served document (capture/key shim in daemon/document.ts, session and
+ * walks in runtime/frame-runtime.ts); terminal freeze lives in
+ * runtime/term-runtime.ts. This is the canvas's vocabulary for both.
+ * SessionRecord is the runtime's own type — one shape, both realms.
  */
 
 export type { SessionRecord };

@@ -19,21 +19,17 @@ import { type CaptureSourceReply, captureMessage } from "./protocol";
  * and 3 are the same errand — borrow the frame long enough to photograph it —
  * and the sweep hands it out a couple at a time.
  *
- * Intent holds a document too, one frame at a time and never a pool: the frozen
+ * Intent holds a document too, one frame at a time and never a pool: the
  * selection target and the frame an open inspector rail reads (#58) both need
- * real DOM to answer picks and tree walks, and both are held with their time
- * stopped.
+ * real DOM to answer picks and tree walks. A readable selected HTML frame stays
+ * live; an unreadable one stays held behind its still and keeps running.
  *
  * A picture stands in below the readable threshold. Above it, a nearby frame
  * is live; a borrowed or held frame remains behind its still.
  *
- * Freezing is `content-visibility: hidden` on the frame's own wrapper, applied
- * by the shell once the boot lands: Chromium stops the nested document's rAF,
- * style, layout and paint at engine level, with no cross-origin condition
- * (#84). There is no cooperative freeze left for html frames — one mechanism
- * ships, not two. A terminal's freeze is a different mechanism wearing the same
- * word (SIGSTOP on a real process, `daemon/term-sessions.ts`) and no CSS can
- * reach it, so the message survives for terminals alone.
+ * HTML documents keep running: Select leaves a readable one live, and an
+ * unreadable held one runs behind its still. A terminal's held state sends
+ * SIGSTOP to its real process (`daemon/term-sessions.ts`).
  */
 
 export type FrameState = "picture" | "refreshing" | "held" | "live";
@@ -189,8 +185,8 @@ export function noteErrandShot(model: LifecycleModel, frame: string, captured: b
 export interface SweepInput {
 	frames: readonly ProjectedFrame[];
 	entered: string | null;
-	/** The one frame currently selected into: mounted with time frozen. */
-	frozen: string | null;
+	/** The one frame Select currently owns: mounted for the selection. */
+	selectionTarget: string | null;
 	/** The frame an open inspector rail is reading (#58): mounted so it can answer. */
 	inspected: string | null;
 	states: Readonly<Record<string, FrameState>>;
@@ -240,7 +236,8 @@ export interface SweepResult {
 }
 
 export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
-	const { frames, entered, frozen, inspected, states, ready, capturing, hasCover, now, camera, viewport } = input;
+	const { frames, entered, selectionTarget, inspected, states, ready, capturing, hasCover, now, camera, viewport } =
+		input;
 	// A frame going back to its picture can be told from a frame you left.
 	// Zooming out must not bill a screenful of frames for a fresh still; going
 	// inside one still must.
@@ -269,24 +266,35 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		const name = frame.name;
 		alive.add(name);
 		const current = states[name] ?? "picture";
-		// Freezing wins over entering: holding the platform modifier over the
-		// frame you are inside takes the pointer back to reach an element, and
-		// the frame must not move under it.
+		// Select wins over entering: it takes the pointer back to reach an
+		// element. A readable HTML frame remains the live thing it is showing.
 		if (entered === name && frame.kind !== "term") model.wentInside.add(name);
 		const modelLive = isFrameLive(frame, camera, viewport);
-		if (modelLive && frozen !== name && entered !== name && !model.wentInside.has(name)) model.modelLive.add(name);
-		const intent: FrameState | null =
-			frozen === name ? "held" : entered === name || modelLive ? "live" : inspected === name ? "held" : null;
+		if (modelLive && selectionTarget !== name && entered !== name && !model.wentInside.has(name)) {
+			model.modelLive.add(name);
+		}
+		let intent: FrameState | null;
+		if (selectionTarget === name && frame.kind === "html" && modelLive) {
+			intent = "live";
+		} else if (selectionTarget === name) {
+			intent = "held";
+		} else if (entered === name || modelLive) {
+			intent = "live";
+		} else if (inspected === name) {
+			intent = "held";
+		} else {
+			intent = null;
+		}
 
 		// A still is only worth what the frame was doing when it was taken. A
 		// frame that booted a moment ago is still arriving, and one that never
 		// ran never arrived at all — both photograph as an absence, and the
 		// canvas would then show that absence in the frame's own place. Having
-		// run long enough once is remembered: a frame frozen mid-entry never
-		// becomes photographable, and a reload takes the memory with the boot.
+		// run long enough once is remembered, and a reload takes the memory with
+		// the boot.
 		const readyAt = ready.get(name);
 		if (readyAt === undefined) model.arrived.delete(name);
-		else if (running(current) && now - readyAt >= CAPTURE_AFTER_READY_MS && !model.arrived.has(name)) {
+		else if (running(current, frame.kind) && now - readyAt >= CAPTURE_AFTER_READY_MS && !model.arrived.has(name)) {
 			model.arrived.add(name);
 		}
 
@@ -381,8 +389,9 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	};
 }
 
-/** Whether a state means the frame's own time is running. */
-const running = (state: FrameState): boolean => state === "live" || state === "refreshing";
+/** Whether the mounted document has been allowed to run. Held HTML runs behind its still. */
+const running = (state: FrameState, kind: ProjectedFrame["kind"]): boolean =>
+	state === "live" || state === "refreshing" || (state === "held" && kind === "html");
 
 /** Something changed about the frame: its picture is wrong, and it may ask again. */
 function markPictureWrong(model: LifecycleModel, frame: string): void {
@@ -394,7 +403,7 @@ function markPictureWrong(model: LifecycleModel, frame: string): void {
 export interface LifecycleDeps {
 	framesRef: RefObject<ProjectedFrame[]>;
 	entered: string | null;
-	frozen: string | null;
+	selectionTarget: string | null;
 	/** The frame an open inspector rail is reading (#58). */
 	inspected: string | null;
 	hasCover: (frame: string) => boolean;
@@ -413,7 +422,7 @@ export interface LifecycleDeps {
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
-	const { framesRef, entered, frozen, inspected, hasCover, onShot, cameraRef, viewportRef } = deps;
+	const { framesRef, entered, selectionTarget, inspected, hasCover, onShot, cameraRef, viewportRef } = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
 	// when each frame reported loaded, not merely that it did: a still is only
@@ -426,8 +435,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	readyRef.current = ready;
 	const enteredRef = useRef(entered);
 	enteredRef.current = entered;
-	const frozenRef = useRef(frozen);
-	frozenRef.current = frozen;
+	const selectionTargetRef = useRef(selectionTarget);
+	selectionTargetRef.current = selectionTarget;
 	const inspectedRef = useRef(inspected);
 	inspectedRef.current = inspected;
 	const hasCoverRef = useRef(hasCover);
@@ -570,7 +579,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		const result = sweepLifecycle(model.current, {
 			frames: framesRef.current,
 			entered: enteredRef.current,
-			frozen: frozenRef.current,
+			selectionTarget: selectionTargetRef.current,
 			inspected: inspectedRef.current,
 			states: statesRef.current,
 			ready: readyRef.current,
@@ -589,13 +598,13 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		if (result.changed) setStates(result.states);
 	}, [framesRef, cameraRef, viewportRef, requestCapture]);
 
-	// Freeze, enter, and summoning the rail must feel instant, not one sweep late.
+	// Selection, entering, and summoning the rail must feel instant, not one sweep late.
 	useEffect(() => {
 		enteredRef.current = entered;
-		frozenRef.current = frozen;
+		selectionTargetRef.current = selectionTarget;
 		inspectedRef.current = inspected;
 		compute();
-	}, [entered, frozen, inspected, compute]);
+	}, [entered, selectionTarget, inspected, compute]);
 
 	useEffect(() => {
 		const sweep = setInterval(compute, SWEEP_MS);

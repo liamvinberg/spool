@@ -45,7 +45,7 @@ function sweeper() {
 		const result = sweepLifecycle(model, {
 			frames,
 			entered: null,
-			frozen: null,
+			selectionTarget: null,
 			inspected: null,
 			states,
 			ready: new Map(frames.map((f) => [f.name, -CAPTURE_AFTER_READY_MS])),
@@ -255,10 +255,10 @@ describe("the cap on frames borrowed at once", () => {
 		expect(next).not.toContain("f0");
 	});
 
-	it("holds the worst case to six documents: entered, frozen, inspected and the cap", () => {
+	it("holds the worst case to six documents: entered, selected, inspected and the cap", () => {
 		const frames = Array.from({ length: 40 }, (_, i) => frame(`f${i}`, i * 200, 0));
 		const s = sweeper();
-		const busy = { hasCover: () => false, entered: "f0", frozen: "f1", inspected: "f2" };
+		const busy = { hasCover: () => false, entered: "f0", selectionTarget: "f1", inspected: "f2" };
 
 		for (let i = 0; i < 8; i++) {
 			expect(mounted(s.sweep(frames, busy).states)).toHaveLength(3 + ERRANDS_IN_FLIGHT);
@@ -267,12 +267,33 @@ describe("the cap on frames borrowed at once", () => {
 });
 
 describe("intent", () => {
-	it("holds the frozen selection target, and thaws the previous one", () => {
+	it("leaves a readable HTML selection live while Select and the inspector read it", () => {
+		const frames = [frame("a", 0, 0), frame("terminal", 200, 0, "term")];
+		const s = sweeper();
+
+		expect(
+			s.sweep(frames, {
+				selectionTarget: "a",
+				inspected: "a",
+				camera: { x: 0, y: 0, k: 4 },
+				viewport: { width: 1000, height: 1000 },
+			}).states,
+		).toEqual({ a: "live", terminal: "live" });
+		expect(
+			s.sweep(frames, {
+				selectionTarget: "terminal",
+				camera: { x: 0, y: 0, k: 4 },
+				viewport: { width: 1000, height: 1000 },
+			}).states.terminal,
+		).toBe("held");
+	});
+
+	it("keeps an unreadable selection held behind its still", () => {
 		const frames = [frame("a", 350, 450), frame("b", 550, 450)];
 		const s = sweeper();
 
-		expect(s.sweep(frames, { frozen: "a" }).states).toEqual({ a: "held", b: "picture" });
-		expect(s.sweep(frames, { frozen: "b" }).states).toEqual({ a: "picture", b: "held" });
+		expect(s.sweep(frames, { selectionTarget: "a" }).states).toEqual({ a: "held", b: "picture" });
+		expect(s.sweep(frames, { selectionTarget: "b" }).states).toEqual({ a: "picture", b: "held" });
 	});
 
 	it("holds the frame an open rail reads, wherever the camera is", () => {
@@ -282,11 +303,11 @@ describe("intent", () => {
 		expect(s.sweep(frames, { inspected: "far" }).states.far).toBe("held");
 	});
 
-	it("freezes the entered frame rather than running it, then thaws it live", () => {
+	it("keeps an unreadable entered selection held, then returns it live", () => {
 		const frames = [frame("a", 450, 450)];
 		const s = sweeper();
 
-		expect(s.sweep(frames, { entered: "a", frozen: "a" }).states).toEqual({ a: "held" });
+		expect(s.sweep(frames, { entered: "a", selectionTarget: "a" }).states).toEqual({ a: "held" });
 		expect(s.sweep(frames, { entered: "a" }).states).toEqual({ a: "live" });
 	});
 

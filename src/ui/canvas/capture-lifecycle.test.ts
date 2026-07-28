@@ -58,7 +58,7 @@ async function mountLifecycle(onShot: (frame: string, rungs: CoverRaster[]) => v
 		lifecycle = useFrameLifecycle({
 			framesRef,
 			entered: null,
-			frozen: null,
+			selectionTarget: null,
 			inspected: null,
 			hasCover: () => false,
 			onShot,
