@@ -22,7 +22,7 @@
 		"dev": "SPOOL_DIR=$HOME/.spool-dev SPOOL_PORT=7767 tsx src/dev.ts",
 		"build": "rm -rf dist && tsup && vite build && cp src/runtime/spool-public.ts dist/spool-public.d.ts",
 		"prepack": "rm -rf dist && tsup && vite build && cp src/runtime/spool-public.ts dist/spool-public.d.ts",
-		"typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json --noEmit && tsc -p tsconfig.ui.json --noEmit",
+		"typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json --noEmit && tsc -p tsconfig.ui.json --noEmit && tsc -p bench/evidence/tsconfig.json --noEmit",
 		"check": "biome check .",
 		"test": "vitest run",
 		"build:ui": "vite build"

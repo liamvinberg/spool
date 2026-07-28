@@ -1,7 +1,9 @@
-import { rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { type Browser, type BrowserContext, chromium, type Page } from "playwright-core";
+import { LIVE_MIN_CSS_PX } from "../src/cover.ts";
 import {
+	clearCopiedCovers,
 	copyProject,
 	densestPage,
 	type FrameBox,
@@ -10,12 +12,20 @@ import {
 	mountedCount,
 	ms,
 	planCamera,
+	prepareCurrentCovers,
 	quantile,
 	quiet,
 	startDaemon,
 	VIEWPORT,
 	writeCamera,
 } from "./harness.ts";
+
+interface CaptureHostReply {
+	spool?: unknown;
+	id?: unknown;
+	image?: { url?: unknown };
+	error?: unknown;
+}
 
 /**
  * The mount-during-gesture benchmark (#94, #112). Mounting a document while the
@@ -73,7 +83,7 @@ import {
  * cannot be read against #82's, because it is a different machine on a
  * different day against a matmannen that has grown since.
  *
- *   pnpm build && node bench/mount-gesture.ts --project ~/projects/matmannen-fc63dba --headed
+ *   pnpm build && node bench/mount-gesture.ts --project <spool-bench> --headed
  *   node bench/mount-gesture.ts --project <path> --caps 1,3,8,0 --arms jobs,cost
  *
  * Run it with node's own type stripping, not tsx: the page scripts below are
@@ -209,7 +219,7 @@ interface JobApi {
  * own main thread what a real refresh job would. A job driven from Node through
  * CDP would insert into some other realm and price nothing.
  */
-function instrument(config: { captureIdle: number }): void {
+function instrument(config: { captureIdle: number; targetWidth: number }): void {
 	if (window !== window.top) return;
 	const state = {
 		raf: [],
@@ -381,13 +391,17 @@ function instrument(config: { captureIdle: number }): void {
 					return;
 				}
 				channel.port1.onmessage = (event: MessageEvent) => {
-					const reply = event.data as Record<string, unknown> | null;
+					const reply = event.data as CaptureHostReply | null;
 					if (reply === null || reply.spool !== RESULT || reply.id !== id) {
 						finish({ error: "invalid capture host reply" });
 						return;
 					}
-					if (typeof reply.url === "string") finish({ url: reply.url });
-					else finish({ error: String(reply.error ?? "capture failed") });
+					const image = reply.image;
+					if (typeof image?.url === "string") {
+						finish({ url: image.url });
+						return;
+					}
+					finish({ error: typeof reply.error === "string" ? reply.error : "capture failed" });
 				};
 				channel.port1.start();
 				target.postMessage({ spool: BOOTSTRAP, id }, new URL(origin).origin, [channel.port2]);
@@ -398,7 +412,7 @@ function instrument(config: { captureIdle: number }): void {
 					width: source.width,
 					height: source.height,
 					dpr: source.dpr,
-					maxEdge: source.maxEdge,
+					targetWidth: source.targetWidth,
 				});
 			});
 			host.src = `${new URL(origin).origin}/capture`;
@@ -463,11 +477,12 @@ function instrument(config: { captureIdle: number }): void {
 					waitingSource.delete(id);
 					done(reply);
 				});
-				el.contentWindow?.postMessage({ spool: "capture", id, maxEdge: 1200, settleMs }, "*");
+				el.contentWindow?.postMessage({ spool: "capture", id, targetWidth: config.targetWidth, settleMs }, "*");
 			});
 			leg.source = performance.now();
-			if (source === null || typeof source.error === "string") state.jobFailures++;
-			else {
+			if (source === null || typeof source.error === "string" || source.targetWidth !== config.targetWidth) {
+				state.jobFailures++;
+			} else {
 				const shot = await raster(id, source);
 				leg.raster = performance.now();
 				if ("url" in shot) leg.bytes = shot.url.length;
@@ -683,7 +698,7 @@ async function open(
 			(globalThis as unknown as { __spoolBench: unknown }).__spoolBench = hooks;
 		}, options.hooks);
 	}
-	await context.addInitScript(instrument, { captureIdle: options.captureIdle });
+	await context.addInitScript(instrument, { captureIdle: options.captureIdle, targetWidth: LIVE_MIN_CSS_PX });
 	const page = await context.newPage();
 	page.on("pageerror", (error) => process.stderr.write(`bench: page error — ${String(error).slice(0, 200)}\n`));
 	if (options.throttle > 1) {
@@ -725,7 +740,7 @@ async function canvasArm(
 ): Promise<ArmRow> {
 	// Per row, not once for the arm: a run photographs the whole page, so the
 	// next cap would open on a canvas that owes nothing and measure an idle one.
-	rmSync(join(root, "design", ".spool", "thumbs"), { recursive: true, force: true });
+	clearCopiedCovers(root);
 	resetCamera();
 	const label = cap > 0 ? `${cap} borrowed at once` : "unbounded";
 	const { context, page } = await open(browser, url, { hooks: { errands: cap }, captureIdle: 0, throttle: rate });
@@ -743,7 +758,7 @@ async function canvasArm(
 		}));
 		await context.close();
 		throw new Error(
-			`the canvas borrowed nothing in 60 s: ${shape.frames} frames on screen, ${shape.images} of them showing a stored still — either the subject kept its ladders or the #112 hook is missing from the built UI`,
+			`the canvas borrowed nothing in 60 s: ${shape.frames} frames on screen, ${shape.images} of them showing a stored still; either the subject kept its stills or the #112 hook is missing from the built UI`,
 		);
 	}
 	const before = await mountedCount(page);
@@ -821,9 +836,9 @@ async function jobsArm(
 		discard ? "" : ", kept not discarded"
 	}`;
 	const { context, page } = await open(browser, url, { hooks: null, captureIdle: 0, throttle: rate });
-	// A settled canvas holds no documents at all now, so the thing to insist on
-	// is that it is drawing frames: a run over an empty page would report a
-	// perfectly smooth gesture over nothing.
+	// This arm starts at picture zoom, so the thing to insist on is that it is
+	// drawing frames. A run over an empty page would report a perfectly smooth
+	// gesture over nothing.
 	const mountedAfter = await settle(page, 1000, 40_000);
 	if ((await framesOnCanvas(page)) === 0) {
 		await context.close();
@@ -1015,7 +1030,7 @@ async function main(): Promise<void> {
 			throw new Error(`frame documents are not where this benchmark thinks: ${probe.url} → ${response.status}`);
 	}
 
-	const readable = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, 0.16);
+	const overviewCamera = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, 0.16);
 	process.stderr.write(
 		`bench: ${url} (copy of ${options.project}, page "${canvasPage === "" ? "root" : canvasPage}", ${
 			boxes.length
@@ -1030,10 +1045,13 @@ async function main(): Promise<void> {
 			channel: options.headed ? "chromium" : "chromium-headless-shell",
 			headless: !options.headed,
 		});
+		writeCamera(root, overviewCamera, canvasPage);
+		await prepareCurrentCovers(browser, url, root, boxes);
+
 		// one discarded pass: a fresh daemon compiles every frame it is asked for,
 		// and a first-ever boot measures the toolchain rather than the canvas
 		process.stderr.write("bench: warming the daemon\n");
-		writeCamera(root, readable, canvasPage);
+		writeCamera(root, overviewCamera, canvasPage);
 		const warm = await browser.newContext({ viewport: VIEWPORT });
 		const warmPage = await warm.newPage();
 		await warmPage.goto(url, { waitUntil: "domcontentloaded" });
@@ -1044,39 +1062,39 @@ async function main(): Promise<void> {
 		await new Promise((wait) => setTimeout(wait, 1500));
 
 		const rate = options.throttle;
-		const resetReadable = (): void => writeCamera(root, readable, canvasPage);
+		const resetOverview = (): void => writeCamera(root, overviewCamera, canvasPage);
 		if (options.arms.includes("jobs")) {
 			process.stderr.write("bench: arm jobs — refresh jobs in flight behind the pictures\n");
 			for (const cap of options.caps) {
-				rows.push(await jobsArm(browser, url, resetReadable, specs, cap, true, true, rate));
+				rows.push(await jobsArm(browser, url, resetOverview, specs, cap, true, true, rate));
 			}
 			// The same pressure with the photograph removed. A job is several costs
 			// wearing one name, and a cap that has to hold for all of them is a
 			// different number from one that only has to hold for the boot.
 			for (const cap of options.caps) {
-				rows.push(await jobsArm(browser, url, resetReadable, specs, cap, false, true, rate));
+				rows.push(await jobsArm(browser, url, resetOverview, specs, cap, false, true, rate));
 			}
 			// And with the discard removed too, which leaves a pure insert. The mount
 			// arm commits 31 documents inside a zoom for nothing while this arm costs
 			// real frames at a third the rate, and tearing the document down again is
 			// the one thing it does that the mount arm never does.
 			for (const cap of options.caps) {
-				rows.push(await jobsArm(browser, url, resetReadable, specs, cap, false, false, rate));
+				rows.push(await jobsArm(browser, url, resetOverview, specs, cap, false, false, rate));
 			}
 		}
 		if (options.arms.includes("cost")) {
 			process.stderr.write("bench: arm cost — one refresh job, priced leg by leg\n");
 			const sample = specs.slice(0, 8);
-			costs.push(await costArm(browser, url, resetReadable, sample, 0, false, rate));
-			costs.push(await costArm(browser, url, resetReadable, sample, 0, true, rate));
-			costs.push(await costArm(browser, url, resetReadable, sample, 900, true, rate));
+			costs.push(await costArm(browser, url, resetOverview, sample, 0, false, rate));
+			costs.push(await costArm(browser, url, resetOverview, sample, 0, true, rate));
+			costs.push(await costArm(browser, url, resetOverview, sample, 900, true, rate));
 		}
 		// Last, and it has to be: every frame owes a picture only if it has none,
 		// so this arm takes the subject's stills away — and every arm above stands
 		// on them.
 		if (options.arms.includes("canvas")) {
 			process.stderr.write("bench: arm canvas — the canvas's own errands through React while the camera moves\n");
-			for (const cap of options.caps) rows.push(await canvasArm(browser, url, root, resetReadable, cap, rate));
+			for (const cap of options.caps) rows.push(await canvasArm(browser, url, root, resetOverview, cap, rate));
 		}
 	} finally {
 		await browser?.close();

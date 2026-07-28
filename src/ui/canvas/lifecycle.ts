@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { COVER_MAX_EDGE } from "../../cover";
+import { LIVE_MIN_CSS_PX } from "../../cover";
 import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
 import { intersects } from "./camera";
 import { CAPTURE_WORKER_TIMEOUT_MS, type CoverRaster, captureRequestId, rasterCaptureSource } from "./capture-broker";
@@ -8,43 +8,47 @@ import { type CaptureSourceReply, captureMessage } from "./protocol";
 
 /**
  * The engine lifecycle (#8, #13, #40, #54, #112): which frames hold a document,
- * and why. Mounting is caused, never scheduled — three causes and no others:
+ * and why. Mounting is caused, never scheduled:
  *
  *   1. you went inside a frame,
  *   2. its picture is missing,
  *   3. its picture is wrong.
+ *   4. it is large enough to read and intersects the viewport's ring.
  *
- * Being on screen is not one of them. A picture already gives panning
- * everything it needs, so panning across thirty frames mounts nothing and the
- * document count is flat in frame count and in zoom: one typically, six at
- * worst. Causes 2 and 3 are the same errand — borrow the frame long enough to
- * photograph it — and the sweep hands it out a couple at a time.
+ * The fourth cause is bounded by viewport area rather than page size. Causes 2
+ * and 3 are the same errand: borrow the frame long enough to photograph it.
+ * The sweep hands that errand out a couple at a time.
  *
- * Intent holds a document too, one frame at a time and never a pool: the frozen
- * selection target and the frame an open inspector rail reads (#58) both need
- * real DOM to answer picks and tree walks, and both are held with their time
- * stopped.
+ * Intent holds a document too: every frame represented by the element
+ * selection. With no element picks, Select instead holds the selected frame,
+ * or the entered frame while its modifier is down. The frame an open inspector
+ * rail reads (#58) is held separately. A readable selected HTML frame stays
+ * live; an unreadable one stays held behind its still and keeps running.
  *
- * The picture is the only thing anyone looks at. The frame you went inside runs
- * and is seen; every other document sits behind that frame's own still, held or
- * booting out of sight, and the still is what the canvas draws at every zoom —
- * which is what the cover ladder (#111) exists to stay sharp for.
+ * A picture stands in below the readable threshold. Above it, a nearby frame
+ * is live; a borrowed or held frame remains behind its still.
  *
- * Freezing is `content-visibility: hidden` on the frame's own wrapper, applied
- * by the shell once the boot lands: Chromium stops the nested document's rAF,
- * style, layout and paint at engine level, with no cross-origin condition
- * (#84). There is no cooperative freeze left for html frames — one mechanism
- * ships, not two. A terminal's freeze is a different mechanism wearing the same
- * word (SIGSTOP on a real process, `daemon/term-sessions.ts`) and no CSS can
- * reach it, so the message survives for terminals alone.
+ * HTML documents keep running: Select leaves a readable one live, and an
+ * unreadable held one runs behind its still. A terminal's held state sends
+ * SIGSTOP to its real process (`daemon/term-sessions.ts`).
  */
 
 export type FrameState = "picture" | "refreshing" | "held" | "live";
 
 const SWEEP_MS = 300;
+const EXPORT_MOUNT_TIMEOUT_MS = 20_000;
+
+function isExportMountReady(
+	state: FrameState | undefined,
+	ready: boolean,
+	sourceWindow: WindowProxy | null | undefined,
+): boolean {
+	return state !== undefined && state !== "picture" && ready && sourceWindow != null;
+}
+
 /**
  * How long a whole self-capture may take: the shim's serialization, the hops
- * between three realms, and the worker's own ladder budget. It has to outlast
+ * between three realms and the worker's raster budget. It has to outlast
  * the worker's, or this timer retires a capture that was still working.
  */
 export const CAPTURE_REPLY_TIMEOUT_MS = CAPTURE_WORKER_TIMEOUT_MS + 3000;
@@ -81,7 +85,7 @@ export const CAPTURE_SETTLE_BUDGET_MS = 900;
 const SHIPPED_ERRANDS_IN_FLIGHT = 3;
 /**
  * The measurement hook (#108, #112), and the only temporary code the canvas
- * carries. `bench/mount-gesture.ts`'s canvas arm sweeps the cap above and below
+ * carries. `bench/mount-gesture.ts` sweeps the cap above and below
  * its shipped value to show where a gesture starts paying for the errands
  * behind it, and the alternative is a second lifecycle model living in the
  * bench, which is strictly worse. The bench throws rather than running without
@@ -131,8 +135,10 @@ export interface LifecycleModel {
 	photographed: Set<string>;
 	/** Errands a frame has already been given for the picture it owes, capped at PICTURE_TRIES. */
 	tries: Map<string, number>;
-	/** Scaffolding, see CANVAS_ARM_KEY: frames the arm made live, rather than you did. */
-	modeLive: Set<string>;
+	/** Frames the readable model made live, rather than frames you entered. */
+	modelLive: Set<string>;
+	/** Frames whose current document was entered and must refresh when it leaves. */
+	wentInside: Set<string>;
 }
 
 export function createLifecycleModel(): LifecycleModel {
@@ -142,64 +148,14 @@ export function createLifecycleModel(): LifecycleModel {
 		errands: new Map(),
 		photographed: new Set(),
 		tries: new Map(),
-		modeLive: new Set(),
+		modelLive: new Set(),
+		wentInside: new Set(),
 	};
 }
 
 /**
- * TEMPORARY (#107 follow-up), and the only thing in this file that is not the
- * shipped model. Three arms of one question that #107 settled by measurement
- * and nobody has settled by feel: what should a frame you are not inside be?
- *
- *   pictures  the shipped model. Its still, at every zoom, always.
- *   live      every frame on the page holds a document. No stills at all.
- *   readable  a document when it is drawn big enough to read and near enough
- *             to see; its still otherwise.
- *
- * `readable` is the one worth building. `bench/canvas.ts --all-live` priced the
- * other two on a 25/50/100/200-frame subject: pictures holds a 10.2 ms pan p95
- * at every count, live is clean at 25, takes its first dropped frame at 50, and
- * by 100 is stuttering at p95 with frames arriving 2.5 s after they mount. The
- * clean region is roughly 25 to 50 live documents, and this arm is an attempt
- * to stay inside it by construction: the live count is bounded by viewport area
- * over LIVE_MIN_CSS_PX squared, which is a dozen or so at any zoom, on any page,
- * however many frames the page has.
- *
- * It reintroduces the camera as a cause of mounting, which #87 removed and
- * #112's own tests assert `SweepInput` cannot express. That is the claim under
- * test, so the cost is deliberate and it is the first thing to go if this loses.
- *
- * ⇧L cycles the arms and the browser remembers which one across a reload, so a
- * reload is part of what can be compared.
- *
- * Deletion criteria: when an arm wins. Whichever it is, this constant, the
- * `arm` plumbing, `bench/canvas.ts`'s `--all-live`, and the two losing arms all
- * go in the landing diff, leaving one canonical codepath. It must never become
- * a setting — `lifecycle.ts` is the file that has already twice carried more
- * rules than it could hold, and #107's "replacement, not a flag" ruled exactly
- * this out. Tracked by #107.
- */
-export const CANVAS_ARM_KEY = "spool:canvas-arm";
-
-export type CanvasArm = "pictures" | "live" | "readable";
-
-export const CANVAS_ARMS: readonly CanvasArm[] = ["pictures", "live", "readable"];
-
-/**
- * TEMPORARY (CANVAS_ARM_KEY). How wide a frame must draw, in CSS pixels, before
- * `readable` gives it a document. Below this you cannot read it, so a still
- * tells you everything the document would; above it you can, which is where the
- * still starts reading as a photograph of the thing rather than the thing.
- *
- * Its real job is arithmetic. It is what bounds the live count without counting:
- * a 1512 x 945 viewport admits about a dozen frames this size, and no page size
- * or zoom can raise that.
- */
-export const LIVE_MIN_CSS_PX = 400;
-
-/**
- * TEMPORARY (CANVAS_ARM_KEY). How far past the viewport `readable` still admits
- * a frame, as a fraction of the viewport. The ring is what hides the boot: a
+ * How far past the viewport a frame is still admitted, as a fraction of it. The
+ * ring is what hides the boot: a
  * frame that only mounts once it is on screen is a frame you watch arrive.
  */
 export const LIVE_MARGIN = 0.25;
@@ -228,8 +184,8 @@ export function noteErrandShot(model: LifecycleModel, frame: string, captured: b
 export interface SweepInput {
 	frames: readonly ProjectedFrame[];
 	entered: string | null;
-	/** The one frame currently selected into: mounted with time frozen. */
-	frozen: string | null;
+	/** Every frame Select currently owns: mounted for the element selection. */
+	selectionTargets: ReadonlySet<string>;
 	/** The frame an open inspector rail is reading (#58): mounted so it can answer. */
 	inspected: string | null;
 	states: Readonly<Record<string, FrameState>>;
@@ -239,16 +195,14 @@ export interface SweepInput {
 	capturing: ReadonlySet<string>;
 	hasCover: (frame: string) => boolean;
 	now: number;
-	/** TEMPORARY (CANVAS_ARM_KEY): which of the three models this sweep is deciding under. */
-	arm?: CanvasArm;
-	/** TEMPORARY (CANVAS_ARM_KEY): where the camera rests — `readable` is the only arm that has one. */
-	camera?: Camera | null;
-	/** TEMPORARY (CANVAS_ARM_KEY): the viewport in CSS pixels, for the same reason. */
-	viewport?: { width: number; height: number } | null;
+	/** Where the camera rests, read when this sweep runs. */
+	camera: Camera | null;
+	/** The viewport's CSS size, read when this sweep runs. */
+	viewport: { width: number; height: number } | null;
 }
 
 /**
- * TEMPORARY (CANVAS_ARM_KEY). Whether `readable` gives this frame a document:
+ * Whether a readable frame gets a document:
  * drawn wide enough to read, and inside the viewport's own ring.
  *
  * Both conditions are load-bearing and neither is sufficient. Size alone would
@@ -256,10 +210,10 @@ export interface SweepInput {
  * ring alone would mount fifty frames at overview zoom, which `bench/canvas.ts`
  * prices at the first dropped frame.
  */
-export function readableLive(
+function isFrameLive(
 	frame: ProjectedFrame,
-	camera: Camera | null | undefined,
-	viewport: { width: number; height: number } | null | undefined,
+	camera: Camera | null,
+	viewport: { width: number; height: number } | null,
 ): boolean {
 	if (camera == null || viewport == null) return false;
 	if (frame.w * camera.k < LIVE_MIN_CSS_PX) return false;
@@ -281,26 +235,13 @@ export interface SweepResult {
 }
 
 export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
-	const {
-		frames,
-		entered,
-		frozen,
-		inspected,
-		states,
-		ready,
-		capturing,
-		hasCover,
-		now,
-		arm = "pictures",
-		camera,
-		viewport,
-	} = input;
-	// TEMPORARY (CANVAS_ARM_KEY). What the arm made live this sweep, so that a
-	// frame going back to its picture can be told from a frame you left. Zooming
-	// out must not bill a screenful of frames for a fresh still, and neither must
-	// switching arms; going inside one still must.
-	const wasModeLive = model.modeLive;
-	model.modeLive = new Set();
+	const { frames, entered, selectionTargets, inspected, states, ready, capturing, hasCover, now, camera, viewport } =
+		input;
+	// A frame going back to its picture can be told from a frame you left.
+	// Zooming out must not bill a screenful of frames for a fresh still; going
+	// inside one still must.
+	const wasModelLive = model.modelLive;
+	model.modelLive = new Set();
 
 	for (const [name, startedAt] of [...model.errands]) {
 		if (now - startedAt >= ERRAND_DEADLINE_MS) noteErrandShot(model, name, false);
@@ -324,36 +265,46 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		const name = frame.name;
 		alive.add(name);
 		const current = states[name] ?? "picture";
-		// Freezing wins over entering: holding the platform modifier over the
-		// frame you are inside takes the pointer back to reach an element, and
-		// the frame must not move under it.
-		// TEMPORARY (CANVAS_ARM_KEY): the arm sits under freezing and over the rail,
-		// so ⌘ still stops a frame under the cursor, and the rail has no reason to
-		// stop one that is already running for it.
-		const armLive = arm === "live" || (arm === "readable" && readableLive(frame, camera, viewport));
-		if (armLive && frozen !== name && entered !== name) model.modeLive.add(name);
-		const intent: FrameState | null =
-			frozen === name ? "held" : entered === name || armLive ? "live" : inspected === name ? "held" : null;
+		// Select wins over entering: it takes the pointer back to reach an
+		// element. A readable HTML frame remains the live thing it is showing.
+		if (entered === name && frame.kind !== "term") model.wentInside.add(name);
+		const modelLive = isFrameLive(frame, camera, viewport);
+		const selected = selectionTargets.has(name);
+		if (modelLive && !selected && entered !== name && !model.wentInside.has(name)) {
+			model.modelLive.add(name);
+		}
+		let intent: FrameState | null;
+		if (selected && frame.kind === "html" && modelLive) {
+			intent = "live";
+		} else if (selected) {
+			intent = "held";
+		} else if (entered === name || modelLive) {
+			intent = "live";
+		} else if (inspected === name) {
+			intent = "held";
+		} else {
+			intent = null;
+		}
 
 		// A still is only worth what the frame was doing when it was taken. A
 		// frame that booted a moment ago is still arriving, and one that never
 		// ran never arrived at all — both photograph as an absence, and the
 		// canvas would then show that absence in the frame's own place. Having
-		// run long enough once is remembered: a frame frozen mid-entry never
-		// becomes photographable, and a reload takes the memory with the boot.
+		// run long enough once is remembered, and a reload takes the memory with
+		// the boot.
 		const readyAt = ready.get(name);
 		if (readyAt === undefined) model.arrived.delete(name);
-		else if (running(current) && now - readyAt >= CAPTURE_AFTER_READY_MS && !model.arrived.has(name)) {
+		else if (running(current, frame.kind) && now - readyAt >= CAPTURE_AFTER_READY_MS && !model.arrived.has(name)) {
 			model.arrived.add(name);
 		}
 
 		// A frame you were inside ran, and what it showed while it ran is not
 		// what its still records — leaving it is a change like any other.
-		// TEMPORARY (CANVAS_ARM_KEY): unless the arm was what made it live. Zooming
-		// past a frame is not using it, and a still of a freshly booted frame is
-		// still true of the frame that just booted and did nothing.
-		if (current === "live" && intent !== "live" && frame.kind !== "term" && !wasModeLive.has(name)) {
+		// Zooming past a frame is not using it, and a still of a freshly booted
+		// frame is still true of the frame that just booted and did nothing.
+		if (current === "live" && intent !== "live" && frame.kind !== "term" && !wasModelLive.has(name)) {
 			markPictureWrong(model, name);
+			model.wentInside.delete(name);
 		}
 
 		// A frame with no picture, or the wrong one, is worth a document for as
@@ -365,10 +316,6 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		// cover deleted later never being noticed.
 		if (model.photographed.has(name) && hasCover(name)) model.photographed.delete(name);
 		const debt =
-			// TEMPORARY (CANVAS_ARM_KEY): `live` photographs nothing, because a frame
-			// that always runs never needs standing in for. `readable` still does —
-			// the still is what it draws at every zoom below the threshold.
-			arm !== "live" &&
 			frame.kind !== "term" &&
 			!model.photographed.has(name) &&
 			(model.tries.get(name) ?? 0) < PICTURE_TRIES &&
@@ -419,7 +366,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		const target: FrameState = intent ?? (model.errands.has(name) ? "refreshing" : "picture");
 		// The photograph is the errand's whole point, taken the moment the
 		// borrowed document has run long enough to be worth one.
-		if (target === "refreshing" && debt && model.arrived.has(name) && !capturing.has(name)) {
+		if (intent === null && target === "refreshing" && debt && model.arrived.has(name) && !capturing.has(name)) {
 			refreshCaptures.push(name);
 		}
 		next[name] = target;
@@ -432,6 +379,8 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	for (const name of [...model.photographed]) if (!alive.has(name)) model.photographed.delete(name);
 	for (const name of [...model.errands.keys()]) if (!alive.has(name)) model.errands.delete(name);
 	for (const name of [...model.tries.keys()]) if (!alive.has(name)) model.tries.delete(name);
+	for (const name of [...model.modelLive]) if (!alive.has(name)) model.modelLive.delete(name);
+	for (const name of [...model.wentInside]) if (!alive.has(name)) model.wentInside.delete(name);
 
 	return {
 		states: next,
@@ -440,8 +389,9 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	};
 }
 
-/** Whether a state means the frame's own time is running. */
-const running = (state: FrameState): boolean => state === "live" || state === "refreshing";
+/** Whether the mounted document has been allowed to run. Held HTML runs behind its still. */
+const running = (state: FrameState, kind: ProjectedFrame["kind"]): boolean =>
+	state === "live" || state === "refreshing" || (state === "held" && kind === "html");
 
 /** Something changed about the frame: its picture is wrong, and it may ask again. */
 function markPictureWrong(model: LifecycleModel, frame: string): void {
@@ -453,28 +403,26 @@ function markPictureWrong(model: LifecycleModel, frame: string): void {
 export interface LifecycleDeps {
 	framesRef: RefObject<ProjectedFrame[]>;
 	entered: string | null;
-	frozen: string | null;
+	selectionTargets: ReadonlySet<string>;
 	/** The frame an open inspector rail is reading (#58). */
 	inspected: string | null;
 	hasCover: (frame: string) => boolean;
-	onShot: (frame: string, rungs: CoverRaster[]) => void;
-	/** TEMPORARY (CANVAS_ARM_KEY): which of the three models the canvas is running. */
-	arm: CanvasArm;
+	onShot: (frame: string, image: CoverRaster) => void;
 	/**
-	 * TEMPORARY (CANVAS_ARM_KEY): where the camera rests, read by `readable`.
+	 * Where the camera rests, read by the sweep.
 	 *
 	 * A ref rather than a value, and deliberately not urgent: a camera moves every
 	 * frame of a gesture, and mounting on each one would mount and discard
-	 * documents all the way through a pan. The 300 ms sweep picks it up when it
-	 * next runs, so what mounts is where the camera came to rest.
+	 * documents all the way through a pan. Canvas invokes the sweep after the
+	 * camera settles, so what mounts is where it came to rest.
 	 */
 	cameraRef: RefObject<Camera | null>;
-	/** TEMPORARY (CANVAS_ARM_KEY): the viewport element, for its CSS size. */
+	/** The viewport element, for its CSS size. */
 	viewportRef: RefObject<HTMLElement | null>;
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
-	const { framesRef, entered, frozen, inspected, hasCover, onShot, arm, cameraRef, viewportRef } = deps;
+	const { framesRef, entered, selectionTargets, inspected, hasCover, onShot, cameraRef, viewportRef } = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
 	// when each frame reported loaded, not merely that it did: a still is only
@@ -487,12 +435,10 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	readyRef.current = ready;
 	const enteredRef = useRef(entered);
 	enteredRef.current = entered;
-	const frozenRef = useRef(frozen);
-	frozenRef.current = frozen;
+	const selectionTargetsRef = useRef(selectionTargets);
+	selectionTargetsRef.current = selectionTargets;
 	const inspectedRef = useRef(inspected);
 	inspectedRef.current = inspected;
-	const armRef = useRef(arm);
-	armRef.current = arm;
 	const hasCoverRef = useRef(hasCover);
 	hasCoverRef.current = hasCover;
 	const onShotRef = useRef(onShot);
@@ -500,27 +446,44 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
 	const model = useRef(createLifecycleModel());
+	const exportFrame = useRef<string | null>(null);
+	const exportMountWaiter = useRef<{
+		frame: string;
+		resolve: (ready: boolean) => void;
+		timeout: ReturnType<typeof setTimeout>;
+	} | null>(null);
 	interface PendingCapture {
 		id: string;
-		maxEdge: number;
+		targetWidth: number;
 		sourceWindow: WindowProxy;
-		resolve: (rungs: CoverRaster[] | undefined) => void;
+		resolve: (image: CoverRaster | undefined) => void;
 		timeout: ReturnType<typeof setTimeout>;
 		rasterStarted: boolean;
+		sourceReturned: Promise<boolean>;
+		resolveSourceReturned: (returned: boolean) => void;
 		abort: AbortController;
 	}
 	const captureWaiters = useRef(new Map<string, PendingCapture>());
 
+	const finishExportMount = useCallback((frame: string, ready: boolean) => {
+		const waiter = exportMountWaiter.current;
+		if (waiter?.frame !== frame) return;
+		clearTimeout(waiter.timeout);
+		exportMountWaiter.current = null;
+		waiter.resolve(ready);
+	}, []);
+
 	/** Resolve exactly the request that produced this shot; stale work cannot satisfy its successor. */
-	const noteShot = useCallback((frame: string, id: string, rungs: CoverRaster[] | undefined) => {
+	const noteShot = useCallback((frame: string, id: string, image: CoverRaster | undefined) => {
 		const pending = captureWaiters.current.get(frame);
 		if (pending?.id !== id) return;
 		clearTimeout(pending.timeout);
 		captureWaiters.current.delete(frame);
+		pending.resolveSourceReturned(false);
 		pending.abort.abort();
-		pending.resolve(rungs);
+		pending.resolve(image);
 		// Full-resolution PNG is an export artifact, never a replacement cover.
-		if (rungs !== undefined && pending.maxEdge > 0) onShotRef.current(frame, rungs);
+		if (image !== undefined && pending.targetWidth > 0) onShotRef.current(frame, image);
 	}, []);
 
 	const onIframe = useCallback(
@@ -548,7 +511,11 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 	/** The frame's loaded report (commit-time effect, #17) — routed in by the canvas's message listener. */
 	const noteLoaded = useCallback((frame: string) => {
-		setReady((current) => (current.has(frame) ? current : new Map(current).set(frame, performance.now())));
+		if (!readyRef.current.has(frame)) {
+			const next = new Map(readyRef.current).set(frame, performance.now());
+			readyRef.current = next;
+			setReady(next);
+		}
 	}, []);
 
 	/**
@@ -568,14 +535,19 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			) {
 				return;
 			}
+			pending.resolveSourceReturned(true);
 			if ("error" in message) {
 				noteShot(message.frame, message.id, undefined);
 				return;
 			}
-			if (pending.maxEdge !== message.maxEdge || pending.rasterStarted) return;
+			if (pending.targetWidth !== message.targetWidth || pending.rasterStarted) return;
 			pending.rasterStarted = true;
-			void rasterCaptureSource({ ...message, maxEdge: pending.maxEdge }, captureOrigin, pending.abort.signal).then(
-				(rungs) => noteShot(message.frame, message.id, rungs),
+			void rasterCaptureSource(
+				{ ...message, targetWidth: pending.targetWidth },
+				captureOrigin,
+				pending.abort.signal,
+			).then(
+				(image) => noteShot(message.frame, message.id, image),
 				() => noteShot(message.frame, message.id, undefined),
 			);
 		},
@@ -583,21 +555,16 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	);
 
 	/**
-	 * Ask the frame's shim for a self-capture whose top rung is bounded to
-	 * `maxEdge` device pixels on its longest side (0 for the frame at full
-	 * resolution, one rung, lossless), allowing it `settleMs` to finish arriving
-	 * before it photographs itself. Resolves every rung the capture host
-	 * produced — or undefined for an unmounted, unbooted, already-capturing or
-	 * mute frame. A bounded capture persists as the frame's cover ladder; a
-	 * full-resolution export returns only to its caller.
+	 * Ask the frame's shim for one still sharp at the live threshold (or a
+	 * full-resolution lossless export when the target is zero).
 	 */
 	const requestCapture = useCallback(
 		(
 			frame: string,
-			maxEdge = COVER_MAX_EDGE,
+			targetWidth = LIVE_MIN_CSS_PX,
 			settleMs = CAPTURE_SETTLE_BUDGET_MS,
-		): Promise<CoverRaster[] | undefined> => {
-			if (!Number.isSafeInteger(maxEdge) || maxEdge < 0 || maxEdge > 16 * 1024) return Promise.resolve(undefined);
+		): Promise<CoverRaster | undefined> => {
+			if (targetWidth !== 0 && targetWidth !== LIVE_MIN_CSS_PX) return Promise.resolve(undefined);
 			const el = iframes.current.get(frame);
 			const sourceWindow = el?.contentWindow;
 			if (sourceWindow == null || !readyRef.current.has(frame)) return Promise.resolve(undefined);
@@ -605,17 +572,23 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			if (pending !== undefined) return Promise.resolve(undefined);
 			return new Promise((resolve) => {
 				const id = captureRequestId();
+				let resolveSourceReturned!: (returned: boolean) => void;
+				const sourceReturned = new Promise<boolean>((sourceResolve) => {
+					resolveSourceReturned = sourceResolve;
+				});
 				const timeout = setTimeout(() => noteShot(frame, id, undefined), CAPTURE_REPLY_TIMEOUT_MS + settleMs);
 				captureWaiters.current.set(frame, {
 					id,
-					maxEdge,
+					targetWidth,
 					sourceWindow,
 					resolve,
 					timeout,
 					rasterStarted: false,
+					sourceReturned,
+					resolveSourceReturned,
 					abort: new AbortController(),
 				});
-				sourceWindow.postMessage(captureMessage(id, maxEdge, settleMs), "*");
+				sourceWindow.postMessage(captureMessage(id, targetWidth, settleMs), "*");
 			});
 		},
 		[noteShot],
@@ -633,14 +606,13 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		const result = sweepLifecycle(model.current, {
 			frames: framesRef.current,
 			entered: enteredRef.current,
-			frozen: frozenRef.current,
-			inspected: inspectedRef.current,
+			selectionTargets: selectionTargetsRef.current,
+			inspected: exportFrame.current ?? inspectedRef.current,
 			states: statesRef.current,
 			ready: readyRef.current,
 			capturing: new Set(captureWaiters.current.keys()),
 			hasCover: hasCoverRef.current,
 			now: performance.now(),
-			arm: armRef.current,
 			camera: cameraRef.current,
 			viewport:
 				viewportRef.current === null
@@ -648,21 +620,90 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 					: { width: viewportRef.current.clientWidth, height: viewportRef.current.clientHeight },
 		});
 		for (const frame of result.refreshCaptures) {
-			void requestCapture(frame).then((rungs) => noteErrandShot(model.current, frame, rungs !== undefined));
+			void requestCapture(frame).then((image) => noteErrandShot(model.current, frame, image !== undefined));
 		}
 		if (result.changed) setStates(result.states);
 	}, [framesRef, cameraRef, viewportRef, requestCapture]);
 
-	// Freeze, enter, and summoning the rail must feel instant, not one sweep late.
-	// So must flipping the mode: a switch you wait 300 ms for is a switch you
-	// cannot feel the difference through.
+	/**
+	 * Hold one HTML frame through the inspector intent, wait for its document,
+	 * capture a full-resolution PNG, then hand the document back.
+	 */
+	const captureExport = useCallback(
+		async (frame: string): Promise<CoverRaster | undefined> => {
+			if (
+				exportFrame.current !== null ||
+				!framesRef.current.some((candidate) => candidate.name === frame && candidate.kind === "html")
+			) {
+				return undefined;
+			}
+
+			exportFrame.current = frame;
+			const coverCapture = captureWaiters.current.get(frame);
+			let mountPromise: Promise<boolean> | undefined;
+			if (
+				!isExportMountReady(
+					statesRef.current[frame],
+					readyRef.current.has(frame),
+					iframes.current.get(frame)?.contentWindow,
+				)
+			) {
+				mountPromise = new Promise((resolve) => {
+					const timeout = setTimeout(() => finishExportMount(frame, false), EXPORT_MOUNT_TIMEOUT_MS);
+					exportMountWaiter.current = { frame, resolve, timeout };
+				});
+			}
+			compute();
+
+			try {
+				// Let the frame return its cover source before export takes its one
+				// capture slot; then only the host-side raster is superseded.
+				if (coverCapture?.targetWidth === LIVE_MIN_CSS_PX) {
+					if (!(await coverCapture.sourceReturned)) return undefined;
+					if (captureWaiters.current.get(frame)?.id === coverCapture.id) {
+						noteShot(frame, coverCapture.id, undefined);
+					}
+				}
+				if (mountPromise !== undefined && !(await mountPromise)) return undefined;
+				return await requestCapture(frame, 0);
+			} finally {
+				finishExportMount(frame, false);
+				if (exportFrame.current === frame) exportFrame.current = null;
+				compute();
+			}
+		},
+		[compute, finishExportMount, framesRef, noteShot, requestCapture],
+	);
+
+	useEffect(() => {
+		const waiter = exportMountWaiter.current;
+		if (
+			waiter !== null &&
+			isExportMountReady(
+				states[waiter.frame],
+				ready.has(waiter.frame),
+				iframes.current.get(waiter.frame)?.contentWindow,
+			)
+		) {
+			finishExportMount(waiter.frame, true);
+		}
+	}, [finishExportMount, ready, states]);
+
+	useEffect(
+		() => () => {
+			const waiter = exportMountWaiter.current;
+			if (waiter !== null) finishExportMount(waiter.frame, false);
+		},
+		[finishExportMount],
+	);
+
+	// Selection, entering, and summoning the rail must feel instant, not one sweep late.
 	useEffect(() => {
 		enteredRef.current = entered;
-		frozenRef.current = frozen;
+		selectionTargetsRef.current = selectionTargets;
 		inspectedRef.current = inspected;
-		armRef.current = arm;
 		compute();
-	}, [entered, frozen, inspected, arm, compute]);
+	}, [entered, selectionTargets, inspected, compute]);
 
 	useEffect(() => {
 		const sweep = setInterval(compute, SWEEP_MS);
@@ -674,5 +715,15 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		markPictureWrong(model.current, frame);
 	}, []);
 
-	return { states, ready, onIframe, noteLoaded, noteCaptureSource, markStale, capture: requestCapture };
+	return {
+		states,
+		ready,
+		onIframe,
+		noteLoaded,
+		noteCaptureSource,
+		markStale,
+		capture: requestCapture,
+		captureExport,
+		sweep: compute,
+	};
 }

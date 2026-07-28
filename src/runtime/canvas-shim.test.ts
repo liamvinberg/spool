@@ -6,9 +6,8 @@ import { makeApp, makeProject, makeTempDir, writeFrame } from "../test-helpers";
 
 /**
  * The canvas shim rides every served frame document as a classic script so it
- * holds native references before any module evaluates. It does not stop time:
- * a held frame is frozen by `content-visibility: hidden` on the canvas side
- * (#112), at engine level. Here the served shim is extracted from a real
+ * holds native references before any module evaluates. HTML frames keep running
+ * when Select owns the pointer. Here the served shim is extracted from a real
  * document and run in the happy-dom realm — its answers are behavior, not text.
  */
 
@@ -322,10 +321,9 @@ describe("the canvas shim", () => {
 	});
 
 	it("leaves the frame's own timers and frames alone", async () => {
-		// The shim used to wrap rAF and setInterval to hold a frozen frame still.
-		// The engine does that now, without the frame's cooperation and without a
-		// cross-origin condition (#84), so wrapping them would only be a second
-		// mechanism to keep in step with the first.
+		// The shim once wrapped rAF and setInterval to pause held HTML. Those
+		// documents now keep running, so wrapping either would reintroduce the
+		// cooperative pause mechanism #131 rejected.
 		const shim = await servedShim();
 		const nativeRaf = window.requestAnimationFrame;
 		const nativeInterval = window.setInterval;

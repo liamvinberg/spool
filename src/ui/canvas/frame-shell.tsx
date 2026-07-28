@@ -8,19 +8,14 @@ import { freezeMessage } from "./protocol";
 
 /**
  * One frame on the canvas, rendering whatever the lifecycle says:
- *   picture    — the still (or a quiet placeholder), no iframe in the DOM
- *   refreshing — a document booting behind the still, only to be photographed
- *   held       — a document with its time stopped, only to answer the rail
- *                and the Select tool; its picture is what you see
- *   live       — the frame you went inside: the real thing, and the only
- *                document anyone ever looks at
+ *   picture: the still (or a quiet placeholder), no iframe in the DOM
+ *   refreshing: a document booting behind the still, only to be photographed
+ *   held: a document behind its still, only to answer the rail and
+ *                the Select tool
+ *   live: a readable document or the frame you went inside
  *
- * The still stands in for every frame but the one you are inside, at every
- * zoom, for as long as you are not inside it (#112). Freezing is
- * `content-visibility: hidden` on the iframe's own wrapper — Chromium stops the
- * nested document's rAF, style, layout and paint at engine level (#84) — and it
- * waits for the boot, because a document locked before it ever laid out has no
- * size to lay out into and nothing for the rail to read.
+ * A readable HTML frame stays visible while Select owns the pointer. Below the
+ * readable threshold its held document remains behind its still.
  *
  * memo'd hard: pans and zooms must never re-render shells — React
  * reconciling an iframe whose src changed reloads it and resets its state.
@@ -67,8 +62,8 @@ export function coverPlan(input: {
 		};
 	}
 	return {
-		// The frame you went inside is the one document anybody looks at, and it
-		// stays that while ⌘ holds its time still.
+		// A live frame is what the canvas is showing, whether it is entered or
+		// Select currently owns the pointer above it.
 		cover: (state !== "live" && !entered) || !ready,
 		image: covered ? "cover" : "placeholder",
 		// Going inside is the whole of "a boot somebody asked for". A borrowed
@@ -87,7 +82,6 @@ export const FrameShell = memo(function FrameShell({
 	interactive,
 	docNonce,
 	cover,
-	coverSizes,
 	terminal,
 	terminalCover,
 	walkArrival,
@@ -97,12 +91,7 @@ export const FrameShell = memo(function FrameShell({
 	name: string;
 	state: FrameState;
 	ready: boolean;
-	/**
-	 * Whether this is the frame you went inside. It outlives `live`: holding the
-	 * platform modifier freezes the frame you are in so an element can be reached
-	 * without it moving, and a frame you are inside is one you are looking at
-	 * however its time is running.
-	 */
+	/** Whether this is the frame you went inside. */
 	entered: boolean;
 	/** Whether the entered iframe currently owns pointer input. */
 	interactive: boolean;
@@ -110,10 +99,8 @@ export const FrameShell = memo(function FrameShell({
 	terminal: boolean;
 	/** Bumped by SSE source changes — a new nonce reloads the document. */
 	docNonce: number;
-	/** The frame's cover ladder (#111) — absent when it has none to show. */
+	/** The frame's immutable cover image, absent when it has none to show. */
 	cover: Cover | undefined;
-	/** The rung the camera asks for, as a CSS length, quantized to the rung boundaries. */
-	coverSizes: string | undefined;
 	/** Terminal-only current/stale/never-run cover truth from the projection. */
 	terminalCover: TerminalCoverState | undefined;
 	/** Set while the current boot is a walk arrival (#28) — quiet cover. */
@@ -132,17 +119,15 @@ export const FrameShell = memo(function FrameShell({
 	);
 
 	// A terminal's freeze is the one that no CSS can reach: `held` SIGSTOPs the
-	// real process behind the frame (daemon/term-sessions.ts), and the message is
-	// the only way to ask for it. html frames freeze at engine level instead, in
-	// the wrapper's content-visibility below. Re-sent when ready flips so a
-	// booting terminal receives its freeze once its runtime's listener exists.
+	// real process behind the frame (daemon/term-sessions.ts). Re-send when ready
+	// flips so a booting terminal receives its freeze once its listener exists.
 	// biome-ignore lint/correctness/useExhaustiveDependencies(ready): the re-send on boot is the point
 	useEffect(() => {
 		if (terminal) elRef.current?.contentWindow?.postMessage(freezeMessage(state === "held"), "*");
 	}, [state, ready, terminal]);
 
-	// The cover: shown for every frame but the one you are inside, and over that
-	// one until it boots, then fades — no white flash on entry (#8
+	// The cover: shown for every non-live frame, and over a live one until it
+	// boots, then fades without a white flash on entry (#8
 	// thumbnail-then-hydrate).
 	const unavailableTerminal = terminalCover?.kind === "stale" || terminalCover?.kind === "never-run";
 	const covered = unavailableTerminal || (state !== "live" && !entered) || !ready;
@@ -168,21 +153,9 @@ export const FrameShell = memo(function FrameShell({
 				<div
 					className="absolute inset-0"
 					style={{
-						// Unpainted, not unmounted. Only the frame you went inside is
-						// ever looked at; a borrowed frame has to run to finish
-						// arriving, so it is hidden rather than stopped, and a held one
-						// you are not inside is stopped outright below.
+						// A held document stays mounted for Select and the rail, but its
+						// still remains on screen below the readable threshold.
 						visibility: state === "live" || entered ? "visible" : "hidden",
-						// Time stopped at engine level (#84), which is strictly more
-						// than the shim's own freeze could hold. Two conditions on it.
-						// It waits for the boot, because a document locked before it
-						// ever laid out has no size to lay out into and the rail would
-						// find nothing in it to read. And it never locks the frame you
-						// are inside: the lock is also a blindfold, and freezing that
-						// one would put its old still under your cursor while you pick
-						// against the DOM behind it. ⌘ over an entered frame takes the
-						// pointer back and leaves its time running.
-						contentVisibility: state === "held" && ready && !entered ? "hidden" : "visible",
 					}}
 				>
 					<iframe
@@ -200,14 +173,12 @@ export const FrameShell = memo(function FrameShell({
 			    leave. A still first mounted at that moment is still decoding when it
 			    is wanted, and the frame shows blank instead. It names the same
 			    addresses as the cover layer below, so the two are one request: the
-			    browser caches a cover by URL, and both ask for the rung the same
-			    `sizes` selects (#111). */}
+			    browser caches a cover by URL. */}
 			{(state === "live" || entered) && cover !== undefined && (
 				<Thumbnail
 					project={project}
 					frame={name}
 					cover={cover}
-					sizes={coverSizes}
 					alt={name}
 					draggable={false}
 					// a fresh capture replaces this image while the canvas is in
@@ -235,7 +206,6 @@ export const FrameShell = memo(function FrameShell({
 							project={project}
 							frame={name}
 							cover={cover}
-							sizes={coverSizes}
 							alt={name}
 							draggable={false}
 							className="absolute inset-0 h-full w-full object-cover object-top"

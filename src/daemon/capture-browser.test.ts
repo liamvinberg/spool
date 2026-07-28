@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { chromium, type Frame, type Page } from "playwright-core";
 import { expect, it, onTestFinished } from "vitest";
-import { COVER_MAX_EDGE } from "../cover";
+import { LIVE_MIN_CSS_PX } from "../cover";
 import { assembleFrameDocument, captureWorkerCsp, captureWorkerDocument } from "./document";
 import { CAPTURE_HOST, RENDER_HOST } from "./security";
 
@@ -218,9 +218,9 @@ async function stopTargetPerformance(frame: Frame) {
 	);
 }
 
-async function requestCapture(page: Page, captureOrigin: string, maxEdge: number) {
+async function requestCapture(page: Page, captureOrigin: string, targetWidth: number) {
 	return page.evaluate(
-		async ({ captureOrigin, maxEdge }) => {
+		async ({ captureOrigin, targetWidth }) => {
 			const frame = document.querySelector<HTMLIFrameElement>("#frame");
 			const sourceWindow = frame?.contentWindow;
 			if (sourceWindow === null || sourceWindow === undefined) throw new Error("frame unavailable");
@@ -248,7 +248,7 @@ async function requestCapture(page: Page, captureOrigin: string, maxEdge: number
 					width: number;
 					height: number;
 					dpr: number;
-					maxEdge: number;
+					targetWidth: number;
 				}>((resolve, reject) => {
 					timeoutId = window.setTimeout(() => reject(new Error("source timed out")), 2400);
 					sourceListener = (event) => {
@@ -260,7 +260,7 @@ async function requestCapture(page: Page, captureOrigin: string, maxEdge: number
 							width?: unknown;
 							height?: unknown;
 							dpr?: unknown;
-							maxEdge?: unknown;
+							targetWidth?: unknown;
 							error?: unknown;
 						};
 						if (
@@ -284,7 +284,7 @@ async function requestCapture(page: Page, captureOrigin: string, maxEdge: number
 							typeof value.width !== "number" ||
 							typeof value.height !== "number" ||
 							typeof value.dpr !== "number" ||
-							typeof value.maxEdge !== "number"
+							typeof value.targetWidth !== "number"
 						) {
 							reject(new Error("invalid capture source"));
 							return;
@@ -294,15 +294,15 @@ async function requestCapture(page: Page, captureOrigin: string, maxEdge: number
 							width: value.width,
 							height: value.height,
 							dpr: value.dpr,
-							maxEdge: value.maxEdge,
+							targetWidth: value.targetWidth,
 						});
 					};
 					window.addEventListener("message", sourceListener);
-					sourceWindow.postMessage({ spool: "capture", id, maxEdge, settleMs: 0 }, "*");
+					sourceWindow.postMessage({ spool: "capture", id, targetWidth, settleMs: 0 }, "*");
 				});
 				if (timeoutId !== undefined) window.clearTimeout(timeoutId);
 				if (sourceListener !== undefined) window.removeEventListener("message", sourceListener);
-				const rungs = await new Promise<{ url: string; width: number; height: number }[]>((resolve, reject) => {
+				const image = await new Promise<{ url: string; width: number; height: number }>((resolve, reject) => {
 					timeoutId = window.setTimeout(() => reject(new Error("worker timed out")), 2400);
 					worker.hidden = true;
 					worker.setAttribute("sandbox", "allow-scripts allow-same-origin");
@@ -313,13 +313,13 @@ async function requestCapture(page: Page, captureOrigin: string, maxEdge: number
 							const value = event.data as {
 								spool?: unknown;
 								id?: unknown;
-								rungs?: unknown;
+								image?: unknown;
 								error?: unknown;
 							};
 							if (value.spool !== "spool-capture-result-v1" || value.id !== id) return;
 							resultReplies += 1;
-							if (Array.isArray(value.rungs))
-								resolve(value.rungs as { url: string; width: number; height: number }[]);
+							if (typeof value.image === "object" && value.image !== null)
+								resolve(value.image as { url: string; width: number; height: number });
 							else reject(new Error(String(value.error)));
 						};
 						channel.port1.onmessageerror = () => reject(new Error("invalid worker reply"));
@@ -335,18 +335,28 @@ async function requestCapture(page: Page, captureOrigin: string, maxEdge: number
 					};
 					document.body.append(worker);
 				});
-				return { rungs, resultReplies };
+				return { image, resultReplies };
 			} finally {
 				cleanup();
 			}
 		},
-		{ captureOrigin, maxEdge },
+		{ captureOrigin, targetWidth },
 	);
 }
 
-async function directWorkerRequest(page: Page, captureOrigin: string, svg: string) {
+async function directWorkerRequest(
+	page: Page,
+	captureOrigin: string,
+	svg: string,
+	dimensions: { width: number; height: number; dpr: number; targetWidth: number } = {
+		width: 20,
+		height: 10,
+		dpr: 2,
+		targetWidth: 400,
+	},
+) {
 	return page.evaluate(
-		async ({ captureOrigin, svg }) => {
+		async ({ captureOrigin, svg, dimensions }) => {
 			const id = "0123456789abcdef0123456789abcdef";
 			const iframe = document.createElement("iframe");
 			iframe.id = "direct-worker";
@@ -374,17 +384,14 @@ async function directWorkerRequest(page: Page, captureOrigin: string, svg: strin
 					spool: "spool-capture-raster-v1",
 					id,
 					svg: new Blob([svg], { type: "image/svg+xml" }),
-					width: 20,
-					height: 10,
-					dpr: 2,
-					maxEdge: 40,
+					...dimensions,
 				});
 			});
 			channel.port1.close();
 			channel.port2.close();
 			return { reply, replies };
 		},
-		{ captureOrigin, svg },
+		{ captureOrigin, svg, dimensions },
 	);
 }
 
@@ -426,23 +433,11 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	await authored.locator("main").waitFor();
 	await authored.evaluate(() => document.fonts.ready);
 
-	// one reply, the whole ladder: the top rung is the 800×600 frame's long edge
-	// at 2×, then half, then quarter — all off one parse and one decode
-	const cover = await requestCapture(page, captureOrigin.origin, COVER_MAX_EDGE);
+	// One reply, one image: 400 CSS px at 2× for the 800×600 source.
+	const cover = await requestCapture(page, captureOrigin.origin, LIVE_MIN_CSS_PX);
 	expect(cover.resultReplies).toBe(1);
-	expect(cover.rungs.map((rung) => [rung.width, rung.height])).toEqual([
-		[1600, 1200],
-		[800, 600],
-		[400, 300],
-	]);
-	const rungImages = [];
-	for (const rung of cover.rungs) rungImages.push(await readImage(rung.url, page));
-	expect(rungImages.map((image) => [image.type, image.width, image.height])).toEqual([
-		["image/jpeg", 1600, 1200],
-		["image/jpeg", 800, 600],
-		["image/jpeg", 400, 300],
-	]);
-	const coverImage = rungImages[1] as (typeof rungImages)[number];
+	const coverImage = await readImage(cover.image.url, page);
+	expect([coverImage.type, coverImage.width, coverImage.height]).toEqual(["image/jpeg", 800, 600]);
 	expect(coverImage.magic).toEqual([255, 216, 255, 224, 0, 16, 74, 70]);
 	expect(coverImage.center[0]).toBeGreaterThanOrEqual(240);
 	expect(coverImage.center[1]).toBeGreaterThanOrEqual(52);
@@ -485,9 +480,8 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	await startTargetPerformance(authored);
 	const exported = await requestCapture(page, captureOrigin.origin, 0);
 	expect(exported.resultReplies).toBe(1);
-	// an export is one lossless sheet, never a ladder
-	expect(exported.rungs).toHaveLength(1);
-	expect(await readImage(exported.rungs[0]?.url ?? "", page)).toEqual({
+	// An export is one full-resolution lossless sheet.
+	expect(await readImage(exported.image.url, page)).toEqual({
 		type: "image/png",
 		width: 1600,
 		height: 1200,
@@ -560,7 +554,7 @@ it("captures through the isolated worker while preserving output and cleanup", {
 		spool: "spool-capture-result-v1",
 		id: "0123456789abcdef0123456789abcdef",
 	});
-	expect((retried.reply.rungs as { url: string }[])[0]?.url).toMatch(/^data:image\/jpeg;base64,/);
+	expect((retried.reply.image as { url: string } | undefined)?.url).toMatch(/^data:image\/jpeg;base64,/);
 	const retriedWorker = page.frames().find((frame) => frame.url() === `${captureOrigin.origin}/capture`);
 	if (retriedWorker === undefined) throw new Error("retried worker disappeared before cleanup inspection");
 	expect(
@@ -574,4 +568,36 @@ it("captures through the isolated worker while preserving output and cleanup", {
 		iframe.remove();
 	});
 	expect(await page.locator(`iframe[src^="${captureOrigin.origin}"]`).count()).toBe(0);
+
+	const tall = await directWorkerRequest(
+		page,
+		captureOrigin.origin,
+		'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="1000"><rect width="40" height="1000" fill="#f5391a"/></svg>',
+		{ width: 40, height: 1000, dpr: 2, targetWidth: 400 },
+	);
+	expect(tall.reply).toMatchObject({
+		spool: "spool-capture-result-v1",
+		id: "0123456789abcdef0123456789abcdef",
+		image: { width: 800, height: 20_000 },
+	});
+	await page.locator("#direct-worker").evaluate((iframe: HTMLIFrameElement) => {
+		iframe.src = "about:blank";
+		iframe.remove();
+	});
+
+	const oversized = await directWorkerRequest(
+		page,
+		captureOrigin.origin,
+		'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="10000"><rect width="40" height="10000" fill="#f5391a"/></svg>',
+		{ width: 40, height: 10_000, dpr: 2, targetWidth: 400 },
+	);
+	expect(oversized.reply).toMatchObject({
+		spool: "spool-capture-result-v1",
+		id: "0123456789abcdef0123456789abcdef",
+		error: "capture output too large",
+	});
+	await page.locator("#direct-worker").evaluate((iframe: HTMLIFrameElement) => {
+		iframe.src = "about:blank";
+		iframe.remove();
+	});
 });

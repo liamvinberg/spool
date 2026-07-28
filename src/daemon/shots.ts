@@ -1,6 +1,6 @@
 import type { Browser } from "playwright-core";
 import { chromium } from "playwright-core";
-import { COVER_HEAL_RUNG, COVER_QUALITY, coverRungScale } from "../cover";
+import { COVER_QUALITY, captureRasterSize, coverCaptureScale } from "../cover";
 
 /**
  * Headless frame shots on playwright-core (#12): only playwright-managed
@@ -37,6 +37,10 @@ export function createShotTaker(): ShotTaker {
 
 	async function capture(target: ShotTarget): Promise<Buffer | undefined> {
 		if (unavailable) return undefined;
+		const width = Math.max(1, Math.round(target.width));
+		const height = Math.max(1, Math.round(target.height));
+		const scale = coverCaptureScale(width);
+		if (captureRasterSize(width, height, scale) === undefined) return undefined;
 		let live: Browser;
 		try {
 			live = await boot();
@@ -48,15 +52,9 @@ export function createShotTaker(): ShotTaker {
 		// close() racing a queued heal) must resolve undefined, never reject
 		let page: Awaited<ReturnType<Browser["newPage"]>> | undefined;
 		try {
-			const width = Math.max(1, Math.round(target.width));
-			const height = Math.max(1, Math.round(target.height));
 			page = await live.newPage({
 				viewport: { width, height },
-				// One shot, at the ladder's bottom rung (#111). There is no image
-				// library here to resample it into the rungs above, and the rung a
-				// heal can honestly claim is the one it actually rasterized — the
-				// frame's own next self-capture writes the rest.
-				deviceScaleFactor: coverRungScale(width, height, COVER_HEAL_RUNG),
+				deviceScaleFactor: scale,
 			});
 			await page.goto(target.url, { timeout: 10_000, waitUntil: "domcontentloaded" });
 			// frames are blank until React commits (#16) — wait for real content;

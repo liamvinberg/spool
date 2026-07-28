@@ -1,0 +1,11 @@
+diff --git a/src/ui/canvas/lifecycle.ts b/src/ui/canvas/lifecycle.ts
+index f26a30f..ff12f8e 100644
+--- a/src/ui/canvas/lifecycle.ts
++++ b/src/ui/canvas/lifecycle.ts
+@@ -217,0 +218,3 @@
++const debugLiveMinCssPx = (globalThis as unknown as { __debug132LiveMinCssPx?: number }).__debug132LiveMinCssPx;
++const measuredLiveMinCssPx = debugLiveMinCssPx ?? LIVE_MIN_CSS_PX;
++
+@@ -224 +227 @@ function isFrameLive(
+-	if (frame.w * camera.k < LIVE_MIN_CSS_PX) return false;
++	if (frame.w * camera.k < measuredLiveMinCssPx) return false;

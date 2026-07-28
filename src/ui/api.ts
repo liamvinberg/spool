@@ -242,31 +242,23 @@ export function frameDocumentUrl(project: string, frame: string, nonce: number):
 }
 
 /**
- * One rung of one cover (#111). The hash addresses the ladder's exact content,
+ * One immutable cover image. The hash addresses its exact content,
  * which is what lets an `<img>` reach it at all: an image element cannot carry
  * the control header, so the unguessable address is the credential. It is also
  * why the daemon can answer immutable — a changed cover is a changed URL, so a
  * warm reload fetches none of them and there is no validator to revalidate.
  */
-export function coverUrl(project: string, frame: string, hash: string, width: number): string {
-	return `/covers/${encodeURIComponent(project)}/${encodeURIComponent(frame)}/${hash}/${width}`;
-}
-
-/** The whole ladder as `srcset` — the browser picks a rung, upgrades in place, and evicts decodes. */
-export function coverSrcSet(project: string, frame: string, cover: Cover): string {
-	return cover.widths.map((width) => `${coverUrl(project, frame, cover.hash, width)} ${width}w`).join(", ");
+export function coverUrl(project: string, frame: string, hash: string): string {
+	return `/covers/${encodeURIComponent(project)}/${encodeURIComponent(frame)}/${hash}`;
 }
 
 /**
- * A cover's sharpest rung as bytes, for the one caller that needs them in hand
- * rather than on screen: an export of a frame nothing live will photograph. A
- * plain fetch, because the address is the credential.
+ * A terminal cover as bytes for export. A plain fetch works because the
+ * content-addressed URL is the credential.
  */
 export async function fetchCover(project: string, frame: string, cover: Cover): Promise<Blob | undefined> {
-	const widest = cover.widths[0];
-	if (widest === undefined) return undefined;
 	try {
-		const res = await fetch(coverUrl(project, frame, cover.hash, widest));
+		const res = await fetch(coverUrl(project, frame, cover.hash));
 		return res.ok ? await res.blob() : undefined;
 	} catch {
 		return undefined;
@@ -274,30 +266,18 @@ export async function fetchCover(project: string, frame: string, cover: Cover): 
 }
 
 /**
- * A self-capture rides a plain PUT, one form field per rung named for its width
- * in device pixels: the daemon has no image library, so the realm that
- * rasterized them is the only one that can say how wide they are. The answer is
- * the ladder's address, which the canvas puts on screen straight away.
+ * A self-capture rides a plain PUT as one image. The answer is its immutable
+ * address, which the canvas puts on screen straight away.
  */
-export async function putCover(
-	project: string,
-	frame: string,
-	rungs: readonly CoverUpload[],
-): Promise<Cover | undefined> {
+export async function putCover(project: string, frame: string, cover: Blob): Promise<Cover | undefined> {
 	const body = new FormData();
-	for (const rung of rungs) body.append(`w${rung.width}`, rung.bytes);
+	body.append("cover", cover);
 	const res = await controlFetch(`/api/p/${encodeURIComponent(project)}/thumbs/${encodeURIComponent(frame)}`, {
 		method: "PUT",
 		body,
 	});
 	if (!res.ok) return undefined;
 	return (await res.json()) as Cover;
-}
-
-/** One rung on its way to the store. */
-export interface CoverUpload {
-	width: number;
-	bytes: Blob;
 }
 
 /** An authenticated SSE fetch stream that dies with the component. */

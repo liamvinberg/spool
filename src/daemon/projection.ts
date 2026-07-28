@@ -32,7 +32,7 @@ export type TerminalCoverState = { kind: "current" } | TerminalCoverUnavailable;
 
 /**
  * One read of a terminal's persisted screen, answering both things the canvas
- * needs: whether it is current, and what addresses it. The ladder is absent
+ * needs: whether it is current, and what addresses it. The image is absent
  * until a screen has been persisted once — a live session that has never saved
  * has nothing a reboot would land in.
  */
@@ -51,7 +51,7 @@ export interface ProjectedFrame {
 	w: number;
 	h: number;
 	/**
-	 * The frame's cover ladder (#111) — absent when it has none, which is what
+	 * The frame's cover image. It is absent when it has none, which is what
 	 * the canvas reads as "show the placeholder". Terminal frames are filled in
 	 * from their persisted screen, which only the session store can address.
 	 */
@@ -252,8 +252,8 @@ export function listProjectFrames(root: string): Projection {
 	const discovery = discover(root);
 	if (discovery === undefined) return { root, pages: [], frames: [], collisions: [] };
 
-	// one sweep of the cover store answers every frame: the rung filenames are the
-	// manifest, so this costs a readdir per frame folder and opens no image
+	// one sweep of the cover store answers every frame from immutable image names,
+	// so this costs a readdir per frame folder and opens no image
 	const covers = readCovers(root);
 
 	const placed: ProjectedFrame[] = [];
@@ -354,7 +354,7 @@ export function readFrameGeometry(root: string, frame: string): { w: number; h: 
 	return { ...defaultFootprint(found.frameKind), persisted: false };
 }
 
-/** One card slot: the frame, and the ladder its picture comes off. */
+/** One card slot: the frame and its picture. */
 export interface CoveredFrame {
 	frame: string;
 	cover: Cover;

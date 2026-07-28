@@ -50,6 +50,8 @@ Topics — \`spool skill <topic>\`:
   verbs       the loops: shot, logs, url, selection, flows`;
 
 const topics: Record<string, string> = {
+	// Pages group journeys, not performance budgets (#128). Readable documents
+	// are bounded by viewport area, so keep the frames topic silent on page size.
 	frames: `Everything lives under design/:
 
   frames/<name>/frame.tsx    default-exports one React component: the frame
