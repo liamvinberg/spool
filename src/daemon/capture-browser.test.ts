@@ -7,6 +7,11 @@ import { COVER_MAX_EDGE } from "../cover";
 import { assembleFrameDocument, captureWorkerCsp, captureWorkerDocument } from "./document";
 import { CAPTURE_HOST, RENDER_HOST } from "./security";
 
+/** A solid #ffcc00 pixel and a solid #7f00ff square — probes for both allowlists. */
+const AMBER_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4f4bhPwAHZALLB0SopwAAAABJRU5ErkJggg==";
+const VIOLET_SVG =
+	"PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM3ZjAwZmYiLz48L3N2Zz4=";
+
 interface ServedCapture {
 	controlOrigin: string;
 	url: string;
@@ -76,6 +81,23 @@ async function serveCapture(): Promise<ServedCapture> {
 				inset: 25%;
 				background-color: #f5391a;
 				background-image: url(/hero.png);
+			}
+			/* A project asset, as the compiler bakes one in (#101): the src copy of
+			   the allowlist carries the svg, the CSS copy carries the raster. */
+			.capture-asset-probe {
+				position: absolute;
+				left: 100px;
+				top: 20px;
+				width: 80px;
+				height: 80px;
+			}
+			.capture-asset-css-probe {
+				position: absolute;
+				left: 300px;
+				top: 20px;
+				width: 80px;
+				height: 80px;
+				background-image: url(data:image/png;base64,${AMBER_PNG});
 			}`,
 		// If this import-only sheet survives, its important green wins visibly.
 		fonts: `@import "/theme.css";
@@ -86,7 +108,7 @@ async function serveCapture(): Promise<ServedCapture> {
 		importMap: { imports: {} },
 		bootJs: `
 			const heavyText = "x".repeat(65_535) + "😀" + "x".repeat(1_034_463);
-			document.getElementById("root").innerHTML = '<main style="position: relative; width: 100%; height: 100%">capture<input value="live"><span class="capture-style-probe"></span><canvas width="20" height="10" style="position: absolute; left: 10px; top: 10px; width: 20px; height: 10px"></canvas><canvas width="20" height="10" style="position: absolute; left: 40px; top: 10px; width: 20px; height: 10px"></canvas><span hidden>' + heavyText + '</span></main>';
+			document.getElementById("root").innerHTML = '<main style="position: relative; width: 100%; height: 100%">capture<input value="live"><span class="capture-style-probe"></span><img class="capture-asset-probe" alt="" src="data:image/svg+xml;base64,${VIOLET_SVG}"><span class="capture-asset-css-probe"></span><canvas width="20" height="10" style="position: absolute; left: 10px; top: 10px; width: 20px; height: 10px"></canvas><canvas width="20" height="10" style="position: absolute; left: 40px; top: 10px; width: 20px; height: 10px"></canvas><span hidden>' + heavyText + '</span></main>';
 			document.querySelectorAll("canvas").forEach((canvas, index) => {
 				const context = canvas.getContext("2d");
 				context.fillStyle = index === 0 ? "#fff" : "#000";
@@ -130,15 +152,23 @@ async function readImage(url: string, page: Page) {
 		const context = canvas.getContext("2d");
 		if (context === null) throw new Error("image canvas unavailable");
 		context.drawImage(image, 0, 0);
+		// Probes are read as fractions of the sheet so every rung samples the same
+		// spot on the frame, whatever resolution it came out at. The frame is
+		// 800×600, so the two 80px squares at (100,20) and (300,20) have their
+		// centres at (140,60) and (340,60) — 0.175/0.425 across and 0.1 down.
+		const at = (fx: number, fy: number) =>
+			Array.from(
+				context.getImageData(Math.floor(image.naturalWidth * fx), Math.floor(image.naturalHeight * fy), 1, 1).data,
+			);
 		return {
 			type: response.headers.get("content-type"),
 			width: image.naturalWidth,
 			height: image.naturalHeight,
 			magic: Array.from(bytes.slice(0, 8)),
-			center: Array.from(
-				context.getImageData(Math.floor(image.naturalWidth / 2), Math.floor(image.naturalHeight / 2), 1, 1).data,
-			),
+			center: at(0.5, 0.5),
 			bottomRight: Array.from(context.getImageData(image.naturalWidth - 20, image.naturalHeight - 20, 1, 1).data),
+			assetSrc: at(0.175, 0.1),
+			assetCss: at(0.425, 0.1),
 		};
 	}, url);
 }
@@ -426,6 +456,16 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	expect(coverImage.bottomRight[1]).toBeLessThanOrEqual(124);
 	expect(coverImage.bottomRight[2]).toBeGreaterThanOrEqual(247);
 	expect(coverImage.bottomRight[3]).toBe(255);
+	// The two project-asset routes (#101): an svg through <img src>, a raster
+	// through a CSS background. Both must be in the picture, not stripped out.
+	expect(coverImage.assetSrc[0]).toBeGreaterThanOrEqual(112);
+	expect(coverImage.assetSrc[0]).toBeLessThanOrEqual(142);
+	expect(coverImage.assetSrc[1]).toBeLessThanOrEqual(16);
+	expect(coverImage.assetSrc[2]).toBeGreaterThanOrEqual(240);
+	expect(coverImage.assetCss[0]).toBeGreaterThanOrEqual(240);
+	expect(coverImage.assetCss[1]).toBeGreaterThanOrEqual(190);
+	expect(coverImage.assetCss[1]).toBeLessThanOrEqual(218);
+	expect(coverImage.assetCss[2]).toBeLessThanOrEqual(16);
 	expect(await page.locator(`iframe[src^="${captureOrigin.origin}"]`).count()).toBe(0);
 	expect(
 		await authored.evaluate(() =>
@@ -454,6 +494,8 @@ it("captures through the isolated worker while preserving output and cleanup", {
 		magic: [137, 80, 78, 71, 13, 10, 26, 10],
 		center: [245, 57, 26, 255],
 		bottomRight: [36, 116, 255, 255],
+		assetSrc: [127, 0, 255, 255],
+		assetCss: [255, 204, 0, 255],
 	});
 	expect(await stopTargetPerformance(authored)).toEqual({ supported: true, longTasks: [], rafGaps: [] });
 	expect(await page.locator(`iframe[src^="${captureOrigin.origin}"]`).count()).toBe(0);

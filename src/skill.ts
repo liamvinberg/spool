@@ -64,7 +64,7 @@ const topics: Record<string, string> = {
   shared/importmap.json      URL imports for libraries (below)
   shared/scenarios/*.json    named seeds (topic: scenarios)
   shared/fixtures/*.json     the mock's data (topic: mock)
-  shared/assets/             yours to organize — but project files are not served in v1 (below)
+  shared/assets/             images and fonts more than one frame uses (below)
   AGENTS.md, CLAUDE.md       init's signposts pointing here; .gitignore covers .spool/
   canvas.json, .spool/       app-owned — never write these
 
@@ -80,7 +80,14 @@ shared/ui components take props, never knowledge — importing "spool" there fai
 
 Libraries: design/ never gets a package.json and nothing is npm-installed there. Imports resolve through shared/importmap.json to URLs (esm.sh works well); init pins clsx, tailwind-merge, class-variance-authority, and motion. A React-based library must not bundle its own React (esm.sh: ?external=react,react-dom) — spool pins react, react-dom, react-dom/client, react/jsx-runtime, and "spool" itself, and its pins always win, so exactly one React runs. Plain .css imports from any source file land in the document as-is.
 
-Static assets: project files are not served in v1 — reference images and media by absolute URL or data URI; fonts via hosted @import or absolute/data src in fonts.css. A relative <img src> has nothing to answer it.`,
+Static assets: import the file and use the value. The compiler bakes it into the document — there is no asset URL and no asset route, so a project path written as a URL string (<img src="/logo.png">, <img src="./logo.png">) still has nothing to answer it.
+
+  import hero from "./hero.png";
+  import logo from "../../shared/assets/logo.svg";
+  <img src={hero} />
+  <div style={{ backgroundImage: \`url(\${logo})\` }} />
+
+Kinds: .png, .jpg, .jpeg, .webp, .gif, .svg; a .json import parses into an object. Put an asset beside the frame that uses it; move it to shared/assets/ when a second frame does. It must be an import and never a URL string: the import is what puts the file in the frame's closure, so editing it reissues the document and its cover. One document carries at most 512 KB of images — that is base64, so roughly 385 KB of real file — and the compile fails naming the file when it doesn't fit; nothing is downscaled. Video and audio are not supported. Remote image URLs still work in a live frame, but nothing fetched ever appears in a still.`,
 
 	terminals: `A terminal frame is born by writing design/frames/<name>/term.tsx. Spool still recognizes the entry as the terminal frame kind, gives it whole-cell geometry, and includes it on the canvas and in the player.
 
@@ -167,7 +174,7 @@ Tokens live in shared/tokens.css, the single token file and the only stylesheet 
   - bridging: @theme inline aliases existing :root variables into utility names
 One file, both blocks — shadcn v4's shape. Non-Tailwind consumers can import the same file; browsers skip @theme.
 
-Fonts: shared/fonts.css is injected into every document — @import url(...) for hosted fonts, or @font-face with absolute/data src (local font files are not served in v1).
+Fonts: shared/fonts.css is injected into every document — @import url(...) for hosted fonts, @font-face with absolute/data src, or @font-face whose url() is a relative path from that file (shared/assets/fonts/local.woff2), which spool reads and carries in the document up to 1 MB. woff2, woff, ttf, otf.
 
 Motion is for interaction feel — the motion library is pinned (import { motion } from "motion/react"): hover, press, drag, springs, layout animation inside a frame. Screen-to-screen motion is never animated from a frame; it belongs to the flow layer (topic: flows). Other animation libraries: add them to the import map.
 

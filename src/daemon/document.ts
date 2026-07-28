@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { COVER_QUALITY, COVER_RUNGS } from "../cover";
+import { CAPTURE_IMAGE_TYPES } from "./assets";
 
 /**
  * Assembly of the served frame document. Spool owns the whole page (#16):
@@ -35,6 +36,8 @@ const captureWorkerJs = `(() => {
 	const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 	const REQUEST_ID = /^[0-9a-f]{32}$/;
 	const SAFE_FONT_DATA_URL = /^data:font\\/(?:otf|ttf|woff2?);base64,[a-z0-9+/]+={0,2}$/i;
+	const SAFE_IMAGE_DATA_URL = /^data:image\\/(?:${CAPTURE_IMAGE_TYPES});base64,[a-z0-9+/]+={0,2}$/i;
+	const SAFE_IMAGE_SRC_PREFIX = /^data:image\\/(?:${CAPTURE_IMAGE_TYPES});base64,/i;
 	const expectedParentOrigin = document.querySelector('meta[name="spool-control-origin"]')?.content;
 	const URL_ATTRIBUTES = new Set([
 		"action", "background", "cite", "data", "formaction", "href",
@@ -74,7 +77,10 @@ const captureWorkerJs = `(() => {
 			}
 			const safeFragment = /^#[^\\s"'()]+$/.test(target);
 			const safeFont = target.length <= MAX_SOURCE_BYTES && SAFE_FONT_DATA_URL.test(target);
-			if (!safeFragment && !safeFont) unsafe = true;
+			// A project asset rides in the document as a bounded base64 image (#101),
+			// so background-image and every other url() image reaches a still.
+			const safeImage = target.length <= MAX_SOURCE_BYTES && SAFE_IMAGE_DATA_URL.test(target);
+			if (!safeFragment && !safeFont && !safeImage) unsafe = true;
 			return "";
 		});
 		return unsafe || /url\\s*\\(/i.test(remainder);
@@ -112,7 +118,9 @@ const captureWorkerJs = `(() => {
 				const value = attribute.value.trim();
 				if (name.startsWith("on") || unsafeCss(value)) throw new Error("unsafe capture SVG");
 				if (!URL_ATTRIBUTES.has(name) || value === "" || value.startsWith("#")) continue;
-				if (name === "src" && /^data:image\\/(?:gif|jpeg|png|webp);base64,/i.test(value)) continue;
+				// An svg reached through src is a passive image context: scripting and
+				// external references are off by specification, so it joins the rasters.
+				if (name === "src" && SAFE_IMAGE_SRC_PREFIX.test(value)) continue;
 				throw new Error("unsafe capture SVG");
 			}
 		}
@@ -583,6 +591,8 @@ const canvasShimJs = `(() => {
 	}
 
 	const SAFE_FONT_DATA_URL = /^data:font\\/(?:otf|ttf|woff2?);base64,[a-z0-9+/]+={0,2}$/i;
+	const SAFE_IMAGE_DATA_URL = /^data:image\\/(?:${CAPTURE_IMAGE_TYPES});base64,[a-z0-9+/]+={0,2}$/i;
+	const SAFE_IMAGE_SRC_PREFIX = /^data:image\\/(?:${CAPTURE_IMAGE_TYPES});base64,/i;
 
 	function sanitizeCaptureClone(clone) {
 		for (const element of clone.querySelectorAll(
@@ -610,11 +620,7 @@ const canvasShimJs = `(() => {
 				}
 				if (!urlAttributes.has(name)) continue;
 				const value = attribute.value.trim();
-				if (
-					value === "" ||
-					value.startsWith("#") ||
-					(name === "src" && /^data:image\\/(?:gif|jpeg|png|webp);base64,/i.test(value))
-				) {
+				if (value === "" || value.startsWith("#") || (name === "src" && SAFE_IMAGE_SRC_PREFIX.test(value))) {
 					continue;
 				}
 				element.removeAttribute(attribute.name);
@@ -672,7 +678,8 @@ const canvasShimJs = `(() => {
 			}
 			const safeFragment = /^#[^\\s"'()]+$/.test(target);
 			const safeFont = target.length <= 16 * 1024 * 1024 && SAFE_FONT_DATA_URL.test(target);
-			if (!safeFragment && !safeFont) unsafe = true;
+			const safeImage = target.length <= 16 * 1024 * 1024 && SAFE_IMAGE_DATA_URL.test(target);
+			if (!safeFragment && !safeFont && !safeImage) unsafe = true;
 			return "";
 		});
 		return unsafe || /url\\s*\\(/i.test(remainder);
