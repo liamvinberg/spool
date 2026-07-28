@@ -9,14 +9,12 @@ import type { FrameState } from "./lifecycle";
 vi.mock("../thumbnail", async () => {
 	const { createElement } = await import("react");
 	return {
-		// stands in for the real srcset image, carrying through whatever the shell
-		// styles it with and whichever rung the camera asked for
-		Thumbnail: ({ alt, style, sizes }: { alt: string; style?: Record<string, string>; sizes?: string }) =>
-			createElement("img", { alt, style, sizes, "data-terminal-cover": "image" }),
+		Thumbnail: ({ alt, style }: { alt: string; style?: Record<string, string> }) =>
+			createElement("img", { alt, style, "data-terminal-cover": "image" }),
 	};
 });
 
-const COVER = { hash: "d".repeat(32), widths: [780, 390, 195] };
+const COVER = { hash: "d".repeat(32) };
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
 /**
@@ -116,7 +114,6 @@ describe("FrameShell documents", () => {
 		terminal: false,
 		docNonce: 0,
 		cover: COVER,
-		coverSizes: "390px",
 		terminalCover: undefined,
 		walkArrival: false,
 		onIframe: vi.fn(),
@@ -246,7 +243,6 @@ describe("FrameShell terminal covers", () => {
 			terminal: true,
 			docNonce: 0,
 			cover: COVER,
-			coverSizes: "390px",
 			walkArrival: false,
 			onIframe: vi.fn(),
 		};
@@ -287,7 +283,6 @@ describe("FrameShell terminal covers", () => {
 			terminal: true,
 			docNonce: 0,
 			cover: COVER,
-			coverSizes: "390px",
 			walkArrival: false,
 			onIframe: vi.fn(),
 		};

@@ -6,7 +6,7 @@ import {
 	coverModified,
 	createThumbHealer,
 	readCover,
-	readCoverRung,
+	readCoverImage,
 	scanCovers,
 	UnservableCoverError,
 	writeCover,
@@ -15,263 +15,127 @@ import {
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 1, 2, 3]);
 const OTHER_JPEG = Buffer.from([0xff, 0xd8, 0xff, 9, 9, 9]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2]);
+const project = () => makeProject(makeTempDir()).root;
+const storeDir = (root: string) => join(root, "design", ".spool", "thumbs", "home");
 
-function project(): string {
-	return makeProject(makeTempDir()).root;
-}
-
-function storeDir(root: string, frame: string): string {
-	return join(root, "design", ".spool", "thumbs", frame);
-}
-
-const ladder = (bytes = JPEG) => [
-	{ width: 780, bytes },
-	{ width: 390, bytes: Buffer.concat([bytes, Buffer.from([4])]) },
-	{ width: 195, bytes: Buffer.concat([bytes, Buffer.from([5])]) },
-];
-
-describe("writing a cover ladder", () => {
-	it("answers with the hash that addresses it and its rungs, widest first", () => {
+describe("writing a cover", () => {
+	it("writes one immutable image addressed by its content hash", () => {
 		const root = project();
-		const cover = writeCover(root, "home", ladder());
+		const cover = writeCover(root, "home", JPEG);
 		expect(cover.hash).toMatch(/^[0-9a-f]{32}$/);
-		expect(cover.widths).toEqual([780, 390, 195]);
+		expect(readdirSync(storeDir(root))).toEqual([`${cover.hash}.jpg`]);
+		expect(readCover(root, "home")).toEqual(cover);
+		expect(readCoverImage(root, "home", cover.hash)).toMatchObject({ type: "image/jpeg", bytes: JPEG });
 	});
 
-	it("names one file per rung, hash then width", () => {
+	it("changes the address for changed content and retires the previous image", () => {
 		const root = project();
-		const cover = writeCover(root, "home", ladder());
-		expect(readdirSync(storeDir(root, "home")).sort()).toEqual(
-			[`${cover.hash}.195.jpg`, `${cover.hash}.390.jpg`, `${cover.hash}.780.jpg`].sort(),
-		);
+		const first = writeCover(root, "home", JPEG);
+		const next = writeCover(root, "home", OTHER_JPEG);
+		expect(next.hash).not.toBe(first.hash);
+		expect(readdirSync(storeDir(root))).toEqual([`${next.hash}.jpg`]);
 	});
 
-	it("takes the rungs in any order and still reports them widest first", () => {
+	it("keeps the address for identical content", () => {
 		const root = project();
-		const cover = writeCover(root, "home", [...ladder()].reverse());
-		expect(cover.widths).toEqual([780, 390, 195]);
+		expect(writeCover(root, "home", JPEG)).toEqual(writeCover(root, "home", JPEG));
 	});
 
-	it("hashes the content, so the same picture keeps its address and a new one gets its own", () => {
+	it("treats an existing ladder as absent", () => {
 		const root = project();
-		const first = writeCover(root, "home", ladder());
-		expect(writeCover(root, "home", ladder()).hash).toBe(first.hash);
-		expect(writeCover(root, "home", ladder(OTHER_JPEG)).hash).not.toBe(first.hash);
-	});
-
-	it("hashes the declared widths too — the same bytes at another size are another cover", () => {
-		const root = project();
-		const one = writeCover(root, "home", [{ width: 780, bytes: JPEG }]);
-		const two = writeCover(root, "home", [{ width: 390, bytes: JPEG }]);
-		expect(two.hash).not.toBe(one.hash);
-	});
-
-	it("retires the ladder it replaces — one cover per frame", () => {
-		const root = project();
-		const stale = writeCover(root, "home", ladder());
-		const fresh = writeCover(root, "home", ladder(OTHER_JPEG));
-		const files = readdirSync(storeDir(root, "home"));
-		expect(files.every((file) => file.startsWith(fresh.hash))).toBe(true);
-		expect(files.some((file) => file.startsWith(stale.hash))).toBe(false);
-	});
-
-	it("sweeps the bare file the old store left beside it", () => {
-		const root = project();
-		const thumbs = join(root, "design", ".spool", "thumbs");
-		mkdirSync(thumbs, { recursive: true });
-		writeFileSync(join(thumbs, "home.jpg"), JPEG);
-		writeFileSync(join(thumbs, "home.png"), PNG);
-		writeCover(root, "home", ladder());
-		expect(existsSync(join(thumbs, "home.jpg"))).toBe(false);
-		expect(existsSync(join(thumbs, "home.png"))).toBe(false);
-	});
-
-	it("keeps a rung's own encoding in its name", () => {
-		const root = project();
-		const cover = writeCover(root, "home", [{ width: 195, bytes: PNG }]);
-		expect(existsSync(join(storeDir(root, "home"), `${cover.hash}.195.png`))).toBe(true);
-	});
-
-	it("refuses bytes that are not a cover this store can serve", () => {
-		const root = project();
-		expect(() => writeCover(root, "home", [{ width: 195, bytes: Buffer.from("nope") }])).toThrow(
-			UnservableCoverError,
-		);
-	});
-
-	it("refuses a ladder with no rungs", () => {
-		expect(() => writeCover(project(), "home", [])).toThrow();
-	});
-});
-
-describe("reading a cover back", () => {
-	it("finds the frame's ladder", () => {
-		const root = project();
-		const written = writeCover(root, "home", ladder());
-		expect(readCover(root, "home")).toEqual(written);
-		expect(scanCovers(root).get("home")).toEqual(written);
-	});
-
-	it("sees a one-rung ladder as a normal cover — a heal writes exactly that", () => {
-		const root = project();
-		const written = writeCover(root, "home", [{ width: 195, bytes: JPEG }]);
-		expect(readCover(root, "home")).toEqual({ hash: written.hash, widths: [195] });
-	});
-
-	it("does not see a bare unhashed file as a cover at all", () => {
-		const root = project();
-		const thumbs = join(root, "design", ".spool", "thumbs");
-		mkdirSync(thumbs, { recursive: true });
-		writeFileSync(join(thumbs, "home.jpg"), JPEG);
-		expect(readCover(root, "home")).toBeUndefined();
-		expect(scanCovers(root).size).toBe(0);
-	});
-
-	it("prefers the longer ladder when a crashed write left two, whatever their hashes", () => {
-		const root = project();
-		const dir = storeDir(root, "home");
-		mkdirSync(dir, { recursive: true });
-		// a stale one-rung ladder whose hash sorts after a fresh three-rung one:
-		// length decides, so readdir order cannot make two readers disagree
-		writeFileSync(join(dir, `${"f".repeat(32)}.195.jpg`), JPEG);
-		for (const width of [780, 390, 195]) writeFileSync(join(dir, `${"a".repeat(32)}.${width}.jpg`), JPEG);
-
-		expect(readCover(root, "home")).toEqual({ hash: "a".repeat(32), widths: [780, 390, 195] });
-	});
-
-	it("breaks a true tie by hash, so every reader picks the same ladder", () => {
-		const root = project();
-		const dir = storeDir(root, "home");
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(join(dir, `${"a".repeat(32)}.195.jpg`), JPEG);
-		writeFileSync(join(dir, `${"f".repeat(32)}.195.jpg`), JPEG);
-
-		expect(readCover(root, "home")?.hash).toBe("f".repeat(32));
-	});
-
-	it("has nothing to say about a frame with no cover, or a store with no folder", () => {
-		const root = project();
+		mkdirSync(storeDir(root), { recursive: true });
+		writeFileSync(join(storeDir(root), `${"a".repeat(32)}.780.jpg`), JPEG);
+		writeFileSync(join(storeDir(root), `${"a".repeat(32)}.390.jpg`), JPEG);
 		expect(readCover(root, "home")).toBeUndefined();
 		expect(scanCovers(root)).toEqual(new Map());
-		expect(coverModified(root, "home")).toBeUndefined();
 	});
 
-	it("sweeps every frame's ladder in one pass", () => {
+	it("keeps a PNG image's own encoding", () => {
 		const root = project();
-		const home = writeCover(root, "home", ladder());
-		const cart = writeCover(root, "cart", [{ width: 195, bytes: PNG }]);
+		const cover = writeCover(root, "home", PNG);
+		expect(existsSync(join(storeDir(root), `${cover.hash}.png`))).toBe(true);
+	});
+
+	it("scans every covered frame and exposes its freshness", () => {
+		const root = project();
+		const home = writeCover(root, "home", JPEG);
+		const cart = writeCover(root, "cart", PNG);
 		expect(scanCovers(root)).toEqual(
 			new Map([
 				["cart", cart],
 				["home", home],
 			]),
 		);
-	});
-
-	it("dates a cover, so the home card can show the freshest three", () => {
-		const root = project();
-		writeCover(root, "home", ladder());
 		expect(coverModified(root, "home")).toBeTypeOf("number");
 	});
-});
 
-describe("reading one rung", () => {
-	it("serves the rung the address names, with its media type", () => {
+	it("answers only the exact immutable address", () => {
 		const root = project();
-		const cover = writeCover(root, "home", ladder());
-		const rung = readCoverRung(root, "home", cover.hash, 390);
-		expect(rung?.type).toBe("image/jpeg");
-		expect(rung?.bytes.equals(ladder()[1]?.bytes as Buffer)).toBe(true);
+		const cover = writeCover(root, "home", JPEG);
+		expect(readCoverImage(root, "home", cover.hash)?.bytes).toEqual(JPEG);
+		expect(readCoverImage(root, "home", "0".repeat(32))).toBeUndefined();
 	});
 
-	it("has nothing for a hash or a width the frame never wrote", () => {
+	it("chooses deterministically when an interrupted write leaves two images", () => {
 		const root = project();
-		const cover = writeCover(root, "home", ladder());
-		expect(readCoverRung(root, "home", cover.hash, 1000)).toBeUndefined();
-		expect(readCoverRung(root, "home", "0".repeat(32), 390)).toBeUndefined();
+		mkdirSync(storeDir(root), { recursive: true });
+		writeFileSync(join(storeDir(root), `${"a".repeat(32)}.jpg`), JPEG);
+		writeFileSync(join(storeDir(root), `${"f".repeat(32)}.png`), PNG);
+		expect(readCover(root, "home")).toEqual({ hash: "f".repeat(32) });
+	});
+
+	it("refuses bytes the store cannot serve", () => {
+		expect(() => writeCover(project(), "home", Buffer.from("nope"))).toThrow(UnservableCoverError);
 	});
 });
 
 describe("the headless fallback", () => {
-	const heal = (root: string) => ({
-		root,
-		frame: "home",
-		url: "http://localhost/frames/home",
-		width: 390,
-		height: 844,
+	it("writes the same one-image shape", async () => {
+		const root = project();
+		const stored = vi.fn();
+		const healer = createThumbHealer({ capture: async () => JPEG, stored });
+		healer.request({ root, frame: "home", url: "http://localhost/frames/home", width: 390, height: 844 });
+		await vi.waitFor(() => expect(stored).toHaveBeenCalledOnce());
+		expect(readCover(root, "home")).toEqual(stored.mock.calls[0]?.[2]);
 	});
 
-	it("writes the one rung it can make, and says so", async () => {
+	it("does not overwrite a self-capture that lands during its shot", async () => {
 		const root = project();
-		const stored: { frame: string; widths: number[] }[] = [];
-		const healer = createThumbHealer({
-			capture: async () => JPEG,
-			stored: (_root, frame, cover) => stored.push({ frame, widths: cover.widths }),
-		});
-
-		healer.request(heal(root));
-		await vi.waitFor(() => expect(stored).toHaveLength(1));
-		// the bottom rung of the ladder a self-capture would write: no image library
-		// here, so one device scale is all a shot can be
-		expect(stored[0]).toEqual({ frame: "home", widths: [195] });
-		expect(readCover(root, "home")?.widths).toEqual([195]);
-	});
-
-	it("never replaces a cover that arrived while it was shooting", async () => {
-		const root = project();
-		const stored: string[] = [];
-		let shooting: (() => void) | undefined;
+		let finish: (() => void) | undefined;
+		const stored = vi.fn();
 		const healer = createThumbHealer({
 			capture: () =>
-				new Promise((done) => {
-					shooting = () => done(JPEG);
+				new Promise((resolve) => {
+					finish = () => resolve(JPEG);
 				}),
-			stored: (_root, frame) => stored.push(frame),
+			stored,
 		});
-
-		healer.request(heal(root));
-		await vi.waitFor(() => expect(shooting).toBeTypeOf("function"));
-		// the frame mounted and photographed itself mid-shot: a whole ladder must
-		// not lose to the one rung a fallback can make
-		const arrived = writeCover(root, "home", ladder());
-		shooting?.();
-		await vi.waitFor(() => expect(readCover(root, "home")).toEqual(arrived));
-		expect(stored).toEqual([]);
+		healer.request({ root, frame: "home", url: "http://localhost/frames/home", width: 390, height: 844 });
+		await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+		const selfCapture = writeCover(root, "home", OTHER_JPEG);
+		finish?.();
+		await vi.waitFor(() => expect(readCover(root, "home")).toEqual(selfCapture));
+		expect(stored).not.toHaveBeenCalled();
 	});
 
-	it("spends no shot on a frame that is already covered, whatever address was asked for", async () => {
+	it("does not spend a shot for an already covered frame", async () => {
 		const root = project();
-		writeCover(root, "home", ladder());
-		let shots = 0;
-		const healer = createThumbHealer({
-			capture: async () => {
-				shots += 1;
-				return JPEG;
-			},
-			stored: () => {},
-		});
-
-		healer.request(heal(root));
-		// a browser launch and a frame boot are the cost of a shot: a made-up
-		// address must not be able to buy one
-		await new Promise((settle) => setTimeout(settle, 20));
-		expect(shots).toBe(0);
+		writeCover(root, "home", JPEG);
+		const capture = vi.fn(async () => JPEG);
+		const healer = createThumbHealer({ capture, stored: vi.fn() });
+		healer.request({ root, frame: "home", url: "http://localhost/frames/home", width: 390, height: 844 });
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(capture).not.toHaveBeenCalled();
 	});
 
-	it("shoots a frame once per cooldown, however often it is asked", async () => {
+	it("deduplicates requests for one frame during the cooldown", async () => {
 		const root = project();
-		let shots = 0;
-		const healer = createThumbHealer({
-			capture: async () => {
-				shots += 1;
-				return undefined;
-			},
-			stored: () => {},
-		});
-
-		healer.request(heal(root));
-		healer.request(heal(root));
-		healer.request(heal(root));
-		await vi.waitFor(() => expect(shots).toBe(1));
+		const capture = vi.fn(async () => undefined);
+		const healer = createThumbHealer({ capture, stored: vi.fn() });
+		const request = { root, frame: "home", url: "http://localhost/frames/home", width: 390, height: 844 };
+		healer.request(request);
+		healer.request(request);
+		healer.request(request);
+		await vi.waitFor(() => expect(capture).toHaveBeenCalledOnce());
 	});
 });

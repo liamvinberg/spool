@@ -1,6 +1,7 @@
 import { rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type Browser, type BrowserContext, chromium, type Page } from "playwright-core";
+import { LIVE_MIN_CSS_PX } from "../src/cover.ts";
 import {
 	copyProject,
 	densestPage,
@@ -16,6 +17,13 @@ import {
 	VIEWPORT,
 	writeCamera,
 } from "./harness.ts";
+
+interface CaptureHostReply {
+	spool?: unknown;
+	id?: unknown;
+	image?: { url?: unknown };
+	error?: unknown;
+}
 
 /**
  * The mount-during-gesture benchmark (#94, #112). Mounting a document while the
@@ -209,7 +217,7 @@ interface JobApi {
  * own main thread what a real refresh job would. A job driven from Node through
  * CDP would insert into some other realm and price nothing.
  */
-function instrument(config: { captureIdle: number }): void {
+function instrument(config: { captureIdle: number; targetWidth: number }): void {
 	if (window !== window.top) return;
 	const state = {
 		raf: [],
@@ -381,13 +389,17 @@ function instrument(config: { captureIdle: number }): void {
 					return;
 				}
 				channel.port1.onmessage = (event: MessageEvent) => {
-					const reply = event.data as Record<string, unknown> | null;
+					const reply = event.data as CaptureHostReply | null;
 					if (reply === null || reply.spool !== RESULT || reply.id !== id) {
 						finish({ error: "invalid capture host reply" });
 						return;
 					}
-					if (typeof reply.url === "string") finish({ url: reply.url });
-					else finish({ error: String(reply.error ?? "capture failed") });
+					const image = reply.image;
+					if (typeof image?.url === "string") {
+						finish({ url: image.url });
+						return;
+					}
+					finish({ error: typeof reply.error === "string" ? reply.error : "capture failed" });
 				};
 				channel.port1.start();
 				target.postMessage({ spool: BOOTSTRAP, id }, new URL(origin).origin, [channel.port2]);
@@ -398,7 +410,7 @@ function instrument(config: { captureIdle: number }): void {
 					width: source.width,
 					height: source.height,
 					dpr: source.dpr,
-					maxEdge: source.maxEdge,
+					targetWidth: source.targetWidth,
 				});
 			});
 			host.src = `${new URL(origin).origin}/capture`;
@@ -463,11 +475,12 @@ function instrument(config: { captureIdle: number }): void {
 					waitingSource.delete(id);
 					done(reply);
 				});
-				el.contentWindow?.postMessage({ spool: "capture", id, maxEdge: 1200, settleMs }, "*");
+				el.contentWindow?.postMessage({ spool: "capture", id, targetWidth: config.targetWidth, settleMs }, "*");
 			});
 			leg.source = performance.now();
-			if (source === null || typeof source.error === "string") state.jobFailures++;
-			else {
+			if (source === null || typeof source.error === "string" || source.targetWidth !== config.targetWidth) {
+				state.jobFailures++;
+			} else {
 				const shot = await raster(id, source);
 				leg.raster = performance.now();
 				if ("url" in shot) leg.bytes = shot.url.length;
@@ -683,7 +696,7 @@ async function open(
 			(globalThis as unknown as { __spoolBench: unknown }).__spoolBench = hooks;
 		}, options.hooks);
 	}
-	await context.addInitScript(instrument, { captureIdle: options.captureIdle });
+	await context.addInitScript(instrument, { captureIdle: options.captureIdle, targetWidth: LIVE_MIN_CSS_PX });
 	const page = await context.newPage();
 	page.on("pageerror", (error) => process.stderr.write(`bench: page error — ${String(error).slice(0, 200)}\n`));
 	if (options.throttle > 1) {
@@ -743,7 +756,7 @@ async function canvasArm(
 		}));
 		await context.close();
 		throw new Error(
-			`the canvas borrowed nothing in 60 s: ${shape.frames} frames on screen, ${shape.images} of them showing a stored still — either the subject kept its ladders or the #112 hook is missing from the built UI`,
+			`the canvas borrowed nothing in 60 s: ${shape.frames} frames on screen, ${shape.images} of them showing a stored still — either the subject kept its stills or the #112 hook is missing from the built UI`,
 		);
 	}
 	const before = await mountedCount(page);

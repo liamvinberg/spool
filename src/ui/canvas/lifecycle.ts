@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { COVER_MAX_EDGE } from "../../cover";
+import { LIVE_MIN_CSS_PX } from "../../cover";
 import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
 import { intersects } from "./camera";
 import { CAPTURE_WORKER_TIMEOUT_MS, type CoverRaster, captureRequestId, rasterCaptureSource } from "./capture-broker";
@@ -35,9 +35,19 @@ import { type CaptureSourceReply, captureMessage } from "./protocol";
 export type FrameState = "picture" | "refreshing" | "held" | "live";
 
 const SWEEP_MS = 300;
+const EXPORT_MOUNT_TIMEOUT_MS = 20_000;
+
+function isExportMountReady(
+	state: FrameState | undefined,
+	ready: boolean,
+	sourceWindow: WindowProxy | null | undefined,
+): boolean {
+	return state !== undefined && state !== "picture" && ready && sourceWindow != null;
+}
+
 /**
  * How long a whole self-capture may take: the shim's serialization, the hops
- * between three realms, and the worker's own ladder budget. It has to outlast
+ * between three realms and the worker's raster budget. It has to outlast
  * the worker's, or this timer retires a capture that was still working.
  */
 export const CAPTURE_REPLY_TIMEOUT_MS = CAPTURE_WORKER_TIMEOUT_MS + 3000;
@@ -141,18 +151,6 @@ export function createLifecycleModel(): LifecycleModel {
 		wentInside: new Set(),
 	};
 }
-
-/**
- * How wide a frame must draw, in CSS pixels, before it gets a document. Below
- * this you cannot read it, so a still
- * tells you everything the document would; above it you can, which is where the
- * still starts reading as a photograph of the thing rather than the thing.
- *
- * Its real job is arithmetic. It is what bounds the live count without counting:
- * a 1512 x 945 viewport admits about a dozen frames this size, and no page size
- * or zoom can raise that.
- */
-export const LIVE_MIN_CSS_PX = 400;
 
 /**
  * How far past the viewport a frame is still admitted, as a fraction of it. The
@@ -366,7 +364,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		const target: FrameState = intent ?? (model.errands.has(name) ? "refreshing" : "picture");
 		// The photograph is the errand's whole point, taken the moment the
 		// borrowed document has run long enough to be worth one.
-		if (target === "refreshing" && debt && model.arrived.has(name) && !capturing.has(name)) {
+		if (intent === null && target === "refreshing" && debt && model.arrived.has(name) && !capturing.has(name)) {
 			refreshCaptures.push(name);
 		}
 		next[name] = target;
@@ -407,7 +405,7 @@ export interface LifecycleDeps {
 	/** The frame an open inspector rail is reading (#58). */
 	inspected: string | null;
 	hasCover: (frame: string) => boolean;
-	onShot: (frame: string, rungs: CoverRaster[]) => void;
+	onShot: (frame: string, image: CoverRaster) => void;
 	/**
 	 * Where the camera rests, read by the sweep.
 	 *
@@ -446,27 +444,44 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
 	const model = useRef(createLifecycleModel());
+	const exportFrame = useRef<string | null>(null);
+	const exportMountWaiter = useRef<{
+		frame: string;
+		resolve: (ready: boolean) => void;
+		timeout: ReturnType<typeof setTimeout>;
+	} | null>(null);
 	interface PendingCapture {
 		id: string;
-		maxEdge: number;
+		targetWidth: number;
 		sourceWindow: WindowProxy;
-		resolve: (rungs: CoverRaster[] | undefined) => void;
+		resolve: (image: CoverRaster | undefined) => void;
 		timeout: ReturnType<typeof setTimeout>;
 		rasterStarted: boolean;
+		sourceReturned: Promise<boolean>;
+		resolveSourceReturned: (returned: boolean) => void;
 		abort: AbortController;
 	}
 	const captureWaiters = useRef(new Map<string, PendingCapture>());
 
+	const finishExportMount = useCallback((frame: string, ready: boolean) => {
+		const waiter = exportMountWaiter.current;
+		if (waiter?.frame !== frame) return;
+		clearTimeout(waiter.timeout);
+		exportMountWaiter.current = null;
+		waiter.resolve(ready);
+	}, []);
+
 	/** Resolve exactly the request that produced this shot; stale work cannot satisfy its successor. */
-	const noteShot = useCallback((frame: string, id: string, rungs: CoverRaster[] | undefined) => {
+	const noteShot = useCallback((frame: string, id: string, image: CoverRaster | undefined) => {
 		const pending = captureWaiters.current.get(frame);
 		if (pending?.id !== id) return;
 		clearTimeout(pending.timeout);
 		captureWaiters.current.delete(frame);
+		pending.resolveSourceReturned(false);
 		pending.abort.abort();
-		pending.resolve(rungs);
+		pending.resolve(image);
 		// Full-resolution PNG is an export artifact, never a replacement cover.
-		if (rungs !== undefined && pending.maxEdge > 0) onShotRef.current(frame, rungs);
+		if (image !== undefined && pending.targetWidth > 0) onShotRef.current(frame, image);
 	}, []);
 
 	const onIframe = useCallback(
@@ -494,7 +509,11 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 	/** The frame's loaded report (commit-time effect, #17) — routed in by the canvas's message listener. */
 	const noteLoaded = useCallback((frame: string) => {
-		setReady((current) => (current.has(frame) ? current : new Map(current).set(frame, performance.now())));
+		if (!readyRef.current.has(frame)) {
+			const next = new Map(readyRef.current).set(frame, performance.now());
+			readyRef.current = next;
+			setReady(next);
+		}
 	}, []);
 
 	/**
@@ -514,14 +533,19 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			) {
 				return;
 			}
+			pending.resolveSourceReturned(true);
 			if ("error" in message) {
 				noteShot(message.frame, message.id, undefined);
 				return;
 			}
-			if (pending.maxEdge !== message.maxEdge || pending.rasterStarted) return;
+			if (pending.targetWidth !== message.targetWidth || pending.rasterStarted) return;
 			pending.rasterStarted = true;
-			void rasterCaptureSource({ ...message, maxEdge: pending.maxEdge }, captureOrigin, pending.abort.signal).then(
-				(rungs) => noteShot(message.frame, message.id, rungs),
+			void rasterCaptureSource(
+				{ ...message, targetWidth: pending.targetWidth },
+				captureOrigin,
+				pending.abort.signal,
+			).then(
+				(image) => noteShot(message.frame, message.id, image),
 				() => noteShot(message.frame, message.id, undefined),
 			);
 		},
@@ -529,21 +553,16 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	);
 
 	/**
-	 * Ask the frame's shim for a self-capture whose top rung is bounded to
-	 * `maxEdge` device pixels on its longest side (0 for the frame at full
-	 * resolution, one rung, lossless), allowing it `settleMs` to finish arriving
-	 * before it photographs itself. Resolves every rung the capture host
-	 * produced — or undefined for an unmounted, unbooted, already-capturing or
-	 * mute frame. A bounded capture persists as the frame's cover ladder; a
-	 * full-resolution export returns only to its caller.
+	 * Ask the frame's shim for one still sharp at the live threshold (or a
+	 * full-resolution lossless export when the target is zero).
 	 */
 	const requestCapture = useCallback(
 		(
 			frame: string,
-			maxEdge = COVER_MAX_EDGE,
+			targetWidth = LIVE_MIN_CSS_PX,
 			settleMs = CAPTURE_SETTLE_BUDGET_MS,
-		): Promise<CoverRaster[] | undefined> => {
-			if (!Number.isSafeInteger(maxEdge) || maxEdge < 0 || maxEdge > 16 * 1024) return Promise.resolve(undefined);
+		): Promise<CoverRaster | undefined> => {
+			if (targetWidth !== 0 && targetWidth !== LIVE_MIN_CSS_PX) return Promise.resolve(undefined);
 			const el = iframes.current.get(frame);
 			const sourceWindow = el?.contentWindow;
 			if (sourceWindow == null || !readyRef.current.has(frame)) return Promise.resolve(undefined);
@@ -551,17 +570,23 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			if (pending !== undefined) return Promise.resolve(undefined);
 			return new Promise((resolve) => {
 				const id = captureRequestId();
+				let resolveSourceReturned!: (returned: boolean) => void;
+				const sourceReturned = new Promise<boolean>((sourceResolve) => {
+					resolveSourceReturned = sourceResolve;
+				});
 				const timeout = setTimeout(() => noteShot(frame, id, undefined), CAPTURE_REPLY_TIMEOUT_MS + settleMs);
 				captureWaiters.current.set(frame, {
 					id,
-					maxEdge,
+					targetWidth,
 					sourceWindow,
 					resolve,
 					timeout,
 					rasterStarted: false,
+					sourceReturned,
+					resolveSourceReturned,
 					abort: new AbortController(),
 				});
-				sourceWindow.postMessage(captureMessage(id, maxEdge, settleMs), "*");
+				sourceWindow.postMessage(captureMessage(id, targetWidth, settleMs), "*");
 			});
 		},
 		[noteShot],
@@ -580,7 +605,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			frames: framesRef.current,
 			entered: enteredRef.current,
 			selectionTarget: selectionTargetRef.current,
-			inspected: inspectedRef.current,
+			inspected: exportFrame.current ?? inspectedRef.current,
 			states: statesRef.current,
 			ready: readyRef.current,
 			capturing: new Set(captureWaiters.current.keys()),
@@ -593,10 +618,82 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 					: { width: viewportRef.current.clientWidth, height: viewportRef.current.clientHeight },
 		});
 		for (const frame of result.refreshCaptures) {
-			void requestCapture(frame).then((rungs) => noteErrandShot(model.current, frame, rungs !== undefined));
+			void requestCapture(frame).then((image) => noteErrandShot(model.current, frame, image !== undefined));
 		}
 		if (result.changed) setStates(result.states);
 	}, [framesRef, cameraRef, viewportRef, requestCapture]);
+
+	/**
+	 * Hold one HTML frame through the inspector intent, wait for its document,
+	 * capture a full-resolution PNG, then hand the document back.
+	 */
+	const captureExport = useCallback(
+		async (frame: string): Promise<CoverRaster | undefined> => {
+			if (
+				exportFrame.current !== null ||
+				!framesRef.current.some((candidate) => candidate.name === frame && candidate.kind === "html")
+			) {
+				return undefined;
+			}
+
+			exportFrame.current = frame;
+			const coverCapture = captureWaiters.current.get(frame);
+			let mountPromise: Promise<boolean> | undefined;
+			if (
+				!isExportMountReady(
+					statesRef.current[frame],
+					readyRef.current.has(frame),
+					iframes.current.get(frame)?.contentWindow,
+				)
+			) {
+				mountPromise = new Promise((resolve) => {
+					const timeout = setTimeout(() => finishExportMount(frame, false), EXPORT_MOUNT_TIMEOUT_MS);
+					exportMountWaiter.current = { frame, resolve, timeout };
+				});
+			}
+			compute();
+
+			try {
+				// Let the frame return its cover source before export takes its one
+				// capture slot; then only the host-side raster is superseded.
+				if (coverCapture?.targetWidth === LIVE_MIN_CSS_PX) {
+					if (!(await coverCapture.sourceReturned)) return undefined;
+					if (captureWaiters.current.get(frame)?.id === coverCapture.id) {
+						noteShot(frame, coverCapture.id, undefined);
+					}
+				}
+				if (mountPromise !== undefined && !(await mountPromise)) return undefined;
+				return await requestCapture(frame, 0);
+			} finally {
+				finishExportMount(frame, false);
+				if (exportFrame.current === frame) exportFrame.current = null;
+				compute();
+			}
+		},
+		[compute, finishExportMount, framesRef, noteShot, requestCapture],
+	);
+
+	useEffect(() => {
+		const waiter = exportMountWaiter.current;
+		if (
+			waiter !== null &&
+			isExportMountReady(
+				states[waiter.frame],
+				ready.has(waiter.frame),
+				iframes.current.get(waiter.frame)?.contentWindow,
+			)
+		) {
+			finishExportMount(waiter.frame, true);
+		}
+	}, [finishExportMount, ready, states]);
+
+	useEffect(
+		() => () => {
+			const waiter = exportMountWaiter.current;
+			if (waiter !== null) finishExportMount(waiter.frame, false);
+		},
+		[finishExportMount],
+	);
 
 	// Selection, entering, and summoning the rail must feel instant, not one sweep late.
 	useEffect(() => {
@@ -624,6 +721,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		noteCaptureSource,
 		markStale,
 		capture: requestCapture,
+		captureExport,
 		sweep: compute,
 	};
 }

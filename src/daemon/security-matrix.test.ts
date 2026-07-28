@@ -150,24 +150,24 @@ describe("daemon authority matrix", () => {
 	it("lets a cover's own address be its credential, on the control host alone", async () => {
 		const { project, request, control } = makeSecurityHarness();
 		const body = new FormData();
-		body.append("w195", new Blob([new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3])]));
+		body.append("cover", new Blob([new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3])]));
 		const put = await control(`/api/p/${encodeURIComponent(project.name)}/thumbs/home`, { method: "PUT", body });
 		expect(put.status).toBe(200);
 		const { hash } = (await put.json()) as { hash: string };
-		const rung = `/covers/${encodeURIComponent(project.name)}/home/${hash}/195`;
+		const image = `/covers/${encodeURIComponent(project.name)}/home/${hash}`;
 
-		// An <img> cannot carry the control header, so writing the ladder's content
+		// An <img> cannot carry the control header, so writing the image content
 		// hash into the URL is what authorizes the read (#111). Nothing weaker
 		// does: a wrong hash names no cover, whoever asks.
-		expect((await request(CONTROL_HOST, rung)).status).toBe(200);
+		expect((await request(CONTROL_HOST, image)).status).toBe(200);
 		expect(
-			(await request(CONTROL_HOST, `/covers/${encodeURIComponent(project.name)}/home/${"0".repeat(32)}/195`)).status,
+			(await request(CONTROL_HOST, `/covers/${encodeURIComponent(project.name)}/home/${"0".repeat(32)}`)).status,
 		).toBe(404);
 
 		// and the address only exists on the trusted host: a frame document, which
 		// shares neither origin nor capability with the canvas, cannot reach it
-		expect((await request(RENDER_HOST, rung)).status).toBe(404);
-		expect((await request(CAPTURE_HOST, rung)).status).toBe(404);
+		expect((await request(RENDER_HOST, image)).status).toBe(404);
+		expect((await request(CAPTURE_HOST, image)).status).toBe(404);
 	});
 
 	it("protects control writes with the same token and origin policy as reads", async () => {

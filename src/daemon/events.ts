@@ -23,7 +23,7 @@ export interface FrameChange {
 export type ChangeEvent =
 	| FrameChange
 	| SharedChange
-	// a cover was written: the ladder rides along, so a canvas can swap addresses
+	// a cover was written: the image rides along, so a canvas can swap addresses
 	// without re-reading the projection. Absent means it could not be read back,
 	// and the canvas falls back to a frames read.
 	| { kind: "thumb"; frame: string; cover?: Cover }

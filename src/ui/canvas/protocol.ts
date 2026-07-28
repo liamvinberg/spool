@@ -1,4 +1,4 @@
-import { coverTopScale } from "../../cover";
+import { captureRasterSize, coverCaptureScale, LIVE_MIN_CSS_PX } from "../../cover";
 import { type ClipboardCopyRequest, parseClipboardCopyRequest } from "../../runtime/clipboard-protocol";
 import type { SessionRecord } from "../../runtime/frame-runtime";
 import { isWalkId } from "../../runtime/walk-protocol";
@@ -108,7 +108,7 @@ export interface CaptureSourceMessage {
 	width: number;
 	height: number;
 	dpr: number;
-	maxEdge: number;
+	targetWidth: number;
 }
 
 export interface CaptureSourceErrorMessage {
@@ -226,12 +226,10 @@ const finite = (value: unknown): value is number => typeof value === "number" &&
 const CAPTURE_ID = /^[0-9a-f]{32}$/;
 const MAX_CAPTURE_SVG_BYTES = 16 * 1024 * 1024;
 const MAX_CAPTURE_SOURCE_EDGE = 32 * 1024;
-const MAX_CAPTURE_EDGE = 16 * 1024;
-const MAX_CAPTURE_PIXELS = 32 * 1024 * 1024;
 
 function captureSourceMessage(message: Record<string, unknown>): boolean {
 	if (
-		!hasExactKeys(message, ["spool", "frame", "id", "svg", "width", "height", "dpr", "maxEdge"]) ||
+		!hasExactKeys(message, ["spool", "frame", "id", "svg", "width", "height", "dpr", "targetWidth"]) ||
 		typeof message.id !== "string" ||
 		!CAPTURE_ID.test(message.id) ||
 		!(message.svg instanceof Blob) ||
@@ -243,21 +241,12 @@ function captureSourceMessage(message: Record<string, unknown>): boolean {
 		!finite(message.dpr) ||
 		message.dpr <= 0 ||
 		message.dpr > 2 ||
-		!boundedInteger(message.maxEdge, 0, MAX_CAPTURE_EDGE)
+		(message.targetWidth !== 0 && message.targetWidth !== LIVE_MIN_CSS_PX)
 	) {
 		return false;
 	}
-	// the same rule the capture host rasters by: a cover's rungs come off the
-	// frame's own long edge, an export off the display's ratio
-	const scale =
-		message.maxEdge > 0 ? coverTopScale(message.maxEdge, Math.max(message.width, message.height)) : message.dpr;
-	const outputWidth = Math.max(1, Math.round(message.width * scale));
-	const outputHeight = Math.max(1, Math.round(message.height * scale));
-	return (
-		Number.isSafeInteger(outputWidth) &&
-		Number.isSafeInteger(outputHeight) &&
-		outputWidth * outputHeight <= MAX_CAPTURE_PIXELS
-	);
+	const scale = message.targetWidth > 0 ? coverCaptureScale(message.width) : message.dpr;
+	return captureRasterSize(message.width, message.height, scale) !== undefined;
 }
 
 function captureSourceErrorMessage(message: Record<string, unknown>): boolean {
@@ -306,15 +295,15 @@ function webHref(value: unknown): value is string {
 
 export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const;
 /**
- * `maxEdge` bounds the cover's longest side; 0 asks for full device resolution.
+ * `targetWidth` asks for a sharp cover at the live threshold; 0 asks for a full-resolution export.
  * `id` binds the reply to the exact request and frame document.
  * `settleMs` is how long the frame may wait for its own fonts and entry
  * animations before it photographs itself — the caller owns that budget,
  * because a walk's cover is wanted inside its own arrival and an ambient
  * refresh can afford to wait for the truth.
  */
-export const captureMessage = (id: string, maxEdge: number, settleMs: number) =>
-	({ spool: "capture", id, maxEdge, settleMs }) as const;
+export const captureMessage = (id: string, targetWidth: number, settleMs: number) =>
+	({ spool: "capture", id, targetWidth, settleMs }) as const;
 export const pickMessage = (x: number, y: number, id: number) => ({ spool: "pick", x, y, id }) as const;
 // "tree?" asks, "tree" answers — distinct kinds, so a reply can never read as a request
 export const treeMessage = (id: number) => ({ spool: "tree?", id }) as const;

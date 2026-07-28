@@ -67,27 +67,24 @@ describe("trusted UI API client", () => {
 		const { fetchCover } = await loadApi();
 		const hash = "b".repeat(32);
 
-		await expect(fetchCover("demo project", "home/card", { hash, widths: [780, 390] })).resolves.toBeInstanceOf(Blob);
+		await expect(fetchCover("demo project", "home/card", { hash })).resolves.toBeInstanceOf(Blob);
 
 		const call = fetchMock.mock.calls[0] ?? [];
 		expect(new URL(String(call[0]), window.location.href).pathname).toBe(
-			`/covers/demo%20project/home%2Fcard/${hash}/780`,
+			`/covers/demo%20project/home%2Fcard/${hash}`,
 		);
 		// the hash is the credential: an <img> cannot carry the control header
 		expect(headersOf(call).get("x-spool-control")).toBeNull();
 	});
 
-	it("uses authenticated keepalive fetches for cover ladders and staged trash", async () => {
+	it("uses authenticated keepalive fetches for covers and staged trash", async () => {
 		const fetchMock = vi
 			.fn()
-			.mockResolvedValue(new Response(JSON.stringify({ hash: "c".repeat(32), widths: [195] }), { status: 200 }));
+			.mockResolvedValue(new Response(JSON.stringify({ hash: "c".repeat(32) }), { status: 200 }));
 		vi.stubGlobal("fetch", fetchMock);
 		const { beaconTrash, putCover } = await loadApi();
 
-		await expect(putCover("demo", "home", [{ width: 195, bytes: new Blob(["jpeg"]) }])).resolves.toEqual({
-			hash: "c".repeat(32),
-			widths: [195],
-		});
+		await expect(putCover("demo", "home", new Blob(["jpeg"]))).resolves.toEqual({ hash: "c".repeat(32) });
 		beaconTrash("demo", ["home"]);
 		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
@@ -95,7 +92,7 @@ describe("trusted UI API client", () => {
 			expect(headersOf(call).get("x-spool-control")).toBe("control-test-token");
 		}
 		const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
-		expect([...body.keys()]).toEqual(["w195"]);
+		expect([...body.keys()]).toEqual(["cover"]);
 		expect((fetchMock.mock.calls[1]?.[1] as RequestInit | undefined)?.keepalive).toBe(true);
 	});
 

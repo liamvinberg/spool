@@ -27,7 +27,7 @@ const frame = (name: string, x: number, y: number, kind: "html" | "term" = "html
 	y,
 	w: 100,
 	h: 100,
-	cover: { hash: "0".repeat(32), widths: [200, 100, 50] },
+	cover: { hash: "0".repeat(32) },
 });
 
 /**

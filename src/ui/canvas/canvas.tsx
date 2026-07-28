@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { COVER_RUNGS, type Cover, coverSizes } from "../../cover";
+import type { Cover } from "../../cover";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
@@ -342,22 +342,16 @@ export function ProjectCanvas({
 
 	/**
 	 * Whether a frame has a still worth standing in for it — the only thing the
-	 * lifecycle asks about a picture. A whole ladder, not merely a cover: the
-	 * daemon's headless fallback writes one rung, because it has no image library
-	 * and cannot resample (#111), and the canvas stands a frame's still in for it
-	 * at every zoom now (#112). A frame carrying only the healed rung is soft
-	 * everywhere above it, so it is still owed a picture of its own.
+	 * lifecycle asks about a picture. The headless fallback and self-capture both
+	 * write the same one-image shape, so any stored cover is enough.
 	 */
 	const hasCover = useCallback(
-		(name: string) =>
-			framesRef.current.some(
-				(f) => f.name === name && f.cover !== undefined && f.cover.widths.length >= COVER_RUNGS,
-			),
+		(name: string) => framesRef.current.some((f) => f.name === name && f.cover !== undefined),
 		[],
 	);
 
 	/**
-	 * A cover was written — ours or another browser's. The ladder is the frame's
+	 * A cover was written by us or another browser. The image is the frame's
 	 * own state, so it is patched in place rather than held beside the projection:
 	 * the hash is the address, so a new one is a new URL and the swap needs no
 	 * nonce of its own.
@@ -370,15 +364,12 @@ export function ProjectCanvas({
 		);
 	}, []);
 
-	// a settled self-capture persists into design/.spool as the frame's whole ladder
+	// a settled self-capture persists into design/.spool as one immutable image
 	const onShot = useCallback(
-		(frame: string, rungs: CoverRaster[]) => {
+		(frame: string, image: CoverRaster) => {
 			void (async () => {
 				try {
-					const uploads = await Promise.all(
-						rungs.map(async (rung) => ({ width: rung.width, bytes: await (await fetch(rung.url)).blob() })),
-					);
-					const cover = await putCover(project, frame, uploads);
+					const cover = await putCover(project, frame, await (await fetch(image.url)).blob());
 					if (cover !== undefined) noteCover(frame, cover);
 				} catch {
 					// a lost capture is re-taken on the next settle
@@ -442,18 +433,14 @@ export function ProjectCanvas({
 	const capturePng = useCallback(
 		async (frame: ProjectedFrame): Promise<CapturedFrame> => {
 			if (frame.kind === "html") {
-				// an export is the artifact, never the cover: 0 asks for the frame
-				// at full device resolution, losslessly, as one rung
-				const rungs = await lifecycleRef.current.capture(frame.name, 0);
-				const sheet = rungs?.[0];
-				if (sheet !== undefined) {
-					const png = await pngBytesFromImageBlob(await (await fetch(sheet.url)).blob(), frame.w, frame.h);
-					return { name: frame.name, width: frame.w, height: frame.h, png };
-				}
+				const sheet = await lifecycleRef.current.captureExport(frame.name);
+				if (sheet === undefined) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
+				const png = await pngBytesFromImageBlob(await (await fetch(sheet.url)).blob(), frame.w, frame.h);
+				return { name: frame.name, width: frame.w, height: frame.h, png };
 			}
 
-			// nothing live to photograph (a terminal, or a frame that would not
-			// answer): fall back to the sharpest rung of its stored cover
+			// A terminal has no HTML document to mount, so its stored cover is
+			// the export source.
 			const stored = frame.cover === undefined ? undefined : await fetchCover(project, frame.name, frame.cover);
 			if (stored === undefined) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
 			const png = await pngBytesFromImageBlob(stored, frame.w, frame.h);
@@ -1293,7 +1280,7 @@ export function ProjectCanvas({
 						void refetchFrames();
 					}
 				} else if (event.kind === "thumb" && event.frame !== undefined) {
-					// the ladder rides the event; only a cover the daemon could not
+					// the image rides the event; only a cover the daemon could not
 					// read back costs a projection read
 					if (event.cover !== undefined) noteCover(event.frame, event.cover);
 					else void refetchFrames();
@@ -2626,11 +2613,6 @@ export function ProjectCanvas({
 											terminal={frame.kind === "term"}
 											docNonce={docNonces[frame.name] ?? 0}
 											cover={frame.cover}
-											coverSizes={
-												frame.cover === undefined
-													? undefined
-													: coverSizes(frame.cover.widths, frame.w, k, devicePixelRatio)
-											}
 											terminalCover={frame.terminalCover}
 											walkArrival={walkArrivals.has(frame.name)}
 											onIframe={onIframe}
