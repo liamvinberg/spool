@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectedFrame } from "../api";
 import { cn } from "../cn";
 import { ageOf, charWeights, findFrames, newestFirst, runsIn, type Weight } from "./frame-find";
@@ -72,108 +72,131 @@ export function FindPalette({
 		listRef.current?.querySelector<HTMLElement>(`[data-at="${at}"]`)?.scrollIntoView({ block: "nearest" });
 	}, [at]);
 
+	// the fade only while rows remain below it: at the end, nothing says "more"
+	const [more, setMore] = useState(false);
+	const measureMore = useCallback(() => {
+		const list = listRef.current;
+		setMore(list !== null && list.scrollTop + list.clientHeight < list.scrollHeight - 1);
+	}, []);
+	useEffect(() => {
+		if (hits.length === 0) {
+			setMore(false);
+			return;
+		}
+		measureMore();
+	}, [hits.length, measureMore]);
+
 	const empty = query.trim().length === 0;
 
 	return (
-		<div className="absolute inset-0 z-30 flex animate-find-in justify-center bg-bg/48 px-8 pt-[104px] backdrop-blur-[2px]">
-			{/* the scrim is a door out, the way the picker's backdrop is */}
-			<button
-				type="button"
-				aria-label="Close the finder"
-				tabIndex={-1}
-				className="absolute inset-0 cursor-default"
-				onMouseDown={onClose}
-			/>
-			<div
-				role="dialog"
-				aria-modal="true"
-				aria-label="Find a frame"
-				// a caret that never leaves: clicking the panel is never clicking away from the field
-				onMouseDown={(event) => {
-					if (event.target !== inputRef.current) event.preventDefault();
-					inputRef.current?.focus();
-				}}
-				className="relative flex h-fit w-[560px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-border-raised bg-surface"
-			>
-				<label className="flex h-12 shrink-0 items-center gap-3 border-border border-b px-4">
-					{/* the summon key, left as the prompt: the field says which key opened it */}
-					<span className="shrink-0 font-mono text-md text-muted/60 leading-md">/</span>
-					<input
-						ref={inputRef}
-						value={query}
-						spellCheck={false}
-						autoComplete="off"
-						placeholder="type part of a name"
-						onChange={(event) => {
-							setQuery(event.target.value);
-							setAt(0);
-						}}
-						onKeyDown={(event) => {
-							if (event.key === "ArrowDown") {
-								event.preventDefault();
-								setAt((n) => Math.min(n + 1, Math.max(hits.length - 1, 0)));
-							} else if (event.key === "ArrowUp") {
-								event.preventDefault();
-								setAt((n) => Math.max(n - 1, 0));
-							} else if (event.key === "Enter") {
-								event.preventDefault();
-								if (picked !== undefined) onLand(picked.frame.name);
-							} else if (event.key === "Escape") {
-								event.preventDefault();
-								onClose();
-							}
-						}}
-						className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none placeholder:text-muted/40"
-						aria-label="Find a frame"
-					/>
-					{/* an order you did not ask for has to say what it is; an order you typed does not */}
-					<span className="shrink-0 font-mono text-2xs text-muted/50 leading-3">
-						{empty ? `${fresh.length} frames, newest first` : `${hits.length} of ${fresh.length}`}
-					</span>
-				</label>
+		<>
+			<div className="absolute inset-0 z-30 animate-find-in bg-bg/48 backdrop-blur-[2px]">
+				{/* the scrim is a door out, the way the picker's backdrop is */}
+				<button
+					type="button"
+					aria-label="Close the finder"
+					tabIndex={-1}
+					className="absolute inset-0 cursor-default"
+					onMouseDown={onClose}
+				/>
+			</div>
+			{/* fixed, so the panel centres on the window: the rails are asymmetric most of
+			    the time, and a viewport centre reads as off-centre. 148 is the 44px bar plus
+			    the 104 the prototype set below it. The scrim still stops at the rails. */}
+			<div className="pointer-events-none fixed inset-x-0 top-[148px] z-30 flex justify-center px-8">
+				<div
+					role="dialog"
+					aria-modal="true"
+					aria-label="Find a frame"
+					// a caret that never leaves: clicking the panel is never clicking away from the field
+					onMouseDown={(event) => {
+						if (event.target !== inputRef.current) event.preventDefault();
+						inputRef.current?.focus();
+					}}
+					className="pointer-events-auto flex h-fit w-[560px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-border-raised bg-surface"
+				>
+					<label className="flex h-12 shrink-0 items-center gap-3 border-border border-b px-4">
+						{/* the summon key, left as the prompt: the field says which key opened it */}
+						<span className="shrink-0 font-mono text-md text-muted/60 leading-md">/</span>
+						<input
+							ref={inputRef}
+							value={query}
+							spellCheck={false}
+							autoComplete="off"
+							placeholder="type part of a name"
+							onChange={(event) => {
+								setQuery(event.target.value);
+								setAt(0);
+							}}
+							onKeyDown={(event) => {
+								if (event.key === "ArrowDown") {
+									event.preventDefault();
+									setAt((n) => Math.min(n + 1, Math.max(hits.length - 1, 0)));
+								} else if (event.key === "ArrowUp") {
+									event.preventDefault();
+									setAt((n) => Math.max(n - 1, 0));
+								} else if (event.key === "Enter") {
+									event.preventDefault();
+									if (picked !== undefined) onLand(picked.frame.name);
+								} else if (event.key === "Escape") {
+									event.preventDefault();
+									onClose();
+								}
+							}}
+							className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none placeholder:text-muted/40"
+							aria-label="Find a frame"
+						/>
+						{/* an order you did not ask for has to say what it is; an order you typed does not */}
+						<span className="shrink-0 font-mono text-2xs text-muted/50 leading-3">
+							{empty ? `${fresh.length} frames, newest first` : `${hits.length} of ${fresh.length}`}
+						</span>
+					</label>
 
-				<div className="relative shrink-0">
-					<div
-						ref={listRef}
-						className="overflow-y-auto py-1.5"
-						// an overflowing list stops half a row short, so the cut is the thing
-						// that says there is more, rather than a trough down the side of it
-						style={{
-							height: Math.min(Math.max(hits.length, 1), VISIBLE) * ROW + 12 + (hits.length > VISIBLE ? 15 : 0),
-						}}
-					>
-						{hits.length === 0 ? (
-							<div className="flex h-[30px] items-center px-4 font-mono text-muted/60 text-sm leading-sm">
-								nothing answers to that
-							</div>
-						) : (
-							hits.map((hit, index) => (
-								<FindRow
-									key={hit.frame.name}
-									name={hit.frame.name}
-									page={pageLabel(pageOf(hit.frame))}
-									matched={hit.matched}
-									index={index}
-									age={empty ? ageOf(hit.frame.born, openedAt) : undefined}
-									picked={index === at}
-									onPoint={() => setAt(index)}
-									onLand={() => onLand(hit.frame.name)}
-								/>
-							))
-						)}
+					<div className="relative shrink-0">
+						<div
+							ref={listRef}
+							onScroll={measureMore}
+							className="overflow-y-auto py-1.5"
+							// an overflowing list stops half a row short, so the cut is the thing
+							// that says there is more, rather than a trough down the side of it
+							style={{
+								height:
+									Math.min(Math.max(hits.length, 1), VISIBLE) * ROW + 12 + (hits.length > VISIBLE ? 15 : 0),
+							}}
+						>
+							{hits.length === 0 ? (
+								<div className="flex h-[30px] items-center px-4 font-mono text-muted/60 text-sm leading-sm">
+									nothing answers to that
+								</div>
+							) : (
+								hits.map((hit, index) => (
+									<FindRow
+										key={hit.frame.name}
+										name={hit.frame.name}
+										page={pageLabel(pageOf(hit.frame))}
+										matched={hit.matched}
+										index={index}
+										age={empty ? ageOf(hit.frame.born, openedAt) : undefined}
+										picked={index === at}
+										onPoint={() => setAt(index)}
+										onLand={() => onLand(hit.frame.name)}
+									/>
+								))
+							)}
+						</div>
+						{more ? (
+							<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface via-surface/85 to-transparent" />
+						) : null}
 					</div>
-					{hits.length > VISIBLE ? (
-						<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface via-surface/85 to-transparent" />
-					) : null}
-				</div>
 
-				<div className="flex h-9 shrink-0 items-center gap-5 border-border border-t px-4 font-mono text-2xs text-muted leading-3">
-					<span>{"↑↓ moves"}</span>
-					<span>{"↵ lands there"}</span>
-					<span>esc closes</span>
+					<div className="flex h-9 shrink-0 items-center gap-5 border-border border-t px-4 font-mono text-2xs text-muted leading-3">
+						<span>{"↑↓ moves"}</span>
+						<span>{"↵ lands there"}</span>
+						<span>esc closes</span>
+					</div>
 				</div>
 			</div>
-		</div>
+		</>
 	);
 }
 
