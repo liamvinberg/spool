@@ -91,12 +91,35 @@ export interface Chip {
 
 export type Strip =
 	| { readonly kind: "none" }
-	| { readonly kind: "chips"; readonly chips: readonly Chip[] }
+	| { readonly kind: "chips"; readonly chips: readonly Chip[]; readonly entered?: EnteredChip }
 	| { readonly kind: "count"; readonly label: string; readonly chips: readonly Chip[] };
 
+/* ---------- the chip nobody chose (#139) ----------
+ * `canvas.tsx:820` serves the entered frame when nothing is picked and nothing is
+ * selected, so stepping inside a frame puts a chip in the composer that the human
+ * never asked for. It is always exactly one frame: a pick outranks it, a canvas
+ * selection outranks it, and any press outside the frame has already left it
+ * (`canvas.tsx:1682`), so there is no state where this chip has a neighbour.
+ *
+ * Four ways to draw it, one per frame:
+ *   drop    what the rail does today, undrawn until now: an ordinary chip, ✕ and
+ *           all, where the ✕ is the only thing on screen that ejects you from the
+ *           frame you are working inside.
+ *   plain   the same chip with the ✕ gone, because entering is retracted by esc.
+ *   quiet   dimmer than a picked chip, on the reading that a chip nobody chose is
+ *           weaker evidence than one they did.
+ *   said    the chip says why it is there — `inside cart` rather than `cart`.
+ */
+export type EnteredChip = "drop" | "plain" | "quiet" | "said";
+
 /** `width` is the composer's inner width in px — 420 rail, less its two paddings */
-export function stripOf(entries: readonly Pointed[], width: number): Strip {
-	if (entries.length === 0) return { kind: "none" };
+export function stripOf(entries: readonly Pointed[], width: number, entered?: EnteredChip): Strip {
+	const first = entries[0];
+	if (first === undefined) return { kind: "none" };
+	if (entered !== undefined) {
+		// one frame, so the fit test has nothing to decide and the count is unreachable
+		return { kind: "chips", chips: [{ id: first.id, label: enteredLabel(first, entered) }], entered };
+	}
 	// one chip has room to say where it is; a run of them only repeats it
 	const shared = entries.length > 1 && sharesFrame(entries);
 	const chips = entries.map((entry) => ({ id: entry.id, label: chipLabel(entry, shared) }));
@@ -105,14 +128,18 @@ export function stripOf(entries: readonly Pointed[], width: number): Strip {
 	return { kind: "count", label: countLabel(entries), chips };
 }
 
+function enteredLabel(entry: Pointed, entered: EnteredChip): string {
+	return entered === "said" ? `inside ${entry.frame}` : chipLabel(entry, false);
+}
+
 /**
  * The line the transcript keeps under the human's words. A sent turn is a
  * record, so it says exactly what the strip said at rest — no more, because the
  * strip is the promise that was made, and no less, because a turn nobody can
  * audit is a turn nobody can trust.
  */
-export function contextLine(entries: readonly Pointed[], width: number): string | undefined {
-	const strip = stripOf(entries, width);
+export function contextLine(entries: readonly Pointed[], width: number, entered?: EnteredChip): string | undefined {
+	const strip = stripOf(entries, width, entered);
 	if (strip.kind === "none") return undefined;
 	if (strip.kind === "count") return strip.label;
 	return strip.chips.map((chip) => chip.label).join(", ");
