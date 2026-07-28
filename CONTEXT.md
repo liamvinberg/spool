@@ -26,7 +26,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Portal**: The chip drawn where a link leaves the active page — no arrow can reach the target, so the marker names it and its page, and activating it jumps there.
 
-**Select**: The default and only pointer tool: a click takes the frame to arrange it, a double-click enters it, and holding the platform modifier takes the element under the cursor instead. Selecting into one frame holds that frame with its time stopped; the rest keep their normal lifecycle. _Avoid_: interact
+**Select**: The default and only pointer tool: a click takes the frame to arrange it, a double-click enters it, and holding the platform modifier takes the element under the cursor instead. Selecting a readable HTML frame leaves it visible and running while Select owns the pointer; an unreadable selection stays held behind its still. _Avoid_: interact
 
 **Hand**: The canvas tool for panning with a primary-button drag; holding Space borrows it temporarily.
 
@@ -38,11 +38,11 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Picture**: A frame below readable size or outside the viewport ring: its still on screen and no document behind it, for as long as nothing asks for one. _Avoid_: hibernated, unmounted, cold
 
-**Caused mounting**: Why a frame holds a document at all: you went inside it, its picture is missing, its picture is wrong, or it draws at least 400 CSS px wide inside a viewport expanded by 25% on every side. The readable condition bounds documents by viewport area rather than frame count. Intent holds a document too, one frame at a time: the frozen selection target and the frame an open inspector rail reads. _Avoid_: warm pool, wake queue, hibernation
+**Caused mounting**: Why a frame holds a document at all: you went inside it, its picture is missing, its picture is wrong, or it draws at least 400 CSS px wide inside a viewport expanded by 25% on every side. The readable condition bounds documents by viewport area rather than frame count. Intent holds a document too, one frame at a time: the selection target and the frame an open inspector rail reads. _Avoid_: warm pool, wake queue, hibernation
 
 **Errand**: The canvas borrowing a frame to photograph it — mount out of sight behind its own still, run, capture, hand the document back. The frame is _refreshing_ while it holds the borrowed document. Three at once at most, and that count is the whole of the pacing. _Avoid_: refresh queue, job
 
-**Held**: A frame mounted with its own time stopped, so the Select tool and the inspector rail have real DOM to read. Frozen by `content-visibility: hidden` at engine level, which suspends the nested document's frames, style, layout and paint — so a held frame shows its still, and the one exception is the frame you are inside, which keeps painting because you are looking at it and only loses the pointer. A terminal's freeze is a SIGSTOP on its real process instead, which no CSS can reach. _Avoid_: warm, paused
+**Held**: A frame mounted behind its still so the Select tool and inspector rail have real DOM to read. An unreadable HTML selection stays held and keeps running; at readable size it resolves live, because Select must point at what is shown. This rejects cooperative pause and frozen pick geometry: entered frames already allow movement while Select owns the pointer, so neither a second runtime control nor stale geometry earns its complexity. A held terminal alone freezes, by SIGSTOP on its real process. _Avoid_: warm, paused
 
 **Inspector rail**: The right rail reading the selected frame, closed by default and summoned only from the header pill. Two tabs: `elements` (the frame's named rows) and `connections` (its whole outbound list). Sticky both ways — selection never opens or closes it. _Avoid_: panel, properties
 

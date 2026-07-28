@@ -365,11 +365,9 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
 
 /**
  * The canvas shim (#8/#22), a classic script installed before any module so it
- * holds native references before frame code can replace them. It no longer
- * stops time: a held frame is frozen by `content-visibility: hidden` on the
- * canvas side (#112), which suspends this document's rAF, style, layout and
- * paint at engine level — strictly more than a cooperative freeze could hold,
- * and one mechanism rather than two. Speaks the host protocol:
+ * holds native references before frame code can replace them. HTML frames keep
+ * running when Select owns the pointer; terminal freeze lives in the terminal
+ * runtime. Speaks the host protocol:
  * {spool:"capture", id, maxEdge, settleMs}
  * answers with a sanitized foreignObject source for the trusted capture host
  * to rasterize off this frame's main thread. The frame waits out its own fonts

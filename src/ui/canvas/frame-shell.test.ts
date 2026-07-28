@@ -20,8 +20,8 @@ const COVER = { hash: "d".repeat(32), widths: [780, 390, 195] };
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
 /**
- * The cover law (#8, #28, #112): the still covers every frame but the one you
- * went inside, and covers that one until its loaded report. The veil +
+ * The cover law (#8, #28, #112): the still covers every non-live frame, and a
+ * live frame until its loaded report. The veil +
  * "booting" badge belongs to that boot alone. A frame borrowed to be
  * photographed boots out of sight behind its own still, and a walk arrival is
  * quiet the same way, so a canvas filling itself in behind you never turns into
@@ -54,11 +54,8 @@ describe("coverPlan", () => {
 		});
 	});
 
-	it("keeps showing the frame you are inside while the modifier holds its time still", () => {
-		// ⌘ over an entered frame freezes it so an element can be reached, and the
-		// lifecycle calls that `held` — but you are still looking at it, and its
-		// stored still is a picture of a state you have since walked away from.
-		expect(plan({ state: "held", ready: true }).cover).toBe(false);
+	it("leaves a readable canvas frame uncovered while Select owns the pointer", () => {
+		expect(plan({ state: "live", entered: false, ready: true }).cover).toBe(false);
 	});
 
 	it("shows the placeholder for a frame with nothing to stand in for it", () => {
@@ -155,13 +152,15 @@ describe("FrameShell documents", () => {
 		act(() => root.unmount());
 	});
 
-	it("shows the document only for the frame you went inside", async () => {
-		const { host, root, again } = await render({ state: "live", entered: true });
+	it("shows every live document, whether it is entered or selected", async () => {
+		const { host, root, again } = await render({ state: "live", entered: false });
 		const wrapper = host.querySelector("iframe")?.parentElement;
 		expect(wrapper?.style.visibility).toBe("visible");
 
-		// borrowed and held frames both have a document and neither is looked at:
-		// the still is what the canvas draws in their place
+		await again({ state: "live", entered: true });
+		expect(wrapper?.style.visibility).toBe("visible");
+
+		// Borrowed and unreadable held frames both stay behind their still.
 		for (const state of ["refreshing", "held"] as const) {
 			await again({ state });
 			expect(host.querySelector("iframe")?.parentElement?.style.visibility).toBe("hidden");
@@ -169,35 +168,27 @@ describe("FrameShell documents", () => {
 		act(() => root.unmount());
 	});
 
-	it("stops a held frame's time at engine level, but never before its boot lands", async () => {
-		// A document locked before it ever laid out has no size to lay out into,
-		// and the rail and the Select tool would find nothing in it to read.
+	it("keeps a held html document mounted without an engine lock", async () => {
 		const { host, root, again } = await render({ state: "held", ready: false });
-		expect(host.querySelector("iframe")?.parentElement?.style.contentVisibility).toBe("visible");
+		expect(host.querySelector("iframe")?.parentElement?.style.contentVisibility).toBe("");
 
 		await again({ state: "held", ready: true });
-		expect(host.querySelector("iframe")?.parentElement?.style.contentVisibility).toBe("hidden");
-
-		// a borrowed frame has to run to finish arriving: hidden, never stopped
-		await again({ state: "refreshing", ready: true });
-		expect(host.querySelector("iframe")?.parentElement?.style.contentVisibility).toBe("visible");
+		expect(host.querySelector("iframe")?.parentElement?.style.contentVisibility).toBe("");
 		act(() => root.unmount());
 	});
 
-	it("never puts a still over the frame you are inside, even while it is held", async () => {
-		// ⌘ over an entered frame freezes it so an element can be reached. Locking
-		// it would also blind it, and you would be picking against live DOM with
-		// a picture of some earlier state under the cursor.
-		const { host, root } = await render({ state: "held", entered: true, ready: true });
+	it("shows the readable selected HTML frame while Select owns its pointer", async () => {
+		const { host, root } = await render({ state: "live", entered: false, ready: true, interactive: false });
 		const wrapper = host.querySelector("iframe")?.parentElement;
 		expect(wrapper?.style.visibility).toBe("visible");
-		expect(wrapper?.style.contentVisibility).toBe("visible");
+		expect(host.querySelector("iframe")?.style.pointerEvents).toBe("none");
+		expect(host.querySelector("[data-frame-cover]")).toBeNull();
 		act(() => root.unmount());
 	});
 
 	it("keeps the same document across every state that has one", async () => {
 		// React reconciling an iframe whose src changed reloads it, and a frame
-		// that reboots when you freeze it is a frame you cannot pick at
+		// that reboots while Select owns it is a frame you cannot pick at.
 		const { host, root, again } = await render({ state: "live" });
 		const iframe = host.querySelector("iframe");
 		await again({ state: "held" });

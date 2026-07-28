@@ -15,10 +15,8 @@ async function launchBrowser(): Promise<Browser | undefined> {
 }
 
 async function childFrame(page: Page, selector: string): Promise<Frame> {
-	// Attached, not visible: the only document the canvas ever shows is the one
-	// you went inside (#112) — every other frame is behind its own still. An
-	// element found a moment ago can also be between documents, so ask again
-	// rather than read a stale handle.
+	// Documents may be hidden or between boots. Wait for attachment, then ask
+	// again if the element has not received its current document yet.
 	for (let attempt = 0; ; attempt++) {
 		const element = await page.waitForSelector(selector, { state: "attached" });
 		const frame = await element.contentFrame();
@@ -372,11 +370,10 @@ it("can copy after the canvas ignores an automatic walk from the same held frame
 	});
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	const label = page.locator('[data-frame-label="warm"]');
-	// Take the frame with one click. Select freezes what you point at, and a
-	// frozen frame is the model's own "mounted, and not the one you are inside"
-	// (#112): it holds real DOM for the tools to read, its boot runs, and it
-	// stays for as long as the selection does — which is what makes the walk it
-	// tries on its own way in observable at all.
+	// Take the frame with one click. The selection target is mounted without
+	// being entered (#112): it holds real DOM for the tools to read, its boot
+	// runs, and it stays for as long as the selection does, which is what makes
+	// the walk it tries on its own observable at all.
 	const still = page.locator('[data-frame-cover="warm"]');
 	await still.waitFor({ timeout: 30_000 });
 	const stillBox = await still.boundingBox();

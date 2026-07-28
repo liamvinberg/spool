@@ -95,8 +95,8 @@ import { TrashToast } from "./trash-toast";
  * clean click; Select picks live DOM and arranges frames; Hand pans. Command
  * and Space borrow Select and Hand while held. Selection keeps Figma's scope
  * grammar: double-click descends, Command-click jumps deepest, Shift toggles,
- * hover previews, and Esc ascends. Selecting into one frame freezes only that
- * document in place. Geometry sidecars are the only canvas writes; frame
+ * hover previews, and Esc ascends. Selecting into one frame makes it the
+ * selection target. Geometry sidecars are the only canvas writes; frame
  * source remains agent-owned.
  */
 
@@ -390,10 +390,9 @@ export function ProjectCanvas({
 
 	const pickedFrame = picked[picked.length - 1]?.frame;
 	const selectedFrame = selected[selected.length - 1];
-	// Select freezes what you point at so it cannot move under the cursor. The
-	// entered frame is the exception: it runs, and only stops when ⌘ takes the
-	// pointer back off it to reach an element.
-	const frozenFrame =
+	// Select owns the selected frame so it can reach its elements. Readable HTML
+	// remains live while the pointer is ours; unreadable frames stay behind stills.
+	const selectionTarget =
 		effectiveTool === "select" ? (pickedFrame ?? selectedFrame ?? (metaDown ? entered : null)) : null;
 	// what the rail reads: the element scope's frame, else the frame selection,
 	// else the frame being used — inside a prototype its elements are the ones
@@ -409,7 +408,7 @@ export function ProjectCanvas({
 	const lifecycle = useFrameLifecycle({
 		framesRef,
 		entered,
-		frozen: frozenFrame,
+		selectionTarget,
 		inspected: railOpen ? inspectedFrame : null,
 		hasCover: hasCover,
 		onShot,
@@ -1662,8 +1661,8 @@ export function ProjectCanvas({
 			return;
 		}
 
-		// A live frame owns its own presses — the canvas only ever sees one when
-		// ⌘ has frozen it to reach an element, so ⌘ must not read as leaving.
+		// A live frame owns its own presses. The canvas only sees one when ⌘ has
+		// borrowed its pointer to reach an element, so ⌘ must not read as leaving.
 		if (enteredRef.current !== null && !event.metaKey) {
 			const hit = frameAtWorld(toWorld(p, cam));
 			if (hit === enteredRef.current) return; // the pointer is the frame's now
@@ -2128,7 +2127,7 @@ export function ProjectCanvas({
 	 * The tree grammar on element rows: shift ranges over the frame's visible
 	 * rows, ⌘/Ctrl toggles, a plain click replaces. Selecting an element is
 	 * Select's business (#54), so the row takes the tool with it — and the
-	 * frame it selects into is the one that freezes.
+	 * frame it selects into becomes the selection target.
 	 */
 	const selectTreeRow = (row: TreeRow, modifiers: SelectModifiers) => {
 		const frame = inspectedFrame;
@@ -2589,7 +2588,7 @@ export function ProjectCanvas({
 							const isSelected = selected.includes(frame.name);
 							const isHovered =
 								effectiveTool === "select" && hovered?.visible === true && hovered.frame === frame.name;
-							const paused = state !== "live";
+							const paused = frame.kind === "term" && state === "held";
 							return (
 								<div
 									key={frame.name}
@@ -2600,9 +2599,8 @@ export function ProjectCanvas({
 										height: frame.h,
 									}}
 								>
-									{/* the label: mono, muted; thread when selected; ▸ = paused (system
-									    page). Entered swaps it for the state chip (#28): time is
-									    running under the pointer, and esc is the way out. */}
+									{/* the label: mono, muted; thread when selected; ▸ only marks a
+									    terminal SIGSTOP. Entered swaps it for the state chip (#28). */}
 									<FrameLabel
 										name={frame.name}
 										frameWidth={frame.w}
