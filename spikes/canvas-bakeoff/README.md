@@ -47,7 +47,7 @@ Both variants render the same five frames (a fake habit app: three phone screens
 - **Watermark** — the tldraw variant shows "made with tldraw" because it runs unlicensed, which is exactly how a free spool would have to ship (see below).
 - Chrome-first on purpose: WebKit blurs transformed iframes (open since 2014), already a decision on the bank page.
 
-## The license facts the verdict must weigh (research/04-substrate.md §1)
+## The license facts the verdict must weigh
 
 - tldraw is **free for local development only**. Production needs a license: **Trial** (100 days, one per entity, no grace period), **Commercial** (paid, "value-based pricing" — the official pricing page contains zero dollar figures), or **Hobby** (non-commercial only, discretionary approval, **watermark mandatory**).
 - The commonly cited ~$6k/yr startup figure is press/HN secondhand from the 2025 relicensing, not confirmed current.

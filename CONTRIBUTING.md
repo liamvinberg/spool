@@ -79,7 +79,6 @@ If you develop in a disposable worktree, register the lane itself with `spool op
 | `CONTEXT.md` | Canonical vocabulary. Use these words in issues, tests, and code. |
 | `docs/adr/` | Why the load-bearing decisions went the way they did |
 | `AGENTS.md` | Repo conventions, written for coding agents but accurate for humans |
-| `research/` | Historical evidence from the exploration phase, not current behavior |
 
 Tests sit next to what they test, as `<module>.test.ts`. If you are changing behavior, the nearest test file is usually the fastest way to understand what the current behavior is supposed to be.
 
