@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { exitChordLabel } from "../../runtime/term-keys";
 import { FrameLabel } from "./frame-label";
 
 describe("FrameLabel", () => {
@@ -18,8 +19,8 @@ describe("FrameLabel", () => {
 			}),
 		);
 
-		expect(markup).toContain("paused · ⌘esc exits");
-		expect(markup).not.toContain("live · ⌘esc exits");
+		expect(markup).toContain(`paused · ${exitChordLabel()} exits`);
+		expect(markup).not.toContain(`live · ${exitChordLabel()} exits`);
 	});
 
 	it("truncates within the frame's rendered width when zoomed out", () => {
