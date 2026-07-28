@@ -83,7 +83,8 @@ const INDENT = MARK_W + 10;
 export function StateMark({ state, className }: { state: RowState; className?: string | undefined }) {
 	const still = useReducedMotion() === true;
 	const failed = state === "failed";
-	const done = state === "done" || failed;
+	const cut = state === "stopped";
+	const done = state === "done" || failed || cut;
 	const running = state === "running";
 	return (
 		<span className={cn("relative flex h-3.5 w-3.5 shrink-0", className)}>
@@ -116,7 +117,17 @@ export function StateMark({ state, className }: { state: RowState; className?: s
 				animate={{ scale: done ? 1 : 0.86 }}
 				transition={still ? { duration: 0 } : { duration: 0.34, delay: 0.06, ease: ARRIVE }}
 			>
-				{(failed ? ["M4.2 4.2l5.6 5.6", "M9.8 4.2l-5.6 5.6"] : ["m3.4 7.2 2.4 2.4 4.8-5.2"]).map((path, stroke) => (
+				{/* one stroke, and it is the only mark here that is neither a yes nor a no.
+				    A check is two strokes meeting, a cross is two crossing, and a call the
+				    developer stopped is a single flat one through the space the ring leaves:
+				    it did not succeed, it did not fail, it was cut. Drawn short of the full
+				    width so it reads as a stub rather than a minus sign. */}
+				{(cut
+					? ["M4.4 7h5.2"]
+					: failed
+						? ["M4.2 4.2l5.6 5.6", "M9.8 4.2l-5.6 5.6"]
+						: ["m3.4 7.2 2.4 2.4 4.8-5.2"]
+				).map((path, stroke) => (
 					<motion.path
 						key={path}
 						d={path}
@@ -141,6 +152,63 @@ export function StateMark({ state, className }: { state: RowState; className?: s
 	);
 }
 
+
+/**
+ * The way out of a turn that is already running (#165).
+ *
+ * `hold` (#145) and this are not the same act and do not share a payload. A parked
+ * turn has already stopped by itself and its exit is #162's dismiss — a bare
+ * `{behavior:"deny"}` back down the question's own channel. A turn in flight is
+ * stopped by an `interrupt` **control request** over the stdin `--input-format
+ * stream-json` already opened, which 2.1.220 answers with `{still_queued:[…]}`:
+ * the uuids of queued messages that outlive the abort. Spool's composer refuses to
+ * send while a turn is running, so that list is always empty here — the request's
+ * own `cancel_queued` flag, whose documentation names this exact case ("a
+ * Stop-means-stop-everything client (a remote UI's Stop button) sets this true"),
+ * has nothing to cancel until Spool decides queueing is a thing it does.
+ *
+ * The key is esc, and it costs nothing to spend. `canvas.tsx:2553` is a ladder of
+ * eight meanings rather than a binding, and #139 owns one rung of it — but
+ * `canvas.tsx:2347` is `if (isTyping(event.target)) return`, so the canvas ignores
+ * every key while focus is in a textarea, and the composer is one. Enter sends and
+ * leaves focus there, so in the ordinary flow esc is already being thrown away at
+ * the exact moment a turn is running. Click out to the canvas and the ladder is the
+ * canvas's again, which is why the press has to exist too: it is the only path that
+ * works from wherever the eyes are, which in this product is the frame repainting.
+ *
+ * The binary agrees with both halves — `press Esc to stop` when it owns the
+ * terminal, `press Ctrl+C to stop` when it does not.
+ */
+export type StopWhere = "none" | "footer" | "field" | "edge";
+
+function StopButton({ where, onStop }: { where: Exclude<StopWhere, "none">; onStop: () => void }) {
+	if (where === "field") {
+		return (
+			<button
+				type="button"
+				onClick={onStop}
+				aria-label="stop"
+				className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border-raised bg-raised transition-colors duration-150 hover:border-muted/45"
+			>
+				<span className="h-2.5 w-2.5 rounded-[1px] bg-text" />
+			</button>
+		);
+	}
+	return (
+		<button
+			type="button"
+			onClick={onStop}
+			className={cn(
+				"flex w-fit items-center gap-2 rounded-sm border border-border-raised bg-raised px-2 transition-colors duration-150 hover:border-muted/45",
+				where === "edge" ? "h-6" : "h-[18px]",
+			)}
+		>
+			<span className="h-2 w-2 shrink-0 rounded-[1px] bg-text" />
+			<span className="font-mono text-2xs text-text leading-3">stop</span>
+			<span className="font-mono text-2xs text-muted/60 leading-3">⎋</span>
+		</button>
+	);
+}
 
 /* ---------- the rail ---------- */
 
@@ -305,6 +373,8 @@ export function PlayRail({
 	onPoint,
 	onJump,
 	run,
+	stop = "none",
+	onStop,
 	onSend,
 	onReplay,
 	onAnswer,
@@ -368,6 +438,9 @@ export function PlayRail({
 	onPoint?: ((frame: string | null) => void) | undefined;
 	onJump?: ((frame: string) => void) | undefined;
 	run: number;
+	/** where the way out of a running turn is drawn; `none` leaves the turn with no exit (#165) */
+	stop?: StopWhere | undefined;
+	onStop?: (() => void) | undefined;
 	onSend: (text: string) => void;
 	onReplay: () => void;
 	/** lets a turn held at a question carry on, once one has been given (#145) */
@@ -393,6 +466,10 @@ export function PlayRail({
 		setPicked(text);
 		onAnswer?.();
 	};
+	// a stop is only ever offered against a turn in flight: a settled one has nothing
+	// to interrupt, and a parked one is #162's dismiss rather than an `interrupt`
+	const cutting = stop !== "none" && phase === "playing" && !waiting && onStop !== undefined;
+	const halt = onStop ?? (() => {});
 	const kit: JumpKit | null =
 		jump === undefined
 			? null
@@ -428,6 +505,7 @@ export function PlayRail({
 				onPick={answer}
 				jump={kit}
 				onReach={reach}
+				tail={cutting && stop === "edge" ? <StopButton where="edge" onStop={halt} /> : undefined}
 			/>
 			<Composer
 				field={field}
@@ -440,6 +518,8 @@ export function PlayRail({
 				onLight={onLight}
 				onDrop={onDrop}
 				phase={phase}
+				stop={cutting && stop !== "edge" ? stop : "none"}
+				onStop={halt}
 				onSend={onSend}
 				onReplay={onReplay}
 				onReach={reach}
@@ -502,6 +582,7 @@ function Transcript({
 	onPick,
 	jump,
 	onReach,
+	tail,
 }: {
 	entries: readonly PlayEntry[];
 	run: number;
@@ -514,6 +595,8 @@ function Transcript({
 	onPick: (label: string) => void;
 	jump: JumpKit | null;
 	onReach: (event: { target: EventTarget | null }) => void;
+	/** whatever hangs off the last entry, which so far is only #165's stop */
+	tail?: ReactNode | undefined;
 }) {
 	const view = useRef<HTMLDivElement>(null);
 	// stay pinned to the live end while the reader is already there, and stop pinning
@@ -582,6 +665,7 @@ function Transcript({
 							/>
 						</Arrive>
 					))}
+					{tail === undefined ? null : <div className="pt-3.5">{tail}</div>}
 				</div>
 			</div>
 			<span className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-bg to-transparent" />
@@ -1479,6 +1563,8 @@ function Composer({
 	onLight,
 	onDrop,
 	phase,
+	stop,
+	onStop,
 	onSend,
 	onReplay,
 	onReach,
@@ -1501,6 +1587,9 @@ function Composer({
 	onLight: ((id: string | null) => void) | undefined;
 	onDrop: ((id: string | null) => void) | undefined;
 	phase: TurnPhase;
+	/** `none` while there is nothing to stop, which is most of the time */
+	stop: StopWhere;
+	onStop: () => void;
 	onSend: (text: string) => void;
 	onReplay: () => void;
 	onReach: (event: { target: EventTarget | null }) => void;
@@ -1518,6 +1607,7 @@ function Composer({
 			{chips === null ? null : <AskChips ask={chips} onPick={onPick} />}
 			<div className="flex flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5 transition-colors duration-150 focus-within:border-muted/45">
 				<SelectionStrip strip={strip} lit={lit} onLight={onLight} onDrop={onDrop} />
+				<div className="flex items-end gap-2">
 				<textarea
 					ref={field}
 					value={value}
@@ -1530,6 +1620,16 @@ function Composer({
 						fit(event.target);
 					}}
 					onKeyDown={(event) => {
+						// the canvas never sees this: `canvas.tsx:2347` returns on any keydown whose
+						// target is a textarea, so esc in the composer has been going nowhere since
+						// #139 — which is the whole reason a running turn can have it without
+						// taking a rung off the ladder out there (#165)
+						if (event.key === "Escape") {
+							if (stop === "none") return;
+							event.preventDefault();
+							onStop();
+							return;
+						}
 						if (event.key !== "Enter" || event.shiftKey) return;
 						event.preventDefault();
 						const text = value.trim();
@@ -1542,13 +1642,25 @@ function Composer({
 					className="w-full resize-none bg-transparent text-base text-text leading-base outline-none placeholder:text-muted/50"
 					style={{ height: MIN_H }}
 				/>
+					{stop === "field" ? <StopButton where="field" onStop={onStop} /> : null}
+				</div>
 			</div>
 			{/* the model takes the hint's place rather than sitting beside it: an 18px
 			    line has room for one quiet thing on the left, and which model is
 			    answering outranks a keyboard hint you learn once */}
 			<div className="relative flex h-[18px] items-center justify-between">
 				{model ?? <span className="font-mono text-2xs text-muted/45 leading-3">{busy ? "" : "enter to send"}</span>}
-				{phase === "settled" ? (
+				{/* stop and replay are the same slot because they are the same question asked
+				    of a turn at its two ends, and they can never both be true: one is what you
+				    can do to a turn that is running, the other to one that has finished. It
+				    draws heavier than `replay` on purpose — replay costs a second and this
+				    stops something spending tokens and writing files. */}
+				{stop === "footer" ? <StopButton where="footer" onStop={onStop} /> : null}
+				{/* a stopped turn replays too: `replay` is the prototype's own affordance and
+				    has no counterpart in the product, where what follows a stop is simply the
+				    next thing you type — which the composer already accepts, because `busy` is
+				    false the moment the turn is no longer playing */}
+				{phase === "settled" || phase === "stopped" ? (
 					<button
 						type="button"
 						onClick={onReplay}

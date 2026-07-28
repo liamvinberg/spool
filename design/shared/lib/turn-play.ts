@@ -23,7 +23,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * the end state and no movement at all.
  */
 
-export type TurnPhase = "idle" | "playing" | "settled";
+/**
+ * `stopped` is a fourth phase rather than an early `settled`, because the two are
+ * not the same ending and the binary says so: a clean turn lands
+ * `result/error_during_execution` with `terminal_reason: "completed"`, an
+ * interrupted one with `"aborted_streaming"` — or `"aborted_tools"`, which is the
+ * same act landing while the tool batch was running rather than while the model
+ * was still writing (2.1.220: `Wpt(e){return e==="aborted_streaming"||e==="aborted_tools"}`).
+ * Everything downstream forks on it: rows in flight resolve differently, the
+ * composer swaps its control back, and the thread mark has to know that nothing
+ * is coming.
+ */
+export type TurnPhase = "idle" | "playing" | "settled" | "stopped";
 
 /** a named moment in the turn, measured in ms from the send */
 export interface Cue {
@@ -46,6 +57,16 @@ export interface Turn {
 	replay: () => void;
 	/** let a held turn carry on, once the thing it was waiting for has happened */
 	resume: () => void;
+	/**
+	 * Stop the turn where it is (#165).
+	 *
+	 * The opposite of `hold` in the one way that matters: a hold parks on a cue the
+	 * script names, so the moment is the capture's, while a cut lands wherever the
+	 * person happened to press. Nothing past it fires, and every row still open when
+	 * it lands stays open forever — which is the whole state being drawn, because a
+	 * turn that is stopped is defined by what it did *not* get to.
+	 */
+	cut: () => void;
 }
 
 /**
@@ -62,7 +83,7 @@ export interface Turn {
  * intervals, and releasing re-arms the rest from where the script had got to, so
  * the timing after the answer is the capture's own again.
  */
-export function useTurn(cues: readonly Cue[], hold?: string): Turn {
+export function useTurn(cues: readonly Cue[], hold?: string, cutAt?: string): Turn {
 	const still = useReducedMotion() === true;
 	const [state, setState] = useState<{ run: number; phase: TurnPhase; prompt: string }>({
 		run: 0,
@@ -73,10 +94,19 @@ export function useTurn(cues: readonly Cue[], hold?: string): Turn {
 	/** the script time this leg starts from; `n` climbs so releasing re-arms the timers */
 	const [leg, setLeg] = useState<{ n: number; from: number }>({ n: 0, from: 0 });
 	const [waiting, setWaiting] = useState(false);
+	/**
+	 * Its own state rather than a read of `phase`, so the scheduler can depend on it.
+	 * Flipping it re-runs the effect, whose cleanup clears every timer still pending —
+	 * which is what actually stops the turn. `phase` is deliberately not a dependency
+	 * there, because the settle at the end of the script sets it and a re-run would
+	 * re-arm the whole script from the top.
+	 */
+	const [cutOff, setCutOff] = useState(false);
 
 	const send = useCallback((text: string) => {
 		setFired([]);
 		setWaiting(false);
+		setCutOff(false);
 		setLeg({ n: 0, from: 0 });
 		setState((prev) => ({ run: prev.run + 1, phase: "playing", prompt: text }));
 	}, []);
@@ -84,16 +114,36 @@ export function useTurn(cues: readonly Cue[], hold?: string): Turn {
 	const replay = useCallback(() => {
 		setFired([]);
 		setWaiting(false);
+		setCutOff(false);
 		setLeg({ n: 0, from: 0 });
 		setState((prev) => ({ run: prev.run + 1, phase: "playing", prompt: prev.prompt }));
+	}, []);
+
+	/**
+	 * A cut is idempotent and only ever reaches a turn that is running: stopping a
+	 * settled turn is not a thing the rail can offer, and stopping a parked one is
+	 * #162's dismiss, which is a different act with a different payload — a bare
+	 * `{behavior:"deny"}` on the question's own channel rather than an `interrupt`
+	 * control request.
+	 */
+	const cut = useCallback(() => {
+		setCutOff(true);
+		setWaiting(false);
+		setState((prev) => (prev.phase === "playing" ? { ...prev, phase: "stopped" } : prev));
 	}, []);
 
 	const { run, phase, prompt } = state;
 	// a number rather than the cue, so the effect below has a stable dependency
 	const stopAt = hold === undefined ? null : (cues.find((cue) => cue.name === hold)?.at ?? null);
+	/** where the capture's own stop landed, for a frame nobody presses (#165) */
+	const cutOn = cutAt === undefined ? null : (cues.find((cue) => cue.name === cutAt)?.at ?? null);
 
 	useEffect(() => {
 		if (run === 0) return;
+		// nothing further is scheduled, and the cleanup of the previous run of this
+		// effect has already cleared what was pending — so the turn is frozen exactly
+		// where the press caught it, mid-argument if that is where it was
+		if (cutOff) return;
 		if (still) {
 			setFired(cues.map((cue) => cue.name));
 			setState((prev) => ({ ...prev, phase: "settled" }));
@@ -112,6 +162,17 @@ export function useTurn(cues: readonly Cue[], hold?: string): Turn {
 				}, cue.at - leg.from),
 			);
 		}
+		// the recording's own interrupt, so a frame left alone ends the way the session
+		// ended rather than settling as though the turn had finished. Flipping `cutOff`
+		// re-runs this effect, whose cleanup takes the settle timer with it
+		if (!parks && cutOn !== null && cutOn >= leg.from) {
+			timers.push(
+				window.setTimeout(() => {
+					setCutOff(true);
+					setState((prev) => (prev.phase === "playing" ? { ...prev, phase: "stopped" } : prev));
+				}, cutOn - leg.from),
+			);
+		}
 		if (parks && stopAt !== null) {
 			timers.push(window.setTimeout(() => setWaiting(true), stopAt - leg.from));
 		} else {
@@ -123,7 +184,7 @@ export function useTurn(cues: readonly Cue[], hold?: string): Turn {
 		return () => {
 			for (const timer of timers) window.clearTimeout(timer);
 		};
-	}, [run, still, cues, leg, stopAt]);
+	}, [run, still, cues, leg, stopAt, cutOn, cutOff]);
 
 	const resume = useCallback(() => {
 		if (stopAt === null) return;
@@ -132,7 +193,7 @@ export function useTurn(cues: readonly Cue[], hold?: string): Turn {
 	}, [stopAt]);
 
 	const at = useCallback((name: string) => fired.includes(name), [fired]);
-	return { phase, prompt, at, run, waiting, send, replay, resume };
+	return { phase, prompt, at, run, waiting, send, replay, resume, cut };
 }
 
 /**
@@ -194,8 +255,20 @@ export function duration(ms: number): string {
  * `claude-fanout.json` — a refused `Edit` — and both read as done, because the
  * projection only ever asked whether a result had landed. A refused MCP call is
  * the same shape, and it is the one the developer most needs to be able to see.
+ *
+ * `stopped` is #165's, and the wire is the reason it cannot be folded into
+ * `failed`. An interrupt stamps the call in flight with exactly what a permission
+ * denial stamps it with — 2.1.220 builds the synthetic result through
+ * `createSyntheticErrorMessage(id, "user_interrupted")`, which sets
+ * `toolDenialKind: "user-rejected"`, the same value a decline at the prompt gets,
+ * and `claude-interrupt.json:70` carries it — so a rail that forks on the error
+ * alone draws a cross and says the agent's `read` failed. It did not fail and it
+ * did not run: `non_execution_kind` is documented as "the harness-stamped reason
+ * an is_error:true result did not carry the tool's own execution output", and
+ * absent means the tool ran to completion. The developer stopped it, so the row
+ * is neither a success nor a fault, and the mark is neither a check nor a cross.
  */
-export type RowState = "pending" | "running" | "done" | "failed";
+export type RowState = "pending" | "running" | "done" | "failed" | "stopped";
 
 export interface RowChild {
 	/** stable across the child's own state changes — its name is not, so keying on
