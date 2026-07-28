@@ -20,7 +20,7 @@ Added the frame finder: press `/` to search frames by name and jump to one.
 | `minor` | The published product gains a capability |
 | `major` | The public contract becomes incompatible (from `1.0.0`; see below) |
 
-Write the prose for someone reading the changelog, not for a reviewer: what they can do now, or what stopped being broken. One coherent change per file, and several commits may share one changeset. Name the file after the change (`frame-finder.md`), or let `pnpm changeset` scaffold one.
+Write the prose for someone reading the changelog, not for a reviewer: what they can do now, or what stopped being broken. Write it the way one person tells another: short plain sentences, no em dashes, no jargon, no flourish. One coherent change per file, and several commits may share one changeset. Name the file after the change (`frame-finder.md`), or let `pnpm changeset` scaffold one.
 
 Work with no published effect ships no changeset: the `design/` canvas, docs, tests, CI, refactors, benchmarks.
 
