@@ -131,24 +131,24 @@ function parseArgs(argv: string[]): Options {
 
 /**
  * The frames that can show a picture at all, read from disk rather than from the
- * canvas. A frame is covered when its cover folder holds at least one rung of a
- * hashed ladder (#111) or — for a terminal — a serialized screen sits beside it.
- * A bare `<frame>.jpg` from the pre-ladder store is not a cover and never shows.
+ * canvas. A frame is covered when its cover folder holds one hashed image, or
+ * when a terminal has a serialized screen beside it. A bare `<frame>.jpg`
+ * from the pre-image store is not a cover and never shows.
  */
 function splitByCover(root: string, frames: FrameBox[]): { covered: string[]; bare: string[] } {
 	const thumbs = join(root, "design", ".spool", "thumbs");
 	const screens = join(root, "design", ".spool", "term");
-	const rung = /^[0-9a-f]{32}\.[1-9][0-9]*\.(?:jpg|png)$/;
+	const image = /^[0-9a-f]{32}\.(?:jpg|png)$/;
 	const covered: string[] = [];
 	const bare: string[] = [];
 	for (const frame of frames) {
-		let ladder: string[] = [];
+		let files: string[] = [];
 		try {
-			ladder = readdirSync(join(thumbs, frame.name));
+			files = readdirSync(join(thumbs, frame.name));
 		} catch {
-			ladder = [];
+			files = [];
 		}
-		const has = ladder.some((file) => rung.test(file)) || existsSync(join(screens, `${frame.name}.screen`));
+		const has = files.some((file) => image.test(file)) || existsSync(join(screens, `${frame.name}.screen`));
 		(has ? covered : bare).push(frame.name);
 	}
 	return { covered, bare };
@@ -224,8 +224,8 @@ interface CoverResponse {
  * The cover fetches as the page timed them. Same-origin, so `responseEnd` is
  * real and sits in the same `performance.now()` timebase as the marks above —
  * which is what makes "network, then decode" a subtraction rather than a guess.
- * Since #111 the `<img>` fetches its own rung, so the network entry *is* the
- * image, and its address is /covers/<project>/<frame>/<hash>/<width>.
+ * The `<img>` fetches its own image, so the network entry *is* the image and
+ * its address is /covers/<project>/<frame>/<hash>.
  */
 const readCoverResponses = (page: Page): Promise<CoverResponse[]> =>
 	page.evaluate(() =>
@@ -236,8 +236,8 @@ const readCoverResponses = (page: Page): Promise<CoverResponse[]> =>
 				const timing = entry as PerformanceResourceTiming;
 				const parts = (timing.name.split("?")[0] ?? "").split("/");
 				return {
-					// .../covers/<project>/<frame>/<hash>/<width>
-					frame: decodeURIComponent(parts[parts.length - 3] ?? ""),
+					// .../covers/<project>/<frame>/<hash>
+					frame: decodeURIComponent(parts[parts.length - 2] ?? ""),
 					responseEnd: timing.responseEnd,
 					transferSize: timing.transferSize,
 					encodedBodySize: timing.encodedBodySize,

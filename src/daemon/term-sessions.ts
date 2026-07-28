@@ -7,7 +7,7 @@ import type { Terminal } from "@xterm/headless";
 import { writeAtomic } from "../atomic-write";
 import type { Cover } from "../cover";
 import { gridFromBuffer } from "../term/buffer-grid";
-import { CELL_W, cellsForPx, MIN_COLS, MIN_ROWS } from "../term/cells";
+import { cellsForPx, MIN_COLS, MIN_ROWS } from "../term/cells";
 import { resetCursorVisibility, serializedCursorVisibility, trackCursorVisibility } from "../term/cursor-visibility";
 import { createOscFilter } from "../term/osc";
 import type { Grid } from "../term/still";
@@ -427,7 +427,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 	}
 
 	/**
-	 * A terminal's cover truth, and the ladder that addresses it. The picture is
+	 * A terminal's cover truth, and the image address for it. The picture is
 	 * the *persisted* screen even while a session runs: a live terminal is
 	 * mounted and painting for real, and its cover is only ever what a reboot
 	 * would land in. That is what makes the address immutable — the served SVG
@@ -444,7 +444,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 			if (persisted.kind === "never-run") return { state: neverRun(frame) };
 		}
 		if (persisted.kind !== "current") return { state: { kind: "current" } };
-		return { state: { kind: "current" }, cover: screenCover(persisted.raw, persisted.record) };
+		return { state: { kind: "current" }, cover: screenCover(persisted.raw) };
 	}
 
 	async function grid(root: string, frame: string): Promise<Grid | undefined> {
@@ -458,7 +458,7 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 	}
 
 	/**
-	 * The cover behind the ladder `cover` addresses: the persisted record alone,
+	 * The cover behind the image address `cover`: the persisted record alone,
 	 * in the pinned font alone. Both are what the hash is taken over, so neither
 	 * is the caller's to vary — reading the live screen or another font here would
 	 * let one immutable address answer with two different pictures.
@@ -497,17 +497,15 @@ export function createTermSessions({ executor, publish, detachGraceMs }: TermSes
 let fontToken: string | undefined;
 
 /**
- * A terminal cover's ladder: one rung, because the still is an SVG and needs no
- * second — the browser rasterizes it at whatever size the canvas draws it. The
- * hash covers the record and the pinned font, which are the whole of what
+ * A terminal cover is one SVG image: the browser rasterizes it at whatever size
+ * the canvas draws it. The hash covers the record and the pinned font, the whole of what
  * `gridToSvg` reads, so a screen that has not changed keeps its address and an
  * upgrade that repins the font retires it.
  */
-function screenCover(raw: string, record: PersistedScreen): Cover {
+function screenCover(raw: string): Cover {
 	fontToken ??= createHash("sha256").update(termFontDataCss()).digest("hex").slice(0, 16);
 	return {
 		hash: createHash("sha256").update(fontToken).update("\0").update(raw).digest("hex").slice(0, 32),
-		widths: [record.cols * CELL_W],
 	};
 }
 

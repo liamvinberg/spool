@@ -32,9 +32,9 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Entered**: The state of a frame after a double-click: pointer and keyboard input belong to its app, and walks happen in place. Esc leaves an html frame. A terminal frame currently has no TUI keyboard session because it renders a static disabled surface; the platform modifier + Esc still leaves it. Holding the platform modifier hands the pointer back so an element can be reached; the frame keeps painting, because you are still looking at it. _Avoid_: focused, interact
 
-**Still**: The stored picture of a frame, taken by the frame itself once it has finished arriving — its own fonts, its content settled. It is what the canvas draws below a readable size, and it covers a frame until its document boots. A still is a placeholder, not an artifact: it stands in below 400 CSS px drawn width; above that, a nearby frame is live. _Avoid_: screenshot, snapshot
+**Still**: One immutable, content-addressed picture of a frame, taken by the frame itself once it has finished arriving with its own fonts and settled content. It is what the canvas draws below a readable size, and it covers a frame until its document boots. A still is a placeholder, not an artifact: it is sharp up to 400 CSS px drawn width; above that, a nearby frame is live. _Avoid_: screenshot, snapshot
 
-**Ladder**: What a still is stored as: several **rungs** of one picture, the top at the frame's long edge doubled and each below it half the one above, addressed together by one hash of their content. The frame's geometry sets the sizes, never the display that photographed it. The canvas names the rung a zoom asks for, because only the canvas can see the camera. A short ladder is a normal cover — the headless fallback can only make its bottom rung. _Avoid_: variant, size, resolution
+**Ladder**: Retired. A still is one image at one immutable URL, sized for the readable threshold; the canvas has no rung to choose. _Avoid_: variant, size, resolution
 
 **Picture**: A frame below readable size or outside the viewport ring: its still on screen and no document behind it, for as long as nothing asks for one. _Avoid_: hibernated, unmounted, cold
 

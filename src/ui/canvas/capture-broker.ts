@@ -1,20 +1,16 @@
-import { COVER_RUNGS } from "../../cover";
+import { captureRasterSize } from "../../cover";
 import type { CaptureSourceMessage } from "./protocol";
 
 const BOOTSTRAP = "spool-capture-bootstrap-v1";
 const RASTER = "spool-capture-raster-v1";
 const RESULT = "spool-capture-result-v1";
 /**
- * How long the isolated worker may hold one capture. The budget is per rung,
- * because a cover is a ladder (#111): the source is parsed and decoded once, but
- * each rung is its own encode, and the whole of it — iframe, bootstrap, rasters
- * — happens inside this window.
+ * How long the isolated worker may hold one raster.
  */
-const CAPTURE_RUNG_TIMEOUT_MS = 2400;
-export const CAPTURE_WORKER_TIMEOUT_MS = CAPTURE_RUNG_TIMEOUT_MS * COVER_RUNGS;
+export const CAPTURE_WORKER_TIMEOUT_MS = 2400;
 const MAX_CAPTURE_DATA_URL_CHARS = Math.ceil((64 * 1024 * 1024) / 3) * 4 + 32;
 
-/** One rung as the capture host actually rasterized it — the width both stores name it by. */
+/** The one image as the capture host actually rasterized it. */
 export interface CoverRaster {
 	url: string;
 	width: number;
@@ -22,7 +18,7 @@ export interface CoverRaster {
 }
 
 type CaptureResult =
-	| { spool: typeof RESULT; id: string; rungs: CoverRaster[] }
+	| { spool: typeof RESULT; id: string; image: CoverRaster }
 	| { spool: typeof RESULT; id: string; error: string };
 
 export interface CaptureBrokerPlatform {
@@ -50,35 +46,22 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]):
 	return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
 }
 
-function coverRaster(value: unknown, maxEdge: number): value is CoverRaster {
+function coverRaster(value: unknown, targetWidth: number): value is CoverRaster {
 	return (
 		record(value) &&
 		exactKeys(value, ["height", "url", "width"]) &&
 		typeof value.url === "string" &&
 		value.url.length <= MAX_CAPTURE_DATA_URL_CHARS &&
-		value.url.startsWith(maxEdge > 0 ? "data:image/jpeg;base64," : "data:image/png;base64,") &&
-		bounded(value.width) &&
-		bounded(value.height)
+		value.url.startsWith(targetWidth > 0 ? "data:image/jpeg;base64," : "data:image/png;base64,") &&
+		typeof value.width === "number" &&
+		typeof value.height === "number" &&
+		captureRasterSize(value.width, value.height, 1) !== undefined
 	);
 }
 
-// a cover rung stays under COVER_MAX_EDGE, but an export is the frame at full
-// device resolution, so the bound here is the worker's own output edge
-const MAX_RASTER_EDGE = 16 * 1024;
-
-function bounded(value: unknown): value is number {
-	return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= MAX_RASTER_EDGE;
-}
-
-function captureResult(value: unknown, id: string, maxEdge: number): CaptureResult | undefined {
+function captureResult(value: unknown, id: string, targetWidth: number): CaptureResult | undefined {
 	if (!record(value) || value.spool !== RESULT || value.id !== id) return undefined;
-	if (
-		exactKeys(value, ["id", "rungs", "spool"]) &&
-		Array.isArray(value.rungs) &&
-		value.rungs.length >= 1 &&
-		value.rungs.length <= (maxEdge > 0 ? COVER_RUNGS : 1) &&
-		value.rungs.every((rung) => coverRaster(rung, maxEdge))
-	) {
+	if (exactKeys(value, ["id", "image", "spool"]) && coverRaster(value.image, targetWidth)) {
 		return value as CaptureResult;
 	}
 	if (
@@ -98,7 +81,7 @@ export function captureRequestId(): string {
 
 /**
  * Rasterize one already-validated frame source in the isolated capture host,
- * answering the whole ladder it produced off that one snapshot. The iframe and
+ * answering the one image it produced. The iframe and
  * both ports have one settlement path, so success, malformed replies, load
  * errors, and timeout all retire the same temporary resources.
  */
@@ -107,7 +90,7 @@ export function rasterCaptureSource(
 	configuredOrigin: string,
 	signal?: AbortSignal,
 	platform: CaptureBrokerPlatform = browserPlatform,
-): Promise<CoverRaster[]> {
+): Promise<CoverRaster> {
 	return new Promise((resolve, reject) => {
 		const captureOrigin = new URL(configuredOrigin).origin;
 		const iframe = platform.createIframe();
@@ -134,11 +117,11 @@ export function rasterCaptureSource(
 			} catch {}
 			iframe.remove();
 		};
-		const finish = (result: { rungs: CoverRaster[] } | { error: Error }) => {
+		const finish = (result: { image: CoverRaster } | { error: Error }) => {
 			if (settled) return;
 			settled = true;
 			cleanup();
-			if ("rungs" in result) resolve(result.rungs);
+			if ("image" in result) resolve(result.image);
 			else reject(result.error);
 		};
 		const onError = () => finish({ error: new Error("capture worker failed to load") });
@@ -152,12 +135,12 @@ export function rasterCaptureSource(
 				return;
 			}
 			channel.port1.onmessage = (event) => {
-				const result = captureResult(event.data, source.id, source.maxEdge);
+				const result = captureResult(event.data, source.id, source.targetWidth);
 				if (result === undefined) {
 					finish({ error: new Error("invalid capture worker reply") });
 					return;
 				}
-				if ("rungs" in result) finish({ rungs: result.rungs });
+				if ("image" in result) finish({ image: result.image });
 				else finish({ error: new Error(result.error) });
 			};
 			channel.port1.onmessageerror = () => finish({ error: new Error("invalid capture worker reply") });
@@ -171,7 +154,7 @@ export function rasterCaptureSource(
 					width: source.width,
 					height: source.height,
 					dpr: source.dpr,
-					maxEdge: source.maxEdge,
+					targetWidth: source.targetWidth,
 				});
 			} catch (error) {
 				finish({ error: error instanceof Error ? error : new Error("capture worker unavailable") });

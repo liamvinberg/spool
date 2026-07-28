@@ -173,14 +173,14 @@ describe("page-frame stores key by leaf name", () => {
 		writePageFrame(root, "shop", "checkout", label("checkout"));
 		const app = makeApp(spoolDir);
 		const body = new FormData();
-		body.append("w195", new Blob([COVER_PNG]));
+		body.append("cover", new Blob([COVER_PNG]));
 
 		const put = await app.request(`/api/p/${name}/thumbs/checkout`, { method: "PUT", body });
 
 		expect(put.status).toBe(200);
 		const { hash } = (await put.json()) as { hash: string };
-		expect(existsSync(join(root, "design", ".spool", "thumbs", "checkout", `${hash}.195.png`))).toBe(true);
-		expect((await app.request(`/covers/${name}/checkout/${hash}/195`)).status).toBe(200);
+		expect(existsSync(join(root, "design", ".spool", "thumbs", "checkout", `${hash}.png`))).toBe(true);
+		expect((await app.request(`/covers/${name}/checkout/${hash}`)).status).toBe(200);
 	});
 
 	it("moves a trashed page frame's folder", async () => {

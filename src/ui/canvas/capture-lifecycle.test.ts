@@ -7,13 +7,8 @@ import type { ProjectedFrame } from "../api";
 import type { CoverRaster } from "./capture-broker";
 import type { CaptureSourceMessage } from "./protocol";
 
-const broker = vi.hoisted(() => ({
-	id: vi.fn<() => string>(),
-	raster: vi.fn(),
-}));
+const broker = vi.hoisted(() => ({ id: vi.fn<() => string>(), raster: vi.fn() }));
 
-// the broker's two doors are stubbed; its budgets are the real ones, because the
-// lifecycle's own timeout is defined as outlasting them
 vi.mock(import("./capture-broker"), async (importOriginal) => ({
 	...(await importOriginal()),
 	captureRequestId: broker.id,
@@ -38,7 +33,7 @@ afterEach(async () => {
 	vi.useRealTimers();
 });
 
-function source(id: string, maxEdge: number): CaptureSourceMessage {
+function source(id: string, targetWidth: number): CaptureSourceMessage {
 	return {
 		spool: "capture-source",
 		frame: "landing",
@@ -47,12 +42,12 @@ function source(id: string, maxEdge: number): CaptureSourceMessage {
 		width: 390,
 		height: 844,
 		dpr: 2,
-		maxEdge,
+		targetWidth,
 	};
 }
 
-async function mountLifecycle(onShot: (frame: string, rungs: CoverRaster[]) => void) {
-	const framesRef = { current: [] } as unknown as RefObject<ProjectedFrame[]>;
+async function mountLifecycle(onShot: (frame: string, image: CoverRaster) => void, frames: ProjectedFrame[] = []) {
+	const framesRef = { current: frames } as unknown as RefObject<ProjectedFrame[]>;
 	let lifecycle: Lifecycle | undefined;
 	function Harness() {
 		lifecycle = useFrameLifecycle({
@@ -60,7 +55,7 @@ async function mountLifecycle(onShot: (frame: string, rungs: CoverRaster[]) => v
 			entered: null,
 			selectionTarget: null,
 			inspected: null,
-			hasCover: () => false,
+			hasCover: (frame) => frames.some((candidate) => candidate.name === frame && candidate.cover !== undefined),
 			onShot,
 			cameraRef: { current: null },
 			viewportRef: { current: null },
@@ -85,66 +80,111 @@ async function mountLifecycle(onShot: (frame: string, rungs: CoverRaster[]) => v
 }
 
 describe("capture request lifecycle", () => {
-	it("correlates one raster to the current id/window and persists only the bounded ladder", async () => {
+	it("correlates one image to its id and window, and never persists an export", async () => {
 		const id1 = "11111111111111111111111111111111";
 		const id2 = "22222222222222222222222222222222";
 		broker.id.mockReturnValueOnce(id1).mockReturnValueOnce(id2);
-		const ladder: CoverRaster[] = [
-			{ url: "data:image/jpeg;base64,anBlZw==", width: 780, height: 1688 },
-			{ url: "data:image/jpeg;base64,anBlZw==", width: 390, height: 844 },
-			{ url: "data:image/jpeg;base64,anBlZw==", width: 195, height: 422 },
-		];
-		const sheet: CoverRaster[] = [{ url: "data:image/png;base64,cG5n", width: 390, height: 844 }];
-		let finishLadder: ((rungs: CoverRaster[]) => void) | undefined;
+		const image: CoverRaster = { url: "data:image/jpeg;base64,anBlZw==", width: 800, height: 1731 };
+		const sheet: CoverRaster = { url: "data:image/png;base64,cG5n", width: 390, height: 844 };
+		let finishImage: ((image: CoverRaster) => void) | undefined;
 		broker.raster
 			.mockImplementationOnce(
 				() =>
-					new Promise<CoverRaster[]>((resolve) => {
-						finishLadder = resolve;
+					new Promise<CoverRaster>((resolve) => {
+						finishImage = resolve;
 					}),
 			)
 			.mockResolvedValueOnce(sheet);
 		const onShot = vi.fn();
 		const { lifecycle, sourceWindow } = await mountLifecycle(onShot);
 
-		const cover = lifecycle.capture("landing", 4096);
+		const cover = lifecycle.capture("landing");
 		const otherWindow = {} as WindowProxy;
-		lifecycle.noteCaptureSource(source("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 4096), sourceWindow);
-		lifecycle.noteCaptureSource(source(id1, 4096), otherWindow);
+		lifecycle.noteCaptureSource(source("a".repeat(32), 400), sourceWindow);
+		lifecycle.noteCaptureSource(source(id1, 400), otherWindow);
 		lifecycle.noteCaptureSource(source(id1, 0), sourceWindow);
 		expect(broker.raster).not.toHaveBeenCalled();
 
-		lifecycle.noteCaptureSource(source(id1, 4096), sourceWindow);
-		lifecycle.noteCaptureSource(source(id1, 4096), sourceWindow);
+		lifecycle.noteCaptureSource(source(id1, 400), sourceWindow);
+		lifecycle.noteCaptureSource(source(id1, 400), sourceWindow);
 		expect(broker.raster).toHaveBeenCalledOnce();
-		expect(broker.raster.mock.calls[0]?.[0]).toMatchObject({ id: id1, maxEdge: 4096 });
+		expect(broker.raster.mock.calls[0]?.[0]).toMatchObject({ id: id1, targetWidth: 400 });
 
-		finishLadder?.(ladder);
-		await expect(cover).resolves.toEqual(ladder);
-		expect(onShot).toHaveBeenCalledWith("landing", ladder);
+		finishImage?.(image);
+		await expect(cover).resolves.toEqual(image);
+		expect(onShot).toHaveBeenCalledWith("landing", image);
 
 		const png = lifecycle.capture("landing", 0);
 		lifecycle.noteCaptureSource(source(id1, 0), sourceWindow);
 		expect(broker.raster).toHaveBeenCalledTimes(1);
 		lifecycle.noteCaptureSource(source(id2, 0), sourceWindow);
 
-		// an export is the caller's artifact: it comes back and is never stored
 		await expect(png).resolves.toEqual(sheet);
 		expect(onShot).toHaveBeenCalledOnce();
 	});
 
-	it("rejects invalid bounds and aborts raster work when its iframe is replaced", async () => {
-		const id = "33333333333333333333333333333333";
+	it("waits for an ambient cover source before export supersedes its host raster", async () => {
+		const coverId = "33333333333333333333333333333333";
+		const exportId = "44444444444444444444444444444444";
+		broker.id.mockReturnValueOnce(coverId).mockReturnValueOnce(exportId);
+		const sheet: CoverRaster = { url: "data:image/png;base64,cG5n", width: 390, height: 844 };
+		broker.raster.mockImplementationOnce(() => new Promise<CoverRaster>(() => {})).mockResolvedValueOnce(sheet);
+		const frame: ProjectedFrame = {
+			name: "landing",
+			kind: "html",
+			x: 0,
+			y: 0,
+			w: 390,
+			h: 844,
+			cover: { hash: "a".repeat(32) },
+		};
+		const { lifecycle, sourceWindow } = await mountLifecycle(vi.fn(), [frame]);
+		const postMessage = vi.spyOn(sourceWindow, "postMessage");
+
+		const cover = lifecycle.capture("landing");
+		let exported: Promise<CoverRaster | undefined> | undefined;
+		await act(async () => {
+			exported = lifecycle.captureExport("landing");
+		});
+
+		expect(postMessage).toHaveBeenCalledOnce();
+		expect(postMessage).toHaveBeenCalledWith(
+			expect.objectContaining({ spool: "capture", id: coverId, targetWidth: 400 }),
+			"*",
+		);
+		expect(broker.raster).not.toHaveBeenCalled();
+
+		await act(async () => {
+			lifecycle.noteCaptureSource(source(coverId, 400), sourceWindow);
+			await Promise.resolve();
+		});
+		const coverSignal = broker.raster.mock.calls[0]?.[2] as AbortSignal | undefined;
+		await expect(cover).resolves.toBeUndefined();
+		expect(coverSignal?.aborted).toBe(true);
+		expect(postMessage).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({ spool: "capture", id: exportId, targetWidth: 0 }),
+			"*",
+		);
+
+		await act(async () => {
+			lifecycle.noteCaptureSource(source(exportId, 0), sourceWindow);
+			await expect(exported).resolves.toEqual(sheet);
+		});
+	});
+
+	it("rejects an invalid target and aborts raster work when the iframe is replaced", async () => {
+		const id = "55555555555555555555555555555555";
 		broker.id.mockReturnValue(id);
-		broker.raster.mockImplementation(() => new Promise<CoverRaster[]>(() => {}));
+		broker.raster.mockImplementation(() => new Promise<CoverRaster>(() => {}));
 		const { iframe, lifecycle, sourceWindow } = await mountLifecycle(vi.fn());
 
 		await expect(lifecycle.capture("landing", -1)).resolves.toBeUndefined();
-		await expect(lifecycle.capture("landing", 16385)).resolves.toBeUndefined();
+		await expect(lifecycle.capture("landing", 401)).resolves.toBeUndefined();
 		expect(broker.id).not.toHaveBeenCalled();
 
-		const capture = lifecycle.capture("landing", 4096);
-		lifecycle.noteCaptureSource(source(id, 4096), sourceWindow);
+		const capture = lifecycle.capture("landing");
+		lifecycle.noteCaptureSource(source(id, 400), sourceWindow);
 		const signal = broker.raster.mock.calls[0]?.[2] as AbortSignal | undefined;
 		expect(signal?.aborted).toBe(false);
 
@@ -159,14 +199,14 @@ describe("capture request lifecycle", () => {
 
 	it("times out one unresolved raster, aborts it, and persists nothing", async () => {
 		vi.useFakeTimers();
-		const id = "44444444444444444444444444444444";
+		const id = "66666666666666666666666666666666";
 		broker.id.mockReturnValue(id);
-		broker.raster.mockImplementation(() => new Promise<CoverRaster[]>(() => {}));
+		broker.raster.mockImplementation(() => new Promise<CoverRaster>(() => {}));
 		const onShot = vi.fn();
 		const { lifecycle, sourceWindow } = await mountLifecycle(onShot);
 
-		const capture = lifecycle.capture("landing", 4096);
-		lifecycle.noteCaptureSource(source(id, 4096), sourceWindow);
+		const capture = lifecycle.capture("landing");
+		lifecycle.noteCaptureSource(source(id, 400), sourceWindow);
 		const signal = broker.raster.mock.calls[0]?.[2] as AbortSignal | undefined;
 
 		await act(() => vi.advanceTimersByTimeAsync(CAPTURE_REPLY_TIMEOUT_MS + CAPTURE_SETTLE_BUDGET_MS - 1));

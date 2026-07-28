@@ -12,11 +12,11 @@ describe("trusted capture source protocol", () => {
 		width: 390,
 		height: 844,
 		dpr: 2,
-		maxEdge: 1200,
+		targetWidth: 400,
 	};
 
 	it("carries the request id and accepts only an exact bounded SVG source", () => {
-		expect(captureMessage(id, 1200, 900)).toEqual({ spool: "capture", id, maxEdge: 1200, settleMs: 900 });
+		expect(captureMessage(id, 400, 900)).toEqual({ spool: "capture", id, targetWidth: 400, settleMs: 900 });
 		expect(parseFrameMessage(source)).toEqual(source);
 		expect(parseFrameMessage({ ...source, extra: true })).toBeUndefined();
 		expect(parseFrameMessage({ ...source, id: "1" })).toBeUndefined();
@@ -25,8 +25,14 @@ describe("trusted capture source protocol", () => {
 		expect(parseFrameMessage({ ...source, width: 0 })).toBeUndefined();
 		expect(parseFrameMessage({ ...source, height: 32769 })).toBeUndefined();
 		expect(parseFrameMessage({ ...source, dpr: 2.1 })).toBeUndefined();
-		expect(parseFrameMessage({ ...source, maxEdge: 16385 })).toBeUndefined();
-		expect(parseFrameMessage({ ...source, width: 32768, height: 32768, dpr: 2, maxEdge: 0 })).toBeUndefined();
+		expect(parseFrameMessage({ ...source, targetWidth: 401 })).toBeUndefined();
+		expect(parseFrameMessage({ ...source, width: 32768, height: 32768, dpr: 2, targetWidth: 0 })).toBeUndefined();
+		expect(parseFrameMessage({ ...source, width: 40, height: 1000 })).toEqual({
+			...source,
+			width: 40,
+			height: 1000,
+		});
+		expect(parseFrameMessage({ ...source, width: 40, height: 10_000 })).toBeUndefined();
 	});
 
 	it("accepts only an exact, correlated bounded source error", () => {

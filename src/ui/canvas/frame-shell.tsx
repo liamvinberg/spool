@@ -82,7 +82,6 @@ export const FrameShell = memo(function FrameShell({
 	interactive,
 	docNonce,
 	cover,
-	coverSizes,
 	terminal,
 	terminalCover,
 	walkArrival,
@@ -100,10 +99,8 @@ export const FrameShell = memo(function FrameShell({
 	terminal: boolean;
 	/** Bumped by SSE source changes — a new nonce reloads the document. */
 	docNonce: number;
-	/** The frame's cover ladder (#111) — absent when it has none to show. */
+	/** The frame's immutable cover image, absent when it has none to show. */
 	cover: Cover | undefined;
-	/** The rung the camera asks for, as a CSS length, quantized to the rung boundaries. */
-	coverSizes: string | undefined;
 	/** Terminal-only current/stale/never-run cover truth from the projection. */
 	terminalCover: TerminalCoverState | undefined;
 	/** Set while the current boot is a walk arrival (#28) — quiet cover. */
@@ -176,14 +173,12 @@ export const FrameShell = memo(function FrameShell({
 			    leave. A still first mounted at that moment is still decoding when it
 			    is wanted, and the frame shows blank instead. It names the same
 			    addresses as the cover layer below, so the two are one request: the
-			    browser caches a cover by URL, and both ask for the rung the same
-			    `sizes` selects (#111). */}
+			    browser caches a cover by URL. */}
 			{(state === "live" || entered) && cover !== undefined && (
 				<Thumbnail
 					project={project}
 					frame={name}
 					cover={cover}
-					sizes={coverSizes}
 					alt={name}
 					draggable={false}
 					// a fresh capture replaces this image while the canvas is in
@@ -211,7 +206,6 @@ export const FrameShell = memo(function FrameShell({
 							project={project}
 							frame={name}
 							cover={cover}
-							sizes={coverSizes}
 							alt={name}
 							draggable={false}
 							className="absolute inset-0 h-full w-full object-cover object-top"
