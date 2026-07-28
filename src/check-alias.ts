@@ -1,6 +1,6 @@
 import { CheckSourceLimitError, checkSourceLimits } from "./check-budget";
 
-export type CheckerAliasConsumer = "module" | "jsx" | "css" | "ambient" | "require";
+export type CheckerAliasConsumer = "module" | "jsx" | "css" | "asset" | "ambient" | "require";
 export type CheckerAliasForm = "module" | "identifier";
 
 const moduleAliasCharacters: string[] = [];

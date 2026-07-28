@@ -7,6 +7,7 @@ import { API, type Diagnostic } from "typescript/unstable/sync";
 import { CheckerAliasAllocator } from "./check-alias";
 import { CheckSourceBudget, CheckSourceLimitError, checkSourceLimitMessage } from "./check-budget";
 import { BoundedFileTooLargeError, readBoundedRegularFile, UnsafeFileReadError } from "./check-file";
+import { ASSET_EXTENSIONS } from "./daemon/assets";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./daemon/design-path";
 
 export interface CheckDiagnostic {
@@ -120,8 +121,14 @@ interface AuthoredModulePolicy {
 	diagnostics: CheckDiagnostic[];
 }
 
+interface LocalAssetResolution {
+	use: ModuleUse;
+	alias: string;
+}
+
 interface LocalAssets {
 	cssResolutions: Map<string, LocalCssResolution[]>;
+	assetResolutions: Map<string, LocalAssetResolution[]>;
 	javaScriptUses: Map<string, ModuleUse[]>;
 	missingUses: Map<string, ModuleUse[]>;
 	missingDiagnostics: CheckDiagnostic[];
@@ -289,6 +296,20 @@ function runCheckDesign(root: string): CheckDiagnostic[] {
 			}
 			const diagnosticResolutions = localModuleResolutions.get(file) ?? [];
 			diagnosticResolutions.push({ use: resolution.use, alias: resolution.alias, target });
+			localModuleResolutions.set(file, diagnosticResolutions);
+		}
+	}
+	// An inlined asset is a data URI by the time a frame sees it, so the shipped
+	// declaration says exactly that and nothing looser (#101).
+	const assetModule = join(internalDir, "asset.d.ts");
+	if (localAssets.assetResolutions.size > 0) {
+		virtualFiles.set(assetModule, "declare const url: string;\nexport default url;\n");
+	}
+	for (const [file, resolutions] of localAssets.assetResolutions) {
+		for (const resolution of resolutions) {
+			paths[resolution.alias] = [assetModule];
+			const diagnosticResolutions = localModuleResolutions.get(file) ?? [];
+			diagnosticResolutions.push({ use: resolution.use, alias: resolution.alias, target: assetModule });
 			localModuleResolutions.set(file, diagnosticResolutions);
 		}
 	}
@@ -1103,6 +1124,16 @@ function authoredPathReadFailure(error: unknown): string | undefined {
 	return typeof code === "string" && !isMissing(error) ? `Filesystem read failed (${sanitize(code)})` : undefined;
 }
 
+/**
+ * The asset kinds the compiler inlines (#101). Spool ships their declaration the
+ * way it ships React's, because design/ never gets a package.json — and the
+ * checker resolves modules independently of the bundler, so it needs the same
+ * knowledge or every asset import reads as a missing module.
+ */
+function isAssetSource(file: string): boolean {
+	return ASSET_EXTENSIONS.has(extname(file).toLowerCase());
+}
+
 function isDesignSource(file: string): boolean {
 	const extension = extname(file).toLowerCase();
 	return (
@@ -1501,6 +1532,7 @@ function inspectLocalAssets(
 	checkerAliases: CheckerAliasAllocator,
 ): LocalAssets {
 	const cssResolutions = new Map<string, LocalCssResolution[]>();
+	const assetResolutions = new Map<string, LocalAssetResolution[]>();
 	const javaScriptUses = new Map<string, ModuleUse[]>();
 	const missingUses = new Map<string, ModuleUse[]>();
 	const missingDiagnostics: CheckDiagnostic[] = [];
@@ -1513,7 +1545,9 @@ function inspectLocalAssets(
 			if (boundaryUses.some((boundary) => boundary.start === use.start && boundary.end === use.end)) continue;
 			const target = resolveAuthoredLocalPath(dirname(file), use.specifier);
 			if (!isWithin(designDir, target) || isDesignPackagePath(designDir, target)) continue;
-			const explicitAsset = /\.(?:(?:c|m)?js|jsx|css)$/.test(localPathSpecifier(use.specifier));
+			const explicitAsset =
+				/\.(?:(?:c|m)?js|jsx|css)$/.test(localPathSpecifier(use.specifier)) ||
+				isAssetSource(localPathSpecifier(use.specifier));
 			const selection = selectLocalCandidate(
 				designDir,
 				target,
@@ -1521,7 +1555,9 @@ function inspectLocalAssets(
 				isDirectoryOnlySpecifier(use.specifier),
 			);
 			const selected = selection.selected;
-			const selectedIsAsset = selected !== undefined && (isJavaScriptSource(selected) || selected.endsWith(".css"));
+			const selectedIsAsset =
+				selected !== undefined &&
+				(isJavaScriptSource(selected) || selected.endsWith(".css") || isAssetSource(selected));
 			if (selected !== undefined && !selectedIsAsset) continue;
 			const missingStaticRequire = use.kind === "require" && selected === undefined;
 			if (!explicitAsset && !selectedIsAsset && !missingStaticRequire) continue;
@@ -1560,12 +1596,17 @@ function inspectLocalAssets(
 					...(authoredDeclaration === undefined ? {} : { declaration: authoredDeclaration }),
 				});
 				cssResolutions.set(file, resolutions);
+			} else if (selected !== undefined && isAssetSource(selected)) {
+				const length = Math.max(1, use.end - use.start - 2);
+				const resolutions = assetResolutions.get(file) ?? [];
+				resolutions.push({ use, alias: checkerAliases.allocate("asset", file, length) });
+				assetResolutions.set(file, resolutions);
 			} else {
 				addModuleUse(javaScriptUses, file, use);
 			}
 		}
 	}
-	return { cssResolutions, javaScriptUses, missingUses, missingDiagnostics };
+	return { cssResolutions, assetResolutions, javaScriptUses, missingUses, missingDiagnostics };
 }
 
 function addModuleUse(usesByFile: Map<string, ModuleUse[]>, file: string, use: ModuleUse): void {

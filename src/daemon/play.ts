@@ -15,7 +15,7 @@ import { readIfExists } from "./project-files";
 import { frameFolder } from "./projection";
 import { buildFrameCss } from "./tailwind";
 import { importMapPins } from "./vendor";
-import { inertWebfonts, type Webfonts } from "./webfonts";
+import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./webfonts";
 
 /**
  * The player page (#24): one light document under /play/ composing every frame
@@ -138,7 +138,8 @@ async function compilePlayer(
 
 	const shared = join(designDir, "shared");
 	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
-	const fonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
+	const resolvedFonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
+	const { css: fonts, files: fontFiles } = inlineLocalFonts(designDir, resolvedFonts);
 	const transitions = readIfExists(join(shared, "transitions.css"), designDir);
 	const importMap = mergeImportMap(
 		parseImportMap(readIfExists(join(shared, "importmap.json"), designDir)),
@@ -148,6 +149,7 @@ async function compilePlayer(
 	const inputs = [
 		...sourceFiles,
 		...stylesheets,
+		...fontFiles,
 		join(shared, "fonts.css"),
 		join(shared, "transitions.css"),
 		join(shared, "importmap.json"),
@@ -178,6 +180,11 @@ async function composePlayer(
 	designDir: string,
 	frames: PlayerFrameRef[],
 ): Promise<{ bundle: DesignBundle; broken: Map<string, string> }> {
+	// No image budget here, and none in blameFrames either (#101). The budget
+	// guards a frame document, because the canvas loads a page full of them; the
+	// player is one document, loaded once. Applying it to the composition would
+	// kill the whole player over the sum of frames that each fit their own
+	// document — the exact whole-player failure this function exists to prevent.
 	const build = (broken: Map<string, string>) =>
 		buildDesignEntry({
 			designDir,

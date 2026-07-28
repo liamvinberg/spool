@@ -1,15 +1,22 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { build, formatMessagesSync, type Plugin } from "esbuild";
-import { assertDesignFile, DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
+import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes } from "./assets";
+import {
+	assertDesignFile,
+	DesignBoundaryError,
+	designRelativePath,
+	realDesignDir,
+	resolveDesignPath,
+} from "./design-path";
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
 import { isSafeName, readIfExists } from "./project-files";
 import { describeCollision, frameKind, lookupFrame } from "./projection";
 import { buildFrameCss } from "./tailwind";
 import { assembleTermDocument, termDocumentEtag } from "./term-document";
 import { importMapPins } from "./vendor";
-import { inertWebfonts, type Webfonts } from "./webfonts";
+import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./webfonts";
 
 export type FrameDocument =
 	| { kind: "ok"; document: string; etag: string; cache: "hit" | "miss" }
@@ -142,8 +149,16 @@ export async function buildDesignEntry(options: {
 	contents: string;
 	/** Names the compilation in errors: `frame "inbox"`, `the player`. */
 	label: string;
+	/**
+	 * How much inlined image this one document may carry (#101). A frame passes
+	 * its budget; the player composition passes none, because it is one document
+	 * loaded once rather than the page full of them the budget guards against —
+	 * and a composition that died on the sum of frames that each fit their own
+	 * document is the exact whole-player failure `composePlayer` exists to stop.
+	 */
+	imageBudget?: number | undefined;
 }): Promise<DesignBundle> {
-	const { designDir, resolveDir, sourcefile, contents, label } = options;
+	const { designDir, resolveDir, sourcefile, contents, label, imageBudget } = options;
 	const result = await build({
 		stdin: { contents, resolveDir, loader: "js", sourcefile },
 		bundle: true,
@@ -159,7 +174,7 @@ export async function buildDesignEntry(options: {
 		write: false,
 		outdir: VIRTUAL_OUTDIR,
 		absWorkingDir: designDir,
-		plugins: [spoolBoundaryPlugin(designDir)],
+		plugins: [spoolBoundaryPlugin(designDir), spoolAssetPlugin(designDir, label, imageBudget)],
 		logLevel: "silent",
 	});
 
@@ -199,13 +214,16 @@ async function compileFrame({
 		sourcefile: STDIN_NAME,
 		contents: bootEntry(frame),
 		label: `frame "${frame}"`,
+		imageBudget: IMAGE_BUDGET_BYTES,
 	});
 
 	const shared = join(designDir, "shared");
 	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
 	// The stills' fonts (#80): remote faces resolved to this daemon so a
-	// capture can inline them, the file as written whenever that fails.
-	const fonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
+	// capture can inline them, the file as written whenever that fails. The
+	// project's own faces (#101) then ride the document as data URIs.
+	const resolvedFonts = await webfonts.resolve(readIfExists(join(shared, "fonts.css"), designDir));
+	const { css: fonts, files: fontFiles } = inlineLocalFonts(designDir, resolvedFonts);
 	const importMap = mergeImportMap(
 		parseImportMap(readIfExists(join(shared, "importmap.json"), designDir)),
 		importMapPins(),
@@ -222,7 +240,13 @@ async function compileFrame({
 		fonts,
 		bundledCss,
 	});
-	const inputs = [...sourceFiles, ...stylesheets, join(shared, "fonts.css"), join(shared, "importmap.json")];
+	const inputs = [
+		...sourceFiles,
+		...stylesheets,
+		...fontFiles,
+		join(shared, "fonts.css"),
+		join(shared, "importmap.json"),
+	];
 	const hash = hashInputs(version, stamp, inputs, designDir);
 	return { inputs, hash, etag: `"${hash.slice(0, 32)}"`, document, fonts: webfonts.revision() };
 }
@@ -298,6 +322,69 @@ function spoolBoundaryPlugin(designDir: string): Plugin {
 					};
 				}
 				return { path: args.path, external: true };
+			});
+		},
+	};
+}
+
+/**
+ * Project assets, carried in the document rather than served (#101). There is
+ * no asset route and no asset URL: an import becomes a `data:` URI right here,
+ * which means an asset has no authority surface at all — the boundary plugin
+ * has already run `assertDesignFile` on everything esbuild resolves, symlinks
+ * and all — and it lands in `metafile.inputs`, so it is a cache input, an ETag
+ * ingredient, and a file the watcher already narrows on.
+ *
+ * Every kind is forced to base64. Esbuild's own `dataurl` loader percent-encodes
+ * SVG, and both copies of the capture allowlist require `;base64,`; forcing the
+ * encoding keeps those predicates as tight as they are instead of teaching them
+ * a looser shape.
+ */
+function spoolAssetPlugin(designDir: string, label: string, budget: number | undefined): Plugin {
+	let spent = 0;
+	return {
+		name: "spool-assets",
+		setup(build) {
+			// A stylesheet's url() is the one reference esbuild cannot be handed a
+			// forced-base64 answer for, and a document-carried asset has no URL to
+			// give it. Say so in the project's own words rather than leaving
+			// esbuild to explain spool's loader choice. Remote and root-absolute
+			// URLs stay the author's business and pass straight through.
+			build.onResolve({ filter: ASSET_FILTER }, (args) => {
+				const local = !args.path.startsWith("/") && !/^[a-z][a-z0-9+.-]*:/i.test(args.path);
+				if (args.kind !== "url-token" || !local) return null;
+				return {
+					errors: [
+						{
+							text: `url(${args.path}) reaches a project asset — an asset is imported, not referenced: import it in the frame and pass the value through a style prop`,
+						},
+					],
+				};
+			});
+			build.onLoad({ filter: ASSET_FILTER }, (args) => {
+				const type = ASSET_MEDIA_TYPES[extname(args.path).toLowerCase()];
+				if (type === undefined) return null;
+				let bytes: Buffer;
+				try {
+					bytes = readFileSync(resolveDesignPath(designDir, args.path));
+				} catch (error) {
+					// Same shape as the boundary plugin's own complaint, so a caller
+					// that must refuse the whole player still recognizes an escape.
+					return { errors: [{ text: describeCompileError(error), detail: error }] };
+				}
+				const url = `data:${type};base64,${bytes.toString("base64")}`;
+				spent += url.length;
+				if (budget !== undefined && spent > budget) {
+					const file = designRelativePath(designDir, args.path);
+					return {
+						errors: [
+							{
+								text: `design/${file} (${kilobytes(url.length)} inlined) puts ${label} over its ${kilobytes(budget)} image budget`,
+							},
+						],
+					};
+				}
+				return { contents: `export default ${JSON.stringify(url)};\n`, loader: "js" };
 			});
 		},
 	};

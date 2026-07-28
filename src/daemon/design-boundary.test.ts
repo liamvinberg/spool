@@ -130,17 +130,35 @@ describe("the design filesystem boundary", () => {
 		}
 	});
 
-	for (const [rel, path] of [
-		["shared/fonts.css", "frame"],
-		["shared/importmap.json", "frame"],
-		["shared/transitions.css", "player"],
-		["shared/scenarios/escape.json", "scenario"],
-		["shared/fixtures/escape.json", "fixture"],
+	// A project asset only escapes through the frame that imports it, and a local
+	// face only through the stylesheet that names it (#101) — so those two rows
+	// bring the reach that reads them.
+	for (const [rel, path, reach] of [
+		["shared/fonts.css", "frame", "none"],
+		["shared/importmap.json", "frame", "none"],
+		["shared/transitions.css", "player", "none"],
+		["shared/scenarios/escape.json", "scenario", "none"],
+		["shared/fixtures/escape.json", "fixture", "none"],
+		["shared/assets/logo.svg", "frame", "import"],
+		["shared/assets/fonts/local.woff2", "frame", "font"],
 	] as const) {
 		it(`does not follow an escaped ${rel} symlink`, async () => {
 			const spoolDir = join(makeTempDir(), ".spool");
 			const { root, name } = makeProject(spoolDir);
-			writeFrame(root, "entry", "export default function Frame() { return <p>inside</p>; }\n");
+			writeFrame(
+				root,
+				"entry",
+				reach === "import"
+					? 'import logo from "../../shared/assets/logo.svg";\nexport default function Frame() { return <img src={logo} alt="" />; }\n'
+					: "export default function Frame() { return <p>inside</p>; }\n",
+			);
+			if (reach === "font") {
+				writeDesignFile(
+					root,
+					"shared/fonts.css",
+					'@font-face { font-family: "Local"; src: url(./assets/fonts/local.woff2); }\n',
+				);
+			}
 			const outside = join(root, "outside.txt");
 			writeFileSync(outside, SENTINEL);
 			const link = join(root, "design", rel);

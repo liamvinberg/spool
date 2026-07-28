@@ -246,6 +246,59 @@ describe("offline design checking", () => {
 		expect(messages(root)).toEqual([]);
 	});
 
+	it.each([
+		["png", "frames/home/hero.png"],
+		["jpg", "frames/home/hero.jpg"],
+		["jpeg", "frames/home/hero.jpeg"],
+		["webp", "frames/home/hero.webp"],
+		["gif", "frames/home/hero.gif"],
+		["svg", "shared/assets/logo.svg"],
+	] as const)("types an imported %s asset as the string the compiler bakes in", (_kind, file) => {
+		const root = makeTempDir();
+		markProject(root);
+		writeDesignFile(root, file, "pretend bytes\n");
+		const specifier = file.startsWith("shared/") ? `../../${file}` : `./${file.split("/").pop()}`;
+		writeFrame(
+			root,
+			"home",
+			`import asset from "${specifier}";\nexport default function Home() { return <img src={asset} alt="" />; }\n`,
+		);
+
+		expect(messages(root)).toEqual([]);
+	});
+
+	it("holds an imported asset to being a string", () => {
+		const root = makeTempDir();
+		markProject(root);
+		writeDesignFile(root, "frames/home/hero.png", "pretend bytes\n");
+		writeFrame(root, "home", 'import hero from "./hero.png";\nconst width: number = hero;\nvoid width;\n');
+
+		const result = messages(root);
+
+		expect(result).toHaveLength(1);
+		expect(result[0]).toContain("TS2322");
+		expect(result[0]).toContain("Type 'string' is not assignable to type 'number'");
+	});
+
+	it("still reports an asset import that resolves to nothing", () => {
+		const root = makeTempDir();
+		markProject(root);
+		writeFrame(root, "home", 'import hero from "./hero.png";\nvoid hero;\n');
+
+		expect(messages(root)).toEqual([
+			"design/frames/home/frame.tsx:1:18 TS2307: Cannot find module './hero.png' or its corresponding type declarations.",
+		]);
+	});
+
+	it("keeps an asset import that leaves design/ a boundary failure", () => {
+		const root = makeTempDir();
+		markProject(root);
+		writeFileSync(join(root, "hero.png"), "pretend bytes\n");
+		writeFrame(root, "home", 'import hero from "../../../hero.png";\nvoid hero;\n');
+
+		expect(messages(root)).toEqual(["design/frames/home/frame.tsx:1:18 TS2307: Relative imports outside design/"]);
+	});
+
 	it("does not let a CSS import satisfy a missing authored declaration reference", () => {
 		const root = makeTempDir();
 		markProject(root);

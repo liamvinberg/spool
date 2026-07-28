@@ -39,7 +39,8 @@ const transitionsCss = `/*
 const fontsCss = `/*
  * Project fonts, plain CSS, loaded in every frame document:
  * a hosted @import url(...), or @font-face with absolute/data src.
- * Local font files are not served in v1 — relative url() has no answer.
+ * A relative url() resolves from this folder — drop the file in
+ * assets/fonts/ and spool carries it in the document.
  */
 `;
 
