@@ -167,7 +167,7 @@ const captureWorkerJs = `(() => {
 		) {
 			throw new Error("invalid capture SVG");
 		}
-		const scale = targetWidth > 0 ? (${LIVE_MIN_CSS_PX} * ${COVER_DEVICE_SCALE}) / width : dpr;
+		const scale = targetWidth > 0 ? (targetWidth * ${COVER_DEVICE_SCALE}) / width : dpr;
 		const outputWidth = Math.max(1, Math.round(width * scale));
 		const outputHeight = Math.max(1, Math.round(height * scale));
 		if (

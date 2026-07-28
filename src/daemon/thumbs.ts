@@ -118,7 +118,9 @@ export function writeCover(root: string, frame: string, bytes: Buffer): Cover {
 	for (const old of filesIn(dir)) {
 		if (old !== name) rmSync(join(dir, old), { force: true });
 	}
-	for (const format of COVER_FORMATS) rmSync(join(coverStoreDir(root), `${frame}.${format.ext}`), { force: true });
+	for (const legacyFormat of COVER_FORMATS) {
+		rmSync(join(coverStoreDir(root), `${frame}.${legacyFormat.ext}`), { force: true });
+	}
 	return { hash };
 }
 

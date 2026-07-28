@@ -129,23 +129,19 @@ export const FrameShell = memo(function FrameShell({
 	// The cover: shown for every non-live frame, and over a live one until it
 	// boots, then fades without a white flash on entry (#8
 	// thumbnail-then-hydrate).
-	const unavailableTerminal = terminalCover?.kind === "stale" || terminalCover?.kind === "never-run";
-	const covered = unavailableTerminal || (state !== "live" && !entered) || !ready;
-	const [veil, setVeil] = useState(covered);
+	// The marker needs no latch of its own: it only silences the badge, which is
+	// already gone by the time the cover fades. If a broken boot or mid-walk edit
+	// retires the marker while the frame stays covered, the honest cover returns.
+	const plan = coverPlan({ state, ready, entered, covered: cover !== undefined, walk: walkArrival, terminalCover });
+	const [veil, setVeil] = useState(plan.cover);
 	useEffect(() => {
-		if (covered) {
+		if (plan.cover) {
 			setVeil(true);
 			return;
 		}
 		const linger = setTimeout(() => setVeil(false), 220);
 		return () => clearTimeout(linger);
-	}, [covered]);
-
-	// The marker needs no latch of its own: it only ever silences the badge, and
-	// the badge is already gone by the time the cover fades. A marker the parent
-	// retires while the frame is still covered — a broken boot, an edit mid-walk
-	// — brings the honest cover straight back, which is the point.
-	const plan = coverPlan({ state, ready, entered, covered: cover !== undefined, walk: walkArrival, terminalCover });
+	}, [plan.cover]);
 
 	return (
 		<>
