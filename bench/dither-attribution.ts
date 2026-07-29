@@ -3,20 +3,30 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type Browser, type BrowserContext, type CDPSession, chromium, type Page } from "playwright-core";
 import {
+	collector,
 	copyProject,
 	DEFAULT_ZOOM,
+	driveRoundTripWheel,
 	type FrameBox,
 	freePort,
+	type GestureStats,
 	mountedCount,
 	ms,
 	namedPage,
+	now,
+	PAN_EVENTS,
+	PAN_STEP_PX,
 	planCamera,
 	prepareCurrentCovers,
-	quantile,
 	quiet,
+	read,
+	settle,
 	startDaemon,
 	VIEWPORT,
+	windowStats,
 	writeCamera,
+	ZOOM_EVENTS,
+	ZOOM_STEP_PX,
 } from "./harness.ts";
 
 /**
@@ -58,8 +68,7 @@ import {
  * (a name's total includes time spent in anything it called), the standard
  * caveat for any trace summary that is not doing full bottom-up self-time.
  *
- *   pnpm build && node bench/dither-attribution.ts
- *   node bench/dither-attribution.ts --project <path> --out <dir> --runs 3
+ *   pnpm build && node bench/dither-attribution.ts --project <project with a "dither" page> --out <dir>
  *
  * Run with node's own type stripping, not tsx — see bench/harness.ts.
  */
@@ -71,14 +80,14 @@ interface Options {
 
 /**
  * `--runs` is deliberately not a knob: the ticket asks for exactly 3 clean
- * repetitions per arm in this alternating order (plus one dedicated trace run
- * each, appended after), and `main` below hardcodes that sequence rather than
- * generalizing a pattern nobody asked for.
+ * repetitions per arm in a balanced A B B A A B order (so neither arm always
+ * runs first; plus one dedicated trace run each, appended after), and `main`
+ * below hardcodes that sequence rather than generalizing a pattern nobody
+ * asked for.
  */
 function parseArgs(argv: string[]): Options {
-	let project = "/Users/liamvinberg/projects/liamvinberg.com";
-	let out =
-		"/private/tmp/claude-501/-Users-liamvinberg-projects-spool/62545b71-e1f3-415f-b05b-28bc7f02dd1b/scratchpad/dither-attribution";
+	let project = "";
+	let out = "";
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		const next = argv[i + 1];
@@ -92,6 +101,8 @@ function parseArgs(argv: string[]): Options {
 			throw new Error(`unknown argument ${arg}`);
 		}
 	}
+	if (project === "") throw new Error("--project <path to a spool project root> is required");
+	if (out === "") throw new Error("--out <directory for results> is required");
 	return { project, out };
 }
 
@@ -158,112 +169,6 @@ function patchToStatic(root: string): void {
 			"\t\t\toffCtx.putImageData(image, 0, 0);\n\t\t\tctx.setTransform(1, 0, 0, 1, 0, 0);\n\t\t\tctx.imageSmoothingEnabled = false;\n\t\t\tctx.drawImage(off, 0, 0, GRID, GRID, 0, 0, PLATE * dpr, PLATE * dpr);\n\t\t\tpainted = true;\n\t\t};\n",
 		],
 	]);
-}
-
-// --- gesture collector (ported from bench/canvas.ts, #82) ------------------
-
-interface Sample {
-	t: number;
-	d: number;
-	mounted: number;
-}
-interface Loaf {
-	t: number;
-	duration: number;
-	blocking: number;
-}
-interface BenchState {
-	raf: Sample[];
-	loaf: Loaf[];
-}
-
-function collector(): void {
-	if (window !== window.top) return;
-	const state: BenchState = { raf: [], loaf: [] };
-	(globalThis as unknown as { __bench: BenchState }).__bench = state;
-
-	let last = performance.now();
-	const tick = (now: number): void => {
-		state.raf.push({ t: now, d: now - last, mounted: document.querySelectorAll("iframe").length });
-		last = now;
-		requestAnimationFrame(tick);
-	};
-	requestAnimationFrame(tick);
-
-	if (PerformanceObserver.supportedEntryTypes.includes("long-animation-frame")) {
-		new PerformanceObserver((list) => {
-			for (const entry of list.getEntries()) {
-				const loaf = entry as PerformanceEntry & { blockingDuration?: number };
-				state.loaf.push({ t: entry.startTime, duration: entry.duration, blocking: loaf.blockingDuration ?? 0 });
-			}
-		}).observe({ type: "long-animation-frame", buffered: true });
-	}
-}
-
-interface GestureStats {
-	p50: number;
-	p95: number;
-	worst: number;
-	rareIntervals: number;
-	loafs: number;
-	loafWorstBlocking: number;
-	frames: number;
-	mountedPeak: number;
-	wallMs: number;
-}
-
-const RARE_INTERVAL_MS = 12;
-
-function windowStats(state: BenchState, from: number, to: number): GestureStats {
-	const inside = state.raf.filter((sample) => sample.t >= from && sample.t <= to);
-	const deltas = inside.map((sample) => sample.d).sort((a, b) => a - b);
-	const loafs = state.loaf.filter((entry) => entry.t >= from && entry.t <= to);
-	return {
-		p50: quantile(deltas, 0.5),
-		p95: quantile(deltas, 0.95),
-		worst: deltas.at(-1) ?? Number.NaN,
-		rareIntervals: deltas.filter((delta) => delta > RARE_INTERVAL_MS).length,
-		loafs: loafs.length,
-		loafWorstBlocking: loafs.reduce((worst, entry) => Math.max(worst, entry.blocking), 0),
-		frames: deltas.length,
-		mountedPeak: inside.reduce((peak, sample) => Math.max(peak, sample.mounted), 0),
-		wallMs: to - from,
-	};
-}
-
-const now = (page: Page): Promise<number> => page.evaluate(() => performance.now());
-const read = (page: Page): Promise<BenchState> =>
-	page.evaluate(() => (globalThis as unknown as { __bench: BenchState }).__bench);
-
-/** Hold until the canvas stops mounting: the count unchanged across `stableMs` (ported from canvas.ts). */
-async function settle(page: Page, stableMs: number, timeoutMs: number): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	let count = await mountedCount(page);
-	let since = Date.now();
-	while (Date.now() < deadline) {
-		await page.waitForTimeout(150);
-		const next = await mountedCount(page);
-		if (next !== count) {
-			count = next;
-			since = Date.now();
-		} else if (Date.now() - since >= stableMs) return;
-	}
-}
-
-const PAN_EVENTS = 90;
-const PAN_STEP_PX = 26;
-const ZOOM_EVENTS = 60;
-const ZOOM_STEP_PX = 4;
-const WHEEL_INTERVAL_MS = 1000 / 60;
-
-async function driveRoundTripWheel(page: Page, steps: number, deltaX: number, deltaY: number): Promise<void> {
-	const started = performance.now();
-	for (let step = 0; step < steps; step++) {
-		const direction = step < steps / 2 ? 1 : -1;
-		await page.mouse.wheel(direction * deltaX, direction * deltaY);
-		const delay = started + (step + 1) * WHEEL_INTERVAL_MS - performance.now();
-		if (delay > 0) await page.waitForTimeout(delay);
-	}
 }
 
 // --- process accounting -----------------------------------------------------
@@ -549,11 +454,51 @@ interface TraceAnalysis {
 	windowMs: number;
 }
 
+/**
+ * The measurement window: the dense burst of main-thread work the gesture
+ * produced. A raw min/max over every event's ts is wrong twice over —
+ * `__metadata` events carry ts 0, and a handful of stray events can precede
+ * the gesture by seconds (both observed on this bench's first run; the
+ * committed evidence documents the by-hand correction this implements).
+ * Cluster the 'X'-phase spans on the classified main threads and take the
+ * largest cluster's span.
+ */
+function traceWindowMs(events: readonly TraceEvent[], threads: readonly { pid: number; tid: number }[]): number {
+	const GAP_US = 2_000_000;
+	const ts = events
+		.filter(
+			(e) =>
+				e.ph === "X" &&
+				typeof e.dur === "number" &&
+				e.dur > 0 &&
+				threads.some((t) => t.pid === e.pid && t.tid === e.tid),
+		)
+		.map((e) => e.ts)
+		.sort((a, b) => a - b);
+	if (ts.length === 0) return Number.NaN;
+	let bestStart = 0;
+	let bestLength = 0;
+	let runStart = 0;
+	for (let i = 1; i <= ts.length; i++) {
+		if (i === ts.length || (ts[i] ?? 0) - (ts[i - 1] ?? 0) > GAP_US) {
+			if (i - runStart > bestLength) {
+				bestLength = i - runStart;
+				bestStart = runStart;
+			}
+			runStart = i;
+		}
+	}
+	return ((ts[bestStart + bestLength - 1] ?? 0) - (ts[bestStart] ?? 0)) / 1000;
+}
+
 function analyzeTrace(events: readonly TraceEvent[], roles: Roles): TraceAnalysis {
 	const canvasTid = mainThreadTid(events, roles.canvasPid);
 	const framesTid = mainThreadTid(events, roles.framesPid);
-	const ts = events.map((e) => e.ts).filter((t) => Number.isFinite(t));
-	const windowMs = ts.length > 0 ? (Math.max(...ts) - Math.min(...ts)) / 1000 : Number.NaN;
+	const threads = [
+		...(canvasTid === undefined ? [] : [{ pid: roles.canvasPid, tid: canvasTid }]),
+		...(framesTid === undefined ? [] : [{ pid: roles.framesPid, tid: framesTid }]),
+	];
+	const windowMs = traceWindowMs(events, threads);
 	return {
 		canvasBusyMs: canvasTid === undefined ? Number.NaN : flattenBusyMs(events, roles.canvasPid, canvasTid),
 		framesBusyMs: framesTid === undefined ? Number.NaN : flattenBusyMs(events, roles.framesPid, framesTid),
@@ -677,7 +622,10 @@ async function runOnce(
 	await page.waitForTimeout(300);
 
 	// --- idle window ---
-	await quiet(page, 30_000);
+	const idleBorrowed = await quiet(page, 30_000);
+	if (idleBorrowed !== 0) {
+		throw new Error(`[${arm.label}#${index}] ${idleBorrowed} picture errands remained before the idle window`);
+	}
 	const idleBefore = await snapshotProcesses(browserSession);
 	await page.waitForTimeout(IDLE_MS);
 	const idleAfter = await snapshotProcesses(browserSession);
@@ -685,7 +633,10 @@ async function runOnce(
 	const idleRss = memorySnapshot(idleAfter, roles);
 
 	// --- gesture window ---
-	await quiet(page, 30_000);
+	const gestureBorrowed = await quiet(page, 30_000);
+	if (gestureBorrowed !== 0) {
+		throw new Error(`[${arm.label}#${index}] ${gestureBorrowed} picture errands remained before the gesture window`);
+	}
 	const size = page.viewportSize() ?? VIEWPORT;
 	const cx = Math.round(size.width / 2);
 	const cy = Math.round(size.height / 2);
