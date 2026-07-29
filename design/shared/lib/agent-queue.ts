@@ -29,16 +29,25 @@ import type { PlayEntry, Queued, TurnPhase } from "./turn-play";
  * own `replay`. The placement question is settled by watching the rows cross, and
  * the turn on the far side of them is #114's to play, not this ticket's.
  */
-export function useQueue(seed: readonly Queued[], phase: TurnPhase): {
+export function useQueue(
+	seed: readonly Queued[],
+	phase: TurnPhase,
+	/** what was already half-written in the composer when the frame opened */
+	writing = "",
+): {
 	/** what is still waiting, in fire order */
 	readonly queued: readonly Queued[];
 	/** what has gone out, as the log's own rows */
 	readonly fired: readonly PlayEntry[];
+	/** what the composer holds, which take-back writes to */
+	readonly draft: string;
+	readonly setDraft: (text: string) => void;
 	readonly queue: (text: string) => void;
 	readonly unqueue: (id: string) => void;
 } {
 	const [queued, setQueued] = useState<readonly Queued[]>(seed);
 	const [fired, setFired] = useState<readonly Queued[]>([]);
+	const [draft, setDraft] = useState(writing);
 	/**
 	 * The counter is why the id exists at all: two identical messages are a real
 	 * thing to type twice, and a ✕ has to reach exactly one of them.
@@ -59,12 +68,38 @@ export function useQueue(seed: readonly Queued[], phase: TurnPhase): {
 	return {
 		queued,
 		fired: fired.map((message) => ({ key: `fired-${message.id}`, kind: "user", text: message.text })),
+		draft,
+		setDraft,
 		queue: (text: string) => {
 			taken.current += 1;
 			const id = `said${taken.current}`;
 			setQueued((waiting) => [...waiting, { id, text }]);
 		},
-		unqueue: (id: string) => setQueued((waiting) => waiting.filter((message) => message.id !== id)),
+		/**
+		 * Taking one back, which is the same act as a stop cancelling the queue and is
+		 * why #170 could state one invariant for both: **words that leave the queue
+		 * un-fired land back in the box.**
+		 *
+		 * They land *above* whatever was already being written, in fire order, separated
+		 * by a blank line. Above rather than below on two counts, neither of them taste:
+		 * the queue's order is the order these were going to be said in, and appending
+		 * would reverse it against the message being written; and the caret is in the
+		 * middle of a half-finished sentence, so anything that lands under it moves the
+		 * words the hand is on. Above, the tail of the box does not move at all.
+		 *
+		 * What it costs is the message count. Two messages that return become one blob of
+		 * text in one field, so a stop that hands back two and an Enter that follows sends
+		 * **one** message where two were queued. That is not a loss — the queue was going
+		 * to fire them into one turn anyway (#170) — but it is the one place where the
+		 * round trip is not lossless, and the blank line is what leaves the seam visible
+		 * enough to split by hand.
+		 */
+		unqueue: (id: string) => {
+			const message = queued.find((waiting) => waiting.id === id);
+			if (message === undefined) return;
+			setQueued((waiting) => waiting.filter((other) => other.id !== id));
+			setDraft((box) => (box === "" ? message.text : `${message.text}\n\n${box}`));
+		},
 	};
 }
 
