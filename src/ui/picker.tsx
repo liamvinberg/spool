@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { browseDirectory, type FsListing, initProjectAt, openProjectAt } from "./api";
+import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
+import type { HotkeyIdFor } from "./hotkeys";
 import { BackIcon } from "./icons";
 
 /**
@@ -32,11 +34,12 @@ export function FolderPicker({
 	}, [browse]);
 
 	useEffect(() => {
-		const onKey = (event: KeyboardEvent) => {
-			if (event.key === "Escape") onClose();
-		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
+		return attachHotkeyLayer({
+			scope: "picker",
+			handlers: {
+				"picker.close": () => onClose(),
+			} satisfies Record<HotkeyIdFor<"picker">, HotkeyHandler>,
+		});
 	}, [onClose]);
 
 	const openHere = async () => {
