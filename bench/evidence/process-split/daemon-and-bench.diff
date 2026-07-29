@@ -1,0 +1,709 @@
+diff --git a/bench/harness.ts b/bench/harness.ts
+index 61cbdbc..eb6792c 100644
+--- a/bench/harness.ts
++++ b/bench/harness.ts
+@@ -94,7 +94,13 @@ export interface Daemon {
+ 	stop: () => void;
+ }
+ 
+-export async function startDaemon(spoolDir: string, root: string, port: number): Promise<Daemon> {
++export async function startDaemon(
++	spoolDir: string,
++	root: string,
++	port: number,
++	/** PROTOTYPE seam (process-split, throwaway): extra env for the serve step only, e.g. SPOOL_SITE_SPLIT=1. */
++	extraEnv: NodeJS.ProcessEnv = {},
++): Promise<Daemon> {
+ 	const cli = join(repoRoot, "dist/cli.js");
+ 	if (!existsSync(cli)) throw new Error(`${cli} is missing — run pnpm build first`);
+ 	const env = { SPOOL_DIR: spoolDir, SPOOL_PORT: String(port) };
+@@ -103,7 +109,7 @@ export async function startDaemon(spoolDir: string, root: string, port: number):
+ 	// healer stays unavailable, so the canvas lifecycle is the sole cover
+ 	// writer and prepareCurrentCovers's exact-one check is the barrier.
+ 	const emptyBrowserStore = mkdtempSync(join(spoolDir, "no-headless-"));
+-	const daemonEnv = { ...env, PLAYWRIGHT_BROWSERS_PATH: emptyBrowserStore };
++	const daemonEnv = { ...env, PLAYWRIGHT_BROWSERS_PATH: emptyBrowserStore, ...extraEnv };
+ 	const child = spawn(process.execPath, [cli, "serve", "--foreground"], {
+ 		env: { ...process.env, ...daemonEnv },
+ 	});
+diff --git a/bench/process-split.ts b/bench/process-split.ts
+new file mode 100644
+index 0000000..af33a6b
+--- /dev/null
++++ b/bench/process-split.ts
+@@ -0,0 +1,647 @@
++import { execFileSync } from "node:child_process";
++import { writeFileSync } from "node:fs";
++import { createServer } from "node:http";
++import { resolve } from "node:path";
++import { type Browser, type CDPSession, chromium, type Page } from "playwright-core";
++import { copyProject, densestPage, freePort, ms, startDaemon, VIEWPORT } from "./harness.ts";
++
++/**
++ * Process-per-frame isolation prototype (throwaway, #process-split): proves or
++ * disproves that Chrome assigns a distinct renderer process to each sandboxed
++ * opaque-origin frame document when it is served from a distinct hostname
++ * under *.run.spool.localhost (SPOOL_SITE_SPLIT=1, src/daemon/app.ts), and
++ * prices what that split costs in memory and buys in stall isolation from one
++ * villain frame's periodic main-thread stalls.
++ *
++ * Modeled directly on bench/frame-cost.ts's mechanics: a dedicated host
++ * server (never `page.route` — that aborts a sandboxed opaque-origin
++ * subframe's navigation and every frame would cost nothing), sandboxed
++ * iframes at authored size inside a `scale(k)` world so all 16 fit onscreen,
++ * staggered inserts, one fresh browser per configuration (frame-cost's own
++ * reasoning: a closed context does not hand back everything it held, and a
++ * leftover renderer from a previous configuration would contaminate the next
++ * one's process count — confirmed empirically while building this), memory
++ * from CDP `SystemInfo.getProcessInfo` crossed with `ps` for RSS.
++ *
++ * CRITICAL, found empirically before writing this file: unlike
++ * bench/frame-cost.ts's default, this always launches the full "chromium"
++ * channel, never "chromium-headless-shell". The headless-shell binary runs in
++ * legacy `--headless=old` mode and never separates renderer processes across
++ * sites at all — a same-site pair and a cross-site pair both stayed at 1
++ * renderer. Only the real "chromium" channel in modern headless mode showed
++ * the split (see process-split/results.md's caveats for the numbers).
++ *
++ *   pnpm build
++ *   node bench/process-split.ts --project <dir with design/, 16 heavy frames incl. one "villain"> --out results.json
++ */
++
++/** Matches bench/frame-cost.ts's own zoom: comfortably fits 16 authored-size frames onscreen. */
++const ZOOM = 0.16;
++/** Per the ticket: 15 s of steady state, measured after boot has settled. */
++const MEASURE_MS = 15_000;
++/** A fresh browser is still finishing its own startup; reading into that charges the frames for it. */
++const SETTLE_MS = 2500;
++/** A frame that has not reported loaded by here is not a measurement. */
++const MOUNT_TIMEOUT_MS = 40_000;
++/** Steady arrival, not a thundering herd against the daemon. */
++const MOUNT_STAGGER_MS = 50;
++/** Beat between "all loaded" and the start of the measurement window, so boot noise never enters it. */
++const POST_BOOT_SETTLE_MS = 1000;
++const RENDER_HOST = "run.spool.localhost";
++const VILLAIN_NAME = "villain";
++
++interface Options {
++	project: string;
++	counts: number[];
++	headed: boolean;
++	out: string | undefined;
++}
++
++function parseArgs(argv: string[]): Options {
++	let project = "";
++	let counts = [4, 8, 16];
++	let headed = false;
++	let out: string | undefined;
++	for (let i = 0; i < argv.length; i++) {
++		const arg = argv[i];
++		const next = argv[i + 1];
++		if (arg === "--project" && next !== undefined) {
++			project = resolve(next);
++			i++;
++		} else if (arg === "--counts" && next !== undefined) {
++			counts = next.split(",").map((count) => Number(count.trim()));
++			i++;
++		} else if (arg === "--out" && next !== undefined) {
++			out = resolve(next);
++			i++;
++		} else if (arg === "--headed") {
++			headed = true;
++		} else if (arg === "--headless") {
++			headed = false;
++		} else {
++			throw new Error(`unknown argument ${arg}`);
++		}
++	}
++	if (project === "") throw new Error("--project <path to a spool project root with the 16 heavy frames> is required");
++	if (counts.some((count) => !Number.isInteger(count) || count < 1)) throw new Error("--counts takes integers >= 1");
++	return { project, counts, headed, out };
++}
++
++type Arm = "shared" | "per-frame";
++
++// --- the host page ---------------------------------------------------------
++
++interface MountSpec {
++	name: string;
++	url: string;
++	w: number;
++	h: number;
++	villain: boolean;
++}
++
++interface RafStats {
++	p50: number;
++	p95: number;
++	worst: number;
++	samples: number;
++}
++
++interface ReportSample {
++	p50: number;
++	p95: number;
++	worst: number;
++	ticks: number;
++}
++
++interface HostApi {
++	mount: (frames: MountSpec[], stagger: number) => Promise<void>;
++	loadedCount: () => number;
++	visibleCount: () => number;
++	rafStats: () => RafStats;
++	resetRaf: () => void;
++	reports: () => Record<string, ReportSample[]>;
++	resetReports: () => void;
++}
++
++/**
++ * The host page, installed as an init script (serialized to the browser by
++ * playwright — nothing outside this function is in scope by the time it
++ * runs; run this file with node's own type stripping, not tsx, exactly per
++ * bench/harness.ts's own note, so the stripped source stays plain,
++ * re-parseable JS with no `__name` wrapper).
++ *
++ * It reproduces frame-cost.ts's bare mount (scaled world of authored-size
++ * sandboxed iframes, answering the session seed) and adds one thing frame-
++ * cost.ts has no need for: collecting each frame's own `{spool:"bench-
++ * report", frame, p50, p95, worst, ticks}` telemetry, keyed by frame name.
++ */
++function host(): void {
++	const scale = 0.16;
++	const raf: number[] = [];
++	const loaded = new Set<string>();
++	const reportsByFrame = new Map<string, { p50: number; p95: number; worst: number; ticks: number }[]>();
++
++	let last = performance.now();
++	const tick = (now: number): void => {
++		raf.push(now - last);
++		last = now;
++		requestAnimationFrame(tick);
++	};
++	requestAnimationFrame(tick);
++
++	window.addEventListener("message", (event: MessageEvent) => {
++		const data = event.data as { spool?: unknown; frame?: unknown } | null;
++		if (data === null || typeof data !== "object") return;
++		// the canvas answers the seed request immediately and with null for any
++		// boot that is not a walk arrival; a silent host would instead charge
++		// every frame the runtime's 250 ms timeout (see bench/frame-cost.ts)
++		if (data.spool === "session?") {
++			(event.source as WindowProxy | null)?.postMessage({ spool: "session", record: null }, "*");
++			return;
++		}
++		if (data.spool === "loaded" && typeof data.frame === "string") {
++			loaded.add(data.frame);
++			return;
++		}
++		if (data.spool === "bench-report" && typeof data.frame === "string") {
++			const record = data as { frame: string; p50: unknown; p95: unknown; worst: unknown; ticks: unknown };
++			const p50 = typeof record.p50 === "number" ? record.p50 : Number.NaN;
++			const p95 = typeof record.p95 === "number" ? record.p95 : Number.NaN;
++			const worst = typeof record.worst === "number" ? record.worst : Number.NaN;
++			const ticks = typeof record.ticks === "number" ? record.ticks : 0;
++			const list = reportsByFrame.get(record.frame) ?? [];
++			list.push({ p50, p95, worst, ticks });
++			reportsByFrame.set(record.frame, list);
++		}
++	});
++
++	const quant = (sorted: number[], q: number): number =>
++		sorted.length === 0
++			? Number.NaN
++			: (sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1))] ?? Number.NaN);
++	const wait = (msec: number): Promise<void> => new Promise((done) => setTimeout(done, msec));
++
++	const world = (): HTMLElement => {
++		const existing = document.getElementById("world");
++		if (existing !== null) return existing;
++		document.body.style.cssText = "margin:0;overflow:hidden;background:#111;";
++		const el = document.createElement("div");
++		el.id = "world";
++		// the canvas's own arrangement: one transformed container with frames at
++		// authored size inside it (bench/frame-cost.ts)
++		el.style.cssText = `position:absolute;top:0;left:0;transform:scale(${scale});transform-origin:0 0;`;
++		document.body.append(el);
++		return el;
++	};
++
++	const place = (frame: MountSpec, index: number, cols: number, cell: { w: number; h: number }): void => {
++		const slot = document.createElement("div");
++		const top = Math.floor(index / cols) * cell.h;
++		slot.style.cssText = `position:absolute;left:${(index % cols) * cell.w}px;top:${top}px;width:${frame.w}px;height:${frame.h}px;overflow:hidden;background:#fff;`;
++		const el = document.createElement("iframe");
++		el.title = frame.name;
++		el.setAttribute("sandbox", "allow-scripts");
++		el.style.cssText = "display:block;width:100%;height:100%;border:0;background:#fff;";
++		el.src = frame.url;
++		slot.append(el);
++		world().append(slot);
++	};
++
++	const grid = (frames: MountSpec[]): { cols: number; cell: { w: number; h: number } } => {
++		const cols = Math.max(1, Math.ceil(Math.sqrt(frames.length)));
++		const cell = { w: 0, h: 0 };
++		for (const frame of frames) {
++			cell.w = Math.max(cell.w, frame.w + 80);
++			cell.h = Math.max(cell.h, frame.h + 80);
++		}
++		return { cols, cell };
++	};
++
++	const api: HostApi = {
++		async mount(frames, stagger) {
++			const { cols, cell } = grid(frames);
++			for (const [index, frame] of frames.entries()) {
++				place(frame, index, cols, cell);
++				if (stagger > 0) await wait(stagger);
++			}
++		},
++		loadedCount: () => loaded.size,
++		visibleCount() {
++			let count = 0;
++			for (const el of document.querySelectorAll("iframe")) {
++				const box = el.getBoundingClientRect();
++				if (box.right > 0 && box.bottom > 0 && box.left < innerWidth && box.top < innerHeight) count++;
++			}
++			return count;
++		},
++		rafStats() {
++			const sorted = [...raf].sort((a, b) => a - b);
++			return {
++				p50: quant(sorted, 0.5),
++				p95: quant(sorted, 0.95),
++				worst: sorted.at(-1) ?? Number.NaN,
++				samples: sorted.length,
++			};
++		},
++		resetRaf() {
++			raf.length = 0;
++		},
++		reports: () => Object.fromEntries(reportsByFrame),
++		resetReports() {
++			reportsByFrame.clear();
++		},
++	};
++	(globalThis as unknown as { __host: HostApi }).__host = api;
++}
++
++const mount = (page: Page, frames: MountSpec[]): Promise<void> =>
++	page.evaluate((input) => (globalThis as unknown as { __host: HostApi }).__host.mount(input.frames, input.stagger), {
++		frames,
++		stagger: MOUNT_STAGGER_MS,
++	});
++
++const loadedCount = (page: Page): Promise<number> =>
++	page.evaluate(() => (globalThis as unknown as { __host: HostApi }).__host.loadedCount());
++
++const visibleCount = (page: Page): Promise<number> =>
++	page.evaluate(() => (globalThis as unknown as { __host: HostApi }).__host.visibleCount());
++
++const rafStats = (page: Page): Promise<RafStats> =>
++	page.evaluate(() => (globalThis as unknown as { __host: HostApi }).__host.rafStats());
++
++const resetRaf = (page: Page): Promise<void> =>
++	page.evaluate(() => {
++		(globalThis as unknown as { __host: HostApi }).__host.resetRaf();
++	});
++
++const reports = (page: Page): Promise<Record<string, ReportSample[]>> =>
++	page.evaluate(() => (globalThis as unknown as { __host: HostApi }).__host.reports());
++
++const resetReports = (page: Page): Promise<void> =>
++	page.evaluate(() => {
++		(globalThis as unknown as { __host: HostApi }).__host.resetReports();
++	});
++
++/** Mount a batch and hold until every frame has reported loaded, or time out. */
++async function mountBatch(page: Page, frames: MountSpec[]): Promise<{ loaded: number; timedOut: boolean }> {
++	await mount(page, frames);
++	try {
++		await page.waitForFunction(
++			(want) => (globalThis as unknown as { __host: HostApi }).__host.loadedCount() >= want,
++			frames.length,
++			{ timeout: MOUNT_TIMEOUT_MS },
++		);
++		return { loaded: await loadedCount(page), timedOut: false };
++	} catch {
++		return { loaded: await loadedCount(page), timedOut: true };
++	}
++}
++
++// --- what the machine is spending ------------------------------------------
++
++interface ProcessDetail {
++	pid: number;
++	type: string;
++	rssMb: number;
++}
++
++interface ProcessSample {
++	renderers: number;
++	processes: number;
++	totalRssMb: number;
++	details: ProcessDetail[];
++}
++
++/**
++ * Chromium's own process list, priced with the OS's resident sizes — the
++ * same instrument as bench/frame-cost.ts's `sampleProcesses`, extended to
++ * keep the per-process breakdown rather than only the aggregate, since this
++ * ticket's first question is the process *count* itself.
++ */
++async function sampleProcesses(session: CDPSession): Promise<ProcessSample> {
++	const { processInfo } = await session.send("SystemInfo.getProcessInfo");
++	const pids = processInfo.map((info) => info.id);
++	const rssByPid = new Map<number, number>();
++	if (pids.length > 0) {
++		// one ps for the whole tree: a call per process would let the sample drift
++		const out = execFileSync("ps", ["-o", "pid=,rss=", "-p", pids.join(",")], { encoding: "utf8" });
++		for (const line of out.split("\n")) {
++			const trimmed = line.trim();
++			if (trimmed === "") continue;
++			const parts = trimmed.split(/\s+/);
++			const pid = Number(parts[0]);
++			const kb = Number(parts[1]);
++			if (Number.isFinite(pid) && Number.isFinite(kb)) rssByPid.set(pid, kb / 1024);
++		}
++	}
++	const details = processInfo.map((info) => ({ pid: info.id, type: info.type, rssMb: rssByPid.get(info.id) ?? 0 }));
++	return {
++		renderers: processInfo.filter((info) => info.type === "renderer").length,
++		processes: processInfo.length,
++		totalRssMb: details.reduce((sum, detail) => sum + detail.rssMb, 0),
++		details,
++	};
++}
++
++/**
++ * The host page gets a server of its own rather than a `page.route`
++ * fulfilment — see bench/frame-cost.ts's own note: with any route
++ * registered, playwright aborts the navigation of a sandboxed opaque-origin
++ * subframe (`net::ERR_ABORTED`), and every frame in this benchmark would
++ * cost nothing at all.
++ */
++async function startHostServer(port: number): Promise<{ url: string; stop: () => void }> {
++	const server = createServer((_request, response) => {
++		response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
++		response.end("<!doctype html><title>process-split bench host</title>");
++	});
++	await new Promise<void>((done) => server.listen(port, "127.0.0.1", done));
++	return { url: `http://127.0.0.1:${port}/`, stop: () => server.close() };
++}
++
++async function openHost(browser: Browser, hostUrl: string): Promise<{ page: Page }> {
++	const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
++	await context.addInitScript(host);
++	const page = await context.newPage();
++	page.on("pageerror", (error) => process.stderr.write(`bench: host error — ${String(error).slice(0, 200)}\n`));
++	await page.goto(hostUrl, { waitUntil: "domcontentloaded" });
++	// a freshly launched browser is still finishing its own startup, and a floor
++	// read taken into that charges the frames for it (bench/frame-cost.ts)
++	await page.waitForTimeout(SETTLE_MS);
++	return { page };
++}
++
++/** Console/network trouble, captured whether or not boot actually fails — cheap insurance. */
++function attachDiagnostics(page: Page): string[] {
++	const errors: string[] = [];
++	const push = (line: string): void => {
++		if (errors.length < 200) errors.push(line);
++	};
++	page.on("console", (message) => {
++		if (message.type() === "error") push(`console.error: ${message.text().slice(0, 300)}`);
++	});
++	page.on("pageerror", (error) => push(`pageerror: ${String(error).slice(0, 300)}`));
++	page.on("requestfailed", (request) =>
++		push(`requestfailed: ${request.url()} — ${request.failure()?.errorText ?? "?"}`),
++	);
++	page.on("response", (response) => {
++		if (response.status() >= 400) push(`http ${response.status()}: ${response.url()}`);
++	});
++	return errors;
++}
++
++// --- stall isolation --------------------------------------------------------
++
++interface StallRow {
++	frame: string;
++	villain: boolean;
++	reports: number;
++	p50Mean: number;
++	p95Max: number;
++	worstMax: number;
++	ticksSum: number;
++}
++
++/** Per-frame reports collected over the window, aggregated to one row per frame. */
++function aggregateReports(raw: Record<string, ReportSample[]>): StallRow[] {
++	const rows: StallRow[] = [];
++	for (const [frame, samples] of Object.entries(raw)) {
++		const clean = samples.filter(
++			(sample) => Number.isFinite(sample.p50) && Number.isFinite(sample.p95) && Number.isFinite(sample.worst),
++		);
++		const p50s = clean.map((sample) => sample.p50);
++		const p95s = clean.map((sample) => sample.p95);
++		const worsts = clean.map((sample) => sample.worst);
++		rows.push({
++			frame,
++			villain: frame === VILLAIN_NAME,
++			reports: clean.length,
++			p50Mean: p50s.length === 0 ? Number.NaN : p50s.reduce((sum, value) => sum + value, 0) / p50s.length,
++			p95Max: p95s.length === 0 ? Number.NaN : Math.max(...p95s),
++			worstMax: worsts.length === 0 ? Number.NaN : Math.max(...worsts),
++			ticksSum: samples.reduce((sum, sample) => sum + sample.ticks, 0),
++		});
++	}
++	rows.sort((a, b) => (a.villain === b.villain ? a.frame.localeCompare(b.frame) : a.villain ? -1 : 1));
++	return rows;
++}
++
++// --- one configuration -------------------------------------------------------
++
++interface Config {
++	arm: Arm;
++	count: number;
++	loaded: number;
++	visible: number;
++	bootTimedOut: boolean;
++	bootMs: number;
++	floor: ProcessSample;
++	held: ProcessSample;
++	hostRaf: RafStats;
++	stalls: StallRow[];
++	diagnostics: string[];
++}
++
++function buildSpecs(
++	port: number,
++	project: string,
++	boxes: readonly { name: string; w: number; h: number }[],
++	arm: Arm,
++): MountSpec[] {
++	return boxes.map((box, index) => ({
++		name: box.name,
++		villain: box.name === VILLAIN_NAME,
++		w: box.w,
++		h: box.h,
++		url:
++			arm === "shared"
++				? `http://${RENDER_HOST}:${port}/p/${encodeURIComponent(project)}/frames/${encodeURIComponent(box.name)}`
++				: `http://f${index}.${RENDER_HOST}:${port}/p/${encodeURIComponent(project)}/frames/${encodeURIComponent(box.name)}`,
++	}));
++}
++
++/**
++ * One arm x count configuration, in a browser of its own — the relaunch is
++ * the point (bench/frame-cost.ts's own reasoning, and confirmed while
++ * building this: a renderer process from a previous configuration can
++ * outlive the context that created it, which would inflate the next
++ * configuration's process count for a reason that has nothing to do with
++ * that configuration's own frames).
++ */
++async function runConfig(
++	launch: () => Promise<Browser>,
++	hostUrl: string,
++	arm: Arm,
++	specs: MountSpec[],
++): Promise<Config> {
++	const browser = await launch();
++	try {
++		const session = await browser.newBrowserCDPSession();
++		const { page } = await openHost(browser, hostUrl);
++		const diagnostics = attachDiagnostics(page);
++		const floor = await sampleProcesses(session);
++		const bootStart = Date.now();
++		const { loaded, timedOut } = await mountBatch(page, specs);
++		const bootMs = Date.now() - bootStart;
++		if (timedOut) {
++			process.stderr.write(
++				`bench:   ${arm} ${specs.length}: not every frame reported loaded (${loaded}/${specs.length})\n`,
++			);
++		}
++		// let boot noise (compiling, first paint) drain before the window that counts
++		await page.waitForTimeout(POST_BOOT_SETTLE_MS);
++		await resetRaf(page);
++		await resetReports(page);
++		await page.waitForTimeout(MEASURE_MS);
++		const held = await sampleProcesses(session);
++		const hostRaf = await rafStats(page);
++		const rawReports = await reports(page);
++		const visible = await visibleCount(page);
++		const stalls = aggregateReports(rawReports);
++		process.stderr.write(
++			`bench:   ${arm} ${specs.length}: ${loaded}/${specs.length} loaded (${visible} onscreen), boot ${ms(bootMs)} ms, ` +
++				`${floor.renderers} → ${held.renderers} renderers, ${(held.totalRssMb - floor.totalRssMb).toFixed(0)} MB over floor\n`,
++		);
++		return {
++			arm,
++			count: specs.length,
++			loaded,
++			visible,
++			bootTimedOut: timedOut,
++			bootMs,
++			floor,
++			held,
++			hostRaf,
++			stalls,
++			diagnostics,
++		};
++	} finally {
++		await browser.close();
++	}
++}
++
++// --- reporting ---------------------------------------------------------------
++
++function processTable(configs: readonly Config[]): string {
++	const rows = ["| arm | frames | renderers (floor → held) | total processes (floor → held) |", "|---|---|---|---|"];
++	for (const c of configs) {
++		rows.push(
++			`| ${c.arm} | ${c.count} | ${c.floor.renderers} → ${c.held.renderers} | ${c.floor.processes} → ${c.held.processes} |`,
++		);
++	}
++	return rows.join("\n");
++}
++
++function memoryTable(configs: readonly Config[]): string {
++	const rows = ["| arm | frames | MB over floor (total) | MB / frame | renderers held |", "|---|---|---|---|---|"];
++	for (const c of configs) {
++		const overFloor = c.held.totalRssMb - c.floor.totalRssMb;
++		rows.push(
++			`| ${c.arm} | ${c.count} | ${overFloor.toFixed(0)} | ${(overFloor / c.count).toFixed(1)} | ${c.held.renderers} |`,
++		);
++	}
++	return rows.join("\n");
++}
++
++function stallTable(configs: readonly Config[]): string {
++	const rows = [
++		"| arm | frames | siblings | sibling p95 mean/max (ms) | sibling worst mean/max (ms) | siblings worst>100ms | villain worst (ms) |",
++		"|---|---|---|---|---|---|---|",
++	];
++	for (const c of configs) {
++		const siblings = c.stalls.filter((s) => !s.villain);
++		const villainRow = c.stalls.find((s) => s.villain);
++		const p95s = siblings.map((s) => s.p95Max).filter(Number.isFinite);
++		const worsts = siblings.map((s) => s.worstMax).filter(Number.isFinite);
++		const meanOf = (values: number[]): number =>
++			values.length === 0 ? Number.NaN : values.reduce((a, b) => a + b, 0) / values.length;
++		const maxOf = (values: number[]): number => (values.length === 0 ? Number.NaN : Math.max(...values));
++		const over100 = siblings.filter((s) => Number.isFinite(s.worstMax) && s.worstMax > 100).length;
++		rows.push(
++			`| ${c.arm} | ${c.count} | ${siblings.length} | ${ms(meanOf(p95s))} / ${ms(maxOf(p95s))} | ${ms(meanOf(worsts))} / ${ms(maxOf(worsts))} | ${over100} | ${ms(villainRow?.worstMax ?? Number.NaN)} |`,
++		);
++	}
++	return rows.join("\n");
++}
++
++function bootTable(configs: readonly Config[]): string {
++	const rows = [
++		"| arm | frames | loaded | onscreen | boot: first insert -> all loaded (ms) |",
++		"|---|---|---|---|---|",
++	];
++	for (const c of configs) {
++		rows.push(
++			`| ${c.arm} | ${c.count} | ${c.loaded}/${c.count} | ${c.visible} | ${ms(c.bootMs)}${c.bootTimedOut ? " (timed out)" : ""} |`,
++		);
++	}
++	return rows.join("\n");
++}
++
++function hostRafTable(configs: readonly Config[]): string {
++	const rows = ["| arm | frames | host page raf p50 / p95 / worst (ms) |", "|---|---|---|"];
++	for (const c of configs) {
++		rows.push(`| ${c.arm} | ${c.count} | ${ms(c.hostRaf.p50)} / ${ms(c.hostRaf.p95)} / ${ms(c.hostRaf.worst)} |`);
++	}
++	return rows.join("\n");
++}
++
++async function main(): Promise<void> {
++	const options = parseArgs(process.argv.slice(2));
++	const { root, name, spoolDir } = copyProject(options.project);
++	const { frames: boxes } = densestPage(root);
++	if (boxes.length === 0) throw new Error(`${options.project} has no frames to measure`);
++	if (!boxes.some((box) => box.name === VILLAIN_NAME)) {
++		throw new Error(`${options.project} has no frame named "${VILLAIN_NAME}"`);
++	}
++	// villain first, so every prefix slice (every tested count) includes it,
++	// regardless of the filesystem's own readdir order
++	const ordered = [
++		...boxes.filter((box) => box.name === VILLAIN_NAME),
++		...boxes.filter((box) => box.name !== VILLAIN_NAME),
++	];
++	const counts = options.counts.filter((count) => count <= ordered.length);
++
++	const port = await freePort();
++	// SPOOL_SITE_SPLIT=1: one daemon for the whole run, reused across every
++	// configuration below — only the browser is relaunched per configuration.
++	// The shared arm never exercises the flag's new branch (exact-match
++	// already classifies run.spool.localhost as "render"), so one daemon
++	// serves both arms identically to how it would with the flag off.
++	const daemon = await startDaemon(spoolDir, root, port, { SPOOL_SITE_SPLIT: "1" });
++	const hostServer = await startHostServer(await freePort());
++	process.stderr.write(
++		`bench: ${daemon.url} (copy of ${options.project}, ${ordered.length} frames, k=${ZOOM}, SPOOL_SITE_SPLIT=1, counts ${counts.join(",")})\n`,
++	);
++
++	const launch = (): Promise<Browser> =>
++		// ALWAYS the full "chromium" channel here, never "chromium-headless-shell" —
++		// see the file header: the headless-shell binary does not separate renderer
++		// processes across sites at all, which would make this whole bench measure
++		// nothing. Modern headless mode ("chromium" channel, headless: true) does.
++		chromium.launch({ channel: "chromium", headless: !options.headed });
++
++	const configs: Config[] = [];
++	try {
++		for (const arm of ["shared", "per-frame"] as const) {
++			for (const count of counts) {
++				const slice = ordered.slice(0, count);
++				const specs = buildSpecs(port, name, slice, arm);
++				process.stderr.write(`bench: ${arm} arm, ${count} frames\n`);
++				configs.push(await runConfig(launch, hostServer.url, arm, specs));
++			}
++		}
++	} finally {
++		hostServer.stop();
++		daemon.stop();
++	}
++
++	process.stdout.write(
++		`${processTable(configs)}\n\n${memoryTable(configs)}\n\n${stallTable(configs)}\n\n${bootTable(configs)}\n\n${hostRafTable(configs)}\n`,
++	);
++	if (options.out !== undefined) {
++		writeFileSync(options.out, `${JSON.stringify({ project: options.project, counts, configs }, null, 2)}\n`);
++		process.stderr.write(`bench: wrote ${options.out}\n`);
++	}
++}
++
++await main();
+diff --git a/src/daemon/app.ts b/src/daemon/app.ts
+index c38832f..e7e9eb2 100644
+--- a/src/daemon/app.ts
++++ b/src/daemon/app.ts
+@@ -155,6 +155,10 @@ export function createDaemonApp({
+ 	onMachineStateWatchError,
+ }: DaemonOptions) {
+ 	const controlToken = providedControlToken ?? createCapability();
++	// PROTOTYPE (process-per-frame isolation, throwaway): read once at daemon
++	// construction, never touched again. Off by default so every existing
++	// caller and test sees the exact-match behavior this file always had.
++	const siteSplit = process.env.SPOOL_SITE_SPLIT === "1";
+ 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
+ 	let controlOrigin = `http://${controlHostname.includes(":") ? `[${controlHostname}]` : controlHostname}`;
+ 	let renderOrigin = renderOriginFor(controlOrigin);
+@@ -361,6 +365,12 @@ export function createDaemonApp({
+ 		const hostname = normalizeHostname(new URL(url).hostname);
+ 		if (hostname === controlHostname) return "control";
+ 		if (hostname === RENDER_HOST) return "render";
++		// PROTOTYPE: every "<anything>.run.spool.localhost" is also a render
++		// host, so each frame can be handed a distinct hostname and (per
++		// Chrome's site-per-precursor-origin rule for opaque sandboxed
++		// origins) a distinct renderer process. Path rules below already gate
++		// purely on `path`, not on which exact hostname classified as render.
++		if (siteSplit && hostname.endsWith(`.${RENDER_HOST}`)) return "render";
+ 		if (hostname === CAPTURE_HOST) return "capture";
+ 		return "unexpected";
+ 	}

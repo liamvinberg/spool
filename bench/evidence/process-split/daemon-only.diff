@@ -1,0 +1,28 @@
+diff --git a/src/daemon/app.ts b/src/daemon/app.ts
+index c38832f..e7e9eb2 100644
+--- a/src/daemon/app.ts
++++ b/src/daemon/app.ts
+@@ -155,6 +155,10 @@ export function createDaemonApp({
+ 	onMachineStateWatchError,
+ }: DaemonOptions) {
+ 	const controlToken = providedControlToken ?? createCapability();
++	// PROTOTYPE (process-per-frame isolation, throwaway): read once at daemon
++	// construction, never touched again. Off by default so every existing
++	// caller and test sees the exact-match behavior this file always had.
++	const siteSplit = process.env.SPOOL_SITE_SPLIT === "1";
+ 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
+ 	let controlOrigin = `http://${controlHostname.includes(":") ? `[${controlHostname}]` : controlHostname}`;
+ 	let renderOrigin = renderOriginFor(controlOrigin);
+@@ -361,6 +365,12 @@ export function createDaemonApp({
+ 		const hostname = normalizeHostname(new URL(url).hostname);
+ 		if (hostname === controlHostname) return "control";
+ 		if (hostname === RENDER_HOST) return "render";
++		// PROTOTYPE: every "<anything>.run.spool.localhost" is also a render
++		// host, so each frame can be handed a distinct hostname and (per
++		// Chrome's site-per-precursor-origin rule for opaque sandboxed
++		// origins) a distinct renderer process. Path rules below already gate
++		// purely on `path`, not on which exact hostname classified as render.
++		if (siteSplit && hostname.endsWith(`.${RENDER_HOST}`)) return "render";
+ 		if (hostname === CAPTURE_HOST) return "capture";
+ 		return "unexpected";
+ 	}
