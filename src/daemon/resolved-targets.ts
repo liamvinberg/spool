@@ -119,8 +119,12 @@ export function projectScenarios(root: string): { names: string[]; hash: string 
  * The targets still standing for one frame: read only when both the frame's
  * source and the scenario set are the ones that were rendered. Same drop-on-edit
  * freshness as a verified mark, one file over.
+ *
+ * `null` is "nobody has rendered this frame at these bytes", which an empty
+ * array is not: a render that produced no `[data-go]` answered the question,
+ * and the answer is that the frame declares no walk at those sites (#150).
  */
-export type RenderedReader = (frame: string, sourceHash: string, scenariosHash: string) => RenderedTarget[];
+export type RenderedReader = (frame: string, sourceHash: string, scenariosHash: string) => RenderedTarget[] | null;
 
 /**
  * That read over one load of the cache file. A project-wide derivation asks per
@@ -132,8 +136,8 @@ export function createRenderedReader(root: string): RenderedReader {
 	return (frame, sourceHash, scenariosHash) => {
 		records ??= readRecords(root);
 		const record = records.find((candidate) => candidate.frame === frame);
-		if (record === undefined) return [];
-		if (record.hash !== sourceHash || record.scenarios !== scenariosHash) return [];
+		if (record === undefined) return null;
+		if (record.hash !== sourceHash || record.scenarios !== scenariosHash) return null;
 		return record.targets;
 	};
 }

@@ -16,7 +16,12 @@ import {
 } from "./nav-sites";
 import { isSafeName } from "./project-files";
 import { frameDirectories, frameNames } from "./projection";
-import { createRenderedReader, projectScenarios, type RenderedReader } from "./resolved-targets";
+import {
+	createRenderedReader,
+	projectScenarios,
+	type RenderedReader,
+	type RenderedTarget,
+} from "./resolved-targets";
 
 /**
  * The link graph (#34, amending #5): the map is read, not walked. Every edge
@@ -188,11 +193,8 @@ export function recordWalk(root: string, from: string, to: string): boolean {
  * can both add the edges and stop reporting the sites as dark.
  */
 function resolvedBySite(
-	rendered: RenderedReader,
-	frame: string,
+	read: readonly RenderedTarget[],
 	dark: readonly UnreadableSite[],
-	hash: string,
-	scenariosHash: string,
 ): Map<string, { targets: Set<string>; site: UnreadableSite }> {
 	if (dark.length === 0) return new Map();
 	const byAnchor = new Map<string, { targets: Set<string>; site: UnreadableSite }>();
@@ -201,7 +203,7 @@ function resolvedBySite(
 		byAnchor.set(`${site.path}:${site.anchor.line}:${site.anchor.col}`, { targets: new Set(), site });
 	}
 	if (byAnchor.size === 0) return new Map();
-	for (const filled of rendered(frame, hash, scenariosHash)) {
+	for (const filled of read) {
 		if (!isSafeName(filled.target)) continue;
 		byAnchor.get(`${filled.path}:${filled.line}:${filled.col}`)?.targets.add(filled.target);
 	}
@@ -233,7 +235,8 @@ function frameFlows(graph: FrameGraph, context: FlowContext): { edges: FlowEdge[
 	const from = graph.frame;
 	const edges: FlowEdge[] = [];
 	const unreadable: FlowUnreadable[] = [];
-	const filled = resolvedBySite(context.rendered, from, graph.unreadable, graph.hash, context.scenarios);
+	const read = context.rendered(from, graph.hash, context.scenarios);
+	const filled = resolvedBySite(read ?? [], graph.unreadable);
 	// a resolved value is the site's, so it joins that site's own target list
 	const byTarget = derivedTargets(graph.sites);
 	const fromRender = new Set<string>();
@@ -270,8 +273,12 @@ function frameFlows(graph: FrameGraph, context: FlowContext): { edges: FlowEdge[
 		});
 	}
 	for (const site of graph.unreadable) {
-		// a site a render answered is no longer dark — do not report it twice
-		if (site.anchor !== undefined && filled.has(`${site.path}:${site.anchor.line}:${site.anchor.col}`)) continue;
+		// a site a render answered is no longer dark, and writing no attribute is
+		// an answer too: an optional prop left undefined renders nothing, so there
+		// is no walk there to be unable to read (#150). Only an anchored data-go
+		// site can be asked — a coded call is invisible to the DOM the pass reads,
+		// and a site with no element to stamp has nothing to match against.
+		if (site.via === "data-go" && site.anchor !== undefined && read !== null) continue;
 		unreadable.push({ frame: from, path: site.path, line: site.line });
 	}
 	return { edges, unreadable };
