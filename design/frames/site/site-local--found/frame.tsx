@@ -62,7 +62,7 @@ export default function SiteLocalFound() {
 				className="absolute -translate-x-1/2 whitespace-nowrap text-center font-semibold text-[48px] leading-[1.0] tracking-[-0.02em]"
 				style={{ left: PAGE_MID, top: 440 }}
 			>
-				Spool is running.
+				spool is running.
 			</h1>
 			<p
 				className="absolute -translate-x-1/2 text-pretty text-center text-[16px] text-muted leading-[25px]"

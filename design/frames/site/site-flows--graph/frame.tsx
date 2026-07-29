@@ -126,7 +126,7 @@ const SOURCES: readonly Source[] = [
 			{ text: "  Checkout" },
 			{ text: "</button>" },
 		],
-		note: "one target, no branch, so the arrow is solid.",
+		note: "One target, no branch, so the arrow is solid.",
 	},
 	{
 		id: "cart",
@@ -143,7 +143,7 @@ const SOURCES: readonly Source[] = [
 			{ text: "  Pay" },
 			{ text: "</button>" },
 		],
-		note: "two targets in a ternary, so both arrows are faint.",
+		note: "Two targets in a ternary, so both arrows are faint.",
 	},
 	{
 		id: "topup",
@@ -155,7 +155,7 @@ const SOURCES: readonly Source[] = [
 			{ text: "  Add $10" },
 			{ text: "</button>" },
 		],
-		note: "a computed target. nothing to read, so nothing is drawn.",
+		note: "A computed target. Nothing to read, so nothing is drawn.",
 	},
 ];
 
@@ -273,7 +273,7 @@ function MapNode({
 			onClick={onSelect}
 			onMouseEnter={() => onHover(true)}
 			onMouseLeave={() => onHover(false)}
-			aria-label={`show the code that walks out of ${nodeKey}`}
+			aria-label={`Show the code that walks out of ${nodeKey}`}
 			className="group absolute cursor-pointer text-left focus-visible:outline-none"
 			style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
 		>
@@ -312,7 +312,7 @@ function SourceCard({
 			onClick={() => onSelect(index)}
 			onMouseEnter={() => onHover(true)}
 			onMouseLeave={() => onHover(false)}
-			aria-label={`read ${source.file}`}
+			aria-label={`Read ${source.file}`}
 			className="group absolute cursor-pointer text-left focus-visible:outline-none"
 			style={{ left: CARD_X[index] ?? CARD_X[0], top: CARD_TOP, width: CARD_W }}
 		>
@@ -651,17 +651,17 @@ function Flows() {
 export default function SiteFlowsGraph() {
 	return (
 		<SiteSection
-			title="flows"
-			lead="every go in your code is an arrow. nobody draws this map by hand."
+			title="Flows"
+			lead="Every go in your code is an arrow. Nobody draws this map by hand."
 			foot={[
-				"solid means the walk will happen. faint means it might.",
-				"a target spool can't read draws nothing, and says so.",
+				"Solid means the walk will happen. Faint means it might.",
+				"A target spool can't read draws nothing, and says so.",
 			]}
 			morph="site-flows-card"
 			back={
-				<button type="button" data-go="site-hub" aria-label="back to canvas" className={backChipClass}>
+				<button type="button" data-go="site-hub" aria-label="Back to canvas" className={backChipClass}>
 					<span className={backArrowClass}>←</span>
-					canvas
+					Canvas
 				</button>
 			}
 		>

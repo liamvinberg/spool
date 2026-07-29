@@ -48,7 +48,7 @@ export default function SiteLocalBlocked() {
 				style={{ left: PAGE_MID + 14, top: WALL - 46 }}
 			>
 				<UpTick className="h-3 w-2 text-thread" />
-				site settings, by the address bar
+				Site settings, by the address bar
 			</span>
 
 			{/* past the wall the page is guessing, so it draws a guess */}

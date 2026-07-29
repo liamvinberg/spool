@@ -105,7 +105,7 @@ function CommandLine({ command, prompt }: { command: string; prompt: string }) {
 					copied ? "text-thread opacity-100" : "text-muted opacity-0",
 				)}
 			>
-				copied
+				Copied
 			</span>
 		</button>
 	);
@@ -140,7 +140,7 @@ export default function SiteMobileReal() {
 						href="https://github.com/liamvinberg/spool"
 						className="flex items-center gap-1 font-mono text-muted text-xs"
 					>
-						github
+						GitHub
 						<ArrowUpRight className="h-3 w-3" />
 					</a>
 				</header>
@@ -149,14 +149,13 @@ export default function SiteMobileReal() {
 					<div className="relative">
 						<Node className="top-[11px]" />
 						<h1 className="font-semibold text-[34px] leading-[1.02] tracking-[-0.02em]">
-							feel an app
+							Feel an app
 							<br />
 							before it exists
 						</h1>
 					</div>
 					<p className="mt-4 text-[15px] text-muted leading-[23px]">
-						a live prototyping canvas. your agent authors real tsx frames, you arrange them and walk the flows. it
-						feels real because it is.
+						A live prototyping canvas. Your agent authors real TSX frames, you arrange them and walk the flows. It feels real because it is.
 					</p>
 
 					{/* A band cut clean through the page: full bleed on both edges, and
@@ -186,15 +185,15 @@ export default function SiteMobileReal() {
 							</div>
 						</div>
 						<p className="mt-4 pl-5 text-[13px] text-muted leading-[20px]">
-							spool runs on your machine, beside your repo. open spool.page on a laptop to walk the canvas.
+							spool runs on your machine, beside your repo. Open spool.page on a laptop to walk the canvas.
 						</p>
 					</div>
 				</main>
 
 				<footer className="flex shrink-0 items-center justify-between border-border border-t py-5">
-					<span className="font-mono text-2xs text-muted">node 22+ · chrome · macos-first</span>
+					<span className="font-mono text-2xs text-muted">Node 22+ · Chrome · macOS-first</span>
 					<a href="https://github.com/liamvinberg/spool" className="flex items-center gap-1 text-[13px] text-text">
-						star it
+						Star it
 						<ArrowUpRight className="h-3 w-3" />
 					</a>
 				</footer>

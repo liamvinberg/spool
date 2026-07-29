@@ -268,7 +268,7 @@ function CommandLine({
 			onClick={() => {
 				void handleCopy();
 			}}
-			aria-label={copied ? `copied ${command}` : `copy ${command}`}
+			aria-label={copied ? `Copied ${command}` : `Copy ${command}`}
 			className={cn(
 				"group/cmd block w-full cursor-pointer text-left focus-visible:outline-none",
 				className,
@@ -432,7 +432,7 @@ function ScrollHint({ opacity }: { opacity: MotionValue<number> }) {
 			>
 				<DownGlyph className="h-3.5 w-3.5" />
 			</motion.span>
-			<span>scroll</span>
+			<span>Scroll</span>
 		</motion.div>
 	);
 }
@@ -475,13 +475,12 @@ function LandingContent({ hint }: { hint: MotionValue<number> }) {
 						<div className="max-w-[560px]">
 							<Node className="-left-[124px] top-[9px]" />
 							<h1 className="font-semibold text-[66px] leading-[0.98] tracking-[-0.02em]">
-								feel an app
+								Feel an app
 								<br />
 								before it exists
 							</h1>
 							<p className="mt-6 max-w-[452px] text-[17px] text-muted leading-[26px]">
-								a live prototyping canvas. your agent authors real tsx frames, you arrange them and
-								walk the flows. it feels real because it is.
+								A live prototyping canvas. Your agent authors real TSX frames, you arrange them and walk the flows. It feels real because it is.
 							</p>
 
 							<div className="mt-9">
@@ -494,7 +493,7 @@ function LandingContent({ hint }: { hint: MotionValue<number> }) {
 									</div>
 								</div>
 								<div className="mt-5 pl-[25px] font-mono text-muted text-xs">
-									requires node 22+ · best in chrome · macos-first today
+									Requires Node 22+ · best in Chrome · macOS-first today
 								</div>
 							</div>
 						</div>
@@ -829,7 +828,7 @@ interface SectionSpec extends Rect {
 const SECTIONS: readonly SectionSpec[] = [
 	{
 		id: "flows",
-		sub: "walk screen to screen",
+		sub: "Walk screen to screen",
 		x: 356,
 		y: 132,
 		w: 292,
@@ -840,7 +839,7 @@ const SECTIONS: readonly SectionSpec[] = [
 	},
 	{
 		id: "disk",
-		sub: "plain files in your repo",
+		sub: "Plain files in your repo",
 		x: 1100,
 		y: 136,
 		w: 196,
@@ -851,7 +850,7 @@ const SECTIONS: readonly SectionSpec[] = [
 	},
 	{
 		id: "frames",
-		sub: "real tsx, real depth",
+		sub: "Real TSX, real depth",
 		x: 372,
 		y: 656,
 		w: 276,
@@ -862,7 +861,7 @@ const SECTIONS: readonly SectionSpec[] = [
 	},
 	{
 		id: "states",
-		sub: "one screen, seeded three ways",
+		sub: "One screen, seeded three ways",
 		x: 1068,
 		y: 640,
 		w: 264,
@@ -1045,7 +1044,7 @@ function DraftsField({ shown }: { shown: boolean }) {
 				animate={{ opacity: shown ? 1 : 0 }}
 				transition={{ duration: 0.3, ease: EASE, delay: shown ? 0.34 : 0 }}
 			>
-				25 takes at one page. sketches, not live frames.
+				25 takes at one page. Sketches, not live frames.
 			</motion.div>
 		</div>
 	);
@@ -1071,7 +1070,7 @@ function EmptyProject({ shown }: { shown: boolean }) {
 				<SpoolMark className="h-7 w-[22px] text-thread opacity-40" />
 				<h2 className="font-medium text-base leading-base">Open a project locally.</h2>
 				<p className="w-[380px] text-center font-mono text-muted text-xs leading-5">
-					this page is a preview. in spool, + opens a project folder from your machine.
+					This page is a preview. In spool, + opens a project folder from your machine.
 				</p>
 				<div className="mt-1 flex gap-4">
 					<span className="w-px shrink-0 self-stretch bg-thread/70" />
@@ -1081,8 +1080,7 @@ function EmptyProject({ shown }: { shown: boolean }) {
 					</div>
 				</div>
 				<p className="mt-1 w-[440px] text-center font-mono text-muted text-xs leading-5">
-					open <span className="text-text">localhost:7766</span>. your frames appear in that local canvas as your
-					agent writes them.
+					Open <span className="text-text">localhost:7766</span>. Your frames appear in that local canvas as your agent writes them.
 				</p>
 			</div>
 		</motion.div>
@@ -1394,7 +1392,7 @@ function LandingTab({ sp, lit }: { sp: MotionValue<number>; lit: boolean }) {
 			className="pointer-events-none absolute top-0 left-0 z-20"
 			style={{ x, y, width: LIVE.w, opacity }}
 		>
-			<NameTab name="landing" sub="the page you are on" lit={lit} />
+			<NameTab name="landing" sub="The page you are on" lit={lit} />
 		</motion.div>
 	);
 }
@@ -1442,7 +1440,7 @@ function SectionTile({
 			<motion.div
 				role="link"
 				tabIndex={live ? 0 : -1}
-				aria-label={entered ? `${spec.id}, live, escape exits` : `${spec.id}, double-click to go inside`}
+				aria-label={entered ? `${spec.id}, live, Escape exits` : `${spec.id}, double-click to go inside`}
 				className={cn(
 					"relative block text-left focus-visible:outline-none",
 					entered ? "cursor-default" : "cursor-pointer",
@@ -1816,21 +1814,21 @@ function Rail({
 					</div>
 				</div>
 				<div className="mt-2 pl-[13px] font-mono text-[10px] text-muted/70 leading-[15px]">
-					node 22+ · macos-first today
+					Node 22+ · macOS-first today
 				</div>
 				<div className="mt-4 flex items-center gap-4 font-mono text-[11px] text-muted">
 					<a
 						href="https://github.com/liamvinberg/spool"
 						className="inline-flex items-center gap-1 transition-colors duration-200 hover:text-thread"
 					>
-						docs
+						Docs
 						<ArrowUpRight className="h-2.5 w-2.5 opacity-70" />
 					</a>
 					<a
 						href="https://github.com/liamvinberg/spool"
 						className="inline-flex items-center gap-1 transition-colors duration-200 hover:text-thread"
 					>
-						github
+						GitHub
 						<ArrowUpRight className="h-2.5 w-2.5 opacity-70" />
 					</a>
 				</div>
@@ -2321,7 +2319,7 @@ export default function SiteHubComposed() {
 										ex={anchorSpec.anno.ex}
 										ey={anchorSpec.anno.ey}
 										sx={anchorSpec.anno.sx}
-										verb="double-click"
+										verb="Double-click"
 										rest=" to go inside"
 									/>
 								) : null}
@@ -2336,7 +2334,7 @@ export default function SiteHubComposed() {
 										ex={780}
 										ey={676}
 										sx={960}
-										verb="scroll"
+										verb="Scroll"
 										rest=" to pull back further"
 									/>
 								) : null}
@@ -2396,7 +2394,7 @@ export default function SiteHubComposed() {
 									ex={318}
 									ey={320}
 									sx={514}
-									rest="rail or canvas, same frames"
+									rest="Rail or canvas, same frames"
 								/>
 							) : null}
 						</AnimatePresence>
