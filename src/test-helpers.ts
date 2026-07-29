@@ -1,7 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { onTestFinished } from "vitest";
+import type { AgentExecutor, AgentProcess } from "./daemon/agent-exec";
+import type { AgentSpawn } from "./daemon/agent-spawn";
 import { createDaemonApp } from "./daemon/app";
 import { renderOrigin } from "./daemon/lifecycle";
 import { CONTROL_HEADER, PROJECT_HEADER, RENDER_HOST } from "./daemon/security";
@@ -64,6 +67,9 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 	daemon.setSelfOrigin("http://localhost:7766");
 	onTestFinished(() => daemon.close());
 	return {
+		/** the raw door: no capability is added, so a test can assert one is required */
+		fetch: (input: string, init?: RequestInit) =>
+			daemon.app.fetch(new Request(new URL(input, "http://localhost:7766"), init)),
 		controlRequest: (input: string, init?: RequestInit) => {
 			const request = new Request(new URL(input, "http://localhost:7766"), init);
 			request.headers.set(CONTROL_HEADER, daemon.controlToken);
@@ -225,6 +231,93 @@ export function fixtureTermExecutor() {
 		return proc;
 	};
 	return { spawned, executor };
+}
+
+/** The seven recorded sessions (#190), read straight from their tracked home. */
+export function readCapture(name: string): readonly unknown[] {
+	const file = fileURLToPath(new URL(`../fixtures/captures/${name}.json`, import.meta.url));
+	return JSON.parse(readFileSync(file, "utf8")) as readonly unknown[];
+}
+
+export const CAPTURES = [
+	"claude-turn",
+	"claude-plan",
+	"claude-edits",
+	"claude-fanout",
+	"claude-mcp",
+	"claude-interrupt",
+	"claude-compact",
+] as const;
+
+/**
+ * The agent fixture executor (#191): the injected stand-in for the developer's
+ * binary. It replays a capture line by line, so CI never spawns an agent, never
+ * touches a login, and never depends on a model.
+ */
+export class FakeAgentProc implements AgentProcess {
+	inputs: string[] = [];
+	ended = false;
+	killed = false;
+	spawn: AgentSpawn;
+	/** what the fixture does when a prompt lands, the way the binary answers one */
+	whenWritten: ((proc: FakeAgentProc, line: string) => void) | undefined;
+	private lineCb: (line: string) => void = () => {};
+	private exitCb: (code: number | null, message?: string) => void = () => {};
+	constructor(spawn: AgentSpawn) {
+		this.spawn = spawn;
+	}
+	write(line: string): void {
+		this.inputs.push(line);
+		this.whenWritten?.(this, line);
+	}
+	end(): void {
+		this.ended = true;
+	}
+	kill(): void {
+		this.killed = true;
+		this.exit(null);
+	}
+	onLine(cb: (line: string) => void): void {
+		this.lineCb = cb;
+	}
+	onExit(cb: (code: number | null, message?: string) => void): void {
+		this.exitCb = cb;
+	}
+	emit(line: string): void {
+		this.lineCb(line);
+	}
+	/** the capture, one wire line at a time, exactly as the binary would print it */
+	replay(events: readonly unknown[]): void {
+		for (const event of events) this.emit(JSON.stringify(event));
+	}
+	exit(code: number | null, message?: string): void {
+		if (this.killed && code !== null) return;
+		this.exitCb(code, message);
+	}
+}
+
+/**
+ * An executor that hands back a controllable process, and remembers every spawn
+ * it was asked for — which is how a test reads the settled arguments and the
+ * environment the child would have received.
+ */
+export function fixtureAgentExecutor(whenWritten?: (proc: FakeAgentProc, line: string) => void) {
+	const spawned: FakeAgentProc[] = [];
+	const executor: AgentExecutor = async (spawn) => {
+		const proc = new FakeAgentProc(spawn);
+		proc.whenWritten = whenWritten;
+		spawned.push(proc);
+		return proc;
+	};
+	return { spawned, executor };
+}
+
+/** An executor that answers a prompt with one capture, then exits cleanly. */
+export function replayAgentExecutor(capture: string) {
+	return fixtureAgentExecutor((proc) => {
+		proc.replay(readCapture(capture));
+		proc.exit(0);
+	});
 }
 
 export async function until(condition: () => boolean, ms = 8000): Promise<void> {

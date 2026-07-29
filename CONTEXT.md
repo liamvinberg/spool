@@ -82,6 +82,18 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Skill**: The teaching text behind `spool skill`, under the completeness contract: if it is not in the skill, spool does not do it.
 
+**Turn**: One exchange with the agent, from the prompt spool sends down its stdin to the terminal reason it answers with. The daemon spawns a process per turn and it dies with the turn. _Avoid_: run, session, request
+
+**Spawn**: The developer's own installed agent, started by the daemon as a child process against the login already on the machine. Spool configures no key. What it takes is settled: the developer's settings only, the permission mode set explicitly, and one allow rule for edits under `design/`.
+
+**Framing**: What spool appends to the agent's system prompt at spawn — five lines saying what the agent is for, plus `spool skill`'s overview taken from the same function the verb prints.
+
+**Agent event**: One member of the internal union every adapter feeds and the rail renders. Modelled richest-first on what Claude Code emits; a type nobody modelled is carried rather than fatal. _Avoid_: message, chunk
+
+**Adapter**: The translation from one runtime's wire format into agent events, and nothing else — it names no frames and parses no tool arguments. Claude Code's is the first; a second needs no rail change.
+
+**Capture**: A recorded window of a real agent session under `fixtures/captures/`, read by both the shipped tests and the dogfood canvas. The captures are the authority: read one before drawing a state, and before claiming one is missing.
+
 ### Laws
 
 **Parity law**: Spool chrome must never alter frame behavior; a frame in spool behaves exactly like its bare document.

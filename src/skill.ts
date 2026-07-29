@@ -10,7 +10,13 @@ import { SpoolError } from "./errors";
  * commit.
  */
 
-const spoolPackageJson = fileURLToPath(new URL("../package.json", import.meta.url));
+/**
+ * The installed-package anchor, resolved on demand. The daemon now reaches this
+ * module to frame the agent it spawns (#191), which puts it on the import graph
+ * of browser-environment tests where `import.meta.url` is not a file URL — so
+ * this must not run merely because the module loaded.
+ */
+const spoolPackageJson = () => fileURLToPath(new URL("../package.json", import.meta.url));
 
 const overview = `spool — the live prototyping canvas. Html frames are TSX components in design/ on disk; the canvas is a projection the human arranges and plays. You author files; spool renders, links, and verifies them.
 
@@ -49,10 +55,10 @@ Topics — \`spool skill <topic>\`:
   styling     Tailwind, tokens.css, cn(), motion
   verbs       the loops: shot, logs, url, selection, flows`;
 
-const topics: Record<string, string> = {
+const topics: Record<string, () => string> = {
 	// Pages group journeys, not performance budgets (#128). Readable documents
 	// are bounded by viewport area, so keep the frames topic silent on page size.
-	frames: `Everything lives under design/:
+	frames: () => `Everything lives under design/:
 
   frames/<name>/frame.tsx    default-exports one React component: the frame
   frames/<name>/frame.json   geometry sidecar { x, y, w, h } (integers, px)
@@ -91,7 +97,8 @@ Static assets: import the file and use the value. The compiler bakes it into the
 
 Kinds: .png, .jpg, .jpeg, .webp, .gif, .svg; a .json import parses into an object. Put an asset beside the frame that uses it; move it to shared/assets/ when a second frame does. It must be an import and never a URL string: the import is what puts the file in the frame's closure, so editing it reissues the document and its cover. One document carries at most 512 KB of images — that is base64, so roughly 385 KB of real file — and the compile fails naming the file when it doesn't fit; nothing is downscaled. Video and audio are not supported. Remote image URLs still work in a live frame, but nothing fetched ever appears in a still.`,
 
-	terminals: `A terminal frame is born by writing design/frames/<name>/term.tsx. Spool still recognizes the entry as the terminal frame kind, gives it whole-cell geometry, and includes it on the canvas and in the player.
+	terminals:
+		() => `A terminal frame is born by writing design/frames/<name>/term.tsx. Spool still recognizes the entry as the terminal frame kind, gives it whole-cell geometry, and includes it on the canvas and in the player.
 
 Terminal execution is disabled until project code can run inside an OS sandbox. The daemon does not compile, evaluate, or execute term.tsx, and it never starts Bun, OpenTUI, a shell, a PTY, or any other process for the entry. Spool renders its own static disabled surface instead; that surface contains no project code and carries no capability to control the daemon. Saving, entering, reloading, or restarting the frame cannot spawn a process.
 
@@ -112,7 +119,7 @@ There is currently no terminal input, output, process lifecycle, restart, or sha
 
 Headless verification never boots terminal project code. \`spool shot <name>\` can only rasterize a source-current persisted grid; a stale or never-run terminal is an actionable error. \`spool logs\` remains an html-frame verb.`,
 
-	flows: `Navigation is walking: a session stands in one frame and walks to another by name.
+	flows: () => `Navigation is walking: a session stands in one frame and walks to another by name.
 
 data-go="<frame-name>" on any element walks there on click — nearest data-go ancestor wins, anchors get preventDefault, variants are valid targets. data-transition="<type>" on the same element names the move for transition styling (felt in the player). That is all the markup sugar; everything richer is code:
 
@@ -135,7 +142,8 @@ Arrows claim what the code says. Every literal data-go target, ui.go(name) call,
 
 The player composes every html frame into one document, so walks are View Transitions, not navigations: crossfade by default; morphs happen wherever two frames give an element the same view-transition-name. Each swap carries its direction (forward, back, restart) plus any data-transition type — style them in shared/transitions.css with ::view-transition-* selectors, plain CSS. Reduced motion is respected, and the player pill toggles motion, walks back, restarts, and closes. Screen components mount fresh on every arrival. Terminal frames remain valid destinations, but the player renders their static disabled surface without executing or restarting project code (topic: terminals).`,
 
-	scenarios: `shared/scenarios/<name>.json = { "state": { ... }, "mock": { ... } } — one named way the app can be. state seeds ui.state at session start; mock configures the fake backend (topic: mock). Both keys optional; no default.json means an empty seed. Names are file names: no leading dot, no slashes.
+	scenarios:
+		() => `shared/scenarios/<name>.json = { "state": { ... }, "mock": { ... } } — one named way the app can be. state seeds ui.state at session start; mock configures the fake backend (topic: mock). Both keys optional; no default.json means an empty seed. Names are file names: no leading dot, no slashes.
 
 default.json is what loads when nothing else is named or resumed: canvas plays, shot/logs boots. The player URL takes ?scenario=<name>; a frame document's URL takes the same query, and naming a different scenario restarts the session. The player's restart button re-reads the file, so an edited seed lands without a new URL.
 
@@ -143,7 +151,7 @@ Frames never branch on which scenario is loaded — no scenario name in ui.state
 
 A scenario file that is missing or broken never blanks the frame: it plays with an empty seed and the error lands in the frame's console — \`spool logs\` shows it.`,
 
-	mock: `Inside a session, relative URLs are the fake backend and absolute URLs are the real network. The boundary is the URL string, and only fetch is intercepted — no XHR, no WebSocket.
+	mock: () => `Inside a session, relative URLs are the fake backend and absolute URLs are the real network. The boundary is the URL string, and only fetch is intercepted — no XHR, no WebSocket.
 
 Zero config: fetch("/api/<name>") answers with shared/fixtures/<name>.json — nested names allowed (/api/users/1 → fixtures/users/1.json), a .json suffix tolerated. Any method gets the same answer: writes are theater, persistence is your frame updating ui.state after the "request" succeeds.
 
@@ -162,7 +170,8 @@ Rule keys are exactly status, fixture (a fixtures/ name), latency (ms), and body
 
 There is no programmable mock — behavior richer than rules belongs in the frame: optimistic ui.state updates over theater requests is the idiom.`,
 
-	styling: `Tailwind v4, compiled at serve: write utility classes in JSX and the document arrives with finished CSS — theme, preflight, exactly the utilities your source uses. No config file, no directives, no build step of yours; the compiler is spool's, pinned per format version, arbitrary values and variants all working.
+	styling:
+		() => `Tailwind v4, compiled at serve: write utility classes in JSX and the document arrives with finished CSS — theme, preflight, exactly the utilities your source uses. No config file, no directives, no build step of yours; the compiler is spool's, pinned per format version, arbitrary values and variants all working.
 
 Tailwind v4 puts important at the end: mt-3.5!, not !mt-3.5.
 
@@ -182,7 +191,7 @@ Motion is for interaction feel — the motion library is pinned (import { motion
 
 The document's baseline: preflight (the same zero a product starts from), tokens, fonts, height chain at 100%. Frames add nothing global — no resets, no font stacks in components; identity lives in tokens.`,
 
-	verbs: `The project verbs — selection, flows, shot, logs, url — resolve the project by walking up from cwd to design/canvas.json and refuse roots they don't know (\`spool open\` once per machine registers), and auto-start the daemon; \`spool status\` prints where it listens and warns when a running daemon predates the CLI (\`spool stop\`, then any verb, updates it). init and open work offline; skill needs nothing.
+	verbs: () => `The project verbs — selection, flows, shot, logs, url — resolve the project by walking up from cwd to design/canvas.json and refuse roots they don't know (\`spool open\` once per machine registers), and auto-start the daemon; \`spool status\` prints where it listens and warns when a running daemon predates the CLI (\`spool stop\`, then any verb, updates it). init and open work offline; skill needs nothing.
 
 The verify loop has two paths. For HTML frames, shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 390×844) at 2×. Reading a missing or invalid sidecar never creates it. A terminal shot does not boot or execute source; it only rasterizes a persisted source-current grid to SVG.
 
@@ -207,7 +216,7 @@ The drive loop — \`spool url <frame>\` prints the player URL after checking th
 For Playwright, wait for DOMContentLoaded and then a meaningful selector from the frame. Do not wait for networkidle: Spool's live reload connection stays open. To use the dependency belonging to this exact Spool install from a repo script, copy the installed-package anchor printed below verbatim:
 
   import { createRequire } from "node:module";
-  const requireFromSpool = createRequire(${JSON.stringify(spoolPackageJson)});
+  const requireFromSpool = createRequire(${JSON.stringify(spoolPackageJson())});
   const { chromium } = requireFromSpool("playwright-core");
 
   const browser = await chromium.launch();
@@ -231,5 +240,5 @@ export function skillText(topic?: string): string {
 	if (text === undefined) {
 		throw new SpoolError(`no skill topic "${topic}" — topics: ${Object.keys(topics).join(", ")}`);
 	}
-	return text;
+	return text();
 }
