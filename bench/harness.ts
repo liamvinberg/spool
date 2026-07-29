@@ -411,3 +411,179 @@ export async function quiet(page: BrowserPage, timeoutMs: number): Promise<numbe
 	);
 	return left;
 }
+
+// --- the gesture collector (#82) -------------------------------------------
+//
+// Shared by bench/canvas.ts and bench/dither-attribution.ts, which quote
+// numbers at each other. It lives here for the same reason the rest of this
+// file exists: two copies would eventually diverge in some detail that
+// silently makes those numbers incomparable — and the first port had already
+// diverged before this was hoisted.
+
+export interface Sample {
+	t: number;
+	d: number;
+	mounted: number;
+}
+
+export interface Loaf {
+	t: number;
+	duration: number;
+	blocking: number;
+}
+
+export interface Stamped {
+	frame: string;
+	t: number;
+}
+
+export interface BenchState {
+	raf: Sample[];
+	loaf: Loaf[];
+	loaded: Stamped[];
+	inserted: Stamped[];
+}
+
+/**
+ * Installed before any script runs, in the top document only: an init script
+ * runs in every frame, and 88 copies of a MutationObserver would be measuring
+ * their own cost. Every number the report quotes is read from here.
+ */
+export function collector(): void {
+	if (window !== window.top) return;
+	const state = { raf: [], loaf: [], loaded: [], inserted: [] } as unknown as BenchState;
+	(globalThis as unknown as { __bench: BenchState }).__bench = state;
+
+	let last = performance.now();
+	const tick = (now: number): void => {
+		state.raf.push({ t: now, d: now - last, mounted: document.querySelectorAll("iframe").length });
+		last = now;
+		requestAnimationFrame(tick);
+	};
+	requestAnimationFrame(tick);
+
+	if (PerformanceObserver.supportedEntryTypes.includes("long-animation-frame")) {
+		new PerformanceObserver((list) => {
+			for (const entry of list.getEntries()) {
+				const loaf = entry as PerformanceEntry & { blockingDuration?: number };
+				state.loaf.push({ t: entry.startTime, duration: entry.duration, blocking: loaf.blockingDuration ?? 0 });
+			}
+		}).observe({ type: "long-animation-frame", buffered: true });
+	}
+
+	// a frame's own arrival report: the canvas reads it too, this only listens
+	window.addEventListener(
+		"message",
+		(event: MessageEvent) => {
+			const data = event.data as { spool?: unknown; frame?: unknown } | null;
+			if (data === null || typeof data !== "object") return;
+			if (data.spool === "loaded" && typeof data.frame === "string") {
+				state.loaded.push({ frame: data.frame, t: performance.now() });
+			}
+		},
+		true,
+	);
+
+	// One entry per document, not per mutation record. A frame reaching the DOM
+	// arrives as a container and, inside it, the wrapper the freeze lock lives on
+	// (#112): both are added nodes in the same batch, and walking each for nested
+	// iframes finds the same one twice.
+	const counted = new WeakSet<HTMLIFrameElement>();
+	const noteIframe = (node: Node): void => {
+		const found =
+			node instanceof HTMLIFrameElement
+				? [node]
+				: node instanceof HTMLElement
+					? node.querySelectorAll("iframe")
+					: [];
+		for (const el of found) {
+			if (counted.has(el)) continue;
+			counted.add(el);
+			state.inserted.push({ frame: el.title, t: performance.now() });
+		}
+	};
+	// document, not documentElement: an init script runs before <html> exists
+	new MutationObserver((records) => {
+		for (const record of records) for (const node of record.addedNodes) noteIframe(node);
+	}).observe(document, { childList: true, subtree: true });
+}
+
+export interface GestureStats {
+	p50: number;
+	p95: number;
+	worst: number;
+	rareIntervals: number;
+	loafs: number;
+	loafWorstBlocking: number;
+	frames: number;
+	mountedPeak: number;
+	wallMs: number;
+}
+
+export const RARE_INTERVAL_MS = 12;
+
+export function windowStats(state: BenchState, from: number, to: number): GestureStats {
+	const inside = state.raf.filter((sample) => sample.t >= from && sample.t <= to);
+	const deltas = inside.map((sample) => sample.d).sort((a, b) => a - b);
+	const loafs = state.loaf.filter((entry) => entry.t >= from && entry.t <= to);
+	return {
+		p50: quantile(deltas, 0.5),
+		p95: quantile(deltas, 0.95),
+		worst: deltas.at(-1) ?? Number.NaN,
+		rareIntervals: deltas.filter((delta) => delta > RARE_INTERVAL_MS).length,
+		loafs: loafs.length,
+		loafWorstBlocking: loafs.reduce((worst, entry) => Math.max(worst, entry.blocking), 0),
+		frames: deltas.length,
+		mountedPeak: inside.reduce((peak, sample) => Math.max(peak, sample.mounted), 0),
+		wallMs: to - from,
+	};
+}
+
+export const now = (page: BrowserPage): Promise<number> => page.evaluate(() => performance.now());
+export const read = (page: BrowserPage): Promise<BenchState> =>
+	page.evaluate(() => (globalThis as unknown as { __bench: BenchState }).__bench);
+
+/**
+ * Hold until the canvas stops mounting: the count unchanged across `stableMs`.
+ * Reports when it stopped changing, not when the waiting ended, so "looks
+ * complete" is not inflated by the window that proves it.
+ */
+export async function settle(
+	page: BrowserPage,
+	stableMs: number,
+	timeoutMs: number,
+): Promise<{ count: number; stableAt: number }> {
+	const deadline = Date.now() + timeoutMs;
+	let count = await mountedCount(page);
+	let since = Date.now();
+	while (Date.now() < deadline) {
+		await page.waitForTimeout(150);
+		const next = await mountedCount(page);
+		if (next !== count) {
+			count = next;
+			since = Date.now();
+		} else if (Date.now() - since >= stableMs) return { count, stableAt: since };
+	}
+	return { count, stableAt: since };
+}
+
+export const PAN_EVENTS = 90;
+export const PAN_STEP_PX = 26;
+export const ZOOM_EVENTS = 60;
+export const ZOOM_STEP_PX = 4; // ~3.7x in and back out across the gesture
+export const WHEEL_INTERVAL_MS = 1000 / 60;
+
+export async function driveRoundTripWheel(
+	page: BrowserPage,
+	steps: number,
+	deltaX: number,
+	deltaY: number,
+): Promise<void> {
+	const started = performance.now();
+	for (let step = 0; step < steps; step++) {
+		const direction = step < steps / 2 ? 1 : -1;
+		await page.mouse.wheel(direction * deltaX, direction * deltaY);
+		const delay = started + (step + 1) * WHEEL_INTERVAL_MS - performance.now();
+		if (delay > 0) await page.waitForTimeout(delay);
+	}
+}
