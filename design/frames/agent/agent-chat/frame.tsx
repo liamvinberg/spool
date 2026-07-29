@@ -16,7 +16,6 @@ import {
 import { enteredFrame } from "../../../shared/lib/pointed-fixtures";
 import { type ShotRef, useTicker, useTurn } from "../../../shared/lib/turn-play";
 import { CanvasChrome, type PageRow } from "../../../shared/ui/spool-canvas-chrome";
-import { LimitLine } from "../../../shared/ui/spool-limit";
 import { ModelMenu } from "../../../shared/ui/spool-model-control";
 import { type BaseFrame, FrameThumb, type Outline, PlayField } from "../../../shared/ui/spool-play-field";
 import { COMPOSER_W, PlayRail } from "../../../shared/ui/spool-play-rail";
@@ -332,10 +331,13 @@ function Case({ spec }: { spec: Case }) {
 						onPoint={setPointed}
 						onJump={setLanded}
 						model={
-							<span className="flex min-w-0 items-center gap-2.5">
-								<ModelMenu state={model.state} models={model.models} pin={model.pin} onPick={model.pick} />
-								<LimitLine info={limit.info} />
-							</span>
+							<ModelMenu
+								state={model.state}
+								models={model.models}
+								pin={model.pin}
+								limit={limit.info}
+								onPick={model.pick}
+							/>
 						}
 						queued={held.queued}
 						onQueue={held.queue}

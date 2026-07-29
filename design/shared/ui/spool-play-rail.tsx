@@ -200,7 +200,7 @@ function StopButton({ where, onStop }: { where: Exclude<StopWhere, "none">; onSt
 			type="button"
 			onClick={onStop}
 			className={cn(
-				"flex w-fit items-center gap-2 rounded-sm border border-border-raised bg-raised px-2 transition-colors duration-150 hover:border-muted/45",
+				"flex w-fit shrink-0 items-center gap-2 rounded-sm border border-border-raised bg-raised px-2 transition-colors duration-150 hover:border-muted/45",
 				where === "edge" ? "h-6" : "h-[18px]",
 			)}
 		>
@@ -2056,8 +2056,13 @@ function Composer({
 			</div>
 			{/* the model takes the hint's place rather than sitting beside it: an 18px
 			    line has room for one quiet thing on the left, and which model is
-			    answering outranks a keyboard hint you learn once */}
-			<div className="relative flex h-[18px] items-center justify-between">
+			    answering outranks a keyboard hint you learn once.
+
+			    it is the only thing on the left since #184 moved the usage window into the
+			    menu, and it is the one thing here allowed to give way: the rail resizes
+			    200–480 and at the floor the model truncates while the stop keeps its size,
+			    because a cut name is still readable and half a stop button is not */}
+			<div className="relative flex h-[18px] items-center justify-between gap-2">
 				{/* the hint is the only thing saying Enter is not being thrown away, so it changes
 				    word while a turn runs rather than going quiet the way it did before #170 */}
 				{model ?? (
