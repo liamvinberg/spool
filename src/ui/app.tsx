@@ -12,6 +12,9 @@ import {
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { ForgetToast } from "./forget-toast";
 import { Home } from "./home";
+import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
+import { HotkeySheet } from "./hotkey-sheet";
+import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { CloseIcon, PlusIcon, RibbonMark, ThreadIcon } from "./icons";
 import { FolderPicker } from "./picker";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
@@ -43,6 +46,7 @@ export function App() {
 	const [pendingForget, setPendingForget] = useState<TabProject | null>(null);
 	const pendingForgetRef = useRef<TabProject | null>(null);
 	const forgetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	const [keysOpen, setKeysOpen] = useState(false);
 	const [toast, setToast] = useState<UpdateToast | null>(null);
 	const toastRef = useRef(toast);
 	toastRef.current = toast;
@@ -195,17 +199,30 @@ export function App() {
 		setPendingForget(null);
 	}, []);
 
-	// ⌘Z answers the toast, the way it does on the canvas (#7)
+	// ⌘Z answers the toast, the way it does on the canvas (#7); the toast
+	// scope outranks the canvas, so one press means one undo
 	useEffect(() => {
-		if (pendingForget === null) return;
-		const onKey = (event: KeyboardEvent) => {
-			if (event.key.toLowerCase() !== "z" || !(event.metaKey || event.ctrlKey)) return;
-			event.preventDefault();
-			undoForget();
-		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
-	}, [pendingForget, undoForget]);
+		return attachHotkeyLayer({
+			scope: "toast",
+			active: () => pendingForgetRef.current !== null,
+			handlers: {
+				"toast.undo": (event) => {
+					event?.preventDefault();
+					undoForget();
+				},
+			} satisfies Record<HotkeyIdFor<"toast">, HotkeyHandler>,
+		});
+	}, [undoForget]);
+
+	// ? opens the shortcut sheet over whatever the shell is showing
+	useEffect(() => {
+		return attachHotkeyLayer({
+			scope: "app",
+			handlers: {
+				"app.help": () => setKeysOpen(true),
+			} satisfies Record<HotkeyIdFor<"app">, HotkeyHandler>,
+		});
+	}, []);
 
 	// leaving the page mid-toast: the staged forget still happens
 	useEffect(() => {
@@ -292,7 +309,7 @@ export function App() {
 								className={`flex h-7 w-7 items-center justify-center rounded-sm hover:bg-surface ${
 									chrome.arrowsOn ? "text-text" : "text-muted"
 								}`}
-								title="Threads (T)"
+								title={`Threads (${hotkeyKey("canvas.threads")})`}
 								aria-pressed={chrome.arrowsOn}
 								onClick={chrome.toggleArrows}
 							>
@@ -342,6 +359,8 @@ export function App() {
 					/>
 				</div>
 			)}
+
+			{keysOpen && <HotkeySheet onClose={() => setKeysOpen(false)} />}
 		</div>
 	);
 }

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProjectCard } from "./api";
+import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
+import type { HotkeyIdFor } from "./hotkeys";
 import { CloseIcon, DotsIcon, SearchIcon } from "./icons";
 import { Thumbnail } from "./thumbnail";
 
@@ -36,18 +38,17 @@ export function Home({
 				);
 
 	useEffect(() => {
-		const onKey = (event: KeyboardEvent) => {
-			if (event.key === "Escape") {
-				setMenuRoot(null);
-				return;
-			}
-			// "/" is the filter's door, unless something is already taking type
-			if (event.key !== "/" || event.target instanceof HTMLInputElement) return;
-			event.preventDefault();
-			searchRef.current?.focus();
-		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
+		return attachHotkeyLayer({
+			scope: "home",
+			handlers: {
+				"home.close-menu": () => setMenuRoot(null),
+				// "/" is the filter's door; dispatch already leaves typing alone
+				"home.search": (event) => {
+					event?.preventDefault();
+					searchRef.current?.focus();
+				},
+			} satisfies Record<HotkeyIdFor<"home">, HotkeyHandler>,
+		});
 	}, []);
 
 	return (
