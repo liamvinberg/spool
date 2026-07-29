@@ -52,7 +52,7 @@ for (const scope of SCOPE_PRIORITY) {
 		HOTKEYS.filter((entry): entry is KeyedHotkeyEntry => entry.scope === scope && "keys" in entry).map((entry) => ({
 			id: entry.id,
 			combos: entry.keys.map(parseCombo),
-			repeats: !("repeats" in entry),
+			repeats: !("repeats" in entry && entry.repeats === false),
 		})),
 	);
 }
