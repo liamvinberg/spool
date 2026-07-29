@@ -1,19 +1,19 @@
-import { useRef, useState } from "react";
+import { QUEUE_SEED, useQueue } from "../../../shared/lib/agent-queue";
 import { LIVE_ASK, useAutoAsk } from "../../../shared/lib/agent-threads";
 import { railEntries, useCapture, useTurnScript } from "../../../shared/lib/claude-turn";
 import { useTicker, useTurn } from "../../../shared/lib/turn-play";
 import { CanvasChrome, type PageRow } from "../../../shared/ui/spool-canvas-chrome";
 import { PlayField } from "../../../shared/ui/spool-play-field";
-import { PlayRail, type Queued } from "../../../shared/ui/spool-play-rail";
+import { PlayRail } from "../../../shared/ui/spool-play-rail";
 import { SpoolShell } from "../../../shared/ui/spool-shell";
 
 /**
- * agent-play--queue-band — the same queue, in a place of its own (#170).
+ * agent-play--queue-band — the same queue, in a place of its own (#176).
  *
- * Same moment, same two messages, same row: a turn four tasks into writing its plan
- * and two things of yours waiting on it. The one difference is that they stand
+ * Same turn, same two messages, same rows. The one difference is that they stand
  * between the log and the composer rather than inside the log, on a strip that does
- * not scroll. Type a third and press Enter; hover one and take it back.
+ * not scroll. Type a third and press Enter; hover one and take it back; leave it and
+ * watch what firing looks like from here.
  *
  * **The transcript stays receipts-only, which is the whole case.** Every entry
  * `railEntries` builds is past tense — a call that ran, a sentence that arrived, an
@@ -29,12 +29,13 @@ import { SpoolShell } from "../../../shared/ui/spool-shell";
  * variant cannot hold, and it is not exotic: a turn long enough to be worth queueing
  * against is a turn long enough to read back through.
  *
- * **What it costs is the teleport, and there is no way to dress it.** A row here is
- * *not* where its receipt lands. When the turn ends the message leaves this strip and
- * reappears in the log with the rail's undimmed user row, so firing is a disappear
- * and an appear rather than an undim in place. Two rows firing in order is that twice.
- * Whether a person reads it as the message moving or as two different objects is the
- * thing to look at with both frames open.
+ * **What it costs is the teleport, and this frame now shows it rather than
+ * describing it.** A row here is *not* where its receipt lands. When the turn ends
+ * the message leaves this strip and reappears in the log with the rail's undimmed
+ * user row, so firing is a disappear and an appear rather than an undim in place.
+ * Two rows firing in order is that twice, and the band collapses out from under them
+ * as the last one goes. Whether that reads as the message moving or as two different
+ * objects is the thing to watch with all four frames open.
  *
  * **It also spends the rail's last free surface.** #117's shelf above the transcript
  * already has three claimants — the plan, the rate limit, the login — and this takes
@@ -47,9 +48,13 @@ import { SpoolShell } from "../../../shared/ui/spool-shell";
  * say `queued`, once each, and a strip that says `queued 2` over two rows that each
  * say `queued` is the interface repeating itself three times. The rule at the top and
  * the composer's own rule under it are what make it a place; the words are the rows'.
+ * `--queue-strip` is what happens when the label wins instead.
  *
- * The capture is `claude-turn.json`'s plan window, `agent-play`'s own, parked
- * mid-plan because the state this frame is about is the running one.
+ * The capture is `claude-plan.json`, the only window in the repo where a plan is
+ * written, worked and ticked off — nine and a half real minutes, so the log fills and
+ * scrolls and the queue waits the way it would in the product. The first pair of
+ * frames used `claude-turn.json`'s eight-second plan window, which is why neither
+ * could show what a placement does under a transcript long enough to read back.
  */
 
 const PAGES: readonly PageRow[] = [
@@ -58,32 +63,14 @@ const PAGES: readonly PageRow[] = [
 	{ name: "directing", frames: [] },
 ];
 
-/** the sibling frame's own two, unchanged: the placement is the only thing under test */
-const SEED: readonly Queued[] = [
-	{ id: "order", text: "hold off on add-habit until i've seen home" },
-	{ id: "chips", text: "swedish weekday chips on the week strip, not mon tue wed" },
-];
-
 export default function AgentQueueBandFrame() {
-	const capture = useCapture("claude-turn");
-	const script = useTurnScript(capture, "plan");
-	// parked where the sibling parks: `skill scenarios` settled above, the plan four of
-	// its seven tasks in, the ring still turning. A turn that settles takes the queue
-	// with it, and the queue is what both frames are about
-	const plan = script.rows.find((row) => row.kind === "tool" && row.counts);
-	const turn = useTurn(script.cues, plan?.kind === "tool" ? plan.children[3]?.cue : undefined);
-	const elapsed = useTicker(turn.run, script.total, turn.waiting);
+	const capture = useCapture("claude-plan");
+	const script = useTurnScript(capture, "session");
+	const turn = useTurn(script.cues);
+	const elapsed = useTicker(turn.run, script.total);
 	const ready = script.cues.length > 0;
 	useAutoAsk(ready, turn.send, LIVE_ASK);
-
-	const [queued, setQueued] = useState<readonly Queued[]>(SEED);
-	const taken = useRef(0);
-	const queue = (text: string) => {
-		taken.current += 1;
-		const id = `said${taken.current}`;
-		setQueued((waiting) => [...waiting, { id, text }]);
-	};
-	const unqueue = (id: string) => setQueued((waiting) => waiting.filter((message) => message.id !== id));
+	const held = useQueue(QUEUE_SEED, turn.phase);
 
 	return (
 		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="39%">
@@ -94,12 +81,12 @@ export default function AgentQueueBandFrame() {
 				railLabel="Agent"
 				rail={
 					<PlayRail
-						entries={railEntries(script, turn, elapsed)}
+						entries={[...railEntries(script, turn, elapsed), ...held.fired]}
 						phase={turn.phase}
 						queue="band"
-						queued={queued}
-						onQueue={queue}
-						onUnqueue={unqueue}
+						queued={held.queued}
+						onQueue={held.queue}
+						onUnqueue={held.unqueue}
 						run={turn.run}
 						onSend={ready ? turn.send : () => {}}
 						onReplay={turn.replay}
