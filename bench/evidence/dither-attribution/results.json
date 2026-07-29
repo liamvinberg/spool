@@ -1,0 +1,677 @@
+{
+  "project": "/Users/liamvinberg/projects/liamvinberg.com",
+  "page": "dither",
+  "camera": {
+    "x": -1012,
+    "y": -255.5,
+    "k": 0.52
+  },
+  "drawnWidthPx": 416,
+  "frameCount": 12,
+  "verify": {
+    "animated": {
+      "painted": true,
+      "changedOverTwoSeconds": true
+    },
+    "static": {
+      "painted": true,
+      "changedOverTwoSeconds": false
+    }
+  },
+  "results": [
+    {
+      "arm": "animated",
+      "index": 1,
+      "traced": false,
+      "liveMounted": 8,
+      "roles": {
+        "canvasPid": 99138,
+        "framesPid": 99137,
+        "canvasCalibrationMs": 251.82900000000004,
+        "framesCalibrationMs": 253.31800000000015,
+        "otherRendererPids": [
+          99139
+        ]
+      },
+      "pan": {
+        "p50": 8.299999999999272,
+        "p95": 9.899999999999636,
+        "worst": 10.200000000000728,
+        "rareIntervals": 0,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 181,
+        "mountedPeak": 8,
+        "wallMs": 1507
+      },
+      "zoom": {
+        "p50": 8.299999999999272,
+        "p95": 10.200000000000728,
+        "worst": 16.799999999999272,
+        "rareIntervals": 2,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 125,
+        "mountedPeak": 8,
+        "wallMs": 1056.3000000715256
+      },
+      "idleCpu": {
+        "canvasS": 0.22016100000000005,
+        "framesS": 4.608262,
+        "gpuS": 1.590522,
+        "browserS": 0.01221799999999984,
+        "otherS": 0.0009430000000000549
+      },
+      "idleRss": {
+        "canvasRssMb": 177.65625,
+        "framesRssMb": 230.484375,
+        "gpuRssMb": 153.390625,
+        "browserRssMb": 222.96875,
+        "otherRssMb": 275.28125,
+        "totalRssMb": 1059.78125
+      },
+      "panCpu": {
+        "canvasS": 0.28629099999999985,
+        "framesS": 0.36545500000000075,
+        "gpuS": 0.20799699999999977,
+        "browserS": 0.099294,
+        "otherS": 0
+      },
+      "zoomCpu": {
+        "canvasS": 0.23198399999999997,
+        "framesS": 0.4631369999999997,
+        "gpuS": 0.3036380000000003,
+        "browserS": 0.09654499999999988,
+        "otherS": 0
+      }
+    },
+    {
+      "arm": "static",
+      "index": 1,
+      "traced": false,
+      "liveMounted": 8,
+      "roles": {
+        "canvasPid": 99798,
+        "framesPid": 99797,
+        "canvasCalibrationMs": 254.36199999999997,
+        "framesCalibrationMs": 252.19000000000003,
+        "otherRendererPids": [
+          99806
+        ]
+      },
+      "pan": {
+        "p50": 8.300000000001091,
+        "p95": 10,
+        "worst": 11.100000000000364,
+        "rareIntervals": 0,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 184,
+        "mountedPeak": 8,
+        "wallMs": 1541.7000000476837
+      },
+      "zoom": {
+        "p50": 8.299999999999272,
+        "p95": 10,
+        "worst": 10.200000000000728,
+        "rareIntervals": 0,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 125,
+        "mountedPeak": 8,
+        "wallMs": 1044.7000000476837
+      },
+      "idleCpu": {
+        "canvasS": 0.3543939999999999,
+        "framesS": 0.0029839999999999867,
+        "gpuS": 0.166601,
+        "browserS": 0.02095899999999995,
+        "otherS": 0.004345000000000002
+      },
+      "idleRss": {
+        "canvasRssMb": 176.96875,
+        "framesRssMb": 206.296875,
+        "gpuRssMb": 147.578125,
+        "browserRssMb": 223.6875,
+        "otherRssMb": 275.6875,
+        "totalRssMb": 1030.21875
+      },
+      "panCpu": {
+        "canvasS": 0.31332899999999997,
+        "framesS": 0.08628800000000003,
+        "gpuS": 0.17154500000000006,
+        "browserS": 0.11328899999999997,
+        "otherS": 0.000036999999999953737
+      },
+      "zoomCpu": {
+        "canvasS": 0.2641420000000001,
+        "framesS": 0.19899199999999995,
+        "gpuS": 0.3144089999999995,
+        "browserS": 0.11033999999999988,
+        "otherS": 0.0000500000000000847
+      }
+    },
+    {
+      "arm": "static",
+      "index": 2,
+      "traced": false,
+      "liveMounted": 8,
+      "roles": {
+        "canvasPid": 1049,
+        "framesPid": 1048,
+        "canvasCalibrationMs": 252.37900000000002,
+        "framesCalibrationMs": 251.45699999999994,
+        "otherRendererPids": [
+          1059
+        ]
+      },
+      "pan": {
+        "p50": 8.299999999999272,
+        "p95": 10.100000000002183,
+        "worst": 10.299999999999272,
+        "rareIntervals": 0,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 181,
+        "mountedPeak": 8,
+        "wallMs": 1506.5
+      },
+      "zoom": {
+        "p50": 8.299999999999272,
+        "p95": 10,
+        "worst": 15.700000000000728,
+        "rareIntervals": 1,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 121,
+        "mountedPeak": 8,
+        "wallMs": 1021.1000000238419
+      },
+      "idleCpu": {
+        "canvasS": 0.28663099999999997,
+        "framesS": 0.002054999999999918,
+        "gpuS": 0.128768,
+        "browserS": 0.012751999999999875,
+        "otherS": 0.005327999999999958
+      },
+      "idleRss": {
+        "canvasRssMb": 175.828125,
+        "framesRssMb": 204.65625,
+        "gpuRssMb": 147.5,
+        "browserRssMb": 223.671875,
+        "otherRssMb": 275.859375,
+        "totalRssMb": 1027.515625
+      },
+      "panCpu": {
+        "canvasS": 0.29999700000000007,
+        "framesS": 0.08628899999999995,
+        "gpuS": 0.16740399999999944,
+        "browserS": 0.10411000000000037,
+        "otherS": 0.000016000000000002124
+      },
+      "zoomCpu": {
+        "canvasS": 0.247425,
+        "framesS": 0.18859900000000007,
+        "gpuS": 0.28829500000000063,
+        "browserS": 0.09841299999999986,
+        "otherS": 0
+      }
+    },
+    {
+      "arm": "animated",
+      "index": 2,
+      "traced": false,
+      "liveMounted": 8,
+      "roles": {
+        "canvasPid": 2458,
+        "framesPid": 2457,
+        "canvasCalibrationMs": 251.603,
+        "framesCalibrationMs": 254.1279999999997,
+        "otherRendererPids": [
+          2460
+        ]
+      },
+      "pan": {
+        "p50": 8.299999999999272,
+        "p95": 10.200000000000728,
+        "worst": 16.700000000000728,
+        "rareIntervals": 1,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 185,
+        "mountedPeak": 8,
+        "wallMs": 1545.5999999046326
+      },
+      "zoom": {
+        "p50": 8.299999999999272,
+        "p95": 10.200000000000728,
+        "worst": 25,
+        "rareIntervals": 2,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 124,
+        "mountedPeak": 8,
+        "wallMs": 1055.5
+      },
+      "idleCpu": {
+        "canvasS": 0.231537,
+        "framesS": 4.533228,
+        "gpuS": 1.6466610000000008,
+        "browserS": 0.012023999999999369,
+        "otherS": 0.001071000000000072
+      },
+      "idleRss": {
+        "canvasRssMb": 177.921875,
+        "framesRssMb": 245,
+        "gpuRssMb": 160.953125,
+        "browserRssMb": 223.828125,
+        "otherRssMb": 275.953125,
+        "totalRssMb": 1083.65625
+      },
+      "panCpu": {
+        "canvasS": 0.3368349999999999,
+        "framesS": 0.41074900000000003,
+        "gpuS": 0.21736300000000064,
+        "browserS": 0.12189100000000064,
+        "otherS": 0.00006499999999995398
+      },
+      "zoomCpu": {
+        "canvasS": 0.21779100000000007,
+        "framesS": 0.4627159999999986,
+        "gpuS": 0.27256899999999895,
+        "browserS": 0.08191099999999985,
+        "otherS": 0
+      }
+    },
+    {
+      "arm": "animated",
+      "index": 3,
+      "traced": false,
+      "liveMounted": 8,
+      "roles": {
+        "canvasPid": 4490,
+        "framesPid": 4489,
+        "canvasCalibrationMs": 252.60500000000002,
+        "framesCalibrationMs": 251.92700000000025,
+        "otherRendererPids": [
+          4500
+        ]
+      },
+      "pan": {
+        "p50": 8.300000000001091,
+        "p95": 10,
+        "worst": 10.200000000000728,
+        "rareIntervals": 0,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 181,
+        "mountedPeak": 8,
+        "wallMs": 1511.8000000715256
+      },
+      "zoom": {
+        "p50": 8.299999999999272,
+        "p95": 10.299999999999272,
+        "worst": 16.700000000000728,
+        "rareIntervals": 1,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 125,
+        "mountedPeak": 8,
+        "wallMs": 1052
+      },
+      "idleCpu": {
+        "canvasS": 0.21701800000000004,
+        "framesS": 4.5927109999999995,
+        "gpuS": 1.6078589999999995,
+        "browserS": 0.013256000000000157,
+        "otherS": 0.0017209999999999795
+      },
+      "idleRss": {
+        "canvasRssMb": 180.390625,
+        "framesRssMb": 242.09375,
+        "gpuRssMb": 161.625,
+        "browserRssMb": 224.171875,
+        "otherRssMb": 275.984375,
+        "totalRssMb": 1084.265625
+      },
+      "panCpu": {
+        "canvasS": 0.3230320000000001,
+        "framesS": 0.39026100000000064,
+        "gpuS": 0.21520699999999948,
+        "browserS": 0.10829700000000031,
+        "otherS": 0.00009699999999999986
+      },
+      "zoomCpu": {
+        "canvasS": 0.2168079999999999,
+        "framesS": 0.47341100000000047,
+        "gpuS": 0.2747769999999985,
+        "browserS": 0.08108399999999971,
+        "otherS": 0
+      }
+    },
+    {
+      "arm": "static",
+      "index": 3,
+      "traced": false,
+      "liveMounted": 8,
+      "roles": {
+        "canvasPid": 5100,
+        "framesPid": 5099,
+        "canvasCalibrationMs": 252.157,
+        "framesCalibrationMs": 250.37599999999992,
+        "otherRendererPids": [
+          5101
+        ]
+      },
+      "pan": {
+        "p50": 8.300000000001091,
+        "p95": 10.100000000000364,
+        "worst": 11.5,
+        "rareIntervals": 0,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 181,
+        "mountedPeak": 8,
+        "wallMs": 1511.5
+      },
+      "zoom": {
+        "p50": 8.299999999999272,
+        "p95": 10,
+        "worst": 16,
+        "rareIntervals": 1,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 120,
+        "mountedPeak": 8,
+        "wallMs": 1009.3000000715256
+      },
+      "idleCpu": {
+        "canvasS": 0.458874,
+        "framesS": 0.004693999999999976,
+        "gpuS": 0.1872410000000002,
+        "browserS": 0.026228999999999836,
+        "otherS": 0.0021960000000000243
+      },
+      "idleRss": {
+        "canvasRssMb": 177.984375,
+        "framesRssMb": 204.390625,
+        "gpuRssMb": 150.5625,
+        "browserRssMb": 224.1875,
+        "otherRssMb": 276.03125,
+        "totalRssMb": 1033.15625
+      },
+      "panCpu": {
+        "canvasS": 0.44240800000000013,
+        "framesS": 0.119722,
+        "gpuS": 0.21971199999999946,
+        "browserS": 0.15097000000000005,
+        "otherS": 0.00009500000000003256
+      },
+      "zoomCpu": {
+        "canvasS": 0.26726099999999997,
+        "framesS": 0.202021,
+        "gpuS": 0.28278099999999995,
+        "browserS": 0.10079100000000007,
+        "otherS": 0
+      }
+    },
+    {
+      "arm": "animated",
+      "index": 4,
+      "traced": true,
+      "liveMounted": 8,
+      "roles": {
+        "canvasPid": 5635,
+        "framesPid": 5634,
+        "canvasCalibrationMs": 251.838,
+        "framesCalibrationMs": 254.0819999999999,
+        "otherRendererPids": [
+          5636
+        ]
+      },
+      "pan": {
+        "p50": 8.299999999999272,
+        "p95": 10,
+        "worst": 10.400000000001455,
+        "rareIntervals": 0,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 218,
+        "mountedPeak": 8,
+        "wallMs": 1812.2000000476837
+      },
+      "zoom": {
+        "p50": 8.299999999999272,
+        "p95": 9.80000000000291,
+        "worst": 10.299999999999272,
+        "rareIntervals": 0,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 127,
+        "mountedPeak": 8,
+        "wallMs": 1053.7999999523163
+      },
+      "idleCpu": {
+        "canvasS": 0.22559600000000002,
+        "framesS": 4.555308,
+        "gpuS": 1.6497519999999994,
+        "browserS": 0.012764999999999915,
+        "otherS": 0.0015329999999999788
+      },
+      "idleRss": {
+        "canvasRssMb": 175.53125,
+        "framesRssMb": 246.0625,
+        "gpuRssMb": 163.328125,
+        "browserRssMb": 224.21875,
+        "otherRssMb": 275.828125,
+        "totalRssMb": 1084.96875
+      },
+      "panCpu": {
+        "canvasS": 0.3286279999999999,
+        "framesS": 0.5269730000000008,
+        "gpuS": 0.26103700000000174,
+        "browserS": 0.19098499999999952,
+        "otherS": 0.3097580000000001
+      },
+      "zoomCpu": {
+        "canvasS": 0.21636199999999994,
+        "framesS": 0.46616699999999867,
+        "gpuS": 0.27321999999999846,
+        "browserS": 0.07948700000000031,
+        "otherS": 0
+      }
+    },
+    {
+      "arm": "static",
+      "index": 4,
+      "traced": true,
+      "liveMounted": 8,
+      "roles": {
+        "canvasPid": 6168,
+        "framesPid": 6167,
+        "canvasCalibrationMs": 252.03199999999998,
+        "framesCalibrationMs": 252.25999999999993,
+        "otherRendererPids": [
+          6169
+        ]
+      },
+      "pan": {
+        "p50": 8.299999999999272,
+        "p95": 10.200000000000728,
+        "worst": 10.399999999999636,
+        "rareIntervals": 0,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 199,
+        "mountedPeak": 8,
+        "wallMs": 1656.2999999523163
+      },
+      "zoom": {
+        "p50": 8.30000000000291,
+        "p95": 10,
+        "worst": 16.599999999998545,
+        "rareIntervals": 1,
+        "loafs": 0,
+        "loafWorstBlocking": 0,
+        "frames": 120,
+        "mountedPeak": 8,
+        "wallMs": 1011.1000000238419
+      },
+      "idleCpu": {
+        "canvasS": 0.3895369999999999,
+        "framesS": 0.00696399999999997,
+        "gpuS": 0.17864900000000006,
+        "browserS": 0.02380199999999988,
+        "otherS": 0.008010000000000128
+      },
+      "idleRss": {
+        "canvasRssMb": 176.390625,
+        "framesRssMb": 207.484375,
+        "gpuRssMb": 151.796875,
+        "browserRssMb": 226.828125,
+        "otherRssMb": 409.53125,
+        "totalRssMb": 1172.03125
+      },
+      "panCpu": {
+        "canvasS": 0.37226199999999987,
+        "framesS": 0.10356399999999999,
+        "gpuS": 0.17868799999999752,
+        "browserS": 0.16719300000000015,
+        "otherS": 0.16383099999999998
+      },
+      "zoomCpu": {
+        "canvasS": 0.2384170000000001,
+        "framesS": 0.18241200000000002,
+        "gpuS": 0.2590439999999994,
+        "browserS": 0.09186400000000017,
+        "otherS": 0.000034000000000089514
+      }
+    }
+  ],
+  "traceAnalysis": {
+    "animated": {
+      "canvasBusyMs": 129.104,
+      "framesBusyMs": 264.905,
+      "canvasTop": [
+        {
+          "name": "FunctionCall",
+          "totalMs": 75.076,
+          "count": 812
+        },
+        {
+          "name": "Layerize",
+          "totalMs": 17.41,
+          "count": 180
+        },
+        {
+          "name": "Paint",
+          "totalMs": 12.45,
+          "count": 457
+        },
+        {
+          "name": "HitTest",
+          "totalMs": 11.881,
+          "count": 93
+        },
+        {
+          "name": "EventDispatch",
+          "totalMs": 10.203,
+          "count": 90
+        }
+      ],
+      "framesTop": [
+        {
+          "name": "FireAnimationFrame",
+          "totalMs": 259.979,
+          "count": 1565
+        },
+        {
+          "name": "FunctionCall",
+          "totalMs": 256.501,
+          "count": 1577
+        },
+        {
+          "name": "MinorGC",
+          "totalMs": 7.855,
+          "count": 137
+        },
+        {
+          "name": "V8.GC_SCAVENGER",
+          "totalMs": 5.858,
+          "count": 137
+        },
+        {
+          "name": "V8.GC_SCAVENGER_SCAVENGE",
+          "totalMs": 5.339,
+          "count": 137
+        }
+      ],
+      "windowMs": 1504.092,
+      "canvasBusyPercent": 8.583517497599882,
+      "framesBusyPercent": 17.61228701435816,
+      "knownIssue": "the raw capture also contained 74 earlier events (all on the canvas/frames pids, none contributing measurable X-phase duration on either CrRendererMain thread) separated from the dense pan-gesture burst by a 10808ms gap of near-total silence, cause not established (not a bug in the gesture timing itself — performance.now() confirms the drive call took ~1500ms as scripted); windowMs/canvasBusyMs/framesBusyMs/top5 above are computed from the dense burst only (the actual pan gesture), excluding that preamble."
+    },
+    "static": {
+      "canvasBusyMs": 153.25,
+      "framesBusyMs": 3.026,
+      "canvasTop": [
+        {
+          "name": "FunctionCall",
+          "totalMs": 88.402,
+          "count": 812
+        },
+        {
+          "name": "Layerize",
+          "totalMs": 20.713,
+          "count": 180
+        },
+        {
+          "name": "Paint",
+          "totalMs": 15.195,
+          "count": 457
+        },
+        {
+          "name": "HitTest",
+          "totalMs": 14.075,
+          "count": 94
+        },
+        {
+          "name": "EventDispatch",
+          "totalMs": 12.189,
+          "count": 90
+        }
+      ],
+      "framesTop": [
+        {
+          "name": "IntersectionObserverController::computeIntersections",
+          "totalMs": 1.191,
+          "count": 303
+        },
+        {
+          "name": "PrePaint",
+          "totalMs": 0.631,
+          "count": 160
+        },
+        {
+          "name": "Paint",
+          "totalMs": 0.526,
+          "count": 6
+        },
+        {
+          "name": "Layerize",
+          "totalMs": 0.413,
+          "count": 126
+        },
+        {
+          "name": "FunctionCall",
+          "totalMs": 0.265,
+          "count": 12
+        }
+      ],
+      "windowMs": 1503.771,
+      "canvasBusyPercent": 10.191046376077209,
+      "framesBusyPercent": 0.2012274475302423,
+      "knownIssue": "the raw capture also contained 102 earlier events (all on the canvas/frames pids, none contributing measurable X-phase duration on either CrRendererMain thread) separated from the dense pan-gesture burst by a 10785ms gap of near-total silence, cause not established (not a bug in the gesture timing itself — performance.now() confirms the drive call took ~1500ms as scripted); windowMs/canvasBusyMs/framesBusyMs/top5 above are computed from the dense burst only (the actual pan gesture), excluding that preamble."
+    }
+  }
+}

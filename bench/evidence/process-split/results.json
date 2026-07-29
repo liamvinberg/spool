@@ -1,0 +1,1215 @@
+{
+  "project": "/private/tmp/claude-501/-Users-liamvinberg-projects-spool/62545b71-e1f3-415f-b05b-28bc7f02dd1b/scratchpad/process-split-project",
+  "counts": [
+    4,
+    8,
+    16
+  ],
+  "configs": [
+    {
+      "arm": "shared",
+      "count": 4,
+      "loaded": 4,
+      "visible": 4,
+      "bootTimedOut": false,
+      "bootMs": 221,
+      "floor": {
+        "renderers": 2,
+        "processes": 6,
+        "totalRssMb": 713.453125,
+        "details": [
+          {
+            "pid": 93350,
+            "type": "browser",
+            "rssMb": 201.578125
+          },
+          {
+            "pid": 93362,
+            "type": "renderer",
+            "rssMb": 93.828125
+          },
+          {
+            "pid": 93363,
+            "type": "renderer",
+            "rssMb": 122.359375
+          },
+          {
+            "pid": 93358,
+            "type": "GPU",
+            "rssMb": 122.859375
+          },
+          {
+            "pid": 93359,
+            "type": "network.mojom.NetworkService",
+            "rssMb": 96
+          },
+          {
+            "pid": 93360,
+            "type": "storage.mojom.StorageService",
+            "rssMb": 76.828125
+          }
+        ]
+      },
+      "held": {
+        "renderers": 3,
+        "processes": 7,
+        "totalRssMb": 943.515625,
+        "details": [
+          {
+            "pid": 93350,
+            "type": "browser",
+            "rssMb": 207.203125
+          },
+          {
+            "pid": 93384,
+            "type": "renderer",
+            "rssMb": 93.75
+          },
+          {
+            "pid": 93362,
+            "type": "renderer",
+            "rssMb": 173.875
+          },
+          {
+            "pid": 93363,
+            "type": "renderer",
+            "rssMb": 133.46875
+          },
+          {
+            "pid": 93358,
+            "type": "GPU",
+            "rssMb": 161.328125
+          },
+          {
+            "pid": 93359,
+            "type": "network.mojom.NetworkService",
+            "rssMb": 97.0625
+          },
+          {
+            "pid": 93360,
+            "type": "storage.mojom.StorageService",
+            "rssMb": 76.828125
+          }
+        ]
+      },
+      "hostRaf": {
+        "p50": 8.300000000000182,
+        "p95": 10.099999999998545,
+        "worst": 10.5,
+        "samples": 1811
+      },
+      "stalls": [
+        {
+          "frame": "villain",
+          "villain": true,
+          "reports": 8,
+          "p50Mean": 40.92499999999991,
+          "p95Max": 43.5,
+          "worstMax": 183.10000000000014,
+          "ticksSum": 366
+        },
+        {
+          "frame": "heavy-01",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.91249999999961,
+          "p95Max": 42.900000000000546,
+          "worstMax": 191.19999999999982,
+          "ticksSum": 366
+        },
+        {
+          "frame": "heavy-02",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.812499999999915,
+          "p95Max": 50,
+          "worstMax": 191.19999999999982,
+          "ticksSum": 367
+        },
+        {
+          "frame": "heavy-03",
+          "villain": false,
+          "reports": 7,
+          "p50Mean": 40.9428571428571,
+          "p95Max": 43.5,
+          "worstMax": 175.3000000000011,
+          "ticksSum": 323
+        }
+      ],
+      "diagnostics": []
+    },
+    {
+      "arm": "shared",
+      "count": 8,
+      "loaded": 8,
+      "visible": 8,
+      "bootTimedOut": false,
+      "bootMs": 445,
+      "floor": {
+        "renderers": 2,
+        "processes": 6,
+        "totalRssMb": 712.515625,
+        "details": [
+          {
+            "pid": 94031,
+            "type": "browser",
+            "rssMb": 202.453125
+          },
+          {
+            "pid": 94041,
+            "type": "renderer",
+            "rssMb": 93.875
+          },
+          {
+            "pid": 94042,
+            "type": "renderer",
+            "rssMb": 120.890625
+          },
+          {
+            "pid": 94037,
+            "type": "GPU",
+            "rssMb": 122.609375
+          },
+          {
+            "pid": 94038,
+            "type": "network.mojom.NetworkService",
+            "rssMb": 95.84375
+          },
+          {
+            "pid": 94039,
+            "type": "storage.mojom.StorageService",
+            "rssMb": 76.84375
+          }
+        ]
+      },
+      "held": {
+        "renderers": 3,
+        "processes": 7,
+        "totalRssMb": 967.21875,
+        "details": [
+          {
+            "pid": 94031,
+            "type": "browser",
+            "rssMb": 209.609375
+          },
+          {
+            "pid": 94063,
+            "type": "renderer",
+            "rssMb": 93.828125
+          },
+          {
+            "pid": 94041,
+            "type": "renderer",
+            "rssMb": 191.34375
+          },
+          {
+            "pid": 94042,
+            "type": "renderer",
+            "rssMb": 132.890625
+          },
+          {
+            "pid": 94037,
+            "type": "GPU",
+            "rssMb": 165.28125
+          },
+          {
+            "pid": 94038,
+            "type": "network.mojom.NetworkService",
+            "rssMb": 97.421875
+          },
+          {
+            "pid": 94039,
+            "type": "storage.mojom.StorageService",
+            "rssMb": 76.84375
+          }
+        ]
+      },
+      "hostRaf": {
+        "p50": 8.300000000000182,
+        "p95": 10.100000000000364,
+        "worst": 10.5,
+        "samples": 1812
+      },
+      "stalls": [
+        {
+          "frame": "villain",
+          "villain": true,
+          "reports": 8,
+          "p50Mean": 40.82500000000002,
+          "p95Max": 58.5,
+          "worstMax": 184.20000000000027,
+          "ticksSum": 360
+        },
+        {
+          "frame": "heavy-01",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.21250000000035,
+          "p95Max": 58.399999999999636,
+          "worstMax": 183.6999999999989,
+          "ticksSum": 361
+        },
+        {
+          "frame": "heavy-02",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.174999999999955,
+          "p95Max": 58.399999999999636,
+          "worstMax": 191.9000000000001,
+          "ticksSum": 358
+        },
+        {
+          "frame": "heavy-03",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.06250000000007,
+          "p95Max": 58.30000000000018,
+          "worstMax": 183.39999999999964,
+          "ticksSum": 358
+        },
+        {
+          "frame": "heavy-04",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.1250000000002,
+          "p95Max": 50.099999999999454,
+          "worstMax": 190.60000000000036,
+          "ticksSum": 355
+        },
+        {
+          "frame": "heavy-05",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.97500000000011,
+          "p95Max": 58.599999999998545,
+          "worstMax": 184.10000000000036,
+          "ticksSum": 359
+        },
+        {
+          "frame": "heavy-06",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.02500000000015,
+          "p95Max": 58.600000000000364,
+          "worstMax": 183.70000000000073,
+          "ticksSum": 356
+        },
+        {
+          "frame": "heavy-07",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.05000000000001,
+          "p95Max": 56.69999999999982,
+          "worstMax": 192,
+          "ticksSum": 357
+        }
+      ],
+      "diagnostics": []
+    },
+    {
+      "arm": "shared",
+      "count": 16,
+      "loaded": 16,
+      "visible": 16,
+      "bootTimedOut": false,
+      "bootMs": 1590,
+      "floor": {
+        "renderers": 2,
+        "processes": 6,
+        "totalRssMb": 714.65625,
+        "details": [
+          {
+            "pid": 94580,
+            "type": "browser",
+            "rssMb": 203.515625
+          },
+          {
+            "pid": 94623,
+            "type": "renderer",
+            "rssMb": 93.953125
+          },
+          {
+            "pid": 94624,
+            "type": "renderer",
+            "rssMb": 120.875
+          },
+          {
+            "pid": 94617,
+            "type": "GPU",
+            "rssMb": 123.4375
+          },
+          {
+            "pid": 94618,
+            "type": "network.mojom.NetworkService",
+            "rssMb": 96.015625
+          },
+          {
+            "pid": 94621,
+            "type": "storage.mojom.StorageService",
+            "rssMb": 76.859375
+          }
+        ]
+      },
+      "held": {
+        "renderers": 3,
+        "processes": 7,
+        "totalRssMb": 1009.4375,
+        "details": [
+          {
+            "pid": 94580,
+            "type": "browser",
+            "rssMb": 213.671875
+          },
+          {
+            "pid": 94657,
+            "type": "renderer",
+            "rssMb": 93.765625
+          },
+          {
+            "pid": 94623,
+            "type": "renderer",
+            "rssMb": 224.609375
+          },
+          {
+            "pid": 94624,
+            "type": "renderer",
+            "rssMb": 134.421875
+          },
+          {
+            "pid": 94617,
+            "type": "GPU",
+            "rssMb": 167.734375
+          },
+          {
+            "pid": 94618,
+            "type": "network.mojom.NetworkService",
+            "rssMb": 98.375
+          },
+          {
+            "pid": 94621,
+            "type": "storage.mojom.StorageService",
+            "rssMb": 76.859375
+          }
+        ]
+      },
+      "hostRaf": {
+        "p50": 8.300000000001091,
+        "p95": 10.099999999998545,
+        "worst": 10.399999999997817,
+        "samples": 1811
+      },
+      "stalls": [
+        {
+          "frame": "villain",
+          "villain": true,
+          "reports": 7,
+          "p50Mean": 67.14285714285701,
+          "p95Max": 225,
+          "worstMax": 225.20000000000073,
+          "ticksSum": 176
+        },
+        {
+          "frame": "heavy-01",
+          "villain": false,
+          "reports": 7,
+          "p50Mean": 67.04285714285723,
+          "p95Max": 224.6999999999989,
+          "worstMax": 225.30000000000018,
+          "ticksSum": 183
+        },
+        {
+          "frame": "heavy-02",
+          "villain": false,
+          "reports": 7,
+          "p50Mean": 67.01428571428563,
+          "p95Max": 224.70000000000073,
+          "worstMax": 225.20000000000073,
+          "ticksSum": 183
+        },
+        {
+          "frame": "heavy-03",
+          "villain": false,
+          "reports": 7,
+          "p50Mean": 67.0285714285716,
+          "p95Max": 224.6999999999989,
+          "worstMax": 225.20000000000073,
+          "ticksSum": 183
+        },
+        {
+          "frame": "heavy-04",
+          "villain": false,
+          "reports": 7,
+          "p50Mean": 67.05714285714261,
+          "p95Max": 224.69999999999982,
+          "worstMax": 225.19999999999982,
+          "ticksSum": 183
+        },
+        {
+          "frame": "heavy-05",
+          "villain": false,
+          "reports": 7,
+          "p50Mean": 67.04285714285697,
+          "p95Max": 224.69999999999982,
+          "worstMax": 225.20000000000073,
+          "ticksSum": 182
+        },
+        {
+          "frame": "heavy-06",
+          "villain": false,
+          "reports": 7,
+          "p50Mean": 67.08571428571427,
+          "p95Max": 224.69999999999982,
+          "worstMax": 225.19999999999982,
+          "ticksSum": 181
+        },
+        {
+          "frame": "heavy-07",
+          "villain": false,
+          "reports": 7,
+          "p50Mean": 67.08571428571453,
+          "p95Max": 224.70000000000073,
+          "worstMax": 225.19999999999982,
+          "ticksSum": 180
+        },
+        {
+          "frame": "heavy-08",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 66.9375000000002,
+          "p95Max": 224.60000000000036,
+          "worstMax": 225.19999999999982,
+          "ticksSum": 206
+        },
+        {
+          "frame": "heavy-09",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 66.88749999999982,
+          "p95Max": 224.69999999999982,
+          "worstMax": 225.19999999999982,
+          "ticksSum": 203
+        },
+        {
+          "frame": "heavy-10",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 66.98749999999998,
+          "p95Max": 224.69999999999982,
+          "worstMax": 225.29999999999927,
+          "ticksSum": 202
+        },
+        {
+          "frame": "heavy-11",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 67.02500000000026,
+          "p95Max": 224.59999999999945,
+          "worstMax": 225.30000000000018,
+          "ticksSum": 202
+        },
+        {
+          "frame": "heavy-12",
+          "villain": false,
+          "reports": 7,
+          "p50Mean": 66.91428571428598,
+          "p95Max": 225,
+          "worstMax": 225.30000000000018,
+          "ticksSum": 182
+        },
+        {
+          "frame": "heavy-13",
+          "villain": false,
+          "reports": 7,
+          "p50Mean": 66.91428571428585,
+          "p95Max": 225.10000000000036,
+          "worstMax": 225.19999999999982,
+          "ticksSum": 181
+        },
+        {
+          "frame": "heavy-14",
+          "villain": false,
+          "reports": 7,
+          "p50Mean": 67.0000000000003,
+          "p95Max": 225,
+          "worstMax": 225.20000000000073,
+          "ticksSum": 180
+        },
+        {
+          "frame": "heavy-15",
+          "villain": false,
+          "reports": 7,
+          "p50Mean": 67.09999999999975,
+          "p95Max": 224.89999999999964,
+          "worstMax": 225.29999999999927,
+          "ticksSum": 178
+        }
+      ],
+      "diagnostics": []
+    },
+    {
+      "arm": "per-frame",
+      "count": 4,
+      "loaded": 4,
+      "visible": 4,
+      "bootTimedOut": false,
+      "bootMs": 222,
+      "floor": {
+        "renderers": 2,
+        "processes": 6,
+        "totalRssMb": 714.34375,
+        "details": [
+          {
+            "pid": 95181,
+            "type": "browser",
+            "rssMb": 202.28125
+          },
+          {
+            "pid": 95192,
+            "type": "renderer",
+            "rssMb": 93.765625
+          },
+          {
+            "pid": 95193,
+            "type": "renderer",
+            "rssMb": 121.03125
+          },
+          {
+            "pid": 95188,
+            "type": "GPU",
+            "rssMb": 122.640625
+          },
+          {
+            "pid": 95189,
+            "type": "network.mojom.NetworkService",
+            "rssMb": 95.921875
+          },
+          {
+            "pid": 95190,
+            "type": "storage.mojom.StorageService",
+            "rssMb": 78.703125
+          }
+        ]
+      },
+      "held": {
+        "renderers": 6,
+        "processes": 10,
+        "totalRssMb": 1361.34375,
+        "details": [
+          {
+            "pid": 95181,
+            "type": "browser",
+            "rssMb": 209.453125
+          },
+          {
+            "pid": 95222,
+            "type": "renderer",
+            "rssMb": 93.78125
+          },
+          {
+            "pid": 95221,
+            "type": "renderer",
+            "rssMb": 144.828125
+          },
+          {
+            "pid": 95220,
+            "type": "renderer",
+            "rssMb": 146.390625
+          },
+          {
+            "pid": 95219,
+            "type": "renderer",
+            "rssMb": 144.703125
+          },
+          {
+            "pid": 95192,
+            "type": "renderer",
+            "rssMb": 144.546875
+          },
+          {
+            "pid": 95193,
+            "type": "renderer",
+            "rssMb": 132.015625
+          },
+          {
+            "pid": 95188,
+            "type": "GPU",
+            "rssMb": 169.5625
+          },
+          {
+            "pid": 95189,
+            "type": "network.mojom.NetworkService",
+            "rssMb": 97.359375
+          },
+          {
+            "pid": 95190,
+            "type": "storage.mojom.StorageService",
+            "rssMb": 78.703125
+          }
+        ]
+      },
+      "hostRaf": {
+        "p50": 8.300000000000182,
+        "p95": 10,
+        "worst": 10.400000000001455,
+        "samples": 1810
+      },
+      "stalls": [
+        {
+          "frame": "villain",
+          "villain": true,
+          "reports": 8,
+          "p50Mean": 40.94999999999993,
+          "p95Max": 42.899999999999636,
+          "worstMax": 183.39999999999964,
+          "ticksSum": 364
+        },
+        {
+          "frame": "heavy-01",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.04999999999981,
+          "p95Max": 42,
+          "worstMax": 43.100000000000364,
+          "ticksSum": 412
+        },
+        {
+          "frame": "heavy-02",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.07499999999986,
+          "p95Max": 42.19999999999891,
+          "worstMax": 43,
+          "ticksSum": 414
+        },
+        {
+          "frame": "heavy-03",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.88749999999973,
+          "p95Max": 42.20000000000073,
+          "worstMax": 42.79999999999927,
+          "ticksSum": 415
+        }
+      ],
+      "diagnostics": []
+    },
+    {
+      "arm": "per-frame",
+      "count": 8,
+      "loaded": 8,
+      "visible": 8,
+      "bootTimedOut": false,
+      "bootMs": 429,
+      "floor": {
+        "renderers": 2,
+        "processes": 6,
+        "totalRssMb": 713.8125,
+        "details": [
+          {
+            "pid": 95749,
+            "type": "browser",
+            "rssMb": 202.546875
+          },
+          {
+            "pid": 95760,
+            "type": "renderer",
+            "rssMb": 93.828125
+          },
+          {
+            "pid": 95761,
+            "type": "renderer",
+            "rssMb": 120.96875
+          },
+          {
+            "pid": 95755,
+            "type": "GPU",
+            "rssMb": 123.625
+          },
+          {
+            "pid": 95756,
+            "type": "network.mojom.NetworkService",
+            "rssMb": 95.921875
+          },
+          {
+            "pid": 95757,
+            "type": "storage.mojom.StorageService",
+            "rssMb": 76.921875
+          }
+        ]
+      },
+      "held": {
+        "renderers": 10,
+        "processes": 14,
+        "totalRssMb": 1970.296875,
+        "details": [
+          {
+            "pid": 95749,
+            "type": "browser",
+            "rssMb": 213.5625
+          },
+          {
+            "pid": 95824,
+            "type": "renderer",
+            "rssMb": 93.71875
+          },
+          {
+            "pid": 95823,
+            "type": "renderer",
+            "rssMb": 144.65625
+          },
+          {
+            "pid": 95822,
+            "type": "renderer",
+            "rssMb": 144.75
+          },
+          {
+            "pid": 95821,
+            "type": "renderer",
+            "rssMb": 146.671875
+          },
+          {
+            "pid": 95820,
+            "type": "renderer",
+            "rssMb": 146.453125
+          },
+          {
+            "pid": 95819,
+            "type": "renderer",
+            "rssMb": 144.828125
+          },
+          {
+            "pid": 95818,
+            "type": "renderer",
+            "rssMb": 144.953125
+          },
+          {
+            "pid": 95817,
+            "type": "renderer",
+            "rssMb": 146.09375
+          },
+          {
+            "pid": 95760,
+            "type": "renderer",
+            "rssMb": 146.515625
+          },
+          {
+            "pid": 95761,
+            "type": "renderer",
+            "rssMb": 133.015625
+          },
+          {
+            "pid": 95755,
+            "type": "GPU",
+            "rssMb": 189.921875
+          },
+          {
+            "pid": 95756,
+            "type": "network.mojom.NetworkService",
+            "rssMb": 98.234375
+          },
+          {
+            "pid": 95757,
+            "type": "storage.mojom.StorageService",
+            "rssMb": 76.921875
+          }
+        ]
+      },
+      "hostRaf": {
+        "p50": 8.300000000000182,
+        "p95": 10.100000000000364,
+        "worst": 18.599999999998545,
+        "samples": 1812
+      },
+      "stalls": [
+        {
+          "frame": "villain",
+          "villain": true,
+          "reports": 8,
+          "p50Mean": 41.03749999999971,
+          "p95Max": 43.100000000000364,
+          "worstMax": 183.20000000000073,
+          "ticksSum": 368
+        },
+        {
+          "frame": "heavy-01",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.72500000000002,
+          "p95Max": 42.100000000000364,
+          "worstMax": 43.600000000000364,
+          "ticksSum": 415
+        },
+        {
+          "frame": "heavy-02",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.19999999999993,
+          "p95Max": 42.100000000000364,
+          "worstMax": 50.20000000000073,
+          "ticksSum": 411
+        },
+        {
+          "frame": "heavy-03",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.02500000298026,
+          "p95Max": 42.099999999998545,
+          "worstMax": 43.600000000000364,
+          "ticksSum": 411
+        },
+        {
+          "frame": "heavy-04",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.21249999999969,
+          "p95Max": 42.09999999999991,
+          "worstMax": 43.600000000000364,
+          "ticksSum": 410
+        },
+        {
+          "frame": "heavy-05",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.95000000000003,
+          "p95Max": 42,
+          "worstMax": 43.399999999999636,
+          "ticksSum": 413
+        },
+        {
+          "frame": "heavy-06",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.02500000000029,
+          "p95Max": 42.100000000000364,
+          "worstMax": 43.70000000000073,
+          "ticksSum": 412
+        },
+        {
+          "frame": "heavy-07",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.087499999999885,
+          "p95Max": 42.5,
+          "worstMax": 50.30000000000109,
+          "ticksSum": 412
+        }
+      ],
+      "diagnostics": []
+    },
+    {
+      "arm": "per-frame",
+      "count": 16,
+      "loaded": 16,
+      "visible": 16,
+      "bootTimedOut": false,
+      "bootMs": 900,
+      "floor": {
+        "renderers": 2,
+        "processes": 6,
+        "totalRssMb": 712.484375,
+        "details": [
+          {
+            "pid": 96369,
+            "type": "browser",
+            "rssMb": 202.40625
+          },
+          {
+            "pid": 96458,
+            "type": "renderer",
+            "rssMb": 93.875
+          },
+          {
+            "pid": 96459,
+            "type": "renderer",
+            "rssMb": 120.921875
+          },
+          {
+            "pid": 96454,
+            "type": "GPU",
+            "rssMb": 122.625
+          },
+          {
+            "pid": 96455,
+            "type": "network.mojom.NetworkService",
+            "rssMb": 95.890625
+          },
+          {
+            "pid": 96456,
+            "type": "storage.mojom.StorageService",
+            "rssMb": 76.765625
+          }
+        ]
+      },
+      "held": {
+        "renderers": 18,
+        "processes": 22,
+        "totalRssMb": 3178.734375,
+        "details": [
+          {
+            "pid": 96369,
+            "type": "browser",
+            "rssMb": 221.171875
+          },
+          {
+            "pid": 96550,
+            "type": "renderer",
+            "rssMb": 93.65625
+          },
+          {
+            "pid": 96549,
+            "type": "renderer",
+            "rssMb": 145.125
+          },
+          {
+            "pid": 96548,
+            "type": "renderer",
+            "rssMb": 144.875
+          },
+          {
+            "pid": 96547,
+            "type": "renderer",
+            "rssMb": 146.65625
+          },
+          {
+            "pid": 96546,
+            "type": "renderer",
+            "rssMb": 145.359375
+          },
+          {
+            "pid": 96545,
+            "type": "renderer",
+            "rssMb": 146.515625
+          },
+          {
+            "pid": 96544,
+            "type": "renderer",
+            "rssMb": 144.6875
+          },
+          {
+            "pid": 96543,
+            "type": "renderer",
+            "rssMb": 146.828125
+          },
+          {
+            "pid": 96542,
+            "type": "renderer",
+            "rssMb": 146.6875
+          },
+          {
+            "pid": 96541,
+            "type": "renderer",
+            "rssMb": 144.765625
+          },
+          {
+            "pid": 96540,
+            "type": "renderer",
+            "rssMb": 144.984375
+          },
+          {
+            "pid": 96539,
+            "type": "renderer",
+            "rssMb": 145.5
+          },
+          {
+            "pid": 96538,
+            "type": "renderer",
+            "rssMb": 144.96875
+          },
+          {
+            "pid": 96537,
+            "type": "renderer",
+            "rssMb": 144.734375
+          },
+          {
+            "pid": 96536,
+            "type": "renderer",
+            "rssMb": 144.765625
+          },
+          {
+            "pid": 96535,
+            "type": "renderer",
+            "rssMb": 144.75
+          },
+          {
+            "pid": 96458,
+            "type": "renderer",
+            "rssMb": 146.1875
+          },
+          {
+            "pid": 96459,
+            "type": "renderer",
+            "rssMb": 134.59375
+          },
+          {
+            "pid": 96454,
+            "type": "GPU",
+            "rssMb": 225.359375
+          },
+          {
+            "pid": 96455,
+            "type": "network.mojom.NetworkService",
+            "rssMb": 99.796875
+          },
+          {
+            "pid": 96456,
+            "type": "storage.mojom.StorageService",
+            "rssMb": 76.765625
+          }
+        ]
+      },
+      "hostRaf": {
+        "p50": 8.299999999999272,
+        "p95": 10.100000000002183,
+        "worst": 16.799999999999272,
+        "samples": 1810
+      },
+      "stalls": [
+        {
+          "frame": "villain",
+          "villain": true,
+          "reports": 8,
+          "p50Mean": 41.037499999999966,
+          "p95Max": 43.600000000000364,
+          "worstMax": 175.10000000000036,
+          "ticksSum": 365
+        },
+        {
+          "frame": "heavy-01",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.887500000000045,
+          "p95Max": 42.09999999999991,
+          "worstMax": 43.5,
+          "ticksSum": 412
+        },
+        {
+          "frame": "heavy-02",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.812499999999915,
+          "p95Max": 43.600000000000364,
+          "worstMax": 43.69999999999891,
+          "ticksSum": 415
+        },
+        {
+          "frame": "heavy-03",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.074999999999875,
+          "p95Max": 42.09999999999991,
+          "worstMax": 43.600000000000364,
+          "ticksSum": 413
+        },
+        {
+          "frame": "heavy-04",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.8749999999999,
+          "p95Max": 42.399999999999636,
+          "worstMax": 43.600000000000364,
+          "ticksSum": 412
+        },
+        {
+          "frame": "heavy-05",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.87500000000003,
+          "p95Max": 42.09999999999991,
+          "worstMax": 43.600000000000364,
+          "ticksSum": 413
+        },
+        {
+          "frame": "heavy-06",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.93749999999994,
+          "p95Max": 43.600000000000364,
+          "worstMax": 43.70000000000073,
+          "ticksSum": 412
+        },
+        {
+          "frame": "heavy-07",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.937499999999915,
+          "p95Max": 42.000000000000014,
+          "worstMax": 43.5,
+          "ticksSum": 413
+        },
+        {
+          "frame": "heavy-08",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.69999999999969,
+          "p95Max": 42.09999999999991,
+          "worstMax": 43.5,
+          "ticksSum": 417
+        },
+        {
+          "frame": "heavy-09",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.70000000000016,
+          "p95Max": 42.29999999999927,
+          "worstMax": 43.69999999999982,
+          "ticksSum": 414
+        },
+        {
+          "frame": "heavy-10",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.98749999999976,
+          "p95Max": 42,
+          "worstMax": 43.400000000000546,
+          "ticksSum": 414
+        },
+        {
+          "frame": "heavy-11",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.97499999999971,
+          "p95Max": 42.299999999999955,
+          "worstMax": 43.700000000000045,
+          "ticksSum": 414
+        },
+        {
+          "frame": "heavy-12",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.84999999999992,
+          "p95Max": 42,
+          "worstMax": 43.599999999999454,
+          "ticksSum": 414
+        },
+        {
+          "frame": "heavy-13",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.88750000000024,
+          "p95Max": 42,
+          "worstMax": 43.599999999999454,
+          "ticksSum": 414
+        },
+        {
+          "frame": "heavy-14",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 40.93750000000031,
+          "p95Max": 42.100000000000364,
+          "worstMax": 43.5,
+          "ticksSum": 414
+        },
+        {
+          "frame": "heavy-15",
+          "villain": false,
+          "reports": 8,
+          "p50Mean": 41.01249999999959,
+          "p95Max": 42,
+          "worstMax": 43.600000000000364,
+          "ticksSum": 415
+        }
+      ],
+      "diagnostics": []
+    }
+  ]
+}
