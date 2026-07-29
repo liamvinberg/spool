@@ -6,7 +6,7 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["**", "!bench/evidence", "!design", "!spikes", "!research"]
+		"includes": ["**", "!bench/evidence", "!design", "!fixtures/captures", "!spikes", "!research"]
 	},
 	"formatter": {
 		"indentStyle": "tab",

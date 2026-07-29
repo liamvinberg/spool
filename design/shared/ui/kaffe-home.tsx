@@ -2,7 +2,7 @@
  * `home`, the one frame on the kaffe project's `site` page.
  *
  * It exists because the transcript behind the #143 frames names it. That capture
- * (shared/fixtures/claude-edits.json) spends two minutes editing
+ * (fixtures/captures/claude-edits.json) spends two minutes editing
  * `frames/home/frame.tsx` and nothing else, so `home` has to be a frame you can
  * actually be taken to for the question to be lookable at — and #136's threads
  * frames had already put it on `site`, one page over from the `app` page the

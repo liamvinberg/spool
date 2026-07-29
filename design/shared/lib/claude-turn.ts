@@ -134,12 +134,18 @@ export interface CaptureEvent {
 	readonly mcp_servers?: readonly { readonly name: string; readonly status: string }[];
 }
 
-/** the mock answers relative URLs out of shared/fixtures, so the capture is one fetch away */
+/**
+ * The mock answers relative URLs out of shared/fixtures, so the capture is one
+ * fetch away. The captures themselves are tracked at the repo's own
+ * fixtures/captures/ and mirrored into shared/fixtures/captures/ by the checkout
+ * entry, because the shipped test suite reads the same bytes this plays and must
+ * not reach into the canvas for them. Their provenance is the README there.
+ */
 export function useCapture(name: string): readonly CaptureEvent[] | undefined {
 	const [events, setEvents] = useState<readonly CaptureEvent[] | undefined>(undefined);
 	useEffect(() => {
 		let live = true;
-		void fetch(`/api/${name}`)
+		void fetch(`/api/captures/${name}`)
 			.then((response) => response.json() as Promise<readonly CaptureEvent[]>)
 			.then((body) => {
 				if (live) setEvents(body);

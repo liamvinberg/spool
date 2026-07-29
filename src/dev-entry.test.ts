@@ -62,6 +62,9 @@ describe("checkout development entry", () => {
 function copyCheckout(): string {
 	const checkout = makeTempDir();
 	cpSync(join(repoRoot, "src"), join(checkout, "src"), { recursive: true });
+	// the entry mirrors the captures into the canvas before it serves, so a
+	// checkout without them is not one
+	cpSync(join(repoRoot, "fixtures"), join(checkout, "fixtures"), { recursive: true });
 	for (const file of ["package.json", "vite.config.ts", "tsconfig.json", "tsconfig.ui.json"]) {
 		cpSync(join(repoRoot, file), join(checkout, file));
 	}
