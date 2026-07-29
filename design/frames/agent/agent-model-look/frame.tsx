@@ -130,9 +130,10 @@ function NameRow({
 const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh", "max"];
 const LONGEST_EFFORT = EFFORT_SAYS.max ?? "";
 
-/* ---------- shipped ----------
- * What the rail draws today, minus the hover reflow, which was fixed on its own
- * because a menu that moves under the pointer is a defect in any of these. */
+/* ---------- was ----------
+ * What the rail drew before #186, kept as the diff the way `--say-raw` is kept for
+ * #148. The hover reflow is already taken out of it, because a menu that moves
+ * under the pointer was a defect under every candidate and landed on its own. */
 
 function Shipped({ models }: { models: readonly ClaudeModel[] }) {
 	const [over, setOver] = useState<Effort | null>(null);
@@ -171,7 +172,7 @@ function Shipped({ models }: { models: readonly ClaudeModel[] }) {
 }
 
 /* ---------- one sentence ----------
- * The recommendation. The list is names, and the one sentence at the bottom
+ * What shipped. The list is names, and the one sentence at the bottom
  * describes whatever the cursor is on — a model or an effort level, the same slot
  * either way. Every complaint dies at once: nothing repeats because only one
  * sentence exists, rows are one line each so the list has a rhythm, the prose is
@@ -275,13 +276,13 @@ function Bare({ models }: { models: readonly ClaudeModel[] }) {
 
 const TAKES = [
 	{
-		id: "shipped",
-		says: "what the rail draws now. five sentences, ragged rows, chips",
+		id: "was",
+		says: "what the rail drew before #186. five sentences, ragged rows, chips",
 		render: Shipped,
 	},
 	{
 		id: "one sentence",
-		says: "names only, and one slot saying what the cursor is on · recommended",
+		says: "names only, and one slot saying what the cursor is on · shipped",
 		render: OneSentence,
 	},
 	{
@@ -303,7 +304,7 @@ export default function AgentModelLookFrame() {
 			<div className="flex shrink-0 items-baseline gap-3 border-border border-b bg-surface/40 px-6 py-2">
 				<span className="font-mono text-sm text-text leading-4">model menu</span>
 				<span className="min-w-0 flex-1 font-mono text-2xs text-muted/70 leading-3">
-					#118's control, drawn four ways on the real `list_models` reply. opus (1m) picked, xhigh set.
+					#186 settled: one sentence. drawn four ways on the real `list_models` reply, opus (1m) picked, xhigh set.
 				</span>
 			</div>
 			<div className="flex min-h-0 flex-1 items-start gap-8 overflow-auto p-6">
