@@ -25,6 +25,8 @@ import {
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { RibbonMark } from "../icons";
+import { AgentRail } from "./agent-rail";
+import { useAgentTurn } from "./agent-stream";
 import { arrange } from "./arrange";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, K_STEP, toWorld, zoomAt } from "./camera";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
@@ -248,6 +250,10 @@ export function ProjectCanvas({
 		[frames, activePage, hidden],
 	);
 	const navigatorFrames = useMemo(() => frames.filter((frame) => !hidden.has(frame.name)), [frames, hidden]);
+	// the agent rail's one turn (#192). It owns the stream and nothing else here has
+	// to know about it: a frame the turn writes lands as an ordinary `change` event,
+	// so the canvas repaints while the transcript is still arriving.
+	const turn = useAgentTurn(project);
 	const exportFrames = useMemo(
 		() => (exportDialog === null ? [] : framesInCanvasOrder(visibleFrames, exportDialog)),
 		[visibleFrames, exportDialog],
@@ -2526,6 +2532,13 @@ export function ProjectCanvas({
 					/>
 				) : null}
 			</div>
+			<AgentRail
+				entries={turn.entries}
+				phase={turn.phase}
+				elapsed={turn.elapsed}
+				last={turn.last}
+				onSend={turn.send}
+			/>
 			{exportDialog !== null && exportFrames.length > 0 ? (
 				<ExportDialog
 					exporting={exporting}

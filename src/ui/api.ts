@@ -1,5 +1,6 @@
 import { hc } from "hono/client";
 import type { Cover } from "../cover";
+import type { AgentEvent } from "../daemon/agent-events";
 import type { AppType } from "../daemon/app";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsListing } from "../daemon/fs-list";
@@ -17,6 +18,7 @@ declare global {
 }
 
 export type {
+	AgentEvent,
 	Camera,
 	CanvasState,
 	Cover,
@@ -269,6 +271,31 @@ export async function putCover(project: string, frame: string, cover: Blob): Pro
 	return (await res.json()) as Cover;
 }
 
+/** Read one SSE body to its end, dispatching each message by its event name. */
+async function drainSse(body: ReadableStream<Uint8Array>, handlers: Record<string, (data: unknown) => void>) {
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+	for (;;) {
+		const next = await reader.read();
+		if (next.done) return;
+		buffer += decoder.decode(next.value, { stream: true });
+		const messages = buffer.split("\n\n");
+		buffer = messages.pop() ?? "";
+		for (const message of messages) {
+			const event = message.match(/^event: (.*)$/m)?.[1] ?? "message";
+			const raw = message.match(/^data: (.*)$/m)?.[1];
+			const handle = handlers[event];
+			if (raw === undefined || handle === undefined) continue;
+			try {
+				handle(JSON.parse(raw));
+			} catch {
+				// a malformed event is dropped, the stream lives on
+			}
+		}
+	}
+}
+
 /** An authenticated SSE fetch stream that dies with the component. */
 export function subscribeSse(url: string, handlers: Record<string, (data: unknown) => void>): () => void {
 	const controller = new AbortController();
@@ -282,27 +309,7 @@ export function subscribeSse(url: string, handlers: Record<string, (data: unknow
 				signal: controller.signal,
 			});
 			if (!res.ok || res.body === null) return;
-			const reader = res.body.getReader();
-			const decoder = new TextDecoder();
-			let buffer = "";
-			for (;;) {
-				const next = await reader.read();
-				if (next.done) return;
-				buffer += decoder.decode(next.value, { stream: true });
-				const messages = buffer.split("\n\n");
-				buffer = messages.pop() ?? "";
-				for (const message of messages) {
-					const event = message.match(/^event: (.*)$/m)?.[1] ?? "message";
-					const raw = message.match(/^data: (.*)$/m)?.[1];
-					const handle = handlers[event];
-					if (raw === undefined || handle === undefined) continue;
-					try {
-						handle(JSON.parse(raw));
-					} catch {
-						// a malformed event is dropped, the stream lives on
-					}
-				}
-			}
+			await drainSse(res.body, handlers);
 		} catch {
 			// connection failures follow the same reconnect path as a clean EOF
 		} finally {
@@ -314,6 +321,54 @@ export function subscribeSse(url: string, handlers: Record<string, (data: unknow
 	return () => {
 		disposed = true;
 		if (reconnectTimer !== undefined) clearTimeout(reconnectTimer);
+		controller.abort();
+	};
+}
+
+/**
+ * One turn against the developer's own agent (#191, #192).
+ *
+ * A POST whose response is the stream, and the one SSE surface here that must
+ * never reconnect: a turn is a process the daemon holds open for exactly as long
+ * as this request lives, so reopening it would spawn a second agent against a
+ * prompt that has already been answered. It ends when the daemon closes it, and
+ * abandoning the returned handle takes the process with it.
+ */
+export function streamAgentTurn(
+	project: string,
+	prompt: string,
+	on: { readonly event: (event: AgentEvent) => void; readonly end: (error?: string) => void },
+): () => void {
+	const controller = new AbortController();
+	let disposed = false;
+	void (async () => {
+		try {
+			// `init` is spread over what the client built, so `headers` here would replace
+			// its own `content-type: application/json` and the daemon would reject the body
+			const res = await client.api.p[":project"].agent.turn.$post(
+				{ param: { project }, json: { prompt } },
+				{ init: { signal: controller.signal } },
+			);
+			if (!res.ok || res.body === null) {
+				on.end(res.body === null ? "the turn stream never opened" : await res.text());
+				return;
+			}
+			// `disposed` gates the events too, not only the end: abandoning a turn can leave
+			// a decoded batch in flight, and it must not land in the turn that replaced it
+			await drainSse(res.body, {
+				agent: (data) => {
+					if (!disposed) on.event(data as AgentEvent);
+				},
+			});
+			if (!disposed) on.end();
+		} catch {
+			// an aborted read is the caller letting go; anything else has already been
+			// reported down the stream as a `closed` event
+			if (!disposed) on.end();
+		}
+	})();
+	return () => {
+		disposed = true;
 		controller.abort();
 	};
 }
