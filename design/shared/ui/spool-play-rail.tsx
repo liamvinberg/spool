@@ -336,6 +336,45 @@ export type AskMode = "log" | "composer" | "shelf";
  */
 export type SayMode = "raw" | "read" | "lede" | "lines";
 
+/**
+ * Where a message typed into a running turn stands before it has happened (#170).
+ *
+ * The composer has stopped refusing. Enter while a turn is in flight queues the
+ * message instead of dropping it, a second Enter queues a second, and **Spool holds
+ * the list rather than the binary** — which is the half of the wire #165 read from
+ * the other end: an `interrupt` control request comes back `{still_queued:[…]}`, the
+ * uuids of queued messages that outlive the abort, and it has been empty on every
+ * capture in this repo because Spool had nothing to put in it.
+ *
+ * A queued message is the only thing this rail draws that **has not happened yet**,
+ * so it cannot wear the transcript's receipt. It is the developer's own words in the
+ * developer's own 2px accent rail, dimmed until it fires, `queued` under it, and a ✕
+ * to take it back. That anatomy is fixed. What the two placements disagree about is
+ * only where the row stands while it waits.
+ *
+ *   tail   at the end of the log, under the live edge, in fire order — which is the
+ *          exact spot the receipt lands, so firing is an undim in place and nothing
+ *          moves. The cost is that the log now holds one thing that is not a receipt.
+ *   band   a fixed strip between the log and the composer. It does not scroll with
+ *          the transcript, so what is waiting stays on screen while you read back,
+ *          and the transcript above stays receipts-only. The cost is the teleport:
+ *          a row that fires leaves the band and reappears in the log.
+ */
+export type QueueWhere = "none" | "tail" | "band";
+
+/**
+ * One message waiting on the running turn.
+ *
+ * The id is the frame's own and not the capture's, because nothing about a queue is
+ * in a capture — Spool took the message, so Spool is the only thing that can name
+ * it. Two identical messages are a real thing to type twice, and the ✕ has to reach
+ * exactly one of them.
+ */
+export interface Queued {
+	readonly id: string;
+	readonly text: string;
+}
+
 /** what a frame-naming row can currently do about the frame it names */
 type Reach = "here" | "coming" | "gone";
 
@@ -376,6 +415,10 @@ export function PlayRail({
 	stop = "none",
 	onStop,
 	onDeny,
+	queue = "none",
+	queued = [],
+	onQueue,
+	onUnqueue,
 	onSend,
 	onReplay,
 	onAnswer,
@@ -451,6 +494,14 @@ export function PlayRail({
 	 * confused — `cutting` below is `phase === "playing" && !waiting`.
 	 */
 	onDeny?: (() => void) | undefined;
+	/** where the messages waiting on a running turn stand; `none` is the rail as it was before #170 */
+	queue?: QueueWhere | undefined;
+	/** those messages, in fire order, none of which has happened */
+	queued?: readonly Queued[] | undefined;
+	/** absent leaves Enter swallowed while a turn runs, which is what the composer did until #170 */
+	onQueue?: ((text: string) => void) | undefined;
+	/** taking one back before it fires; absent draws no ✕ at all */
+	onUnqueue?: ((id: string) => void) | undefined;
 	onSend: (text: string) => void;
 	onReplay: () => void;
 	/** lets a turn held at a question carry on, once one has been given (#145) */
@@ -483,6 +534,10 @@ export function PlayRail({
 	// a deny destroys the question rather than answering it, so nothing is recorded as
 	// picked: the row resolves on the turn ending, the same way #165's rows do
 	const deny = () => onDeny?.();
+	// the queue is off unless a frame says where it goes, so every frame that predates
+	// #170 keeps a composer that refuses while a turn runs and a log with nothing in it
+	// that has not happened
+	const pending = queue === "none" ? [] : queued;
 	const kit: JumpKit | null =
 		jump === undefined
 			? null
@@ -519,8 +574,11 @@ export function PlayRail({
 				onDeny={ask === "log" && waiting && onDeny !== undefined ? deny : undefined}
 				jump={kit}
 				onReach={reach}
+				queued={queue === "tail" ? pending : []}
+				onUnqueue={onUnqueue}
 				tail={cutting && stop === "edge" ? <StopButton where="edge" onStop={halt} /> : undefined}
 			/>
+			{queue === "band" && pending.length > 0 ? <QueueBand queued={pending} onUnqueue={onUnqueue} /> : null}
 			<Composer
 				field={field}
 				strip={stripOf(selection, COMPOSER_W, entered)}
@@ -534,6 +592,7 @@ export function PlayRail({
 				phase={phase}
 				stop={cutting && stop !== "edge" ? stop : "none"}
 				onStop={halt}
+				onQueue={queue === "none" ? undefined : onQueue}
 				onSend={onSend}
 				onReplay={onReplay}
 				onReach={reach}
@@ -597,6 +656,8 @@ function Transcript({
 	onDeny,
 	jump,
 	onReach,
+	queued,
+	onUnqueue,
 	tail,
 }: {
 	entries: readonly PlayEntry[];
@@ -611,6 +672,9 @@ function Transcript({
 	onDeny: (() => void) | undefined;
 	jump: JumpKit | null;
 	onReach: (event: { target: EventTarget | null }) => void;
+	/** the queue standing in the log, which is empty in every placement but `tail` (#170) */
+	queued: readonly Queued[];
+	onUnqueue: ((id: string) => void) | undefined;
 	/** whatever hangs off the last entry, which so far is only #165's stop */
 	tail?: ReactNode | undefined;
 }) {
@@ -682,6 +746,15 @@ function Transcript({
 							/>
 						</Arrive>
 					))}
+					{/* the queue stands under the live edge and inside the same column, so each
+					    row is already in the place its receipt will take: the first one clears
+					    the live edge by the 14px `gapBefore` gives a turn boundary, which is
+					    what the row it becomes will sit on (#170) */}
+					{queued.length === 0 ? null : (
+						<div className="pt-3.5">
+							<QueueList queued={queued} onUnqueue={onUnqueue} gap={14} />
+						</div>
+					)}
 					{tail === undefined ? null : <div className="pt-3.5">{tail}</div>}
 				</div>
 			</div>
@@ -781,6 +854,117 @@ function Entry({
 	}
 	if (entry.kind === "prose") return <Prose entry={entry} mode={say} />;
 	return <Line entry={entry} shot={shot} shotView={shotView} mcp={mcp} jump={jump} />;
+}
+
+/* ---------- the words you said into a running turn (#170) ----------
+ * The transcript is receipts and this is not one. Everything else the rail draws is
+ * past tense — a call that ran, a sentence that arrived, an answer that was given —
+ * and a queued message is the developer's own words with nothing behind them yet.
+ *
+ * So the row is deliberately the *user* row and not a new object: the same 2px accent
+ * rail, the same text size, the same mono line under it that a `context` sits on.
+ * Every one of those is dimmed, and the line says `queued` rather than naming a
+ * frame. The moment it fires it is not replaced by a row — it *is* the row, undimmed,
+ * which is the whole reason the anatomy has to match to the pixel.
+ *
+ * The ✕ is on hover, in the words the selection chip's own removal already uses. A
+ * queue you have to manage is a queue you have to look at, and the resting state
+ * here is two lines of your own words waiting their turn. */
+
+function QueuedRow({ message, onDrop }: { message: Queued; onDrop: (() => void) | undefined }) {
+	return (
+		<div className="group relative flex flex-col gap-1 pl-3.5">
+			{/* the rail is the one thing here that does *not* dim: it says whose words these
+			    are, and that is settled the moment they are typed. What is provisional is
+			    only whether they have gone out, which the text and the marker carry */}
+			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
+			<p className="whitespace-pre-wrap text-base text-text/45 leading-base">{message.text}</p>
+			<span className="flex h-3.5 items-center gap-1.5">
+				<span className="font-mono text-2xs text-muted/55 leading-3">queued</span>
+				{onDrop === undefined ? null : (
+					<button
+						type="button"
+						onClick={onDrop}
+						aria-label={`unqueue ${message.text}`}
+						// no plate behind it, unlike the composer chip's own ✕: in a dimmed row a
+						// filled box is the brightest thing on the line, and the row is the thing
+						// being read
+						className="flex h-3.5 w-3.5 items-center justify-center text-muted/0 transition-colors duration-150 hover:text-text group-hover:text-muted/50"
+					>
+						<CloseIcon className="h-2 w-2" />
+					</button>
+				)}
+			</span>
+		</div>
+	);
+}
+
+/**
+ * The rows themselves, identical in both placements so that where they stand is the
+ * only thing under test.
+ *
+ * They arrive on the transcript's own curve, because typing into a running turn and
+ * a row landing in the log are the same beat to the eye and there is no reason for
+ * two. They retire on it too, which the log's entries never do: nothing in a
+ * transcript is ever taken back, and a queued message is the one thing that can be.
+ * `gap` is skipped on the first row so a placement can set its own lead-in.
+ */
+function QueueList({
+	queued,
+	onUnqueue,
+	gap,
+}: {
+	queued: readonly Queued[];
+	onUnqueue: ((id: string) => void) | undefined;
+	gap: number;
+}) {
+	const still = useReducedMotion() === true;
+	return (
+		<AnimatePresence initial={false}>
+			{queued.map((message, index) => (
+				<motion.div
+					key={message.id}
+					className="shrink-0 overflow-hidden"
+					initial={still ? false : { height: 0, opacity: 0 }}
+					animate={{ height: "auto", opacity: 1 }}
+					exit={still ? { opacity: 0 } : { height: 0, opacity: 0 }}
+					transition={
+						still
+							? { duration: 0 }
+							: { height: { duration: 0.28, ease: ARRIVE }, opacity: { duration: 0.2, ease: "linear" } }
+					}
+				>
+					<div style={{ paddingTop: index === 0 ? 0 : gap }}>
+						<QueuedRow
+							message={message}
+							onDrop={onUnqueue === undefined ? undefined : () => onUnqueue(message.id)}
+						/>
+					</div>
+				</motion.div>
+			))}
+		</AnimatePresence>
+	);
+}
+
+/**
+ * The queue as a band, held between the log and the composer.
+ *
+ * It is in neither of them and it does not scroll: the transcript runs under it and
+ * stays receipts-only, so what is waiting is on screen whether or not you have
+ * scrolled back to read something. Its own rule at the top is what makes it a place
+ * rather than a few rows that happen to sit low — the composer already carries one,
+ * and two rules is what a band between two things looks like.
+ *
+ * It caps and scrolls inside itself on the transcript's own 2px bar, because a queue
+ * has no upper bound: you can go on typing for as long as the turn goes on running,
+ * and a band that grows to fit takes the room out of the log.
+ */
+function QueueBand({ queued, onUnqueue }: { queued: readonly Queued[]; onUnqueue: ((id: string) => void) | undefined }) {
+	return (
+		<div className="pages-scrollbar flex max-h-[164px] shrink-0 flex-col overflow-y-auto border-border border-t px-3.5 py-3">
+			<QueueList queued={queued} onUnqueue={onUnqueue} gap={14} />
+		</div>
+	);
 }
 
 /** rendered lines are not source lines, so the clamp is a height and the fade is on it */
@@ -1623,6 +1807,7 @@ function Composer({
 	phase,
 	stop,
 	onStop,
+	onQueue,
 	onSend,
 	onReplay,
 	onReach,
@@ -1648,6 +1833,17 @@ function Composer({
 	/** `none` while there is nothing to stop, which is most of the time */
 	stop: StopWhere;
 	onStop: () => void;
+	/**
+	 * What Enter does while a turn is running (#170).
+	 *
+	 * Absent is the composer as it was: `busy` swallowed the press, on the reasoning
+	 * written into #165 that Spool "refuses to send while a turn is running", which is
+	 * why an `interrupt`'s `{still_queued:[…]}` has been empty in every capture here.
+	 * Present, the press is taken and held rather than sent, and the hint below says so
+	 * — because a field that accepts a message and shows nothing for it is worse than
+	 * one that refuses.
+	 */
+	onQueue: ((text: string) => void) | undefined;
 	onSend: (text: string) => void;
 	onReplay: () => void;
 	onReach: (event: { target: EventTarget | null }) => void;
@@ -1691,10 +1887,14 @@ function Composer({
 						if (event.key !== "Enter" || event.shiftKey) return;
 						event.preventDefault();
 						const text = value.trim();
-						if (text === "" || busy) return;
+						// a running turn used to swallow this press. #170 takes it and holds it
+						// instead, and the field clears either way, because either way the
+						// message has been taken
+						if (text === "" || (busy && onQueue === undefined)) return;
 						setValue("");
 						event.currentTarget.style.height = `${MIN_H}px`;
-						if (answering) onPick(text);
+						if (busy) onQueue?.(text);
+						else if (answering) onPick(text);
 						else onSend(text);
 					}}
 					className="w-full resize-none bg-transparent text-base text-text leading-base outline-none placeholder:text-muted/50"
@@ -1707,7 +1907,13 @@ function Composer({
 			    line has room for one quiet thing on the left, and which model is
 			    answering outranks a keyboard hint you learn once */}
 			<div className="relative flex h-[18px] items-center justify-between">
-				{model ?? <span className="font-mono text-2xs text-muted/45 leading-3">{busy ? "" : "enter to send"}</span>}
+				{/* the hint is the only thing saying Enter is not being thrown away, so it changes
+				    word while a turn runs rather than going quiet the way it did before #170 */}
+				{model ?? (
+					<span className="font-mono text-2xs text-muted/45 leading-3">
+						{busy ? (onQueue === undefined ? "" : "enter to queue") : "enter to send"}
+					</span>
+				)}
 				{/* stop and replay are the same slot because they are the same question asked
 				    of a turn at its two ends, and they can never both be true: one is what you
 				    can do to a turn that is running, the other to one that has finished. It
