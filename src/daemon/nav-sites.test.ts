@@ -51,7 +51,7 @@ describe("data-go sites", () => {
 `;
 		expect(parseNavSites(source, PATH)).toEqual({
 			sites: [],
-			unreadable: [{ path: PATH, line: 3, anchor: { line: 3, col: 9 } }],
+			unreadable: [{ via: "data-go", path: PATH, line: 3, anchor: { line: 3, col: 9 } }],
 		});
 	});
 
@@ -62,7 +62,9 @@ describe("data-go sites", () => {
 }
 `;
 		expect(parseNavSites(source, PATH).sites).toEqual([]);
-		expect(parseNavSites(source, PATH).unreadable).toEqual([{ path: PATH, line: 3, anchor: { line: 3, col: 9 } }]);
+		expect(parseNavSites(source, PATH).unreadable).toEqual([
+			{ via: "data-go", path: PATH, line: 3, anchor: { line: 3, col: 9 } },
+		]);
 	});
 });
 
@@ -106,7 +108,7 @@ export default function Frame() {
 		// though the destination cannot become an arrow.
 		expect(parseNavSites(source, PATH)).toEqual({
 			sites: [],
-			unreadable: [{ path: PATH, line: 4, anchor: { line: 4, col: 9 } }],
+			unreadable: [{ via: "ui.go", path: PATH, line: 4, anchor: { line: 4, col: 9 } }],
 		});
 	});
 
@@ -214,7 +216,7 @@ export default function Frame() {
 		expect(sites.map(({ target, conditional }) => ({ target, conditional }))).toEqual([
 			{ target: "receipt", conditional: true },
 		]);
-		expect(unreadable).toEqual([{ path: PATH, line: 4, anchor: { line: 4, col: 9 } }]);
+		expect(unreadable).toEqual([{ via: "ui.go", path: PATH, line: 4, anchor: { line: 4, col: 9 } }]);
 	});
 });
 
@@ -391,6 +393,6 @@ export function onKey(name) {
 `;
 		const { sites, unreadable } = parseNavSites(source, TERM_PATH);
 		expect(sites).toEqual([]);
-		expect(unreadable).toEqual([{ path: TERM_PATH, line: 3 }]);
+		expect(unreadable).toEqual([{ via: "term.go", path: TERM_PATH, line: 3 }]);
 	});
 });

@@ -164,6 +164,68 @@ describe("a render fills a dark target", () => {
 	});
 });
 
+/**
+ * A render that produced no attribute is an answer too (#150). `data-go={prop}`
+ * on a shared component is how shared navigation is written, so the optional
+ * prop left undefined is the common case, not the error case — and React
+ * renders no attribute at all for it. Reporting that as a walk whose
+ * destination cannot be read put one prop site on every frame mounting the
+ * component: 173 rows over 4 source lines on this repo's own canvas.
+ *
+ * The distinction the cache already carries is a fresh record versus none. A
+ * frame that rendered and produced nothing at an anchor has no walk there; a
+ * frame nobody has rendered has an unanswered question, and those are not the
+ * same fact.
+ */
+describe("a render that answers with no attribute", () => {
+	it("drops a dark site the frame rendered and left empty", async () => {
+		const { root, name, app } = seedProject();
+		expect((await fetchFlows(app, name)).unreadable).toHaveLength(1);
+
+		// the frame rendered, every scenario, and its carrier wrote no data-go
+		writeCache(root, "index", []);
+
+		const after = await fetchFlows(app, name);
+		expect(after.edges).toEqual([]);
+		expect(after.unreadable).toEqual([]);
+	});
+
+	it("keeps a dark site nobody has rendered", async () => {
+		const { name, app } = seedProject();
+
+		// no record at all: the question was never put to a render
+		expect((await fetchFlows(app, name)).unreadable).toEqual([
+			{ frame: "index", path: "shared/ui/rows.tsx", line: 6 },
+		]);
+	});
+
+	it("keeps a dark site whose empty read is about older bytes", async () => {
+		const { root, name, app } = seedProject();
+		writeCache(root, "index", []);
+		expect((await fetchFlows(app, name)).unreadable).toEqual([]);
+
+		// the component is edited: the empty read no longer speaks for this source
+		writeDesignFile(root, "shared/ui/rows.tsx", `${ROWS}\n// touched\n`);
+
+		expect((await fetchFlows(app, name)).unreadable).toHaveLength(1);
+	});
+
+	it("keeps a dark site the render could never speak to", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		// ui.go inside a handler: a site with no element to stamp, so no anchor
+		writeFrame(
+			root,
+			"index",
+			`import { ui } from "spool";\nexport default function Frame() {\n\treturn <button type="button" onClick={() => ui.go(pick())}>go</button>;\n}\n`,
+		);
+		const app = makeApp(spoolDir);
+		writeCache(root, "index", []);
+
+		expect((await fetchFlows(app, name)).unreadable).toHaveLength(1);
+	});
+});
+
 describe("the pass", () => {
 	// the pass reads the source half from the graph the daemon keeps, as it does
 	// in the daemon — one store across a describe, so repeat runs hit the cache

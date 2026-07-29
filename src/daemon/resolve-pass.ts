@@ -47,10 +47,13 @@ export interface ResolvePassResult {
 	unavailable: number;
 }
 
-/** A frame with an unresolvable site the render could speak to: no anchor
- * means no element to match a rendered attribute against, so nothing to fill. */
+/**
+ * A frame with an unresolvable site the render could speak to. No anchor means
+ * no element to match a rendered attribute against; a coded call means nothing
+ * in the DOM to match at all, so `ui.go(pick())` stays dark whatever renders.
+ */
 function wantsRender(graph: FrameGraph): boolean {
-	return graph.unreadable.some((site) => site.anchor !== undefined);
+	return graph.unreadable.some((site) => site.via === "data-go" && site.anchor !== undefined);
 }
 
 export function createResolvePass(deps: ResolvePassDeps) {
@@ -72,7 +75,10 @@ export function createResolvePass(deps: ResolvePassDeps) {
 			const graph = graphs.get(frame.name);
 			if (graph === undefined || !wantsRender(graph)) continue;
 			const sourceHash = graph.hash;
-			if (rendered(frame.name, sourceHash, scenarios.hash).length > 0) {
+			// a fresh read is fresh whatever it found: a frame that rendered and
+			// wrote no [data-go] answered, and re-asking it every pass paid a page
+			// load per scenario for the answer already on disk (#150)
+			if (rendered(frame.name, sourceHash, scenarios.hash) !== null) {
 				result.skipped++;
 				continue;
 			}

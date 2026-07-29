@@ -31,6 +31,8 @@ export interface NavSite {
 }
 
 export interface UnreadableSite {
+	/** How the source spells it — only a `data-go` site is one a render can answer. */
+	via: NavSite["via"];
 	path: string;
 	line: number;
 	anchor?: { line: number; col: number };
@@ -364,7 +366,13 @@ function pushSites(
 		});
 	}
 	if (read.unreadable) {
-		out.unreadable.push({ path: at.path, line: at.line, ...anchor, ...(branched ? { conditional: true } : {}) });
+		out.unreadable.push({
+			via: at.via,
+			path: at.path,
+			line: at.line,
+			...anchor,
+			...(branched ? { conditional: true } : {}),
+		});
 	}
 }
 
