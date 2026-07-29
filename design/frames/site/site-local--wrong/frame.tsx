@@ -63,7 +63,7 @@ export default function SiteLocalWrong() {
 				className="absolute -translate-x-1/2 text-pretty text-center text-[16px] text-muted leading-[25px]"
 				style={{ left: PAGE_MID, top: 504, width: 740 }}
 			>
-				Another app already owns <span className="font-mono text-text">127.0.0.1:7766</span>, and Spool cannot
+				Another app already owns <span className="font-mono text-text">127.0.0.1:7766</span>, and spool cannot
 				start there until the port is free.
 			</p>
 
@@ -71,7 +71,7 @@ export default function SiteLocalWrong() {
 			<span className="absolute w-px bg-border" style={{ left: PAGE_MID, top: 596, height: 172 }} />
 
 			<div className="absolute" style={{ left: 200, top: 600, width: 460 }}>
-				<p className="text-md leading-[22px]">See what is holding the port, then start Spool:</p>
+				<p className="text-md leading-[22px]">See what is holding the port, then start spool:</p>
 				<div className="mt-4 flex gap-5">
 					<span className="w-px shrink-0 self-stretch bg-thread/70" />
 					<div className="font-mono text-[14px] leading-[28px]">
@@ -82,7 +82,7 @@ export default function SiteLocalWrong() {
 			</div>
 
 			<div className="absolute" style={{ left: 780, top: 600, width: 460 }}>
-				<p className="text-md leading-[22px]">Moved Spool to another port on purpose?</p>
+				<p className="text-md leading-[22px]">Moved spool to another port on purpose?</p>
 				<div className="mt-4 flex gap-5">
 					<span className="w-px shrink-0 self-stretch bg-thread/70" />
 					<span className="font-mono text-[14px] text-muted leading-[28px]">

@@ -591,17 +591,17 @@ function Stage() {
 export default function SiteFramesDepth() {
 	return (
 		<SiteSection
-			title="frames"
-			lead="one file, running. point at either side and the other one answers."
+			title="Frames"
+			lead="One file, running. Point at either side and the other one answers."
 			foot={[
-				"the bars are not drawn. they are a number over the largest number.",
-				"state, motion and arithmetic. a screenshot holds none of them.",
+				"The bars are not drawn. They are a number over the largest number.",
+				"State, motion and arithmetic. A screenshot holds none of them.",
 			]}
 			morph="site-frames-card"
 			back={
-				<button type="button" data-go="site-hub" aria-label="back to canvas" className={backChipClass}>
+				<button type="button" data-go="site-hub" aria-label="Back to canvas" className={backChipClass}>
 					<span className={backArrowClass}>←</span>
-					canvas
+					Canvas
 				</button>
 			}
 		>

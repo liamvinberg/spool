@@ -138,7 +138,7 @@ interface FrameSpec {
 const LANDING: FrameSpec = {
 	id: "landing",
 	name: "landing",
-	sub: "the page you are on",
+	sub: "The page you are on",
 	x: 332,
 	y: 306,
 	w: 440,
@@ -150,7 +150,7 @@ const SECTIONS: readonly FrameSpec[] = [
 	{
 		id: "flows",
 		name: "flows",
-		sub: "walk screen to screen",
+		sub: "Walk screen to screen",
 		x: 108,
 		y: 132,
 		w: 292,
@@ -161,7 +161,7 @@ const SECTIONS: readonly FrameSpec[] = [
 	{
 		id: "disk",
 		name: "disk",
-		sub: "plain files in your repo",
+		sub: "Plain files in your repo",
 		x: 852,
 		y: 136,
 		w: 196,
@@ -172,7 +172,7 @@ const SECTIONS: readonly FrameSpec[] = [
 	{
 		id: "frames",
 		name: "frames",
-		sub: "real tsx, real depth",
+		sub: "Real TSX, real depth",
 		x: 124,
 		y: 656,
 		w: 276,
@@ -183,7 +183,7 @@ const SECTIONS: readonly FrameSpec[] = [
 	{
 		id: "states",
 		name: "states",
-		sub: "one screen, seeded three ways",
+		sub: "One screen, seeded three ways",
 		x: 820,
 		y: 640,
 		w: 264,
@@ -508,13 +508,12 @@ function LandingBody() {
 					<section className="relative grid grid-cols-[1fr_auto] items-center gap-12">
 						<div className="max-w-[560px]">
 							<h1 className="font-semibold text-[66px] leading-[0.98] tracking-[-0.02em]">
-								feel an app
+								Feel an app
 								<br />
 								before it exists
 							</h1>
 							<p className="mt-6 max-w-[452px] text-[17px] text-muted leading-[26px]">
-								a live prototyping canvas. your agent authors real tsx frames, you arrange them and walk the
-								flows. it feels real because it is.
+								A live prototyping canvas. Your agent authors real TSX frames, you arrange them and walk the flows. It feels real because it is.
 							</p>
 
 							<div className="mt-9">
@@ -533,7 +532,7 @@ function LandingBody() {
 									</div>
 								</div>
 								<div className="mt-5 pl-[25px] font-mono text-muted text-xs">
-									requires node 22+ · best in chrome · macos-first today
+									Requires Node 22+ · best in Chrome · macOS-first today
 								</div>
 							</div>
 						</div>
@@ -1106,7 +1105,7 @@ export default function SiteHubTutorial() {
 								ex={anchorSpec.anno.ex}
 								ey={anchorSpec.anno.ey}
 								sx={anchorSpec.anno.sx}
-								verb="double-click"
+								verb="Double-click"
 								rest=" to go inside"
 							/>
 						) : null}
@@ -1123,7 +1122,7 @@ export default function SiteHubTutorial() {
 								ex={607}
 								ey={695}
 								sx={737}
-								verb="scroll"
+								verb="Scroll"
 								rest=" to pull back"
 							/>
 						)}
@@ -1147,7 +1146,7 @@ export default function SiteHubTutorial() {
 							ex={318}
 							ey={320}
 							sx={514}
-							rest="rail or canvas, same frames"
+							rest="Rail or canvas, same frames"
 						/>
 					)}
 				</AnimatePresence>

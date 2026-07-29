@@ -262,7 +262,7 @@ function FrameGroup({
 		<button
 			type="button"
 			onClick={() => onSelect(index)}
-			aria-label={`render frames/${frame.name}`}
+			aria-label={`Render frames/${frame.name}`}
 			className="group relative block w-full cursor-pointer text-left transition-colors duration-200 hover:bg-raised/35 focus-visible:outline-none"
 		>
 			<motion.span
@@ -590,17 +590,17 @@ function Stage() {
 export default function SiteDiskWrite() {
 	return (
 		<SiteSection
-			title="your disk"
-			lead="plain files in your repo. one folder, two files, and the screen they render."
+			title="Your disk"
+			lead="Plain files in your repo. One folder, two files, and the screen they render."
 			foot={[
-				"your agent writes the files. spool renders them and never owns them.",
-				"commit them, branch them, delete them. they are source files like any other.",
+				"Your agent writes the files. spool renders them and never owns them.",
+				"Commit them, branch them, delete them. They are source files like any other.",
 			]}
 			morph="site-disk-card"
 			back={
-				<button type="button" data-go="site-hub" aria-label="back to canvas" className={backChipClass}>
+				<button type="button" data-go="site-hub" aria-label="Back to canvas" className={backChipClass}>
 					<span className={backArrowClass}>←</span>
-					canvas
+					Canvas
 				</button>
 			}
 		>

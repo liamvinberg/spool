@@ -43,7 +43,7 @@ export default function SiteLocalPlate() {
 		<SiteLocalShell
 			footnote={
 				<>
-					Safari and Brave block requests to your own machine. If Spool is running, open <PortLink />{" "}
+					Safari and Brave block requests to your own machine. If spool is running, open <PortLink />{" "}
 					directly.
 				</>
 			}
@@ -69,13 +69,13 @@ export default function SiteLocalPlate() {
 				className="absolute -translate-x-1/2 whitespace-nowrap text-center font-semibold text-[48px] leading-[1.0] tracking-[-0.02em]"
 				style={{ left: PAGE_MID, top: 432 }}
 			>
-				Spool isn&apos;t running here.
+				spool isn&apos;t running here.
 			</h1>
 			<p
 				className="absolute -translate-x-1/2 text-pretty text-center text-[16px] text-muted leading-[25px]"
 				style={{ left: PAGE_MID, top: 504, width: 700 }}
 			>
-				This page listens for Spool at <span className="font-mono text-text">127.0.0.1:7766</span> and takes
+				This page listens for spool at <span className="font-mono text-text">127.0.0.1:7766</span> and takes
 				you there the moment it answers. Your work stays on your machine. None of it ever reaches this page.
 			</p>
 
@@ -83,7 +83,7 @@ export default function SiteLocalPlate() {
 			<span className="absolute w-px bg-border" style={{ left: PAGE_MID, top: 596, height: 172 }} />
 
 			<div className="absolute" style={{ left: 200, top: 600, width: 460 }}>
-				<p className="text-md leading-[22px]">Start Spool on this machine:</p>
+				<p className="text-md leading-[22px]">Start spool on this machine:</p>
 				<div className="mt-4 flex gap-5">
 					<span className="w-px shrink-0 self-stretch bg-thread/70" />
 					<div className="font-mono text-[14px] leading-[28px]">

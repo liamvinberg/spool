@@ -50,9 +50,9 @@ export function colorJson(line: string): ReactNode[] {
  * has to stay in the frame. So the shell owns how the chip looks and the frame
  * owns where it walks, which is the half that was ever worth reading anyway:
  *
- *   <button type="button" data-go="site-hub" aria-label="back to canvas" className={backChipClass}>
+ *   <button type="button" data-go="site-hub" aria-label="Back to canvas" className={backChipClass}>
  *     <span className={backArrowClass}>←</span>
- *     canvas
+ *     Canvas
  *   </button>
  */
 export const backChipClass =
