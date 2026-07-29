@@ -304,34 +304,20 @@ export function App() {
 						{/* the threads toggle (#34): the map is identity, so on is the
 						    default — but a page with no thread gets no switch. It governs
 						    the whole flow layer now (#151), the arrows and the docked
-						    walks together, and keeps a grey dot while what it hides
-						    contains a fault. Grey rather than accent: the accent belongs
-						    to the selection, and a mistyped frame name is not an alarm.
-						    An off-page walk gets no dot — leaving the page is an ordinary
-						    thing for a flow to do. */}
+						    walks together. It carried a dot over hidden faults until #203
+						    took the faults off the canvas; with nothing left to whisper
+						    about, the toggle is a toggle again. */}
 						{chrome.hasThreads && (
 							<button
 								type="button"
-								className={`relative flex h-7 w-7 items-center justify-center rounded-sm hover:bg-surface ${
+								className={`flex h-7 w-7 items-center justify-center rounded-sm hover:bg-surface ${
 									chrome.arrowsOn ? "text-text" : "text-muted"
 								}`}
-								title={
-									chrome.arrowsOn || chrome.faults === 0
-										? `Threads (${hotkeyKey("canvas.threads")})`
-										: `${chrome.faults} ${chrome.faults === 1 ? "walk" : "walks"} on this page ${
-												chrome.faults === 1 ? "goes" : "go"
-											} nowhere`
-								}
+								title={`Threads (${hotkeyKey("canvas.threads")})`}
 								aria-pressed={chrome.arrowsOn}
 								onClick={chrome.toggleArrows}
 							>
 								<EdgeIcon />
-								{!chrome.arrowsOn && chrome.faults > 0 && (
-									<span
-										data-walk-notice=""
-										className="absolute top-[3px] right-[3px] h-[5px] w-[5px] rounded-full bg-muted"
-									/>
-								)}
 							</button>
 						)}
 						<span className="min-w-9 text-right font-mono text-muted text-xs leading-xs">{chrome.zoomPct}%</span>
