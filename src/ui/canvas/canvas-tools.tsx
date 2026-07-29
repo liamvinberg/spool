@@ -1,4 +1,5 @@
 import { cn } from "../cn";
+import { hotkeyChips, hotkeyEntry, hotkeyKey } from "../hotkeys";
 import { HandIcon, SelectIcon } from "../icons";
 
 export type CanvasTool = "select" | "hand";
@@ -15,8 +16,14 @@ interface ToolMeta {
 // enters it, ⌘ takes the element under the cursor. ⌘ is therefore a modifier
 // inside Select, not a way to borrow it.
 const TOOLS: readonly ToolMeta[] = [
-	{ id: "select", label: "select", key: "V", hold: null, Icon: SelectIcon },
-	{ id: "hand", label: "hand", key: "H", hold: "hold space", Icon: HandIcon },
+	{ id: "select", label: "select", key: hotkeyKey("canvas.tool-select"), hold: null, Icon: SelectIcon },
+	{
+		id: "hand",
+		label: "hand",
+		key: hotkeyKey("canvas.tool-hand"),
+		hold: hotkeyChips(hotkeyEntry("canvas.tool-hand")).gesture ?? null,
+		Icon: HandIcon,
+	},
 ];
 
 export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool: (tool: CanvasTool) => void }) {

@@ -220,6 +220,10 @@ export function InspectorRail({
 				type="button"
 				aria-label="Resize inspector"
 				onKeyDown={(event) => {
+					// a focused grip answers its arrows itself; stop them short of
+					// the hotkey dispatch, or the same press would nudge the selection
+					if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+					event.stopPropagation();
 					if (event.key === "ArrowLeft") updateWidth(RAIL_WIDTH);
 					if (event.key === "ArrowRight") updateWidth(STRIP_WIDTH);
 				}}

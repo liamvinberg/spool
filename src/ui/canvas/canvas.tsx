@@ -23,6 +23,8 @@ import {
 	resolveFlows,
 	subscribeSse,
 } from "../api";
+import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
+import type { HotkeyIdFor } from "../hotkeys";
 import { RibbonMark } from "../icons";
 import { arrange } from "./arrange";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, K_STEP, toWorld, zoomAt } from "./camera";
@@ -1449,10 +1451,12 @@ export function ProjectCanvas({
 					// canvas must never lose — from any frame: a walked-away source
 					// legitimately still holds focus, and its chord means the same
 					// thing (#28). The jump chords join Esc there (#166): mid-walk,
-					// inside a frame, is exactly where ctrl+o is owed.
-					if (message.key === "Escape" && enteredRef.current !== null) exitEntered(true);
-					else if (message.key === "ctrl+o") jumpBack();
-					else if (message.key === "ctrl+i") jumpForward();
+					// inside a frame, is exactly where ctrl+o is owed. Each chord
+					// runs its register entry, so the relay can never drift from
+					// what the same key does out here.
+					if (message.key === "Escape") runHotkey("canvas.leave");
+					else if (message.key === "ctrl+o") runHotkey("canvas.jump-back");
+					else if (message.key === "ctrl+i") runHotkey("canvas.jump-forward");
 					return;
 				case "modifier":
 					// the frame names the key that moved; which one is accel is the
@@ -1543,17 +1547,7 @@ export function ProjectCanvas({
 		};
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
-	}, [
-		project,
-		walkTo,
-		exitEntered,
-		stopAnimation,
-		zoomAtPoint,
-		viewportCenter,
-		requestSiteBoxes,
-		jumpBack,
-		jumpForward,
-	]);
+	}, [project, walkTo, stopAnimation, zoomAtPoint, viewportCenter, requestSiteBoxes]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
 	useEffect(() => {
@@ -2340,249 +2334,192 @@ export function ProjectCanvas({
 			if (enteredRef.current !== null) return [];
 			return selectedRef.current.length > 0 ? [...selectedRef.current] : pickTarget();
 		};
-		const isTyping = (target: EventTarget | null) =>
-			target instanceof HTMLElement &&
-			(target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (isTyping(event.target)) return;
-			if (exportDialogRef.current !== null) {
-				if (event.key === "Escape" && !exportingRef.current) {
-					event.preventDefault();
-					cancelExportDialog();
-				}
-				return;
-			}
-			if (findingRef.current) {
-				// the finder owns the keys while it is up, exactly as the export dialog does
-				if (event.key === "Escape") {
-					event.preventDefault();
-					setFinding(false);
-				}
-				return;
-			}
-			const mod = event.metaKey || event.ctrlKey;
-			if (event.key === accelKeyName()) {
-				setAccelDown(true);
-				return;
-			}
-			if (event.code === "Space") {
+		const gestureStill = () => gesture.current.kind === "idle" || gesture.current.kind === "pan";
+		const zoomStep = (event: KeyboardEvent | undefined, factor: number) => {
+			// the accel chords must eat the browser's own page zoom
+			if (event !== undefined && (event.metaKey || event.ctrlKey)) event.preventDefault();
+			const c = viewportCenter();
+			zoomAtPoint(c.x, c.y, factor, true);
+		};
+		const nudgeArrow = (event: KeyboardEvent | undefined, step: number) => {
+			if (event === undefined) return;
+			if (enteredRef.current !== null || selectedRef.current.length === 0) return;
+			event.preventDefault();
+			const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+			const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+			nudge(dx, dy);
+		};
+		// every canvas entry in the register answers here, or the map fails to
+		// compile — the handlers gate on state, the register never does
+		const handlers = {
+			"canvas.accel-hold": () => setAccelDown(true),
+			"canvas.space-hold": (event) => {
+				if (event === undefined) return;
 				if (!event.repeat) setSpaceDown(true);
 				event.preventDefault();
-				return;
-			}
-			if (
-				event.ctrlKey &&
-				!event.metaKey &&
-				!event.altKey &&
-				!event.shiftKey &&
-				(event.key === "o" || event.key === "i")
-			) {
-				// the jump list rides the literal control key on every platform —
-				// vim's own chords, the keyboard-first story's first landing (#166)
-				// — and ⌃O must eat the browser's open-file dialog
-				event.preventDefault();
-				if (event.key === "o") jumpBack();
-				else jumpForward();
-				return;
-			}
-			if (mod && (event.key === "z" || event.key === "Z")) {
-				event.preventDefault();
-				if (event.shiftKey) {
-					if (gesture.current.kind === "idle" || gesture.current.kind === "pan") redoGeometry();
-					return;
-				}
-				// ⌘Z answers the trash toast first (#7), then walks the geometry stack
+			},
+			// the jump list rides the literal control key on every platform —
+			// vim's own chords, the keyboard-first story's first landing (#166)
+			// — and ⌃O must eat the browser's open-file dialog
+			"canvas.jump-back": (event) => {
+				event?.preventDefault();
+				jumpBack();
+			},
+			"canvas.jump-forward": (event) => {
+				event?.preventDefault();
+				jumpForward();
+			},
+			// ⌘Z answers the trash toast first (#7), then walks the geometry stack
+			"canvas.undo": (event) => {
+				event?.preventDefault();
 				if (pendingTrashRef.current !== null) undoTrash();
-				else if (gesture.current.kind === "idle" || gesture.current.kind === "pan") undoGeometry();
-				return;
-			}
-			if (mod && (event.key === "=" || event.key === "+")) {
-				event.preventDefault();
-				const c = viewportCenter();
-				zoomAtPoint(c.x, c.y, K_STEP, true);
-				return;
-			}
-			if (mod && event.key === "-") {
-				event.preventDefault();
-				const c = viewportCenter();
-				zoomAtPoint(c.x, c.y, 1 / K_STEP, true);
-				return;
-			}
-			if (mod && (event.key === "k" || event.key === "K")) {
-				// ⌘K beside "/" — the chord every other palette taught, same door
-				if (enteredRef.current === null) {
-					event.preventDefault();
-					setFinding(true);
-				}
-				return;
-			}
-			if (mod && event.key === "Escape") {
-				// the terminal exit chord (#42) landing canvas-side: focus can sit
-				// here instead of inside the entered frame, and the frame cannot
-				// relay a chord it never saw
-				if (enteredRef.current !== null) {
-					event.preventDefault();
-					exitEntered(true);
-				}
-				return;
-			}
-			if (mod) return;
-			if (event.shiftKey && event.code === "Digit1") {
-				zoomFit();
-				return;
-			}
-			if (event.shiftKey && event.code === "Digit2") {
+				else if (gestureStill()) undoGeometry();
+			},
+			"canvas.redo": (event) => {
+				event?.preventDefault();
+				if (gestureStill()) redoGeometry();
+			},
+			"canvas.zoom-in": (event) => zoomStep(event, K_STEP),
+			"canvas.zoom-out": (event) => zoomStep(event, 1 / K_STEP),
+			"canvas.zoom-reset": () => resetZoom(),
+			// "/" is the filter's door here as on Home, ⌘K beside it — the chord
+			// every other palette taught, same door
+			"canvas.find": (event) => {
+				if (enteredRef.current !== null) return;
+				event?.preventDefault();
+				setFinding(true);
+			},
+			// leaving an entered frame: ⌘esc landing canvas-side (#42), or the
+			// esc the shim relays out of the frame that owned it
+			"canvas.leave": (event) => {
+				if (enteredRef.current === null) return;
+				event?.preventDefault();
+				exitEntered(true);
+			},
+			"canvas.fit-all": () => zoomFit(),
+			"canvas.fit-selection": () => {
 				const names = selectedRef.current.length > 0 ? selectedRef.current : pickTarget();
 				const boxes = framesRef.current.filter((f) => names.includes(f.name));
 				const viewport = viewportRef.current;
 				if (boxes.length > 0 && viewport !== null) {
 					animateCamera(fitCamera(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight));
 				}
-				return;
-			}
-			if (!event.repeat && event.shiftKey && (event.key === "a" || event.key === "A")) {
-				// ⇧A tidies the field; one ⌘Z puts every frame back where it was
+			},
+			// ⇧A tidies the field; one ⌘Z puts every frame back where it was
+			"canvas.tidy": (event) => {
+				event?.preventDefault();
+				if (gestureStill()) arrangeFrames();
+			},
+			// the threads toggle (#34): persisted per project
+			"canvas.threads": () => toggleArrows(),
+			"canvas.tool-select": () => setTool("select"),
+			"canvas.tool-hand": () => setTool("hand"),
+			// the menu's verbs (#7) on bare keys, each acting on the selection;
+			// Play wants one frame to open on, whether P or ⇧⏎ asked
+			"canvas.play": (event) => {
+				const targets = verbTarget();
+				const [only] = targets;
+				if (targets.length !== 1 || only === undefined) return;
+				if (event !== undefined && event.key === "Enter") event.preventDefault();
+				playFrame(only);
+			},
+			"canvas.reload": () => {
+				for (const name of verbTarget()) reloadFrameDocument(name);
+			},
+			"canvas.export": () => openExport(verbTarget(), null),
+			"canvas.trash": (event) => {
+				const targets = verbTarget();
+				if (targets.length === 0) return;
+				event?.preventDefault(); // ⌫ must never walk the browser back
+				stageTrash(targets);
+			},
+			// The tool used to split these: Interact stepped between frames,
+			// Select nudged. With one pointer tool left, bare arrows nudge the
+			// selection (Select's own business) and ⌥ steps to the neighbouring
+			// frame — which ⏎ then goes inside (#28).
+			"canvas.nudge": (event) => nudgeArrow(event, 1),
+			"canvas.nudge-far": (event) => nudgeArrow(event, 10),
+			"canvas.step": (event) => {
+				if (event === undefined) return;
+				if (enteredRef.current !== null || selectedRef.current.length === 0) return;
 				event.preventDefault();
-				if (gesture.current.kind === "idle" || gesture.current.kind === "pan") arrangeFrames();
-				return;
-			}
-			if (!event.repeat && !event.shiftKey && (event.key === "t" || event.key === "T")) {
-				// the threads toggle (#34): persisted per project
-				toggleArrows();
-				return;
-			}
-			if (!event.repeat && event.key === "/" && enteredRef.current === null) {
-				// "/" is the filter's door here as on Home: the finder over the canvas.
-				// No shift gate — some layouts spell "/" with it.
-				event.preventDefault();
-				setFinding(true);
-				return;
-			}
-			switch (event.key) {
-				case "v":
-				case "V":
-					setTool("select");
-					break;
-				case "h":
-				case "H":
-					setTool("hand");
-					break;
-				case "+":
-				case "=": {
-					const c = viewportCenter();
-					zoomAtPoint(c.x, c.y, K_STEP, true);
-					break;
+				if (selectedRef.current.length !== 1) return;
+				const current = framesRef.current.find((frame) => frame.name === selectedRef.current[0]);
+				if (current === undefined) return;
+				const direction = spatialDirection(event.key);
+				if (direction === undefined) return;
+				const target = nextSpatialFrame(current, framesRef.current, direction);
+				if (target === undefined) return;
+				setSelected([target.name]);
+				setPicked([]);
+				const viewport = viewportRef.current;
+				const cam = cameraRef.current;
+				if (viewport !== null && cam !== null) {
+					animateCamera(centerOn(cam, target, viewport.clientWidth, viewport.clientHeight));
 				}
-				case "-": {
-					const c = viewportCenter();
-					zoomAtPoint(c.x, c.y, 1 / K_STEP, true);
-					break;
-				}
-				case "0":
-					resetZoom();
-					break;
-				// the menu's verbs (#7) on bare keys, each acting on the selection
-				case "p":
-				case "P": {
-					// Play from here wants one frame to open on, exactly as ⇧⏎ does
-					const targets = verbTarget();
-					const [only] = targets;
-					if (targets.length !== 1 || only === undefined) break;
-					playFrame(only);
-					break;
-				}
-				case "r":
-				case "R":
-					for (const name of verbTarget()) reloadFrameDocument(name);
-					break;
-				case "e":
-				case "E":
-					openExport(verbTarget(), null);
-					break;
-				case "Backspace":
-				case "Delete": {
-					const targets = verbTarget();
-					if (targets.length === 0) break;
-					event.preventDefault(); // ⌫ must never walk the browser back
-					stageTrash(targets);
-					break;
-				}
-				case "ArrowLeft":
-				case "ArrowRight":
-				case "ArrowUp":
-				case "ArrowDown": {
-					if (enteredRef.current !== null || selectedRef.current.length === 0) break;
-					event.preventDefault();
-					// The tool used to split these: Interact stepped between frames,
-					// Select nudged. With one pointer tool left, bare arrows nudge
-					// the selection (Select's own business) and ⌥ steps to the
-					// neighbouring frame — which ⏎ then goes inside (#28).
-					if (event.altKey) {
-						if (selectedRef.current.length !== 1) break;
-						const current = framesRef.current.find((frame) => frame.name === selectedRef.current[0]);
-						if (current === undefined) break;
-						const direction = spatialDirection(event.key);
-						if (direction === undefined) break;
-						const target = nextSpatialFrame(current, framesRef.current, direction);
-						if (target === undefined) break;
-						setSelected([target.name]);
+			},
+			// ⏎ goes inside; ⇧⏎ is Play's chord, the heavier verb on the modifier
+			"canvas.enter": (event) => {
+				if (enteredRef.current !== null || selectedRef.current.length !== 1) return;
+				const [target] = selectedRef.current;
+				if (target === undefined) return;
+				event?.preventDefault();
+				enterFrame(target);
+			},
+			"canvas.escape": () => {
+				cancelPicks();
+				setPreview(null);
+				if (!gestureStill()) cancelGesture();
+				else if (menuOpenRef.current) setMenu(null);
+				else if (enteredRef.current !== null) exitEntered(true);
+				else if (pickedRef.current.length > 1) {
+					// a multi-selection has no one ancestry: drop to its frames
+					const frames = [...new Set(pickedRef.current.map((pick) => pick.frame))];
+					pickedChain.current = null;
+					setPicked([]);
+					setSelected(frames);
+				} else if (pickedRef.current[0] !== undefined) {
+					// ascend the ancestry (Figma): element → parent → … → frame → clear
+					const picked = pickedRef.current[0];
+					const held = pickedChain.current;
+					const depth =
+						held !== null && held.frame === picked.frame
+							? held.chain.findIndex((h) => h.selector === picked.selector)
+							: -1;
+					const parent = depth > 0 ? held?.chain[depth - 1] : undefined;
+					if (parent !== undefined) setPicked([{ frame: picked.frame, ...parent }]);
+					else {
 						setPicked([]);
-						const viewport = viewportRef.current;
-						const cam = cameraRef.current;
-						if (viewport !== null && cam !== null) {
-							animateCamera(centerOn(cam, target, viewport.clientWidth, viewport.clientHeight));
-						}
-						break;
+						setSelected([picked.frame]);
 					}
-					const step = event.shiftKey ? 10 : 1;
-					const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
-					const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-					nudge(dx, dy);
-					break;
+				} else {
+					setSelected([]);
 				}
-				case "Enter": {
-					// ⏎ goes inside, ⇧⏎ plays it: the heavier verb takes the modifier
-					if (event.repeat || enteredRef.current !== null || selectedRef.current.length !== 1) break;
-					const [target] = selectedRef.current;
-					if (target === undefined) break;
-					event.preventDefault();
-					if (event.shiftKey) playFrame(target);
-					else enterFrame(target);
-					break;
-				}
-				case "Escape": {
-					cancelPicks();
-					setPreview(null);
-					if (gesture.current.kind !== "idle" && gesture.current.kind !== "pan") cancelGesture();
-					else if (menuOpenRef.current) setMenu(null);
-					else if (enteredRef.current !== null) exitEntered(true);
-					else if (pickedRef.current.length > 1) {
-						// a multi-selection has no one ancestry: drop to its frames
-						const frames = [...new Set(pickedRef.current.map((pick) => pick.frame))];
-						pickedChain.current = null;
-						setPicked([]);
-						setSelected(frames);
-					} else if (pickedRef.current[0] !== undefined) {
-						// ascend the ancestry (Figma): element → parent → … → frame → clear
-						const picked = pickedRef.current[0];
-						const held = pickedChain.current;
-						const depth =
-							held !== null && held.frame === picked.frame
-								? held.chain.findIndex((h) => h.selector === picked.selector)
-								: -1;
-						const parent = depth > 0 ? held?.chain[depth - 1] : undefined;
-						if (parent !== undefined) setPicked([{ frame: picked.frame, ...parent }]);
-						else {
-							setPicked([]);
-							setSelected([picked.frame]);
-						}
-					} else {
-						setSelected([]);
-					}
-					break;
-				}
-			}
-		};
+			},
+		} satisfies Record<HotkeyIdFor<"canvas">, HotkeyHandler>;
+		const detachDialog = attachHotkeyLayer({
+			scope: "dialog",
+			active: () => exportDialogRef.current !== null,
+			handlers: {
+				"dialog.close": (event) => {
+					if (exportingRef.current) return;
+					event?.preventDefault();
+					cancelExportDialog();
+				},
+			} satisfies Record<HotkeyIdFor<"dialog">, HotkeyHandler>,
+		});
+		// the finder owns the keys while it is up, exactly as the export dialog does
+		const detachFinder = attachHotkeyLayer({
+			scope: "finder",
+			active: () => findingRef.current,
+			handlers: {
+				"finder.close": (event) => {
+					event?.preventDefault();
+					setFinding(false);
+				},
+			} satisfies Record<HotkeyIdFor<"finder">, HotkeyHandler>,
+		});
+		const detachCanvas = attachHotkeyLayer({ scope: "canvas", handlers });
 		const onKeyUp = (event: KeyboardEvent) => {
 			if (event.code === "Space") setSpaceDown(false);
 			// releasing accel outside an element scope ends the deep-hover preview
@@ -2596,11 +2533,12 @@ export function ProjectCanvas({
 			setSpaceDown(false);
 			setPreview(null);
 		};
-		window.addEventListener("keydown", onKeyDown);
 		window.addEventListener("keyup", onKeyUp);
 		window.addEventListener("blur", clearModifiers);
 		return () => {
-			window.removeEventListener("keydown", onKeyDown);
+			detachDialog();
+			detachFinder();
+			detachCanvas();
 			window.removeEventListener("keyup", onKeyUp);
 			window.removeEventListener("blur", clearModifiers);
 		};
