@@ -82,6 +82,9 @@ function Picker({ state, models, pin = null, onPick, engines }: PickerProps & { 
 	// the model says which levels it has, and haiku says it has none — so the whole
 	// control is absent rather than present and inert
 	const levels = current?.supportedEffortLevels ?? [];
+	/** the tallest sentence this menu can be made to say, which is what it reserves room for */
+	const longest = [...levels.map((level) => EFFORT_SAYS[level] ?? ""), `CLAUDE_CODE_EFFORT_LEVEL=${pin} is set in the environment`]
+		.reduce((tallest, says) => (says.length > tallest.length ? says : tallest), "");
 
 	const close = (next: Partial<ModelState>) => {
 		onPick(next);
@@ -173,10 +176,27 @@ function Picker({ state, models, pin = null, onPick, engines }: PickerProps & { 
 										</button>
 									))}
 								</span>
-								<p className={cn(QUIET, "min-h-[26px] px-1.5 pt-1.5 pb-0.5 text-muted/40 leading-[1.5]")}>
-									{pin === null
-										? EFFORT_SAYS[over ?? state.effort]
-										: `CLAUDE_CODE_EFFORT_LEVEL=${pin} is set in the environment`}
+								{/*
+								 * The sentence reserves the tallest thing it can ever say.
+								 *
+								 * These descriptions are the binary's and they are wildly uneven — `max`
+								 * is 165 characters against `xhigh`'s 76 and `low`'s 57 — so a `min-h`
+								 * let the line grow by three as the cursor crossed the row. The menu is
+								 * `bottom-full`, so growing moves its *top* edge: hovering `max` shoved
+								 * the model list up under the rail's own top and out of the frame. A
+								 * pointer must never move what it is pointing at, so the block is sized
+								 * for the longest sentence on offer and the live one is drawn over it,
+								 * the same reserve `Prose` uses one file across.
+								 */}
+								<p className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted/40 leading-[1.5]")}>
+									<span className="invisible" aria-hidden="true">
+										{longest}
+									</span>
+									<span className="absolute inset-x-1.5 top-1.5">
+										{pin === null
+											? EFFORT_SAYS[over ?? state.effort]
+											: `CLAUDE_CODE_EFFORT_LEVEL=${pin} is set in the environment`}
+									</span>
 								</p>
 							</>
 						)}
