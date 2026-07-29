@@ -38,9 +38,12 @@ in `src/ui/` and `src/runtime/`; when a design ships, the frame here becomes
 what shipped. Read the implementation before trusting a frame — that is how
 "design mode" survived here for months after select became the only pointer
 tool. What the chrome is today: one 44px bar (brand lockup, project tabs, "+",
-then threads toggle and zoom), the Pages rail at 248px, the Inspector rail at
-300px with its elements and connections tabs, and the tool bar floating over
-the bottom of the viewport. No mode switch. Play lives on the selection.
+then threads toggle and zoom), the Pages rail at 248px, the agent rail at 420px
+in a 200–480 range, and the tool bar floating over the bottom of the viewport.
+No mode switch. Play lives on the selection. The agent rail is the transcript
+and the composer only (#192): the tab row, `elements` and `connections` are all
+gone, and the tool rows, threads, plan strip and model readout the frames here
+draw are still ahead of the code.
 
 Explorations live until the work they decided is built. Making the decision is
 not that moment: while a page is still being resolved, the rejected frames are

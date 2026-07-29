@@ -74,6 +74,25 @@ export function CloseIcon() {
 	);
 }
 
+/**
+ * The agent rail, on the strip it collapses to (#144, #192): a mark and a line,
+ * twice — the rail drawn as itself.
+ *
+ * It says what the pane is rather than who is answering in it. #115 ships one rail
+ * over more than one adapter, so a glyph borrowed from a vendor's mark would be
+ * wrong the day a second one lands, and a speech bubble is somebody else's product
+ * rather than this one's.
+ */
+export function AgentIcon() {
+	return (
+		<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+			<circle cx="3.2" cy="5.4" r="1.15" fill="currentColor" />
+			<circle cx="3.2" cy="10.6" r="1.15" fill="currentColor" />
+			<path d="M6.4 5.4h7.2M6.4 10.6h4.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+		</svg>
+	);
+}
+
 /** The per-card menu on home. */
 export function DotsIcon() {
 	return (

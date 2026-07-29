@@ -59,6 +59,34 @@
 	/* the finder: the scrim fades in, the panel settles from just above */
 	--animate-find-in: find-in 140ms ease-out;
 	--animate-find-panel-in: find-panel-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	/* the agent rail (#192): an entry settles into the log, a word fades in as it
+	 * arrives, and a ring turns slowly enough to read as work rather than an alarm.
+	 * 170ms on the word is where the sourced numbers land — Streamdown defaults to
+	 * 150 and recommends more only for faster streams; anything entering stays under
+	 * 300 and eases out, because accelerating at the start reads as responsive. At
+	 * 260 four words are mid-fade at once against two at 170. */
+	--animate-agent-entry: agent-entry 280ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	--animate-agent-word: agent-word 170ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	--animate-agent-spin: agent-spin 1.15s linear infinite;
+
+	@keyframes agent-entry {
+		from {
+			opacity: 0;
+			transform: translateY(6px);
+		}
+	}
+
+	@keyframes agent-word {
+		from {
+			opacity: 0;
+		}
+	}
+
+	@keyframes agent-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
 
 	@keyframes menu-in {
 		from {
@@ -101,7 +129,10 @@
 	.animate-menu-in,
 	.animate-toast-in,
 	.animate-find-in,
-	.animate-find-panel-in {
+	.animate-find-panel-in,
+	.animate-agent-entry,
+	.animate-agent-word,
+	.animate-agent-spin {
 		animation: none;
 	}
 }
