@@ -17,12 +17,14 @@ import { ChevronIcon } from "../../../shared/ui/spool-icons";
  * that range, not a fixed width. So the question is not which one moves. It is
  * what the row does across a 280px range that already exists and already snaps.
  *
- * **At the two ends it answers itself.** Measured in #180: model 160, limit 179,
- * stop 73, one 10px gap. The box is the rail less 29px of padding.
+ * **At the two ends it answers itself.** Every cell prints what it wanted, and the
+ * three occupants come out at model 160, limit 179, stop 73, with two 10px gaps
+ * between them — 432 for all of it. The box is the rail less 29px of padding.
  *
- *   480 → 451 of box, 422 wanted. everything fits, and only here.
- *   420 → 391 of box. 31 short, which is the wrap #184 was filed for.
- *   300 → 271 of box. the shipped default cannot hold model and limit at all.
+ *   480 → 451 of box. 432 fits, with 19 to spare, and this is the only width it does.
+ *   420 → 391 of box. 41 short, which is the wrap #184 was filed for.
+ *   300 → 271 of box. model and limit alone are 349. the shipped default cannot
+ *         hold the two readouts, before the stop is even asked for.
  *   200 → 171 of box. the model alone is 160. nothing else fits, at all.
  *
  * So a rail at its own default already cannot draw what three tickets put in this
@@ -35,22 +37,42 @@ import { ChevronIcon } from "../../../shared/ui/spool-icons";
  * on a running process and the other two are readouts, and `limit out` is what the
  * first three turned out to be saying together.
  *
- * **Two things the ladder settled that no amount of arguing would have.**
+ * **Three things the ladder settled that no amount of arguing would have.**
  *
- * `shorten` cannot cover the range. Cut all the way down to `Opus › 92%` it still
- * overflows the 171px floor — the one cell in twenty-four that flags it. So the
- * gentlest policy is not a policy: something has to go at the narrow end whatever
- * you do with the words.
+ * **The model name is not spool's to cut, so two of these columns were never
+ * legal.** `readout` already said so — the name is the binary's `displayName`
+ * "uncased and unshortened, because the moment Spool rewrites it Spool owns it" —
+ * and the captured `list_models` reply is what gives that rule teeth. Five rows
+ * come back and none of them is `Opus`: there is `Default (recommended)` and there
+ * is `Opus (1M context)`, both resolving to the same `claude-opus-5[1m]`, and the
+ * parenthetical is the only thing telling them apart. `/model opus` meanwhile is
+ * accepted and resolves to Opus *without* the 1M window. So `Opus · high` in this
+ * row is not a short name for this machine. It is the correct name of a different
+ * one, printed under a transcript the other machine wrote.
  *
- * And **the limit appears in exactly one row of eighteen** across the first three
- * columns, the 480 ceiling. Not at `RAIL_WIDTH` 300, not at #144's 420, nowhere
- * below. "Keep it and shed it when tight" is therefore the limit being absent by
- * default and present only if you drag the rail to maximum — invisible precisely
- * when you would want it. That is what `limit out` is: the conclusion drawn rather
- * than described.
+ * What is legal is an ellipsis, and the difference is not a technicality. `Opus
+ * (1M cont…` is visibly cut and reads as cut, the whole string stays in the DOM,
+ * and the full name is one click up in the menu. The layout ran out of room and
+ * said so; nobody renamed anything. So the surviving columns truncate.
  *
- * Each cell draws at its real box width and measures itself, so a cell that says
- * it overflows has actually overflowed. Nothing here is computed.
+ * **The limit cannot be whole below the ceiling.** In `drop` and `stop last`, the
+ * two columns that keep the words the binary wrote, it is drawn at 480 and at no
+ * other width — two rows out of twelve. `shorten` is the only column that carries
+ * it all the way down, and it does that by turning it into `92%`, a number with no
+ * noun in a row that no longer says which window it is a number about. So "keep the
+ * limit and shed it when tight" is the limit being absent at every width anyone
+ * uses, and "keep it and cut it" is keeping the digits and dropping the fact.
+ * `limit out` is that read as a conclusion instead of a table.
+ *
+ * **And `limit out` wants 243 at every width, which is the whole argument in one
+ * number.** No threshold, no ladder, no rung that only fires at one size — 160 and
+ * 73 and the gap between them, from 200 to 480. It clears the shipped 300's box by
+ * 28 and only truncates below 260, only while a turn is in flight.
+ *
+ * Each cell draws at its real box width and measures itself, so a cell that says it
+ * overflows has actually overflowed. Nothing here is computed — including the four
+ * paragraphs above, two of which said something else until the measurement stopped
+ * lying about rows whose children truncate.
  */
 
 /* ---------- the ladder ----------
@@ -66,10 +88,11 @@ const CHROME = 29;
 
 const QUIET = "font-mono text-2xs leading-3";
 
-function Model({ label }: { label: string }) {
+/** `cut` is the shipped behaviour: the label gives way with an ellipsis and the chevron never does */
+function Model({ label, cut = false }: { label: string; cut?: boolean }) {
 	return (
-		<span className={cn(QUIET, "flex shrink-0 items-center gap-1 text-muted/45")}>
-			{label}
+		<span className={cn(QUIET, "flex items-center gap-1 text-muted/45", cut ? "min-w-0" : "shrink-0")}>
+			<span className={cn(cut && "min-w-0 truncate")}>{label}</span>
 			<ChevronIcon open={false} className="h-2 w-2 shrink-0" />
 		</span>
 	);
@@ -92,43 +115,54 @@ function Stop() {
 /**
  * One footer at one width, reporting whether it actually fit.
  *
- * Two things had to be got right before the flag could be trusted, and both were
- * wrong on the first pass.
+ * The flag was wrong twice before it could be trusted, both times because the
+ * layout was hiding the thing being measured.
  *
  * It waits for `document.fonts.ready`. Measured before the mono face lands, every
  * width is the fallback's and the flag reads clear on rows that visibly clip.
  *
- * And it sums the children rather than reading `scrollWidth`. The row is a flex
- * with a truncating limit in it, so overflow gets absorbed *into* that child and
- * the scroll width never exceeds the client width even when the stop is being cut
- * off the end — the layout hides the very thing the flag is for. Summing natural
- * widths asks the question the ladder actually cares about: was this ever going to
- * fit, before anything gave way to make it look like it did.
+ * And it measures a second copy of the row rather than the row. A flex row with a
+ * truncating child absorbs its own overflow: the child shrinks, the row fits, and
+ * `scrollWidth` reports fitting even while the text is being cut off — the layout
+ * hides the very thing the flag is for. Summing the children's scroll widths fixed
+ * that for one level, then broke again the moment the *model* became the thing
+ * that truncates, because the cut now happens a level deeper and the child's own
+ * box shrinks with it. So the row is drawn twice, once constrained and once at
+ * `w-max` and invisible, and the invisible one is asked how wide this would like
+ * to be. That question has one answer at every nesting depth.
  */
 function Footer({ rail, children }: { rail: number; children: ReactNode }) {
 	const box = useRef<HTMLDivElement>(null);
-	const [over, setOver] = useState<boolean | null>(null);
+	const ghost = useRef<HTMLDivElement>(null);
+	const [wanted, setWanted] = useState<number | null>(null);
 	useEffect(() => {
-		const node = box.current;
-		if (node === null) return;
-		const read = () => {
-			const kids = Array.from(node.children) as HTMLElement[];
-			const gaps = Math.max(0, kids.length - 1) * 10;
-			const wanted = kids.reduce((sum, kid) => sum + kid.scrollWidth, gaps);
-			setOver(wanted > node.clientWidth + 1);
-		};
+		const natural = ghost.current;
+		if (natural === null) return;
+		const read = () => setWanted(Math.round(natural.getBoundingClientRect().width));
 		void document.fonts.ready.then(read);
 		const watch = new ResizeObserver(read);
-		watch.observe(node);
+		watch.observe(natural);
 		return () => watch.disconnect();
 	}, []);
+	const over = wanted !== null && wanted > rail - CHROME + 1;
 	return (
 		<div className="flex flex-col gap-1">
-			<div style={{ width: rail - CHROME }} className="rounded-xs border border-border/60 bg-surface/30 px-1 py-0.5">
+			<div
+				style={{ width: rail - CHROME }}
+				className="relative rounded-xs border border-border/60 bg-surface/30 px-1 py-0.5"
+			>
 				<div ref={box} className="flex h-[18px] items-center justify-between gap-2.5 overflow-hidden">{children}</div>
+				<div
+					ref={ghost}
+					aria-hidden="true"
+					className="pointer-events-none invisible absolute top-0 left-0 flex h-[18px] w-max items-center gap-2.5"
+				>
+					{children}
+				</div>
 			</div>
-			<span className={cn(QUIET, over === true ? "text-text/70" : "text-muted/30")}>
-				{rail} rail · {rail - CHROME} box{over === true ? " · over" : ""}
+			<span className={cn(QUIET, over ? "text-text/70" : "text-muted/30")}>
+				{rail} rail · {rail - CHROME} box · {wanted === null ? "…" : `${wanted} wanted`}
+				{over ? " · over" : ""}
 			</span>
 		</div>
 	);
@@ -177,9 +211,17 @@ function limitAt(limit: string, step: 0 | 1 | 2): string {
  * removed, which is the one edit spool can make to the binary's own phrasing
  * without putting words in its mouth.
  *
- * The cost is that the row stops reading as the machine's and starts reading as
- * spool's summary of it, and at the narrow end `92%` alone is a number with no
- * noun. */
+ * **Which is exactly where it dies, and the model half is what kills it.** Removing
+ * words from a sentence leaves a shorter sentence. Removing them from a *name*
+ * leaves another name, and here it leaves a name that is taken: `Opus (1M context)`
+ * cut to `Opus` is the model `/model opus` gets you, which is Opus without the 1M
+ * window. The row would print one machine's name over another machine's transcript
+ * and look completely unremarkable doing it.
+ *
+ * It is also the column that fits everywhere — 148 in the 171px floor — which is
+ * the point of keeping it. Nothing about the pixels rules this out. It loses on
+ * what the words mean after they are cut, and it is drawn so that is visible next
+ * to the limit, where the identical edit is harmless. */
 
 function Shorten({ rail, model, limit }: { rail: number; model: string; limit: string }) {
 	const box = rail - CHROME;
@@ -201,7 +243,9 @@ function Shorten({ rail, model, limit }: { rail: number; model: string; limit: s
  * chevron because #118's menu still has to be reachable at any width.
  *
  * The cost is that the narrowest row is a control and a word, which says what is
- * running but not on what. */
+ * running but not on what. It also inherits `shorten`'s fatal step wholesale — its
+ * middle rung is the same rename — so what it really contributes is the ordering,
+ * which is the part `limit out` keeps. */
 
 function StopLast({ rail, model, limit }: { rail: number; model: string; limit: string }) {
 	const box = rail - CHROME;
@@ -217,11 +261,12 @@ function StopLast({ rail, model, limit }: { rail: number; model: string; limit: 
 /* ---------- limit out ----------
  * The recommendation, and the ladder is what produced it rather than taste.
  *
- * Look along the other three: the limit appears in exactly one row of eighteen,
- * the 480 ceiling. It cannot be drawn at `RAIL_WIDTH` 300, or at the 420 #144 gave
- * the agent, or anywhere below. So "keep the limit and shed it when tight" is not
- * a policy — it is the limit being absent by default and present only if you drag
- * the rail to its maximum, which is invisible exactly when you would want it.
+ * Look along the other three. Wherever the limit keeps the binary's own words it is
+ * drawn at 480 and nowhere else — not at `RAIL_WIDTH` 300, not at the 420 #144 gave
+ * the agent, nowhere below. The only column that carries it further carries `92%`,
+ * which is the number without the fact. So "keep the limit and shed it when tight"
+ * is the limit being absent at every width anyone actually uses, and present only
+ * if you drag the rail to its maximum first.
  *
  * So it leaves the row, and #122's own reasoning says where it goes. It chose the
  * footer *because* #118's menu was already in the same eighteen pixels and the
@@ -231,14 +276,22 @@ function StopLast({ rail, model, limit }: { rail: number; model: string; limit: 
  * cursor is on. A window is one more line in it, readable at every rail width,
  * next to the five things you would do about it.
  *
- * What is left in the row is a model that shortens and a stop that never leaves,
- * and it fits from the 200 floor to the 480 ceiling with nothing clipped. */
+ * What is left in the row is the model and a stop, and neither of them shortens.
+ * The model keeps its whole name at every width and truncates at the floor, which
+ * is the one degrade available to it that is not a rename; the stop is `shrink-0`
+ * and never gives way, because a cut name is still readable and half a stop button
+ * is not. There is no threshold in this column and no step ladder — one rule, all
+ * 280 pixels of range.
+ *
+ * The 200 floor is also the transient case rather than the standing one. A stop is
+ * only drawn against a turn in flight (`cutting` wants `phase === "playing"`), so
+ * for most of a session that row is a model alone in 171px of box against its own
+ * 160, and the ellipsis appears only while something is running. */
 
 function LimitOut({ rail, model }: { rail: number; model: string; limit: string }) {
-	const box = rail - CHROME;
 	return (
 		<Footer rail={rail}>
-			<Model label={modelAt(model, box >= 300 ? 0 : box >= 220 ? 1 : 2)} />
+			<Model label={model} cut={true} />
 			<Stop />
 		</Footer>
 	);
@@ -246,9 +299,13 @@ function LimitOut({ rail, model }: { rail: number; model: string; limit: string 
 
 const ORDERS = [
 	{ id: "drop", says: "a thing that does not fit is not shown. limit first, then the stop", render: Drop },
-	{ id: "shorten", says: "words go, facts stay. overflows at the floor, so it cannot cover the range", render: Shorten },
-	{ id: "stop last", says: "the only control on the row never leaves. the readouts give way to it", render: StopLast },
-	{ id: "limit out", says: "the limit goes to the model menu, next to the remedy · recommended", render: LimitOut },
+	{
+		id: "shorten",
+		says: "words go, facts stay. but `Opus (1M context)` cut to `Opus` is a different model",
+		render: Shorten,
+	},
+	{ id: "stop last", says: "the only control never leaves. inherits the rename at its middle rung", render: StopLast },
+	{ id: "limit out", says: "limit to the menu, name truncated never shortened · shipped", render: LimitOut },
 ] as const;
 
 export default function AgentFooterFitFrame() {

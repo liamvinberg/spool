@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
+import { CAPTURED_NOW, type RateLimitInfo, limitReadout } from "../lib/agent-limit";
 import {
 	type ClaudeModel,
 	EFFORT_SAYS,
@@ -69,10 +70,21 @@ interface PickerProps {
 	state: ModelState;
 	models: readonly ClaudeModel[] | undefined;
 	pin?: Effort | null;
+	/** the usage window, which lives in here rather than beside the trigger (#184) */
+	limit?: RateLimitInfo | undefined;
+	now?: number;
 	onPick: (next: Partial<ModelState>) => void;
 }
 
-function Picker({ state, models, pin = null, onPick, engines }: PickerProps & { engines: boolean }) {
+function Picker({
+	state,
+	models,
+	pin = null,
+	limit,
+	now = CAPTURED_NOW,
+	onPick,
+	engines,
+}: PickerProps & { engines: boolean }) {
 	const still = useReducedMotion() === true;
 	const [open, setOpen] = useState(false);
 	const [over, setOver] = useState<string | null>(null);
@@ -108,6 +120,8 @@ function Picker({ state, models, pin = null, onPick, engines }: PickerProps & { 
 		...levels.map((level) => EFFORT_SAYS[level] ?? ""),
 		`CLAUDE_CODE_EFFORT_LEVEL=${pin} is set in the environment`,
 	].reduce((tallest, sentence) => (sentence.length > tallest.length ? sentence : tallest), "");
+	/** null until the binary warns, which is most of a session */
+	const usage = limit === undefined ? null : limitReadout(limit, now);
 
 	const close = (next: Partial<ModelState>) => {
 		onPick(next);
@@ -115,7 +129,7 @@ function Picker({ state, models, pin = null, onPick, engines }: PickerProps & { 
 	};
 
 	return (
-		<span className="relative">
+		<span className="relative flex min-w-0">
 			{open ? (
 				<button
 					type="button"
@@ -129,11 +143,28 @@ function Picker({ state, models, pin = null, onPick, engines }: PickerProps & { 
 				onClick={() => setOpen(!open)}
 				className={cn(
 					QUIET,
-					"flex items-center gap-1 transition-colors duration-150",
+					"flex min-w-0 items-center gap-1 transition-colors duration-150",
 					open ? "text-muted" : "text-muted/45 hover:text-muted",
 				)}
 			>
-				{label}
+				{/*
+				 * It truncates, and it never shortens.
+				 *
+				 * `readout` already forbade the second one — the name is the binary's
+				 * `displayName` "uncased and unshortened, because the moment Spool rewrites it
+				 * Spool owns it" — and the captured reply says why that rule has teeth. Five
+				 * rows come back and **none of them is `Opus`**: there is `Default
+				 * (recommended)` and there is `Opus (1M context)`, both resolving to the same
+				 * `claude-opus-5[1m]`, and the parenthetical is the only thing telling them
+				 * apart. Meanwhile `/model opus` is accepted and resolves to Opus *without* the
+				 * 1M window. So a footer trimmed to `Opus · high` would not be a short name for
+				 * this machine, it would be the correct name of a different one.
+				 *
+				 * An ellipsis is not that. `Opus (1M cont…` is visibly cut and reads as cut,
+				 * the whole string is in the DOM, and the full name is one click up in this
+				 * menu. Rendering ran out of room; nobody renamed anything.
+				 */}
+				<span className="min-w-0 truncate">{label}</span>
 				<ChevronIcon open={open} className="h-2 w-2 shrink-0" />
 			</button>
 			<AnimatePresence>
@@ -146,6 +177,49 @@ function Picker({ state, models, pin = null, onPick, engines }: PickerProps & { 
 						transition={still ? { duration: 0 } : { duration: 0.18, ease: ARRIVE }}
 						onMouseLeave={() => setOver(null)}
 					>
+						{/*
+						 * The window, moved in here off the footer (#184).
+						 *
+						 * #122 chose the footer on one line of the binary's own advice: the remedy
+						 * for running out is a model switch, every time, so the fact should sit
+						 * next to the lever instead of writing out `try /model sonnet`. That
+						 * argument survives the move and is the reason for it — the lever is not
+						 * the trigger, it is this list, and the fact is now *inside* it.
+						 *
+						 * What forced it is width. The rail is drag-resizable 200–480 and ships at
+						 * **300** (`inspector.tsx`), which leaves a 271px box; the model readout is
+						 * 160 and the window 179, so the two of them wanted 349 and could not both
+						 * be on that line at the width spool actually opens at. Keeping it and
+						 * hiding it when tight meant hiding it always and showing it only if you
+						 * dragged to the 480 ceiling — visible in the one place nobody is.
+						 *
+						 * The move also buys back what the squeeze had already taken. On the 420
+						 * rail the line was clipped to `resets…`, and the reset time is half of
+						 * what the readout is for: ninety-two per cent of a week is a different
+						 * fact depending on whether it comes back Wednesday or in an hour. In here
+						 * it renders whole, at every rail width.
+						 *
+						 * It is a fact and not a row, so it does not take the row shape and cannot
+						 * be hovered into the sentence slot below. It is absent outright until the
+						 * binary warns — `limitReadout` answers null while the status is `allowed`
+						 * — so for most of a session this menu is exactly what #186 shipped.
+						 */}
+						{usage === null ? null : (
+							<>
+								<span
+									className={cn(
+										QUIET,
+										"block px-1.5 pt-1 pb-1.5",
+										// brightness rather than hue, the same step the footer line made:
+										// reached comes forward without becoming a second accent
+										limit?.status === "rejected" ? "text-text/70" : "text-muted/45",
+									)}
+								>
+									{usage}
+								</span>
+								<Rule />
+							</>
+						)}
 						{engines ? (
 							<>
 								<Group label="engine" />
