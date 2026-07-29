@@ -3,7 +3,7 @@ import { type ReactNode, type RefObject, useEffect, useRef, useState } from "rea
 import { type EnteredChip, type Pointed, type Strip, stripOf } from "../lib/agent-selection";
 import { liveThread } from "../lib/agent-threads";
 import { cn } from "../lib/utils";
-import type { Connector, Plan, PlayEntry, Question, RowState, ShotRef, TurnPhase } from "../lib/turn-play";
+import type { Connector, Plan, PlayEntry, Queued, Question, RowState, ShotRef, TurnPhase } from "../lib/turn-play";
 import { ChevronIcon, CloseIcon } from "./spool-icons";
 import { type Arrival, Caret, Said, closedText } from "./spool-say";
 import { ThreadStrip } from "./spool-thread-strip";
@@ -352,6 +352,10 @@ export type SayMode = "raw" | "read" | "lede" | "lines";
  * to take it back. That anatomy is fixed. What the two placements disagree about is
  * only where the row stands while it waits.
  *
+ * The four differ by what kind of thing they think a queued message *is*, which is
+ * the question under the placement: the first two say it belongs to the log, the
+ * third says it never left your hands, the fourth says it is machinery.
+ *
  *   tail   at the end of the log, under the live edge, in fire order — which is the
  *          exact spot the receipt lands, so firing is an undim in place and nothing
  *          moves. The cost is that the log now holds one thing that is not a receipt.
@@ -359,21 +363,17 @@ export type SayMode = "raw" | "read" | "lede" | "lines";
  *          the transcript, so what is waiting stays on screen while you read back,
  *          and the transcript above stays receipts-only. The cost is the teleport:
  *          a row that fires leaves the band and reappears in the log.
+ *   box    inside the composer, stacked above the field you are typing in and
+ *          sharing its border. A queued message has not left your hands, so it
+ *          stays in the surface that holds words that have not gone out; firing is
+ *          the stack leaving the box for the log, which is what sending already
+ *          looks like, and take-back drops a row into the field it is sitting on.
+ *          The cost is that the composer grows upward and eats the log.
+ *   strip  one line — `queued` and a count — opening into the list, in the
+ *          vocabulary `PlanStrip` and `EstateStrip` already speak. Costs the least
+ *          room and hides the one thing the queue exists to protect: your own words.
  */
-export type QueueWhere = "none" | "tail" | "band";
-
-/**
- * One message waiting on the running turn.
- *
- * The id is the frame's own and not the capture's, because nothing about a queue is
- * in a capture — Spool took the message, so Spool is the only thing that can name
- * it. Two identical messages are a real thing to type twice, and the ✕ has to reach
- * exactly one of them.
- */
-export interface Queued {
-	readonly id: string;
-	readonly text: string;
-}
+export type QueueWhere = "none" | "tail" | "band" | "box" | "strip";
 
 /** what a frame-naming row can currently do about the frame it names */
 type Reach = "here" | "coming" | "gone";
@@ -579,9 +579,12 @@ export function PlayRail({
 				tail={cutting && stop === "edge" ? <StopButton where="edge" onStop={halt} /> : undefined}
 			/>
 			{queue === "band" && pending.length > 0 ? <QueueBand queued={pending} onUnqueue={onUnqueue} /> : null}
+			{queue === "strip" && pending.length > 0 ? <QueueStrip queued={pending} onUnqueue={onUnqueue} /> : null}
 			<Composer
 				field={field}
 				strip={stripOf(selection, COMPOSER_W, entered)}
+				queued={queue === "box" ? pending : []}
+				onUnqueue={onUnqueue}
 				chips={ask === "composer" && waiting ? asked.ask : null}
 				onPick={answer}
 				answering={waiting}
@@ -963,6 +966,96 @@ function QueueBand({ queued, onUnqueue }: { queued: readonly Queued[]; onUnqueue
 	return (
 		<div className="pages-scrollbar flex max-h-[164px] shrink-0 flex-col overflow-y-auto border-border border-t px-3.5 py-3">
 			<QueueList queued={queued} onUnqueue={onUnqueue} gap={14} />
+		</div>
+	);
+}
+
+/**
+ * The queue inside the composer, stacked on the field it was typed into.
+ *
+ * The reading the other placements do not offer: a queued message has not left your
+ * hands. The log is where things that happened live and the composer is where your
+ * words live, so a message that has been committed but not sent stays in the second
+ * one — dimmed, because committed is not sent, and above the field, because the
+ * thing you are writing now is the one nearest your cursor.
+ *
+ * It makes three things geometry rather than rules. **Firing is the send it already
+ * is**: the stack leaves this box and lands in the log, which is the exact journey
+ * every message in the transcript already made, so nothing has to be explained.
+ * **Take-back is a drop, not a teleport**: the row is sitting on the field it goes
+ * back into, which is #170's own invariant — *words that leave the queue un-fired
+ * land back in the box* — drawn instead of stated. And **the stack is what fires
+ * together**: #170 settled that every queued message goes down stdin at once and the
+ * binary runs one turn over all of them, which a stack in one box says and a run of
+ * separate log rows does not.
+ *
+ * It shares the composer's border rather than taking one of its own, because a
+ * second box inside the panel would read as a second place to type. The hairline
+ * under the stack is the composer's own internal rule, the one the selection strip
+ * already sits above.
+ *
+ * What it costs is room, and the cost lands on the log: an unbounded queue would
+ * push the transcript off the top, so it caps at the same 164px the band does and
+ * scrolls inside itself. The second cost is that the one surface that was
+ * unambiguously yours to write in now holds things you have already committed, and
+ * the dim is what carries the difference.
+ */
+function QueueBox({ queued, onUnqueue }: { queued: readonly Queued[]; onUnqueue: ((id: string) => void) | undefined }) {
+	if (queued.length === 0) return null;
+	return (
+		<div className="flex min-h-0 flex-col gap-2.5">
+			<div className="pages-scrollbar flex max-h-[164px] min-h-0 flex-col overflow-y-auto">
+				<QueueList queued={queued} onUnqueue={onUnqueue} gap={14} />
+			</div>
+			<span className="h-px shrink-0 bg-border-raised" />
+		</div>
+	);
+}
+
+/**
+ * The queue as one line, in the vocabulary the rail already has.
+ *
+ * `PlanStrip` and `EstateStrip` are both a mono word, a count and a chevron, and
+ * #117's rule is that a thing earns its own place only if it outlives the call that
+ * made it. A queued message outlives nothing — it exists only until the turn ends,
+ * which is the shortest life anything on this rail has — so the strictest reading of
+ * the rail's own rule says it gets a line and not a column.
+ *
+ * Drawn so it can lose by being looked at. What it hides is the one thing the queue
+ * was built to protect: #170 chose a queue over a dropped keystroke because *losing
+ * written words is the failure*, and a line that says `queued 2` has lost them from
+ * the screen if not from the list. Taking one back needs the list open, so the
+ * gesture the ticket is also deciding costs a click before it can even be aimed.
+ */
+function QueueStrip({ queued, onUnqueue }: { queued: readonly Queued[]; onUnqueue: ((id: string) => void) | undefined }) {
+	const still = useReducedMotion() === true;
+	const [open, setOpen] = useState(false);
+	return (
+		<div className="flex shrink-0 flex-col border-border border-t">
+			<button
+				type="button"
+				onClick={() => setOpen(!open)}
+				className="flex h-[34px] w-full items-center gap-2.5 px-3.5 text-left transition-colors duration-150 hover:bg-surface"
+			>
+				<span className="shrink-0 font-mono text-muted text-sm leading-4">queued</span>
+				<span className="shrink-0 font-mono text-muted/60 text-sm tabular-nums leading-4">{queued.length}</span>
+				<ChevronIcon open={open} className="ml-auto h-2.5 w-2.5 shrink-0 text-muted/35" />
+			</button>
+			<AnimatePresence initial={false}>
+				{open ? (
+					<motion.div
+						className="pages-scrollbar max-h-[164px] overflow-y-auto"
+						initial={{ height: 0, opacity: 0 }}
+						animate={{ height: "auto", opacity: 1 }}
+						exit={{ height: 0, opacity: 0 }}
+						transition={still ? { duration: 0 } : { duration: 0.24, ease: ARRIVE }}
+					>
+						<div className="px-3.5 pb-3">
+							<QueueList queued={queued} onUnqueue={onUnqueue} gap={14} />
+						</div>
+					</motion.div>
+				) : null}
+			</AnimatePresence>
 		</div>
 	);
 }
@@ -1797,6 +1890,8 @@ const MAX_H = 160;
 function Composer({
 	field,
 	strip,
+	queued,
+	onUnqueue,
 	chips,
 	onPick,
 	answering,
@@ -1814,6 +1909,9 @@ function Composer({
 }: {
 	field: RefObject<HTMLTextAreaElement | null>;
 	strip: Strip;
+	/** the queue standing in the composer, which is empty in every placement but `box` (#170) */
+	queued: readonly Queued[];
+	onUnqueue: ((id: string) => void) | undefined;
 	/** a question's options, when the proposal puts them here rather than in the log (#145) */
 	chips: Question | null;
 	onPick: (label: string) => void;
@@ -1859,7 +1957,8 @@ function Composer({
 	return (
 		<div className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5" onMouseDown={onReach}>
 			{chips === null ? null : <AskChips ask={chips} onPick={onPick} />}
-			<div className="flex flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5 transition-colors duration-150 focus-within:border-muted/45">
+			<div className="flex min-h-0 flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5 transition-colors duration-150 focus-within:border-muted/45">
+				<QueueBox queued={queued} onUnqueue={onUnqueue} />
 				<SelectionStrip strip={strip} lit={lit} onLight={onLight} onDrop={onDrop} />
 				<div className="flex items-end gap-2">
 				<textarea

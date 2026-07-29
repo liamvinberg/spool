@@ -390,6 +390,19 @@ export interface Plan {
 	readonly children: readonly RowChild[];
 }
 
+/**
+ * One message waiting on the running turn (#170).
+ *
+ * The id is the frame's own and not the capture's, because nothing about a queue is
+ * in a capture — Spool took the message, so Spool is the only thing that can name
+ * it. Two identical messages are a real thing to type twice, and the ✕ has to reach
+ * exactly one of them.
+ */
+export interface Queued {
+	readonly id: string;
+	readonly text: string;
+}
+
 export type PlayEntry =
 	| { readonly key: string; readonly kind: "user"; readonly text: string; readonly context?: string | undefined }
 	| {
