@@ -35,7 +35,7 @@ export function extractJsxSpan(source: string, line: number, column: number): Js
 }
 
 /** 1-based line/column to string offset; undefined when out of range. */
-export function offsetOf(source: string, line: number, column: number): number | undefined {
+function offsetOf(source: string, line: number, column: number): number | undefined {
 	let lineStart = 0;
 	for (let n = 1; n < line; n++) {
 		const next = source.indexOf("\n", lineStart);

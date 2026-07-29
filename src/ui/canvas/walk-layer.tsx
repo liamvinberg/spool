@@ -265,8 +265,14 @@ function nub(walk: Walk, wall: number, y: number, k: number): PlacedWalk {
 	};
 }
 
+/**
+ * A mark's identity. A fault keys on its source path rather than the words it
+ * prints: a tag shows the file's basename, so two dark lines at the same line
+ * of two same-named files would otherwise collide into one mark.
+ */
 function keyOf(walk: Walk): string {
-	return walk.kind === "exit" ? `exit\0${walk.frame}\0${walk.target}` : `fault\0${walk.frame}\0${walk.name}`;
+	if (walk.kind === "exit") return `exit\0${walk.frame}\0${walk.target}`;
+	return `fault\0${walk.frame}\0${walk.path ?? ""}\0${walk.name}`;
 }
 
 function round(value: number): number {
@@ -396,10 +402,12 @@ function FaultTag({ placed, fault, k }: { placed: PlacedWalk; fault: WalkFault; 
 /* ---------- the layer ---------- */
 
 /**
- * Every leader on the page in one coordinate space, under the frames, with the
- * tags over them. One SVG rather than one per frame: a leader leaves its
- * frame's box by design, and a stack of overflowing SVGs is a stack of z-index
- * arguments nobody wins.
+ * Every leader on the page in one coordinate space, over the frames, with the
+ * tags over them in turn. The leaders sit above the covers rather than under
+ * them the way the arrows do, because a leader is 20 pixels long and would
+ * otherwise vanish under the very frame it docks to. One SVG rather than one
+ * per frame: a leader leaves its frame's box by design, and a stack of
+ * overflowing SVGs is a stack of z-index arguments nobody wins.
  */
 export function WalkLayer({
 	walks,
@@ -441,7 +449,9 @@ export function WalkLayer({
 								cy={placed.ay}
 								r={(layer.size === "nub" ? 1.5 : 2.5) / k}
 								fill="var(--color-muted)"
-								fillOpacity={placed.stop ? 1 : 0.85}
+								// a nub is the only thing left on its wall, so it carries one
+								// weight; at readable size the fault's dot is the heavier ink
+								fillOpacity={layer.size === "nub" ? 0.8 : placed.stop ? 1 : 0.85}
 							/>
 							{placed.stop && (
 								<Terminator x={layer.size === "nub" ? placed.ex + 3 / k : placed.ex} y={placed.ey} k={k} />

@@ -275,7 +275,7 @@ export function ProjectCanvas({
 	const settledCameraRef = useRef<Camera | null>(null);
 	const framesRef = useRef(visibleFrames);
 	framesRef.current = visibleFrames;
-	// the whole projection, for cross-page reads: walks, connections, editor paths
+	// the whole projection, for cross-page reads: walks, exits, editor paths
 	const allFramesRef = useRef(frames);
 	allFramesRef.current = frames;
 	const activePageRef = useRef(activePage);

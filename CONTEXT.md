@@ -26,7 +26,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Page**: A one-level subfolder of `design/frames/` grouping frames into a journey; each page is its own canvas. The flat top level is the permanent root page, and frame names stay unique across the whole project. _Avoid_: group, section, sub-page
 
-**Portal**: The chip drawn where a link leaves the active page — no arrow can reach the target, so the marker names it and its page, and activating it jumps there.
+**Exit**: A walk that leaves the active page, drawn on the frame declaring it: a short leader off the wall into a mono tag naming the target and its page. Pressing it travels — the page follows, the arrival is centred, the target ends up selected. It replaced the portal chip, which #58 deleted with nothing in its place. _Avoid_: portal, chip, marker
 
 **Select**: The default and only pointer tool: a click takes the frame to arrange it, a double-click enters it, and holding the platform modifier takes the element under the cursor instead. Selecting a readable HTML frame leaves it visible and running while Select owns the pointer; an unreadable selection stays held behind its still. _Avoid_: interact
 
@@ -56,7 +56,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Certainty**: An arrow's claim: `will` (solid, unconditional site) or `might` (faint, the site sits inside a branch). _Avoid_: dashed arrows (retired)
 
-**Unreadable**: A navigation site whose destination cannot be read from source; flagged by `spool flows`, never drawn, never simulated.
+**Unreadable**: A navigation site whose destination cannot be read from source. Never simulated, and drawn only as a fault on the frame declaring it. A site the render answered — including by producing no attribute at all — is not unreadable, so an optional prop left undefined is no walk rather than a dark one.
 
 **Walk**: Traversing navigation from an entered frame or in the player; a walk can flip a derived edge's verified mark.
 
