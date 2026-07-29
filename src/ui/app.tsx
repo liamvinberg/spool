@@ -15,7 +15,7 @@ import { Home } from "./home";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
-import { CloseIcon, PlusIcon, RibbonMark, ThreadIcon } from "./icons";
+import { CloseIcon, EdgeIcon, PlusIcon, RibbonMark } from "./icons";
 import { FolderPicker } from "./picker";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
 
@@ -302,18 +302,36 @@ export function App() {
 						    could only ever guess, and its guess with nothing selected was
 						    the first frame by name — a start that means nothing. */}
 						{/* the threads toggle (#34): the map is identity, so on is the
-						    default — but a page with no thread gets no switch */}
+						    default — but a page with no thread gets no switch. It governs
+						    the whole flow layer now (#151), the arrows and the docked
+						    walks together, and keeps a grey dot while what it hides
+						    contains a fault. Grey rather than accent: the accent belongs
+						    to the selection, and a mistyped frame name is not an alarm.
+						    An off-page walk gets no dot — leaving the page is an ordinary
+						    thing for a flow to do. */}
 						{chrome.hasThreads && (
 							<button
 								type="button"
-								className={`flex h-7 w-7 items-center justify-center rounded-sm hover:bg-surface ${
+								className={`relative flex h-7 w-7 items-center justify-center rounded-sm hover:bg-surface ${
 									chrome.arrowsOn ? "text-text" : "text-muted"
 								}`}
-								title={`Threads (${hotkeyKey("canvas.threads")})`}
+								title={
+									chrome.arrowsOn || chrome.faults === 0
+										? `Threads (${hotkeyKey("canvas.threads")})`
+										: `${chrome.faults} ${chrome.faults === 1 ? "walk" : "walks"} on this page ${
+												chrome.faults === 1 ? "goes" : "go"
+											} nowhere`
+								}
 								aria-pressed={chrome.arrowsOn}
 								onClick={chrome.toggleArrows}
 							>
-								<ThreadIcon />
+								<EdgeIcon />
+								{!chrome.arrowsOn && chrome.faults > 0 && (
+									<span
+										data-walk-notice=""
+										className="absolute top-[3px] right-[3px] h-[5px] w-[5px] rounded-full bg-muted"
+									/>
+								)}
 							</button>
 						)}
 						<span className="min-w-9 text-right font-mono text-muted text-xs leading-xs">{chrome.zoomPct}%</span>

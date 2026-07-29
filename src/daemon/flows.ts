@@ -16,12 +16,7 @@ import {
 } from "./nav-sites";
 import { isSafeName } from "./project-files";
 import { frameDirectories, frameNames } from "./projection";
-import {
-	createRenderedReader,
-	projectScenarios,
-	type RenderedReader,
-	type RenderedTarget,
-} from "./resolved-targets";
+import { createRenderedReader, projectScenarios, type RenderedReader, type RenderedTarget } from "./resolved-targets";
 
 /**
  * The link graph (#34, amending #5): the map is read, not walked. Every edge

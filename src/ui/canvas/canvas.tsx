@@ -93,6 +93,7 @@ import { CanvasSidebar, type SelectModifiers } from "./sidebar";
 import { snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { TrashToast } from "./trash-toast";
+import { WalkLayer, walksOf } from "./walk-layer";
 
 /**
  * The infinite canvas (#22) and its hands (#23): design/ projected as
@@ -111,11 +112,20 @@ export interface CanvasChrome {
 	arrowsOn: boolean;
 	toggleArrows: () => void;
 	/**
-	 * Whether this page has a thread to hide: an edge with both ends on it, or
-	 * a portal leaving it. The toggle is not drawn otherwise — a switch over
-	 * nothing is chrome pretending to be a control (#34/#39).
+	 * Whether this page has a layer to hide: an arrow between two frames on it,
+	 * a walk that leaves it, or a walk that lands nowhere. The toggle is not
+	 * drawn otherwise — a switch over nothing is chrome pretending to be a
+	 * control (#34/#39). One toggle governs the whole layer (#151), so it
+	 * counts the whole layer.
 	 */
 	hasThreads: boolean;
+	/**
+	 * How many walks on this page go nowhere. The hidden layer keeps a dot on
+	 * the toggle over these and over nothing else: leaving the page is an
+	 * ordinary thing for a flow to do, and only the thing you would want to fix
+	 * is worth marking a canvas you deliberately quietened (#151).
+	 */
+	faults: number;
 }
 
 interface Point {
@@ -407,12 +417,23 @@ export function ProjectCanvas({
 	// else the frame being used — inside a prototype its elements are the ones
 	// worth looking at, so entering must not empty the rail
 	const inspectedFrame = pickedFrame ?? selectedFrame ?? entered ?? null;
-	// a thread to hide on this page: a drawable, non-self edge with both ends
-	// here. Cross-page connections live in the inspector instead (#34/#39/#58).
+	// what this page knows and no arrow can reach: the walks that leave it, and
+	// the walks that land nowhere (#151). Derived at rest — the layer is never
+	// gated on a selection, because the gap it fills is the frames you did not
+	// pick and a fault nothing else on the canvas can say.
+	const walks = useMemo(
+		() => walksOf(edges, unreadable, visibleFrames, frames),
+		[edges, unreadable, visibleFrames, frames],
+	);
+	const faults = useMemo(() => walks.filter((walk) => walk.kind === "fault").length, [walks]);
+	// a layer to hide on this page: an arrow with both ends here, or any mark
+	// the walk layer draws. One toggle governs both, so it counts both — a page
+	// whose only walks leave it used to get no switch at all (#34/#39/#151).
 	const hasThreads = useMemo(() => {
+		if (walks.length > 0) return true;
 		const here = new Set(visibleFrames.map((entry) => entry.name));
 		return edges.some((edge) => edge.from !== edge.to && here.has(edge.from) && here.has(edge.to));
-	}, [edges, visibleFrames]);
+	}, [edges, visibleFrames, walks]);
 
 	const lifecycle = useFrameLifecycle({
 		framesRef,
@@ -2576,9 +2597,10 @@ export function ProjectCanvas({
 			arrowsOn,
 			toggleArrows,
 			hasThreads,
+			faults,
 		});
 		return () => onChrome(null);
-	}, [zoomPct, onChrome, arrowsOn, toggleArrows, hasThreads]);
+	}, [zoomPct, onChrome, arrowsOn, toggleArrows, hasThreads, faults]);
 
 	// --- render -------------------------------------------------------------------
 
@@ -2706,6 +2728,9 @@ export function ProjectCanvas({
 								</div>
 							);
 						})}
+						{/* the tags ride over the frames, because pressing one travels —
+						    the leaders under them are the map and take no pointer */}
+						{arrowsOn && <WalkLayer walks={walks} frames={visibleFrames} k={k} onOpen={landOnFrame} />}
 					</div>
 				)}
 

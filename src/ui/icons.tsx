@@ -50,18 +50,18 @@ export function BackIcon() {
 	);
 }
 
-/** The thread glyph (#34): one arrow of the map, tail to head. */
-export function ThreadIcon() {
+/**
+ * The edge glyph (#151): two frames and the walk between them. It replaced the
+ * single arrow when the toggle stopped governing only arrows — the layer draws
+ * a walk whether or not this canvas can show the frame at its far end, and an
+ * arrow was only ever half of what the switch did.
+ */
+export function EdgeIcon() {
 	return (
-		<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-			<path
-				d="M2.5 12.5 C 6.5 12.5, 9.5 3.5, 12.5 3.5"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="1.5"
-				strokeLinecap="round"
-			/>
-			<path d="M14.5 3.5 L10.8 1.8 L10.8 5.2 Z" fill="currentColor" stroke="none" />
+		<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+			<circle cx="4.2" cy="4.6" r="1.9" stroke="currentColor" strokeWidth="1.5" />
+			<circle cx="11.8" cy="11.4" r="1.9" stroke="currentColor" strokeWidth="1.5" />
+			<path d="M5.7 6.1 10.3 9.9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
 		</svg>
 	);
 }
