@@ -1,0 +1,23 @@
+# The daemon spawns the developer's agent
+
+Spool's honest self-description changes here. It was "opening an untrusted design is inert". It becomes "spool can run an agent with write access to your repo, and that agent asks before it writes outside `design/`" (#114, #191).
+
+This does not breach the boundary [issue #41](https://github.com/liamvinberg/spool/issues/41) drew. #41 names the CLI and daemon as the trusted computing base and forbids project code from spawning processes; that is why terminal frames are still a static disabled surface ([ADR-0006](./0006-terminal-frames-run-real-processes.md)). An agent chat is the other side of the same line: the daemon spawns it, on a control-plane route behind the control capability, because the hands explicitly asked for a turn. No frame, no player document, no project file and no shared design can reach it.
+
+**What is spawned.** The developer's own `claude`, resolved by bare name off `PATH`, as a child of the daemon inheriting its environment. It reuses whatever CLI login is already on the machine — `apiKeySource: "none"` in all seven captures under `fixtures/captures/` is that claim's evidence. Spool configures no key, asks for none, and stores none. It also strips none: someone's own CLI configured with a key breaks no promise spool made.
+
+**How the fence is expressed.** Three arguments, and they are the whole of it (`src/daemon/agent-spawn.ts`):
+
+- `--setting-sources user`. Only the developer's own settings load. The project's stay out, because a project's `allow` list can make its own dangerous calls quiet, and opening somebody's design must not change what your agent may do. Measured on 2.1.220: a throwaway project whose `.claude/settings.json` registers a `SessionStart` hook fires two hooks under this spawn, all of them the developer's own, and three the moment `project` is added to the sources. The measured cost is that the project's `CLAUDE.md` and `AGENTS.md` go with the settings; spool pays it in the appended system prompt, one line of which spends the agent's own read on that file.
+- `--permission-mode default`, set explicitly rather than left to the machine. Measured on 2.1.220, a default spawn inherits the user's `defaultMode`, and a `bypassPermissions` there ran a spool-spawned agent with every check off, everywhere on disk.
+- One allow rule, `Edit(./design/**)`, and nothing denied. Deny beats allow and cannot express an exception, so the fence is a list of what is quiet rather than a wall with a door. `Write(path)` rules are inert for file permission checks; `Edit` covers every file-editing tool. Work outside `design/` asks once and is never blocked.
+
+**The ask is not wired yet.** Approvals arrive as data only when `--permission-prompt-tool stdio` is passed, and answering one needs a person, so both belong to the ticket that builds the rail. Until then the fence holds in its strict direction — a write outside `design/` does not happen — but the agent meets a refusal rather than a question, and stops. The allow rule and the mode are what make that boundary real; the channel that carries the question to a human is the next piece.
+
+Tools are not narrowed and the shell stays open. Measured: with writes denied the agent immediately routed around it through Bash, and the binary already fences the shell by path unaided. A command allowlist buys prompts, not safety.
+
+**What rides along with eyes open.** The developer's skills, slash commands, custom agents, hooks, connectors and personal memory. Hooks are arbitrary shell commands running because spool pressed a button, and there is no lever that keeps connectors and drops hooks — it is the same switch. The hermetic alternative was argued and lost on the product rather than the security: a designer pulling design tokens from a connector into spool is the difference between a canvas and a toy, and inheriting means spool never owns an abstraction over connectors.
+
+**No permission grant outlives the thread that made it.** "Always" is held with the running thread and written to no file, so a click inside a design tool never changes what the developer's terminal agent may do tomorrow.
+
+**The spawn is injectable** (`src/daemon/agent-exec.ts`), mirroring the terminal executor already on the daemon app's options. Its fixture implementation replays a capture line by line, so CI never spawns an agent, never touches a login, and never depends on a model.

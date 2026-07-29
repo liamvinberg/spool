@@ -18,6 +18,8 @@ import { openProject } from "../open";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
+import { type AgentExecutor, claudeExecutor } from "./agent-exec";
+import { type AgentTurn, startAgentTurn } from "./agent-turn";
 import { stampLabels } from "./call-site";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
@@ -103,6 +105,8 @@ export interface DaemonOptions {
 	upgrade?: () => { ok: true } | { ok: false; error: string };
 	/** Retained seam for dormant session tests; public daemon routes never invoke it. */
 	termExecutor?: TermExecutor;
+	/** The agent spawn (#191) — swapped for a capture replayer so CI never runs a real agent. */
+	agentExecutor?: AgentExecutor;
 	/** Machine-state filesystem lifecycle boundary. */
 	machineStateWatchAdapter?: MachineStateWatchAdapter;
 	/** Machine-state observation failures stay visible without escaping a watcher callback. */
@@ -151,6 +155,7 @@ export function createDaemonApp({
 	fetchLatest,
 	upgrade,
 	termExecutor,
+	agentExecutor,
 	machineStateWatchAdapter,
 	onMachineStateWatchError,
 }: DaemonOptions) {
@@ -277,6 +282,12 @@ export function createDaemonApp({
 			hub.publish(root, { kind: "thumb", frame, ...(cover === undefined ? {} : { cover }) });
 		},
 	});
+
+	// #191's ADR: the daemon spawns the developer's own agent when the hands ask
+	// for it. Project code never reaches this — it is a control-plane route
+	// behind the control token, the same boundary #41 drew.
+	const spawnAgent = agentExecutor ?? claudeExecutor();
+	const liveTurns = new Set<AgentTurn>();
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -764,6 +775,48 @@ export function createDaemonApp({
 			}
 			return c.text("terminal execution is disabled until it can run in an OS sandbox", 409);
 		})
+		.post(
+			"/api/p/:project/agent/turn",
+			validator("json", (value, c) => {
+				const prompt =
+					typeof value === "object" && value !== null ? (value as { prompt?: unknown }).prompt : undefined;
+				if (typeof prompt !== "string" || prompt.trim() === "") {
+					return c.text('a turn is { "prompt": "…" }', 400);
+				}
+				return { prompt };
+			}),
+			(c) => {
+				// one turn, streamed as it arrives (#191): the prompt goes down the
+				// binary's stdin and its events come back over this response in the
+				// order the wire sent them
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const turn = startAgentTurn({
+					executor: spawnAgent,
+					root: project.root,
+					content: [{ type: "text", text: c.req.valid("json").prompt }],
+				});
+				liveTurns.add(turn);
+				return streamSSE(c, async (stream) => {
+					let id = 0;
+					stream.onAbort(() => turn.stop());
+					try {
+						for await (const event of turn.events) {
+							try {
+								await stream.writeSSE({ event: "agent", data: JSON.stringify(event), id: String(id++) });
+							} catch {
+								// the client hung up mid-write — stop reading, but never
+								// swallow a failure from the turn itself
+								break;
+							}
+						}
+					} finally {
+						turn.stop();
+						liveTurns.delete(turn);
+					}
+				});
+			},
+		)
 		.get("/api/p/:project/verify/:frame", async (c) => {
 			// the agent's compile probe (#25): shot and logs branch on this JSON —
 			// ok hands the closure etag (the log cache key), error the text verbatim
@@ -1418,6 +1471,8 @@ export function createDaemonApp({
 		terms,
 		close: () => {
 			machineStateWatch.stop();
+			for (const turn of liveTurns) turn.stop();
+			liveTurns.clear();
 			void terms.close();
 			hub.close();
 			updateChecker.stop();

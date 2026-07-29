@@ -4,20 +4,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { readFixture } from "./daemon/project-files";
 import { mirrorCaptures } from "./dev-captures";
-import { makeProject, makeTempDir } from "./test-helpers";
+import { CAPTURES, makeProject, makeTempDir } from "./test-helpers";
 
 /** The tracked home, named the way any shipped reader has to name it (#190). */
 const home = fileURLToPath(new URL("../fixtures/captures", import.meta.url));
-
-const CAPTURES = [
-	"claude-compact",
-	"claude-edits",
-	"claude-fanout",
-	"claude-interrupt",
-	"claude-mcp",
-	"claude-plan",
-	"claude-turn",
-];
 
 describe("the agent captures", () => {
 	it("are read from the repo's own home rather than the canvas", () => {
