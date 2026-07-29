@@ -369,6 +369,7 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 }
 .spool-player-error strong { display: block; margin-bottom: 16px; color: #f5391a; font-weight: 400; }
 .spool-player-error pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.spool-player-escape { display: inline-block; margin-top: 16px; color: #f0efed; text-decoration: underline; text-underline-offset: 3px; }
 /* the HUD: no containers, only marks in the stage's corners */
 .spool-hud {
 	position: fixed;

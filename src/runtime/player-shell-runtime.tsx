@@ -73,6 +73,23 @@ const MAX_PENDING_CONTROLLER_COMMANDS = 32;
  */
 const HANDOFF_RELOAD_COOLDOWN_MS = 10_000;
 const HANDOFF_RELOAD_KEY = "spool:player-handoff-reload";
+/**
+ * How long a booting player may stay mute before the shell stops hiding it
+ * (#185): a runtime that never finishes its bootstrap used to leave the screen
+ * white forever, indistinguishable from loading. The connect deadline starts
+ * at the iframe's load event, so a slow link spends its time in the document
+ * fetch where it belongs — once loaded, connecting is module evaluation plus
+ * one postMessage. The ready deadline starts at player-connect and covers the
+ * leg to the reveal, so a runtime that connects and then wedges is caught too.
+ * The boot deadline is the backstop for a document that never manages to load.
+ */
+const BOOTSTRAP_CONNECT_DEADLINE_MS = 4_000;
+const BOOTSTRAP_READY_DEADLINE_MS = 6_000;
+const BOOTSTRAP_BOOT_DEADLINE_MS = 45_000;
+const BOOTSTRAP_SILENT_MESSAGE =
+	"the player loaded but never connected to its shell. something running inside the player iframe is interfering with its boot; a browser extension injected into the sandbox is the usual culprit. the bare player runs the same prototype without the embedding.";
+const BOOTSTRAP_UNREVEALED_MESSAGE =
+	"the player connected but never reported its first stable layout, so the shell stopped waiting. something is starving the embedded frame, either code injected into its sandbox or the browser throttling it. the bare player runs the same prototype without the embedding.";
 
 declare global {
 	interface Window {
@@ -110,6 +127,8 @@ export function bootPlayerShell(config: ShellConfig): void {
 	let cut: Cut | undefined;
 	let pendingNavigation: PendingNavigation | undefined;
 	let loadError: string | undefined;
+	let loadEscape: string | undefined;
+	let bootstrapDeadline: number | undefined;
 	let runtimePort: MessagePort | undefined;
 	let postToRuntime: ((message: Record<string, unknown>) => void) | undefined;
 	let latestGeometry: { revision: number; frames: { name: string; w: number; h: number }[] } | undefined;
@@ -133,7 +152,10 @@ export function bootPlayerShell(config: ShellConfig): void {
 			geometryAppliedRevision === geometryRevision &&
 			geometryReadyRevision === geometryRevision
 		);
-		if (!hidden) revealed = true;
+		if (!hidden) {
+			revealed = true;
+			disarmBootstrapDeadline();
+		}
 	};
 	/**
 	 * Reload once per cooldown to earn a fresh handoff, reporting whether the
@@ -164,6 +186,32 @@ export function bootPlayerShell(config: ShellConfig): void {
 		} catch {
 			// Nothing to clear when storage is denied.
 		}
+	};
+	/** The render-origin player with the shell params stripped: same prototype, no embedding left to interfere with. */
+	const barePlayerUrl = (): string => {
+		const url = new URL(config.innerUrl);
+		url.searchParams.delete("shell");
+		url.searchParams.delete("handoff");
+		return url.href;
+	};
+	const disarmBootstrapDeadline = () => {
+		if (bootstrapDeadline !== undefined) window.clearTimeout(bootstrapDeadline);
+		bootstrapDeadline = undefined;
+	};
+	const armBootstrapDeadline = (grace: number, message: string) => {
+		if (revealed || loadError !== undefined) return;
+		disarmBootstrapDeadline();
+		bootstrapDeadline = window.setTimeout(() => {
+			bootstrapDeadline = undefined;
+			if (revealed || loadError !== undefined) return;
+			loadError = message;
+			loadEscape = barePlayerUrl();
+			hidden = true;
+			postToRuntime = undefined;
+			runtimePort?.close();
+			runtimePort = undefined;
+			notify();
+		}, grace);
 	};
 	const host = () => document.querySelector<HTMLIFrameElement>("#spool-player");
 	const postCommand = (command: string, extra: Record<string, unknown> = {}) =>
@@ -373,6 +421,10 @@ export function bootPlayerShell(config: ShellConfig): void {
 			const addMessageListener = port.addEventListener.bind(port);
 			const startPort = port.start.bind(port);
 			runtimePort = port;
+			// Connected is not revealed: a runtime can hand its port over and then
+			// wedge before player-ready (#185), so the deadline moves to the next leg
+			// instead of standing down.
+			armBootstrapDeadline(BOOTSTRAP_READY_DEADLINE_MS, BOOTSTRAP_UNREVEALED_MESSAGE);
 			clearHandoffReload();
 			postToRuntime = (outbound) => postMessage(outbound);
 			config.frames = frames;
@@ -422,7 +474,10 @@ export function bootPlayerShell(config: ShellConfig): void {
 			// iframe it discarded, a reloaded frame — and its handoff had expired or
 			// been evicted. Serving this page again mints a new one, and a reload is
 			// what the player already means by a restart (#88).
-			if (reloadForHandoff()) return;
+			if (reloadForHandoff()) {
+				disarmBootstrapDeadline();
+				return;
+			}
 			loadError = message.error;
 			hidden = true;
 			notify();
@@ -801,6 +856,11 @@ export function bootPlayerShell(config: ShellConfig): void {
 				<div className="spool-player-error" role="alert">
 					<strong>player failed to load</strong>
 					<pre>{loadError}</pre>
+					{loadEscape !== undefined && (
+						<a className="spool-player-escape" href={loadEscape}>
+							open the bare player
+						</a>
+					)}
 				</div>
 			);
 		}
@@ -810,11 +870,19 @@ export function bootPlayerShell(config: ShellConfig): void {
 				title={config.project}
 				sandbox="allow-scripts"
 				src={config.innerUrl}
-				style={{ visibility: hidden ? "hidden" : "visible" }}
+				onLoad={() => armBootstrapDeadline(BOOTSTRAP_CONNECT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE)}
+				// Hidden by opacity, never visibility: headed Chromium render-throttles
+				// a visibility-hidden cross-origin iframe, which starves the runtime's
+				// animation-frame gates and deadlocks the reveal it is hiding for
+				// (#185). inert keeps what visibility used to guarantee — no clicks,
+				// no focus — while the frame stays rendered underneath.
+				inert={hidden}
+				style={{ opacity: hidden ? 0 : 1 }}
 			/>
 		);
 	}
 	createRoot(root).render(createElement(Player, { frames: {}, controller, host: createElement(Host) }));
+	armBootstrapDeadline(BOOTSTRAP_BOOT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
