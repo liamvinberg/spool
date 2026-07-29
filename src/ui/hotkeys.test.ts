@@ -61,8 +61,17 @@ describe("combo matching", () => {
 		expect(matchesCombo(press({ key: "?" }), parseCombo("question"))).toBe(true);
 	});
 
-	it("space matches by code", () => {
+	it("character keys match however the layout spells them", () => {
+		// "+" is ⇧= on US layouts and "=" is ⇧0 on Swedish: shift is spelling, not chord
+		expect(matchesCombo(press({ key: "+", shiftKey: true }), parseCombo("plus"))).toBe(true);
+		expect(matchesCombo(press({ key: "+", shiftKey: true, metaKey: true }), parseCombo("accel+plus"))).toBe(true);
+		expect(matchesCombo(press({ key: "=", shiftKey: true, metaKey: true }), parseCombo("accel+equals"))).toBe(true);
+	});
+
+	it("space matches by code, under any modifier", () => {
 		expect(matchesCombo(press({ key: " ", code: "Space" }), parseCombo("space"))).toBe(true);
+		expect(matchesCombo(press({ key: " ", code: "Space", shiftKey: true }), parseCombo("space"))).toBe(true);
+		expect(matchesCombo(press({ key: " ", code: "Space", metaKey: true }), parseCombo("space"))).toBe(true);
 	});
 
 	it("a bare accel combo is the platform modifier key itself", () => {

@@ -20,13 +20,17 @@ import { formatCombo } from "./hotkey-combos";
 
 export type HotkeyScope = "dialog" | "finder" | "picker" | "help" | "toast" | "canvas" | "home" | "app";
 
-/** Most modal first; dispatch stops at the first exclusive scope that is up. */
+/**
+ * Most modal first; dispatch stops at the first exclusive scope that is up.
+ * The toast sits above help on purpose: an undo window keeps draining while
+ * the sheet is read, so ⌘Z must reach it even then.
+ */
 export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 	"dialog",
 	"finder",
 	"picker",
-	"help",
 	"toast",
+	"help",
 	"canvas",
 	"home",
 	"app",
@@ -59,8 +63,8 @@ interface HotkeySpec {
 	readonly keys?: readonly string[];
 	/** a pointer move that means a command, told beside the keys */
 	readonly gesture?: string | (() => string);
-	/** overrides the derived key face where the derivation would mislead */
-	readonly shown?: string | (() => string);
+	/** overrides the derived key faces where the derivation would mislead */
+	readonly shown?: readonly string[] | (() => readonly string[]);
 	/** false: held-key repeats are ignored (default: they fire) */
 	readonly repeats?: false;
 	/** false: dispatch-only plumbing, never a row on the sheet */
@@ -89,7 +93,7 @@ export const HOTKEYS = [
 		group: "Frames",
 		label: "Leave the frame you are inside",
 		keys: ["accel+escape"],
-		shown: () => `esc · ${accelLabel()}esc`,
+		shown: () => ["esc", `${accelLabel()}esc`],
 	},
 	{
 		id: "canvas.play",
@@ -107,7 +111,7 @@ export const HOTKEYS = [
 		group: "Frames",
 		label: "Move the selection to the Trash",
 		keys: ["backspace", "delete"],
-		shown: "⌫",
+		shown: ["⌫"],
 	},
 	{
 		id: "canvas.tidy",
@@ -118,6 +122,7 @@ export const HOTKEYS = [
 		repeats: false,
 	},
 	{ id: "canvas.menu", scope: "canvas", group: "Frames", label: "Open the frame menu", gesture: "right-click" },
+	{ id: "canvas.move", scope: "canvas", group: "Frames", label: "Move a frame", gesture: "drag" },
 	{
 		id: "canvas.resize",
 		scope: "canvas",
@@ -128,6 +133,13 @@ export const HOTKEYS = [
 
 	// --- Selection ------------------------------------------------------------
 	{ id: "canvas.select", scope: "canvas", group: "Selection", label: "Select a frame", gesture: "click" },
+	{
+		id: "canvas.marquee",
+		scope: "canvas",
+		group: "Selection",
+		label: "Select frames in a sweep",
+		gesture: "drag empty canvas",
+	},
 	{
 		id: "canvas.select-add",
 		scope: "canvas",
@@ -149,7 +161,7 @@ export const HOTKEYS = [
 		group: "Selection",
 		label: "Nudge the selection 1 px",
 		keys: ["arrowleft", "arrowright", "arrowup", "arrowdown"],
-		shown: "←↑→↓",
+		shown: ["←↑→↓"],
 	},
 	{
 		id: "canvas.nudge-far",
@@ -157,7 +169,7 @@ export const HOTKEYS = [
 		group: "Selection",
 		label: "Nudge 10 px",
 		keys: ["shift+arrowleft", "shift+arrowright", "shift+arrowup", "shift+arrowdown"],
-		shown: "⇧←↑→↓",
+		shown: ["⇧←↑→↓"],
 	},
 	{
 		id: "canvas.step",
@@ -165,7 +177,7 @@ export const HOTKEYS = [
 		group: "Selection",
 		label: "Select the neighbouring frame",
 		keys: ["alt+arrowleft", "alt+arrowright", "alt+arrowup", "alt+arrowdown"],
-		shown: "⌥←↑→↓",
+		shown: ["⌥←↑→↓"],
 	},
 	{
 		id: "canvas.escape",
@@ -182,7 +194,7 @@ export const HOTKEYS = [
 		group: "Camera",
 		label: "Zoom in",
 		keys: ["accel+plus", "accel+equals", "plus", "equals"],
-		shown: () => `${accelLabel()}+`,
+		shown: () => [`${accelLabel()}+`],
 	},
 	{
 		id: "canvas.zoom-out",
@@ -190,7 +202,7 @@ export const HOTKEYS = [
 		group: "Camera",
 		label: "Zoom out",
 		keys: ["accel+minus", "minus"],
-		shown: () => `${accelLabel()}-`,
+		shown: () => [`${accelLabel()}-`],
 	},
 	{ id: "canvas.zoom-reset", scope: "canvas", group: "Camera", label: "Zoom to 100%", keys: ["0"] },
 	{ id: "canvas.fit-all", scope: "canvas", group: "Camera", label: "Zoom to fit every frame", keys: ["shift+1"] },
@@ -235,7 +247,7 @@ export const HOTKEYS = [
 		group: "Find and jump",
 		label: "Find a frame",
 		keys: ["slash", "accel+k"],
-		shown: () => `/ · ${accelLabel()}K`,
+		shown: () => ["/", `${accelLabel()}K`],
 		repeats: false,
 	},
 	{
@@ -297,8 +309,8 @@ export function hotkeyEntry(id: HotkeyId): HotkeyEntry {
 	return entry;
 }
 
-function told(value: string | (() => string) | undefined): string | undefined {
-	return typeof value === "function" ? value() : value;
+function told<T>(value: T | (() => T) | undefined): T | undefined {
+	return typeof value === "function" ? (value as () => T)() : value;
 }
 
 /**
@@ -314,17 +326,12 @@ export function hotkeyKey(id: HotkeyId): string {
 
 /** Everything the sheet draws for an entry: key faces as chips, gesture as prose. */
 export function hotkeyChips(entry: HotkeyEntry): { keys: readonly string[]; gesture: string | undefined } {
-	const shown = told("shown" in entry ? entry.shown : undefined);
-	const keys =
-		shown !== undefined
-			? shown.split(" · ")
-			: "keys" in entry
-				? entry.keys.map(formatCombo)
-				: ([] as readonly string[]);
-	return { keys, gesture: told("gesture" in entry ? entry.gesture : undefined) };
+	const shown = told<readonly string[]>("shown" in entry ? entry.shown : undefined);
+	const keys = shown ?? ("keys" in entry ? entry.keys.map(formatCombo) : ([] as readonly string[]));
+	return { keys, gesture: told<string>("gesture" in entry ? entry.gesture : undefined) };
 }
 
 /** The sheet's rows: listed entries of one group, in register order. */
 export function listedHotkeys(group: HotkeyGroup): readonly HotkeyEntry[] {
-	return HOTKEYS.filter((entry) => entry.group === group && !("listed" in entry));
+	return HOTKEYS.filter((entry) => entry.group === group && !("listed" in entry && entry.listed === false));
 }

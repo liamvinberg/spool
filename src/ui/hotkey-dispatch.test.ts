@@ -73,6 +73,16 @@ describe("hotkey dispatch", () => {
 		expect(nudge).toHaveBeenCalledTimes(1);
 	});
 
+	it("keeps the toast's undo reachable while the sheet is up", () => {
+		const closeHelp = vi.fn();
+		const toastUndo = vi.fn();
+		attach({ scope: "help", handlers: { "help.close": closeHelp } });
+		attach({ scope: "toast", handlers: { "toast.undo": toastUndo } });
+		dispatchHotkeyEvent(key({ key: "z", metaKey: true }));
+		expect(toastUndo).toHaveBeenCalledTimes(1);
+		expect(closeHelp).not.toHaveBeenCalled();
+	});
+
 	it("lets ? fall through quiet scopes to the app shell", () => {
 		const open = vi.fn();
 		attach({ scope: "canvas", handlers: {} });

@@ -1,4 +1,4 @@
-import { accelLabel, applePlatform, currentPlatform } from "../runtime/platform-keys";
+import { accelKeyName, accelLabel, applePlatform, currentPlatform } from "../runtime/platform-keys";
 
 /**
  * Combo strings: the one spelling of a key chord, shared by the registry, the
@@ -16,9 +16,12 @@ import { accelLabel, applePlatform, currentPlatform } from "../runtime/platform-
  *
  * Matching is exact: a modifier the combo does not name must not be held, so
  * `t` can never fire under ⇧T and an unregistered ⌘-chord matches nothing.
- * Three keys bend the rules the way the old handler did: `slash` and
- * `question` ignore shift because some layouts spell them with it, and a
- * shifted digit matches by `event.code`, because ⇧1 is `!` before it is a 1.
+ * Exactness bends only where a layout spells the key itself: character tokens
+ * (`slash`, `question`, `plus`, `minus`, `equals`) ignore shift because on
+ * many layouts shift is how the character is typed at all (`+` is ⇧= on US,
+ * `=` is ⇧0 on Swedish); a shifted digit matches by `event.code`, because ⇧1
+ * is `!` before it is a 1; and `space` ignores modifiers entirely, because
+ * hold-to-pan has always borrowed the Hand no matter what else is held.
  */
 
 export interface ComboEvent {
@@ -91,21 +94,22 @@ const KEY_OF: Record<string, string> = {
 	arrowdown: "ArrowDown",
 };
 
+/** Character tokens a layout may spell with shift: match the character, not the chord. */
+const SHIFT_AGNOSTIC = new Set(["slash", "question", "plus", "minus", "equals"]);
+
 export function matchesCombo(event: ComboEvent, combo: ParsedCombo): boolean {
 	// a bare accel combo is the platform's own modifier key going down; the
 	// other platform's modifier stays an ordinary, unclaimed key here
-	if (combo.key === null) {
-		return event.key === (applePlatform(currentPlatform()) ? "Meta" : "Control");
-	}
+	if (combo.key === null) return event.key === accelKeyName();
+	// hold-to-pan borrows the Hand under any modifier, as it always has
+	if (combo.key === "space") return event.code === "Space";
 	if (combo.alt !== event.altKey) return false;
-	const shiftAgnostic = combo.key === "slash" || combo.key === "question";
-	if (!shiftAgnostic && combo.shift !== event.shiftKey) return false;
+	if (!SHIFT_AGNOSTIC.has(combo.key) && combo.shift !== event.shiftKey) return false;
 	if (combo.accel) {
 		if (!event.metaKey && !event.ctrlKey) return false;
 	} else if (combo.ctrl) {
 		if (!event.ctrlKey || event.metaKey) return false;
 	} else if (event.metaKey || event.ctrlKey) return false;
-	if (combo.key === "space") return event.code === "Space";
 	if (/^[0-9]$/.test(combo.key)) {
 		// shifted digits match by code (⇧1 is "!" on most layouts); bare digits
 		// by key, exactly as the old handler read them
@@ -144,7 +148,7 @@ export function formatCombo(combo: string): string {
 	let face = "";
 	if (parsed.accel) face += accelLabel();
 	if (parsed.ctrl) face += apple ? "⌃" : "ctrl+";
-	if (parsed.shift && parsed.key !== "slash" && parsed.key !== "question") face += "⇧";
+	if (parsed.shift && (parsed.key === null || !SHIFT_AGNOSTIC.has(parsed.key))) face += "⇧";
 	if (parsed.alt) face += "⌥";
 	if (parsed.key === null) return face.replace(/\+$/, "");
 	if (/^[a-z]$/.test(parsed.key)) return face + parsed.key.toUpperCase();
