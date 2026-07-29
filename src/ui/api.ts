@@ -218,17 +218,6 @@ export function beaconTrash(project: string, frames: string[]): void {
 	});
 }
 
-/** The rail's call-site rows (#58): each stamp's repeating call, or null. */
-export async function fetchStampLabels(project: string, stamps: string[]): Promise<Record<string, string | null>> {
-	try {
-		const res = await client.api.p[":project"]["stamp-labels"].$post({ param: { project }, json: { stamps } });
-		if (!res.ok) return {};
-		return ((await res.json()) as { labels: Record<string, string | null> }).labels;
-	} catch {
-		return {};
-	}
-}
-
 export function openInEditor(project: string, path: string, line?: number): void {
 	void client.api.p[":project"].editor.$post({
 		param: { project },

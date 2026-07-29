@@ -366,12 +366,7 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * point — top-level element down to the deepest, each with its selector,
  * geometry, and nearest data-spool-source stamp (#23) — the canvas walks it
  * Figma-style (double-click descends, Esc ascends) without ever handing the
- * frame the pointer; {spool:"tree?"} answers with the whole live DOM below
- * the boot root, each element carrying its own stamp and whatever names it
- * (#55) — the inspector rail's elements tab reads it; {spool:"describe",
- * selectors} answers with one ancestry chain per selector so rail rows become
- * canvas selections;
- * {spool:"sites"} answers with the frame-local boxes of
+ * frame the pointer; {spool:"sites"} answers with the frame-local boxes of
  * navigation-site elements (#34) so arrows grow out of what causes them.
  * Entered frames also hand canvas-zoom gestures back across
  * the iframe boundary; ordinary wheel input stays inside the frame so its own
@@ -811,44 +806,6 @@ const canvasShimJs = `(() => {
 		return chainOf(el);
 	}
 
-	// one line of words, collapsed and capped — a row label is a glance, not a paragraph
-	function capped(raw) {
-		const out = String(raw || "").replace(/\\s+/g, " ").trim();
-		return out.length > 60 ? out.slice(0, 59) + "\\u2026" : out;
-	}
-
-	// direct text children only: a wrapper never wears its descendants' words
-	function textOf(el) {
-		let out = "";
-		for (const node of el.childNodes) if (node.nodeType === 3) out += node.textContent;
-		return capped(out);
-	}
-
-	// what names an element that has no words of its own (#55): the accessible
-	// label its author already wrote — an icon button, an image, an input
-	function labelOf(el) {
-		return capped(
-			el.getAttribute("aria-label") ||
-			el.getAttribute("alt") ||
-			el.getAttribute("title") ||
-			el.getAttribute("placeholder") ||
-			""
-		);
-	}
-
-	// the live DOM below the boot root (#58): every element, its own stamp only —
-	// grouping, boundaries, and which rows are named are the canvas's read of it
-	function rawTree(el) {
-		return {
-			tag: el.tagName.toLowerCase(),
-			selector: cssPath(el),
-			source: el.getAttribute("data-spool-source"),
-			text: textOf(el),
-			label: labelOf(el),
-			children: Array.from(el.children).map(rawTree),
-		};
-	}
-
 	// where each navigation site's element sits (#34): stamp match first, and
 	// for data-go sites the rendered attribute as fallback — component-wrapped
 	// elements stamp where they are authored, which is not the site's file.
@@ -896,30 +853,6 @@ const canvasShimJs = `(() => {
 			let boxes = {};
 			try { boxes = siteBoxes(m.sites); } catch {}
 			parent.postMessage({ spool: "site-boxes", frame, id: m.id, boxes }, "*");
-			return;
-		}
-		if (m.spool === "tree?") {
-			const frame = (window.__SPOOL__ || {}).frame;
-			let roots = [];
-			try {
-				const root = document.getElementById("root");
-				roots = root ? Array.from(root.children).map(rawTree) : [];
-			} catch {}
-			parent.postMessage({ spool: "tree", frame, id: m.id, roots }, "*");
-			return;
-		}
-		if (m.spool === "describe") {
-			const frame = (window.__SPOOL__ || {}).frame;
-			let chains = [];
-			try {
-				chains = (Array.isArray(m.selectors) ? m.selectors : []).map((sel) => {
-					let el = null;
-					try { el = typeof sel === "string" ? document.querySelector(sel) : null; } catch {}
-					if (!el || el.id === "root") return [];
-					return chainOf(el);
-				});
-			} catch {}
-			parent.postMessage({ spool: "described", frame, id: m.id, chains }, "*");
 			return;
 		}
 		if (m.spool !== "capture") return;

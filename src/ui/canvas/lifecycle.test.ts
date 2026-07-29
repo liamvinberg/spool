@@ -46,7 +46,7 @@ function sweeper() {
 			frames,
 			entered: null,
 			selectionTargets: new Set(),
-			inspected: null,
+			held: null,
 			states,
 			ready: new Map(frames.map((f) => [f.name, -CAPTURE_AFTER_READY_MS])),
 			capturing: new Set(),
@@ -255,14 +255,14 @@ describe("the cap on frames borrowed at once", () => {
 		expect(next).not.toContain("f0");
 	});
 
-	it("adds entered, selected and inspected intent to the capped errands", () => {
+	it("adds entered, selected and held intent to the capped errands", () => {
 		const frames = Array.from({ length: 40 }, (_, i) => frame(`f${i}`, i * 200, 0));
 		const s = sweeper();
 		const busy = {
 			hasCover: () => false,
 			entered: "f0",
 			selectionTargets: new Set(["f1"]),
-			inspected: "f2",
+			held: "f2",
 		};
 
 		for (let i = 0; i < 8; i++) {
@@ -313,26 +313,26 @@ describe("intent", () => {
 		});
 	});
 
-	it("unites picked-frame intent with the frame an open rail reads", () => {
-		const frames = [frame("a", 350, 450), frame("b", 550, 450), frame("rail", 750, 450)];
+	it("unites picked-frame intent with the frame an export holds", () => {
+		const frames = [frame("a", 350, 450), frame("b", 550, 450), frame("export", 750, 450)];
 		const s = sweeper();
 
 		expect(
 			s.sweep(frames, {
 				selectionTargets: new Set(["a", "b"]),
-				inspected: "rail",
+				held: "export",
 			}).states,
-		).toEqual({ a: "held", b: "held", rail: "held" });
+		).toEqual({ a: "held", b: "held", export: "held" });
 	});
 
-	it("leaves a readable HTML selection live while Select and the inspector read it", () => {
+	it("leaves a readable HTML selection live while Select owns it and an export holds it", () => {
 		const frames = [frame("a", 0, 0), frame("terminal", 200, 0, "term")];
 		const s = sweeper();
 
 		expect(
 			s.sweep(frames, {
 				selectionTargets: new Set(["a"]),
-				inspected: "a",
+				held: "a",
 				camera: { x: 0, y: 0, k: 4 },
 				viewport: { width: 1000, height: 1000 },
 			}).states,
@@ -354,11 +354,11 @@ describe("intent", () => {
 		expect(s.sweep(frames, { selectionTargets: new Set(["b"]) }).states).toEqual({ a: "picture", b: "held" });
 	});
 
-	it("holds the frame an open rail reads, wherever the camera is", () => {
+	it("holds a frame being read rather than looked at, wherever the camera is", () => {
 		const frames = [frame("a", 450, 450), frame("far", -900_000, 0)];
 		const s = sweeper();
 
-		expect(s.sweep(frames, { inspected: "far" }).states.far).toBe("held");
+		expect(s.sweep(frames, { held: "far" }).states.far).toBe("held");
 	});
 
 	it("keeps an unreadable entered selection held, then returns it live", () => {
