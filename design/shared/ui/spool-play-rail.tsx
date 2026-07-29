@@ -419,6 +419,8 @@ export function PlayRail({
 	queued = [],
 	onQueue,
 	onUnqueue,
+	draft,
+	onDraft,
 	onSend,
 	onReplay,
 	onAnswer,
@@ -502,6 +504,16 @@ export function PlayRail({
 	onQueue?: ((text: string) => void) | undefined;
 	/** taking one back before it fires; absent draws no ✕ at all */
 	onUnqueue?: ((id: string) => void) | undefined;
+	/**
+	 * What the composer holds, when somebody outside it needs to write there (#176).
+	 *
+	 * Absent, the field keeps its own text and nothing else can reach it, which is
+	 * every frame that predates take-back. Present with `onDraft`, the field is
+	 * controlled — because a queued message that is taken back has to *land* somewhere,
+	 * and the whole of #170's invariant is that where it lands is the box.
+	 */
+	draft?: string | undefined;
+	onDraft?: ((text: string) => void) | undefined;
 	onSend: (text: string) => void;
 	onReplay: () => void;
 	/** lets a turn held at a question carry on, once one has been given (#145) */
@@ -585,6 +597,8 @@ export function PlayRail({
 				strip={stripOf(selection, COMPOSER_W, entered)}
 				queued={queue === "box" ? pending : []}
 				onUnqueue={onUnqueue}
+				draft={draft}
+				onDraft={onDraft}
 				chips={ask === "composer" && waiting ? asked.ask : null}
 				onPick={answer}
 				answering={waiting}
@@ -1892,6 +1906,8 @@ function Composer({
 	strip,
 	queued,
 	onUnqueue,
+	draft,
+	onDraft,
 	chips,
 	onPick,
 	answering,
@@ -1912,6 +1928,9 @@ function Composer({
 	/** the queue standing in the composer, which is empty in every placement but `box` (#170) */
 	queued: readonly Queued[];
 	onUnqueue: ((id: string) => void) | undefined;
+	/** present together, the field is controlled so take-back can write into it (#176) */
+	draft: string | undefined;
+	onDraft: ((text: string) => void) | undefined;
 	/** a question's options, when the proposal puts them here rather than in the log (#145) */
 	chips: Question | null;
 	onPick: (label: string) => void;
@@ -1946,13 +1965,24 @@ function Composer({
 	onReplay: () => void;
 	onReach: (event: { target: EventTarget | null }) => void;
 }) {
-	const [value, setValue] = useState("");
+	const [held, setHeld] = useState("");
+	// controlled only when somebody outside needs to write here, which until #176's
+	// take-back nobody did
+	const outside = draft !== undefined && onDraft !== undefined;
+	const value = outside ? draft : held;
+	const write = outside ? onDraft : setHeld;
 	const busy = phase === "playing" && !answering;
 
 	const fit = (element: HTMLTextAreaElement) => {
 		element.style.height = "auto";
 		element.style.height = `${Math.max(MIN_H, Math.min(element.scrollHeight, MAX_H))}px`;
 	};
+	// words handed back arrive from outside the field, so the field has to re-fit to
+	// them the way it does to typing (#176)
+	useEffect(() => {
+		const element = field.current;
+		if (element !== null) fit(element);
+	}, [value]);
 
 	return (
 		<div className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5" onMouseDown={onReach}>
@@ -1969,7 +1999,7 @@ function Composer({
 					placeholder={answering ? "or say it in your own words" : "say what to change"}
 					aria-label={answering ? "or say it in your own words" : "say what to change"}
 					onChange={(event) => {
-						setValue(event.target.value);
+						write(event.target.value);
 						fit(event.target);
 					}}
 					onKeyDown={(event) => {
@@ -1990,7 +2020,7 @@ function Composer({
 						// instead, and the field clears either way, because either way the
 						// message has been taken
 						if (text === "" || (busy && onQueue === undefined)) return;
-						setValue("");
+						write("");
 						event.currentTarget.style.height = `${MIN_H}px`;
 						if (busy) onQueue?.(text);
 						else if (answering) onPick(text);
