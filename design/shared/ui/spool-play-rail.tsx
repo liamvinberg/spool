@@ -375,6 +375,7 @@ export function PlayRail({
 	run,
 	stop = "none",
 	onStop,
+	onDeny,
 	onSend,
 	onReplay,
 	onAnswer,
@@ -441,6 +442,15 @@ export function PlayRail({
 	/** where the way out of a running turn is drawn; `none` leaves the turn with no exit (#165) */
 	stop?: StopWhere | undefined;
 	onStop?: (() => void) | undefined;
+	/**
+	 * #162's third exit off a parked question, and the *only* other way out of a turn
+	 * Spool has. It is not #165's stop and does not share its wire: a stop is an
+	 * `interrupt` control request against a turn that is streaming, this is a bare
+	 * `{behavior:"deny"}` back down the question's own `can_use_tool` channel. They
+	 * can never both be offered, which is the whole answer to whether they could be
+	 * confused — `cutting` below is `phase === "playing" && !waiting`.
+	 */
+	onDeny?: (() => void) | undefined;
 	onSend: (text: string) => void;
 	onReplay: () => void;
 	/** lets a turn held at a question carry on, once one has been given (#145) */
@@ -470,6 +480,9 @@ export function PlayRail({
 	// to interrupt, and a parked one is #162's dismiss rather than an `interrupt`
 	const cutting = stop !== "none" && phase === "playing" && !waiting && onStop !== undefined;
 	const halt = onStop ?? (() => {});
+	// a deny destroys the question rather than answering it, so nothing is recorded as
+	// picked: the row resolves on the turn ending, the same way #165's rows do
+	const deny = () => onDeny?.();
 	const kit: JumpKit | null =
 		jump === undefined
 			? null
@@ -503,6 +516,7 @@ export function PlayRail({
 				say={say}
 				picked={picked}
 				onPick={answer}
+				onDeny={ask === "log" && waiting && onDeny !== undefined ? deny : undefined}
 				jump={kit}
 				onReach={reach}
 				tail={cutting && stop === "edge" ? <StopButton where="edge" onStop={halt} /> : undefined}
@@ -580,6 +594,7 @@ function Transcript({
 	say,
 	picked,
 	onPick,
+	onDeny,
 	jump,
 	onReach,
 	tail,
@@ -593,6 +608,7 @@ function Transcript({
 	say: SayMode;
 	picked: string | null;
 	onPick: (label: string) => void;
+	onDeny: (() => void) | undefined;
 	jump: JumpKit | null;
 	onReach: (event: { target: EventTarget | null }) => void;
 	/** whatever hangs off the last entry, which so far is only #165's stop */
@@ -661,6 +677,7 @@ function Transcript({
 								say={say}
 								picked={picked}
 								onPick={onPick}
+								onDeny={onDeny}
 								jump={jump}
 							/>
 						</Arrive>
@@ -714,6 +731,7 @@ function Entry({
 	say,
 	picked,
 	onPick,
+	onDeny,
 	jump,
 }: {
 	entry: PlayEntry;
@@ -724,9 +742,10 @@ function Entry({
 	say: SayMode;
 	picked: string | null;
 	onPick: (label: string) => void;
+	onDeny: (() => void) | undefined;
 	jump: JumpKit | null;
 }) {
-	if (entry.kind === "ask") return <Ask entry={entry} mode={ask} picked={picked} onPick={onPick} />;
+	if (entry.kind === "ask") return <Ask entry={entry} mode={ask} picked={picked} onPick={onPick} onDeny={onDeny} />;
 	if (entry.kind === "user") {
 		return (
 			<div className="relative flex flex-col gap-1.5 pl-3.5">
@@ -1394,11 +1413,14 @@ function Ask({
 	mode,
 	picked,
 	onPick,
+	onDeny,
 }: {
 	entry: Extract<PlayEntry, { kind: "ask" }>;
 	mode: AskMode;
 	picked: string | null;
 	onPick: (label: string) => void;
+	/** absent leaves the question with #145's two exits and no third (#162) */
+	onDeny?: (() => void) | undefined;
 }) {
 	const streaming = entry.shown.length < entry.ask.question.length;
 	return (
@@ -1416,6 +1438,8 @@ function Ask({
 			</p>
 			{picked !== null ? (
 				<Answered label={picked} />
+			) : entry.state === "stopped" ? (
+				<Dismissed />
 			) : entry.state === "failed" ? (
 				<Dropped />
 			) : mode === "log" && entry.live ? (
@@ -1433,6 +1457,21 @@ function Ask({
 							)}
 						</button>
 					))}
+					{/* not a fourth option, so it must not look like one. An option is an answer
+					    and this is the refusal of the whole question — full-width bordered rows
+					    above, one quiet mono word below them, in the register the composer uses
+					    for its own hints. It carries no key, because #165 gave esc to a turn
+					    that is *running* and a parked one is not that; whether it should have
+					    one is #162's to reopen, not this frame's to invent. */}
+					{onDeny === undefined ? null : (
+						<button
+							type="button"
+							onClick={onDeny}
+							className="w-fit pt-0.5 font-mono text-2xs text-muted/45 leading-3 transition-colors duration-150 hover:text-muted"
+						>
+							dismiss
+						</button>
+					)}
 				</div>
 			) : null}
 		</div>
@@ -1470,6 +1509,25 @@ function Dropped() {
 		<div className="flex items-center gap-2.5">
 			<StateMark state="failed" />
 			<span className="font-mono text-2xs text-muted/55 leading-3">nobody answered</span>
+		</div>
+	);
+}
+
+/**
+ * #162's third exit, drawn.
+ *
+ * `nobody answered` and this are opposites and must not look alike: the first is the
+ * empty answer, where the agent carries on and picks for you, and the second is a
+ * bare `{behavior:"deny"}`, where it stops and waits. So this takes the `stopped`
+ * mark rather than `failed`'s cross — the same mark #165 gives a tool an interrupt
+ * caught, which is right, because the binary stamps both the same way: a deny and an
+ * interrupt both land `toolDenialKind: "user-rejected"` and neither tool ever ran.
+ */
+function Dismissed() {
+	return (
+		<div className="flex items-center gap-2.5">
+			<StateMark state="stopped" />
+			<span className="font-mono text-2xs text-muted/55 leading-3">dismissed</span>
 		</div>
 	);
 }
