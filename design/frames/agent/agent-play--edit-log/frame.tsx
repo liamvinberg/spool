@@ -12,7 +12,7 @@ import { SpoolShell } from "../../../shared/ui/spool-shell";
  * one frame, in three runs of six, four and three, each run ending where the
  * agent goes and looks at what it changed. Nineteen rows for one problem.
  *
- * The capture is `shared/fixtures/claude-edits.json`, spliced from the Streak
+ * The capture is `fixtures/captures/claude-edits.json`, spliced from the Streak
  * parent for this question: 19:01:03 to 19:03:07, the shortest window that holds
  * more than one run and every boundary between them. The three older fixtures
  * all cut somewhere inside a run, which is why no frame here has ever shown one
