@@ -14,11 +14,11 @@ import {
 	useTurnScript,
 } from "../../../shared/lib/claude-turn";
 import { enteredFrame } from "../../../shared/lib/pointed-fixtures";
-import { useTicker, useTurn } from "../../../shared/lib/turn-play";
+import { type ShotRef, useTicker, useTurn } from "../../../shared/lib/turn-play";
 import { CanvasChrome, type PageRow } from "../../../shared/ui/spool-canvas-chrome";
 import { LimitLine } from "../../../shared/ui/spool-limit";
 import { ModelMenu } from "../../../shared/ui/spool-model-control";
-import { type BaseFrame, type Outline, PlayField } from "../../../shared/ui/spool-play-field";
+import { type BaseFrame, FrameThumb, type Outline, PlayField } from "../../../shared/ui/spool-play-field";
 import { COMPOSER_W, PlayRail } from "../../../shared/ui/spool-play-rail";
 import { SpoolShell } from "../../../shared/ui/spool-shell";
 import { cn } from "../../../shared/lib/utils";
@@ -100,6 +100,17 @@ const PAGES: readonly PageRow[] = [
 	{ name: "site", frames: [] },
 	{ name: "directing", frames: [] },
 ];
+
+/**
+ * The picture behind a `look` row's chevron (#117), at both sizes it is asked for.
+ *
+ * `shotView` takes a width so one render prop answers the 120px thumbnail and the
+ * lightbox behind it. What goes big is the frame re-rendered, not a bitmap scaled
+ * up, because a spool screenshot is of a frame spool can still draw.
+ */
+const SHOT_W = 120;
+const picture = (shot: ShotRef, width = SHOT_W) =>
+	shot.frame === null ? null : <FrameThumb name={shot.frame} width={width} />;
 
 /** the project's own frames, which is what a `jump` row is allowed to reach (#143) */
 const HAVE = ["menu", "cart", "receipt"] as const;
@@ -306,6 +317,7 @@ function Case({ spec }: { spec: Case }) {
 						/* every one of these is a decision rather than a mode, so none of them is conditional */
 						say="read"
 						shot="open"
+						shotView={picture}
 						mcp="ask"
 						ask="log"
 						jump="name"

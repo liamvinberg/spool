@@ -41,7 +41,7 @@ const TAKES = ["cart--empty", "cart--empty-b", "cart--empty-c"] as const;
 /** small enough that a row still reads as a row, large enough to recognise the frame */
 const SHOT_W = 84;
 
-const picture = (shot: ShotRef) => (shot.frame === null ? null : <FrameThumb name={shot.frame} width={SHOT_W} />);
+const picture = (shot: ShotRef, width = SHOT_W) => (shot.frame === null ? null : <FrameThumb name={shot.frame} width={width} />);
 
 export default function AgentShotInlineFrame() {
 	const capture = useCapture("claude-fanout");

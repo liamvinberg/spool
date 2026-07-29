@@ -5,6 +5,7 @@ import { liveThread } from "../lib/agent-threads";
 import { cn } from "../lib/utils";
 import type { Connector, Plan, PlayEntry, Queued, Question, RowState, ShotRef, TurnPhase } from "../lib/turn-play";
 import { ChevronIcon, CloseIcon } from "./spool-icons";
+import { Lightbox } from "./spool-lightbox";
 import { type Arrival, Caret, Said, closedText } from "./spool-say";
 import { ThreadStrip } from "./spool-thread-strip";
 
@@ -449,7 +450,7 @@ export function PlayRail({
 	connectors?: readonly Connector[] | undefined;
 	shot?: ShotMode;
 	/** the picture itself, drawn and sized by whoever knows what the frame looks like */
-	shotView?: ((shot: ShotRef) => ReactNode) | undefined;
+	shotView?: ((shot: ShotRef, width?: number) => ReactNode) | undefined;
 	/** how a row names a tool that is not spool's; rows that are spool's are untouched */
 	mcp?: McpMode;
 	/** where a question the agent stopped to ask is drawn, and answered (#145) */
@@ -680,7 +681,7 @@ function Transcript({
 	entries: readonly PlayEntry[];
 	run: number;
 	shot: ShotMode;
-	shotView: ((shot: ShotRef) => ReactNode) | undefined;
+	shotView: ((shot: ShotRef, width?: number) => ReactNode) | undefined;
 	mcp: McpMode;
 	ask: AskMode;
 	say: SayMode;
@@ -826,7 +827,7 @@ function Entry({
 }: {
 	entry: PlayEntry;
 	shot: ShotMode;
-	shotView: ((shot: ShotRef) => ReactNode) | undefined;
+	shotView: ((shot: ShotRef, width?: number) => ReactNode) | undefined;
 	mcp: McpMode;
 	ask: AskMode;
 	say: SayMode;
@@ -1255,7 +1256,7 @@ function Line({
 }: {
 	entry: Extract<PlayEntry, { kind: "line" }>;
 	shot: ShotMode;
-	shotView: ((shot: ShotRef) => ReactNode) | undefined;
+	shotView: ((shot: ShotRef, width?: number) => ReactNode) | undefined;
 	mcp: McpMode;
 	jump: JumpKit | null;
 }) {
@@ -1539,7 +1540,18 @@ function Line({
  * view and the well holds the frame itself, and the media type goes — `image/png`
  * is a fact about a file, and this rail speaks frames.
  */
-function Picture({ shot, view }: { shot: ShotRef; view: ((shot: ShotRef) => ReactNode) | undefined }) {
+/**
+ * How wide the picture goes when you click into it (`spool-lightbox.tsx`).
+ *
+ * A phone frame is 390 CSS px, so this is it at roughly life size with room for
+ * the caption under it. The thumbnail's own width stays the frame's to choose,
+ * which is why `shotView` takes one rather than closing over it: one render prop
+ * has to answer at both sizes now.
+ */
+const BIG_W = 390;
+
+function Picture({ shot, view }: { shot: ShotRef; view: ((shot: ShotRef, width?: number) => ReactNode) | undefined }) {
+	const [big, setBig] = useState(false);
 	if (view === undefined) {
 		return (
 			<span className="flex items-start gap-2.5 pt-0.5">
@@ -1553,8 +1565,18 @@ function Picture({ shot, view }: { shot: ShotRef; view: ((shot: ShotRef) => Reac
 	}
 	return (
 		<div className="flex flex-col gap-1.5 pt-0.5">
-			<Frame>{view(shot)}</Frame>
+			{/* #117 settled that the picture is fixed at one moment and so stays behind the
+			    disclosure rather than earning a row. It did not settle that 120px is all you
+			    ever get of it: the thing in there is a screen, and at that width you can read
+			    that it changed but not what changed. So the thumbnail is the receipt and this
+			    is the look, which costs the row nothing because it is spent on nothing else. */}
+			<button type="button" onClick={() => setBig(true)} className="w-fit cursor-zoom-in">
+				<Frame>{view(shot)}</Frame>
+			</button>
 			<span className="truncate font-mono text-2xs text-muted/45 leading-4">{shot.frame ?? shot.path}</span>
+			<Lightbox open={big} onClose={() => setBig(false)} caption={shot.frame ?? shot.path}>
+				{view(shot, BIG_W)}
+			</Lightbox>
 		</div>
 	);
 }

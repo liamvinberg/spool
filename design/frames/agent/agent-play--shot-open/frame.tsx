@@ -41,7 +41,7 @@ const TAKES = ["cart--empty", "cart--empty-b", "cart--empty-c"] as const;
 /** the width the rail has left once the transcript's padding and the row's indent are off it */
 const SHOT_W = 120;
 
-const picture = (shot: ShotRef) => (shot.frame === null ? null : <FrameThumb name={shot.frame} width={SHOT_W} />);
+const picture = (shot: ShotRef, width = SHOT_W) => (shot.frame === null ? null : <FrameThumb name={shot.frame} width={width} />);
 
 export default function AgentShotOpenFrame() {
 	const capture = useCapture("claude-fanout");
