@@ -897,7 +897,12 @@ function emitRows(drafts: readonly Draft[], shown: Timeline): ScriptRow[] {
 					text: draft.text,
 					chunks: draft.chunks.map((chunk, part) => ({
 						cue: cue(`${key}:p${part}`, chunk.at),
-						at: chunk.at,
+						// shown time, not wall time. #149's pace compares this against the ticker's
+						// `elapsed`, which counts from 0 at send; a raw capture timestamp is ~1.8e12,
+						// so every delta tested as still in the future, `drawnBy` broke on the first
+						// one and returned 0, and every agent message drew as a permanently empty
+						// reserve. Every other field on this row already goes through `shownAt`.
+						at: shownAt(chunk.at),
 						upto: chunk.upto,
 					})),
 				});
