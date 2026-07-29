@@ -486,7 +486,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 			const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 			const screen = document.querySelector<HTMLElement>(".spool-screen");
 			if (host === null || screen === null) return;
-			const record = () => trace.push(`${host.style.visibility}:${screen.style.width}×${screen.style.height}`);
+			const record = () => trace.push(`${host.style.opacity}:${screen.style.width}×${screen.style.height}`);
 			if (!seen.has(host)) {
 				seen.add(host);
 				record();
@@ -499,7 +499,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 	const playerFrame = player.frameLocator("#spool-player");
 	await playerFrame.locator("#probe").waitFor();
 	await player.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible",
+		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1",
 	);
 	const live = player.frames().find((frame) => frame !== player.mainFrame()) as Frame;
 	const playerProbe = await read(live);
@@ -509,8 +509,8 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 	const initialTrace = await player.evaluate(
 		() => (window as unknown as { __spoolInitialTrace: string[] }).__spoolInitialTrace,
 	);
-	expect(initialTrace[0]).toBe("hidden:390px×844px");
-	expect(initialTrace.at(-1)).toBe("visible:390px×844px");
+	expect(initialTrace[0]).toBe("0:390px×844px");
+	expect(initialTrace.at(-1)).toBe("1:390px×844px");
 
 	await live.evaluate(() => {
 		const original = document.startViewTransition?.bind(document);
@@ -537,14 +537,14 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 				requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
 			}),
 	);
-	expect(await player.locator("#spool-player").evaluate((host) => getComputedStyle(host).visibility)).toBe("visible");
+	expect(await player.locator("#spool-player").evaluate((host) => getComputedStyle(host).opacity)).toBe("1");
 
 	await player.evaluate(() => {
 		const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 		const screen = document.querySelector<HTMLElement>(".spool-screen");
 		if (host === null || screen === null) throw new Error("player shell did not mount its host");
 		const trace: string[] = [];
-		const record = () => trace.push(`${host.style.visibility}:${screen.style.width}×${screen.style.height}`);
+		const record = () => trace.push(`${host.style.opacity}:${screen.style.width}×${screen.style.height}`);
 		record();
 		new MutationObserver(record).observe(host, { attributes: true, attributeFilter: ["style"] });
 		new MutationObserver(record).observe(screen, { attributes: true, attributeFilter: ["style"] });
@@ -554,7 +554,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 	await playerFrame.getByText("cross").waitFor();
 	await player.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "cross",
 		undefined,
 		{ timeout: 5_000 },
@@ -567,9 +567,9 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 		await live.evaluate(() => (window as unknown as { __spoolTransitions: () => number }).__spoolTransitions()),
 	).toBe(1);
 	const cutTrace = await player.evaluate(() => (window as unknown as { __spoolCutTrace: string[] }).__spoolCutTrace);
-	const hidden = cutTrace.findIndex((entry) => entry.startsWith("hidden:"));
+	const hidden = cutTrace.findIndex((entry) => entry.startsWith("0:"));
 	const resized = cutTrace.findIndex((entry) => entry.includes("720px×480px"));
-	const revealed = cutTrace.findIndex((entry, index) => index > resized && entry.startsWith("visible:"));
+	const revealed = cutTrace.findIndex((entry, index) => index > resized && entry.startsWith("1:"));
 	expect(hidden).toBeGreaterThanOrEqual(0);
 	expect(resized).toBeGreaterThan(hidden);
 	expect(revealed).toBeGreaterThan(resized);
@@ -686,7 +686,7 @@ it("plays a frame whose name is inherited by ordinary objects", { timeout: 60_00
 	await inner.locator("#constructor-frame").waitFor({ state: "attached" });
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "constructor",
 		undefined,
 		{ timeout: 5_000 },
@@ -718,7 +718,7 @@ it("plays a frame named __proto__", { timeout: 60_000 }, async () => {
 	await inner.locator("#proto-frame").waitFor({ state: "attached" });
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "__proto__",
 		undefined,
 		{ timeout: 5_000 },
@@ -899,6 +899,101 @@ export default function Home() {
 	expect(await player.locator(".spool-player-error").innerText()).toContain("the frame's own fault");
 });
 
+it("plays on when an injected wallet shim fails without a scheme in its stack", { timeout: 60_000 }, async () => {
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const project = await serveProject();
+	// The same MetaMask death as above, as it looks when the shim is injected
+	// inline: no chrome-extension:// anywhere, only bare inpage.js frames (#185).
+	writeFrame(
+		project.root,
+		"home",
+		`const failure = new Error("MetaMask extension not found");
+failure.stack = 'Error: MetaMask extension not found\\n    at Object.connect (inpage.js:7:84179)\\n    at inpage.js:4:41709';
+dispatchEvent(new PromiseRejectionEvent("unhandledrejection", { promise: Promise.resolve(), reason: failure }));
+
+export default function Home() {
+	return <main id="home">home</main>;
+}
+`,
+	);
+
+	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	onTestFinished(() => context.close());
+	const player = await context.newPage();
+	await player.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=home`);
+
+	await player.frameLocator("#spool-player").locator("#home").waitFor();
+	expect(await player.locator(".spool-player-error").count()).toBe(0);
+});
+
+it("names a mute player instead of hiding it and offers the bare player", { timeout: 60_000 }, async () => {
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const project = await serveProject();
+	writeFrame(project.root, "home", 'export default function Home() { return <main id="home">home</main>; }\n');
+
+	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	onTestFinished(() => context.close());
+	const player = await context.newPage();
+	// An extension that kills the runtime before it can speak looks, from the
+	// shell's seat, like player-connect simply never arriving (#185).
+	await player.addInitScript(() => {
+		if (window.top !== window) return;
+		window.addEventListener(
+			"message",
+			(event) => {
+				const data = event.data as { spool?: unknown } | null;
+				if (typeof data === "object" && data !== null && data.spool === "player-connect") {
+					event.stopImmediatePropagation();
+				}
+			},
+			true,
+		);
+	});
+	await player.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=home`);
+
+	// White is indistinguishable from loading until the deadline names it.
+	await player.locator(".spool-player-error").waitFor({ timeout: 20_000 });
+	expect(await player.locator(".spool-player-error pre").innerText()).toContain("never connected");
+	const hatch = player.locator(".spool-player-escape");
+	const href = await hatch.getAttribute("href");
+	expect(href).not.toBeNull();
+	expect(href).toContain("/play/");
+	expect(href).not.toContain("shell=1");
+	expect(href).not.toContain("handoff=");
+
+	// The escape hatch is a real door: the bare player mounts the prototype.
+	await hatch.click();
+	await player.locator("#home").waitFor({ timeout: 20_000 });
+});
+
+it("names a player that connects but is starved of animation frames", { timeout: 60_000 }, async () => {
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const project = await serveProject();
+	writeFrame(project.root, "home", 'export default function Home() { return <main id="home">home</main>; }\n');
+
+	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	onTestFinished(() => context.close());
+	const player = await context.newPage();
+	// What headed Chromium does to a render-throttled iframe (#185): the runtime
+	// connects, then its animation-frame gates never run, so player-ready and
+	// the geometry acks never leave. The shell must not hide that forever.
+	await player.addInitScript(() => {
+		if (window.top === window) return;
+		window.requestAnimationFrame = () => 0;
+	});
+	await player.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=home`);
+
+	await player.locator(".spool-player-error").waitFor({ timeout: 20_000 });
+	expect(await player.locator(".spool-player-error pre").innerText()).toContain("first stable layout");
+
+	// The same door out: the bare player is top-level, so nothing throttles it.
+	await player.locator(".spool-player-escape").click();
+	await player.locator("#home").waitFor({ timeout: 20_000 });
+});
+
 it("ignores an authored exact resize while real runtime navigation still works", { timeout: 60_000 }, async () => {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());
@@ -957,7 +1052,7 @@ export default function Start() {
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "start",
 		undefined,
 		{ timeout: 5_000 },
@@ -978,7 +1073,7 @@ export default function Start() {
 	await inner.locator("#to-target").click();
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
@@ -1034,7 +1129,7 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 		const record = () => {
 			const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 			const screen = document.querySelector<HTMLElement>(".spool-screen");
-			if (host?.style.visibility === "visible" && screen !== null) {
+			if (host?.style.opacity === "1" && screen !== null) {
 				visibleSizes.push(`${screen.style.width}×${screen.style.height}`);
 			}
 		};
@@ -1127,7 +1222,7 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 	await page.waitForFunction(() => {
 		const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 		const screen = document.querySelector<HTMLElement>(".spool-screen");
-		return host?.style.visibility === "hidden" && screen?.style.width === "500px" && screen.style.height === "500px";
+		return host?.style.opacity === "0" && screen?.style.width === "500px" && screen.style.height === "500px";
 	});
 
 	const update = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/geometry`, {
@@ -1152,7 +1247,7 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 				requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 			}),
 	);
-	expect(await page.locator("#spool-player").evaluate((host) => host.style.visibility)).toBe("hidden");
+	expect(await page.locator("#spool-player").evaluate((host) => host.style.opacity)).toBe("0");
 	expect(
 		await page.locator(".spool-screen").evaluate((screen) => `${screen.style.width}×${screen.style.height}`),
 	).toBe("500px×500px");
@@ -1162,9 +1257,7 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 		() => {
 			const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 			const screen = document.querySelector<HTMLElement>(".spool-screen");
-			return (
-				host?.style.visibility === "visible" && screen?.style.width === "600px" && screen.style.height === "600px"
-			);
+			return host?.style.opacity === "1" && screen?.style.width === "600px" && screen.style.height === "600px";
 		},
 		undefined,
 		{ timeout: 5_000 },
@@ -1212,7 +1305,7 @@ it("reveals the last valid geometry while live geometry transport retries", { ti
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#start").waitFor({ state: "attached" });
 	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible",
+		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1241,7 +1334,7 @@ it("reveals the preflight geometry while the first live geometry request hangs",
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#start").waitFor({ state: "attached" });
 	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible",
+		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1289,7 +1382,7 @@ it("replays geometry emitted before the shell runtime connects without SSE", { t
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#start").waitFor({ state: "attached" });
 	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible",
+		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1335,7 +1428,7 @@ export default function Start() {
 	await inner.locator("#start").waitFor({ state: "attached" });
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector<HTMLElement>(".spool-screen")?.style.width === "640px",
 		undefined,
 		{ timeout: 5_000 },
@@ -1380,7 +1473,7 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 	await inner.locator("#to-target").waitFor();
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "from",
 	);
 	await page.evaluate(() => {
@@ -1392,9 +1485,7 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 	});
 
 	await inner.locator("#to-target").click();
-	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "hidden",
-	);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "0");
 
 	const geometryRefresh = page.waitForResponse(
 		(response) => new URL(response.url()).pathname === `/api/p/${project.name}/frames`,
@@ -1410,9 +1501,7 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 		() => {
 			const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 			const screen = document.querySelector<HTMLElement>(".spool-screen");
-			return (
-				host?.style.visibility === "hidden" && screen?.style.width === "600px" && screen.style.height === "600px"
-			);
+			return host?.style.opacity === "0" && screen?.style.width === "600px" && screen.style.height === "600px";
 		},
 		undefined,
 		{ timeout: 5_000 },
@@ -1427,7 +1516,7 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 	});
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
@@ -1490,7 +1579,7 @@ export default function Target() {
 	await inner.locator("#to-target").click();
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "after",
 		undefined,
 		{ timeout: 5_000 },
@@ -1533,7 +1622,7 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "start",
 	);
 	const framesPath = `/api/p/${project.name}/frames`;
@@ -1572,9 +1661,7 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 		).__spoolMountGate.hold();
 	});
 	await inner.locator("#to-target").click();
-	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "hidden",
-	);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "0");
 
 	await updateGeometry(500, 500);
 	await firstCaptured;
@@ -1623,7 +1710,7 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 	});
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
@@ -1660,9 +1747,7 @@ it("classifies old-same new-cross walks from the shell's latest geometry", { tim
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#to-target").waitFor();
-	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible",
-	);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1");
 	await page.evaluate(() => {
 		(
 			window as unknown as {
@@ -1694,7 +1779,7 @@ it("classifies old-same new-cross walks from the shell's latest geometry", { tim
 	await inner.locator("#target").waitFor();
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
@@ -1741,9 +1826,7 @@ it("classifies old-cross new-same walks from the shell's latest geometry", { tim
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#to-target").waitFor();
-	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible",
-	);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1");
 	await page.evaluate(() => {
 		(
 			window as unknown as {
@@ -1775,7 +1858,7 @@ it("classifies old-cross new-same walks from the shell's latest geometry", { tim
 	await inner.locator("#target").waitFor();
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
@@ -1823,9 +1906,7 @@ export default function Start() {
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#to-target").waitFor();
-	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible",
-	);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1");
 	await page.evaluate(() => {
 		(
 			window as unknown as {
@@ -1897,7 +1978,7 @@ it("reclassifies a queued transition when newer geometry arrives before runtime 
 	await inner.locator("#target").waitFor({ timeout: 5_000 });
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "target",
 	);
 	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
@@ -1957,7 +2038,7 @@ it("mounts a target at newer geometry while its stale transition is held", { tim
 	await inner.locator("#target").waitFor({ timeout: 5_000 });
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "target",
 	);
 	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
@@ -2036,7 +2117,7 @@ it("reclassifies newer geometry while a transition commit is held", { timeout: 6
 	await inner.locator("#target").waitFor({ timeout: 5_000 });
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "target",
 	);
 	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
@@ -2079,9 +2160,7 @@ it("settles newer geometry before revealing a transition whose apply is held", {
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#to-target").waitFor();
-	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible",
-	);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1");
 	await page.evaluate(() => {
 		(
 			window as unknown as {
@@ -2114,9 +2193,7 @@ it("settles newer geometry before revealing a transition whose apply is held", {
 	});
 	expect(update.status).toBe(204);
 	await refresh;
-	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "hidden",
-	);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "0");
 
 	await page.evaluate(() => {
 		(
@@ -2128,7 +2205,7 @@ it("settles newer geometry before revealing a transition whose apply is held", {
 	await inner.locator("#target").waitFor({ timeout: 5_000 });
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "target",
 	);
 	expect(await inner.locator("#viewport").innerText()).toBe("720×480");
@@ -3067,9 +3144,7 @@ it("cuts when the source viewport no longer matches same-size shell geometry", {
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#to-target").waitFor();
-	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible",
-	);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1");
 	await page.evaluate(() => {
 		(
 			window as unknown as {
@@ -3110,9 +3185,7 @@ it("cuts when the source viewport no longer matches same-size shell geometry", {
 		.toEqual({ width: 390, height: 844 });
 
 	await inner.locator("#to-target").click();
-	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "hidden",
-	);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "0");
 	await page.locator("#spool-player").evaluate((host) => {
 		host.style.removeProperty("width");
 		host.style.removeProperty("height");
@@ -3120,7 +3193,7 @@ it("cuts when the source viewport no longer matches same-size shell geometry", {
 	await inner.locator("#target").waitFor();
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "target",
 	);
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
@@ -3154,7 +3227,7 @@ export default function Start() {
 	const inner = page.frameLocator("#spool-player");
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "next",
 		undefined,
 		{ timeout: 5_000 },
@@ -3192,7 +3265,7 @@ export default function Start() { return <main id="start">start</main>; }
 	await inner.locator("#next").waitFor({ timeout: 5_000 });
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "next",
 	);
 });
@@ -3230,7 +3303,7 @@ export default function Start() {
 	const inner = page.frameLocator("#spool-player");
 	await page.waitForFunction(
 		() =>
-			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible" &&
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-slate-frame")?.textContent === "next",
 		undefined,
 		{ timeout: 5_000 },
@@ -3408,9 +3481,7 @@ it("shows a destination render exception during a same-size View Transition", { 
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#to-boom").waitFor();
-	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible",
-	);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1");
 	await inner.locator("body").evaluate(() => {
 		(
 			window as unknown as {
@@ -3484,9 +3555,7 @@ it("shows a destination render exception during a cross-size hard cut", { timeou
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#to-boom").waitFor();
-	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible",
-	);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1");
 	await inner.locator("#to-boom").click();
 
 	await page.locator('[role="alert"]').waitFor({ timeout: 5_000 });
@@ -3513,9 +3582,7 @@ it("keeps a ready player visible after a late authored exception", { timeout: 60
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=home`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#home").waitFor();
-	await page.waitForFunction(
-		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.visibility === "visible",
-	);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1");
 	await inner.locator("body").evaluate(() => {
 		(
 			window as unknown as {
@@ -3745,7 +3812,7 @@ it("keeps terminal poster and chrome behavior through the control shell", { time
 		.locator(".spool-term-screen")
 		.evaluate(() => ({ width: innerWidth, height: innerHeight }));
 	expect(viewport).toEqual({ width: 720, height: 480 });
-	expect(await page.locator("#spool-player").evaluate((host) => getComputedStyle(host).visibility)).toBe("visible");
+	expect(await page.locator("#spool-player").evaluate((host) => getComputedStyle(host).opacity)).toBe("1");
 
 	const started = await page.evaluate(() => performance.now());
 	await page.waitForFunction((at) => performance.now() - at > 2_300, started);

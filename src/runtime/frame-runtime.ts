@@ -202,6 +202,8 @@ if (play?.shell === true && embedded) {
 /** No authored frame is ever served from one of these, so a throw site here is not the frame's. */
 const EXTENSION_SCRIPT =
 	/^(?:chrome-extension|moz-extension|safari-web-extension|safari-extension|webkit-masked-url):\/\//;
+/** Authored code always executes from a served document or module, so the frame's own throw sites carry these. */
+const SERVED_SCRIPT = /^https?:\/\//;
 
 /**
  * A browser extension's content script runs inside this document and its own
@@ -209,13 +211,19 @@ const EXTENSION_SCRIPT =
  * it used to take the whole player down with it. Chrome exempts content scripts
  * from page CSP and from the sandbox attribute, so refusing to blame the frame
  * is the only move spool has. Judged by throw site, not by the whole stack: an
- * extension calling into frame code still reports the frame's fault.
+ * extension calling into frame code still reports the frame's fault. A site is
+ * the frame's only when it is a served URL: extensions that inject inline show
+ * bare filenames (`inpage.js:7`) with no scheme at all (#185), and no authored
+ * module ever runs schemeless.
  */
 function thrownByAnExtension(filename: string | undefined, value: unknown): boolean {
-	if (filename !== undefined && filename !== "") return EXTENSION_SCRIPT.test(filename);
+	if (filename !== undefined && filename !== "") {
+		return EXTENSION_SCRIPT.test(filename) || !SERVED_SCRIPT.test(filename);
+	}
 	if (!(value instanceof Error) || value.stack === undefined) return false;
-	const site = value.stack.match(/[a-z-]+:\/\/[^\s)]+/)?.[0];
-	return site !== undefined && EXTENSION_SCRIPT.test(site);
+	const site = value.stack.match(/(?:[a-z-]+:\/\/[^\s)]+|\b[\w.-]+\.[cm]?js:\d+)/)?.[0];
+	if (site === undefined) return false;
+	return EXTENSION_SCRIPT.test(site) || !SERVED_SCRIPT.test(site);
 }
 // --- clipboard --------------------------------------------------------------
 
