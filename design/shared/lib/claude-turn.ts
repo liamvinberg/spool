@@ -1690,11 +1690,14 @@ export function railEntries(
 				key: row.key,
 				kind: "ask",
 				// a question nobody answered is not done, and the binary agrees: it comes back
-				// `The user did not answer the questions.` rather than with an answer
-				state: settled ? (row.dropped ? "failed" : "done") : "running",
+				// `The user did not answer the questions.` rather than with an answer. A
+				// dismissed one is neither: #162's deny means the tool never ran at all, which
+				// is the same `user-rejected` stamp #165's interrupt leaves on the call it
+				// caught — so the two share a state, and the turn ends either way
+				state: settled ? (row.dropped ? "failed" : "done") : cut ? "stopped" : "running",
 				ask: row.ask,
 				shown: row.ask.question.slice(0, Math.round(row.ask.question.length * part)),
-				live: live && !settled,
+				live: live && !settled && !cut,
 			});
 			continue;
 		}
