@@ -66,16 +66,6 @@ export function EdgeIcon() {
 	);
 }
 
-/** The inspector: one mark across canvas and player — a surface with a rail. */
-export function InspectorIcon() {
-	return (
-		<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-			<rect x="2.5" y="3.5" width="11" height="9" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-			<path d="M10 4v8" stroke="currentColor" strokeWidth="1.5" />
-		</svg>
-	);
-}
-
 export function CloseIcon() {
 	return (
 		<svg width="8" height="8" viewBox="0 0 16 16" aria-hidden="true">

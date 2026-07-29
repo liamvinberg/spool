@@ -21,8 +21,8 @@ import { type CaptureSourceReply, captureMessage } from "./protocol";
  *
  * Intent holds a document too: every frame represented by the element
  * selection. With no element picks, Select instead holds the selected frame,
- * or the entered frame while its modifier is down. The frame an open inspector
- * rail reads (#58) is held separately. A readable selected HTML frame stays
+ * or the entered frame while its modifier is down. A frame being exported is
+ * held separately. A readable selected HTML frame stays
  * live; an unreadable one stays held behind its still and keeps running.
  *
  * A picture stands in below the readable threshold. Above it, a nearby frame
@@ -621,7 +621,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	}, [framesRef, cameraRef, viewportRef, requestCapture]);
 
 	/**
-	 * Hold one HTML frame through the inspector intent, wait for its document,
+	 * Hold one HTML frame through the export intent, wait for its document,
 	 * capture a full-resolution PNG, then hand the document back.
 	 */
 	const captureExport = useCallback(

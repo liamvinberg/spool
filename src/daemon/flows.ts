@@ -273,6 +273,16 @@ function frameFlows(graph: FrameGraph, context: FlowContext): { edges: FlowEdge[
 		// is no walk there to be unable to read (#150). Only an anchored data-go
 		// site can be asked — a coded call is invisible to the DOM the pass reads,
 		// and a site with no element to stamp has nothing to match against.
+		//
+		// The question is put per frame rather than per site, because the cache
+		// records the carriers that produced an attribute and nothing else, so a
+		// stamp absent from it either rendered empty or never mounted. Asking per
+		// site would need the render to report stamps it saw as well, and it would
+		// still not reach #150's own worked example: the shared component that
+		// returns a plain div when its target prop is missing never mounts the
+		// stamped element at all. The cost is that a genuinely dark expression on
+		// a frame that has been rendered goes unreported; a frame nobody has
+		// rendered, and every coded call, still report.
 		if (site.via === "data-go" && site.anchor !== undefined && read !== null) continue;
 		unreadable.push({ frame: from, path: site.path, line: site.line });
 	}
