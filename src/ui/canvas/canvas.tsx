@@ -5,7 +5,7 @@ import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import { snapPxToCells } from "../../term/cells";
-import type { Camera, FlowEdge, FlowUnreadable, FrameCollision, Geometry, ProjectedFrame } from "../api";
+import type { Camera, FlowEdge, FrameCollision, Geometry, ProjectedFrame } from "../api";
 import {
 	beaconTrash,
 	fetchCanvasState,
@@ -103,19 +103,11 @@ export interface CanvasChrome {
 	toggleArrows: () => void;
 	/**
 	 * Whether this page has a layer to hide: an arrow between two frames on it,
-	 * a walk that leaves it, or a walk that lands nowhere. The toggle is not
-	 * drawn otherwise — a switch over nothing is chrome pretending to be a
-	 * control (#34/#39). One toggle governs the whole layer (#151), so it
-	 * counts the whole layer.
+	 * or a walk that leaves it. The toggle is not drawn otherwise — a switch
+	 * over nothing is chrome pretending to be a control (#34/#39). One toggle
+	 * governs the whole layer (#151), so it counts the whole layer.
 	 */
 	hasThreads: boolean;
-	/**
-	 * How many walks on this page go nowhere. The hidden layer keeps a dot on
-	 * the toggle over these and over nothing else: leaving the page is an
-	 * ordinary thing for a flow to do, and only the thing you would want to fix
-	 * is worth marking a canvas you deliberately quietened (#151).
-	 */
-	faults: number;
 }
 
 interface Point {
@@ -205,8 +197,6 @@ export function ProjectCanvas({
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const [frames, setFrames] = useState<ProjectedFrame[]>([]);
 	const [edges, setEdges] = useState<FlowEdge[]>([]);
-	// walks whose destination the parser cannot read: named in the rail, never dropped
-	const [unreadable, setUnreadable] = useState<FlowUnreadable[]>([]);
 	// the arrows toggle (#34): per-project, default on — the map is spool's identity
 	const [arrowsOn, setArrowsOn] = useState(true);
 	// frame-local boxes of navigation-site elements, as each frame's shim answers
@@ -387,18 +377,13 @@ export function ProjectCanvas({
 		const fallback = selectedFrame ?? (accelDown ? entered : null);
 		return fallback === null ? new Set<string>() : new Set([fallback]);
 	}, [effectiveTool, picked, selectedFrame, accelDown, entered]);
-	// what this page knows and no arrow can reach: the walks that leave it, and
-	// the walks that land nowhere (#151). Derived at rest — the layer is never
-	// gated on a selection, because the gap it fills is the frames you did not
-	// pick and a fault nothing else on the canvas can say.
-	const walks = useMemo(
-		() => walksOf(edges, unreadable, visibleFrames, frames),
-		[edges, unreadable, visibleFrames, frames],
-	);
-	const faults = useMemo(() => walks.filter((walk) => walk.kind === "fault").length, [walks]);
-	// a layer to hide on this page: an arrow with both ends here, or any mark
-	// the walk layer draws. One toggle governs both, so it counts both — a page
-	// whose only walks leave it used to get no switch at all (#34/#39/#151).
+	// the walks this page can take that no arrow can reach: the ones that land
+	// on another page (#151). Derived at rest — the layer is never gated on a
+	// selection, because the gap it fills is the frames you did not pick.
+	const walks = useMemo(() => walksOf(edges, visibleFrames, frames), [edges, visibleFrames, frames]);
+	// a layer to hide on this page: an arrow with both ends here, or a docked
+	// walk. One toggle governs both, so it counts both — a page whose only walks
+	// leave it used to get no switch at all (#34/#39/#151).
 	const hasThreads = useMemo(() => {
 		if (walks.length > 0) return true;
 		const here = new Set(visibleFrames.map((entry) => entry.name));
@@ -541,7 +526,6 @@ export function ProjectCanvas({
 		const flows = await fetchFlows(project);
 		if (flows === undefined) return;
 		setEdges(flows.edges);
-		setUnreadable(flows.unreadable);
 	}, [project]);
 
 	// boot: stored cameras + arrows + active page, the
@@ -2319,10 +2303,9 @@ export function ProjectCanvas({
 			arrowsOn,
 			toggleArrows,
 			hasThreads,
-			faults,
 		});
 		return () => onChrome(null);
-	}, [zoomPct, onChrome, arrowsOn, toggleArrows, hasThreads, faults]);
+	}, [zoomPct, onChrome, arrowsOn, toggleArrows, hasThreads]);
 
 	// --- render -------------------------------------------------------------------
 

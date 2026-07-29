@@ -7,10 +7,10 @@ import type { Flows } from "../api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
 
 /**
- * The walk layer as the canvas drives it (#151): what the flow map knows and
- * an arrow cannot draw, on screen at rest with nothing selected. Same-page
- * edges stay the arrows; a walk that leaves the page docks on its frame as a
- * pressable tag, and a walk that lands nowhere docks as a fault that is not.
+ * The walk layer as the canvas drives it (#151, amended by #203): the walks
+ * this page can take that no arrow can reach, on screen at rest with nothing
+ * selected. Same-page edges stay the arrows; a walk that leaves the page docks
+ * on its frame as a pressable tag; a walk that lands nowhere is not drawn.
  *
  * The geometry is walk-layer.test.ts's. What is asserted here is the wiring:
  * that the marks appear without being asked for, that pressing one travels,
@@ -116,18 +116,20 @@ describe("the walk layer", () => {
 		expect(exitTag(canvas.host, "menu")).toBeNull();
 	});
 
-	it("draws a destination no frame answers to as a fault, and never as a door", async () => {
+	/**
+	 * The canvas draws what you can act on (#203). A dead walk cannot be
+	 * pressed and its fix is in source, so it stays in `spool flows` and in
+	 * what an agent reads rather than taking a face here.
+	 */
+	it("draws nothing for a destination no frame answers to", async () => {
 		const canvas = mount();
 		await canvas.render();
 
-		const fault = canvas.host.querySelector('[data-walk-fault="missing"]');
-		expect(fault?.textContent).toContain("ghost");
-		expect(fault?.textContent).toContain("missing");
-		// a fault is not a button at all: there is nowhere for it to go
-		expect(fault?.tagName).toBe("DIV");
+		expect(canvas.host.textContent).not.toContain("ghost");
+		expect(canvas.host.textContent).not.toContain("missing");
 	});
 
-	it("draws a walk whose destination cannot be read by where it is written", async () => {
+	it("draws nothing for a walk whose destination cannot be read", async () => {
 		const canvas = mount({
 			...FLOWS,
 			edges: [],
@@ -135,11 +137,9 @@ describe("the walk layer", () => {
 		});
 		await canvas.render();
 
-		const fault = canvas.host.querySelector('[data-walk-fault="unreadable"]');
-		expect(fault?.textContent).toContain("rows.tsx:11");
-		expect(fault?.textContent).toContain("unreadable");
-		// the road is in the title; the tag has room for the name
-		expect(fault?.getAttribute("title")).toContain("shared/ui/rows.tsx");
+		expect(canvas.host.textContent).not.toContain("rows.tsx");
+		expect(canvas.host.textContent).not.toContain("unreadable");
+		expect(canvas.chrome.latest?.hasThreads).toBe(false);
 	});
 
 	it("travels when an exit tag is pressed: the page follows and the target is the selection", async () => {
@@ -157,7 +157,7 @@ describe("the walk layer", () => {
 		);
 	});
 
-	it("hides the whole layer on one toggle, arrows and tags and faults together", async () => {
+	it("hides the whole layer on one toggle, arrows and tags together", async () => {
 		const canvas = mount();
 		await canvas.render();
 		expect(canvas.chrome.latest?.arrowsOn).toBe(true);
@@ -165,15 +165,7 @@ describe("the walk layer", () => {
 		await act(async () => canvas.chrome.latest?.toggleArrows());
 
 		expect(exitTag(canvas.host, "checkout")).toBeNull();
-		expect(canvas.host.querySelector('[data-walk-fault="missing"]')).toBeNull();
 		expect(canvas.host.querySelector("svg[data-flow-arrows]")).toBeNull();
-	});
-
-	it("counts the faults it would hide, so the toggle can keep a dot over them", async () => {
-		const canvas = mount();
-		await canvas.render();
-
-		expect(canvas.chrome.latest?.faults).toBe(1);
 	});
 
 	it("offers the toggle for a page whose only walks leave it", async () => {
@@ -186,7 +178,6 @@ describe("the walk layer", () => {
 		await canvas.render();
 
 		expect(canvas.chrome.latest?.hasThreads).toBe(true);
-		expect(canvas.chrome.latest?.faults).toBe(0);
 	});
 
 	it("draws no switch over a page with nothing to hide", async () => {
