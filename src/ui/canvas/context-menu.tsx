@@ -11,6 +11,8 @@
  * the canvas for an editor, which is not something the hands do by reflex.
  */
 
+import { hotkeyKey } from "../hotkeys";
+
 export interface MenuPlacement {
 	x: number;
 	y: number;
@@ -71,22 +73,22 @@ export function ContextMenu({
 			onPointerDown={(event) => event.stopPropagation()}
 			onContextMenu={(event) => event.preventDefault()}
 		>
-			<Item label="Play from here" keys="P" onClick={onPlay} />
+			<Item label="Play from here" keys={hotkeyKey("canvas.play")} onClick={onPlay} />
 			<Item label="Open in editor" onClick={onOpenEditor} />
-			<Item label="Reload frame" keys="R" onClick={onReload} />
+			<Item label="Reload frame" keys={hotkeyKey("canvas.reload")} onClick={onReload} />
 			<Rule />
-			<Item label={tidyLabel} keys="⇧A" onClick={onTidy} />
+			<Item label={tidyLabel} keys={hotkeyKey("canvas.tidy")} onClick={onTidy} />
 			{exportAction !== null ? (
 				<Item
 					label={
 						exportAction.selectionCount === 1 ? "Export as PNG" : `Export ${exportAction.selectionCount} frames…`
 					}
-					keys="E"
+					keys={hotkeyKey("canvas.export")}
 					onClick={exportAction.onSelect}
 				/>
 			) : null}
 			<Rule />
-			<Item label="Move to Trash" keys="⌫" onClick={onTrash} />
+			<Item label="Move to Trash" keys={hotkeyKey("canvas.trash")} onClick={onTrash} />
 		</div>
 	);
 }
