@@ -40,15 +40,11 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Picture**: A frame below readable size or outside the viewport ring: its still on screen and no document behind it, for as long as nothing asks for one. _Avoid_: hibernated, unmounted, cold
 
-**Caused mounting**: Why a frame holds a document at all: you went inside it, its picture is missing, its picture is wrong, or it draws at least 400 CSS px wide inside a viewport expanded by 25% on every side. The readable condition bounds documents by viewport area rather than frame count. Intent holds documents too: every frame represented by the current element selection. With no element picks, Select instead holds the selected frame, or the entered frame while its modifier is down. The frame an open inspector rail reads is held separately. _Avoid_: warm pool, wake queue, hibernation
+**Caused mounting**: Why a frame holds a document at all: you went inside it, its picture is missing, its picture is wrong, or it draws at least 400 CSS px wide inside a viewport expanded by 25% on every side. The readable condition bounds documents by viewport area rather than frame count. Intent holds documents too: every frame represented by the current element selection. With no element picks, Select instead holds the selected frame, or the entered frame while its modifier is down. A frame being exported is held separately. _Avoid_: warm pool, wake queue, hibernation
 
 **Errand**: The canvas borrowing a frame to photograph it — mount out of sight behind its own still, run, capture, hand the document back. The frame is _refreshing_ while it holds the borrowed document. Three at once at most, and that count is the whole of the pacing. _Avoid_: refresh queue, job
 
-**Held**: A frame mounted behind its still so the Select tool and inspector rail have real DOM to read. An unreadable HTML selection stays held and keeps running; at readable size it resolves live, because Select must point at what is shown. This rejects cooperative pause and frozen pick geometry: entered frames already allow movement while Select owns the pointer, so neither a second runtime control nor stale geometry earns its complexity. A held terminal alone freezes, by SIGSTOP on its real process. _Avoid_: warm, paused
-
-**Inspector rail**: The right rail reading the selected frame, closed by default and summoned only from the header pill. Two tabs: `elements` (the frame's named rows) and `connections` (its whole outbound list). Sticky both ways — selection never opens or closes it. _Avoid_: panel, properties
-
-**Named row**: An element the inspector lists: a component boundary, a call-site (with its `[n]` instances beneath it), or an element carrying text or an accessible label. Anonymous wrappers are not rows; their children promote to the nearest named one, so depth reads as authored depth.
+**Held**: A frame mounted behind its still so the Select tool has real DOM to read. An unreadable HTML selection stays held and keeps running; at readable size it resolves live, because Select must point at what is shown. This rejects cooperative pause and frozen pick geometry: entered frames already allow movement while Select owns the pointer, so neither a second runtime control nor stale geometry earns its complexity. A held terminal alone freezes, by SIGSTOP on its real process. _Avoid_: warm, paused
 
 **Hands**: The human at the canvas. Hands own geometry and arrangement; agents own frame source. _Avoid_: user, designer
 

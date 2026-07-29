@@ -316,54 +316,6 @@ describe("the canvas shim", () => {
 		expect(((await picked) as { chain: unknown }).chain).toEqual([]);
 	});
 
-	it("walks the live DOM below the boot root, each element with its own stamp and name", async () => {
-		const shim = await servedShim();
-		runShim(shim);
-		document.body.innerHTML = `<div id="root"><main data-spool-source="frames/host/frame.tsx:3:3">
-			<h1 data-spool-source="frames/host/frame.tsx:4:4">Din varukorg</h1>
-			<button aria-label="Close" data-spool-source="frames/host/frame.tsx:5:4"><span></span></button>
-		</main></div>`;
-
-		const walked = nextReply("tree");
-		window.postMessage({ spool: "tree?", id: 3 }, "*");
-
-		const reply = (await walked) as { id: number; roots: Array<Record<string, unknown>> };
-		expect(reply.id).toBe(3);
-		expect(reply.roots).toHaveLength(1);
-		const main = reply.roots[0] as { tag: string; text: string; children: Array<Record<string, unknown>> };
-		expect(main).toMatchObject({ tag: "main", selector: "main", source: "frames/host/frame.tsx:3:3" });
-		// a wrapper never wears its descendants' words
-		expect(main.text).toBe("");
-		expect(main.children[0]).toMatchObject({ tag: "h1", text: "Din varukorg", label: "" });
-		// no words of its own: the accessible label its author wrote names it
-		expect(main.children[1]).toMatchObject({ tag: "button", text: "", label: "Close" });
-	});
-
-	it("describes each selector's ancestry so rail rows become canvas selections", async () => {
-		const shim = await servedShim();
-		runShim(shim);
-		document.body.innerHTML = `<div id="root"><main data-spool-source="frames/host/frame.tsx:3:3">
-			<ul data-spool-source="frames/host/frame.tsx:6:4"><li>a</li><li>b</li></ul>
-		</main></div>`;
-
-		const described = nextReply("described");
-		window.postMessage(
-			{ spool: "describe", selectors: ["main > ul > li:nth-of-type(2)", "main > ghost"], id: 9 },
-			"*",
-		);
-
-		const reply = (await described) as { id: number; chains: Array<Array<Record<string, unknown>>> };
-		expect(reply.id).toBe(9);
-		expect(reply.chains).toHaveLength(2);
-		expect(reply.chains[0]?.map((hit) => hit.selector)).toEqual([
-			"main",
-			"main > ul",
-			"main > ul > li:nth-of-type(2)",
-		]);
-		// a selector nothing answers is an empty chain, never a guess
-		expect(reply.chains[1]).toEqual([]);
-	});
-
 	it("leaves the frame's own timers and frames alone", async () => {
 		// The shim once wrapped rAF and setInterval to pause held HTML. Those
 		// documents now keep running, so wrapping either would reintroduce the

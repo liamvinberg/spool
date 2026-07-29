@@ -186,8 +186,8 @@ export interface SweepInput {
 	entered: string | null;
 	/** Every frame Select currently owns: mounted for the element selection. */
 	selectionTargets: ReadonlySet<string>;
-	/** The frame an open inspector rail is reading (#58): mounted so it can answer. */
-	inspected: string | null;
+	/** A frame being read rather than looked at — an export in flight holds one mounted. */
+	held: string | null;
 	states: Readonly<Record<string, FrameState>>;
 	/** Frames whose boot has reported loaded, and when — the ones a capture can reach. */
 	ready: ReadonlyMap<string, number>;
@@ -235,8 +235,7 @@ export interface SweepResult {
 }
 
 export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
-	const { frames, entered, selectionTargets, inspected, states, ready, capturing, hasCover, now, camera, viewport } =
-		input;
+	const { frames, entered, selectionTargets, held, states, ready, capturing, hasCover, now, camera, viewport } = input;
 	// A frame going back to its picture can be told from a frame you left.
 	// Zooming out must not bill a screenful of frames for a fresh still; going
 	// inside one still must.
@@ -280,7 +279,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 			intent = "held";
 		} else if (entered === name || modelLive) {
 			intent = "live";
-		} else if (inspected === name) {
+		} else if (held === name) {
 			intent = "held";
 		} else {
 			intent = null;
@@ -404,8 +403,6 @@ export interface LifecycleDeps {
 	framesRef: RefObject<ProjectedFrame[]>;
 	entered: string | null;
 	selectionTargets: ReadonlySet<string>;
-	/** The frame an open inspector rail is reading (#58). */
-	inspected: string | null;
 	hasCover: (frame: string) => boolean;
 	onShot: (frame: string, image: CoverRaster) => void;
 	/**
@@ -422,7 +419,7 @@ export interface LifecycleDeps {
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
-	const { framesRef, entered, selectionTargets, inspected, hasCover, onShot, cameraRef, viewportRef } = deps;
+	const { framesRef, entered, selectionTargets, hasCover, onShot, cameraRef, viewportRef } = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
 	// when each frame reported loaded, not merely that it did: a still is only
@@ -437,8 +434,6 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	enteredRef.current = entered;
 	const selectionTargetsRef = useRef(selectionTargets);
 	selectionTargetsRef.current = selectionTargets;
-	const inspectedRef = useRef(inspected);
-	inspectedRef.current = inspected;
 	const hasCoverRef = useRef(hasCover);
 	hasCoverRef.current = hasCover;
 	const onShotRef = useRef(onShot);
@@ -607,7 +602,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			frames: framesRef.current,
 			entered: enteredRef.current,
 			selectionTargets: selectionTargetsRef.current,
-			inspected: exportFrame.current ?? inspectedRef.current,
+			held: exportFrame.current,
 			states: statesRef.current,
 			ready: readyRef.current,
 			capturing: new Set(captureWaiters.current.keys()),
@@ -697,13 +692,12 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		[finishExportMount],
 	);
 
-	// Selection, entering, and summoning the rail must feel instant, not one sweep late.
+	// Selection and entering must feel instant, not one sweep late.
 	useEffect(() => {
 		enteredRef.current = entered;
 		selectionTargetsRef.current = selectionTargets;
-		inspectedRef.current = inspected;
 		compute();
-	}, [entered, selectionTargets, inspected, compute]);
+	}, [entered, selectionTargets, compute]);
 
 	useEffect(() => {
 		const sweep = setInterval(compute, SWEEP_MS);

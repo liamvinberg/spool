@@ -96,7 +96,7 @@ describe("project filesystem sinks", () => {
 		});
 	});
 
-	it("refuses escaped editor and stamp reads without launching the editor", async () => {
+	it("refuses an escaped editor read without launching the editor", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		const outside = join(root, "outside.tsx");
@@ -114,12 +114,6 @@ describe("project filesystem sinks", () => {
 		expect(editor.status).toBe(400);
 		expect(await editor.text()).toContain("design boundary");
 		expect(launchEditor).not.toHaveBeenCalled();
-
-		const labels = await app.request(
-			`/api/p/${name}/stamp-labels`,
-			json("POST", { stamps: ["shared/escape.tsx:1:1"] }),
-		);
-		await expectBoundary(labels, "shared/escape.tsx", root);
 	});
 
 	it("does not derive flow sites from source symlinks leaving design", async () => {
