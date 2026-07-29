@@ -254,6 +254,7 @@ export function FlowArrows({
 	return (
 		<svg
 			aria-hidden="true"
+			data-flow-arrows=""
 			width="1"
 			height="1"
 			className="pointer-events-none absolute top-0 left-0"
