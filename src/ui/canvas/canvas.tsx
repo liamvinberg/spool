@@ -2686,7 +2686,6 @@ export function ProjectCanvas({
 				plan={turn.plan}
 				phase={turn.phase}
 				elapsed={turn.elapsed}
-				last={turn.last}
 				jump={{
 					have: reach.have,
 					gone: reach.gone,

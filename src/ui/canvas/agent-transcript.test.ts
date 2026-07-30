@@ -3,15 +3,7 @@ import { createClaudeAdapter } from "../../daemon/agent-claude";
 import type { AgentEvent } from "../../daemon/agent-events";
 import { CAPTURES, readCapture } from "../../test-helpers";
 import { drawnBy } from "./agent-pace";
-import {
-	type AgentEntry,
-	type AgentRow,
-	duration,
-	fullyShown,
-	type Stamped,
-	shownBy,
-	transcriptOf,
-} from "./agent-transcript";
+import { type AgentEntry, type AgentRow, fullyShown, type Stamped, shownBy, transcriptOf } from "./agent-transcript";
 
 /**
  * The transcript the rail draws (#192, #193), projected off #191's event union.
@@ -34,7 +26,6 @@ const speaking: AgentEvent = { kind: "speaking", message: "m", model: "opus", pa
 const done: AgentEvent = { kind: "ended", ending: "done", reason: "completed", stopReason: null, parent: null };
 
 const kinds = (entries: readonly AgentEntry[]) => entries.map((entry) => entry.kind);
-const beat = (entries: readonly AgentEntry[]) => entries.find((entry) => entry.kind === "beat");
 const prose = (entries: readonly AgentEntry[]) => entries.filter((entry) => entry.kind === "prose");
 const rows = (entries: readonly AgentEntry[]) => entries.filter((entry) => entry.kind === "row");
 /** every row in the log, each delegate's own transcript unfolded in place (#194) */
@@ -106,42 +97,38 @@ describe("the human's words", () => {
 
 describe("the wait before the first token", () => {
 	/**
-	 * The measured median is over a second and a half, which is long enough that
-	 * nothing on screen reads as a hang rather than as intent. The beat is what is on
-	 * screen: one turning mark and a duration off the same clock the prose is paced by.
+	 * It draws nothing, and neither does the model's own thinking.
+	 *
+	 * The wire carries no thinking text at all — every one of the 346 thinking fields
+	 * across the captures is the empty string — so what was drawable was a duration, and
+	 * only 2 of 36 thinking blocks are substantial. `thinking 0.0s` was the norm. The wait
+	 * was also the one entry this log ever removed, which dragged everything above it
+	 * down 38.3px the moment an answer landed.
 	 */
-	it("puts a live beat in the log the moment the request goes up", () => {
-		const { entries } = transcriptOf([{ text: "go" }], stamp([[0, waiting]]));
-
-		expect(kinds(entries)).toEqual(["user", "beat"]);
-		expect(beat(entries)).toMatchObject({ state: "running", verb: null, since: 0, until: null });
-	});
-
-	/** a request going up is a fact; that the model is *thinking* is not, until it says so */
-	it("says nothing about what the model is doing until the wire names it", () => {
-		expect(beat(transcriptOf([{ text: "go" }], stamp([waiting]))?.entries)?.verb).toBeNull();
+	it("draws nothing while a request is out", () => {
+		expect(kinds(transcriptOf([{ text: "go" }], stamp([[0, waiting]])).entries)).toEqual(["user"]);
 		expect(
-			beat(
+			kinds(
 				transcriptOf(
 					[{ text: "go" }],
 					stamp([waiting, speaking, { kind: "thinking", block: 0, tokens: 12, parent: null }]),
 				).entries,
-			)?.verb,
-		).toBe("thinking");
+			),
+		).toEqual(["user"]);
 	});
 
-	/** it was the absence of an answer rather than a thing that happened */
-	it("leaves no receipt once the first token lands", () => {
+	/** and nothing appears once it comes back either: the log is receipts */
+	it("draws nothing once the first token lands", () => {
 		const { entries } = transcriptOf([{ text: "go" }], stamp([waiting, speaking, say("done.")]));
 
 		expect(kinds(entries)).toEqual(["user", "prose"]);
 	});
 
-	/** every model request raises one, so the gaps inside a turn read the same way */
-	it("opens a fresh beat for the next request in the same turn", () => {
+	/** the wait between two requests in one turn is the same silence */
+	it("draws nothing between two requests in the same turn", () => {
 		const { entries } = transcriptOf([{ text: "go" }], stamp([waiting, speaking, say("one"), waiting]));
 
-		expect(kinds(entries)).toEqual(["user", "prose", "beat"]);
+		expect(kinds(entries)).toEqual(["user", "prose"]);
 	});
 
 	/**
@@ -159,62 +146,31 @@ describe("the wait before the first token", () => {
 		expect(kinds(entries)).toEqual(["user", "prose", "prose"]);
 		expect(prose(entries).map((entry) => (entry.kind === "prose" ? entry.full : ""))).toEqual(["one", "two"]);
 	});
-});
 
-describe("the thinking beat", () => {
-	/** the wire sends an empty string for a thought's text, so a duration is all of it */
-	it("carries a duration and never prose", () => {
-		const { entries } = transcriptOf(
-			[{ text: "go" }],
-			stamp([
-				[0, waiting],
-				[900, speaking],
-				[1000, { kind: "thinking", block: 0, tokens: 0, parent: null }],
-				[1400, { kind: "thinking", block: 0, tokens: 61, parent: null }],
-				[2600, say("done.")],
-			]),
-		);
-		const thought = beat(entries);
-
-		expect(thought).toEqual({
-			key: "think:1:0",
-			kind: "beat",
-			state: "done",
-			verb: "thinking",
-			since: 1000,
-			until: 2600,
-		});
-		expect(duration((thought?.until ?? 0) - (thought?.since ?? 0))).toBe("1.6s");
-	});
-
-	it("gives each thinking block its own beat", () => {
+	/**
+	 * And it closes it once per request, which is the whole of what the gate is for.
+	 *
+	 * Every event after the first is an answer to a request that has already come back.
+	 * Advancing the message on one of those would clear the blocks its own deltas opened,
+	 * so the next settled message would land against a block index nothing had drawn and
+	 * open a third entry for the second message.
+	 */
+	it("closes the wait once per request and not once per answer", () => {
 		const { entries } = transcriptOf(
 			[{ text: "go" }],
 			stamp([
 				waiting,
-				speaking,
-				{ kind: "thinking", block: 0, tokens: 10, parent: null },
-				{ kind: "thinking", block: 2, tokens: 20, parent: null },
-			]),
-		);
-
-		expect(kinds(entries)).toEqual(["user", "beat", "beat"]);
-		expect(entries.filter((entry) => entry.kind === "beat").map((entry) => entry.state)).toEqual(["done", "running"]);
-	});
-
-	/** the model stopped composing the moment it called something */
-	it("settles when the turn starts working rather than talking", () => {
-		const { entries } = transcriptOf(
-			[{ text: "go" }],
-			stamp([
+				say("one"),
+				{ kind: "said", text: "one", parent: null },
+				called("t1", "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` }),
+				result("t1"),
 				waiting,
-				speaking,
-				{ kind: "thinking", block: 0, tokens: 10, parent: null },
-				{ kind: "call", id: "t1", block: 1, tool: "Edit", parent: null },
+				say("two"),
+				{ kind: "said", text: "two", parent: null },
 			]),
 		);
 
-		expect(beat(entries)?.state).toBe("done");
+		expect(prose(entries).map((entry) => (entry.kind === "prose" ? entry.full : ""))).toEqual(["one", "two"]);
 	});
 });
 
@@ -323,20 +279,6 @@ describe("a turn that ends", () => {
 		);
 
 		expect(entries.at(-1)).toEqual({ key: "end", kind: "note", text: "stopped" });
-	});
-
-	it("carries an unfinished beat into the ending it got", () => {
-		const { entries } = transcriptOf(
-			[{ text: "go" }],
-			stamp([
-				waiting,
-				speaking,
-				{ kind: "thinking", block: 0, tokens: 8, parent: null },
-				{ kind: "ended", ending: "stopped", reason: "aborted_streaming", stopReason: null, parent: null },
-			]),
-		);
-
-		expect(beat(entries)?.state).toBe("stopped");
 	});
 
 	/** spool is not the authority on why somebody else's process gave up */
@@ -600,26 +542,20 @@ describe("a run of writes", () => {
 				transcriptOf([{ text: "go" }], stamp([ready, write("t1"), say("now the totals."), write("t2")])).entries,
 			),
 		).toEqual(["edit home", "edit home"]);
-		// a thought is too, and it is what settles the mark once the writes are over
-		const thought: AgentEvent = { kind: "thinking", block: 0, tokens: 40, parent: null };
-		expect(
-			rows(transcriptOf([{ text: "go" }], stamp([ready, write("t1"), result("t1"), thought])).entries)[0],
-		).toMatchObject({
-			state: "done",
-		});
 	});
 
 	/**
-	 * Only what stays drawn ends it. The wait for the next request opens a beat and
-	 * then takes it back, so a run it ended would be a run broken by nothing the reader
-	 * can see — and two identical rows would end up next to each other with no reason
-	 * between them.
+	 * Only what stays drawn ends it, and neither the wait for the next request nor the
+	 * model's own thinking draws anything: a run either of them ended would be a run
+	 * broken by nothing the reader can see, and two identical rows would end up next to
+	 * each other with no reason between them.
 	 */
-	it("is not ended by a beat the log takes back", () => {
+	it("is not ended by a wait or a thought, because neither draws", () => {
 		const write = (id: string) => called(id, "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` });
+		const thought: AgentEvent = { kind: "thinking", block: 0, tokens: 40, parent: null };
 		const { entries } = transcriptOf(
 			[{ text: "go" }],
-			stamp([ready, write("t1"), result("t1"), waiting, speaking, write("t2"), result("t2"), done]),
+			stamp([ready, write("t1"), result("t1"), waiting, speaking, thought, write("t2"), result("t2"), done]),
 		);
 
 		expect(kinds(entries)).toEqual(["user", "row"]);
@@ -1178,7 +1114,7 @@ describe("the plan", () => {
 	/**
 	 * The nine-minute turn, replayed: seven tasks written in nine seconds and then moved
 	 * across the rest of it. `0/7 Setting up tokens, fonts, and scenario seed` becomes
-	 * `1/7 Authoring the home frame` sixteen rows further down the log, which is what a
+	 * `1/7 Authoring the home frame` fifteen rows further down the log, which is what a
 	 * transcript cannot hold — and the reading in between is honest, because for a moment
 	 * one task has landed and the agent has not said which is next.
 	 */
@@ -1203,9 +1139,12 @@ describe("the plan", () => {
 		]);
 		// the count climbs as the list is written, and then the phrasing carries it
 		expect(readings.slice(0, 7)).toEqual(["0/1 —", "0/2 —", "0/3 —", "0/4 —", "0/5 —", "0/6 —", "0/7 —"]);
-		// and by the time it last changed, sixteen rows sat between it and the line in the
-		// log that says it was written: a log would have carried it off the top
-		expect(below.at(-1)).toBe(16);
+		// and by the time it last changed, fifteen rows sat between it and the line in the
+		// log that says it was written: a log would have carried it off the top. It was
+		// sixteen while a thought drew a line of its own and so broke a run of writes;
+		// now that it draws nothing it cannot break one, and the two rows either side of
+		// one thought are the one row they always were
+		expect(below.at(-1)).toBe(15);
 		expect(lines(rowsOf("claude-plan"))).toContain("plan 7 tasks");
 	});
 
@@ -1810,12 +1749,8 @@ describe("every capture, replayed whole", () => {
 			const { entries } = transcriptOf([{ text: "make these consistent" }], seen);
 
 			expect(entries[0]).toMatchObject({ kind: "user" });
-			// no beat is left running once the stream is over, and nothing draws an empty
-			// message or a duration that runs backwards
+			// nothing draws an empty message
 			for (const entry of entries) {
-				if (entry.kind === "beat") {
-					expect(entry.until === null || entry.until >= entry.since).toBe(true);
-				}
 				if (entry.kind === "prose") expect(entry.full.length).toBeGreaterThan(0);
 			}
 			// every message the wire settled is in the log exactly once

@@ -20,7 +20,6 @@ import {
 	type AgentPlan,
 	type AgentRow,
 	type AgentSent,
-	duration,
 	type RowState,
 	shownBy,
 } from "./agent-transcript";
@@ -36,10 +35,10 @@ import { ChevronIcon, PanelCaret } from "./sidebar";
  * at 420 a tab row is a whole line of a narrow column spent saying which of two
  * things you are looking at, and there is only one thing to look at.
  *
- * Five things render and nothing else: the plan, the human's words, the agent's
- * words, one quiet beat for the time the model spends composing, and one line per
- * tool call. Threads, chips and the model readout are later tickets, and this reads
- * correctly without them.
+ * Four things render and nothing else: the plan, the human's words, the agent's
+ * words, and one line per tool call. The wait before the first token and the model's
+ * own thinking render nothing. Threads, chips and the model readout are later
+ * tickets, and this reads correctly without them.
  *
  * One line is the rule, and the test for the exception is whether the thing outlives
  * the call that made it. A row is a mark, a verb and a subject, with everything else
@@ -177,7 +176,6 @@ export function AgentRail({
 	plan,
 	phase,
 	elapsed,
-	last,
 	jump,
 	pointing,
 	threads,
@@ -198,7 +196,6 @@ export function AgentRail({
 	plan: AgentPlan | null;
 	phase: TurnPhase;
 	elapsed: number;
-	last: number;
 	jump: FrameJump;
 	pointing: Pointing;
 	/** every conversation this project has, newest first (#136, #200) */
@@ -347,7 +344,6 @@ export function AgentRail({
 						live={phase === "playing"}
 						spoke={spoke}
 						elapsed={elapsed}
-						last={last}
 						jump={jump}
 						onAnswer={onAnswer}
 					>
@@ -907,7 +903,6 @@ function Transcript({
 	live,
 	spoke,
 	elapsed,
-	last,
 	jump,
 	onAnswer,
 	children,
@@ -923,7 +918,6 @@ function Transcript({
 	 */
 	spoke: number;
 	elapsed: number;
-	last: number;
 	jump: FrameJump;
 	onAnswer: (request: string, reply: AgentReply) => void;
 	children: React.ReactNode;
@@ -996,8 +990,8 @@ function Transcript({
 
 	/*
 	 * The pin above re-runs when the list changes; height changes on more than the
-	 * list. A fence settles, an answered question folds its options, a beat is spliced
-	 * out — the body resizes with nothing new in it, and until the next render either
+	 * list. A fence settles, an answered question folds its options, a message settles
+	 * — the body resizes with nothing new in it, and until the next render either
 	 * the pin or the chip is stale. Watching the body itself closes that gap: following
 	 * re-pins, and a reader who is away learns the live end moved. (happy-dom
 	 * constructs the observer and lays nothing out, so tests drive the pin through the
@@ -1079,7 +1073,7 @@ function Transcript({
 							className="animate-agent-entry shrink-0"
 							style={{ paddingTop: gapBefore(entries[index - 1], entry) }}
 						>
-							<Entry entry={entry} elapsed={elapsed} last={last} jump={jump} onAnswer={onAnswer} />
+							<Entry entry={entry} elapsed={elapsed} jump={jump} onAnswer={onAnswer} />
 						</div>
 					))}
 				</div>
@@ -1111,24 +1105,21 @@ function Transcript({
 	);
 }
 
-/** consecutive machine work reads as one run, so it sits tighter than a turn boundary */
+/** consecutive rows read as one run, so they sit tighter than a turn boundary */
 function gapBefore(previous: AgentEntry | undefined, entry: AgentEntry): number {
 	if (previous === undefined) return 0;
-	const machine = (candidate: AgentEntry) => candidate.kind === "beat" || candidate.kind === "row";
-	if (machine(previous) && machine(entry)) return 6;
+	if (previous.kind === "row" && entry.kind === "row") return 6;
 	return 14;
 }
 
 function Entry({
 	entry,
 	elapsed,
-	last,
 	jump,
 	onAnswer,
 }: {
 	entry: AgentEntry;
 	elapsed: number;
-	last: number;
 	jump: FrameJump;
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
@@ -1183,29 +1174,6 @@ function Entry({
 	}
 	if (entry.kind === "row") return <Row entry={entry} jump={jump} />;
 	if (entry.kind === "ask") return <Ask entry={entry} onAnswer={onAnswer} />;
-	if (entry.kind === "beat") {
-		/*
-		 * A beat's duration is the wire's, read off the same clock the prose is paced by.
-		 * A beat nobody closed — a stream that died mid-turn — stops at the last event
-		 * rather than climbing forever, and an infinite clock is the settled case where
-		 * `until` is always set.
-		 */
-		const now = Number.isFinite(elapsed) ? elapsed : last;
-		const ran = Math.max(0, (entry.until ?? Math.max(entry.since, now)) - entry.since);
-		return (
-			<div className="-mx-1.5 flex h-[26px] w-fit max-w-[calc(100%+12px)] items-center gap-2.5 px-1.5">
-				<StateMark state={entry.state} />
-				<span className="flex min-w-0 items-baseline gap-1.5">
-					{entry.verb === null ? null : (
-						<span className="font-mono text-muted/70 text-sm leading-4">{entry.verb}</span>
-					)}
-					<span className="min-w-0 truncate font-mono text-muted/60 text-sm tabular-nums leading-4">
-						{duration(ran)}
-					</span>
-				</span>
-			</div>
-		);
-	}
 	return <Prose entry={entry} elapsed={elapsed} />;
 }
 
