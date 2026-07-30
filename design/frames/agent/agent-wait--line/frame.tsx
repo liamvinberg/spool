@@ -41,15 +41,22 @@ import { WaitFrame } from "../../../shared/ui/spool-wait-rail";
  * seconds. This take is the only one on the row that distinguishes *the model is
  * thinking* from *your machine is busy*.
  *
+ * **What the research says about it.** This take has more support than anything else on
+ * the row. Claude Code puts a word, a clock and a token count in a fixed region under the
+ * log, which is this slot to the pixel; Claude Desktop and Codex both keep a word mounted
+ * and never unmount it. The one thing none of them does is prove aliveness with a
+ * *counter* — both desktop surfaces move light across the word instead, which is
+ * `agent-wait--shimmer` and is this frame's only real rival.
+ *
  * **What it costs.** 24px of transcript on every thread forever, a permanent word in a
  * surface whose whole argument is that it holds only what happened, and a third live
- * region in a rail that already has the stop and the thread mark. And it is the take
- * furthest from anything the research found: every surface read at the source puts its
- * indicator *in* the flow, so an always-present line outside the flow has no precedent
- * anywhere — which cuts both ways, since none of them solved this either.
+ * region in a rail that already has the stop and the thread mark. And the digit: for a
+ * measured 878ms to 4,043ms a number is changing in the corner of the eye, and a number
+ * asks to be read in a way a pulse does not. That is the cost `shimmer` refuses to pay
+ * and the fact `shimmer` gives up in exchange.
  *
- * **What it beats.** `mark`, by saying what it means, and `fact`, by having somewhere
- * to say it — the footer measurement on that frame is what rules a sentence out of the
+ * **What it beats.** `mark`, by saying what it means, and `fact`, by having somewhere to
+ * say it, since the footer measurement on that frame is what rules a sentence out of the
  * composer row. It beats `none` only if a word at the edge is worth 24 permanent pixels,
  * which is the question to answer while watching it rest.
  */

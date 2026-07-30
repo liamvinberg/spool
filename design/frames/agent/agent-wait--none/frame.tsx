@@ -9,15 +9,14 @@ import { WaitFrame } from "../../../shared/ui/spool-wait-rail";
  * leave if nothing exists. Zero enters, zero leaves, zero px, and the rail spends the
  * whole turn holding only receipts.
  *
- * **And the research does not kill it, which was the surprise.** Every surface that
- * could be read at the source for this ticket — assistant-ui, Zed, and Claude Code's own
- * TUI — draws something while a request is out, so on a show of hands this take is
- * alone. But the answers come back identical every time: **mounted when the request goes
- * out, unmounted when the answer lands.** Not one of them keeps a persistent object that
- * changes state. So the thing being objected to here is the industry default, and `none`
- * is not a lazy version of it: it is the only take on this row, apart from the three
- * that never leave, that refuses the default rather than decorating it. The sheet is
- * `agent-wait-look`.
+ * **The research does not kill it, and it does not save it either.** Five surfaces were
+ * read at the source and every one of them draws something while a request is out, so on
+ * a show of hands this take is alone. Three of them mount it on send and unmount it on
+ * answer, which is spool's own defect. But **two of them — Claude Desktop and Codex, the
+ * two closest to what this rail is — keep the object mounted and change only whether the
+ * animation runs.** So the always-present shape is not a novelty this page invented, it
+ * is shipping in the two most comparable surfaces, and the honest reading is that `none`
+ * is the only one of six positions nobody holds. The sheet is `agent-wait-look`.
  *
  * **What it costs, and this is unchanged.** The four waits are 7,572ms of a 13,407ms
  * turn: for **56% of it the log holds nothing in motion**, and the last row reads `done`
@@ -42,9 +41,9 @@ export default function WaitNoneFrame() {
 			title="none · nothing, and the case for it"
 			claim="nothing exists, so nothing can enter or leave. the floor the other three are measured against."
 			notes={[
-				"no surface read at the source keeps a persistent indicator.",
-				"all mount one on send and drop it on answer, so this is the",
-				"only take that refuses the default rather than dressing it.",
+				"five surfaces read at the source, five draw something. three",
+				"mount it on send; claude desktop and codex keep theirs and",
+				"only change whether it moves. nobody holds this position.",
 				"cost: 56% with nothing moving, and no number left afterwards.",
 			]}
 		/>

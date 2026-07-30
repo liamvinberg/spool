@@ -41,14 +41,21 @@ import { WaitFrame } from "../../../shared/ui/spool-wait-rail";
  * a mark with a shape has to care about and a ring does not. Watch the frame rest
  * between turns: that is the state it is in most of the time.
  *
- * **What is honestly wrong with it.** It says nothing. It is the unnamed turning mark
- * the whole complaint started with, wearing the logo — and the one thing round one
- * agreed on is that an unlabelled spinner is the weakest object in this rail, because
- * every other row is a verb and a subject. It also puts the brand in the position of
- * reporting on the machine, which is a decision about the brand and not only about the
- * rail: from here on the logo means *working*, everywhere, or it means nothing anywhere.
- * And **nothing found in the research does this** — of the surfaces read at the source,
- * not one uses its own brand mark as a loading state.
+ * **What is honestly wrong with it.** It says nothing. It is the unnamed turning mark the
+ * whole complaint started with, wearing the logo, and the one thing round one agreed on is
+ * that an unlabelled spinner is the weakest object in this rail, because every other row
+ * is a verb and a subject. It also puts the brand in the position of reporting on the
+ * machine, which is a decision about the brand rather than only about the rail: from here
+ * on the logo means *working*, everywhere, or it means nothing anywhere.
+ *
+ * **And the research is against it twice over.** Of the five surfaces read at the source,
+ * not one uses its own brand mark as a loading state, and four of the five spend
+ * characters rather than glyphs. Claude's web transcript has no spinner, no dots and no
+ * `animate-pulse` classname anywhere in it. The closest thing in the whole reading is that
+ * Claude Code's frame array ends on `✻`, which is also the Claude glyph in its own figure
+ * table: a text character that happens to be the brand's, in an array that could not be
+ * tied to the request-waiting spinner. That is the entire precedent, and it is nothing.
+ * The sheet is `agent-wait-look` and this is the take it argues hardest against.
  *
  * **What it beats.** `none`, on the one thing `none` cannot answer: for 56% of a turn
  * there is now something alive in the rail, and it costs 24 pixels of a row that had

@@ -23,25 +23,41 @@ import { Cell, Finding, Glyph, type Surface } from "./look";
  * off render code it is drawn in italics, and where nothing could be verified the row
  * says so instead of guessing.
  *
- * **The result is one sentence and it is unanimous.** Of every surface that could be
- * read, **not one keeps a persistent indicator**. All of them mount something when the
- * request goes out and unmount it when the answer lands, which is exactly what spool
- * does today and exactly what was objected to. There is no prior art for the shape round
- * two is looking for, which cuts both ways: nobody has solved this, and nobody has tried.
+ * **The two desktop apps nearly did not get read at all, and the first answer about them
+ * was wrong.** A fast check said both were Electron shells loading the web app: they do
+ * `loadURL` remote origins and `ChatGPT.app` even announces itself with
+ * `x-i-am-a-browser: true`. That was a real string leading to a false conclusion. Both
+ * ship their conversation locally. `Claude.app` serves its renderer over its own `app://`
+ * protocol out of `Contents/Resources/ion-dist/`, and the remote `claude.ai` strings are
+ * auth callbacks; `ChatGPT.app` bundles a webview titled Codex with local
+ * `chatgpt-conversation-page` chunks and uses `chatgpt.com` only as an API base. The
+ * lesson is the page's own rule: a string is not a finding, and the row that would have
+ * gone in on the first reading would have been the two most important rows here, blank.
  *
- * **And the second result kills a specific idea.** Not one of them draws its own brand
- * mark. The nearest thing in the whole reading is that Claude Code's spinner frames end
- * on `✻`, which is also the Claude figure glyph in its own symbol table — a text glyph
- * that happens to be the brand's, not a logo being animated, and the frame array could
- * not be tied to the request-waiting spinner specifically. That is the entire precedent
- * for a logo as a loading state.
+ * **Because these two reverse the headline.** The shape round two is looking for is not
+ * unprecedented. It is what both of them ship. Claude keeps its label mounted and swaps
+ * only the shimmer wrapper around it (`a?jsx(Mr,{paused:_,children:l}):l`), and its newer
+ * fixed status row is purely a state change — opacity for presence, a class for the
+ * shimmer, no unmount anywhere. Codex is the same and more explicit about it: the
+ * animation is applied by `classList.add` and taken off by `classList.remove` on a node
+ * that never goes. So **two of the surfaces read here keep a persistent object and change
+ * its state, and three mount and unmount one.** The always-present direction has prior
+ * art, in the two surfaces closest to what spool is.
  *
- * **What they do agree on is words.** Claude Code says a gerund, an escalating one when
- * it is slow, an elapsed clock, a token count and how to interrupt. Zed will say
- * `Awaiting Confirmation` and, behind a setting, an elapsed time and a token count. Both
- * of them put a number on the wait. Nothing here is a bare spinner and nothing here is
- * silent, which is the case against `agent-wait--mark` and the case for
- * `agent-wait--line`.
+ * **The second result stands and it kills a specific idea.** Not one of the five draws its
+ * own brand mark. The nearest thing in the whole reading is that Claude Code's spinner
+ * frames end on `✻`, which is also the Claude figure glyph in its own symbol table: a text
+ * character that happens to be the brand's, not a logo being animated, and the array could
+ * not be tied to the request-waiting spinner specifically. Claude's *web* transcript has no
+ * `animate-pulse` classname anywhere and no spinner and no dots at all. That is the entire
+ * precedent for a logo as a loading state, and it is nothing.
+ *
+ * **What they agree on is a word.** Claude Code says a gerund, escalates it when the turn
+ * drags, and adds a clock and a token count. Claude Desktop says `Thinking...` and
+ * shimmers it. Codex says `Thinking` and shimmers it on a cadence. Zed will say `Awaiting
+ * Confirmation`. Four of the five spend characters rather than glyphs, and the two that
+ * are closest to spool's own shape spend them on **one word with light moving across it**
+ * — which is `agent-wait--shimmer`, a frame that exists because this reading turned it up.
  */
 
 const SURFACES: readonly Surface[] = [
@@ -50,7 +66,7 @@ const SURFACES: readonly Surface[] = [
 		source: "2.1.220 · jsc string table · 0x7481560, 0xcac1880, 0x60a04a0",
 		where: "fixed, below the log",
 		whereHow: "inferred",
-		always: false,
+		always: "no, it is made and unmade",
 		alwaysNote: "showSpinner is a boolean",
 		alwaysHow: "inferred",
 		moves: "nothing is committed: the viewport repaints whole",
@@ -61,38 +77,40 @@ const SURFACES: readonly Surface[] = [
 	},
 	{
 		name: "claude desktop",
-		source: "not verified",
-		where: "unverified",
-		whereHow: "unverified",
-		always: null,
-		alwaysNote: "unverified",
-		alwaysHow: "unverified",
-		moves: "unverified",
-		movesHow: "unverified",
-		says: "not read at the source. no claim is made here.",
-		glyphs: null,
-		cycle: 0,
+		source: "Claude.app · ion-dist/assets/v1/shared-5-UQAFGbWu.js, c360a9e1c-DrYIyI47.js",
+		where: "both: a block in the turn, and a fixed row outside the transcript region",
+		whereHow: "read",
+		always: "yes",
+		alwaysNote: "a?jsx(Mr,{paused:_,children:l}):l",
+		alwaysHow: "read",
+		moves: "the label shifts left by 20px and a gap: the icon slot is only supplied while streaming",
+		movesHow: "read",
+		says: "the word Thinking..., shimmering, then a summary or Thought process crossfaded in its place. an elapsed clock only after ten seconds. the fixed row pulses its colour instead of sweeping. no spinner and no dots in the transcript at all.",
+		glyphs: ["Thinking"],
+		cycle: 2250,
+		sweep: true,
 	},
 	{
-		name: "chatgpt",
-		source: "not verified",
-		where: "unverified",
+		name: "chatgpt · codex",
+		source: "ChatGPT.app · webview/assets/app-initial-BHB6SClA.js",
+		where: "unverified for the word; the fixed scroll button is read",
 		whereHow: "unverified",
-		always: null,
-		alwaysNote: "unverified",
-		alwaysHow: "unverified",
-		moves: "unverified",
-		movesHow: "unverified",
-		says: "not read at the source. no claim is made here.",
-		glyphs: null,
-		cycle: 0,
+		always: "yes",
+		alwaysNote: "classList.add/remove, never remounted",
+		alwaysHow: "read",
+		moves: "no. the sweep is an absolute overlay and the text is duplicated rather than replaced",
+		movesHow: "read",
+		says: "the word Thinking, shimmering on a cadence rather than continuously: 600ms of delay, one second of sweep, every four seconds. stepped on purpose, steps(48,end). skipped whole under prefers-reduced-motion.",
+		glyphs: ["Thinking"],
+		cycle: 2000,
+		sweep: true,
 	},
 	{
 		name: "cursor",
 		source: "closed, not installed · cursor.com/changelog/cli-feb-18-2026",
 		where: "unverified",
 		whereHow: "unverified",
-		always: false,
+		always: "no, it is made and unmade",
 		alwaysNote: "its own changelog, about the cli",
 		alwaysHow: "read",
 		moves: "unverified",
@@ -106,7 +124,7 @@ const SURFACES: readonly Surface[] = [
 		source: "crates/agent_ui/src/conversation_view/thread_view.rs:7280",
 		where: "in the list, one item past the end",
 		whereHow: "read",
-		always: false,
+		always: "no, it is made and unmade",
 		alwaysNote: "list_state.splice() adds and removes it",
 		alwaysHow: "read",
 		moves: "ListAlignment::Top, so not while scrolled up. tail-follow reclaims its height at the bottom",
@@ -120,7 +138,7 @@ const SURFACES: readonly Surface[] = [
 		source: "packages/core/src/react/primitives/message/MessageGroupedParts.tsx",
 		where: "in the flow, inside the assistant message",
 		whereHow: "read",
-		always: false,
+		always: "no, it is made and unmade",
 		alwaysNote: "shouldShowIndicator() gates the mount",
 		alwaysHow: "read",
 		moves: "the row is made when the request goes out and keeps its place. only the glyph leaves",
@@ -158,9 +176,9 @@ function Line({ surface }: { surface: Surface }) {
 			<Cell text={surface.where} how={surface.whereHow} />
 			<div className="flex min-w-0 flex-col gap-1">
 				<Cell
-					text={surface.always === null ? "unverified" : surface.always ? "yes" : "no, it is made and unmade"}
+					text={surface.always}
 					how={surface.alwaysHow}
-					className={surface.always === false ? "text-thread" : undefined}
+					className={surface.always.startsWith("no,") ? "text-thread" : undefined}
 				/>
 				<span className="font-mono text-2xs text-muted/35 leading-4">{surface.alwaysNote}</span>
 			</div>
@@ -195,28 +213,30 @@ export default function AgentWaitLookFrame() {
 			</div>
 			<div className="grid min-h-0 shrink-0 grid-cols-3 gap-8">
 				<Finding
-					title="nobody keeps one"
-					body="three of the six could be read at the source and all three mount an indicator when the request goes out and unmount it when the answer lands. cursor's own changelog says the same about its cli. spool does exactly this today and it is what was objected to, so the always-present shape round two is looking for has no prior art anywhere. that is not an argument against it: none of these solved the blinking either, they just never treated it as a problem."
+					title="two of five keep one, three do not"
+					body="zed splices a list item in and out, assistant-ui gates a mount, claude code flips a showSpinner boolean. but claude desktop and codex both keep the object mounted and change only whether the animation runs, classList.add and classList.remove on a node that never goes. so the always-present shape has prior art, and it is in the two surfaces closest to what spool is."
 				/>
 				<Finding
 					title="nobody uses their logo"
-					body="not one draws its own brand mark while it waits. the closest in the whole reading is that claude code's frames end on ✻, which is also the claude glyph in its own figure table: a text character that happens to be the brand's, in an array that could not be tied to the request-waiting spinner. that is the entire precedent for the logo idea, and it is thin."
+					body="not one of the five draws its own brand mark while it waits. the closest in the whole reading is that claude code's frames end on ✻, which is also the claude glyph in its own figure table: a text character that happens to be the brand's, in an array that could not be tied to the request-waiting spinner. claude's web transcript has no spinner, no dots and no animate-pulse classname at all. that is the entire precedent for the logo idea, and it is nothing."
 				/>
 				<Finding
-					title="the two that say anything say words and a number"
-					body="claude code prints a gerund, escalates it when the turn drags, and carries an elapsed clock and a token count. zed will say Awaiting Confirmation and put elapsed time behind a setting. both spend characters rather than glyphs on the wait, and both put a number on it. a bare spinner is what zed does when it has nothing to add, never what either does when it does."
+					title="four of five spend characters, not glyphs"
+					body="claude code says a gerund and escalates it, and adds a clock and a token count. claude desktop says Thinking... and shimmers it. codex says Thinking and shimmers it one second in every four. zed will say Awaiting Confirmation. only zed's ordinary case is a bare wordless spinner, and it is the one that admits it has nothing to add."
 				/>
 			</div>
 			<div className="flex shrink-0 flex-col gap-2 border-border border-t pt-3">
 				<span className="font-mono text-sm text-text leading-4">what it decides on the row below</span>
 				<p className="max-w-[1500px] font-mono text-2xs text-muted/70 leading-5">
 					the surface this rail is being written inside puts a word, a clock and a count in a fixed region under the
-					log, which is agent-wait--line's slot to the pixel. it differs from that take in one thing only: it mounts
-					when the request goes out. so the take with the most support here is the one that keeps claude code's
-					placement and its words and drops the mounting, and the take with the least is agent-wait--mark, which is the
-					one thing every readable surface agrees not to do and the one thing none of them says anything with. that is
-					not a reason to leave it undrawn. it is the reason it is drawn beside a frame that says idle, working and
-					waiting 1.4s in the same pixels.
+					log, which is agent-wait--line's slot to the pixel, and it differs from that take in one thing only: it
+					mounts when the request goes out. the two that never mount anything say one word and move light across it,
+					which is agent-wait--shimmer and is the only frame on the row below that this reading invented rather than
+					judged. between them they leave one real disagreement, and it is what the row has to settle: line proves it
+					is alive with a digit changing every hundred milliseconds, shimmer proves it with a sweep and gives the
+					number up. agent-wait--mark has the least support of anything here. it is the one thing no readable surface
+					does and the one thing none of them says anything with, which is not a reason to leave it undrawn. it is the
+					reason it is drawn beside two frames that say idle, working and waiting in the same pixels.
 				</p>
 			</div>
 		</div>

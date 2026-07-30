@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { cn } from "../../../shared/lib/utils";
+import { ShimmerWord } from "../../../shared/ui/spool-wait-rail";
 
 /**
  * The sheet's own parts. Nothing here knows about spool's rail: it is a reading of
@@ -16,7 +17,7 @@ export interface Surface {
 	readonly where: string;
 	readonly whereHow: Firmness;
 	/** does it stay put and change, or does it come and go */
-	readonly always: boolean | null;
+	readonly always: "yes" | "no, it is made and unmade" | "not on disk";
 	readonly alwaysNote: string;
 	readonly alwaysHow: Firmness;
 	readonly moves: string;
@@ -28,6 +29,8 @@ export interface Surface {
 	readonly cycle: number;
 	/** the animation is an opacity pulse rather than a glyph cycle */
 	readonly pulse?: boolean;
+	/** it is a word with light moving across it rather than a glyph at all */
+	readonly sweep?: boolean;
 }
 
 /** a cell whose confidence is part of what it says */
@@ -54,13 +57,25 @@ export function Cell({ text, how, className }: { text: string; how: Firmness; cl
  * seconds, and describing that in words would be the one place this sheet stopped
  * showing its work.
  */
-export function Glyph({ frames, cycle, pulse = false }: { frames: readonly string[]; cycle: number; pulse?: boolean }) {
+export function Glyph({
+	frames,
+	cycle,
+	pulse = false,
+	sweep = false,
+}: {
+	frames: readonly string[];
+	cycle: number;
+	pulse?: boolean;
+	sweep?: boolean;
+}) {
 	const [at, setAt] = useState(0);
 	useEffect(() => {
-		if (pulse || frames.length < 2) return;
+		if (pulse || sweep || frames.length < 2) return;
 		const timer = window.setInterval(() => setAt((n) => (n + 1) % frames.length), Math.round(cycle / frames.length));
 		return () => window.clearInterval(timer);
-	}, [frames, cycle, pulse]);
+	}, [frames, cycle, pulse, sweep]);
+	if (sweep)
+		return <ShimmerWord text={frames[0] ?? ""} live cycle={cycle} className="font-mono text-2xs leading-4" />;
 	return (
 		<span
 			className={cn("font-mono text-base text-text/80 leading-4 tabular-nums", pulse && "animate-pulse")}
