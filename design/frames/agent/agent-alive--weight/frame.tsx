@@ -17,11 +17,15 @@ import { AliveFrame } from "../../../shared/ui/spool-alive-rail";
  * Grotesk at 14px sitting where every other frame on this row puts mono at 12px, and it looks
  * like what it is, which is the rail talking in the wrong voice.
  *
- * *Two: the axis is not an axis.* `fonts.css` imports Familjen Grotesk as
- * `wght@400;500;600;700` — four static instances, not a variable font. An animated weight
- * therefore does not sweep, it **steps four times**, and the steps are visible at this size.
- * A real variable axis would need a self-hosted variable file, which is a `@font-face` and up
- * to 1MB in every frame document, spent so a word can get bolder.
+ * *Two: the axis is real, and this frame said it was not.* An earlier draft of this comment
+ * claimed Familjen Grotesk is four static instances and that a weight animation therefore
+ * steps rather than sweeps. **That was wrong.** The app loads
+ * `@fontsource-variable/familjen-grotesk`, whose every `@font-face` declares
+ * `font-weight: 400 700` — one continuous variable range — and the family it resolves to is
+ * named `Familjen Grotesk Variable` (`src/ui/ui.css:22`). The 400/500/600 in `ui.css:38-40`
+ * are design tokens and say nothing about the axis. So a smooth 400→700 sweep is available,
+ * no self-hosted file is needed, and the reason to reject this take is not the font. It is
+ * the register above and the reflow below, and either is enough on its own.
  *
  * *Three: weight is geometry.* Glyph advances change with weight, so every step **lays out**
  * and the word's own box changes width. The slot meter reads that directly: the widest step
@@ -43,8 +47,8 @@ export default function AliveWeightFrame() {
 			title="weight · an axis this document does not have"
 			claim="fragment mono ships one weight, so the status line has to leave its own register to do this at all. it is in the sans here, visibly."
 			notes={[
-				"familjen grotesk is four static instances here, so",
-				"the axis is four visible steps, not a sweep.",
+				"the axis is real: familjen grotesk is variable, 400",
+				"to 700, so the sweep is smooth. that is not the fault.",
 				"weight is glyph metrics, so every step lays out and",
 				"the word's own box changes width. the meter reads it.",
 			]}

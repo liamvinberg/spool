@@ -533,15 +533,20 @@ function Gerund({ on, still }: { on: boolean; still: boolean }) {
 }
 
 /**
- * `weight` — the word thickening on an axis this document does not have.
+ * `weight` — the word thickening, which reflows every step it takes.
  *
- * Drawn to be killed, and it takes three separate facts to do it. The status register in
- * this repo is machine text, which is mono, and **Fragment Mono ships one weight**, so the
- * take can only exist at all by moving the status line into the sans — which is what this
- * frame does, visibly, so the cost is on screen rather than in a note. `fonts.css` then loads
- * Familjen Grotesk as four static instances, 400/500/600/700, so an animated axis is not an
- * axis: it is four steps. And weight is glyph metrics, so every step **lays out** and the
- * word's own box changes width, which the slot meter reads directly.
+ * Drawn to be killed, and it takes two facts rather than the three claimed here first. The
+ * status register in this repo is machine text, which is mono, and **Fragment Mono ships one
+ * weight**, so the take can only exist at all by moving the status line into the sans — which
+ * is what this frame does, visibly, so the cost is on screen rather than in a note. And weight
+ * is glyph metrics, so every step **lays out** and the word's own box changes width, which the
+ * slot meter reads directly. Either fact is enough on its own.
+ *
+ * **The third fact was not one.** This comment claimed the app loads Familjen Grotesk as four
+ * static instances and that the axis is therefore four steps. It loads
+ * `@fontsource-variable/familjen-grotesk`, which declares `font-weight: 400 700` — one
+ * continuous range — so the sweep is smooth and the font was never the objection. Corrected
+ * rather than deleted, because a frame on this page is read as evidence and this one was wrong.
  */
 function Weight({ on, still }: { on: boolean; still: boolean }) {
 	const moving = on && !still;
