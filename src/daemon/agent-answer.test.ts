@@ -32,7 +32,7 @@ function startTurn(name: string, app: ReturnType<typeof makeApp>, prompt = "shoo
 	return app.request(`/api/p/${name}/agent/turn`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ prompt }),
+		body: JSON.stringify({ said: [{ prompt }] }),
 	});
 }
 

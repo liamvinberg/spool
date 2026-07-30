@@ -10,7 +10,7 @@ import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import trash from "trash";
 import { z } from "zod";
-import { MAX_ATTACHMENT_BYTES, parseAttachment } from "../attachment";
+import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachment } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_FAVICON_SVG } from "../brand";
 import type { Cover } from "../cover";
 import { SpoolError } from "../errors";
@@ -64,7 +64,7 @@ import {
 	RENDER_HOST,
 	renderOriginFor,
 } from "./security";
-import { createSelectionStore, parseSelectionPut } from "./selection";
+import { createSelectionStore, parseSelectionEntries, parseSelectionPut, type SelectionEntry } from "./selection";
 import { selectionBlock } from "./selection-block";
 import { type AppEvent, type MachineStateWatchAdapter, readSession, updateSession, watchMachineState } from "./session";
 import { createShotTaker } from "./shots";
@@ -291,14 +291,19 @@ export function createDaemonApp({
 	// behind the control token, the same boundary #41 drew.
 	const spawnAgent = agentExecutor ?? claudeExecutor();
 	/**
-	 * Every turn in flight, and the project it is running in.
+	 * Every turn in flight, the project it is running in, and what the rail calls it.
 	 *
 	 * The project is carried because an answer arrives on its own request rather than
 	 * on the stream that asked for it (#197): a waiting request is addressed by the id
 	 * the binary gave it, and this is what keeps one project's answer from reaching
 	 * another project's turn.
+	 *
+	 * The name is carried for the same reason and a different id (#165). A stop has no
+	 * request to quote — it is the one thing spool asks the binary for rather than
+	 * answers — so the rail names its own turn when it starts one, and the stop names
+	 * it back. Absent for a client that never intends to stop anything.
 	 */
-	const liveTurns = new Map<AgentTurn, string>();
+	const liveTurns = new Map<AgentTurn, { root: string; id?: string }>();
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -790,22 +795,49 @@ export function createDaemonApp({
 			"/api/p/:project/agent/turn",
 			validator("json", (value, c) => {
 				const body = (typeof value === "object" && value !== null ? value : {}) as {
-					prompt?: unknown;
-					attachment?: unknown;
+					said?: unknown;
+					turn?: unknown;
 				};
-				if (typeof body.prompt !== "string" || body.prompt.trim() === "") {
-					return c.text('a turn is { "prompt": "…" }', 400);
+				// a turn is what the human said, which is one message when they pressed Enter
+				// against a quiet rail and several when a queue fired as one turn (#170)
+				if (!Array.isArray(body.said) || body.said.length === 0) {
+					return c.text('a turn is { "said": [{ "prompt": "…" }] }', 400);
 				}
-				// an attachment is optional and never guessed at: a picture spool cannot
-				// send is said out loud rather than dropped out of the message (#119)
-				const attached = body.attachment === undefined ? undefined : parseAttachment(body.attachment);
-				if (body.attachment !== undefined && attached === undefined) {
-					return c.text(
-						`an attachment is { "media": "image/png", "data": "<base64>" } — png, jpeg, gif or webp under ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB`,
-						400,
-					);
+				if (body.turn !== undefined && (typeof body.turn !== "string" || body.turn === "")) {
+					return c.text('"turn" is the id a stop names this turn by', 400);
 				}
-				return { prompt: body.prompt, attachment: attached };
+				const said: { prompt: string; selection?: SelectionEntry[]; attachment?: Attachment }[] = [];
+				for (const raw of body.said) {
+					const one = (typeof raw === "object" && raw !== null ? raw : {}) as {
+						prompt?: unknown;
+						selection?: unknown;
+						attachment?: unknown;
+					};
+					if (typeof one.prompt !== "string" || one.prompt.trim() === "") {
+						return c.text('a turn is { "said": [{ "prompt": "…" }] }', 400);
+					}
+					// an attachment is optional and never guessed at: a picture spool cannot
+					// send is said out loud rather than dropped out of the message (#119)
+					const attached = one.attachment === undefined ? undefined : parseAttachment(one.attachment);
+					if (one.attachment !== undefined && attached === undefined) {
+						return c.text(
+							`an attachment is { "media": "image/png", "data": "<base64>" } — png, jpeg, gif or webp under ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB`,
+							400,
+						);
+					}
+					// a message that captured its own selection at Enter hands it back here;
+					// one that did not is asking for what the hands are pointing at now (#170)
+					const captured = one.selection === undefined ? undefined : parseSelectionEntries(one.selection);
+					if (one.selection !== undefined && captured === undefined) {
+						return c.text('"selection" is the entry list this daemon served the rail', 400);
+					}
+					said.push({
+						prompt: one.prompt,
+						...(captured === undefined ? {} : { selection: captured }),
+						...(attached === undefined ? {} : { attachment: attached }),
+					});
+				}
+				return { said, turn: typeof body.turn === "string" ? body.turn : undefined };
 			}),
 			(c) => {
 				// one turn, streamed as it arrives (#191): the prompt goes down the
@@ -813,18 +845,25 @@ export function createDaemonApp({
 				// order the wire sent them
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
-				const { prompt, attachment } = c.req.valid("json");
+				const { said, turn: named } = c.req.valid("json");
 				const turn = startAgentTurn({
 					executor: spawnAgent,
 					root: project.root,
 					// what the hands are pointing at rides with the words, in the bytes
-					// `spool selection` prints for this same moment (#116)
-					content: agentPromptContent(prompt, selectionBlock(selections.get(project.root)), attachment),
+					// `spool selection` prints for this same moment (#116) — or, for a
+					// message the queue held, for the moment it was said (#170)
+					content: agentPromptContent(
+						said.map((one) => ({
+							prompt: one.prompt,
+							selection: selectionBlock(one.selection ?? selections.get(project.root)),
+							...(one.attachment === undefined ? {} : { attachment: one.attachment }),
+						})),
+					),
 				});
-				liveTurns.set(turn, project.root);
+				liveTurns.set(turn, { root: project.root, ...(named === undefined ? {} : { id: named }) });
 				return streamSSE(c, async (stream) => {
 					let id = 0;
-					stream.onAbort(() => turn.stop());
+					stream.onAbort(() => turn.abandon());
 					try {
 						for await (const event of turn.events) {
 							try {
@@ -836,10 +875,43 @@ export function createDaemonApp({
 							}
 						}
 					} finally {
-						turn.stop();
+						turn.abandon();
 						liveTurns.delete(turn);
 					}
 				});
+			},
+		)
+		.post(
+			"/api/p/:project/agent/interrupt",
+			validator("json", (value, c) => {
+				const body = (typeof value === "object" && value !== null ? value : {}) as { turn?: unknown };
+				if (typeof body.turn !== "string" || body.turn === "") {
+					return c.text('a stop is { "turn": "…" }', 400);
+				}
+				return { turn: body.turn };
+			}),
+			(c) => {
+				/*
+				 * The way out of a turn that is already running (#165).
+				 *
+				 * Its own door for the reason an answer has one: the turn's stream is a
+				 * response the client is reading and has no way back up. The turn names
+				 * itself when it starts, so a project holding two of them stops the one the
+				 * hands are looking at rather than both.
+				 *
+				 * What goes down the wire is a request rather than a kill. The process
+				 * survives it and ends the turn itself, which is why this answers with
+				 * nothing: everything there is to say arrives on the stream.
+				 */
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const { turn: named } = c.req.valid("json");
+				for (const [turn, live] of liveTurns) {
+					if (live.root === project.root && live.id === named && turn.interrupt()) return c.body(null, 204);
+				}
+				// nothing is running under that name: it ended on its own, or it was never
+				// this project's. Both are the same fact from here, and both mean stopped
+				return c.text(`no turn "${named}" to stop`, 404);
 			},
 		)
 		.post(
@@ -870,8 +942,8 @@ export function createDaemonApp({
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				const { request, reply } = c.req.valid("json");
-				for (const [turn, root] of liveTurns) {
-					if (root === project.root && turn.answer(request, reply)) return c.body(null, 204);
+				for (const [turn, live] of liveTurns) {
+					if (live.root === project.root && turn.answer(request, reply)) return c.body(null, 204);
 				}
 				// nobody is waiting on it: the turn ended, it was answered already, or it
 				// belongs to another project. All three are the same fact from here
@@ -1514,7 +1586,7 @@ export function createDaemonApp({
 		terms,
 		close: () => {
 			machineStateWatch.stop();
-			for (const turn of liveTurns.keys()) turn.stop();
+			for (const turn of liveTurns.keys()) turn.abandon();
 			liveTurns.clear();
 			void terms.close();
 			hub.close();

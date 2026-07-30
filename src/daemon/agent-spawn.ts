@@ -176,19 +176,46 @@ export function agentPromptLine(content: readonly unknown[]): string {
 }
 
 /**
+ * One thing the human said, with what was riding with it when they said it
+ * (#116, #119, #170).
+ *
+ * `selection` is already rendered, because there is one renderer for it and the
+ * daemon owns it: these are the bytes `spool selection` prints. It arrives here
+ * rather than being looked up here because a queued message carries the block
+ * from its own Enter rather than from the moment the queue fires.
+ */
+export interface AgentSaid {
+	readonly prompt: string;
+	/** the selection block that rode with these words; empty where nothing was pointed at */
+	readonly selection: string;
+	readonly attachment?: Attachment;
+}
+
+/**
  * The content blocks one turn sends: what the hands are pointing at, what they
- * typed, and whatever they attached (#116, #119).
+ * typed, and whatever they attached (#116, #119, #170).
  *
  * The selection leads the text because it is the context the words are about, and
  * the attachment leads both because a reference is what the sentence refers to. An
  * empty selection contributes nothing at all rather than an empty block, which
  * would be a shape claiming the moment had one.
+ *
+ * A turn is a list rather than one message because a queue fires as one turn: every
+ * message spool held goes out in the order it was said in, each carrying its own
+ * selection block, and the binary reads all of them as the one thing it was asked.
+ * They ride in one user message rather than one line each, so nothing depends on the
+ * binary's own queueing to keep them from becoming two turns.
  */
-export function agentPromptContent(prompt: string, selection: string, attached?: Attachment): unknown[] {
+export function agentPromptContent(said: readonly AgentSaid[]): unknown[] {
 	const blocks: unknown[] = [];
-	if (attached !== undefined) {
-		blocks.push({ type: "image", source: { type: "base64", media_type: attached.media, data: attached.data } });
+	for (const one of said) {
+		if (one.attachment !== undefined) {
+			blocks.push({
+				type: "image",
+				source: { type: "base64", media_type: one.attachment.media, data: one.attachment.data },
+			});
+		}
+		blocks.push({ type: "text", text: one.selection === "" ? one.prompt : `${one.selection}\n\n${one.prompt}` });
 	}
-	blocks.push({ type: "text", text: selection === "" ? prompt : `${selection}\n\n${prompt}` });
 	return blocks;
 }

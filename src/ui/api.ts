@@ -351,18 +351,34 @@ export function subscribeSse(url: string, handlers: Record<string, (data: unknow
  * prompt that has already been answered. It ends when the daemon closes it, and
  * abandoning the returned handle takes the process with it.
  */
+export interface AgentSaying {
+	readonly prompt: string;
+	/**
+	 * What the hands were pointing at when these words were said (#116, #170).
+	 *
+	 * The daemon's own enriched list, handed back to it so a message the queue held
+	 * carries the block from its own Enter rather than from the moment it fired.
+	 * Absent asks the daemon for what the hands are pointing at now, which is the same
+	 * moment for a message that goes out on the press that made it.
+	 */
+	readonly selection?: readonly SelectionEntry[] | undefined;
+	/**
+	 * A reference riding with the words (#119), as base64 rather than a path.
+	 *
+	 * Look-only and nothing lands: the bytes go down the same stdin the prompt does,
+	 * so the project gains no file. A browser never reveals a dropped file's path,
+	 * which is why this is bytes at all.
+	 */
+	readonly attached?: Attachment | undefined;
+}
+
 export function streamAgentTurn(
 	project: string,
 	said: {
-		readonly prompt: string;
-		/**
-		 * A reference riding with the words (#119), as base64 rather than a path.
-		 *
-		 * Look-only and nothing lands: the bytes go down the same stdin the prompt does,
-		 * so the project gains no file. A browser never reveals a dropped file's path,
-		 * which is why this is bytes at all.
-		 */
-		readonly attached?: Attachment | undefined;
+		/** what the rail calls this turn, which is the address its stop names (#165) */
+		readonly turn: string;
+		/** one message, or the several a queue fired as one turn (#170) */
+		readonly saying: readonly AgentSaying[];
 	},
 	on: { readonly event: (event: AgentEvent) => void; readonly end: (error?: string) => void },
 ): () => void {
@@ -373,7 +389,17 @@ export function streamAgentTurn(
 			// `init` is spread over what the client built, so `headers` here would replace
 			// its own `content-type: application/json` and the daemon would reject the body
 			const res = await client.api.p[":project"].agent.turn.$post(
-				{ param: { project }, json: { prompt: said.prompt, attachment: said.attached } },
+				{
+					param: { project },
+					json: {
+						turn: said.turn,
+						said: said.saying.map((one) => ({
+							prompt: one.prompt,
+							...(one.selection === undefined ? {} : { selection: [...one.selection] }),
+							...(one.attached === undefined ? {} : { attachment: one.attached }),
+						})),
+					},
+				},
 				{ init: { signal: controller.signal } },
 			);
 			if (!res.ok || res.body === null) {
@@ -410,4 +436,18 @@ export function streamAgentTurn(
  */
 export async function answerAgentTurn(project: string, request: string, reply: AgentReply): Promise<void> {
 	await client.api.p[":project"].agent.answer.$post({ param: { project }, json: { request, reply } });
+}
+
+/**
+ * Stop a turn that is already running (#165).
+ *
+ * Its own door for the same reason an answer has one: the turn's stream is a
+ * response with no way back up. What it sends is a request rather than a kill — the
+ * process survives it and ends the turn itself — so there is nothing to read back
+ * here. Everything the press produces arrives on the stream the rail is already
+ * reading, which is also why a refusal is silence: being turned away means nothing
+ * is running under that name, and a turn that already ended is stopped.
+ */
+export async function interruptAgentTurn(project: string, turn: string): Promise<void> {
+	await client.api.p[":project"].agent.interrupt.$post({ param: { project }, json: { turn } });
 }

@@ -72,8 +72,22 @@ their whole descriptions in the log on `agent-play--ask-log`'s rule, with the
 wordless `dismiss` of `--ask-deny` under them and the composer live beside them,
 where Enter answers rather than sends. A question parks the turn and freezes its
 clock until somebody acts; a connector's elicitation is declined and no dialog
-kinds are declared. The threads strip and the model readout the frames here draw
-are still ahead of the code.
+kinds are declared. **#198 landed the stop and the queue**: `agent-stop`'s press
+sits in the composer footer with its own `⎋`, esc from the field does the same and
+esc from the canvas does it on the bottom rung of the ladder, once every rung above
+it has passed; what goes down is an `interrupt` control request, so the process
+survives it and the log ends on the wire's own `aborted_streaming` saying `stopped`,
+and `[Request interrupted by user]` is never drawn. The stop is offered against
+`phase === "playing"` and nothing else, because a parked turn has stopped by itself.
+The queue is `agent-play--queue-box`'s: Enter while a turn runs holds the message in
+a list spool owns, it stacks inside the composer's own border above the chip strip,
+dimmed with a mono `queued` and a ✕, capped at 164px and scrolling inside itself,
+and the whole stack goes down stdin as one turn the moment the result arrives with
+each message carrying the `<selection>` entries from its own Enter. `--queue-back`'s
+merge is the one invariant both exits share, in `agent-queue.ts`: words that leave
+the queue un-fired land above the draft in fire order, one blank line apart. The
+threads strip and the model readout the frames here draw are still ahead of the
+code.
 
 Explorations live until the work they decided is built. Making the decision is
 not that moment: while a page is still being resolved, the rejected frames are

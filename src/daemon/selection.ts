@@ -71,6 +71,59 @@ export function parseSelectionPut(value: unknown): SelectionPut | undefined {
 	return { elements };
 }
 
+/**
+ * A selection the rail captured, read back off the wire (#170).
+ *
+ * The one caller is a queued message, which carries the selection block from its own
+ * Enter rather than from the moment the queue fires — so the list has to travel, and
+ * the daemon reads it back rather than looking one up. It is the same enriched shape
+ * the daemon served the rail in the first place: `spool selection`'s own renderer is
+ * still the only thing that turns it into bytes, so a chat turn and a CLI agent read
+ * one contract.
+ *
+ * Strict rather than coercing. A half-read entry would print `undefined` into
+ * somebody's prompt, which is worse than the turn being turned away.
+ *
+ * The one thing it does rewrite is the excerpt's length, because `selectionBlock` is
+ * written against the promise that every excerpt reaching it is already inside the cap
+ * — true of the store, which caps on the way in, and not true of a list arriving over
+ * the wire. Capping here keeps that promise for both readers rather than teaching the
+ * renderer to distrust its input. It is the only field with a budget, and the entry's
+ * pointer, which is the whole of what an agent needs, is never touched.
+ */
+export function parseSelectionEntries(value: unknown): SelectionEntry[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const entries: SelectionEntry[] = [];
+	for (const raw of value) {
+		if (typeof raw !== "object" || raw === null) return undefined;
+		const { kind, frame, path, size, name, lines, selector, excerpt, generated } = raw as Record<string, unknown>;
+		if (typeof frame !== "string" || !isSafeName(frame) || typeof path !== "string") return undefined;
+		if (kind === "frame") {
+			const box = size as Record<string, unknown> | undefined;
+			if (typeof box?.w !== "number" || typeof box.h !== "number") return undefined;
+			entries.push({ kind: "frame", frame, path, size: { w: box.w, h: box.h } });
+			continue;
+		}
+		if (kind !== "element") return undefined;
+		if (typeof name !== "string" || typeof selector !== "string" || typeof excerpt !== "string") return undefined;
+		if (!Array.isArray(lines) || lines.length !== 2 || !lines.every((line) => typeof line === "number")) {
+			return undefined;
+		}
+		if (generated !== undefined && generated !== true) return undefined;
+		entries.push({
+			kind: "element",
+			frame,
+			name,
+			path,
+			lines: [lines[0] as number, lines[1] as number],
+			selector,
+			excerpt: cap(excerpt),
+			...(generated === true ? { generated: true as const } : {}),
+		});
+	}
+	return entries;
+}
+
 export function createSelectionStore() {
 	const byRoot = new Map<string, SelectionEntry[]>();
 

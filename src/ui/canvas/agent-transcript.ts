@@ -1,5 +1,6 @@
 import type { Attachment } from "../../attachment";
 import type { AgentEvent } from "../../daemon/agent-events";
+import type { SelectionEntry } from "../../daemon/selection";
 import { ASK_TOOL, type AskQuestion, questionsOf } from "./agent-ask";
 import {
 	type CallInput,
@@ -474,17 +475,35 @@ const ANSWERS: ReadonlySet<AgentEvent["kind"]> = new Set([
 ]);
 
 /**
- * What went out with the words, as the composer captured it at Enter (#116, #119).
+ * What went out with the words, as the composer captured it at Enter (#116, #119,
+ * #170).
  *
  * Held rather than derived, because the strip may have moved since: a turn is a
- * record of the moment it was sent, and the selection is a live thing.
+ * record of the moment it was sent, and the selection is a live thing. That is a
+ * nicety for a message that goes out on the press that made it and the whole of the
+ * contract for one the queue held, which fires minutes later against a canvas the
+ * hands have moved on from.
  */
 export interface AgentSent {
+	/** exactly what the chip strip said at rest, which is the line the log keeps */
 	readonly context?: string | null;
 	readonly attached?: Attachment | null;
+	/** the entries those chips were drawn from, which are the bytes that go out */
+	readonly selection?: readonly SelectionEntry[] | undefined;
 }
 
-export function transcriptOf(prompt: string, seen: readonly Stamped[], sent: AgentSent = {}): Transcript {
+/**
+ * One thing the human said, and what rode with it.
+ *
+ * A turn's head is a list because a queue fires as one turn (#170): every message
+ * spool held goes out together, in the order it was said in, and each of them is a
+ * row of the log rather than one blob nobody typed.
+ */
+export interface AgentWords extends AgentSent {
+	readonly text: string;
+}
+
+export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped[]): Transcript {
 	const beats: Beat[] = [];
 	const prose = new Map<string, Prose>();
 	const rows = new Map<string, Row>();
@@ -1152,9 +1171,15 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[], sent: Age
 		return { ...row, kind: "row", delegated: theirs };
 	};
 
-	const entries: AgentEntry[] = [
-		{ key: "user", kind: "user", text: prompt, context: sent.context ?? null, attached: sent.attached ?? null },
-	];
+	// every message that started this turn, in the order it was said in: one for a
+	// press against a quiet rail, and the whole stack for a queue that fired (#170)
+	const entries: AgentEntry[] = said.map((words, index) => ({
+		key: index === 0 ? "user" : `user-${index}`,
+		kind: "user",
+		text: words.text,
+		context: words.context ?? null,
+		attached: words.attached ?? null,
+	}));
 	for (const slot of order) {
 		if (slot.kind === "beat") {
 			const beat = beats.find((candidate) => candidate.key === slot.key);
