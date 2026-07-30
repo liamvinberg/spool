@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { skillText } from "../skill";
-import { AGENT_ALLOW_RULE, agentFraming, agentPromptContent, agentPromptLine, planAgentSpawn } from "./agent-spawn";
+import { AGENT_ALLOW_RULES, agentFraming, agentPromptContent, agentPromptLine, planAgentSpawn } from "./agent-spawn";
 
 /** a thread nobody has spawned yet, which is the ordinary case a flag test wants */
 const FRESH = { id: "6b5c1d2e-1111-4222-8333-444455556666", resume: false } as const;
@@ -57,14 +57,16 @@ describe("the spawn", () => {
 		expect(flagValue(args, "--permission-prompt-tool")).toBe("stdio");
 	});
 
-	it("passes one allow rule and denies nothing", () => {
+	it("allows edits under design/ and the tools that cannot change anything, denies nothing", () => {
 		const { args } = planAgentSpawn("/tmp/product", {}, FRESH);
 
 		const settings = JSON.parse(flagValue(args, "--settings") ?? "{}") as {
 			permissions?: { allow?: string[]; deny?: string[] };
+			sandbox?: { enabled?: boolean };
 		};
-		expect(settings.permissions?.allow).toEqual([AGENT_ALLOW_RULE]);
-		expect(AGENT_ALLOW_RULE).toBe("Edit(./design/**)");
+		expect(settings.permissions?.allow).toEqual(AGENT_ALLOW_RULES);
+		// the mutation fence, and the harmless three: read anywhere, fetch, search
+		expect(AGENT_ALLOW_RULES).toEqual(["Edit(./design/**)", "Read(//**)", "WebFetch", "WebSearch"]);
 		// deny beats allow and cannot express an exception, so there is no deny
 		expect(settings.permissions?.deny).toBeUndefined();
 		// and the shell is not narrowed: the fence is paths, never commands
@@ -72,6 +74,23 @@ describe("the spawn", () => {
 		expect(args).not.toContain("--disallowedTools");
 		expect(args).not.toContain("--dangerously-skip-permissions");
 		expect(args).not.toContain("--permission-mode=bypassPermissions");
+	});
+
+	it("runs the shell sandboxed, which is what makes commands quiet", () => {
+		const { args } = planAgentSpawn("/tmp/product", {}, FRESH);
+
+		const settings = JSON.parse(flagValue(args, "--settings") ?? "{}") as {
+			sandbox?: { enabled?: boolean; filesystem?: unknown };
+		};
+		// the OS judges the running process where an allowlist could only judge
+		// the command string, and a script the agent wrote is not a string anyone
+		// can judge
+		expect(settings.sandbox?.enabled).toBe(true);
+		// no filesystem narrowing: denyWrite on the root with allowWrite on
+		// design/ blocks design/ too (measured on 2.1.220 — deny beats allow), so
+		// the boundary stays the binary's own cwd + temp and the framing carries
+		// the design/ intent instead
+		expect(settings.sandbox && "filesystem" in settings.sandbox).toBe(false);
 	});
 
 	it("puts no API key in the environment and strips none the developer set", () => {
@@ -184,7 +203,10 @@ describe("the framing", () => {
 		// the price of restricting setting sources: the project's own memory file
 		// never reaches the agent, so one line spends the agent's own Read on it
 		expect(framing).toContain("Read the project's own CLAUDE.md or AGENTS.md before your first change.");
-		expect(framing).toContain("Writing under design/ is silent.");
+		// the framing carries the fence's one gap: the sandbox's write boundary is
+		// the project root, so only the file tools ask outside design/
+		expect(framing).toContain("writing under design/ are\nall silent.");
+		expect(framing).toContain("with the file\ntools rather than the shell");
 	});
 
 	it("forbids nothing the fence leaves open", () => {
