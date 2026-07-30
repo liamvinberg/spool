@@ -3,13 +3,9 @@ import { createPortal } from "react-dom";
 import { accelPressed } from "../../runtime/platform-keys";
 import type { ProjectedFrame } from "../api";
 import { framesOnPage, pageLabel, pageList } from "./pages";
+import { COLLAPSED_BELOW, MAX_WIDTH, STRIP_WIDTH, settledWidth, useRailWidth } from "./rail-width";
 
 const PANEL_WIDTH = 248;
-const STRIP_WIDTH = 44;
-const MIN_WIDTH = 200;
-const MAX_WIDTH = 480;
-const SNAP_BELOW = 144;
-const COLLAPSED_BELOW = 72;
 
 export interface SelectModifiers {
 	shift: boolean;
@@ -44,7 +40,7 @@ export function CanvasSidebar({
 	/** The page holding the finder's pick — its row lights while the palette is up. */
 	litPage?: string | null;
 }) {
-	const [width, setWidth] = useState(PANEL_WIDTH);
+	const [width, setWidth] = useRailWidth("pages", PANEL_WIDTH);
 	const [dragging, setDragging] = useState(false);
 	const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 	const [pageTooltip, setPageTooltip] = useState<{ page: string; x: number; y: number } | null>(null);
@@ -63,7 +59,7 @@ export function CanvasSidebar({
 		target.releasePointerCapture(pointerId);
 		drag.current = null;
 		setDragging(false);
-		setWidth(current.latestWidth < SNAP_BELOW ? STRIP_WIDTH : Math.max(MIN_WIDTH, current.latestWidth));
+		setWidth(settledWidth(current.latestWidth));
 	}
 
 	function showPageTooltip(page: string, target: HTMLButtonElement) {
