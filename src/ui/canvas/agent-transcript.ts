@@ -1,11 +1,13 @@
 import type { Attachment } from "../../attachment";
 import type { AgentEvent } from "../../daemon/agent-events";
+import { ASK_TOOL, type AskQuestion, questionsOf } from "./agent-ask";
 import {
 	type CallInput,
 	type CallName,
 	drawsOwnRow,
 	nameCall,
 	type RowForeign,
+	readProse,
 	taskMoved,
 	taskWritten,
 } from "./agent-nouns";
@@ -53,6 +55,21 @@ export type RowState = "pending" | "running" | "done" | "failed" | "stopped";
 
 /** whether the beat is still going, finished, or was cut off with the turn */
 export type BeatState = Extract<RowState, "running" | "done" | "stopped">;
+
+/**
+ * How a waiting request is going (#145, #162).
+ *
+ * Six, and five of them are endings, because the ways out of a question are not
+ * variations on one another. `arriving` is the call still writing itself, which is
+ * the same first beat every tool call gets and is not yet answerable. `open` is the
+ * one state that draws controls, and it is what parks the turn.
+ *
+ * `dismissed` and `dropped` are opposites and must never look alike: the first is a
+ * bare deny, where the agent is told to stop and wait, and the second is the empty
+ * answer, where the agent read the silence and picked for itself. Measured, it thinks
+ * for five beats and carries on with the cautious option.
+ */
+export type AskState = "arriving" | "open" | "allowed" | "always" | "denied" | "answered" | "dropped";
 
 /**
  * A picture a call handed back, inline (#117).
@@ -220,6 +237,39 @@ export type AgentEntry =
 	  }
 	| AgentRow
 	/**
+	 * The turn waiting on the person, and what it is waiting for (#121, #145, #162).
+	 *
+	 * One entry for two things, because the wire is one channel: an approval leads with
+	 * the agent's written description and offers spool's own three answers, and the
+	 * agent's own question leads with its questions and offers the agent's. What tells
+	 * them apart is `question`, off the flag the request carries, and never the presence
+	 * of a drawable option list: a payload spool could not read is still a question, and
+	 * allowing one with its arguments untouched is the empty answer spool never sends.
+	 *
+	 * Nothing permanent is added to the rail by answering one. The question is a
+	 * sentence the agent wrote, so it is drawn where the agent's sentences are drawn,
+	 * and the answer is a sentence the person chose, so it lands in the shape the rail
+	 * already gives the person's words. The option list is the only new geometry and it
+	 * exists only while nobody has answered.
+	 */
+	| {
+			readonly key: string;
+			readonly kind: "ask";
+			/** the control request an answer names; null until the request itself lands */
+			readonly request: string | null;
+			/** the agent's own question rather than an approval to run something */
+			readonly question: boolean;
+			/** the agent's own sentence: its written description, or its question so far */
+			readonly asked: string | null;
+			/** its questions and their options, once the whole call has landed */
+			readonly questions: readonly AskQuestion[];
+			/** an "always" is on offer, because the request suggested a rule for one */
+			readonly always: boolean;
+			readonly state: AskState;
+			/** the person's own words, once they have said them */
+			readonly words: string | null;
+	  }
+	/**
 	 * Spool's own word, drawn as a rule across the log.
 	 *
 	 * A boundary rather than a reply: everything above it happened and nothing below
@@ -242,6 +292,14 @@ export interface Transcript {
 	readonly over: boolean;
 	/** when the last event landed, so the clock can stop once the edge has caught up */
 	readonly last: number;
+	/**
+	 * The request the turn is parked on, or null while nothing waits on anybody.
+	 *
+	 * The one state in this rail that waits on the person rather than being watched by
+	 * them, which is why it is a field rather than something read back out of the
+	 * entries: it stops the clock, and it changes what Enter in the composer means.
+	 */
+	readonly asking: string | null;
 }
 
 /**
@@ -292,6 +350,21 @@ interface Prose {
 	landed: Landed[];
 	settled: boolean;
 }
+
+/** a waiting request, from the call that opens it to whatever ends it */
+interface Ask {
+	readonly key: string;
+	request: string | null;
+	question: boolean;
+	asked: string | null;
+	questions: readonly AskQuestion[];
+	always: boolean;
+	state: AskState;
+	words: string | null;
+}
+
+/** nobody has answered it and it is still there to answer, which is what parks a turn */
+const unanswered = (ask: Ask) => ask.state === "open" || ask.state === "arriving";
 
 interface Row {
 	key: string;
@@ -415,8 +488,12 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[], sent: Age
 	const beats: Beat[] = [];
 	const prose = new Map<string, Prose>();
 	const rows = new Map<string, Row>();
+	/** every waiting request by its own key, which is the call it is about */
+	const asks = new Map<string, Ask>();
+	/** which ask a control request and a call answer to, since the two arrive apart */
+	const askOf = new Map<string, string>();
 	/** the order entries were opened in, which is the order the log reads */
-	const order: { kind: "beat" | "prose" | "row"; key: string }[] = [];
+	const order: { kind: "beat" | "prose" | "row" | "ask"; key: string }[] = [];
 	const notes: AgentEntry[] = [];
 	/** open tool blocks by slot, since a fragment carries only its block index */
 	const blocks = new Map<string, Block>();
@@ -639,6 +716,51 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[], sent: Age
 			runs.set(block.thread, { row: block.row, name, settle: null });
 	};
 
+	/**
+	 * The block the turn is going to stop at, opened where the call opens (#145).
+	 *
+	 * A question is a call like any other on the way in — a name, then its arguments
+	 * typing themselves in — so it gets the same first beat, and only the request that
+	 * follows makes it answerable. Opening it here rather than on that request is what
+	 * puts the question in the log in the agent's own order.
+	 *
+	 * The key is the call, because that is what the request, the whole call and the
+	 * result all name it by. Where there is no call to name it by, the request is.
+	 *
+	 * An approval is the other way round and `under` is why. Its request arrives after
+	 * the call it is about — measured, while the *next* call's arguments are already
+	 * streaming — so appending it would put the block under a row it has nothing to do
+	 * with. It goes back under its own row instead, which is also what keeps it from
+	 * ending a run it never interrupted.
+	 */
+	const openAsk = (key: string, opening: "question" | "approval", under: string | null = null): Ask => {
+		const known = asks.get(key);
+		if (known !== undefined) return known;
+		const made: Ask = {
+			key: `ask:${key}`,
+			request: null,
+			// a call named `AskUserQuestion` is a question before its request says so, and
+			// an approval's block is only ever opened by a request that has
+			question: opening === "question",
+			asked: null,
+			questions: [],
+			always: false,
+			state: "arriving",
+			words: null,
+		};
+		asks.set(key, made);
+		const row = under === null ? -1 : order.findIndex((slot) => slot.kind === "row" && slot.key === under);
+		if (row >= 0) {
+			order.splice(row + 1, 0, { kind: "ask", key });
+			return made;
+		}
+		order.push({ kind: "ask", key });
+		// a question is something the log draws at the end of it, so it ends whatever run
+		// was open the way every other drawn thing does
+		endRun("");
+		return made;
+	};
+
 	/** a block the wire is opening, or one it never streamed and is handing over whole */
 	const blockOf = (thread: string, slot: string, id: string | null, tool: string): Block => {
 		const block: Block = { id, tool, thread, fragments: "", row: null, named: null, joined: false, settled: false };
@@ -661,6 +783,9 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[], sent: Age
 			if (block.row === null && !block.joined) nameRow(block, block.fragments, false, null);
 		}
 		for (const row of rows.values()) if (row.state === "running") row.state = "stopped";
+		// a question the turn ended under is one nobody answered, and the controls go
+		// with it: there is no process left for an answer to reach
+		for (const ask of asks.values()) if (unanswered(ask)) ask.state = "dropped";
 	};
 
 	/** the model stopped composing, so whatever beat was open closes on this ending */
@@ -714,7 +839,14 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[], sent: Age
 				// the plan's row opens on the first of its creates, before any of them has
 				// said what its task is, so the count types itself in the way a path does
 				if (event.tool === "TaskCreate") openPlan(block);
-				else nameRow(block, undefined, false, null);
+				// the turn stopping to ask, which is not a call the log is a receipt for:
+				// the question is the object the way the plan is. Only on the thread the
+				// person is talking to, because a question is words
+				else if (event.tool === ASK_TOOL && thread === "") {
+					const key = event.id ?? `block:${event.block}`;
+					openAsk(key, "question");
+					if (event.id !== null) askOf.set(event.id, key);
+				} else nameRow(block, undefined, false, null);
 				break;
 			}
 			case "call-input": {
@@ -725,6 +857,14 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[], sent: Age
 				const block = blocks.get(`${thread}:${event.block}`);
 				if (block === undefined) break;
 				block.fragments += event.fragment;
+				// the question types itself in, because a half-arrived sentence is the same
+				// sentence with less of it. Its options do not: they are objects, and half
+				// an option list is not a shorter one
+				const asking = block.tool === ASK_TOOL ? asks.get(block.id ?? `block:${event.block}`) : undefined;
+				if (asking !== undefined) {
+					asking.asked = readProse(block.fragments, "question");
+					break;
+				}
 				nameRow(block, block.fragments, false, null);
 				break;
 			}
@@ -741,6 +881,14 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[], sent: Age
 					moveTask(thread, event.input);
 					break;
 				}
+				// the whole call is the authority on the options, the same way a settled
+				// message outranks its own deltas
+				const asking = event.tool === ASK_TOOL && thread === "" ? asks.get(event.id) : undefined;
+				if (asking !== undefined) {
+					asking.questions = questionsOf(event.input);
+					asking.asked = asking.questions[0]?.question ?? asking.asked;
+					break;
+				}
 				const foreign =
 					event.foreign === undefined
 						? null
@@ -748,7 +896,66 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[], sent: Age
 				nameRow(block, event.input, true, foreign);
 				break;
 			}
+			case "asking": {
+				/*
+				 * The request that makes it answerable, and the moment the turn parks.
+				 *
+				 * A question already has a block in the log, opened where its call opened, so
+				 * this finds it and turns the options on. An approval has none — the call it is
+				 * about is an ordinary row already drawn above — so the block opens here, under
+				 * that row, carrying the agent's written description and nothing else.
+				 */
+				const key = event.call ?? event.request;
+				const above = event.call === null ? null : (calls.get(event.call)?.row ?? null);
+				const ask = openAsk(key, event.interaction ? "question" : "approval", above?.key ?? null);
+				// the flag is the discriminator, so a question whose payload spool could not read
+				// still reads as one: its exits are a sentence and a dismiss rather than an allow
+				ask.question = event.interaction;
+				askOf.set(event.request, key);
+				if (event.call !== null) askOf.set(event.call, key);
+				ask.request = event.request;
+				ask.state = "open";
+				ask.always = event.suggestions.length > 0;
+				/*
+				 * The agent's own written sentence, which is the whole of what an approval gives
+				 * somebody to decide on — and nothing where it wrote none.
+				 *
+				 * There is no fallback to the tool's own name, on #142's finding: a display name
+				 * arrives in three different conventions across three servers, which is why the
+				 * row above says `ask Notion` rather than `Notion-Search`, and a block that put
+				 * the rejected name back under it would undo that. And a description the row
+				 * already prints is dropped for the same reason nothing else in this rail is
+				 * said twice: for a shell call spool's own noun is `run <description>`.
+				 */
+				if (event.description !== null && event.description !== above?.subject) ask.asked = event.description;
+				if (ask.questions.length === 0) ask.questions = questionsOf(event.input);
+				if (ask.asked === null && ask.questions.length > 0) ask.asked = ask.questions[0]?.question ?? null;
+				break;
+			}
+			case "answered": {
+				const ask = asks.get(askOf.get(event.request) ?? "");
+				if (ask === undefined) break;
+				ask.state =
+					event.answer === "allow"
+						? "allowed"
+						: event.answer === "always"
+							? "always"
+							: event.answer === "deny"
+								? "denied"
+								: "answered";
+				ask.words = event.words;
+				break;
+			}
 			case "result": {
+				/*
+				 * A result on a request nobody answered is the agent answering for itself, and
+				 * it is not a stall: measured, the result lands 84 ms after the ask, the agent
+				 * thinks for five beats and takes the cautious option. So the block says the
+				 * question expired rather than that it failed, and an answered one keeps
+				 * whatever the person said.
+				 */
+				const waited = asks.get(askOf.get(event.id) ?? "");
+				if (waited !== undefined && unanswered(waited)) waited.state = "dropped";
 				const block = calls.get(event.id);
 				if (block === undefined) break;
 				/*
@@ -959,6 +1166,15 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[], sent: Age
 			if (row !== null) entries.push(row);
 			continue;
 		}
+		if (slot.kind === "ask") {
+			const ask = asks.get(slot.key);
+			// a call that opened and never said what it was asking is not a question yet,
+			// but a request that arrived always draws: its controls are the block even
+			// where the row above already said everything there was to say
+			if (ask !== undefined && (ask.request !== null || ask.asked !== null || ask.questions.length > 0))
+				entries.push({ ...ask, kind: "ask" });
+			continue;
+		}
 		const block = prose.get(slot.key);
 		// a text block that opened and never carried a character is not a message
 		if (block !== undefined && block.full !== "") entries.push({ ...block, kind: "prose", landed: block.landed });
@@ -984,5 +1200,6 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[], sent: Age
 					running: written.find((task) => task.state === "running")?.name ?? null,
 					tasks: written,
 				};
-	return { entries: [...entries, ...notes], plan: planned, over, last };
+	const parked = [...asks.values()].find((ask) => ask.state === "open")?.request ?? null;
+	return { entries: [...entries, ...notes], plan: planned, over, last, asking: parked };
 }

@@ -168,6 +168,92 @@ export interface AgentResult extends AgentEventBase {
 	readonly tools?: readonly string[];
 }
 
+/**
+ * One permission update the binary suggested for itself, carried whole (#121).
+ *
+ * Spool reads exactly one field of it — `destination`, which an "always" answer
+ * rewrites to the thread's own scope so the grant dies with the thread and no file
+ * is touched. Everything else is the runtime's own rule language and rides through
+ * untouched, because spool owning an abstraction over permission rules is the thing
+ * #121 decided against: the fence is paths, and the rules are the binary's.
+ */
+export type AgentGrant = Readonly<Record<string, unknown>>;
+
+/**
+ * The turn is waiting on the person (#121, #145).
+ *
+ * One member for two cases, because the wire is one channel: an approval and the
+ * agent's own question arrive on the same request and are told apart by
+ * `interaction`, which is what everything downstream reads. Measured across all
+ * twelve asks in the capture, what they carry follows it — the flagged one has
+ * neither the agent's written `description` nor a rule an "always" could grant, and
+ * carries its options inside `input` instead — but the flag is the fact and the
+ * contents are the consequence, so nothing infers one from the other.
+ *
+ * Nothing is parsed here. `input` is whatever the tool was called with, and turning
+ * it into a question with readable options is the rail's own projection.
+ */
+export interface AgentAsking extends AgentEventBase {
+	readonly kind: "asking";
+	/** the control request's own id, which is what an answer names */
+	readonly request: string;
+	/** the call it is about, which is the row already in the log */
+	readonly call: string | null;
+	readonly tool: string;
+	/** the binary's own display name for the tool */
+	readonly display: string | null;
+	readonly input: unknown;
+	/** the agent's own written sentence about what it wants to do */
+	readonly description: string | null;
+	/** the agent's own question rather than an approval to run something */
+	readonly interaction: boolean;
+	/**
+	 * What an "always" would grant, in the binary's own rule language.
+	 *
+	 * Empty is the whole of the rule for whether "always" is on offer: either the
+	 * request suggested nothing, or it asked for the always rule to be suppressed.
+	 * Spool never composes a rule of its own to fill the gap.
+	 */
+	readonly suggestions: readonly AgentGrant[];
+}
+
+/** What the person said to a waiting request, in spool's own five words. */
+export type AgentAnswer = "allow" | "always" | "deny" | "said" | "picked";
+
+/**
+ * A waiting request stopped waiting, because the person answered it.
+ *
+ * Emitted by the daemon rather than by any adapter: the answer went up the same
+ * stdin the prompt did, and this is the only trace of it the stream would otherwise
+ * carry. The transcript is a fold over events, so without it the log could not draw
+ * the answer at all.
+ */
+export interface AgentAnswered extends AgentEventBase {
+	readonly kind: "answered";
+	readonly request: string;
+	readonly answer: AgentAnswer;
+	/** the person's own words, where the answer was words */
+	readonly words: string | null;
+}
+
+/**
+ * A connector asking a question of its own, which spool declines (#145).
+ *
+ * Not the same kind of thing as the agent's question and not drawn: the words are a
+ * server's rather than the agent's, its schema is an unbounded form, and decline is
+ * the protocol's own word for "no answer is coming". A connector that needs auth
+ * offers no tool to be asked through in the first place.
+ *
+ * It carries the id the decline has to quote and nothing else. The request does send a
+ * server name, a message and a schema, but no capture in the repo holds an
+ * elicitation at all, so anything modelled beyond what declining needs would be a
+ * field with nothing behind it.
+ */
+export interface AgentElicit extends AgentEventBase {
+	readonly kind: "elicit";
+	readonly request: string;
+}
+
 /** A delegated task, named with its own type and the whole prompt it was given. */
 export interface AgentTaskStarted extends AgentEventBase {
 	readonly kind: "task-started";
@@ -259,6 +345,9 @@ export type AgentEvent =
 	| AgentCallInput
 	| AgentCalled
 	| AgentResult
+	| AgentAsking
+	| AgentAnswered
+	| AgentElicit
 	| AgentTaskStarted
 	| AgentTaskStep
 	| AgentTaskDone

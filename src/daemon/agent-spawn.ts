@@ -46,6 +46,21 @@ export const AGENT_ALLOW_RULE = "Edit(./design/**)";
 const AGENT_PERMISSION_MODE = "default";
 
 /**
+ * Where an approval goes, and the flag the whole of #121 rests on.
+ *
+ * Approvals arrive as data only when the permission prompt tool is wired to the
+ * stdio the adapter already opens. Without it the ask has nowhere to land: the tool
+ * fails quietly and the agent apologises and stops, so the fence would be a wall.
+ * The binary's own help does not document this value.
+ *
+ * It buys the agent's own question too, and there is no choosing one without the
+ * other: `AskUserQuestion` exists under `--print` only when a permission prompt tool
+ * is wired, and its own check answers `ask` unconditionally, so no allow rule can
+ * pre-answer it either.
+ */
+const AGENT_PERMISSION_PROMPT_TOOL = "stdio";
+
+/**
  * Only the developer's own settings load. The project's stay out: a spool
  * project is a thing you open from someone else, its `allow` list can make its
  * own dangerous calls quiet, and opening someone's design must not change what
@@ -137,6 +152,8 @@ export function planAgentSpawn(root: string, env: Readonly<Record<string, string
 			AGENT_SETTING_SOURCES,
 			"--permission-mode",
 			AGENT_PERMISSION_MODE,
+			"--permission-prompt-tool",
+			AGENT_PERMISSION_PROMPT_TOOL,
 			"--settings",
 			JSON.stringify({ permissions: { allow: [AGENT_ALLOW_RULE] } }),
 			"--append-system-prompt",

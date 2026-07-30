@@ -733,6 +733,289 @@ describe("the calls the log is not a receipt for", () => {
 });
 
 /**
+ * The turn waiting on the person (#121, #145, #162).
+ *
+ * Two things arrive on one `can_use_tool` request and are told apart by a flag: an
+ * approval, which carries the agent's written description and the rules an "always"
+ * would grant, and the agent's own question, which carries neither and carries its
+ * options inside the call instead. Everything asserted here is read off the twelve
+ * asks in `claude-mcp.json`, which is every one the repo holds.
+ */
+describe("a waiting request", () => {
+	const QUESTION =
+		"`spool shot` is blocked by the v0.3.0 CLI / v0.4.0 daemon split. How do you want the version gap closed?";
+	const ASK_ID = "toolu_01NoWtiLnKqzNvGj2MdAefyP";
+
+	const asking = (over: Partial<Extract<AgentEvent, { kind: "asking" }>> = {}): AgentEvent => ({
+		kind: "asking",
+		request: "req-1",
+		call: "c1",
+		tool: "Bash",
+		display: "Bash",
+		input: { command: "spool upgrade" },
+		description: "Upgrade the CLI so the shot can run",
+		interaction: false,
+		suggestions: [{ type: "addRules", rules: [{ toolName: "Bash", ruleContent: "spool upgrade" }] }],
+		parent: null,
+		...over,
+	});
+
+	const answered = (over: Partial<Extract<AgentEvent, { kind: "answered" }>> = {}): AgentEvent => ({
+		kind: "answered",
+		request: "req-1",
+		answer: "allow",
+		words: null,
+		parent: null,
+		...over,
+	});
+
+	const asks = (entries: readonly AgentEntry[]) => entries.filter((entry) => entry.kind === "ask");
+	const one = (entries: readonly AgentEntry[]) => asks(entries)[0];
+
+	/** the question as the capture writes it: a name, eleven fragments, then the whole call */
+	const questionCall = (): AgentEvent[] => [
+		{ kind: "call", id: ASK_ID, block: 2, tool: "AskUserQuestion", parent: null },
+		{ kind: "call-input", block: 2, fragment: '{"questions": [{"question": "`spool shot` is blo', parent: null },
+		{
+			kind: "call-input",
+			block: 2,
+			fragment: "cked by the v0.3.0 CLI / v0.4.0 daemon split. How do you want the version gap clo",
+			parent: null,
+		},
+		{ kind: "call-input", block: 2, fragment: 'sed?", "header": "Shot fix"}]}', parent: null },
+		called(ASK_ID, "AskUserQuestion", {
+			questions: [
+				{
+					question: QUESTION,
+					header: "Shot fix",
+					multiSelect: false,
+					options: [
+						{ label: "Run `spool upgrade`", description: "I run it, which installs the latest release." },
+						{ label: "Ship it unverified", description: "Leave the frame as authored." },
+					],
+				},
+			],
+		}),
+	];
+
+	it("draws an approval under the row it is about, in the agent's own sentence", () => {
+		const { entries, asking: parked } = transcriptOf(
+			"go",
+			stamp([ready, called("c1", "Bash", { command: "spool upgrade", description: "Upgrade the CLI" }), asking()]),
+		);
+
+		// the row above already says what the call is, so the block says why
+		expect(lines(entries)).toEqual(["upgrade"]);
+		expect(kinds(entries)).toEqual(["user", "row", "ask"]);
+		expect(one(entries)).toMatchObject({
+			kind: "ask",
+			request: "req-1",
+			asked: "Upgrade the CLI so the shot can run",
+			questions: [],
+			always: true,
+			state: "open",
+		});
+		expect(parked).toBe("req-1");
+	});
+
+	it("offers no always where the request suggested no rule", () => {
+		const { entries } = transcriptOf("go", stamp([ready, asking({ suggestions: [] })]));
+
+		// absent rather than dead: spool never composes a rule of its own to fill it
+		expect(one(entries)).toMatchObject({ always: false, state: "open" });
+	});
+
+	it("says nothing the row above already said, and never a wire name", () => {
+		// spool's own noun for a shell call is `run <description>`, so for those the row
+		// is already the sentence and the block is its controls and nothing else
+		const twice = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				called("c1", "Bash", {
+					command: "curl -sS https://fonts.googleapis.com",
+					description: "Check the fonts URL",
+				}),
+				asking({ description: "Check the fonts URL" }),
+			]),
+		);
+		expect(lines(twice.entries)).toEqual(["run Check the fonts URL"]);
+		expect(one(twice.entries)).toMatchObject({ asked: null, state: "open" });
+
+		// and a connector's request carries no description at all, where the display name
+		// is the convention #142 rejected for the row: `ask Notion`, never `Notion-Search`
+		const outside = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				{
+					kind: "called",
+					id: "c9",
+					tool: "mcp__claude_ai_Notion__notion-search",
+					input: { query: "kaffe" },
+					foreign: { server: "Notion", tool: "Notion-Search" },
+					parent: null,
+				},
+				asking({
+					call: "c9",
+					tool: "mcp__claude_ai_Notion__notion-search",
+					display: "Notion-Search",
+					description: null,
+				}),
+			]),
+		);
+		expect(lines(outside.entries)).toEqual(["ask Notion"]);
+		expect(one(outside.entries)).toMatchObject({ asked: null, state: "open" });
+	});
+
+	it("reads the request's own flag rather than whether it could draw an option list", () => {
+		// the flag is the discriminator the wire gives, so a question whose payload spool
+		// could not read is still a question: its exits are a sentence and a dismiss,
+		// never an allow, because allowing one with its arguments untouched is the empty
+		// answer the agent reads as nobody having answered
+		const unreadable = transcriptOf(
+			"go",
+			stamp([ready, asking({ call: ASK_ID, interaction: true, description: null, input: { questions: "?" } })]),
+		);
+
+		expect(one(unreadable.entries)).toMatchObject({ question: true, questions: [], state: "open" });
+		// and an approval is one however much it carries
+		expect(one(transcriptOf("go", stamp([ready, asking()])).entries)).toMatchObject({ question: false });
+	});
+
+	it("goes back under its own row when the next call is already streaming", () => {
+		// which is what the capture does: the request for one call lands while the
+		// arguments of the one after it are still arriving
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				called("c1", "Bash", { command: "spool upgrade", description: "Upgrade the CLI" }),
+				{ kind: "call", id: "c2", block: 2, tool: "Read", parent: null },
+				{ kind: "call-input", block: 2, fragment: '{"file_path": "/p/design/frames/cart/f', parent: null },
+				asking(),
+			]),
+		);
+
+		expect(kinds(entries)).toEqual(["user", "row", "ask", "row"]);
+		expect(lines(entries)).toEqual(["upgrade", "read"]);
+	});
+
+	it("types the question in and lands its options whole", () => {
+		const beats = questionCall();
+		const partway = transcriptOf("go", stamp([ready, ...beats.slice(0, 3)]));
+		const whole = transcriptOf("go", stamp([ready, ...beats]));
+
+		// a half-arrived sentence is the same sentence with less of it, so it types in
+		// the way every other call's subject does — and it is not answerable yet
+		expect(one(partway.entries)).toMatchObject({
+			state: "arriving",
+			asked: "`spool shot` is blocked by the v0.3.0 CLI / v0.4.0 daemon split. How do you want the version gap clo",
+			questions: [],
+			request: null,
+		});
+		expect(partway.asking).toBeNull();
+		// its options are objects and half an option list is not a shorter one, so they
+		// arrive with the whole call
+		const settled = one(whole.entries);
+		expect(settled?.kind === "ask" && settled.questions).toEqual([
+			{
+				header: "Shot fix",
+				question: QUESTION,
+				options: [
+					{ label: "Run `spool upgrade`", description: "I run it, which installs the latest release." },
+					{ label: "Ship it unverified", description: "Leave the frame as authored." },
+				],
+			},
+		]);
+		// and still nothing to press, because the request that makes it answerable is
+		// what parks the turn
+		expect(settled?.kind === "ask" && settled.state).toBe("arriving");
+		expect(whole.asking).toBeNull();
+	});
+
+	it("parks the turn on the request and releases it on the answer", () => {
+		const parked = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				...questionCall(),
+				asking({ request: "req-q", call: ASK_ID, interaction: true, description: null, suggestions: [] }),
+			]),
+		);
+		expect(parked.asking).toBe("req-q");
+		expect(one(parked.entries)).toMatchObject({ state: "open", always: false });
+
+		const released = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				...questionCall(),
+				asking({ request: "req-q", call: ASK_ID, interaction: true, description: null, suggestions: [] }),
+				answered({ request: "req-q", answer: "picked", words: "Ship it unverified" }),
+			]),
+		);
+
+		// the answer is the person's own words, in the shape the rail already gives them
+		expect(released.asking).toBeNull();
+		expect(one(released.entries)).toMatchObject({ state: "answered", words: "Ship it unverified" });
+	});
+
+	it("tells the five ways out apart", () => {
+		const endedBy = (event: AgentEvent) => one(transcriptOf("go", stamp([ready, asking(), event])).entries);
+
+		expect(endedBy(answered({ answer: "allow" }))).toMatchObject({ state: "allowed" });
+		expect(endedBy(answered({ answer: "always" }))).toMatchObject({ state: "always" });
+		expect(endedBy(answered({ answer: "deny" }))).toMatchObject({ state: "denied" });
+		expect(endedBy(answered({ answer: "said", words: "do the other one" }))).toMatchObject({
+			state: "answered",
+			words: "do the other one",
+		});
+		// nobody answered and the agent carried on, which is the opposite of a dismiss
+		expect(endedBy(result("c1"))).toMatchObject({ state: "dropped" });
+	});
+
+	it("keeps an answered request answered when its result lands", () => {
+		const { entries } = transcriptOf("go", stamp([ready, asking(), answered({ answer: "allow" }), result("c1")]));
+
+		expect(one(entries)).toMatchObject({ state: "allowed" });
+	});
+
+	it("drops what nobody answered when the turn ends under it", () => {
+		const { entries, asking: parked } = transcriptOf("go", stamp([ready, asking(), done]));
+
+		// there is no process left for an answer to reach, so the controls go with it
+		expect(one(entries)).toMatchObject({ state: "dropped" });
+		expect(parked).toBeNull();
+	});
+
+	it("reads every ask the capture holds and draws no wire name for any of them", () => {
+		const { entries } = transcriptOf("make these consistent", replay("claude-mcp"));
+		const drawn = asks(entries);
+
+		expect(drawn).toHaveLength(12);
+		// the capture had nothing attached to answer them, so the agent answered for
+		// itself every time — which is the state, and it is not a stall
+		expect(new Set(drawn.map((ask) => (ask.kind === "ask" ? ask.state : "")))).toEqual(new Set(["dropped"]));
+		// the one that is the agent's own question is the one with options in it
+		const questions = drawn.filter((ask) => ask.kind === "ask" && ask.questions.length > 0);
+		expect(questions).toHaveLength(1);
+		expect(questions[0]?.kind === "ask" && questions[0].questions[0]?.header).toBe("Shot fix");
+		expect(questions[0]?.kind === "ask" && questions[0].questions[0]?.options.map((option) => option.label)).toEqual([
+			"Run `spool upgrade`",
+			"You fix it, I shoot",
+			"Ship it unverified",
+		]);
+		// 150 to 250 characters of what each choice costs, which is why they are a block
+		// in the log rather than chips beside the composer
+		for (const option of questions[0]?.kind === "ask" ? (questions[0].questions[0]?.options ?? []) : []) {
+			expect(option.description.length).toBeGreaterThan(100);
+		}
+		expect(lines(entries)).not.toContain("askuserquestion");
+	});
+});
+
+/**
  * The plan is the one thing a turn produces that outlives the call that made it, so
  * it is the one exception to the one-line rule: the list leaves the log for a strip
  * of its own and only the line saying it was written stays behind (#117, #194).

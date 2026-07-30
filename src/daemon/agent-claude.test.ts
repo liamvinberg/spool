@@ -27,8 +27,8 @@ function project(capture: string): AgentEvent[] {
 /**
  * What the adapter deliberately does not model yet, per capture.
  *
- * `control_request` and `control_response` are approvals, the model list and the
- * usage windows, all of which are their own tickets. They arrive as `other`
+ * `control_response` is the model list and the usage windows answering requests
+ * spool does not yet make, which are their own tickets. They arrive as `other`
  * carrying their payload rather than as a crash, which is the whole point: a
  * shape spool has no member for costs a blank row.
  */
@@ -37,7 +37,7 @@ const UNMODELLED: Readonly<Record<string, readonly string[]>> = {
 	"claude-plan": ["system/background_tasks_changed"],
 	"claude-edits": [],
 	"claude-fanout": ["system/background_tasks_changed"],
-	"claude-mcp": ["control_request", "control_response", "system/hook_response", "system/hook_started"],
+	"claude-mcp": ["control_response", "system/hook_response", "system/hook_started"],
 	"claude-interrupt": ["control_response", "system/hook_response", "system/hook_started"],
 	"claude-compact": ["system/hook_response", "system/hook_started", "system/status"],
 };

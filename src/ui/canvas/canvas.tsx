@@ -2668,6 +2668,7 @@ export function ProjectCanvas({
 				}}
 				pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
 				onSend={turn.send}
+				onAnswer={turn.answer}
 			/>
 			{exportDialog !== null && exportFrames.length > 0 ? (
 				<ExportDialog
