@@ -3,7 +3,15 @@ import { createClaudeAdapter } from "../../daemon/agent-claude";
 import type { AgentEvent } from "../../daemon/agent-events";
 import { CAPTURES, readCapture } from "../../test-helpers";
 import { drawnBy } from "./agent-pace";
-import { type AgentEntry, duration, fullyShown, type Stamped, shownBy, transcriptOf } from "./agent-transcript";
+import {
+	type AgentEntry,
+	type AgentRow,
+	duration,
+	fullyShown,
+	type Stamped,
+	shownBy,
+	transcriptOf,
+} from "./agent-transcript";
 
 /**
  * The transcript the rail draws (#192, #193), projected off #191's event union.
@@ -29,6 +37,9 @@ const kinds = (entries: readonly AgentEntry[]) => entries.map((entry) => entry.k
 const beat = (entries: readonly AgentEntry[]) => entries.find((entry) => entry.kind === "beat");
 const prose = (entries: readonly AgentEntry[]) => entries.filter((entry) => entry.kind === "prose");
 const rows = (entries: readonly AgentEntry[]) => entries.filter((entry) => entry.kind === "row");
+/** every row in the log, each delegate's own transcript unfolded in place (#194) */
+const deep = (entries: readonly AgentEntry[]): AgentRow[] =>
+	rows(entries).flatMap((row) => [row, ...deep(row.delegated)]);
 /** what a row reads as on the line, which is the whole of what the log says out loud */
 const lines = (entries: readonly AgentEntry[]) =>
 	rows(entries).map(
@@ -396,8 +407,10 @@ describe("one tool call", () => {
 				frame: "cart",
 				count: 1,
 				detail: "design/frames/app/cart/frame.tsx",
+				shot: null,
 				foreign: null,
 				parent: null,
+				delegated: [],
 			},
 		]);
 	});
@@ -690,21 +703,23 @@ describe("the calls the log is not a receipt for", () => {
 	 * A plan is written in nine seconds and then runs for nine minutes, and a question
 	 * has not happened yet: both outlive the call that made them, so both leave the
 	 * transcript for a place of their own (#117, #145). What matters here is that
-	 * neither leaves a wire name on a line in the meantime.
+	 * neither leaves a wire name on a line in the meantime, and that the plan's own line
+	 * is one however many calls wrote the list.
 	 */
-	it("draw no row at all", () => {
+	it("draw one line for the plan and none at all for the rest", () => {
 		const { entries } = transcriptOf(
 			"go",
 			stamp([
 				ready,
 				called("p1", "TaskCreate", { subject: "Write the frame", activeForm: "Writing the frame" }),
-				called("p2", "TaskUpdate", { taskId: "1", status: "in_progress" }),
+				called("p2", "TaskCreate", { subject: "Shoot it", activeForm: "Shooting it" }),
+				called("p3", "TaskUpdate", { taskId: "1", status: "in_progress" }),
 				called("q1", "AskUserQuestion", { questions: [{ question: "Which currency?", options: [] }] }),
 				called("t1", "Read", { file_path: `${ROOT}/design/frames/cart/frame.tsx` }),
 			]),
 		);
 
-		expect(lines(entries)).toEqual(["read cart"]);
+		expect(lines(entries)).toEqual(["plan 2 tasks", "read cart"]);
 	});
 
 	/** and the one question in the captures is the case that caught it */
@@ -714,6 +729,232 @@ describe("the calls the log is not a receipt for", () => {
 
 		expect(asked).toHaveLength(1);
 		expect(lines(rowsOf("claude-mcp"))).not.toContain("askuserquestion");
+	});
+});
+
+/**
+ * The plan is the one thing a turn produces that outlives the call that made it, so
+ * it is the one exception to the one-line rule: the list leaves the log for a strip
+ * of its own and only the line saying it was written stays behind (#117, #194).
+ */
+describe("the plan", () => {
+	const create = (id: string, subject: string, activeForm: string) =>
+		called(id, "TaskCreate", { subject, description: "…", activeForm });
+	const move = (id: string, task: string, status: string) => called(id, "TaskUpdate", { taskId: task, status });
+
+	it("is absent from a turn that never writes one", () => {
+		expect(
+			transcriptOf("go", stamp([ready, called("t1", "Read", { file_path: `${ROOT}/AGENTS.md` })])).plan,
+		).toBeNull();
+	});
+
+	/** the count is the receipt and it climbs, because seven creates are seven events */
+	it("counts its tasks in as they are written", () => {
+		const written = [
+			create("p1", "Author the home frame", "Authoring the home frame"),
+			create("p2", "Shoot it and read the shot back", "Verifying the frame"),
+		];
+		const upTo = (upto: number) => transcriptOf("go", stamp([ready, ...written.slice(0, upto)]));
+
+		expect(upTo(0).plan).toBeNull();
+		expect(lines(upTo(1).entries)).toEqual(["plan 1 task"]);
+		expect(upTo(1).plan).toMatchObject({ total: 1, done: 0, running: null });
+		expect(lines(upTo(2).entries)).toEqual(["plan 2 tasks"]);
+		expect(upTo(2).plan?.total).toBe(2);
+	});
+
+	/**
+	 * Both phrasings are the agent's own: the written form the list reads in, and the
+	 * present participle it supplies alongside precisely so that a surface never has to
+	 * invent a friendlier one for a task in flight.
+	 */
+	it("reads a running task in the agent's own present participle and never in spool's", () => {
+		const { plan } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				create("p1", "Author the home frame", "Authoring the home frame"),
+				create("p2", "Shoot it and read the shot back", "Verifying the frame"),
+				move("p3", "1", "completed"),
+				move("p4", "2", "in_progress"),
+			]),
+		);
+
+		expect(plan).toEqual({
+			total: 2,
+			done: 1,
+			running: "Verifying the frame",
+			tasks: [
+				{ key: "task:1", name: "Author the home frame", state: "done" },
+				{ key: "task:2", name: "Verifying the frame", state: "running" },
+			],
+		});
+	});
+
+	/** written down and not started is the one place a row in this rail is pending */
+	it("leaves a task nobody has started pending", () => {
+		const { plan } = transcriptOf("go", stamp([ready, create("p1", "Wire the flow graph", "Wiring the flow graph")]));
+
+		expect(plan?.tasks.map((task) => task.state)).toEqual(["pending"]);
+	});
+
+	/** the list is the object, so a move is the list changing and never a line */
+	it("draws no line when a task moves", () => {
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				create("p1", "Author the home frame", "Authoring the home frame"),
+				move("p2", "1", "in_progress"),
+			]),
+		);
+
+		expect(lines(entries)).toEqual(["plan 1 task"]);
+	});
+
+	/** a window that opens after the list was written has nothing to move */
+	it("moves nothing when the update names a task this stream never saw written", () => {
+		const { entries, plan } = transcriptOf("go", stamp([ready, move("p1", "3", "completed")]));
+
+		expect(plan).toBeNull();
+		expect(lines(entries)).toEqual([]);
+	});
+
+	/**
+	 * Per thread, for the reason a run is (#135): the shelf belongs to the conversation,
+	 * so a delegate that writes its own list keeps it inside its own transcript rather
+	 * than merging its tasks into the strip above the log. No capture holds one — 0 of 7 —
+	 * which is exactly why the rule is asserted rather than assumed.
+	 */
+	it("keeps a delegate's own list out of the conversation's strip", () => {
+		const { entries, plan } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				called("d1", "Agent", { description: "Design cart--empty" }),
+				called("p1", "TaskCreate", { subject: "Author the frame", activeForm: "Authoring the frame" }, "d1"),
+				called("p2", "TaskUpdate", { taskId: "1", status: "in_progress" }, "d1"),
+			]),
+		);
+		const delegation = rows(entries)[0];
+
+		expect(plan).toBeNull();
+		expect(lines(entries)).toEqual(["delegate Design cart--empty"]);
+		expect(lines(delegation?.delegated ?? [])).toEqual(["plan 1 task"]);
+	});
+
+	/**
+	 * The nine-minute turn, replayed: seven tasks written in nine seconds and then moved
+	 * across the rest of it. `0/7 Setting up tokens, fonts, and scenario seed` becomes
+	 * `1/7 Authoring the home frame` sixteen rows further down the log, which is what a
+	 * transcript cannot hold — and the reading in between is honest, because for a moment
+	 * one task has landed and the agent has not said which is next.
+	 */
+	it("goes on changing while the log grows past the line that wrote it", () => {
+		const seen = replay("claude-plan");
+		const readings: string[] = [];
+		const below: number[] = [];
+		for (let upto = 1; upto <= seen.length; upto += 1) {
+			const { entries, plan } = transcriptOf("go", seen.slice(0, upto));
+			if (plan === null) continue;
+			const reading = `${plan.done}/${plan.total} ${plan.running ?? "—"}`;
+			if (readings.at(-1) === reading) continue;
+			readings.push(reading);
+			const drawn = rows(entries);
+			below.push(drawn.length - 1 - drawn.findIndex((row) => row.verb === "plan"));
+		}
+
+		expect(readings.slice(-3)).toEqual([
+			"0/7 Setting up tokens, fonts, and scenario seed",
+			"1/7 —",
+			"1/7 Authoring the home frame",
+		]);
+		// the count climbs as the list is written, and then the phrasing carries it
+		expect(readings.slice(0, 7)).toEqual(["0/1 —", "0/2 —", "0/3 —", "0/4 —", "0/5 —", "0/6 —", "0/7 —"]);
+		// and by the time it last changed, sixteen rows sat between it and the line in the
+		// log that says it was written: a log would have carried it off the top
+		expect(below.at(-1)).toBe(16);
+		expect(lines(rowsOf("claude-plan"))).toContain("plan 7 tasks");
+	});
+
+	/** the same seven, written into a turn that never got around to starting one */
+	it("says nothing is running when nothing has been started", () => {
+		expect(transcriptOf("go", replay("claude-turn")).plan).toMatchObject({ total: 7, done: 0, running: null });
+	});
+
+	/** two updates and no creates: this window opened after the list was written */
+	it("has no list in the window that only moves one", () => {
+		const seen = replay("claude-edits");
+		const moves = seen.filter(({ event }) => event.kind === "called" && event.tool === "TaskUpdate");
+
+		expect(moves).toHaveLength(2);
+		expect(transcriptOf("go", seen).plan).toBeNull();
+		expect(lines(rowsOf("claude-edits")).some((line) => line.startsWith("plan"))).toBe(false);
+	});
+});
+
+/**
+ * A screenshot does not earn a place off the line the way the plan does: it is fixed
+ * at the one moment it was taken. So it is the payload of the row that read it, and
+ * roughly 150 KB of base64 is why it must never reach the line itself (#117).
+ */
+describe("a picture a call handed back", () => {
+	const look = called("t1", "Read", { file_path: `${ROOT}/design/.spool/verify/home.png` });
+	const png = (data: string) => result("t1", { images: [{ media: "image/png", data }] });
+
+	it("rides one field below the line, with the path still behind the disclosure", () => {
+		const { entries } = transcriptOf("go", stamp([ready, look, png("iVBORw0KGgo")]));
+
+		expect(rows(entries)).toEqual([
+			{
+				key: "row:t1",
+				kind: "row",
+				state: "done",
+				verb: "look",
+				subject: "home",
+				frame: "home",
+				count: 1,
+				detail: "design/.spool/verify/home.png",
+				shot: { media: "image/png", data: "iVBORw0KGgo" },
+				foreign: null,
+				parent: null,
+				delegated: [],
+			},
+		]);
+	});
+
+	/** 150 KB of base64 on a line would be the end of the line as a receipt */
+	it("keeps the bytes out of every word the line is made of", () => {
+		const data = "iVBORw0KGgo".repeat(14_000);
+		const row = rows(transcriptOf("go", stamp([ready, look, png(data)])).entries)[0];
+
+		expect(row?.shot?.data).toHaveLength(data.length);
+		for (const word of [row?.verb, row?.subject, row?.detail]) expect(word).not.toContain("iVBORw0KGgo");
+	});
+
+	it("is absent from a call that handed one nothing back", () => {
+		expect(rows(transcriptOf("go", stamp([ready, look, result("t1")])).entries)[0]?.shot).toBeNull();
+	});
+
+	/**
+	 * Four in the edits window and one in each of the two plan windows, every one of them
+	 * a `spool shot` the agent read back off `.spool/verify/<frame>.png`. So the row says
+	 * which frame it looked at and never says `.png` at all.
+	 */
+	it("comes back on the look rows of every capture that holds one", () => {
+		for (const [capture, count] of [
+			["claude-edits", 4],
+			["claude-plan", 1],
+			["claude-turn", 1],
+		] as const) {
+			const shown = deep(transcriptOf("go", replay(capture)).entries).filter((row) => row.shot !== null);
+
+			expect(shown).toHaveLength(count);
+			for (const row of shown) {
+				expect(row).toMatchObject({ verb: "look", subject: "home", frame: "home", shot: { media: "image/png" } });
+				expect(row.detail).toBe("design/.spool/verify/home.png");
+			}
+		}
 	});
 });
 
@@ -751,8 +992,10 @@ describe("a search for a tool that is not spool's", () => {
 				frame: null,
 				count: 1,
 				detail: "No matching deferred tools found",
+				shot: null,
 				foreign: null,
 				parent: null,
+				delegated: [],
 			},
 		]);
 	});
@@ -852,11 +1095,13 @@ describe("how a row settles", () => {
 
 describe("what a delegate does", () => {
 	/**
-	 * Its rows reach the transcript tagged to their parent, because for a delegate the
-	 * place is the canvas: a frame it writes lands out there, and the row is how you
+	 * Its rows reach the transcript inside the row that delegated it: a sub-agent is one
+	 * row that expands into its own transcript (#194), so a fan-out is one line per
+	 * delegate until somebody wants more. They reach it at all because for a delegate
+	 * the place is the canvas — a frame it writes lands out there, and the row is how you
 	 * get to it (#143).
 	 */
-	it("reaches the transcript as rows tagged to the call that delegated it", () => {
+	it("is one row that expands into its own transcript", () => {
 		const { entries } = transcriptOf(
 			"three takes on the cart",
 			stamp([
@@ -867,8 +1112,66 @@ describe("what a delegate does", () => {
 			]),
 		);
 
-		expect(lines(entries)).toEqual(["delegate Design cart--empty", "write cart--empty"]);
-		expect(rows(entries).map((row) => row.parent)).toEqual([null, "d1"]);
+		// one line in the log, and the delegate's own work one click down inside it
+		expect(lines(entries)).toEqual(["delegate Design cart--empty"]);
+		expect(rows(entries).map((row) => row.parent)).toEqual([null]);
+		expect(lines(rows(entries)[0]?.delegated ?? [])).toEqual(["write cart--empty"]);
+		expect(rows(entries)[0]?.delegated.map((theirs) => theirs.parent)).toEqual(["d1"]);
+	});
+
+	/**
+	 * Its live step, which is a snapshot rather than a log: sixty-seven of them land in
+	 * the fan-out against twelve rows, so it is what a delegation says about itself
+	 * between the rows it draws. It replaces rather than appends, and it goes the moment
+	 * the task lands, because by then its rows are under it and its frames are out on the
+	 * canvas.
+	 */
+	it("says where it is between the rows it draws, and stops when it lands", () => {
+		const step = (description: string): AgentEvent => ({
+			kind: "task-step",
+			task: "a1",
+			call: "d1",
+			description,
+			lastTool: "Write",
+			parent: null,
+		});
+		const upTo = (count: number) =>
+			rows(
+				transcriptOf(
+					"go",
+					stamp([
+						ready,
+						called("d1", "Agent", { description: "Design cart--empty" }),
+						{
+							kind: "task-started",
+							task: "a1",
+							call: "d1",
+							description: "d",
+							agent: "designer",
+							prompt: "…",
+							parent: null,
+						},
+						step("Reading design/frames/cart/frame.tsx"),
+						step("Writing design/frames/cart--empty/frame.tsx"),
+						{ kind: "task-done", task: "a1", status: "completed", summary: "done", parent: null },
+					]).slice(0, count),
+				).entries,
+			)[0];
+
+		expect(upTo(4)?.detail).toBe("Reading design/frames/cart/frame.tsx");
+		expect(upTo(5)?.detail).toBe("Writing design/frames/cart--empty/frame.tsx");
+		expect(upTo(6)).toMatchObject({ detail: null, state: "done" });
+	});
+
+	/** a row spool cannot file under anything stays in the log rather than being dropped */
+	it("keeps a row in the log when the call that delegated it was never seen", () => {
+		const { entries } = transcriptOf(
+			"go",
+			stamp([ready, called("t1", "Write", { file_path: `${ROOT}/design/frames/cart--empty/frame.tsx` }, "d9")]),
+		);
+
+		expect(lines(entries)).toEqual(["write cart--empty"]);
+		expect(rows(entries)[0]?.parent).toBe("d9");
 	});
 
 	/** two delegates writing at once are two runs, not one broken twice */
@@ -1046,20 +1349,54 @@ describe("the stopped turn, replayed", () => {
 });
 
 describe("the fan-out, replayed", () => {
-	/** a delegate's writes never appeared at all until the parent-call tag was caught */
-	it("puts every delegate's rows in the transcript, tagged to their parent", () => {
+	/**
+	 * Three delegates, three rows, and every one of their own rows inside the row that
+	 * launched it. The log is the three lines and the two the parent drew itself; the
+	 * twelve writes are one click down each.
+	 */
+	it("is three rows that expand, and the log is those three lines", () => {
 		const drawn = rowsOf("claude-fanout");
-		const delegated = drawn.filter((row) => row.parent !== null);
+		const delegations = drawn.filter((row) => row.verb === "delegate");
 
-		expect(new Set(delegated.map((row) => row.parent)).size).toBe(3);
-		expect(delegated.length).toBeGreaterThan(drawn.length - delegated.length);
-		// the three frames the delegates authored, each written as one run of writes
-		expect(lines(delegated).filter((line) => line.startsWith("write cart--empty"))).toEqual([
-			"write cart--empty ×2",
-			"write cart--empty",
-			"write cart--empty",
-			"write cart--empty-c ×2",
-			"write cart--empty-b ×2",
+		expect(delegations).toHaveLength(3);
+		// nothing tagged to a delegate is loose in the log: every one of them is inside its
+		// own delegation, which is what makes a fan-out one line per sub-agent
+		expect(drawn.filter((row) => row.parent !== null)).toEqual([]);
+		expect(new Set(delegations.flatMap((row) => row.delegated.map((theirs) => theirs.parent))).size).toBe(3);
+		expect(delegations.flatMap((row) => row.delegated).length).toBeGreaterThan(drawn.length);
+	});
+
+	/**
+	 * A fan-out is uneven and its order is not the one you would write down: the three
+	 * designers land their first writes minutes apart, and `cart--empty-c` lands its
+	 * before `cart--empty-b` does. Whoever finishes first arrives first, so nothing here
+	 * sorts them and the log is read forward one event at a time to see it.
+	 */
+	it("lands the three delegates' frames as they finish rather than in a tidy order", () => {
+		const seen = replay("claude-fanout");
+		/** the frames the delegates write, in the order each one first reaches the log */
+		const appeared: string[] = [];
+		for (let upto = 1; upto <= seen.length; upto += 1) {
+			for (const row of deep(transcriptOf("go", seen.slice(0, upto)).entries)) {
+				if (row.verb !== "write" || row.frame === null || appeared.includes(row.frame)) continue;
+				appeared.push(row.frame);
+			}
+			if (appeared.length === 3) break;
+		}
+
+		expect(appeared).toEqual(["cart--empty", "cart--empty-c", "cart--empty-b"]);
+		// and that is not the order the folder sorts them in, which is the whole finding
+		expect(appeared).not.toEqual([...appeared].sort());
+	});
+
+	/** each delegate's own transcript keeps every rule the parent's log keeps */
+	it("collapses each delegate's writes to its own frame inside its own row", () => {
+		const delegations = rowsOf("claude-fanout").filter((row) => row.verb === "delegate");
+
+		expect(delegations.map((row) => lines(row.delegated).filter((line) => line.startsWith("write")))).toEqual([
+			["write cart--empty ×2", "write cart--empty", "write cart--empty"],
+			["write cart--empty-b ×2"],
+			["write cart--empty-c ×2"],
 		]);
 	});
 
@@ -1073,7 +1410,7 @@ describe("the fan-out, replayed", () => {
 		const seen = replay("claude-fanout");
 		const errored = seen.filter(({ event }) => event.kind === "result" && event.failed);
 		const stamped = seen.filter(({ event }) => event.kind === "result" && event.nonExecution !== undefined);
-		const failed = rowsOf("claude-fanout").filter((row) => row.state === "failed");
+		const failed = deep(rowsOf("claude-fanout")).filter((row) => row.state === "failed");
 
 		expect(errored).toHaveLength(2);
 		expect(stamped).toEqual([]);
@@ -1084,7 +1421,9 @@ describe("the fan-out, replayed", () => {
 			expect(row.detail).toContain("String to replace not found in file.");
 		}
 		// and no row in this capture is stopped: nobody pressed anything
-		expect(rowsOf("claude-fanout").some((row) => row.state === "stopped" && row.verb !== "delegate")).toBe(false);
+		expect(deep(rowsOf("claude-fanout")).some((row) => row.state === "stopped" && row.verb !== "delegate")).toBe(
+			false,
+		);
 	});
 
 	/** the delegation that reported is done; the two the window never heard back from are not */
@@ -1099,7 +1438,9 @@ describe("every capture, replayed whole", () => {
 	for (const capture of CAPTURES) {
 		it(`draws ${capture} in spool's own nouns`, () => {
 			const { entries, over } = transcriptOf("make these consistent", replay(capture));
-			const drawn = rows(entries);
+			// every delegate's own transcript included, since its rows keep every rule the
+			// parent's do — for a delegate the place is the canvas too (#143, #194)
+			const drawn = deep(entries);
 
 			for (const row of drawn) {
 				// the surface speaks frames and pages: a path never reaches a line, and a row
@@ -1112,6 +1453,9 @@ describe("every capture, replayed whole", () => {
 				// a work row is never pending: a call is running from the moment its block opens
 				expect(row.state).not.toBe("pending");
 				expect(row.count).toBeGreaterThan(0);
+				// and a picture stays one field below the line, never on it: a screenshot is
+				// roughly 150 KB of base64 and the row above it already said `look`
+				expect(`${row.verb} ${row.subject ?? ""} ${row.detail ?? ""}`).not.toContain("iVBORw0KGgo");
 			}
 			// nothing is left turning once the stream is over. Two of these windows were cut
 			// with the turn still going, and a run still open is what that honestly looks

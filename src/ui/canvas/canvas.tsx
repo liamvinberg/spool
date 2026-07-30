@@ -254,6 +254,23 @@ export function ProjectCanvas({
 	// to know about it: a frame the turn writes lands as an ordinary `change` event,
 	// so the canvas repaints while the transcript is still arriving.
 	const turn = useAgentTurn(project);
+	/**
+	 * What a row in the rail can do about the frame it names (#143, #194).
+	 *
+	 * `have` is what the project has, so a name outside it is not a place to go. `gone`
+	 * is what it had and lost, which the rail cannot work out for itself and must not
+	 * guess: a frame the turn is one beat from writing and a frame that was trashed are
+	 * both simply absent, and they read as opposites. Only this side watched the folder,
+	 * so only this side can tell them apart.
+	 */
+	const seenFrames = useRef<Set<string>>(new Set());
+	const reach = useMemo(() => {
+		const here = new Set(navigatorFrames.map((frame) => frame.name));
+		for (const name of here) seenFrames.current.add(name);
+		return { have: here, gone: new Set([...seenFrames.current].filter((name) => !here.has(name))) };
+	}, [navigatorFrames]);
+	/** the frame a row in the rail is pointing at, answered out here rather than in the log */
+	const [pointed, setPointed] = useState<string | null>(null);
 	const exportFrames = useMemo(
 		() => (exportDialog === null ? [] : framesInCanvasOrder(visibleFrames, exportDialog)),
 		[visibleFrames, exportDialog],
@@ -2029,6 +2046,17 @@ export function ProjectCanvas({
 		return frame === undefined ? ROOT_PAGE : pageOf(frame);
 	};
 
+	/**
+	 * Where a row in the agent rail pointing at a frame gets answered (#194).
+	 *
+	 * A row can only ring a frame that is on screen, and a thread is not bound to a page,
+	 * so for most rows the frame is somewhere else. Then the answer is the page it is on,
+	 * lit in the Pages rail — pointing is answered wherever the answer can be drawn, and
+	 * the two cases are exclusive by construction.
+	 */
+	const pointedFrame = pointed !== null && visibleFrames.some((frame) => frame.name === pointed) ? pointed : null;
+	const pointedPage = pointed === null || pointedFrame !== null ? null : framePageOf(pointed);
+
 	/** Land on a frame by name: switch page if needed, select it, centre the camera. */
 	const landOnFrame = useCallback(
 		(name: string) => {
@@ -2346,7 +2374,9 @@ export function ProjectCanvas({
 				onSwitchPage={activatePageFromTree}
 				onSelectFrame={selectFrameRow}
 				onDoubleClickFrame={flyToFrame}
-				litPage={finding ? findLit : null}
+				// the finder's pick, or the page holding the frame a row in the agent rail is
+				// pointing at (#194)
+				litPage={finding ? findLit : pointedPage}
 			/>
 			<div
 				ref={viewportRef}
@@ -2451,7 +2481,17 @@ export function ProjectCanvas({
 						frames={visibleFrames}
 						selected={selected}
 						entered={entered}
-						hovered={effectiveTool === "select" ? hovered : null}
+						// a row in the rail pointing at a frame gets the ring the pointer itself
+						// would draw, which is the weaker of the two out here: pointing at a frame is
+						// a weaker claim than having gone to it, and the accent stays with the
+						// selection either way
+						hovered={
+							pointedFrame !== null
+								? { frame: pointedFrame, visible: true }
+								: effectiveTool === "select"
+									? hovered
+									: null
+						}
 						editable={effectiveTool === "select"}
 						picked={picked}
 						preview={effectiveTool === "select" ? preview : null}
@@ -2534,9 +2574,21 @@ export function ProjectCanvas({
 			</div>
 			<AgentRail
 				entries={turn.entries}
+				plan={turn.plan}
 				phase={turn.phase}
 				elapsed={turn.elapsed}
 				last={turn.last}
+				jump={{
+					have: reach.have,
+					gone: reach.gone,
+					onPoint: setPointed,
+					onJump: (name) => {
+						// pointing was the question and landing is the answer, so the weaker mark
+						// goes as the stronger one arrives
+						setPointed(null);
+						landOnFrame(name);
+					},
+				}}
 				onSend={turn.send}
 			/>
 			{exportDialog !== null && exportFrames.length > 0 ? (

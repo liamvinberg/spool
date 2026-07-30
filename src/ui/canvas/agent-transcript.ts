@@ -1,5 +1,13 @@
 import type { AgentEvent } from "../../daemon/agent-events";
-import { type CallInput, type CallName, drawsRow, nameCall, type RowForeign } from "./agent-nouns";
+import {
+	type CallInput,
+	type CallName,
+	drawsOwnRow,
+	nameCall,
+	type RowForeign,
+	taskMoved,
+	taskWritten,
+} from "./agent-nouns";
 import { drawnBy, type Landed } from "./agent-pace";
 
 /**
@@ -8,7 +16,7 @@ import { drawnBy, type Landed } from "./agent-pace";
  *
  * The rail renders these and nothing else: the human's words, the agent's words,
  * one quiet beat for the time the model spends composing, one line per tool call,
- * and spool's own word for a turn that did not end cleanly. Chips, the plan and
+ * the plan, and spool's own word for a turn that did not end cleanly. Chips and
  * threads are later tickets and this projection does not pretend to them — an event
  * it does not draw is dropped rather than guessed at, because `stream-json`
  * publishes no stability guarantee and a rename must cost a blank row rather than a
@@ -23,7 +31,9 @@ import { drawnBy, type Landed } from "./agent-pace";
  * A sub-agent's words are skipped and its work is not. Its own turns reach the
  * parent stream tagged with their parent call, and a delegate's prose belongs to
  * the delegate — but the frames it writes are out on the canvas, which is why its
- * rows reach the transcript at all (#143).
+ * rows reach the transcript at all (#143). They reach it inside the row that
+ * delegated them: a sub-agent is one row that expands into its own transcript
+ * (#194), so a fan-out is three lines until somebody wants more.
  */
 
 /**
@@ -42,6 +52,110 @@ export type RowState = "pending" | "running" | "done" | "failed" | "stopped";
 
 /** whether the beat is still going, finished, or was cut off with the turn */
 export type BeatState = Extract<RowState, "running" | "done" | "stopped">;
+
+/**
+ * A picture a call handed back, inline (#117).
+ *
+ * A screenshot comes back as a base64 image block of roughly 150 KB, which has two
+ * consequences and they pull in opposite directions: the rail can draw the picture
+ * with no second fetch, and it must never let those bytes reach a log line. So they
+ * live here, one field down from the row, behind the disclosure — and the row's own
+ * `frame` and `detail` are what say which frame it is a picture of.
+ *
+ * A screenshot does not earn a place off the line the way the plan does: it is fixed
+ * at the one moment it was taken, so nothing about it goes on changing after the call
+ * that produced it.
+ */
+export interface AgentShot {
+	readonly media: string;
+	readonly data: string;
+}
+
+/**
+ * One tool call, one line (#117, #193).
+ *
+ * The line is the receipt and the disclosure is the payload, which is why `detail`
+ * is a field of its own rather than a longer subject: the row says `read cart` and
+ * the path is one click down, closed by default, and nobody has to open it.
+ *
+ * Three beats, and the wire sends all three. `verb` is there the moment the block
+ * opens, because a tool call exists before its arguments do; `subject` is null
+ * until the argument that names it has finished arriving; and `state` runs until a
+ * result settles it. A row cut mid-argument therefore draws as a bare verb with no
+ * subject, which needed no special case.
+ *
+ * `count` is how many calls this one row holds — consecutive writes to one frame
+ * are one row and the count climbs live (#135). It is separate from the subject
+ * because the two are different objects: the name is a place and the count is how
+ * many times the agent went at it, so anything that treats the name as somewhere
+ * to go has to be able to leave the count out of it.
+ */
+export interface AgentRow {
+	readonly key: string;
+	readonly kind: "row";
+	readonly state: RowState;
+	readonly verb: string;
+	readonly subject: string | null;
+	readonly frame: string | null;
+	readonly count: number;
+	readonly detail: string | null;
+	/** the picture this call handed back, which is the payload of its line (#117) */
+	readonly shot: AgentShot | null;
+	readonly foreign: RowForeign | null;
+	/** the delegating call this row came from, or null on the human's own thread */
+	readonly parent: string | null;
+	/**
+	 * The rows a delegate this call launched has drawn: its own transcript (#194).
+	 *
+	 * A sub-agent is one row that expands, so a fan-out is one line per delegate until
+	 * somebody wants more — and what is in there is rows rather than a summary, because
+	 * for a delegate the place is the canvas and a row is how you get to one (#143).
+	 */
+	readonly delegated: readonly AgentRow[];
+}
+
+/**
+ * How one task of the plan is going.
+ *
+ * Narrower than a row's, and the narrowing is the point: a task is written down before
+ * it starts, so `pending` is reachable here and nowhere else — and nothing about a plan
+ * fails or is stopped, because a task is an intention rather than a call.
+ */
+export type TaskState = Extract<RowState, "pending" | "running" | "done">;
+
+/**
+ * One task of the plan, in whichever of the agent's two phrasings its state calls for.
+ *
+ * Named apart from the runtime's own `task-started`/`task-done`, which are a delegate's
+ * task and a different object: one is something the agent wrote down, the other is
+ * something it handed off.
+ */
+export interface AgentPlanTask {
+	readonly key: string;
+	readonly name: string;
+	readonly state: TaskState;
+}
+
+/**
+ * The plan, off the line and onto the shelf (#117, #194).
+ *
+ * It is the one thing a turn produces that goes on changing after the call that made
+ * it: written in nine seconds, then updated over the next eight to nine minutes
+ * across seventeen to twenty-eight rows, so a log both buries it and loses it. What
+ * the strip draws is one line of it — a count and whatever is running — and the list
+ * is one click down.
+ *
+ * Every word of it is the agent's own. A `TaskCreate` ships both phrasings, the
+ * written `subject` and the present-participle `activeForm`, precisely so that a
+ * surface never has to invent a friendlier one.
+ */
+export interface AgentPlan {
+	readonly total: number;
+	readonly done: number;
+	/** the agent's own present-participle phrasing for whatever is running */
+	readonly running: string | null;
+	readonly tasks: readonly AgentPlanTask[];
+}
 
 export type AgentEntry =
 	/** what the human said, in the log the instant they said it */
@@ -88,38 +202,7 @@ export type AgentEntry =
 			readonly landed: readonly Landed[];
 			readonly settled: boolean;
 	  }
-	/**
-	 * One tool call, one line (#117, #193).
-	 *
-	 * The line is the receipt and the disclosure is the payload, which is why `detail`
-	 * is a field of its own rather than a longer subject: the row says `read cart` and
-	 * the path is one click down, closed by default, and nobody has to open it.
-	 *
-	 * Three beats, and the wire sends all three. `verb` is there the moment the block
-	 * opens, because a tool call exists before its arguments do; `subject` is null
-	 * until the argument that names it has finished arriving; and `state` runs until a
-	 * result settles it. A row cut mid-argument therefore draws as a bare verb with no
-	 * subject, which needed no special case.
-	 *
-	 * `count` is how many calls this one row holds — consecutive writes to one frame
-	 * are one row and the count climbs live (#135). It is separate from the subject
-	 * because the two are different objects: the name is a place and the count is how
-	 * many times the agent went at it, so anything that treats the name as somewhere
-	 * to go has to be able to leave the count out of it.
-	 */
-	| {
-			readonly key: string;
-			readonly kind: "row";
-			readonly state: RowState;
-			readonly verb: string;
-			readonly subject: string | null;
-			readonly frame: string | null;
-			readonly count: number;
-			readonly detail: string | null;
-			readonly foreign: RowForeign | null;
-			/** the delegating call this row came from, or null on the human's own thread */
-			readonly parent: string | null;
-	  }
+	| AgentRow
 	/**
 	 * Spool's own word, drawn as a rule across the log.
 	 *
@@ -137,6 +220,8 @@ export interface Stamped {
 
 export interface Transcript {
 	readonly entries: readonly AgentEntry[];
+	/** the plan the turn wrote, or null until it writes one — most turns never do */
+	readonly plan: AgentPlan | null;
 	/** the turn is over: nothing more is coming down this stream */
 	readonly over: boolean;
 	/** when the last event landed, so the clock can stop once the edge has caught up */
@@ -200,8 +285,24 @@ interface Row {
 	frame: string | null;
 	count: number;
 	detail: string | null;
+	shot: AgentShot | null;
 	foreign: RowForeign | null;
 	parent: string | null;
+}
+
+/**
+ * One task of the plan, as the call that wrote it phrased it twice.
+ *
+ * `subject` is the written form the list reads in and `running` is the present
+ * participle the strip reads in while the task is the one in flight. Both are the
+ * agent's own words, which is the whole point of carrying two: the rail never has to
+ * invent a friendlier phrasing for a task in progress.
+ */
+interface PlanTask {
+	readonly key: string;
+	readonly subject: string;
+	readonly running: string | null;
+	state: TaskState;
 }
 
 /**
@@ -297,7 +398,26 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[]): Transcri
 	/** the run still open on each thread */
 	const runs = new Map<string, Run>();
 	/** which call a delegated task answers to, so the task's end settles the row */
-	const tasks = new Map<string, string>();
+	const taskCalls = new Map<string, string>();
+	/**
+	 * A delegate's rows, by the row that delegated them (#194).
+	 *
+	 * They are held aside rather than pushed into `order` because a sub-agent is one row
+	 * that expands: its own transcript belongs inside that row, and a fan-out of three
+	 * delegates is three lines in the log until somebody opens one.
+	 */
+	const delegated = new Map<string, string[]>();
+	/**
+	 * The plan of each thread that writes one, and the row standing for the calls that
+	 * wrote it.
+	 *
+	 * Per thread for the reason a run is (#135): a fan-out interleaves, and one plan
+	 * across the whole log would file a delegate's row inside that delegate while
+	 * merging its tasks into the conversation's own strip. Only the thread the human is
+	 * talking to reaches the shelf; a delegate's plan is its own business and stays a
+	 * line in its own transcript.
+	 */
+	const plans = new Map<string, { row: Row; tasks: PlanTask[] }>();
 	/** the project the agent is standing in, so a path behind a disclosure is relative */
 	let root = "";
 
@@ -356,8 +476,61 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[]): Transcri
 		};
 		block.row = made;
 		rows.set(made.key, made);
-		order.push({ kind: "row", key: made.key });
+		// a delegate's row goes inside the row that delegated it, unless spool never saw
+		// that call — a stream joined mid-delegation has a row and nowhere to file it, and
+		// the log is the honest place for a row whose parent spool cannot name
+		const above = block.thread === "" ? null : (calls.get(block.thread)?.row ?? null);
+		if (above === null) order.push({ kind: "row", key: made.key });
+		else delegated.set(above.key, [...(delegated.get(above.key) ?? []), made.key]);
 		return made;
+	};
+
+	/**
+	 * This thread's plan, opened by the first of the calls that write it.
+	 *
+	 * Seven creates in nine seconds are one list, so the first of them opens one row and
+	 * the rest only lengthen it: the subject counts the tasks in as they land, which is
+	 * the same three beats every other call gets. Every create's block points at that row
+	 * so that whichever result comes back settles it.
+	 */
+	const openPlan = (block: Block): { row: Row; tasks: PlanTask[] } => {
+		const known = plans.get(block.thread);
+		if (known !== undefined) {
+			block.row = known.row;
+			return known;
+		}
+		const made = {
+			row: draw(block, {
+				state: "running",
+				verb: "plan",
+				subject: null,
+				frame: null,
+				count: 1,
+				detail: null,
+				shot: null,
+				foreign: null,
+			}),
+			tasks: [] as PlanTask[],
+		};
+		plans.set(block.thread, made);
+		return made;
+	};
+
+	/** one task, in both of the phrasings the call carries, appended to the list it is in */
+	const addTask = (block: Block, input: CallInput) => {
+		const plan = openPlan(block);
+		const written = taskWritten(input);
+		if (written === null) return;
+		plan.tasks.push({ key: `task:${plan.tasks.length + 1}`, ...written, state: "pending" });
+		plan.row.subject = `${plan.tasks.length} task${plan.tasks.length === 1 ? "" : "s"}`;
+	};
+
+	/** a task moving inside the list, which is the list changing rather than a row */
+	const moveTask = (thread: string, input: CallInput) => {
+		const moved = taskMoved(input);
+		const task = moved === null ? undefined : plans.get(thread)?.tasks[moved.at - 1];
+		if (moved === null || task === undefined) return;
+		task.state = moved.state;
 	};
 
 	/**
@@ -372,7 +545,7 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[]): Transcri
 		// a call the log does not draw still holds its block, so that its arguments land
 		// on it rather than on whatever the slot held last — an index is reused every
 		// message, and a plan's own calls take the ones the writes before them had
-		if (!drawsRow(block.tool)) return;
+		if (!drawsOwnRow(block.tool)) return;
 		// the fragments are a preview and the whole call is the authority, the same way a
 		// settled message outranks its own deltas
 		if (block.settled && !whole) return;
@@ -416,6 +589,7 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[]): Transcri
 				frame: named.frame,
 				count: 1,
 				detail: named.detail,
+				shot: null,
 				foreign,
 			});
 			if (named.writes && name !== null) runs.set(block.thread, { row, name, settle: null });
@@ -509,7 +683,11 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[]): Transcri
 			case "call": {
 				// the block opens with a name and an empty input, and the subject types
 				// itself in behind it
-				nameRow(blockOf(thread, `${thread}:${event.block}`, event.id, event.tool), undefined, false, null);
+				const block = blockOf(thread, `${thread}:${event.block}`, event.id, event.tool);
+				// the plan's row opens on the first of its creates, before any of them has
+				// said what its task is, so the count types itself in the way a path does
+				if (event.tool === "TaskCreate") openPlan(block);
+				else nameRow(block, undefined, false, null);
 				break;
 			}
 			case "call-input": {
@@ -526,6 +704,16 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[]): Transcri
 			case "called": {
 				const known = calls.get(event.id);
 				const block = known ?? blockOf(thread, `${thread}:${event.id}`, event.id, event.tool);
+				// the two calls that move the plan rather than the log: one lengthens the list,
+				// the other moves a task inside it, and neither is a row
+				if (event.tool === "TaskCreate") {
+					addTask(block, event.input);
+					break;
+				}
+				if (event.tool === "TaskUpdate") {
+					moveTask(thread, event.input);
+					break;
+				}
 				const foreign =
 					event.foreign === undefined
 						? null
@@ -551,6 +739,7 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[]): Transcri
 						frame: null,
 						count: 1,
 						detail: event.text === "" ? null : event.text,
+						shot: null,
 						foreign: null,
 					});
 					break;
@@ -573,18 +762,42 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[]): Transcri
 				 * developer's own press back to them as an instruction to stop and wait.
 				 */
 				if (state === "failed" && event.text.trim() !== "") block.row.detail = event.text.trim();
+				/*
+				 * The picture the call handed back, which goes one field down rather than onto
+				 * the line: roughly 150 KB of base64 per screenshot, and the row above it
+				 * already said `look`.
+				 *
+				 * The first of them, because every image result in all seven captures carries
+				 * exactly one — a `spool shot` writes one PNG and the agent reads that one back.
+				 */
+				const picture = event.images[0];
+				if (picture !== undefined) block.row.shot = { media: picture.media, data: picture.data };
 				break;
 			}
 			case "task-started":
 			case "task-step":
 			case "task-done": {
 				// a task's end arrives carrying the runtime's own task id and nothing else, so
-				// the start is the only thing that ties the two together
-				if (event.kind === "task-started" && event.call !== null) tasks.set(event.task, event.call);
-				if (event.kind === "task-done" && event.status === "completed") {
-					const call = tasks.get(event.task);
-					const row = call === undefined ? null : (calls.get(call)?.row ?? null);
-					if (row !== null) row.state = "done";
+				// the start is what ties the two together — but a step names its call as well,
+				// and a stream that opened mid-delegation never saw the start
+				if (event.kind !== "task-done" && event.call !== null) taskCalls.set(event.task, event.call);
+				const call = taskCalls.get(event.task);
+				const row = call === undefined ? null : (calls.get(call)?.row ?? null);
+				if (row === null) break;
+				/*
+				 * A delegate's live step, which is a snapshot rather than a log: the row holds the
+				 * one it is on and it replaces rather than appends. Sixty-seven of them land in the
+				 * fan-out against twelve rows, so it is what a delegation says about itself between
+				 * the rows it draws.
+				 *
+				 * It sits where every other row's payload sits, and it goes the moment the task
+				 * lands: by then the frames it wrote are out on the canvas and its own rows are
+				 * under it, so a line in the wire's words has nothing left to add.
+				 */
+				if (event.kind === "task-step" && event.description !== null) row.detail = event.description;
+				if (event.kind === "task-done") {
+					row.detail = null;
+					if (event.status === "completed") row.state = "done";
 				}
 				break;
 			}
@@ -697,6 +910,14 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[]): Transcri
 		}
 	}
 
+	/** one row and, under it, whatever the delegate it launched has done so far */
+	const rowOf = (key: string): AgentRow | null => {
+		const row = rows.get(key);
+		if (row === undefined) return null;
+		const theirs = (delegated.get(key) ?? []).map(rowOf).filter((kid): kid is AgentRow => kid !== null);
+		return { ...row, kind: "row", delegated: theirs };
+	};
+
 	const entries: AgentEntry[] = [{ key: "user", kind: "user", text: prompt }];
 	for (const slot of order) {
 		if (slot.kind === "beat") {
@@ -705,13 +926,34 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[]): Transcri
 			continue;
 		}
 		if (slot.kind === "row") {
-			const row = rows.get(slot.key);
-			if (row !== undefined) entries.push({ ...row, kind: "row" });
+			const row = rowOf(slot.key);
+			if (row !== null) entries.push(row);
 			continue;
 		}
 		const block = prose.get(slot.key);
 		// a text block that opened and never carried a character is not a message
 		if (block !== undefined && block.full !== "") entries.push({ ...block, kind: "prose", landed: block.landed });
 	}
-	return { entries: [...entries, ...notes], over, last };
+	/*
+	 * The plan, in the two phrasings the agent supplied and no others: the list reads in
+	 * the written form, and whatever is running reads in the present participle it was
+	 * given — once, here, so the strip and the list cannot disagree about what a task is
+	 * called. A task nobody has started is written down and not begun, which is the one
+	 * place in this rail a row is `pending`.
+	 */
+	const written: AgentPlanTask[] = (plans.get("")?.tasks ?? []).map((task) => ({
+		key: task.key,
+		name: task.state === "running" && task.running !== null ? task.running : task.subject,
+		state: task.state,
+	}));
+	const planned: AgentPlan | null =
+		written.length === 0
+			? null
+			: {
+					total: written.length,
+					done: written.filter((task) => task.state === "done").length,
+					running: written.find((task) => task.state === "running")?.name ?? null,
+					tasks: written,
+				};
+	return { entries: [...entries, ...notes], plan: planned, over, last };
 }
