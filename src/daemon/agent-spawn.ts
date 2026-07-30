@@ -10,9 +10,10 @@ import { skillText } from "../skill";
  * configures no key, asks for none, and stores none — `apiKeySource: "none"` in
  * every capture is that claim's evidence.
  *
- * Spool overrides exactly two things about the developer's environment: where
- * settings come from, and the permission mode. Everything else rides along with
- * eyes open — skills, hooks, custom agents, connectors — because a designer
+ * Spool overrides exactly three things about the developer's environment: where
+ * settings come from, the permission mode, and the shell's sandbox. Everything
+ * else rides along with eyes open — skills, hooks, custom agents, connectors —
+ * because a designer
  * pulling tokens from a connector into spool is the difference between a canvas
  * and a toy, and inheriting means spool never owns an abstraction over
  * connectors.
@@ -28,18 +29,45 @@ import { skillText } from "../skill";
 export const AGENT_COMMAND = "claude";
 
 /**
- * The one allow rule, and the whole of the fence (#121).
+ * The allow rules, and the whole of the fence (#121, widened: an approval
+ * guards a mutation outside `design/`, never a tool).
  *
  * Nothing is denied, because deny beats allow and cannot express an exception:
  * `deny(./**)` with `allow(./design/**)` blocks `design/` too. So the fence is a
- * list of what is quiet rather than a wall with a door, and everything outside
+ * list of what is quiet rather than a wall with a door, and editing outside
  * `design/` asks once rather than being blocked.
  *
  * `Edit` and not `Write`: the binary says out loud that `Write(path)` rules are
  * not matched by file permission checks and that `Edit` rules cover every
  * file-editing tool.
+ *
+ * The other three are the tools that cannot change anything: reading anywhere
+ * on disk (`//` is the rule syntax's absolute root), fetching pages, and
+ * searching the web — all measured to take effect from these bare rules on
+ * 2.1.220. A prompt on a harmless tool teaches the person to click approve
+ * without reading, which is the opposite of what an approval is for.
  */
-export const AGENT_ALLOW_RULE = "Edit(./design/**)";
+export const AGENT_ALLOW_RULES: readonly string[] = ["Edit(./design/**)", "Read(//**)", "WebFetch", "WebSearch"];
+
+/**
+ * The shell runs sandboxed and unprompted (measured on 2.1.220).
+ *
+ * A command allowlist judges the string, and a script the agent wrote itself is
+ * not judgeable as a string. The sandbox judges the running process instead:
+ * the OS (Seatbelt on macOS) confines every command and its children to writes
+ * under the project root and the session temp dir, reads stay open, and the
+ * first use of a network domain asks. A command that needs more fails inside
+ * the boundary and falls back to the regular permission flow, so the ask
+ * arrives exactly when the boundary is crossed rather than on every `ls`.
+ *
+ * The accepted gap: the OS boundary is the project root, not `design/`.
+ * Narrowing it is not expressible — `denyWrite` on the root with `allowWrite`
+ * on `design/` blocks `design/` too (measured: deny beats allow here as it
+ * does in the permission rules) — so a shell write to `src/` is silent where
+ * the same change through `Edit` would ask. The framing carries the intent the
+ * settings cannot: changes outside `design/` go through the file tools.
+ */
+const AGENT_SANDBOX = { enabled: true } as const;
 
 /**
  * The permission mode, set explicitly rather than left to the machine.
@@ -83,10 +111,12 @@ const AGENT_SETTING_SOURCES = "user";
  *
  * They say what the agent is for and forbid nothing: #121 left writes outside
  * `design/` possible on purpose, so a prompt that closes them contradicts the
- * fence rather than completing it. The one line about the boundary buys
- * something a permission rule cannot — the agent saying what it is about to do
- * outside `design/` before the approval lands, rather than the human meeting a
- * modal cold.
+ * fence rather than completing it. The lines about the boundary buy two things
+ * a permission rule cannot: the agent saying what it is about to do outside
+ * `design/` before the approval lands, rather than the human meeting a modal
+ * cold; and outside-`design/` changes routed through the file tools, which is
+ * where the ask lives — the sandbox's own write boundary is the project root,
+ * so the shell would not ask (the accepted gap on the settings above).
  *
  * The line about the project's own memory file is the price of
  * `--setting-sources user`. Spool reading the file itself would mean
@@ -106,8 +136,10 @@ That is what "this" and "that" mean.
 Read the project's own CLAUDE.md or AGENTS.md before your first change. Spool does
 not load it for you.
 
-Writing under design/ is silent. Anything else asks the human first, so say what you
-are about to do outside design/ before you do it.`;
+Reading anywhere, searching the web, shell commands, and writing under design/ are
+all silent. Editing files outside design/ asks the human first: say what you are
+about to do before the ask lands, and make changes outside design/ with the file
+tools rather than the shell, so the ask actually happens.`;
 
 /**
  * The framing plus the skill overview, which is a call into the same function
@@ -205,7 +237,7 @@ export function planAgentSpawn(
 			"--permission-prompt-tool",
 			AGENT_PERMISSION_PROMPT_TOOL,
 			"--settings",
-			JSON.stringify({ permissions: { allow: [AGENT_ALLOW_RULE] } }),
+			JSON.stringify({ permissions: { allow: AGENT_ALLOW_RULES }, sandbox: AGENT_SANDBOX }),
 			// absent rather than defaulted on both: nobody having chosen is not the same
 			// fact as having chosen the binary's default, and only one of them is spool's
 			// to assert
