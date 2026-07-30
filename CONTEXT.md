@@ -108,6 +108,10 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Run**: Consecutive writes to one frame drawn as one row with a climbing count (`edit home ×6`). The next thing the log draws ends it, per thread; time is never the rule, because gaps inside a run reach 15.2s while the shortest gap between two runs is 17.5s. _Avoid_: batch, group, collapse
 
+**Ask**: The turn waiting on the person, which is the one state in this rail that ends when somebody acts rather than when something arrives. An approval and the agent's own question ride one control request and are told apart by a flag on it: an approval leads with the agent's own written description and takes allow, always or deny, and a question leads with its own options and their whole descriptions and takes a pick, a sentence typed in the composer, or a wordless dismiss. Prose is a first-class answer the runtime prefers. An ask parks the turn and stops the clock, and nothing spool runs ever answers one or expires it. A connector's structured elicitation is declined instead, and no dialog kinds are declared, so a generic dialog is never received. _Avoid_: permission prompt, modal, confirmation
+
+**Always**: An approval answered for the rest of the thread, using the rules the request suggested for itself moved to the runtime's own thread scope. Written to no file, because the complaint is repetition rather than a missing permanent grant, and absent rather than dead where the request suggested no rule — spool composes none of its own. _Avoid_: remember, don't ask again, grant
+
 ### Laws
 
 **Parity law**: Spool chrome must never alter frame behavior; a frame in spool behaves exactly like its bare document.

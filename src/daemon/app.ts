@@ -19,6 +19,7 @@ import { openProject } from "../open";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
+import { parseAgentReply } from "./agent-control";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { agentPromptContent } from "./agent-spawn";
 import { type AgentTurn, startAgentTurn } from "./agent-turn";
@@ -289,7 +290,15 @@ export function createDaemonApp({
 	// for it. Project code never reaches this — it is a control-plane route
 	// behind the control token, the same boundary #41 drew.
 	const spawnAgent = agentExecutor ?? claudeExecutor();
-	const liveTurns = new Set<AgentTurn>();
+	/**
+	 * Every turn in flight, and the project it is running in.
+	 *
+	 * The project is carried because an answer arrives on its own request rather than
+	 * on the stream that asked for it (#197): a waiting request is addressed by the id
+	 * the binary gave it, and this is what keeps one project's answer from reaching
+	 * another project's turn.
+	 */
+	const liveTurns = new Map<AgentTurn, string>();
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -812,7 +821,7 @@ export function createDaemonApp({
 					// `spool selection` prints for this same moment (#116)
 					content: agentPromptContent(prompt, selectionBlock(selections.get(project.root)), attachment),
 				});
-				liveTurns.add(turn);
+				liveTurns.set(turn, project.root);
 				return streamSSE(c, async (stream) => {
 					let id = 0;
 					stream.onAbort(() => turn.stop());
@@ -831,6 +840,42 @@ export function createDaemonApp({
 						liveTurns.delete(turn);
 					}
 				});
+			},
+		)
+		.post(
+			"/api/p/:project/agent/answer",
+			validator("json", (value, c) => {
+				const body = (typeof value === "object" && value !== null ? value : {}) as {
+					request?: unknown;
+					reply?: unknown;
+				};
+				const reply = parseAgentReply(body.reply);
+				if (typeof body.request !== "string" || body.request === "" || reply === undefined) {
+					return c.text(
+						'an answer is { "request": "…", "reply": { "kind": "allow" | "always" | "deny" | "said" | "picked" } }',
+						400,
+					);
+				}
+				return { request: body.request, reply };
+			}),
+			(c) => {
+				/*
+				 * The answer to a request the turn is parked on (#121, #145).
+				 *
+				 * It is its own door rather than a second body on the turn's stream, because
+				 * that stream is a response the client is reading and has no way back up. The
+				 * request's own id is the address, so nothing here has to name a turn: a
+				 * project can hold several and exactly one of them is holding this request.
+				 */
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const { request, reply } = c.req.valid("json");
+				for (const [turn, root] of liveTurns) {
+					if (root === project.root && turn.answer(request, reply)) return c.body(null, 204);
+				}
+				// nobody is waiting on it: the turn ended, it was answered already, or it
+				// belongs to another project. All three are the same fact from here
+				return c.text(`no waiting request "${request}"`, 404);
 			},
 		)
 		.get("/api/p/:project/verify/:frame", async (c) => {
@@ -1469,7 +1514,7 @@ export function createDaemonApp({
 		terms,
 		close: () => {
 			machineStateWatch.stop();
-			for (const turn of liveTurns) turn.stop();
+			for (const turn of liveTurns.keys()) turn.stop();
 			liveTurns.clear();
 			void terms.close();
 			hub.close();

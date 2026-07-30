@@ -39,6 +39,8 @@ interface Turn {
 	readonly prompts: string[];
 	/** whatever rode with those words, which so far is a reference image (#119) */
 	readonly attachments: ({ media: string; data: string } | undefined)[];
+	/** what the person said to a waiting request, which goes up its own door (#145) */
+	readonly answers: { request: string; reply: Record<string, unknown> }[];
 	push(event: AgentEvent): void;
 	close(): void;
 }
@@ -120,6 +122,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 	const turn: Turn & { open: boolean } = {
 		prompts: [],
 		attachments: [],
+		answers: [],
 		open: false,
 		push: () => {},
 		close: () => {},
@@ -155,6 +158,11 @@ function mount({ still = false }: { still?: boolean } = {}) {
 					stream.close();
 				};
 				return stream.response();
+			}
+			if (url.pathname.endsWith("/agent/answer")) {
+				const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
+				turn.answers.push(JSON.parse(body) as Turn["answers"][number]);
+				return new Response(null, { status: 204 });
 			}
 			// the daemon's own answer to a put: the enriched list the composer draws
 			if (url.pathname.endsWith("/selection") && init?.method === "PUT") {
@@ -1501,5 +1509,269 @@ describe("an attached image", () => {
 		expect(canvas.host.querySelector("[data-agent-attached]")).toBeNull();
 		await send(canvas.host, "never mind");
 		expect(canvas.turn.attachments.at(-1)).toBeUndefined();
+	});
+});
+
+/**
+ * The turn waiting on the person, in the rail (#121, #145, #162).
+ *
+ * The wire half is `agent-answer.test.ts`'s and the projection half is
+ * `agent-transcript.test.ts`'s. What is asserted here is the surface: that the
+ * options and their whole descriptions are in the log, that pressing one sends the
+ * answer, that the composer stays live beside them and prose typed there answers,
+ * and that the dismiss is one wordless word.
+ */
+describe("a question in the log", () => {
+	const QUESTION = "`spool shot` is blocked by the CLI and daemon split. How do you want the version gap closed?";
+	const OPTIONS = [
+		{
+			label: "Run `spool upgrade`",
+			description:
+				"I run it, which installs the latest release and restarts the daemon on it, then re-run `spool shot receipt` and report the render. Side effect: the daemon restarts under any canvas you currently have open.",
+		},
+		{
+			label: "Ship it unverified",
+			description:
+				"Leave the frame as authored. It is live on the canvas either way, but nobody has seen it render, so overflow or a font miss would go unnoticed.",
+		},
+	];
+
+	/** the ask the way the wire sends it: the call, then the request that parks the turn */
+	function ask(canvas: ReturnType<typeof mount>, over: Partial<Extract<AgentEvent, { kind: "asking" }>> = {}) {
+		canvas.turn.push({
+			kind: "called",
+			id: "q1",
+			tool: "AskUserQuestion",
+			input: { questions: [{ question: QUESTION, header: "Shot fix", options: OPTIONS }] },
+			parent: null,
+		});
+		canvas.turn.push({
+			kind: "asking",
+			request: "req-q",
+			call: "q1",
+			tool: "AskUserQuestion",
+			display: "AskUserQuestion",
+			input: { questions: [{ question: QUESTION, header: "Shot fix", options: OPTIONS }] },
+			description: null,
+			interaction: true,
+			suggestions: [],
+			parent: null,
+			...over,
+		});
+	}
+
+	const options = (host: HTMLElement) =>
+		[...host.querySelectorAll("[data-agent-option]")].map((option) => option.getAttribute("data-agent-option"));
+
+	it("draws the options and their whole descriptions, and sends the one that is pressed", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot the receipt");
+
+		ask(canvas);
+		await until(() => options(canvas.host).length === 2);
+
+		const block = canvas.host.querySelector<HTMLElement>("[data-agent-ask]");
+		expect(block?.textContent).toContain(QUESTION);
+		// 150 to 250 characters of what each choice costs, whole and side by side: the
+		// descriptions are the reason the options are a block rather than chips
+		for (const option of OPTIONS) expect(block?.textContent).toContain(option.description);
+
+		const pressed = canvas.host.querySelector<HTMLButtonElement>('[data-agent-option="Ship it unverified"]');
+		await act(async () => pressed?.click());
+
+		expect(canvas.turn.answers.at(-1)).toEqual({
+			request: "req-q",
+			reply: { kind: "picked", picks: { [QUESTION]: "Ship it unverified" } },
+		});
+	});
+
+	it("keeps the composer live beside it, and prose sent there answers", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot the receipt");
+
+		ask(canvas);
+		await until(() => options(canvas.host).length === 2);
+
+		// the field is the path the tool prefers: it tests a typed sentence before the
+		// picked ones and tells the agent to follow what the person actually said
+		expect(field(canvas.host)?.placeholder).toBe("or say it in your own words");
+		await send(canvas.host, "neither, leave my install alone");
+
+		expect(canvas.turn.answers.at(-1)).toEqual({
+			request: "req-q",
+			reply: { kind: "said", text: "neither, leave my install alone" },
+		});
+		// answering answered rather than starting a second turn
+		expect(canvas.turn.prompts).toEqual(["shoot the receipt"]);
+	});
+
+	it("takes a wordless dismiss and sends a bare deny", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot the receipt");
+
+		ask(canvas);
+		await until(() => options(canvas.host).length === 2);
+
+		const dismiss = canvas.host.querySelector<HTMLButtonElement>("[data-agent-dismiss]");
+		// one word, and nothing else in it: it means one thing
+		expect(dismiss?.textContent).toBe("dismiss");
+		await act(async () => dismiss?.click());
+
+		expect(canvas.turn.answers.at(-1)).toEqual({ request: "req-q", reply: { kind: "deny" } });
+	});
+
+	it("stops the clock while it waits and never answers for anybody", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot the receipt");
+		canvas.turn.push({ kind: "waiting", parent: null });
+		canvas.turn.push({ kind: "thinking", block: 0, tokens: 50, parent: null });
+		ask(canvas);
+		await until(() => options(canvas.host).length === 2);
+
+		const beat = () => canvas.host.querySelector("[data-agent-log]")?.textContent?.match(/thinking([\d.]+)s/)?.[1];
+		const held = beat();
+		expect(held).toBeDefined();
+		await settle(700);
+
+		// the agent is not thinking while somebody decides, so the log does not count
+		// the seconds they take — and nothing spool runs ever submits an answer
+		expect(beat()).toBe(held);
+		expect(canvas.turn.answers).toEqual([]);
+		expect(canvas.host.querySelector("[data-agent-ask]")?.getAttribute("data-agent-ask")).toBe("open");
+	});
+
+	it("collapses to the person's own words once they have answered", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot the receipt");
+
+		ask(canvas);
+		await until(() => options(canvas.host).length === 2);
+		canvas.turn.push({
+			kind: "answered",
+			request: "req-q",
+			answer: "picked",
+			words: "Ship it unverified",
+			parent: null,
+		});
+		await until(() => options(canvas.host).length === 0);
+
+		// the answer is a sentence the person chose, so it lands in the shape the rail
+		// already gives the person's words, and the option list is gone
+		expect(canvas.host.querySelector("[data-agent-ask]")?.textContent).toContain("Ship it unverified");
+		expect(canvas.host.querySelector("[data-agent-dismiss]")).toBeNull();
+		// and the composer is a composer again
+		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+	});
+});
+
+describe("an approval in the log", () => {
+	const approval = (over: Partial<Extract<AgentEvent, { kind: "asking" }>> = {}): AgentEvent => ({
+		kind: "asking",
+		request: "req-a",
+		call: "c1",
+		tool: "Bash",
+		display: "Bash",
+		input: { command: "spool upgrade" },
+		description: "Run `spool upgrade`, which restarts the daemon under any canvas you have open",
+		interaction: false,
+		suggestions: [
+			{
+				type: "addRules",
+				rules: [{ toolName: "Bash", ruleContent: "spool upgrade" }],
+				behavior: "allow",
+				destination: "localSettings",
+			},
+		],
+		parent: null,
+		...over,
+	});
+
+	const options = (host: HTMLElement) =>
+		[...host.querySelectorAll("[data-agent-option]")].map((option) => option.getAttribute("data-agent-option"));
+
+	it("carries the agent's own written description and three answers", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot the receipt");
+
+		canvas.turn.push({
+			kind: "called",
+			id: "c1",
+			tool: "Bash",
+			input: { command: "spool upgrade", description: "Upgrade the CLI" },
+			parent: null,
+		});
+		canvas.turn.push(approval());
+		await until(() => options(canvas.host).length > 0);
+
+		// the row above already says what the call is, so the block says why — and every
+		// one of the three is an answer, so all three are rows
+		expect(canvas.host.querySelector("[data-agent-ask]")?.textContent).toContain("which restarts the daemon");
+		expect(options(canvas.host)).toEqual(["allow", "always, for this thread", "deny"]);
+		expect(canvas.host.querySelector("[data-agent-dismiss]")).toBeNull();
+
+		const always = canvas.host.querySelector<HTMLButtonElement>('[data-agent-option="always, for this thread"]');
+		await act(async () => always?.click());
+		expect(canvas.turn.answers.at(-1)).toEqual({ request: "req-a", reply: { kind: "always" } });
+	});
+
+	it("offers no always where the request suggested no rule", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot the receipt");
+
+		canvas.turn.push(approval({ suggestions: [] }));
+		await until(() => options(canvas.host).length > 0);
+
+		// absent rather than dead: spool never composes a rule of its own to fill it
+		expect(options(canvas.host)).toEqual(["allow", "deny"]);
+	});
+
+	it("is never answered by typing, because no sentence answers may I run this", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot the receipt");
+
+		canvas.turn.push(approval());
+		await until(() => options(canvas.host).length > 0);
+
+		// the field is a field, not a way of allowing something: typing "wait, don't"
+		// at an approval must never be the thing that lets the command through
+		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+		await send(canvas.host, "wait, do not run that");
+
+		expect(canvas.turn.answers).toEqual([]);
+		// and parked is not finished, so the press is refused rather than spawning a
+		// second agent into a turn that is still holding the repo
+		expect(canvas.turn.prompts).toEqual(["shoot the receipt"]);
+		expect(canvas.host.querySelector("[data-agent-log]")?.textContent).not.toContain("wait, do not run that");
+	});
+
+	it("lets the clock run again when nobody answered and the agent moved on", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot the receipt");
+		canvas.turn.push({ kind: "called", id: "c1", tool: "Bash", input: { command: "spool upgrade" }, parent: null });
+		canvas.turn.push(approval());
+		await until(() => options(canvas.host).length > 0);
+
+		// the agent takes the cautious option itself and its result lands 84ms later, so
+		// the block says the question expired — and the clock has to come back with it,
+		// or every event after it stamps at the same millisecond and nothing draws
+		canvas.turn.push({ kind: "result", id: "c1", failed: true, text: "", images: [], parent: null });
+		canvas.turn.push({ kind: "waiting", parent: null });
+		canvas.turn.push({ kind: "thinking", block: 0, tokens: 50, parent: null });
+		await until(() => canvas.host.querySelector("[data-agent-ask]")?.getAttribute("data-agent-ask") === "dropped");
+
+		const beat = () => canvas.host.querySelector("[data-agent-log]")?.textContent?.match(/thinking([\d.]+)s/)?.[1];
+		const held = beat();
+		expect(held).toBeDefined();
+		await settle(500);
+		expect(beat()).not.toBe(held);
 	});
 });

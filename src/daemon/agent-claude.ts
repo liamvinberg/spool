@@ -2,6 +2,7 @@ import type {
 	AgentEvent,
 	AgentEventBase,
 	AgentForeign,
+	AgentGrant,
 	AgentImage,
 	AgentLimit,
 	AgentSpeaking,
@@ -91,11 +92,33 @@ interface WireEvent {
 	};
 }
 
+/**
+ * A request coming the other way (#121, #145).
+ *
+ * The binary asks the client for things over the same stdout the turn streams down,
+ * and every one of them names itself with a `request_id` the answer has to quote.
+ * `can_use_tool` is the only subtype the rail draws; the rest are answered by the
+ * daemon on the protocol's own terms.
+ */
+interface WireControl {
+	readonly subtype?: string;
+	readonly tool_name?: string;
+	readonly display_name?: string;
+	readonly input?: unknown;
+	readonly description?: string;
+	readonly permission_suggestions?: readonly unknown[];
+	readonly suppress_always_allow_rule?: boolean;
+	readonly requires_user_interaction?: boolean;
+	readonly tool_use_id?: string;
+}
+
 interface WireLine {
 	readonly type?: string;
 	readonly subtype?: string;
 	readonly status?: string;
 	readonly event?: WireEvent;
+	readonly request_id?: string;
+	readonly request?: WireControl;
 	readonly parent_tool_use_id?: string | null;
 	readonly ttft_ms?: number;
 	readonly session_id?: string;
@@ -187,6 +210,8 @@ export function createClaudeAdapter() {
 				return assistant(wire, base);
 			case "user":
 				return user(wire, base);
+			case "control_request":
+				return asked(wire, base);
 			case "result":
 				return [ended(wire, base)];
 			case "rate_limit_event":
@@ -279,6 +304,49 @@ export function createClaudeAdapter() {
 			default:
 				return [{ kind: "other", type: `system/${string(wire.subtype) ?? "unknown"}`, ...base, vendor: wire }];
 		}
+	}
+
+	/**
+	 * The binary asking the client for something (#121, #145).
+	 *
+	 * Three subtypes are question-shaped and only one of them is the agent's own
+	 * question, so they do not collapse into one member: `can_use_tool` carries the
+	 * agent's words and is the channel both an approval and an `AskUserQuestion` ride,
+	 * `elicitation` carries a connector's words and is declined, and a
+	 * `request_user_dialog` arrives only for a dialog kind the client declared it can
+	 * display — spool declares none, so it never does.
+	 *
+	 * A request nobody modelled becomes `other`, which is a request nobody answers.
+	 * That is the honest failure: the binary's own abort resolves it, where a guessed
+	 * answer would resolve it wrongly.
+	 */
+	function asked(wire: WireLine, base: AgentEventBase): AgentEvent[] {
+		const request = string(wire.request_id) ?? "";
+		const control = wire.request ?? {};
+		if (request === "") return [{ kind: "other", type: "control_request", ...base, vendor: wire }];
+		if (control.subtype === "can_use_tool") {
+			return [
+				{
+					kind: "asking",
+					request,
+					call: string(control.tool_use_id) ?? null,
+					tool: string(control.tool_name) ?? "",
+					display: string(control.display_name) ?? null,
+					input: control.input,
+					description: string(control.description) ?? null,
+					interaction: bool(control.requires_user_interaction) ?? false,
+					// an always the request asked to have suppressed is an always spool does not
+					// get to offer, which is the same fact as it having suggested nothing
+					suggestions:
+						bool(control.suppress_always_allow_rule) === true ? [] : grantsOf(control.permission_suggestions),
+					...base,
+				},
+			];
+		}
+		if (control.subtype === "elicitation") return [{ kind: "elicit", request, ...base }];
+		return [
+			{ kind: "other", type: `control_request/${string(control.subtype) ?? "unknown"}`, ...base, vendor: wire },
+		];
 	}
 
 	function streamed(wire: WireLine, base: AgentEventBase, parent: string | null): AgentEvent[] {
@@ -470,6 +538,21 @@ function foreignOf(meta: {
 		...some("tool", string(meta.display_name)),
 		...some("iconUrl", string(meta.icon_url)),
 	};
+}
+
+/**
+ * The rules an "always" would grant, carried whole rather than remodelled (#121).
+ *
+ * The binary's permission-update language has six shapes and its own destinations,
+ * and spool reads exactly one field of one of them. So every suggestion rides
+ * through as the object it arrived as, and anything that is not an object is not a
+ * rule spool can hand back.
+ */
+function grantsOf(suggestions: readonly unknown[] | undefined): readonly AgentGrant[] {
+	if (!Array.isArray(suggestions)) return [];
+	return suggestions.filter(
+		(entry): entry is AgentGrant => typeof entry === "object" && entry !== null && !Array.isArray(entry),
+	);
 }
 
 function limitOf(info: Record<string, unknown>): AgentLimit {

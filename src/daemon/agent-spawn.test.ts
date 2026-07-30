@@ -44,6 +44,16 @@ describe("the spawn", () => {
 		expect(flagValue(args, "--permission-mode")).toBe("default");
 	});
 
+	it("wires the permission prompt tool to stdio, which is what makes an ask data", () => {
+		const { args } = planAgentSpawn("/tmp/product", {});
+
+		// #121 rests on this and the binary's own help does not document it: without a
+		// permission prompt tool wired to the stdio the adapter already opens, the ask
+		// has nowhere to land, the tool fails quietly and the agent apologises and
+		// stops — so the fence would be a wall rather than a question
+		expect(flagValue(args, "--permission-prompt-tool")).toBe("stdio");
+	});
+
 	it("passes one allow rule and denies nothing", () => {
 		const { args } = planAgentSpawn("/tmp/product", {});
 

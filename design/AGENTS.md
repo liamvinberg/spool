@@ -62,8 +62,18 @@ count that opens into a droppable list, a chip's ✕ deselecting out on the canv
 and the entered frame's chip drawn at full strength with no ✕ at all; the prompt
 carries one `<selection>` block, the same bytes `spool selection` now prints; the
 transcript keeps the strip's own words under the human's; and a pasted or dropped
-image rides as base64 with nothing written anywhere. The threads strip and the
-model readout the frames here draw are still ahead of the code.
+image rides as base64 with nothing written anywhere. **#197 landed the answering**:
+the spawn wires its permission prompt to stdio, which is what makes an approval
+data at all, so an approval draws under the row it is about carrying the agent's
+own written description and takes allow, always or deny — always being the rule
+the request suggested, moved to the thread's own scope and written to no file, and
+absent where it suggested none. The agent's own question draws its options and
+their whole descriptions in the log on `agent-play--ask-log`'s rule, with the
+wordless `dismiss` of `--ask-deny` under them and the composer live beside them,
+where Enter answers rather than sends. A question parks the turn and freezes its
+clock until somebody acts; a connector's elicitation is declined and no dialog
+kinds are declared. The threads strip and the model readout the frames here draw
+are still ahead of the code.
 
 Explorations live until the work they decided is built. Making the decision is
 not that moment: while a page is still being resolved, the rejected frames are

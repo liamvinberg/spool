@@ -181,6 +181,18 @@ function readField(input: CallInput, key: string, whole: boolean): string | null
 }
 
 /**
+ * One prose field as far as it has arrived (#145).
+ *
+ * The opposite reading to the one above, and the difference is the value rather than
+ * the moment: a half-arrived path is not a shorter path but a different one, while a
+ * half-arrived sentence is the same sentence with less of it. So a question types
+ * itself in the way the wire sends it, in the same three beats every call gets.
+ */
+export function readProse(input: CallInput, key: string): string | null {
+	return readField(input, key, true);
+}
+
+/**
  * The frame a path names, or null when the path is a file that is not one (#143).
  *
  * A frame is the folder that holds its entry — `frames/<name>/frame.tsx` at the

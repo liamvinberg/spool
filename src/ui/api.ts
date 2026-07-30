@@ -1,6 +1,7 @@
 import { hc } from "hono/client";
 import type { Attachment } from "../attachment";
 import type { Cover } from "../cover";
+import type { AgentReply } from "../daemon/agent-control";
 import type { AgentEvent } from "../daemon/agent-events";
 import type { AppType } from "../daemon/app";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
@@ -397,4 +398,16 @@ export function streamAgentTurn(
 		disposed = true;
 		controller.abort();
 	};
+}
+
+/**
+ * What the person said to a request the turn is parked on (#121, #145).
+ *
+ * A refusal is silence on purpose. Being turned away means the daemon holds no such
+ * waiting request, which happens exactly when the turn already ended, the request was
+ * already answered, or the answer was in the other one's vocabulary — and the first
+ * two the stream has already said or is about to.
+ */
+export async function answerAgentTurn(project: string, request: string, reply: AgentReply): Promise<void> {
+	await client.api.p[":project"].agent.answer.$post({ param: { project }, json: { request, reply } });
 }

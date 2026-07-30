@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
+import type { AgentReply } from "../../daemon/agent-control";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { AgentIcon, CloseIcon } from "../icons";
@@ -135,6 +136,7 @@ export function AgentRail({
 	jump,
 	pointing,
 	onSend,
+	onAnswer,
 }: {
 	entries: readonly AgentEntry[];
 	/** the plan, off the log and onto the shelf; absent until the turn writes one */
@@ -145,8 +147,20 @@ export function AgentRail({
 	jump: FrameJump;
 	pointing: Pointing;
 	onSend: (text: string, sent: AgentSent) => void;
+	/** what the person said to a waiting request, on its own way back up (#145) */
+	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
 	const [width, setWidth] = useState(RAIL_WIDTH);
+	/**
+	 * The question the composer would answer, read off the log rather than handed in.
+	 *
+	 * A question only, never an approval. Prose is an answer to a question — it becomes
+	 * the response the tool tests first — and there is no sentence that answers "may I
+	 * run this": typing one at an approval would let the call through carrying the words
+	 * as a spare argument, which is the opposite of what somebody writing "wait, don't"
+	 * means. An approval is answered by pressing one of its three, and by nothing else.
+	 */
+	const asking = entries.find((entry) => entry.kind === "ask" && entry.state === "open" && entry.question);
 	const [dragging, setDragging] = useState(false);
 	const drag = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
 	const collapsed = width <= COLLAPSED_BELOW;
@@ -193,7 +207,7 @@ export function AgentRail({
 			) : (
 				<div className="flex h-full min-w-[200px] flex-col">
 					{plan === null ? null : <PlanStrip plan={plan} />}
-					<Transcript entries={entries} elapsed={elapsed} last={last} jump={jump}>
+					<Transcript entries={entries} elapsed={elapsed} last={last} jump={jump} onAnswer={onAnswer}>
 						{/* the caret rides the transcript's own top fade rather than a row of its
 						    own: #144's whole finding is that a line of a 420px column is too
 						    expensive to spend on chrome, and it is #136's threads strip that will
@@ -212,9 +226,11 @@ export function AgentRail({
 					    the 200 floor, because the rule is one line rather than one width */}
 					<Composer
 						phase={phase}
+						answering={asking?.kind === "ask" ? asking.request : null}
 						strip={stripOf(pointing.entries, composerWidth(width), pointing.inside)}
 						pointing={pointing}
 						onSend={onSend}
+						onAnswer={onAnswer}
 					/>
 				</div>
 			)}
@@ -353,12 +369,14 @@ function Transcript({
 	elapsed,
 	last,
 	jump,
+	onAnswer,
 	children,
 }: {
 	entries: readonly AgentEntry[];
 	elapsed: number;
 	last: number;
 	jump: FrameJump;
+	onAnswer: (request: string, reply: AgentReply) => void;
 	children: React.ReactNode;
 }) {
 	const view = useRef<HTMLDivElement>(null);
@@ -413,7 +431,7 @@ function Transcript({
 							className="animate-agent-entry shrink-0"
 							style={{ paddingTop: gapBefore(entries[index - 1], entry) }}
 						>
-							<Entry entry={entry} elapsed={elapsed} last={last} jump={jump} />
+							<Entry entry={entry} elapsed={elapsed} last={last} jump={jump} onAnswer={onAnswer} />
 						</div>
 					))}
 				</div>
@@ -432,7 +450,19 @@ function gapBefore(previous: AgentEntry | undefined, entry: AgentEntry): number 
 	return 14;
 }
 
-function Entry({ entry, elapsed, last, jump }: { entry: AgentEntry; elapsed: number; last: number; jump: FrameJump }) {
+function Entry({
+	entry,
+	elapsed,
+	last,
+	jump,
+	onAnswer,
+}: {
+	entry: AgentEntry;
+	elapsed: number;
+	last: number;
+	jump: FrameJump;
+	onAnswer: (request: string, reply: AgentReply) => void;
+}) {
 	if (entry.kind === "user") {
 		/*
 		 * The words, and under them what was sent with them (#116).
@@ -470,6 +500,7 @@ function Entry({ entry, elapsed, last, jump }: { entry: AgentEntry; elapsed: num
 		);
 	}
 	if (entry.kind === "row") return <Row entry={entry} jump={jump} />;
+	if (entry.kind === "ask") return <Ask entry={entry} onAnswer={onAnswer} />;
 	if (entry.kind === "beat") {
 		/*
 		 * A beat's duration is the wire's, read off the same clock the prose is paced by.
@@ -683,6 +714,157 @@ function Row({ entry, jump, nested = false }: { entry: AgentRow; jump: FrameJump
 	);
 }
 
+/* ---------- the turn waiting on you ----------
+ * The first state in this rail that waits on the person rather than being watched by
+ * them, and the only geometry that exists while nobody has answered.
+ *
+ * The question itself was never the variable. It is a sentence the agent wrote, so it
+ * goes where the agent's sentences go; the answer is a sentence the person chose, so
+ * it lands in the shape the rail already gives the person's words. Agent, then human,
+ * which is what a thread is — so an answered question adds nothing permanent to the
+ * rail's vocabulary and the option list is gone the moment somebody has answered.
+ *
+ * The options are a block in the log and not chips beside the composer, and what
+ * settled that was the descriptions: 150 to 250 characters of what each choice costs,
+ * comparable side by side and unreadable in a chip. The composer stays live beside
+ * them, because prose is a first-class answer the tool tests before the picked ones
+ * and rewards with the stronger instruction to follow what the person actually said.
+ *
+ * An approval is the same block with different words in it. It leads with the agent's
+ * own written description of what it is about to do — the row above already says what
+ * the call is — and its three answers are spool's own, in the mono register spool uses
+ * for its own words. All three are bordered, because for an approval every one of them
+ * is an answer. A question's dismiss is not: it refuses the whole question rather than
+ * answering it, so it stays one quiet wordless word underneath. */
+
+function Ask({
+	entry,
+	onAnswer,
+}: {
+	entry: Extract<AgentEntry, { kind: "ask" }>;
+	onAnswer: (request: string, reply: AgentReply) => void;
+}) {
+	const request = entry.request;
+	const open = entry.state === "open" && request !== null;
+	const answer = (reply: AgentReply) => {
+		if (request !== null) onAnswer(request, reply);
+	};
+	return (
+		<div data-agent-ask={entry.state} className="flex flex-col gap-3">
+			{/* the sentences, drawn where the agent's sentences are drawn. A question still
+			    arriving shows a caret, because it is typing itself in the way every tool
+			    call's subject does */}
+			{entry.question ? (
+				entry.questions.map((question) => (
+					<div key={question.question} className="flex flex-col gap-1.5">
+						<p className="text-base text-text/90 leading-base">{question.question}</p>
+						{open ? (
+							<div className="flex flex-col gap-1.5">
+								{question.options.map((option) => (
+									<button
+										key={option.label}
+										type="button"
+										data-agent-option={option.label}
+										onClick={() => answer({ kind: "picked", picks: { [question.question]: option.label } })}
+										className="flex flex-col gap-1 rounded-md border border-border-raised bg-surface px-3 py-2.5 text-left transition-colors duration-150 hover:border-muted/45"
+									>
+										<span className="text-base text-text leading-base">{option.label}</span>
+										{option.description === "" ? null : (
+											<span className="text-2xs text-muted/70 leading-4">{option.description}</span>
+										)}
+									</button>
+								))}
+							</div>
+						) : null}
+					</div>
+				))
+			) : entry.asked === null ? null : (
+				// nothing where the agent wrote nothing: the row above already named the call,
+				// and a block that repeated it would be the rail saying one thing twice
+				<p className="text-base text-text/90 leading-base">
+					{entry.asked}
+					{entry.state === "arriving" ? <Caret /> : null}
+				</p>
+			)}
+			{entry.state === "answered" ? <Answered words={entry.words} /> : null}
+			{entry.state === "dropped" ? <AskOutcome state="failed" text="nobody answered" /> : null}
+			{entry.state === "allowed" ? <AskOutcome state="done" text="allowed" /> : null}
+			{entry.state === "always" ? <AskOutcome state="done" text="allowed for this thread" /> : null}
+			{/* a deny and a dismiss are one wire and two acts: for an approval the person
+			    answered no, and for a question they refused to answer at all */}
+			{entry.state === "denied" ? (
+				<AskOutcome state="stopped" text={entry.question ? "dismissed" : "denied"} />
+			) : null}
+			{open && entry.question ? (
+				// not a fourth option and it must not look like one, so the options keep their
+				// bordered rows and this is one quiet mono word underneath, in the register
+				// the composer uses for its own hints. It stays wordless so it means one thing
+				<button
+					type="button"
+					data-agent-dismiss=""
+					onClick={() => answer({ kind: "deny" })}
+					className="w-fit font-mono text-2xs text-muted/45 leading-3 transition-colors duration-150 hover:text-muted"
+				>
+					dismiss
+				</button>
+			) : null}
+			{open && !entry.question ? (
+				<div className="flex flex-col gap-1.5">
+					<AskAction label="allow" onPick={() => answer({ kind: "allow" })} />
+					{/* absent rather than dead where the request suggested no rule: spool never
+					    composes one of its own to fill the gap. Where it is offered it lasts the
+					    thread and is written to no file, because the complaint is repetition */}
+					{entry.always ? (
+						<AskAction label="always, for this thread" onPick={() => answer({ kind: "always" })} />
+					) : null}
+					<AskAction label="deny" onPick={() => answer({ kind: "deny" })} />
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+/** one of spool's own answers to an approval, in the same row an option gets */
+function AskAction({ label, onPick }: { label: string; onPick: () => void }) {
+	return (
+		<button
+			type="button"
+			data-agent-option={label}
+			onClick={onPick}
+			className="w-full rounded-md border border-border-raised bg-surface px-3 py-2 text-left transition-colors duration-150 hover:border-muted/45"
+		>
+			<span className="font-mono text-sm text-text leading-4">{label}</span>
+		</button>
+	);
+}
+
+/**
+ * The answer, in the shape the rail already draws the person's words in.
+ *
+ * Not a row, because the verb slot has nowhere to put it: `ask` is spent on every call
+ * that left the building, and `ask Notion` one line above `asked Shot fix` is two words
+ * the eye cannot separate at this size. The person's own accent rail is the answer that
+ * needed no new word at all.
+ */
+function Answered({ words }: { words: string | null }) {
+	return (
+		<div className="relative flex flex-col gap-1.5 pl-3.5">
+			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
+			<p className="whitespace-pre-wrap text-base text-text leading-base">{words}</p>
+		</div>
+	);
+}
+
+/** what became of a request nobody is waiting on any more, in one quiet line */
+function AskOutcome({ state, text }: { state: RowState; text: string }) {
+	return (
+		<div className="flex items-center gap-2.5">
+			<StateMark state={state} />
+			<span className="font-mono text-2xs text-muted/55 leading-3">{text}</span>
+		</div>
+	);
+}
+
 /**
  * The paragraph count at which a message stops being a sentence and is a document.
  *
@@ -857,19 +1039,40 @@ function StateMark({ state, className }: { state: RowState; className?: string }
 
 function Composer({
 	phase,
+	answering,
 	strip,
 	pointing,
 	onSend,
+	onAnswer,
 }: {
 	phase: TurnPhase;
+	/**
+	 * The request Enter would answer, or null while Enter means what it always meant.
+	 *
+	 * A turn held at a question takes the press as the answer rather than as a new
+	 * turn, and the tool prefers it that way: it tests a typed sentence before the
+	 * picked options and tells the agent to read it carefully, because the person may
+	 * ask for something else entirely. An option list was never the only way to answer.
+	 */
+	answering: string | null;
 	strip: Strip;
 	pointing: Pointing;
 	onSend: (text: string, sent: AgentSent) => void;
+	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
 	const [held, setHeld] = useState("");
 	/** the reference riding with the words, which is bytes and never a path (#119) */
 	const [attached, setAttached] = useState<Attachment | null>(null);
-	const busy = phase === "playing";
+	/*
+	 * A turn parked on a question takes the press as its answer, and everything else in
+	 * flight refuses it.
+	 *
+	 * Parked is not finished: a turn held at an approval is still a live process holding
+	 * the repo, so its press is refused the way a streaming one's is. Only a question
+	 * turns the field into somewhere to answer, because only a question has somewhere
+	 * for words to go.
+	 */
+	const busy = (phase === "playing" || phase === "asking") && answering === null;
 
 	const resize = (element: HTMLTextAreaElement) => {
 		element.style.height = "auto";
@@ -912,8 +1115,8 @@ function Composer({
 					value={held}
 					rows={3}
 					spellCheck={false}
-					placeholder="say what to change"
-					aria-label="say what to change"
+					placeholder={answering === null ? "say what to change" : "or say it in your own words"}
+					aria-label={answering === null ? "say what to change" : "or say it in your own words"}
 					onChange={(event) => {
 						setHeld(event.target.value);
 						resize(event.target);
@@ -932,6 +1135,15 @@ function Composer({
 						event.preventDefault();
 						const text = held.trim();
 						if (text === "" || busy) return;
+						// answering answers, and otherwise sends: a turn parked on a question is
+						// not a turn in flight, and the words are the answer rather than the next
+						// thing to say
+						if (answering !== null) {
+							setHeld("");
+							event.currentTarget.style.height = `${MIN_H}px`;
+							onAnswer(answering, { kind: "said", text });
+							return;
+						}
 						send(text, event.currentTarget);
 					}}
 					className="w-full resize-none bg-transparent text-base text-text leading-base outline-none placeholder:text-muted/50"
