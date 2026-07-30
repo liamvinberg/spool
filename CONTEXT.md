@@ -18,7 +18,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Geometry sidecar**: The app-owned `frame.json` beside a frame's source, holding its place and size on the canvas. _Avoid_: layout file
 
-**Asset**: A project file whose bytes ride inside the served document instead of being fetched: an image a frame imports, or a font `shared/fonts.css` names by a relative `url()`. There is no asset route and no asset URL, and the import is what puts the file in a frame's closure. _Avoid_: static file, public folder
+**Asset**: A project file whose bytes ride inside the served document instead of being fetched: an image or text file a frame imports, or a font `shared/fonts.css` names by a relative `url()`. There is no asset route and no asset URL, and the import is what puts the file in a frame's closure. _Avoid_: static file, public folder
 
 ### Canvas
 

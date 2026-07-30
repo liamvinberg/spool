@@ -95,7 +95,7 @@ Static assets: import the file and use the value. The compiler bakes it into the
   <img src={hero} />
   <div style={{ backgroundImage: \`url(\${logo})\` }} />
 
-Kinds: .png, .jpg, .jpeg, .webp, .gif, .svg; a .json import parses into an object. Put an asset beside the frame that uses it; move it to shared/assets/ when a second frame does. It must be an import and never a URL string: the import is what puts the file in the frame's closure, so editing it reissues the document and its cover. One document carries at most 512 KB of images — that is base64, so roughly 385 KB of real file — and the compile fails naming the file when it doesn't fit; nothing is downscaled. Video and audio are not supported. Remote image URLs still work in a live frame, but nothing fetched ever appears in a still.`,
+Kinds: .png, .jpg, .jpeg, .webp, .gif, .svg; a .json import parses into an object and a .txt import is the file's text. Put an asset beside the frame that uses it; move it to shared/assets/ when a second frame does. It must be an import and never a URL string: the import is what puts the file in the frame's closure, so editing it reissues the document and its cover. One document carries at most 512 KB of images — that is base64, so roughly 385 KB of real file — and the compile fails naming the file when it doesn't fit; nothing is downscaled. Video and audio are not supported. Remote image URLs still work in a live frame, but nothing fetched ever appears in a still.`,
 
 	terminals:
 		() => `A terminal frame is born by writing design/frames/<name>/term.tsx. Spool still recognizes the entry as the terminal frame kind, gives it whole-cell geometry, and includes it on the canvas and in the player.
