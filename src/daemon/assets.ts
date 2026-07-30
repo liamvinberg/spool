@@ -1,10 +1,10 @@
 /**
  * What a project asset is (#101): which kinds a frame can import, how their
- * bytes are spelled once inlined, and what one document may carry. One list,
- * because the same six kinds are read by four independent readers — the
- * compiler's loader, the offline checker's module resolution, and both copies
- * of the capture allowlist — and a kind added to only some of them is a frame
- * that renders and a cover that does not.
+ * bytes are spelled once inlined, and what one document may carry. The whole
+ * answer lives here, because the six image kinds are read by four independent
+ * readers — the compiler's loader, the offline checker's module resolution, and
+ * both copies of the capture allowlist — and a kind added to only some of them
+ * is a frame that renders and a cover that does not.
  */
 
 /** The asset kinds a frame can import, and the media type each rides as. */
@@ -21,6 +21,14 @@ export const ASSET_EXTENSIONS: ReadonlySet<string> = new Set(Object.keys(ASSET_M
 
 /** Esbuild's plugin filter, and the checker's own read of the same list. */
 export const ASSET_FILTER = /\.(?:gif|jpe?g|png|svg|webp)$/i;
+
+/**
+ * The kinds esbuild's own default loaders already answer, which spool never
+ * overrides: `.txt` arrives as the file's text. It has no loader here and no
+ * media type because it needs neither — but TypeScript resolves `.json` and
+ * nothing else, so the checker is one reader that still has to be told.
+ */
+export const TEXT_EXTENSIONS: ReadonlySet<string> = new Set([".txt"]);
 
 /**
  * The media-type alternation the capture predicates allow, interpolated into

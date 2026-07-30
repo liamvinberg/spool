@@ -253,7 +253,8 @@ describe("offline design checking", () => {
 		["webp", "frames/home/hero.webp"],
 		["gif", "frames/home/hero.gif"],
 		["svg", "shared/assets/logo.svg"],
-	] as const)("types an imported %s asset as the string the compiler bakes in", (_kind, file) => {
+		["txt", "frames/home/copy.txt"],
+	] as const)("types an imported %s asset as the string a frame receives", (_kind, file) => {
 		const root = makeTempDir();
 		markProject(root);
 		writeDesignFile(root, file, "pretend bytes\n");
@@ -261,17 +262,20 @@ describe("offline design checking", () => {
 		writeFrame(
 			root,
 			"home",
-			`import asset from "${specifier}";\nexport default function Home() { return <img src={asset} alt="" />; }\n`,
+			`import asset from "${specifier}";\nconst value: string = asset;\nexport default function Home() { return <p>{value}</p>; }\n`,
 		);
 
 		expect(messages(root)).toEqual([]);
 	});
 
-	it("holds an imported asset to being a string", () => {
+	it.each([
+		["asset", "frames/home/hero.png", "./hero.png"],
+		["text file", "frames/home/copy.txt", "./copy.txt"],
+	] as const)("holds an imported %s to being a string and nothing looser", (_kind, file, specifier) => {
 		const root = makeTempDir();
 		markProject(root);
-		writeDesignFile(root, "frames/home/hero.png", "pretend bytes\n");
-		writeFrame(root, "home", 'import hero from "./hero.png";\nconst width: number = hero;\nvoid width;\n');
+		writeDesignFile(root, file, "pretend bytes\n");
+		writeFrame(root, "home", `import value from "${specifier}";\nconst width: number = value;\nvoid width;\n`);
 
 		const result = messages(root);
 

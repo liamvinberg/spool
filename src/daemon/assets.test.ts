@@ -53,6 +53,26 @@ describe("project assets", () => {
 		expect(body).not.toContain("data:image/svg+xml,");
 	});
 
+	it("carries an imported text file as its contents, and makes it a cache input", async () => {
+		const { root, document } = project();
+		writeDesignFile(root, "frames/entry/copy.txt", "first copy\n");
+		writeFrame(
+			root,
+			"entry",
+			'import copy from "./copy.txt";\nexport default function Frame() { return <p>{copy}</p>; }\n',
+		);
+
+		const first = await document();
+		expect(await first.text()).toContain("first copy");
+		const etag = first.headers.get("etag");
+		expect(etag).toBeTruthy();
+
+		writeDesignFile(root, "frames/entry/copy.txt", "second copy\n");
+		const second = await document();
+		expect(await second.text()).toContain("second copy");
+		expect(second.headers.get("etag")).not.toBe(etag);
+	});
+
 	it("makes an asset a cache input, so swapping its bytes reissues the document", async () => {
 		const { root, document } = project();
 		writeAsset(root, "frames/entry/hero.png", COVER_PNG);

@@ -7,7 +7,7 @@ import { API, type Diagnostic } from "typescript/unstable/sync";
 import { CheckerAliasAllocator } from "./check-alias";
 import { CheckSourceBudget, CheckSourceLimitError, checkSourceLimitMessage } from "./check-budget";
 import { BoundedFileTooLargeError, readBoundedRegularFile, UnsafeFileReadError } from "./check-file";
-import { ASSET_EXTENSIONS } from "./daemon/assets";
+import { ASSET_EXTENSIONS, TEXT_EXTENSIONS } from "./daemon/assets";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./daemon/design-path";
 
 export interface CheckDiagnostic {
@@ -299,11 +299,11 @@ function runCheckDesign(root: string): CheckDiagnostic[] {
 			localModuleResolutions.set(file, diagnosticResolutions);
 		}
 	}
-	// An inlined asset is a data URI by the time a frame sees it, so the shipped
-	// declaration says exactly that and nothing looser (#101).
+	// Both kinds reach a frame as a string, so the shipped declaration says that
+	// and nothing looser (#101).
 	const assetModule = join(internalDir, "asset.d.ts");
 	if (localAssets.assetResolutions.size > 0) {
-		virtualFiles.set(assetModule, "declare const url: string;\nexport default url;\n");
+		virtualFiles.set(assetModule, "declare const value: string;\nexport default value;\n");
 	}
 	for (const [file, resolutions] of localAssets.assetResolutions) {
 		for (const resolution of resolutions) {
@@ -1125,13 +1125,15 @@ function authoredPathReadFailure(error: unknown): string | undefined {
 }
 
 /**
- * The asset kinds the compiler inlines (#101). Spool ships their declaration the
- * way it ships React's, because design/ never gets a package.json — and the
- * checker resolves modules independently of the bundler, so it needs the same
- * knowledge or every asset import reads as a missing module.
+ * The asset kinds whose module is a string (#101) — an image's data URI, a text
+ * file's contents. Spool ships their declaration the way it ships React's,
+ * because design/ never gets a package.json, and the checker resolves modules
+ * independently of the bundler: without this, an import the daemon serves
+ * happily reads here as a missing module.
  */
 function isAssetSource(file: string): boolean {
-	return ASSET_EXTENSIONS.has(extname(file).toLowerCase());
+	const extension = extname(file).toLowerCase();
+	return ASSET_EXTENSIONS.has(extension) || TEXT_EXTENSIONS.has(extension);
 }
 
 function isDesignSource(file: string): boolean {
