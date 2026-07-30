@@ -92,8 +92,6 @@ export interface AgentTurn {
 	 * cut is the honest downgrade of an arrival rather than a slower one.
 	 */
 	readonly elapsed: number;
-	/** when the last event landed, so a beat nobody closed still reads its real length */
-	readonly last: number;
 	/**
 	 * Send what was typed, and with it whatever the composer was holding (#116, #119).
 	 *
@@ -832,7 +830,6 @@ export function useAgentThreads(project: string): AgentDeck {
 			plan: planOf(here, seen),
 			phase,
 			elapsed: still || here.drained ? Number.POSITIVE_INFINITY : here.ms,
-			last: seen.last,
 			send: say,
 			answer: useCallback(
 				(request: string, reply: AgentReply) => {

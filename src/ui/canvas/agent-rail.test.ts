@@ -388,6 +388,19 @@ const arriving = (host: HTMLElement) => host.querySelector("[data-agent-prose]")
 const MESSAGE = "the frame is authored and live on the canvas, and the shot came back clean.";
 
 /**
+ * The same sentence twenty times over: long enough to still be arriving, and plain, so
+ * the text the log draws is the text that went in.
+ *
+ * It is how a stopped clock is observed now that nothing in the log draws a duration. The
+ * pace is `min(12ms, 250ms ÷ pending)` per character, so a running clock spends a whole
+ * delta inside 250ms whatever its length — which makes "is any of it still arriving" a
+ * binary reading of whether the clock moved at all, with no window to tune. The arriving
+ * window is the only place a partial message is drawn: once the whole of it is on screen
+ * `Prose` draws it settled and the box is gone.
+ */
+const LONG = Array.from({ length: 20 }, () => MESSAGE).join(" ");
+
+/**
  * The longest message the captures hold: 3,372 characters of bold lead-ins, inline code,
  * two fenced blocks and a blockquote. It is the thing every claim about a long message is
  * about, so it is what the rail is asked to draw.
@@ -594,27 +607,11 @@ describe("one turn", () => {
 	});
 
 	/**
-	 * The measured wait before the first token is over a second, so the beat is the
-	 * difference between the rail reading as intent and reading as a hang. It leaves no
-	 * receipt: once the answer starts, the wait was the absence of one.
+	 * The wait before the first token draws nothing, and neither does the thought that
+	 * follows it. The stroke on the composer's border is what says the turn is alive; the
+	 * log is receipts, and the one thing it must never do is add a line and take it back.
 	 */
-	it("shows the wait as work, and takes it back once the first token lands", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "go");
-
-		canvas.turn.push(waiting);
-		await settle();
-		const beats = rail(canvas.host)?.querySelectorAll(".animate-agent-spin").length ?? 0;
-		expect(beats).toBe(1);
-
-		canvas.turn.push(speaking);
-		canvas.turn.push(say("the frame is live."));
-		await settle();
-		expect(rail(canvas.host)?.querySelectorAll(".animate-agent-spin")).toHaveLength(0);
-	});
-
-	it("draws a thinking beat as a duration and never as prose", async () => {
+	it("draws nothing for the wait or the thought", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "go");
@@ -624,8 +621,10 @@ describe("one turn", () => {
 		canvas.turn.push({ kind: "thinking", block: 0, tokens: 61, parent: null });
 		await settle();
 
-		expect(rail(canvas.host)?.textContent).toContain("thinking");
-		expect(rail(canvas.host)?.textContent).toMatch(/thinking\s*\d+\.\d+s/);
+		expect(rail(canvas.host)?.querySelectorAll(".animate-agent-spin")).toHaveLength(0);
+		expect(log(canvas.host)).not.toContain("thinking");
+		// the human's words and nothing under them
+		expect(log(canvas.host).trim()).toBe("go");
 	});
 
 	it("lets the agent's words arrive rather than appear whole", async () => {
@@ -1907,23 +1906,31 @@ describe("a question in the log", () => {
 		expect(canvas.turn.answers.at(-1)).toEqual({ request: "req-q", reply: { kind: "deny" } });
 	});
 
+	/**
+	 * The clock is read off the arriving edge of a message, which is the one thing in this
+	 * rail that is paced by it: a running clock spends a whole delta inside 250ms, so a
+	 * message still short of its own end after 700ms is a clock that never moved.
+	 */
 	it("stops the clock while it waits and never answers for anybody", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "shoot the receipt");
 		canvas.turn.push({ kind: "waiting", parent: null });
-		canvas.turn.push({ kind: "thinking", block: 0, tokens: 50, parent: null });
+		canvas.turn.push(speaking);
+		canvas.turn.push(say(LONG));
+		// the edge has to be somewhere before the question stops it, or a frozen clock at
+		// zero would pass this by drawing nothing at all
+		await until(() => arriving(canvas.host).length > 0);
 		ask(canvas);
 		await until(() => options(canvas.host).length === 2);
-
-		const beat = () => canvas.host.querySelector("[data-agent-log]")?.textContent?.match(/thinking([\d.]+)s/)?.[1];
-		const held = beat();
-		expect(held).toBeDefined();
+		expect(arriving(canvas.host).length).toBeLessThan(LONG.length);
 		await settle(700);
 
-		// the agent is not thinking while somebody decides, so the log does not count
-		// the seconds they take — and nothing spool runs ever submits an answer
-		expect(beat()).toBe(held);
+		// the words are not arriving while somebody decides, so 700ms later some of the
+		// message is still on its way — and nothing spool runs ever submits an answer
+		const held = arriving(canvas.host);
+		expect(held.length).toBeGreaterThan(0);
+		expect(held.length).toBeLessThan(LONG.length);
 		expect(canvas.turn.answers).toEqual([]);
 		expect(canvas.host.querySelector("[data-agent-ask]")?.getAttribute("data-agent-ask")).toBe("open");
 	});
@@ -2049,14 +2056,14 @@ describe("an approval in the log", () => {
 		// or every event after it stamps at the same millisecond and nothing draws
 		canvas.turn.push({ kind: "result", id: "c1", failed: true, text: "", images: [], parent: null });
 		canvas.turn.push({ kind: "waiting", parent: null });
-		canvas.turn.push({ kind: "thinking", block: 0, tokens: 50, parent: null });
+		canvas.turn.push(speaking);
+		canvas.turn.push(say(LONG));
 		await until(() => canvas.host.querySelector("[data-agent-ask]")?.getAttribute("data-agent-ask") === "dropped");
 
-		const beat = () => canvas.host.querySelector("[data-agent-log]")?.textContent?.match(/thinking([\d.]+)s/)?.[1];
-		const held = beat();
-		expect(held).toBeDefined();
-		await settle(500);
-		expect(beat()).not.toBe(held);
+		// the clock has to come back with the drop, or the message stamped after it would
+		// sit at zero characters forever: nothing left arriving, and the whole of it drawn
+		await until(() => canvas.host.querySelector("[data-agent-prose]") === null);
+		expect(log(canvas.host)).toContain(LONG);
 	});
 });
 
