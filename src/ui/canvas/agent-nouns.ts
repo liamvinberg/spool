@@ -71,18 +71,19 @@ export interface CallName {
 const WRITES = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 
 /**
- * The calls the log is not a receipt for, because what they produce outlives them.
+ * The calls that get no row of their own, because what they produce outlives them.
  *
  * Seven `TaskCreate`s in nine seconds are one list, and that list then runs the next
- * nine minutes, so a log both buries it and loses it: the plan leaves the transcript
- * for a strip of its own, which is #194's, and a `TaskUpdate` is that list changing
- * rather than a call worth a row (#117). A question is the same shape of thing from
- * the other end — the one entry in this log that has not happened yet — so it is the
- * question that gets drawn rather than the call that asked it, which is #197's.
+ * nine minutes, so a log both buries it and loses it: the plan is one row for however
+ * many calls write it, and the list itself leaves for a strip on the shelf (#117,
+ * #194). A `TaskUpdate` is that list changing rather than a call worth a row, so it
+ * draws nothing at all. A question is the same shape of thing from the other end —
+ * the one entry in this log that has not happened yet — so it is the question that
+ * gets drawn rather than the call that asked it, which is #197's.
  *
- * None of them draws, and that is load-bearing twice over: a wire name would
- * otherwise reach a line whose whole rule is spool's nouns, and a call that draws
- * nothing cannot break a run.
+ * None of them reaches `nameCall`, and that is load-bearing twice over: a wire name
+ * would otherwise reach a line whose whole rule is spool's nouns, and a call that
+ * draws nothing cannot break a run.
  */
 const UNDRAWN = new Set(["TaskCreate", "TaskUpdate", "AskUserQuestion"]);
 
@@ -96,9 +97,44 @@ const TAKES_FRAME = new Set(["shot", "logs", "url"]);
 
 const PICTURE = /\.(?:png|jpe?g|webp|gif|svg)$/i;
 
-/** whether a call reaches the log as a row at all */
-export function drawsRow(tool: string): boolean {
+/**
+ * Whether this call gets a row of its own.
+ *
+ * Not whether it reaches the log at all: the plan's own creates share one row between
+ * however many of them there are, and that row is built from the list rather than from
+ * any one call, so it is drawn by the projection and never named here.
+ */
+export function drawsOwnRow(tool: string): boolean {
 	return !UNDRAWN.has(tool);
+}
+
+/**
+ * One task of the plan, as the call that wrote it phrased it twice (#117, #194).
+ *
+ * `TaskCreate` ships the written form and the present participle together, precisely
+ * so that a surface never has to invent a friendlier wording for a task in progress.
+ * Null is a create whose subject has not finished arriving, which is nothing to add to
+ * a list yet.
+ */
+export function taskWritten(input: CallInput): { readonly subject: string; readonly running: string | null } | null {
+	const subject = readField(input, "subject", true);
+	return subject === null ? null : { subject, running: readField(input, "activeForm", true) };
+}
+
+/**
+ * A task moving inside the plan, as the call that moved it names it (#194).
+ *
+ * `taskId` is the task's position in the list the creates wrote, counted from one, and
+ * it is the wire's own shape rather than spool's choice. The status is the wire's own
+ * word too: anything but these two leaves the task where it is.
+ */
+export function taskMoved(input: CallInput): { readonly at: number; readonly state: "running" | "done" } | null {
+	const at = Number.parseInt(readField(input, "taskId", true) ?? "", 10);
+	const status = readField(input, "status", true);
+	if (!Number.isFinite(at)) return null;
+	if (status === "in_progress") return { at, state: "running" };
+	if (status === "completed") return { at, state: "done" };
+	return null;
 }
 
 /**

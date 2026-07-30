@@ -44,9 +44,15 @@ No mode switch. Play lives on the selection. The agent rail is the transcript
 and the composer (#192): the tab row, `elements` and `connections` are all gone.
 The transcript holds the human's words, the agent's words, a beat for the wait,
 and one line per tool call with its payload behind a closed disclosure (#193) —
-runs of writes counted, `ask <Server>` for a connector, five row states. What a
-row *opens* and where its name navigates, the plan strip, the threads strip and
-the model readout the frames here draw are still ahead of the code.
+runs of writes counted, `ask <Server>` for a connector, five row states. **#194
+built what a row opens and where it goes**: the plan strip is on the shelf above
+the log with a count and the agent's own `activeForm`, a screenshot is a real
+120px thumbnail behind its row's disclosure that presses to life size, a frame's
+name in a row navigates on `landOnFrame`'s own rule with the accent per row and
+the run's count outside the target, a gone frame is struck off a `gone` set the
+canvas hands in, and a sub-agent is one row that expands into its delegate's own
+rows. The threads strip and the model readout the frames here draw are still
+ahead of the code.
 
 Explorations live until the work they decided is built. Making the decision is
 not that moment: while a page is still being resolved, the rejected frames are

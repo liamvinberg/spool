@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { streamAgentTurn } from "../api";
-import { type AgentEntry, fullyShown, type Stamped, transcriptOf } from "./agent-transcript";
+import { type AgentEntry, type AgentPlan, fullyShown, type Stamped, transcriptOf } from "./agent-transcript";
 
 /**
  * One turn, from the composer to the log (#192).
@@ -28,6 +28,12 @@ export type TurnPhase = "idle" | "playing" | "settled";
 
 export interface AgentTurn {
 	readonly entries: readonly AgentEntry[];
+	/**
+	 * The plan the turn wrote, which is not in the entries and is the point of it: it
+	 * goes on changing for the rest of the turn, so it sits on the shelf above the log
+	 * rather than scrolling off the top of one (#117, #194).
+	 */
+	readonly plan: AgentPlan | null;
 	readonly phase: TurnPhase;
 	/**
 	 * Milliseconds since the send, and infinite once there is nothing left to pace —
@@ -140,6 +146,7 @@ export function useAgentTurn(project: string): AgentTurn {
 	const transcript = transcriptOf(prompt, events.current);
 	return {
 		entries: run === 0 ? [] : transcript.entries,
+		plan: run === 0 ? null : transcript.plan,
 		phase: run === 0 ? "idle" : open ? "playing" : "settled",
 		elapsed: still || drained ? Number.POSITIVE_INFINITY : ms,
 		last: transcript.last,

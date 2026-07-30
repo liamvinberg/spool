@@ -7,23 +7,27 @@ import type { AgentEvent } from "../api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
 
 /**
- * The agent rail as the canvas drives it (#192, #193).
+ * The agent rail as the canvas drives it (#192, #193, #194).
  *
  * One turn, end to end: the composer takes a sentence, the daemon's stream answers
  * it, and the transcript is what the projection said it would be. What is asserted
  * here is the wiring — that the human's words land before anything comes back, that
  * the request carries them, that prose arrives rather than appearing, that a tool
- * call reaches the screen as one line, and that the rail is the agent and nothing
- * else.
+ * call reaches the screen as one line, that pressing a frame's name takes the canvas
+ * there, and that the rail is the agent and nothing else.
  *
  * The rules behind the rows are `agent-transcript.test.ts`'s and the pace is
  * `agent-pace.test.ts`'s.
  */
 
+/** `receipt` sits one page over, which is the normal case: a thread is not bound to a page */
 const PROJECTION = {
 	root: "/project",
-	pages: [],
-	frames: [{ name: "home", kind: "html", x: 0, y: 0, w: 390, h: 844 }],
+	pages: ["site"],
+	frames: [
+		{ name: "home", kind: "html", x: 0, y: 0, w: 390, h: 844 },
+		{ name: "receipt", page: "site", kind: "html", x: 0, y: 0, w: 390, h: 844 },
+	],
 	collisions: [],
 };
 
@@ -65,6 +69,9 @@ function mount({ still = false }: { still?: boolean } = {}) {
 	};
 	/** the daemon's own watcher channel: what a frame the turn writes arrives on */
 	const watcher = sse();
+	const chrome: { latest: CanvasChrome | null } = { latest: null };
+	/** what the folder holds, so a test can take a frame out of it and say so */
+	const project = { frames: PROJECTION.frames as { name: string; page?: string }[] };
 	if (still) {
 		vi.stubGlobal("matchMedia", (query: string) => ({
 			matches: query.includes("prefers-reduced-motion"),
@@ -91,7 +98,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 			}
 			if (url.pathname.endsWith("/events")) return watcher.response();
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
-			if (url.pathname.endsWith("/frames")) return Response.json(PROJECTION);
+			if (url.pathname.endsWith("/frames")) return Response.json({ ...PROJECTION, frames: project.frames });
 			if (url.pathname.endsWith("/flows/resolve")) return Response.json({ skipped: 0, read: 0, unavailable: 0 });
 			if (url.pathname.endsWith("/flows")) return Response.json({ frames: [], edges: [], unreadable: [] });
 			return Response.json({});
@@ -125,15 +132,20 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		host,
 		turn,
 		watcher,
+		chrome,
+		project,
 		render: async () => {
 			await act(async () => {
 				root.render(
 					createElement(ProjectCanvas, {
 						project: "test",
-						onChrome: (_next: CanvasChrome | null) => {},
+						onChrome: (next: CanvasChrome | null) => {
+							if (next !== null) chrome.latest = next;
+						},
 					}),
 				);
 			});
+			await until(() => host.querySelector('[data-frame-label="home"]') !== null);
 		},
 	};
 }
@@ -426,36 +438,41 @@ describe("one turn", () => {
  * that a row reaches the screen as one line, and that the payload the projection kept
  * separate stays off it until somebody asks. */
 
-describe("a tool row", () => {
-	const ready: AgentEvent = {
-		kind: "ready",
-		session: "s",
-		model: "claude-opus-5",
-		cwd: "/project",
-		version: "2.1.220",
-		permissionMode: "default",
-		apiKeySource: "none",
-		capabilities: [],
-		parent: null,
-	};
-	const edit = (id: string): AgentEvent => ({
-		kind: "called",
-		id,
-		tool: "Edit",
-		input: { file_path: "/project/design/frames/home/frame.tsx" },
-		parent: null,
-	});
-	const settled = (id: string): AgentEvent => ({
-		kind: "result",
-		id,
-		failed: false,
-		text: "",
-		images: [],
-		parent: null,
-	});
-	const rows = (host: HTMLElement) =>
-		[...host.querySelectorAll("[data-agent-row]")].map((row) => row.getAttribute("data-agent-row"));
+const ready: AgentEvent = {
+	kind: "ready",
+	session: "s",
+	model: "claude-opus-5",
+	cwd: "/project",
+	version: "2.1.220",
+	permissionMode: "default",
+	apiKeySource: "none",
+	capabilities: [],
+	parent: null,
+};
+/** one whole call, as the wire hands one over once its arguments have finished arriving */
+const called = (id: string, tool: string, input: unknown, parent: string | null = null): AgentEvent => ({
+	kind: "called",
+	id,
+	tool,
+	input,
+	parent,
+});
+const edit = (id: string, frame = "home"): AgentEvent =>
+	called(id, "Edit", { file_path: `/project/design/frames/${frame}/frame.tsx` });
+const settled = (id: string, over: Partial<Extract<AgentEvent, { kind: "result" }>> = {}): AgentEvent => ({
+	kind: "result",
+	id,
+	failed: false,
+	text: "",
+	images: [],
+	parent: null,
+	...over,
+});
+/** what every row in the log says out loud, in order */
+const rows = (host: HTMLElement) =>
+	[...host.querySelectorAll("[data-agent-row]")].map((row) => row.getAttribute("data-agent-row"));
 
+describe("a tool row", () => {
 	it("is one line, with its path behind a disclosure nobody has to open", async () => {
 		const canvas = mount();
 		await canvas.render();
@@ -545,5 +562,431 @@ describe("a tool row", () => {
 		await settle(120);
 
 		expect(strokes()).toEqual(["M4.4 7h5.2", "M4.2 4.2l5.6 5.6", "M9.8 4.2l-5.6 5.6"]);
+	});
+});
+
+/* ---------- what a row opens and where it goes (#194) ----------
+ * The plan earns a place off the line because it outlives the call that wrote it; a
+ * screenshot does not, so it is the payload of its own row. The name is the place and
+ * the rest of the row is still the call. */
+
+const strip = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-plan]");
+const task = (subject: string, activeForm: string, id: string): AgentEvent =>
+	called(id, "TaskCreate", { subject, description: "…", activeForm });
+const move = (id: string, which: string, status: string): AgentEvent =>
+	called(id, "TaskUpdate", { taskId: which, status });
+
+describe("the plan", () => {
+	it("leaves the transcript for a strip carrying a count and the agent's own wording", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "build the streak app");
+
+		canvas.turn.push(ready);
+		await settle(60);
+		// most turns never write one, and the rail costs nothing for those
+		expect(strip(canvas.host)).toBeNull();
+
+		canvas.turn.push(task("Author the home frame", "Authoring the home frame", "p1"));
+		canvas.turn.push(task("Verify each frame with spool shot", "Verifying frames with spool shot", "p2"));
+		canvas.turn.push(move("p3", "1", "in_progress"));
+		await settle(120);
+
+		expect(strip(canvas.host)?.textContent).toContain("plan");
+		expect(strip(canvas.host)?.textContent).toContain("0/2");
+		// the agent's own present participle, never a friendlier one spool wrote
+		expect(strip(canvas.host)?.textContent).toContain("Authoring the home frame");
+		expect(strip(canvas.host)?.textContent).not.toContain("Author the home frame");
+		// out of the log and out of the box that scrolls, which is the whole point of it
+		expect(strip(canvas.host)?.closest(".pages-scrollbar")).toBeNull();
+		// and the log keeps the one line that says the list was written
+		expect(rows(canvas.host)).toEqual(["plan 2 tasks"]);
+	});
+
+	/** the strip is where a changing thing can live; a log is where it gets lost */
+	it("goes on changing while the log grows past the line that wrote it", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "build the streak app");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(task("Author the home frame", "Authoring the home frame", "p1"));
+		canvas.turn.push(task("Verify each frame with spool shot", "Verifying frames with spool shot", "p2"));
+		canvas.turn.push(move("p3", "1", "in_progress"));
+		await settle(120);
+		expect(strip(canvas.host)?.textContent).toContain("0/2");
+
+		// eight rows of work land between the plan and its next move, which is what
+		// carries it off the top of a transcript
+		for (let index = 0; index < 8; index += 1) {
+			canvas.turn.push(called(`r${index}`, "Read", { file_path: `/project/design/frames/home/take-${index}.tsx` }));
+			canvas.turn.push(settled(`r${index}`));
+		}
+		canvas.turn.push(move("p4", "1", "completed"));
+		canvas.turn.push(move("p5", "2", "in_progress"));
+		await settle(160);
+
+		expect(rows(canvas.host).length).toBeGreaterThan(8);
+		expect(strip(canvas.host)?.textContent).toContain("1/2");
+		expect(strip(canvas.host)?.textContent).toContain("Verifying frames with spool shot");
+	});
+
+	/** seven tasks permanently open is a hundred and fifty pixels answering nothing */
+	it("opens into the list it is a count of, and starts shut", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "build the streak app");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(task("Author the home frame", "Authoring the home frame", "p1"));
+		canvas.turn.push(task("Verify each frame with spool shot", "Verifying frames with spool shot", "p2"));
+		await settle(120);
+
+		const open = canvas.host.querySelector<HTMLElement>('[aria-label="plan"]');
+		expect(open?.getAttribute("aria-expanded")).toBe("false");
+		expect(strip(canvas.host)?.textContent).not.toContain("Verify each frame with spool shot");
+
+		await act(async () => {
+			open?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		});
+
+		expect(strip(canvas.host)?.textContent).toContain("Author the home frame");
+		expect(strip(canvas.host)?.textContent).toContain("Verify each frame with spool shot");
+	});
+});
+
+describe("a screenshot", () => {
+	const look = called("s1", "Read", { file_path: "/project/design/.spool/verify/home.png" });
+	/** what a real one is: about 150 KB of base64, which is why it must never reach a line */
+	const DATA = "iVBORw0KGgo".repeat(14_000);
+	const picture = (host: HTMLElement) => host.querySelector<HTMLImageElement>("[data-agent-row] img");
+
+	it("opens itself as a 120px thumbnail behind the disclosure, and never reaches a line", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "check the home frame");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(look);
+		await settle(120);
+		expect(rows(canvas.host)).toEqual(["look home"]);
+		expect(picture(canvas.host)).toBeNull();
+
+		canvas.turn.push(settled("s1", { images: [{ media: "image/png", data: DATA }] }));
+		await settle(120);
+
+		// the one payload worth showing unasked, since the picture is what the agent saw
+		const line = canvas.host.querySelector<HTMLElement>('[aria-label="look home"]');
+		expect(line?.getAttribute("aria-expanded")).toBe("true");
+		expect(picture(canvas.host)?.getAttribute("width")).toBe("120");
+		expect(picture(canvas.host)?.getAttribute("src")).toBe(`data:image/png;base64,${DATA}`);
+		// the line stays the receipt: the picture hangs under it and not on it
+		expect(line?.querySelector("img")).toBeNull();
+		expect(line?.textContent).not.toContain("iVBORw0KGgo");
+		expect(rail(canvas.host)?.textContent).not.toContain("iVBORw0KGgo");
+		// `image/png` is a fact about a file; which frame is the thing worth keeping
+		expect(rail(canvas.host)?.textContent).not.toContain("image/png");
+		expect(rows(canvas.host)).toEqual(["look home"]);
+	});
+
+	/** the row above the thumbnail already said which frame, so the thumbnail does not */
+	it("says which frame only where the line above it does not", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "check the home frame");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(look);
+		canvas.turn.push(settled("s1", { images: [{ media: "image/png", data: DATA }] }));
+		await settle(120);
+
+		expect(rows(canvas.host)).toEqual(["look home"]);
+		expect(canvas.host.querySelector('[data-agent-row="look home"]')?.textContent).toBe("lookhome");
+	});
+
+	/** 120px says a frame changed; this is where you see what changed */
+	it("goes to life size on a press and comes back on esc", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "check the home frame");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(look);
+		canvas.turn.push(settled("s1", { images: [{ media: "image/png", data: DATA }] }));
+		await settle(120);
+
+		await act(async () => {
+			picture(canvas.host)?.parentElement?.parentElement?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		});
+		const held = canvas.host.querySelector<HTMLElement>("[data-agent-lightbox]");
+		expect(held?.querySelector("img")?.getAttribute("width")).toBe("390");
+		// held big, the row is behind the picture, so the caption is the only thing saying
+		// what this is
+		expect(held?.textContent).toContain("home");
+		expect(held?.textContent).toContain("esc");
+
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+		});
+		expect(canvas.host.querySelector("[data-agent-lightbox]")).toBeNull();
+	});
+
+	/**
+	 * The picture takes the keyboard the way every other modal here does, through the
+	 * register's exclusive `dialog` scope — so while it is up, a canvas shortcut does not
+	 * fire underneath it.
+	 */
+	it("holds the canvas's own keys while it is up", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "check the home frame");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(look);
+		canvas.turn.push(settled("s1", { images: [{ media: "image/png", data: DATA }] }));
+		await settle(120);
+		const tool = () => canvas.host.querySelector('[aria-label="hand"]')?.getAttribute("aria-pressed");
+		expect(tool()).toBe("false");
+
+		await act(async () => {
+			picture(canvas.host)?.parentElement?.parentElement?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		});
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "h", bubbles: true, cancelable: true }));
+		});
+
+		expect(tool()).toBe("false");
+		expect(canvas.host.querySelector("[data-agent-lightbox]")).not.toBeNull();
+	});
+});
+
+describe("a row that names a frame", () => {
+	const name = (host: HTMLElement, frame: string) => host.querySelector<HTMLElement>(`[data-agent-jump="${frame}"]`);
+	const press = async (element: HTMLElement | null) => {
+		await act(async () => {
+			element?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		});
+	};
+	const hover = async (element: HTMLElement | null, over: boolean) => {
+		await act(async () => {
+			element?.dispatchEvent(new MouseEvent(over ? "mouseover" : "mouseout", { bubbles: true }));
+		});
+	};
+
+	/** landing on a frame is going to where it is, never deciding how close you wanted to be */
+	it("navigates, centres, selects and keeps the zoom", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tidy the receipt");
+		const zoom = canvas.chrome.latest?.zoomPct;
+
+		canvas.turn.push(ready);
+		canvas.turn.push(edit("t1", "site/receipt"));
+		canvas.turn.push(settled("t1"));
+		await settle(120);
+		expect(rows(canvas.host)).toEqual(["edit receipt"]);
+
+		await press(name(canvas.host, "receipt"));
+		await settle(60);
+
+		// the page follows, and the frame it names is the one that is mounted
+		expect(canvas.host.querySelector('[data-frame-label="receipt"]')).not.toBeNull();
+		expect(canvas.host.querySelector('[data-frame-label="home"]')).toBeNull();
+		expect(canvas.host.querySelector('button[aria-label="receipt frame"]')?.getAttribute("aria-pressed")).toBe(
+			"true",
+		);
+		// and the zoom is the reader's, so following a row is not a navigation to undo
+		expect(canvas.chrome.latest?.zoomPct).toBe(zoom);
+		// the press on the name is not the press on the disclosure
+		expect(canvas.host.querySelector('[aria-label="edit receipt"]')?.getAttribute("aria-expanded")).toBe("false");
+	});
+
+	/**
+	 * A row can only light a frame that is on screen, and a thread is not bound to a
+	 * page, so for most rows there is no box out there to ring. Pointing gets answered
+	 * wherever the answer can be drawn.
+	 */
+	it("pairs with the frame's page when the frame is not on screen", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tidy the receipt");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(edit("t1", "site/receipt"));
+		canvas.turn.push(settled("t1"));
+		await settle(120);
+
+		await hover(name(canvas.host, "receipt"), true);
+		expect(canvas.host.querySelector("[data-page-lit]")?.textContent).toContain("site");
+		expect(canvas.host.querySelector('[data-frame-hover="receipt"]')).toBeNull();
+
+		await hover(name(canvas.host, "receipt"), false);
+		expect(canvas.host.querySelector("[data-page-lit]")).toBeNull();
+	});
+
+	/** the frame is drawn, so pointing rings it out there rather than lighting its page */
+	it("rings the frame itself when it is on screen", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tidy the home frame");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(edit("t1"));
+		canvas.turn.push(settled("t1"));
+		await settle(120);
+
+		await hover(name(canvas.host, "home"), true);
+		expect(canvas.host.querySelector('[data-frame-hover="home"]')).not.toBeNull();
+		expect(canvas.host.querySelector("[data-page-lit]")).toBeNull();
+	});
+
+	/**
+	 * Pointing is per frame and this rail names one frame over and over, so a mark keyed
+	 * on the frame would light every row naming it. It is keyed on the cursor's own row.
+	 */
+	it("marks the name on the row under the cursor and never every row naming that frame", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tidy the home frame");
+		const marked = () =>
+			[...canvas.host.querySelectorAll("[data-agent-jump]")].filter((word) =>
+				word.firstElementChild?.className.includes("underline"),
+			).length;
+
+		canvas.turn.push(ready);
+		canvas.turn.push(edit("t1"));
+		canvas.turn.push(settled("t1"));
+		canvas.turn.push(called("t2", "Read", { file_path: "/project/design/frames/home/frame.tsx" }));
+		canvas.turn.push(settled("t2"));
+		await settle(120);
+		expect(rows(canvas.host)).toEqual(["edit home", "read home"]);
+		expect(marked()).toBe(0);
+
+		await hover(name(canvas.host, "home"), true);
+		expect(marked()).toBe(1);
+	});
+
+	/** linking the count would say the count is part of the place */
+	it("keeps a run's count outside the target", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tidy the home frame");
+
+		canvas.turn.push(ready);
+		for (const id of ["t1", "t2", "t3"]) {
+			canvas.turn.push(edit(id));
+			canvas.turn.push(settled(id));
+		}
+		await settle(120);
+
+		expect(rows(canvas.host)).toEqual(["edit home ×3"]);
+		// the name is the whole of the target, and the count is beside it on the line
+		expect(name(canvas.host, "home")?.textContent).toBe("home");
+		expect(canvas.host.querySelector('[aria-label="edit home ×3"]')?.textContent).toContain("×3");
+	});
+
+	/**
+	 * Not-yet and never-again are both simply absent from in here and they read as
+	 * opposites, so which one it is comes from the canvas rather than being inferred.
+	 */
+	it("reads struck and does nothing once the frame is gone", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tidy the receipt");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(edit("t1", "site/receipt"));
+		canvas.turn.push(settled("t1"));
+		await settle(120);
+		expect(name(canvas.host, "receipt")).not.toBeNull();
+
+		// the frame leaves the folder, and the daemon's watcher says so
+		canvas.project.frames = canvas.project.frames.filter((frame) => frame.name !== "receipt");
+		canvas.watcher.push("change", { kind: "frame", frame: "receipt" });
+		await until(() => canvas.host.querySelector('[data-agent-jump="receipt"]') === null);
+
+		expect(rows(canvas.host)).toEqual(["edit receipt"]);
+		const word = [...(canvas.host.querySelectorAll('[aria-label="edit receipt"] span') ?? [])].find(
+			(span) => span.textContent === "receipt",
+		);
+		expect(word?.className).toContain("line-through");
+		// and a frame this turn has not written yet is not struck: it is one beat from here
+		canvas.turn.push(called("t2", "Write", { file_path: "/project/design/frames/menu/frame.tsx" }));
+		await settle(120);
+		const coming = [...canvas.host.querySelectorAll('[data-agent-row="write menu"] span')].find(
+			(span) => span.textContent === "menu",
+		);
+		expect(coming?.className).not.toContain("line-through");
+		expect(name(canvas.host, "menu")).toBeNull();
+	});
+});
+
+describe("a sub-agent", () => {
+	it("is one row that expands into its own transcript", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "three takes on the receipt");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(called("d1", "Agent", { description: "Design receipt--empty" }));
+		canvas.turn.push({
+			kind: "called",
+			id: "w1",
+			tool: "Write",
+			input: { file_path: "/project/design/frames/site/receipt/frame.tsx" },
+			parent: "d1",
+		});
+		canvas.turn.push(settled("w1", { parent: "d1" }));
+		await settle(120);
+
+		// one line in the log until somebody wants more, which is what makes a fan-out
+		// one line per delegate rather than a page of interleaved writes
+		expect(rows(canvas.host)).toEqual(["delegate Design receipt--empty"]);
+
+		await act(async () => {
+			canvas.host
+				.querySelector('[aria-label="delegate Design receipt--empty"]')
+				?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		});
+
+		expect(rows(canvas.host)).toEqual(["delegate Design receipt--empty", "write receipt"]);
+		expect(canvas.host.querySelector('[data-agent-row="write receipt"]')?.hasAttribute("data-agent-nested")).toBe(
+			true,
+		);
+		// and its rows navigate on the same rule as everything else, because for a
+		// delegate the place is the canvas
+		expect(canvas.host.querySelector('[data-agent-jump="receipt"]')).not.toBeNull();
+	});
+
+	/**
+	 * A fan-out is uneven and its order is not the one you would write down: whoever
+	 * finishes first arrives first, so the third take can land before the second. The
+	 * canvas is where that is visible, because a frame appears the moment its file does.
+	 */
+	it("lands each delegate's frame on the canvas as it finishes", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "three takes on the cart");
+		const on = (frame: string) => canvas.host.querySelector(`[data-frame-label="${frame}"]`) !== null;
+
+		canvas.turn.push(ready);
+		for (const take of ["d1", "d2", "d3"]) canvas.turn.push(called(take, "Agent", { description: `Design ${take}` }));
+		await settle(120);
+		expect(rows(canvas.host)).toEqual(["delegate Design d1", "delegate Design d2", "delegate Design d3"]);
+
+		/** one delegate's frame reaching disk, which the daemon's watcher says out loud */
+		const lands = async (frame: string) => {
+			canvas.project.frames = [...canvas.project.frames, { name: frame }];
+			canvas.watcher.push("change", { kind: "frame", frame });
+			await until(() => on(frame));
+		};
+
+		await lands("cart--empty");
+		expect([on("cart--empty"), on("cart--empty-c"), on("cart--empty-b")]).toEqual([true, false, false]);
+		// the third designer finishes before the second, and nothing waits for the second
+		await lands("cart--empty-c");
+		expect([on("cart--empty"), on("cart--empty-c"), on("cart--empty-b")]).toEqual([true, true, false]);
+		await lands("cart--empty-b");
+		expect([on("cart--empty"), on("cart--empty-c"), on("cart--empty-b")]).toEqual([true, true, true]);
 	});
 });

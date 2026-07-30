@@ -146,6 +146,9 @@ export function CanvasSidebar({
 							return (
 								<div key={page}>
 									<div
+										// something outside this rail is pointing at this page: the finder's pick, or
+										// a row in the agent rail naming a frame that is not on screen (#194)
+										data-page-lit={page === litPage ? "" : undefined}
 										className={`group relative flex h-8 items-center pr-1.5 hover:bg-surface ${active || page === litPage ? "bg-surface" : ""}`}
 									>
 										{active ? (

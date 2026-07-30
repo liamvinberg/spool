@@ -3,12 +3,13 @@ import { cn } from "../cn";
 import { AgentIcon } from "../icons";
 import { closedText } from "./agent-markers";
 import { Caret, Said } from "./agent-said";
+import { Shot } from "./agent-shot";
 import type { TurnPhase } from "./agent-stream";
-import { type AgentEntry, duration, type RowState, shownBy } from "./agent-transcript";
+import { type AgentEntry, type AgentPlan, type AgentRow, duration, type RowState, shownBy } from "./agent-transcript";
 import { ChevronIcon, PanelCaret } from "./sidebar";
 
 /**
- * The agent rail (#144, #192, #193): the right rail, whole, drawn as one
+ * The agent rail (#144, #192, #193, #194): the right rail, whole, drawn as one
  * conversation.
  *
  * There is no tab row. The agent owns this column — `elements` died with the
@@ -17,15 +18,22 @@ import { ChevronIcon, PanelCaret } from "./sidebar";
  * at 420 a tab row is a whole line of a narrow column spent saying which of two
  * things you are looking at, and there is only one thing to look at.
  *
- * Four things render and nothing else: the human's words, the agent's words, one
- * quiet beat for the time the model spends composing, and one line per tool call.
- * The plan, threads, chips and the model readout are later tickets, and this reads
+ * Five things render and nothing else: the plan, the human's words, the agent's
+ * words, one quiet beat for the time the model spends composing, and one line per
+ * tool call. Threads, chips and the model readout are later tickets, and this reads
  * correctly without them.
  *
- * One line is the rule. A row is a mark, a verb and a subject, with everything else
+ * One line is the rule, and the test for the exception is whether the thing outlives
+ * the call that made it. A row is a mark, a verb and a subject, with everything else
  * behind a disclosure closed by default that nobody has to open — so a nine-minute
  * turn is still something to skim, and the detail is one click down rather than in
- * the way.
+ * the way. The plan is the one thing that earns a place off the line, because it goes
+ * on changing for the rest of the turn; a screenshot does not, so it is a real
+ * thumbnail behind a disclosure.
+ *
+ * The name is the place and the rest of the row is still the call. Clicking a frame's
+ * name takes the canvas there; the verb, the count and the disclosure open the
+ * detail. The click had to be split because the disclosure already owned it.
  *
  * State is motion, not colour. A row is running while a colourless ring turns and
  * settled once a stroke has drawn itself through the space it leaves. The accent
@@ -65,17 +73,40 @@ const LIVE_TAIL = 150;
 const MIN_H = 60;
 const MAX_H = 160;
 
+/**
+ * What a row can do about the frame it names (#143, #194).
+ *
+ * Absence is handed in rather than inferred, because two states look identical from
+ * inside the rail and read as opposites: a frame the turn is one beat from writing,
+ * and a frame the project had and lost. Only the second is struck, so only the canvas
+ * can tell them apart — it is the thing that watched the folder.
+ */
+export interface FrameJump {
+	/** the frames the project has right now; a name outside this is not a place to go */
+	readonly have: ReadonlySet<string>;
+	/** the frames it had and no longer has, which read as gone and do nothing */
+	readonly gone: ReadonlySet<string>;
+	/** the cursor is on a row naming this frame, or has left; answered out on the canvas */
+	readonly onPoint: (frame: string | null) => void;
+	readonly onJump: (frame: string) => void;
+}
+
 export function AgentRail({
 	entries,
+	plan,
 	phase,
 	elapsed,
 	last,
+	jump,
 	onSend,
 }: {
 	entries: readonly AgentEntry[];
+	/** the plan, off the log and onto the shelf; absent until the turn writes one */
+	plan: AgentPlan | null;
 	phase: TurnPhase;
 	elapsed: number;
 	last: number;
+	jump: FrameJump;
 	onSend: (text: string) => void;
 }) {
 	const [width, setWidth] = useState(RAIL_WIDTH);
@@ -124,7 +155,8 @@ export function AgentRail({
 				</div>
 			) : (
 				<div className="flex h-full min-w-[200px] flex-col">
-					<Transcript entries={entries} elapsed={elapsed} last={last}>
+					{plan === null ? null : <PlanStrip plan={plan} />}
+					<Transcript entries={entries} elapsed={elapsed} last={last} jump={jump}>
 						{/* the caret rides the transcript's own top fade rather than a row of its
 						    own: #144's whole finding is that a line of a 420px column is too
 						    expensive to spend on chrome, and it is #136's threads strip that will
@@ -184,6 +216,64 @@ export function AgentRail({
 	);
 }
 
+/* ---------- the plan, out of the log ----------
+ * A transcript is a log and a log scrolls. Everything else in one is finished the
+ * moment it is drawn, so scrolling costs nothing; the plan is the exception, because
+ * it goes on changing for the rest of the turn. Measured on the capture, it is written
+ * in nine seconds and its first task does not land for another eight minutes and
+ * sixteen rows, by which point a transcript has carried it off the top and the tick
+ * lands where nobody is looking.
+ *
+ * So it comes out of the log and sits above it, and it obeys the one-line rule while
+ * it does: a count, and the agent's own present-participle phrasing for whatever is
+ * running. Both phrasings are the agent's — `TaskCreate` ships the written form and
+ * the participle together, precisely so that a surface never invents a friendlier
+ * one. The list is a click away and is not the resting state, because seven tasks
+ * permanently open is a hundred and fifty pixels of rail answering a question nobody
+ * asked twice.
+ *
+ * The cost is on screen and it is honest: thirty-four pixels of rail for as long as
+ * there is a plan. It is absent until one is written, which most turns never do. */
+
+function PlanStrip({ plan }: { plan: AgentPlan }) {
+	const [open, setOpen] = useState(false);
+	return (
+		<div data-agent-plan="" className="flex shrink-0 flex-col border-border border-b">
+			<button
+				type="button"
+				aria-label="plan"
+				aria-expanded={open}
+				onClick={() => setOpen(!open)}
+				className="flex h-[34px] w-full shrink-0 items-center gap-2.5 px-3.5 text-left transition-colors duration-150 hover:bg-surface"
+			>
+				<span className="shrink-0 font-mono text-muted text-sm leading-4">plan</span>
+				<span className="shrink-0 font-mono text-muted/60 text-sm tabular-nums leading-4">
+					{plan.done}/{plan.total}
+				</span>
+				{/* nothing is running between a task landing and the agent saying which is next,
+				    and the strip says nothing rather than holding the last thing it said */}
+				{plan.running === null ? null : (
+					<span className="min-w-0 flex-1 truncate font-mono text-sm text-text/85 leading-4">{plan.running}</span>
+				)}
+				<ChevronIcon open={open} className="ml-auto h-2.5 w-2.5 shrink-0 text-muted/35" />
+			</button>
+			{open ? (
+				<div className="relative flex shrink-0 flex-col pb-2 pl-[18px]">
+					{/* the rule stands where the list hangs from, a little in from the strip's own
+					    left edge, so the tasks read as belonging to the line above them */}
+					<span className="absolute top-1 bottom-3 left-[18px] w-px bg-border-raised" />
+					{plan.tasks.map((task) => (
+						<span key={task.key} className="flex h-[22px] items-center gap-2 pl-2.5">
+							<StateMark state={task.state} className="h-3 w-3" />
+							<span className="truncate font-mono text-2xs text-muted leading-3">{task.name}</span>
+						</span>
+					))}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
 /* ---------- the transcript ----------
  * It follows the live end while the reader is already there, and stops the moment
  * they scroll up to read something: a log that yanks itself back down mid-sentence
@@ -202,11 +292,13 @@ function Transcript({
 	entries,
 	elapsed,
 	last,
+	jump,
 	children,
 }: {
 	entries: readonly AgentEntry[];
 	elapsed: number;
 	last: number;
+	jump: FrameJump;
 	children: React.ReactNode;
 }) {
 	const view = useRef<HTMLDivElement>(null);
@@ -262,7 +354,7 @@ function Transcript({
 							className="animate-agent-entry shrink-0"
 							style={{ paddingTop: gapBefore(entries[index - 1], entry) }}
 						>
-							<Entry entry={entry} elapsed={elapsed} last={last} />
+							<Entry entry={entry} elapsed={elapsed} last={last} jump={jump} />
 						</div>
 					))}
 				</div>
@@ -281,7 +373,7 @@ function gapBefore(previous: AgentEntry | undefined, entry: AgentEntry): number 
 	return 14;
 }
 
-function Entry({ entry, elapsed, last }: { entry: AgentEntry; elapsed: number; last: number }) {
+function Entry({ entry, elapsed, last, jump }: { entry: AgentEntry; elapsed: number; last: number; jump: FrameJump }) {
 	if (entry.kind === "user") {
 		return (
 			<div className="relative flex flex-col gap-1.5 pl-3.5">
@@ -301,7 +393,7 @@ function Entry({ entry, elapsed, last }: { entry: AgentEntry; elapsed: number; l
 			</div>
 		);
 	}
-	if (entry.kind === "row") return <Row entry={entry} />;
+	if (entry.kind === "row") return <Row entry={entry} jump={jump} />;
 	if (entry.kind === "beat") {
 		/*
 		 * A beat's duration is the wire's, read off the same clock the prose is paced by.
@@ -334,22 +426,125 @@ function Entry({ entry, elapsed, last }: { entry: AgentEntry; elapsed: number; l
  * and still readable, which is the whole reason the rule is one line; what the words
  * are and where they come from is `agent-nouns.ts`.
  *
- * The count is its own box beside the subject rather than part of it, because #143
- * gives the name a click of its own and a count wearing the same word would take it
- * with them. */
+ * The name is the place and the rest of the row is still the call (#143). The verb and
+ * the count are about the call — six edits happened, here is the file they happened
+ * to — and the name is about the frame, which outlives the call. Two objects, two
+ * targets, split where the row's own grammar already splits. Giving the whole row to
+ * the frame lost on consistency, because the click was already spent on the disclosure
+ * and two identical-looking rows would then do different things.
+ *
+ * The count is its own box beside the subject rather than part of it, because linking
+ * the count would say the count is part of the place.
+ *
+ * The accent is per row and never per name. Pointing is per frame, and a transcript
+ * that names one frame twelve times would light all twelve rows at once off a shared
+ * `pointed` — so what marks the name is this row's own cursor, and what the pointing
+ * produces is a ring out on the canvas or a lit page in the Pages rail. */
 
-function Row({ entry }: { entry: Extract<AgentEntry, { kind: "row" }> }) {
-	const [open, setOpen] = useState(false);
+function Row({ entry, jump, nested = false }: { entry: AgentRow; jump: FrameJump; nested?: boolean }) {
+	/**
+	 * Whether the disclosure has been pressed, and which way.
+	 *
+	 * Undefined is nobody having touched it, which is not the same as closed: a row
+	 * holding a picture opens itself, because the picture is the one payload worth
+	 * showing unasked. A press still wins after that, either way.
+	 */
+	const [clicked, setClicked] = useState<boolean | undefined>(undefined);
+	/**
+	 * The cursor is on this row.
+	 *
+	 * Held here rather than left to `:hover` because the mark belongs to the name and
+	 * the hit area is the name, so the row has to know the cursor is inside it — and
+	 * held per row rather than keyed on the frame, which is the whole rule above.
+	 */
+	const [over, setOver] = useState(false);
+	const shot = entry.shot;
+	const holds = entry.detail !== null || shot !== null || entry.delegated.length > 0;
+	const open = holds && (clicked ?? shot !== null);
+
+	/*
+	 * The name is a place, a place that is not there yet, or a place that was. Only the
+	 * last of the three is struck: a frame this turn is one beat from writing is absent
+	 * in exactly the same way, and it is one beat from existing, so it reads as an
+	 * ordinary word and does nothing.
+	 */
+	const frame = entry.frame;
+	const goes = frame !== null && jump.have.has(frame);
+	const gone = frame !== null && jump.gone.has(frame);
+	/** what this row is pointing at, so an unmount with the cursor on it can take it back */
+	const pointing = useRef<string | null>(null);
+	const unpoint = useRef(jump.onPoint);
+	unpoint.current = jump.onPoint;
+	const point = (on: boolean) => {
+		setOver(on);
+		if (!goes || frame === null) return;
+		pointing.current = on ? frame : null;
+		jump.onPoint(on ? frame : null);
+	};
+	// a row can leave while the cursor is on its name — a disclosure shutting takes a
+	// delegate's rows with it — and a ring nothing is pointing at would stay lit
+	useEffect(
+		() => () => {
+			if (pointing.current !== null) unpoint.current(null);
+		},
+		[],
+	);
+
+	const name =
+		entry.subject === null ? null : (
+			<span
+				className={cn(
+					"min-w-0 truncate font-mono text-sm leading-4",
+					// struck through and dimmed, in the words the canvas already uses for a name
+					// nothing answers to
+					gone ? "text-muted/45 line-through" : "text-text/85",
+					// the only mark the name carries, and only while the cursor is on its row: a
+					// dotted rule is the lightest thing that says this word is a place
+					goes && over && "underline decoration-dotted decoration-thread/60 underline-offset-[3px]",
+				)}
+			>
+				{entry.subject}
+			</span>
+		);
 	const line = (
 		<>
 			<StateMark state={entry.state} />
 			<span className="flex min-w-0 items-baseline gap-1.5">
 				<span className="shrink-0 font-mono text-muted text-sm leading-4">{entry.verb}</span>
-				{entry.subject === null ? null : (
-					<span className="min-w-0 truncate font-mono text-sm text-text/85 leading-4">{entry.subject}</span>
+				{goes ? (
+					// biome-ignore lint/a11y/useSemanticElements: this row is the disclosure's button, and a button cannot contain an anchor
+					<span
+						role="link"
+						tabIndex={0}
+						data-agent-jump={frame}
+						onClick={(event) => {
+							event.stopPropagation();
+							if (frame !== null) jump.onJump(frame);
+						}}
+						onKeyDown={(event) => {
+							if (event.key !== "Enter" && event.key !== " ") return;
+							event.stopPropagation();
+							event.preventDefault();
+							if (frame !== null) jump.onJump(frame);
+						}}
+						onMouseEnter={() => point(true)}
+						onMouseLeave={() => point(false)}
+						className="flex min-w-0 cursor-pointer"
+					>
+						{name}
+					</span>
+				) : (
+					name
 				)}
 				{entry.count > 1 ? (
-					<span className="shrink-0 font-mono text-sm text-text/85 tabular-nums leading-4">×{entry.count}</span>
+					<span
+						className={cn(
+							"shrink-0 font-mono text-sm tabular-nums leading-4",
+							gone ? "text-muted/45" : "text-text/85",
+						)}
+					>
+						×{entry.count}
+					</span>
 				) : null}
 			</span>
 		</>
@@ -358,32 +553,55 @@ function Row({ entry }: { entry: Extract<AgentEntry, { kind: "row" }> }) {
 	// and one run of text to read
 	const said = [entry.verb, entry.subject, entry.count > 1 ? `×${entry.count}` : null].filter(Boolean).join(" ");
 	const row = "-mx-1.5 flex h-[26px] w-fit max-w-[calc(100%+12px)] items-center gap-2.5 rounded-sm px-1.5 text-left";
-	if (entry.detail === null)
+	if (!holds)
 		return (
-			<div data-agent-row={said} className={row}>
+			<div data-agent-row={said} data-agent-nested={nested ? "" : undefined} className={row}>
 				{line}
 			</div>
 		);
 	return (
-		<div data-agent-row={said} className="flex flex-col">
+		<div data-agent-row={said} data-agent-nested={nested ? "" : undefined} className="flex flex-col">
 			<button
 				type="button"
 				aria-label={said}
 				aria-expanded={open}
-				onClick={() => setOpen(!open)}
+				onClick={() => setClicked(!open)}
 				className={cn(row, "hover:bg-surface")}
 			>
 				{line}
 				<ChevronIcon open={open} className="ml-0.5 h-2.5 w-2.5 shrink-0 text-muted/35" />
 			</button>
 			{open ? (
-				<span
-					data-agent-detail=""
-					className="block truncate pt-0.5 pb-1 font-mono text-2xs text-muted/55 leading-4"
-					style={{ paddingLeft: INDENT }}
-				>
-					{entry.detail}
-				</span>
+				<div className="flex flex-col pt-0.5 pb-1" style={{ paddingLeft: INDENT }}>
+					{/* the picture takes the payload's place rather than sitting under a line of
+					    file metadata: `image/png` is a fact about a file and the row above already
+					    said `look`. The caption is dropped where the line already carries it, since
+					    every shot in the captures is of the frame its own row names. */}
+					{shot === null ? null : (
+						<Shot shot={shot} of={entry.frame ?? entry.detail} quiet={entry.frame === entry.subject} />
+					)}
+					{shot === null && entry.detail !== null ? (
+						<span data-agent-detail="" className="block truncate font-mono text-2xs text-muted/55 leading-4">
+							{entry.detail}
+						</span>
+					) : null}
+					{/*
+					 * A sub-agent is one row that expands into its own transcript (#194). What is in
+					 * here is rows rather than a summary, because for a delegate the place is the
+					 * canvas: its frames land out there and a row is how you get to one, so they
+					 * navigate on the same rule as everything else.
+					 */}
+					{entry.delegated.length > 0 ? (
+						<div className="relative flex flex-col">
+							<span className="absolute top-1 bottom-1 left-0 w-px bg-border-raised" />
+							{entry.delegated.map((theirs) => (
+								<div key={theirs.key} className="animate-agent-entry pl-2.5">
+									<Row entry={theirs} jump={jump} nested={true} />
+								</div>
+							))}
+						</div>
+					) : null}
+				</div>
 			) : null}
 		</div>
 	);
@@ -466,7 +684,7 @@ const STROKES: Record<RowState, readonly [string, string | null]> = {
 	stopped: ["M4.4 7h5.2", null],
 };
 
-function StateMark({ state }: { state: RowState }) {
+function StateMark({ state, className }: { state: RowState; className?: string }) {
 	const turning = state === "running";
 	const ringed = turning || state === "pending";
 	const settled = !ringed;
@@ -476,7 +694,7 @@ function StateMark({ state }: { state: RowState }) {
 		{ key: "two", d: second ?? first, drawn: settled && second !== null, delay: 135 },
 	];
 	return (
-		<span className="relative flex h-3.5 w-3.5 shrink-0">
+		<span className={cn("relative flex h-3.5 w-3.5 shrink-0", className)}>
 			<span
 				className={cn(
 					"absolute inset-0 transition-[opacity,transform] duration-200 ease-in motion-reduce:transition-none",
