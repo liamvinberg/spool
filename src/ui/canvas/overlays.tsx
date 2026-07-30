@@ -1,8 +1,9 @@
 import { cellsForPx } from "../../term/cells";
 import type { Camera, ProjectedFrame } from "../api";
+import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
 import { frameSourcePath } from "./pages";
-import { type PickedHit, parseStampRef } from "./protocol";
+import { type PickedHit, parseStampRef, pickKey } from "./protocol";
 
 /**
  * Screen-space selection furniture (#23), drawn over the transformed field so
@@ -17,9 +18,6 @@ import { type PickedHit, parseStampRef } from "./protocol";
 export interface PickedSelection extends PickedHit {
 	frame: string;
 }
-
-/** The (frame, selector) pair as one identity — picks match on nothing else. */
-export const pickKey = (frame: string, selector: string): string => `${frame}\0${selector}`;
 
 /** The would-be click target under the cursor (#37) — outlined, never selected. */
 export interface ElementPreview {
@@ -71,6 +69,7 @@ export function SelectionOverlay({
 	hovered,
 	editable,
 	picked,
+	lit = null,
 	preview,
 	guides,
 	marquee,
@@ -84,6 +83,14 @@ export function SelectionOverlay({
 	/** Select is the only surface that exposes arrange handles. */
 	editable: boolean;
 	picked: readonly PickedSelection[];
+	/**
+	 * The chip the cursor is on, in the composer (#116).
+	 *
+	 * A chip and the box it names are one object, so one of them under the cursor
+	 * marks the other. It is a pick's own key, because two picks of one list row are
+	 * one string in the rail and only their boxes tell them apart.
+	 */
+	lit?: string | null;
 	preview: ElementPreview | null;
 	guides: Guides;
 	/** Normalized screen-space rect while a marquee drag is live. */
@@ -154,7 +161,10 @@ export function SelectionOverlay({
 				return (
 					<div
 						key={`ring-${name}`}
-						className="absolute border-[1.5px] border-thread"
+						// the ring's own strength is the system page's law and does not move; the
+						// cursor on this frame's chip fills the box instead, which is the same
+						// thing a lit element outline does one level down (#116)
+						className={`absolute border-[1.5px] border-thread ${lit === name || lit === WHOLE_SELECTION ? "bg-thread/10" : ""}`}
 						style={{
 							left: rect.x - 3,
 							top: rect.y - 3,
@@ -227,7 +237,15 @@ export function SelectionOverlay({
 			{picked.map((pick) => {
 				const box = elementBox(pick.frame, pick.rect);
 				if (box === undefined) return null;
-				return <ElementOutline key={pickKey(pick.frame, pick.selector)} box={box} radius={pick.radius * k} />;
+				const key = pickKey(pick.frame, pick.selector);
+				return (
+					<ElementOutline
+						key={key}
+						box={box}
+						radius={pick.radius * k}
+						lit={lit === key || lit === WHOLE_SELECTION}
+					/>
+				);
 			})}
 
 			{previewShown !== null &&
@@ -247,11 +265,17 @@ export function SelectionOverlay({
 	);
 }
 
-/** The element outline: 1px thread at 2px offset, no handles — faded previews. */
-function ElementOutline({ box, radius, faded }: { box: Box; radius: number; faded?: boolean }) {
+/**
+ * The element outline: 1px thread at 2px offset, no handles — faded previews.
+ *
+ * `lit` is the cursor sitting on this element's chip in the composer, which fills the
+ * box rather than thickening its edge: the stroke is the system page's law, and a
+ * fill is the lightest thing that says *this one* among five identical outlines.
+ */
+function ElementOutline({ box, radius, faded, lit }: { box: Box; radius: number; faded?: boolean; lit?: boolean }) {
 	return (
 		<div
-			className={`absolute border border-thread ${faded === true ? "opacity-50" : ""}`}
+			className={`absolute border border-thread ${faded === true ? "opacity-50" : ""} ${lit === true ? "bg-thread/10" : ""}`}
 			style={{
 				left: box.x - 2,
 				top: box.y - 2,

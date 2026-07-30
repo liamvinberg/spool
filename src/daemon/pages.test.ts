@@ -214,7 +214,7 @@ describe("page-frame stores key by leaf name", () => {
 			body: JSON.stringify({ frames: ["checkout"] }),
 		});
 
-		expect(put.status).toBe(204);
+		expect(put.status).toBe(200);
 		const { selection } = (await (await app.request(`/api/p/${name}/selection`)).json()) as {
 			selection: { path: string }[];
 		};

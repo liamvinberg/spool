@@ -1,3 +1,4 @@
+import type { Attachment } from "../attachment";
 import { skillText } from "../skill";
 
 /**
@@ -155,4 +156,22 @@ export function planAgentSpawn(root: string, env: Readonly<Record<string, string
  */
 export function agentPromptLine(content: readonly unknown[]): string {
 	return `${JSON.stringify({ type: "user", message: { role: "user", content } })}\n`;
+}
+
+/**
+ * The content blocks one turn sends: what the hands are pointing at, what they
+ * typed, and whatever they attached (#116, #119).
+ *
+ * The selection leads the text because it is the context the words are about, and
+ * the attachment leads both because a reference is what the sentence refers to. An
+ * empty selection contributes nothing at all rather than an empty block, which
+ * would be a shape claiming the moment had one.
+ */
+export function agentPromptContent(prompt: string, selection: string, attached?: Attachment): unknown[] {
+	const blocks: unknown[] = [];
+	if (attached !== undefined) {
+		blocks.push({ type: "image", source: { type: "base64", media_type: attached.media, data: attached.data } });
+	}
+	blocks.push({ type: "text", text: selection === "" ? prompt : `${selection}\n\n${prompt}` });
+	return blocks;
 }

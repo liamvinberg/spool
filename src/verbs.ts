@@ -1,6 +1,8 @@
 import { basename } from "node:path";
 import { renderOrigin } from "./daemon/lifecycle";
 import { lookupFrame } from "./daemon/projection";
+import type { SelectionEntry } from "./daemon/selection";
+import { selectionBlock } from "./daemon/selection-block";
 import { SpoolError } from "./errors";
 import { readRegistry } from "./registry";
 import { resolveProjectRoot } from "./resolve";
@@ -27,12 +29,20 @@ export function resolveRegisteredProject(spoolDir: string, cwd: string): Project
 	return { root, name: basename(root) };
 }
 
-/** The live selection payload (#23): what Liam points at, verbatim. */
+/**
+ * The live selection (#23) as one block: what Liam points at, in the bytes a chat
+ * turn's prompt carries for the same moment (#116).
+ *
+ * One rendering rather than two, because a CLI agent and the agent in the rail are
+ * reading the same thing and a second dialect of it is a second thing to keep
+ * true. Nothing pointed at prints nothing, which is the same emptiness the prompt
+ * carries.
+ */
 export async function readSelection(daemonUrl: string, name: string, controlToken: string): Promise<string> {
 	const body = (await apiJson(`${daemonUrl}/api/p/${encodeURIComponent(name)}/selection`, controlToken)) as {
-		selection: unknown;
+		selection: SelectionEntry[];
 	};
-	return pretty(body.selection);
+	return selectionBlock(body.selection);
 }
 
 /** The derived link graph: read from source, verified by witnessed sessions. */

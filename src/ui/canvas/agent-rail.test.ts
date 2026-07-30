@@ -4,7 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { longestStreamed } from "../../test-helpers";
-import type { AgentEvent } from "../api";
+import type { AgentEvent, SelectionEntry } from "../api";
 import { chunksOf } from "./agent-markdown";
 import { followTo } from "./agent-rail";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
@@ -37,9 +37,61 @@ const PROJECTION = {
 
 interface Turn {
 	readonly prompts: string[];
+	/** whatever rode with those words, which so far is a reference image (#119) */
+	readonly attachments: ({ media: string; data: string } | undefined)[];
 	push(event: AgentEvent): void;
 	close(): void;
 }
+
+/**
+ * The selection the daemon serves back, which is what the composer draws (#116).
+ *
+ * `served` is a test standing in for the enrichment: the strip is the promise of what
+ * a prompt will carry, so what it draws is the daemon's own list rather than a second
+ * reading of the canvas out here. Left null, the stub enriches what was put the way
+ * the daemon would.
+ */
+interface Pointed {
+	served: SelectionEntry[] | null;
+	readonly puts: { frames?: string[]; elements?: { selector: string }[] }[];
+}
+
+function enrich(put: { frames?: string[]; elements?: { frame: string; selector: string }[] }): SelectionEntry[] {
+	if (put.elements !== undefined) {
+		return put.elements.map((element) => ({
+			kind: "element" as const,
+			frame: element.frame,
+			name: "main",
+			path: `design/frames/${element.frame}/frame.tsx`,
+			lines: [2, 4] as [number, number],
+			selector: element.selector,
+			excerpt: "<main>hi</main>",
+		}));
+	}
+	return (put.frames ?? []).map((frame) => ({
+		kind: "frame" as const,
+		frame,
+		path: `design/frames/${frame}/frame.tsx`,
+		size: { w: 390, h: 844 },
+	}));
+}
+
+const frameEntry = (frame: string): SelectionEntry => ({
+	kind: "frame",
+	frame,
+	path: `design/frames/${frame}/frame.tsx`,
+	size: { w: 390, h: 844 },
+});
+
+const elementEntry = (name: string, selector: string, lines: [number, number]): SelectionEntry => ({
+	kind: "element",
+	frame: "home",
+	name,
+	path: "design/frames/home/frame.tsx",
+	lines,
+	selector,
+	excerpt: `<${name} className="row" />`,
+});
 
 /** an SSE body a test can write into, which is both of the canvas's live streams */
 function sse() {
@@ -67,6 +119,7 @@ function sse() {
 function mount({ still = false }: { still?: boolean } = {}) {
 	const turn: Turn & { open: boolean } = {
 		prompts: [],
+		attachments: [],
 		open: false,
 		push: () => {},
 		close: () => {},
@@ -76,6 +129,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 	const chrome: { latest: CanvasChrome | null } = { latest: null };
 	/** what the folder holds, so a test can take a frame out of it and say so */
 	const project = { frames: PROJECTION.frames as { name: string; page?: string }[] };
+	const pointed: Pointed = { served: null, puts: [] };
 	if (still) {
 		vi.stubGlobal("matchMedia", (query: string) => ({
 			matches: query.includes("prefers-reduced-motion"),
@@ -90,7 +144,9 @@ function mount({ still = false }: { still?: boolean } = {}) {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
 			if (url.pathname.endsWith("/agent/turn")) {
 				const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
-				turn.prompts.push((JSON.parse(body) as { prompt: string }).prompt);
+				const sent = JSON.parse(body) as { prompt: string; attachment?: { media: string; data: string } };
+				turn.prompts.push(sent.prompt);
+				turn.attachments.push(sent.attachment);
 				const stream = sse();
 				turn.open = true;
 				turn.push = (event) => stream.push("agent", event);
@@ -99,6 +155,12 @@ function mount({ still = false }: { still?: boolean } = {}) {
 					stream.close();
 				};
 				return stream.response();
+			}
+			// the daemon's own answer to a put: the enriched list the composer draws
+			if (url.pathname.endsWith("/selection") && init?.method === "PUT") {
+				const put = JSON.parse(String(init.body ?? "{}")) as Parameters<typeof enrich>[0];
+				pointed.puts.push(put);
+				return Response.json({ selection: pointed.served ?? enrich(put) });
 			}
 			if (url.pathname.endsWith("/events")) return watcher.response();
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
@@ -138,6 +200,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		watcher,
 		chrome,
 		project,
+		pointed,
 		render: async () => {
 			await act(async () => {
 				root.render(
@@ -203,6 +266,92 @@ async function settle(ms = 400) {
 		await new Promise((resolve) => setTimeout(resolve, ms));
 	});
 }
+
+/** the chips the composer is drawing, in the order the strip lays them out */
+const chips = (host: HTMLElement) =>
+	[...host.querySelectorAll("[data-agent-chip]")].map((chip) => chip.getAttribute("data-agent-chip"));
+
+/** the rows behind an opened count chip */
+const chipRows = (host: HTMLElement) =>
+	[...host.querySelectorAll("[data-agent-chip-row]")].map((row) => row.getAttribute("data-agent-chip-row"));
+
+const chipDrop = (host: HTMLElement, label: string) =>
+	host.querySelector<HTMLButtonElement>(`[data-agent-chip="${label}"] button[aria-label="drop ${label}"]`);
+
+/** the way inside a frame: the double-click, presses and all */
+async function enterHome(host: HTMLElement, x = 40, y = 40) {
+	const field = host.querySelector<HTMLElement>('[role="application"]');
+	if (field === null) throw new Error("no canvas");
+	await act(async () => {
+		for (const pointerId of [91, 92]) {
+			field.dispatchEvent(
+				new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId }),
+			);
+			field.dispatchEvent(
+				new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId }),
+			);
+		}
+		field.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: x, clientY: y }));
+	});
+}
+
+/** one click on the frame, which is how a frame is taken */
+async function clickHome(host: HTMLElement, x = 40, y = 40) {
+	const field = host.querySelector<HTMLElement>('[role="application"]');
+	if (field === null) throw new Error("no canvas");
+	await act(async () => {
+		field.dispatchEvent(
+			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 7 }),
+		);
+		field.dispatchEvent(
+			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 7 }),
+		);
+	});
+}
+
+/** a pasted screenshot, which is one of the two ways one gets into the composer */
+async function paste(host: HTMLElement, file: File) {
+	const box = field(host);
+	if (box === null) throw new Error("no composer");
+	await act(async () => {
+		const event = new Event("paste", { bubbles: true });
+		Object.defineProperty(event, "clipboardData", { value: { files: [file] } });
+		box.dispatchEvent(event);
+	});
+	await until(() => host.querySelector("[data-agent-attached]") !== null);
+}
+
+/**
+ * A drag over the composer, carrying what a dragging browser really carries.
+ *
+ * `files` is empty until the drop — the drag data store is in protected mode, and
+ * only each item's kind and type can be read — so a dragover accepted off `files`
+ * is a dragover that never happens.
+ */
+async function dragOver(host: HTMLElement, items: { kind: string; type: string }[]): Promise<boolean> {
+	const box = field(host);
+	if (box === null) throw new Error("no composer");
+	const event = new Event("dragover", { bubbles: true, cancelable: true });
+	Object.defineProperty(event, "dataTransfer", { value: { items, files: [] } });
+	await act(async () => {
+		box.dispatchEvent(event);
+	});
+	return event.defaultPrevented;
+}
+
+async function drop(host: HTMLElement, file: File) {
+	const box = field(host);
+	if (box === null) throw new Error("no composer");
+	await act(async () => {
+		const event = new Event("drop", { bubbles: true, cancelable: true });
+		Object.defineProperty(event, "dataTransfer", { value: { items: [], files: [file] } });
+		box.dispatchEvent(event);
+	});
+}
+
+/** one pixel of PNG, which is what a paste or a drop hands over */
+const shot = () =>
+	new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3])], "shot.png", { type: "image/png" });
 
 const waiting: AgentEvent = { kind: "waiting", parent: null };
 const speaking: AgentEvent = { kind: "speaking", message: "m", model: "claude-opus-5", parent: null };
@@ -1178,5 +1327,179 @@ describe("a sub-agent", () => {
 		expect([on("cart--empty"), on("cart--empty-c"), on("cart--empty-b")]).toEqual([true, true, false]);
 		await lands("cart--empty-b");
 		expect([on("cart--empty"), on("cart--empty-c"), on("cart--empty-b")]).toEqual([true, true, true]);
+	});
+});
+
+/**
+ * What rides with the words (#116, #119, #139).
+ *
+ * The strip is the promise of what the prompt will carry, so what it draws is the
+ * daemon's own enriched list rather than a second reading of the canvas out here —
+ * which is why the stub answers a put the way the daemon does and the tests read the
+ * chips off that answer.
+ */
+describe("the chip strip", () => {
+	it("draws every entry the daemon serves, not just the first", async () => {
+		const canvas = mount();
+		canvas.pointed.served = ["menu", "cart", "receipt"].map(frameEntry);
+		await canvas.render();
+
+		await until(() => chips(canvas.host).length === 3);
+		expect(chips(canvas.host)).toEqual(["menu", "cart", "receipt"]);
+	});
+
+	it("collapses to a count that opens into the list when the chips would take a second line", async () => {
+		const canvas = mount();
+		canvas.pointed.served = [
+			elementEntry("cart-title", "h1", [36, 40]),
+			elementEntry("line-item", "div > div:nth-child(1)", [44, 56]),
+			elementEntry("line-item", "div > div:nth-child(2)", [44, 56]),
+			elementEntry("total-row", "div > div:nth-child(3)", [61, 70]),
+			elementEntry("pay-button", "button", [73, 81]),
+		];
+		await canvas.render();
+
+		await until(() => chips(canvas.host).length === 1);
+		// one line, so five element labels are a count instead — and nothing is a
+		// list of two and a number
+		expect(chips(canvas.host)).toEqual(["5 elements in home"]);
+		expect(chipRows(canvas.host)).toEqual([]);
+
+		const count = canvas.host.querySelector<HTMLButtonElement>('[data-agent-chip="5 elements in home"] button');
+		await act(async () => count?.click());
+
+		// two of these five are the same string, which is the whole reason removal
+		// reaches out to the canvas rather than staying in the rail
+		expect(chipRows(canvas.host)).toEqual([
+			"cart-title · 36-40",
+			"line-item · 44-56",
+			"line-item · 44-56",
+			"total-row · 61-70",
+			"pay-button · 73-81",
+		]);
+	});
+
+	it("deselects on the canvas when a chip is dismissed", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		await clickHome(canvas.host);
+		await until(() => chips(canvas.host).includes("home"));
+		expect(canvas.host.querySelector('[data-frame-label="home"] .text-thread')).not.toBeNull();
+
+		const drop = chipDrop(canvas.host, "home");
+		expect(drop).not.toBeNull();
+		await act(async () => drop?.click());
+
+		// the strip and the canvas never disagree: the ring goes with the chip, and
+		// what the daemon is told goes with both
+		expect(canvas.host.querySelector('[data-frame-label="home"] .text-thread')).toBeNull();
+		await until(() => chips(canvas.host).length === 0);
+		await until(() => canvas.pointed.puts.at(-1)?.frames?.length === 0);
+	});
+
+	it("draws the frame the hands stepped into as an ordinary chip with no dismiss control", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		await enterHome(canvas.host);
+		await until(() => chips(canvas.host).includes("home"));
+
+		// same accent, same word, same weight as one you picked — entering is the most
+		// specific act the canvas has, and the only way out of it is a mode change
+		const chip = canvas.host.querySelector('[data-agent-chip="home"]');
+		expect(chip?.className).toContain("bg-raised");
+		expect(chip?.className).not.toContain("bg-surface");
+		expect(chipDrop(canvas.host, "home")).toBeNull();
+	});
+
+	it("keeps a line under the human's words saying what was sent with them", async () => {
+		const canvas = mount();
+		canvas.pointed.served = ["menu", "cart"].map(frameEntry);
+		await canvas.render();
+		await until(() => chips(canvas.host).length === 2);
+
+		await send(canvas.host, "make these consistent");
+
+		const context = canvas.host.querySelector("[data-agent-context]");
+		expect(context?.textContent).toBe("menu, cart");
+		// and it is a record rather than a live reading: the strip moving on does not
+		// rewrite what a sent turn says it carried
+		canvas.pointed.served = [frameEntry("receipt")];
+		await clickHome(canvas.host);
+		await until(() => chips(canvas.host).includes("receipt"));
+		expect(canvas.host.querySelector("[data-agent-context]")?.textContent).toBe("menu, cart");
+	});
+
+	it("says nothing under words that carried nothing", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		await send(canvas.host, "start a habit tracker");
+
+		expect(canvas.host.querySelector("[data-agent-context]")).toBeNull();
+	});
+});
+
+describe("an attached image", () => {
+	it("rides with the words as bytes and shows what was sent", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		await paste(canvas.host, shot());
+		expect(canvas.host.querySelector("[data-agent-attached] img")).not.toBeNull();
+
+		await send(canvas.host, "match this");
+
+		const sent = canvas.turn.attachments.at(-1);
+		expect(sent?.media).toBe("image/png");
+		// the bytes themselves, base64: a browser never reveals a path, so there is
+		// nothing else this could be
+		expect(sent?.data).toBe("iVBORw0KGgoBAgM=");
+		// the receipt is the picture, because a line of mono cannot audit one
+		expect(canvas.host.querySelector('[data-agent-log] img[src^="data:image/png;base64,"]')).not.toBeNull();
+		// and the composer is empty again: the reference went out with the message
+		expect(canvas.host.querySelector("[data-agent-attached]")).toBeNull();
+	});
+
+	it("arrives from a drag the browser is still holding, and only from one carrying a picture", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		// accepting the drag is the whole of it: without this the browser refuses the
+		// drop and navigates to the file instead
+		expect(await dragOver(canvas.host, [{ kind: "file", type: "image/png" }])).toBe(true);
+		expect(await dragOver(canvas.host, [{ kind: "string", type: "text/plain" }])).toBe(false);
+		expect(await dragOver(canvas.host, [{ kind: "file", type: "application/pdf" }])).toBe(false);
+
+		await drop(canvas.host, shot());
+		await until(() => canvas.host.querySelector("[data-agent-attached]") !== null);
+	});
+
+	it("is not taken at all when it is one the agent could not be sent", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		// the composer refuses exactly what the daemon refuses, so a tile never draws
+		// for something a turn would be turned away for
+		await drop(canvas.host, new File([new Uint8Array([1, 2])], "logo.svg", { type: "image/svg+xml" }));
+		await settle(60);
+		expect(canvas.host.querySelector("[data-agent-attached]")).toBeNull();
+
+		await send(canvas.host, "match this");
+		expect(canvas.turn.attachments.at(-1)).toBeUndefined();
+	});
+
+	it("can be taken back before it goes", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		await paste(canvas.host, shot());
+		const drop = canvas.host.querySelector<HTMLButtonElement>('[aria-label="drop the attached image"]');
+		await act(async () => drop?.click());
+
+		expect(canvas.host.querySelector("[data-agent-attached]")).toBeNull();
+		await send(canvas.host, "never mind");
+		expect(canvas.turn.attachments.at(-1)).toBeUndefined();
 	});
 });

@@ -48,21 +48,44 @@ describe("resolveRegisteredProject", () => {
 });
 
 describe("selection and flows over the daemon", () => {
-	it("prints the live selection payload", async () => {
+	it("prints the live selection as the block a prompt carries", async () => {
 		const { spoolDir, root, name, url } = await serveProject();
 		writeFrame(root, "cart", plainTsx);
 		const token = controlToken(spoolDir);
-		await fetch(`${url}/api/p/${name}/selection`, {
-			method: "PUT",
-			headers: { "content-type": "application/json", "X-Spool-Control": token },
-			body: JSON.stringify({ frames: ["cart"] }),
+		const point = (body: unknown) =>
+			fetch(`${url}/api/p/${name}/selection`, {
+				method: "PUT",
+				headers: { "content-type": "application/json", "X-Spool-Control": token },
+				body: JSON.stringify(body),
+			});
+
+		// nothing pointed at prints nothing, which is the emptiness a prompt carries
+		expect(await readSelection(url, name, token)).toBe("");
+
+		await point({ frames: ["cart"] });
+		expect(await readSelection(url, name, token)).toBe(
+			["<selection>", "cart — design/frames/cart/frame.tsx — 390×844", "</selection>"].join("\n"),
+		);
+
+		// an element prints its noun, its lines and its excerpt under it
+		await point({
+			elements: [
+				{
+					frame: "cart",
+					selector: "main",
+					outerHtml: "<main>hi</main>",
+					source: "frames/cart/frame.tsx:2:9",
+					generated: false,
+				},
+			],
 		});
-
-		const printed = await readSelection(url, name, token);
-
-		expect(JSON.parse(printed)).toEqual([
-			{ kind: "frame", frame: "cart", path: "design/frames/cart/frame.tsx", size: { w: 390, h: 844 } },
-		]);
+		const element = [
+			"<selection>",
+			"cart · main — design/frames/cart/frame.tsx:2-2",
+			"  <main>hi</main>",
+			"</selection>",
+		];
+		expect(await readSelection(url, name, token)).toBe(element.join("\n"));
 	});
 
 	it("prints the link graph", async () => {

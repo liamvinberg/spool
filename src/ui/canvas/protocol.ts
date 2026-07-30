@@ -29,6 +29,15 @@ export interface PickedHit {
 	generated: boolean;
 }
 
+/**
+ * The (frame, selector) pair as one identity — picks match on nothing else.
+ *
+ * It lives beside the hit rather than in the overlay because it is what names a
+ * pick everywhere: the outline out on the canvas, the chip in the composer, and
+ * the removal that has to reach from one to the other (#116).
+ */
+export const pickKey = (frame: string, selector: string): string => `${frame}\0${selector}`;
+
 /** A stamp taken apart: "frames/cart/frame.tsx:10:5" → rel, line, col. */
 export interface StampRef {
 	rel: string;

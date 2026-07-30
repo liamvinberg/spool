@@ -1,3 +1,4 @@
+import type { Attachment } from "../../attachment";
 import type { AgentEvent } from "../../daemon/agent-events";
 import {
 	type CallInput,
@@ -158,8 +159,23 @@ export interface AgentPlan {
 }
 
 export type AgentEntry =
-	/** what the human said, in the log the instant they said it */
-	| { readonly key: string; readonly kind: "user"; readonly text: string }
+	/**
+	 * What the human said, in the log the instant they said it — and under it, what
+	 * was sent with the words (#116).
+	 *
+	 * `context` is exactly what the chip strip said at rest, captured when Enter was
+	 * pressed: no more, because the strip is the promise that was made, and no less,
+	 * because a turn nobody can audit is a turn nobody can trust. `attached` is the
+	 * reference that rode along, which is the one thing a line of mono cannot audit,
+	 * so the receipt for it is the picture itself.
+	 */
+	| {
+			readonly key: string;
+			readonly kind: "user";
+			readonly text: string;
+			readonly context: string | null;
+			readonly attached: Attachment | null;
+	  }
 	/**
 	 * The model composing, which is the only thing on screen for the wait before the
 	 * first token — measured at over a second, so it is the difference between the
@@ -384,7 +400,18 @@ const ANSWERS: ReadonlySet<AgentEvent["kind"]> = new Set([
 	"task-done",
 ]);
 
-export function transcriptOf(prompt: string, seen: readonly Stamped[]): Transcript {
+/**
+ * What went out with the words, as the composer captured it at Enter (#116, #119).
+ *
+ * Held rather than derived, because the strip may have moved since: a turn is a
+ * record of the moment it was sent, and the selection is a live thing.
+ */
+export interface AgentSent {
+	readonly context?: string | null;
+	readonly attached?: Attachment | null;
+}
+
+export function transcriptOf(prompt: string, seen: readonly Stamped[], sent: AgentSent = {}): Transcript {
 	const beats: Beat[] = [];
 	const prose = new Map<string, Prose>();
 	const rows = new Map<string, Row>();
@@ -918,7 +945,9 @@ export function transcriptOf(prompt: string, seen: readonly Stamped[]): Transcri
 		return { ...row, kind: "row", delegated: theirs };
 	};
 
-	const entries: AgentEntry[] = [{ key: "user", kind: "user", text: prompt }];
+	const entries: AgentEntry[] = [
+		{ key: "user", kind: "user", text: prompt, context: sent.context ?? null, attached: sent.attached ?? null },
+	];
 	for (const slot of order) {
 		if (slot.kind === "beat") {
 			const beat = beats.find((candidate) => candidate.key === slot.key);

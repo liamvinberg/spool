@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { streamAgentTurn } from "../api";
-import { type AgentEntry, type AgentPlan, fullyShown, type Stamped, transcriptOf } from "./agent-transcript";
+import {
+	type AgentEntry,
+	type AgentPlan,
+	type AgentSent,
+	fullyShown,
+	type Stamped,
+	transcriptOf,
+} from "./agent-transcript";
 
 /**
  * One turn, from the composer to the log (#192).
@@ -43,7 +50,14 @@ export interface AgentTurn {
 	readonly elapsed: number;
 	/** when the last event landed, so a beat nobody closed still reads its real length */
 	readonly last: number;
-	readonly send: (text: string) => void;
+	/**
+	 * Send what was typed, and with it whatever the composer was holding (#116, #119).
+	 *
+	 * `sent` is captured here rather than read later because the selection is a live
+	 * thing and a turn is a record: the chips that were up are the bytes that went
+	 * out, and the line under the words says so for as long as the log lasts.
+	 */
+	readonly send: (text: string, sent?: AgentSent) => void;
 }
 
 const stillness = () =>
@@ -57,6 +71,8 @@ export function useAgentTurn(project: string): AgentTurn {
 	const started = useRef(0);
 	const abandon = useRef<(() => void) | null>(null);
 	const [prompt, setPrompt] = useState("");
+	/** what rode with those words, held for as long as the log holds them */
+	const [carried, setCarried] = useState<AgentSent>({});
 	/** climbs per send, which is what re-arms the clock */
 	const [run, setRun] = useState(0);
 	const [open, setOpen] = useState(false);
@@ -74,12 +90,13 @@ export function useAgentTurn(project: string): AgentTurn {
 	const live = useRef({ open: false, prompt: "" });
 
 	const send = useCallback(
-		(text: string) => {
+		(text: string, sent: AgentSent = {}) => {
 			abandon.current?.();
 			events.current = [];
 			started.current = Date.now();
 			live.current = { open: true, prompt: text };
 			setPrompt(text);
+			setCarried(sent);
 			setRun((current) => current + 1);
 			setOpen(true);
 			setMs(0);
@@ -87,23 +104,27 @@ export function useAgentTurn(project: string): AgentTurn {
 			const push = (event: Stamped["event"]) => {
 				events.current.push({ at: Date.now() - started.current, event });
 			};
-			abandon.current = streamAgentTurn(project, text, {
-				event: push,
-				/*
-				 * The stream is the turn's whole life, so its end has to leave the log
-				 * saying why. The daemon ends every turn with a `closed` event; a stream
-				 * that stops without one stopped on this side, and the union already has
-				 * the member for a process that is gone.
-				 */
-				end: (error) => {
-					if (error !== undefined) push({ kind: "closed", code: null, message: error, parent: null });
-					else if (events.current.at(-1)?.event.kind !== "closed") {
-						push({ kind: "closed", code: null, message: "the turn stream ended", parent: null });
-					}
-					live.current = { ...live.current, open: false };
-					setOpen(false);
+			abandon.current = streamAgentTurn(
+				project,
+				{ prompt: text, attached: sent.attached ?? undefined },
+				{
+					event: push,
+					/*
+					 * The stream is the turn's whole life, so its end has to leave the log
+					 * saying why. The daemon ends every turn with a `closed` event; a stream
+					 * that stops without one stopped on this side, and the union already has
+					 * the member for a process that is gone.
+					 */
+					end: (error) => {
+						if (error !== undefined) push({ kind: "closed", code: null, message: error, parent: null });
+						else if (events.current.at(-1)?.event.kind !== "closed") {
+							push({ kind: "closed", code: null, message: "the turn stream ended", parent: null });
+						}
+						live.current = { ...live.current, open: false };
+						setOpen(false);
+					},
 				},
-			});
+			);
 		},
 		[project],
 	);
@@ -143,7 +164,7 @@ export function useAgentTurn(project: string): AgentTurn {
 	// the daemon takes the process with the request
 	useEffect(() => () => abandon.current?.(), []);
 
-	const transcript = transcriptOf(prompt, events.current);
+	const transcript = transcriptOf(prompt, events.current, carried);
 	return {
 		entries: run === 0 ? [] : transcript.entries,
 		plan: run === 0 ? null : transcript.plan,

@@ -1,5 +1,7 @@
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { MAX_ATTACHMENT_BYTES } from "../attachment";
 import {
 	fixtureAgentExecutor,
 	makeApp,
@@ -9,7 +11,9 @@ import {
 	replayAgentExecutor,
 	sseReader,
 	until,
+	writeFrame,
 } from "../test-helpers";
+import { readSelection } from "../verbs";
 import type { AgentEvent } from "./agent-events";
 import { agentFraming } from "./agent-spawn";
 import { startAgentTurn } from "./agent-turn";
@@ -31,12 +35,36 @@ async function drainTurn(res: Response, limit = 4000): Promise<AgentEvent[]> {
 	return seen;
 }
 
-function startTurn(name: string, app: ReturnType<typeof makeApp>, prompt = "make these consistent") {
+function startTurn(name: string, app: ReturnType<typeof makeApp>, body: unknown = { prompt: "make these consistent" }) {
 	return app.request(`/api/p/${name}/agent/turn`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ prompt }),
+		body: JSON.stringify(typeof body === "string" ? { prompt: body } : body),
 	});
+}
+
+/** what the hands point at, put the way the canvas puts it */
+function point(name: string, app: ReturnType<typeof makeApp>, put: unknown) {
+	return app.request(`/api/p/${name}/selection`, {
+		method: "PUT",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(put),
+	});
+}
+
+/** the one user message a turn sends, taken apart into its content blocks */
+function sentContent(input: string | undefined): { type: string; text?: string; source?: Record<string, string> }[] {
+	const line = JSON.parse(input ?? "{}") as { message?: { content?: unknown } };
+	return (line.message?.content ?? []) as { type: string; text?: string }[];
+}
+
+function sentText(input: string | undefined): string {
+	return sentContent(input).find((block) => block.type === "text")?.text ?? "";
+}
+
+/** every file under a root, so a test can say nothing landed */
+function filesUnder(root: string): string[] {
+	return readdirSync(root, { recursive: true }).map(String).sort();
 }
 
 describe("one turn over the wire", () => {
@@ -79,6 +107,108 @@ describe("one turn over the wire", () => {
 			type: "user",
 			message: { role: "user", content: [{ type: "text", text: "tidy up the cart" }] },
 		});
+	});
+
+	it("carries every selected frame and element ahead of the words, in one block", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", "export default function Frame() {\n\treturn <main>hi</main>;\n}\n");
+		writeFrame(root, "menu", "export default function Frame() {\n\treturn <main>hi</main>;\n}\n");
+		const agent = replayAgentExecutor("claude-compact");
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+
+		await point(name, app, { frames: ["cart", "menu"] });
+		await drainTurn(await startTurn(name, app, "make these consistent"));
+
+		// the second frame is the whole point: the daemon has always served a list
+		expect(sentText(agent.spawned[0]?.inputs[0])).toBe(
+			[
+				"<selection>",
+				"cart — design/frames/cart/frame.tsx — 390×844",
+				"menu — design/frames/menu/frame.tsx — 390×844",
+				"</selection>",
+				"",
+				"make these consistent",
+			].join("\n"),
+		);
+	});
+
+	it("carries the words alone when the hands point at nothing", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const agent = replayAgentExecutor("claude-compact");
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+
+		await drainTurn(await startTurn(name, app, "start a habit tracker"));
+
+		// no empty block: a shape claiming the moment had one is worse than silence
+		expect(sentText(agent.spawned[0]?.inputs[0])).toBe("start a habit tracker");
+	});
+
+	it("carries the same bytes `spool selection` prints for the same moment", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", "export default function Frame() {\n\treturn <main>hi</main>;\n}\n");
+		const agent = replayAgentExecutor("claude-compact");
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+		await point(name, app, {
+			elements: [
+				{
+					frame: "cart",
+					selector: "main",
+					outerHtml: "<main>hi</main>",
+					source: "frames/cart/frame.tsx:2:9",
+					generated: false,
+				},
+			],
+		});
+
+		await drainTurn(await startTurn(name, app, "tighten this"));
+
+		// the CLI's own read, over this same daemon: one contract, not two dialects
+		vi.stubGlobal("fetch", (url: string, init?: RequestInit) => app.fetch(new URL(url).pathname, init));
+		const printed = await readSelection("http://localhost:7766", name, "test-control-token");
+		vi.unstubAllGlobals();
+		expect(printed).not.toBe("");
+		expect(sentText(agent.spawned[0]?.inputs[0])).toBe(`${printed}\n\ntighten this`);
+	});
+
+	it("sends an attached image as bytes and writes no file anywhere", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		const agent = replayAgentExecutor("claude-compact");
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+		const before = filesUnder(root);
+		// one pixel, the shape a `tool_result` already carries a screenshot in
+		const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+
+		await drainTurn(await startTurn(name, app, { prompt: "match this", attachment: { media: "image/png", data } }));
+
+		expect(sentContent(agent.spawned[0]?.inputs[0])).toEqual([
+			{ type: "image", source: { type: "base64", media_type: "image/png", data } },
+			{ type: "text", text: "match this" },
+		]);
+		// look-only: the app-owned folder gains no inbox, no lifetime and no deleter
+		expect(filesUnder(root)).toEqual(before);
+	});
+
+	it("says so rather than dropping an attachment it cannot send", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const agent = fixtureAgentExecutor(() => {});
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+		const refused = async (attachment: unknown) =>
+			(await startTurn(name, app, { prompt: "match this", attachment })).status;
+
+		expect(await refused({ media: "image/svg+xml", data: "PHN2Zy8+" })).toBe(400);
+		expect(await refused({ media: "image/png", data: "not base64!" })).toBe(400);
+		// base64's groups of four carry three bytes, so this is the ceiling passed
+		expect(
+			await refused({ media: "image/png", data: "A".repeat((Math.floor(MAX_ATTACHMENT_BYTES / 3) + 2) * 4) }),
+		).toBe(400);
+		expect(await refused("data:image/png;base64,AAAA")).toBe(400);
+		// a message that half arrived is worse than one that was refused
+		expect(agent.spawned).toHaveLength(0);
 	});
 
 	it("carries the settled arguments and puts no API key in the environment", async () => {
