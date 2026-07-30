@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentReply } from "../../daemon/agent-control";
-import { answerAgentTurn, streamAgentTurn } from "../api";
+import { answerAgentTurn, interruptAgentTurn, streamAgentTurn } from "../api";
+import type { AgentHandback, AgentQueued } from "./agent-queue";
 import {
 	type AgentEntry,
 	type AgentPlan,
 	type AgentSent,
+	type AgentWords,
 	fullyShown,
 	type Stamped,
 	transcriptOf,
@@ -76,6 +78,31 @@ export interface AgentTurn {
 	 * everything else arrives on, so the log stays one fold over one sequence.
 	 */
 	readonly answer: (request: string, reply: AgentReply) => void;
+	/** what spool is holding until this turn ends, in the order it will fire (#170) */
+	readonly queued: readonly AgentQueued[];
+	/**
+	 * Take a message spool cannot send yet (#170).
+	 *
+	 * Enter while a turn is running accepts the words rather than dropping them, and
+	 * nothing goes down the wire mid-turn. `sent` is captured here for the same reason
+	 * a send captures it and with far more at stake: this message fires when the turn
+	 * ends, which may be nine minutes and a different selection later, so the chips
+	 * that were up at Enter are the bytes that go out with it.
+	 */
+	readonly queue: (text: string, sent?: AgentSent) => void;
+	/** take one back by hand, which hands its words to whoever is holding the box */
+	readonly unqueue: (id: string) => void;
+	/**
+	 * Stop the turn, and the queue with it (#165, #170).
+	 *
+	 * An interrupt request rather than a kill: the process survives it, and the log
+	 * ends by saying `stopped` off the wire's own word for it. The queue goes because a
+	 * stop is one act with one outcome — every word still waiting comes back to the box
+	 * rather than firing into a turn nobody asked for.
+	 */
+	readonly stop: () => void;
+	/** whatever left the queue un-fired, for whoever is holding the box (#170) */
+	readonly handback: AgentHandback;
 }
 
 const stillness = () =>
@@ -88,9 +115,8 @@ export function useAgentTurn(project: string): AgentTurn {
 	const events = useRef<Stamped[]>([]);
 	const started = useRef(0);
 	const abandon = useRef<(() => void) | null>(null);
-	const [prompt, setPrompt] = useState("");
-	/** what rode with those words, held for as long as the log holds them */
-	const [carried, setCarried] = useState<AgentSent>({});
+	/** what started this turn: one message, or the stack a queue fired as one (#170) */
+	const [said, setSaid] = useState<readonly AgentWords[]>([]);
 	/** climbs per send, which is what re-arms the clock */
 	const [run, setRun] = useState(0);
 	const [open, setOpen] = useState(false);
@@ -105,7 +131,7 @@ export function useAgentTurn(project: string): AgentTurn {
 	 * of ticks can run before the render that would have told them the stream had
 	 * closed, and every one of them would decide there was more coming.
 	 */
-	const live = useRef({ open: false, prompt: "" });
+	const live = useRef<{ open: boolean; said: readonly AgentWords[] }>({ open: false, said: [] });
 	/**
 	 * The time the turn spent waiting on the person, which is time the log never had.
 	 *
@@ -134,17 +160,49 @@ export function useAgentTurn(project: string): AgentTurn {
 	 * a turn nobody answered, which is the turn every capture in the repo records.
 	 */
 	const waitingOn = useRef(new Map<string, string | null>());
+	/**
+	 * The queue, which spool holds rather than the binary (#170).
+	 *
+	 * It is a ref beside its state because two things read it that a render cannot: the
+	 * fire, which happens on the effect that sees the turn settle, and the stop, which
+	 * has to empty it and hand its words back in one act.
+	 */
+	const holding = useRef<readonly AgentQueued[]>([]);
+	const [queued, setQueued] = useState<readonly AgentQueued[]>([]);
+	/** climbs per handover, because the same words can come back twice in one session */
+	const [handback, setHandback] = useState<AgentHandback>({ count: 0, messages: [] });
+	/** what the daemon's stop names this turn by, since a stop has no request to quote */
+	const named = useRef("");
+	/** turns started, which is the number a turn's name is made unique by */
+	const starts = useRef(0);
+	/** messages ever held, which is the number a take-back aims at exactly one of */
+	const holds = useRef(0);
+
+	const hold = useCallback((waiting: readonly AgentQueued[]) => {
+		holding.current = waiting;
+		setQueued(waiting);
+	}, []);
+
+	/** the one exit both the stop and a take-back go through, so they cannot diverge */
+	const handBack = useCallback((going: readonly AgentQueued[]) => {
+		if (going.length === 0) return;
+		setHandback((last) => ({ count: last.count + 1, messages: going }));
+	}, []);
 
 	const send = useCallback(
-		(text: string, sent: AgentSent = {}) => {
+		(saying: readonly AgentWords[]) => {
+			if (saying.length === 0) return;
 			abandon.current?.();
 			events.current = [];
 			started.current = Date.now();
 			parked.current = { total: 0, since: null };
 			waitingOn.current = new Map();
-			live.current = { open: true, prompt: text };
-			setPrompt(text);
-			setCarried(sent);
+			live.current = { open: true, said: saying };
+			starts.current += 1;
+			// a name of its own, because a stop has no request to quote: it names the turn
+			// the hands are looking at rather than whatever this project is running
+			named.current = `${Date.now()}-${starts.current}`;
+			setSaid(saying);
 			setRun((current) => current + 1);
 			setOpen(true);
 			setMs(0);
@@ -168,7 +226,14 @@ export function useAgentTurn(project: string): AgentTurn {
 			};
 			abandon.current = streamAgentTurn(
 				project,
-				{ prompt: text, attached: sent.attached ?? undefined },
+				{
+					turn: named.current,
+					saying: saying.map((words) => ({
+						prompt: words.text,
+						selection: words.selection,
+						attached: words.attached ?? undefined,
+					})),
+				},
 				{
 					event: push,
 					/*
@@ -219,7 +284,7 @@ export function useAgentTurn(project: string): AgentTurn {
 			const now = clock();
 			setMs(now);
 			if (live.current.open) return;
-			const { entries } = transcriptOf(live.current.prompt, events.current);
+			const { entries } = transcriptOf(live.current.said, events.current);
 			if (
 				entries.some(
 					(entry) => entry.kind === "prose" && !fullyShown(entry, still ? Number.POSITIVE_INFINITY : now),
@@ -235,14 +300,57 @@ export function useAgentTurn(project: string): AgentTurn {
 	// the daemon takes the process with the request
 	useEffect(() => () => abandon.current?.(), []);
 
-	const transcript = transcriptOf(prompt, events.current, carried);
+	const transcript = transcriptOf(said, events.current);
+	const phase: TurnPhase = run === 0 ? "idle" : transcript.asking !== null ? "asking" : open ? "playing" : "settled";
+
+	/*
+	 * The queue fires the moment the turn is no longer running (#170).
+	 *
+	 * Every message at once, in order, as one turn: the binary reads all of them as the
+	 * one thing it was asked, so this is a send rather than a run of sends. A stop never
+	 * reaches here, because a stop empties the list before the phase can settle — which
+	 * is the invariant, not a race that happens to fall the right way.
+	 */
+	useEffect(() => {
+		if (phase !== "settled" || holding.current.length === 0) return;
+		const firing = holding.current;
+		hold([]);
+		send(firing);
+	}, [phase, hold, send]);
+
 	return {
 		entries: run === 0 ? [] : transcript.entries,
 		plan: run === 0 ? null : transcript.plan,
-		phase: run === 0 ? "idle" : transcript.asking !== null ? "asking" : open ? "playing" : "settled",
+		phase,
 		elapsed: still || drained ? Number.POSITIVE_INFINITY : ms,
 		last: transcript.last,
-		send,
+		send: useCallback((text: string, sent: AgentSent = {}) => send([{ text, ...sent }]), [send]),
 		answer,
+		queued,
+		queue: useCallback(
+			(text: string, sent: AgentSent = {}) => {
+				holds.current += 1;
+				hold([...holding.current, { id: `held-${holds.current}`, text, ...sent }]);
+			},
+			[hold],
+		),
+		unqueue: useCallback(
+			(id: string) => {
+				const going = holding.current.filter((one) => one.id === id);
+				if (going.length === 0) return;
+				hold(holding.current.filter((one) => one.id !== id));
+				handBack(going);
+			},
+			[hold, handBack],
+		),
+		stop: useCallback(() => {
+			// the queue goes first and unconditionally: whether or not there is still a
+			// process to ask, a stop is one act and the words it cancels come back
+			const going = holding.current;
+			hold([]);
+			handBack(going);
+			void interruptAgentTurn(project, named.current);
+		}, [project, hold, handBack]),
+		handback,
 	};
 }

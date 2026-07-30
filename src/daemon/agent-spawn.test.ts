@@ -99,18 +99,38 @@ describe("what rides with the words", () => {
 	const block = "<selection>\ncart — design/frames/cart/frame.tsx — 390×844\n</selection>";
 
 	it("leads the words with the selection, and with a picture before both", () => {
-		expect(agentPromptContent("make these consistent", block)).toEqual([
+		expect(agentPromptContent([{ prompt: "make these consistent", selection: block }])).toEqual([
 			{ type: "text", text: `${block}\n\nmake these consistent` },
 		]);
-		expect(agentPromptContent("match this", "", { media: "image/png", data: "AAAA" })).toEqual([
+		expect(
+			agentPromptContent([
+				{ prompt: "match this", selection: "", attachment: { media: "image/png", data: "AAAA" } },
+			]),
+		).toEqual([
 			{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
 			{ type: "text", text: "match this" },
 		]);
 	});
 
 	it("adds no block when nothing is pointed at", () => {
-		expect(agentPromptContent("start a habit tracker", "")).toEqual([
+		expect(agentPromptContent([{ prompt: "start a habit tracker", selection: "" }])).toEqual([
 			{ type: "text", text: "start a habit tracker" },
+		]);
+	});
+
+	it("sends every message a queue fired, in order, each with its own block (#170)", () => {
+		const second = "<selection>\nmenu — design/frames/menu/frame.tsx — 390×844\n</selection>";
+
+		// one turn, not two: the messages are blocks of one user message, so nothing
+		// depends on the binary's own queueing to keep them from becoming two turns
+		expect(
+			agentPromptContent([
+				{ prompt: "make these consistent", selection: block },
+				{ prompt: "and the menu too", selection: second },
+			]),
+		).toEqual([
+			{ type: "text", text: `${block}\n\nmake these consistent` },
+			{ type: "text", text: `${second}\n\nand the menu too` },
 		]);
 	});
 });

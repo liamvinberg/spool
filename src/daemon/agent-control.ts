@@ -170,3 +170,22 @@ export const DECLINED = { action: "decline" } as const;
 export function controlResponseLine(request: string, response: unknown): string {
 	return `${JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: request, response } })}\n`;
 }
+
+/**
+ * The way out of a turn that is already running (#165).
+ *
+ * It goes the other way down the same stdin an answer does, and it is the one thing
+ * spool asks the binary for rather than answers. A request rather than a kill: the
+ * process survives it, finishes what it was in the middle of writing, and emits a
+ * clean `result` carrying `terminal_reason: "aborted_streaming"` — so nothing is torn
+ * and the log ends by saying what happened.
+ *
+ * The capture answers it with `{still_queued: []}`, the uuids of queued messages that
+ * outlive the abort, and it is always empty because spool holds its own queue rather
+ * than filling the binary's (#170). Nothing else rides here: the request's own
+ * `cancel_queued` flag exists for a queue spool never puts anything in, so setting it
+ * would be spool declaring an intent about a list that does not exist.
+ */
+export function interruptRequestLine(request: string): string {
+	return `${JSON.stringify({ type: "control_request", request_id: request, request: { subtype: "interrupt" } })}\n`;
+}

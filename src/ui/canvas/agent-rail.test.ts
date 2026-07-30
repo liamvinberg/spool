@@ -35,12 +35,24 @@ const PROJECTION = {
 	collisions: [],
 };
 
+/** one message of a turn, as the daemon reads it off the wire */
+interface Said {
+	readonly prompt: string;
+	readonly selection?: readonly { readonly frame: string }[];
+	readonly attachment?: { media: string; data: string };
+}
+
 interface Turn {
+	/** every message of every turn, flattened: a turn is one press or a queue that fired */
 	readonly prompts: string[];
 	/** whatever rode with those words, which so far is a reference image (#119) */
 	readonly attachments: ({ media: string; data: string } | undefined)[];
+	/** each turn's own messages, so a test can say two of them fired as one turn (#170) */
+	readonly turns: (readonly Said[])[];
 	/** what the person said to a waiting request, which goes up its own door (#145) */
 	readonly answers: { request: string; reply: Record<string, unknown> }[];
+	/** the turns a press asked to stop, by the name the rail gave them (#165) */
+	readonly stops: string[];
 	push(event: AgentEvent): void;
 	close(): void;
 }
@@ -122,11 +134,15 @@ function mount({ still = false }: { still?: boolean } = {}) {
 	const turn: Turn & { open: boolean } = {
 		prompts: [],
 		attachments: [],
+		turns: [],
 		answers: [],
+		stops: [],
 		open: false,
 		push: () => {},
 		close: () => {},
 	};
+	/** what the rail last called its turn, which is the address a stop names (#165) */
+	let named = "";
 	/** the daemon's own watcher channel: what a frame the turn writes arrives on */
 	const watcher = sse();
 	const chrome: { latest: CanvasChrome | null } = { latest: null };
@@ -147,9 +163,13 @@ function mount({ still = false }: { still?: boolean } = {}) {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
 			if (url.pathname.endsWith("/agent/turn")) {
 				const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
-				const sent = JSON.parse(body) as { prompt: string; attachment?: { media: string; data: string } };
-				turn.prompts.push(sent.prompt);
-				turn.attachments.push(sent.attachment);
+				const sent = JSON.parse(body) as { turn: string; said: readonly Said[] };
+				named = sent.turn;
+				turn.turns.push(sent.said);
+				for (const one of sent.said) {
+					turn.prompts.push(one.prompt);
+					turn.attachments.push(one.attachment);
+				}
 				const stream = sse();
 				turn.open = true;
 				turn.push = (event) => stream.push("agent", event);
@@ -158,6 +178,15 @@ function mount({ still = false }: { still?: boolean } = {}) {
 					stream.close();
 				};
 				return stream.response();
+			}
+			// the stop's own door: a request rather than a kill, so nothing comes back
+			// here and everything it produces arrives on the stream (#165)
+			if (url.pathname.endsWith("/agent/interrupt")) {
+				const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
+				const asked = (JSON.parse(body) as { turn: string }).turn;
+				if (asked !== named || !turn.open) return new Response(`no turn "${asked}" to stop`, { status: 404 });
+				turn.stops.push(asked);
+				return new Response(null, { status: 204 });
 			}
 			if (url.pathname.endsWith("/agent/answer")) {
 				const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
@@ -555,19 +584,16 @@ describe("one turn", () => {
 		expect(canvas.host.querySelector("[data-agent-caret]")).toBeNull();
 	});
 
-	it("gives the composer back when the turn ends, and refuses it while one runs", async () => {
+	it("says what Enter will do with the press, and gives the composer back when the turn ends", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "go");
 		canvas.turn.push(waiting);
 		await settle();
 
-		expect(rail(canvas.host)?.textContent).toContain("a turn is running");
 		// a second send would spawn a second agent against the same repo, so the press
-		// is refused — and the words stay in the field rather than being thrown away
-		await send(canvas.host, "and again");
-		expect(canvas.turn.prompts).toEqual(["go"]);
-		expect(field(canvas.host)?.value).toBe("and again");
+		// is taken and held rather than sent — and the hint says which (#170)
+		expect(rail(canvas.host)?.textContent).toContain("enter to queue");
 
 		canvas.turn.push(ended);
 		canvas.turn.push(closed);
@@ -1773,5 +1799,323 @@ describe("an approval in the log", () => {
 		expect(held).toBeDefined();
 		await settle(500);
 		expect(beat()).not.toBe(held);
+	});
+});
+
+/**
+ * Stopping a turn, and saying the next thing without stopping it (#165, #170, #176).
+ *
+ * One invariant spans them and is what makes them one thing to test: words that leave
+ * the queue un-fired land back in the box. A stop cancels the queue and hands the
+ * words back, and taking one back by hand is the same act with the same outcome.
+ */
+
+/** the press in the footer, which is the exit that works from wherever the eyes are */
+const stopPress = (host: HTMLElement) =>
+	[...host.querySelectorAll<HTMLButtonElement>('[aria-label="Agent"] button')].find(
+		(button) => button.textContent?.startsWith("stop") === true,
+	) ?? null;
+
+/** every message waiting in the composer, in the order it will fire */
+const queuedRows = (host: HTMLElement) =>
+	[...host.querySelectorAll("[data-agent-queued] p")].map((row) => row.textContent);
+
+/**
+ * The stroke every row's mark actually draws, in the log's own order.
+ *
+ * A settled mark holds both strokes so the dash offset has something mounted to run
+ * on, and the one it means is the one it lets be seen — so the marks are read off
+ * opacity rather than off the path list, which would count a cross's spare stroke
+ * against every row that is not one.
+ */
+const drawnStrokes = (host: HTMLElement) =>
+	[...host.querySelectorAll<SVGPathElement>("[data-agent-row] path")]
+		.filter((stroke) => stroke.style.opacity === "1")
+		.map((stroke) => stroke.getAttribute("d"));
+
+async function pressEscape(host: HTMLElement, where: "composer" | "canvas") {
+	// the target is the whole of the difference: the hotkey dispatch returns on any
+	// keydown born in a text field, so a press in the composer never reaches the ladder
+	const target = where === "composer" ? field(host) : host.querySelector<HTMLElement>('[role="application"]');
+	if (target === null) throw new Error("nowhere to press");
+	await act(async () => {
+		target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+	});
+}
+
+/** a turn in flight, which is the only state either of these controls exists in */
+async function running(canvas: ReturnType<typeof mount>, prompt = "start a habit tracker") {
+	await canvas.render();
+	await send(canvas.host, prompt);
+	canvas.turn.push(waiting);
+	canvas.turn.push(speaking);
+	await settle();
+}
+
+describe("stopping a turn", () => {
+	it("stops it on a press in the composer footer", async () => {
+		const canvas = mount();
+		await running(canvas);
+
+		const press = stopPress(canvas.host);
+		expect(press).not.toBeNull();
+		await act(async () => press?.click());
+
+		expect(canvas.turn.stops).toHaveLength(1);
+	});
+
+	it("stops it on escape from the composer, where the key was going nowhere", async () => {
+		const canvas = mount();
+		await running(canvas);
+
+		// the canvas ignores every key while focus is in a text field, and Enter leaves
+		// focus here — so escape has been thrown away at the exact moment a turn runs
+		await pressEscape(canvas.host, "composer");
+
+		expect(canvas.turn.stops).toHaveLength(1);
+	});
+
+	it("draws what it caught as stopped, and never echoes the notice back at you", async () => {
+		const canvas = mount();
+		await running(canvas);
+		// two reads open, which is the shape the capture holds: one whose block closed and
+		// gets only the synthetic rejection, one cut mid-argument with no result at all
+		canvas.turn.push(called("t1", "Read", { file_path: "/project/CLAUDE.md" }));
+		canvas.turn.push({ kind: "call", id: "t2", block: 1, tool: "Read", parent: null });
+		await act(async () => stopPress(canvas.host)?.click());
+
+		// the aftermath the interrupt leaves: the caught call is stamped with the same
+		// denial kind a permission decline gets, so the error alone cannot tell them apart
+		canvas.turn.push(settled("t1", { failed: true, nonExecution: "user-rejected" }));
+		canvas.turn.push({
+			kind: "ended",
+			ending: "stopped",
+			reason: "aborted_streaming",
+			stopReason: null,
+			parent: null,
+		});
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		await settle();
+
+		// the half-typed one is a bare verb with no subject, which is beat one of three
+		expect(rows(canvas.host)).toEqual(["read CLAUDE.md", "read"]);
+		// one flat stroke each and nothing else drawn anywhere: a check is two strokes
+		// meeting, a cross two crossing, and spool never says something errored when it
+		// simply never ran
+		expect(drawnStrokes(canvas.host)).toEqual(["M4.4 7h5.2", "M4.4 7h5.2"]);
+		// spool says its own word for the boundary, and never the binary's note: that one
+		// is addressed to the model, and echoing it reports your own press back at you
+		const log = canvas.host.querySelector("[data-agent-log]")?.textContent ?? "";
+		expect(log).toContain("stopped");
+		expect(log).not.toContain("[Request interrupted by user]");
+	});
+
+	it("stops it on escape from the canvas, once the ladder out there has nothing to say", async () => {
+		const canvas = mount();
+		await running(canvas);
+		// clicking out to watch a frame repaint is the state this whole rail is built
+		// for, and it gives the key back to the canvas
+		await clickHome(canvas.host);
+		await settle(50);
+
+		// the frame the click selected is the first rung, and it goes first
+		await pressEscape(canvas.host, "canvas");
+		expect(canvas.turn.stops).toHaveLength(0);
+
+		await pressEscape(canvas.host, "canvas");
+		expect(canvas.turn.stops).toHaveLength(1);
+	});
+
+	it("is offered against a running turn and against nothing else", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		// nothing has been said, so there is nothing to stop
+		expect(stopPress(canvas.host)).toBeNull();
+
+		await send(canvas.host, "shoot the receipt");
+		canvas.turn.push(waiting);
+		await settle();
+		expect(stopPress(canvas.host)).not.toBeNull();
+
+		// a parked turn is not a running turn: it is spending nothing and moving
+		// nowhere, and its way out is the question's own dismiss
+		canvas.turn.push({ kind: "called", id: "c1", tool: "Bash", input: { command: "spool upgrade" }, parent: null });
+		canvas.turn.push({
+			kind: "asking",
+			request: "req-1",
+			call: "c1",
+			tool: "Bash",
+			display: "Bash",
+			input: { command: "spool upgrade" },
+			description: "Upgrade the spool CLI",
+			interaction: false,
+			suggestions: [],
+			parent: null,
+		});
+		await until(() => canvas.host.querySelector("[data-agent-ask]") !== null);
+		expect(stopPress(canvas.host)).toBeNull();
+
+		canvas.turn.push(ended);
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		await settle();
+		expect(stopPress(canvas.host)).toBeNull();
+	});
+});
+
+describe("the queue", () => {
+	it("takes a message typed into a running turn rather than sending or stopping", async () => {
+		const canvas = mount();
+		await running(canvas);
+
+		await send(canvas.host, "hold off on add-habit until i've seen home");
+
+		// nothing went down the wire mid-turn, and nothing was interrupted for it
+		expect(canvas.turn.prompts).toEqual(["start a habit tracker"]);
+		expect(canvas.turn.stops).toEqual([]);
+		// it stacks inside the composer, dimmed, with a mono `queued` and a take-back
+		expect(queuedRows(canvas.host)).toEqual(["hold off on add-habit until i've seen home"]);
+		const row = canvas.host.querySelector("[data-agent-queued]");
+		expect(row?.querySelector("p")?.className).toContain("text-text/45");
+		expect(row?.textContent).toContain("queued");
+		expect(row?.querySelector('button[aria-label^="take back"]')).not.toBeNull();
+		// and the field is empty again, because the message has been taken
+		expect(field(canvas.host)?.value).toBe("");
+	});
+
+	it("fires in order as one turn the moment the result arrives", async () => {
+		const canvas = mount();
+		await running(canvas);
+		await send(canvas.host, "hold off on add-habit");
+		await send(canvas.host, "swedish weekday chips");
+		expect(queuedRows(canvas.host)).toHaveLength(2);
+
+		canvas.turn.push(ended);
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		await until(() => canvas.turn.turns.length === 2);
+
+		// one turn reading both of them, in the order they were said in — not two turns
+		expect(canvas.turn.turns[1]?.map((one) => one.prompt)).toEqual([
+			"hold off on add-habit",
+			"swedish weekday chips",
+		]);
+		// the box is its own again, and both messages are the log's own rows
+		expect(queuedRows(canvas.host)).toEqual([]);
+		await until(() => canvas.host.querySelector("[data-agent-log]")?.textContent?.includes("weekday") === true);
+		expect(canvas.host.querySelector("[data-agent-log]")?.textContent).toContain("hold off on add-habit");
+	});
+
+	it("carries the selection each message was said against, not the one at firing time", async () => {
+		const canvas = mount();
+		canvas.pointed.served = [frameEntry("cart")];
+		await running(canvas);
+		await until(() => chips(canvas.host).includes("cart"));
+		await send(canvas.host, "make this consistent");
+
+		// the hands move on, which is the whole reason this is captured at Enter: nine
+		// minutes can pass between the press and the fire
+		canvas.pointed.served = [frameEntry("menu")];
+		await clickHome(canvas.host);
+		await until(() => chips(canvas.host).includes("menu"));
+		await send(canvas.host, "and this one");
+
+		canvas.turn.push(ended);
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		await until(() => canvas.turn.turns.length === 2);
+
+		expect(canvas.turn.turns[1]?.map((one) => one.selection?.map((entry) => entry.frame))).toEqual([
+			["cart"],
+			["menu"],
+		]);
+	});
+
+	it("hands a message back into the box when it is taken back by hand", async () => {
+		const canvas = mount();
+		await running(canvas);
+		await send(canvas.host, "hold off on add-habit");
+		// a half-written sentence, because the merge is only a question when there is a
+		// caret sitting in one
+		await act(async () => {
+			const box = field(canvas.host);
+			if (box !== null) type(box, "make the header sticky and give the");
+		});
+
+		const back = canvas.host.querySelector<HTMLButtonElement>('[data-agent-queued] button[aria-label^="take back"]');
+		await act(async () => back?.click());
+
+		// above the draft, with a blank line: the queue's order is the order these were
+		// going to be said in, and the caret is mid-word
+		expect(field(canvas.host)?.value).toBe("hold off on add-habit\n\nmake the header sticky and give the");
+		expect(queuedRows(canvas.host)).toEqual([]);
+	});
+
+	it("caps its own height and scrolls inside itself rather than taking the log's room", async () => {
+		const canvas = mount();
+		await running(canvas);
+		for (const words of ["one", "two", "three", "four", "five", "six"]) await send(canvas.host, words);
+
+		expect(queuedRows(canvas.host)).toHaveLength(6);
+		// the composer grows upward, so a queue with no ceiling is a transcript pushed off
+		// the top of the rail: the cost of holding words on screen lands here instead
+		const box = canvas.host.querySelector<HTMLElement>("[data-agent-queue]");
+		expect(box?.style.maxHeight).toBe("164px");
+		expect(box?.className).toContain("overflow-y-auto");
+	});
+
+	it("hands the reference back with the words rather than dropping it", async () => {
+		const canvas = mount();
+		await running(canvas);
+		await paste(canvas.host, shot());
+		await send(canvas.host, "match this");
+		// the picture left the box with the message, so while it waits there is one queued
+		// row and nothing attached
+		expect(queuedRows(canvas.host)).toEqual(["match this"]);
+		expect(canvas.host.querySelector("[data-agent-attached]")).toBeNull();
+
+		const back = canvas.host.querySelector<HTMLButtonElement>('[data-agent-queued] button[aria-label^="take back"]');
+		await act(async () => back?.click());
+
+		// and it comes home with them: a reference that vanished on the way back would be
+		// a picture the hand cannot see and cannot get again, since a browser never gave
+		// spool its path
+		expect(field(canvas.host)?.value).toBe("match this");
+		await until(() => canvas.host.querySelector("[data-agent-attached] img") !== null);
+	});
+
+	it("is cancelled by a stop, which hands every word back the same way", async () => {
+		const canvas = mount();
+		await running(canvas);
+		await send(canvas.host, "hold off on add-habit");
+		await send(canvas.host, "swedish weekday chips");
+		await act(async () => {
+			const box = field(canvas.host);
+			if (box !== null) type(box, "make the header sticky and give the");
+		});
+
+		await act(async () => stopPress(canvas.host)?.click());
+
+		expect(canvas.turn.stops).toHaveLength(1);
+		// one act with one outcome: the same landing a take-back produces, for both
+		expect(field(canvas.host)?.value).toBe(
+			"hold off on add-habit\n\nswedish weekday chips\n\nmake the header sticky and give the",
+		);
+		expect(queuedRows(canvas.host)).toEqual([]);
+
+		// and nothing fires when the stopped turn ends, because the queue is already gone
+		canvas.turn.push({
+			kind: "ended",
+			ending: "stopped",
+			reason: "aborted_streaming",
+			stopReason: null,
+			parent: null,
+		});
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		await settle();
+		expect(canvas.turn.turns).toHaveLength(1);
 	});
 });

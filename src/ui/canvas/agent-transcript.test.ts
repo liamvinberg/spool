@@ -47,7 +47,7 @@ const lines = (entries: readonly AgentEntry[]) =>
 	);
 
 /** the rows of one capture, projected whole */
-const rowsOf = (capture: string) => rows(transcriptOf("make these consistent", replay(capture)).entries);
+const rowsOf = (capture: string) => rows(transcriptOf([{ text: "make these consistent" }], replay(capture)).entries);
 
 /** a whole call, as the wire hands one over once its arguments have finished arriving */
 const called = (id: string, tool: string, input: unknown, parent: string | null = null): AgentEvent => ({
@@ -97,7 +97,7 @@ function replay(capture: string): Stamped[] {
 
 describe("the human's words", () => {
 	it("are in the log before a single event has landed", () => {
-		expect(transcriptOf("tidy the receipt", [])).toMatchObject({
+		expect(transcriptOf([{ text: "tidy the receipt" }], [])).toMatchObject({
 			entries: [{ kind: "user", text: "tidy the receipt" }],
 			over: false,
 		});
@@ -111,7 +111,7 @@ describe("the wait before the first token", () => {
 	 * screen: one turning mark and a duration off the same clock the prose is paced by.
 	 */
 	it("puts a live beat in the log the moment the request goes up", () => {
-		const { entries } = transcriptOf("go", stamp([[0, waiting]]));
+		const { entries } = transcriptOf([{ text: "go" }], stamp([[0, waiting]]));
 
 		expect(kinds(entries)).toEqual(["user", "beat"]);
 		expect(beat(entries)).toMatchObject({ state: "running", verb: null, since: 0, until: null });
@@ -119,25 +119,27 @@ describe("the wait before the first token", () => {
 
 	/** a request going up is a fact; that the model is *thinking* is not, until it says so */
 	it("says nothing about what the model is doing until the wire names it", () => {
-		expect(beat(transcriptOf("go", stamp([waiting]))?.entries)?.verb).toBeNull();
+		expect(beat(transcriptOf([{ text: "go" }], stamp([waiting]))?.entries)?.verb).toBeNull();
 		expect(
 			beat(
-				transcriptOf("go", stamp([waiting, speaking, { kind: "thinking", block: 0, tokens: 12, parent: null }]))
-					.entries,
+				transcriptOf(
+					[{ text: "go" }],
+					stamp([waiting, speaking, { kind: "thinking", block: 0, tokens: 12, parent: null }]),
+				).entries,
 			)?.verb,
 		).toBe("thinking");
 	});
 
 	/** it was the absence of an answer rather than a thing that happened */
 	it("leaves no receipt once the first token lands", () => {
-		const { entries } = transcriptOf("go", stamp([waiting, speaking, say("done.")]));
+		const { entries } = transcriptOf([{ text: "go" }], stamp([waiting, speaking, say("done.")]));
 
 		expect(kinds(entries)).toEqual(["user", "prose"]);
 	});
 
 	/** every model request raises one, so the gaps inside a turn read the same way */
 	it("opens a fresh beat for the next request in the same turn", () => {
-		const { entries } = transcriptOf("go", stamp([waiting, speaking, say("one"), waiting]));
+		const { entries } = transcriptOf([{ text: "go" }], stamp([waiting, speaking, say("one"), waiting]));
 
 		expect(kinds(entries)).toEqual(["user", "prose", "beat"]);
 	});
@@ -150,7 +152,7 @@ describe("the wait before the first token", () => {
 	 */
 	it("closes the wait on whatever the answer starts with, not on one runtime's signal", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([waiting, say("one"), waiting, say("two"), done, { kind: "closed", code: 0, parent: null }]),
 		);
 
@@ -163,7 +165,7 @@ describe("the thinking beat", () => {
 	/** the wire sends an empty string for a thought's text, so a duration is all of it */
 	it("carries a duration and never prose", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				[0, waiting],
 				[900, speaking],
@@ -187,7 +189,7 @@ describe("the thinking beat", () => {
 
 	it("gives each thinking block its own beat", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				waiting,
 				speaking,
@@ -203,7 +205,7 @@ describe("the thinking beat", () => {
 	/** the model stopped composing the moment it called something */
 	it("settles when the turn starts working rather than talking", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				waiting,
 				speaking,
@@ -219,7 +221,7 @@ describe("the thinking beat", () => {
 describe("the agent's words", () => {
 	it("arrive as they are written rather than appearing whole", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				[0, waiting],
 				[900, speaking],
@@ -239,7 +241,7 @@ describe("the agent's words", () => {
 	});
 
 	it("keeps two blocks of one message apart", () => {
-		const { entries } = transcriptOf("go", stamp([waiting, speaking, say("one", 0), say("two", 2)]));
+		const { entries } = transcriptOf([{ text: "go" }], stamp([waiting, speaking, say("one", 0), say("two", 2)]));
 
 		expect(prose(entries).map((entry) => (entry.kind === "prose" ? entry.full : ""))).toEqual(["one", "two"]);
 	});
@@ -247,7 +249,7 @@ describe("the agent's words", () => {
 	/** the deltas are a preview; the settled assistant message is the authority */
 	it("lets the settled message confirm the block its own deltas opened", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				waiting,
 				speaking,
@@ -263,7 +265,7 @@ describe("the agent's words", () => {
 	/** a runtime that sends no partial messages opens no block, so the text arrives here first */
 	it("draws a message that never streamed", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([waiting, speaking, { kind: "said", text: "done.", parent: null }, done]),
 		);
 
@@ -277,7 +279,7 @@ describe("the agent's words", () => {
 	 */
 	it("puts text the settled message added onto the schedule so the edge can reach it", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				[0, waiting],
 				[900, speaking],
@@ -294,7 +296,7 @@ describe("the agent's words", () => {
 	});
 
 	it("draws nothing for a text block that never carried a character", () => {
-		const { entries } = transcriptOf("go", stamp([waiting, speaking, say("", 0), done]));
+		const { entries } = transcriptOf([{ text: "go" }], stamp([waiting, speaking, say("", 0), done]));
 
 		expect(kinds(entries)).toEqual(["user"]);
 	});
@@ -303,7 +305,7 @@ describe("the agent's words", () => {
 describe("a turn that ends", () => {
 	/** the log is receipts, and "it worked" is not one */
 	it("says nothing when it ended cleanly", () => {
-		const { entries, over } = transcriptOf("go", stamp([waiting, speaking, say("done."), done]));
+		const { entries, over } = transcriptOf([{ text: "go" }], stamp([waiting, speaking, say("done."), done]));
 
 		expect(kinds(entries)).toEqual(["user", "prose"]);
 		expect(over).toBe(true);
@@ -311,7 +313,7 @@ describe("a turn that ends", () => {
 
 	it("says one flat word when it was stopped", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				waiting,
 				speaking,
@@ -325,7 +327,7 @@ describe("a turn that ends", () => {
 
 	it("carries an unfinished beat into the ending it got", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				waiting,
 				speaking,
@@ -340,7 +342,7 @@ describe("a turn that ends", () => {
 	/** spool is not the authority on why somebody else's process gave up */
 	it("quotes the wire's own word for a failure", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				waiting,
 				{ kind: "ended", ending: "failed", reason: "error_during_execution", stopReason: null, parent: null },
@@ -352,7 +354,7 @@ describe("a turn that ends", () => {
 
 	it("quotes the runner verbatim when the agent never started", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([{ kind: "closed", code: null, message: "spawn claude ENOENT", parent: null }]),
 		);
 
@@ -361,7 +363,7 @@ describe("a turn that ends", () => {
 
 	it("never swallows a process that went away without finishing", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([waiting, speaking, say("half a"), { kind: "closed", code: 1, parent: null }]),
 		);
 
@@ -370,7 +372,7 @@ describe("a turn that ends", () => {
 
 	it("is silent about the exit that follows a turn that ended", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([waiting, speaking, say("done."), done, { kind: "closed", code: 0, parent: null }]),
 		);
 
@@ -386,7 +388,7 @@ describe("one tool call", () => {
 	 */
 	it("is one row, with the disclosure's payload separate from the line", () => {
 		const { entries } = transcriptOf(
-			"tidy the cart",
+			[{ text: "tidy the cart" }],
 			stamp([
 				ready,
 				waiting,
@@ -431,7 +433,7 @@ describe("one tool call", () => {
 			{ kind: "call-input", block: 1, fragment: 'frames/cart/frame.tsx", "offset": 1', parent: null },
 			result("t1"),
 		]);
-		const at = (upto: number) => rows(transcriptOf("go", opening.slice(0, upto)).entries)[0];
+		const at = (upto: number) => rows(transcriptOf([{ text: "go" }], opening.slice(0, upto)).entries)[0];
 
 		// the tool is named before its argument exists, and a half-arrived path names no
 		// frame, so the subject slot waits rather than printing a word the wire has not
@@ -453,7 +455,7 @@ describe("one tool call", () => {
 			`${ROOT}/pnpm-lock.yaml`,
 		];
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				waiting,
@@ -480,7 +482,7 @@ describe("one tool call", () => {
 	/** the agent's own word for what it is doing, where spool has no better noun */
 	it("reads a spool verb out of the shell rather than saying `run`", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				waiting,
@@ -505,7 +507,7 @@ describe("a run of writes", () => {
 	/** six edits are `edit home ×6`, and the count is the whole receipt */
 	it("is one row per frame, counting the calls it holds", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				waiting,
@@ -542,7 +544,7 @@ describe("a run of writes", () => {
 			result("t2"),
 			done,
 		]);
-		const at = (upto: number) => rows(transcriptOf("go", events.slice(0, upto)).entries)[0];
+		const at = (upto: number) => rows(transcriptOf([{ text: "go" }], events.slice(0, upto)).entries)[0];
 
 		expect(at(5)).toMatchObject({ count: 1, state: "running" });
 		expect(at(6)).toMatchObject({ count: 2, state: "running" });
@@ -554,18 +556,22 @@ describe("a run of writes", () => {
 		const write = (id: string) => called(id, "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` });
 		const shot = called("s1", "Bash", { command: "spool shot home", description: "Shoot" });
 
-		expect(lines(transcriptOf("go", stamp([ready, write("t1"), shot, write("t2")])).entries)).toEqual([
+		expect(lines(transcriptOf([{ text: "go" }], stamp([ready, write("t1"), shot, write("t2")])).entries)).toEqual([
 			"edit home",
 			"shot home",
 			"edit home",
 		]);
 		// the agent saying something is the log drawing something
 		expect(
-			lines(transcriptOf("go", stamp([ready, write("t1"), say("now the totals."), write("t2")])).entries),
+			lines(
+				transcriptOf([{ text: "go" }], stamp([ready, write("t1"), say("now the totals."), write("t2")])).entries,
+			),
 		).toEqual(["edit home", "edit home"]);
 		// a thought is too, and it is what settles the mark once the writes are over
 		const thought: AgentEvent = { kind: "thinking", block: 0, tokens: 40, parent: null };
-		expect(rows(transcriptOf("go", stamp([ready, write("t1"), result("t1"), thought])).entries)[0]).toMatchObject({
+		expect(
+			rows(transcriptOf([{ text: "go" }], stamp([ready, write("t1"), result("t1"), thought])).entries)[0],
+		).toMatchObject({
 			state: "done",
 		});
 	});
@@ -579,7 +585,7 @@ describe("a run of writes", () => {
 	it("is not ended by a beat the log takes back", () => {
 		const write = (id: string) => called(id, "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` });
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([ready, write("t1"), result("t1"), waiting, speaking, write("t2"), result("t2"), done]),
 		);
 
@@ -590,7 +596,7 @@ describe("a run of writes", () => {
 	/** a call that draws nothing cannot break a run: the plan is not a row (#117) */
 	it("is not broken by the plan's own bookkeeping", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				called("t1", "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` }),
@@ -605,7 +611,7 @@ describe("a run of writes", () => {
 	/** never two files, which is the clause that has never had to fire in a capture */
 	it("never spans two frames", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				called("t1", "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` }),
@@ -639,7 +645,10 @@ describe("a call that went outside", () => {
 	 * that says the agent left the building.
 	 */
 	it("is `ask <Server>`, with the wire name behind the disclosure", () => {
-		const { entries } = transcriptOf("find the tokens", stamp([ready, waiting, speaking, meta, result("t1")]));
+		const { entries } = transcriptOf(
+			[{ text: "find the tokens" }],
+			stamp([ready, waiting, speaking, meta, result("t1")]),
+		);
 
 		expect(lines(entries)).toEqual(["ask Notion"]);
 		expect(rows(entries)[0]).toMatchObject({
@@ -650,7 +659,7 @@ describe("a call that went outside", () => {
 
 	/** a local-first canvas must not tell a favicon service which connectors you have */
 	it("drops the icon rather than carrying it", () => {
-		const { entries } = transcriptOf("go", stamp([ready, meta]));
+		const { entries } = transcriptOf([{ text: "go" }], stamp([ready, meta]));
 
 		expect(JSON.stringify(rows(entries))).not.toContain("favicon");
 	});
@@ -663,7 +672,7 @@ describe("a call that went outside", () => {
 	 */
 	it("waits for the name rather than drawing its wire name", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				{ kind: "call", id: "t1", block: 1, tool: "mcp__claude_ai_Notion__notion-search", parent: null },
@@ -677,7 +686,7 @@ describe("a call that went outside", () => {
 	/** a runtime that names the tool and not the server degrades rather than guessing */
 	it("puts the tool's own name in the subject when no server is named", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			// the wire's own shape: a field it has nothing for is absent rather than null
 			stamp([ready, { ...meta, foreign: { tool: "Search Files" } }]),
 		);
@@ -691,7 +700,7 @@ describe("a call that went outside", () => {
 	 * down, and never on a line.
 	 */
 	it("says only `ask` rather than falling back to the wire name", () => {
-		const { entries } = transcriptOf("go", stamp([ready, { ...meta, foreign: {} }]));
+		const { entries } = transcriptOf([{ text: "go" }], stamp([ready, { ...meta, foreign: {} }]));
 
 		expect(lines(entries)).toEqual(["ask"]);
 		expect(rows(entries)[0]).toMatchObject({ detail: "mcp__claude_ai_Notion__notion-search" });
@@ -708,7 +717,7 @@ describe("the calls the log is not a receipt for", () => {
 	 */
 	it("draw one line for the plan and none at all for the rest", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				called("p1", "TaskCreate", { subject: "Write the frame", activeForm: "Writing the frame" }),
@@ -800,7 +809,7 @@ describe("a waiting request", () => {
 
 	it("draws an approval under the row it is about, in the agent's own sentence", () => {
 		const { entries, asking: parked } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([ready, called("c1", "Bash", { command: "spool upgrade", description: "Upgrade the CLI" }), asking()]),
 		);
 
@@ -819,7 +828,7 @@ describe("a waiting request", () => {
 	});
 
 	it("offers no always where the request suggested no rule", () => {
-		const { entries } = transcriptOf("go", stamp([ready, asking({ suggestions: [] })]));
+		const { entries } = transcriptOf([{ text: "go" }], stamp([ready, asking({ suggestions: [] })]));
 
 		// absent rather than dead: spool never composes a rule of its own to fill it
 		expect(one(entries)).toMatchObject({ always: false, state: "open" });
@@ -829,7 +838,7 @@ describe("a waiting request", () => {
 		// spool's own noun for a shell call is `run <description>`, so for those the row
 		// is already the sentence and the block is its controls and nothing else
 		const twice = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				called("c1", "Bash", {
@@ -845,7 +854,7 @@ describe("a waiting request", () => {
 		// and a connector's request carries no description at all, where the display name
 		// is the convention #142 rejected for the row: `ask Notion`, never `Notion-Search`
 		const outside = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				{
@@ -874,20 +883,20 @@ describe("a waiting request", () => {
 		// never an allow, because allowing one with its arguments untouched is the empty
 		// answer the agent reads as nobody having answered
 		const unreadable = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([ready, asking({ call: ASK_ID, interaction: true, description: null, input: { questions: "?" } })]),
 		);
 
 		expect(one(unreadable.entries)).toMatchObject({ question: true, questions: [], state: "open" });
 		// and an approval is one however much it carries
-		expect(one(transcriptOf("go", stamp([ready, asking()])).entries)).toMatchObject({ question: false });
+		expect(one(transcriptOf([{ text: "go" }], stamp([ready, asking()])).entries)).toMatchObject({ question: false });
 	});
 
 	it("goes back under its own row when the next call is already streaming", () => {
 		// which is what the capture does: the request for one call lands while the
 		// arguments of the one after it are still arriving
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				called("c1", "Bash", { command: "spool upgrade", description: "Upgrade the CLI" }),
@@ -903,8 +912,8 @@ describe("a waiting request", () => {
 
 	it("types the question in and lands its options whole", () => {
 		const beats = questionCall();
-		const partway = transcriptOf("go", stamp([ready, ...beats.slice(0, 3)]));
-		const whole = transcriptOf("go", stamp([ready, ...beats]));
+		const partway = transcriptOf([{ text: "go" }], stamp([ready, ...beats.slice(0, 3)]));
+		const whole = transcriptOf([{ text: "go" }], stamp([ready, ...beats]));
 
 		// a half-arrived sentence is the same sentence with less of it, so it types in
 		// the way every other call's subject does — and it is not answerable yet
@@ -936,7 +945,7 @@ describe("a waiting request", () => {
 
 	it("parks the turn on the request and releases it on the answer", () => {
 		const parked = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				...questionCall(),
@@ -947,7 +956,7 @@ describe("a waiting request", () => {
 		expect(one(parked.entries)).toMatchObject({ state: "open", always: false });
 
 		const released = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				...questionCall(),
@@ -962,7 +971,8 @@ describe("a waiting request", () => {
 	});
 
 	it("tells the five ways out apart", () => {
-		const endedBy = (event: AgentEvent) => one(transcriptOf("go", stamp([ready, asking(), event])).entries);
+		const endedBy = (event: AgentEvent) =>
+			one(transcriptOf([{ text: "go" }], stamp([ready, asking(), event])).entries);
 
 		expect(endedBy(answered({ answer: "allow" }))).toMatchObject({ state: "allowed" });
 		expect(endedBy(answered({ answer: "always" }))).toMatchObject({ state: "always" });
@@ -976,13 +986,16 @@ describe("a waiting request", () => {
 	});
 
 	it("keeps an answered request answered when its result lands", () => {
-		const { entries } = transcriptOf("go", stamp([ready, asking(), answered({ answer: "allow" }), result("c1")]));
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([ready, asking(), answered({ answer: "allow" }), result("c1")]),
+		);
 
 		expect(one(entries)).toMatchObject({ state: "allowed" });
 	});
 
 	it("drops what nobody answered when the turn ends under it", () => {
-		const { entries, asking: parked } = transcriptOf("go", stamp([ready, asking(), done]));
+		const { entries, asking: parked } = transcriptOf([{ text: "go" }], stamp([ready, asking(), done]));
 
 		// there is no process left for an answer to reach, so the controls go with it
 		expect(one(entries)).toMatchObject({ state: "dropped" });
@@ -990,7 +1003,7 @@ describe("a waiting request", () => {
 	});
 
 	it("reads every ask the capture holds and draws no wire name for any of them", () => {
-		const { entries } = transcriptOf("make these consistent", replay("claude-mcp"));
+		const { entries } = transcriptOf([{ text: "make these consistent" }], replay("claude-mcp"));
 		const drawn = asks(entries);
 
 		expect(drawn).toHaveLength(12);
@@ -1027,7 +1040,7 @@ describe("the plan", () => {
 
 	it("is absent from a turn that never writes one", () => {
 		expect(
-			transcriptOf("go", stamp([ready, called("t1", "Read", { file_path: `${ROOT}/AGENTS.md` })])).plan,
+			transcriptOf([{ text: "go" }], stamp([ready, called("t1", "Read", { file_path: `${ROOT}/AGENTS.md` })])).plan,
 		).toBeNull();
 	});
 
@@ -1037,7 +1050,7 @@ describe("the plan", () => {
 			create("p1", "Author the home frame", "Authoring the home frame"),
 			create("p2", "Shoot it and read the shot back", "Verifying the frame"),
 		];
-		const upTo = (upto: number) => transcriptOf("go", stamp([ready, ...written.slice(0, upto)]));
+		const upTo = (upto: number) => transcriptOf([{ text: "go" }], stamp([ready, ...written.slice(0, upto)]));
 
 		expect(upTo(0).plan).toBeNull();
 		expect(lines(upTo(1).entries)).toEqual(["plan 1 task"]);
@@ -1053,7 +1066,7 @@ describe("the plan", () => {
 	 */
 	it("reads a running task in the agent's own present participle and never in spool's", () => {
 		const { plan } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				create("p1", "Author the home frame", "Authoring the home frame"),
@@ -1076,7 +1089,10 @@ describe("the plan", () => {
 
 	/** written down and not started is the one place a row in this rail is pending */
 	it("leaves a task nobody has started pending", () => {
-		const { plan } = transcriptOf("go", stamp([ready, create("p1", "Wire the flow graph", "Wiring the flow graph")]));
+		const { plan } = transcriptOf(
+			[{ text: "go" }],
+			stamp([ready, create("p1", "Wire the flow graph", "Wiring the flow graph")]),
+		);
 
 		expect(plan?.tasks.map((task) => task.state)).toEqual(["pending"]);
 	});
@@ -1084,7 +1100,7 @@ describe("the plan", () => {
 	/** the list is the object, so a move is the list changing and never a line */
 	it("draws no line when a task moves", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				create("p1", "Author the home frame", "Authoring the home frame"),
@@ -1097,7 +1113,7 @@ describe("the plan", () => {
 
 	/** a window that opens after the list was written has nothing to move */
 	it("moves nothing when the update names a task this stream never saw written", () => {
-		const { entries, plan } = transcriptOf("go", stamp([ready, move("p1", "3", "completed")]));
+		const { entries, plan } = transcriptOf([{ text: "go" }], stamp([ready, move("p1", "3", "completed")]));
 
 		expect(plan).toBeNull();
 		expect(lines(entries)).toEqual([]);
@@ -1111,7 +1127,7 @@ describe("the plan", () => {
 	 */
 	it("keeps a delegate's own list out of the conversation's strip", () => {
 		const { entries, plan } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				called("d1", "Agent", { description: "Design cart--empty" }),
@@ -1138,7 +1154,7 @@ describe("the plan", () => {
 		const readings: string[] = [];
 		const below: number[] = [];
 		for (let upto = 1; upto <= seen.length; upto += 1) {
-			const { entries, plan } = transcriptOf("go", seen.slice(0, upto));
+			const { entries, plan } = transcriptOf([{ text: "go" }], seen.slice(0, upto));
 			if (plan === null) continue;
 			const reading = `${plan.done}/${plan.total} ${plan.running ?? "—"}`;
 			if (readings.at(-1) === reading) continue;
@@ -1162,7 +1178,11 @@ describe("the plan", () => {
 
 	/** the same seven, written into a turn that never got around to starting one */
 	it("says nothing is running when nothing has been started", () => {
-		expect(transcriptOf("go", replay("claude-turn")).plan).toMatchObject({ total: 7, done: 0, running: null });
+		expect(transcriptOf([{ text: "go" }], replay("claude-turn")).plan).toMatchObject({
+			total: 7,
+			done: 0,
+			running: null,
+		});
 	});
 
 	/** two updates and no creates: this window opened after the list was written */
@@ -1171,7 +1191,7 @@ describe("the plan", () => {
 		const moves = seen.filter(({ event }) => event.kind === "called" && event.tool === "TaskUpdate");
 
 		expect(moves).toHaveLength(2);
-		expect(transcriptOf("go", seen).plan).toBeNull();
+		expect(transcriptOf([{ text: "go" }], seen).plan).toBeNull();
 		expect(lines(rowsOf("claude-edits")).some((line) => line.startsWith("plan"))).toBe(false);
 	});
 });
@@ -1186,7 +1206,7 @@ describe("a picture a call handed back", () => {
 	const png = (data: string) => result("t1", { images: [{ media: "image/png", data }] });
 
 	it("rides one field below the line, with the path still behind the disclosure", () => {
-		const { entries } = transcriptOf("go", stamp([ready, look, png("iVBORw0KGgo")]));
+		const { entries } = transcriptOf([{ text: "go" }], stamp([ready, look, png("iVBORw0KGgo")]));
 
 		expect(rows(entries)).toEqual([
 			{
@@ -1209,14 +1229,14 @@ describe("a picture a call handed back", () => {
 	/** 150 KB of base64 on a line would be the end of the line as a receipt */
 	it("keeps the bytes out of every word the line is made of", () => {
 		const data = "iVBORw0KGgo".repeat(14_000);
-		const row = rows(transcriptOf("go", stamp([ready, look, png(data)])).entries)[0];
+		const row = rows(transcriptOf([{ text: "go" }], stamp([ready, look, png(data)])).entries)[0];
 
 		expect(row?.shot?.data).toHaveLength(data.length);
 		for (const word of [row?.verb, row?.subject, row?.detail]) expect(word).not.toContain("iVBORw0KGgo");
 	});
 
 	it("is absent from a call that handed one nothing back", () => {
-		expect(rows(transcriptOf("go", stamp([ready, look, result("t1")])).entries)[0]?.shot).toBeNull();
+		expect(rows(transcriptOf([{ text: "go" }], stamp([ready, look, result("t1")])).entries)[0]?.shot).toBeNull();
 	});
 
 	/**
@@ -1230,7 +1250,7 @@ describe("a picture a call handed back", () => {
 			["claude-plan", 1],
 			["claude-turn", 1],
 		] as const) {
-			const shown = deep(transcriptOf("go", replay(capture)).entries).filter((row) => row.shot !== null);
+			const shown = deep(transcriptOf([{ text: "go" }], replay(capture)).entries).filter((row) => row.shot !== null);
 
 			expect(shown).toHaveLength(count);
 			for (const row of shown) {
@@ -1252,7 +1272,7 @@ describe("a search for a tool that is not spool's", () => {
 	 */
 	it("draws only when it comes back with nothing", () => {
 		const answered = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				search("t1", "notion search page"),
@@ -1260,7 +1280,7 @@ describe("a search for a tool that is not spool's", () => {
 			]),
 		);
 		const empty = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([ready, search("t2", "+figma get code"), result("t2", { text: "No matching deferred tools found" })]),
 		);
 
@@ -1289,7 +1309,10 @@ describe("how a row settles", () => {
 
 	/** the tool ran and its own output is the error, so the mark is two strokes crossing */
 	it("failed when the wire says the call failed", () => {
-		const { entries } = transcriptOf("go", stamp([ready, read, result("t1", { failed: true, text: "not found" })]));
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([ready, read, result("t1", { failed: true, text: "not found" })]),
+		);
 
 		expect(rows(entries)[0]).toMatchObject({ state: "failed", detail: "not found" });
 	});
@@ -1301,7 +1324,7 @@ describe("how a row settles", () => {
 	 */
 	it("stopped when the non-execution kind says the developer stopped it", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				read,
@@ -1321,7 +1344,7 @@ describe("how a row settles", () => {
 	/** a rule refused it, which is a fault the agent ran into rather than a hand */
 	it("failed when a rule refused the call, in the developer's own words", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				read,
@@ -1335,7 +1358,7 @@ describe("how a row settles", () => {
 	/** spool never claims something errored when it simply never ran */
 	it("stops rather than fails when the turn ends with it still in flight", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				read,
@@ -1367,12 +1390,12 @@ describe("how a row settles", () => {
 			{ kind: "task-done", task: "a5e0", status: "completed", summary: null, parent: null },
 		]);
 
-		expect(rows(transcriptOf("go", events.slice(0, 4)).entries)[0]).toMatchObject({
+		expect(rows(transcriptOf([{ text: "go" }], events.slice(0, 4)).entries)[0]).toMatchObject({
 			verb: "delegate",
 			subject: "Design cart--empty",
 			state: "running",
 		});
-		expect(rows(transcriptOf("go", events).entries)[0]).toMatchObject({ state: "done" });
+		expect(rows(transcriptOf([{ text: "go" }], events).entries)[0]).toMatchObject({ state: "done" });
 	});
 });
 
@@ -1386,7 +1409,7 @@ describe("what a delegate does", () => {
 	 */
 	it("is one row that expands into its own transcript", () => {
 		const { entries } = transcriptOf(
-			"three takes on the cart",
+			[{ text: "three takes on the cart" }],
 			stamp([
 				ready,
 				called("d1", "Agent", { description: "Design cart--empty" }),
@@ -1421,7 +1444,7 @@ describe("what a delegate does", () => {
 		const upTo = (count: number) =>
 			rows(
 				transcriptOf(
-					"go",
+					[{ text: "go" }],
 					stamp([
 						ready,
 						called("d1", "Agent", { description: "Design cart--empty" }),
@@ -1449,7 +1472,7 @@ describe("what a delegate does", () => {
 	/** a row spool cannot file under anything stays in the log rather than being dropped */
 	it("keeps a row in the log when the call that delegated it was never seen", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([ready, called("t1", "Write", { file_path: `${ROOT}/design/frames/cart--empty/frame.tsx` }, "d9")]),
 		);
 
@@ -1462,7 +1485,7 @@ describe("what a delegate does", () => {
 		const write = (id: string, frame: string, parent: string) =>
 			called(id, "Edit", { file_path: `${ROOT}/design/frames/${frame}/frame.tsx` }, parent);
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				ready,
 				write("a1", "cart--empty", "d1"),
@@ -1478,7 +1501,7 @@ describe("what a delegate does", () => {
 	/** it belongs to the frame it writes, not to the log the human is reading */
 	it("never reaches the transcript with its words", () => {
 		const { entries } = transcriptOf(
-			"go",
+			[{ text: "go" }],
 			stamp([
 				waiting,
 				speaking,
@@ -1534,7 +1557,9 @@ describe("the two minutes of edits, replayed", () => {
 		const seen = replay("claude-edits");
 		const climbed: number[] = [];
 		for (let upto = 1; upto <= seen.length; upto += 1) {
-			const run = rows(transcriptOf("go", seen.slice(0, upto)).entries).find((row) => row.verb === "edit");
+			const run = rows(transcriptOf([{ text: "go" }], seen.slice(0, upto)).entries).find(
+				(row) => row.verb === "edit",
+			);
 			if (run === undefined || climbed.at(-1) === run.count) continue;
 			climbed.push(run.count);
 			if (run.count === 6) break;
@@ -1660,7 +1685,7 @@ describe("the fan-out, replayed", () => {
 		/** the frames the delegates write, in the order each one first reaches the log */
 		const appeared: string[] = [];
 		for (let upto = 1; upto <= seen.length; upto += 1) {
-			for (const row of deep(transcriptOf("go", seen.slice(0, upto)).entries)) {
+			for (const row of deep(transcriptOf([{ text: "go" }], seen.slice(0, upto)).entries)) {
 				if (row.verb !== "write" || row.frame === null || appeared.includes(row.frame)) continue;
 				appeared.push(row.frame);
 			}
@@ -1720,7 +1745,7 @@ describe("the fan-out, replayed", () => {
 describe("every capture, replayed whole", () => {
 	for (const capture of CAPTURES) {
 		it(`draws ${capture} in spool's own nouns`, () => {
-			const { entries, over } = transcriptOf("make these consistent", replay(capture));
+			const { entries, over } = transcriptOf([{ text: "make these consistent" }], replay(capture));
 			// every delegate's own transcript included, since its rows keep every rule the
 			// parent's do — for a delegate the place is the canvas too (#143, #194)
 			const drawn = deep(entries);
@@ -1749,7 +1774,7 @@ describe("every capture, replayed whole", () => {
 
 		it(`projects ${capture} without loss or crash`, () => {
 			const seen = replay(capture);
-			const { entries } = transcriptOf("make these consistent", seen);
+			const { entries } = transcriptOf([{ text: "make these consistent" }], seen);
 
 			expect(entries[0]).toMatchObject({ kind: "user" });
 			// no beat is left running once the stream is over, and nothing draws an empty

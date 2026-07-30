@@ -6,6 +6,7 @@ import { cn } from "../cn";
 import { AgentIcon, CloseIcon } from "../icons";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
 import { closedText } from "./agent-markers";
+import { type AgentHandback, type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
 import { Caret, Said } from "./agent-said";
 import { Shot } from "./agent-shot";
 import type { TurnPhase } from "./agent-stream";
@@ -135,7 +136,12 @@ export function AgentRail({
 	last,
 	jump,
 	pointing,
+	queued,
+	handback,
 	onSend,
+	onQueue,
+	onUnqueue,
+	onStop,
 	onAnswer,
 }: {
 	entries: readonly AgentEntry[];
@@ -146,11 +152,45 @@ export function AgentRail({
 	last: number;
 	jump: FrameJump;
 	pointing: Pointing;
+	/** what spool is holding until this turn ends, in the order it will fire (#170) */
+	queued: readonly AgentQueued[];
+	/** whatever left the queue un-fired, for the box below to take back (#170) */
+	handback: AgentHandback;
 	onSend: (text: string, sent: AgentSent) => void;
+	/** Enter against a running turn: the words are taken and held rather than sent */
+	onQueue: (text: string, sent: AgentSent) => void;
+	onUnqueue: (id: string) => void;
+	/** the press in the footer and the escape in the field, which are one act (#165) */
+	onStop: () => void;
 	/** what the person said to a waiting request, on its own way back up (#145) */
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
 	const [width, setWidth] = useState(RAIL_WIDTH);
+	/**
+	 * What the composer is holding, lifted out of it because two things write here
+	 * (#170).
+	 *
+	 * A take-back drops one message into the field it is sitting on, and a stop hands
+	 * back everything the queue held — and a stop can arrive from the canvas, where the
+	 * hands are watching a frame repaint and the box is nowhere near the press. So the
+	 * draft is the rail's and the field is controlled.
+	 */
+	const [draft, setDraft] = useState("");
+	/** the reference riding with the words, up here for the same reason (#119, #170) */
+	const [attached, setAttached] = useState<Attachment | null>(null);
+	/** the handovers already merged, since the same words can come back twice */
+	const merged = useRef(0);
+	useEffect(() => {
+		if (handback.count === merged.current) return;
+		merged.current = handback.count;
+		setDraft((box) =>
+			handedBack(
+				handback.messages.map((one) => one.text),
+				box,
+			),
+		);
+		setAttached((held) => handedBackReference(handback.messages, held));
+	}, [handback]);
 	/**
 	 * The question the composer would answer, read off the log rather than handed in.
 	 *
@@ -229,7 +269,15 @@ export function AgentRail({
 						answering={asking?.kind === "ask" ? asking.request : null}
 						strip={stripOf(pointing.entries, composerWidth(width), pointing.inside)}
 						pointing={pointing}
+						draft={draft}
+						onDraft={setDraft}
+						attached={attached}
+						onAttach={setAttached}
+						queued={queued}
 						onSend={onSend}
+						onQueue={onQueue}
+						onUnqueue={onUnqueue}
+						onStop={onStop}
 						onAnswer={onAnswer}
 					/>
 				</div>
@@ -1032,17 +1080,28 @@ function StateMark({ state, className }: { state: RowState; className?: string }
 /* ---------- the composer ----------
  * One bounded box the whole message is typed into, with what rides along stacked
  * above the field it rides with. Enter sends what is in it verbatim, whatever that
- * is; shift-Enter is a newline. A turn already in flight refuses the press rather
- * than taking it, because every send spawns an agent and two of them writing one
- * repo is not a thing to offer — the hint below says so, so a press that does
- * nothing is never a mystery. */
+ * is; shift-Enter is a newline.
+ *
+ * Enter has three meanings and the turn's own state resolves them (#170): answering
+ * answers, busy queues, otherwise sends. Busy used to refuse — two agents writing one
+ * repo is still not a thing to offer — but refusing threw away written words, so the
+ * press is taken and held instead and the queue above the field is where it waits.
+ * The hint below says which of the three is live, so a press is never a mystery. */
 
 function Composer({
 	phase,
 	answering,
 	strip,
 	pointing,
+	draft,
+	onDraft,
+	attached,
+	onAttach,
+	queued,
 	onSend,
+	onQueue,
+	onUnqueue,
+	onStop,
 	onAnswer,
 }: {
 	phase: TurnPhase;
@@ -1057,35 +1116,68 @@ function Composer({
 	answering: string | null;
 	strip: Strip;
 	pointing: Pointing;
+	/** controlled, because a take-back and a stop both write into the field (#170) */
+	draft: string;
+	onDraft: (text: string) => void;
+	/**
+	 * The reference riding with the words, which is bytes and never a path (#119).
+	 *
+	 * Controlled for the field's own reason: a message the queue held carries one, and
+	 * taking it back has to put it where it came from rather than dropping it silently.
+	 */
+	attached: Attachment | null;
+	onAttach: (attached: Attachment | null) => void;
+	queued: readonly AgentQueued[];
 	onSend: (text: string, sent: AgentSent) => void;
+	onQueue: (text: string, sent: AgentSent) => void;
+	onUnqueue: (id: string) => void;
+	onStop: () => void;
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
-	const [held, setHeld] = useState("");
-	/** the reference riding with the words, which is bytes and never a path (#119) */
-	const [attached, setAttached] = useState<Attachment | null>(null);
+	const field = useRef<HTMLTextAreaElement>(null);
 	/*
 	 * A turn parked on a question takes the press as its answer, and everything else in
-	 * flight refuses it.
+	 * flight holds it.
 	 *
 	 * Parked is not finished: a turn held at an approval is still a live process holding
-	 * the repo, so its press is refused the way a streaming one's is. Only a question
+	 * the repo, so its press is queued the way a streaming one's is. Only a question
 	 * turns the field into somewhere to answer, because only a question has somewhere
 	 * for words to go.
 	 */
 	const busy = (phase === "playing" || phase === "asking") && answering === null;
+	/*
+	 * A stop is only ever offered against a turn in flight (#165, #180).
+	 *
+	 * `playing` and not `busy`: a parked turn has already stopped by itself, it is
+	 * spending nothing and moving nowhere, and its way out is the question's own
+	 * dismiss. Drawing the stop there would be drawing a running turn where there is
+	 * none, which is the defect every parked frame in the prototype had.
+	 */
+	const cutting = phase === "playing";
 
 	const resize = (element: HTMLTextAreaElement) => {
 		element.style.height = "auto";
 		element.style.height = `${Math.max(MIN_H, Math.min(element.scrollHeight, MAX_H))}px`;
 	};
 
-	const send = (text: string, field: HTMLTextAreaElement) => {
-		setHeld("");
-		setAttached(null);
-		field.style.height = `${MIN_H}px`;
+	// words handed back arrive from outside the field, so it has to re-fit to them the
+	// way it does to typing (#170)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the text is what decides the height — the box is measured through the ref
+	useEffect(() => {
+		const element = field.current;
+		if (element !== null) resize(element);
+	}, [draft]);
+
+	const take = (text: string) => {
+		onDraft("");
+		onAttach(null);
 		// captured here rather than read later: the chips that were up are the bytes
-		// that went out, and the line under the words has to say so afterwards
-		onSend(text, { context: contextOf(strip), attached });
+		// that went out, and the line under the words has to say so afterwards. For a
+		// message the queue holds that is the whole contract, because it fires against a
+		// canvas the hands have moved on from
+		const sent: AgentSent = { context: contextOf(strip), attached, selection: pointing.entries };
+		if (busy) onQueue(text, sent);
+		else onSend(text, sent);
 	};
 
 	return (
@@ -1105,20 +1197,22 @@ function Composer({
 				if (file === undefined) return;
 				event.preventDefault();
 				event.stopPropagation();
-				void readAttachment(file).then(setAttached);
+				void readAttachment(file).then(onAttach);
 			}}
 		>
 			<div className="flex min-h-0 flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5 transition-colors duration-150 focus-within:border-muted/45">
-				{attached === null ? null : <Attached attached={attached} onDrop={() => setAttached(null)} />}
+				<QueueBox queued={queued} onUnqueue={onUnqueue} />
+				{attached === null ? null : <Attached attached={attached} onDrop={() => onAttach(null)} />}
 				<SelectionStrip strip={strip} pointing={pointing} />
 				<textarea
-					value={held}
+					ref={field}
+					value={draft}
 					rows={3}
 					spellCheck={false}
 					placeholder={answering === null ? "say what to change" : "or say it in your own words"}
 					aria-label={answering === null ? "say what to change" : "or say it in your own words"}
 					onChange={(event) => {
-						setHeld(event.target.value);
+						onDraft(event.target.value);
 						resize(event.target);
 					}}
 					onPaste={(event) => {
@@ -1128,36 +1222,165 @@ function Composer({
 						const file = attachmentIn(event.clipboardData);
 						if (file === undefined) return;
 						event.preventDefault();
-						void readAttachment(file).then(setAttached);
+						void readAttachment(file).then(onAttach);
 					}}
 					onKeyDown={(event) => {
+						/*
+						 * The canvas never sees this press: the hotkey dispatch returns on any
+						 * keydown whose target is a textarea, and the composer is one. Enter sends
+						 * and leaves focus here, so escape has been going nowhere at the exact
+						 * moment a turn is running — which is why a turn in flight can have it
+						 * without taking a rung off the ladder out there (#165).
+						 */
+						if (event.key === "Escape") {
+							if (!cutting) return;
+							event.preventDefault();
+							onStop();
+							return;
+						}
 						if (event.key !== "Enter" || event.shiftKey) return;
 						event.preventDefault();
-						const text = held.trim();
-						if (text === "" || busy) return;
-						// answering answers, and otherwise sends: a turn parked on a question is
-						// not a turn in flight, and the words are the answer rather than the next
-						// thing to say
+						const text = draft.trim();
+						if (text === "") return;
+						// answering answers, busy queues, otherwise sends — the three meanings of
+						// one press, resolved by what the turn is doing (#170)
 						if (answering !== null) {
-							setHeld("");
+							onDraft("");
 							event.currentTarget.style.height = `${MIN_H}px`;
 							onAnswer(answering, { kind: "said", text });
 							return;
 						}
-						send(text, event.currentTarget);
+						event.currentTarget.style.height = `${MIN_H}px`;
+						take(text);
 					}}
 					className="w-full resize-none bg-transparent text-base text-text leading-base outline-none placeholder:text-muted/50"
 					style={{ height: MIN_H }}
 				/>
 			</div>
-			{/* an 18px line, and the one thing on it gives way rather than wrapping: the rail
-			    resizes 200–480 and the hint is the only occupant until #184's model readout
-			    lands beside it */}
-			<div className="flex h-[18px] items-center">
+			{/* an 18px line, and the left of it gives way rather than wrapping: the rail
+			    resizes 200–480, the stop keeps its size because half a stop button is not
+			    readable, and the readout is the one thing here allowed to truncate (#184).
+			    the hint holds the slot #184's model readout takes */}
+			<div className="flex h-[18px] items-center justify-between gap-2.5">
+				{/* the hint is the only thing saying Enter is not being thrown away, so it
+				    changes word while a turn runs rather than going quiet (#170) */}
 				<span className="min-w-0 truncate font-mono text-2xs text-muted/45 leading-3">
-					{busy ? "a turn is running" : "enter to send"}
+					{busy ? "enter to queue" : "enter to send"}
 				</span>
+				{cutting ? <StopButton onStop={onStop} /> : null}
 			</div>
+		</div>
+	);
+}
+
+/**
+ * The way out of a turn that is already running (#165).
+ *
+ * It sits in the footer rather than in the composer box or at the live edge. The box
+ * loses because spool has no send button to morph — Enter sends — so it would be
+ * adding the slot it deliberately lacks and leaving it empty whenever no turn runs.
+ * The live edge loses because it travels, fastest exactly when rows are piling up,
+ * and scrolls away the moment you read back.
+ *
+ * The press is not a convenience beside the key. Escape works while focus is in the
+ * field, and clicking out to the canvas to watch a frame repaint — which is the state
+ * this whole thing is built for — gives the ladder out there its key back. The press
+ * is the exit that works from wherever the eyes are.
+ *
+ * The glyph says which key, quietly, because that is where the key is learned.
+ */
+function StopButton({ onStop }: { onStop: () => void }) {
+	return (
+		<button
+			type="button"
+			onClick={onStop}
+			className="flex h-[18px] w-fit shrink-0 items-center gap-2 rounded-sm border border-border-raised bg-raised px-2 transition-colors duration-150 hover:border-muted/45"
+		>
+			<span className="h-2 w-2 shrink-0 rounded-[1px] bg-text" />
+			<span className="font-mono text-2xs text-text leading-3">stop</span>
+			<span className="font-mono text-2xs text-muted/60 leading-3">⎋</span>
+		</button>
+	);
+}
+
+/* ---------- the queue, inside the composer (#170, #176) ----------
+ * A queued message has not left your hands. The log is where things that have
+ * happened live and the composer is where your words live, so a message committed and
+ * not sent stays in the second one — dimmed, because committed is not sent, and above
+ * the field, because the thing being written now is the one nearest the cursor.
+ *
+ * It makes three things geometry rather than rules. Firing is the send it already is:
+ * the stack leaves this box and lands in the log, the exact journey every message in
+ * the transcript already made. Take-back is a drop rather than a jump: the row is
+ * sitting on the field it returns to, which is the invariant drawn instead of stated.
+ * And the stack is what fires together, because every held message goes out at once
+ * and the binary reads all of them as one turn.
+ *
+ * What it costs is room, and the cost lands on the log: an unbounded queue would push
+ * the transcript off the top, so it caps and scrolls inside itself. */
+
+/** as much of the composer as the queue may take before it scrolls inside itself */
+const QUEUE_H = 164;
+
+function QueueBox({ queued, onUnqueue }: { queued: readonly AgentQueued[]; onUnqueue: (id: string) => void }) {
+	if (queued.length === 0) return null;
+	return (
+		<div className="flex min-h-0 flex-col gap-2.5">
+			<div
+				data-agent-queue=""
+				className="pages-scrollbar flex min-h-0 flex-col gap-3.5 overflow-y-auto"
+				style={{ maxHeight: QUEUE_H }}
+			>
+				{queued.map((message) => (
+					<QueuedRow key={message.id} message={message} onDrop={() => onUnqueue(message.id)} />
+				))}
+			</div>
+			{/* the composer's own internal rule, the one the selection strip already sits
+			    above: a second border would read as a second place to type */}
+			<span className="h-px shrink-0 bg-border-raised" />
+		</div>
+	);
+}
+
+/**
+ * One waiting message, which is the log's own user row and not a new object.
+ *
+ * A queued message is the only thing this rail draws that has not happened yet, so it
+ * cannot wear the transcript's receipt — but it is about to become one, which is why
+ * the anatomy has to match to the pixel: the same 2px rail, the same text size, the
+ * same mono line under it that a context sits on. Every one of those is dimmed and
+ * the line says `queued`. The moment it fires it is not replaced by a row, it is the
+ * row.
+ *
+ * The rail is the one thing that does not dim: it says whose words these are, and
+ * that was settled the moment they were typed. What is provisional is only whether
+ * they have gone out.
+ *
+ * The ✕ stands alone rather than splitting the row's click, because one destination
+ * cannot need two targets — words that leave the queue un-fired land back in the box,
+ * and there is nowhere else for them to go. It is on hover, in the vocabulary a chip's
+ * own removal already uses, because the resting state here is two lines of your own
+ * words waiting their turn.
+ */
+function QueuedRow({ message, onDrop }: { message: AgentQueued; onDrop: () => void }) {
+	return (
+		<div data-agent-queued="" className="group relative flex shrink-0 animate-agent-entry flex-col gap-1 pl-3.5">
+			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
+			<p className="whitespace-pre-wrap text-base text-text/45 leading-base">{message.text}</p>
+			<span className="flex h-3.5 items-center gap-1.5">
+				<span className="font-mono text-2xs text-muted/55 leading-3">queued</span>
+				{/* no plate behind it, unlike the composer chip's own ✕: in a dimmed row a
+				    filled box is the brightest thing on the line, and the row is what is
+				    being read */}
+				<button
+					type="button"
+					onClick={onDrop}
+					aria-label={`take back ${message.text}`}
+					className="flex h-3.5 w-3.5 items-center justify-center text-muted/0 transition-colors duration-150 hover:text-text group-hover:text-muted/50"
+				>
+					<CloseIcon />
+				</button>
+			</span>
 		</div>
 	);
 }

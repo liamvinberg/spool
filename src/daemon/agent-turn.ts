@@ -1,5 +1,13 @@
 import { createClaudeAdapter } from "./agent-claude";
-import { type AgentReply, answerFits, answerPayload, controlResponseLine, DECLINED, wordsOf } from "./agent-control";
+import {
+	type AgentReply,
+	answerFits,
+	answerPayload,
+	controlResponseLine,
+	DECLINED,
+	interruptRequestLine,
+	wordsOf,
+} from "./agent-control";
 import type { AgentAsking, AgentEvent } from "./agent-events";
 import type { AgentExecutor, AgentProcess } from "./agent-exec";
 import { agentPromptLine, planAgentSpawn } from "./agent-spawn";
@@ -40,8 +48,28 @@ export interface AgentTurn {
 	 * line down a stdin the binary is no longer listening on for it.
 	 */
 	answer(request: string, reply: AgentReply): boolean;
-	/** abandon it: the client disconnected, or the daemon is closing */
-	stop(): void;
+	/**
+	 * Stop the turn the hands no longer want, which is spool's Stop (#165).
+	 *
+	 * Not a kill and not `abandon` below. It is a control request going up the same stdin
+	 * the prompt went down, so the binary survives it: it stops what it is doing, hands
+	 * the call it caught a synthetic rejection, and emits a clean result saying it was
+	 * aborted. The turn then ends the way every turn ends, which is why nothing here has
+	 * to teach the stream a second way to finish.
+	 *
+	 * True as long as there is a turn to stop, spawning included: a press that lands
+	 * before the process exists is held and spent when it does. False only once the turn
+	 * is over, which is the same fact the caller reports as nothing to stop.
+	 */
+	interrupt(): boolean;
+	/**
+	 * Give the turn up: the client disconnected, or the daemon is closing.
+	 *
+	 * The blunt one, and not the domain's Stop. Nobody asked for this and nobody is
+	 * reading the answer, so the process is killed rather than asked, and no clean result
+	 * is waited for. `interrupt` above is what a hand pressing stop does.
+	 */
+	abandon(): void;
 }
 
 export function startAgentTurn({ executor, root, content }: AgentTurnOptions): AgentTurn {
@@ -60,6 +88,31 @@ export function startAgentTurn({ executor, root, content }: AgentTurnOptions): A
 	 * suggested for itself.
 	 */
 	const asking = new Map<string, AgentAsking>();
+	/**
+	 * The presses this turn owes the binary, so a stop cannot land in the gap before
+	 * there is a process to ask.
+	 *
+	 * The spawn is awaited, so the turn exists and reports itself as running for as long
+	 * as that takes — and the rail's press is live from the same instant, because the
+	 * composer draws the stop off its own phase rather than off the wire. A press in that
+	 * window used to be turned away as *no turn to stop*, which is the one refusal that
+	 * is not true: the turn is starting. So the press is remembered and spent the moment
+	 * the process is up, which is the same promise `abandon`'s own flag already makes for
+	 * a client that goes away mid-spawn.
+	 *
+	 * It is a count rather than a flag so a second press is a second request rather than
+	 * one the binary has already answered.
+	 */
+	let interrupts = 0;
+	let asked = 0;
+
+	/** every press not yet down the wire, in one place so the spawn and the door agree */
+	function interruptFrom(target: AgentProcess): void {
+		while (asked < interrupts) {
+			asked += 1;
+			target.write(interruptRequestLine(`spool-interrupt-${asked}`));
+		}
+	}
 
 	function push(event: AgentEvent): void {
 		if (finished) return;
@@ -124,6 +177,9 @@ export function startAgentTurn({ executor, root, content }: AgentTurnOptions): A
 			finish();
 		});
 		started.write(agentPromptLine(content));
+		// a press that landed while this was spawning is spent here, in the order the
+		// hands made it and behind the prompt it is stopping
+		interruptFrom(started);
 	})();
 
 	async function* events(): AsyncGenerator<AgentEvent> {
@@ -152,7 +208,20 @@ export function startAgentTurn({ executor, root, content }: AgentTurnOptions): A
 			push({ kind: "answered", request, answer: reply.kind, words: wordsOf(reply), parent: held.parent });
 			return true;
 		},
-		stop: () => {
+		interrupt: () => {
+			// a turn that is over is nothing to stop, and a turn given up is over — `abandon`
+			// finishes it. One still spawning is not, so the press is taken now and spent
+			// when there is somewhere to spend it
+			if (finished) return false;
+			interrupts += 1;
+			if (proc !== undefined) interruptFrom(proc);
+			// nothing is pushed and nothing is cleared: the binary answers the request, ends
+			// the turn on its own terms and exits, and the stream says all three. A request
+			// still parked when the press lands is one the binary's own abort resolves —
+			// spool inventing an answer for it here would be spool answering a question
+			return true;
+		},
+		abandon: () => {
 			stopped = true;
 			asking.clear();
 			proc?.kill();
