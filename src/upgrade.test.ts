@@ -124,6 +124,7 @@ function fakeIo(overrides: Partial<UpgradeIo> & { statuses?: DaemonStatus[] }): 
 			return 0;
 		},
 		readInstalledVersion: () => "0.2.0",
+		fetchLatest: async () => "0.2.0",
 		status: async () => statuses[Math.min(statuses.length - 1, statusCalls++)] as DaemonStatus,
 		stop: async () => {
 			calls.stops++;
@@ -181,19 +182,120 @@ describe("runUpgrade", () => {
 		});
 	});
 
-	it("restarts a running daemon even when it already reports the installed version", async () => {
+	it("installs nothing and leaves the daemon alone when the registry offers no more", async () => {
 		const { io, calls } = fakeIo({ statuses: [{ running: true, url: "http://x", pid: 1, version: "0.2.0" }] });
 
 		const outcome = await runUpgrade(makeTempDir(), "0.2.0", io);
 
-		expect(calls.stops).toBe(1);
-		expect(calls.ensures).toEqual([["/opt/homebrew/bin/node", NEW_CLI, "serve", "--foreground"]]);
-		expect(outcome).toEqual({
-			kind: "done",
-			from: "0.2.0",
-			to: "0.2.0",
-			daemon: { running: true, url: "http://127.0.0.1:7766", restarted: true },
+		expect(outcome).toEqual({ kind: "current", latest: "0.2.0", cli: "0.2.0", daemon: "0.2.0" });
+		expect(calls.installs).toEqual([]);
+		expect(calls.stops).toBe(0);
+		expect(calls.ensures).toEqual([]);
+	});
+
+	it("refuses to reinstall under a daemon that is already ahead of the registry", async () => {
+		// the publish lag that downgraded a live machine: cli and registry agree
+		// on 0.3.0 while the daemon is already serving 0.4.0
+		const { io, calls } = fakeIo({
+			statuses: [{ running: true, url: "http://x", pid: 1, version: "0.4.0" }],
+			fetchLatest: async () => "0.3.0",
 		});
+
+		const outcome = await runUpgrade(makeTempDir(), "0.3.0", io);
+
+		expect(outcome).toEqual({ kind: "current", latest: "0.3.0", cli: "0.3.0", daemon: "0.4.0" });
+		expect(calls.installs).toEqual([]);
+		expect(calls.stops).toBe(0);
+	});
+
+	it("refuses when only the cli would move and the daemon would go backwards", async () => {
+		const { io, calls } = fakeIo({
+			statuses: [{ running: true, url: "http://x", pid: 1, version: "0.4.0" }],
+			fetchLatest: async () => "0.3.0",
+		});
+
+		const outcome = await runUpgrade(makeTempDir(), "0.2.0", io);
+
+		expect(outcome.kind).toBe("current");
+		expect(calls.installs).toEqual([]);
+		expect(calls.stops).toBe(0);
+	});
+
+	it("upgrades anyway when the registry cannot be reached", async () => {
+		const { io, calls } = fakeIo({
+			statuses: [{ running: true, url: "http://x", pid: 1, version: "0.1.0" }],
+			fetchLatest: async () => undefined,
+		});
+
+		const outcome = await runUpgrade(makeTempDir(), "0.1.0", io);
+
+		expect(outcome.kind).toBe("done");
+		expect(calls.installs.length).toBe(1);
+		expect(calls.stops).toBe(1);
+	});
+
+	it("asks before the restart, naming the version and the daemon it takes down", async () => {
+		const asked: string[] = [];
+		const { io, calls } = fakeIo({
+			statuses: [{ running: true, url: "http://x", pid: 1, version: "0.1.0" }],
+			confirm: async (question) => {
+				asked.push(question);
+				return true;
+			},
+		});
+
+		const outcome = await runUpgrade(makeTempDir(), "0.1.0", io);
+
+		expect(asked).toEqual([
+			"upgrade to v0.2.0 — this stops the daemon (v0.1.0) and everything running under it. continue?",
+		]);
+		expect(outcome.kind).toBe("done");
+		expect(calls.stops).toBe(1);
+	});
+
+	it("installs nothing when the human declines", async () => {
+		const { io, calls } = fakeIo({
+			statuses: [{ running: true, url: "http://x", pid: 1, version: "0.1.0" }],
+			confirm: async () => false,
+		});
+
+		const outcome = await runUpgrade(makeTempDir(), "0.1.0", io);
+
+		expect(outcome).toEqual({ kind: "declined" });
+		expect(calls.installs).toEqual([]);
+		expect(calls.stops).toBe(0);
+	});
+
+	it("does not ask when nothing is running and no plist would be re-baked", async () => {
+		let asked = 0;
+		const { io } = fakeIo({
+			statuses: [{ running: false }],
+			confirm: async () => {
+				asked++;
+				return true;
+			},
+		});
+
+		const outcome = await runUpgrade(makeTempDir(), "0.1.0", io);
+
+		expect(asked).toBe(0);
+		expect(outcome.kind).toBe("done");
+	});
+
+	it("asks before re-baking a launch agent even with no daemon answering", async () => {
+		const asked: string[] = [];
+		const { io } = fakeIo({
+			statuses: [{ running: false }, { running: true, url: "http://y", pid: 2, version: "0.2.0" }],
+			plistExists: () => true,
+			confirm: async (question) => {
+				asked.push(question);
+				return true;
+			},
+		});
+
+		await runUpgrade(makeTempDir(), "0.1.0", io);
+
+		expect(asked).toEqual(["upgrade to v0.2.0 — this re-bakes the launch agent. continue?"]);
 	});
 
 	it("with autostart on: stops, re-bakes the plist onto the new cli, waits for the new version", async () => {

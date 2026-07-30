@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
@@ -100,6 +101,16 @@ program
 // --- agent verbs (#25): read-only, cwd-resolved, daemon auto-started ---------
 
 const narrate = (line: string) => process.stderr.write(`spool: ${line}\n`);
+
+/** Anything but an explicit yes is a no — the destructive half needs the word. */
+const confirmOnTty = async (question: string): Promise<boolean> => {
+	const rl = createInterface({ input: process.stdin, output: process.stderr });
+	try {
+		return /^y(es)?$/i.test((await rl.question(`spool: ${question} [y/N] `)).trim());
+	} finally {
+		rl.close();
+	}
+};
 
 interface VerifyOptions {
 	viewport?: { width: number; height: number };
@@ -351,9 +362,25 @@ program
 program
 	.command("upgrade")
 	.description("install the latest release and restart the daemon on it")
-	.action(async () => {
-		const outcome = await runUpgrade(spoolDir, pkg.version, { narrate });
+	.option("--yes", "skip the confirmation before the daemon is restarted")
+	.action(async (options: { yes?: boolean }) => {
+		// A prompt nobody can answer is a hang: ask only a real terminal. An
+		// agent's shell and the toast door's detached spawn both fall through.
+		const asks = options.yes !== true && process.stdin.isTTY === true;
+		const outcome = await runUpgrade(spoolDir, pkg.version, { narrate, ...(asks ? { confirm: confirmOnTty } : {}) });
 		if (outcome.kind === "refused" || outcome.kind === "failed") throw new SpoolError(outcome.message);
+		if (outcome.kind === "declined") {
+			process.stdout.write("left alone — nothing was installed and the daemon was not touched\n");
+			return;
+		}
+		if (outcome.kind === "current") {
+			process.stdout.write(
+				outcome.daemon !== undefined && isNewer(outcome.daemon, outcome.latest)
+					? `npm's latest is v${outcome.latest} but the daemon already runs v${outcome.daemon} — not downgrading it\n`
+					: `already the latest (v${outcome.latest})\n`,
+			);
+			return;
+		}
 		process.stdout.write(
 			outcome.to === outcome.from
 				? `already the latest (v${outcome.to})\n`

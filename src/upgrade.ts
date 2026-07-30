@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { installAutostart, launchAgentPath } from "./autostart";
 import { type DaemonStatus, ensureDaemon, poll, selfCliPath, statusDaemon, stopDaemon } from "./daemon/lifecycle";
+import { fetchLatestVersion, isNewer } from "./daemon/update-check";
 import { SpoolError } from "./errors";
 
 /**
@@ -12,6 +13,11 @@ import { SpoolError } from "./errors";
  * mid-dance, and ensureDaemon refuses to spawn beside a healthy elder). The
  * terminal runs runUpgrade in-process; the canvas toast's POST /api/upgrade
  * spawns the same command detached via requestUpgrade and stands back.
+ *
+ * Nothing is installed or stopped until the registry says there is something
+ * to install (#137). A restart is not free — it drops every canvas and kills
+ * every process under the daemon — so it is spent only on a real upgrade,
+ * and the terminal is asked first.
  *
  * The dance is goal-state and launchd-aware: install with the manager that
  * owns the running install (read off the CLI's real path — the wrong one
@@ -127,6 +133,10 @@ export interface UpgradeIo {
 	/** the manager run, stdio inherited — the human sees npm talk; null = spawn failed */
 	runInstall?: (bin: string, args: string[]) => number | null;
 	readInstalledVersion?: (packageDir: string) => string | undefined;
+	/** what the registry is offering; undefined = offline, and offline never blocks */
+	fetchLatest?: () => Promise<string | undefined>;
+	/** asked only when a daemon or a launch agent is about to be taken down; undefined = never ask */
+	confirm?: (question: string) => Promise<boolean>;
 	status?: () => Promise<DaemonStatus>;
 	stop?: () => Promise<unknown>;
 	ensure?: (command: string[]) => Promise<{ url: string }>;
@@ -138,6 +148,10 @@ export interface UpgradeIo {
 export type UpgradeOutcome =
 	| { kind: "refused"; message: string }
 	| { kind: "failed"; message: string }
+	/** the registry offers nothing worth taking; nothing was installed or stopped */
+	| { kind: "current"; latest: string; cli: string; daemon: string | undefined }
+	/** the human said no at the confirmation; nothing was installed or stopped */
+	| { kind: "declined" }
 	| {
 			kind: "done";
 			from: string;
@@ -183,6 +197,32 @@ export async function runUpgrade(
 	const status = io.status ?? (() => statusDaemon(spoolDir));
 	const stop = io.stop ?? (() => stopDaemon(spoolDir));
 	const before = await status();
+	const daemonVersion = before.running ? before.version : undefined;
+	const hasPlist = (io.plistExists ?? existsSync)(launchAgentPath(home));
+
+	// Ask the registry before touching anything. The target has to beat both
+	// halves of the install: beating only the CLI lets a publish lag reinstall
+	// an older release over a daemon that is already ahead of it, and the
+	// restart then carries every canvas down onto the older build. Offline
+	// answers undefined, and an upgrade a human asked for outright is not
+	// refused by a registry that will not talk.
+	const latest = await (io.fetchLatest ?? fetchLatestVersion)();
+	if (latest !== undefined) {
+		const beatsCli = isNewer(latest, currentVersion);
+		const beatsDaemon = daemonVersion === undefined || isNewer(latest, daemonVersion);
+		if (!beatsCli || !beatsDaemon) return { kind: "current", latest, cli: currentVersion, daemon: daemonVersion };
+	}
+
+	// A restart takes every process under the daemon with it, so the terminal
+	// says so before it happens. The toast door spawns detached with no tty
+	// and passes no confirm: the canvas asks in its own way before it POSTs.
+	if (io.confirm !== undefined && (before.running || hasPlist)) {
+		const target = latest === undefined ? "the latest release" : `v${latest}`;
+		const cost = before.running
+			? `stops the daemon (v${before.version}) and everything running under it`
+			: "re-bakes the launch agent";
+		if (!(await io.confirm(`upgrade to ${target} — this ${cost}. continue?`))) return { kind: "declined" };
+	}
 
 	narrate(`${plan.manager} owns this install — running: ${[plan.bin, ...plan.args].join(" ")}`);
 	const exit = (io.runInstall ?? runInstallDefault)(plan.bin, plan.args);
@@ -199,7 +239,6 @@ export async function runUpgrade(
 	}
 	const newCli = join(plan.packageDir, "dist", "cli.js");
 
-	const hasPlist = (io.plistExists ?? existsSync)(launchAgentPath(home));
 	if (hasPlist) {
 		// autostart promises a running daemon: re-bake keeps it supervised and
 		// heals the baked realpaths, RunAtLoad starts the successor
