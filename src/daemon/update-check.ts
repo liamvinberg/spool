@@ -8,7 +8,9 @@ import { writeAtomic } from "../atomic-write";
  * whether a newer spool.page exists. The answer is cached in
  * ~/.spool/update.json so a restart inside the same day never re-asks, and
  * every failure is silent: the check can only ever add a toast, never
- * subtract from a working spool. `spool upgrade` depends on none of this.
+ * subtract from a working spool. `spool upgrade` shares the two primitives
+ * below — it asks the registry live rather than off this cache, because a
+ * cache minutes stale is what talks it into installing an older release.
  */
 
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
