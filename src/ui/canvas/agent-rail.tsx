@@ -455,6 +455,24 @@ const MARK_TAB = 36;
 /** the open tab's floor, from #136's own measurement: below this a name is not a name */
 const OPEN_TAB = 112;
 
+/**
+ * The open tab's ceiling, which is what stops it from being the whole row.
+ *
+ * Growing to fill was the first drawing and it is wrong twice. An ask is a sentence, and
+ * no tab width makes a sentence readable — past about twenty-five characters the extra
+ * pixels buy more of a fragment nobody finishes reading, while spending the room the
+ * other threads are collapsed into. And the accent bar sits under the open tab, so a tab
+ * that fills draws a rule across the whole rail: a progress bar, which is the reading
+ * #136 already refused when it kept the bar off a strip holding one thread.
+ *
+ * So the tab is the width its name wants, between the floor and here, and what is left
+ * over goes to the marks rather than to a truncation. At the 420 default the row has 360
+ * to spend, so a named tab and three marks sit in it at once; at the 200 floor it has 140
+ * and the tab alone is over it, which is the case the row already scrolls for under its
+ * fade. No threshold and no ladder: one cap that cuts a long ask at every width.
+ */
+const OPEN_MAX = 220;
+
 function ThreadStrip({ threads }: { threads: Threads }) {
 	const { list, open, onOpen, onClose, onNew } = threads;
 	/**
@@ -511,7 +529,7 @@ function ThreadStrip({ threads }: { threads: Threads }) {
 								data-agent-thread={thread.ask}
 								data-agent-thread-life={thread.life}
 								className="group relative flex shrink-0 items-center gap-1"
-								style={on ? { minWidth: OPEN_TAB, flex: "1 1 0%" } : { width: MARK_TAB }}
+								style={on ? { minWidth: OPEN_TAB, maxWidth: OPEN_MAX } : { width: MARK_TAB }}
 							>
 								<button
 									ref={on ? here : undefined}
