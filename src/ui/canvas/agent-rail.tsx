@@ -1691,6 +1691,68 @@ function StateMark({ state, className }: { state: RowState; className?: string }
  * The hint below says which of the three is live, so a press is never a mystery. */
 
 /**
+ * The stroke on the composer's top border, which is the whole of what says the agent is
+ * alive.
+ *
+ * A thread is laid out of the left edge, carries at its full length, and is taken up into
+ * the right edge as the head waits there for the tail. Spool means winding thread and this
+ * product calls its conversations threads, so a stroke on the boundary is closer to what
+ * the thing is than a spinner would be — and it says it without spending the logo or a
+ * single pixel of the transcript, because it rides the hairline that was already there.
+ *
+ * **No word, and that is the point.** The stroke is the entire indicator. It tells two
+ * states apart: idle draws the border unchanged, and a request out, thinking, saying and
+ * doing all draw the same laying-and-taking-up. A reader watching the edge of their own eye
+ * learns nothing from the difference between a request being out and a `read` being open,
+ * because the answer to *do I need to do anything* is no in both.
+ *
+ * **The one state that is a call to act gets a shape instead.** Parked on a request, the
+ * stroke stops where it was and an 18px break opens in the line. Stopping is
+ * `animation-play-state: paused`, which is literally "where it was" and needs no clock of
+ * spool's; a break is static, which is correct for a thing that has stopped, and nothing
+ * else in this rail is a discontinuous line.
+ *
+ * The animation is `ui.css`'s, keyframes on one element's `translateX` and `scaleX`. Its
+ * cost is stated rather than hidden: 420px of peripheral travel every 1.6s at 0.26px/ms,
+ * the largest moving thing in the rail. What it buys is that the transcript gives up
+ * nothing at all.
+ */
+function WindStroke({ phase }: { phase: TurnPhase }) {
+	// every state of a turn in flight draws the same thing, and a parked one draws it
+	// stopped: the animation is the same instance either way, so pausing freezes the two
+	// ends exactly where the request caught them
+	const laying = phase === "playing" || phase === "asking";
+	const parked = phase === "asking";
+	return (
+		<>
+			<span
+				aria-hidden="true"
+				data-agent-wind={parked ? "parked" : laying ? "laying" : "idle"}
+				className={cn(
+					// scaled to nothing at rest, so idle is the border and nothing else: the
+					// keyframes take the transform over for as long as they are running.
+					// `transform` rather than Tailwind's `scale-x-0`, which compiles to the
+					// `scale` property and would multiply the animation's own scale by zero
+					"pointer-events-none absolute -top-px left-0 block h-px w-full origin-left bg-text/75 [transform:scaleX(0)]",
+					laying && "animate-agent-wind",
+					parked && "[animation-play-state:paused]",
+				)}
+			/>
+			{/* the break, held rather than mounted so it can open over 200ms rather than
+			    appear: it is a piece of the page laid over the hairline */}
+			<span
+				aria-hidden="true"
+				data-agent-wind-break=""
+				className={cn(
+					"pointer-events-none absolute -top-px left-1/2 block h-px w-[18px] -translate-x-1/2 bg-bg transition-opacity duration-200 motion-reduce:transition-none",
+					parked ? "opacity-100" : "opacity-0",
+				)}
+			/>
+		</>
+	);
+}
+
+/**
  * What the field says it is for, which is what the next press will do (#145, #200).
  *
  * Three, because Enter has three meanings here and the field is what each of them is
@@ -1811,7 +1873,7 @@ function Composer({
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: a drop target is not a control, and its keyboard path is the paste the field already takes
 		<div
-			className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5"
+			className="relative flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5"
 			onDragOver={(event) => {
 				// `items` rather than `files`: while a drag is in flight the data store is in
 				// protected mode and `files` is empty, so a guard that read it would never
@@ -1828,6 +1890,7 @@ function Composer({
 				void readAttachment(file).then(onAttach);
 			}}
 		>
+			<WindStroke phase={phase} />
 			<div className="flex min-h-0 flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5 transition-colors duration-150 focus-within:border-muted/45">
 				<QueueBox queued={queued} onUnqueue={onUnqueue} />
 				{attached === null ? null : <Attached attached={attached} onDrop={() => onAttach(null)} />}
