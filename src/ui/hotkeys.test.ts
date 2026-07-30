@@ -6,6 +6,11 @@ function press(overrides: Partial<ComboEvent>): ComboEvent {
 	return { key: "", code: "", metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...overrides };
 }
 
+// Named, never ambient: node reads the host platform through `navigator`, so a
+// test that leaves it unsaid asserts the Mac on a Mac and Linux on the runner.
+const APPLE = "MacIntel";
+const OTHER = "Linux x86_64";
+
 describe("combo parsing", () => {
 	it("reads modifiers and the key", () => {
 		expect(parseCombo("accel+shift+z")).toEqual({ accel: true, ctrl: false, shift: true, alt: false, key: "z" });
@@ -75,18 +80,24 @@ describe("combo matching", () => {
 	});
 
 	it("a bare accel combo is the platform modifier key itself", () => {
-		// no navigator in this environment, so the platform reads as Apple
-		expect(matchesCombo(press({ key: "Meta" }), parseCombo("accel"))).toBe(true);
-		expect(matchesCombo(press({ key: "Control" }), parseCombo("accel"))).toBe(false);
+		const combo = parseCombo("accel");
+		expect(matchesCombo(press({ key: "Meta" }), combo, APPLE)).toBe(true);
+		expect(matchesCombo(press({ key: "Control" }), combo, APPLE)).toBe(false);
+		expect(matchesCombo(press({ key: "Control" }), combo, OTHER)).toBe(true);
+		expect(matchesCombo(press({ key: "Meta" }), combo, OTHER)).toBe(false);
 	});
 });
 
 describe("combo faces", () => {
-	// no navigator here: Apple faces, the same honest default platform-keys takes
-	it("wears the platform accel face and the app's glyphs", () => {
-		expect(formatCombo("accel+z")).toBe("⌘Z");
+	it("wears the accel and ctrl faces each platform writes", () => {
+		expect(formatCombo("accel+z", APPLE)).toBe("⌘Z");
+		expect(formatCombo("accel+z", OTHER)).toBe("ctrl+Z");
+		expect(formatCombo("ctrl+o", APPLE)).toBe("⌃O");
+		expect(formatCombo("ctrl+o", OTHER)).toBe("ctrl+O");
+	});
+
+	it("keeps the app's glyphs on every platform", () => {
 		expect(formatCombo("shift+a")).toBe("⇧A");
-		expect(formatCombo("ctrl+o")).toBe("⌃O");
 		expect(formatCombo("backspace")).toBe("⌫");
 		expect(formatCombo("enter")).toBe("↵");
 		expect(formatCombo("question")).toBe("?");
