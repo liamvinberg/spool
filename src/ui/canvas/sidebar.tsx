@@ -312,7 +312,7 @@ export function FolderIcon({ className }: { className?: string }) {
 	);
 }
 
-function ChevronIcon({ open, className }: { open: boolean; className?: string }) {
+export function ChevronIcon({ open, className }: { open: boolean; className?: string }) {
 	return (
 		<svg
 			viewBox="0 0 12 12"

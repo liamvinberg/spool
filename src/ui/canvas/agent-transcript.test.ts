@@ -6,12 +6,13 @@ import { drawnBy } from "./agent-pace";
 import { type AgentEntry, duration, fullyShown, type Stamped, shownBy, transcriptOf } from "./agent-transcript";
 
 /**
- * The transcript the rail draws (#192), projected off #191's event union.
+ * The transcript the rail draws (#192, #193), projected off #191's event union.
  *
  * The wire cases are asserted on hand-built event lists, because that is the only
- * way to pin a millisecond. The seven captures are then replayed through the same
- * projection whole, which is what says the rules hold against events nobody wrote
- * for them.
+ * way to pin a millisecond and a wire shape. Every rule is then asserted again over
+ * the captures, which is what says it holds against events nobody wrote for it — and
+ * the captures cut both ways: two designs on this map were wrong before a recording
+ * corrected them, and one ticket claimed a fixture lacked something it already held.
  */
 
 const stamp = (events: readonly (AgentEvent | [number, AgentEvent])[]): Stamped[] =>
@@ -27,6 +28,47 @@ const done: AgentEvent = { kind: "ended", ending: "done", reason: "completed", s
 const kinds = (entries: readonly AgentEntry[]) => entries.map((entry) => entry.kind);
 const beat = (entries: readonly AgentEntry[]) => entries.find((entry) => entry.kind === "beat");
 const prose = (entries: readonly AgentEntry[]) => entries.filter((entry) => entry.kind === "prose");
+const rows = (entries: readonly AgentEntry[]) => entries.filter((entry) => entry.kind === "row");
+/** what a row reads as on the line, which is the whole of what the log says out loud */
+const lines = (entries: readonly AgentEntry[]) =>
+	rows(entries).map(
+		(row) => `${row.verb}${row.subject === null ? "" : ` ${row.subject}`}${row.count > 1 ? ` ×${row.count}` : ""}`,
+	);
+
+/** the rows of one capture, projected whole */
+const rowsOf = (capture: string) => rows(transcriptOf("make these consistent", replay(capture)).entries);
+
+/** a whole call, as the wire hands one over once its arguments have finished arriving */
+const called = (id: string, tool: string, input: unknown, parent: string | null = null): AgentEvent => ({
+	kind: "called",
+	id,
+	tool,
+	input,
+	parent,
+});
+
+const result = (id: string, over: Partial<Extract<AgentEvent, { kind: "result" }>> = {}): AgentEvent => ({
+	kind: "result",
+	id,
+	failed: false,
+	text: "",
+	images: [],
+	parent: null,
+	...over,
+});
+
+const ROOT = "/Users/designer/kaffe";
+const ready: AgentEvent = {
+	kind: "ready",
+	session: "s",
+	model: "claude-opus-5",
+	cwd: ROOT,
+	version: "2.1.220",
+	permissionMode: "default",
+	apiKeySource: "none",
+	capabilities: [],
+	parent: null,
+};
 
 /** every event of one capture, as the daemon's adapter reads it, stamped on the wire's own order */
 function replay(capture: string): Stamped[] {
@@ -325,9 +367,530 @@ describe("a turn that ends", () => {
 	});
 });
 
+describe("one tool call", () => {
+	/**
+	 * One line of verb and subject, with the payload behind a disclosure closed by
+	 * default. A nine-minute turn is nineteen of these, so the line is the receipt and
+	 * the path is one click down rather than in the way.
+	 */
+	it("is one row, with the disclosure's payload separate from the line", () => {
+		const { entries } = transcriptOf(
+			"tidy the cart",
+			stamp([
+				ready,
+				waiting,
+				speaking,
+				called("t1", "Read", { file_path: `${ROOT}/design/frames/app/cart/frame.tsx` }),
+				result("t1"),
+				done,
+			]),
+		);
+
+		expect(rows(entries)).toEqual([
+			{
+				key: "row:t1",
+				kind: "row",
+				state: "done",
+				verb: "read",
+				subject: "cart",
+				frame: "cart",
+				count: 1,
+				detail: "design/frames/app/cart/frame.tsx",
+				foreign: null,
+				parent: null,
+			},
+		]);
+	});
+
+	/**
+	 * Three beats, and the wire sends all three: the block opens with a name and an
+	 * empty input, the subject types itself in as uneven partial JSON behind it, and
+	 * the result settles it. A row cut mid-argument is beat one, which needs no case of
+	 * its own.
+	 */
+	it("appears, has its subject typed in, and then runs", () => {
+		const opening = stamp([
+			ready,
+			waiting,
+			speaking,
+			{ kind: "call", id: "t1", block: 1, tool: "Read", parent: null },
+			{ kind: "call-input", block: 1, fragment: '{"file_path": "/Users/designer/kaffe/design/', parent: null },
+			{ kind: "call-input", block: 1, fragment: 'frames/cart/frame.tsx", "offset": 1', parent: null },
+			result("t1"),
+		]);
+		const at = (upto: number) => rows(transcriptOf("go", opening.slice(0, upto)).entries)[0];
+
+		// the tool is named before its argument exists, and a half-arrived path names no
+		// frame, so the subject slot waits rather than printing a word the wire has not
+		// finished
+		expect(at(4)).toMatchObject({ verb: "read", subject: null, state: "running" });
+		expect(at(5)).toMatchObject({ verb: "read", subject: null, state: "running" });
+		expect(at(6)).toMatchObject({ verb: "read", subject: "cart", state: "running" });
+		expect(at(7)).toMatchObject({ verb: "read", subject: "cart", state: "done" });
+	});
+
+	/** the surface speaks frames and pages; a path lives behind the disclosure */
+	it("names frames and pages rather than the files they are made of", () => {
+		const paths = [
+			`${ROOT}/design/frames/cart/frame.tsx`,
+			`${ROOT}/design/frames/app/checkout/frame.tsx`,
+			`${ROOT}/design/frames/cart/frame.json`,
+			`${ROOT}/design/frames/app`,
+			`${ROOT}/design/shared/tokens.css`,
+			`${ROOT}/pnpm-lock.yaml`,
+		];
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				waiting,
+				speaking,
+				...paths.map((file, index) => called(`t${index}`, "Read", { file_path: file })),
+			]),
+		);
+
+		expect(rows(entries).map((row) => row.subject)).toEqual([
+			"cart",
+			"checkout",
+			// the geometry sidecar is the frame too: twelve rows that each read `frame.tsx`
+			// would name nothing at all
+			"cart",
+			// a page, and the one name here that is not a frame — which of the two it is
+			// takes the project's own frame list, and #143 hands that in
+			"app",
+			"tokens.css",
+			"pnpm-lock.yaml",
+		]);
+		expect(rows(entries).map((row) => row.frame)).toEqual(["cart", "checkout", "cart", null, null, null]);
+	});
+
+	/** the agent's own word for what it is doing, where spool has no better noun */
+	it("reads a spool verb out of the shell rather than saying `run`", () => {
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				waiting,
+				speaking,
+				called("t1", "Bash", { command: "spool shot cart 2>&1 | tail -20", description: "Shoot the cart frame" }),
+				// a compound command is several calls and it ends on its point, so the last
+				// spool verb in it is the one worth a row
+				called("t2", "Bash", {
+					command: 'spool status 2>&1; echo "---"; spool logs cart 2>&1',
+					description: "Check",
+				}),
+				called("t3", "Bash", { command: "find design -type f | sort", description: "List design tree files" }),
+			]),
+		);
+
+		expect(lines(entries)).toEqual(["shot cart", "logs cart", "run List design tree files"]);
+		expect(rows(entries).map((row) => row.frame)).toEqual(["cart", "cart", null]);
+	});
+});
+
+describe("a run of writes", () => {
+	/** six edits are `edit home ×6`, and the count is the whole receipt */
+	it("is one row per frame, counting the calls it holds", () => {
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				waiting,
+				speaking,
+				called("t1", "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` }),
+				result("t1"),
+				called("t2", "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` }),
+				result("t2"),
+				// it is writes rather than edits: a delegate switches to rewriting the file
+				// whole partway through, and that is still one act
+				called("t3", "Write", { file_path: `${ROOT}/design/frames/home/frame.tsx` }),
+				result("t3"),
+				done,
+			]),
+		);
+
+		expect(lines(entries)).toEqual(["edit home ×3"]);
+		expect(rows(entries)[0]).toMatchObject({ frame: "home", detail: "design/frames/home/frame.tsx", state: "done" });
+	});
+
+	/**
+	 * The mark settles once, when the run closes, rather than striking a check between
+	 * every pair of edits — while the run can still gain a call it is working, and the
+	 * count climbing is what says so.
+	 */
+	it("keeps working between its own calls", () => {
+		const events = stamp([
+			ready,
+			waiting,
+			speaking,
+			called("t1", "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` }),
+			result("t1"),
+			called("t2", "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` }),
+			result("t2"),
+			done,
+		]);
+		const at = (upto: number) => rows(transcriptOf("go", events.slice(0, upto)).entries)[0];
+
+		expect(at(5)).toMatchObject({ count: 1, state: "running" });
+		expect(at(6)).toMatchObject({ count: 2, state: "running" });
+		expect(at(8)).toMatchObject({ count: 2, state: "done" });
+	});
+
+	/** the next thing the log draws ends it, and time is never the rule */
+	it("ends on the next thing the log draws", () => {
+		const write = (id: string) => called(id, "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` });
+		const shot = called("s1", "Bash", { command: "spool shot home", description: "Shoot" });
+
+		expect(lines(transcriptOf("go", stamp([ready, write("t1"), shot, write("t2")])).entries)).toEqual([
+			"edit home",
+			"shot home",
+			"edit home",
+		]);
+		// the agent saying something is the log drawing something
+		expect(
+			lines(transcriptOf("go", stamp([ready, write("t1"), say("now the totals."), write("t2")])).entries),
+		).toEqual(["edit home", "edit home"]);
+		// a thought is too, and it is what settles the mark once the writes are over
+		const thought: AgentEvent = { kind: "thinking", block: 0, tokens: 40, parent: null };
+		expect(rows(transcriptOf("go", stamp([ready, write("t1"), result("t1"), thought])).entries)[0]).toMatchObject({
+			state: "done",
+		});
+	});
+
+	/**
+	 * Only what stays drawn ends it. The wait for the next request opens a beat and
+	 * then takes it back, so a run it ended would be a run broken by nothing the reader
+	 * can see — and two identical rows would end up next to each other with no reason
+	 * between them.
+	 */
+	it("is not ended by a beat the log takes back", () => {
+		const write = (id: string) => called(id, "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` });
+		const { entries } = transcriptOf(
+			"go",
+			stamp([ready, write("t1"), result("t1"), waiting, speaking, write("t2"), result("t2"), done]),
+		);
+
+		expect(kinds(entries)).toEqual(["user", "row"]);
+		expect(lines(entries)).toEqual(["edit home ×2"]);
+	});
+
+	/** a call that draws nothing cannot break a run: the plan is not a row (#117) */
+	it("is not broken by the plan's own bookkeeping", () => {
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				called("t1", "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` }),
+				called("p1", "TaskUpdate", { taskId: "1", status: "completed" }),
+				called("t2", "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` }),
+			]),
+		);
+
+		expect(lines(entries)).toEqual(["edit home ×2"]);
+	});
+
+	/** never two files, which is the clause that has never had to fire in a capture */
+	it("never spans two frames", () => {
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				called("t1", "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` }),
+				called("t2", "Edit", { file_path: `${ROOT}/design/frames/cart/frame.tsx` }),
+				called("t3", "Edit", { file_path: `${ROOT}/design/frames/cart/frame.tsx` }),
+			]),
+		);
+
+		expect(lines(entries)).toEqual(["edit home", "edit cart ×2"]);
+	});
+});
+
+describe("a call that went outside", () => {
+	const meta = {
+		kind: "called" as const,
+		id: "t1",
+		tool: "mcp__claude_ai_Notion__notion-search",
+		input: { query: "tokens" },
+		foreign: {
+			server: "Notion",
+			tool: "Notion-Search",
+			iconUrl: "https://www.google.com/s2/favicons?domain=notion.com&sz=64",
+		},
+		parent: null,
+	};
+
+	/**
+	 * `ask <Server>`, off the metadata riding with the call. Spool never invents the
+	 * noun and never parses the wire name for one: the server slot is the binary's own
+	 * word, and `ask` is spool's own verb so no connector author can break the one mark
+	 * that says the agent left the building.
+	 */
+	it("is `ask <Server>`, with the wire name behind the disclosure", () => {
+		const { entries } = transcriptOf("find the tokens", stamp([ready, waiting, speaking, meta, result("t1")]));
+
+		expect(lines(entries)).toEqual(["ask Notion"]);
+		expect(rows(entries)[0]).toMatchObject({
+			detail: "mcp__claude_ai_Notion__notion-search",
+			foreign: { server: "Notion", tool: "Notion-Search", raw: "mcp__claude_ai_Notion__notion-search" },
+		});
+	});
+
+	/** a local-first canvas must not tell a favicon service which connectors you have */
+	it("drops the icon rather than carrying it", () => {
+		const { entries } = transcriptOf("go", stamp([ready, meta]));
+
+		expect(JSON.stringify(rows(entries))).not.toContain("favicon");
+	});
+
+	/**
+	 * The metadata rides with the whole call, so until it lands spool has no word for
+	 * the row — and the wire name is not one it will print. #142 settled that
+	 * `mcp__claude_ai_Notion__notion-search` exists exactly once in this interface, one
+	 * click down.
+	 */
+	it("waits for the name rather than drawing its wire name", () => {
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				{ kind: "call", id: "t1", block: 1, tool: "mcp__claude_ai_Notion__notion-search", parent: null },
+				{ kind: "call-input", block: 1, fragment: '{"query": "tokens"}', parent: null },
+			]),
+		);
+
+		expect(rows(entries)).toEqual([]);
+	});
+
+	/** a runtime that names the tool and not the server degrades rather than guessing */
+	it("puts the tool's own name in the subject when no server is named", () => {
+		const { entries } = transcriptOf(
+			"go",
+			// the wire's own shape: a field it has nothing for is absent rather than null
+			stamp([ready, { ...meta, foreign: { tool: "Search Files" } }]),
+		);
+
+		expect(lines(entries)).toEqual(["ask Search Files"]);
+	});
+
+	/**
+	 * A runtime that names neither leaves the subject empty. The row still says the
+	 * agent went outside, and the wire name stays where #142 put it: once, one click
+	 * down, and never on a line.
+	 */
+	it("says only `ask` rather than falling back to the wire name", () => {
+		const { entries } = transcriptOf("go", stamp([ready, { ...meta, foreign: {} }]));
+
+		expect(lines(entries)).toEqual(["ask"]);
+		expect(rows(entries)[0]).toMatchObject({ detail: "mcp__claude_ai_Notion__notion-search" });
+	});
+});
+
+describe("the calls the log is not a receipt for", () => {
+	/**
+	 * A plan is written in nine seconds and then runs for nine minutes, and a question
+	 * has not happened yet: both outlive the call that made them, so both leave the
+	 * transcript for a place of their own (#117, #145). What matters here is that
+	 * neither leaves a wire name on a line in the meantime.
+	 */
+	it("draw no row at all", () => {
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				called("p1", "TaskCreate", { subject: "Write the frame", activeForm: "Writing the frame" }),
+				called("p2", "TaskUpdate", { taskId: "1", status: "in_progress" }),
+				called("q1", "AskUserQuestion", { questions: [{ question: "Which currency?", options: [] }] }),
+				called("t1", "Read", { file_path: `${ROOT}/design/frames/cart/frame.tsx` }),
+			]),
+		);
+
+		expect(lines(entries)).toEqual(["read cart"]);
+	});
+
+	/** and the one question in the captures is the case that caught it */
+	it("leave nothing behind in the capture that holds one", () => {
+		const seen = replay("claude-mcp");
+		const asked = seen.filter(({ event }) => event.kind === "called" && event.tool === "AskUserQuestion");
+
+		expect(asked).toHaveLength(1);
+		expect(lines(rowsOf("claude-mcp"))).not.toContain("askuserquestion");
+	});
+});
+
+describe("a search for a tool that is not spool's", () => {
+	const search = (id: string, query: string) => called(id, "ToolSearch", { query, max_results: 10 });
+
+	/**
+	 * The two-step is machinery and the log holds work on the project, so a search that
+	 * answered draws nothing. An empty one is the exception and the whole reason the
+	 * rule exists: a connector nobody has signed in to offers no failing tool, it
+	 * offers no tool, so this row is the only trace it leaves anywhere.
+	 */
+	it("draws only when it comes back with nothing", () => {
+		const answered = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				search("t1", "notion search page"),
+				result("t1", { tools: ["mcp__claude_ai_Notion__notion-search"] }),
+			]),
+		);
+		const empty = transcriptOf(
+			"go",
+			stamp([ready, search("t2", "+figma get code"), result("t2", { text: "No matching deferred tools found" })]),
+		);
+
+		expect(rows(answered.entries)).toEqual([]);
+		expect(rows(empty.entries)).toEqual([
+			{
+				key: "row:t2",
+				kind: "row",
+				state: "failed",
+				verb: "find",
+				subject: "+figma get code",
+				frame: null,
+				count: 1,
+				detail: "No matching deferred tools found",
+				foreign: null,
+				parent: null,
+			},
+		]);
+	});
+});
+
+describe("how a row settles", () => {
+	const read = called("t1", "Read", { file_path: `${ROOT}/design/frames/cart/frame.tsx` });
+
+	/** the tool ran and its own output is the error, so the mark is two strokes crossing */
+	it("failed when the wire says the call failed", () => {
+		const { entries } = transcriptOf("go", stamp([ready, read, result("t1", { failed: true, text: "not found" })]));
+
+		expect(rows(entries)[0]).toMatchObject({ state: "failed", detail: "not found" });
+	});
+
+	/**
+	 * The wire cannot tell a stop from a permission denial by the error alone, because
+	 * both stamp the same denial kind. What separates them is the non-execution kind:
+	 * the developer stopped this one, so it did not fail and it did not run.
+	 */
+	it("stopped when the non-execution kind says the developer stopped it", () => {
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				read,
+				result("t1", {
+					failed: true,
+					nonExecution: "user-rejected",
+					text: "The user doesn't want to proceed with this tool use.",
+				}),
+			]),
+		);
+
+		// and the row keeps its own path: what the binary writes there is addressed to
+		// the model, so drawing it reports the developer's own press back at them
+		expect(rows(entries)[0]).toMatchObject({ state: "stopped", detail: "design/frames/cart/frame.tsx" });
+	});
+
+	/** a rule refused it, which is a fault the agent ran into rather than a hand */
+	it("failed when a rule refused the call, in the developer's own words", () => {
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				read,
+				result("t1", { failed: true, nonExecution: "permission-rule", text: "Skip Drive — use Notion only." }),
+			]),
+		);
+
+		expect(rows(entries)[0]).toMatchObject({ state: "failed", detail: "Skip Drive — use Notion only." });
+	});
+
+	/** spool never claims something errored when it simply never ran */
+	it("stops rather than fails when the turn ends with it still in flight", () => {
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				read,
+				{ kind: "ended", ending: "stopped", reason: "aborted_streaming", stopReason: null, parent: null },
+			]),
+		);
+
+		expect(rows(entries)[0]).toMatchObject({ state: "stopped" });
+	});
+
+	/**
+	 * A delegation's own result is the launch receipt — measured at 84ms, against a
+	 * task that outlives it by minutes — so the row settles on the task instead.
+	 */
+	it("holds a delegation open until its task reports, not until its call returns", () => {
+		const events = stamp([
+			ready,
+			called("d1", "Agent", { description: "Design cart--empty", subagent_type: "designer" }),
+			{
+				kind: "task-started",
+				task: "a5e0",
+				call: "d1",
+				description: null,
+				agent: "designer",
+				prompt: null,
+				parent: null,
+			},
+			result("d1", { text: "Async agent launched successfully." }),
+			{ kind: "task-done", task: "a5e0", status: "completed", summary: null, parent: null },
+		]);
+
+		expect(rows(transcriptOf("go", events.slice(0, 4)).entries)[0]).toMatchObject({
+			verb: "delegate",
+			subject: "Design cart--empty",
+			state: "running",
+		});
+		expect(rows(transcriptOf("go", events).entries)[0]).toMatchObject({ state: "done" });
+	});
+});
+
 describe("what a delegate does", () => {
+	/**
+	 * Its rows reach the transcript tagged to their parent, because for a delegate the
+	 * place is the canvas: a frame it writes lands out there, and the row is how you
+	 * get to it (#143).
+	 */
+	it("reaches the transcript as rows tagged to the call that delegated it", () => {
+		const { entries } = transcriptOf(
+			"three takes on the cart",
+			stamp([
+				ready,
+				called("d1", "Agent", { description: "Design cart--empty" }),
+				called("t1", "Write", { file_path: `${ROOT}/design/frames/cart--empty/frame.tsx` }, "d1"),
+				result("t1", { parent: "d1" }),
+			]),
+		);
+
+		expect(lines(entries)).toEqual(["delegate Design cart--empty", "write cart--empty"]);
+		expect(rows(entries).map((row) => row.parent)).toEqual([null, "d1"]);
+	});
+
+	/** two delegates writing at once are two runs, not one broken twice */
+	it("keeps its own run apart from every other thread's", () => {
+		const write = (id: string, frame: string, parent: string) =>
+			called(id, "Edit", { file_path: `${ROOT}/design/frames/${frame}/frame.tsx` }, parent);
+		const { entries } = transcriptOf(
+			"go",
+			stamp([
+				ready,
+				write("a1", "cart--empty", "d1"),
+				write("b1", "cart--empty-b", "d2"),
+				write("a2", "cart--empty", "d1"),
+				write("b2", "cart--empty-b", "d2"),
+			]),
+		);
+
+		expect(lines(entries)).toEqual(["edit cart--empty ×2", "edit cart--empty-b ×2"]);
+	});
+
 	/** it belongs to the frame it writes, not to the log the human is reading */
-	it("never reaches the transcript", () => {
+	it("never reaches the transcript with its words", () => {
 		const { entries } = transcriptOf(
 			"go",
 			stamp([
@@ -344,8 +907,219 @@ describe("what a delegate does", () => {
 	});
 });
 
+/**
+ * The rules again, against events nobody wrote for them.
+ *
+ * A hand-built list pins a millisecond and a wire shape; only a recording says the
+ * rule survives a real session. Where a claim here is a count it is a count of what
+ * is in the repo: the captures are spliced windows and every one of them has content
+ * elided, so a distribution belongs to the parent recording and cannot be recomputed
+ * from these files.
+ */
+describe("the two minutes of edits, replayed", () => {
+	/** nineteen rows became nine on the parent; twenty-two calls become twelve here */
+	it("draws one row per call, with runs of writes collapsed", () => {
+		const seen = replay("claude-edits");
+		const whole = seen.filter(({ event }) => event.kind === "called");
+		const bookkeeping = whole.filter(({ event }) => event.kind === "called" && event.tool.startsWith("Task"));
+
+		expect(whole).toHaveLength(24);
+		expect(bookkeeping).toHaveLength(2);
+		expect(lines(rowsOf("claude-edits"))).toEqual([
+			"write home",
+			"shot home",
+			"look home",
+			// six edits, one row, and the two TaskUpdates that sit inside this window draw
+			// nothing at all — a call that draws nothing cannot break a run
+			"edit home ×6",
+			"logs home",
+			"look home",
+			"edit home ×4",
+			"shot home",
+			"look home",
+			"edit home ×3",
+			"shot home",
+			"look home",
+		]);
+	});
+
+	/** the count is a live receipt rather than a summary written at the end */
+	it("climbs the count while the run is happening", () => {
+		const seen = replay("claude-edits");
+		const climbed: number[] = [];
+		for (let upto = 1; upto <= seen.length; upto += 1) {
+			const run = rows(transcriptOf("go", seen.slice(0, upto)).entries).find((row) => row.verb === "edit");
+			if (run === undefined || climbed.at(-1) === run.count) continue;
+			climbed.push(run.count);
+			if (run.count === 6) break;
+		}
+
+		expect(climbed).toEqual([1, 2, 3, 4, 5, 6]);
+	});
+
+	/** every row names the frame it touched, and the path is behind the disclosure */
+	it("names one frame and keeps every path off the line", () => {
+		const drawn = rowsOf("claude-edits");
+
+		expect(new Set(drawn.map((row) => row.subject))).toEqual(new Set(["home"]));
+		expect(new Set(drawn.map((row) => row.frame))).toEqual(new Set(["home"]));
+		expect(drawn.filter((row) => row.detail !== null)).toHaveLength(drawn.length);
+	});
+});
+
+describe("the connector window, replayed", () => {
+	/** four calls went outside, and the row says where each of them went */
+	it("draws every foreign call as `ask <Server>` and nothing else as `ask`", () => {
+		const seen = replay("claude-mcp");
+		const outside = seen.filter(({ event }) => event.kind === "called" && event.foreign !== undefined);
+		const asked = rowsOf("claude-mcp").filter((row) => row.verb === "ask");
+
+		expect(outside).toHaveLength(4);
+		expect(asked.map((row) => row.subject)).toEqual(["Notion", "Google Drive", "Google Drive", "Google Drive"]);
+		// the server's own name is the subject and the wire name is one click down, so
+		// `mcp__` appears exactly once per row and never on the line
+		for (const row of asked) {
+			expect(row.detail === null || row.foreign?.raw === row.detail || !row.detail.startsWith("mcp__")).toBe(true);
+			expect(row.verb).toBe("ask");
+			expect(row.subject).not.toContain("mcp__");
+		}
+		expect(JSON.stringify(rowsOf("claude-mcp"))).not.toContain("favicon");
+	});
+
+	/**
+	 * Four searches, one row. Asked for Figma the agent searched, got nothing back, and
+	 * said nothing about it anywhere in the capture — so this row is the only place the
+	 * connector nobody had signed in to is visible at all.
+	 */
+	it("draws the one search that came back empty and none of the three that answered", () => {
+		const seen = replay("claude-mcp");
+		const searches = seen.filter(({ event }) => event.kind === "called" && event.tool === "ToolSearch");
+		const found = rowsOf("claude-mcp").filter((row) => row.verb === "find");
+
+		expect(searches).toHaveLength(4);
+		expect(found).toHaveLength(1);
+		expect(found[0]).toMatchObject({
+			state: "failed",
+			subject: "+figma get code variables styles frame",
+			detail: "No matching deferred tools found",
+		});
+	});
+
+	/** the refused Drive search is a cross, in the sentence the developer typed */
+	it("fails the call a rule refused", () => {
+		const refused = rowsOf("claude-mcp").filter((row) => row.state === "failed" && row.verb === "ask");
+
+		expect(refused).toHaveLength(1);
+		expect(refused[0]).toMatchObject({ subject: "Google Drive", detail: "Skip Drive — use Notion only." });
+	});
+
+	/** three writes to three files are three rows: the run's own clause, firing */
+	it("keeps three consecutive writes to three different files apart", () => {
+		expect(lines(rowsOf("claude-mcp")).filter((line) => line.startsWith("write"))).toEqual([
+			"write tokens.css",
+			"write fonts.css",
+			"write receipt",
+		]);
+	});
+});
+
+describe("the stopped turn, replayed", () => {
+	/**
+	 * The interrupt stamps the call it caught with the same denial kind a permission
+	 * decline gets, so a rail that forked on the error alone would draw a cross and say
+	 * a `read` failed. It did not fail and it did not run.
+	 */
+	it("stops the call the press caught rather than failing it", () => {
+		const drawn = rowsOf("claude-interrupt");
+
+		expect(lines(drawn)).toEqual([
+			"run List project root and design folder contents",
+			"read probe.txt",
+			"read CLAUDE.md",
+			// cut mid-argument, which is beat one of the three and needed no case of its own
+			"read",
+		]);
+		expect(drawn.map((row) => row.state)).toEqual(["done", "done", "stopped", "stopped"]);
+		// nothing in this capture ever errored, and nothing draws a cross
+		expect(drawn.some((row) => row.state === "failed")).toBe(false);
+	});
+});
+
+describe("the fan-out, replayed", () => {
+	/** a delegate's writes never appeared at all until the parent-call tag was caught */
+	it("puts every delegate's rows in the transcript, tagged to their parent", () => {
+		const drawn = rowsOf("claude-fanout");
+		const delegated = drawn.filter((row) => row.parent !== null);
+
+		expect(new Set(delegated.map((row) => row.parent)).size).toBe(3);
+		expect(delegated.length).toBeGreaterThan(drawn.length - delegated.length);
+		// the three frames the delegates authored, each written as one run of writes
+		expect(lines(delegated).filter((line) => line.startsWith("write cart--empty"))).toEqual([
+			"write cart--empty ×2",
+			"write cart--empty",
+			"write cart--empty",
+			"write cart--empty-c ×2",
+			"write cart--empty-b ×2",
+		]);
+	});
+
+	/**
+	 * Two errored `Edit`s have sat in this fixture since the first capture and the rail
+	 * drew a check on both of them: it had no failed state at all until #142. Neither
+	 * carries a non-execution kind, so both ran and both failed, and the mark is two
+	 * strokes crossing rather than one flat one.
+	 */
+	it("crosses the two calls that ran and failed", () => {
+		const seen = replay("claude-fanout");
+		const errored = seen.filter(({ event }) => event.kind === "result" && event.failed);
+		const stamped = seen.filter(({ event }) => event.kind === "result" && event.nonExecution !== undefined);
+		const failed = rowsOf("claude-fanout").filter((row) => row.state === "failed");
+
+		expect(errored).toHaveLength(2);
+		expect(stamped).toEqual([]);
+		expect(failed).toHaveLength(2);
+		for (const row of failed) {
+			expect(row).toMatchObject({ verb: "edit", parent: expect.any(String) });
+			// the tool's own account of why, which outranks the path the row was holding
+			expect(row.detail).toContain("String to replace not found in file.");
+		}
+		// and no row in this capture is stopped: nobody pressed anything
+		expect(rowsOf("claude-fanout").some((row) => row.state === "stopped" && row.verb !== "delegate")).toBe(false);
+	});
+
+	/** the delegation that reported is done; the two the window never heard back from are not */
+	it("settles a delegation on its task rather than on its launch", () => {
+		const delegations = rowsOf("claude-fanout").filter((row) => row.verb === "delegate");
+
+		expect(delegations.map((row) => row.state)).toEqual(["done", "stopped", "stopped"]);
+	});
+});
+
 describe("every capture, replayed whole", () => {
 	for (const capture of CAPTURES) {
+		it(`draws ${capture} in spool's own nouns`, () => {
+			const { entries, over } = transcriptOf("make these consistent", replay(capture));
+			const drawn = rows(entries);
+
+			for (const row of drawn) {
+				// the surface speaks frames and pages: a path never reaches a line, and a row
+				// that names a frame names one the project could take you to
+				expect(row.subject ?? "").not.toContain("/");
+				expect(row.verb).not.toContain("/");
+				// nor does a wire name, which lives behind the disclosure and nowhere else
+				expect(`${row.verb} ${row.subject ?? ""}`).not.toContain("mcp__");
+				expect(row.frame === null || row.frame === row.subject).toBe(true);
+				// a work row is never pending: a call is running from the moment its block opens
+				expect(row.state).not.toBe("pending");
+				expect(row.count).toBeGreaterThan(0);
+			}
+			// nothing is left turning once the stream is over. Two of these windows were cut
+			// with the turn still going, and a run still open is what that honestly looks
+			// like — the next write would still have joined it.
+			if (over) expect(drawn.filter((row) => row.state === "running")).toEqual([]);
+			else expect(drawn.filter((row) => row.state === "running").length).toBeLessThanOrEqual(1);
+		});
+
 		it(`projects ${capture} without loss or crash`, () => {
 			const seen = replay(capture);
 			const { entries } = transcriptOf("make these consistent", seen);

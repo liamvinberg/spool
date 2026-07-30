@@ -41,9 +41,12 @@ tool. What the chrome is today: one 44px bar (brand lockup, project tabs, "+",
 then threads toggle and zoom), the Pages rail at 248px, the agent rail at 420px
 in a 200–480 range, and the tool bar floating over the bottom of the viewport.
 No mode switch. Play lives on the selection. The agent rail is the transcript
-and the composer only (#192): the tab row, `elements` and `connections` are all
-gone, and the tool rows, threads, plan strip and model readout the frames here
-draw are still ahead of the code.
+and the composer (#192): the tab row, `elements` and `connections` are all gone.
+The transcript holds the human's words, the agent's words, a beat for the wait,
+and one line per tool call with its payload behind a closed disclosure (#193) —
+runs of writes counted, `ask <Server>` for a connector, five row states. What a
+row *opens* and where its name navigates, the plan strip, the threads strip and
+the model readout the frames here draw are still ahead of the code.
 
 Explorations live until the work they decided is built. Making the decision is
 not that moment: while a page is still being resolved, the rejected frames are
