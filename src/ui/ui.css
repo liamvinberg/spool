@@ -74,6 +74,26 @@
 	--animate-agent-entry: agent-entry 280ms cubic-bezier(0.22, 0.61, 0.36, 1);
 	--animate-agent-word: agent-word 170ms cubic-bezier(0.22, 0.61, 0.36, 1);
 	--animate-agent-spin: agent-spin 1.15s linear infinite;
+	/* the stroke on the composer's top border: the thread is laid out of the left edge,
+	 * carries at its full length, and is taken up into the right edge as the head waits
+	 * there for the tail. It is the whole of what says the agent is alive, and it spends
+	 * no transcript pixels — it rides the hairline that is already there.
+	 *
+	 * `translateX` is the tail and `scaleX` about a left origin is the length, which is
+	 * one composited matrix for two ends moving on their own schedules. Both are
+	 * percentages of the composer's own width, so the track is whatever the rail has been
+	 * dragged to.
+	 *
+	 * Linear, because the easing is in the keyframe values rather than in the timing
+	 * function: each end has its own smoothstep over its own part of the cycle, and one
+	 * shared curve cannot express two. The stops sample that arithmetic every 5% of the
+	 * cycle, which is within 1.2px of it at the shipped width.
+	 *
+	 * It cannot be read as a progress bar: the length peaks at 0.41 of the track and then
+	 * falls for the whole second half, so no state of it is full and nothing about it
+	 * accumulates. And the length is 0 at both ends of the cycle, so the loop starts over
+	 * on screen with nothing drawn. */
+	--animate-agent-wind: agent-wind 1600ms linear infinite;
 	/* the model menu (#199) opens upward off an 18px line, so it arrives from below
 	 * rather than above: `menu-in` is the same gesture the other way up, and a panel
 	 * that dropped down from a trigger at the bottom of the rail would be travelling
@@ -96,6 +116,72 @@
 	@keyframes agent-spin {
 		to {
 			transform: rotate(360deg);
+		}
+	}
+
+	@keyframes agent-wind {
+		0% {
+			transform: translateX(0%) scaleX(0);
+		}
+		5% {
+			transform: translateX(0%) scaleX(0.0118);
+		}
+		10% {
+			transform: translateX(0%) scaleX(0.0451);
+		}
+		15% {
+			transform: translateX(0%) scaleX(0.0967);
+		}
+		20% {
+			transform: translateX(0%) scaleX(0.1635);
+		}
+		25% {
+			transform: translateX(0.432%) scaleX(0.238);
+		}
+		30% {
+			transform: translateX(2.94%) scaleX(0.3006);
+		}
+		35% {
+			transform: translateX(7.407%) scaleX(0.3493);
+		}
+		40% {
+			transform: translateX(13.518%) scaleX(0.384);
+		}
+		45% {
+			transform: translateX(20.957%) scaleX(0.4049);
+		}
+		50% {
+			transform: translateX(29.407%) scaleX(0.4119);
+		}
+		55% {
+			transform: translateX(38.553%) scaleX(0.4049);
+		}
+		60% {
+			transform: translateX(48.077%) scaleX(0.384);
+		}
+		65% {
+			transform: translateX(57.665%) scaleX(0.3493);
+		}
+		70% {
+			transform: translateX(67%) scaleX(0.3006);
+		}
+		75% {
+			transform: translateX(75.767%) scaleX(0.238);
+		}
+		80% {
+			transform: translateX(83.648%) scaleX(0.1635);
+		}
+		85% {
+			transform: translateX(90.328%) scaleX(0.0967);
+		}
+		90% {
+			transform: translateX(95.49%) scaleX(0.0451);
+		}
+		95% {
+			transform: translateX(98.82%) scaleX(0.0118);
+		}
+		100% {
+			transform: translateX(100%) scaleX(0);
 		}
 	}
 
@@ -151,8 +237,16 @@
 	.animate-agent-entry,
 	.animate-agent-word,
 	.animate-agent-menu-in,
-	.animate-agent-spin {
+	.animate-agent-spin,
+	.animate-agent-wind {
 		animation: none;
+	}
+
+	/* the stroke is the whole indicator, so stillness cannot mean absence: it is held a
+	 * third of the way along its own cycle, which is the same picture everybody else sees
+	 * with nothing moving in it. 143px of stroke at the shipped 420 rail. */
+	.animate-agent-wind {
+		transform: translateX(6.372%) scaleX(0.3406);
 	}
 }
 
