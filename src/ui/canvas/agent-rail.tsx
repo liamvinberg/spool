@@ -225,6 +225,8 @@ export function AgentRail({
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
 	const [width, setWidth] = useState(RAIL_WIDTH);
+	/** how many sends this rail has watched go out, which is the log's cue to follow again */
+	const [spoke, setSpoke] = useState(0);
 	/**
 	 * What the composer is holding, lifted out of it because two things write here
 	 * (#170).
@@ -340,7 +342,15 @@ export function AgentRail({
 					    running and this exists precisely because none can (#201) */}
 					{login.out ? <LoginStrip login={login} /> : null}
 					{plan === null ? null : <PlanStrip plan={plan} />}
-					<Transcript entries={entries} elapsed={elapsed} last={last} jump={jump} onAnswer={onAnswer}>
+					<Transcript
+						entries={entries}
+						live={phase === "playing"}
+						spoke={spoke}
+						elapsed={elapsed}
+						last={last}
+						jump={jump}
+						onAnswer={onAnswer}
+					>
 						<CollapseCaret onCollapse={() => setWidth(STRIP_WIDTH)} />
 					</Transcript>
 					{/* the strip is measured against the composer's own inner width, which the
@@ -359,7 +369,10 @@ export function AgentRail({
 						queued={queued}
 						model={model}
 						limit={limit}
-						onSend={onSend}
+						onSend={(text, sent) => {
+							setSpoke((count) => count + 1);
+							onSend(text, sent);
+						}}
 						onQueue={onQueue}
 						onUnqueue={onUnqueue}
 						onStop={onStop}
@@ -842,8 +855,28 @@ function PlanStrip({ plan }: { plan: AgentPlan }) {
 
 /* ---------- the transcript ----------
  * It follows the live end while the reader is already there, and stops the moment
- * they scroll up to read something: a log that yanks itself back down mid-sentence
- * is worse than one that does not follow at all. */
+ * they scroll to read something: a log that yanks itself back down mid-sentence is
+ * worse than one that does not follow at all.
+ *
+ * Leaving is an act and so is coming back. Any input that could carry the reader away
+ * from where following holds — a wheel, a finger, the scrolling keys, a scrollbar
+ * drag — ends the following before the scroll it causes ever lands. It resumes only
+ * where resuming moves nothing: the chip over the log's foot, the reader's own words
+ * going out, or the end of the log when the end is the follow point. Proximity alone
+ * re-arms nothing, because against an entry taller than the box the follow point is
+ * that entry's first line, and a rule that re-armed near the bottom warped whoever
+ * reached the end back up by the entry's whole overflow, again on every attempt. */
+
+/** the keys that scroll a focused log, and which way they carry the reader */
+const SCROLL_KEYS: Record<string, -1 | 1 | undefined> = {
+	ArrowUp: -1,
+	PageUp: -1,
+	Home: -1,
+	ArrowDown: 1,
+	PageDown: 1,
+	End: 1,
+	" ": 1,
+};
 
 /**
  * Where the log scrolls to while it is following the live end.
@@ -871,6 +904,8 @@ export function followTo(
 
 function Transcript({
 	entries,
+	live,
+	spoke,
 	elapsed,
 	last,
 	jump,
@@ -878,6 +913,15 @@ function Transcript({
 	children,
 }: {
 	entries: readonly AgentEntry[];
+	/** whether the turn is still writing, which is the word the chip picks for what is below */
+	live: boolean;
+	/**
+	 * How many times the person has sent words while this rail stood. A count rather
+	 * than anything read off the entries, because a turn's first user entry is keyed
+	 * `user` every turn — the list cannot say "these words are new" across a turn
+	 * boundary, and the send itself already can.
+	 */
+	spoke: number;
 	elapsed: number;
 	last: number;
 	jump: FrameJump;
@@ -887,43 +931,142 @@ function Transcript({
 	const view = useRef<HTMLDivElement>(null);
 	const [follow, setFollow] = useState(true);
 	/**
-	 * The scroll this box just performed on itself.
-	 *
-	 * Without it, following ends the moment it starts working: anchoring a tall entry's
-	 * first line leaves the box well short of its own end, the assignment fires
-	 * `onScroll`, and the distance test below reads that as the reader having scrolled
-	 * up. One entry would be pinned and then nothing else for the rest of the turn.
-	 * Only an assignment that really moves the box is flagged, so the flag is always
-	 * spent by the event it caused.
+	 * Whether the reader is somewhere other than where following would hold them, which
+	 * is the one condition the way-back chip draws on. It is state rather than a read
+	 * off the box because the box moves without scrolling: a streaming entry grows
+	 * under a still scrollbar, and the chip has to appear the moment the live end
+	 * walks away from a reader who never touched anything.
 	 */
-	const ours = useRef(false);
+	const [away, setAway] = useState(false);
+	/**
+	 * The last scroll this box performed on itself, held as the value rather than a
+	 * spent-by-one-event flag. The flag was wrong twice over. Scroll events coalesce,
+	 * so a wheel landing in the same frame as the log's own write arrived as one event
+	 * the flag swallowed, reader and all — which is how the log kept fighting a person
+	 * who had plainly scrolled. And Chrome's scroll anchoring moves the box on its own
+	 * schedule, which a spent flag then misread as the reader leaving. Holding the
+	 * number lets every event answer the question that matters: is the box where the
+	 * log put it, or where following would sit? Anything else is the reader.
+	 */
+	const wrote = useRef<number | null>(null);
+	/** the last send this log answered, so speaking re-enters follow exactly once */
+	const heard = useRef(spoke);
+	/** `follow`, readable from the size watcher without re-observing on every flip */
+	const following = useRef(true);
+	/** where the last touch was, because a touch names no direction until it moves */
+	const touched = useRef<number | null>(null);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: the entry list is what moves the end
-	useEffect(() => {
-		const box = view.current;
-		if (box === null || !follow) return;
+	/** where following would put the box right now */
+	const aim = (box: HTMLElement) => {
 		const tail = box.firstElementChild?.lastElementChild;
-		const target = followTo(
+		return followTo(
 			box,
 			tail instanceof HTMLElement ? tail.getBoundingClientRect().top - box.getBoundingClientRect().top : null,
 		);
-		if (box.scrollTop === target) return;
-		ours.current = true;
-		box.scrollTop = target;
-	}, [entries, follow]);
+	};
+	const pin = (box: HTMLElement) => {
+		const to = aim(box);
+		if (Math.abs(box.scrollTop - to) < 1) return;
+		wrote.current = to;
+		box.scrollTop = to;
+	};
+	/** the reader took the wheel: following ends now, before the scroll it causes lands */
+	const leave = () => {
+		setFollow(false);
+		setAway(true);
+	};
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the entry list is what moves the end
+	useEffect(() => {
+		following.current = follow;
+		const box = view.current;
+		if (box === null) return;
+		const sent = spoke !== heard.current;
+		heard.current = spoke;
+		// the person speaking is the one act that re-enters follow on their behalf:
+		// their words land at the live end, and they put them there
+		if (follow || sent) {
+			if (!follow) setFollow(true);
+			if (sent && away) setAway(false);
+			pin(box);
+			return;
+		}
+		setAway(Math.abs(box.scrollTop - aim(box)) >= 1);
+	}, [entries, follow, spoke]);
+
+	/*
+	 * The pin above re-runs when the list changes; height changes on more than the
+	 * list. A fence settles, an answered question folds its options, a beat is spliced
+	 * out — the body resizes with nothing new in it, and until the next render either
+	 * the pin or the chip is stale. Watching the body itself closes that gap: following
+	 * re-pins, and a reader who is away learns the live end moved. (happy-dom
+	 * constructs the observer and lays nothing out, so tests drive the pin through the
+	 * rail's clock instead.)
+	 */
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the watcher reads refs and the box, nothing rendered
+	useEffect(() => {
+		const box = view.current;
+		const body = box?.firstElementChild;
+		if (box === null || body === null || body === undefined) return;
+		const watcher = new ResizeObserver(() => {
+			if (following.current) pin(box);
+			else setAway(Math.abs(box.scrollTop - aim(box)) >= 1);
+		});
+		watcher.observe(body);
+		return () => watcher.disconnect();
+	}, []);
 
 	return (
 		<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: the handlers only watch the reader leave; the log stays a scroll region, and its one control is the chip below */}
 			<div
 				ref={view}
 				data-agent-log=""
 				onScroll={(event) => {
-					if (ours.current) {
-						ours.current = false;
+					const box = event.currentTarget;
+					const own = wrote.current;
+					wrote.current = null;
+					if (own !== null && Math.abs(box.scrollTop - own) < 1) return;
+					const to = aim(box);
+					const off = Math.abs(box.scrollTop - to) >= 1;
+					if (follow) {
+						// moved, not by the log, and not to where following sits: a scrollbar
+						// drag, the one way to scroll a log without touching it
+						if (off) leave();
 						return;
 					}
+					setAway(off);
+					// the end re-arms follow only when the end is where following would sit
+					// anyway, so re-entering moves nothing
+					if (!off && to >= box.scrollHeight - box.clientHeight - 1) setFollow(true);
+				}}
+				onWheel={(event) => {
+					if (!follow || event.deltaY === 0) return;
 					const box = event.currentTarget;
-					setFollow(box.scrollHeight - box.scrollTop - box.clientHeight < 24);
+					const room = box.scrollHeight - box.clientHeight - box.scrollTop;
+					if (event.deltaY < 0 ? box.scrollTop > 0 : room >= 1) leave();
+				}}
+				onTouchStart={(event) => {
+					touched.current = event.touches[0]?.clientY ?? null;
+				}}
+				onTouchMove={(event) => {
+					const from = touched.current;
+					const at = event.touches[0]?.clientY;
+					if (at === undefined) return;
+					touched.current = at;
+					if (!follow || from === null || at === from) return;
+					const box = event.currentTarget;
+					const room = box.scrollHeight - box.clientHeight - box.scrollTop;
+					// a finger pulling down drags earlier words back into view: scrolling up
+					if (at > from ? box.scrollTop > 0 : room >= 1) leave();
+				}}
+				onKeyDown={(event) => {
+					if (!follow || event.target !== event.currentTarget) return;
+					const way = SCROLL_KEYS[event.key === " " && event.shiftKey ? "PageUp" : event.key];
+					if (way === undefined) return;
+					const box = event.currentTarget;
+					const room = box.scrollHeight - box.clientHeight - box.scrollTop;
+					if (way < 0 ? box.scrollTop > 0 : room >= 1) leave();
 				}}
 				className="pages-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-3.5 pt-6 pb-4"
 			>
@@ -942,6 +1085,27 @@ function Transcript({
 				</div>
 			</div>
 			<span className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-bg to-transparent" />
+			{/* the way back, drawn only while the reader is somewhere following is not.
+			    It names what is below — live while the turn is writing, latest once it
+			    settles — and pressing it returns to where following holds, which for a
+			    tall live entry is its first line rather than its newest word. */}
+			{follow || !away ? null : (
+				<button
+					type="button"
+					data-agent-live=""
+					onClick={() => {
+						const box = view.current;
+						if (box === null) return;
+						setFollow(true);
+						setAway(false);
+						pin(box);
+					}}
+					className="absolute bottom-3 left-1/2 flex h-6 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-bg px-2.5 font-mono text-2xs text-muted leading-3 transition-colors duration-150 hover:bg-surface hover:text-text"
+				>
+					<span aria-hidden="true">↓</span>
+					{live ? "live" : "latest"}
+				</button>
+			)}
 			{children}
 		</div>
 	);

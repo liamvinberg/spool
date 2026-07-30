@@ -941,6 +941,129 @@ describe("what the log scrolls to", () => {
 	});
 });
 
+/**
+ * The machine around the clamp: when following ends, what never re-arms it, and the
+ * ways back. The geometry is handed in as above, except the tail's rect moves with the
+ * scroll the way a real one does, because everything under test is positional — where
+ * following would sit against where the reader is.
+ */
+describe("when the reader takes the wheel", () => {
+	async function pinned() {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "check the copy");
+		canvas.turn.push(waiting);
+		canvas.turn.push(speaking);
+		canvas.turn.push(say(DOCUMENT));
+		await settle(120);
+		const log = canvas.host.querySelector<HTMLElement>("[data-agent-log]");
+		const tail = log?.firstElementChild?.lastElementChild;
+		if (log === null || !(tail instanceof HTMLElement)) throw new Error("no live entry");
+		const geometry = (scrollHeight: number, top: number) => {
+			Object.defineProperty(log, "scrollHeight", { value: scrollHeight, configurable: true });
+			Object.defineProperty(log, "clientHeight", { value: 500, configurable: true });
+			log.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+			tail.getBoundingClientRect = () => ({ top: top - log.scrollTop }) as DOMRect;
+		};
+		// 1,400px of live entry in a 500px box, its first line held at 90
+		geometry(1400, 100);
+		await until(() => log.scrollTop === 90);
+		return { canvas, log, geometry };
+	}
+
+	/** the reader's wheel, which acts before any scroll it causes lands */
+	async function wheel(log: HTMLElement, deltaY: number) {
+		await act(async () => {
+			log.dispatchEvent(new WheelEvent("wheel", { deltaY, bubbles: true }));
+		});
+	}
+	/** where the reader's scroll put the box, arriving the way a real one does */
+	async function scrolled(log: HTMLElement, to: number) {
+		await act(async () => {
+			log.scrollTop = to;
+			log.dispatchEvent(new Event("scroll"));
+		});
+	}
+	const chip = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-live]");
+
+	it("a wheel ends following and the log stays where the reader put it", async () => {
+		const { canvas, log } = await pinned();
+		await wheel(log, -53);
+		await scrolled(log, 40);
+		canvas.turn.push(say(" and the rest of it"));
+		await settle(250);
+		expect(log.scrollTop).toBe(40);
+	});
+
+	/**
+	 * The one from the field. A reader wheels down through a tall live entry and reaches
+	 * its end; the follow point is the entry's first line, 810px up, and a rule that
+	 * re-armed follow near the bottom warped them back there on every attempt. The end
+	 * of a tall entry re-arms nothing now.
+	 */
+	it("reaching the end of a tall live entry does not warp back to its first line", async () => {
+		const { canvas, log } = await pinned();
+		await wheel(log, 53);
+		await scrolled(log, 620);
+		await scrolled(log, 900);
+		canvas.turn.push(say(" and the rest of it"));
+		await settle(250);
+		expect(log.scrollTop).toBe(900);
+	});
+
+	it("the end re-arms follow when the end is where following would sit", async () => {
+		const { canvas, log, geometry } = await pinned();
+		// the same entry, now short of the box: its top 400px into a 700px scroll, so
+		// the follow point is the plain end at 200
+		geometry(700, 400);
+		await until(() => log.scrollTop === 200);
+		await wheel(log, -53);
+		await scrolled(log, 80);
+		await scrolled(log, 200);
+		// the log grows 60px; a follower is carried to the new end
+		geometry(760, 400);
+		canvas.turn.push(say(" and the rest of it"));
+		await until(() => log.scrollTop === 260);
+	});
+
+	it("a chip names the live end, and a press returns and holds", async () => {
+		const { canvas, log } = await pinned();
+		expect(chip(canvas.host)).toBeNull();
+		await wheel(log, -53);
+		await scrolled(log, 40);
+		await until(() => chip(canvas.host) !== null);
+		expect(chip(canvas.host)?.textContent).toContain("live");
+		await act(async () => {
+			chip(canvas.host)?.click();
+		});
+		expect(log.scrollTop).toBe(90);
+		await until(() => chip(canvas.host) === null);
+		canvas.turn.push(say(" and the rest of it"));
+		await settle(150);
+		expect(log.scrollTop).toBe(90);
+	});
+
+	it("the chip says latest once the turn has settled", async () => {
+		const { canvas, log } = await pinned();
+		canvas.turn.close();
+		await settle(120);
+		await wheel(log, -53);
+		await scrolled(log, 40);
+		await until(() => chip(canvas.host)?.textContent?.includes("latest") === true);
+	});
+
+	it("the reader speaking carries the log back to the live edge", async () => {
+		const { canvas, log } = await pinned();
+		canvas.turn.close();
+		await settle(120);
+		await wheel(log, -53);
+		await scrolled(log, 40);
+		await until(() => chip(canvas.host) !== null);
+		await send(canvas.host, "and once more");
+		await until(() => chip(canvas.host) === null && log.scrollTop !== 40);
+	});
+});
+
 /* ---------- the log ----------
  * The projection's rules are `agent-transcript.test.ts`'s. What is asserted here is
  * that a row reaches the screen as one line, and that the payload the projection kept
