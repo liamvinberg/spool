@@ -4,6 +4,12 @@
 
 @import "tailwindcss";
 @import "@fontsource-variable/familjen-grotesk";
+/* the italic axis, which the package's own entry point does not carry: `index.css`
+ * declares `font-style: normal` and nothing else, so with `font-synthesis: none`
+ * below, emphasis in an agent's message rendered as no change at all. The face
+ * ships in the same package; it was only ever unimported. A real oblique over a
+ * synthesized one for the same reason the mono is a real mono */
+@import "@fontsource-variable/familjen-grotesk/wght-italic.css";
 @import "@fontsource/fragment-mono";
 
 @theme {

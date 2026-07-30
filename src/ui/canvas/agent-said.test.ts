@@ -53,6 +53,8 @@ function draw(node: ReactNode): HTMLElement {
 function structural(text: string): number {
 	return chunksOf(text).reduce((total, chunk) => {
 		if (chunk.kind === "fence") return total + 1;
+		// one `<hr>` and nothing inside it
+		if (chunk.kind === "rule") return total + 1;
 		if (chunk.kind === "item") return total + 3 + chunk.spans.length;
 		return total + 1 + chunk.spans.length;
 	}, 1);
