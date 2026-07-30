@@ -201,6 +201,19 @@ function mount({ still = false }: { still?: boolean } = {}) {
 	/** what the folder holds, so a test can take a frame out of it and say so */
 	const project = { frames: PROJECTION.frames as { name: string; page?: string }[] };
 	const pointed: Pointed = { served: null, puts: [] };
+	/**
+	 * The two ways there is no agent to talk to, as the daemon answers them (#201).
+	 *
+	 * `installed` starts null, which is a door that said nothing: the rail draws its
+	 * ordinary self, because only a look that came back and found nothing is a wall.
+	 * `login` is only ever asked by a press, and the counts are how a test says so.
+	 */
+	const preflight = {
+		installed: null as boolean | null,
+		login: { signedIn: false, account: null } as { signedIn: boolean; account: string | null },
+		looks: 0,
+		asked: 0,
+	};
 	/** the model door, and every choice that went through it (#199) */
 	const offered = {
 		offer: OFFERED,
@@ -221,6 +234,17 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+			// is there an agent on this machine at all: a `which`, asked when the rail opens
+			// and again on every press behind the wall (#201)
+			if (url.pathname.endsWith("/agent/installed")) {
+				preflight.looks += 1;
+				return Response.json(preflight.installed === null ? {} : { installed: preflight.installed });
+			}
+			// whose login it is, asked of the binary and only ever by a press (#201)
+			if (url.pathname.endsWith("/agent/login")) {
+				preflight.asked += 1;
+				return Response.json(preflight.login);
+			}
 			if (url.pathname.endsWith("/agent/turn")) {
 				const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
 				const sent = JSON.parse(body) as { thread: string; turn: string; said: readonly Said[] };
@@ -338,6 +362,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		pointed,
 		stored,
 		offered,
+		preflight,
 		render: async () => {
 			await act(async () => {
 				root.render(
@@ -3218,5 +3243,260 @@ describe("the usage window", () => {
 		expect(rail(canvas.host)?.textContent).toContain("usage limit reached · winding down");
 		await openModelMenu(canvas);
 		expect(usageLine(canvas.host)).toContain("weekly limit hit");
+	});
+});
+
+/* ---------- the two ways there is no agent to talk to (#127, #201) ----------
+ * Both are ordinary states of the rail rather than error paths, because spool spawns the
+ * developer's own binary and reuses whatever login is already there. They are drawn as
+ * different shapes because they are not knowable in the same way: whether a command is on
+ * PATH is a fact about this machine, so it is known before anybody types and it is a wall;
+ * whether it is signed in is a fact inside another product, so it is found out by spawning
+ * and it is a strip over a log that still works. */
+
+/** the wall, in the transcript's place */
+const wall = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-wall]");
+
+/** the standing half of being signed out, on the shelf */
+const outStrip = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-login]");
+
+/** the one control either of these states offers, pressed and given time to answer */
+async function checkAgain(within: HTMLElement | null) {
+	await press(within?.querySelector("[data-agent-check]"));
+	await settle(100);
+}
+
+/** how many times the log holds one sentence, which for a held prompt has to be once */
+const said = (host: HTMLElement, text: string) =>
+	(host.querySelector("[data-agent-log]")?.textContent?.split(text).length ?? 1) - 1;
+
+/** the binary's own refusal, as the runner hands it back off a non-zero exit */
+const refused: AgentEvent = {
+	kind: "closed",
+	code: 1,
+	message: "Not logged in · Please run /login",
+	parent: null,
+};
+
+describe("no agent on this machine", () => {
+	it("draws a wall in the transcript's place before the first keystroke", async () => {
+		const canvas = mount();
+		canvas.preflight.installed = false;
+		await canvas.render();
+		await settle(50);
+
+		expect(wall(canvas.host)?.textContent).toContain("no claude on this machine");
+		expect(canvas.host.querySelector("[data-agent-log]")).toBeNull();
+		// the docs root is the binary's own, and the sentence about why is spool's
+		expect(wall(canvas.host)?.textContent).toContain("code.claude.com/docs");
+		// nothing was sent, and nothing was asked about a login either: this state is
+		// answered by looking, and looking is free
+		expect(canvas.turn.prompts).toEqual([]);
+		expect(canvas.preflight.asked).toBe(0);
+	});
+
+	/**
+	 * The composer stays and it is dead: take it away and the rail is a sentence with no
+	 * evidence of what the rail is for, leave it live and it collects a prompt for nobody.
+	 */
+	it("keeps the composer, at its resting height and switched off", async () => {
+		const canvas = mount();
+		canvas.preflight.installed = false;
+		await canvas.render();
+		await settle(50);
+
+		expect(canvas.host.querySelector("[data-agent-dead]")?.textContent).toBe("say what to change");
+		expect(field(canvas.host)).toBeNull();
+	});
+
+	/**
+	 * Installing an agent takes minutes rather than the second a login takes, so pressing
+	 * this twice is the normal case and a press that leaves no mark reads as broken.
+	 */
+	it("lets its check fail as often as it likes, and says so each time", async () => {
+		const canvas = mount();
+		canvas.preflight.installed = false;
+		await canvas.render();
+		await settle(50);
+		expect(canvas.host.querySelector("[data-agent-looked]")).toBeNull();
+
+		await checkAgain(wall(canvas.host));
+		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("still nothing on your PATH");
+
+		await checkAgain(wall(canvas.host));
+		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("still nothing on your PATH");
+		expect(canvas.preflight.looks).toBe(3);
+		// and the wall is still the whole of the rail's body
+		expect(field(canvas.host)).toBeNull();
+	});
+
+	it("goes the moment a check finds one, and the composer comes back", async () => {
+		const canvas = mount();
+		canvas.preflight.installed = false;
+		await canvas.render();
+		await settle(50);
+
+		canvas.preflight.installed = true;
+		await checkAgain(wall(canvas.host));
+
+		expect(wall(canvas.host)).toBeNull();
+		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+		await send(canvas.host, "shoot home");
+		expect(canvas.turn.prompts).toEqual(["shoot home"]);
+	});
+
+	/** a wall is spool saying it looked, so a door that said nothing draws no wall */
+	it("draws no wall when the door said nothing", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await settle(50);
+
+		expect(wall(canvas.host)).toBeNull();
+		expect(field(canvas.host)).not.toBeNull();
+	});
+
+	/**
+	 * And it never guesses the other way either. A door that cannot answer is not a machine
+	 * that grew an agent: taking the wall down on it would put a live composer over nothing
+	 * to spawn, on the one press meant to find out.
+	 */
+	it("keeps the wall when a look comes back with no answer", async () => {
+		const canvas = mount();
+		canvas.preflight.installed = false;
+		await canvas.render();
+		await settle(50);
+
+		canvas.preflight.installed = null;
+		await checkAgain(wall(canvas.host));
+
+		expect(wall(canvas.host)).not.toBeNull();
+		expect(canvas.host.querySelector("[data-agent-looked]")).not.toBeNull();
+		expect(field(canvas.host)).toBeNull();
+	});
+});
+
+describe("signed out", () => {
+	/**
+	 * Nothing local knows the login is bad. The spawn is the question, so the words go out
+	 * and land in the log the instant Enter is pressed, and the refusal arrives when the
+	 * first token would have — a composer that refused instantly would be spool guessing,
+	 * and it would guess wrong the moment somebody signs in without telling it.
+	 */
+	it("is found out by spawning, and the words are in the log before the refusal is", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+
+		expect(canvas.turn.prompts).toEqual(["shoot home"]);
+		expect(rail(canvas.host)?.textContent).toContain("shoot home");
+		expect(outStrip(canvas.host)).toBeNull();
+
+		canvas.turn.push(refused);
+		canvas.turn.close();
+		await settle();
+
+		// the binary's own words, verbatim, and one sentence of spool's under them saying
+		// what to do about it from here
+		expect(rail(canvas.host)?.textContent).toContain("Not logged in · Please run /login");
+		expect(rail(canvas.host)?.textContent).toContain("run `claude` in a terminal, then /login");
+		expect(rail(canvas.host)?.textContent).toContain("spool uses that login; it never asks for a key");
+		expect(outStrip(canvas.host)?.textContent).toContain("signed out");
+		// nothing local knows any better than the last spawn did, so the composer stays live
+		// and the next send is a send: it would answer wrong the moment somebody signs in
+		// without telling it
+		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+		await send(canvas.host, "again then");
+		expect(canvas.turn.prompts).toEqual(["shoot home", "again then"]);
+	});
+
+	it("holds the prompt, and checking again runs it with no second copy of it", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+		canvas.turn.push(refused);
+		canvas.turn.close();
+		await settle();
+
+		canvas.preflight.login = { signedIn: true, account: "ada@kaffe.se" };
+		await checkAgain(outStrip(canvas.host));
+
+		// the same words, sent again, without anybody retyping a sentence to prove they
+		// meant it — and said once, so the log holds one copy of them
+		expect(canvas.turn.prompts).toEqual(["shoot home", "shoot home"]);
+		expect(said(canvas.host, "shoot home")).toBe(1);
+		// the account is named once, from the reply, at the moment spool starts using it
+		expect(rail(canvas.host)?.textContent).toContain("signed in as ada@kaffe.se");
+		expect(outStrip(canvas.host)).toBeNull();
+	});
+
+	it("says so and runs nothing when the check comes back with the same answer", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+		canvas.turn.push(refused);
+		canvas.turn.close();
+		await settle();
+
+		await checkAgain(outStrip(canvas.host));
+
+		expect(canvas.turn.prompts).toEqual(["shoot home"]);
+		expect(rail(canvas.host)?.textContent).toContain("still signed out");
+		expect(outStrip(canvas.host)).not.toBeNull();
+
+		// a press that keeps saying the same thing leaves the one line saying it, rather
+		// than stacking a third identical boundary across the log
+		await checkAgain(outStrip(canvas.host));
+		expect(canvas.preflight.asked).toBe(2);
+		expect(said(canvas.host, "still signed out")).toBe(1);
+	});
+
+	/** the mark and the strip say the same thing, and they stop saying it together */
+	it("marks the thread waiting, and stops once a turn does not bounce", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+		canvas.turn.push(refused);
+		canvas.turn.close();
+		await settle();
+		expect(lifeOfTab(canvas.host, "shoot home")).toBe("waiting");
+
+		canvas.preflight.login = { signedIn: true, account: "ada@kaffe.se" };
+		await checkAgain(outStrip(canvas.host));
+		canvas.turn.push(waiting);
+		await settle(150);
+
+		// the turn that ran is what says the bounce stopped, and it says it while it runs
+		expect(lifeOfTab(canvas.host, "shoot home")).toBe("streaming");
+		expect(outStrip(canvas.host)).toBeNull();
+
+		canvas.turn.push(speaking);
+		canvas.turn.push(say("on it."));
+		canvas.turn.push(ended);
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		await settle(600);
+
+		// and it stays stopped: the refusal is in the log above, where it happened, and the
+		// thread it happened in is one somebody has read
+		expect(lifeOfTab(canvas.host, "shoot home")).toBe("read");
+		expect(outStrip(canvas.host)).toBeNull();
+	});
+
+	/**
+	 * The API-key state is cut, and cutting it is a decision: spool asks for nothing and
+	 * stores nothing, so a warning would be spool holding an opinion about somebody's
+	 * billing arrangement. What survives is the promise, said once under the remedy.
+	 */
+	it("offers nowhere to paste a key", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+		canvas.turn.push(refused);
+		canvas.turn.close();
+		await settle();
+
+		expect(rail(canvas.host)?.querySelectorAll("input")).toHaveLength(0);
+		expect(rail(canvas.host)?.textContent).not.toContain("API key");
+		expect(rail(canvas.host)?.textContent).not.toContain("ANTHROPIC");
 	});
 });

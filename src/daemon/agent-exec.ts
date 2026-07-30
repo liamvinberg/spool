@@ -27,6 +27,39 @@ export interface AgentProcess {
 export type AgentExecutor = (options: AgentSpawn) => Promise<AgentProcess>;
 
 /**
+ * One probe, run to completion (#199, #201).
+ *
+ * A probe is not a turn: it asks the binary a question about itself, reads the answer and
+ * ends. Both of them — what the model menu may offer, and whose login this is — want the
+ * same three ways to be over and want it to happen once: the process exited, the caller
+ * has heard enough, or the binary has had long enough. So the lifecycle lives here, beside
+ * the process it is about, and each probe supplies only its own conversation.
+ *
+ * The timeout is the backstop rather than the plan. Every caller closes stdin, so the
+ * binary exits on its own and `onExit` is what normally ends this.
+ */
+export async function probeAgent(
+	proc: AgentProcess,
+	timeoutMs: number,
+	/** what to ask, and when the answer is complete: `finish` ends the probe early */
+	ask: (finish: () => void) => void,
+): Promise<void> {
+	let settled = false;
+	await new Promise<void>((resolve) => {
+		const done = () => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			proc.kill();
+			resolve();
+		};
+		const timer = setTimeout(done, timeoutMs);
+		proc.onExit(done);
+		ask(done);
+	});
+}
+
+/**
  * How much of what the binary printed is kept for the exit message.
  *
  * Enough for a refusal and its remedy — the longest of the binary's own is under a

@@ -1,4 +1,5 @@
 import type { StoredLife } from "../../daemon/agent-threads";
+import { signedOut } from "./agent-preflight";
 import type { TurnPhase } from "./agent-stream";
 import type { AgentEntry } from "./agent-transcript";
 
@@ -44,29 +45,22 @@ export interface Thread {
 }
 
 /**
- * The binary's own words for a login that is not there, verbatim from 2.1.220 (#127).
- *
- * Spool does not read `~/.claude.json` or the credentials beside it to find this out. It
- * asks by doing the thing it was going to do anyway, and this is the answer coming back,
- * so what is matched is the agent's own sentence rather than a shape spool invented.
- */
-const SIGNED_OUT: readonly string[] = [
-	"Not logged in",
-	"Please run /login",
-	"Invalid API key",
-	"No authentication available",
-];
-
-/**
  * The turn bounced off a login, which is one of the three things a person has to clear.
  *
- * Read off the log rather than handed in, because the log is where the refusal lands:
- * the binary writes it on the way out and the transcript draws it as spool's own
- * boundary note. #127's standing strip and its `check again` are not built, and this
- * does not build them — it is the mark's own rule, which is this ticket's.
+ * Read off the log rather than handed in, because the log is where the refusal lands: the
+ * binary writes it on the way out and the transcript draws it verbatim. The words are the
+ * binary's own (see `agent-preflight.ts`), because spool does not read the agent's private
+ * credential files to find this out — it asks by doing the thing it was going to do
+ * anyway, and this is the answer coming back.
+ *
+ * It is asked of one turn's entries rather than of a whole conversation, and that is
+ * load-bearing now that #201 built the way out: a bounce is true until it stops being
+ * true, and the turn that ran after somebody signed in is what says it stopped. Asked of
+ * the conversation, the archived refusal would keep the mark stuck and the strip up
+ * forever, on a thread that is working.
  */
 export function bounced(entries: readonly AgentEntry[]): boolean {
-	return entries.some((entry) => entry.kind === "note" && SIGNED_OUT.some((words) => entry.text.includes(words)));
+	return entries.some((entry) => entry.kind === "note" && signedOut(entry.text));
 }
 
 /**

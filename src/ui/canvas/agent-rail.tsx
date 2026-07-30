@@ -9,6 +9,7 @@ import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, 
 import { limitReadout } from "./agent-limit";
 import { closedText } from "./agent-markers";
 import { type AgentModelDeck, menuLongest, menuSays } from "./agent-model";
+import type { InstallDeck, LoginDeck } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
 import { Caret, Said } from "./agent-said";
 import { Shot } from "./agent-shot";
@@ -180,6 +181,8 @@ export function AgentRail({
 	jump,
 	pointing,
 	threads,
+	install,
+	login,
 	queued,
 	handback,
 	model,
@@ -200,6 +203,10 @@ export function AgentRail({
 	pointing: Pointing;
 	/** every conversation this project has, newest first (#136, #200) */
 	threads: Threads;
+	/** whether there is an agent on this machine at all, and the look that says so (#201) */
+	install: InstallDeck;
+	/** the agent would not start because nobody is signed in, and the way out (#201) */
+	login: LoginDeck;
 	/** what spool is holding until this turn ends, in the order it will fire (#170) */
 	queued: readonly AgentQueued[];
 	/** whatever left the queue un-fired, for the box below to take back (#170) */
@@ -308,25 +315,33 @@ export function AgentRail({
 						<AgentIcon />
 					</button>
 				</div>
+			) : install.missing ? (
+				/*
+				 * There is nothing to spawn, and spool knew it before anybody typed (#201).
+				 *
+				 * The wall takes the transcript's place and the composer stays, dead. The rest of
+				 * the shelf goes with the transcript: a plan belongs to a turn, and a thread is a
+				 * conversation you cannot continue on a machine with no agent on it.
+				 */
+				<div className="flex h-full min-w-[200px] flex-col">
+					<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+						<InstallWall install={install} />
+						<CollapseCaret onCollapse={() => setWidth(STRIP_WIDTH)} />
+					</div>
+					<DeadComposer />
+				</div>
 			) : (
 				<div className="flex h-full min-w-[200px] flex-col">
 					{/* the threads lead the shelf, because the row is the rail's own navigation and
 					    everything under it belongs to whichever thread it names */}
 					<ThreadStrip threads={threads} />
+					{/* the standing half of being signed out, on the shelf the plan would take —
+					    and they never want it at once, because a plan belongs to a turn that is
+					    running and this exists precisely because none can (#201) */}
+					{login.out ? <LoginStrip login={login} /> : null}
 					{plan === null ? null : <PlanStrip plan={plan} />}
 					<Transcript entries={entries} elapsed={elapsed} last={last} jump={jump} onAnswer={onAnswer}>
-						{/* the caret rides the transcript's own top fade rather than a row of its
-						    own: #144's whole finding is that a line of a 420px column is too
-						    expensive to spend on chrome, and the threads row above it is already
-						    spending the one line the shelf can afford */}
-						<button
-							type="button"
-							aria-label="Collapse agent"
-							onClick={() => setWidth(STRIP_WIDTH)}
-							className="absolute top-2 right-2 z-10 flex h-7 w-7 items-center justify-center rounded-sm text-muted/40 transition-colors hover:text-text"
-						>
-							<PanelCaret dir="right" className="h-3.5 w-2.5" />
-						</button>
+						<CollapseCaret onCollapse={() => setWidth(STRIP_WIDTH)} />
 					</Transcript>
 					{/* the strip is measured against the composer's own inner width, which the
 					    rail's drag moves: the same three chips fit at 420 and are a count at
@@ -599,6 +614,156 @@ function ThreadMark({ life, spare = false }: { life: Life; spare?: boolean }) {
 	);
 }
 
+/**
+ * The way back to the strip.
+ *
+ * It rides the body's own top fade rather than a row of its own: #144's whole finding is
+ * that a line of a 420px column is too expensive to spend on chrome, and the threads row
+ * is already spending the one line the shelf can afford. The wall gets it too, because a
+ * rail you cannot collapse is a rail that has taken the column hostage over a state
+ * nobody caused.
+ */
+function CollapseCaret({ onCollapse }: { onCollapse: () => void }) {
+	return (
+		<button
+			type="button"
+			aria-label="Collapse agent"
+			onClick={onCollapse}
+			className="absolute top-2 right-2 z-10 flex h-7 w-7 items-center justify-center rounded-sm text-muted/40 transition-colors hover:text-text"
+		>
+			<PanelCaret dir="right" className="h-3.5 w-2.5" />
+		</button>
+	);
+}
+
+/* ---------- the agent that is not there (#127, #201) ----------
+ * Two surfaces, and they are different shapes because the two states are known in
+ * different ways. A missing binary is a fact about this machine, true before anyone
+ * types, so it takes the transcript's place. A bad login is a fact inside another
+ * product, so it is a standing strip over a log that still works.
+ *
+ * Neither is coloured. There is one accent in this product and it means a chip in the
+ * composer and a box out on the canvas are the same object; spending it on a state that
+ * is not even a failure — you have not installed something yet — would break the only
+ * thing it says. Both step forward in brightness, which is the whole of the emphasis the
+ * rest of the rail uses. */
+
+/** the binary's own docs root, as it links it itself */
+const DOCS = "code.claude.com/docs";
+
+/**
+ * Ask again: one control, in the rail's own weight, for both of these states.
+ *
+ * Mono, small, and no border until you are on it. The rail has exactly one filled control
+ * anywhere — the composer — and neither of these states is the place to introduce a second.
+ * It says what it is doing rather than what it is for while a check is out, because that
+ * is the only thing on screen saying the press landed.
+ */
+function Quiet({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+	return (
+		<button
+			type="button"
+			data-agent-check=""
+			onClick={onClick}
+			className="-mr-1.5 flex h-6 shrink-0 items-center gap-2 rounded-sm px-1.5 font-mono text-2xs text-text/70 leading-3 transition-colors duration-150 hover:bg-surface hover:text-text"
+		>
+			{busy ? (
+				<svg
+					viewBox="0 0 14 14"
+					className="h-3 w-3 shrink-0 animate-agent-spin text-muted/60"
+					fill="none"
+					aria-hidden="true"
+				>
+					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.26" />
+					<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+				</svg>
+			) : null}
+			{busy ? "looking" : "check again"}
+		</button>
+	);
+}
+
+/**
+ * Nothing to spawn.
+ *
+ * The composer stays, and it is dead. Removing it would leave the rail as a sentence with
+ * no evidence of what the rail is for; leaving it live would collect a prompt for nobody.
+ * So it sits there at its resting height, dimmed, saying what it will say once there is
+ * something behind it — the one thing a wall owes you past the bad news is a picture of
+ * the good state.
+ *
+ * The threads row goes with the transcript. A conversation you cannot continue is not
+ * something to switch to, and the wall is the whole of the rail's body while it is up.
+ *
+ * The words are not spool's where they do not have to be: `code.claude.com/docs` is the
+ * docs root the binary links itself. What spool writes is the sentence about why there is
+ * nothing here, because that sentence is about spool.
+ */
+function InstallWall({ install }: { install: InstallDeck }) {
+	return (
+		<div data-agent-wall="" className="flex min-h-0 flex-1 flex-col justify-center px-3.5">
+			<div className="animate-agent-entry flex flex-col gap-3">
+				<p className="text-base text-text leading-base">no claude on this machine</p>
+				<p className="text-base text-muted leading-base">
+					Spool runs the agent you already have, with the login you already made. There is nothing here to run yet.
+				</p>
+				<div className="flex flex-col gap-1.5 pt-1">
+					<div className="flex items-center justify-between">
+						<span className="font-mono text-2xs text-muted/45 leading-4">{DOCS}</span>
+						<Quiet busy={install.checking} onClick={install.look} />
+					</div>
+					{/* the check is allowed to fail forever, and a press that leaves no mark reads
+					    as a broken button — so it leaves one line, in the composer's own mono */}
+					{install.foundNothing ? (
+						<span data-agent-looked="" className="animate-agent-entry font-mono text-2xs text-muted/45 leading-4">
+							still nothing on your PATH
+						</span>
+					) : null}
+				</div>
+			</div>
+		</div>
+	);
+}
+
+/** the composer at rest and switched off, so the rail still shows what it is for */
+function DeadComposer() {
+	return (
+		<div data-agent-dead="" className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5">
+			<div className="flex flex-col rounded-md border border-border/70 bg-surface/40 px-3 py-2.5">
+				<span className="text-base text-muted/25 leading-base" style={{ height: MIN_H }}>
+					say what to change
+				</span>
+			</div>
+			<div className="flex h-[18px] items-center" />
+		</div>
+	);
+}
+
+/**
+ * Signed out, as a standing fact.
+ *
+ * A strip rather than a wall because the log below it is not empty and must not be: what
+ * the human typed is down there in their own voice, and so is the moment the send
+ * bounced. The strip is the part that outlives that moment — the same test #117 used to
+ * lift the plan out of the transcript and leave the screenshot in it.
+ *
+ * It sits at the plan strip's height and in the plan strip's place, because the rail has
+ * one shelf and those two never want it at once: a plan belongs to a turn that is running,
+ * and this exists precisely because none can.
+ *
+ * Two things on it and no third. The promise about keys is in the log under the remedy,
+ * where somebody deciding what to do reads it once, rather than held on screen for as long
+ * as the state lasts.
+ */
+function LoginStrip({ login }: { login: LoginDeck }) {
+	return (
+		<div data-agent-login="" className="flex h-[34px] shrink-0 items-center border-border border-b px-3.5">
+			<span className="min-w-0 flex-1 truncate font-mono text-muted text-sm leading-4">signed out</span>
+			<Quiet busy={login.checking} onClick={login.check} />
+		</div>
+	);
+}
+
 /* ---------- the plan, out of the log ----------
  * A transcript is a log and a log scrolls. Everything else in one is finished the
  * moment it is drawn, so scrolling costs nothing; the plan is the exception, because
@@ -813,11 +978,24 @@ function Entry({
 	if (entry.kind === "note") {
 		// a boundary reaches across the rail because what it says applies to everything
 		// under it: above it happened, below it did not
+		if (entry.rule !== false) {
+			return (
+				<div className="flex items-center gap-2.5 py-0.5">
+					<span className="h-px flex-1 bg-border" />
+					<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3">{entry.text}</span>
+					<span className="h-px flex-1 bg-border" />
+				</div>
+			);
+		}
+		// and a note that is only itself sits where it fell, in the quiet mono the
+		// composer's own hints use: the remedy in the weight that says it is the thing to
+		// do, and under it the sentence you need once (#201)
 		return (
-			<div className="flex items-center gap-2.5 py-0.5">
-				<span className="h-px flex-1 bg-border" />
-				<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3">{entry.text}</span>
-				<span className="h-px flex-1 bg-border" />
+			<div data-agent-aside="" className="flex flex-col gap-0.5">
+				{entry.said === undefined ? null : (
+					<p className="font-mono text-2xs text-text/70 leading-4">{entry.said}</p>
+				)}
+				<p className="whitespace-pre-wrap font-mono text-2xs text-muted/55 leading-4">{entry.text}</p>
 			</div>
 		);
 	}

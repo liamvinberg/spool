@@ -126,6 +126,28 @@ shortening, and #200's own word about a finished thread moved into the field's
 placeholder to make room. #122's window renders whole inside the menu at every rail
 width, clamped to the composer rather than cut off by the rail, absent until the binary
 warns, with nothing about overage and one rule across the log for the wind-down.
+**#201 landed the two ways there is no agent to talk to**, as the two shapes
+`--wall-install` and `--wall-login` drew them. A missing binary is a wall in the
+transcript's place before the first keystroke, with the composer present and dead;
+it is answered by a `which` over the same bare name a spawn resolves, asked when the
+rail opens, and its look may keep failing and says so in one quiet line each time. A
+door that said nothing draws no wall, because a wall is spool saying it looked. The
+threads row goes with the transcript there, since a conversation you cannot continue
+is not something to switch to. Signed out is a strip on the shelf the plan would take
+plus the bounce in the log, found out by spawning, with the binary's own refusal
+verbatim and one sentence of spool's under it — the frames' own `LOGIN_REMEDY` and
+the promise about keys, as the second note shape this rail has ever had. **The check
+is `claude auth status --json`**, which is the frames' preflight made real and the
+only instrument that names an account without spool reading a private file: the
+frames read `oauthAccount` off `~/.claude.json`, which the ticket forbids, and the
+binary answers `loggedIn` and an `email` itself in 0.31s. On a yes it names the
+account once and re-sends the held prompt with the turn drawing no second copy of it;
+on a no it leaves one quiet line and sends nothing, which the frames never drew
+because their check always passed. **One defect fell out of building the way back**:
+#161's mark and this strip both read the bounce off the log, and reading the whole
+conversation left an archived refusal saying *stuck* forever on a thread that had
+recovered — so both now read the turn that ran, which also means a restored thread
+draws neither, having no held prompt to run and nothing waiting on anybody.
 
 Explorations live until the work they decided is built. Making the decision is
 not that moment: while a page is still being resolved, the rejected frames are

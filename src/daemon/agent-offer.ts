@@ -1,4 +1,4 @@
-import type { AgentExecutor } from "./agent-exec";
+import { type AgentExecutor, probeAgent } from "./agent-exec";
 import { type AgentAsk, agentPromptLine, planAgentSpawn } from "./agent-spawn";
 
 export type { AgentAsk };
@@ -325,20 +325,8 @@ export async function askAgentOffer({
 	const replies: string[] = [];
 	/** the control request has been answered, whether or not the answer held models */
 	let listed = false;
-	let settled = false;
 
-	await new Promise<void>((resolve) => {
-		const done = () => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
-			proc.kill();
-			resolve();
-		};
-		// the backstop rather than the plan: stdin closes below, so the process exits on
-		// its own and `onExit` is what normally ends this
-		const timer = setTimeout(done, timeoutMs);
-		proc.onExit(done);
+	await probeAgent(proc, timeoutMs, (done) => {
 		proc.onLine((line) => {
 			let wire: WireResponse;
 			try {

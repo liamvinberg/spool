@@ -331,6 +331,14 @@ export class FakeAgentProc implements AgentProcess {
 	spawn: AgentSpawn;
 	/** what the fixture does when a prompt lands, the way the binary answers one */
 	whenWritten: ((proc: FakeAgentProc, line: string) => void) | undefined;
+	/**
+	 * What the fixture does once its input closes, the way a probe that reads no stdin
+	 * answers (#201).
+	 *
+	 * `claude auth status` is asked nothing and prints a document, so the close is the
+	 * only thing that happens to it before it speaks.
+	 */
+	whenEnded: ((proc: FakeAgentProc) => void) | undefined;
 	private lineCb: (line: string) => void = () => {};
 	private exitCb: (code: number | null, message?: string) => void = () => {};
 	constructor(spawn: AgentSpawn) {
@@ -342,6 +350,7 @@ export class FakeAgentProc implements AgentProcess {
 	}
 	end(): void {
 		this.ended = true;
+		this.whenEnded?.(this);
 	}
 	kill(): void {
 		this.killed = true;
@@ -371,15 +380,33 @@ export class FakeAgentProc implements AgentProcess {
  * it was asked for — which is how a test reads the settled arguments and the
  * environment the child would have received.
  */
-export function fixtureAgentExecutor(whenWritten?: (proc: FakeAgentProc, line: string) => void) {
+export function fixtureAgentExecutor(
+	whenWritten?: (proc: FakeAgentProc, line: string) => void,
+	whenEnded?: (proc: FakeAgentProc) => void,
+) {
 	const spawned: FakeAgentProc[] = [];
 	const executor: AgentExecutor = async (spawn) => {
 		const proc = new FakeAgentProc(spawn);
 		proc.whenWritten = whenWritten;
+		proc.whenEnded = whenEnded;
 		spawned.push(proc);
 		return proc;
 	};
 	return { spawned, executor };
+}
+
+/**
+ * A binary answering the login probe, and nothing else (#201).
+ *
+ * `claude auth status --json` prints a document and exits, so the fixture answers on the
+ * close: one reply for whichever spawn asked the question, and the ordinary fixture
+ * behaviour for a turn's own spawn.
+ */
+export function loginAgentExecutor(reply: string) {
+	return fixtureAgentExecutor(undefined, (proc) => {
+		for (const line of reply.split("\n")) proc.emit(line);
+		proc.exit(0);
+	});
 }
 
 /** An executor that answers a prompt with one capture, then exits cleanly. */
