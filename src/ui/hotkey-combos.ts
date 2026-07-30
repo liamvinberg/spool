@@ -97,10 +97,10 @@ const KEY_OF: Record<string, string> = {
 /** Character tokens a layout may spell with shift: match the character, not the chord. */
 const SHIFT_AGNOSTIC = new Set(["slash", "question", "plus", "minus", "equals"]);
 
-export function matchesCombo(event: ComboEvent, combo: ParsedCombo): boolean {
+export function matchesCombo(event: ComboEvent, combo: ParsedCombo, platform = currentPlatform()): boolean {
 	// a bare accel combo is the platform's own modifier key going down; the
 	// other platform's modifier stays an ordinary, unclaimed key here
-	if (combo.key === null) return event.key === accelKeyName();
+	if (combo.key === null) return event.key === accelKeyName(platform);
 	// hold-to-pan borrows the Hand under any modifier, as it always has
 	if (combo.key === "space") return event.code === "Space";
 	if (combo.alt !== event.altKey) return false;
@@ -142,11 +142,11 @@ const FACE_OF: Record<string, string> = {
  * toast already wears (`⌘Z`, `ctrl+Z`); ⇧ ⌥ ⌫ stay glyphs everywhere, the
  * face the context menu has always drawn.
  */
-export function formatCombo(combo: string): string {
+export function formatCombo(combo: string, platform = currentPlatform()): string {
 	const parsed = parseCombo(combo);
-	const apple = applePlatform(currentPlatform());
+	const apple = applePlatform(platform);
 	let face = "";
-	if (parsed.accel) face += accelLabel();
+	if (parsed.accel) face += accelLabel(platform);
 	if (parsed.ctrl) face += apple ? "⌃" : "ctrl+";
 	if (parsed.shift && (parsed.key === null || !SHIFT_AGNOSTIC.has(parsed.key))) face += "⇧";
 	if (parsed.alt) face += "⌥";

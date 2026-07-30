@@ -327,7 +327,7 @@ export function hotkeyKey(id: HotkeyId): string {
 /** Everything the sheet draws for an entry: key faces as chips, gesture as prose. */
 export function hotkeyChips(entry: HotkeyEntry): { keys: readonly string[]; gesture: string | undefined } {
 	const shown = told<readonly string[]>("shown" in entry ? entry.shown : undefined);
-	const keys = shown ?? ("keys" in entry ? entry.keys.map(formatCombo) : ([] as readonly string[]));
+	const keys = shown ?? ("keys" in entry ? entry.keys.map((combo) => formatCombo(combo)) : ([] as readonly string[]));
 	return { keys, gesture: told<string>("gesture" in entry ? entry.gesture : undefined) };
 }
 
