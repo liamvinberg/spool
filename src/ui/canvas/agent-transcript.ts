@@ -1,7 +1,8 @@
 import type { Attachment } from "../../attachment";
-import type { AgentEvent } from "../../daemon/agent-events";
+import type { AgentEvent, AgentLimit } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../../daemon/selection";
 import { ASK_TOOL, type AskQuestion, questionsOf } from "./agent-ask";
+import { limitNote } from "./agent-limit";
 import {
 	type CallInput,
 	type CallName,
@@ -338,6 +339,15 @@ export interface Transcript {
 	 * entries: it stops the clock, and it changes what Enter in the composer means.
 	 */
 	readonly asking: string | null;
+	/**
+	 * The last usage window the binary said anything about, or null across a whole
+	 * session where it said nothing — which is most of them (#122).
+	 *
+	 * A field rather than an entry, because it is not a thing that happened: it is true
+	 * across the turn, it was true before the turn, and it will still be true tomorrow.
+	 * The one thing the log draws about it is the wind-down, which is a moment.
+	 */
+	readonly limit: AgentLimit | null;
 }
 
 /**
@@ -591,6 +601,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	let over = false;
 	let ended = false;
 	let last = 0;
+	/** the last usage window the binary said anything about, so a crossing can be seen */
+	let limit: AgentLimit | null = null;
 
 	/**
 	 * The log drew something on this thread, which is what ends a run (#135).
@@ -1193,9 +1205,24 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				}
 				break;
 			}
+			case "limit": {
+				/*
+				 * The usage window, said once, when there is something to say (#122, #199).
+				 *
+				 * The standing fact is the readout's — it outlives every turn that saw it, so it
+				 * is carried out of here rather than drawn in here. What the log gets is the
+				 * wind-down and only the wind-down: the agent has just been told to finish what
+				 * it is holding and start nothing new, and the line is why the delegation it
+				 * announced never happens.
+				 */
+				const note = limitNote(limit, event.limit);
+				limit = event.limit;
+				if (note !== null) notes.push({ key: `limit-${notes.length}`, kind: "note", text: note });
+				break;
+			}
 			default:
-				// limit, compacting, compacted and anything nobody modelled: not this
-				// ticket's to draw, and never fatal
+				// compacting, compacted and anything nobody modelled: not this ticket's to
+				// draw, and never fatal
 				break;
 		}
 	}
@@ -1263,5 +1290,5 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 					tasks: written,
 				};
 	const parked = [...asks.values()].find((ask) => ask.state === "open")?.request ?? null;
-	return { entries: [...entries, ...notes], plan: planned, over, last, asking: parked };
+	return { entries: [...entries, ...notes], plan: planned, over, last, asking: parked, limit };
 }

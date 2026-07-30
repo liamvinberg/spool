@@ -25,6 +25,7 @@ import {
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { RibbonMark } from "../icons";
+import { useAgentModel } from "./agent-model";
 import { AgentRail } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
@@ -256,6 +257,10 @@ export function ProjectCanvas({
 	// so the canvas repaints while the transcript is still arriving.
 	const deck = useAgentThreads(project);
 	const turn = deck.turn;
+	// which machine is answering, asked of that machine rather than shipped (#118, #199).
+	// Keyed on the open thread, because that is what the answer is about: the rows are the
+	// binary's and the same for every thread, and which of them is answering is not.
+	const model = useAgentModel(project, deck.open);
 	/**
 	 * The running turn, for the one hotkey handler that can stop it (#165).
 	 *
@@ -2699,6 +2704,8 @@ export function ProjectCanvas({
 				}}
 				queued={turn.queued}
 				handback={turn.handback}
+				model={model}
+				limit={turn.limit}
 				onSend={turn.send}
 				onQueue={turn.queue}
 				onUnqueue={turn.unqueue}

@@ -102,7 +102,30 @@ byte-identical to what was drawn. A restart cuts the picture where the lights we
 out and offers no resume, an aged-out session reads finished, and a ✕ deletes
 nothing. **What the frames here still draw ahead of the code**: `--threads-strip`'s
 equal-width tabs and its missing ✕, which #136 already recorded as the frame
-lagging its own decision, and the model readout.
+lagging its own decision.
+**#199 landed the model, its effort and the usage window**: the footer's send hint is
+gone and `agent-play--model-menu`'s trigger has its slot, populated by a real
+`list_models` control request per open rather than by anything shipped — one probe
+spawn in `agent-offer.ts` asks the control request and a bare `/model` in the same
+process, for no turn and no token, and answers both what may be picked and what is
+answering. A press is `agent-model-look`'s `one sentence`: names one line each and a
+single slot describing whatever the cursor is on, reserving its tallest sentence
+because the panel opens upward. Effort comes off the picked row's own
+`supportedEffortLevels`, so `haiku` draws no control at all. **What the frames could
+not show is that a pick has to survive the process it was made in**: a pick sends the
+message, keeps only what the reply confirmed, and hands that to every later spawn of
+that thread as `--model` / `--effort` — which is also why the environment still wins,
+since `--effort` was measured to outrank `CLAUDE_CODE_EFFORT_LEVEL` while `/effort` is
+refused by it, and spool only ever passes a flag the binary already agreed to. The ask
+is a thread's rather than a project's, on #200's own reading: the rows come back the
+same for every thread and which of them is answering does not. The probe carries no
+thread at all, because `/model haiku` is a local command the runtime records in
+whatever session it lands in, and the menu's plumbing must not reach the transcript.
+#184's row is the model and the stop and nothing else, the name truncating and never
+shortening, and #200's own word about a finished thread moved into the field's
+placeholder to make room. #122's window renders whole inside the menu at every rail
+width, clamped to the composer rather than cut off by the rail, absent until the binary
+warns, with nothing about overage and one rule across the log for the wind-down.
 
 Explorations live until the work they decided is built. Making the decision is
 not that moment: while a page is still being resolved, the rejected frames are

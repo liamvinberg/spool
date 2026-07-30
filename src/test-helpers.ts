@@ -257,6 +257,22 @@ export const CAPTURES = [
 	"claude-compact",
 ] as const;
 
+/**
+ * The `list_models` control reply, captured whole (#118, #199).
+ *
+ * Beside the session captures rather than in one of them, because it is not a window of
+ * a session: it is one control response, taken on the same 2.1.220 the seven were. It
+ * has one reader on each side of the wire and three tests asserting on it, so it is read
+ * from here rather than typed out again in each — the same rule the captures are under.
+ *
+ * The canvas keeps its own copy under `design/shared/fixtures/`, because spool's mock
+ * convention resolves fixtures under `design/` and nowhere else.
+ */
+export function readModelsReply(): unknown {
+	const file = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "claude-models.json");
+	return JSON.parse(readFileSync(file, "utf8")) as unknown;
+}
+
 /** one message the wire streamed: what it said, and the fragments it said it in */
 export interface StreamedMessage {
 	readonly text: string;

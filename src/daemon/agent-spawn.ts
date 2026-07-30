@@ -155,11 +155,28 @@ export interface AgentSession {
  * adds nothing to it — no key is configured anywhere in this path — and removes
  * nothing either: someone's own CLI configured with a key breaks no promise
  * spool made, and stripping it would break their setup to make a slogan tidier.
+ *
+ * `ask` is which machine the hands chose and how hard it should think (#199). It is
+ * the binary's own two flags and nothing more, and it rides every spawn rather than
+ * being said once: a resume restores the conversation, so a `/model` typed into one
+ * turn is a fact about that turn, and the flag is what makes the choice a property of
+ * the thread instead. Only a change the binary already confirmed reaches here — see
+ * `askFrom` — because `--effort` outranks `CLAUDE_CODE_EFFORT_LEVEL` and an
+ * unconfirmed level would beat the variable that had just refused it.
  */
 export function planAgentSpawn(
 	root: string,
 	env: Readonly<Record<string, string | undefined>>,
-	session: AgentSession,
+	/**
+	 * Null for a spawn that is not a conversation (#199, #200).
+	 *
+	 * Every turn belongs to a thread and says so, which is the whole of #120. The model
+	 * probe does not: it asks the binary a question about itself, so it takes no id and
+	 * leaves no transcript behind, rather than writing the menu's own plumbing into a
+	 * thread the rail is drawing.
+	 */
+	session: AgentSession | null,
+	ask: AgentAsk = {},
 ): AgentSpawn {
 	return {
 		command: AGENT_COMMAND,
@@ -174,8 +191,7 @@ export function planAgentSpawn(
 			// the thread, in the binary's own vocabulary for one. A resume restores the
 			// agent's memory for free and emits no history, which is why the rail's picture
 			// is spool's problem: the two halves of a thread are the id and the drawing
-			session.resume ? "--resume" : "--session-id",
-			session.id,
+			...(session === null ? [] : [session.resume ? "--resume" : "--session-id", session.id]),
 			"--setting-sources",
 			AGENT_SETTING_SOURCES,
 			"--permission-mode",
@@ -184,12 +200,36 @@ export function planAgentSpawn(
 			AGENT_PERMISSION_PROMPT_TOOL,
 			"--settings",
 			JSON.stringify({ permissions: { allow: [AGENT_ALLOW_RULE] } }),
+			// absent rather than defaulted on both: nobody having chosen is not the same
+			// fact as having chosen the binary's default, and only one of them is spool's
+			// to assert
+			...(ask.value === undefined ? [] : ["--model", ask.value]),
+			...(ask.effort === undefined ? [] : ["--effort", ask.effort]),
 			"--append-system-prompt",
 			agentFraming(),
 		],
 		cwd: root,
 		env: { ...env },
 	};
+}
+
+/**
+ * What the hands have asked for, which is a request and never a readout (#199).
+ *
+ * Absent on either axis means nobody has asked and the binary's own default stands.
+ * Spool keeps it per thread so every spawn of that thread carries it: which machine is
+ * answering is a fact about the conversation rather than about the last turn that
+ * happened to say so.
+ *
+ * It lives here rather than beside the offer that produces it, because these two flags
+ * are what a spawn takes and this module is what a spawn is. `effort` is a plain level
+ * rather than a set spool ships: which levels exist is the model's own claim about
+ * itself, and a set here would hide the one a newer CLI added. What keeps a level spool
+ * cannot honour off a spawn is `askFrom`, which asks the model whether it listed it.
+ */
+export interface AgentAsk {
+	readonly value?: string;
+	readonly effort?: string;
 }
 
 /**

@@ -3,7 +3,8 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { longestStreamed } from "../../test-helpers";
+import { type AgentOffer, modelsOf } from "../../daemon/agent-offer";
+import { longestStreamed, readModelsReply } from "../../test-helpers";
 import type { AgentEvent, SelectionEntry, ServedThread, ThreadPut } from "../api";
 import { chunksOf } from "./agent-markdown";
 import { followTo } from "./agent-rail";
@@ -152,6 +153,33 @@ function sse() {
 	};
 }
 
+/**
+ * What `list_models` came back with, and what is answering (#118, #199).
+ *
+ * Read from `fixtures/claude-models.json` rather than typed out here: nothing in this
+ * menu is spool's to write, two of the five rows resolve to the identical model with
+ * only a parenthetical between them, and one of them carries no effort levels at all.
+ */
+const OFFERED: AgentOffer = {
+	models: modelsOf(readModelsReply()),
+	current: { value: "opus[1m]", resolved: "claude-opus-5[1m]", name: "Opus 5", effort: "high", pin: null },
+};
+
+/** the daemon's own answer to a choice: the binary's report of what it is now running */
+function reported(offer: AgentOffer, wanted: { value?: string; effort?: string }): AgentOffer {
+	const picked = offer.models.find((model) => model.value === wanted.value);
+	// an alias the binary would not take leaves the report exactly where it was
+	if (wanted.value !== undefined && picked === undefined) return offer;
+	return {
+		models: offer.models,
+		current: {
+			...offer.current,
+			...(picked === undefined ? {} : { value: picked.value, resolved: picked.resolvedModel }),
+			...(wanted.effort === undefined ? {} : { effort: wanted.effort }),
+		},
+	};
+}
+
 function mount({ still = false }: { still?: boolean } = {}) {
 	const turn: Turn & { open: boolean } = {
 		prompts: [],
@@ -173,6 +201,14 @@ function mount({ still = false }: { still?: boolean } = {}) {
 	/** what the folder holds, so a test can take a frame out of it and say so */
 	const project = { frames: PROJECTION.frames as { name: string; page?: string }[] };
 	const pointed: Pointed = { served: null, puts: [] };
+	/** the model door, and every choice that went through it (#199) */
+	const offered = {
+		offer: OFFERED,
+		/** every thread the rail asked the offer about, in order */
+		asked: [] as string[],
+		chose: [] as { thread: string; value?: string; effort?: string }[],
+		reply: reported,
+	};
 	if (still) {
 		vi.stubGlobal("matchMedia", (query: string) => ({
 			matches: query.includes("prefers-reduced-motion"),
@@ -218,6 +254,22 @@ function mount({ still = false }: { still?: boolean } = {}) {
 			// the threads this project has, and the picture the rail writes back (#120, #200)
 			if (url.pathname.endsWith("/agent/threads")) {
 				return Response.json({ threads: stored.served ?? [] });
+			}
+			// the binary's own answer to `list_models`, and what a choice does to it: the menu
+			// is populated at runtime, so the stub is the door rather than a table (#199). Both
+			// hang under `/agent/threads/`, so they answer before the thread's own put
+			if (url.pathname.endsWith("/models")) {
+				const thread = url.pathname.split("/agent/threads/")[1]?.replace(/\/models$/, "") ?? "";
+				offered.asked.push(thread);
+				return Response.json(offered.offer);
+			}
+			if (url.pathname.endsWith("/model")) {
+				const thread = url.pathname.split("/agent/threads/")[1]?.replace(/\/model$/, "") ?? "";
+				const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
+				const wanted = JSON.parse(body) as { value?: string; effort?: string };
+				offered.chose.push({ thread, ...wanted });
+				offered.offer = offered.reply(offered.offer, wanted);
+				return Response.json(offered.offer);
 			}
 			if (url.pathname.includes("/agent/threads/")) {
 				const thread = url.pathname.split("/agent/threads/")[1]?.replace(/\/close$/, "") ?? "";
@@ -285,6 +337,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		project,
 		pointed,
 		stored,
+		offered,
 		render: async () => {
 			await act(async () => {
 				root.render(
@@ -452,9 +505,12 @@ describe("the rail", () => {
 		expect(canvas.host.querySelector('[aria-label="Inspector"]')).toBeNull();
 		expect(rail(canvas.host)?.textContent).not.toContain("elements");
 		expect(rail(canvas.host)?.textContent).not.toContain("connections");
-		// the composer is the whole of what an empty rail says
+		// the composer is the whole of what an empty rail says, and the footer under it
+		// says which machine is answering — the send hint's slot, because that outranks a
+		// keyboard hint you learn once (#184)
 		expect(field(canvas.host)?.placeholder).toBe("say what to change");
-		expect(rail(canvas.host)?.textContent).toContain("enter to send");
+		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
+		expect(rail(canvas.host)?.textContent).not.toContain("enter to send");
 	});
 
 	it("opens at 420, inside the range it already had", async () => {
@@ -631,26 +687,28 @@ describe("one turn", () => {
 		expect(canvas.host.querySelector("[data-agent-caret]")).toBeNull();
 	});
 
-	it("says what Enter will do with the press, and gives the composer back when the turn ends", async () => {
+	it("holds the press while a turn runs, and gives the composer back when it ends", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "go");
 		canvas.turn.push(waiting);
 		await settle();
 
-		// a second send would spawn a second agent against the same repo, so the press
-		// is taken and held rather than sent — and the hint says which (#170)
-		expect(rail(canvas.host)?.textContent).toContain("enter to queue");
+		// a second send would spawn a second agent against the same repo, so the press is
+		// taken and held rather than sent (#170). The footer says nothing about it either
+		// way: #184 spent that slot on which machine is answering, and the dimmed row
+		// inside the composer is what says the words were taken
+		await send(canvas.host, "then this");
+		await settle(50);
+		expect(canvas.turn.prompts).toEqual(["go"]);
+		expect(queuedRows(canvas.host)).toEqual(["then this"]);
+		expect(rail(canvas.host)?.textContent).not.toContain("enter to");
 
 		canvas.turn.push(ended);
 		canvas.turn.push(closed);
 		canvas.turn.close();
 		await settle();
-		expect(rail(canvas.host)?.textContent).toContain("enter to send");
-
-		await send(canvas.host, "and again");
-		await settle(50);
-		expect(canvas.turn.prompts).toEqual(["go", "and again"]);
+		expect(canvas.turn.prompts).toEqual(["go", "then this"]);
 	});
 
 	/** the log is receipts, and a clean ending is not one */
@@ -681,7 +739,8 @@ describe("one turn", () => {
 		await settle();
 
 		expect(rail(canvas.host)?.textContent).toContain("spawn claude ENOENT");
-		expect(rail(canvas.host)?.textContent).toContain("enter to send");
+		// and the composer comes back: the turn is over, so the next thing said is a send
+		expect(field(canvas.host)?.placeholder).toBe("say what to change");
 	});
 });
 
@@ -2600,8 +2659,9 @@ describe("what survives a restart", () => {
 
 		// the transcript is intact and worth reading
 		expect(log(canvas.host)).toContain("The header is tighter now.");
-		// and the composer says what the next thing said will actually do
-		expect(rail(canvas.host)?.textContent).toContain("a new thread starts here");
+		// and the composer says what the next thing said will actually do, in the field it is
+		// a fact about — #184 gave the footer's own 18px line to the model readout
+		expect(field(canvas.host)?.placeholder).toBe("say what to change · this starts a new thread");
 		expect(rail(canvas.host)?.textContent).not.toMatch(/resume/i);
 
 		await send(canvas.host, "and now the receipt");
@@ -2748,5 +2808,415 @@ describe("closing a thread", () => {
 
 		expect(tabs(canvas.host)).toEqual(["new thread"]);
 		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+	});
+});
+
+/* ---------- which machine is answering (#118, #122, #184, #186, #199) ----------
+ * The readout is the footer's whole left half now, and it is a button. Everything in
+ * the menu it opens arrives from the binary at runtime: nothing here is a table spool
+ * shipped, and a press is a shortcut for `/model haiku` rather than a second source of
+ * truth — so what moves the readout is the reply and never the press. */
+
+const modelTrigger = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('[aria-label="model"]');
+
+const modelMenu = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-model-menu]");
+
+/** every row in the menu, in the order the reply listed them */
+const modelRows = (host: HTMLElement) =>
+	[...host.querySelectorAll<HTMLButtonElement>("[data-agent-model-row]")].map(
+		(row) => row.getAttribute("data-agent-model-row") ?? "",
+	);
+
+const modelRow = (host: HTMLElement, label: string) =>
+	host.querySelector<HTMLButtonElement>(`[data-agent-model-row="${label}"]`);
+
+/** the one slot, and what it is saying about whatever the cursor is on */
+const menuSlot = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-model-says]");
+
+const usageLine = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-usage]")?.textContent ?? null;
+
+async function openModelMenu(canvas: ReturnType<typeof mount>) {
+	await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
+	await act(async () => modelTrigger(canvas.host)?.click());
+	await settle(50);
+}
+
+/**
+ * The rail dragged to one width, which is the constraint every footer claim is about.
+ *
+ * The grip captures the pointer, and happy-dom has no capture to give — so it is
+ * stubbed the way the drag's own test stubs it, and the gesture is three separate acts
+ * because the handler reads state each time.
+ */
+async function resizeRail(host: HTMLElement, width: number) {
+	const grip = host.querySelector<HTMLElement>('[aria-label="Resize agent"]');
+	if (grip === null) throw new Error("no grip");
+	grip.setPointerCapture = () => {};
+	grip.releasePointerCapture = () => {};
+	const from = 1000;
+	const at = Number(host.querySelector<HTMLElement>('[aria-label="Agent"]')?.style.width.replace("px", "") ?? 420);
+	await act(async () => {
+		grip.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, button: 0, clientX: from, bubbles: true }));
+	});
+	await act(async () => {
+		grip.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: at + from - width, bubbles: true }));
+	});
+	await act(async () => {
+		grip.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, bubbles: true }));
+	});
+}
+
+async function hover(target: HTMLElement | null) {
+	if (target === null) throw new Error("nothing to point at");
+	await act(async () => {
+		target.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+		target.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+	});
+}
+
+/** the effort rows and the rule above them, which answer the pointer as one block */
+const effortBlock = (host: HTMLElement) => modelRow(host, "max")?.parentElement ?? null;
+
+/** the 18px line the model and the stop share, which is what the menu is measured against */
+const footerRow = (host: HTMLElement) => modelTrigger(host)?.parentElement?.parentElement ?? null;
+
+/** the usage window as the two captures carry it: `seven_day` at 92%, resetting Wednesday */
+const warned: AgentEvent = {
+	kind: "limit",
+	limit: {
+		status: "allowed_warning",
+		window: "seven_day",
+		utilization: 0.92,
+		resetsAt: Math.floor(Date.now() / 1000) + 38 * 3600,
+		usingOverage: false,
+		surpassedThreshold: 0.75,
+	},
+	parent: null,
+};
+
+describe("the model menu", () => {
+	it("is populated by the binary rather than by a table spool ships", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await openModelMenu(canvas);
+
+		// five rows came back and none of them is `Opus`: the reply is what names them
+		expect(modelRows(canvas.host)).toEqual([
+			"Default (recommended)",
+			"Opus (1M context)",
+			"Fable",
+			"Sonnet",
+			"Haiku",
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+			"max",
+		]);
+		// and it asks again on the way open, because the answer is the installed CLI's
+		expect(modelMenu(canvas.host)).not.toBeNull();
+	});
+
+	it("draws one line per row, and one slot for whatever the cursor is on", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await openModelMenu(canvas);
+
+		// the row is its name and nothing else, so the description cannot be printed twice
+		// — which it was, word for word, on the two rows that resolve to the same model
+		expect(modelRow(canvas.host, "Opus (1M context)")?.textContent).toBe("Opus (1M context)");
+		expect(modelRow(canvas.host, "Default (recommended)")?.textContent).toBe("Default (recommended)");
+		// with nothing pointed at, the slot describes the model that is set
+		expect(menuSlot(canvas.host)?.getAttribute("data-agent-model-says")).toBe(
+			"Opus 5 with 1M context · Best for everyday, complex tasks",
+		);
+
+		await hover(modelRow(canvas.host, "Sonnet"));
+		expect(menuSlot(canvas.host)?.getAttribute("data-agent-model-says")).toBe(
+			"Sonnet 5 · Efficient for routine tasks",
+		);
+		// one slot for both vocabularies, because a model value and a level cannot collide
+		await hover(modelRow(canvas.host, "max"));
+		expect(menuSlot(canvas.host)?.getAttribute("data-agent-model-says")).toContain("Maximum capability");
+	});
+
+	it("reserves the tallest sentence, so nothing reflows under the pointer", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await openModelMenu(canvas);
+		const slot = menuSlot(canvas.host);
+		if (slot === null) throw new Error("no slot");
+
+		// the panel opens upward, so a slot that grew would move its own top edge. What is
+		// reserved is the longest thing it can ever say, which is `max` at 165 characters
+		const reserved = slot.querySelector("[aria-hidden]")?.textContent ?? "";
+		expect(reserved).toContain("Use sparingly for the hardest tasks.");
+		await hover(modelRow(canvas.host, "low"));
+		expect(slot.querySelector("[aria-hidden]")?.textContent).toBe(reserved);
+		// and it is never empty: something is always set, so something is always described
+		expect(slot.getAttribute("data-agent-model-says")).not.toBe("");
+	});
+
+	it("shows no effort control at all on a model that reports no levels", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await openModelMenu(canvas);
+
+		await act(async () => modelRow(canvas.host, "Haiku")?.click());
+		await settle(50);
+		await act(async () => modelTrigger(canvas.host)?.click());
+		await settle(50);
+
+		// haiku carries no `supportedEffortLevels` at all, so the control is absent rather
+		// than present and inert — which makes it a fact rather than a judgement
+		expect(modelRows(canvas.host)).toEqual([
+			"Default (recommended)",
+			"Opus (1M context)",
+			"Fable",
+			"Sonnet",
+			"Haiku",
+		]);
+		expect(modelMenu(canvas.host)?.textContent).not.toContain("effort");
+		// and the readout drops the level with it, because the model says it has none
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Haiku");
+		expect(modelTrigger(canvas.host)?.textContent).not.toContain("high");
+	});
+
+	it("sends the message, and lets the reply move the readout", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await openModelMenu(canvas);
+
+		await act(async () => modelRow(canvas.host, "Sonnet")?.click());
+		await settle(50);
+
+		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet · high");
+		// the menu closes on a model, because that was the decision
+		expect(modelMenu(canvas.host)).toBeNull();
+		// and it went to the thread that is open, because that is what the answer is about
+		expect(canvas.offered.chose[0]?.thread).toBe(canvas.offered.asked[0]);
+	});
+
+	it("is asked again per thread, because which machine is answering is one thread's fact", async () => {
+		const canvas = mount();
+		canvas.stored.served = [
+			storedThread({ id: ONE, ask: "tighten the header", at: 20 }),
+			storedThread({ id: TWO, ask: "write the copy deck", at: 10 }),
+		];
+		await canvas.render();
+		await until(() => canvas.offered.asked.length > 0);
+
+		await openTab(canvas.host, "write the copy deck");
+		await until(() => canvas.offered.asked.length > 1);
+
+		// a project runs one thread on Opus and another on Haiku, so switching re-asks
+		// rather than carrying the last thread's model across
+		expect(canvas.offered.asked).toEqual([ONE, TWO]);
+	});
+
+	it("leaves the readout alone when the binary does not take the choice", async () => {
+		const canvas = mount();
+		await canvas.render();
+		// the report comes back unchanged, which is what an alias `list_models` never
+		// offered does: the press is not the authority and nothing local pretends it was
+		canvas.offered.reply = (offer) => offer;
+		await openModelMenu(canvas);
+
+		await act(async () => modelRow(canvas.host, "Sonnet")?.click());
+		await settle(50);
+
+		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context) · high");
+	});
+
+	it("keeps the menu open on an effort level, because it refines the model above it", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await openModelMenu(canvas);
+
+		await act(async () => modelRow(canvas.host, "xhigh")?.click());
+		await settle(50);
+
+		expect(canvas.offered.chose.map((one) => one.effort)).toEqual(["xhigh"]);
+		expect(modelMenu(canvas.host)).not.toBeNull();
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context) · xhigh");
+	});
+
+	it("says which variable holds the effort, and offers no level it cannot move", async () => {
+		const canvas = mount();
+		canvas.offered.offer = {
+			models: OFFERED.models,
+			current: { ...OFFERED.current, effort: "max", pin: "max" },
+		};
+		await canvas.render();
+		await openModelMenu(canvas);
+
+		// measured, an exported CLAUDE_CODE_EFFORT_LEVEL refuses an in-session change and
+		// names itself in the refusal — so the environment outranks anything spool draws,
+		// and it says so where the rows it killed are rather than over every row. The block
+		// answers, not the row: a disabled control fires no mouse event at all
+		await hover(effortBlock(canvas.host));
+		expect(menuSlot(canvas.host)?.getAttribute("data-agent-model-says")).toBe(
+			"CLAUDE_CODE_EFFORT_LEVEL=max is set in the environment",
+		);
+		await hover(modelRow(canvas.host, "max"));
+		expect(menuSlot(canvas.host)?.getAttribute("data-agent-model-says")).toBe(
+			"CLAUDE_CODE_EFFORT_LEVEL=max is set in the environment",
+		);
+		// and a model row still describes its model, so no sentence in the reply becomes
+		// unreadable on a machine that happens to export the variable
+		await hover(modelRow(canvas.host, "Sonnet"));
+		expect(menuSlot(canvas.host)?.getAttribute("data-agent-model-says")).toBe(
+			"Sonnet 5 · Efficient for routine tasks",
+		);
+		expect(modelRow(canvas.host, "low")?.disabled).toBe(true);
+		expect(modelRow(canvas.host, "max")?.disabled).toBe(false);
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context) · max");
+	});
+});
+
+describe("the footer the model hangs off", () => {
+	it("holds the model and the stop and nothing else", async () => {
+		const canvas = mount();
+		await running(canvas);
+		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
+		const footer = footerRow(canvas.host);
+		if (footer === null) throw new Error("no footer");
+
+		// 243 wanted at every width: the model, the gap and the stop. The limit went to
+		// the menu and the send hint went with it (#184)
+		expect(footer.textContent).toBe("Opus (1M context) · highstop⎋");
+		expect(footer.textContent).not.toContain("weekly limit");
+		expect(footer.textContent).not.toContain("enter to");
+	});
+
+	it("truncates the name and never shortens it, across the whole drag range", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
+
+		for (const width of [200, 260, 300, 360, 420, 480]) {
+			await resizeRail(canvas.host, width);
+			expect(rail(canvas.host)?.style.width).toBe(`${width}px`);
+			const name = modelTrigger(canvas.host)?.querySelector("span");
+			// `Opus (1M context)` cut to `Opus` would be the correct name of a *different*
+			// machine — `/model opus` resolves without the 1M window — so the string stays
+			// whole in the DOM and the layout is what gives way
+			expect(name?.textContent).toBe("Opus (1M context) · high");
+			expect(name?.className).toContain("truncate");
+			// and the model is the only thing that gives way: a cut name is still readable
+			// and half a stop button is not
+			expect(modelTrigger(canvas.host)?.className).toContain("min-w-0");
+		}
+
+		// and the stop, which only exists against a turn in flight, never gives way at all
+		await send(canvas.host, "go");
+		canvas.turn.push(waiting);
+		await settle(150);
+		expect(stopPress(canvas.host)?.className).toContain("shrink-0");
+	});
+});
+
+describe("the usage window", () => {
+	it("is absent until the binary warns, and draws no gauge below that", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "go");
+		// at `allowed` the payload carries no utilization at all, so there is nothing to
+		// draw a gauge from and nothing to say
+		canvas.turn.push({
+			kind: "limit",
+			limit: { status: "allowed", window: "seven_day", resetsAt: 1785308400, usingOverage: false },
+			parent: null,
+		});
+		await settle(150);
+		await openModelMenu(canvas);
+
+		expect(usageLine(canvas.host)).toBeNull();
+		expect(modelMenu(canvas.host)?.textContent).not.toContain("%");
+
+		// and nothing about overage at any status: billing spool has no relationship to
+		// narrate, and it is moot anyway, since overage being on means the limit is not
+		// stopping you
+		canvas.turn.push({ kind: "limit", limit: { ...warned.limit, usingOverage: true }, parent: null });
+		await settle(150);
+		expect(usageLine(canvas.host)).toMatch(/^weekly limit 92% · resets [a-z]{3}$/);
+		expect(modelMenu(canvas.host)?.textContent).not.toMatch(/overage|credit/i);
+		expect(rail(canvas.host)?.textContent).not.toMatch(/overage/i);
+	});
+
+	it("renders whole inside the menu, at every rail width", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "go");
+		canvas.turn.push(warned);
+		await settle(150);
+		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
+
+		for (const width of [200, 300, 420, 480]) {
+			await resizeRail(canvas.host, width);
+			await act(async () => modelTrigger(canvas.host)?.click());
+			// the reset time is half of what the readout is for: ninety-two per cent of a
+			// week is a different fact depending on whether it comes back Wednesday or in
+			// an hour. In the footer at 420 it clipped to `resets…`
+			expect(usageLine(canvas.host)).toMatch(/^weekly limit 92% · resets [a-z]{3}$/);
+			/*
+			 * And the panel fits inside the rail rather than being cut off by it.
+			 *
+			 * Asserted as the mechanism rather than measured, because this environment has no
+			 * layout: what makes it fit is that it wants 300 and is clamped to the row it hangs
+			 * off, and that the row is the composer's own width rather than the trigger's. The
+			 * rail drags to a 200 floor with 171px of box and is `overflow-hidden`, so a fixed
+			 * 300 anchored to the trigger has its right edge guillotined below 315.
+			 */
+			const panel = modelMenu(canvas.host);
+			expect(panel?.style.width).toBe("300px");
+			expect(panel?.className).toContain("max-w-full");
+			expect(panel?.parentElement?.className).not.toContain("relative");
+			expect(footerRow(canvas.host)?.contains(panel as Node)).toBe(true);
+			await act(async () => modelTrigger(canvas.host)?.click());
+		}
+	});
+
+	it("outlives the turn that saw it, because the window does", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "go");
+		canvas.turn.push(warned);
+		canvas.turn.push(ended);
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		await settle(150);
+		await send(canvas.host, "and again");
+		await settle(50);
+		await openModelMenu(canvas);
+
+		// it came back on the message before this one and it will still be true tomorrow,
+		// so a new turn does not clear it
+		expect(usageLine(canvas.host)).toContain("weekly limit 92%");
+	});
+
+	it("draws the wind-down across the log, because it is why the work stops early", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "go");
+		canvas.turn.push(warned);
+		await settle(150);
+		expect(rail(canvas.host)?.textContent).not.toContain("winding down");
+
+		canvas.turn.push({
+			kind: "limit",
+			limit: { ...warned.limit, status: "rejected", graceActive: true },
+			parent: null,
+		});
+		await settle(150);
+
+		// the agent has been told to finish or checkpoint and start nothing new, and
+		// without a line saying so the delegation it announced and never made reads as the
+		// agent losing the thread
+		expect(rail(canvas.host)?.textContent).toContain("usage limit reached · winding down");
+		await openModelMenu(canvas);
+		expect(usageLine(canvas.host)).toContain("weekly limit hit");
 	});
 });

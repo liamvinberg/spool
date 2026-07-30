@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentReply } from "../../daemon/agent-control";
+import type { AgentLimit } from "../../daemon/agent-events";
 import type { ServedThread } from "../../daemon/agent-threads";
 import {
 	answerAgentTurn,
@@ -132,6 +133,15 @@ export interface AgentTurn {
 	readonly stop: () => void;
 	/** whatever left the queue un-fired, for whoever is holding the box (#170) */
 	readonly handback: AgentHandback;
+	/**
+	 * The usage window, which is the one thing here that outlives a turn (#122).
+	 *
+	 * It came back on the message before this one and it will still be true tomorrow, so a
+	 * new turn does not clear it and neither does switching thread: it is one allowance
+	 * every thread is spending. Null until the binary warns, which is most of a session,
+	 * and that is what keeps the readout from ever becoming chrome.
+	 */
+	readonly limit: AgentLimit | null;
 }
 
 /**
@@ -327,6 +337,16 @@ export function useAgentThreads(project: string): AgentDeck {
 	/** what the strip has open, for the stream callbacks that outlive the render */
 	const openRef = useRef(open);
 	openRef.current = open;
+	/**
+	 * The usage window, which belongs to the account rather than to a thread (#122).
+	 *
+	 * One window, however many threads are running: it is the same allowance they are all
+	 * spending, so whichever stream says something about it says it for all of them. It
+	 * sits out here rather than on a thread for the same reason it is not in a transcript —
+	 * a transcript is rebuilt per turn and this outlives every one of them, because a limit
+	 * resets on a clock nobody here is holding.
+	 */
+	const [limit, setLimit] = useState<AgentLimit | null>(null);
 
 	/*
 	 * A thread has an id before it has a process, because the id *is* the session id
@@ -419,6 +439,9 @@ export function useAgentThreads(project: string): AgentDeck {
 				thread.parked.total -
 				(thread.parked.since === null ? 0 : Date.now() - thread.parked.since);
 			const push = (event: Stamped["event"]) => {
+				// the standing window, lifted out of the turn: it was true before this one
+				// started and it will still be true after it ends (#122)
+				if (event.kind === "limit") setLimit(event.limit);
 				// the clock stops on the request and starts again on whatever released it: an
 				// answer, the call's own result where nobody answered, or the turn ending under
 				// it. The same three the transcript settles a waiting block on
@@ -738,6 +761,7 @@ export function useAgentThreads(project: string): AgentDeck {
 				void interruptAgentTurn(project, thread.named);
 			}, [project, hold, handBack]),
 			handback: here.handback,
+			limit,
 		},
 	};
 }
