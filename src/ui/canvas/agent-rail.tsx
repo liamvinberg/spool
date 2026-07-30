@@ -24,6 +24,7 @@ import {
 	type RowState,
 	shownBy,
 } from "./agent-transcript";
+import { COLLAPSED_BELOW, MAX_WIDTH, STRIP_WIDTH, settledWidth, useRailWidth } from "./rail-width";
 import { ChevronIcon, PanelCaret } from "./sidebar";
 
 /**
@@ -67,12 +68,6 @@ import { ChevronIcon, PanelCaret } from "./sidebar";
  * strip decision is measured against.
  */
 const RAIL_WIDTH = 420;
-
-const STRIP_WIDTH = 44;
-const MIN_WIDTH = 200;
-const MAX_WIDTH = 480;
-const SNAP_BELOW = 144;
-const COLLAPSED_BELOW = 72;
 
 /** clear of the top fade, so an anchored first line is not dimmed by it */
 const TOP_INSET = 10;
@@ -224,7 +219,7 @@ export function AgentRail({
 	/** what the person said to a waiting request, on its own way back up (#145) */
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
-	const [width, setWidth] = useState(RAIL_WIDTH);
+	const [width, setWidth] = useRailWidth("agent", RAIL_WIDTH);
 	/** how many sends this rail has watched go out, which is the log's cue to follow again */
 	const [spoke, setSpoke] = useState(0);
 	/**
@@ -284,7 +279,7 @@ export function AgentRail({
 		target.releasePointerCapture(pointerId);
 		drag.current = null;
 		setDragging(false);
-		setWidth(current.latestWidth < SNAP_BELOW ? STRIP_WIDTH : Math.max(MIN_WIDTH, current.latestWidth));
+		setWidth(settledWidth(current.latestWidth));
 	}
 
 	return (
