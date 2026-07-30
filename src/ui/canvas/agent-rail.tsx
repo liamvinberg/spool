@@ -4,11 +4,12 @@ import { AgentIcon } from "../icons";
 import { closedText } from "./agent-markers";
 import { Caret, Said } from "./agent-said";
 import type { TurnPhase } from "./agent-stream";
-import { type AgentEntry, type BeatState, duration, shownBy } from "./agent-transcript";
-import { PanelCaret } from "./sidebar";
+import { type AgentEntry, duration, type RowState, shownBy } from "./agent-transcript";
+import { ChevronIcon, PanelCaret } from "./sidebar";
 
 /**
- * The agent rail (#144, #192): the right rail, whole, drawn as one conversation.
+ * The agent rail (#144, #192, #193): the right rail, whole, drawn as one
+ * conversation.
  *
  * There is no tab row. The agent owns this column — `elements` died with the
  * inspector and `connections` left for the ambient walk layer — so the rail is the
@@ -16,14 +17,19 @@ import { PanelCaret } from "./sidebar";
  * at 420 a tab row is a whole line of a narrow column spent saying which of two
  * things you are looking at, and there is only one thing to look at.
  *
- * Three things render and nothing else: the human's words, the agent's words, and
- * one quiet beat for the time the model spends composing. Tool rows, the plan,
- * threads, chips and the model readout are later tickets, and this reads correctly
- * without them.
+ * Four things render and nothing else: the human's words, the agent's words, one
+ * quiet beat for the time the model spends composing, and one line per tool call.
+ * The plan, threads, chips and the model readout are later tickets, and this reads
+ * correctly without them.
  *
- * State is motion, not colour. A beat is running while a colourless ring turns and
- * done once a check has drawn itself through the space it leaves. The accent stays
- * with the selection, which is the one thing on screen the human owns.
+ * One line is the rule. A row is a mark, a verb and a subject, with everything else
+ * behind a disclosure closed by default that nobody has to open — so a nine-minute
+ * turn is still something to skim, and the detail is one click down rather than in
+ * the way.
+ *
+ * State is motion, not colour. A row is running while a colourless ring turns and
+ * settled once a stroke has drawn itself through the space it leaves. The accent
+ * stays with the selection, which is the one thing on screen the human owns.
  */
 
 /**
@@ -44,6 +50,9 @@ const COLLAPSED_BELOW = 72;
 
 /** clear of the top fade, so an anchored first line is not dimmed by it */
 const TOP_INSET = 10;
+
+/** the mark's own width and the gap beside it, so a disclosure lines up under the verb */
+const INDENT = 14 + 10;
 
 /**
  * How much of an arriving message is still treated as live, in drawn characters.
@@ -267,7 +276,8 @@ function Transcript({
 /** consecutive machine work reads as one run, so it sits tighter than a turn boundary */
 function gapBefore(previous: AgentEntry | undefined, entry: AgentEntry): number {
 	if (previous === undefined) return 0;
-	if (previous.kind === "beat" && entry.kind === "beat") return 6;
+	const machine = (candidate: AgentEntry) => candidate.kind === "beat" || candidate.kind === "row";
+	if (machine(previous) && machine(entry)) return 6;
 	return 14;
 }
 
@@ -291,6 +301,7 @@ function Entry({ entry, elapsed, last }: { entry: AgentEntry; elapsed: number; l
 			</div>
 		);
 	}
+	if (entry.kind === "row") return <Row entry={entry} />;
 	if (entry.kind === "beat") {
 		/*
 		 * A beat's duration is the wire's, read off the same clock the prose is paced by.
@@ -315,6 +326,67 @@ function Entry({ entry, elapsed, last }: { entry: AgentEntry; elapsed: number; l
 		);
 	}
 	return <Prose entry={entry} elapsed={elapsed} />;
+}
+
+/* ---------- one tool call, one line ----------
+ * A mark, a verb and a subject, and the payload the projection kept separate stays
+ * off the line until somebody asks for it. A nine-minute turn is nineteen of these
+ * and still readable, which is the whole reason the rule is one line; what the words
+ * are and where they come from is `agent-nouns.ts`.
+ *
+ * The count is its own box beside the subject rather than part of it, because #143
+ * gives the name a click of its own and a count wearing the same word would take it
+ * with them. */
+
+function Row({ entry }: { entry: Extract<AgentEntry, { kind: "row" }> }) {
+	const [open, setOpen] = useState(false);
+	const line = (
+		<>
+			<StateMark state={entry.state} />
+			<span className="flex min-w-0 items-baseline gap-1.5">
+				<span className="shrink-0 font-mono text-muted text-sm leading-4">{entry.verb}</span>
+				{entry.subject === null ? null : (
+					<span className="min-w-0 truncate font-mono text-sm text-text/85 leading-4">{entry.subject}</span>
+				)}
+				{entry.count > 1 ? (
+					<span className="shrink-0 font-mono text-sm text-text/85 tabular-nums leading-4">×{entry.count}</span>
+				) : null}
+			</span>
+		</>
+	);
+	// the spoken form of the same line, because the words are separate boxes to lay out
+	// and one run of text to read
+	const said = [entry.verb, entry.subject, entry.count > 1 ? `×${entry.count}` : null].filter(Boolean).join(" ");
+	const row = "-mx-1.5 flex h-[26px] w-fit max-w-[calc(100%+12px)] items-center gap-2.5 rounded-sm px-1.5 text-left";
+	if (entry.detail === null)
+		return (
+			<div data-agent-row={said} className={row}>
+				{line}
+			</div>
+		);
+	return (
+		<div data-agent-row={said} className="flex flex-col">
+			<button
+				type="button"
+				aria-label={said}
+				aria-expanded={open}
+				onClick={() => setOpen(!open)}
+				className={cn(row, "hover:bg-surface")}
+			>
+				{line}
+				<ChevronIcon open={open} className="ml-0.5 h-2.5 w-2.5 shrink-0 text-muted/35" />
+			</button>
+			{open ? (
+				<span
+					data-agent-detail=""
+					className="block truncate pt-0.5 pb-1 font-mono text-2xs text-muted/55 leading-4"
+					style={{ paddingLeft: INDENT }}
+				>
+					{entry.detail}
+				</span>
+			) : null}
+		</div>
+	);
 }
 
 /**
@@ -358,51 +430,95 @@ function Prose({ entry, elapsed }: { entry: Extract<AgentEntry, { kind: "prose" 
 }
 
 /* ---------- the mark ----------
- * The most repeated moment in the rail is a beat going from running to done, so it
- * is one gesture rather than two pictures: the ring shrinks away while the check
- * strokes through the space it is leaving. The overlap is what makes it read as the
+ * The most repeated moment in the rail is a row going from running to done, so it is
+ * one gesture rather than two pictures: the ring shrinks away while the stroke draws
+ * itself through the space it is leaving. The overlap is what makes it read as the
  * same object settling.
  *
- * A beat can also settle on neither yes nor no. A check is two strokes meeting and a
- * cross is two crossing; a beat the developer cut short is a single flat one through
- * the space the ring leaves — it did not succeed, it did not fail, it was cut. Drawn
- * short of the full width so it reads as a stub rather than a minus sign. */
+ * Three endings, because a stop is neither of the other two. Done is two strokes
+ * meeting, failed is two crossing, and a call the developer stopped is a single flat
+ * one — it did not succeed, it did not fail, it was cut — drawn short of the full
+ * width so it reads as a stub rather than a minus sign. Nothing is coloured: the
+ * accent belongs to the selection, and a refusal is not an alarm, because nine times
+ * out of ten the developer caused it.
+ *
+ * `pending` is the same ring with the arc taken off it and nothing turning, so a list
+ * at rest has no motion in it at all. No work row is ever pending — a call is running
+ * from the moment its block opens — and it is drawn here because the plan's own tasks
+ * are written down long before they start (#194). */
 
-function StateMark({ state }: { state: BeatState }) {
-	const running = state === "running";
-	const paths = state === "stopped" ? ["M4.4 7h5.2"] : ["m3.4 7.2 2.4 2.4 4.8-5.2"];
+const CHECK = "m3.4 7.2 2.4 2.4 4.8-5.2";
+
+/**
+ * The strokes each ending draws, as a fixed pair so the mark is one element that
+ * changes rather than two that swap.
+ *
+ * The stroke has to be mounted before it draws — a dash offset only animates on an
+ * element that was already there — so a row that is still running holds the check's
+ * geometry at zero length, and whichever ending arrives replaces the path in place
+ * and lets it draw.
+ */
+const STROKES: Record<RowState, readonly [string, string | null]> = {
+	pending: [CHECK, null],
+	running: [CHECK, null],
+	done: [CHECK, null],
+	failed: ["M4.2 4.2l5.6 5.6", "M9.8 4.2l-5.6 5.6"],
+	stopped: ["M4.4 7h5.2", null],
+};
+
+function StateMark({ state }: { state: RowState }) {
+	const turning = state === "running";
+	const ringed = turning || state === "pending";
+	const settled = !ringed;
+	const [first, second] = STROKES[state];
+	const strokes: { key: string; d: string; drawn: boolean; delay: number }[] = [
+		{ key: "one", d: first, drawn: settled, delay: 75 },
+		{ key: "two", d: second ?? first, drawn: settled && second !== null, delay: 135 },
+	];
 	return (
 		<span className="relative flex h-3.5 w-3.5 shrink-0">
 			<span
 				className={cn(
 					"absolute inset-0 transition-[opacity,transform] duration-200 ease-in motion-reduce:transition-none",
-					running ? "opacity-100" : "scale-[0.62] opacity-0",
+					ringed ? "opacity-100" : "scale-[0.62] opacity-0",
 				)}
 			>
 				<svg
 					viewBox="0 0 14 14"
-					className={cn("h-full w-full text-text/60", running && "animate-agent-spin")}
+					className={cn(
+						turning ? "text-text/60" : "text-text/35",
+						"h-full w-full",
+						turning && "animate-agent-spin",
+					)}
 					fill="none"
 					aria-hidden="true"
 				>
 					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.26" />
-					<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+					{turning ? (
+						<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+					) : null}
 				</svg>
 			</span>
 			<svg viewBox="0 0 14 14" className="absolute inset-0 h-full w-full text-muted" fill="none" aria-hidden="true">
-				{paths.map((path) => (
+				{strokes.map((stroke) => (
 					// `pathLength` normalises the stroke to 1 unit, so the dash offset draws it
 					// without anything having to measure the geometry first
 					<path
-						key={path}
-						d={path}
+						key={stroke.key}
+						d={stroke.d}
 						stroke="currentColor"
 						strokeWidth="1.5"
 						strokeLinecap="round"
 						strokeLinejoin="round"
 						pathLength={1}
-						className="transition-[stroke-dashoffset,opacity] delay-75 duration-300 ease-out motion-reduce:transition-none"
-						style={{ strokeDasharray: 1, strokeDashoffset: running ? 1 : 0, opacity: running ? 0 : 1 }}
+						className="transition-[stroke-dashoffset,opacity] duration-300 ease-out motion-reduce:transition-none"
+						style={{
+							strokeDasharray: 1,
+							strokeDashoffset: stroke.drawn ? 0 : 1,
+							opacity: stroke.drawn ? 1 : 0,
+							// the second stroke of a cross follows the first rather than racing it
+							transitionDelay: `${stroke.delay}ms`,
+						}}
 					/>
 				))}
 			</svg>

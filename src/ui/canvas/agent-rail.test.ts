@@ -7,15 +7,16 @@ import type { AgentEvent } from "../api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
 
 /**
- * The agent rail as the canvas drives it (#192).
+ * The agent rail as the canvas drives it (#192, #193).
  *
  * One turn, end to end: the composer takes a sentence, the daemon's stream answers
  * it, and the transcript is what the projection said it would be. What is asserted
  * here is the wiring — that the human's words land before anything comes back, that
- * the request carries them, that prose arrives rather than appearing, and that the
- * rail is the agent and nothing else.
+ * the request carries them, that prose arrives rather than appearing, that a tool
+ * call reaches the screen as one line, and that the rail is the agent and nothing
+ * else.
  *
- * The words themselves are `agent-transcript.test.ts`'s and the pace is
+ * The rules behind the rows are `agent-transcript.test.ts`'s and the pace is
  * `agent-pace.test.ts`'s.
  */
 
@@ -417,5 +418,132 @@ describe("one turn", () => {
 
 		expect(rail(canvas.host)?.textContent).toContain("spawn claude ENOENT");
 		expect(rail(canvas.host)?.textContent).toContain("enter to send");
+	});
+});
+
+/* ---------- the log ----------
+ * The projection's rules are `agent-transcript.test.ts`'s. What is asserted here is
+ * that a row reaches the screen as one line, and that the payload the projection kept
+ * separate stays off it until somebody asks. */
+
+describe("a tool row", () => {
+	const ready: AgentEvent = {
+		kind: "ready",
+		session: "s",
+		model: "claude-opus-5",
+		cwd: "/project",
+		version: "2.1.220",
+		permissionMode: "default",
+		apiKeySource: "none",
+		capabilities: [],
+		parent: null,
+	};
+	const edit = (id: string): AgentEvent => ({
+		kind: "called",
+		id,
+		tool: "Edit",
+		input: { file_path: "/project/design/frames/home/frame.tsx" },
+		parent: null,
+	});
+	const settled = (id: string): AgentEvent => ({
+		kind: "result",
+		id,
+		failed: false,
+		text: "",
+		images: [],
+		parent: null,
+	});
+	const rows = (host: HTMLElement) =>
+		[...host.querySelectorAll("[data-agent-row]")].map((row) => row.getAttribute("data-agent-row"));
+
+	it("is one line, with its path behind a disclosure nobody has to open", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tidy the numbers");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(waiting);
+		canvas.turn.push(speaking);
+		canvas.turn.push(edit("t1"));
+		canvas.turn.push(settled("t1"));
+		canvas.turn.push(ended);
+		canvas.turn.close();
+		await settle();
+
+		expect(rows(canvas.host)).toEqual(["edit home"]);
+		// the payload is one click down and closed, so the path is nowhere on screen
+		expect(rail(canvas.host)?.textContent).not.toContain("design/frames/home/frame.tsx");
+		const disclosure = canvas.host.querySelector<HTMLElement>('[aria-label="edit home"]');
+		expect(disclosure?.getAttribute("aria-expanded")).toBe("false");
+
+		await act(async () => {
+			disclosure?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		});
+		expect(canvas.host.querySelector("[data-agent-detail]")?.textContent).toBe("design/frames/home/frame.tsx");
+	});
+
+	/** six edits to one frame are one row, and the count climbs while it happens */
+	it("counts a run of writes rather than repeating it", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tidy the numbers");
+
+		canvas.turn.push(ready);
+		canvas.turn.push(edit("t1"));
+		canvas.turn.push(settled("t1"));
+		await settle(120);
+		expect(rows(canvas.host)).toEqual(["edit home"]);
+
+		canvas.turn.push(edit("t2"));
+		canvas.turn.push(settled("t2"));
+		canvas.turn.push(edit("t3"));
+		canvas.turn.push(settled("t3"));
+		await settle(120);
+
+		expect(rows(canvas.host)).toEqual(["edit home ×3"]);
+	});
+
+	/** a stop is neither done nor failed, so the mark is neither a check nor a cross */
+	it("draws a stopped call as one flat stroke and a failed one as two crossing", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "go");
+		const strokes = () =>
+			[...canvas.host.querySelectorAll("[data-agent-row] path")]
+				.filter((path) => (path as SVGPathElement).style.opacity === "1")
+				.map((path) => path.getAttribute("d"));
+
+		canvas.turn.push(ready);
+		canvas.turn.push({
+			kind: "called",
+			id: "t1",
+			tool: "Read",
+			input: { file_path: "/project/design/CLAUDE.md" },
+			parent: null,
+		});
+		canvas.turn.push({
+			kind: "result",
+			id: "t1",
+			failed: true,
+			nonExecution: "user-rejected",
+			text: "The user doesn't want to proceed with this tool use.",
+			images: [],
+			parent: null,
+		});
+		await settle(120);
+		// one flat stroke, drawn short of the mark's full width
+		expect(strokes()).toEqual(["M4.4 7h5.2"]);
+
+		canvas.turn.push({
+			kind: "called",
+			id: "t2",
+			tool: "Read",
+			input: { file_path: "/project/design/AGENTS.md" },
+			parent: null,
+		});
+		canvas.turn.push({ kind: "result", id: "t2", failed: true, text: "not found", images: [], parent: null });
+		await settle(120);
+
+		expect(strokes()).toEqual(["M4.4 7h5.2", "M4.2 4.2l5.6 5.6", "M9.8 4.2l-5.6 5.6"]);
 	});
 });

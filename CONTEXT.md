@@ -90,6 +90,10 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Capture**: A recorded window of a real agent session under `fixtures/captures/`, read by both the shipped tests and the dogfood canvas. The captures are the authority: read one before drawing a state, and before claiming one is missing.
 
+**Row**: One tool call in the transcript, as one line: a mark, a verb and a subject in spool's own nouns, with the path, command or wire name it stands in for behind a disclosure closed by default. Five states — pending, running, done, failed, stopped — where stopped is a call that never ran because a hand stopped it, told from failed by the wire's non-execution kind. _Avoid_: log entry, event, message
+
+**Run**: Consecutive writes to one frame drawn as one row with a climbing count (`edit home ×6`). The next thing the log draws ends it, per thread; time is never the rule, because gaps inside a run reach 15.2s while the shortest gap between two runs is 17.5s. _Avoid_: batch, group, collapse
+
 ### Laws
 
 **Parity law**: Spool chrome must never alter frame behavior; a frame in spool behaves exactly like its bare document.
