@@ -78,7 +78,54 @@ const CHROME = 29;
  *   fact  the composer footer's readout slot, which carries a fact when nothing is
  *         out and the live count when something is.
  */
-export type WaitTake = "now" | "none" | "mark" | "line" | "fact";
+export type WaitTake = "now" | "none" | "mark" | "line" | "fact" | "shimmer";
+
+/**
+ * A word that is alive because the light moves across it, which is what the two desktop
+ * apps actually ship and what `agent-wait--shimmer` proposes.
+ *
+ * The mechanism is theirs. Claude's `shimmertext` sweeps a gradient over `bg-clip-text`
+ * from `background-position: 100% 0` to `0 0`, reaching the end at 65% of the duration
+ * and holding there for the rest; Codex's does the same in `steps(48, end)` on a cadence
+ * rather than continuously. Both keep the text mounted the whole time and change only
+ * whether the sweep is running, so the word never enters and never leaves.
+ *
+ * **The honest cost, and #149 already paid attention to this.** `background-position` is
+ * a paint property, so this animation runs on the main thread rather than the compositor
+ * — the same class of thing that disqualified `blur` on `agent-say-arrive`. The
+ * difference is scale: that was a per-word filter over a 3,372-character message
+ * re-rendering sixty times a second, and this is one seven-letter word. Chromium repaints
+ * one text run. Under `prefers-reduced-motion` it does not run at all, which is also what
+ * Codex does.
+ */
+export function ShimmerWord({
+	text,
+	live,
+	cycle = 2250,
+	className,
+}: {
+	text: string;
+	live: boolean;
+	cycle?: number;
+	className?: string | undefined;
+}) {
+	const still = useReducedMotion() === true;
+	if (!live || still)
+		return <span className={cn("inline-block text-muted/45", className)}>{text}</span>;
+	return (
+		<motion.span
+			className={cn(
+				"inline-block bg-[length:260%_100%] bg-clip-text bg-gradient-to-r from-muted/40 via-text to-muted/40 text-transparent",
+				className,
+			)}
+			initial={{ backgroundPosition: "100% 0%" }}
+			animate={{ backgroundPosition: ["100% 0%", "0% 0%", "0% 0%"] }}
+			transition={{ duration: cycle / 1000, times: [0, 0.65, 1], repeat: Number.POSITIVE_INFINITY, ease: "linear" }}
+		>
+			{text}
+		</motion.span>
+	);
+}
 
 /* ---------- the transcript ---------- */
 
@@ -182,25 +229,42 @@ function Say({ entry }: { entry: Extract<PlayEntry, { kind: "prose" }> }) {
  * `waiting` is the only state that carries a number, and the number is the only thing on
  * this line that moves. It is `tabular-nums`, so a digit changing changes no width.
  */
-function EdgeLine({ live, ms, running }: { live: boolean; ms: number; running: boolean }) {
+function EdgeLine({
+	live,
+	ms,
+	running,
+	sweep,
+}: {
+	live: boolean;
+	ms: number;
+	running: boolean;
+	/** the aliveness is light moving over the word rather than a digit changing */
+	sweep: boolean;
+}) {
 	const word = live ? "waiting" : running ? "working" : "idle";
 	return (
 		<div
 			data-wait-part="line"
 			className="pointer-events-none absolute inset-x-0 bottom-0 flex h-9 items-center gap-2 px-3.5"
 		>
-			<motion.span
-				key={word}
-				className={cn("shrink-0 font-mono text-sm leading-4", live ? "text-muted" : "text-muted/45")}
-				initial={{ opacity: 0.35 }}
-				animate={{ opacity: 1 }}
-				transition={{ duration: 0.18, ease: "linear" }}
-			>
-				{word}
-			</motion.span>
-			<span className="shrink-0 font-mono text-sm text-text/80 tabular-nums leading-4">
-				{live ? duration(ms) : ""}
-			</span>
+			{sweep ? (
+				<ShimmerWord text={word} live={live || running} className="shrink-0 font-mono text-sm leading-4" />
+			) : (
+				<>
+					<motion.span
+						key={word}
+						className={cn("shrink-0 font-mono text-sm leading-4", live ? "text-muted" : "text-muted/45")}
+						initial={{ opacity: 0.35 }}
+						animate={{ opacity: 1 }}
+						transition={{ duration: 0.18, ease: "linear" }}
+					>
+						{word}
+					</motion.span>
+					<span className="shrink-0 font-mono text-sm text-text/80 tabular-nums leading-4">
+						{live ? duration(ms) : ""}
+					</span>
+				</>
+			)}
 		</div>
 	);
 }
@@ -284,7 +348,7 @@ function Transcript({
 				}}
 				className={cn(
 					"pages-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-3.5 pt-6",
-					take === "line" ? "pb-10" : "pb-4",
+					take === "line" || take === "shimmer" ? "pb-10" : "pb-4",
 				)}
 			>
 				<div className="mt-auto shrink-0">
@@ -296,10 +360,10 @@ function Transcript({
 				</div>
 			</div>
 			<span className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-bg to-transparent" />
-			{take === "line" ? (
+			{take === "line" || take === "shimmer" ? (
 				<>
 					<span className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-b from-transparent to-bg" />
-					<EdgeLine live={live} ms={waitMs} running={running} />
+					<EdgeLine live={live} ms={waitMs} running={running} sweep={take === "shimmer"} />
 				</>
 			) : null}
 		</div>
