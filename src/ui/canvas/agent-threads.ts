@@ -1,7 +1,7 @@
 import type { StoredLife } from "../../daemon/agent-threads";
 import { signedOut } from "./agent-preflight";
 import type { TurnPhase } from "./agent-stream";
-import type { AgentEntry } from "./agent-transcript";
+import type { AgentEntry, AgentRow } from "./agent-transcript";
 
 /**
  * More than one conversation in a project, and most of them somewhere you are not
@@ -110,10 +110,57 @@ export function storedLife(life: Life): StoredLife {
 	return life === "streaming" ? "running" : life;
 }
 
-/** the human's own first sentence, which is the only name a thread has */
+/** the human's own first sentence, which is what a thread falls back to being called */
 export function askOf(entries: readonly AgentEntry[], fallback = "new thread"): string {
 	const said = entries.find((entry) => entry.kind === "user");
 	return said?.kind === "user" && said.text.trim() !== "" ? said.text : fallback;
+}
+
+/** two names and then a count: past this a nameplate is a list, and a list is the deck's job */
+const SHOWN = 2;
+
+/**
+ * What a thread is called, which is what it wrote (#200).
+ *
+ * The ask was the name because there was nothing to borrow, and the note above still
+ * holds on both alternatives it rejected: the binary's own generated title never reaches
+ * print mode, and naming a conversation with a side call to a cheap model is silent spend
+ * on somebody's subscription for a label. The third option was the one nobody had looked
+ * at, because the answer is already in the log. **A thread that has written frames has a
+ * name made of facts about the repo** — no call, no invention, and nothing to keep in
+ * sync, since it is derived on read rather than stored.
+ *
+ * It beats the ask on the thing the ask is worst at. An ask is a sentence and a name is
+ * a label, so every name was a truncation: `so when the like shot patches or disappears
+ * its li…`, cut mid-word, at whatever width the furniture left over. A frame name is
+ * already short, already unique in the project, and already the thing the conversation
+ * was *about* — and it is what you would say out loud to name that conversation.
+ *
+ * Only writes count. A turn reads far more than it writes, and the frames it read are
+ * where it looked rather than what it did; a name made of them would call every thread
+ * after the file it happened to open first.
+ *
+ * Two names and then a count, rather than a truncation: the count is a fact where a
+ * cut string is a broken one, and `--worked` measured two at 208px against a 492px ask.
+ * A thread that has written nothing yet is still the ask, and one that has said nothing
+ * at all is still `new thread` — this is a better name where there is one, not a
+ * different fallback.
+ */
+export function nameOf(entries: readonly AgentEntry[], fallback = "new thread"): string {
+	const written: string[] = [];
+	const walk = (rows: readonly AgentRow[]) => {
+		for (const row of rows) {
+			// a delegate's writes are the thread's writes: the frames are out on the canvas
+			// either way, and which process authored one is not what the name is about
+			walk(row.delegated);
+			if (row.verb !== "write" || row.frame === null) continue;
+			if (!written.includes(row.frame)) written.push(row.frame);
+		}
+	};
+	walk(entries.filter((entry): entry is AgentRow => entry.kind === "row"));
+	if (written.length === 0) return askOf(entries, fallback);
+	const shown = written.slice(0, SHOWN).join(", ");
+	return written.length > SHOWN ? `${shown} +${written.length - SHOWN}` : shown;
 }
 
 /**

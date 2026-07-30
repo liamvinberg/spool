@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askOf, bounced, cutPicture, lifeOf, storedLife } from "./agent-threads";
+import { askOf, bounced, cutPicture, lifeOf, nameOf, storedLife } from "./agent-threads";
 import type { AgentEntry } from "./agent-transcript";
 
 /**
@@ -144,6 +144,54 @@ describe("the name", () => {
 	it("says a thread nobody has spoken to is new", () => {
 		expect(askOf([])).toBe("new thread");
 		expect(askOf([row("done")])).toBe("new thread");
+	});
+});
+
+/**
+ * The name a thread carries once it has done something (#200).
+ *
+ * The ask was never a name, it was a sentence standing in for one, and every drawing of
+ * it was a truncation. What a thread wrote is already short, already unique and already
+ * what the conversation was about.
+ */
+describe("naming a thread after what it wrote", () => {
+	const wrote = (frame: string): Extract<AgentEntry, { kind: "row" }> => ({
+		...row("done", "write"),
+		key: `row:write:${frame}`,
+		frame,
+		subject: frame,
+	});
+
+	it("is the frames it wrote, in the order it first wrote them", () => {
+		expect(nameOf([asked, wrote("cart--empty-b"), wrote("cart--empty-c")])).toBe("cart--empty-b, cart--empty-c");
+	});
+
+	it("counts a frame once however many times the agent went at it", () => {
+		expect(nameOf([wrote("cart--empty-b"), wrote("cart--empty-b")])).toBe("cart--empty-b");
+	});
+
+	/** a turn reads far more than it writes, and where it looked is not what it did */
+	it("ignores what it only read", () => {
+		expect(nameOf([asked, row("done", "read"), row("done", "run")])).toBe("shoot home and fix what reads wrong");
+	});
+
+	/** the frames are on the canvas either way, and which process authored one is not the name */
+	it("counts a delegate's writes as the thread's own", () => {
+		const sent = { ...row("done", "delegate"), frame: null, delegated: [wrote("cart--empty-b")] };
+
+		expect(nameOf([asked, sent])).toBe("cart--empty-b");
+	});
+
+	/** a count is a fact where a cut string is a broken one */
+	it("says two and then how many more, rather than truncating", () => {
+		const many = ["a", "b", "c", "d"].map(wrote);
+
+		expect(nameOf([asked, ...many])).toBe("a, b +2");
+	});
+
+	it("falls back to the ask, and then to nothing having happened at all", () => {
+		expect(nameOf([asked])).toBe("shoot home and fix what reads wrong");
+		expect(nameOf([])).toBe("new thread");
 	});
 });
 
