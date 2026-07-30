@@ -98,6 +98,16 @@ export function Caret() {
 	);
 }
 
+/**
+ * One level of nesting, which is the marker's width and its gap.
+ *
+ * A sub-list lines up under its parent's *words* rather than under its parent's
+ * bullet, which is the only indent that reads as containment in a column this narrow.
+ * The depth itself is capped in the parser, so a runaway indent cannot walk the prose
+ * off the right edge of a 200px rail.
+ */
+const INDENT = 14;
+
 export function Said({ text, live = 0, caret }: { text: string; live?: number; caret?: ReactNode }) {
 	const chunks = chunksOf(text);
 	const total = drawnText(chunks).length;
@@ -107,10 +117,26 @@ export function Said({ text, live = 0, caret }: { text: string; live?: number; c
 		seen += value.length;
 		return node;
 	};
+	/*
+	 * A span is one element carrying whatever its markers added, rather than one element
+	 * per marker. Nesting them would wrap an emphasised path in three tags to say what
+	 * two classes say, and every extra element is one more thing between an arriving word
+	 * and the text shaping it belongs to (#163).
+	 *
+	 * A link is the exception and has to be: it is the one marker that is an element
+	 * rather than a face.
+	 */
 	const spans = (list: readonly Span[]) => (
 		<>
 			{list.map((span, at) => {
 				const key = `${at}-${span.text.slice(0, 12)}`;
+				const face = cn(
+					span.italic === true && "italic",
+					// struck text is over, so it is dimmed as well as ruled: a line alone at full
+					// strength reads as emphasis at a glance
+					span.strike === true && "text-text/50 line-through",
+				);
+				const inner = run(span.text);
 				if (span.code === true) {
 					return (
 						<code
@@ -118,20 +144,52 @@ export function Said({ text, live = 0, caret }: { text: string; live?: number; c
 							className={cn(
 								"rounded-xs bg-surface px-[3px] py-px font-mono text-2xs",
 								span.bold === true ? "text-text" : "text-text/85",
+								face,
 							)}
 						>
-							{run(span.text)}
+							{inner}
 						</code>
+					);
+				}
+				if (span.href !== undefined) {
+					return (
+						/*
+						 * Underlined rather than coloured, because the one accent in this rail belongs
+						 * to the selection and a link is not the selection. It leaves for the browser:
+						 * a frame is navigated to by its own row (#194), so a URL in prose is the web
+						 * and nothing spool owns.
+						 *
+						 * A bold link is an `<a>` carrying the weight rather than a `<strong>` inside
+						 * one, because the anchor is already the element this span is owed and #163
+						 * is about not spending a second.
+						 */
+						<a
+							key={key}
+							href={span.href}
+							target="_blank"
+							rel="noreferrer"
+							className={cn(
+								"underline decoration-border-raised underline-offset-2 transition-colors duration-150 hover:decoration-text",
+								span.bold === true && "font-medium text-text",
+								face,
+							)}
+						>
+							{inner}
+						</a>
 					);
 				}
 				if (span.bold === true) {
 					return (
-						<strong key={key} className="font-medium text-text">
-							{run(span.text)}
+						<strong key={key} className={cn("font-medium text-text", face)}>
+							{inner}
 						</strong>
 					);
 				}
-				return <span key={key}>{run(span.text)}</span>;
+				return (
+					<span key={key} className={face}>
+						{inner}
+					</span>
+				);
 			})}
 		</>
 	);
@@ -166,16 +224,21 @@ export function Said({ text, live = 0, caret }: { text: string; live?: number; c
 						</p>
 					);
 				}
+				if (chunk.kind === "rule") {
+					// a rule is the agent ending a section, so it is drawn at the strength of the
+					// borders that already separate things here rather than as a line of its own
+					return <hr key={key} className="my-1 border-border border-t" />;
+				}
 				if (chunk.kind === "item") {
 					return (
-						<p key={key} className="flex gap-2 pl-0.5">
+						<p key={key} className="flex gap-2 pl-0.5" style={{ marginLeft: chunk.depth * INDENT }}>
 							{/* the one glyph in the block that is the renderer's rather than the
 							    agent's, and marked as such: a word count over this prose has to
 							    skip it */}
 							<span data-marker="" className="shrink-0 text-muted/70 tabular-nums">
-								{chunk.marker}
+								{chunk.done === undefined ? chunk.marker : chunk.done ? "☑" : "☐"}
 							</span>
-							<span>
+							<span className={chunk.done === true ? "text-text/50" : undefined}>
 								{spans(chunk.spans)}
 								{end}
 							</span>

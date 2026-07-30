@@ -88,15 +88,79 @@ export function closedText(text: string): string {
 		// a line holding only `-`, `*` or `1.` is a nascent list marker: a paragraph whose
 		// one character *leaves* the drawn text the moment its space arrives and promotes it
 		// to a marker. It waits, exactly as a nascent fence waits for its third backtick.
-		if (/^\s*(?:[-*]|\d+\.)$/.test(tail)) return head;
-		// a trailing run of marker characters cannot mean anything yet. One asterisk is
-		// not a marker; two backticks are either an empty code span or the first two
-		// thirds of a fence, and both are a block for one frame.
-		tail = tail.replace(/\*{3,}$/, "").replace(/`{2,}$/, "");
-		if (tail.endsWith("*") && !tail.endsWith("**")) tail = tail.slice(0, -1);
+		// `--` waits with them, because its third dash makes it a rule.
+		if (/^\s*(?:[-*]|\d+\.|--)$/.test(tail)) return head;
+		tail = holdLink(tail);
+		// a trailing run of marker characters cannot mean anything yet. Two backticks are
+		// either an empty code span or the first two thirds of a fence, and one tilde is
+		// half of anything; both are a block for one frame.
+		tail = tail
+			.replace(/\*{3,}$/, "")
+			.replace(/`{2,}$/, "")
+			.replace(/(?<!~)~$/, "");
 		if ((tail.match(/`/g) ?? []).length % 2 === 1) tail = tail.endsWith("`") ? tail.slice(0, -1) : `${tail}\``;
-		if ((tail.match(/\*\*/g) ?? []).length % 2 === 1) tail = tail.endsWith("**") ? tail.slice(0, -2) : `${tail}**`;
+		if ((tail.match(/~~/g) ?? []).length % 2 === 1) tail = tail.endsWith("~~") ? tail.slice(0, -2) : `${tail}~~`;
+		tail = closeStars(tail);
 	}
 
 	return head + tail;
+}
+
+/**
+ * A link that has not finished arriving waits, because its own syntax is not text.
+ *
+ * This is the second case in the file where a drawn character *leaves* again, and it
+ * is worse than the nascent list marker: `[the frame](spool.page)` draws `the frame`,
+ * so the brackets, the parentheses and the whole URL are characters on screen that
+ * the closing `)` deletes. Twenty-two of them in the longest plausible link.
+ *
+ * So an unfinished link is held from its `[`, and the test is what makes it cheap: a
+ * bracket is only *unfinished* while it could still become a link. `[a]` with nothing
+ * yet after it could; `[a] and` could not, because the character after the close is
+ * not a `(`, and prose full of brackets is left alone from the frame that settles it.
+ *
+ * It also happens to answer the task box for free. `- [` and `- [ ]` are the same
+ * shape — a bracket that might close into something whose syntax is not text — so
+ * they wait here rather than needing a rule of their own.
+ */
+function holdLink(tail: string): string {
+	const open = tail.lastIndexOf("[");
+	if (open < 0) return tail;
+	const rest = tail.slice(open);
+	if (/^\[[^\]\n]*\]\([^()\s]*\)/.test(rest)) return tail;
+	// still open, or closed and pointing at a `(` that has not shut: either way it may
+	// still become a link, so none of it is text yet
+	if (/^\[[^\]\n]*(\](\([^()\s]*)?)?$/.test(rest)) return tail.slice(0, open);
+	return tail;
+}
+
+/**
+ * The asterisks, balanced as the two markers they now are.
+ *
+ * Bold alone could be counted, because `**` is unambiguous. Italic cannot be counted
+ * beside it: `**a**` holds four asterisks and no emphasis, and the rule this replaced
+ * — drop a trailing `*` that is not a `**` — deleted the *closing* asterisk of every
+ * finished `*run*` the moment italic became a marker at all.
+ *
+ * So the run is walked instead, longest marker first, and each is closed or dropped on
+ * the file's own rule: an opener with nothing behind it is dropped, because `**` is not
+ * bold and `*` is not emphasis, and anything with a character in it is closed so it
+ * renders from that character and simply grows. Inner closes before outer.
+ */
+function closeStars(tail: string): string {
+	let bold = -1;
+	let italic = -1;
+	for (let at = 0; at < tail.length; ) {
+		if (tail[at] === "*" && tail[at + 1] === "*") {
+			bold = bold === -1 ? at : -1;
+			at += 2;
+		} else if (tail[at] === "*") {
+			italic = italic === -1 ? at : -1;
+			at += 1;
+		} else at += 1;
+	}
+	let out = tail;
+	if (italic >= 0) out = italic === out.length - 1 ? out.slice(0, italic) : `${out}*`;
+	if (bold >= 0) out = bold === tail.length - 2 ? out.slice(0, bold) : `${out}**`;
+	return out;
 }

@@ -798,6 +798,8 @@ describe("a long message", () => {
 		const chunks = chunksOf(DOCUMENT);
 		// every block of it is on screen: the whole message, nothing dropped
 		for (const chunk of chunks) {
+			// a rule is structure with no words in it, so there is nothing of it to find here
+			if (chunk.kind === "rule") continue;
 			const own = chunk.kind === "fence" ? chunk.text : chunk.spans.map((span) => span.text).join("");
 			expect(said.textContent).toContain(own);
 		}
