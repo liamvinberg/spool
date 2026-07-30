@@ -3,13 +3,14 @@ import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../a
 import type { AgentReply } from "../../daemon/agent-control";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
-import { AgentIcon, CloseIcon } from "../icons";
+import { AgentIcon, CloseIcon, PlusIcon } from "../icons";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
 import { closedText } from "./agent-markers";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
 import { Caret, Said } from "./agent-said";
 import { Shot } from "./agent-shot";
 import type { TurnPhase } from "./agent-stream";
+import type { Life, Thread } from "./agent-threads";
 import {
 	type AgentEntry,
 	type AgentPlan,
@@ -128,6 +129,45 @@ export interface Pointing {
 	readonly onDrop: (id: string | null) => void;
 }
 
+/**
+ * The conversations this project has, and what the row may do about them (#136, #200).
+ *
+ * One bundle rather than six props for the reason `Pointing` and `FrameJump` are: they
+ * arrive together, they change together, and the deck upstream already holds them as one
+ * object.
+ */
+export interface Threads {
+	readonly list: readonly Thread[];
+	readonly open: string;
+	/**
+	 * The open thread has a picture and no session left to continue it (#120).
+	 *
+	 * It reads as finished: nothing offers a resume that would fail, and the composer says
+	 * what the next thing said will actually do, which is start a new thread.
+	 */
+	readonly finished: boolean;
+	/** a press on a tab, which reads the thread and moves nothing else */
+	readonly onOpen: (id: string) => void;
+	/** the ✕ on a tab: it leaves the row, and neither the session nor the picture goes */
+	readonly onClose: (id: string) => void;
+	/** the plus that leads the row */
+	readonly onNew: () => void;
+}
+
+/**
+ * What the composer is holding for one thread: unsent words and a reference.
+ *
+ * Per thread, because words nobody has sent belong to the conversation they were written
+ * for. Switching a thread to check on something must not throw a half-typed sentence away,
+ * and must not carry it into somebody else's transcript either.
+ */
+interface Holding {
+	readonly draft: string;
+	readonly attached: Attachment | null;
+}
+
+const EMPTY: Holding = { draft: "", attached: null };
+
 export function AgentRail({
 	entries,
 	plan,
@@ -136,6 +176,7 @@ export function AgentRail({
 	last,
 	jump,
 	pointing,
+	threads,
 	queued,
 	handback,
 	onSend,
@@ -152,6 +193,8 @@ export function AgentRail({
 	last: number;
 	jump: FrameJump;
 	pointing: Pointing;
+	/** every conversation this project has, newest first (#136, #200) */
+	threads: Threads;
 	/** what spool is holding until this turn ends, in the order it will fire (#170) */
 	queued: readonly AgentQueued[];
 	/** whatever left the queue un-fired, for the box below to take back (#170) */
@@ -174,23 +217,35 @@ export function AgentRail({
 	 * back everything the queue held — and a stop can arrive from the canvas, where the
 	 * hands are watching a frame repaint and the box is nowhere near the press. So the
 	 * draft is the rail's and the field is controlled.
+	 *
+	 * It is held per thread, because words nobody has sent belong to the conversation they
+	 * were written for: switching threads to check on something must not throw away a
+	 * half-typed sentence, and must not carry it into somebody else's transcript either.
 	 */
-	const [draft, setDraft] = useState("");
-	/** the reference riding with the words, up here for the same reason (#119, #170) */
-	const [attached, setAttached] = useState<Attachment | null>(null);
-	/** the handovers already merged, since the same words can come back twice */
-	const merged = useRef(0);
+	const open = threads.open;
+	const [held, setHeld] = useState<Readonly<Record<string, Holding>>>({});
+	const holding = held[open] ?? EMPTY;
+	const write = (patch: (was: Holding) => Holding) =>
+		setHeld((all) => ({ ...all, [open]: patch(all[open] ?? EMPTY) }));
+	/** the handovers already merged per thread, since the same words can come back twice */
+	const merged = useRef(new Map<string, number>());
 	useEffect(() => {
-		if (handback.count === merged.current) return;
-		merged.current = handback.count;
-		setDraft((box) =>
-			handedBack(
-				handback.messages.map((one) => one.text),
-				box,
-			),
-		);
-		setAttached((held) => handedBackReference(handback.messages, held));
-	}, [handback]);
+		if (handback.count === (merged.current.get(open) ?? 0)) return;
+		merged.current.set(open, handback.count);
+		setHeld((all) => {
+			const was = all[open] ?? EMPTY;
+			return {
+				...all,
+				[open]: {
+					draft: handedBack(
+						handback.messages.map((one) => one.text),
+						was.draft,
+					),
+					attached: handedBackReference(handback.messages, was.attached),
+				},
+			};
+		});
+	}, [handback, open]);
 	/**
 	 * The question the composer would answer, read off the log rather than handed in.
 	 *
@@ -246,12 +301,15 @@ export function AgentRail({
 				</div>
 			) : (
 				<div className="flex h-full min-w-[200px] flex-col">
+					{/* the threads lead the shelf, because the row is the rail's own navigation and
+					    everything under it belongs to whichever thread it names */}
+					<ThreadStrip threads={threads} />
 					{plan === null ? null : <PlanStrip plan={plan} />}
 					<Transcript entries={entries} elapsed={elapsed} last={last} jump={jump} onAnswer={onAnswer}>
 						{/* the caret rides the transcript's own top fade rather than a row of its
 						    own: #144's whole finding is that a line of a 420px column is too
-						    expensive to spend on chrome, and it is #136's threads strip that will
-						    carry this glyph once there is more than one thread to carry */}
+						    expensive to spend on chrome, and the threads row above it is already
+						    spending the one line the shelf can afford */}
 						<button
 							type="button"
 							aria-label="Collapse agent"
@@ -266,13 +324,14 @@ export function AgentRail({
 					    the 200 floor, because the rule is one line rather than one width */}
 					<Composer
 						phase={phase}
+						finished={threads.finished}
 						answering={asking?.kind === "ask" ? asking.request : null}
 						strip={stripOf(pointing.entries, composerWidth(width), pointing.inside)}
 						pointing={pointing}
-						draft={draft}
-						onDraft={setDraft}
-						attached={attached}
-						onAttach={setAttached}
+						draft={holding.draft}
+						onDraft={(draft) => write((was) => ({ ...was, draft }))}
+						attached={holding.attached}
+						onAttach={(attached) => write((was) => ({ ...was, attached }))}
 						queued={queued}
 						onSend={onSend}
 						onQueue={onQueue}
@@ -322,6 +381,210 @@ export function AgentRail({
 				<span className="absolute top-0 right-[5px] bottom-0 w-px bg-transparent group-hover:bg-thread group-focus-visible:bg-thread" />
 			</button>
 		</aside>
+	);
+}
+
+/* ---------- the threads, in a row under the rail (#136, #144, #161, #200) ----------
+ * Every conversation on screen at once, in a rail that does not have room for their
+ * names. Nothing is behind anything: a thread finishing while you are elsewhere changes
+ * a mark you are already looking at, and switching costs one press with no intermediate
+ * surface, which is the fastest any switcher can be.
+ *
+ * The open one takes the room it needs and the rest collapse to their mark. Equal-width
+ * tabs was the first drawing and its break was width: at four threads each got about
+ * 112px, eleven characters of mono, and a thread's only name is the sentence the human
+ * typed. Asks are sentences. Collapsing the others keeps the whole bet and removes the
+ * constraint that made the name useless.
+ *
+ * The plus leads the row, because the row is read left to right and *new* belongs before
+ * the newest rather than after the oldest.
+ *
+ * How you reach the rest: the press centres the row on what was pressed. So a half-cut
+ * mark at the edge is itself the way to the next one, and it adds no control and no new
+ * gesture — the click was already spent on opening the thread. It beat a caret per
+ * overflowing end, a count that opens a menu, and collapsing the overflow to bare marks.
+ * A scroll bar was never on the table: a trough across the top of a 420px rail is the
+ * loudest object in a near-black interface, and it says *scroll me* when the thing worth
+ * saying is *there are four more conversations and two of them are unread*.
+ *
+ * Nothing is coloured and nothing re-sorts. State in this rail is motion, the one accent
+ * belongs to the selection, and the order is recency fixed once — a strip that re-sorted
+ * as its threads worked would move a tab out from under a cursor already reaching for it.
+ */
+
+/** the row's own height, which is the plan strip's: one line of chrome, not two */
+const STRIP_H = 34;
+
+/**
+ * A collapsed tab, at the width it needs to hold both of its jobs.
+ *
+ * The mark is 14px and the ✕ is 14px, and the ✕'s room is reserved whether or not the
+ * cursor is on the tab — so nothing moves on hover and the two hit targets never share
+ * a pixel. The alternative, swapping the mark for the ✕, makes a press on a bare mark
+ * ambiguous: the whole cell would be the close control, and there would be no way left
+ * to switch to the thread it belongs to.
+ */
+const MARK_TAB = 36;
+
+/** the open tab's floor, from #136's own measurement: below this a name is not a name */
+const OPEN_TAB = 112;
+
+function ThreadStrip({ threads }: { threads: Threads }) {
+	const { list, open, onOpen, onClose, onNew } = threads;
+	/**
+	 * The row's one scroll, which is what a press means (#144).
+	 *
+	 * It happens here rather than in the press for two reasons, both of which were bugs
+	 * when the press did it. The press ran before the render that opens the tab, so it
+	 * centred the 36px mark rather than the name that replaces it. And this effect then
+	 * fired an instant scroll of its own on top, which cancels a smooth one already in
+	 * flight — so the centring the press exists for was being thrown away by the frame
+	 * after it.
+	 *
+	 * The first draw is instant, because a deck restored with ten threads should open
+	 * already in the right place rather than animating there. Every opening after it is
+	 * smooth and centred, which is the gesture: whatever was pressed comes to the middle,
+	 * and that is what puts the next one in reach.
+	 */
+	const here = useRef<HTMLButtonElement>(null);
+	const drawn = useRef(false);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: which tab is open is what moves the row
+	useEffect(() => {
+		const tab = here.current;
+		if (tab === null) return;
+		if (!drawn.current) {
+			drawn.current = true;
+			tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+			return;
+		}
+		tab.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+	}, [open]);
+
+	return (
+		<div
+			data-agent-threads=""
+			className="flex shrink-0 items-stretch border-border border-b"
+			style={{ height: STRIP_H }}
+		>
+			{/* the plus leads, because the room at the other end belongs to the threads */}
+			<button
+				type="button"
+				aria-label="New thread"
+				onClick={onNew}
+				className="flex w-9 shrink-0 items-center justify-center border-border border-r text-muted/45 transition-colors duration-150 hover:text-text"
+			>
+				<PlusIcon />
+			</button>
+			<div className="relative min-w-0 flex-1">
+				<div className="flex h-full items-stretch gap-2 overflow-x-auto px-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+					{list.map((thread) => {
+						const on = thread.id === open;
+						return (
+							<div
+								key={thread.id}
+								data-agent-thread={thread.ask}
+								data-agent-thread-life={thread.life}
+								className="group relative flex shrink-0 items-center gap-1"
+								style={on ? { minWidth: OPEN_TAB, flex: "1 1 0%" } : { width: MARK_TAB }}
+							>
+								<button
+									ref={on ? here : undefined}
+									type="button"
+									aria-label={thread.ask}
+									aria-current={on ? "true" : undefined}
+									onClick={() => onOpen(thread.id)}
+									className="flex min-w-0 flex-1 items-center gap-2 text-left"
+								>
+									<ThreadMark life={thread.life} spare={!on} />
+									{on ? (
+										<span className="min-w-0 truncate font-mono text-sm text-text leading-4">
+											{thread.ask}
+										</span>
+									) : null}
+								</button>
+								{/* the ✕ on hover, in the vocabulary every other list here already uses. It is
+								    a tidy rather than a delete: neither the agent's own session nor spool's
+								    stored picture goes with the tab */}
+								<button
+									type="button"
+									data-agent-thread-close={thread.ask}
+									aria-label={`close ${thread.ask}`}
+									onClick={() => onClose(thread.id)}
+									className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted/0 transition-colors duration-150 hover:text-text group-hover:text-muted/50"
+								>
+									<CloseIcon />
+								</button>
+								{/* the bar says which of several is open, so with one thread there is no which
+								    and it is the whole row of accent saying nothing — it reads as a progress
+								    bar, which is the opposite of what it means */}
+								{on && list.length > 1 ? (
+									<span className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] bg-thread" />
+								) : null}
+							</div>
+						);
+					})}
+				</div>
+				{/* the fade is what says there is a next one, and it says nothing about how to
+				    get to it, because the press already does */}
+				<span className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-bg to-transparent" />
+			</div>
+		</div>
+	);
+}
+
+/**
+ * What a thread is doing, in the smallest thing that can say it (#161).
+ *
+ * The box is always 14px whatever is inside it, so a tab with a name and a tab without
+ * one align on the same left edge and a mark appearing never moves the name beside it.
+ *
+ * Three readings of five lives. Streaming draws nothing and keeps the row aligned: the
+ * transcript below is already a turning mark and a live edge, so a second spinner on the
+ * tab naming the thread you are watching says nothing the screen does not. Running turns,
+ * colourless, because state in this rail is motion and the one accent belongs to the
+ * selection. Waiting is `unread`'s disc held inside `running`'s ring — the turn that
+ * stopped, with the thing that stopped it sitting in it — and it is the loudest of the
+ * three on purpose, because it is the only one of them that is actually stuck. Unread is a
+ * solid dot at text strength, the way a mailbox says it. Read is nothing.
+ *
+ * Two candidates for waiting died on facts rather than taste. Freezing the spinner is
+ * pixel-identical to what `prefers-reduced-motion` already renders for a working thread,
+ * so it would be working's drawing with a second meaning for every reduced-motion reader.
+ * Borrowing the disc alone breaks on the clearing rule: a disc clears when you open the
+ * thread and a question does not, so a strip that spent it here would go quiet about a
+ * thread that will never finish.
+ *
+ * A collapsed tab's `read` is the one departure, and it is #144's own: out here the mark
+ * *is* the thread, and a thread you cannot see is a thread you cannot press, so read
+ * falls back to a hollow dot at the strength a disabled thing gets.
+ */
+function ThreadMark({ life, spare = false }: { life: Life; spare?: boolean }) {
+	const turning = life === "running";
+	return (
+		<span data-agent-mark={life} className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+			{turning ? (
+				<svg
+					viewBox="0 0 14 14"
+					className="h-3.5 w-3.5 animate-agent-spin text-text/60"
+					fill="none"
+					aria-hidden="true"
+				>
+					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.26" />
+					<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+				</svg>
+			) : life === "waiting" ? (
+				// the same ring working turns, at rest and dimmed so the disc reads as the thing
+				// in it rather than as a second object beside it
+				<svg viewBox="0 0 14 14" className="h-3.5 w-3.5 text-text/85" fill="none" aria-hidden="true">
+					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.4" />
+					<circle cx="7" cy="7" r="2.2" fill="currentColor" />
+				</svg>
+			) : life === "unread" ? (
+				<span className="h-[5px] w-[5px] rounded-full bg-text/85" />
+			) : spare ? (
+				<span className="h-[5px] w-[5px] rounded-full border border-muted/45" />
+			) : null}
+		</span>
 	);
 }
 
@@ -1090,6 +1353,7 @@ function StateMark({ state, className }: { state: RowState; className?: string }
 
 function Composer({
 	phase,
+	finished,
 	answering,
 	strip,
 	pointing,
@@ -1105,6 +1369,14 @@ function Composer({
 	onAnswer,
 }: {
 	phase: TurnPhase;
+	/**
+	 * This thread's agent session is gone, so the next thing said starts a new one (#120).
+	 *
+	 * It is a hint rather than a refusal. The transcript is intact and worth reading, the
+	 * words are not thrown away, and what the press will actually do is said out loud
+	 * instead of a resume being offered that would fail.
+	 */
+	finished: boolean;
 	/**
 	 * The request Enter would answer, or null while Enter means what it always meant.
 	 *
@@ -1265,7 +1537,7 @@ function Composer({
 				{/* the hint is the only thing saying Enter is not being thrown away, so it
 				    changes word while a turn runs rather than going quiet (#170) */}
 				<span className="min-w-0 truncate font-mono text-2xs text-muted/45 leading-3">
-					{busy ? "enter to queue" : "enter to send"}
+					{busy ? "enter to queue" : finished ? "a new thread starts here" : "enter to send"}
 				</span>
 				{cutting ? <StopButton onStop={onStop} /> : null}
 			</div>

@@ -4,10 +4,11 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AgentEvent } from "../api";
-import { type AgentTurn, useAgentTurn } from "./agent-stream";
+import { type AgentDeck, type AgentTurn, useAgentThreads } from "./agent-stream";
 
 /**
- * The hook that owns one turn (#192), on its own rather than under the canvas.
+ * The hook that owns every thread's turn (#192, #200), on its own rather than under the
+ * canvas.
  *
  * Both of these are properties nothing else can see. The canvas re-renders for its
  * own reasons — a watcher event, a flows read, a frame waking — so a rail mounted
@@ -16,14 +17,19 @@ import { type AgentTurn, useAgentTurn } from "./agent-stream";
  */
 
 function mount() {
-	const seen: AgentTurn[] = [];
+	const seen: AgentDeck[] = [];
 	let open = false;
 	const encoder = new TextEncoder();
 	let ctrl: ReadableStreamDefaultController<Uint8Array> | undefined;
 
 	vi.stubGlobal(
 		"fetch",
-		vi.fn(async () => {
+		vi.fn(async (input: RequestInfo | URL) => {
+			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+			// a project with nothing stored, which is what every case here is about: the
+			// picture coming back off disk is `agent-rail.test.ts`'s
+			if (url.pathname.endsWith("/agent/threads")) return Response.json({ threads: [] });
+			if (url.pathname.includes("/agent/threads/")) return new Response(null, { status: 204 });
 			const stream = new ReadableStream<Uint8Array>({
 				start: (controller) => {
 					ctrl = controller;
@@ -45,12 +51,12 @@ function mount() {
 	});
 
 	function Probe() {
-		seen.push(useAgentTurn("test"));
+		seen.push(useAgentThreads("test"));
 		return null;
 	}
 
 	return {
-		latest: () => seen[seen.length - 1] as AgentTurn,
+		latest: () => (seen[seen.length - 1] as AgentDeck).turn as AgentTurn,
 		push: (event: AgentEvent) => ctrl?.enqueue(encoder.encode(`event: agent\ndata: ${JSON.stringify(event)}\n\n`)),
 		close: () => {
 			open = false;
@@ -83,7 +89,7 @@ const speaking: AgentEvent = { kind: "speaking", message: "m", model: "opus", pa
 const ended: AgentEvent = { kind: "ended", ending: "done", reason: "completed", stopReason: null, parent: null };
 const closed: AgentEvent = { kind: "closed", code: 0, parent: null };
 
-describe("useAgentTurn", () => {
+describe("the turn a thread is running", () => {
 	/**
 	 * Reduced motion drops the pacing, not the updates: the arrival is what stillness
 	 * asks not to see, and the clock is what puts arriving events on screen at all.

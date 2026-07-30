@@ -26,7 +26,7 @@ import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-disp
 import type { HotkeyIdFor } from "../hotkeys";
 import { RibbonMark } from "../icons";
 import { AgentRail } from "./agent-rail";
-import { useAgentTurn } from "./agent-stream";
+import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, K_STEP, toWorld, zoomAt } from "./camera";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
@@ -254,7 +254,8 @@ export function ProjectCanvas({
 	// the agent rail's one turn (#192). It owns the stream and nothing else here has
 	// to know about it: a frame the turn writes lands as an ordinary `change` event,
 	// so the canvas repaints while the transcript is still arriving.
-	const turn = useAgentTurn(project);
+	const deck = useAgentThreads(project);
+	const turn = deck.turn;
 	/**
 	 * The running turn, for the one hotkey handler that can stop it (#165).
 	 *
@@ -2493,6 +2494,7 @@ export function ProjectCanvas({
 			>
 				{camera !== null && (
 					<div
+						data-canvas-camera=""
 						className="absolute top-0 left-0"
 						style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${k})`, transformOrigin: "0 0" }}
 					>
@@ -2687,6 +2689,14 @@ export function ProjectCanvas({
 					},
 				}}
 				pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
+				threads={{
+					list: deck.threads,
+					open: deck.open,
+					finished: deck.finished,
+					onOpen: deck.onOpen,
+					onClose: deck.onClose,
+					onNew: deck.onNew,
+				}}
 				queued={turn.queued}
 				handback={turn.handback}
 				onSend={turn.send}

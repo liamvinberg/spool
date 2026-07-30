@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MAX_ATTACHMENT_BYTES } from "../attachment";
@@ -16,6 +16,7 @@ import {
 import { readSelection } from "../verbs";
 import type { AgentEvent } from "./agent-events";
 import { agentFraming } from "./agent-spawn";
+import { sessionFile } from "./agent-threads";
 import { startAgentTurn } from "./agent-turn";
 
 /** Every event of one turn, read off the stream the way a client would. */
@@ -35,11 +36,18 @@ async function drainTurn(res: Response, limit = 4000): Promise<AgentEvent[]> {
 	return seen;
 }
 
+/** the conversation a turn runs under, which is the session id spool minted for it (#120) */
+const THREAD = "1f0e2d3c-4b5a-4697-8899-aabbccddeeff";
+
 function startTurn(name: string, app: ReturnType<typeof makeApp>, body: unknown = "make these consistent") {
 	return app.request(`/api/p/${name}/agent/turn`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify(typeof body === "string" ? { said: [{ prompt: body }] } : body),
+		body: JSON.stringify(
+			typeof body === "string"
+				? { thread: THREAD, said: [{ prompt: body }] }
+				: { thread: THREAD, ...(body as Record<string, unknown>) },
+		),
 	});
 }
 
@@ -277,7 +285,12 @@ describe("one turn over the wire", () => {
 		// a fixture that answers nothing: the turn is still in flight when whoever
 		// asked for it goes away
 		const agent = fixtureAgentExecutor(() => {});
-		const turn = startAgentTurn({ executor: agent.executor, root: "/tmp/product", content: [] });
+		const turn = startAgentTurn({
+			executor: agent.executor,
+			root: "/tmp/product",
+			content: [],
+			session: { id: "6b5c1d2e-1111-4222-8333-444455556666", resume: false },
+		});
 		const seen: AgentEvent[] = [];
 		const reading = (async () => {
 			for await (const event of turn.events) seen.push(event);
@@ -390,6 +403,53 @@ describe("one turn over the wire", () => {
 			expect(events.at(-1)?.kind).toBe("closed");
 			expect(events.some((event) => event.kind === "ready")).toBe(true);
 		}
+	});
+});
+
+/**
+ * The conversation a turn belongs to (#120, #200).
+ *
+ * The session id is the thread, and the two flags are exclusive: `--session-id` wants an
+ * id the binary has never seen and `--resume` wants one it has. So the file is the fact,
+ * which also means a thread whose session has aged out carries on under its own id rather
+ * than failing a resume.
+ */
+describe("the thread a turn runs under", () => {
+	it("starts a session under the id the rail named", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const agent = fixtureAgentExecutor(() => {});
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+
+		const res = await startTurn(name, app, { said: [{ prompt: "go" }] });
+		await until(() => agent.spawned.length === 1);
+
+		const args: readonly string[] = agent.spawned[0]?.spawn.args ?? [];
+		expect(args[args.indexOf("--session-id") + 1]).toBe(THREAD);
+		expect(args).not.toContain("--resume");
+		await res.body?.cancel();
+	});
+
+	it("resumes it once the binary has a session file under that id", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		const home = makeTempDir();
+		vi.stubEnv("HOME", home);
+		vi.stubEnv("CLAUDE_CONFIG_DIR", "");
+		const file = sessionFile(root, THREAD, { HOME: home });
+		mkdirSync(join(file, ".."), { recursive: true });
+		writeFileSync(file, "{}\n");
+		const agent = fixtureAgentExecutor(() => {});
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+
+		const res = await startTurn(name, app, { said: [{ prompt: "and now the receipt" }] });
+		await until(() => agent.spawned.length === 1);
+
+		const args: readonly string[] = agent.spawned[0]?.spawn.args ?? [];
+		expect(args[args.indexOf("--resume") + 1]).toBe(THREAD);
+		expect(args).not.toContain("--session-id");
+		await res.body?.cancel();
+		vi.unstubAllEnvs();
 	});
 });
 
@@ -540,10 +600,14 @@ describe("the door", () => {
 				body: JSON.stringify(body),
 			});
 
-		expect((await post(`/api/p/${name}/agent/turn`, { said: [{ prompt: "  " }] })).status).toBe(400);
-		expect((await post(`/api/p/${name}/agent/turn`, { said: [] })).status).toBe(400);
-		expect((await post(`/api/p/${name}/agent/turn`, {})).status).toBe(400);
-		expect((await post("/api/p/ghost/agent/turn", { said: [{ prompt: "go" }] })).status).toBe(404);
+		expect((await post(`/api/p/${name}/agent/turn`, { thread: THREAD, said: [{ prompt: "  " }] })).status).toBe(400);
+		expect((await post(`/api/p/${name}/agent/turn`, { thread: THREAD, said: [] })).status).toBe(400);
+		expect((await post(`/api/p/${name}/agent/turn`, { thread: THREAD })).status).toBe(400);
+		// a turn belongs to a conversation, and spool minted its id before there was a
+		// process: without one there is nothing to resume and nothing to store under (#120)
+		expect((await post(`/api/p/${name}/agent/turn`, { said: [{ prompt: "go" }] })).status).toBe(400);
+		expect((await post(`/api/p/${name}/agent/turn`, { thread: "kaffe", said: [{ prompt: "go" }] })).status).toBe(400);
+		expect((await post("/api/p/ghost/agent/turn", { thread: THREAD, said: [{ prompt: "go" }] })).status).toBe(404);
 		// spawning is the daemon's authority and nobody else's: without the
 		// control capability this door does not open at all
 		const uninvited = await app.fetch(`/api/p/${name}/agent/turn`, {
@@ -554,5 +618,112 @@ describe("the door", () => {
 		expect(uninvited.status).toBe(401);
 		// nothing spawned for any of them
 		expect(agent.spawned).toHaveLength(0);
+	});
+});
+
+/**
+ * The threads door (#120, #136, #200).
+ *
+ * The picture is the rail's and the disk is the daemon's, so what these check is the
+ * seam: an envelope strict enough that a client cannot claim a restart or a close, an
+ * opaque drawing that comes back byte for byte, and the two facts only the daemon can
+ * answer riding out with it.
+ */
+describe("the threads door", () => {
+	const picture = {
+		ask: "shoot home and fix whatever reads wrong",
+		life: "read",
+		at: 1_700_000_000_000,
+		entries: [{ key: "u0", kind: "user", text: "shoot home and fix whatever reads wrong" }],
+		plan: null,
+	};
+
+	function threads(name: string, app: ReturnType<typeof makeApp>) {
+		return app.request(`/api/p/${name}/agent/threads`);
+	}
+
+	function put(name: string, app: ReturnType<typeof makeApp>, id: string, body: unknown) {
+		return app.request(`/api/p/${name}/agent/threads/${id}`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	}
+
+	it("hands back the drawing it was given, with nothing capped and nothing elided", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const app = makeApp(spoolDir, { agentExecutor: fixtureAgentExecutor(() => {}).executor });
+
+		expect((await put(name, app, THREAD, picture)).status).toBe(204);
+
+		const served = (await (await threads(name, app)).json()) as { threads: { entries: unknown[] }[] };
+		expect(served.threads).toHaveLength(1);
+		expect(served.threads[0]?.entries).toEqual(picture.entries);
+	});
+
+	it("refuses an envelope that is not one, and a thread not named by a uuid", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const app = makeApp(spoolDir, { agentExecutor: fixtureAgentExecutor(() => {}).executor });
+
+		expect((await put(name, app, THREAD, { ...picture, ask: "" })).status).toBe(400);
+		expect((await put(name, app, THREAD, { ...picture, life: "streaming" })).status).toBe(400);
+		expect((await put(name, app, THREAD, { ...picture, entries: "lots" })).status).toBe(400);
+		expect((await put(name, app, "kaffe", picture)).status).toBe(400);
+		expect((await put("ghost", app, THREAD, picture)).status).toBe(404);
+	});
+
+	/** a reboot is not a hand: a thread mid-turn reads stopped and nothing resumes it */
+	it("says a thread was stopped when no turn in this daemon is running it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const app = makeApp(spoolDir, { agentExecutor: fixtureAgentExecutor(() => {}).executor });
+		await put(name, app, THREAD, { ...picture, life: "running" });
+
+		const served = (await (await threads(name, app)).json()) as {
+			threads: { stopped: boolean; life: string; continuable: boolean }[];
+		};
+		expect(served.threads[0]).toMatchObject({ stopped: true, life: "unread" });
+	});
+
+	it("leaves a thread this daemon is still running alone", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const agent = fixtureAgentExecutor(() => {});
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+		await put(name, app, THREAD, { ...picture, life: "running" });
+
+		const running = await startTurn(name, app, { said: [{ prompt: "carry on" }] });
+		await until(() => agent.spawned.length === 1);
+		const served = (await (await threads(name, app)).json()) as { threads: { stopped: boolean }[] };
+
+		expect(served.threads[0]?.stopped).toBe(false);
+		await running.body?.cancel();
+	});
+
+	it("closes a thread out of the strip and keeps every byte of it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const app = makeApp(spoolDir, { agentExecutor: fixtureAgentExecutor(() => {}).executor });
+		await put(name, app, THREAD, picture);
+
+		const closed = await app.request(`/api/p/${name}/agent/threads/${THREAD}/close`, { method: "POST" });
+		expect(closed.status).toBe(204);
+
+		const served = (await (await threads(name, app)).json()) as { threads: unknown[] };
+		expect(served.threads).toEqual([]);
+		// nothing was deleted: the file is still there, which the store's own test reads
+		const again = await app.request(`/api/p/${name}/agent/threads/${THREAD}/close`, { method: "POST" });
+		expect(again.status).toBe(204);
+	});
+
+	it("has nothing to say about a project that has never held a thread", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const app = makeApp(spoolDir, { agentExecutor: fixtureAgentExecutor(() => {}).executor });
+
+		expect(await (await threads(name, app)).json()).toEqual({ threads: [] });
+		expect((await app.request(`/api/p/${name}/agent/threads/${THREAD}/close`, { method: "POST" })).status).toBe(404);
 	});
 });

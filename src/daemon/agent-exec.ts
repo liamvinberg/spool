@@ -27,6 +27,15 @@ export interface AgentProcess {
 export type AgentExecutor = (options: AgentSpawn) => Promise<AgentProcess>;
 
 /**
+ * How much of what the binary printed is kept for the exit message.
+ *
+ * Enough for a refusal and its remedy — the longest of the binary's own is under a
+ * hundred characters — and not a transcript of a crash, because it becomes one line in a
+ * log the rail draws.
+ */
+const STDERR_KEPT = 400;
+
+/**
  * The real spawn: the developer's own binary, inheriting the daemon's
  * environment and reusing whatever login is already on the machine.
  *
@@ -41,6 +50,8 @@ export function claudeExecutor(): AgentExecutor {
 		let exitCb: (code: number | null, message?: string) => void = () => {};
 		let exited = false;
 		let buffer = "";
+		/** the tail of what it printed, which is where a refusal it does not stream lands */
+		let said = "";
 		const reportExit = (code: number | null, message?: string) => {
 			if (exited) return;
 			exited = true;
@@ -58,14 +69,27 @@ export function claudeExecutor(): AgentExecutor {
 				if (line.trim() !== "") lineCb(line);
 			}
 		});
+		/*
+		 * What the binary said on its way out, kept so the rail can draw it (#127, #200).
+		 *
+		 * A refusal it prints rather than streams — `Not logged in`, `Please run /login` —
+		 * reaches nobody otherwise: stderr goes to the daemon's log, which is not where the
+		 * person is looking, and the exit alone is a code with no words. It is reported only
+		 * on a non-zero exit, because a successful run's stderr is warnings rather than a
+		 * reason, and it is bounded because it goes in a log line.
+		 */
 		child.stderr.setEncoding("utf8");
-		child.stderr.on("data", (chunk: string) => process.stderr.write(chunk));
+		child.stderr.on("data", (chunk: string) => {
+			process.stderr.write(chunk);
+			said = `${said}${chunk}`.slice(-STDERR_KEPT);
+		});
 		// a write to a child that has already gone must not take the daemon with it
 		child.stdin.on("error", () => {});
 		child.on("exit", (code) => {
 			if (buffer.trim() !== "") lineCb(buffer);
 			buffer = "";
-			reportExit(code);
+			const words = said.trim();
+			reportExit(code, code !== 0 && words !== "" ? words : undefined);
 		});
 		// a missing binary lands here rather than on exit, and is the whole of
 		// what "the agent is not installed" looks like from in here

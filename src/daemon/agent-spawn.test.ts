@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { skillText } from "../skill";
 import { AGENT_ALLOW_RULE, agentFraming, agentPromptContent, agentPromptLine, planAgentSpawn } from "./agent-spawn";
 
+/** a thread nobody has spawned yet, which is the ordinary case a flag test wants */
+const FRESH = { id: "6b5c1d2e-1111-4222-8333-444455556666", resume: false } as const;
+
 /** the value that follows a flag, the way the child's argv reads it */
 function flagValue(args: readonly string[], flag: string): string | undefined {
 	const at = args.indexOf(flag);
@@ -10,7 +13,7 @@ function flagValue(args: readonly string[], flag: string): string | undefined {
 
 describe("the spawn", () => {
 	it("resolves the developer's own binary by bare name", () => {
-		const spawn = planAgentSpawn("/tmp/product", {});
+		const spawn = planAgentSpawn("/tmp/product", {}, FRESH);
 
 		// bare name, so PATH answers it — spool ships no agent and pins no install
 		expect(spawn.command).toBe("claude");
@@ -18,7 +21,7 @@ describe("the spawn", () => {
 	});
 
 	it("carries the settled arguments, with partial messages and structured input", () => {
-		const { args } = planAgentSpawn("/tmp/product", {});
+		const { args } = planAgentSpawn("/tmp/product", {}, FRESH);
 
 		expect(args).toContain("--print");
 		expect(flagValue(args, "--output-format")).toBe("stream-json");
@@ -32,7 +35,7 @@ describe("the spawn", () => {
 	});
 
 	it("restricts settings to the developer's own and sets the permission mode explicitly", () => {
-		const { args } = planAgentSpawn("/tmp/product", {});
+		const { args } = planAgentSpawn("/tmp/product", {}, FRESH);
 
 		// the project's settings stay out: opening someone's design must not
 		// change what your agent may do
@@ -45,7 +48,7 @@ describe("the spawn", () => {
 	});
 
 	it("wires the permission prompt tool to stdio, which is what makes an ask data", () => {
-		const { args } = planAgentSpawn("/tmp/product", {});
+		const { args } = planAgentSpawn("/tmp/product", {}, FRESH);
 
 		// #121 rests on this and the binary's own help does not document it: without a
 		// permission prompt tool wired to the stdio the adapter already opens, the ask
@@ -55,7 +58,7 @@ describe("the spawn", () => {
 	});
 
 	it("passes one allow rule and denies nothing", () => {
-		const { args } = planAgentSpawn("/tmp/product", {});
+		const { args } = planAgentSpawn("/tmp/product", {}, FRESH);
 
 		const settings = JSON.parse(flagValue(args, "--settings") ?? "{}") as {
 			permissions?: { allow?: string[]; deny?: string[] };
@@ -72,7 +75,7 @@ describe("the spawn", () => {
 	});
 
 	it("puts no API key in the environment and strips none the developer set", () => {
-		const bare = planAgentSpawn("/tmp/product", { PATH: "/usr/bin", HOME: "/home/liam" });
+		const bare = planAgentSpawn("/tmp/product", { PATH: "/usr/bin", HOME: "/home/liam" }, FRESH);
 
 		// spool configures no key anywhere in this path
 		expect(Object.keys(bare.env)).toEqual(["PATH", "HOME"]);
@@ -80,7 +83,7 @@ describe("the spawn", () => {
 
 		// and someone's own CLI configured with a key breaks no promise spool
 		// made, so it rides along untouched
-		const keyed = planAgentSpawn("/tmp/product", { PATH: "/usr/bin", ANTHROPIC_API_KEY: "sk-ant-theirs" });
+		const keyed = planAgentSpawn("/tmp/product", { PATH: "/usr/bin", ANTHROPIC_API_KEY: "sk-ant-theirs" }, FRESH);
 		expect(keyed.env.ANTHROPIC_API_KEY).toBe("sk-ant-theirs");
 	});
 
@@ -135,9 +138,35 @@ describe("what rides with the words", () => {
 	});
 });
 
+/**
+ * The thread, in the binary's own vocabulary for one (#120, #200).
+ *
+ * The session id is the thread: spool mints a uuid before there is any process, hands it
+ * over on the thread's first turn, and resumes it on every turn after. Measured in #120,
+ * a resumed session keeps its id and does not fork, and the agent remembers what it was
+ * told with nothing re-sent — which is exactly why the rail's own picture is spool's
+ * problem, since a resume emits no history at all.
+ */
+describe("the session", () => {
+	it("is started under the id spool minted for the thread", () => {
+		const { args } = planAgentSpawn("/tmp/product", {}, FRESH);
+
+		expect(flagValue(args, "--session-id")).toBe(FRESH.id);
+		expect(args).not.toContain("--resume");
+	});
+
+	it("is resumed under that same id on every turn after the first", () => {
+		const { args } = planAgentSpawn("/tmp/product", {}, { id: FRESH.id, resume: true });
+
+		expect(flagValue(args, "--resume")).toBe(FRESH.id);
+		// the two are exclusive: --session-id wants an id the binary has never seen
+		expect(args).not.toContain("--session-id");
+	});
+});
+
 describe("the framing", () => {
 	it("is what the spawn actually appends, rather than text nobody sends", () => {
-		const { args } = planAgentSpawn("/tmp/product", {});
+		const { args } = planAgentSpawn("/tmp/product", {}, FRESH);
 
 		// appended rather than replacing: --system-prompt would take Claude Code's
 		// own tool instructions with it
@@ -177,6 +206,6 @@ describe("the framing", () => {
 
 	it("is the same bytes on every spawn, so it caches", () => {
 		expect(agentFraming()).toBe(agentFraming());
-		expect(planAgentSpawn("/a", {}).args).toEqual(planAgentSpawn("/a", {}).args);
+		expect(planAgentSpawn("/a", {}, FRESH).args).toEqual(planAgentSpawn("/a", {}, FRESH).args);
 	});
 });

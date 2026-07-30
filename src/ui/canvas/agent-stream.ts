@@ -1,28 +1,46 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentReply } from "../../daemon/agent-control";
-import { answerAgentTurn, interruptAgentTurn, streamAgentTurn } from "../api";
+import type { ServedThread } from "../../daemon/agent-threads";
+import {
+	answerAgentTurn,
+	closeAgentThread,
+	fetchAgentThreads,
+	interruptAgentTurn,
+	putAgentThread,
+	streamAgentTurn,
+} from "../api";
 import type { AgentHandback, AgentQueued } from "./agent-queue";
+import { askOf, bounced, cutPicture, type Life, lifeOf, storedLife, type Thread } from "./agent-threads";
 import {
 	type AgentEntry,
 	type AgentPlan,
 	type AgentSent,
 	type AgentWords,
+	drawableEntries,
 	fullyShown,
 	type Stamped,
 	transcriptOf,
+	unpaced,
 } from "./agent-transcript";
 
 /**
- * One turn, from the composer to the log (#192).
+ * Every conversation a project has, and the one turn the rail is watching (#192, #200).
  *
- * The hook owns three things and nothing else: the events as they land, the clock
- * they are read against, and the request itself. Everything the rail draws is
- * derived — the transcript is projected fresh from the events on every tick, so
- * there is one source of truth and no second copy to keep in step.
+ * A thread owns three things and nothing else: the events as they land, the clock they
+ * are read against, and the request itself. Everything the rail draws is derived — the
+ * transcript is projected fresh from the events on every tick, so there is one source of
+ * truth and no second copy to keep in step.
  *
- * The clock is the pace's clock. #149's smoother is a closed-form function of
- * elapsed milliseconds rather than an accumulator, so a tick is a read rather than
- * a step: a dropped frame costs nothing and the edge lands where it would have.
+ * The clock is the pace's clock. #149's smoother is a closed-form function of elapsed
+ * milliseconds rather than an accumulator, so a tick is a read rather than a step: a
+ * dropped frame costs nothing and the edge lands where it would have.
+ *
+ * **A project holds many of them and they keep running when you look away**, which is
+ * why a thread is a plain object here rather than a hook. Hooks cannot be N of anything,
+ * and the alternative — one hook keyed on whichever thread is open — abandons the stream
+ * of every thread you switch off, which is the one thing this ticket exists to stop. So
+ * the deck holds a map of them, one interval ticks all of them, and React is told to
+ * redraw by a counter.
  */
 
 /**
@@ -33,6 +51,17 @@ import {
  * see; slower turns a stream into a slideshow.
  */
 const TICK_MS = 100;
+
+/**
+ * How often a thread in flight writes its picture down.
+ *
+ * The picture changes on every tick and the disk does not need to. What a restart may
+ * cost is bounded by this and nothing else, so it is short enough that a thread caught
+ * mid-turn comes back showing what it was doing, and long enough that a nine-minute turn
+ * is a few hundred writes rather than five thousand. Every boundary that matters — the
+ * send, the settle, a look — writes immediately regardless.
+ */
+const SAVE_MS = 2000;
 
 /**
  * What the turn is doing, and the one member that is about the person (#145).
@@ -65,8 +94,8 @@ export interface AgentTurn {
 	/**
 	 * Send what was typed, and with it whatever the composer was holding (#116, #119).
 	 *
-	 * `sent` is captured here rather than read later because the selection is a live
-	 * thing and a turn is a record: the chips that were up are the bytes that went
+	 * `sent` is captured by the caller rather than read later because the selection is a
+	 * live thing and a turn is a record: the chips that were up are the bytes that went
 	 * out, and the line under the words says so for as long as the log lasts.
 	 */
 	readonly send: (text: string, sent?: AgentSent) => void;
@@ -105,129 +134,311 @@ export interface AgentTurn {
 	readonly handback: AgentHandback;
 }
 
+/**
+ * The threads of one project, and the one the rail has open (#136, #200).
+ *
+ * `turn` is the open thread's, so everything the rail already drew keeps its shape: the
+ * transcript, the composer and the queue are one thread's and always were. What is new
+ * is the strip above them and the fact that the others are still running.
+ */
+export interface AgentDeck {
+	readonly threads: readonly Thread[];
+	readonly open: string;
+	readonly turn: AgentTurn;
+	/**
+	 * The open thread has a picture and no session left to continue it (#120).
+	 *
+	 * The binary deletes its own session files after thirty days, so spool's picture
+	 * outlives the thing that makes the conversation continuable. Such a thread reads as
+	 * finished: the transcript is intact, nothing offers a resume, and the next thing
+	 * said starts a new thread rather than failing a resume.
+	 */
+	readonly finished: boolean;
+	/** a press on the strip, which reads the thread and moves nothing else */
+	readonly onOpen: (id: string) => void;
+	/** the ✕ on a tab: it leaves the strip, and neither the session nor the picture goes */
+	readonly onClose: (id: string) => void;
+	/** the plus that leads the row */
+	readonly onNew: () => void;
+}
+
 const stillness = () =>
 	typeof window !== "undefined" && typeof window.matchMedia === "function"
 		? window.matchMedia("(prefers-reduced-motion: reduce)").matches
 		: false;
 
-export function useAgentTurn(project: string): AgentTurn {
-	const [still] = useState(stillness);
-	const events = useRef<Stamped[]>([]);
-	const started = useRef(0);
-	const abandon = useRef<(() => void) | null>(null);
-	/** what started this turn: one message, or the stack a queue fired as one (#170) */
-	const [said, setSaid] = useState<readonly AgentWords[]>([]);
+/**
+ * One thread's whole runtime.
+ *
+ * Every field here was a ref or a piece of state in the one-thread hook this replaces.
+ * They are fields now because a project has as many of these as somebody starts, and
+ * because two things read them that a render cannot: the fire, which happens when a
+ * stream closes, and the stop, which has to empty a queue and hand its words back in one
+ * act.
+ */
+interface Live {
+	readonly id: string;
+	/** everything this thread's earlier turns drew, which is the conversation so far */
+	before: readonly AgentEntry[];
+	/** the plan the last turn that wrote one left, since a plan is drawn state (#120) */
+	heldPlan: AgentPlan | null;
+	/** the picture as it came off disk, drawn until this thread runs again */
+	restored: boolean;
+	/** the agent's own session is still there, so the conversation can be continued */
+	continuable: boolean;
+	/** it landed somewhere nobody was looking, and nobody has looked since */
+	unread: boolean;
+	/** unix ms of the last thing that happened in it, which is the strip's order */
+	at: number;
+	events: Stamped[];
+	started: number;
+	abandon: (() => void) | null;
+	said: readonly AgentWords[];
 	/** climbs per send, which is what re-arms the clock */
-	const [run, setRun] = useState(0);
-	const [open, setOpen] = useState(false);
-	const [ms, setMs] = useState(0);
+	run: number;
+	/** the stream is open, written by the stream rather than by a render */
+	streaming: boolean;
+	ms: number;
 	/** the stream is closed and the edge has caught up with it: nothing left to read */
-	const [drained, setDrained] = useState(false);
-	/**
-	 * What the clock reads, written by the stream rather than by a render.
-	 *
-	 * It cannot be a mirror of the state above: a render is when React chooses, and the
-	 * clock ticks whether or not one has happened. Under batching a whole turn's worth
-	 * of ticks can run before the render that would have told them the stream had
-	 * closed, and every one of them would decide there was more coming.
-	 */
-	const live = useRef<{ open: boolean; said: readonly AgentWords[] }>({ open: false, said: [] });
+	drained: boolean;
 	/**
 	 * The time the turn spent waiting on the person, which is time the log never had.
 	 *
 	 * A question stops the clock. Everything the transcript reads is measured from the
 	 * send — a beat's length, the rate a message is paced at — and none of it should
 	 * count the seconds somebody spent deciding: the agent is not thinking during them
-	 * and nothing is arriving. So the clock is the wall clock minus what was parked,
-	 * and the same reading stamps every event and drives every tick.
+	 * and nothing is arriving.
 	 */
-	const parked = useRef<{ total: number; since: number | null }>({ total: 0, since: null });
-	const clock = useCallback(
-		() =>
-			Date.now() -
-			started.current -
-			parked.current.total -
-			(parked.current.since === null ? 0 : Date.now() - parked.current.since),
-		[],
-	);
+	parked: { total: number; since: number | null };
 	/**
 	 * The requests nobody has answered yet, and the call each is about.
 	 *
 	 * The clock runs again the moment the last of them is gone, and that is not the same
-	 * as somebody answering: an unanswered request is neither a state nor a stall, and
-	 * measured, the agent takes the cautious option itself and its result lands 84ms
-	 * later. A clock that only ever restarted on an answer would freeze for the rest of
-	 * a turn nobody answered, which is the turn every capture in the repo records.
+	 * as somebody answering: measured, the agent takes the cautious option itself and its
+	 * result lands 84ms later. A clock that only ever restarted on an answer would freeze
+	 * for the rest of a turn nobody answered, which is the turn every capture records.
 	 */
-	const waitingOn = useRef(new Map<string, string | null>());
-	/**
-	 * The queue, which spool holds rather than the binary (#170).
-	 *
-	 * It is a ref beside its state because two things read it that a render cannot: the
-	 * fire, which happens on the effect that sees the turn settle, and the stop, which
-	 * has to empty it and hand its words back in one act.
-	 */
-	const holding = useRef<readonly AgentQueued[]>([]);
-	const [queued, setQueued] = useState<readonly AgentQueued[]>([]);
-	/** climbs per handover, because the same words can come back twice in one session */
-	const [handback, setHandback] = useState<AgentHandback>({ count: 0, messages: [] });
+	waitingOn: Map<string, string | null>;
+	holding: readonly AgentQueued[];
+	handback: AgentHandback;
 	/** what the daemon's stop names this turn by, since a stop has no request to quote */
-	const named = useRef("");
+	named: string;
 	/** turns started, which is the number a turn's name is made unique by */
-	const starts = useRef(0);
+	starts: number;
 	/** messages ever held, which is the number a take-back aims at exactly one of */
-	const holds = useRef(0);
+	holds: number;
+	/** when its picture was last written down, so a stream throttles its own writes */
+	saved: number;
+}
 
-	const hold = useCallback((waiting: readonly AgentQueued[]) => {
-		holding.current = waiting;
-		setQueued(waiting);
+function born(id: string, over: Partial<Live> = {}): Live {
+	return {
+		id,
+		before: [],
+		heldPlan: null,
+		restored: false,
+		continuable: false,
+		unread: false,
+		at: Date.now(),
+		events: [],
+		started: 0,
+		abandon: null,
+		said: [],
+		run: 0,
+		streaming: false,
+		ms: 0,
+		drained: false,
+		parked: { total: 0, since: null },
+		waitingOn: new Map(),
+		holding: [],
+		handback: { count: 0, messages: [] },
+		named: "",
+		starts: 0,
+		holds: 0,
+		saved: 0,
+		...over,
+	};
+}
+
+/**
+ * A thread as it came off disk, which is the same view as a live one (#120).
+ *
+ * Nothing is capped and nothing is elided, because the disclosure was never file
+ * contents: what was drawn is what was stored, so a restored thread is the entries it
+ * had. The one thing that is not identical is what a restart did to it — a thread caught
+ * mid-turn is cut where the lights went out, which is derived here because the events
+ * that would say it are gone.
+ */
+function restored(stored: ServedThread): Live {
+	// nothing off disk is being paced: the clock its schedule was written against ended
+	// with the daemon that held it
+	const entries = unpaced(drawableEntries(stored.entries));
+	return born(stored.id, {
+		before: stored.stopped ? cutPicture(entries) : entries,
+		heldPlan: (stored.plan ?? null) as AgentPlan | null,
+		restored: true,
+		continuable: stored.continuable,
+		unread: stored.life === "unread",
+		at: stored.at,
+	});
+}
+
+/** what this thread has drawn: every turn before this one, and this one so far */
+function entriesOf(thread: Live, seen: { entries: readonly AgentEntry[] }): readonly AgentEntry[] {
+	if (thread.run === 0) return thread.before;
+	return thread.before.length === 0 ? seen.entries : [...thread.before, ...seen.entries];
+}
+
+/**
+ * The plan this thread is drawing, which belongs to the turn that wrote it.
+ *
+ * A thread that is running again draws that turn's; one that only came off disk draws the
+ * one it came back with, because a plan is drawn state and so is stored state.
+ */
+function planOf(thread: Live, shown: { plan: AgentPlan | null }): AgentPlan | null {
+	return thread.run === 0 ? thread.heldPlan : shown.plan;
+}
+
+/**
+ * One finished turn, keyed so it can sit in a log beside the next one.
+ *
+ * A row's key is the call it is about and a call id is unique in a session, but a beat,
+ * a note and the human's own words are numbered inside their turn — so a turn puts its
+ * own name in front of every key rather than trusting the wire for uniqueness across a
+ * conversation.
+ *
+ * The token is the turn's own name and not a counter, because a counter restarts with
+ * the daemon: a restored conversation already holds turns keyed by the counters of a
+ * session that has ended, and its next turn would be numbered over the top of them.
+ */
+function archive(entries: readonly AgentEntry[], token: string): AgentEntry[] {
+	// and it loses its schedule with its clock: the next turn's starts again at zero, and a
+	// message read against that one draws as no characters at all
+	return unpaced(entries).map((entry) => ({ ...entry, key: `${token}:${entry.key}` }));
+}
+
+export function useAgentThreads(project: string): AgentDeck {
+	const [still] = useState(stillness);
+	const threads = useRef(new Map<string, Live>());
+	const [open, setOpen] = useState("");
+	/** climbs whenever anything a render reads has moved, which is what redraws the rail */
+	const [, bump] = useState(0);
+	const redraw = useCallback(() => bump((count) => count + 1), []);
+	/** what the strip has open, for the stream callbacks that outlive the render */
+	const openRef = useRef(open);
+	openRef.current = open;
+
+	/*
+	 * A thread has an id before it has a process, because the id *is* the session id
+	 * (#120). Spool mints a uuid, hands it to the binary as its session on the first
+	 * turn, and resumes it on every turn after — so the picture and the conversation are
+	 * addressed by the same string and the id wins whenever they disagree.
+	 */
+	const start = useCallback((): Live => {
+		const id = crypto.randomUUID();
+		const thread = born(id);
+		threads.current.set(id, thread);
+		return thread;
 	}, []);
 
-	/** the one exit both the stop and a take-back go through, so they cannot diverge */
-	const handBack = useCallback((going: readonly AgentQueued[]) => {
-		if (going.length === 0) return;
-		setHandback((last) => ({ count: last.count + 1, messages: going }));
-	}, []);
+	/**
+	 * The picture, written where a daemon restart cannot reach it (#120).
+	 *
+	 * It folds the thread itself rather than taking a drawing: every caller wanted the same
+	 * three derivations of the same fold, and passing them in meant four places agreeing
+	 * about how a thread's life, entries and plan are read.
+	 */
+	const save = useCallback(
+		(thread: Live) => {
+			const shown = transcriptOf(thread.said, thread.events);
+			const entries = entriesOf(thread, shown);
+			// a thread nobody has said anything to is not a conversation yet, and an empty
+			// picture on disk would be a tab restored with nothing in it
+			if (entries.length === 0) return;
+			thread.saved = Date.now();
+			void putAgentThread(project, thread.id, {
+				ask: askOf(entries),
+				life: storedLife(lifeFor(thread, openRef.current, shown)),
+				at: thread.at,
+				// nothing on disk is being paced: what a reader will see is drawn whole, so the
+				// schedule goes rather than sitting there meaning nothing
+				entries: unpaced(entries),
+				plan: planOf(thread, shown),
+			});
+		},
+		[project],
+	);
+
+	/**
+	 * The look that reads a thread, wherever the looking happened (#136).
+	 *
+	 * A press on the strip, and the opening a restore performs on the newest thread it
+	 * found: both are somebody looking at it, so both clear the dot. Neither touches the
+	 * waiting mark, because nothing about looking answers a question.
+	 */
+	const read = useCallback(
+		(thread: Live) => {
+			if (!thread.unread) return;
+			thread.unread = false;
+			save(thread);
+		},
+		[save],
+	);
 
 	const send = useCallback(
-		(saying: readonly AgentWords[]) => {
+		(thread: Live, saying: readonly AgentWords[]) => {
 			if (saying.length === 0) return;
-			abandon.current?.();
-			events.current = [];
-			started.current = Date.now();
-			parked.current = { total: 0, since: null };
-			waitingOn.current = new Map();
-			live.current = { open: true, said: saying };
-			starts.current += 1;
-			// a name of its own, because a stop has no request to quote: it names the turn
-			// the hands are looking at rather than whatever this project is running
-			named.current = `${Date.now()}-${starts.current}`;
-			setSaid(saying);
-			setRun((current) => current + 1);
-			setOpen(true);
-			setMs(0);
-			setDrained(false);
+			thread.abandon?.();
+			// the conversation keeps what it has already drawn: a turn replaces the events it
+			// is folded from, never the turns before it
+			if (thread.run > 0) {
+				thread.before = [
+					...thread.before,
+					...archive(transcriptOf(thread.said, thread.events).entries, thread.named),
+				];
+			}
+			thread.events = [];
+			thread.started = Date.now();
+			thread.parked = { total: 0, since: null };
+			thread.waitingOn = new Map();
+			thread.said = saying;
+			thread.streaming = true;
+			thread.run += 1;
+			thread.starts += 1;
+			thread.ms = 0;
+			thread.drained = false;
+			thread.unread = false;
+			thread.at = Date.now();
+			thread.restored = false;
+			// a name of its own, because a stop has no request to quote: it names the turn the
+			// hands are looking at rather than whatever this project is running
+			thread.named = `${Date.now()}-${thread.starts}`;
+			const clock = () =>
+				Date.now() -
+				thread.started -
+				thread.parked.total -
+				(thread.parked.since === null ? 0 : Date.now() - thread.parked.since);
 			const push = (event: Stamped["event"]) => {
 				// the clock stops on the request and starts again on whatever released it: an
 				// answer, the call's own result where nobody answered, or the turn ending under
 				// it. The same three the transcript settles a waiting block on
-				if (event.kind === "asking") waitingOn.current.set(event.request, event.call);
-				if (event.kind === "answered") waitingOn.current.delete(event.request);
+				if (event.kind === "asking") thread.waitingOn.set(event.request, event.call);
+				if (event.kind === "answered") thread.waitingOn.delete(event.request);
 				if (event.kind === "result") {
-					for (const [request, call] of waitingOn.current)
-						if (call === event.id) waitingOn.current.delete(request);
+					for (const [request, call] of thread.waitingOn) if (call === event.id) thread.waitingOn.delete(request);
 				}
-				if (event.kind === "ended" || event.kind === "closed") waitingOn.current.clear();
-				if (waitingOn.current.size > 0) parked.current.since ??= Date.now();
-				else if (parked.current.since !== null) {
-					parked.current = { total: parked.current.total + (Date.now() - parked.current.since), since: null };
+				if (event.kind === "ended" || event.kind === "closed") thread.waitingOn.clear();
+				if (thread.waitingOn.size > 0) thread.parked.since ??= Date.now();
+				else if (thread.parked.since !== null) {
+					thread.parked = { total: thread.parked.total + (Date.now() - thread.parked.since), since: null };
 				}
-				events.current.push({ at: clock(), event });
+				thread.events.push({ at: clock(), event });
 			};
-			abandon.current = streamAgentTurn(
+			thread.abandon = streamAgentTurn(
 				project,
 				{
-					turn: named.current,
+					thread: thread.id,
+					turn: thread.named,
 					saying: saying.map((words) => ({
 						prompt: words.text,
 						selection: words.selection,
@@ -237,120 +448,326 @@ export function useAgentTurn(project: string): AgentTurn {
 				{
 					event: push,
 					/*
-					 * The stream is the turn's whole life, so its end has to leave the log
-					 * saying why. The daemon ends every turn with a `closed` event; a stream
-					 * that stops without one stopped on this side, and the union already has
-					 * the member for a process that is gone.
+					 * The stream is the turn's whole life, so its end has to leave the log saying
+					 * why. The daemon ends every turn with a `closed` event; a stream that stops
+					 * without one stopped on this side, and the union already has the member for a
+					 * process that is gone.
 					 */
 					end: (error) => {
 						if (error !== undefined) push({ kind: "closed", code: null, message: error, parent: null });
-						else if (events.current.at(-1)?.event.kind !== "closed") {
+						else if (thread.events.at(-1)?.event.kind !== "closed") {
 							push({ kind: "closed", code: null, message: "the turn stream ended", parent: null });
 						}
-						live.current = { ...live.current, open: false };
-						setOpen(false);
+						thread.streaming = false;
+						thread.at = Date.now();
+						// it landed while nobody was looking at it, and a look is the only thing that
+						// clears that (#161) — so the flag is set here and read nowhere else
+						if (thread.id !== openRef.current) thread.unread = true;
+						// the conversation continues under the same id from here, whatever the disk
+						// still says about the session that started it
+						thread.continuable = true;
+						save(thread);
+						/*
+						 * The queue fires the moment the turn is no longer running (#170).
+						 *
+						 * Every message at once, in order, as one turn: the binary reads all of them as
+						 * the one thing it was asked, so this is a send rather than a run of sends. A
+						 * stop never reaches here, because a stop empties the list before the stream can
+						 * close — which is the invariant, not a race that happens to fall the right way.
+						 */
+						const firing = thread.holding;
+						if (firing.length > 0) {
+							thread.holding = [];
+							send(thread, firing);
+						}
+						redraw();
 					},
 				},
 			);
+			redraw();
 		},
-		[project, clock],
-	);
-
-	const answer = useCallback(
-		(request: string, reply: AgentReply) => {
-			// nothing is drawn from the reply here: the daemon pushes an `answered` down
-			// the stream when it reaches the process, so one fold still draws the log
-			void answerAgentTurn(project, request, reply);
-		},
-		[project],
+		[project, save, redraw],
 	);
 
 	/*
-	 * The clock, and the one thing that stops it.
+	 * The threads this project already has, read once on the way in (#120).
+	 *
+	 * Resuming restores the agent's memory for free and emits zero history, so the rail
+	 * is spool's problem or nobody's: what comes back here is the drawing spool wrote,
+	 * and it is the whole of what a restored thread is. A project with none opens on one
+	 * fresh thread, which is what the rail has always shown.
+	 */
+	useEffect(() => {
+		let gone = false;
+		void fetchAgentThreads(project).then((stored) => {
+			if (gone) return;
+			for (const one of stored) {
+				if (threads.current.has(one.id)) continue;
+				threads.current.set(one.id, restored(one));
+			}
+			// the row opens on something either way, so this only ever runs before it has:
+			// a project with nothing stored gets one fresh thread, which is what the rail
+			// has always shown
+			if (openRef.current !== "") return;
+			// newest first, which is the strip's own order: the one you were most likely
+			// reading is the one it opens on, and opening it is what reads it
+			const newest = [...threads.current.values()].sort((one, two) => two.at - one.at)[0];
+			if (newest === undefined) {
+				setOpen(start().id);
+				return;
+			}
+			read(newest);
+			setOpen(newest.id);
+			redraw();
+		});
+		return () => {
+			gone = true;
+		};
+	}, [project, start, read, redraw]);
+
+	/*
+	 * One clock for every thread, and the one thing that stops each of them.
 	 *
 	 * It runs under reduced motion too, which is not a contradiction: the tick is what
 	 * puts arriving events on screen, and the pace is what `elapsed` decides. Stopping
 	 * the tick would leave a still-preferring reader looking at their own sentence and
 	 * nothing else until the process exited, then the whole turn at once.
 	 *
-	 * It outlives the stream on purpose: the pace is up to 0.8s behind the wire, so the
-	 * last words of a message arrive after the process has gone. It stops when the edge
-	 * has reached the end of every message, which is the only moment at which there is
-	 * nothing left to draw.
+	 * It outlives a stream on purpose: the pace is up to 0.8s behind the wire, so the
+	 * last words of a message arrive after the process has gone. A thread stops ticking
+	 * when its edge has reached the end of every message, which is the only moment at
+	 * which there is nothing left to draw.
 	 */
 	useEffect(() => {
-		if (run === 0 || drained) return;
 		const timer = setInterval(() => {
-			const now = clock();
-			setMs(now);
-			if (live.current.open) return;
-			const { entries } = transcriptOf(live.current.said, events.current);
-			if (
-				entries.some(
-					(entry) => entry.kind === "prose" && !fullyShown(entry, still ? Number.POSITIVE_INFINITY : now),
+			let moved = false;
+			for (const thread of threads.current.values()) {
+				if (thread.run === 0 || thread.drained) continue;
+				moved = true;
+				const now =
+					Date.now() -
+					thread.started -
+					thread.parked.total -
+					(thread.parked.since === null ? 0 : Date.now() - thread.parked.since);
+				thread.ms = now;
+				if (thread.streaming) {
+					// a turn in flight writes itself down on a throttle, so what a restart costs is
+					// bounded by SAVE_MS rather than by the length of the turn
+					if (Date.now() - thread.saved >= SAVE_MS) {
+						save(thread);
+					}
+					continue;
+				}
+				const { entries } = transcriptOf(thread.said, thread.events);
+				if (
+					entries.some(
+						(entry) => entry.kind === "prose" && !fullyShown(entry, still ? Number.POSITIVE_INFINITY : now),
+					)
 				)
-			)
-				return;
-			setDrained(true);
+					continue;
+				thread.drained = true;
+			}
+			if (moved) redraw();
 		}, TICK_MS);
 		return () => clearInterval(timer);
-	}, [run, drained, still, clock]);
+	}, [still, save, redraw]);
 
-	// a turn belongs to the canvas that asked for it: navigating away ends it, and
-	// the daemon takes the process with the request
-	useEffect(() => () => abandon.current?.(), []);
-
-	const transcript = transcriptOf(said, events.current);
-	const phase: TurnPhase = run === 0 ? "idle" : transcript.asking !== null ? "asking" : open ? "playing" : "settled";
-
-	/*
-	 * The queue fires the moment the turn is no longer running (#170).
-	 *
-	 * Every message at once, in order, as one turn: the binary reads all of them as the
-	 * one thing it was asked, so this is a send rather than a run of sends. A stop never
-	 * reaches here, because a stop empties the list before the phase can settle — which
-	 * is the invariant, not a race that happens to fall the right way.
-	 */
+	// every thread belongs to the canvas that opened it: navigating away ends them all,
+	// and the daemon takes each process with its request
 	useEffect(() => {
-		if (phase !== "settled" || holding.current.length === 0) return;
-		const firing = holding.current;
-		hold([]);
-		send(firing);
-	}, [phase, hold, send]);
+		const held = threads.current;
+		return () => {
+			for (const thread of held.values()) thread.abandon?.();
+		};
+	}, []);
+
+	const here = threads.current.get(open) ?? born(open);
+	const seen = transcriptOf(here.said, here.events);
+	const phase = phaseOf(here, seen);
+	const entries = entriesOf(here, seen);
+	/*
+	 * The strip, in recency order, fixed once (#136).
+	 *
+	 * Newest leftmost and it stays there, so the one you are reading is the one you can
+	 * always see. A strip that re-sorted as its threads worked would move a name out from
+	 * under a cursor already reaching for it, which is why the order reads `at` — the last
+	 * time something happened in the thread — and never a life.
+	 *
+	 * Each thread is folded once here and read twice, for its name and for its mark. The
+	 * fold is the only way to know either: the ask is the first thing the human said and
+	 * the mark is what its turn is doing, and both live in the events.
+	 */
+	const strip: readonly Thread[] = [...threads.current.values()]
+		.sort((one, two) => two.at - one.at)
+		.map((thread) => {
+			const shown = thread.id === open ? seen : transcriptOf(thread.said, thread.events);
+			const drawn = thread.id === open ? entries : entriesOf(thread, shown);
+			return { id: thread.id, ask: askOf(drawn), life: lifeFor(thread, open, shown) };
+		});
+
+	const hold = useCallback(
+		(thread: Live, waiting: readonly AgentQueued[]) => {
+			thread.holding = waiting;
+			redraw();
+		},
+		[redraw],
+	);
+
+	/** the one exit both the stop and a take-back go through, so they cannot diverge */
+	const handBack = useCallback(
+		(thread: Live, going: readonly AgentQueued[]) => {
+			if (going.length === 0) return;
+			thread.handback = { count: thread.handback.count + 1, messages: going };
+			redraw();
+		},
+		[redraw],
+	);
+
+	/**
+	 * What the hands said, into whichever thread is in front of them.
+	 *
+	 * A thread whose session has aged out takes the words into a new one instead. Its
+	 * picture is intact and worth reading, and the agent it was talking to is gone — so
+	 * carrying on in it would be a conversation with something that does not remember
+	 * having had it.
+	 */
+	const say = useCallback(
+		(text: string, sent: AgentSent = {}) => {
+			const thread = threads.current.get(openRef.current);
+			if (thread === undefined) return;
+			if (thread.restored && !thread.continuable) {
+				const fresh = start();
+				setOpen(fresh.id);
+				send(fresh, [{ text, ...sent }]);
+				return;
+			}
+			send(thread, [{ text, ...sent }]);
+		},
+		[send, start],
+	);
+
+	const onOpen = useCallback(
+		(id: string) => {
+			const thread = threads.current.get(id);
+			if (thread === undefined) return;
+			read(thread);
+			setOpen(id);
+		},
+		[read],
+	);
+
+	const onClose = useCallback(
+		(id: string) => {
+			const thread = threads.current.get(id);
+			if (thread === undefined) return;
+			/*
+			 * Closing a thread is a tidy rather than a delete (#136).
+			 *
+			 * It leaves the strip, and neither the agent's own session nor spool's stored
+			 * picture goes with it. What does stop is the stream, because a tab nobody can
+			 * reach must not go on holding a process the hands cannot see.
+			 */
+			thread.abandon?.();
+			threads.current.delete(id);
+			void closeAgentThread(project, id);
+			if (openRef.current === id) {
+				const newest = [...threads.current.values()].sort((one, two) => two.at - one.at)[0];
+				setOpen((newest ?? start()).id);
+			}
+			redraw();
+		},
+		[project, start, redraw],
+	);
+
+	const onNew = useCallback(() => setOpen(start().id), [start]);
 
 	return {
-		entries: run === 0 ? [] : transcript.entries,
-		plan: run === 0 ? null : transcript.plan,
-		phase,
-		elapsed: still || drained ? Number.POSITIVE_INFINITY : ms,
-		last: transcript.last,
-		send: useCallback((text: string, sent: AgentSent = {}) => send([{ text, ...sent }]), [send]),
-		answer,
-		queued,
-		queue: useCallback(
-			(text: string, sent: AgentSent = {}) => {
-				holds.current += 1;
-				hold([...holding.current, { id: `held-${holds.current}`, text, ...sent }]);
-			},
-			[hold],
-		),
-		unqueue: useCallback(
-			(id: string) => {
-				const going = holding.current.filter((one) => one.id === id);
-				if (going.length === 0) return;
-				hold(holding.current.filter((one) => one.id !== id));
-				handBack(going);
-			},
-			[hold, handBack],
-		),
-		stop: useCallback(() => {
-			// the queue goes first and unconditionally: whether or not there is still a
-			// process to ask, a stop is one act and the words it cancels come back
-			const going = holding.current;
-			hold([]);
-			handBack(going);
-			void interruptAgentTurn(project, named.current);
-		}, [project, hold, handBack]),
-		handback,
+		threads: strip,
+		open,
+		finished: here.restored && !here.continuable,
+		onOpen,
+		onClose,
+		onNew,
+		turn: {
+			entries,
+			plan: planOf(here, seen),
+			phase,
+			elapsed: still || here.drained ? Number.POSITIVE_INFINITY : here.ms,
+			last: seen.last,
+			send: say,
+			answer: useCallback(
+				(request: string, reply: AgentReply) => {
+					// nothing is drawn from the reply here: the daemon pushes an `answered` down
+					// the stream when it reaches the process, so one fold still draws the log
+					void answerAgentTurn(project, request, reply);
+				},
+				[project],
+			),
+			queued: here.holding,
+			queue: useCallback(
+				(text: string, sent: AgentSent = {}) => {
+					const thread = threads.current.get(openRef.current);
+					if (thread === undefined) return;
+					thread.holds += 1;
+					hold(thread, [...thread.holding, { id: `held-${thread.holds}`, text, ...sent }]);
+				},
+				[hold],
+			),
+			unqueue: useCallback(
+				(id: string) => {
+					const thread = threads.current.get(openRef.current);
+					if (thread === undefined) return;
+					const going = thread.holding.filter((one) => one.id === id);
+					if (going.length === 0) return;
+					hold(
+						thread,
+						thread.holding.filter((one) => one.id !== id),
+					);
+					handBack(thread, going);
+				},
+				[hold, handBack],
+			),
+			stop: useCallback(() => {
+				const thread = threads.current.get(openRef.current);
+				if (thread === undefined) return;
+				// the queue goes first and unconditionally: whether or not there is still a
+				// process to ask, a stop is one act and the words it cancels come back
+				const going = thread.holding;
+				hold(thread, []);
+				handBack(thread, going);
+				void interruptAgentTurn(project, thread.named);
+			}, [project, hold, handBack]),
+			handback: here.handback,
+		},
 	};
+}
+
+/**
+ * A thread waiting on a person, which is three causes and one mark (#161).
+ *
+ * A parked question and a waiting approval are both the turn parked on a request, which
+ * is `asking`. A signed-out bounce is the third, and it is read off the log because that
+ * is where the refusal lands. A usage wind-down is none of them: the agent is told to
+ * finish and does.
+ */
+function stuck(phase: TurnPhase, entries: readonly AgentEntry[]): boolean {
+	return phase === "asking" || bounced(entries);
+}
+
+/** what one thread's turn is doing, which is the same reading wherever it is asked for */
+function phaseOf(thread: Live, shown: { asking: string | null }): TurnPhase {
+	if (thread.run === 0) return "idle";
+	if (shown.asking !== null) return "asking";
+	return thread.streaming ? "playing" : "settled";
+}
+
+/** one thread's mark, off its own fold */
+function lifeFor(thread: Live, open: string, shown: { entries: readonly AgentEntry[]; asking: string | null }): Life {
+	const phase = phaseOf(thread, shown);
+	return lifeOf({
+		phase,
+		open: thread.id === open,
+		unread: thread.unread,
+		stuck: stuck(phase, entriesOf(thread, shown)),
+	});
 }

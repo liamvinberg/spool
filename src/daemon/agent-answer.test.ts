@@ -28,11 +28,14 @@ import type { AgentEvent } from "./agent-events";
 
 const ASK_CALL = "toolu_01NoWtiLnKqzNvGj2MdAefyP";
 
+/** the conversation a turn runs under, which is the session id spool minted for it (#120) */
+const THREAD = "1f0e2d3c-4b5a-4697-8899-aabbccddeeff";
+
 function startTurn(name: string, app: ReturnType<typeof makeApp>, prompt = "shoot the receipt") {
 	return app.request(`/api/p/${name}/agent/turn`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ said: [{ prompt }] }),
+		body: JSON.stringify({ thread: THREAD, said: [{ prompt }] }),
 	});
 }
 

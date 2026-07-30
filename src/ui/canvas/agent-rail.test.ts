@@ -4,7 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { longestStreamed } from "../../test-helpers";
-import type { AgentEvent, SelectionEntry } from "../api";
+import type { AgentEvent, SelectionEntry, ServedThread, ThreadPut } from "../api";
 import { chunksOf } from "./agent-markdown";
 import { followTo } from "./agent-rail";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
@@ -42,6 +42,16 @@ interface Said {
 	readonly attachment?: { media: string; data: string };
 }
 
+/** one thread's stream, so a test can drive a conversation it is not looking at (#200) */
+interface Stream {
+	/** the thread this turn ran under, which is the session id the rail minted */
+	readonly thread: string;
+	push(event: AgentEvent): void;
+	close(): void;
+	/** the client let go of this turn, which is what takes the process with it */
+	readonly aborted: () => boolean;
+}
+
 interface Turn {
 	/** every message of every turn, flattened: a turn is one press or a queue that fired */
 	readonly prompts: string[];
@@ -53,8 +63,20 @@ interface Turn {
 	readonly answers: { request: string; reply: Record<string, unknown> }[];
 	/** the turns a press asked to stop, by the name the rail gave them (#165) */
 	readonly stops: string[];
+	/** every stream this project has opened, in order, one per turn (#200) */
+	readonly streams: Stream[];
 	push(event: AgentEvent): void;
 	close(): void;
+}
+
+/** the threads the daemon has stored, and what the rail writes back to it (#120, #200) */
+interface Stored {
+	/** what a mount reads: null is a project that has never had a thread */
+	served: ServedThread[] | null;
+	/** every picture the rail wrote down, newest last */
+	readonly puts: { thread: string; body: ThreadPut }[];
+	/** every thread the ✕ closed */
+	readonly closed: string[];
 }
 
 /**
@@ -137,10 +159,12 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		turns: [],
 		answers: [],
 		stops: [],
+		streams: [],
 		open: false,
 		push: () => {},
 		close: () => {},
 	};
+	const stored: Stored = { served: null, puts: [], closed: [] };
 	/** what the rail last called its turn, which is the address a stop names (#165) */
 	let named = "";
 	/** the daemon's own watcher channel: what a frame the turn writes arrives on */
@@ -163,7 +187,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
 			if (url.pathname.endsWith("/agent/turn")) {
 				const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
-				const sent = JSON.parse(body) as { turn: string; said: readonly Said[] };
+				const sent = JSON.parse(body) as { thread: string; turn: string; said: readonly Said[] };
 				named = sent.turn;
 				turn.turns.push(sent.said);
 				for (const one of sent.said) {
@@ -172,12 +196,34 @@ function mount({ still = false }: { still?: boolean } = {}) {
 				}
 				const stream = sse();
 				turn.open = true;
+				// `turn` is whichever stream opened last, which is what a one-thread test wants;
+				// `streams` keeps every one of them, which is how a test drives a conversation it
+				// is not looking at
 				turn.push = (event) => stream.push("agent", event);
 				turn.close = () => {
 					turn.open = false;
 					stream.close();
 				};
+				// the abort is the whole of what letting go of a turn looks like from out here:
+				// the daemon takes the process with the request
+				const signal = input instanceof Request ? input.signal : init?.signal;
+				turn.streams.push({
+					thread: sent.thread,
+					push: (event) => stream.push("agent", event),
+					close: () => stream.close(),
+					aborted: () => signal?.aborted === true,
+				});
 				return stream.response();
+			}
+			// the threads this project has, and the picture the rail writes back (#120, #200)
+			if (url.pathname.endsWith("/agent/threads")) {
+				return Response.json({ threads: stored.served ?? [] });
+			}
+			if (url.pathname.includes("/agent/threads/")) {
+				const thread = url.pathname.split("/agent/threads/")[1]?.replace(/\/close$/, "") ?? "";
+				if (url.pathname.endsWith("/close")) stored.closed.push(thread);
+				else stored.puts.push({ thread, body: JSON.parse(String(init?.body ?? "{}")) as ThreadPut });
+				return new Response(null, { status: 204 });
 			}
 			// the stop's own door: a request rather than a kill, so nothing comes back
 			// here and everything it produces arrives on the stream (#165)
@@ -238,6 +284,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		chrome,
 		project,
 		pointed,
+		stored,
 		render: async () => {
 			await act(async () => {
 				root.render(
@@ -770,14 +817,16 @@ describe("a long message", () => {
 			tail.getBoundingClientRect = () => ({ top }) as DOMRect;
 		};
 
-		// 1,400px of message in a 500px box, its first line 100px down: the first line wins
+		// 1,400px of message in a 500px box, its first line 100px down: the first line wins.
+		// Waited for rather than deadlined: what moves the box is the rail's own 100ms tick,
+		// and a fixed sleep makes the assertion a race with whatever else the machine is doing
 		geometry(1400, 100);
-		await settle(150);
+		await until(() => log.scrollTop === 90);
 		expect(log.scrollTop).toBe(90);
 
 		// and an entry that fits keeps ordinary follow-the-end
 		geometry(520, 400);
-		await settle(150);
+		await until(() => log.scrollTop === 20);
 		expect(log.scrollTop).toBe(20);
 	});
 });
@@ -2117,5 +2166,587 @@ describe("the queue", () => {
 		canvas.turn.close();
 		await settle();
 		expect(canvas.turn.turns).toHaveLength(1);
+	});
+});
+
+/* ---------- the threads, and what survives a restart (#120, #136, #200) ---------- */
+
+/** the strip's tabs, in the order it lays them out: newest leftmost, fixed once */
+const tabs = (host: HTMLElement) =>
+	[...host.querySelectorAll("[data-agent-thread]")].map((tab) => tab.getAttribute("data-agent-thread"));
+
+const lifeOfTab = (host: HTMLElement, ask: string) =>
+	host.querySelector(`[data-agent-thread="${ask}"]`)?.getAttribute("data-agent-thread-life");
+
+/** the ring, the disc and the dot, counted inside the mark's own 14px box */
+const marks = (host: HTMLElement, ask: string) => {
+	const mark = host.querySelector(`[data-agent-thread="${ask}"] [data-agent-mark]`);
+	return {
+		turning: mark?.querySelectorAll(".animate-agent-spin").length ?? 0,
+		drawn: mark?.children.length ?? 0,
+	};
+};
+
+async function press(element: Element | null | undefined) {
+	if (element === null || element === undefined) throw new Error("nothing to press");
+	await act(async () => {
+		element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+	});
+}
+
+const openTab = (host: HTMLElement, ask: string) =>
+	press(host.querySelector(`[data-agent-thread="${ask}"] button[aria-label="${ask}"]`));
+
+const closeTab = (host: HTMLElement, ask: string) => press(host.querySelector(`[data-agent-thread-close="${ask}"]`));
+
+const newThread = (host: HTMLElement) => press(host.querySelector('[aria-label="New thread"]'));
+
+/** the words in the log, which is how a test says whose transcript is on screen */
+const log = (host: HTMLElement) => host.querySelector("[data-agent-log]")?.textContent ?? "";
+
+const camera = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-canvas-camera]")?.style.transform ?? "";
+
+/** one whole turn, answered and settled, in the stream that is open */
+async function answerTurn(stream: { push: (event: AgentEvent) => void; close: () => void }, text: string) {
+	stream.push(waiting);
+	stream.push(speaking);
+	stream.push({ kind: "said", text, parent: null });
+	stream.push(ended);
+	stream.push(closed);
+	stream.close();
+	await settle();
+}
+
+/** a thread as the daemon serves one back, which is spool's own drawing off disk */
+function storedThread(over: Partial<ServedThread> & { id: string; ask: string }): ServedThread {
+	return {
+		life: "read",
+		at: 1_700_000_000_000,
+		entries: [
+			{ key: "u0", kind: "user", text: over.ask, context: null, attached: null },
+			{
+				key: "row:t1",
+				kind: "row",
+				state: "done",
+				verb: "edit",
+				subject: "home",
+				detail: "design/frames/home/frame.tsx",
+				frame: "home",
+				count: 1,
+				shot: null,
+				foreign: null,
+				parent: null,
+				delegated: [],
+			},
+			/*
+			 * The schedule the message arrived on, kept in the fixture on purpose.
+			 *
+			 * Every real streamed message has one, and it is milliseconds from *that* turn's
+			 * send. A restored thread has no clock to read it against — the daemon that held one
+			 * is gone — so a picture that came back still carrying its schedule drew as no
+			 * characters at all, which is the one way "restored is identical to live" can fail
+			 * silently.
+			 */
+			{
+				key: "p0",
+				kind: "prose",
+				full: "The header is tighter now.",
+				landed: [{ at: 4200, upto: 26 }],
+				settled: true,
+			},
+		],
+		plan: null,
+		stopped: false,
+		closed: false,
+		continuable: true,
+		...over,
+	};
+}
+
+const ONE = "1f0e2d3c-4b5a-4697-8899-aabbccddeeff";
+const TWO = "2a1b3c4d-5e6f-4788-9900-112233445566";
+
+describe("the threads strip", () => {
+	it("opens on one thread, with the room going to its name", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		expect(tabs(canvas.host)).toEqual(["new thread"]);
+		// the bar says which of several is open, so with one thread there is no which
+		expect(canvas.host.querySelector('[data-agent-thread="new thread"] .bg-thread')).toBeNull();
+	});
+
+	/** the name is the ask, because there is nothing to borrow: print mode generates none */
+	it("names a thread by what the human asked, with nothing generated", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home and fix whatever reads wrong");
+		await settle();
+
+		expect(tabs(canvas.host)).toEqual(["shoot home and fix whatever reads wrong"]);
+	});
+
+	it("holds many conversations and switches between them in one press", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tighten the header");
+		await answerTurn(canvas.turn.streams[0] as Stream, "The header is tighter now.");
+
+		await newThread(canvas.host);
+		await send(canvas.host, "write the swedish copy deck");
+		await answerTurn(canvas.turn.streams[1] as Stream, "The copy deck landed.");
+
+		// newest leftmost, and each turn ran under its own thread
+		expect(tabs(canvas.host)).toEqual(["write the swedish copy deck", "tighten the header"]);
+		expect(canvas.turn.streams[0]?.thread).not.toBe(canvas.turn.streams[1]?.thread);
+		expect(log(canvas.host)).toContain("The copy deck landed.");
+
+		await openTab(canvas.host, "tighten the header");
+
+		expect(log(canvas.host)).toContain("The header is tighter now.");
+		expect(log(canvas.host)).not.toContain("The copy deck landed.");
+	});
+
+	/**
+	 * A thread is a conversation in a project rather than a conversation about a place, so
+	 * there is nowhere for a switch to move to. It is why the deck carries no page at all.
+	 */
+	it("leaves the canvas exactly where it is", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tighten the header");
+		await answerTurn(canvas.turn.streams[0] as Stream, "done.");
+		await newThread(canvas.host);
+		await send(canvas.host, "write the copy deck");
+		await answerTurn(canvas.turn.streams[1] as Stream, "done.");
+
+		const before = camera(canvas.host);
+		const frames = [...canvas.host.querySelectorAll("[data-frame-label]")].map((frame) =>
+			frame.getAttribute("data-frame-label"),
+		);
+
+		await openTab(canvas.host, "tighten the header");
+
+		expect(camera(canvas.host)).toBe(before);
+		expect(
+			[...canvas.host.querySelectorAll("[data-frame-label]")].map((frame) => frame.getAttribute("data-frame-label")),
+		).toEqual(frames);
+	});
+
+	/**
+	 * The press is the scroll, which is how you reach the rest of the row: no caret per
+	 * end, no count that opens a menu, and no control added at all.
+	 */
+	it("centres the row on what was pressed", async () => {
+		const canvas = mount();
+		const centred: ScrollIntoViewOptions[] = [];
+		Element.prototype.scrollIntoView = function scrollIntoView(options?: boolean | ScrollIntoViewOptions) {
+			if (typeof options === "object") centred.push(options);
+		};
+		await canvas.render();
+		await send(canvas.host, "tighten the header");
+		await answerTurn(canvas.turn.streams[0] as Stream, "done.");
+		await newThread(canvas.host);
+		await send(canvas.host, "write the copy deck");
+		await answerTurn(canvas.turn.streams[1] as Stream, "done.");
+
+		centred.length = 0;
+		await openTab(canvas.host, "tighten the header");
+
+		expect(centred).toContainEqual({ inline: "center", block: "nearest", behavior: "smooth" });
+	});
+});
+
+describe("a thread's mark", () => {
+	/**
+	 * Three of the five lives draw. Streaming draws nothing and keeps the row aligned,
+	 * because the transcript below is already a turning mark and a live edge.
+	 */
+	it("draws nothing for the thread in the rail while its turn runs", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tighten the header");
+		canvas.turn.push(waiting);
+		await settle();
+
+		expect(lifeOfTab(canvas.host, "tighten the header")).toBe("streaming");
+		expect(marks(canvas.host, "tighten the header")).toEqual({ turning: 0, drawn: 0 });
+	});
+
+	it("turns for a thread working somewhere you are not looking", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "three takes on the empty cart");
+		canvas.turn.push(waiting);
+		await settle();
+		await newThread(canvas.host);
+
+		expect(lifeOfTab(canvas.host, "three takes on the empty cart")).toBe("running");
+		expect(marks(canvas.host, "three takes on the empty cart").turning).toBe(1);
+		// and the stream it left behind is still open, which is the whole point
+		expect(canvas.turn.streams[0]?.aborted()).toBe(false);
+	});
+
+	it("is a solid dot once a thread lands where nobody was looking, and clears on a look", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+		canvas.turn.push(waiting);
+		await settle();
+		await newThread(canvas.host);
+
+		await answerTurn(canvas.turn.streams[0] as Stream, "Home is shot.");
+		expect(lifeOfTab(canvas.host, "shoot home")).toBe("unread");
+
+		await openTab(canvas.host, "shoot home");
+		// opening a thread is what reads it, wherever the opening happened
+		expect(lifeOfTab(canvas.host, "shoot home")).toBe("read");
+	});
+
+	it("keeps a collapsed read thread pressable with a hollow dot", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+		await answerTurn(canvas.turn.streams[0] as Stream, "Home is shot.");
+		await newThread(canvas.host);
+
+		// out here the mark is the thread, and a thread you cannot see is one you cannot
+		// press, so read falls back to the strength a disabled thing gets
+		expect(lifeOfTab(canvas.host, "shoot home")).toBe("read");
+		expect(marks(canvas.host, "shoot home").drawn).toBe(1);
+	});
+});
+
+describe("a thread waiting on a person", () => {
+	/** a parked question, a waiting approval and a signed-out bounce are one mark */
+	it("draws the disc for a question the agent parked on", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "pick a direction");
+		canvas.turn.push(ready);
+		canvas.turn.push({
+			kind: "asking",
+			request: "req-q",
+			call: null,
+			tool: "AskUserQuestion",
+			display: null,
+			input: { questions: [{ question: "Which layout?", options: [{ label: "grid" }] }] },
+			description: null,
+			interaction: true,
+			suggestions: [],
+			parent: null,
+		});
+		await settle();
+
+		expect(lifeOfTab(canvas.host, "pick a direction")).toBe("waiting");
+		// nothing turns: the thread has stopped and is costing nothing
+		expect(marks(canvas.host, "pick a direction").turning).toBe(0);
+	});
+
+	it("draws the disc for an approval nobody has answered", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tidy the repo");
+		canvas.turn.push(ready);
+		canvas.turn.push(called("call-1", "Bash", { command: "rm -rf build" }));
+		canvas.turn.push({
+			kind: "asking",
+			request: "req-a",
+			call: "call-1",
+			tool: "Bash",
+			display: null,
+			input: { command: "rm -rf build" },
+			description: "Delete the build folder",
+			interaction: false,
+			suggestions: [],
+			parent: null,
+		});
+		await settle();
+
+		expect(lifeOfTab(canvas.host, "tidy the repo")).toBe("waiting");
+	});
+
+	it("draws the disc for a signed-out bounce, in the binary's own words", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+		canvas.turn.push({ kind: "closed", code: 1, message: "Not logged in · Please run /login", parent: null });
+		canvas.turn.close();
+		await settle();
+
+		expect(lifeOfTab(canvas.host, "shoot home")).toBe("waiting");
+	});
+
+	/** the agent is told to finish and does, so a wind-down is not a thread that is stuck */
+	it("does not draw it for a usage wind-down", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "three takes on the cart");
+		canvas.turn.push(waiting);
+		canvas.turn.push({
+			kind: "limit",
+			limit: { status: "approaching_limit", window: "five_hour", utilization: 0.92, graceActive: true },
+			parent: null,
+		});
+		await settle();
+		await newThread(canvas.host);
+
+		expect(lifeOfTab(canvas.host, "three takes on the cart")).toBe("running");
+	});
+
+	/** a look reads a thread; nothing about looking answers a question */
+	it("keeps the disc through a look", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "pick a direction");
+		canvas.turn.push(ready);
+		canvas.turn.push({
+			kind: "asking",
+			request: "req-q",
+			call: null,
+			tool: "AskUserQuestion",
+			display: null,
+			input: { questions: [{ question: "Which layout?", options: [{ label: "grid" }] }] },
+			description: null,
+			interaction: true,
+			suggestions: [],
+			parent: null,
+		});
+		await settle();
+		await newThread(canvas.host);
+		expect(lifeOfTab(canvas.host, "pick a direction")).toBe("waiting");
+
+		await openTab(canvas.host, "pick a direction");
+
+		expect(lifeOfTab(canvas.host, "pick a direction")).toBe("waiting");
+	});
+});
+
+describe("what survives a restart", () => {
+	it("restores every thread the daemon kept, identical to a live one", async () => {
+		const canvas = mount();
+		canvas.stored.served = [
+			storedThread({ id: ONE, ask: "tighten the header", at: 10 }),
+			storedThread({ id: TWO, ask: "write the copy deck", at: 20 }),
+		];
+		await canvas.render();
+		await settle();
+
+		expect(tabs(canvas.host)).toEqual(["write the copy deck", "tighten the header"]);
+		// the picture is the whole of it: nothing capped, nothing elided, the same view
+		expect(log(canvas.host)).toContain("write the copy deck");
+		expect(log(canvas.host)).toContain("The header is tighter now.");
+		expect(canvas.host.querySelector('[data-agent-row="edit home"]')).not.toBeNull();
+		/*
+		 * And it is *drawn*, rather than sitting in the invisible reserve a message still
+		 * arriving holds. A restored message has no clock to be paced against, so both of
+		 * the live edge's boxes have to be absent: an arriving copy with nothing in it and a
+		 * reserve holding the text it cannot reach is exactly what a schedule read against a
+		 * clock that starts again at zero produces.
+		 */
+		expect(canvas.host.querySelector("[data-agent-prose]")).toBeNull();
+		expect(canvas.host.querySelector("[data-agent-reserve]")).toBeNull();
+	});
+
+	/** a reboot is not a hand: the thread reads stopped and nothing offers to run it again */
+	it("reads a thread the restart caught mid-turn as stopped, and offers no resume", async () => {
+		const canvas = mount();
+		canvas.stored.served = [
+			storedThread({
+				id: ONE,
+				ask: "three takes on the cart",
+				life: "running",
+				stopped: true,
+				entries: [
+					{ key: "u0", kind: "user", text: "three takes on the cart", context: null, attached: null },
+					{
+						key: "row:t1",
+						kind: "row",
+						state: "running",
+						verb: "write",
+						subject: "cart--empty-b",
+						detail: null,
+						frame: "cart--empty-b",
+						count: 1,
+						shot: null,
+						foreign: null,
+						parent: null,
+						delegated: [],
+					},
+				],
+			}),
+		];
+		await canvas.render();
+		await settle();
+
+		expect(log(canvas.host)).toContain("stopped");
+		expect(canvas.host.querySelector('[data-agent-row="write cart--empty-b"]')).not.toBeNull();
+		// nothing turns, because nothing is running
+		expect(rail(canvas.host)?.querySelectorAll(".animate-agent-spin")).toHaveLength(0);
+		expect(rail(canvas.host)?.textContent).not.toMatch(/resume|continue/i);
+		// and nothing was spawned to bring it back
+		expect(canvas.turn.turns).toEqual([]);
+	});
+
+	/**
+	 * The binary deletes its own sessions after thirty days, so spool's picture outlives
+	 * the thing that makes the conversation continuable.
+	 */
+	it("reads a thread whose session has aged out as finished", async () => {
+		const canvas = mount();
+		canvas.stored.served = [storedThread({ id: ONE, ask: "tighten the header", continuable: false })];
+		await canvas.render();
+		await settle();
+
+		// the transcript is intact and worth reading
+		expect(log(canvas.host)).toContain("The header is tighter now.");
+		// and the composer says what the next thing said will actually do
+		expect(rail(canvas.host)?.textContent).toContain("a new thread starts here");
+		expect(rail(canvas.host)?.textContent).not.toMatch(/resume/i);
+
+		await send(canvas.host, "and now the receipt");
+		await settle();
+
+		// a new thread, rather than a resume that would fail
+		expect(canvas.turn.streams[0]?.thread).not.toBe(ONE);
+		expect(tabs(canvas.host)).toEqual(["and now the receipt", "tighten the header"]);
+	});
+
+	/**
+	 * The same clock rule inside one session: a thread's earlier turns keep their text.
+	 *
+	 * A message's schedule is milliseconds from its own turn's send, and the next turn's
+	 * clock starts again at zero — so a turn left carrying its schedule would re-type
+	 * itself, from nothing, every time somebody said the next thing.
+	 */
+	it("keeps a thread's earlier turns whole while the next one arrives", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tighten the header");
+		canvas.turn.push(waiting);
+		canvas.turn.push(speaking);
+		canvas.turn.push(say(MESSAGE));
+		canvas.turn.push(ended);
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		await until(() => arriving(canvas.host) === "");
+
+		await send(canvas.host, "and now the receipt");
+		canvas.turn.push(waiting);
+		canvas.turn.push(speaking);
+		canvas.turn.push(say("Receipt is next."));
+		await settle(120);
+
+		// the first turn is settled text with no live boxes of its own, under the second
+		expect(log(canvas.host)).toContain(MESSAGE);
+		expect(log(canvas.host)).toContain("tighten the header");
+		expect(log(canvas.host)).toContain("and now the receipt");
+		// and exactly one message is arriving: the one that is
+		expect(canvas.host.querySelectorAll("[data-agent-prose]")).toHaveLength(1);
+	});
+
+	it("carries on in a thread whose session is still there", async () => {
+		const canvas = mount();
+		canvas.stored.served = [storedThread({ id: ONE, ask: "tighten the header" })];
+		await canvas.render();
+		await settle();
+
+		await send(canvas.host, "and now the receipt");
+		await settle();
+
+		expect(canvas.turn.streams[0]?.thread).toBe(ONE);
+		// the conversation keeps what it had drawn, above the turn that continues it
+		expect(log(canvas.host)).toContain("The header is tighter now.");
+		expect(log(canvas.host)).toContain("and now the receipt");
+		expect(tabs(canvas.host)).toEqual(["tighten the header"]);
+	});
+
+	it("writes the picture down as it draws it", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+		await answerTurn(canvas.turn.streams[0] as Stream, "Home is shot.");
+
+		const put = canvas.stored.puts.at(-1);
+		expect(put?.thread).toBe(canvas.turn.streams[0]?.thread);
+		expect(put?.body.ask).toBe("shoot home");
+		expect(put?.body.life).toBe("read");
+		// stored is exactly drawn: the entries are the ones the transcript rendered
+		expect(put?.body.entries).toContainEqual(expect.objectContaining({ kind: "user", text: "shoot home" }));
+		expect(put?.body.entries).toContainEqual(expect.objectContaining({ kind: "prose", full: "Home is shot." }));
+	});
+
+	/** a thread the rail is not looking at is stored as what it was doing, never as streaming */
+	it("stores a thread working elsewhere as running", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "three takes on the cart");
+		canvas.turn.push(waiting);
+		await settle();
+		await newThread(canvas.host);
+		await settle(2400);
+
+		expect(canvas.stored.puts.at(-1)?.body.life).toBe("running");
+	});
+});
+
+describe("closing a thread", () => {
+	it("takes the tab out of the strip and deletes neither the session nor the picture", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tighten the header");
+		await answerTurn(canvas.turn.streams[0] as Stream, "done.");
+		await newThread(canvas.host);
+		await send(canvas.host, "write the copy deck");
+		await answerTurn(canvas.turn.streams[1] as Stream, "done.");
+
+		await closeTab(canvas.host, "tighten the header");
+
+		expect(tabs(canvas.host)).toEqual(["write the copy deck"]);
+		// its own door, which writes one flag: nothing here is a delete
+		expect(canvas.stored.closed).toEqual([canvas.turn.streams[0]?.thread]);
+	});
+
+	it("opens the newest of what is left when the open one is closed", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tighten the header");
+		await answerTurn(canvas.turn.streams[0] as Stream, "The header is tighter now.");
+		await newThread(canvas.host);
+		await send(canvas.host, "write the copy deck");
+		await answerTurn(canvas.turn.streams[1] as Stream, "The copy deck landed.");
+
+		await closeTab(canvas.host, "write the copy deck");
+
+		expect(tabs(canvas.host)).toEqual(["tighten the header"]);
+		expect(log(canvas.host)).toContain("The header is tighter now.");
+	});
+
+	/** a tab nobody can reach must not go on holding a process the hands cannot see */
+	it("stops the stream the tab was holding", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "three takes on the cart");
+		canvas.turn.push(waiting);
+		await settle();
+		await newThread(canvas.host);
+		expect(canvas.turn.streams[0]?.aborted()).toBe(false);
+
+		await closeTab(canvas.host, "three takes on the cart");
+		await settle();
+
+		expect(canvas.turn.streams[0]?.aborted()).toBe(true);
+	});
+
+	it("leaves a fresh thread behind when the last one is closed", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tighten the header");
+		await answerTurn(canvas.turn.streams[0] as Stream, "done.");
+
+		await closeTab(canvas.host, "tighten the header");
+
+		expect(tabs(canvas.host)).toEqual(["new thread"]);
+		expect(field(canvas.host)?.placeholder).toBe("say what to change");
 	});
 });
