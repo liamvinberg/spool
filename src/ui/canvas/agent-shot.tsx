@@ -99,8 +99,11 @@ export function Shot({
  *
  * `fixed` rather than a portal: the canvas fills the window, so this covers it with
  * nothing threaded through the rail to make it happen.
+ *
+ * Shared with the composer's attachment tile, because holding a picture up is one
+ * gesture whether the picture came back from a tool call or went out with your words.
  */
-function Lightbox({
+export function Lightbox({
 	open,
 	onClose,
 	caption,

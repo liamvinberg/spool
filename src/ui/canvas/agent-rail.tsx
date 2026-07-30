@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentLimit } from "../../daemon/agent-events";
@@ -12,7 +12,7 @@ import { type AgentModelDeck, menuLongest, menuSays } from "./agent-model";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
 import { Caret, Said } from "./agent-said";
-import { Shot } from "./agent-shot";
+import { Lightbox, Shot } from "./agent-shot";
 import type { TurnPhase } from "./agent-stream";
 import type { Life, Thread } from "./agent-threads";
 import {
@@ -2352,31 +2352,53 @@ function QueuedRow({ message, onDrop }: { message: AgentQueued; onDrop: () => vo
 /** how wide the tile is: enough to recognise a screenshot, not enough to read it */
 const ATTACHED_W = 44;
 
+/**
+ * The tile has two things to do, so it has two targets.
+ *
+ * The picture is the press, because at this size it can be recognised and not checked,
+ * and checking it is what a reference is for: it goes up over the rail in the same
+ * overlay a tool call's screenshot goes up in. Taking the reference back is the ✕ in
+ * the corner, the smaller target, because it is the rarer intent and the only one of
+ * the two that cannot be undone.
+ *
+ * The ✕ is on hover, in the vocabulary the ✕ on a thread and on a chip already uses.
+ * It carries a plate the chip's does not, because it sits on a picture rather than on
+ * a surface, and an unbacked glyph over arbitrary pixels is not always there.
+ */
 function Attached({ attached, onDrop }: { attached: Attachment; onDrop: () => void }) {
+	const [big, setBig] = useState(false);
+	// held across renders for the reason `Shot` holds its own: the rail re-projects on
+	// a clock and the string is the size of the picture, now read in two places
+	const src = useMemo(() => `data:${attached.media};base64,${attached.data}`, [attached.media, attached.data]);
 	return (
-		<span
-			data-agent-attached=""
-			className="group relative flex w-fit shrink-0 overflow-hidden rounded-xs border border-border-raised bg-bg"
-			style={{ width: ATTACHED_W, height: ATTACHED_W }}
-		>
-			{/* the picture is its own label: `image/png` is a fact about a file and this is a
-			    thing you can see */}
-			<img
-				src={`data:${attached.media};base64,${attached.data}`}
-				alt="attached reference"
-				className="h-full w-full object-cover"
-			/>
-			{/* the whole tile is the way to take it back, because there is nothing else it
-			    could do: it is your own picture and you are looking at it */}
-			<button
-				type="button"
-				onClick={onDrop}
-				aria-label="drop the attached image"
-				className="absolute inset-0 flex items-center justify-center bg-bg/0 text-text/0 transition-colors duration-150 group-hover:bg-bg/70 group-hover:text-text"
+		<>
+			<span
+				data-agent-attached=""
+				className="group relative flex w-fit shrink-0 overflow-hidden rounded-xs border border-border-raised bg-bg"
+				style={{ width: ATTACHED_W, height: ATTACHED_W }}
 			>
-				<CloseIcon />
-			</button>
-		</span>
+				{/* the picture is its own label: `image/png` is a fact about a file and this is a
+				    thing you can see */}
+				<button type="button" onClick={() => setBig(true)} className="flex h-full w-full cursor-zoom-in">
+					<img src={src} alt="attached reference" className="h-full w-full object-cover" />
+				</button>
+				<button
+					type="button"
+					onClick={onDrop}
+					aria-label="drop the attached image"
+					className="absolute top-0 right-0 flex h-4 w-4 items-center justify-center rounded-bl-xs bg-bg/0 text-muted/0 transition-colors duration-150 hover:text-text group-hover:bg-bg/70 group-hover:text-muted/70"
+				>
+					<CloseIcon />
+				</button>
+			</span>
+			{/* beside the tile rather than inside it: the tile clips to 44px, and a picture held
+			    over the whole rail cannot hang off something that small.
+			    No caption, because a browser never reveals a dropped file's path and there is
+			    nothing else to say that the picture is not already saying */}
+			<Lightbox open={big} onClose={() => setBig(false)} caption={null}>
+				<img src={src} alt="attached reference" className="block max-h-full max-w-full" />
+			</Lightbox>
+		</>
 	);
 }
 

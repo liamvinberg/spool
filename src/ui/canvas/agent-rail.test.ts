@@ -1782,7 +1782,7 @@ describe("an attached image", () => {
 		expect(canvas.turn.attachments.at(-1)).toBeUndefined();
 	});
 
-	it("can be taken back before it goes", async () => {
+	it("can be taken back with the ✕ before it goes", async () => {
 		const canvas = mount();
 		await canvas.render();
 
@@ -1793,6 +1793,35 @@ describe("an attached image", () => {
 		expect(canvas.host.querySelector("[data-agent-attached]")).toBeNull();
 		await send(canvas.host, "never mind");
 		expect(canvas.turn.attachments.at(-1)).toBeUndefined();
+	});
+
+	/** 44px is enough to recognise a picture and not enough to check one */
+	it("goes up at size on a press, and the press is not the way back", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		await paste(canvas.host, shot());
+		await act(async () => {
+			canvas.host
+				.querySelector<HTMLImageElement>("[data-agent-attached] img")
+				?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		});
+
+		// the same overlay a tool call's screenshot is held up in, with the same way out
+		const held = canvas.host.querySelector<HTMLElement>("[data-agent-lightbox]");
+		expect(held?.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgoBAgM=");
+		expect(held?.textContent).toContain("esc");
+		// and looking at it is not dropping it: the ✕ is the only thing that does that
+		expect(canvas.host.querySelector("[data-agent-attached]")).not.toBeNull();
+
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+		});
+		expect(canvas.host.querySelector("[data-agent-lightbox]")).toBeNull();
+		expect(canvas.host.querySelector("[data-agent-attached]")).not.toBeNull();
+
+		await send(canvas.host, "match this");
+		expect(canvas.turn.attachments.at(-1)?.data).toBe("iVBORw0KGgoBAgM=");
 	});
 });
 
