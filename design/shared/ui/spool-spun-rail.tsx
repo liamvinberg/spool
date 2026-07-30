@@ -808,7 +808,9 @@ const SPECS: Record<SpunTake, Spec> = {
 		composited: "yes. translateX and scaleX of one element",
 		swept: (track) => `${track}px lateral, 0.26px/ms`,
 		progress: "no state of it is full and its length falls for half the cycle. length 0 at both ends of the loop, so the reset is on screen and invisible",
-		reduced: "one stroke, held a third of the way along, 172px",
+		// 172px was this take's *peak* length, copied into the wrong slot. `Wind` holds
+		// `windAt(0.34)`, which is 0.3406 of the track, so at 420 the held stroke is 143px
+		reduced: "one stroke, held a third of the way through the cycle, 143px at 420",
 		collides: "no. nothing else in the rail is a stroke on this edge",
 		tells: [
 			["idle", "the border, unchanged"],
