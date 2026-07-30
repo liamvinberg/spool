@@ -3,7 +3,10 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { longestStreamed } from "../../test-helpers";
 import type { AgentEvent } from "../api";
+import { chunksOf } from "./agent-markdown";
+import { followTo } from "./agent-rail";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
 
 /**
@@ -16,8 +19,9 @@ import { type CanvasChrome, ProjectCanvas } from "./canvas";
  * call reaches the screen as one line, that pressing a frame's name takes the canvas
  * there, and that the rail is the agent and nothing else.
  *
- * The rules behind the rows are `agent-transcript.test.ts`'s and the pace is
- * `agent-pace.test.ts`'s.
+ * The rules behind the rows are `agent-transcript.test.ts`'s, the pace is
+ * `agent-pace.test.ts`'s, and what a rendered word leaves in the DOM is
+ * `agent-said.test.ts`'s.
  */
 
 /** `receipt` sits one page over, which is the normal case: a thread is not bound to a page */
@@ -157,6 +161,13 @@ const arriving = (host: HTMLElement) => host.querySelector("[data-agent-prose]")
 
 /** long enough that the pace cannot spend it inside one tick of the rail's clock */
 const MESSAGE = "the frame is authored and live on the canvas, and the shot came back clean.";
+
+/**
+ * The longest message the captures hold: 3,372 characters of bold lead-ins, inline code,
+ * two fenced blocks and a blockquote. It is the thing every claim about a long message is
+ * about, so it is what the rail is asked to draw.
+ */
+const DOCUMENT = longestStreamed("claude-mcp").text;
 
 async function until(condition: () => boolean, ms = 4000) {
 	const start = Date.now();
@@ -316,6 +327,13 @@ describe("one turn", () => {
 		const drawn = arriving(canvas.host);
 		expect(drawn.length).toBeGreaterThan(0);
 		expect(drawn.length).toBeLessThan(MESSAGE.length);
+		// one caret at the live edge, static, saying more is coming — every fade completes
+		// during a pause, so it is then the only thing that does
+		const carets = canvas.host.querySelectorAll("[data-agent-caret]");
+		expect(carets).toHaveLength(1);
+		expect(carets[0]?.className).not.toMatch(/animate-/);
+		// and words are arriving rather than appearing
+		expect(canvas.host.querySelectorAll(".animate-agent-word").length).toBeGreaterThan(0);
 
 		canvas.turn.push(ended);
 		canvas.turn.push(closed);
@@ -374,6 +392,10 @@ describe("one turn", () => {
 		expect(rail(canvas.host)?.textContent).toContain(MESSAGE);
 		// nothing is mid-arrival, so there is no live copy at all
 		expect(canvas.host.querySelector("[data-agent-prose]")).toBeNull();
+		// and nothing about the settled message moves: no word is arriving and no caret
+		// says more is coming
+		expect(canvas.host.querySelectorAll(".animate-agent-word")).toHaveLength(0);
+		expect(canvas.host.querySelector("[data-agent-caret]")).toBeNull();
 	});
 
 	it("gives the composer back when the turn ends, and refuses it while one runs", async () => {
@@ -430,6 +452,174 @@ describe("one turn", () => {
 
 		expect(rail(canvas.host)?.textContent).toContain("spawn claude ENOENT");
 		expect(rail(canvas.host)?.textContent).toContain("enter to send");
+	});
+});
+
+/* ---------- a message that is a document ----------
+ * The one-line rule settles this without argument: a message has no call to outlive. So
+ * it is rendered whole and nothing is clamped, and the thing that makes it long is the
+ * thing that makes it skimmable. What the log does about the size of it is where the top
+ * anchor comes in — following the end of a 3,372-character message drives the verdict in
+ * its first line out of view before anyone has read it. */
+
+describe("a long message", () => {
+	it("renders as markdown, whole, and clamps nothing", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "check the copy");
+
+		canvas.turn.push(waiting);
+		canvas.turn.push(speaking);
+		canvas.turn.push(say(DOCUMENT));
+		canvas.turn.push(ended);
+		canvas.turn.push(closed);
+		canvas.turn.close();
+		// the pace drains a backlog this big in about 1.6s, and the live copy going away is
+		// the edge having caught up with the wire
+		await until(() => arriving(canvas.host).length > 0);
+		await until(() => canvas.host.querySelector("[data-agent-prose]") === null, 8000);
+
+		const said = canvas.host.querySelector("[data-agent-log]")?.firstElementChild?.lastElementChild;
+		if (!(said instanceof HTMLElement)) throw new Error("no message");
+		const chunks = chunksOf(DOCUMENT);
+		// every block of it is on screen: the whole message, nothing dropped
+		for (const chunk of chunks) {
+			const own = chunk.kind === "fence" ? chunk.text : chunk.spans.map((span) => span.text).join("");
+			expect(said.textContent).toContain(own);
+		}
+		// drawn rather than printed: the markers are gone and the structure is elements
+		expect(said.textContent).not.toContain("**");
+		expect(said.textContent).not.toContain("```");
+		expect(said.querySelectorAll("strong").length).toBeGreaterThan(0);
+		expect(said.querySelectorAll("code").length).toBeGreaterThan(0);
+		// two fenced blocks and one paragraph per remaining block, blockquote included
+		expect(said.querySelectorAll("pre")).toHaveLength(2);
+		expect(said.querySelectorAll("p")).toHaveLength(chunks.filter((chunk) => chunk.kind !== "fence").length);
+		// and nothing shortens it: no clamp, no height cut, and nothing to press to find out
+		// whether the rest mattered
+		expect(said.querySelector('[class*="line-clamp"]')).toBeNull();
+		expect(said.querySelector('[class*="max-h-"]')).toBeNull();
+		expect(said.querySelectorAll("button")).toHaveLength(0);
+	});
+
+	/**
+	 * A sentence holds the pace's lag so its last lines do not walk in one at a time; a
+	 * document does not, because the reserve would put its whole height into the scroll
+	 * range from the first character and leave screens of scrollable nothing under a
+	 * message still being written.
+	 */
+	it("reserves the height of a short message and lets a document grow instead", async () => {
+		const reserve = (host: HTMLElement) => host.querySelector("[data-agent-reserve]");
+
+		const sentence = mount();
+		await sentence.render();
+		await send(sentence.host, "go");
+		sentence.turn.push(waiting);
+		sentence.turn.push(speaking);
+		sentence.turn.push(say(MESSAGE));
+		await until(() => arriving(sentence.host).length > 0);
+
+		expect(reserve(sentence.host)).not.toBeNull();
+
+		const report = mount();
+		await report.render();
+		await send(report.host, "check the copy");
+		report.turn.push(waiting);
+		report.turn.push(speaking);
+		report.turn.push(say(DOCUMENT));
+		await until(() => arriving(report.host).length > 0);
+
+		expect(reserve(report.host)).toBeNull();
+	});
+
+	/**
+	 * The crossover happens mid-stream, because the paragraph count is read off what the
+	 * wire has sent: a message is a sentence until its fourth paragraph lands and a document
+	 * afterwards. The live copy has to survive that, or every word in the window fires its
+	 * arrival again at the moment the reserve goes.
+	 */
+	it("keeps the live copy mounted when a message becomes a document mid-stream", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "check the copy");
+		canvas.turn.push(waiting);
+		canvas.turn.push(speaking);
+		// three paragraphs: still a sentence as far as the reserve is concerned
+		const blocks = chunksOf(DOCUMENT).flatMap((chunk) =>
+			chunk.kind === "p" ? [chunk.spans.map((span) => span.text).join("")] : [],
+		);
+		canvas.turn.push(say(blocks.slice(0, 3).join("\n\n")));
+		await until(() => arriving(canvas.host).length > 0);
+		const before = canvas.host.querySelector("[data-agent-prose]");
+
+		expect(before).not.toBeNull();
+		expect(canvas.host.querySelector("[data-agent-reserve]")).not.toBeNull();
+
+		// and the fourth lands
+		canvas.turn.push(say(`\n\n${blocks[3] ?? ""}`));
+		await until(() => canvas.host.querySelector("[data-agent-reserve]") === null);
+
+		// the same element, so nothing inside it remounted and no word arrived twice
+		expect(canvas.host.querySelector("[data-agent-prose]")).toBe(before);
+		expect(arriving(canvas.host).length).toBeGreaterThan(0);
+	});
+
+	/**
+	 * The geometry is handed in because happy-dom lays nothing out, and the arithmetic it
+	 * feeds is `followTo`'s own — asserted directly below this.
+	 */
+	it("anchors the top of a live entry taller than the box, and the end of one that fits", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "check the copy");
+		canvas.turn.push(waiting);
+		canvas.turn.push(speaking);
+		canvas.turn.push(say(DOCUMENT));
+		await settle(120);
+
+		const log = canvas.host.querySelector<HTMLElement>("[data-agent-log]");
+		const tail = log?.firstElementChild?.lastElementChild;
+		if (log === null || !(tail instanceof HTMLElement)) throw new Error("no live entry");
+		const geometry = (scrollHeight: number, top: number) => {
+			Object.defineProperty(log, "scrollHeight", { value: scrollHeight, configurable: true });
+			Object.defineProperty(log, "clientHeight", { value: 500, configurable: true });
+			log.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+			tail.getBoundingClientRect = () => ({ top }) as DOMRect;
+		};
+
+		// 1,400px of message in a 500px box, its first line 100px down: the first line wins
+		geometry(1400, 100);
+		await settle(150);
+		expect(log.scrollTop).toBe(90);
+
+		// and an entry that fits keeps ordinary follow-the-end
+		geometry(520, 400);
+		await settle(150);
+		expect(log.scrollTop).toBe(20);
+	});
+});
+
+/**
+ * The clamp itself, which is the whole of the anchoring rule and needs no layout.
+ *
+ * `tail` is how far the last entry's top sits below the box's own top edge.
+ */
+describe("what the log scrolls to", () => {
+	it("follows the end while the last entry fits the box", () => {
+		expect(followTo({ scrollTop: 0, scrollHeight: 520, clientHeight: 500 }, 400)).toBe(20);
+	});
+
+	/** 1,400px of content in 500px of box: the scroll that pins the first line is below the end */
+	it("pins the first line of an entry taller than the box", () => {
+		expect(followTo({ scrollTop: 0, scrollHeight: 1400, clientHeight: 500 }, 100)).toBe(90);
+	});
+
+	it("follows the end when the log holds nothing to anchor", () => {
+		expect(followTo({ scrollTop: 0, scrollHeight: 520, clientHeight: 500 }, null)).toBe(20);
+	});
+
+	it("never scrolls above the top of the log", () => {
+		expect(followTo({ scrollTop: 0, scrollHeight: 100, clientHeight: 500 }, 0)).toBe(0);
 	});
 });
 

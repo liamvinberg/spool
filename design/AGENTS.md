@@ -51,8 +51,13 @@ the log with a count and the agent's own `activeForm`, a screenshot is a real
 name in a row navigates on `landOnFrame`'s own rule with the accent per row and
 the run's count outside the target, a gone frame is struck off a `gone` set the
 canvas hands in, and a sub-agent is one row that expands into its delegate's own
-rows. The threads strip and the model readout the frames here draw are still
-ahead of the code.
+rows. **#195 landed the message itself**: it renders as markdown whole and
+clamped never, arrives at the backlog's own rate with a word fading in at 170ms
+behind a static caret, and leaves no element behind once it settles. A reply long
+enough to be a document — four paragraphs or more — grows as it arrives rather
+than reserving its height, on `agent-play--say-read`'s own rule, and stillness
+draws it settled with nothing moving. The threads strip and the model readout the
+frames here draw are still ahead of the code.
 
 Explorations live until the work they decided is built. Making the decision is
 not that moment: while a page is still being resolved, the rejected frames are

@@ -31,9 +31,6 @@ import { type Chunk, chunksOf, drawnText, type Span } from "./agent-markdown";
  * wrapped, and its trailing edge is free to move.
  */
 
-/** the opacity ramp for the arriving edge, in characters — roughly half a line */
-const RAMP = 30;
-
 /**
  * A run of text where the trailing `live` characters are arriving.
  *
@@ -57,17 +54,19 @@ function Run({ text, from, total, live }: { text: string; from: number; total: n
 				// a settled word is text rather than an element: see the word rule above
 				if (pos + piece.length <= start) return piece;
 				return (
-					// the key is the word's own offset in the message, which is what makes it
-					// stable: `closedText` guarantees the drawn text only ever grows, so a word
-					// mounts once and its arrival animation fires once
-					<span
-						key={pos}
-						className="animate-agent-word"
-						// the ramp is the arrival's own, not a second mechanism: a word that
-						// mounts near the very end of the message starts fainter, so the edge
-						// softens instead of ending on a hard boundary
-						style={{ animationDelay: `${Math.round(60 * Math.max(0, Math.min(1, 1 - (total - pos) / RAMP)))}ms` }}
-					>
+					/*
+					 * The key is the word's own offset in the message, which is what makes it
+					 * stable: `closedText` guarantees the drawn text only ever grows, so a word
+					 * mounts once and its arrival animation fires once.
+					 *
+					 * One class and nothing else, which is the frame's own `fade`. A delay across
+					 * the last half-line was drawn and it is a defect rather than a softer edge: a
+					 * CSS animation with no fill mode has no effect during its delay, so a delayed
+					 * word paints at full strength and then snaps to nothing to begin its own fade.
+					 * That is the one thing a fade exists to prevent, at the live edge where every
+					 * arriving word is.
+					 */
+					<span key={pos} className="animate-agent-word">
 						{piece}
 					</span>
 				);
@@ -92,6 +91,7 @@ function Run({ text, from, total, live }: { text: string; from: number; total: n
 export function Caret() {
 	return (
 		<span
+			data-agent-caret=""
 			className="ml-[3px] inline-block h-[12px] w-[2px] translate-y-[1px] rounded-[1px] bg-text/70 align-baseline"
 			aria-hidden="true"
 		/>
