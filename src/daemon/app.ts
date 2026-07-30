@@ -22,6 +22,7 @@ import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { type AgentAsk, askAgentOffer, askFrom, isEffortShaped, isModelShaped } from "./agent-offer";
+import { agentInstalled, askAgentLogin } from "./agent-preflight";
 import { agentPromptContent } from "./agent-spawn";
 import { closeThread, isThreadId, parseThreadPut, putThread, serveThreads, sessionExists } from "./agent-threads";
 import { type AgentTurn, startAgentTurn } from "./agent-turn";
@@ -806,6 +807,25 @@ export function createDaemonApp({
 				return c.text(`no terminal frame "${frame}" to restart`, 404);
 			}
 			return c.text("terminal execution is disabled until it can run in an OS sandbox", 409);
+		})
+		/*
+		 * The two ways there is no agent to talk to, one door each (#201).
+		 *
+		 * They are two doors because they are two questions, and `agent-preflight.ts` is
+		 * where that split is argued. What the shape of these routes carries is when each is
+		 * allowed to be asked: the `which` is free and stable, so the rail asks it on open,
+		 * and the login costs a process inside somebody else's product, so it is only ever
+		 * opened by a hand on `check again`.
+		 */
+		.get("/api/p/:project/agent/installed", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			return c.json({ installed: agentInstalled(process.env) });
+		})
+		.get("/api/p/:project/agent/login", async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			return c.json(await askAgentLogin({ executor: spawnAgent, root: project.root, env: process.env }));
 		})
 		.post(
 			"/api/p/:project/agent/turn",

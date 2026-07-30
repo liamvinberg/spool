@@ -18,8 +18,14 @@ import { skillText } from "../skill";
  * connectors.
  */
 
-/** Bare name, off `PATH`: the agent the developer installed, not one spool ships. */
-const AGENT_COMMAND = "claude";
+/**
+ * Bare name, off `PATH`: the agent the developer installed, not one spool ships.
+ *
+ * Exported because whether this name resolves at all is a question of its own (#201):
+ * a machine with no `claude` on it has a rail with nothing behind it, and the check for
+ * that is a `which` over this same name rather than a second opinion about it.
+ */
+export const AGENT_COMMAND = "claude";
 
 /**
  * The one allow rule, and the whole of the fence (#121).

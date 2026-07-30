@@ -26,6 +26,7 @@ import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-disp
 import type { HotkeyIdFor } from "../hotkeys";
 import { RibbonMark } from "../icons";
 import { useAgentModel } from "./agent-model";
+import { useAgentInstall } from "./agent-preflight";
 import { AgentRail } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
@@ -257,6 +258,10 @@ export function ProjectCanvas({
 	// so the canvas repaints while the transcript is still arriving.
 	const deck = useAgentThreads(project);
 	const turn = deck.turn;
+	// whether there is an agent on this machine at all (#201). A `which` rather than a
+	// spawn, asked when the rail opens, because a missing binary is a fact about this
+	// machine that is true before anybody types
+	const install = useAgentInstall(project);
 	// which machine is answering, asked of that machine rather than shipped (#118, #199).
 	// Keyed on the open thread, because that is what the answer is about: the rows are the
 	// binary's and the same for every thread, and which of them is answering is not.
@@ -2702,6 +2707,8 @@ export function ProjectCanvas({
 					onClose: deck.onClose,
 					onNew: deck.onNew,
 				}}
+				install={install}
+				login={deck.login}
 				queued={turn.queued}
 				handback={turn.handback}
 				model={model}

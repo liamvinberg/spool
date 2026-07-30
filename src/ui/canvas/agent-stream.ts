@@ -5,11 +5,13 @@ import type { ServedThread } from "../../daemon/agent-threads";
 import {
 	answerAgentTurn,
 	closeAgentThread,
+	fetchAgentLogin,
 	fetchAgentThreads,
 	interruptAgentTurn,
 	putAgentThread,
 	streamAgentTurn,
 } from "../api";
+import { type LoginDeck, STILL_OUT, signedInAs } from "./agent-preflight";
 import type { AgentHandback, AgentQueued } from "./agent-queue";
 import { askOf, bounced, cutPicture, type Life, lifeOf, storedLife, type Thread } from "./agent-threads";
 import {
@@ -164,6 +166,8 @@ export interface AgentDeck {
 	 * said starts a new thread rather than failing a resume.
 	 */
 	readonly finished: boolean;
+	/** the agent would not start because nobody is signed in, and the way out of it (#201) */
+	readonly login: LoginDeck;
 	/** a press on the strip, which reads the thread and moves nothing else */
 	readonly onOpen: (id: string) => void;
 	/** the ✕ on a tab: it leaves the strip, and neither the session nor the picture goes */
@@ -192,6 +196,25 @@ interface Live {
 	before: readonly AgentEntry[];
 	/** the plan the last turn that wrote one left, since a plan is drawn state (#120) */
 	heldPlan: AgentPlan | null;
+	/**
+	 * What happened between turns, which is the log below the last one (#201).
+	 *
+	 * A check that came back is a moment, and moments go in the log — so a press on
+	 * `check again` leaves its one line here rather than on the shelf, where the standing
+	 * fact lives. It joins `before` at the next send, behind the turn it followed.
+	 */
+	after: readonly AgentEntry[];
+	/** notes ever left between turns, which is the number that keys them apart */
+	noted: number;
+	/**
+	 * This run's prompt is already in the log above, so the turn draws no second copy.
+	 *
+	 * True only for the run a held prompt started (#201). They wrote a sentence, pressed
+	 * Enter, and the machine said not yet; it went into the log in their voice at that
+	 * moment and stayed there. The check sends those same words, and one thing said once
+	 * is drawn once.
+	 */
+	carried: boolean;
 	/** the picture as it came off disk, drawn until this thread runs again */
 	restored: boolean;
 	/** the agent's own session is still there, so the conversation can be continued */
@@ -245,6 +268,9 @@ function born(id: string, over: Partial<Live> = {}): Live {
 	return {
 		id,
 		before: [],
+		after: [],
+		noted: 0,
+		carried: false,
 		heldPlan: null,
 		restored: false,
 		continuable: false,
@@ -293,10 +319,30 @@ function restored(stored: ServedThread): Live {
 	});
 }
 
-/** what this thread has drawn: every turn before this one, and this one so far */
+/**
+ * What this turn draws, which is not always what it sent (#201).
+ *
+ * A run started by a held prompt draws no words of its own: the sentence is already in the
+ * log in the human's voice, from the instant they pressed Enter, and one thing said once
+ * is drawn once. It still goes down the wire — the check runs the prompt they wrote, not a
+ * retyped proof that they meant it.
+ */
+function shownOf(thread: Live) {
+	return transcriptOf(thread.carried ? [] : thread.said, thread.events);
+}
+
+/**
+ * What this thread has drawn: every turn before this one, this one so far, and whatever
+ * happened after it.
+ */
 function entriesOf(thread: Live, seen: { entries: readonly AgentEntry[] }): readonly AgentEntry[] {
-	if (thread.run === 0) return thread.before;
-	return thread.before.length === 0 ? seen.entries : [...thread.before, ...seen.entries];
+	const drawn =
+		thread.run === 0
+			? thread.before
+			: thread.before.length === 0
+				? seen.entries
+				: [...thread.before, ...seen.entries];
+	return thread.after.length === 0 ? drawn : [...drawn, ...thread.after];
 }
 
 /**
@@ -370,7 +416,7 @@ export function useAgentThreads(project: string): AgentDeck {
 	 */
 	const save = useCallback(
 		(thread: Live) => {
-			const shown = transcriptOf(thread.said, thread.events);
+			const shown = shownOf(thread);
 			const entries = entriesOf(thread, shown);
 			// a thread nobody has said anything to is not a conversation yet, and an empty
 			// picture on disk would be a tab restored with nothing in it
@@ -406,17 +452,20 @@ export function useAgentThreads(project: string): AgentDeck {
 	);
 
 	const send = useCallback(
-		(thread: Live, saying: readonly AgentWords[]) => {
+		(thread: Live, saying: readonly AgentWords[], carried = false) => {
 			if (saying.length === 0) return;
 			thread.abandon?.();
 			// the conversation keeps what it has already drawn: a turn replaces the events it
 			// is folded from, never the turns before it
 			if (thread.run > 0) {
-				thread.before = [
-					...thread.before,
-					...archive(transcriptOf(thread.said, thread.events).entries, thread.named),
-				];
+				thread.before = [...thread.before, ...archive(shownOf(thread).entries, thread.named)];
 			}
+			// and whatever happened between the two of them lands behind the turn it followed
+			if (thread.after.length > 0) {
+				thread.before = [...thread.before, ...thread.after];
+				thread.after = [];
+			}
+			thread.carried = carried;
 			thread.events = [];
 			thread.started = Date.now();
 			thread.parked = { total: 0, since: null };
@@ -581,7 +630,7 @@ export function useAgentThreads(project: string): AgentDeck {
 					}
 					continue;
 				}
-				const { entries } = transcriptOf(thread.said, thread.events);
+				const { entries } = shownOf(thread);
 				if (
 					entries.some(
 						(entry) => entry.kind === "prose" && !fullyShown(entry, still ? Number.POSITIVE_INFINITY : now),
@@ -605,7 +654,7 @@ export function useAgentThreads(project: string): AgentDeck {
 	}, []);
 
 	const here = threads.current.get(open) ?? born(open);
-	const seen = transcriptOf(here.said, here.events);
+	const seen = shownOf(here);
 	const phase = phaseOf(here, seen);
 	const entries = entriesOf(here, seen);
 	/*
@@ -623,7 +672,7 @@ export function useAgentThreads(project: string): AgentDeck {
 	const strip: readonly Thread[] = [...threads.current.values()]
 		.sort((one, two) => two.at - one.at)
 		.map((thread) => {
-			const shown = thread.id === open ? seen : transcriptOf(thread.said, thread.events);
+			const shown = thread.id === open ? seen : shownOf(thread);
 			const drawn = thread.id === open ? entries : entriesOf(thread, shown);
 			return { id: thread.id, ask: askOf(drawn), life: lifeFor(thread, open, shown) };
 		});
@@ -704,10 +753,77 @@ export function useAgentThreads(project: string): AgentDeck {
 
 	const onNew = useCallback(() => setOpen(start().id), [start]);
 
+	/**
+	 * One line in the log for a moment that happened between two turns (#201).
+	 *
+	 * `rule` is what tells the two apart, on the transcript's own test. A login spool has
+	 * started using is a boundary across the log — above it nothing could run, below it
+	 * everything can — and a check that came back with the answer it had is only itself, so
+	 * it sits where it fell. The second one does not stack: the third press of a button
+	 * that keeps saying the same thing must leave one line saying it, not three.
+	 */
+	const note = useCallback(
+		(thread: Live, text: string, rule = true) => {
+			const last = thread.after.at(-1);
+			if (!rule && last?.kind === "note" && last.text === text) return;
+			thread.noted += 1;
+			thread.after = [...thread.after, { key: `login-${thread.noted}`, kind: "note", text, rule }];
+			thread.at = Date.now();
+			save(thread);
+			redraw();
+		},
+		[save, redraw],
+	);
+
+	/**
+	 * Which thread a check is out for, rather than whether one is.
+	 *
+	 * One at a time, because a login is a fact about the machine and asking it twice at
+	 * once would be asking the same question twice — but the strip that says `looking` is
+	 * the strip that was pressed, so switching thread mid-check does not put another
+	 * thread's strip in a state nobody asked it for.
+	 */
+	const [checkingOn, setCheckingOn] = useState<string | null>(null);
+	/**
+	 * Ask again, and run what was already said (#201).
+	 *
+	 * The press asks the binary whose login it is — one local process, no session and no
+	 * token — because that is the only honest instrument: the alternative is reading the
+	 * agent's own credential files, which is spool parsing a private format it does not own.
+	 *
+	 * On a yes it names the account, once, at the moment spool starts using it, and then
+	 * sends the prompt that bounced. Nobody retypes a sentence to prove they meant it, and
+	 * the turn draws no second copy of it because the first one is still up there in their
+	 * own voice. On a no it says so and leaves one quiet line, because a press that leaves
+	 * no mark reads as a broken button.
+	 */
+	const check = useCallback(() => {
+		if (checkingOn !== null) return;
+		// the thread the press was made on, held across the ask: a check answered after
+		// somebody switched away must not leave its line, or its re-send, in another
+		// conversation's log
+		const thread = threads.current.get(openRef.current);
+		if (thread === undefined) return;
+		setCheckingOn(thread.id);
+		void fetchAgentLogin(project).then((login) => {
+			setCheckingOn(null);
+			if (login?.signedIn !== true) {
+				note(thread, STILL_OUT, false);
+				return;
+			}
+			note(thread, signedInAs(login.account));
+			// the held prompt is the words the bounce was about, which the thread still has
+			if (thread.said.length > 0) send(thread, thread.said, true);
+		});
+	}, [project, checkingOn, note, send]);
+
 	return {
 		threads: strip,
 		open,
 		finished: here.restored && !here.continuable,
+		// the standing fact, off the turn that ran: it goes the instant a turn does not
+		// bounce, and comes back on the refusal of one that does
+		login: { out: bounced(seen.entries), checking: checkingOn === open, check },
 		onOpen,
 		onClose,
 		onNew,
@@ -773,6 +889,11 @@ export function useAgentThreads(project: string): AgentDeck {
  * is `asking`. A signed-out bounce is the third, and it is read off the log because that
  * is where the refusal lands. A usage wind-down is none of them: the agent is told to
  * finish and does.
+ *
+ * Off the turn that ran rather than off the conversation (#201). A bounce is true until it
+ * stops being true, and what says it stopped is the next turn coming back clean — so a
+ * thread that recovered draws no mark, where reading the whole log would keep the archived
+ * refusal saying *stuck* for as long as the thread lived.
  */
 function stuck(phase: TurnPhase, entries: readonly AgentEntry[]): boolean {
 	return phase === "asking" || bounced(entries);
@@ -792,6 +913,6 @@ function lifeFor(thread: Live, open: string, shown: { entries: readonly AgentEnt
 		phase,
 		open: thread.id === open,
 		unread: thread.unread,
-		stuck: stuck(phase, entriesOf(thread, shown)),
+		stuck: stuck(phase, shown.entries),
 	});
 }

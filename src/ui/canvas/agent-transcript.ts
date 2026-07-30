@@ -14,6 +14,7 @@ import {
 	taskWritten,
 } from "./agent-nouns";
 import { drawnBy, type Landed } from "./agent-pace";
+import { LOGIN_REMEDY, NO_KEY, signedOut } from "./agent-preflight";
 
 /**
  * The transcript, projected from the event union the daemon streams (#191, #192,
@@ -277,8 +278,20 @@ export type AgentEntry =
 	 * A boundary rather than a reply: everything above it happened and nothing below
 	 * it did. A clean turn gets none — the log is receipts, and "it worked" is not
 	 * one.
+	 *
+	 * `rule` is the exception, and #201 is what earned it: the remedy under a
+	 * refusal is not a boundary, it is a thing to read and do, so it sits where it
+	 * fell in the quiet mono the composer's own hints use. Absent is a rule, because
+	 * every note before it was a boundary and a stored one carries no flag.
 	 */
-	| { readonly key: string; readonly kind: "note"; readonly text: string };
+	| {
+			readonly key: string;
+			readonly kind: "note";
+			readonly text: string;
+			/** the line above the note's own, in the weight that says it is the thing to do */
+			readonly said?: string;
+			readonly rule?: boolean;
+	  };
 
 /** every kind the union has, as the one runtime list of it (see `drawableEntries`) */
 const KINDS: ReadonlySet<string> = new Set(["user", "beat", "prose", "row", "ask", "note"]);
@@ -1195,8 +1208,22 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				// the one thing the rail must never swallow, because it is why nothing came
 				// back. The runner's own message is quoted verbatim — a missing binary
 				// reaches here as `spawn claude ENOENT` and spool does not improve on it.
-				if (event.message !== undefined) notes.push({ key: "closed", kind: "note", text: event.message });
-				else if (!ended) {
+				if (event.message !== undefined) {
+					notes.push({ key: "closed", kind: "note", text: event.message });
+					/*
+					 * The one sentence spool adds to a refusal it did not write (#201).
+					 *
+					 * The words above are the binary's own and stay that way. What it cannot say
+					 * from here is what to do about it: its own remedy is `/login`, a slash command
+					 * inside an interactive session, and spool spawns print mode. So the remedy is
+					 * spool's, the promise about keys rides under it where somebody deciding what to
+					 * do will read it once, and neither of them is a boundary — nothing below them
+					 * is untrue, they are a thing to go and do.
+					 */
+					if (signedOut(event.message)) {
+						notes.push({ key: "closed-fix", kind: "note", rule: false, said: LOGIN_REMEDY, text: NO_KEY });
+					}
+				} else if (!ended) {
 					notes.push({
 						key: "closed",
 						kind: "note",

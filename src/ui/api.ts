@@ -4,6 +4,7 @@ import type { Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
 import type { AgentEvent } from "../daemon/agent-events";
 import type { AgentAsk } from "../daemon/agent-offer";
+import type { AgentLogin } from "../daemon/agent-preflight";
 import type { ServedThread, ThreadPut } from "../daemon/agent-threads";
 import type { AppType } from "../daemon/app";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
@@ -506,6 +507,44 @@ export async function closeAgentThread(project: string, thread: string): Promise
 		await client.api.p[":project"].agent.threads[":thread"].close.$post({ param: { project, thread } });
 	} catch {
 		// the tab is gone from the strip either way; the flag is the only thing at stake
+	}
+}
+
+/**
+ * Is there an agent on this machine at all (#201).
+ *
+ * A `which` on the daemon's side, asked when the rail opens and again on every press
+ * behind the wall. Null is a door that said nothing, which is not the same fact as a
+ * machine with no agent on it: only a look that came back and found nothing draws a wall,
+ * because a wall is spool saying it looked.
+ */
+export async function fetchAgentInstalled(project: string): Promise<boolean | null> {
+	try {
+		const res = await client.api.p[":project"].agent.installed.$get({ param: { project } });
+		if (!res.ok) return null;
+		const { installed } = (await res.json()) as { installed?: unknown };
+		return typeof installed === "boolean" ? installed : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Whose login the binary reports (#201).
+ *
+ * Asked of the agent rather than read out of its files, and opened only by a press on
+ * `check again`: never at boot and never before a send. Null where the door said nothing,
+ * which the strip reads as the answer it already had.
+ */
+export async function fetchAgentLogin(project: string): Promise<AgentLogin | null> {
+	try {
+		const res = await client.api.p[":project"].agent.login.$get({ param: { project } });
+		if (!res.ok) return null;
+		const login = (await res.json()) as { signedIn?: unknown; account?: unknown };
+		if (typeof login.signedIn !== "boolean") return null;
+		return { signedIn: login.signedIn, account: typeof login.account === "string" ? login.account : null };
+	} catch {
+		return null;
 	}
 }
 
