@@ -120,6 +120,21 @@ export function askOf(entries: readonly AgentEntry[], fallback = "new thread"): 
 const SHOWN = 2;
 
 /**
+ * The verbs that mean the agent changed the file rather than looked at it.
+ *
+ * Both of them, and the second is the one that matters: `agent-nouns.ts` sends `Write` to
+ * `write` and `Edit`, `MultiEdit` and `NotebookEdit` all to `edit`, so a thread working on
+ * frames that already exist — which is most of them — produces no `write` at all. A rule
+ * that read only `write` would name almost every real thread after its ask and look like it
+ * was working.
+ *
+ * It reads the verb because that is all a row carries: `agent-nouns.ts` computes a `writes`
+ * flag and `AgentRow` does not keep it, so the string is the only fact that survives to
+ * here. Promoting that flag onto the row would put this in one place instead of two.
+ */
+const CHANGED = new Set(["write", "edit"]);
+
+/**
  * What a thread is called, which is what it wrote (#200).
  *
  * The ask was the name because there was nothing to borrow, and the note above still
@@ -153,7 +168,7 @@ export function nameOf(entries: readonly AgentEntry[], fallback = "new thread"):
 			// a delegate's writes are the thread's writes: the frames are out on the canvas
 			// either way, and which process authored one is not what the name is about
 			walk(row.delegated);
-			if (row.verb !== "write" || row.frame === null) continue;
+			if (!CHANGED.has(row.verb) || row.frame === null) continue;
 			if (!written.includes(row.frame)) written.push(row.frame);
 		}
 	};

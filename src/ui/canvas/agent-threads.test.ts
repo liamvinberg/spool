@@ -173,6 +173,15 @@ describe("naming a thread after what it wrote", () => {
 	/** a turn reads far more than it writes, and where it looked is not what it did */
 	it("ignores what it only read", () => {
 		expect(nameOf([asked, row("done", "read"), row("done", "run")])).toBe("shoot home and fix what reads wrong");
+		expect(nameOf([asked, row("done", "look")])).toBe("shoot home and fix what reads wrong");
+	});
+
+	/**
+	 * `Edit` is `edit` and only `Write` is `write`, so a rule that read one verb would name
+	 * almost every real thread after its ask: most work is on frames that already exist.
+	 */
+	it("counts an edit as much as a write, because most work is on a frame that exists", () => {
+		expect(nameOf([asked, { ...wrote("cart--empty-b"), verb: "edit" }])).toBe("cart--empty-b");
 	});
 
 	/** the frames are on the canvas either way, and which process authored one is not the name */
