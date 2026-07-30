@@ -1,32 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { createClaudeAdapter } from "../../daemon/agent-claude";
-import { readCapture } from "../../test-helpers";
+import { CAPTURES, longestStreamed, streamedMessages } from "../../test-helpers";
 import { chunksOf, drawnText } from "./agent-markdown";
 import { closedText } from "./agent-markers";
 
 /**
- * The prose half of the rail (#148, #149, #192): the markdown subset, and the
+ * The prose half of the rail (#148, #149, #192, #195): the markdown subset, and the
  * repair that lets a half-arrived message be drawn without the block structure
  * moving under the reader.
  *
- * The property at the bottom is the whole claim, and it is asserted against a real
- * streamed message rather than an authored one: every prefix of it, one character
- * at a time, must draw a prefix of what the finished message draws. Anything else
- * is text on screen being unwritten.
+ * The property at the bottom is the whole claim, and it is asserted against every
+ * character the repo's captures ever streamed rather than against an authored string:
+ * every prefix of every message, one character at a time, must draw a prefix of what
+ * that finished message draws. Anything else is text on screen being unwritten.
  */
-
-/** the longest prose message a capture streamed, reassembled off the adapter's own events */
-function longestMessage(capture: string): string {
-	const adapter = createClaudeAdapter();
-	const blocks = new Map<number, string>();
-	for (const line of readCapture(capture)) {
-		for (const event of adapter.read(JSON.stringify(line))) {
-			if (event.kind !== "say" || event.parent !== null) continue;
-			blocks.set(event.block, (blocks.get(event.block) ?? "") + event.text);
-		}
-	}
-	return [...blocks.values()].reduce((longest, text) => (text.length > longest.length ? text : longest), "");
-}
 
 describe("the markdown subset", () => {
 	it("reads bold, inline code, fences, quotes and both list kinds", () => {
@@ -96,33 +82,52 @@ describe("closing what has not been written yet", () => {
 	});
 
 	it("leaves a finished message byte-identical", () => {
-		const full = longestMessage("claude-mcp");
+		const full = longestStreamed("claude-mcp").text;
 
-		expect(full.length).toBeGreaterThan(3000);
+		// the longest message the repo holds, and the one every claim about size is about
+		expect(full.length).toBe(3372);
 		expect(closedText(full)).toBe(full);
 	});
 });
 
 /**
- * The property, over every prefix of a real 3,372-character message.
+ * The property, over every character the captures ever streamed.
  *
- * Holding unclosed markers back scored six breaks here and drawing them raw scored
- * six too; closing them scores none, which is what makes an animate-on-mount
- * arrival safe at all — a word only ever mounts once, because nothing it is inside
- * is ever redrawn as something else.
+ * Holding unclosed markers back broke the prefix and drawing them raw broke it too;
+ * closing them scores none, which is what makes an animate-on-mount arrival safe at
+ * all — a word only ever mounts once, because nothing it is inside is ever redrawn as
+ * something else.
+ *
+ * The walk is per message rather than per capture because that is the unit a reader
+ * watches: twenty-two of them across the seven captures, 7,581 characters, of which
+ * the three over five hundred are the 5,808 the decision was measured on.
  */
 describe("what is drawn is always a prefix of what will be drawn", () => {
-	for (const capture of ["claude-mcp", "claude-turn", "claude-interrupt"]) {
-		it(`holds across every prefix of ${capture}'s longest message`, () => {
-			const full = longestMessage(capture);
-			const settled = drawnText(chunksOf(full));
-			const broken: number[] = [];
-			for (let at = 1; at <= full.length; at += 1) {
-				const drawn = drawnText(chunksOf(closedText(full.slice(0, at))));
-				if (!settled.startsWith(drawn)) broken.push(at);
-			}
+	const walk = (full: string): number[] => {
+		const settled = drawnText(chunksOf(full));
+		const broken: number[] = [];
+		for (let at = 1; at <= full.length; at += 1) {
+			const drawn = drawnText(chunksOf(closedText(full.slice(0, at))));
+			if (!settled.startsWith(drawn)) broken.push(at);
+		}
+		return broken;
+	};
+
+	for (const capture of CAPTURES) {
+		it(`holds across every character ${capture} streamed`, () => {
+			const messages = streamedMessages(capture);
+			const broken = messages.flatMap(({ text }, index) => walk(text).map((at) => `${index}:${at}`));
 
 			expect(broken).toEqual([]);
 		});
 	}
+
+	/** the corpus itself, so a capture losing its prose can never quietly empty the walk */
+	it("walks every message in every capture", () => {
+		const all = CAPTURES.flatMap((capture) => streamedMessages(capture)).map(({ text }) => text);
+
+		expect(all.length).toBe(22);
+		expect(all.reduce((total, text) => total + text.length, 0)).toBe(7581);
+		expect(all.filter((text) => text.length > 500).reduce((total, text) => total + text.length, 0)).toBe(5808);
+	});
 });

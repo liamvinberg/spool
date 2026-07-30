@@ -277,16 +277,31 @@ function PlanStrip({ plan }: { plan: AgentPlan }) {
 /* ---------- the transcript ----------
  * It follows the live end while the reader is already there, and stops the moment
  * they scroll up to read something: a log that yanks itself back down mid-sentence
- * is worse than one that does not follow at all.
+ * is worse than one that does not follow at all. */
+
+/**
+ * Where the log scrolls to while it is following the live end.
  *
- * What it anchors is the *top* of the live entry rather than the bottom of the log.
- * A 3,372-character message is over a thousand pixels against a transcript of about
- * five hundred, and following its end drives its first line — where the verdict is —
- * out of view before it has been read, at 171 characters a second for twenty seconds.
- * One clamp does both cases: the scroll that puts the entry's first line at the top
- * falls below the maximum scroll exactly when the entry is taller than the box, so a
- * short entry keeps ordinary follow-the-end and a tall one pins its own first line
- * and fills downward. */
+ * What it anchors is the *top* of the live entry rather than the bottom of the log. A
+ * 3,372-character message is over a thousand pixels against a transcript of about five
+ * hundred, and following its end drives its first line — where the verdict is — out of
+ * view before it has been read, at 171 characters a second for twenty seconds.
+ *
+ * `tail` is how far the last entry's top sits below the box's own, or null when the log
+ * is empty. One clamp covers both cases and nothing measures an entry's height: the
+ * scroll that puts that entry's first line at the top is at most
+ * `scrollHeight - entryHeight`, so it falls below the maximum scroll exactly when the
+ * entry is taller than the box. A short entry therefore keeps ordinary follow-the-end,
+ * and a tall one pins its own first line and fills downward for as long as it is the
+ * thing being written.
+ */
+export function followTo(
+	box: { readonly scrollTop: number; readonly scrollHeight: number; readonly clientHeight: number },
+	tail: number | null,
+): number {
+	const end = box.scrollHeight - box.clientHeight;
+	return Math.max(0, Math.min(tail === null ? end : box.scrollTop + tail - TOP_INSET, end));
+}
 
 function Transcript({
 	entries,
@@ -319,13 +334,11 @@ function Transcript({
 	useEffect(() => {
 		const box = view.current;
 		if (box === null || !follow) return;
-		const end = box.scrollHeight - box.clientHeight;
 		const tail = box.firstElementChild?.lastElementChild;
-		const top =
-			tail instanceof HTMLElement
-				? box.scrollTop + (tail.getBoundingClientRect().top - box.getBoundingClientRect().top) - TOP_INSET
-				: end;
-		const target = Math.max(0, Math.min(top, end));
+		const target = followTo(
+			box,
+			tail instanceof HTMLElement ? tail.getBoundingClientRect().top - box.getBoundingClientRect().top : null,
+		);
 		if (box.scrollTop === target) return;
 		ours.current = true;
 		box.scrollTop = target;
@@ -335,6 +348,7 @@ function Transcript({
 		<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
 			<div
 				ref={view}
+				data-agent-log=""
 				onScroll={(event) => {
 					if (ours.current) {
 						ours.current = false;
@@ -608,17 +622,35 @@ function Row({ entry, jump, nested = false }: { entry: AgentRow; jump: FrameJump
 }
 
 /**
+ * The paragraph count at which a message stops being a sentence and is a document.
+ *
+ * Nothing is measured to decide it. It is the same test the lede candidate asked of a
+ * message, answered off the paragraph breaks in the text rather than off the renderer's
+ * chunks or a layout pass, so it is known from the character the fourth paragraph opens
+ * on rather than from a box that has already been drawn.
+ */
+const DOCUMENT_BLOCKS = 4;
+
+/**
  * One block of the agent's prose, however much of it has arrived.
  *
- * The block holds the height of everything that has *landed* rather than the height
- * of what is drawn, which is the pace's lag — up to 0.8s of text the wire has sent
- * and the edge has not reached. That much is reserved so the last lines do not walk
+ * A short message reserves the height of everything that has *landed* rather than the
+ * height of what is drawn, which is the pace's lag — up to 0.8s of text the wire has
+ * sent and the edge has not reached. That much is held so the last lines do not walk
  * in one at a time under the reader. It is not the finished message's height and
- * cannot be: the wire has not sent the rest yet.
+ * cannot be: the wire has not sent the rest yet. Rendered, the reserve cannot be a
+ * hidden copy of the same string either — a half-typed `**bold` is not the geometry of
+ * a finished `**bold**` — so it is the landed text drawn invisibly with the arriving
+ * one drawn over it.
  *
- * Rendered, that reserve cannot be a hidden copy of the same string — a half-typed
- * `**bold` is not the geometry of a finished `**bold**` — so it is the landed text
- * drawn invisibly with the arriving one drawn over it.
+ * **A document grows instead.** The reserve puts its whole height into the scroll
+ * range from the first character, so a message still being written for twenty seconds
+ * leaves screens of scrollable nothing under it and the scrollbar says the log is
+ * longer than anything in it. Growing has no such space. The empty-screen argument
+ * that used to be made against the reserve at this size was a bottom-pinning artefact
+ * and the top-anchored follow above answered it, so what is left is only the scroll
+ * range — enough to keep the reserve off a document, and not enough to pretend the
+ * reserve was ever unwatchable.
  */
 function Prose({ entry, elapsed }: { entry: Extract<AgentEntry, { kind: "prose" }>; elapsed: number }) {
 	const upto = shownBy(entry, elapsed);
@@ -633,14 +665,23 @@ function Prose({ entry, elapsed }: { entry: Extract<AgentEntry, { kind: "prose" 
 	 * into a `<pre>`. Closed instead, what is drawn is always a prefix of what will be.
 	 */
 	const shown = closedText(entry.full.slice(0, upto));
+	const grows = entry.full.split(/\n\n+/).length >= DOCUMENT_BLOCKS;
 	return (
 		<div className="relative">
-			<div className="invisible" aria-hidden="true">
-				<Said text={entry.full} />
-			</div>
-			{/* the arriving copy, and the only place in the rail that holds a partial
-			    message: it is addressable so a test can ask how much has landed */}
-			<div data-agent-prose="" className="absolute inset-0">
+			{/*
+			 * The reserve, whose slot is held open when there is nothing in it. A message
+			 * crosses into being a document mid-stream, and a tree that changed shape at that
+			 * moment would take the live copy with it: React would remount the window and
+			 * every word inside it would fire its arrival again, all at once.
+			 */}
+			{grows ? null : (
+				<div data-agent-reserve="" className="invisible" aria-hidden="true">
+					<Said text={entry.full} />
+				</div>
+			)}
+			{/* the arriving copy, and the only place in the rail that holds a partial message:
+			    it is addressable so a test can ask how much has landed */}
+			<div data-agent-prose="" className={cn(!grows && "absolute inset-0")}>
 				<Said text={shown} live={Math.min(LIVE_TAIL, shown.length)} caret={<Caret />} />
 			</div>
 		</div>

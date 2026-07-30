@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { onTestFinished } from "vitest";
+import { createClaudeAdapter } from "./daemon/agent-claude";
 import type { AgentExecutor, AgentProcess } from "./daemon/agent-exec";
 import type { AgentSpawn } from "./daemon/agent-spawn";
 import { createDaemonApp } from "./daemon/app";
@@ -233,9 +234,16 @@ export function fixtureTermExecutor() {
 	return { spawned, executor };
 }
 
-/** The seven recorded sessions (#190), read straight from their tracked home. */
+/**
+ * The seven recorded sessions (#190), read straight from their tracked home.
+ *
+ * Joined off this module's own directory rather than resolved through `new URL`, because
+ * a DOM test environment shims the global `URL` to resolve against the served origin and
+ * `fileURLToPath` then has no file to hand back — and the rail's own tests are DOM tests
+ * that read captures. Same shape the runtime's own DOM tests use.
+ */
 export function readCapture(name: string): readonly unknown[] {
-	const file = fileURLToPath(new URL(`../fixtures/captures/${name}.json`, import.meta.url));
+	const file = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "captures", `${name}.json`);
 	return JSON.parse(readFileSync(file, "utf8")) as readonly unknown[];
 }
 
@@ -248,6 +256,52 @@ export const CAPTURES = [
 	"claude-interrupt",
 	"claude-compact",
 ] as const;
+
+/** one message the wire streamed: what it said, and the fragments it said it in */
+export interface StreamedMessage {
+	readonly text: string;
+	/** the length of each delta, in the order they landed */
+	readonly deltas: readonly number[];
+}
+
+/**
+ * Every message a capture streamed, in the order the wire opened them.
+ *
+ * Keyed by the message the deltas belong to and the block inside it, which is how the
+ * transcript keys prose and is not optional: block indexes reset with every request, so
+ * keying on the index alone glues `claude-mcp`'s eight messages into one 5,002-character
+ * string nobody wrote.
+ *
+ * The deltas rather than the settled message, because the deltas are what a reader
+ * watches arrive — and where a capture elided an assistant message, the authority that
+ * lands afterwards is shorter than what was streamed.
+ */
+export function streamedMessages(capture: string): readonly StreamedMessage[] {
+	const adapter = createClaudeAdapter();
+	const blocks = new Map<string, { text: string; deltas: number[] }>();
+	let id = "";
+	for (const line of readCapture(capture)) {
+		for (const event of adapter.read(JSON.stringify(line))) {
+			// the work of every thread reaches the log; the words of only one do
+			if (event.parent !== null) continue;
+			if (event.kind === "speaking") id = event.message ?? "";
+			if (event.kind !== "say") continue;
+			const key = `${id}:${event.block}`;
+			const block = blocks.get(key) ?? { text: "", deltas: [] };
+			block.text += event.text;
+			block.deltas.push(event.text.length);
+			blocks.set(key, block);
+		}
+	}
+	return [...blocks.values()].filter((block) => block.text.trim() !== "");
+}
+
+/** the longest message a capture streamed, which is what every claim about size is about */
+export const longestStreamed = (capture: string): StreamedMessage =>
+	streamedMessages(capture).reduce((most, block) => (block.text.length > most.text.length ? block : most), {
+		text: "",
+		deltas: [],
+	});
 
 /**
  * The agent fixture executor (#191): the injected stand-in for the developer's

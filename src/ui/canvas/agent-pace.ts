@@ -39,8 +39,14 @@
  * slightly less than it has.
  */
 
-/** the drain window: how long the backlog would take to clear at the current rate */
-const DRAIN_MS = 250;
+/**
+ * The drain window: how long the backlog would take to clear at the current rate.
+ *
+ * Exported with the floor below so a test integrates this rule rather than a copy of
+ * its numbers: the closed form is only worth trusting if it agrees with a numeric
+ * integration of the same two constants.
+ */
+export const DRAIN_MS = 250;
 /**
  * The slowest the edge may move, in ms per character — 83 characters a second.
  *
@@ -51,7 +57,7 @@ const DRAIN_MS = 250;
  * chunk and then waits, which removes the lurch inside a burst and leaves the
  * silence between bursts untouched.
  */
-const FLOOR_MS_PER_CHAR = 12;
+export const FLOOR_MS_PER_CHAR = 12;
 /** the backlog at which the floor takes over from the decay, where the two rates meet */
 const FLOOR_AT = DRAIN_MS / FLOOR_MS_PER_CHAR;
 
