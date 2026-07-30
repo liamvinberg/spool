@@ -10,7 +10,7 @@ import {
 } from "./agent-control";
 import type { AgentAsking, AgentEvent } from "./agent-events";
 import type { AgentExecutor, AgentProcess } from "./agent-exec";
-import { type AgentSession, agentPromptLine, planAgentSpawn } from "./agent-spawn";
+import { type AgentAsk, type AgentSession, agentPromptLine, planAgentSpawn } from "./agent-spawn";
 
 /**
  * One turn: spawn the developer's agent, send what the human said, and hand back
@@ -36,6 +36,8 @@ export interface AgentTurnOptions {
 	readonly content: readonly unknown[];
 	/** the thread this turn continues, which is the binary's session id (#120, #200) */
 	readonly session: AgentSession;
+	/** which machine the thread chose, and how hard it should think (#199) */
+	readonly ask?: AgentAsk;
 }
 
 export interface AgentTurn {
@@ -74,7 +76,7 @@ export interface AgentTurn {
 	abandon(): void;
 }
 
-export function startAgentTurn({ executor, root, content, session }: AgentTurnOptions): AgentTurn {
+export function startAgentTurn({ executor, root, content, session, ask }: AgentTurnOptions): AgentTurn {
 	const adapter = createClaudeAdapter();
 	const queue: AgentEvent[] = [];
 	let waiting: (() => void) | undefined;
@@ -133,7 +135,7 @@ export function startAgentTurn({ executor, root, content, session }: AgentTurnOp
 	void (async () => {
 		let started: AgentProcess;
 		try {
-			started = await executor(planAgentSpawn(root, process.env, session));
+			started = await executor(planAgentSpawn(root, process.env, session, ask));
 		} catch (error) {
 			push({
 				kind: "closed",

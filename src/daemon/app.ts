@@ -21,6 +21,7 @@ import { gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
+import { type AgentAsk, askAgentOffer, askFrom, isEffortShaped, isModelShaped } from "./agent-offer";
 import { agentPromptContent } from "./agent-spawn";
 import { closeThread, isThreadId, parseThreadPut, putThread, serveThreads, sessionExists } from "./agent-threads";
 import { type AgentTurn, startAgentTurn } from "./agent-turn";
@@ -305,6 +306,20 @@ export function createDaemonApp({
 	 * it back. Absent for a client that never intends to stop anything.
 	 */
 	const liveTurns = new Map<AgentTurn, { root: string; id?: string; thread: string }>();
+	/**
+	 * Which machine each thread chose, and how hard it should think (#199).
+	 *
+	 * It is the ask and never the readout: what is drawn comes back off the binary's own
+	 * report, and this is only what the next spawn is asked to carry.
+	 *
+	 * Per thread rather than per project, because which machine is answering is a fact
+	 * about a conversation: a project runs one thread on Opus and another on Haiku, and a
+	 * project-wide ask would carry the open thread's choice into the one you switched to.
+	 * It dies with the daemon, because a preference nobody has said is durable is not a
+	 * file to write — a restarted thread reads its model off the next turn's own report.
+	 */
+	const agentAsks = new Map<string, AgentAsk>();
+	const askKey = (root: string, thread: string) => `${root} ${thread}`;
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -878,6 +893,10 @@ export function createDaemonApp({
 							...(one.attachment === undefined ? {} : { attachment: one.attachment }),
 						})),
 					),
+					// the machine this thread chose, handed to the process that will answer: a
+					// resume restores the conversation, and the flag is what makes the choice a
+					// property of the thread rather than of whichever turn last said so
+					ask: agentAsks.get(askKey(project.root, thread)) ?? {},
 				});
 				liveTurns.set(turn, { root: project.root, thread, ...(named === undefined ? {} : { id: named }) });
 				return streamSSE(c, async (stream) => {
@@ -1022,6 +1041,92 @@ export function createDaemonApp({
 			}
 			return c.body(null, 204);
 		})
+		/*
+		 * What this thread may pick, and what is answering (#118, #199).
+		 *
+		 * Asked of the binary every time rather than cached, because the answer is the
+		 * installed CLI's: a new model appears because the developer updated it, and a table
+		 * spool shipped would be a release behind on the day that happened. It costs one
+		 * spawn, no turn and no token — `list_models` is a control request and a bare
+		 * `/model` is answered before the model ever sees it.
+		 *
+		 * Under the thread rather than beside it, because `current` is a fact about one
+		 * conversation: the rows are the binary's and the same for all of them, and which of
+		 * those rows is answering is not.
+		 */
+		.get("/api/p/:project/agent/threads/:thread/models", async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const thread = c.req.param("thread");
+			if (!isThreadId(thread)) {
+				return c.text("a thread is named by the uuid its session runs under", 400);
+			}
+			return c.json(
+				await askAgentOffer({
+					executor: spawnAgent,
+					root: project.root,
+					env: process.env,
+					ask: agentAsks.get(askKey(project.root, thread)) ?? {},
+				}),
+			);
+		})
+		.post(
+			"/api/p/:project/agent/threads/:thread/model",
+			validator("json", (value, c) => {
+				const body = (typeof value === "object" && value !== null ? value : {}) as {
+					value?: unknown;
+					effort?: unknown;
+				};
+				// a leading dash is refused here rather than reasoned about downstream: an
+				// offered alias never starts with one, and a value that does is a value being
+				// handed to argv where a flag would go
+				if (body.value !== undefined && !isModelShaped(body.value)) {
+					return c.text('"value" is one of the choices `list_models` named', 400);
+				}
+				// one lowercase word, which is the shape a level has to have to be an argument
+				// at all. Which levels exist is the model's own claim and not a list spool
+				// carries: the round trip below is what refuses one the binary will not take
+				if (body.effort !== undefined && !isEffortShaped(body.effort)) {
+					return c.text('"effort" is one of the levels the model said it supports', 400);
+				}
+				if (body.value === undefined && body.effort === undefined) {
+					return c.text('a choice is { "value": "…" } or { "effort": "…" }', 400);
+				}
+				return {
+					...(body.value === undefined ? {} : { value: body.value as string }),
+					...(body.effort === undefined ? {} : { effort: body.effort }),
+				} satisfies AgentAsk;
+			}),
+			async (c) => {
+				/*
+				 * Choosing one, which is sending the message (#118, #199).
+				 *
+				 * The menu is a shortcut for `/model haiku` and never a second source of truth,
+				 * so this sends that message and answers with what came back. What spool keeps
+				 * is only the ask the binary confirmed: an alias it resolved to nothing, or an
+				 * effort the environment holds, leaves the readout exactly where it was,
+				 * because nothing moved.
+				 */
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const thread = c.req.param("thread");
+				if (!isThreadId(thread)) {
+					return c.text("a thread is named by the uuid its session runs under", 400);
+				}
+				const wanted = c.req.valid("json");
+				const key = askKey(project.root, thread);
+				const held = agentAsks.get(key) ?? {};
+				const offer = await askAgentOffer({
+					executor: spawnAgent,
+					root: project.root,
+					env: process.env,
+					ask: held,
+					choose: wanted,
+				});
+				agentAsks.set(key, askFrom(offer, wanted, held));
+				return c.json(offer);
+			},
+		)
 		.get("/api/p/:project/verify/:frame", async (c) => {
 			// the agent's compile probe (#25): shot and logs branch on this JSON —
 			// ok hands the closure etag (the log cache key), error the text verbatim

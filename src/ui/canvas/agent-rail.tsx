@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
+import type { AgentLimit } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { AgentIcon, CloseIcon, PlusIcon } from "../icons";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
+import { limitReadout } from "./agent-limit";
 import { closedText } from "./agent-markers";
+import { type AgentModelDeck, menuLongest, menuSays } from "./agent-model";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
 import { Caret, Said } from "./agent-said";
 import { Shot } from "./agent-shot";
@@ -179,6 +182,8 @@ export function AgentRail({
 	threads,
 	queued,
 	handback,
+	model,
+	limit,
 	onSend,
 	onQueue,
 	onUnqueue,
@@ -199,6 +204,10 @@ export function AgentRail({
 	queued: readonly AgentQueued[];
 	/** whatever left the queue un-fired, for the box below to take back (#170) */
 	handback: AgentHandback;
+	/** which machine is answering, and the list the binary offered instead (#118, #199) */
+	model: AgentModelDeck;
+	/** the usage window, absent until the binary warns, which is most of a session (#122) */
+	limit: AgentLimit | null;
 	onSend: (text: string, sent: AgentSent) => void;
 	/** Enter against a running turn: the words are taken and held rather than sent */
 	onQueue: (text: string, sent: AgentSent) => void;
@@ -333,6 +342,8 @@ export function AgentRail({
 						attached={holding.attached}
 						onAttach={(attached) => write((was) => ({ ...was, attached }))}
 						queued={queued}
+						model={model}
+						limit={limit}
 						onSend={onSend}
 						onQueue={onQueue}
 						onUnqueue={onUnqueue}
@@ -1351,6 +1362,19 @@ function StateMark({ state, className }: { state: RowState; className?: string }
  * press is taken and held instead and the queue above the field is where it waits.
  * The hint below says which of the three is live, so a press is never a mystery. */
 
+/**
+ * What the field says it is for, which is what the next press will do (#145, #200).
+ *
+ * Three, because Enter has three meanings here and the field is what each of them is
+ * about: answering a question the turn is parked on, starting the thread again when its
+ * session has aged out, and otherwise saying the next thing. A question wins over a
+ * finished thread, because a parked turn is a live process and there is nothing to start.
+ */
+function fieldSays(answering: string | null, finished: boolean): string {
+	if (answering !== null) return "or say it in your own words";
+	return finished ? "say what to change · this starts a new thread" : "say what to change";
+}
+
 function Composer({
 	phase,
 	finished,
@@ -1362,6 +1386,8 @@ function Composer({
 	attached,
 	onAttach,
 	queued,
+	model,
+	limit,
 	onSend,
 	onQueue,
 	onUnqueue,
@@ -1400,6 +1426,8 @@ function Composer({
 	attached: Attachment | null;
 	onAttach: (attached: Attachment | null) => void;
 	queued: readonly AgentQueued[];
+	model: AgentModelDeck;
+	limit: AgentLimit | null;
 	onSend: (text: string, sent: AgentSent) => void;
 	onQueue: (text: string, sent: AgentSent) => void;
 	onUnqueue: (id: string) => void;
@@ -1476,13 +1504,21 @@ function Composer({
 				<QueueBox queued={queued} onUnqueue={onUnqueue} />
 				{attached === null ? null : <Attached attached={attached} onDrop={() => onAttach(null)} />}
 				<SelectionStrip strip={strip} pointing={pointing} />
+				{/*
+				 * What the field is for, and what the press will do with it.
+				 *
+				 * #200's word about a thread whose session has aged out lives here rather than in
+				 * the footer: the footer's 18px line went to the model (#184), and "this starts a
+				 * new thread" is a fact about the words being typed rather than about which
+				 * machine is answering.
+				 */}
 				<textarea
 					ref={field}
 					value={draft}
 					rows={3}
 					spellCheck={false}
-					placeholder={answering === null ? "say what to change" : "or say it in your own words"}
-					aria-label={answering === null ? "say what to change" : "or say it in your own words"}
+					placeholder={fieldSays(answering, finished)}
+					aria-label={fieldSays(answering, finished)}
 					onChange={(event) => {
 						onDraft(event.target.value);
 						resize(event.target);
@@ -1529,20 +1565,303 @@ function Composer({
 					style={{ height: MIN_H }}
 				/>
 			</div>
-			{/* an 18px line, and the left of it gives way rather than wrapping: the rail
-			    resizes 200–480, the stop keeps its size because half a stop button is not
-			    readable, and the readout is the one thing here allowed to truncate (#184).
-			    the hint holds the slot #184's model readout takes */}
-			<div className="flex h-[18px] items-center justify-between gap-2.5">
-				{/* the hint is the only thing saying Enter is not being thrown away, so it
-				    changes word while a turn runs rather than going quiet (#170) */}
-				<span className="min-w-0 truncate font-mono text-2xs text-muted/45 leading-3">
-					{busy ? "enter to queue" : finished ? "a new thread starts here" : "enter to send"}
-				</span>
+			{/*
+			 * The footer holds the model and the stop, and nothing else (#184).
+			 *
+			 * 243 wanted at every width — the model's 160, the stop's 73 and the gap between
+			 * them — with no threshold and no ladder across the rail's whole 200–480 range.
+			 * The three occupants #118, #122 and #165 each put here wanted 432 against 391 of
+			 * box at 420, which wrapped the model to 24px inside an 18px line and elided the
+			 * limit's reset time; the limit went to the menu on #122's own reasoning, and the
+			 * send hint went because which machine is answering outranks a keyboard hint you
+			 * learn once. #200's own word about a finished thread went with it, into the
+			 * placeholder of the field it is a fact about.
+			 *
+			 * The model is the one thing here allowed to give way, and it truncates rather
+			 * than shortening. The stop is `shrink-0`, because a cut name is still readable
+			 * and half a stop button is not.
+			 */}
+			{/* the row is what the menu above it is measured against, not the trigger: a panel
+			    anchored to a trigger that shrinks with its own text would move with the text,
+			    and it has to be clamped to the composer's width rather than to a word's */}
+			<div className="relative flex h-[18px] items-center justify-between gap-2.5">
+				<ModelMenu model={model} limit={limit} />
 				{cutting ? <StopButton onStop={onStop} /> : null}
 			</div>
 		</div>
 	);
+}
+
+/* ---------- which machine is answering (#118, #122, #184, #186, #199) ----------
+ * The readout, made a button. Five rows, because `list_models` offered five: no
+ * grouping, no width switch and no policy section, because the reply already resolved
+ * all of that and every one of those would have been spool inventing structure it
+ * would then have to keep in sync.
+ *
+ * Nothing in here knows what a model is called. The names, the sentences and the
+ * effort levels all arrive from the binary at runtime, and a press is a shortcut for
+ * `/model haiku` rather than a second source of truth — so the readout follows the
+ * reply and never the press, which is what keeps it from ever being wrong.
+ *
+ * None of it takes the thread accent. Chip and outline are one object out on the
+ * canvas and they are the only colour on screen, so a control about which machine is
+ * answering stays colourless like everything else the agent does. */
+
+/** the footer's own voice, so the line reads as one line */
+const QUIET = "font-mono text-2xs leading-3";
+
+/**
+ * How wide the panel wants to be, which is not always what it gets.
+ *
+ * 300 is what the menu was drawn at and what the sentence slot's reserve is measured
+ * against. It is not a width that always fits: the rail drags down to 200, which leaves
+ * 171px of composer, so the panel is clamped to the row it hangs off and gives way like
+ * everything else in this footer. Wanting more than there is and being cut to fit is the
+ * same act the model name makes one line below.
+ */
+const MENU_W = 300;
+
+function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit | null }) {
+	const [open, setOpen] = useState(false);
+	/**
+	 * What the one slot is describing, which is one piece of state rather than two.
+	 *
+	 * A model's value and an effort level cannot collide — the levels are a closed set
+	 * the binary names and a model value is an alias like `opus[1m]` — so the slot that
+	 * answers both is one slot.
+	 */
+	const [over, setOver] = useState<string | null>(null);
+	const { offer, levels } = model;
+	const pin = offer.current.pin;
+	const says = menuSays(offer, over);
+	const longest = menuLongest(offer);
+	// read at draw time rather than held: the reset is a clock time inside a day and a
+	// weekday past that, so what it says depends on when it is being read
+	const usage = limit === null ? null : limitReadout(limit, Date.now());
+
+	const show = (next: boolean) => {
+		setOpen(next);
+		setOver(null);
+		// the answer is the installed binary's, so opening asks again rather than drawing
+		// whatever was true when the rail mounted
+		if (next) model.refresh();
+	};
+
+	return (
+		// no `relative` of its own: the panel is positioned against the footer row, so its
+		// width is clamped to the composer rather than to however long the name happens to be
+		<span data-agent-model={model.readout} className="flex min-w-0">
+			{open ? (
+				<button
+					type="button"
+					aria-label="close the model menu"
+					className="fixed inset-0 z-10 cursor-default"
+					onClick={() => show(false)}
+				/>
+			) : null}
+			<button
+				type="button"
+				aria-label="model"
+				aria-expanded={open}
+				onClick={() => show(!open)}
+				className={cn(
+					QUIET,
+					"flex min-w-0 items-center gap-1 transition-colors duration-150",
+					open ? "text-muted" : "text-muted/45 hover:text-muted",
+				)}
+			>
+				{/*
+				 * It truncates, and it never shortens.
+				 *
+				 * The name is the binary's own `displayName`, uncased and unshortened, because
+				 * the moment spool rewrites it spool owns it — and the captured reply is what
+				 * gives that rule teeth. Five rows come back and none of them is `Opus`: there
+				 * is `Default (recommended)` and there is `Opus (1M context)`, both resolving to
+				 * the same model, and the parenthetical is the only thing telling them apart,
+				 * while `/model opus` is accepted and resolves to Opus *without* the 1M window.
+				 * So `Opus · high` here would not be a short name for this machine, it would be
+				 * the correct name of a different one under a transcript this one wrote.
+				 *
+				 * An ellipsis is not that. `Opus (1M cont…` is visibly cut and reads as cut, the
+				 * whole string stays in the DOM, and the full name is one press up in the menu.
+				 */}
+				<span className="min-w-0 truncate">{model.readout}</span>
+				<ChevronIcon open={open} className="h-2 w-2 shrink-0" />
+			</button>
+			{open ? (
+				// biome-ignore lint/a11y/noStaticElementInteractions: leaving the panel only puts the slot back to describing the model that is set, and a keyboard reader never has a pointed row for it to return from
+				<div
+					data-agent-model-menu=""
+					style={{ width: MENU_W }}
+					// `max-w-full` against the footer row, which is the composer's own width: the
+					// rail drags to a 200 floor with 171px of box, and a fixed 300 would be cut off
+					// by the rail's own `overflow-hidden` rather than fitting inside it
+					className="absolute bottom-full left-0 z-20 mb-2 max-w-full animate-agent-menu-in origin-bottom-left rounded-md border border-border-raised bg-raised p-1.5"
+					onMouseLeave={() => setOver(null)}
+				>
+					{/*
+					 * The window, in here rather than beside the trigger (#122, #184).
+					 *
+					 * #122 chose the footer on one line of the binary's own advice: the remedy for
+					 * running out is a model switch, every time, so the fact should sit next to the
+					 * lever instead of writing out `try /model sonnet`. That argument survives the
+					 * move and is the reason for it — the lever is not the trigger, it is this
+					 * list, and the fact is now inside it.
+					 *
+					 * What forced it is width. The rail is drag-resizable 200–480; at 420 the line
+					 * clipped to `resets…`, and the reset time is half of what the readout is for,
+					 * since ninety-two per cent of a week is a different fact depending on whether
+					 * it comes back Wednesday or in an hour. In here it renders whole at every rail
+					 * width.
+					 *
+					 * It is a fact and not a row, so it takes no row shape and cannot be hovered
+					 * into the sentence slot. It is absent outright until the binary warns — below
+					 * that the payload carries no utilization at all, so there is no gauge to draw.
+					 */}
+					{usage === null ? null : (
+						<>
+							<span
+								data-agent-usage=""
+								className={cn(
+									QUIET,
+									"block px-1.5 pt-1 pb-1.5",
+									// brightness rather than hue: reached comes forward without becoming a
+									// second accent, and a warning stays a peer of the rows below it
+									limit?.status === "rejected" ? "text-text/70" : "text-muted/45",
+								)}
+							>
+								{usage}
+							</span>
+							<MenuRule />
+						</>
+					)}
+					{/*
+					 * One line per row, and one sentence for the whole menu (#186).
+					 *
+					 * A row is its name and nothing else, and the slot at the bottom describes
+					 * whatever the cursor is on — a model or an effort level, the same slot either
+					 * way. That kills four complaints with one move. The list stops repeating
+					 * itself, which it did literally: `Default (recommended)` and `Opus (1M
+					 * context)` resolve to the same model and so carried the same sentence, word
+					 * for word, on adjacent rows. Rows stop being ragged, since a description
+					 * wrapped to one line or two depending on where the sentence fell and gave
+					 * five rows five heights. And effort stops being a second shape.
+					 *
+					 * It is not a new idea: the effort row already worked this way and was the only
+					 * part of the menu nobody objected to.
+					 */}
+					{offer.models.map((entry) => (
+						<MenuRow
+							key={entry.value}
+							label={entry.displayName}
+							on={offer.current.value === entry.value}
+							onOver={() => setOver(entry.value)}
+							onPick={() => {
+								model.choose({ value: entry.value });
+								show(false);
+							}}
+						/>
+					))}
+					{levels.length === 0 ? null : (
+						// the block reports the pointer as well as its rows do, because a row the
+						// environment killed reports nothing: a disabled control fires no mouse event,
+						// so the one row you would hover to ask why it is dead had no way to answer
+						// biome-ignore lint/a11y/noStaticElementInteractions: pointing at the block only picks which sentence the one slot shows, and a keyboard reader has no pointer to point with
+						<span onMouseEnter={pin === null ? undefined : () => setOver(pin)}>
+							<MenuRule />
+							{/* effort keeps the menu open on a press: it is a refinement of the model
+							    above it rather than a second decision */}
+							<MenuGroup label="effort" />
+							{levels.map((level) => (
+								<MenuRow
+									key={level}
+									label={level}
+									on={offer.current.effort === level}
+									dead={pin !== null && pin !== level}
+									onOver={() => setOver(level)}
+									onPick={() => model.choose({ effort: level })}
+								/>
+							))}
+						</span>
+					)}
+					{/*
+					 * The slot, reserving the tallest thing it can ever say.
+					 *
+					 * Everything it can say is the binary's own words and they are wildly uneven:
+					 * `max` runs 165 characters against `xhigh`'s 76 and `low`'s 57, and the model
+					 * sentences are longer again. Sized to the longest with the live one drawn over
+					 * it, because the panel opens upward — a line that grew as the cursor crossed a
+					 * row would move the menu's own top edge, and a pointer must never move what it
+					 * is pointing at.
+					 *
+					 * It sits outside the effort block, because a model with no effort levels still
+					 * has a description: haiku reports no levels at all and the control is then
+					 * absent rather than greyed. Its sentence is not.
+					 */}
+					{/* `leading-[1.5]` over the footer's own `leading-3`: this is the one thing in
+					    here that wraps, and 12px lines on a 10px face is a line for reading along
+					    rather than a paragraph to read */}
+					<p
+						data-agent-model-says={says}
+						className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted/40 leading-[1.5]")}
+					>
+						<span className="invisible" aria-hidden="true">
+							{longest}
+						</span>
+						<span className="absolute inset-x-1.5 top-1.5">{says}</span>
+					</p>
+				</div>
+			) : null}
+		</span>
+	);
+}
+
+/**
+ * One row: the name, and nothing else on the line.
+ *
+ * `dead` is the effort the environment holds — measured, an exported
+ * `CLAUDE_CODE_EFFORT_LEVEL` refuses an in-session change and names itself in the
+ * refusal, so a level nobody can pick is drawn as one nobody can pick rather than as
+ * one that silently does nothing.
+ */
+function MenuRow({
+	label,
+	on,
+	dead = false,
+	onOver,
+	onPick,
+}: {
+	label: string;
+	on: boolean;
+	dead?: boolean;
+	/** the row reports the cursor; the menu owns the one slot that answers it (#186) */
+	onOver: () => void;
+	onPick: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			data-agent-model-row={label}
+			disabled={dead}
+			aria-current={on}
+			onMouseEnter={onOver}
+			onClick={onPick}
+			className={cn(
+				"flex w-full min-w-0 rounded-xs px-1.5 py-1 text-left transition-colors duration-150",
+				dead ? "text-muted/30" : on ? "bg-surface text-text" : "text-text/70 hover:bg-surface/60",
+			)}
+		>
+			<span className="min-w-0 truncate font-mono text-xs leading-4">{label}</span>
+		</button>
+	);
+}
+
+function MenuGroup({ label }: { label: string }) {
+	return <span className={cn(QUIET, "block px-1.5 pt-1 pb-1.5 text-muted/35")}>{label}</span>;
+}
+
+function MenuRule() {
+	return <span className="my-1 block h-px bg-border" />;
 }
 
 /**

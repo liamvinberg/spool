@@ -3,6 +3,7 @@ import type { Attachment } from "../attachment";
 import type { Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
 import type { AgentEvent } from "../daemon/agent-events";
+import type { AgentAsk } from "../daemon/agent-offer";
 import type { ServedThread, ThreadPut } from "../daemon/agent-threads";
 import type { AppType } from "../daemon/app";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
@@ -506,4 +507,37 @@ export async function closeAgentThread(project: string, thread: string): Promise
 	} catch {
 		// the tab is gone from the strip either way; the flag is the only thing at stake
 	}
+}
+
+/**
+ * What the model menu may offer, and what is answering (#118, #199).
+ *
+ * The list is the installed binary's answer to a control request rather than a table
+ * spool shipped, so it is asked for at runtime and cached nowhere. It costs one spawn
+ * and no turn and no token.
+ *
+ * The body arrives unread, the way an event off the turn's stream does: `offerOf` in
+ * `agent-model.ts` owns the shape, so a daemon on another version costs the menu its
+ * rows rather than the rail its render. Undefined where the door said no, which is not
+ * the same fact as a machine with nothing to pick — the footer keeps what it had.
+ */
+export async function agentModelOffer(project: string, thread: string): Promise<unknown> {
+	const res = await client.api.p[":project"].agent.threads[":thread"].models.$get({ param: { project, thread } });
+	return res.ok ? await res.json() : undefined;
+}
+
+/**
+ * Choose one, which is sending the message (#118, #199).
+ *
+ * The menu is a shortcut for `/model haiku` and never a second source of truth, so what
+ * comes back is the binary's own report of what it is now running — and that, rather
+ * than the press, is what moves the readout. An alias it will not take leaves the
+ * report where it was, which is what the footer then says.
+ */
+export async function chooseAgentModel(project: string, thread: string, next: AgentAsk): Promise<unknown> {
+	const res = await client.api.p[":project"].agent.threads[":thread"].model.$post({
+		param: { project, thread },
+		json: next,
+	});
+	return res.ok ? await res.json() : undefined;
 }

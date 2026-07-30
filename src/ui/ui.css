@@ -68,6 +68,11 @@
 	--animate-agent-entry: agent-entry 280ms cubic-bezier(0.22, 0.61, 0.36, 1);
 	--animate-agent-word: agent-word 170ms cubic-bezier(0.22, 0.61, 0.36, 1);
 	--animate-agent-spin: agent-spin 1.15s linear infinite;
+	/* the model menu (#199) opens upward off an 18px line, so it arrives from below
+	 * rather than above: `menu-in` is the same gesture the other way up, and a panel
+	 * that dropped down from a trigger at the bottom of the rail would be travelling
+	 * away from where it came from */
+	--animate-agent-menu-in: agent-menu-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
 
 	@keyframes agent-entry {
 		from {
@@ -85,6 +90,13 @@
 	@keyframes agent-spin {
 		to {
 			transform: rotate(360deg);
+		}
+	}
+
+	@keyframes agent-menu-in {
+		from {
+			opacity: 0;
+			transform: translateY(4px);
 		}
 	}
 
@@ -132,6 +144,7 @@
 	.animate-find-panel-in,
 	.animate-agent-entry,
 	.animate-agent-word,
+	.animate-agent-menu-in,
 	.animate-agent-spin {
 		animation: none;
 	}
