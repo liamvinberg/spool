@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
@@ -388,6 +390,19 @@ const arriving = (host: HTMLElement) => host.querySelector("[data-agent-prose]")
 const MESSAGE = "the frame is authored and live on the canvas, and the shot came back clean.";
 
 /**
+ * The same sentence twenty times over: long enough to still be arriving, and plain, so
+ * the text the log draws is the text that went in.
+ *
+ * It is how a stopped clock is observed now that nothing in the log draws a duration. The
+ * pace is `min(12ms, 250ms ÷ pending)` per character, so a running clock spends a whole
+ * delta inside 250ms whatever its length — which makes "is any of it still arriving" a
+ * binary reading of whether the clock moved at all, with no window to tune. The arriving
+ * window is the only place a partial message is drawn: once the whole of it is on screen
+ * `Prose` draws it settled and the box is gone.
+ */
+const LONG = Array.from({ length: 20 }, () => MESSAGE).join(" ");
+
+/**
  * The longest message the captures hold: 3,372 characters of bold lead-ins, inline code,
  * two fenced blocks and a blockquote. It is the thing every claim about a long message is
  * about, so it is what the rail is asked to draw.
@@ -594,27 +609,11 @@ describe("one turn", () => {
 	});
 
 	/**
-	 * The measured wait before the first token is over a second, so the beat is the
-	 * difference between the rail reading as intent and reading as a hang. It leaves no
-	 * receipt: once the answer starts, the wait was the absence of one.
+	 * The wait before the first token draws nothing, and neither does the thought that
+	 * follows it. The stroke on the composer's border is what says the turn is alive; the
+	 * log is receipts, and the one thing it must never do is add a line and take it back.
 	 */
-	it("shows the wait as work, and takes it back once the first token lands", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await send(canvas.host, "go");
-
-		canvas.turn.push(waiting);
-		await settle();
-		const beats = rail(canvas.host)?.querySelectorAll(".animate-agent-spin").length ?? 0;
-		expect(beats).toBe(1);
-
-		canvas.turn.push(speaking);
-		canvas.turn.push(say("the frame is live."));
-		await settle();
-		expect(rail(canvas.host)?.querySelectorAll(".animate-agent-spin")).toHaveLength(0);
-	});
-
-	it("draws a thinking beat as a duration and never as prose", async () => {
+	it("draws nothing for the wait or the thought", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "go");
@@ -624,8 +623,10 @@ describe("one turn", () => {
 		canvas.turn.push({ kind: "thinking", block: 0, tokens: 61, parent: null });
 		await settle();
 
-		expect(rail(canvas.host)?.textContent).toContain("thinking");
-		expect(rail(canvas.host)?.textContent).toMatch(/thinking\s*\d+\.\d+s/);
+		expect(rail(canvas.host)?.querySelectorAll(".animate-agent-spin")).toHaveLength(0);
+		expect(log(canvas.host)).not.toContain("thinking");
+		// the human's words and nothing under them
+		expect(log(canvas.host).trim()).toBe("go");
 	});
 
 	it("lets the agent's words arrive rather than appear whole", async () => {
@@ -1936,23 +1937,31 @@ describe("a question in the log", () => {
 		expect(canvas.turn.answers.at(-1)).toEqual({ request: "req-q", reply: { kind: "deny" } });
 	});
 
+	/**
+	 * The clock is read off the arriving edge of a message, which is the one thing in this
+	 * rail that is paced by it: a running clock spends a whole delta inside 250ms, so a
+	 * message still short of its own end after 700ms is a clock that never moved.
+	 */
 	it("stops the clock while it waits and never answers for anybody", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "shoot the receipt");
 		canvas.turn.push({ kind: "waiting", parent: null });
-		canvas.turn.push({ kind: "thinking", block: 0, tokens: 50, parent: null });
+		canvas.turn.push(speaking);
+		canvas.turn.push(say(LONG));
+		// the edge has to be somewhere before the question stops it, or a frozen clock at
+		// zero would pass this by drawing nothing at all
+		await until(() => arriving(canvas.host).length > 0);
 		ask(canvas);
 		await until(() => options(canvas.host).length === 2);
-
-		const beat = () => canvas.host.querySelector("[data-agent-log]")?.textContent?.match(/thinking([\d.]+)s/)?.[1];
-		const held = beat();
-		expect(held).toBeDefined();
+		expect(arriving(canvas.host).length).toBeLessThan(LONG.length);
 		await settle(700);
 
-		// the agent is not thinking while somebody decides, so the log does not count
-		// the seconds they take — and nothing spool runs ever submits an answer
-		expect(beat()).toBe(held);
+		// the words are not arriving while somebody decides, so 700ms later some of the
+		// message is still on its way — and nothing spool runs ever submits an answer
+		const held = arriving(canvas.host);
+		expect(held.length).toBeGreaterThan(0);
+		expect(held.length).toBeLessThan(LONG.length);
 		expect(canvas.turn.answers).toEqual([]);
 		expect(canvas.host.querySelector("[data-agent-ask]")?.getAttribute("data-agent-ask")).toBe("open");
 	});
@@ -2078,14 +2087,14 @@ describe("an approval in the log", () => {
 		// or every event after it stamps at the same millisecond and nothing draws
 		canvas.turn.push({ kind: "result", id: "c1", failed: true, text: "", images: [], parent: null });
 		canvas.turn.push({ kind: "waiting", parent: null });
-		canvas.turn.push({ kind: "thinking", block: 0, tokens: 50, parent: null });
+		canvas.turn.push(speaking);
+		canvas.turn.push(say(LONG));
 		await until(() => canvas.host.querySelector("[data-agent-ask]")?.getAttribute("data-agent-ask") === "dropped");
 
-		const beat = () => canvas.host.querySelector("[data-agent-log]")?.textContent?.match(/thinking([\d.]+)s/)?.[1];
-		const held = beat();
-		expect(held).toBeDefined();
-		await settle(500);
-		expect(beat()).not.toBe(held);
+		// the clock has to come back with the drop, or the message stamped after it would
+		// sit at zero characters forever: nothing left arriving, and the whole of it drawn
+		await until(() => canvas.host.querySelector("[data-agent-prose]") === null);
+		expect(log(canvas.host)).toContain(LONG);
 	});
 });
 
@@ -3652,5 +3661,203 @@ describe("signed out", () => {
 		expect(rail(canvas.host)?.querySelectorAll("input")).toHaveLength(0);
 		expect(rail(canvas.host)?.textContent).not.toContain("API key");
 		expect(rail(canvas.host)?.textContent).not.toContain("ANTHROPIC");
+	});
+});
+
+/**
+ * The stroke on the composer's top border, which is what says the agent is alive (#N).
+ *
+ * It spends no transcript pixels: it rides the hairline the composer already draws. So
+ * what there is to assert is which of three pictures is up, and then the arithmetic of the
+ * stroke itself, which lives in the stylesheet rather than in any element — a keyframe's
+ * values are not reachable from a mounted node, so the last block reads the file the way
+ * `agent-said.test.ts` reads it.
+ */
+describe("the stroke on the composer's border", () => {
+	const stroke = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-wind]");
+	const state = (host: HTMLElement) => stroke(host)?.getAttribute("data-agent-wind");
+	const laying = (host: HTMLElement) => stroke(host)?.className.includes("animate-agent-wind") ?? false;
+	const stopped = (host: HTMLElement) => stroke(host)?.className.includes("animation-play-state:paused") ?? false;
+	const broken = (host: HTMLElement) =>
+		host.querySelector<HTMLElement>("[data-agent-wind-break]")?.className.includes("opacity-100") ?? false;
+
+	/** a still of the rail at rest is the rail as it shipped: the border and nothing over it */
+	it("draws the border unchanged while nothing is running", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		expect(state(canvas.host)).toBe("idle");
+		expect(laying(canvas.host)).toBe(false);
+		expect(broken(canvas.host)).toBe(false);
+	});
+
+	/**
+	 * One picture for every state of a turn in flight. A reader watching the edge of their
+	 * own eye learns nothing from the difference between a request being out and a `read`
+	 * being open, because the answer to *do I need to do anything* is no in both.
+	 */
+	it("lays and takes up for a request out, a thought, words and work alike", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+
+		canvas.turn.push(waiting);
+		await settle();
+		expect(state(canvas.host)).toBe("laying");
+
+		canvas.turn.push(speaking);
+		canvas.turn.push({ kind: "thinking", block: 0, tokens: 40, parent: null });
+		await settle();
+		expect(state(canvas.host)).toBe("laying");
+
+		canvas.turn.push(say("the frame is live."));
+		canvas.turn.push({ kind: "called", id: "c9", tool: "Read", input: { file_path: "/project/x" }, parent: null });
+		await settle();
+		expect(state(canvas.host)).toBe("laying");
+		expect(laying(canvas.host)).toBe(true);
+		expect(stopped(canvas.host)).toBe(false);
+		expect(broken(canvas.host)).toBe(false);
+	});
+
+	/**
+	 * The one state that is a call to act gets a shape of its own rather than the same
+	 * picture slower: the stroke stops where the request caught it and an 18px break opens
+	 * in the line. Stopping is the animation paused, so nothing of spool's holds the clock.
+	 */
+	it("stops where it was and breaks the line while the turn waits on a person", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+		canvas.turn.push({ kind: "called", id: "c1", tool: "Bash", input: { command: "spool upgrade" }, parent: null });
+		canvas.turn.push({
+			kind: "asking",
+			request: "req-a",
+			call: "c1",
+			tool: "Bash",
+			display: "Bash",
+			input: { command: "spool upgrade" },
+			description: "Run `spool upgrade`",
+			interaction: false,
+			suggestions: [],
+			parent: null,
+		});
+		await until(() => state(canvas.host) === "parked");
+
+		expect(laying(canvas.host)).toBe(true);
+		expect(stopped(canvas.host)).toBe(true);
+		expect(broken(canvas.host)).toBe(true);
+	});
+
+	/** the turn is over, so the border is the border again */
+	it("is gone once the turn has ended", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+		canvas.turn.push(waiting);
+		canvas.turn.push(speaking);
+		canvas.turn.push(say("done."));
+		canvas.turn.push(ended);
+		// the stream is what says the turn is in flight, so it lays until the process goes
+		canvas.turn.close();
+		await until(() => state(canvas.host) === "idle");
+
+		expect(laying(canvas.host)).toBe(false);
+		expect(broken(canvas.host)).toBe(false);
+	});
+
+	/**
+	 * The stroke is the entire indicator. Earlier candidates carried a `working` or an
+	 * `idle` beside it and both were rejected: a word on the boundary is a word to read,
+	 * and the whole argument for a stroke is that it is answered without reading anything.
+	 */
+	it("carries no word, and nothing that could hold one", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+		canvas.turn.push(waiting);
+		await settle();
+
+		const parts = [...canvas.host.querySelectorAll("[data-agent-wind], [data-agent-wind-break]")];
+		expect(parts).toHaveLength(2);
+		for (const part of parts) {
+			expect(part.textContent).toBe("");
+			expect(part.children).toHaveLength(0);
+			expect(part.getAttribute("aria-hidden")).toBe("true");
+		}
+		expect(rail(canvas.host)?.textContent).not.toContain("working");
+	});
+});
+
+/**
+ * The arithmetic of the stroke, which is a stylesheet fact.
+ *
+ * Two independently moving ends on one composited matrix: `translateX` is the tail and
+ * `scaleX` about a left origin is the length. Neither the cycle nor a keyframe's values are
+ * reachable from a mounted element, so this reads the file.
+ */
+describe("the stylesheet the stroke lives in", () => {
+	const CSS = readFileSync(join(process.cwd(), "src/ui/ui.css"), "utf8");
+	const block = (open: string): string => {
+		const at = CSS.indexOf(open);
+		if (at === -1) throw new Error(`no ${open}`);
+		const end = CSS.indexOf("\n\t}", at);
+		return CSS.slice(at, end === -1 ? undefined : end);
+	};
+	/** every stop as [tail, length], both fractions of the track */
+	const stops = [...block("@keyframes agent-wind").matchAll(/translateX\((-?[\d.]+)%\) scaleX\(([\d.]+)\)/g)].map(
+		(stop) => [Number(stop[1]) / 100, Number(stop[2])] as const,
+	);
+
+	it("lays and takes up once every 1600ms", () => {
+		expect(CSS).toContain("--animate-agent-wind: agent-wind 1600ms linear infinite");
+	});
+
+	/**
+	 * Linear, because the easing is in the values: each end has its own smoothstep over its
+	 * own part of the cycle, and one shared timing function cannot express two.
+	 */
+	it("moves two ends on one matrix and nothing else", () => {
+		const frames = block("@keyframes agent-wind");
+
+		expect(stops).toHaveLength(21);
+		expect(frames).not.toMatch(/opacity|filter|background|width|left|margin/);
+	});
+
+	/** so the loop restarts on screen with nothing drawn, rather than off the right edge */
+	it("is nothing at all at both ends of the cycle", () => {
+		expect(stops.at(0)).toEqual([0, 0]);
+		expect(stops.at(-1)).toEqual([1, 0]);
+	});
+
+	/**
+	 * The progress question, answered by the arithmetic rather than by taste: no state of
+	 * it is full, and its length falls for the whole second half of the cycle. A bar that
+	 * empties on the way to completion is not the idiom.
+	 */
+	it("is never full and never accumulates", () => {
+		const lengths = stops.map(([, length]) => length);
+		const longest = Math.max(...lengths);
+
+		expect(longest).toBeCloseTo(0.41, 2);
+		expect(lengths.indexOf(longest)).toBe(10);
+		const falling = lengths.slice(10);
+		expect(falling).toEqual([...falling].sort((one, two) => two - one));
+		// and the tail only ever goes forward, so nothing is ever laid backwards
+		const tails = stops.map(([tail]) => tail);
+		expect(tails).toEqual([...tails].sort((one, two) => one - two));
+	});
+
+	/**
+	 * Stillness cannot mean absence here, because the stroke is the whole indicator. It is
+	 * held a third of the way along its own cycle instead, which is the same picture
+	 * everybody else sees with nothing moving in it.
+	 */
+	it("holds one static stroke when stillness is asked for", () => {
+		const at = CSS.indexOf("@media (prefers-reduced-motion: reduce)");
+		const still = CSS.slice(at, CSS.indexOf("\n}", at));
+
+		expect(still).toContain(".animate-agent-wind");
+		expect(still).toContain("animation: none");
+		expect(still).toContain("transform: translateX(6.372%) scaleX(0.3406)");
 	});
 });
