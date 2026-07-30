@@ -37,7 +37,7 @@ Lifecycle (offline, take a path):
 For a disposable implementation lane, run \`spool open <lane>\` before verification and \`spool remove <lane>\` before erasing the worktree. Never alias a lane to the registered main checkout: verification must read the lane's source.
 
 Read verbs (work from any cwd inside a registered project, auto-start the daemon):
-  spool selection       what the human points at: frame or element, source path and lines
+  spool selection       what the human points at, as one <selection> block: frames and elements, paths and lines
   spool flows           the link graph, read from source: edges, certainty, verified walks
   spool shot <frame>    HTML headless screenshot, or terminal source-current persisted-grid SVG
   spool logs <frame>    the same scenario HTML boot's console, cached by compiled source
@@ -226,10 +226,16 @@ For Playwright, wait for DOMContentLoaded and then a meaningful selector from th
 
 Walks you take in the player flip verified marks on the map's derived edges — \`spool flows\` shows which claims a real session has confirmed, most valuable on might edges: a verified faint edge is a branch that actually fired. The player's restart re-reads the scenario, so edit-seed-restart iterates on one URL.
 
-\`spool selection\` prints what the human points at — always a JSON list, empty when nothing is selected:
-  frame entries      { kind: "frame", frame, path, size: { w, h } }
-  element entries    { kind: "element", frame, path, lines: [start, end], selector, excerpt }
-                     — the human selected into a frame with the Select tool. path and lines land in source (open-in-editor exact), selector in the live DOM, excerpt is the JSX span. "generated": true marks runtime-created DOM: lines point at the nearest stamped ancestor (no stamp at all: the frame's first line), excerpt becomes live outerHTML, trust the selector.
+\`spool selection\` prints what the human points at as one block — the same bytes a spool agent-chat prompt carries, and nothing at all when nothing is selected:
+
+  <selection>
+  cart — design/frames/app/cart/frame.tsx — 480×640
+  checkout · line-item — design/frames/app/checkout/frame.tsx:44-56
+    <li className="flex items-baseline justify-between py-2">…
+    3 excerpts elided over budget — read the paths
+  </selection>
+
+A frame is its name, its source path and its size. An element is its frame, what the source calls it, and its path with the line range the stamp spans; the line under it is the JSX excerpt, capped at 240 characters. Every entry always contributes that pointer — read the path when you need more — and only excerpts are ever dropped, which the block says out loud when it happens. A runtime-created element takes its name and excerpt from the live DOM and its lines from the nearest stamped ancestor.
 
 \`spool flows\` prints { frames, edges, unreadable } — every edge { from, to, certainty: "will" | "might", sites: [{ path, line, conditional? }] }, "verified": true once a real session took it, "missing": true on targets no frame answers (typo'd ui.go literals included), and unreadable entries { frame, path, line } for navigation whose destination cannot be read: together, the todo list when wiring a flow.`,
 };

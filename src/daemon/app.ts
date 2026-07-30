@@ -10,6 +10,7 @@ import { streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import trash from "trash";
 import { z } from "zod";
+import { MAX_ATTACHMENT_BYTES, parseAttachment } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_FAVICON_SVG } from "../brand";
 import type { Cover } from "../cover";
 import { SpoolError } from "../errors";
@@ -19,6 +20,7 @@ import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../reg
 import { gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
+import { agentPromptContent } from "./agent-spawn";
 import { type AgentTurn, startAgentTurn } from "./agent-turn";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
@@ -62,6 +64,7 @@ import {
 	renderOriginFor,
 } from "./security";
 import { createSelectionStore, parseSelectionPut } from "./selection";
+import { selectionBlock } from "./selection-block";
 import { type AppEvent, type MachineStateWatchAdapter, readSession, updateSession, watchMachineState } from "./session";
 import { createShotTaker } from "./shots";
 import type { TermExecutor } from "./term-exec";
@@ -777,12 +780,23 @@ export function createDaemonApp({
 		.post(
 			"/api/p/:project/agent/turn",
 			validator("json", (value, c) => {
-				const prompt =
-					typeof value === "object" && value !== null ? (value as { prompt?: unknown }).prompt : undefined;
-				if (typeof prompt !== "string" || prompt.trim() === "") {
+				const body = (typeof value === "object" && value !== null ? value : {}) as {
+					prompt?: unknown;
+					attachment?: unknown;
+				};
+				if (typeof body.prompt !== "string" || body.prompt.trim() === "") {
 					return c.text('a turn is { "prompt": "…" }', 400);
 				}
-				return { prompt };
+				// an attachment is optional and never guessed at: a picture spool cannot
+				// send is said out loud rather than dropped out of the message (#119)
+				const attached = body.attachment === undefined ? undefined : parseAttachment(body.attachment);
+				if (body.attachment !== undefined && attached === undefined) {
+					return c.text(
+						`an attachment is { "media": "image/png", "data": "<base64>" } — png, jpeg, gif or webp under ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB`,
+						400,
+					);
+				}
+				return { prompt: body.prompt, attachment: attached };
 			}),
 			(c) => {
 				// one turn, streamed as it arrives (#191): the prompt goes down the
@@ -790,10 +804,13 @@ export function createDaemonApp({
 				// order the wire sent them
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
+				const { prompt, attachment } = c.req.valid("json");
 				const turn = startAgentTurn({
 					executor: spawnAgent,
 					root: project.root,
-					content: [{ type: "text", text: c.req.valid("json").prompt }],
+					// what the hands are pointing at rides with the words, in the bytes
+					// `spool selection` prints for this same moment (#116)
+					content: agentPromptContent(prompt, selectionBlock(selections.get(project.root)), attachment),
 				});
 				liveTurns.add(turn);
 				return streamSSE(c, async (stream) => {
@@ -845,7 +862,10 @@ export function createDaemonApp({
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				selections.set(project.root, c.req.valid("json"));
-				return c.body(null, 204);
+				// the enriched list comes straight back, because the composer's chips are
+				// the promise of what the prompt will carry and only this side knows the
+				// paths, the sizes, the line ranges and the excerpts (#116)
+				return c.json({ selection: selections.get(project.root) });
 			},
 		)
 		.put(

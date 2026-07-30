@@ -189,7 +189,8 @@ describe("daemon authority matrix", () => {
 				})
 			).status,
 		).toBe(403);
-		expect((await control(path, init)).status).toBe(204);
+		// the put answers with the enriched list rather than an empty 204 (#116)
+		expect((await control(path, init)).status).toBe(200);
 		expect(await (await control(path)).json()).toMatchObject({ selection: [{ frame: "home" }] });
 	});
 

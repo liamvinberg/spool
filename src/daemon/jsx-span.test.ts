@@ -26,6 +26,7 @@ describe("extractJsxSpan", () => {
 		expect(extractJsxSpan(source, 4, 4)).toEqual({
 			lines: [4, 4],
 			excerpt: '<button className="pay">Pay now</button>',
+			name: "button",
 		});
 	});
 
@@ -34,6 +35,7 @@ describe("extractJsxSpan", () => {
 		expect(extractJsxSpan(source, 2, 2)).toEqual({
 			lines: [2, 4],
 			excerpt: "<div>\n\t\t<div>inner</div>\n\t</div>",
+			name: "div",
 		});
 	});
 
@@ -42,6 +44,7 @@ describe("extractJsxSpan", () => {
 		expect(extractJsxSpan(source, 2, 2)).toEqual({
 			lines: [2, 2],
 			excerpt: '<input type="text" />',
+			name: "input",
 		});
 	});
 
@@ -56,6 +59,7 @@ describe("extractJsxSpan", () => {
 		expect(extractJsxSpan(source, 2, 2)).toEqual({
 			lines: [2, 4],
 			excerpt: '<button onClick={() => go(a > b ? "x" : "</button>")} title={"{"}>\n\t\tGo\n\t</button>',
+			name: "button",
 		});
 	});
 
@@ -72,6 +76,7 @@ describe("extractJsxSpan", () => {
 		expect(extractJsxSpan(source, 2, 2)).toEqual({
 			lines: [2, 6],
 			excerpt: "<ul>\n\t\t{items.map((i) => (\n\t\t\t<li key={i}>{i}</li>\n\t\t))}\n\t</ul>",
+			name: "ul",
 		});
 	});
 
@@ -82,6 +87,7 @@ describe("extractJsxSpan", () => {
 			lines: [2, 2],
 			// biome-ignore lint/suspicious/noTemplateCurlyInString: same fixture, expected verbatim
 			excerpt: '<div className={`a ${x > 2 ? "b" : `${y}`} c`}>ok</div>',
+			name: "div",
 		});
 	});
 
@@ -99,6 +105,7 @@ describe("extractJsxSpan", () => {
 		expect(extractJsxSpan(source, 2, 2)).toEqual({
 			lines: [2, 7],
 			excerpt: "<section>\n\t\t{/* a <fake> tag } */}\n\t\t<>\n\t\t\t<i>a</i>\n\t\t</>\n\t</section>",
+			name: "section",
 		});
 	});
 
@@ -108,6 +115,7 @@ describe("extractJsxSpan", () => {
 		expect(extractJsxSpan(source, 2, 2)).toEqual({
 			lines: [2, 23],
 			excerpt: '<main className="screen">',
+			name: "main",
 		});
 	});
 
@@ -116,7 +124,14 @@ describe("extractJsxSpan", () => {
 		expect(extractJsxSpan(source, 2, 2)).toEqual({
 			lines: [2, 5],
 			excerpt: '<img\n\t\tsrc="/a.png"\n\t\talt="a"\n\t/>',
+			name: "img",
 		});
+	});
+
+	it("names a component by what the source called it, and a fragment not at all", () => {
+		const source = lines("const x = (", "\t<Icons.Cart size={12} />", ");");
+		expect(extractJsxSpan(source, 2, 2)?.name).toBe("Icons.Cart");
+		expect(extractJsxSpan(lines("const x = (", "\t<>ok</>", ");"), 2, 2)?.name).toBeUndefined();
 	});
 
 	it("returns undefined when the position does not point at a tag", () => {
@@ -131,6 +146,7 @@ describe("extractJsxSpan", () => {
 		expect(extractJsxSpan(source, 2, 2)).toEqual({
 			lines: [2, 2],
 			excerpt: '<button className="pay">',
+			name: "button",
 		});
 	});
 

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, sep } from "node:path";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
-import { extractJsxSpan } from "./jsx-span";
+import { extractJsxSpan, type JsxSpan } from "./jsx-span";
 import { isSafeName } from "./project-files";
 import { frameFolder, frameGeometry, lookupFrame } from "./projection";
 
@@ -20,6 +20,13 @@ export type SelectionEntry =
 	| {
 			kind: "element";
 			frame: string;
+			/**
+			 * What spool calls this element: the name the source wrote, or the live tag
+			 * when there is no source to read (#116). Never unique — sibling rows of one
+			 * list share it — which is why removal reaches out to the canvas, where they
+			 * are two boxes in two places.
+			 */
+			name: string;
 			path: string;
 			lines: [number, number];
 			selector: string;
@@ -108,6 +115,7 @@ function elementEntry(root: string, { frame, selector, outerHtml, source, genera
 		return {
 			kind: "element",
 			frame,
+			name: tagOf(outerHtml),
 			path: framePath,
 			lines: [1, 1],
 			selector,
@@ -121,7 +129,18 @@ function elementEntry(root: string, { frame, selector, outerHtml, source, genera
 	// a generated element's own markup never exists in source: live outerHTML
 	// is the excerpt, the stamped ancestor lends its lines
 	const excerpt = generated ? cap(outerHtml) : (span?.excerpt ?? sourceLine(stamp) ?? cap(outerHtml));
-	const entry: SelectionEntry = { kind: "element", frame, path: `design/${stamp.rel}`, lines, selector, excerpt };
+	// and its name comes from the same place its excerpt does — the stamped
+	// ancestor's authored name would be somebody else's word for it
+	const name = generated ? tagOf(outerHtml) : (span?.name ?? tagOf(outerHtml));
+	const entry: SelectionEntry = {
+		kind: "element",
+		frame,
+		name,
+		path: `design/${stamp.rel}`,
+		lines,
+		selector,
+		excerpt,
+	};
 	return generated ? { ...entry, generated: true } : entry;
 }
 
@@ -162,7 +181,7 @@ export function parseStamp(root: string, source: string): Stamp | undefined {
 	return { file, rel: rel.split(sep).join("/"), line, column };
 }
 
-function spanOf(stamp: Stamp): { lines: [number, number]; excerpt: string } | undefined {
+function spanOf(stamp: Stamp): JsxSpan | undefined {
 	let text: string;
 	try {
 		text = readFileSync(stamp.file, "utf8");
@@ -184,4 +203,15 @@ function sourceLine(stamp: Stamp): string | undefined {
 
 function cap(text: string): string {
 	return text.length <= EXCERPT_CAP ? text : `${text.slice(0, EXCERPT_CAP - 1)}…`;
+}
+
+/**
+ * The live DOM's own word for an element, off the serialization it handed over.
+ *
+ * `outerHTML` always opens on the tag, so this is a read rather than a guess; the
+ * fallback exists because a payload is somebody else's input and a noun is not
+ * worth a 400.
+ */
+function tagOf(outerHtml: string): string {
+	return /^<\s*([A-Za-z][\w$.:-]*)/.exec(outerHtml.slice(0, 80))?.[1] ?? "element";
 }

@@ -1,4 +1,5 @@
 import { hc } from "hono/client";
+import type { Attachment } from "../attachment";
 import type { Cover } from "../cover";
 import type { AgentEvent } from "../daemon/agent-events";
 import type { AppType } from "../daemon/app";
@@ -7,7 +8,7 @@ import type { FsListing } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
-import type { SelectionPut } from "../daemon/selection";
+import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 
 declare global {
 	interface Window {
@@ -32,6 +33,8 @@ export type {
 	ProjectCard,
 	ProjectedFrame,
 	Projection,
+	SelectionEntry,
+	SelectionPut,
 };
 
 /**
@@ -188,9 +191,22 @@ export function postWalk(project: string, from: string, to: string): void {
 	void client.api.p[":project"].walked.$post({ param: { project }, json: { from, to } }).catch(() => {});
 }
 
-/** What Liam points at (#23) — daemon memory, the agent's read surface. */
-export function putSelection(project: string, selection: SelectionPut): void {
-	void client.api.p[":project"].selection.$put({ param: { project }, json: selection });
+/**
+ * What Liam points at (#23) — daemon memory, the agent's read surface.
+ *
+ * The enriched list comes back, because the composer's chips are the promise of
+ * what a prompt will carry and only the daemon knows the paths, the sizes, the line
+ * ranges and the excerpts (#116). Undefined is the put that never landed, which
+ * leaves the chips as they were rather than emptying them.
+ */
+export async function putSelection(project: string, selection: SelectionPut): Promise<SelectionEntry[] | undefined> {
+	try {
+		const res = await client.api.p[":project"].selection.$put({ param: { project }, json: selection });
+		if (!res.ok) return undefined;
+		return ((await res.json()) as { selection: SelectionEntry[] }).selection;
+	} catch {
+		return undefined;
+	}
 }
 
 /** Move and resize write geometry sidecars alone — never source (#23). */
@@ -336,7 +352,17 @@ export function subscribeSse(url: string, handlers: Record<string, (data: unknow
  */
 export function streamAgentTurn(
 	project: string,
-	prompt: string,
+	said: {
+		readonly prompt: string;
+		/**
+		 * A reference riding with the words (#119), as base64 rather than a path.
+		 *
+		 * Look-only and nothing lands: the bytes go down the same stdin the prompt does,
+		 * so the project gains no file. A browser never reveals a dropped file's path,
+		 * which is why this is bytes at all.
+		 */
+		readonly attached?: Attachment | undefined;
+	},
 	on: { readonly event: (event: AgentEvent) => void; readonly end: (error?: string) => void },
 ): () => void {
 	const controller = new AbortController();
@@ -346,7 +372,7 @@ export function streamAgentTurn(
 			// `init` is spread over what the client built, so `headers` here would replace
 			// its own `content-type: application/json` and the daemon would reject the body
 			const res = await client.api.p[":project"].agent.turn.$post(
-				{ param: { project }, json: { prompt } },
+				{ param: { project }, json: { prompt: said.prompt, attachment: said.attached } },
 				{ init: { signal: controller.signal } },
 			);
 			if (!res.ok || res.body === null) {

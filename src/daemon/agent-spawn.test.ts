@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { skillText } from "../skill";
-import { AGENT_ALLOW_RULE, agentFraming, agentPromptLine, planAgentSpawn } from "./agent-spawn";
+import { AGENT_ALLOW_RULE, agentFraming, agentPromptContent, agentPromptLine, planAgentSpawn } from "./agent-spawn";
 
 /** the value that follows a flag, the way the child's argv reads it */
 function flagValue(args: readonly string[], flag: string): string | undefined {
@@ -82,6 +82,26 @@ describe("the spawn", () => {
 			type: "user",
 			message: { role: "user", content: [{ type: "text", text: "make these consistent" }] },
 		});
+	});
+});
+
+describe("what rides with the words", () => {
+	const block = "<selection>\ncart — design/frames/cart/frame.tsx — 390×844\n</selection>";
+
+	it("leads the words with the selection, and with a picture before both", () => {
+		expect(agentPromptContent("make these consistent", block)).toEqual([
+			{ type: "text", text: `${block}\n\nmake these consistent` },
+		]);
+		expect(agentPromptContent("match this", "", { media: "image/png", data: "AAAA" })).toEqual([
+			{ type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
+			{ type: "text", text: "match this" },
+		]);
+	});
+
+	it("adds no block when nothing is pointed at", () => {
+		expect(agentPromptContent("start a habit tracker", "")).toEqual([
+			{ type: "text", text: "start a habit tracker" },
+		]);
 	});
 });
 

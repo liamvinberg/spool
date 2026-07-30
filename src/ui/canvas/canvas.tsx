@@ -5,7 +5,7 @@ import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import { snapPxToCells } from "../../term/cells";
-import type { Camera, FlowEdge, FrameCollision, Geometry, ProjectedFrame } from "../api";
+import type { Camera, FlowEdge, FrameCollision, Geometry, ProjectedFrame, SelectionEntry, SelectionPut } from "../api";
 import {
 	beaconTrash,
 	fetchCanvasState,
@@ -74,6 +74,7 @@ import {
 	clipboardCopyAllowed,
 	type PickedHit,
 	parseFrameMessage,
+	pickKey,
 	pickMessage,
 	type SessionRecord,
 	type SiteAnchor,
@@ -271,6 +272,20 @@ export function ProjectCanvas({
 	}, [navigatorFrames]);
 	/** the frame a row in the rail is pointing at, answered out here rather than in the log */
 	const [pointed, setPointed] = useState<string | null>(null);
+	/**
+	 * What the hands are pointing at, as the daemon enriched it (#116).
+	 *
+	 * The composer's chips are the promise of what a prompt will carry, so they are
+	 * this list rather than a second reading of `selected` and `picked` out here: only
+	 * the daemon knows the paths, the sizes, the line ranges and the excerpts, and a
+	 * strip drawn off anything else could promise what the block does not hold.
+	 */
+	const [pointing, setPointing] = useState<{ entries: readonly SelectionEntry[]; inside: boolean }>({
+		entries: [],
+		inside: false,
+	});
+	/** the chip or box the pointer is over, which lights the other one (#116) */
+	const [lit, setLit] = useState<string | null>(null);
 	const exportFrames = useMemo(
 		() => (exportDialog === null ? [] : framesInCanvasOrder(visibleFrames, exportDialog)),
 		[visibleFrames, exportDialog],
@@ -791,28 +806,64 @@ export function ProjectCanvas({
 
 	// --- selection sync (#23): what Liam points at, served to agents ------------
 
+	/**
+	 * Entering is the strongest thing you can say about what you mean, and it clears
+	 * the selection ring — so it must still be served. Without the same fallback,
+	 * agents and the player both lose you the moment you step inside a frame; and
+	 * because the composer draws whatever is served, this is also the state where the
+	 * strip holds a chip nobody chose (#139).
+	 */
+	const insideOnly = picked.length === 0 && selected.length === 0 && entered !== null;
+
 	useEffect(() => {
 		const timer = setTimeout(() => {
-			if (picked.length > 0) {
-				putSelection(project, {
-					elements: picked.map(({ frame, selector, outerHtml, source, generated }) => ({
-						frame,
-						selector,
-						outerHtml,
-						source,
-						generated,
-					})),
-				});
-			} else {
-				// Entering is the strongest thing you can say about what you mean,
-				// and it clears the selection ring — so it must still be served. The
-				// rail already reads it this way; without the same fallback, agents
-				// and the player both lose you the moment you step inside a frame.
-				putSelection(project, { frames: selected.length > 0 ? selected : entered === null ? [] : [entered] });
-			}
+			const put: SelectionPut =
+				picked.length > 0
+					? {
+							elements: picked.map(({ frame, selector, outerHtml, source, generated }) => ({
+								frame,
+								selector,
+								outerHtml,
+								source,
+								generated,
+							})),
+						}
+					: { frames: selected.length > 0 ? selected : entered === null ? [] : [entered] };
+			// the enriched list is what the composer draws (#116): the strip is the
+			// promise of what a prompt will carry, so it is the daemon's own answer
+			// rather than a second guess at it out here. `inside` travels with it for
+			// the same reason — read live it would say "no ✕" a beat before the chip it
+			// is about had arrived
+			void putSelection(project, put).then((entries) => {
+				if (entries !== undefined) setPointing({ entries, inside: insideOnly });
+			});
 		}, SELECTION_PUT_MS);
 		return () => clearTimeout(timer);
-	}, [project, picked, selected, entered]);
+	}, [project, picked, selected, entered, insideOnly]);
+
+	/**
+	 * Where a chip in the composer reaches back to (#116).
+	 *
+	 * Removal belongs on the canvas because that is where the thing being removed is:
+	 * two picks of one list row are one string in the rail and two boxes out there, so
+	 * a ✕ that only tidied the strip would leave the two disagreeing about what is
+	 * picked. `null` is the collapsed strip's own ✕, which drops the lot rather than a
+	 * member, since the count stands for the whole list.
+	 *
+	 * It leaves an entered frame alone, and cannot be reached from one: inside a frame
+	 * the strip is a single chip with no ✕ at all (#139), because out there the only
+	 * way to stop pointing at the frame you are in is to leave it.
+	 */
+	const dropPointed = useCallback((id: string | null) => {
+		setLit(null);
+		if (id === null) {
+			setPicked([]);
+			setSelected([]);
+			return;
+		}
+		setPicked((current) => current.filter((pick) => pickKey(pick.frame, pick.selector) !== id));
+		setSelected((current) => current.filter((name) => name !== id));
+	}, []);
 
 	// --- geometry writes (#23): sidecars only, never source ---------------------
 
@@ -2057,6 +2108,23 @@ export function ProjectCanvas({
 	const pointedFrame = pointed !== null && visibleFrames.some((frame) => frame.name === pointed) ? pointed : null;
 	const pointedPage = pointed === null || pointedFrame !== null ? null : framePageOf(pointed);
 
+	/**
+	 * The cursor out on the canvas, over something the strip is already holding a chip
+	 * for (#116).
+	 *
+	 * Only over a thing that is pointed at — an ordinary hover across the canvas lights
+	 * nothing in the composer, because a chip that lit for a frame nobody picked would
+	 * be claiming it was in the prompt.
+	 */
+	const litOut =
+		effectiveTool !== "select"
+			? null
+			: preview !== null && picked.some((pick) => pick.frame === preview.frame && pick.selector === preview.selector)
+				? pickKey(preview.frame, preview.selector)
+				: hovered !== null && (selected.includes(hovered.frame) || entered === hovered.frame)
+					? hovered.frame
+					: null;
+
 	/** Land on a frame by name: switch page if needed, select it, centre the camera. */
 	const landOnFrame = useCallback(
 		(name: string) => {
@@ -2494,6 +2562,15 @@ export function ProjectCanvas({
 						}
 						editable={effectiveTool === "select"}
 						picked={picked}
+						/*
+						 * A chip and the box it names are one object, so the cursor on one marks the
+						 * other (#116). Only an element's box takes a mark: a chip can only name a
+						 * frame that is selected or entered, and out here that frame is already
+						 * ringed at full strength, so there is nothing left to say about it — where
+						 * five element outlines look alike and the strip is the only thing that can
+						 * say which one a row means.
+						 */
+						lit={lit}
 						preview={effectiveTool === "select" ? preview : null}
 						guides={guides}
 						marquee={marquee}
@@ -2589,6 +2666,7 @@ export function ProjectCanvas({
 						landOnFrame(name);
 					},
 				}}
+				pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
 				onSend={turn.send}
 			/>
 			{exportDialog !== null && exportFrames.length > 0 ? (

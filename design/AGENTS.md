@@ -56,8 +56,14 @@ clamped never, arrives at the backlog's own rate with a word fading in at 170ms
 behind a static caret, and leaves no element behind once it settles. A reply long
 enough to be a document — four paragraphs or more — grows as it arrives rather
 than reserving its height, on `agent-play--say-read`'s own rule, and stillness
-draws it settled with nothing moving. The threads strip and the model readout the
-frames here draw are still ahead of the code.
+draws it settled with nothing moving. **#196 landed what rides with the words**:
+the composer draws the whole selection the daemon serves, one line of chips or a
+count that opens into a droppable list, a chip's ✕ deselecting out on the canvas
+and the entered frame's chip drawn at full strength with no ✕ at all; the prompt
+carries one `<selection>` block, the same bytes `spool selection` now prints; the
+transcript keeps the strip's own words under the human's; and a pasted or dropped
+image rides as base64 with nothing written anywhere. The threads strip and the
+model readout the frames here draw are still ahead of the code.
 
 Explorations live until the work they decided is built. Making the decision is
 not that moment: while a page is still being resolved, the rejected frames are

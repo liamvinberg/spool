@@ -12,6 +12,12 @@ export interface JsxSpan {
 	/** 1-based inclusive line range of the whole element. */
 	lines: [number, number];
 	excerpt: string;
+	/**
+	 * What the source calls this element — the JSX name the author wrote, so a
+	 * component reads as `CartRow` and a tag as `li`. Undefined for a fragment,
+	 * which has no name to print.
+	 */
+	name: string | undefined;
 }
 
 const EXCERPT_CAP = 240;
@@ -31,7 +37,19 @@ export function extractJsxSpan(source: string, line: number, column: number): Js
 	return {
 		lines: [line, line + countLines(source, start, spanEnd)],
 		excerpt: excerptOf(source, start, spanEnd, openEnd),
+		name: nameOf(source, start),
 	};
+}
+
+/**
+ * The element's own name, read off the opening tag the scanner just walked.
+ *
+ * JSX names go further than HTML's: a member expression (`Icons.Cart`), a
+ * namespace (`svg:use`), a leading underscore. A fragment (`<>`) matches nothing
+ * and has nothing to be called.
+ */
+function nameOf(source: string, start: number): string | undefined {
+	return /^<\s*([A-Za-z_$][\w$.:-]*)/.exec(source.slice(start, start + 80))?.[1];
 }
 
 /** 1-based line/column to string offset; undefined when out of range. */

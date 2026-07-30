@@ -38,16 +38,20 @@ describe("the selection API", () => {
 		expect(await (await app.request(`/api/p/${name}/selection`)).json()).toEqual({ selection: [] });
 
 		const put = await app.request(`/api/p/${name}/selection`, jsonPut({ frames: ["checkout"] }));
-		expect(put.status).toBe(204);
-
-		expect(await (await app.request(`/api/p/${name}/selection`)).json()).toEqual({
+		// the put answers with what it enriched, because the composer's chips are the
+		// promise of what a prompt will carry and only this side knows the paths (#116)
+		expect(put.status).toBe(200);
+		const enriched = {
 			selection: [
 				{ kind: "frame", frame: "checkout", path: "design/frames/checkout/frame.tsx", size: { w: 800, h: 600 } },
 			],
-		});
+		};
+		expect(await put.json()).toEqual(enriched);
+
+		expect(await (await app.request(`/api/p/${name}/selection`)).json()).toEqual(enriched);
 	});
 
-	it("serves an element selection as path/lines/selector/excerpt from the stamp", async () => {
+	it("serves an element selection as name/path/lines/selector/excerpt from the stamp", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);
 		writeFrame(root, "checkout", frameTsx);
@@ -68,13 +72,16 @@ describe("the selection API", () => {
 				],
 			}),
 		);
-		expect(put.status).toBe(204);
+		expect(put.status).toBe(200);
 
 		expect(await (await app.request(`/api/p/${name}/selection`)).json()).toEqual({
 			selection: [
 				{
 					kind: "element",
 					frame: "checkout",
+					// what the source calls it, which is the noun a chip and the prompt
+					// block both print
+					name: "button",
 					path: "design/frames/checkout/frame.tsx",
 					lines: [4, 4],
 					selector: "main > button",
@@ -111,14 +118,14 @@ describe("the selection API", () => {
 				],
 			}),
 		);
-		expect(put.status).toBe(204);
+		expect(put.status).toBe(200);
 
 		const { selection } = (await (await app.request(`/api/p/${name}/selection`)).json()) as {
 			selection: Array<Record<string, unknown>>;
 		};
-		expect(selection.map((entry) => [entry.kind, entry.selector, entry.lines])).toEqual([
-			["element", "main > button", [4, 4]],
-			["element", "main", [3, 5]],
+		expect(selection.map((entry) => [entry.kind, entry.name, entry.selector, entry.lines])).toEqual([
+			["element", "button", "main > button", [4, 4]],
+			["element", "main", "main", [3, 5]],
 		]);
 	});
 
@@ -149,6 +156,9 @@ describe("the selection API", () => {
 		expect(selection[0]).toMatchObject({
 			kind: "element",
 			generated: true,
+			// its name comes from the same place its excerpt does — the stamped
+			// ancestor's own word for itself would be somebody else's
+			name: "li",
 			lines: [3, 5],
 			excerpt: "<li>b</li>",
 			selector: "main > ul > li:nth-of-type(2)",

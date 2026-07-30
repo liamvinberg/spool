@@ -140,10 +140,13 @@ async function verbContext(): Promise<{ root: string; name: string; daemonUrl: s
 
 program
 	.command("selection")
-	.description("print the live selection payload — what the human points at")
+	.description("print the live selection block — what the human points at")
 	.action(async () => {
 		const { name, daemonUrl, controlToken } = await verbContext();
-		process.stdout.write(`${await readSelection(daemonUrl, name, controlToken)}\n`);
+		const block = await readSelection(daemonUrl, name, controlToken);
+		// nothing pointed at is nothing printed: an empty block would be a shape
+		// claiming the moment had one
+		if (block !== "") process.stdout.write(`${block}\n`);
 	});
 
 program

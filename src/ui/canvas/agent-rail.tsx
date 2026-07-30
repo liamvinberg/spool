@@ -1,11 +1,22 @@
 import { useEffect, useRef, useState } from "react";
+import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
+import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
-import { AgentIcon } from "../icons";
+import { AgentIcon, CloseIcon } from "../icons";
+import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
 import { closedText } from "./agent-markers";
 import { Caret, Said } from "./agent-said";
 import { Shot } from "./agent-shot";
 import type { TurnPhase } from "./agent-stream";
-import { type AgentEntry, type AgentPlan, type AgentRow, duration, type RowState, shownBy } from "./agent-transcript";
+import {
+	type AgentEntry,
+	type AgentPlan,
+	type AgentRow,
+	type AgentSent,
+	duration,
+	type RowState,
+	shownBy,
+} from "./agent-transcript";
 import { ChevronIcon, PanelCaret } from "./sidebar";
 
 /**
@@ -91,6 +102,30 @@ export interface FrameJump {
 	readonly onJump: (frame: string) => void;
 }
 
+/**
+ * What the hands are pointing at, and what the strip may do about it (#116, #139).
+ *
+ * The entries are the daemon's own enriched list rather than the canvas's raw
+ * selection, because the strip is the promise of what the prompt will carry: what
+ * is drawn here and what goes out are one list read twice.
+ */
+export interface Pointing {
+	readonly entries: readonly SelectionEntry[];
+	/**
+	 * The list is the frame the hands stepped into rather than one they picked.
+	 *
+	 * It draws as an ordinary chip at full strength with the dismiss control taken
+	 * off: entering is the most specific act the canvas has, and out there the only
+	 * way to stop pointing at the frame you are inside is a mode change.
+	 */
+	readonly inside: boolean;
+	/** the entry the pointer is over, in the rail or out on the canvas */
+	readonly lit: string | null;
+	readonly onLight: (id: string | null) => void;
+	/** null drops the whole selection, which is the count chip's own ✕ */
+	readonly onDrop: (id: string | null) => void;
+}
+
 export function AgentRail({
 	entries,
 	plan,
@@ -98,6 +133,7 @@ export function AgentRail({
 	elapsed,
 	last,
 	jump,
+	pointing,
 	onSend,
 }: {
 	entries: readonly AgentEntry[];
@@ -107,7 +143,8 @@ export function AgentRail({
 	elapsed: number;
 	last: number;
 	jump: FrameJump;
-	onSend: (text: string) => void;
+	pointing: Pointing;
+	onSend: (text: string, sent: AgentSent) => void;
 }) {
 	const [width, setWidth] = useState(RAIL_WIDTH);
 	const [dragging, setDragging] = useState(false);
@@ -170,7 +207,15 @@ export function AgentRail({
 							<PanelCaret dir="right" className="h-3.5 w-2.5" />
 						</button>
 					</Transcript>
-					<Composer phase={phase} onSend={onSend} />
+					{/* the strip is measured against the composer's own inner width, which the
+					    rail's drag moves: the same three chips fit at 420 and are a count at
+					    the 200 floor, because the rule is one line rather than one width */}
+					<Composer
+						phase={phase}
+						strip={stripOf(pointing.entries, composerWidth(width), pointing.inside)}
+						pointing={pointing}
+						onSend={onSend}
+					/>
 				</div>
 			)}
 
@@ -389,10 +434,27 @@ function gapBefore(previous: AgentEntry | undefined, entry: AgentEntry): number 
 
 function Entry({ entry, elapsed, last, jump }: { entry: AgentEntry; elapsed: number; last: number; jump: FrameJump }) {
 	if (entry.kind === "user") {
+		/*
+		 * The words, and under them what was sent with them (#116).
+		 *
+		 * The line is exactly what the chip strip said at rest when Enter was pressed —
+		 * no more, because the strip is the promise that was made, and no less, because
+		 * a turn nobody can audit is a turn nobody can trust. A picture is the one thing
+		 * that line cannot audit, so its receipt is the picture itself, at the same
+		 * thumbnail a tool call's own shot gets.
+		 */
 		return (
 			<div className="relative flex flex-col gap-1.5 pl-3.5">
 				<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
 				<p className="whitespace-pre-wrap text-base text-text leading-base">{entry.text}</p>
+				{/* the same 120px thumbnail a call's own picture gets, because it is the same
+				    act of looking: a picture in the log, at a size that says what it is */}
+				{entry.attached === null ? null : <Shot shot={entry.attached} of={null} quiet={true} />}
+				{entry.context === null ? null : (
+					<span data-agent-context="" className="truncate font-mono text-2xs text-muted/55 leading-3">
+						{entry.context}
+					</span>
+				)}
 			</div>
 		);
 	}
@@ -786,14 +848,27 @@ function StateMark({ state, className }: { state: RowState; className?: string }
 }
 
 /* ---------- the composer ----------
- * One bounded box the whole message is typed into. Enter sends what is in it
- * verbatim, whatever that is; shift-Enter is a newline. A turn already in flight
- * refuses the press rather than taking it, because every send spawns an agent and
- * two of them writing one repo is not a thing to offer — the hint below says so, so
- * a press that does nothing is never a mystery. */
+ * One bounded box the whole message is typed into, with what rides along stacked
+ * above the field it rides with. Enter sends what is in it verbatim, whatever that
+ * is; shift-Enter is a newline. A turn already in flight refuses the press rather
+ * than taking it, because every send spawns an agent and two of them writing one
+ * repo is not a thing to offer — the hint below says so, so a press that does
+ * nothing is never a mystery. */
 
-function Composer({ phase, onSend }: { phase: TurnPhase; onSend: (text: string) => void }) {
+function Composer({
+	phase,
+	strip,
+	pointing,
+	onSend,
+}: {
+	phase: TurnPhase;
+	strip: Strip;
+	pointing: Pointing;
+	onSend: (text: string, sent: AgentSent) => void;
+}) {
 	const [held, setHeld] = useState("");
+	/** the reference riding with the words, which is bytes and never a path (#119) */
+	const [attached, setAttached] = useState<Attachment | null>(null);
 	const busy = phase === "playing";
 
 	const resize = (element: HTMLTextAreaElement) => {
@@ -801,9 +876,38 @@ function Composer({ phase, onSend }: { phase: TurnPhase; onSend: (text: string) 
 		element.style.height = `${Math.max(MIN_H, Math.min(element.scrollHeight, MAX_H))}px`;
 	};
 
+	const send = (text: string, field: HTMLTextAreaElement) => {
+		setHeld("");
+		setAttached(null);
+		field.style.height = `${MIN_H}px`;
+		// captured here rather than read later: the chips that were up are the bytes
+		// that went out, and the line under the words has to say so afterwards
+		onSend(text, { context: contextOf(strip), attached });
+	};
+
 	return (
-		<div className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5">
+		// biome-ignore lint/a11y/noStaticElementInteractions: a drop target is not a control, and its keyboard path is the paste the field already takes
+		<div
+			className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5"
+			onDragOver={(event) => {
+				// `items` rather than `files`: while a drag is in flight the data store is in
+				// protected mode and `files` is empty, so a guard that read it would never
+				// accept the drag and the browser would navigate to the dropped picture
+				if (!draggingAttachment(event.dataTransfer)) return;
+				event.preventDefault();
+				event.stopPropagation();
+			}}
+			onDrop={(event) => {
+				const file = attachmentIn(event.dataTransfer);
+				if (file === undefined) return;
+				event.preventDefault();
+				event.stopPropagation();
+				void readAttachment(file).then(setAttached);
+			}}
+		>
 			<div className="flex min-h-0 flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5 transition-colors duration-150 focus-within:border-muted/45">
+				{attached === null ? null : <Attached attached={attached} onDrop={() => setAttached(null)} />}
+				<SelectionStrip strip={strip} pointing={pointing} />
 				<textarea
 					value={held}
 					rows={3}
@@ -814,14 +918,21 @@ function Composer({ phase, onSend }: { phase: TurnPhase; onSend: (text: string) 
 						setHeld(event.target.value);
 						resize(event.target);
 					}}
+					onPaste={(event) => {
+						// a screenshot in the clipboard is the commonest reference there is, and
+						// pasting one is how it gets here: a browser never reveals a path, so
+						// there is nothing else a paste could mean
+						const file = attachmentIn(event.clipboardData);
+						if (file === undefined) return;
+						event.preventDefault();
+						void readAttachment(file).then(setAttached);
+					}}
 					onKeyDown={(event) => {
 						if (event.key !== "Enter" || event.shiftKey) return;
 						event.preventDefault();
 						const text = held.trim();
 						if (text === "" || busy) return;
-						setHeld("");
-						event.currentTarget.style.height = `${MIN_H}px`;
-						onSend(text);
+						send(text, event.currentTarget);
 					}}
 					className="w-full resize-none bg-transparent text-base text-text leading-base outline-none placeholder:text-muted/50"
 					style={{ height: MIN_H }}
@@ -836,5 +947,253 @@ function Composer({ phase, onSend }: { phase: TurnPhase; onSend: (text: string) 
 				</span>
 			</div>
 		</div>
+	);
+}
+
+/* ---------- the reference that rides along (#119) ----------
+ * Look-only, and nothing lands. The bytes go down the same stdin the prompt does,
+ * so the project gains no file, no inbox and no deleter — the agent's own
+ * transcript is the durable copy, outside the repo. The cost is stated rather than
+ * hidden: a browser never reveals a dropped file's path, so a logo cannot be added
+ * to the project this way, and adding an asset is already a deliberate import into
+ * `design/shared/assets/`.
+ *
+ * It arrives by paste or by drop and by nothing else. The footer holds the model and
+ * the stop and nothing else (#184), and the chip line is the selection's, so a
+ * button would need a slot the composer deliberately does not have — where a
+ * pasted screenshot is the gesture people already have in their hands. */
+
+/** how wide the tile is: enough to recognise a screenshot, not enough to read it */
+const ATTACHED_W = 44;
+
+function Attached({ attached, onDrop }: { attached: Attachment; onDrop: () => void }) {
+	return (
+		<span
+			data-agent-attached=""
+			className="group relative flex w-fit shrink-0 overflow-hidden rounded-xs border border-border-raised bg-bg"
+			style={{ width: ATTACHED_W, height: ATTACHED_W }}
+		>
+			{/* the picture is its own label: `image/png` is a fact about a file and this is a
+			    thing you can see */}
+			<img
+				src={`data:${attached.media};base64,${attached.data}`}
+				alt="attached reference"
+				className="h-full w-full object-cover"
+			/>
+			{/* the whole tile is the way to take it back, because there is nothing else it
+			    could do: it is your own picture and you are looking at it */}
+			<button
+				type="button"
+				onClick={onDrop}
+				aria-label="drop the attached image"
+				className="absolute inset-0 flex items-center justify-center bg-bg/0 text-text/0 transition-colors duration-150 group-hover:bg-bg/70 group-hover:text-text"
+			>
+				<CloseIcon />
+			</button>
+		</span>
+	);
+}
+
+/**
+ * Whether a drag in flight is carrying something that could ride along.
+ *
+ * A dragging browser keeps its data store in protected mode, so `files` is empty
+ * until the drop and only each item's `kind` and `type` can be read — which is
+ * exactly enough, and reading `files` here would refuse every drag.
+ */
+function draggingAttachment(data: DataTransfer | null): boolean {
+	return Array.from(data?.items ?? []).some((item) => item.kind === "file" && ATTACHMENT_MEDIA.has(item.type));
+}
+
+/**
+ * The picture in a drop or a paste, if it is one spool can send.
+ *
+ * The composer refuses exactly what the daemon refuses (`src/attachment.ts`), so a
+ * tile never draws for something the turn would be turned away for: nothing appearing
+ * is a smaller cost than a prompt lost to a refusal after Enter.
+ */
+function attachmentIn(data: DataTransfer | null): File | undefined {
+	return Array.from(data?.files ?? []).find((file) => isSendableAttachment(file));
+}
+
+/**
+ * The file as the bytes the agent reads.
+ *
+ * Chunked because `String.fromCharCode` takes its bytes as arguments and a
+ * screenshot is hundreds of thousands of them, which is a stack overflow rather
+ * than a slow call.
+ */
+async function readAttachment(file: File): Promise<Attachment> {
+	const bytes = new Uint8Array(await file.arrayBuffer());
+	let binary = "";
+	for (let at = 0; at < bytes.length; at += 8192) {
+		binary += String.fromCharCode(...bytes.subarray(at, at + 8192));
+	}
+	return { media: file.type, data: btoa(binary) };
+}
+
+/* ---------- what the hands are pointing at ----------
+ * The selection sits in the composer and goes out with the message without being
+ * asked for. Its accent is the one the entry wears out on the canvas, because the
+ * chip and the outline are one object — which is why hovering either lights the
+ * other, and why a chip that cannot be paired with a box out there is a chip that
+ * should not be drawn.
+ *
+ * One line, always. Either the chips fit on it or the strip is a count; the composer
+ * never grows downward to make room for context, because the space below is the
+ * prompt's. Opening the count is the human asking for the list, and then it is a
+ * list: hoverable, individually droppable, eight rows before it scrolls inside
+ * itself and no bar when it does. */
+
+/** rows the open list shows before it starts scrolling under a fade */
+const ROWS_SHOWN = 8;
+
+function SelectionStrip({ strip, pointing }: { strip: Strip; pointing: Pointing }) {
+	const [open, setOpen] = useState(false);
+	if (strip.kind === "none") return null;
+
+	// no wrap: the strip is chips because they fit on one line, and a second line
+	// would be the rule breaking quietly rather than the count taking over. If the
+	// estimate is off by a few pixels a chip truncates instead
+	if (strip.kind === "chips") {
+		return (
+			<span data-agent-chips="" className="flex min-w-0 items-center gap-1.5">
+				{strip.chips.map((chip) => (
+					<Chip
+						key={chip.id}
+						words={chip}
+						lit={pointing.lit === chip.id}
+						onLight={pointing.onLight}
+						// the entered frame is the one chip whose ✕ has nowhere to land:
+						// removal mirrors the canvas, and out there the only way to stop
+						// pointing at the frame you are inside is to leave it (#139)
+						onDrop={strip.inside ? undefined : () => pointing.onDrop(chip.id)}
+					/>
+				))}
+			</span>
+		);
+	}
+
+	return (
+		<span data-agent-chips="" className="flex min-w-0 flex-col gap-1.5">
+			<span className="flex min-w-0 items-center">
+				{/* the whole list rather than an entry's own id: the cursor on a count lights
+				    every box the count stands for */}
+				<Chip
+					words={{ id: WHOLE_SELECTION, label: strip.label }}
+					lit={pointing.lit !== null}
+					open={open}
+					onOpen={() => setOpen(!open)}
+					onLight={pointing.onLight}
+					// the count's own ✕ drops the whole selection, which is the one act the
+					// canvas cannot do for you while you are standing inside a frame
+					onDrop={() => pointing.onDrop(null)}
+				/>
+			</span>
+			{open ? (
+				/* Eight rows and then it scrolls, and it scrolls without a bar: the list is
+				   for reaching one member, never for reading forty, and a native scrollbar in
+				   a 420 rail is a grey slab across the only accent on screen. The fade says
+				   there is more the way the transcript's does. */
+				<span className="relative flex flex-col">
+					<span className="flex max-h-[208px] flex-col overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+						{strip.chips.map((chip) => (
+							<button
+								key={chip.id}
+								type="button"
+								data-agent-chip-row={chip.label}
+								onMouseEnter={() => pointing.onLight(chip.id)}
+								onMouseLeave={() => pointing.onLight(null)}
+								onClick={() => pointing.onDrop(chip.id)}
+								className={cn(
+									"group flex h-[26px] shrink-0 items-center gap-2 rounded-xs px-1 text-left",
+									pointing.lit === chip.id && "bg-surface",
+								)}
+							>
+								<span
+									className={cn(
+										"h-2.5 w-[2px] shrink-0 rounded-full",
+										pointing.lit === chip.id ? "bg-thread" : "bg-thread/40",
+									)}
+								/>
+								<span className="min-w-0 flex-1 truncate font-mono text-text/80 text-xs leading-4">
+									{chip.label}
+								</span>
+								<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/0 group-hover:text-muted/60">
+									<CloseIcon />
+								</span>
+							</button>
+						))}
+					</span>
+					{strip.chips.length > ROWS_SHOWN ? (
+						<span className="pointer-events-none absolute inset-x-0 bottom-0 h-7 bg-gradient-to-t from-surface to-transparent" />
+					) : null}
+				</span>
+			) : null}
+		</span>
+	);
+}
+
+function Chip({
+	words,
+	lit,
+	open,
+	onOpen,
+	onLight,
+	onDrop,
+}: {
+	words: ChipWords;
+	lit: boolean;
+	open?: boolean;
+	onOpen?: () => void;
+	onLight: (id: string | null) => void;
+	/** absent when there is nothing a ✕ could do — then the chip has no ✕ at all */
+	onDrop?: (() => void) | undefined;
+}) {
+	const body = (
+		<>
+			<span className={cn("h-3 w-[2px] shrink-0 rounded-full", lit ? "bg-thread" : "bg-thread/55")} />
+			<span className="min-w-0 truncate font-mono text-text/85 text-xs leading-4">{words.label}</span>
+			{onOpen === undefined ? null : (
+				<ChevronIcon open={open ?? false} className="h-2.5 w-2.5 shrink-0 text-muted/40" />
+			)}
+		</>
+	);
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: the cursor lighting the box out on the canvas is a hover reading, and its own controls are buttons
+		<span
+			data-agent-chip={words.label}
+			className={cn(
+				"flex h-6 min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-sm border bg-raised pl-2 transition-colors duration-150",
+				// the ✕'s own padding goes with it, or the chip keeps a gap it no longer uses
+				onDrop === undefined ? "pr-2.5" : "pr-1",
+				lit ? "border-thread/45" : "border-border-raised",
+			)}
+			onMouseEnter={() => onLight(words.id)}
+			onMouseLeave={() => onLight(null)}
+		>
+			{onOpen === undefined ? (
+				body
+			) : (
+				<button
+					type="button"
+					onClick={onOpen}
+					aria-expanded={open ?? false}
+					className="flex min-w-0 items-center gap-2 text-left"
+				>
+					{body}
+				</button>
+			)}
+			{onDrop === undefined ? null : (
+				<button
+					type="button"
+					onClick={onDrop}
+					aria-label={`drop ${words.label}`}
+					className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/50 transition-colors duration-150 hover:bg-surface hover:text-text"
+				>
+					<CloseIcon />
+				</button>
+			)}
+		</span>
 	);
 }

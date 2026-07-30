@@ -72,7 +72,13 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Verbs**: The read-only agent CLI: `selection`, `flows`, `shot`, `logs`, `url`, `skill`. Agents author by writing frame files, never through a spool command.
 
-**Selection**: What hands last pointed at, served to agents as read-only context: path, lines, selector, excerpt.
+**Selection**: What hands last pointed at, served to agents as read-only context: always a list, frames or elements, each with its path and — for an element — what the source calls it, the lines it spans, its selector and its excerpt.
+
+**Selection block**: The selection as one block of text, and the only rendering of it: the bytes `spool selection` prints are the bytes a turn's prompt carries for the same moment, so a CLI agent and the agent in the rail read one contract. Every entry always contributes its pointer and only excerpts are ever elided, which the block states when it happens. Nothing pointed at prints nothing, because an empty block would be a shape claiming the moment had one. _Avoid_: context payload, prompt preamble
+
+**Chip**: One entry of the selection in the composer, riding out with the message without being asked for. The strip takes one line of the composer and never two: either every chip fits or it is a count that opens into a droppable list, and there is no third shape. A chip's dismiss control deselects on the canvas, because two picks of one list row are one string in the rail and two boxes out there. The frame the hands stepped into is an ordinary chip with the control taken off, at full strength. _Avoid_: pill, tag, token
+
+**Attachment**: A reference image riding with a prompt as base64 over the stdin the turn already opens. Look-only: nothing is written, so the app-owned folder gains no inbox, no lifetime and no deleter, and the agent's own transcript is the durable copy. A browser never reveals a dropped file's path, which is why adding an asset stays a deliberate import into `design/shared/assets/`. It arrives by paste or drop, and its receipt is the picture under the words in the transcript. _Avoid_: upload, file
 
 **Shot**: A headless, scenario-seeded screenshot of one frame in spool's own browser, never taken from the canvas.
 
