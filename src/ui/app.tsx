@@ -286,7 +286,7 @@ export function App() {
 						})}
 						<button
 							type="button"
-							className="flex h-[26px] w-[26px] items-center justify-center rounded-sm hover:bg-surface"
+							className="flex h-[26px] w-[26px] items-center justify-center rounded-sm text-muted hover:bg-surface"
 							onClick={() => setPicking(true)}
 							title="Open a project folder"
 						>

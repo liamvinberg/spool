@@ -125,6 +125,25 @@ export interface AgentSpawn {
 }
 
 /**
+ * Which conversation this turn belongs to (#120, #200).
+ *
+ * The session id is the thread. Spool mints a uuid before there is any process, hands
+ * it over as the session id on the thread's first turn, and resumes it on every turn
+ * after — so a thread has an id before its first event lands and keeps the same one for
+ * as long as it lives. Measured in #120: a resumed session keeps its id, does not fork,
+ * and the agent remembers what it was told without anything being re-sent.
+ *
+ * `resume` is not a preference. `--session-id` wants an id the binary has never seen and
+ * `--resume` wants one it has, so the two are exclusive and the caller answers it with a
+ * file-existence check rather than a guess: a thread whose session has aged out starts a
+ * fresh one under the same id instead of failing a resume.
+ */
+export interface AgentSession {
+	readonly id: string;
+	readonly resume: boolean;
+}
+
+/**
  * The settled spawn for one project root.
  *
  * `--include-partial-messages` is not a flag, it is the product: without it
@@ -137,7 +156,11 @@ export interface AgentSpawn {
  * nothing either: someone's own CLI configured with a key breaks no promise
  * spool made, and stripping it would break their setup to make a slogan tidier.
  */
-export function planAgentSpawn(root: string, env: Readonly<Record<string, string | undefined>>): AgentSpawn {
+export function planAgentSpawn(
+	root: string,
+	env: Readonly<Record<string, string | undefined>>,
+	session: AgentSession,
+): AgentSpawn {
 	return {
 		command: AGENT_COMMAND,
 		args: [
@@ -148,6 +171,11 @@ export function planAgentSpawn(root: string, env: Readonly<Record<string, string
 			"--verbose",
 			"--input-format",
 			"stream-json",
+			// the thread, in the binary's own vocabulary for one. A resume restores the
+			// agent's memory for free and emits no history, which is why the rail's picture
+			// is spool's problem: the two halves of a thread are the id and the drawing
+			session.resume ? "--resume" : "--session-id",
+			session.id,
 			"--setting-sources",
 			AGENT_SETTING_SOURCES,
 			"--permission-mode",

@@ -3,6 +3,7 @@ import type { Attachment } from "../attachment";
 import type { Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
 import type { AgentEvent } from "../daemon/agent-events";
+import type { ServedThread, ThreadPut } from "../daemon/agent-threads";
 import type { AppType } from "../daemon/app";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsListing } from "../daemon/fs-list";
@@ -36,6 +37,8 @@ export type {
 	Projection,
 	SelectionEntry,
 	SelectionPut,
+	ServedThread,
+	ThreadPut,
 };
 
 /**
@@ -375,6 +378,8 @@ export interface AgentSaying {
 export function streamAgentTurn(
 	project: string,
 	said: {
+		/** the conversation this turn continues, which is the agent's session id (#120) */
+		readonly thread: string;
 		/** what the rail calls this turn, which is the address its stop names (#165) */
 		readonly turn: string;
 		/** one message, or the several a queue fired as one turn (#170) */
@@ -392,6 +397,7 @@ export function streamAgentTurn(
 				{
 					param: { project },
 					json: {
+						thread: said.thread,
 						turn: said.turn,
 						said: said.saying.map((one) => ({
 							prompt: one.prompt,
@@ -450,4 +456,54 @@ export async function answerAgentTurn(project: string, request: string, reply: A
  */
 export async function interruptAgentTurn(project: string, turn: string): Promise<void> {
 	await client.api.p[":project"].agent.interrupt.$post({ param: { project }, json: { turn } });
+}
+
+/**
+ * Every thread this project has, as spool wrote them down (#120, #136, #200).
+ *
+ * The picture is the whole of it, so this is the rail's own drawing coming back rather
+ * than a stream to re-fold: a resume restores the agent's memory for free and emits no
+ * history, which is why the record is spool's problem. Nothing on the way back is capped
+ * or elided, because live and restored are the same view.
+ *
+ * An empty list is also what a daemon that cannot answer gives, and it is the right
+ * answer either way: a rail with no stored threads opens on a fresh one.
+ */
+export async function fetchAgentThreads(project: string): Promise<ServedThread[]> {
+	try {
+		const res = await client.api.p[":project"].agent.threads.$get({ param: { project } });
+		if (!res.ok) return [];
+		const { threads } = (await res.json()) as { threads?: ServedThread[] };
+		return Array.isArray(threads) ? threads : [];
+	} catch {
+		return [];
+	}
+}
+
+/** one thread's picture, written whole: stored is exactly drawn, with no lossy tier */
+export async function putAgentThread(project: string, thread: string, picture: ThreadPut): Promise<void> {
+	try {
+		await client.api.p[":project"].agent.threads[":thread"].$put({
+			param: { project, thread },
+			json: { ...picture, entries: [...picture.entries] },
+		});
+	} catch {
+		// a write that never landed costs what the next one will land anyway: the picture is
+		// rewritten on every boundary, so nothing here is the only chance to record it
+	}
+}
+
+/**
+ * Closing a thread, which is a tidy rather than a delete (#136).
+ *
+ * It leaves the strip and nothing else goes: not the agent's own session, and not
+ * spool's stored picture. Spool does not throw away a readable record because a tab was
+ * put away.
+ */
+export async function closeAgentThread(project: string, thread: string): Promise<void> {
+	try {
+		await client.api.p[":project"].agent.threads[":thread"].close.$post({ param: { project, thread } });
+	} catch {
+		// the tab is gone from the strip either way; the flag is the only thing at stake
+	}
 }

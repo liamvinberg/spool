@@ -22,6 +22,7 @@ import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { agentPromptContent } from "./agent-spawn";
+import { closeThread, isThreadId, parseThreadPut, putThread, serveThreads, sessionExists } from "./agent-threads";
 import { type AgentTurn, startAgentTurn } from "./agent-turn";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
@@ -303,7 +304,7 @@ export function createDaemonApp({
 	 * answers — so the rail names its own turn when it starts one, and the stop names
 	 * it back. Absent for a client that never intends to stop anything.
 	 */
-	const liveTurns = new Map<AgentTurn, { root: string; id?: string }>();
+	const liveTurns = new Map<AgentTurn, { root: string; id?: string; thread: string }>();
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
@@ -797,6 +798,7 @@ export function createDaemonApp({
 				const body = (typeof value === "object" && value !== null ? value : {}) as {
 					said?: unknown;
 					turn?: unknown;
+					thread?: unknown;
 				};
 				// a turn is what the human said, which is one message when they pressed Enter
 				// against a quiet rail and several when a queue fired as one turn (#170)
@@ -805,6 +807,12 @@ export function createDaemonApp({
 				}
 				if (body.turn !== undefined && (typeof body.turn !== "string" || body.turn === "")) {
 					return c.text('"turn" is the id a stop names this turn by', 400);
+				}
+				// the conversation this turn belongs to, which is the agent's own session id
+				// (#120): spool mints it before there is a process, so it is never optional and
+				// never anything but the uuid shape the binary takes
+				if (!isThreadId(body.thread)) {
+					return c.text('"thread" is the uuid this conversation runs under', 400);
 				}
 				const said: { prompt: string; selection?: SelectionEntry[]; attachment?: Attachment }[] = [];
 				for (const raw of body.said) {
@@ -837,7 +845,7 @@ export function createDaemonApp({
 						...(attached === undefined ? {} : { attachment: attached }),
 					});
 				}
-				return { said, turn: typeof body.turn === "string" ? body.turn : undefined };
+				return { said, thread: body.thread, turn: typeof body.turn === "string" ? body.turn : undefined };
 			}),
 			(c) => {
 				// one turn, streamed as it arrives (#191): the prompt goes down the
@@ -845,10 +853,21 @@ export function createDaemonApp({
 				// order the wire sent them
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
-				const { said, turn: named } = c.req.valid("json");
+				const { said, thread, turn: named } = c.req.valid("json");
 				const turn = startAgentTurn({
 					executor: spawnAgent,
 					root: project.root,
+					/*
+					 * The thread, in the binary's own vocabulary for one (#120, #200).
+					 *
+					 * Resume when the session file is there and start it under the same id when it
+					 * is not, because the two flags are exclusive and the file is the fact: the
+					 * binary deletes its own sessions after thirty days, so a thread that outlived
+					 * one carries on under its own id rather than failing a resume. The rail has
+					 * already stopped offering it as continuable by then — this is the honest
+					 * floor under that, not a second opinion about it.
+					 */
+					session: { id: thread, resume: sessionExists(project.root, thread, process.env) },
 					// what the hands are pointing at rides with the words, in the bytes
 					// `spool selection` prints for this same moment (#116) — or, for a
 					// message the queue held, for the moment it was said (#170)
@@ -860,7 +879,7 @@ export function createDaemonApp({
 						})),
 					),
 				});
-				liveTurns.set(turn, { root: project.root, ...(named === undefined ? {} : { id: named }) });
+				liveTurns.set(turn, { root: project.root, thread, ...(named === undefined ? {} : { id: named }) });
 				return streamSSE(c, async (stream) => {
 					let id = 0;
 					stream.onAbort(() => turn.abandon());
@@ -950,6 +969,59 @@ export function createDaemonApp({
 				return c.text(`no waiting request "${request}"`, 404);
 			},
 		)
+		/*
+		 * The threads of this project, as they survive (#120, #136, #200).
+		 *
+		 * The picture is the rail's and the disk is the daemon's, which is the whole seam:
+		 * the fold from the event union to what is drawn lives in the rail, so the rail is
+		 * what writes the drawing, and nothing down here has a second opinion about the
+		 * vocabulary. What the daemon adds is the two facts only it can answer — whether a
+		 * thread's process was taken by a restart, and whether the agent's own session is
+		 * still there to continue.
+		 */
+		.get("/api/p/:project/agent/threads", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const live = new Set<string>();
+			for (const one of liveTurns.values()) if (one.root === project.root) live.add(one.thread);
+			return c.json({ threads: serveThreads(spoolDir, project.root, { live }) });
+		})
+		.put(
+			"/api/p/:project/agent/threads/:thread",
+			validator("json", (value, c) => {
+				const put = parseThreadPut(value);
+				if (put === undefined) {
+					return c.text('a thread is { "ask": "…", "life": "read", "entries": [] }', 400);
+				}
+				return put;
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const thread = c.req.param("thread");
+				if (!isThreadId(thread)) {
+					return c.text("a thread is named by the uuid its session runs under", 400);
+				}
+				putThread(spoolDir, project.root, thread, c.req.valid("json"));
+				return c.body(null, 204);
+			},
+		)
+		/*
+		 * Closing a thread, which is a tidy rather than a delete (#136).
+		 *
+		 * It leaves the strip and it leaves nothing else: not the agent's own session, and
+		 * not spool's stored picture. Spool does not throw away a readable record because a
+		 * tab was put away, so this writes one flag and touches no bytes of the drawing.
+		 */
+		.post("/api/p/:project/agent/threads/:thread/close", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const thread = c.req.param("thread");
+			if (!closeThread(spoolDir, project.root, thread)) {
+				return c.text(`no thread "${thread}" to close`, 404);
+			}
+			return c.body(null, 204);
+		})
 		.get("/api/p/:project/verify/:frame", async (c) => {
 			// the agent's compile probe (#25): shot and logs branch on this JSON —
 			// ok hands the closure etag (the log cache key), error the text verbatim

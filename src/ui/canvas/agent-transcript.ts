@@ -279,6 +279,43 @@ export type AgentEntry =
 	 */
 	| { readonly key: string; readonly kind: "note"; readonly text: string };
 
+/** every kind the union has, as the one runtime list of it (see `drawableEntries`) */
+const KINDS: ReadonlySet<string> = new Set(["user", "beat", "prose", "row", "ask", "note"]);
+
+/**
+ * Entries from outside this fold, as things this rail can draw (#120, #200).
+ *
+ * A thread comes back off disk carrying the drawing spool wrote, and spool's store keeps
+ * it opaque on purpose: the vocabulary is this module's, and a second parser for it down
+ * there is exactly what storing the drawing avoided. So this is the floor under a file a
+ * person can open in an editor rather than a validator — an entry with a kind the renderer
+ * has no branch for would fall through every one of them, and one hand-edited thread must
+ * not take the canvas with it.
+ */
+export function drawableEntries(entries: readonly unknown[]): AgentEntry[] {
+	return entries.filter((entry): entry is AgentEntry => {
+		if (typeof entry !== "object" || entry === null) return false;
+		const one = entry as { key?: unknown; kind?: unknown };
+		return typeof one.key === "string" && typeof one.kind === "string" && KINDS.has(one.kind);
+	});
+}
+
+/**
+ * The same entries with nothing left to pace (#149, #200).
+ *
+ * A message's schedule is a fact about one clock, and a clock belongs to one turn: it is
+ * milliseconds from that turn's send. So the moment an entry leaves its own turn — into
+ * the turns a conversation has already had, or onto disk — the schedule means nothing, and
+ * reading it against a clock that starts again at zero draws the message as no characters
+ * at all. Dropping it is what `shownBy` already documents for a block that never streamed:
+ * a message with no schedule is drawn whole.
+ */
+export function unpaced(entries: readonly AgentEntry[]): AgentEntry[] {
+	return entries.map((entry) =>
+		entry.kind === "prose" && entry.landed.length > 0 ? { ...entry, landed: [], settled: true } : entry,
+	);
+}
+
 /** one event and the millisecond it reached the client, measured from the send */
 export interface Stamped {
 	readonly at: number;

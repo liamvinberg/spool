@@ -21,16 +21,11 @@ export function PlayIcon() {
 	);
 }
 
+/** `currentColor`, so a button that lightens on hover takes its plus with it */
 export function PlusIcon() {
 	return (
 		<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-			<path
-				d="M5 1 L5 9 M1 5 L9 5"
-				fill="none"
-				stroke="var(--color-muted)"
-				strokeWidth="1.5"
-				strokeLinecap="round"
-			/>
+			<path d="M5 1 L5 9 M1 5 L9 5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
 		</svg>
 	);
 }

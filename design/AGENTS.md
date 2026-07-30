@@ -85,9 +85,24 @@ dimmed with a mono `queued` and a ✕, capped at 164px and scrolling inside itse
 and the whole stack goes down stdin as one turn the moment the result arrives with
 each message carrying the `<selection>` entries from its own Enter. `--queue-back`'s
 merge is the one invariant both exits share, in `agent-queue.ts`: words that leave
-the queue un-fired land above the draft in fire order, one blank line apart. The
-threads strip and the model readout the frames here draw are still ahead of the
-code.
+the queue un-fired land above the draft in fire order, one blank line apart.
+**#200 landed the threads and what survives a restart**: the strip is a row above
+the plan's shelf, the plus leading it, the open thread taking the room it needs
+with its ✕ and the rest collapsed to a mark with theirs, and a press centring the
+row on what was pressed. It draws #161's marks at ship size, with `streaming`
+drawing nothing — the frames here turn a ring for the thread you are watching,
+which is a second spinner saying what the transcript already says. A collapsed
+`read` thread keeps `agent-nav-strip`'s hollow dot, because out there the mark is
+the thread. A signed-out bounce shares the waiting disc, read off the binary's own
+words now that a printed refusal reaches the log; a wind-down does not. The
+picture is one file per thread under the state directory, written on every
+boundary and on a 2s throttle while a turn runs, and the thread id is the session
+id the spawn resumes — so a conversation keeps every turn and a restored thread is
+byte-identical to what was drawn. A restart cuts the picture where the lights went
+out and offers no resume, an aged-out session reads finished, and a ✕ deletes
+nothing. **What the frames here still draw ahead of the code**: `--threads-strip`'s
+equal-width tabs and its missing ✕, which #136 already recorded as the frame
+lagging its own decision, and the model readout.
 
 Explorations live until the work they decided is built. Making the decision is
 not that moment: while a page is still being resolved, the rejected frames are
