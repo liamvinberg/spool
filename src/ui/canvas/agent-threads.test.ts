@@ -36,14 +36,6 @@ const row = (state: "running" | "done", verb = "edit"): Extract<AgentEntry, { ki
 	parent: null,
 	delegated: [],
 });
-const beat = (until: number | null): AgentEntry => ({
-	key: "beat:1",
-	kind: "beat",
-	state: "running",
-	verb: null,
-	since: 10,
-	until,
-});
 
 describe("a thread's mark", () => {
 	it("draws nothing for the thread in the rail and turns for one working elsewhere", () => {
@@ -210,11 +202,10 @@ describe("what a restart leaves", () => {
 	 * say so are gone, because the drawing was stored rather than the stream, so the
 	 * aftermath is derived from the entries themselves.
 	 */
-	it("stops every row that was still running and closes the beat", () => {
-		const cut = cutPicture([asked, beat(null), row("running"), row("done", "shot")]);
+	it("stops every row that was still running", () => {
+		const cut = cutPicture([asked, row("running"), row("done", "shot")]);
 
 		expect(cut.filter((entry) => entry.kind === "row").map((entry) => entry.state)).toEqual(["stopped", "done"]);
-		expect(cut.find((entry) => entry.kind === "beat")).toMatchObject({ state: "stopped", until: 10 });
 	});
 
 	it("ends the log on spool's own word for a turn that did not finish", () => {

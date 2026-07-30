@@ -20,7 +20,6 @@ import {
 	type AgentPlan,
 	type AgentRow,
 	type AgentSent,
-	duration,
 	type RowState,
 	shownBy,
 } from "./agent-transcript";
@@ -37,10 +36,10 @@ import { ChevronIcon, PanelCaret } from "./sidebar";
  * at 420 a tab row is a whole line of a narrow column spent saying which of two
  * things you are looking at, and there is only one thing to look at.
  *
- * Five things render and nothing else: the plan, the human's words, the agent's
- * words, one quiet beat for the time the model spends composing, and one line per
- * tool call. Threads, chips and the model readout are later tickets, and this reads
- * correctly without them.
+ * Four things render and nothing else: the plan, the human's words, the agent's
+ * words, and one line per tool call. The wait before the first token and the model's
+ * own thinking render nothing. Threads, chips and the model readout are later
+ * tickets, and this reads correctly without them.
  *
  * One line is the rule, and the test for the exception is whether the thing outlives
  * the call that made it. A row is a mark, a verb and a subject, with everything else
@@ -172,7 +171,6 @@ export function AgentRail({
 	plan,
 	phase,
 	elapsed,
-	last,
 	jump,
 	pointing,
 	threads,
@@ -193,7 +191,6 @@ export function AgentRail({
 	plan: AgentPlan | null;
 	phase: TurnPhase;
 	elapsed: number;
-	last: number;
 	jump: FrameJump;
 	pointing: Pointing;
 	/** every conversation this project has, newest first (#136, #200) */
@@ -342,7 +339,6 @@ export function AgentRail({
 						live={phase === "playing"}
 						spoke={spoke}
 						elapsed={elapsed}
-						last={last}
 						jump={jump}
 						onAnswer={onAnswer}
 					>
@@ -902,7 +898,6 @@ function Transcript({
 	live,
 	spoke,
 	elapsed,
-	last,
 	jump,
 	onAnswer,
 	children,
@@ -918,7 +913,6 @@ function Transcript({
 	 */
 	spoke: number;
 	elapsed: number;
-	last: number;
 	jump: FrameJump;
 	onAnswer: (request: string, reply: AgentReply) => void;
 	children: React.ReactNode;
@@ -991,8 +985,8 @@ function Transcript({
 
 	/*
 	 * The pin above re-runs when the list changes; height changes on more than the
-	 * list. A fence settles, an answered question folds its options, a beat is spliced
-	 * out — the body resizes with nothing new in it, and until the next render either
+	 * list. A fence settles, an answered question folds its options, a message settles
+	 * — the body resizes with nothing new in it, and until the next render either
 	 * the pin or the chip is stale. Watching the body itself closes that gap: following
 	 * re-pins, and a reader who is away learns the live end moved. (happy-dom
 	 * constructs the observer and lays nothing out, so tests drive the pin through the
@@ -1074,7 +1068,7 @@ function Transcript({
 							className="animate-agent-entry shrink-0"
 							style={{ paddingTop: gapBefore(entries[index - 1], entry) }}
 						>
-							<Entry entry={entry} elapsed={elapsed} last={last} jump={jump} onAnswer={onAnswer} />
+							<Entry entry={entry} elapsed={elapsed} jump={jump} onAnswer={onAnswer} />
 						</div>
 					))}
 				</div>
@@ -1106,24 +1100,21 @@ function Transcript({
 	);
 }
 
-/** consecutive machine work reads as one run, so it sits tighter than a turn boundary */
+/** consecutive rows read as one run, so they sit tighter than a turn boundary */
 function gapBefore(previous: AgentEntry | undefined, entry: AgentEntry): number {
 	if (previous === undefined) return 0;
-	const machine = (candidate: AgentEntry) => candidate.kind === "beat" || candidate.kind === "row";
-	if (machine(previous) && machine(entry)) return 6;
+	if (previous.kind === "row" && entry.kind === "row") return 6;
 	return 14;
 }
 
 function Entry({
 	entry,
 	elapsed,
-	last,
 	jump,
 	onAnswer,
 }: {
 	entry: AgentEntry;
 	elapsed: number;
-	last: number;
 	jump: FrameJump;
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
@@ -1178,29 +1169,6 @@ function Entry({
 	}
 	if (entry.kind === "row") return <Row entry={entry} jump={jump} />;
 	if (entry.kind === "ask") return <Ask entry={entry} onAnswer={onAnswer} />;
-	if (entry.kind === "beat") {
-		/*
-		 * A beat's duration is the wire's, read off the same clock the prose is paced by.
-		 * A beat nobody closed — a stream that died mid-turn — stops at the last event
-		 * rather than climbing forever, and an infinite clock is the settled case where
-		 * `until` is always set.
-		 */
-		const now = Number.isFinite(elapsed) ? elapsed : last;
-		const ran = Math.max(0, (entry.until ?? Math.max(entry.since, now)) - entry.since);
-		return (
-			<div className="-mx-1.5 flex h-[26px] w-fit max-w-[calc(100%+12px)] items-center gap-2.5 px-1.5">
-				<StateMark state={entry.state} />
-				<span className="flex min-w-0 items-baseline gap-1.5">
-					{entry.verb === null ? null : (
-						<span className="font-mono text-muted/70 text-sm leading-4">{entry.verb}</span>
-					)}
-					<span className="min-w-0 truncate font-mono text-muted/60 text-sm tabular-nums leading-4">
-						{duration(ran)}
-					</span>
-				</span>
-			</div>
-		);
-	}
 	return <Prose entry={entry} elapsed={elapsed} />;
 }
 
@@ -1718,6 +1686,68 @@ function StateMark({ state, className }: { state: RowState; className?: string }
  * The hint below says which of the three is live, so a press is never a mystery. */
 
 /**
+ * The stroke on the composer's top border, which is the whole of what says the agent is
+ * alive.
+ *
+ * A thread is laid out of the left edge, carries at its full length, and is taken up into
+ * the right edge as the head waits there for the tail. Spool means winding thread and this
+ * product calls its conversations threads, so a stroke on the boundary is closer to what
+ * the thing is than a spinner would be — and it says it without spending the logo or a
+ * single pixel of the transcript, because it rides the hairline that was already there.
+ *
+ * **No word, and that is the point.** The stroke is the entire indicator. It tells two
+ * states apart: idle draws the border unchanged, and a request out, thinking, saying and
+ * doing all draw the same laying-and-taking-up. A reader watching the edge of their own eye
+ * learns nothing from the difference between a request being out and a `read` being open,
+ * because the answer to *do I need to do anything* is no in both.
+ *
+ * **The one state that is a call to act gets a shape instead.** Parked on a request, the
+ * stroke stops where it was and an 18px break opens in the line. Stopping is
+ * `animation-play-state: paused`, which is literally "where it was" and needs no clock of
+ * spool's; a break is static, which is correct for a thing that has stopped, and nothing
+ * else in this rail is a discontinuous line.
+ *
+ * The animation is `ui.css`'s, keyframes on one element's `translateX` and `scaleX`. Its
+ * cost is stated rather than hidden: 420px of peripheral travel every 1.6s at 0.26px/ms,
+ * the largest moving thing in the rail. What it buys is that the transcript gives up
+ * nothing at all.
+ */
+function WindStroke({ phase }: { phase: TurnPhase }) {
+	// every state of a turn in flight draws the same thing, and a parked one draws it
+	// stopped: the animation is the same instance either way, so pausing freezes the two
+	// ends exactly where the request caught them
+	const laying = phase === "playing" || phase === "asking";
+	const parked = phase === "asking";
+	return (
+		<>
+			<span
+				aria-hidden="true"
+				data-agent-wind={parked ? "parked" : laying ? "laying" : "idle"}
+				className={cn(
+					// scaled to nothing at rest, so idle is the border and nothing else: the
+					// keyframes take the transform over for as long as they are running.
+					// `transform` rather than Tailwind's `scale-x-0`, which compiles to the
+					// `scale` property and would multiply the animation's own scale by zero
+					"pointer-events-none absolute -top-px left-0 block h-px w-full origin-left bg-text/75 [transform:scaleX(0)]",
+					laying && "animate-agent-wind",
+					parked && "[animation-play-state:paused]",
+				)}
+			/>
+			{/* the break, held rather than mounted so it can open over 200ms rather than
+			    appear: it is a piece of the page laid over the hairline */}
+			<span
+				aria-hidden="true"
+				data-agent-wind-break=""
+				className={cn(
+					"pointer-events-none absolute -top-px left-1/2 block h-px w-[18px] -translate-x-1/2 bg-bg transition-opacity duration-200 motion-reduce:transition-none",
+					parked ? "opacity-100" : "opacity-0",
+				)}
+			/>
+		</>
+	);
+}
+
+/**
  * What the field says it is for, which is what the next press will do (#145, #200).
  *
  * Three, because Enter has three meanings here and the field is what each of them is
@@ -1838,7 +1868,7 @@ function Composer({
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: a drop target is not a control, and its keyboard path is the paste the field already takes
 		<div
-			className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5"
+			className="relative flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5"
 			onDragOver={(event) => {
 				// `items` rather than `files`: while a drag is in flight the data store is in
 				// protected mode and `files` is empty, so a guard that read it would never
@@ -1855,6 +1885,7 @@ function Composer({
 				void readAttachment(file).then(onAttach);
 			}}
 		>
+			<WindStroke phase={phase} />
 			<div className="flex min-h-0 flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5 transition-colors duration-150 focus-within:border-muted/45">
 				<QueueBox queued={queued} onUnqueue={onUnqueue} />
 				{attached === null ? null : <Attached attached={attached} onDrop={() => onAttach(null)} />}

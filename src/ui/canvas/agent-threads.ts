@@ -186,8 +186,8 @@ export function nameOf(entries: readonly AgentEntry[], fallback = "new thread"):
  * an agent has write access to the repo, and re-running one minutes later because a
  * background process came back up is spool taking an action nobody asked for at that
  * moment. So the picture is settled here rather than restarted — every row that was
- * still running stops, every open beat closes on the last thing that happened, and the
- * log ends on spool's own word for a turn that did not finish.
+ * still running stops, every question nobody can answer any more reads as one nobody
+ * answered, and the log ends on spool's own word for a turn that did not finish.
  *
  * It is the same aftermath a press already derives, expressed on the finished entries
  * because that is all a restored thread has: the events are gone, and #120 stored the
@@ -202,9 +202,6 @@ export function cutPicture(entries: readonly AgentEntry[]): AgentEntry[] {
 			return entry.state === "running"
 				? { ...entry, state: "stopped" as const, delegated: cutRows(entry.delegated) }
 				: { ...entry, delegated: cutRows(entry.delegated) };
-		}
-		if (entry.kind === "beat" && entry.until === null) {
-			return { ...entry, state: "stopped" as const, until: entry.since };
 		}
 		// a request nobody can answer any more: there is no process left for an answer to
 		// reach, so it reads as the one nobody answered rather than as one still open
