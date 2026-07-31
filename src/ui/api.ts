@@ -348,13 +348,14 @@ export function subscribeSse(url: string, handlers: Record<string, (data: unknow
 }
 
 /**
- * One turn against the developer's own agent (#191, #192).
+ * One turn against the developer's own agent (#191, #192, #211).
  *
- * A POST whose response is the stream, and the one SSE surface here that must
- * never reconnect: a turn is a process the daemon holds open for exactly as long
- * as this request lives, so reopening it would spawn a second agent against a
- * prompt that has already been answered. It ends when the daemon closes it, and
- * abandoning the returned handle takes the process with it.
+ * A POST whose response is the stream, and the one SSE surface here that must never
+ * reconnect *by itself*: reopening the POST would spawn a second agent against a prompt
+ * that has already been answered. What it may do — and what `attachAgentTurn` below is —
+ * is go and read the same turn again through its own door, because the turn no longer
+ * belongs to this request. Letting go of the handle lets go of the read, and the daemon
+ * carries on.
  */
 export interface AgentSaying {
 	readonly prompt: string;
@@ -377,6 +378,68 @@ export interface AgentSaying {
 	readonly attached?: Attachment | undefined;
 }
 
+/**
+ * What the daemon says as a read opens (#211).
+ *
+ * It is the turn introducing itself rather than anything the agent said, which is why it
+ * rides its own SSE event: the rail is picking a conversation back up and needs the three
+ * facts it lost with the last response — what this turn is called, whether the process is
+ * still up, and how much of what follows is a replay rather than something happening now.
+ */
+export interface AgentAttached {
+	/** the name a stop quotes (#165), absent for a turn nobody intends to stop */
+	readonly turn?: string;
+	readonly running: boolean;
+	/** the first event id this read will carry */
+	readonly from: number;
+	/** how long the log was when the read opened: `logged - from` events are replay */
+	readonly logged: number;
+}
+
+export interface AgentReading {
+	readonly attached?: ((attached: AgentAttached) => void) | undefined;
+	readonly event: (event: AgentEvent) => void;
+	readonly end: (error?: string) => void;
+}
+
+/**
+ * Read one open response as a turn, however the response was asked for.
+ *
+ * Both doors return the same stream, so both read it the same way: the POST that starts a
+ * turn and the GET that picks one up differ in what they send and in nothing after that.
+ */
+async function readTurn(open: Promise<Response>, on: AgentReading, disposed: () => boolean): Promise<void> {
+	try {
+		const res = await open;
+		if (!res.ok || res.body === null) {
+			if (!disposed()) on.end(res.body === null ? "the turn stream never opened" : await res.text());
+			return;
+		}
+		// `disposed` gates the events too, not only the end: letting go of a read can leave
+		// a decoded batch in flight, and it must not land in the turn that replaced it
+		await drainSse(res.body, {
+			attached: (data) => {
+				if (!disposed()) on.attached?.(data as AgentAttached);
+			},
+			agent: (data) => {
+				if (!disposed()) on.event(data as AgentEvent);
+			},
+		});
+		if (!disposed()) on.end();
+	} catch (error) {
+		/*
+		 * The reason, rather than silence (#211).
+		 *
+		 * An aborted read is the caller letting go and never reaches here — `disposed` is
+		 * set before the abort. Everything else is the transport dying, and it used to be
+		 * reported as a clean end: the rail drew *the turn stream ended* over a dropped
+		 * socket, a sleeping laptop and a daemon that had gone, with no way to tell them
+		 * apart. What the browser said is worth more than that, however terse.
+		 */
+		if (!disposed()) on.end(error instanceof Error ? error.message : String(error));
+	}
+}
+
 export function streamAgentTurn(
 	project: string,
 	said: {
@@ -387,47 +450,60 @@ export function streamAgentTurn(
 		/** one message, or the several a queue fired as one turn (#170) */
 		readonly saying: readonly AgentSaying[];
 	},
-	on: { readonly event: (event: AgentEvent) => void; readonly end: (error?: string) => void },
+	on: AgentReading,
 ): () => void {
 	const controller = new AbortController();
 	let disposed = false;
-	void (async () => {
-		try {
-			// `init` is spread over what the client built, so `headers` here would replace
-			// its own `content-type: application/json` and the daemon would reject the body
-			const res = await client.api.p[":project"].agent.turn.$post(
-				{
-					param: { project },
-					json: {
-						thread: said.thread,
-						turn: said.turn,
-						said: said.saying.map((one) => ({
-							prompt: one.prompt,
-							...(one.selection === undefined ? {} : { selection: [...one.selection] }),
-							...(one.attached === undefined ? {} : { attachment: one.attached }),
-						})),
-					},
+	// `init` is spread over what the client built, so `headers` here would replace its own
+	// `content-type: application/json` and the daemon would reject the body
+	void readTurn(
+		client.api.p[":project"].agent.turn.$post(
+			{
+				param: { project },
+				json: {
+					thread: said.thread,
+					turn: said.turn,
+					said: said.saying.map((one) => ({
+						prompt: one.prompt,
+						...(one.selection === undefined ? {} : { selection: [...one.selection] }),
+						...(one.attached === undefined ? {} : { attachment: one.attached }),
+					})),
 				},
-				{ init: { signal: controller.signal } },
-			);
-			if (!res.ok || res.body === null) {
-				on.end(res.body === null ? "the turn stream never opened" : await res.text());
-				return;
-			}
-			// `disposed` gates the events too, not only the end: abandoning a turn can leave
-			// a decoded batch in flight, and it must not land in the turn that replaced it
-			await drainSse(res.body, {
-				agent: (data) => {
-					if (!disposed) on.event(data as AgentEvent);
-				},
-			});
-			if (!disposed) on.end();
-		} catch {
-			// an aborted read is the caller letting go; anything else has already been
-			// reported down the stream as a `closed` event
-			if (!disposed) on.end();
-		}
-	})();
+			},
+			{ init: { signal: controller.signal } },
+		),
+		on,
+		() => disposed,
+	);
+	return () => {
+		disposed = true;
+		controller.abort();
+	};
+}
+
+/**
+ * The turn this conversation already has, picked up where it was left (#211).
+ *
+ * The door a returning rail knocks on. A turn outlives the request that started it, so a
+ * refresh loses the response and nothing else: this asks the daemon for the turn running
+ * in a thread and reads it from `from` — zero for a fresh page, which replays the whole
+ * log and rebuilds exactly what was on screen.
+ *
+ * A 404 is the ordinary answer and not a failure: it means nothing is being held for this
+ * conversation, which is every thread that is not mid-turn. The picture on disk is the
+ * whole of what the rail can draw for one of those, and it already has it.
+ */
+export function attachAgentTurn(project: string, thread: string, from: number, on: AgentReading): () => void {
+	const controller = new AbortController();
+	let disposed = false;
+	void readTurn(
+		client.api.p[":project"].agent.turn[":thread"].$get(
+			{ param: { project, thread }, query: { from: String(from) } },
+			{ init: { signal: controller.signal } },
+		),
+		on,
+		() => disposed,
+	);
 	return () => {
 		disposed = true;
 		controller.abort();
@@ -487,7 +563,7 @@ export async function putAgentThread(project: string, thread: string, picture: T
 	try {
 		await client.api.p[":project"].agent.threads[":thread"].$put({
 			param: { project, thread },
-			json: { ...picture, entries: [...picture.entries] },
+			json: { ...picture, entries: [...picture.entries], queued: [...picture.queued] },
 		});
 	} catch {
 		// a write that never landed costs what the next one will land anyway: the picture is

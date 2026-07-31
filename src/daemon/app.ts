@@ -22,11 +22,12 @@ import { gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
+import { type AgentHeld, createAgentTurns } from "./agent-live";
 import { type AgentAsk, askAgentOffer, askFrom, isEffortShaped, isModelShaped } from "./agent-offer";
 import { agentInstalled, askAgentLogin } from "./agent-preflight";
 import { agentPromptContent } from "./agent-spawn";
 import { closeThread, isThreadId, parseThreadPut, putThread, serveThreads, sessionExists } from "./agent-threads";
-import { type AgentTurn, startAgentTurn } from "./agent-turn";
+import { startAgentTurn } from "./agent-turn";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import {
@@ -140,6 +141,46 @@ type LaunchEditor = (file: string, onError?: (fileName: string, message: string 
 
 /** launch-editor is CJS `export =` — createRequire keeps the types honest. */
 const launchEditorDefault = createRequire(import.meta.url)("launch-editor") as LaunchEditor;
+
+/**
+ * One view of a held turn, which is what both doors return (#211).
+ *
+ * The turn is not this response's to end. A client that goes away closes its own read and
+ * leaves the process where it was — which is the whole of what #211 changed, and it is one
+ * line: `onAbort` closes the view rather than abandoning the turn.
+ *
+ * It opens by saying what is being read: the name the rail's stop has to quote, whether
+ * the process is still up, and how many events are already in the log. That last one is
+ * what lets the rail draw the replay whole and pace only what arrives after it — the same
+ * rule a picture off disk is under, since neither of them is happening now.
+ */
+function attachTurn(c: Context, held: AgentHeld, from: number) {
+	return streamSSE(c, async (stream) => {
+		const view = held.watch(from);
+		stream.onAbort(() => view.close());
+		try {
+			await stream.writeSSE({
+				event: "attached",
+				data: JSON.stringify({
+					...(held.id === undefined ? {} : { turn: held.id }),
+					running: held.running,
+					from,
+					logged: held.logged,
+				}),
+			});
+			for await (const { id, event } of view) {
+				try {
+					await stream.writeSSE({ event: "agent", data: JSON.stringify(event), id: String(id) });
+				} catch {
+					// the client hung up mid-write — stop reading, and leave the turn running
+					break;
+				}
+			}
+		} finally {
+			view.close();
+		}
+	});
+}
 
 const disabledTermExecutor: TermExecutor = async () => {
 	throw new SpoolError("terminal execution is disabled until it can run in an OS sandbox");
@@ -296,19 +337,16 @@ export function createDaemonApp({
 	// behind the control token, the same boundary #41 drew.
 	const spawnAgent = agentExecutor ?? claudeExecutor();
 	/**
-	 * Every turn in flight, the project it is running in, and what the rail calls it.
+	 * Every turn this daemon is holding, by the conversation it belongs to (#211).
 	 *
-	 * The project is carried because an answer arrives on its own request rather than
-	 * on the stream that asked for it (#197): a waiting request is addressed by the id
-	 * the binary gave it, and this is what keeps one project's answer from reaching
-	 * another project's turn.
-	 *
-	 * The name is carried for the same reason and a different id (#165). A stop has no
-	 * request to quote — it is the one thing spool asks the binary for rather than
-	 * answers — so the rail names its own turn when it starts one, and the stop names
-	 * it back. Absent for a client that never intends to stop anything.
+	 * It used to be every turn *in flight*, keyed by the turn and cleared by the request
+	 * that streamed it — which is what made a refresh kill the binary. A turn is held here
+	 * now and the stream is only a view of it: the project is carried because an answer
+	 * arrives on its own request rather than on the stream that asked for it (#197), and
+	 * the rail's own name for the turn is carried because a stop has no request to quote
+	 * and names the turn instead (#165).
 	 */
-	const liveTurns = new Map<AgentTurn, { root: string; id?: string; thread: string }>();
+	const liveTurns = createAgentTurns();
 	/**
 	 * Which machine each thread chose, and how hard it should think (#199).
 	 *
@@ -933,6 +971,21 @@ export function createDaemonApp({
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				const { said, thread, turn: named } = c.req.valid("json");
+				/*
+				 * One turn per conversation, refused rather than replaced (#211).
+				 *
+				 * A thread holding a running turn is a thread with a process standing in the repo,
+				 * and a second one would be two agents writing the same files against a prompt
+				 * neither of them can see. The rail queues into a running turn rather than sending,
+				 * so this only ever catches a client that lost its stream and came back without
+				 * attaching — and saying so is what sends it to the door below.
+				 */
+				if (liveTurns.get(project.root, thread)?.running === true) {
+					return c.text(
+						`a turn is already running in thread "${thread}" — attach to it rather than starting a second`,
+						409,
+					);
+				}
 				const turn = startAgentTurn({
 					executor: spawnAgent,
 					root: project.root,
@@ -962,25 +1015,52 @@ export function createDaemonApp({
 					// property of the thread rather than of whichever turn last said so
 					ask: agentAsks.get(askKey(project.root, thread)) ?? {},
 				});
-				liveTurns.set(turn, { root: project.root, thread, ...(named === undefined ? {} : { id: named }) });
-				return streamSSE(c, async (stream) => {
-					let id = 0;
-					stream.onAbort(() => turn.abandon());
-					try {
-						for await (const event of turn.events) {
-							try {
-								await stream.writeSSE({ event: "agent", data: JSON.stringify(event), id: String(id++) });
-							} catch {
-								// the client hung up mid-write — stop reading, but never
-								// swallow a failure from the turn itself
-								break;
-							}
-						}
-					} finally {
-						turn.abandon();
-						liveTurns.delete(turn);
-					}
+				const held = liveTurns.hold({
+					root: project.root,
+					thread,
+					turn,
+					...(named === undefined ? {} : { id: named }),
 				});
+				return attachTurn(c, held, 0);
+			},
+		)
+		/*
+		 * The same turn, read again from wherever a client left off (#211).
+		 *
+		 * A refresh, a lid, a dropped socket: the browser loses the response and the turn goes
+		 * on, so what a returning rail needs is not a new turn but the one it was reading. It
+		 * asks for the turn in this thread, says how much of it it has, and gets the rest —
+		 * the log from that point, and then everything that arrives after.
+		 *
+		 * From zero by default, which is what a fresh page asks for: the fold from the event
+		 * union to the drawing is the rail's and it is pure, so handing back every event the
+		 * turn has produced rebuilds exactly what was on screen. Nothing down here folds
+		 * anything, which is #120's seam kept where it was.
+		 */
+		.get(
+			"/api/p/:project/agent/turn/:thread",
+			validator("query", (value) => {
+				// how much of the turn the client already has, which is the id it wants first.
+				// Anything that is not a whole number is a client that has nothing, and that is a
+				// replay rather than a refusal: a bad query must cost the read no events, never
+				// the turn
+				const said = (value as { from?: unknown }).from;
+				const from = Number.parseInt(typeof said === "string" ? said : "", 10);
+				return { from: Number.isInteger(from) && from > 0 ? from : 0 };
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const thread = c.req.param("thread");
+				if (!isThreadId(thread)) {
+					return c.text("a thread is named by the uuid its session runs under", 400);
+				}
+				const held = liveTurns.get(project.root, thread);
+				// nothing is being held for this conversation: it ended long enough ago to have
+				// been let go of, or it never ran here. Both are the same fact from here, and the
+				// picture on disk is the whole of what the rail can draw for one of them
+				if (held === undefined) return c.text(`no turn to read in thread "${thread}"`, 404);
+				return attachTurn(c, held, c.req.valid("query").from);
 			},
 		)
 		.post(
@@ -1008,8 +1088,8 @@ export function createDaemonApp({
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				const { turn: named } = c.req.valid("json");
-				for (const [turn, live] of liveTurns) {
-					if (live.root === project.root && live.id === named && turn.interrupt()) return c.body(null, 204);
+				for (const held of liveTurns.of(project.root)) {
+					if (held.id === named && held.interrupt()) return c.body(null, 204);
 				}
 				// nothing is running under that name: it ended on its own, or it was never
 				// this project's. Both are the same fact from here, and both mean stopped
@@ -1044,8 +1124,8 @@ export function createDaemonApp({
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				const { request, reply } = c.req.valid("json");
-				for (const [turn, live] of liveTurns) {
-					if (live.root === project.root && turn.answer(request, reply)) return c.body(null, 204);
+				for (const held of liveTurns.of(project.root)) {
+					if (held.answer(request, reply)) return c.body(null, 204);
 				}
 				// nobody is waiting on it: the turn ended, it was answered already, or it
 				// belongs to another project. All three are the same fact from here
@@ -1065,9 +1145,7 @@ export function createDaemonApp({
 		.get("/api/p/:project/agent/threads", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			const live = new Set<string>();
-			for (const one of liveTurns.values()) if (one.root === project.root) live.add(one.thread);
-			return c.json({ threads: serveThreads(spoolDir, project.root, { live }) });
+			return c.json({ threads: serveThreads(spoolDir, project.root, { live: liveTurns.threads(project.root) }) });
 		})
 		.put(
 			"/api/p/:project/agent/threads/:thread",
@@ -1827,8 +1905,7 @@ export function createDaemonApp({
 		terms,
 		close: () => {
 			machineStateWatch.stop();
-			for (const turn of liveTurns.keys()) turn.abandon();
-			liveTurns.clear();
+			liveTurns.close();
 			void terms.close();
 			hub.close();
 			updateChecker.stop();
