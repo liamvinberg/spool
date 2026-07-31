@@ -112,6 +112,67 @@ describe("daemon authority matrix", () => {
 		expect((await request("capture-spool.localhost.attacker.example", "/capture")).status).toBe(421);
 	});
 
+	/*
+	 * The hosted front door at local.spool.page listens for this daemon from the
+	 * visitor's browser and hands over when it answers (spool-cloud#8). Reading
+	 * the answer is what tells it spool is there rather than some other server
+	 * squatting the port, so exactly one route gains exactly one header — and the
+	 * cross-origin reply is trimmed, because the door needs a name and a version
+	 * and has no business knowing the pid.
+	 */
+	describe("the front door's health read", () => {
+		const health = (origin?: string) =>
+			makeSecurityHarness().request(CONTROL_HOST, "/api/health", {
+				...(origin === undefined ? {} : { headers: { origin } }),
+			});
+
+		it("lets the hosted door read a trimmed health", async () => {
+			const response = await health("https://local.spool.page");
+
+			expect(response.headers.get("access-control-allow-origin")).toBe("https://local.spool.page");
+			expect(response.headers.get("vary")?.toLowerCase()).toContain("origin");
+			expect(await response.json()).toEqual({ name: "spool", version: "0.0.0-test" });
+		});
+
+		// so a locally served copy of the door can read health while it is being
+		// worked on. Safe by construction: anything already on loopback could ask
+		// directly, and no public site can ever carry a loopback origin.
+		it.each(["http://localhost:8788", "http://127.0.0.1:5173", "https://localhost:4443", "http://[::1]:8788"])(
+			"lets a loopback origin (%s) read a trimmed health",
+			async (origin) => {
+				const response = await health(origin);
+
+				expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+				expect(await response.json()).toEqual({ name: "spool", version: "0.0.0-test" });
+			},
+		);
+
+		it("tells nobody else, and keeps the full body for the daemon's own callers", async () => {
+			for (const origin of [
+				"https://evil.example",
+				"http://local.spool.page",
+				"https://local.spool.page.evil.example",
+				"https://notlocal.spool.page",
+				"http://localhost.evil.example",
+				"null",
+			]) {
+				const response = await health(origin);
+				expect(response.headers.get("access-control-allow-origin"), origin).toBeNull();
+			}
+
+			// no Origin at all is the daemon's own lifecycle probe, unchanged
+			const direct = await health();
+			expect(direct.headers.get("access-control-allow-origin")).toBeNull();
+			expect(await direct.json()).toMatchObject({ name: "spool", version: "0.0.0-test", pid: expect.any(Number) });
+		});
+
+		it("still refuses a preflight, because a simple GET never needs one", async () => {
+			const { request } = makeSecurityHarness();
+
+			expect((await request(CONTROL_HOST, "/api/p/anything", { method: "OPTIONS" })).status).toBe(403);
+		});
+	});
+
 	it("rebuilds cached frame authority when the bound control origin changes", async () => {
 		const { project, daemon, render } = makeSecurityHarness();
 		const path = `/p/${encodeURIComponent(project.name)}/frames/home`;

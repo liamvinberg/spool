@@ -13,6 +13,7 @@ import { z } from "zod";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachment } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_FAVICON_SVG } from "../brand";
 import type { Cover } from "../cover";
+import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { initProject } from "../init";
 import { openProject } from "../open";
@@ -43,6 +44,7 @@ import { createFlowGraph, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
+import { isLoopbackHost } from "./lifecycle";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
@@ -409,6 +411,39 @@ export function createDaemonApp({
 		return "unexpected";
 	}
 
+	/**
+	 * Who may read `/api/health` across origins, and nothing else may — this is
+	 * the daemon's only CORS header anywhere.
+	 *
+	 * The hosted front door at local.spool.page listens for this daemon from a
+	 * visitor's browser and hands over when it answers (spool-cloud#8). Without a
+	 * readable reply it can only learn that *something* is on the port, so any dev
+	 * server squatting 7766 would read as spool and a visitor would be handed to
+	 * it. One route, one header, one trimmed body is the whole carve-out.
+	 *
+	 * Loopback origins are allowed too, so a locally served copy of that page can
+	 * read health while the page itself is being worked on. It is safe by
+	 * construction: anything already serving on loopback could ask the daemon
+	 * directly, and a public website can never carry a loopback origin.
+	 *
+	 * Narrower than the issue in one place, on purpose: http and https only.
+	 * `new URL("foo://localhost").origin` serializes to the string "null", and
+	 * echoing that back would hand the header to every sandboxed frame on the
+	 * machine — the exact opaque-origin law the rest of this file exists to keep.
+	 */
+	function healthReaderOrigin(origin: string | undefined): string | undefined {
+		if (origin === undefined) return undefined;
+		if (origin === DOOR_ORIGIN) return DOOR_ORIGIN;
+		let url: URL;
+		try {
+			url = new URL(origin);
+		} catch {
+			return undefined;
+		}
+		if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+		return isLoopbackHost(normalizeHostname(url.hostname)) ? url.origin : undefined;
+	}
+
 	function isProjectDataPath(path: string): boolean {
 		return /^\/api\/p\/[^/]+\/(?:scenarios\/[^/]+|fixtures\/.+)$/.test(path);
 	}
@@ -506,7 +541,16 @@ export function createDaemonApp({
 			c.header("x-content-type-options", "nosniff");
 			return c.html(captureWorkerDocument(controlOrigin));
 		})
-		.get("/api/health", (c) => c.json({ name: "spool", version, pid: process.pid, startedAt }))
+		.get("/api/health", (c) => {
+			const reader = healthReaderOrigin(c.req.header("origin"));
+			// two shapes behind one URL, chosen by Origin — no cache may collapse them
+			c.header("vary", "origin");
+			if (reader === undefined) return c.json({ name: "spool", version, pid: process.pid, startedAt });
+			c.header("access-control-allow-origin", reader);
+			// the door asks two questions and is owed two answers: is this spool,
+			// and which version. The pid and the start time are nobody else's.
+			return c.json({ name: "spool", version });
+		})
 		.post("/api/upgrade", (c) => {
 			// the toast door (#30): spawn the one orchestrator detached and stand
 			// back — the SSE drop and the version flip tell the rest of the story
