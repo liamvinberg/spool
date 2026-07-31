@@ -31,6 +31,15 @@ export interface PageRow {
 	mark?: Life | undefined;
 	/** paired with something outside this rail that is pointing at the same page */
 	lit?: boolean | undefined;
+	/**
+	 * What stands in the folder's slot. A page spool projects out of what the
+	 * project holds is not a folder of frames, so it does not wear a folder (#189).
+	 */
+	face?: ReactNode | undefined;
+	/** a hairline under the row, for a row that is not part of the list below it */
+	ruled?: boolean | undefined;
+	/** docked against the bottom of the rail instead of listed with the pages */
+	foot?: boolean | undefined;
 }
 
 export function CanvasChrome({
@@ -48,7 +57,8 @@ export function CanvasChrome({
 	/** the selected frame, as both rails show it; nothing selected is a real state */
 	selected?: string | undefined;
 	inspector?: "elements" | "connections" | undefined;
-	tool?: "select" | "hand" | undefined;
+	/** `none` draws no tool bar at all, for a surface with nothing to point at (#189) */
+	tool?: "select" | "hand" | "none" | undefined;
 	/** an exploration's own right rail, taking the inspector's place — proposals only */
 	rail?: ReactNode | undefined;
 	/** the right rail's width; the shipped inspector is 300, and 0 draws no rail at all */
@@ -104,6 +114,8 @@ function PagesRail({
 	targets?: readonly Target[] | undefined;
 }) {
 	const reached = new Map(targets.map((target) => [target.frame, target]));
+	const listed = pages.filter((page) => page.foot !== true);
+	const footed = pages.filter((page) => page.foot === true);
 	return (
 		<aside className="flex shrink-0 flex-col border-border border-r bg-bg" style={{ width: PAGES_W }}>
 			<div className="flex h-11 shrink-0 items-center justify-between border-border border-b pr-2 pl-3.5">
@@ -116,77 +128,104 @@ function PagesRail({
 				</span>
 			</div>
 			<div className="min-h-0 flex-1 overflow-hidden py-2">
-				{pages.map((page) => (
-					<div key={page.name}>
-						<div
-							className={cn(
-								"group relative flex h-8 items-center pr-1.5",
-								(page.active === true || page.lit === true) && "bg-surface",
-							)}
-						>
-							{page.active === true ? (
-								<span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-thread" />
-							) : null}
-							<span className="flex h-8 w-6 shrink-0 items-center justify-center text-muted">
-								<ChevronIcon open={page.open === true} className="h-2.5 w-2.5" />
-							</span>
-							<span className="flex h-8 min-w-0 flex-1 items-center gap-2 text-left">
-								<FolderIcon
-									className={cn("h-3.5 w-3.5 shrink-0", page.active === true ? "text-thread" : "text-muted")}
-								/>
-								<span
-									className={cn(
-										"min-w-0 flex-1 truncate font-mono text-sm leading-sm",
-										page.active === true ? "text-text" : "text-muted",
-									)}
-								>
-									{page.name}
-								</span>
-							</span>
-							{page.mark === undefined ? null : <ThreadMark life={page.mark} className="mr-1.5" />}
-							{/* a collapsed page says only *that* it is walked to: how many is one row of
-							    grey away, and two numbers side by side read as one wrong number */}
-							{page.open === true || !page.frames.some((frame) => reached.has(frame)) ? null : (
-								<WalkTick className="mr-2 h-2 w-2.5 text-thread" />
-							)}
-							<span className="font-mono text-2xs text-muted/60 leading-3">{page.frames.length}</span>
-						</div>
-						{page.open === true ? (
-							<div className="relative pb-0.5">
-								<span className="absolute top-0 bottom-1 left-[18px] w-px bg-border-raised" />
-								{page.frames.map((frame) => {
-									const target = reached.get(frame);
-									return (
-										<div
-											key={frame}
-											className={cn("relative flex h-7 items-center", frame === selected && "bg-surface")}
-										>
-											<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
-											<span
-												className={cn(
-													"min-w-0 truncate pl-[34px] font-mono text-sm leading-sm",
-													frame === selected ? "text-text" : target === undefined ? "text-muted" : "text-text/85",
-												)}
-											>
-												{frame}
-											</span>
-											{target === undefined ? null : (
-												<WalkTick
-													className={cn(
-														"mr-2 ml-auto h-2 w-2.5 shrink-0 text-thread",
-														target.certainty === "might" && "opacity-45",
-													)}
-												/>
-											)}
-										</div>
-									);
-								})}
-							</div>
-						) : null}
-					</div>
+				{listed.map((page) => (
+					<PageBlock key={page.name} page={page} selected={selected} reached={reached} />
 				))}
 			</div>
+			{footed.length === 0 ? null : (
+				<div className="shrink-0 border-border border-t py-2">
+					{footed.map((page) => (
+						<PageBlock key={page.name} page={page} selected={selected} reached={reached} />
+					))}
+				</div>
+			)}
 		</aside>
+	);
+}
+
+function PageBlock({
+	page,
+	selected,
+	reached,
+}: {
+	page: PageRow;
+	selected?: string | undefined;
+	reached: Map<string, Target>;
+}) {
+	return (
+		<div className={cn(page.ruled === true && "border-border border-b pb-2 mb-2")}>
+			<div
+				className={cn(
+					"group relative flex h-8 items-center pr-1.5",
+					(page.active === true || page.lit === true) && "bg-surface",
+				)}
+			>
+				{page.active === true ? (
+					<span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-thread" />
+				) : null}
+				<span className="flex h-8 w-6 shrink-0 items-center justify-center text-muted">
+					<ChevronIcon open={page.open === true} className="h-2.5 w-2.5" />
+				</span>
+				<span className="flex h-8 min-w-0 flex-1 items-center gap-2 text-left">
+					{page.face === undefined ? (
+						<FolderIcon
+							className={cn("h-3.5 w-3.5 shrink-0", page.active === true ? "text-thread" : "text-muted")}
+						/>
+					) : (
+						<span className={cn("shrink-0", page.active === true ? "text-thread" : "text-muted")}>
+							{page.face}
+						</span>
+					)}
+					<span
+						className={cn(
+							"min-w-0 flex-1 truncate font-mono text-sm leading-sm",
+							page.active === true ? "text-text" : "text-muted",
+						)}
+					>
+						{page.name}
+					</span>
+				</span>
+				{page.mark === undefined ? null : <ThreadMark life={page.mark} className="mr-1.5" />}
+				{/* a collapsed page says only *that* it is walked to: how many is one row of
+				    grey away, and two numbers side by side read as one wrong number */}
+				{page.open === true || !page.frames.some((frame) => reached.has(frame)) ? null : (
+					<WalkTick className="mr-2 h-2 w-2.5 text-thread" />
+				)}
+				<span className="font-mono text-2xs text-muted/60 leading-3">{page.frames.length}</span>
+			</div>
+			{page.open === true ? (
+				<div className="relative pb-0.5">
+					<span className="absolute top-0 bottom-1 left-[18px] w-px bg-border-raised" />
+					{page.frames.map((frame) => {
+						const target = reached.get(frame);
+						return (
+							<div
+								key={frame}
+								className={cn("relative flex h-7 items-center", frame === selected && "bg-surface")}
+							>
+								<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
+								<span
+									className={cn(
+										"min-w-0 truncate pl-[34px] font-mono text-sm leading-sm",
+										frame === selected ? "text-text" : target === undefined ? "text-muted" : "text-text/85",
+									)}
+								>
+									{frame}
+								</span>
+								{target === undefined ? null : (
+									<WalkTick
+										className={cn(
+											"mr-2 ml-auto h-2 w-2.5 shrink-0 text-thread",
+											target.certainty === "might" && "opacity-45",
+										)}
+									/>
+								)}
+							</div>
+						);
+					})}
+				</div>
+			) : null}
+		</div>
 	);
 }
 
@@ -205,7 +244,8 @@ const TOOLS = [
 	{ id: "hand", label: "hand", key: "H", Icon: HandIcon },
 ] as const;
 
-function CanvasTools({ tool }: { tool: "select" | "hand" }) {
+function CanvasTools({ tool }: { tool: "select" | "hand" | "none" }) {
+	if (tool === "none") return null;
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-6 z-20 flex justify-center">
 			<div
