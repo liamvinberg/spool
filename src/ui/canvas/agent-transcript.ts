@@ -38,8 +38,9 @@ import { LOGIN_REMEDY, NO_KEY, signedOut } from "./agent-preflight";
  * parent stream tagged with their parent call, and a delegate's prose belongs to
  * the delegate — but the frames it writes are out on the canvas, which is why its
  * rows reach the transcript at all (#143). They reach it inside the row that
- * delegated them: a sub-agent is one row that expands into its own transcript
- * (#194), so a fan-out is three lines until somebody wants more.
+ * delegated them, where the thread's own reading of what it wrote can walk them:
+ * a fan-out is three lines and what each of them is doing now, because a delegate
+ * draws as its own live step and never as a page of its calls (#194).
  */
 
 /**
@@ -146,17 +147,28 @@ export interface AgentRow {
 	readonly frame: string | null;
 	readonly count: number;
 	readonly detail: string | null;
+	/**
+	 * What a delegate this call launched is doing right now (#194).
+	 *
+	 * Status rather than payload, which is why it is not `detail`: a payload is a fact
+	 * about the call that keeps for as long as the row does, and this is true only while
+	 * it is being said. It replaces rather than appends, and it goes the moment the task
+	 * lands — a finished delegate is one line, and what it produced is out on the canvas.
+	 */
+	readonly step: string | null;
 	/** the picture this call handed back, which is the payload of its line (#117) */
 	readonly shot: AgentShot | null;
 	readonly foreign: RowForeign | null;
 	/** the delegating call this row came from, or null on the human's own thread */
 	readonly parent: string | null;
 	/**
-	 * The rows a delegate this call launched has drawn: its own transcript (#194).
+	 * The rows a delegate this call launched has drawn (#194).
 	 *
-	 * A sub-agent is one row that expands, so a fan-out is one line per delegate until
-	 * somebody wants more — and what is in there is rows rather than a summary, because
-	 * for a delegate the place is the canvas and a row is how you get to one (#143).
+	 * They are here for what reads a thread rather than for the log, which draws the
+	 * delegate's live step and never its calls: a fan-out of five sub-agents is sixty
+	 * rows nobody asked for, and the frames they wrote are on the canvas either way
+	 * (#143). What still needs them is the thread's own account of what it wrote — a
+	 * delegate's writes are the thread's writes.
 	 */
 	readonly delegated: readonly AgentRow[];
 }
@@ -465,6 +477,7 @@ interface Row {
 	frame: string | null;
 	count: number;
 	detail: string | null;
+	step: string | null;
 	shot: AgentShot | null;
 	foreign: RowForeign | null;
 	parent: string | null;
@@ -737,6 +750,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				frame: null,
 				count: 1,
 				detail: null,
+				step: null,
 				shot: null,
 				foreign: null,
 			}),
@@ -819,6 +833,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				frame: named.frame,
 				count: 1,
 				detail: named.detail,
+				step: null,
 				shot: null,
 				foreign,
 			});
@@ -918,7 +933,12 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		for (const block of blocks.values()) {
 			if (block.row === null && !block.joined) nameRow(block, block.fragments, false, null);
 		}
-		for (const row of rows.values()) if (row.state === "running") row.state = "stopped";
+		// a step is what a delegate is doing now, and nothing is doing anything now
+		for (const row of rows.values()) {
+			if (row.state !== "running") continue;
+			row.state = "stopped";
+			row.step = null;
+		}
 		// a question the turn ended under is one nobody answered, and the controls go
 		// with it: there is no process left for an answer to reach
 		for (const ask of asks.values()) if (unanswered(ask)) ask.state = "dropped";
@@ -1124,6 +1144,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 						frame: null,
 						count: 1,
 						detail: event.text === "" ? null : event.text,
+						step: null,
 						shot: null,
 						foreign: null,
 					});
@@ -1172,16 +1193,16 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				/*
 				 * A delegate's live step, which is a snapshot rather than a log: the row holds the
 				 * one it is on and it replaces rather than appends. Sixty-seven of them land in the
-				 * fan-out against twelve rows, so it is what a delegation says about itself between
-				 * the rows it draws.
+				 * fan-out against twelve rows, and it is the whole of what a delegation says about
+				 * itself — the calls it made are the delegate's business, and a fan-out that spent
+				 * a line on each of them would bury the turn that launched it.
 				 *
-				 * It sits where every other row's payload sits, and it goes the moment the task
-				 * lands: by then the frames it wrote are out on the canvas and its own rows are
-				 * under it, so a line in the wire's words has nothing left to add.
+				 * It goes the moment the task lands: by then the frames it wrote are out on the
+				 * canvas, so a line in the wire's words has nothing left to add.
 				 */
-				if (event.kind === "task-step" && event.description !== null) row.detail = event.description;
+				if (event.kind === "task-step" && event.description !== null) row.step = event.description;
 				if (event.kind === "task-done") {
-					row.detail = null;
+					row.step = null;
 					if (event.status === "completed") row.state = "done";
 				}
 				break;

@@ -594,6 +594,7 @@ describe("one tool call", () => {
 				frame: "cart",
 				count: 1,
 				detail: "design/frames/app/cart/frame.tsx",
+				step: null,
 				shot: null,
 				foreign: null,
 				parent: null,
@@ -1419,6 +1420,7 @@ describe("a picture a call handed back", () => {
 				frame: "home",
 				count: 1,
 				detail: "design/.spool/verify/home.png",
+				step: null,
 				shot: { media: "image/png", data: "iVBORw0KGgo" },
 				foreign: null,
 				parent: null,
@@ -1496,6 +1498,7 @@ describe("a search for a tool that is not spool's", () => {
 				frame: null,
 				count: 1,
 				detail: "No matching deferred tools found",
+				step: null,
 				shot: null,
 				foreign: null,
 				parent: null,
@@ -1602,13 +1605,13 @@ describe("how a row settles", () => {
 
 describe("what a delegate does", () => {
 	/**
-	 * Its rows reach the transcript inside the row that delegated it: a sub-agent is one
-	 * row that expands into its own transcript (#194), so a fan-out is one line per
-	 * delegate until somebody wants more. They reach it at all because for a delegate
-	 * the place is the canvas — a frame it writes lands out there, and the row is how you
-	 * get to it (#143).
+	 * Its rows reach the transcript inside the row that delegated it and never beside it:
+	 * a sub-agent is one row in the log (#194), so a fan-out is one line per delegate
+	 * however many calls each of them makes. They reach it at all because a delegate's
+	 * writes are the thread's writes — the frames land on the canvas, and what reads a
+	 * thread has to be able to say so (#143).
 	 */
-	it("is one row that expands into its own transcript", () => {
+	it("keeps its rows inside the row that delegated it", () => {
 		const { entries } = transcriptOf(
 			[{ text: "three takes on the cart" }],
 			stamp([
@@ -1619,7 +1622,7 @@ describe("what a delegate does", () => {
 			]),
 		);
 
-		// one line in the log, and the delegate's own work one click down inside it
+		// one line in the log, and the delegate's own work filed under it rather than in it
 		expect(lines(entries)).toEqual(["delegate Design cart--empty"]);
 		expect(rows(entries).map((row) => row.parent)).toEqual([null]);
 		expect(lines(rows(entries)[0]?.delegated ?? [])).toEqual(["write cart--empty"]);
@@ -1628,12 +1631,15 @@ describe("what a delegate does", () => {
 
 	/**
 	 * Its live step, which is a snapshot rather than a log: sixty-seven of them land in
-	 * the fan-out against twelve rows, so it is what a delegation says about itself
-	 * between the rows it draws. It replaces rather than appends, and it goes the moment
-	 * the task lands, because by then its rows are under it and its frames are out on the
-	 * canvas.
+	 * the fan-out against twelve rows, and it is the whole of what a delegation says about
+	 * itself in the log. It replaces rather than appends, and it goes the moment the task
+	 * lands, because by then its frames are out on the canvas.
+	 *
+	 * It is `step` and not `detail` because the two do not keep for the same length of
+	 * time: a payload is a fact about the call, and this is true only while it is being
+	 * said.
 	 */
-	it("says where it is between the rows it draws, and stops when it lands", () => {
+	it("says where it is while it runs, and stops saying it when it lands", () => {
 		const step = (description: string): AgentEvent => ({
 			kind: "task-step",
 			task: "a1",
@@ -1665,9 +1671,11 @@ describe("what a delegate does", () => {
 				).entries,
 			)[0];
 
-		expect(upTo(4)?.detail).toBe("Reading design/frames/cart/frame.tsx");
-		expect(upTo(5)?.detail).toBe("Writing design/frames/cart--empty/frame.tsx");
-		expect(upTo(6)).toMatchObject({ detail: null, state: "done" });
+		expect(upTo(4)?.step).toBe("Reading design/frames/cart/frame.tsx");
+		expect(upTo(5)?.step).toBe("Writing design/frames/cart--empty/frame.tsx");
+		expect(upTo(6)).toMatchObject({ step: null, state: "done" });
+		// and it never lands in the payload, which the disclosure would then offer to open
+		expect(upTo(5)?.detail).toBeNull();
 	});
 
 	/** a row spool cannot file under anything stays in the log rather than being dropped */

@@ -1224,6 +1224,8 @@ const settled = (id: string, over: Partial<Extract<AgentEvent, { kind: "result" 
 /** what every row in the log says out loud, in order */
 const rows = (host: HTMLElement) =>
 	[...host.querySelectorAll("[data-agent-row]")].map((row) => row.getAttribute("data-agent-row"));
+/** where the delegate that is running says it has got to, or nothing if none is saying */
+const step = (host: HTMLElement) => host.querySelector("[data-agent-step]")?.textContent ?? null;
 
 describe("a tool row", () => {
 	it("is one line, with its path behind a disclosure nobody has to open", async () => {
@@ -1675,13 +1677,22 @@ describe("a row that names a frame", () => {
 });
 
 describe("a sub-agent", () => {
-	it("is one row that expands into its own transcript", async () => {
+	it("is one row and the step it is on, never the calls it made", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "three takes on the receipt");
 
 		canvas.turn.push(ready);
 		canvas.turn.push(called("d1", "Agent", { description: "Design receipt--empty" }));
+		canvas.turn.push({
+			kind: "task-started",
+			task: "a1",
+			call: "d1",
+			description: null,
+			agent: "designer",
+			prompt: null,
+			parent: null,
+		});
 		canvas.turn.push({
 			kind: "called",
 			id: "w1",
@@ -1692,23 +1703,69 @@ describe("a sub-agent", () => {
 		canvas.turn.push(settled("w1", { parent: "d1" }));
 		await settle(120);
 
-		// one line in the log until somebody wants more, which is what makes a fan-out
-		// one line per delegate rather than a page of interleaved writes
+		// one line however much the delegate does, which is what makes a fan-out three
+		// lines rather than a page of interleaved writes — and it does not open, because
+		// there is nothing of somebody else's homework in there to open
 		expect(rows(canvas.host)).toEqual(["delegate Design receipt--empty"]);
+		expect(canvas.host.querySelector('[aria-label="delegate Design receipt--empty"]')).toBeNull();
+		expect(rail(canvas.host)?.textContent).not.toContain("receipt--empty/frame.tsx");
 
-		await act(async () => {
-			canvas.host
-				.querySelector('[aria-label="delegate Design receipt--empty"]')
-				?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		// what it says about itself is where it is, one line down and asked of nobody
+		canvas.turn.push({
+			kind: "task-step",
+			task: "a1",
+			call: "d1",
+			description: "Reading design/frames/site/receipt/frame.tsx",
+			lastTool: "Read",
+			parent: null,
+		});
+		await settle(120);
+		expect(step(canvas.host)).toBe("Reading design/frames/site/receipt/frame.tsx");
+
+		// and it goes when the task lands: the frames it wrote are out on the canvas
+		canvas.turn.push({ kind: "task-done", task: "a1", status: "completed", summary: null, parent: null });
+		await settle(120);
+		expect(step(canvas.host)).toBeNull();
+		expect(rows(canvas.host)).toEqual(["delegate Design receipt--empty"]);
+	});
+
+	/**
+	 * A step is replaced every few seconds and the line it is on is at the edge of where
+	 * somebody is reading, so the change is a crossfade rather than a cut: the words being
+	 * replaced stay on screen, under the ones replacing them, for as long as it takes them
+	 * to go. Only one set of them is true, which is what the hook is on.
+	 */
+	it("holds the words it is replacing on screen while the new ones arrive", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "a take on the receipt");
+		const walking = (description: string): AgentEvent => ({
+			kind: "task-step",
+			task: "a1",
+			call: "d1",
+			description,
+			lastTool: "Read",
+			parent: null,
 		});
 
-		expect(rows(canvas.host)).toEqual(["delegate Design receipt--empty", "write receipt"]);
-		expect(canvas.host.querySelector('[data-agent-row="write receipt"]')?.hasAttribute("data-agent-nested")).toBe(
-			true,
-		);
-		// and its rows navigate on the same rule as everything else, because for a
-		// delegate the place is the canvas
-		expect(canvas.host.querySelector('[data-agent-jump="receipt"]')).not.toBeNull();
+		canvas.turn.push(ready);
+		canvas.turn.push(called("d1", "Agent", { description: "Design receipt--empty" }));
+		canvas.turn.push({
+			kind: "task-started",
+			task: "a1",
+			call: "d1",
+			description: null,
+			agent: "designer",
+			prompt: null,
+			parent: null,
+		});
+		canvas.turn.push(walking("Reading the flows topic"));
+		await settle(120);
+		canvas.turn.push(walking("Writing receipt--empty"));
+		await settle(120);
+
+		expect(step(canvas.host)).toBe("Writing receipt--empty");
+		expect(log(canvas.host)).toContain("Reading the flows topic");
 	});
 
 	/**

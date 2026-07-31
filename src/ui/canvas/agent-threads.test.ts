@@ -29,6 +29,7 @@ const row = (state: "running" | "done", verb = "edit"): Extract<AgentEntry, { ki
 	verb,
 	subject: "home",
 	detail: null,
+	step: null,
 	frame: "home",
 	count: 1,
 	shot: null,
