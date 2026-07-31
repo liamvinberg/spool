@@ -69,15 +69,36 @@ export async function probeAgent(
 const STDERR_KEPT = 400;
 
 /**
+ * How long the asked-for way out gets before it stops being a request.
+ *
+ * The same three seconds the terminal executor gives a supervisor, for the same reason:
+ * a process that has been asked to go and has not is not going to, and what it is
+ * holding — a port, a lock, a repo — is held against everybody.
+ */
+const HARD_KILL_MS = 3000;
+
+/**
  * The real spawn: the developer's own binary, inheriting the daemon's
  * environment and reusing whatever login is already on the machine.
  *
  * `shell: false` is the default and stays that way — the prompt and the framing
  * both reach the child as argv, never through a shell that would parse them.
+ *
+ * It is spawned into its own process group, because the binary is not the only process
+ * a turn makes: an agent that ran a dev server under Bash left it a grandchild, and a
+ * signal addressed to the one pid spool knows about walked past it. The group is what
+ * spool started, so the group is what spool takes back. Windows has no such thing to
+ * address — `detached` there is a console window per turn — so the flag stops at the
+ * platform that means something by it.
  */
 export function claudeExecutor(): AgentExecutor {
 	return async ({ command, args, cwd, env }) => {
-		const child = spawn(command, [...args], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+		const child = spawn(command, [...args], {
+			cwd,
+			env,
+			stdio: ["pipe", "pipe", "pipe"],
+			detached: process.platform !== "win32",
+		});
 
 		let lineCb: (line: string) => void = () => {};
 		let exitCb: (code: number | null, message?: string) => void = () => {};
@@ -85,10 +106,30 @@ export function claudeExecutor(): AgentExecutor {
 		let buffer = "";
 		/** the tail of what it printed, which is where a refusal it does not stream lands */
 		let said = "";
+		/** the signal a request that was not honoured comes due as, cancelled by the exit */
+		let hardKill: ReturnType<typeof setTimeout> | undefined;
 		const reportExit = (code: number | null, message?: string) => {
+			if (hardKill !== undefined) clearTimeout(hardKill);
 			if (exited) return;
 			exited = true;
 			exitCb(code, message);
+		};
+		/**
+		 * One signal, addressed to the whole group.
+		 *
+		 * The negative pid is the group this child leads, which is where everything it
+		 * started lives. The fallback is the child alone, for the machines and the moments
+		 * where there is no group to name: Windows has none, and a group that is already
+		 * gone throws rather than answering.
+		 */
+		const signalGroup = (signal: NodeJS.Signals): void => {
+			const pid = child.pid;
+			if (pid === undefined) return;
+			try {
+				process.kill(-pid, signal);
+			} catch {
+				child.kill(signal);
+			}
 		};
 
 		child.stdout.setEncoding("utf8");
@@ -118,7 +159,22 @@ export function claudeExecutor(): AgentExecutor {
 		});
 		// a write to a child that has already gone must not take the daemon with it
 		child.stdin.on("error", () => {});
-		child.on("exit", (code) => {
+		/*
+		 * And neither must a read of one.
+		 *
+		 * A `data` listener with no `error` beside it is an unhandled error event, which
+		 * node throws out of the stream and nothing here catches: one broken pipe on one
+		 * child's stdout takes the daemon down, and every other project's turn with it. It
+		 * lands where a spawn that never started lands, because from up here the two are
+		 * the same fact — there is no process left to read.
+		 */
+		child.stdout.on("error", (error: Error) => reportExit(null, error.message));
+		child.stderr.on("error", (error: Error) => reportExit(null, error.message));
+		// `close` rather than `exit`: the exit is the process going, and the pipes can
+		// still be holding the last thing it said. A turn's final `result` arriving after
+		// its own exit would be dropped, and a turn that finished cleanly would read as one
+		// that was cut
+		child.on("close", (code) => {
 			if (buffer.trim() !== "") lineCb(buffer);
 			buffer = "";
 			const words = said.trim();
@@ -136,8 +192,14 @@ export function claudeExecutor(): AgentExecutor {
 				if (!exited) child.stdin.end();
 			},
 			kill: () => {
+				// closing stdin is the clean way out and the signal is the same request by
+				// other means; the second one is not a request. A binary that sat through the
+				// first — wedged, or deep in a tool call nobody is reading — is a process
+				// standing in a repo on behalf of nobody
 				child.stdin.end();
-				child.kill();
+				signalGroup("SIGTERM");
+				hardKill ??= setTimeout(() => signalGroup("SIGKILL"), HARD_KILL_MS);
+				hardKill.unref?.();
 			},
 			onLine: (cb) => {
 				lineCb = cb;

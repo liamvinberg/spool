@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { until } from "../test-helpers";
 import { claudeExecutor } from "./agent-exec";
 
 /**
@@ -59,4 +60,72 @@ describe("the spawn's own plumbing", () => {
 		expect(end.code).toBeNull();
 		expect(end.message).toContain("ENOENT");
 	});
+
+	/**
+	 * Everything the process printed, and then the exit — in that order (#191).
+	 *
+	 * The exit event fires when the process goes, which is not when its pipes are empty:
+	 * a binary that prints its `result` and exits in the same breath leaves the last of it
+	 * in a buffer the daemon has not read yet. Reported on the exit, a turn that finished
+	 * cleanly loses its ending and the rail draws it as one that was cut, so the report
+	 * waits for the close.
+	 */
+	it("hands over the last of what a process printed before saying it is gone", async () => {
+		const proc = await run('i=0; while [ $i -lt 4000 ]; do printf \'{"n":%s}\\n\' "$i"; i=$((i+1)); done; exit 3');
+
+		const end = await exited(proc);
+
+		expect(end.lines).toHaveLength(4000);
+		expect(end.lines.at(-1)).toBe('{"n":3999}');
+		expect(end.code).toBe(3);
+	});
+});
+
+/**
+ * What a kill has to reach (#191).
+ *
+ * A turn is a process tree rather than a process: the binary runs Bash, Bash starts a dev
+ * server, and the pid spool holds is the one at the top. So the kill addresses the group
+ * the spawn made, and it does not take no for an answer — the first signal is a request,
+ * and the second one is not.
+ */
+describe("giving a process up", () => {
+	/** whether that pid is still something this machine would signal */
+	const alive = (pid: number): boolean => {
+		try {
+			process.kill(pid, 0);
+			return true;
+		} catch {
+			return false;
+		}
+	};
+
+	it("takes what the process started with it, not only the process", async () => {
+		// the shape of the thing being killed: a child of the child, which is what a dev
+		// server the agent left running under Bash is
+		const proc = await run('sleep 30 & printf \'{"pid":%s}\\n\' "$!"; wait');
+		const grandchild = await new Promise<number>((resolve) => {
+			proc.onLine((line) => resolve((JSON.parse(line) as { pid: number }).pid));
+		});
+		expect(alive(grandchild)).toBe(true);
+
+		proc.kill();
+
+		await until(() => !alive(grandchild));
+	});
+
+	it("stops asking a process that will not go, and makes it go", async () => {
+		// a binary that sits through the polite one. Every `sleep` the loop starts is its
+		// own process and the group signal reaches those, so the shell alone survives it
+		const proc = await run('trap "" TERM; while true; do sleep 0.2; done');
+		const end = exited(proc);
+		// it is really up and really ignoring it: a term now changes nothing
+		await new Promise((resolve) => setTimeout(resolve, 200));
+
+		proc.kill();
+
+		// null is the code of a process that died on a signal, which is the only way this
+		// one was ever going to
+		expect((await end).code).toBeNull();
+	}, 10_000);
 });
