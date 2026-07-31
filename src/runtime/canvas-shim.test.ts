@@ -80,6 +80,23 @@ function nextReply(kind: string): Promise<unknown> {
 }
 
 const nextPicked = () => nextReply("picked");
+const nextSiteBoxes = () => nextReply("site-boxes") as Promise<{ boxes: Record<string, unknown> }>;
+
+/** happy-dom lays nothing out, so a box a test wants to read has to be given one. */
+function layOut(selector: string, box: { x: number; y: number; w: number; h: number }): void {
+	const el = document.querySelector(selector);
+	expect(el, selector).not.toBeNull();
+	(el as Element).getBoundingClientRect = (() => ({
+		x: box.x,
+		y: box.y,
+		width: box.w,
+		height: box.h,
+		top: box.y,
+		left: box.x,
+		right: box.x + box.w,
+		bottom: box.y + box.h,
+	})) as unknown as Element["getBoundingClientRect"];
+}
 
 describe("the canvas shim", () => {
 	it("relays Meta hold changes without claiming the frame's own shortcuts", async () => {
@@ -441,6 +458,48 @@ describe("the canvas shim", () => {
 		picked = nextPicked();
 		window.postMessage({ spool: "pick", x: 1, y: 1 }, "*");
 		expect(((await picked) as { chain: unknown }).chain).toEqual([]);
+	});
+
+	it("answers a range anchor with the union of every stamp inside it (#214)", async () => {
+		const shim = await servedShim();
+		runShim(shim);
+		document.body.innerHTML = `<div id="root"><main data-spool-source="frames/host/frame.tsx:3:2">
+			<h1 data-spool-source="frames/host/frame.tsx:4:3">kaffe</h1>
+			<p data-spool-source="frames/host/frame.tsx:5:3">open until six</p>
+			<footer data-spool-source="frames/host/frame.tsx:9:3">closed sundays</footer>
+			<aside data-spool-source="shared/ui/badge.tsx:2:2">new</aside>
+		</main></div>`;
+		layOut("main", { x: 0, y: 0, w: 400, h: 600 });
+		layOut("h1", { x: 20, y: 20, w: 200, h: 40 });
+		layOut("p", { x: 20, y: 70, w: 360, h: 24 });
+		layOut("footer", { x: 20, y: 500, w: 360, h: 30 });
+		layOut("aside", { x: 300, y: 20, w: 60, h: 20 });
+
+		const boxes = nextSiteBoxes();
+		window.postMessage(
+			{
+				spool: "sites",
+				id: 4,
+				sites: [
+					// two stamps and the element that holds them: the union is the block
+					{ path: "frames/host/frame.tsx", line: 4, col: 0, through: 5 },
+					// another file's stamps are another file's, whatever line they are on
+					{ path: "shared/ui/badge.tsx", line: 1, col: 0, through: 4 },
+					// a range nothing on screen came from has no box, and no fallback
+					{ path: "frames/host/frame.tsx", line: 40, col: 0, through: 44 },
+					// the point form is untouched by any of it
+					{ path: "frames/host/frame.tsx", line: 9, col: 3 },
+				],
+			},
+			"*",
+		);
+
+		expect((await boxes).boxes).toEqual({
+			"frames/host/frame.tsx:4-5": { x: 20, y: 20, w: 360, h: 74 },
+			"shared/ui/badge.tsx:1-4": { x: 300, y: 20, w: 60, h: 20 },
+			"frames/host/frame.tsx:40-44": null,
+			"frames/host/frame.tsx:9:3": { x: 20, y: 500, w: 360, h: 30 },
+		});
 	});
 
 	it("leaves the frame's own timers alone, and its frames alone until a freeze", async () => {

@@ -4,6 +4,7 @@ import type { SelectionEntry } from "../../daemon/selection";
 import { ASK_TOOL, type AskQuestion, questionsOf } from "./agent-ask";
 import { limitNote } from "./agent-limit";
 import {
+	type AgentWrite,
 	type CallInput,
 	type CallName,
 	drawsOwnRow,
@@ -12,6 +13,7 @@ import {
 	readProse,
 	taskMoved,
 	taskWritten,
+	writeOf,
 } from "./agent-nouns";
 import { drawnBy, type Landed } from "./agent-pace";
 import { LOGIN_REMEDY, NO_KEY, signedOut } from "./agent-preflight";
@@ -423,6 +425,18 @@ export interface Transcript {
 	 * The one thing the log draws about it is the wind-down, which is a moment.
 	 */
 	readonly limit: AgentLimit | null;
+	/**
+	 * Every write this turn has landed, in the order they landed (#214).
+	 *
+	 * Not entries, and deliberately: the log's row for a run of six edits is one line
+	 * and stays one line, because how many times the agent went at a frame is a fact
+	 * about the rail. This is the other reading of the same calls — where each of them
+	 * went — and it is what the canvas needs to draw a mark on the block that changed.
+	 *
+	 * Projected fresh with everything else, so a reader must key on `key` rather than on
+	 * the array's length: the same events give the same list every tick.
+	 */
+	readonly writes: readonly AgentWrite[];
 }
 
 /**
@@ -522,6 +536,8 @@ interface Block {
 	row: Row | null;
 	/** the last name spool had for it, which is what an empty search's row is built from */
 	named: CallName | null;
+	/** the block this call is about to change, held until its result says it landed (#214) */
+	wrote: AgentWrite | null;
 	/** it joined the open run, so the count is the whole of what it adds */
 	joined: boolean;
 	/** the whole call has landed, so a stray fragment cannot take its arguments back */
@@ -626,6 +642,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	/** the order entries were opened in, which is the order the log reads */
 	const order: { kind: "prose" | "row" | "wait" | "ask"; key: string }[] = [];
 	const notes: AgentEntry[] = [];
+	/** every write that landed, which is the other reading of the calls above (#214) */
+	const writes: AgentWrite[] = [];
 	/** open tool blocks by slot, since a fragment carries only its block index */
 	const blocks = new Map<string, Block>();
 	/** every call by its own id, which is what a whole call and a result arrive with */
@@ -904,7 +922,17 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 
 	/** a block the wire is opening, or one it never streamed and is handing over whole */
 	const blockOf = (thread: string, slot: string, id: string | null, tool: string): Block => {
-		const block: Block = { id, tool, thread, fragments: "", row: null, named: null, joined: false, settled: false };
+		const block: Block = {
+			id,
+			tool,
+			thread,
+			fragments: "",
+			row: null,
+			named: null,
+			wrote: null,
+			joined: false,
+			settled: false,
+		};
 		blocks.set(slot, block);
 		if (id !== null) calls.set(id, block);
 		return block;
@@ -1064,6 +1092,9 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 					event.foreign === undefined
 						? null
 						: { server: event.foreign.server ?? null, tool: event.foreign.tool ?? null, raw: event.tool };
+				// the strings this write is made of, held rather than published: what the
+				// canvas can locate is a change that landed, and only the result says so (#214)
+				block.wrote = foreign === null ? writeOf(event.id, event.tool, event.input) : null;
 				nameRow(block, event.input, true, foreign);
 				break;
 			}
@@ -1129,6 +1160,13 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				if (waited !== undefined && unanswered(waited)) waited.state = "dropped";
 				const block = calls.get(event.id);
 				if (block === undefined) break;
+				/*
+				 * The write landed, so the file now holds what the call said it would (#214).
+				 * A failed one publishes nothing: a call that was denied, stopped or errored
+				 * changed no pixels, and a mark for it would be pointing at nothing.
+				 */
+				if (block.wrote !== null && !event.failed) writes.push(block.wrote);
+				block.wrote = null;
 				/*
 				 * A search that loaded no tool is the only place a connector nobody has signed
 				 * in to is visible at all: it offers no failing tool, it offers no tool. So the
@@ -1421,5 +1459,5 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 					tasks: written,
 				};
 	const parked = [...asks.values()].find((ask) => ask.state === "open")?.request ?? null;
-	return { entries: [...entries, ...notes], plan: planned, over, asking: parked, limit };
+	return { entries: [...entries, ...notes], plan: planned, over, asking: parked, limit, writes };
 }

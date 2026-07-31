@@ -98,6 +98,50 @@ const TAKES_FRAME = new Set(["shot", "logs", "url"]);
 const PICTURE = /\.(?:png|jpe?g|webp|gif|svg)$/i;
 
 /**
+ * One write, as the two strings that can name the block it changed (#214).
+ *
+ * The rail's own reading of a write is a noun — `edit home` — and that is a fact about
+ * the frame. This is the other one: a fact about the file, which the canvas cannot turn
+ * into pixels on its own and the daemon cannot learn on its own, because the daemon
+ * never sees a tool call.
+ *
+ * `find` is ordered by which string the file is likelier to be holding when the daemon
+ * reads it. An applied edit is named by what it put there, and what it replaced is
+ * behind it for the beat before the write reaches disk — exactly one of the two can be
+ * in the file, so first-hit-wins needs no clock to decide between them. A `Write` has
+ * only the one string, because it is the whole file and there was nothing else there.
+ */
+export interface AgentWrite {
+	/** the call's own id, which is what keeps one write from being drawn twice */
+	readonly key: string;
+	/** the file, as the agent spelled it: the daemon owns resolving it */
+	readonly path: string;
+	readonly find: readonly string[];
+}
+
+/**
+ * What a write call changed, or null when it named no file.
+ *
+ * Only the two tools whose arguments say what the new text is. `MultiEdit` and
+ * `NotebookEdit` are writes for every other purpose in this rail and are not here: one
+ * carries a list of edits and the other a cell rather than a string, so naming a single
+ * block from either would be spool guessing which of several changes to point at.
+ */
+export function writeOf(id: string, tool: string, input: CallInput): AgentWrite | null {
+	const path = readField(input, "file_path", true);
+	if (path === null || path === "") return null;
+	if (tool === "Write") {
+		const content = readField(input, "content", true);
+		return content === null || content === "" ? null : { key: id, path, find: [content] };
+	}
+	if (tool !== "Edit") return null;
+	const find = [readField(input, "new_string", true), readField(input, "old_string", true)].filter(
+		(one): one is string => one !== null && one !== "",
+	);
+	return find.length === 0 ? null : { key: id, path, find };
+}
+
+/**
  * Whether this call gets a row of its own.
  *
  * Not whether it reaches the log at all: the plan's own creates share one row between

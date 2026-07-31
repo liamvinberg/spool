@@ -10,6 +10,7 @@ import type { AppType } from "../daemon/app";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsListing } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
+import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
@@ -34,6 +35,7 @@ export type {
 	FrameCollision,
 	FsListing,
 	Geometry,
+	LocatedRange,
 	ProjectCard,
 	ProjectedFrame,
 	Projection,
@@ -272,6 +274,24 @@ export function openInEditor(project: string, path: string, line?: number): void
 		param: { project },
 		json: line === undefined ? { path } : { path, line },
 	});
+}
+
+/**
+ * Where one write landed, asked of the side that owns the file (#214).
+ *
+ * The canvas reads the transcript and knows the strings an edit was made of; the
+ * daemon reads the disk and knows which lines they are on now. Nothing found is an
+ * ordinary answer — a file the agent has already moved on from — and costs a mark
+ * rather than anything else.
+ */
+export async function locateWrite(project: string, path: string, find: string[]): Promise<LocatedRange | undefined> {
+	try {
+		const res = await client.api.p[":project"].locate.$post({ param: { project }, json: { path, find } });
+		if (!res.ok) return undefined;
+		return ((await res.json()) as { range: LocatedRange | null }).range ?? undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 export function frameDocumentUrl(project: string, frame: string, nonce: number): string {
