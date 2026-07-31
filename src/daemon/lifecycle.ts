@@ -141,7 +141,8 @@ export function assertLoopbackHost(host: string): void {
 	);
 }
 
-function isLoopbackHost(host: string): boolean {
+/** The hosts the daemon binds, and the hosts allowed to read health cross-origin. */
+export function isLoopbackHost(host: string): boolean {
 	return host === "127.0.0.1" || host === "localhost" || host === "::1";
 }
 
