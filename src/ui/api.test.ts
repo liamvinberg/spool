@@ -265,31 +265,146 @@ describe("trusted UI API client", () => {
 	});
 });
 
-describe("picking a turn back up", () => {
-	it("reads attach's 404 as the ordinary answer, never as an error to draw", async () => {
-		// the daemon's own body for a thread that is not mid-turn — it was drawn
-		// into the log verbatim the first time a restart outlived the turns its
-		// rails were reading
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValue(new Response('no turn to read in thread "6a290038"', { status: 404 }));
-		vi.stubGlobal("fetch", fetchMock);
-		const { attachAgentTurn } = await loadApi();
+const THREAD = "6a290038-7520-4555-aad3-fd3f462ab402";
 
-		const ended = await new Promise<string | undefined>((resolve) => {
-			attachAgentTurn("demo", "6a290038-7520-4555-aad3-fd3f462ab402", 0, { event: () => {}, end: resolve });
+/** one open turn stream, held so a test can drop it the way a network does */
+function turnStream() {
+	const encoder = new TextEncoder();
+	let ctrl: ReadableStreamDefaultController<Uint8Array> | undefined;
+	const stream = new ReadableStream<Uint8Array>({
+		start: (controller) => {
+			ctrl = controller;
+		},
+	});
+	return {
+		response: () => new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }),
+		push: (event: string, data: unknown) =>
+			ctrl?.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)),
+		/** the socket going, which says nothing at all about the process on the other end */
+		drop: () => ctrl?.close(),
+	};
+}
+
+describe("following a turn", () => {
+	it("goes back for the turn from the event it reached, rather than ending it", async () => {
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		const opened: string[] = [];
+		const streams = [turnStream(), turnStream()];
+		const fetchMock = vi.fn((input: RequestInfo | URL) => {
+			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+			opened.push(url.pathname + url.search);
+			return Promise.resolve((streams[opened.length - 1] ?? turnStream()).response());
 		});
-		expect(ended).toBeUndefined();
+		vi.stubGlobal("fetch", fetchMock);
+		const { followAgentTurn } = await loadApi();
+
+		const ends: unknown[] = [];
+		const events: unknown[] = [];
+		const letGo = followAgentTurn(
+			"demo",
+			{ say: { thread: THREAD, turn: "t1", saying: [{ prompt: "go" }] } },
+			{ event: (event) => events.push(event), end: (ending) => ends.push(ending) },
+		);
+		await vi.waitFor(() => expect(opened).toHaveLength(1));
+		streams[0]?.push("agent", { kind: "waiting", parent: null });
+		streams[0]?.push("agent", { kind: "speaking", message: "m", model: "opus", parent: null });
+		await vi.waitFor(() => expect(events).toHaveLength(2));
+
+		// two seconds of dropped wifi, which used to draw the turn as over and fire the
+		// queue into a thread the daemon was still running one in
+		streams[0]?.drop();
+		await vi.waitFor(() => expect(opened).toHaveLength(2));
+
+		// nothing ended, and the second read asks for the turn from the third event
+		expect(ends).toEqual([]);
+		expect(opened[1]).toBe(`/api/p/demo/agent/turn/${THREAD}?from=2`);
+		letGo();
 	});
 
-	it("still reports a failure that is not the ordinary answer", async () => {
-		const fetchMock = vi.fn().mockResolvedValue(new Response("the daemon fell over", { status: 500 }));
-		vi.stubGlobal("fetch", fetchMock);
-		const { attachAgentTurn } = await loadApi();
+	it("ends the turn on the daemon's own word for it and on nothing else", async () => {
+		const stream = turnStream();
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(stream.response()));
+		const { followAgentTurn } = await loadApi();
 
-		const ended = await new Promise<string | undefined>((resolve) => {
-			attachAgentTurn("demo", "6a290038-7520-4555-aad3-fd3f462ab402", 0, { event: () => {}, end: resolve });
+		const ends: unknown[] = [];
+		followAgentTurn("demo", { attach: { thread: THREAD } }, { event: () => {}, end: (ending) => ends.push(ending) });
+		await vi.waitFor(() => expect(ends).toEqual([]));
+		stream.push("agent", { kind: "closed", code: 0, parent: null });
+		stream.drop();
+
+		await vi.waitFor(() => expect(ends).toEqual([{ kind: "ended" }]));
+	});
+
+	it("reads attach's 404 as the turn being gone, never as an error to draw", async () => {
+		// the daemon's own body for a thread it is holding nothing for — it was drawn
+		// into the log verbatim the first time a restart outlived the turns its
+		// rails were reading
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(new Response('no turn to read in thread "6a290038"', { status: 404 })),
+		);
+		const { followAgentTurn } = await loadApi();
+
+		const ending = await new Promise((resolve) => {
+			followAgentTurn("demo", { attach: { thread: THREAD } }, { event: () => {}, end: resolve });
 		});
-		expect(ended).toBe("the daemon fell over");
+		expect(ending).toEqual({ kind: "cut" });
+	});
+
+	it("still reports a refusal that is not the ordinary answer", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("the daemon fell over", { status: 500 })));
+		const { followAgentTurn } = await loadApi();
+
+		const ending = await new Promise((resolve) => {
+			followAgentTurn("demo", { attach: { thread: THREAD } }, { event: () => {}, end: resolve });
+		});
+		expect(ending).toEqual({ kind: "refused", status: 500, why: "the daemon fell over" });
+	});
+
+	it("says the turn is already running rather than starting a second one", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(new Response(`a turn is already running in thread "${THREAD}"`, { status: 409 })),
+		);
+		const { followAgentTurn } = await loadApi();
+
+		const ending = await new Promise((resolve) => {
+			followAgentTurn(
+				"demo",
+				{ say: { thread: THREAD, turn: "t1", saying: [{ prompt: "go" }] } },
+				{ event: () => {}, end: resolve },
+			);
+		});
+		expect(ending).toMatchObject({ kind: "refused", status: 409 });
+	});
+
+	it("never opens the door that says something twice", async () => {
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		const opened: string[] = [];
+		const streams = [turnStream(), turnStream()];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+				const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+				opened.push(`${input instanceof Request ? input.method : (init?.method ?? "GET")} ${url.pathname}`);
+				return Promise.resolve((streams[opened.length - 1] ?? turnStream()).response());
+			}),
+		);
+		const { followAgentTurn } = await loadApi();
+
+		const letGo = followAgentTurn(
+			"demo",
+			{ say: { thread: THREAD, turn: "t1", saying: [{ prompt: "go" }] } },
+			{ event: () => {}, end: () => {} },
+		);
+		await vi.waitFor(() => expect(opened).toHaveLength(1));
+		streams[0]?.drop();
+		await vi.waitFor(() => expect(opened).toHaveLength(2));
+
+		// the prompt has already been answered, so a second POST would spawn a second
+		// agent against it: everything after the first read goes up the attach door
+		expect(opened[0]).toBe("POST /api/p/demo/agent/turn");
+		expect(opened[1]).toBe(`GET /api/p/demo/agent/turn/${THREAD}`);
+		letGo();
 	});
 });
