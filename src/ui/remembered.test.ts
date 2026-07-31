@@ -17,11 +17,13 @@ import { keep, recall, useRemembered } from "./remembered";
 const isWidth = (value: unknown): value is number => typeof value === "number" && value > 0;
 
 /**
- * A store, because the test environment has none.
+ * A store of this test's own, rather than whatever the environment hands back.
  *
- * happy-dom 20 implements no `localStorage` at all, and that absence is worth naming: it is
- * the same shape as a browser that refuses one, and it is how the `?? null` guard in
- * `store()` earned its place — an undefined store walks straight through a `=== null` test.
+ * happy-dom has a `localStorage`, but a runtime carrying its own global shadows it and reads
+ * back `undefined` instead. That second shape is worth naming: it is what a browser refusing
+ * storage looks like, and it is how the `?? null` guard in `store()` earned its place — an
+ * undefined store walks straight through a `=== null` test. Installing one here means these
+ * tests assert the same thing whichever runtime they run on.
  */
 function memoryStore(): Storage {
 	const held = new Map<string, string>();
