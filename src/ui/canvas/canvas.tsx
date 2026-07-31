@@ -2513,10 +2513,6 @@ export function ProjectCanvas({
 						{visibleFrames.map((frame) => {
 							const state = lifecycle.states[frame.name] ?? "picture";
 							const isEntered = entered === frame.name;
-							const isSelected = selected.includes(frame.name);
-							const isHovered =
-								effectiveTool === "select" && hovered?.visible === true && hovered.frame === frame.name;
-							const paused = frame.kind === "term" && state === "held";
 							return (
 								<div
 									key={frame.name}
@@ -2527,19 +2523,6 @@ export function ProjectCanvas({
 										height: frame.h,
 									}}
 								>
-									{/* the label: mono, muted; thread when selected; ▸ only marks a
-									    terminal SIGSTOP. Entered swaps it for the state chip (#28). */}
-									<FrameLabel
-										name={frame.name}
-										frameWidth={frame.w}
-										k={k}
-										entered={isEntered}
-										paused={paused}
-										selected={isSelected}
-										hovered={isHovered}
-										terminal={frame.kind === "term"}
-										onPlay={() => playFrame(frame.name)}
-									/>
 									<div
 										className="relative h-full w-full overflow-hidden"
 										style={{ borderRadius: shellRadius }}
@@ -2566,6 +2549,42 @@ export function ProjectCanvas({
 											/>
 										)}
 									</div>
+								</div>
+							);
+						})}
+						{/* Labels share one layer above every frame. A transformed frame is
+						    its own stacking context, so keeping its label inside would let a
+						    later neighboring frame paint over the label regardless of the
+						    label's own z-index. */}
+						{visibleFrames.map((frame) => {
+							const state = lifecycle.states[frame.name] ?? "picture";
+							const isEntered = entered === frame.name;
+							const isSelected = selected.includes(frame.name);
+							const isHovered =
+								effectiveTool === "select" && hovered?.visible === true && hovered.frame === frame.name;
+							const paused = frame.kind === "term" && state === "held";
+							return (
+								<div
+									key={`${frame.name}:label`}
+									className="pointer-events-none absolute h-0"
+									style={{
+										transform: `translate(${frame.x}px, ${frame.y}px)`,
+										width: frame.w,
+									}}
+								>
+									{/* Mono, muted; thread when selected; ▸ only marks a terminal
+									    SIGSTOP. Entered swaps it for the state chip (#28). */}
+									<FrameLabel
+										name={frame.name}
+										frameWidth={frame.w}
+										k={k}
+										entered={isEntered}
+										paused={paused}
+										selected={isSelected}
+										hovered={isHovered}
+										terminal={frame.kind === "term"}
+										onPlay={() => playFrame(frame.name)}
+									/>
 								</div>
 							);
 						})}
