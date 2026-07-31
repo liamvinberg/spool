@@ -6,13 +6,12 @@ import {
 	type AgentAttached,
 	type AgentReading,
 	answerAgentTurn,
-	attachAgentTurn,
 	closeAgentThread,
 	fetchAgentLogin,
 	fetchAgentThreads,
+	followAgentTurn,
 	interruptAgentTurn,
 	putAgentThread,
-	streamAgentTurn,
 } from "../api";
 import type { AgentWrite } from "./agent-nouns";
 import { type LoginDeck, STILL_OUT, signedInAs } from "./agent-preflight";
@@ -25,6 +24,7 @@ import {
 	lastOf,
 	lifeOf,
 	nameOf,
+	STOPPED,
 	storedLife,
 	type Thread,
 } from "./agent-threads";
@@ -615,15 +615,22 @@ export function useAgentThreads(project: string): AgentDeck {
 				attached,
 				event: push,
 				/*
-				 * The stream is the turn's whole life, so its end has to leave the log saying
-				 * why. The daemon ends every turn with a `closed` event; a stream that stops
-				 * without one stopped on this side, and the union already has the member for a
-				 * process that is gone.
+				 * A turn ends when the daemon says so, and not when a socket does (#211, #234).
+				 *
+				 * The read is a view of the turn rather than the turn itself, so a transport that
+				 * stops says nothing about the process: the follow goes back and asks for the turn
+				 * again, and only what comes back here is an ending. Three of them, and each is a
+				 * different thing to draw — the daemon's own terminal event, which is already the
+				 * last thing in the log; a turn that is gone with nobody left to say how it went;
+				 * and a door that refused before there was a turn at all.
 				 */
-				end: (error) => {
-					if (error !== undefined) push({ kind: "closed", code: null, message: error, parent: null });
-					else if (thread.events.at(-1)?.event.kind !== "closed") {
-						push({ kind: "closed", code: null, message: "the turn stream ended", parent: null });
+				end: (ending) => {
+					if (ending.kind === "refused") {
+						push({ kind: "closed", code: null, message: ending.why, parent: null });
+					} else if (ending.kind === "cut") {
+						// the same word a picture a restart caught mid-turn comes back under: the
+						// process is gone, nothing said how it went, and the log stops where it stopped
+						push({ kind: "closed", code: null, message: STOPPED, parent: null });
 					}
 					thread.streaming = false;
 					thread.at = Date.now();
@@ -641,30 +648,38 @@ export function useAgentThreads(project: string): AgentDeck {
 					 * the one thing it was asked, so this is a send rather than a run of sends. A
 					 * stop never reaches here, because a stop empties the list before the stream can
 					 * close — which is the invariant, not a race that happens to fall the right way.
+					 *
+					 * A cut fires nothing (#234). Nobody knows what the turn that vanished did to the
+					 * repo, and sending the next thing into that is spool taking an action on a
+					 * guess: the words stay in the box, where a hand can send them or take them back.
 					 */
-					const firing = thread.holding;
-					if (firing.length > 0) {
-						thread.holding = [];
-						run(thread, { saying: firing, carried: false });
+					if (ending.kind !== "cut") {
+						const firing = thread.holding;
+						if (firing.length > 0) {
+							thread.holding = [];
+							run(thread, { saying: firing, carried: false });
+						}
 					}
 					redraw();
 				},
 			};
-			thread.abandon = attaching
-				? attachAgentTurn(project, thread.id, 0, reading)
-				: streamAgentTurn(
-						project,
-						{
-							thread: thread.id,
-							turn: thread.named,
-							saying: opening.saying.map((words) => ({
-								prompt: words.text,
-								selection: words.selection,
-								attached: words.attached ?? undefined,
-							})),
+			thread.abandon = followAgentTurn(
+				project,
+				attaching
+					? { attach: { thread: thread.id } }
+					: {
+							say: {
+								thread: thread.id,
+								turn: thread.named,
+								saying: opening.saying.map((words) => ({
+									prompt: words.text,
+									selection: words.selection,
+									attached: words.attached ?? undefined,
+								})),
+							},
 						},
-						reading,
-					);
+				reading,
+			);
 			redraw();
 		},
 		[project, save, redraw],

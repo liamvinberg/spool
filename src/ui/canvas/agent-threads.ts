@@ -259,8 +259,14 @@ export function cutPicture(entries: readonly AgentEntry[]): AgentEntry[] {
 	return [...cut, { key: "restart", kind: "note", text: STOPPED }];
 }
 
-/** spool's own word for a turn that did not end cleanly, which the transcript owns */
-const STOPPED = "stopped";
+/**
+ * Spool's own word for a turn that did not end cleanly, which the transcript owns.
+ *
+ * Exported because a cut is not only a thing found on disk (#234): a turn the daemon stops
+ * holding while the rail is reading it ends the same way and has to say the same word, and
+ * two words for one fact would be the rail claiming they are different fates.
+ */
+export const STOPPED = "stopped";
 
 function cutRows(rows: readonly Extract<AgentEntry, { kind: "row" }>[]): Extract<AgentEntry, { kind: "row" }>[] {
 	return rows.map((row) => (row.state === "running" ? { ...row, state: "stopped" as const, step: null } : row));

@@ -3,7 +3,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import type { AgentEvent, ServedThread } from "../api";
+import type { AgentEvent, ServedThread, ThreadPut } from "../api";
 import { type AgentDeck, type AgentTurn, useAgentThreads } from "./agent-stream";
 import { fullyShown } from "./agent-transcript";
 
@@ -19,27 +19,56 @@ import { fullyShown } from "./agent-transcript";
 
 function mount(stored: readonly ServedThread[] = []) {
 	const seen: AgentDeck[] = [];
-	let open = false;
 	const encoder = new TextEncoder();
-	let ctrl: ReadableStreamDefaultController<Uint8Array> | undefined;
 	const asked: string[] = [];
+	/** every picture the rail wrote down, in the order it wrote them */
+	const puts: ThreadPut[] = [];
+	/**
+	 * Every read of a turn this rail has opened, newest last.
+	 *
+	 * A list rather than one handle, because a turn now outlives the read of it (#211,
+	 * #234): a dropped socket is followed by another read of the same turn, and a test
+	 * about that has to be able to drop one and drive the next.
+	 */
+	const reads: { ctrl: ReadableStreamDefaultController<Uint8Array> | undefined; open: boolean }[] = [];
+	/** what the doors answer instead of a stream, for the refusals a rail has to survive */
+	const door = { turn: 0, gone: false };
+
+	const opened = () => {
+		const read: { ctrl: ReadableStreamDefaultController<Uint8Array> | undefined; open: boolean } = {
+			ctrl: undefined,
+			open: true,
+		};
+		const body = new ReadableStream<Uint8Array>({
+			start: (controller) => {
+				read.ctrl = controller;
+			},
+		});
+		reads.push(read);
+		return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+	};
+	const newest = () => reads[reads.length - 1];
 
 	vi.stubGlobal(
 		"fetch",
-		vi.fn(async (input: RequestInfo | URL) => {
+		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
 			asked.push(url.pathname + url.search);
 			// a project with nothing stored, which is what most cases here are about: the
 			// picture coming back off disk is `agent-rail.test.ts`'s
 			if (url.pathname.endsWith("/agent/threads")) return Response.json({ threads: stored });
-			if (url.pathname.includes("/agent/threads/")) return new Response(null, { status: 204 });
-			const stream = new ReadableStream<Uint8Array>({
-				start: (controller) => {
-					ctrl = controller;
-				},
-			});
-			open = true;
-			return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+			if (url.pathname.includes("/agent/threads/")) {
+				puts.push(JSON.parse(String(init?.body ?? "{}")) as ThreadPut);
+				return new Response(null, { status: 204 });
+			}
+			if (url.pathname.endsWith("/agent/turn") && door.turn !== 0) {
+				return new Response(`the door said ${door.turn}`, { status: door.turn });
+			}
+			// the attach door's own answer for a thread it is holding nothing for
+			if (url.pathname.includes("/agent/turn/") && door.gone) {
+				return new Response("no turn to read", { status: 404 });
+			}
+			return opened();
 		}),
 	);
 
@@ -47,7 +76,7 @@ function mount(stored: readonly ServedThread[] = []) {
 	document.body.append(host);
 	const root = createRoot(host);
 	onTestFinished(() => {
-		if (open) ctrl?.close();
+		for (const read of reads) if (read.open) read.ctrl?.close();
 		act(() => root.unmount());
 		host.remove();
 		vi.unstubAllGlobals();
@@ -58,16 +87,24 @@ function mount(stored: readonly ServedThread[] = []) {
 		return null;
 	}
 
+	const write = (event: string, data: unknown) =>
+		newest()?.ctrl?.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+
 	return {
 		latest: () => (seen[seen.length - 1] as AgentDeck).turn as AgentTurn,
 		asked,
-		push: (event: AgentEvent) => ctrl?.enqueue(encoder.encode(`event: agent\ndata: ${JSON.stringify(event)}\n\n`)),
+		puts,
+		door,
+		reads,
+		push: (event: AgentEvent) => write("agent", event),
 		/** the line a turn opens with, which is the daemon saying what is being read (#211) */
-		attached: (info: { turn?: string; running: boolean; from: number; logged: number }) =>
-			ctrl?.enqueue(encoder.encode(`event: attached\ndata: ${JSON.stringify(info)}\n\n`)),
+		attached: (info: { turn?: string; running: boolean; from: number; logged: number }) => write("attached", info),
+		/** the socket going, which is not the turn going (#234) */
 		close: () => {
-			open = false;
-			ctrl?.close();
+			const read = newest();
+			if (read === undefined) return;
+			read.open = false;
+			read.ctrl?.close();
 		},
 		render: async () => {
 			await act(async () => {
@@ -162,19 +199,114 @@ describe("the turn a thread is running", () => {
 
 		expect(canvas.latest().elapsed).toBe(Number.POSITIVE_INFINITY);
 	});
+});
 
-	/** the daemon ends every turn; a stream that stops without one stopped on this side */
-	it("says so when the stream ends without the turn ending", async () => {
+/**
+ * A read that stopped, over a turn that did not (#234).
+ *
+ * The daemon holds the turn and the rail holds a view of it, so a socket going says
+ * nothing about the process: two seconds of dropped wifi used to draw the turn as
+ * finished, fire the queue into a thread that was still running one, and corrupt the
+ * boundary the next reload reads. The rail goes back and asks for the same turn instead.
+ */
+describe("a stream that dropped", () => {
+	const THREAD = /\/agent\/turn\/[0-9a-f-]+\?from=(\d+)/;
+	const attaches = (asked: readonly string[]) =>
+		asked.map((path) => path.match(THREAD)?.[1]).filter((from): from is string => from !== undefined);
+
+	it("goes back for the turn from the event it reached, and ends nothing", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await act(async () => {
 			canvas.latest().send("go");
 		});
+		canvas.push(waiting);
+		canvas.push(speaking);
+		await settle(200);
+
 		canvas.close();
+		// the backoff's first step is jittered across 250–500ms, so a beat past it is where
+		// the next read is
+		await settle(700);
+
+		// the turn is still the turn: nothing settled, nothing was cut, and the read that
+		// opened asks for what comes after the two events already in hand
+		expect(canvas.latest().phase).toBe("playing");
+		expect(attaches(canvas.asked)).toEqual(["2"]);
+		expect(canvas.asked.filter((path) => path.endsWith("/agent/turn"))).toHaveLength(1);
+	});
+
+	it("draws nothing twice when the turn comes back", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		canvas.push(waiting);
+		canvas.push(speaking);
+		canvas.push({ kind: "say", block: 0, text: "Reading the header.", parent: null });
+		await settle(200);
+		expect(canvas.latest().entries.filter((entry) => entry.kind === "prose")).toHaveLength(1);
+
+		canvas.close();
+		await settle(700);
+		// the daemon replays nothing, because the rail asked for what it has not seen
+		canvas.attached({ turn: "t1", running: true, from: 3, logged: 3 });
+		canvas.push({ kind: "say", block: 1, text: "And the footer.", parent: null });
 		await settle(300);
 
+		const prose = canvas.latest().entries.filter((entry) => entry.kind === "prose");
+		expect(prose.map((entry) => (entry.kind === "prose" ? entry.full : ""))).toEqual([
+			"Reading the header.",
+			"And the footer.",
+		]);
+		// the words the turn was started with stay above the boundary and are never replayed
+		expect(canvas.latest().entries.filter((entry) => entry.kind === "user")).toHaveLength(1);
+	});
+
+	it("keeps the queue rather than firing it at a socket", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		canvas.push(waiting);
+		await act(async () => {
+			canvas.latest().queue("and the footer");
+		});
+
+		canvas.close();
+		await settle(700);
+
+		// one turn ever went down the wire: the queue fires when the daemon says the turn
+		// is over, and a dropped socket is not the daemon saying anything
+		expect(canvas.asked.filter((path) => path.endsWith("/agent/turn"))).toHaveLength(1);
+		expect(canvas.latest().queued.map((one) => one.text)).toEqual(["and the footer"]);
+	});
+
+	it("draws the cut when the turn it was reading is gone", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		canvas.push(waiting);
+		await act(async () => {
+			canvas.latest().queue("and the footer");
+		});
+		await settle(200);
+
+		// the daemon restarted under the read: it holds no turn for this thread any more,
+		// and nobody is left who can say how the one it held went
+		canvas.door.gone = true;
+		canvas.close();
+		await settle(700);
+
 		expect(canvas.latest().phase).toBe("settled");
-		expect(canvas.latest().entries.at(-1)).toMatchObject({ kind: "note", text: "the turn stream ended" });
+		expect(canvas.latest().entries.at(-1)).toMatchObject({ kind: "note", text: "stopped" });
+		// and nothing fires into a repo nobody knows the state of
+		expect(canvas.asked.filter((path) => path.endsWith("/agent/turn"))).toHaveLength(1);
+		expect(canvas.latest().queued.map((one) => one.text)).toEqual(["and the footer"]);
 	});
 });
 

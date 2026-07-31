@@ -263,6 +263,12 @@ function mount({ still = false }: { still?: boolean } = {}) {
 				preflight.asked += 1;
 				return Response.json(preflight.login);
 			}
+			// the attach door (#211, #234): a turn outlives the read of it, so a rail whose
+			// stream dropped asks for the same turn again rather than starting a second. This
+			// daemon holds nothing between reads, which is the answer that says the turn is gone
+			if (url.pathname.includes("/agent/turn/")) {
+				return new Response("no turn to read", { status: 404 });
+			}
 			if (url.pathname.endsWith("/agent/turn")) {
 				const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
 				const sent = JSON.parse(body) as { thread: string; turn: string; said: readonly Said[] };
@@ -1167,6 +1173,8 @@ describe("when the reader takes the wheel", () => {
 
 	it("the chip says latest once the turn has settled", async () => {
 		const { canvas, log } = await pinned();
+		// the daemon's own word for the end of a turn, which is the only thing that ends one
+		canvas.turn.push(closed);
 		canvas.turn.close();
 		await settle(120);
 		await wheel(log, -53);
@@ -1176,6 +1184,7 @@ describe("when the reader takes the wheel", () => {
 
 	it("the reader speaking carries the log back to the live edge", async () => {
 		const { canvas, log } = await pinned();
+		canvas.turn.push(closed);
 		canvas.turn.close();
 		await settle(120);
 		await wheel(log, -53);
@@ -4182,7 +4191,8 @@ describe("the stroke on the composer's border", () => {
 		canvas.turn.push(speaking);
 		canvas.turn.push(say("done."));
 		canvas.turn.push(ended);
-		// the stream is what says the turn is in flight, so it lays until the process goes
+		// the daemon is what says the turn is over, so it lays until the process goes (#234)
+		canvas.turn.push(closed);
 		canvas.turn.close();
 		await until(() => state(canvas.host) === "idle");
 
