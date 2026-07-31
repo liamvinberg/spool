@@ -47,21 +47,25 @@ export const AGENT_COMMAND = "claude";
  * 2.1.220. A prompt on a harmless tool teaches the person to click approve
  * without reading, which is the opposite of what an approval is for.
  *
- * The two `Bash(spool …)` rules are spool trusting its own CLI: every verb is
- * read-only by construction (#6), so a prompt on one is a prompt on spool
- * asking whether spool may be used. They exist because the verbs also cannot
- * run sandboxed — see the sandbox's `excludedCommands` below — and a command
- * outside the sandbox is back in the regular flow, where only a rule keeps it
- * quiet. Measured on 2.1.220: the rule holds through a pipe
- * (`spool shot x 2>&1 | head -3` runs unprompted).
+ * The bare `Bash` rule is the decision that no command ever asks. The sandbox
+ * below is not an approval mechanism and cannot be one: measured in `--print`
+ * with no prompt tool, sandboxed commands auto-ran, but observed live with the
+ * stdio prompt tool wired (2026-07-31), a sandboxed read-only loop still asked
+ * — so an allow rule is the only floor that holds on both paths, including the
+ * binary's own unsandboxed retry of a command the sandbox broke. What the ask
+ * was guarding is carried elsewhere: the OS boundary confines what runs
+ * sandboxed, and mutations through the file tools still ask outside `design/`.
+ * The session evidence says what the shell is actually for — `spool`, `cd`,
+ * `cat`, `grep`, `sed`, loops — and an approval on any of those teaches the
+ * person to click allow without reading, which is the opposite of what an
+ * approval is for.
  */
 export const AGENT_ALLOW_RULES: readonly string[] = [
 	"Edit(./design/**)",
 	"Read(//**)",
 	"WebFetch",
 	"WebSearch",
-	"Bash(spool)",
-	"Bash(spool *)",
+	"Bash",
 ];
 
 /**
@@ -84,10 +88,9 @@ export const AGENT_ALLOW_RULES: readonly string[] = [
  *
  * Spool's own CLI is excluded from the sandbox, because `spool shot` launches
  * Chrome and Chrome cannot start under Seatbelt (mach port permission denied,
- * observed live) — the fallback prompt that failure buys is an approval for
- * taking a screenshot, which is exactly the noise this fence exists to end.
- * Excluded means back in the regular permission flow, and the
- * `Bash(spool …)` rules above are what keep it quiet there.
+ * observed live). Exclusion is a capability fact, not a permission one: the
+ * verbs run outside the boundary because they cannot run inside it, and the
+ * bare `Bash` rule above is what keeps them quiet out there.
  */
 const AGENT_SANDBOX = { enabled: true, excludedCommands: ["spool", "spool *"] } as const;
 
