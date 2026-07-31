@@ -2416,18 +2416,25 @@ describe("the queue", () => {
 	});
 });
 
-/* ---------- the threads, and what survives a restart (#120, #136, #200) ---------- */
+/* ---------- the threads, and what survives a restart (#120, #136, #200, #205) ---------- */
 
-/** the strip's tabs, in the order it lays them out: newest leftmost, fixed once */
-const tabs = (host: HTMLElement) =>
-	[...host.querySelectorAll("[data-agent-thread]")].map((tab) => tab.getAttribute("data-agent-thread"));
+/** the column's cells, in the order it lays them out: newest at the top, fixed once */
+const cells = (host: HTMLElement) =>
+	[...host.querySelectorAll("[data-agent-thread]")].map((cell) => cell.getAttribute("data-agent-thread"));
 
-const lifeOfTab = (host: HTMLElement, ask: string) =>
-	host.querySelector(`[data-agent-thread="${ask}"]`)?.getAttribute("data-agent-thread-life");
+const cell = (host: HTMLElement, name: string) => host.querySelector<HTMLElement>(`[data-agent-thread="${name}"]`);
+
+/** the column itself, which is 34px of the rail's own width whatever is in it */
+const spine = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-threads]");
+
+const lifeOfCell = (host: HTMLElement, name: string) => cell(host, name)?.getAttribute("data-agent-thread-life");
+
+/** the thread you are in, which is the one place a name is written */
+const nameplate = (host: HTMLElement) => host.querySelector("[data-agent-nameplate]")?.textContent ?? "";
 
 /** the ring, the disc and the dot, counted inside the mark's own 14px box */
-const marks = (host: HTMLElement, ask: string) => {
-	const mark = host.querySelector(`[data-agent-thread="${ask}"] [data-agent-mark]`);
+const marks = (host: HTMLElement, name: string) => {
+	const mark = cell(host, name)?.querySelector("[data-agent-mark]");
 	return {
 		turning: mark?.querySelectorAll(".animate-agent-spin").length ?? 0,
 		drawn: mark?.children.length ?? 0,
@@ -2441,10 +2448,19 @@ async function press(element: Element | null | undefined) {
 	});
 }
 
-const openTab = (host: HTMLElement, ask: string) =>
-	press(host.querySelector(`[data-agent-thread="${ask}"] button[aria-label="${ask}"]`));
+const openCell = (host: HTMLElement, name: string) => press(cell(host, name));
 
-const closeTab = (host: HTMLElement, ask: string) => press(host.querySelector(`[data-agent-thread-close="${ask}"]`));
+/** the thread under the pointer, arriving over the log because the cell cannot hold it */
+async function point(host: HTMLElement, name: string) {
+	await hover(cell(host, name));
+	return host.querySelector<HTMLElement>("[data-agent-flyout]");
+}
+
+/** the ✕, which is in the flyout because a 34px cell has room for one hit target */
+const closeThread = async (host: HTMLElement, name: string) => {
+	await point(host, name);
+	await press(host.querySelector(`[data-agent-thread-close="${name}"]`));
+};
 
 const newThread = (host: HTMLElement) => press(host.querySelector('[aria-label="New thread"]'));
 
@@ -2464,8 +2480,17 @@ async function answerTurn(stream: { push: (event: AgentEvent) => void; close: ()
 	await settle();
 }
 
-/** a thread as the daemon serves one back, which is spool's own drawing off disk */
-function storedThread(over: Partial<ServedThread> & { id: string; ask: string }): ServedThread {
+/**
+ * A thread as the daemon serves one back, which is spool's own drawing off disk.
+ *
+ * `frame` is what its one row edited, and it is a parameter because that is the thread's
+ * name now (#205): two fixtures that both edited `home` are two threads called `home`, and
+ * a test that cannot tell them apart is asserting nothing about which one it opened.
+ */
+function storedThread({
+	frame = "home",
+	...over
+}: Partial<ServedThread> & { id: string; ask: string; frame?: string }): ServedThread {
 	return {
 		life: "read",
 		at: 1_700_000_000_000,
@@ -2476,9 +2501,9 @@ function storedThread(over: Partial<ServedThread> & { id: string; ask: string })
 				kind: "row",
 				state: "done",
 				verb: "edit",
-				subject: "home",
-				detail: "design/frames/home/frame.tsx",
-				frame: "home",
+				subject: frame,
+				detail: `design/frames/${frame}/frame.tsx`,
+				frame,
 				count: 1,
 				shot: null,
 				foreign: null,
@@ -2513,24 +2538,66 @@ function storedThread(over: Partial<ServedThread> & { id: string; ask: string })
 const ONE = "1f0e2d3c-4b5a-4697-8899-aabbccddeeff";
 const TWO = "2a1b3c4d-5e6f-4788-9900-112233445566";
 
-describe("the threads strip", () => {
-	it("opens on one thread, with the room going to its name", async () => {
+/** a project with as many restored threads in it as asked for, each named by its own frame */
+const written = (count: number): ServedThread[] =>
+	Array.from({ length: count }, (_, at) =>
+		storedThread({ id: `thread-${at}`, ask: `ask ${at}`, frame: `frame-${at}`, at }),
+	);
+
+describe("the threads column", () => {
+	it("opens on one thread, named above the log rather than in the column", async () => {
 		const canvas = mount();
 		await canvas.render();
 
-		expect(tabs(canvas.host)).toEqual(["new thread"]);
-		// the bar says which of several is open, so with one thread there is no which
+		expect(cells(canvas.host)).toEqual(["new thread"]);
+		// nothing in the column is a name: a cell is a mark, and the name is on the nameplate
+		expect(cell(canvas.host, "new thread")?.textContent).toBe("");
+		expect(nameplate(canvas.host)).toBe("new thread");
+		// the accent says which of several is open, so with one thread there is no which
 		expect(canvas.host.querySelector('[data-agent-thread="new thread"] .bg-thread')).toBeNull();
 	});
 
-	/** the name is the ask, because there is nothing to borrow: print mode generates none */
-	it("names a thread by what the human asked, with nothing generated", async () => {
+	/**
+	 * The claim the column is for: what it costs does not move with the number of threads.
+	 *
+	 * The row's did. #136 measured four names at 112px each and called that the floor, so a
+	 * fifth thread was already scrolling under a fade. A cell is 34px of a column the rail
+	 * has around 864 of, and twelve of them is half of it.
+	 */
+	it.each([1, 4, 12])("draws %i threads in the same 34px", async (count) => {
+		const canvas = mount();
+		canvas.stored.served = written(count);
+		await canvas.render();
+		await settle();
+
+		expect(cells(canvas.host)).toHaveLength(count);
+		expect(spine(canvas.host)?.style.width).toBe("34px");
+		// every one of them is in it: nothing overflows into a menu and nothing is elided
+		expect(cells(canvas.host)).toContain(`frame-${count - 1}`);
+	});
+
+	/** the name is what it wrote, derived on read: no call, no invention, nothing to store */
+	it("names a thread by the frames it wrote", async () => {
+		const canvas = mount();
+		canvas.stored.served = [storedThread({ id: ONE, ask: "tighten the header", frame: "home" })];
+		await canvas.render();
+		await settle();
+
+		expect(cells(canvas.host)).toEqual(["home"]);
+		expect(nameplate(canvas.host)).toBe("home");
+		// the record on disk keeps the ask, which is a different fact and still true
+		expect(canvas.stored.served[0]?.ask).toBe("tighten the header");
+	});
+
+	/** a thread that has written nothing is still its ask: a better name where there is one */
+	it("falls back to the ask until the thread has written something", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "shoot home and fix whatever reads wrong");
 		await settle();
 
-		expect(tabs(canvas.host)).toEqual(["shoot home and fix whatever reads wrong"]);
+		expect(nameplate(canvas.host)).toBe("shoot home and fix whatever reads wrong");
+		expect(cells(canvas.host)).toEqual(["shoot home and fix whatever reads wrong"]);
 	});
 
 	it("holds many conversations and switches between them in one press", async () => {
@@ -2543,15 +2610,16 @@ describe("the threads strip", () => {
 		await send(canvas.host, "write the swedish copy deck");
 		await answerTurn(canvas.turn.streams[1] as Stream, "The copy deck landed.");
 
-		// newest leftmost, and each turn ran under its own thread
-		expect(tabs(canvas.host)).toEqual(["write the swedish copy deck", "tighten the header"]);
+		// newest at the top, and each turn ran under its own thread
+		expect(cells(canvas.host)).toEqual(["write the swedish copy deck", "tighten the header"]);
 		expect(canvas.turn.streams[0]?.thread).not.toBe(canvas.turn.streams[1]?.thread);
 		expect(log(canvas.host)).toContain("The copy deck landed.");
 
-		await openTab(canvas.host, "tighten the header");
+		await openCell(canvas.host, "tighten the header");
 
 		expect(log(canvas.host)).toContain("The header is tighter now.");
 		expect(log(canvas.host)).not.toContain("The copy deck landed.");
+		expect(nameplate(canvas.host)).toBe("tighten the header");
 	});
 
 	/**
@@ -2572,35 +2640,52 @@ describe("the threads strip", () => {
 			frame.getAttribute("data-frame-label"),
 		);
 
-		await openTab(canvas.host, "tighten the header");
+		await openCell(canvas.host, "tighten the header");
 
 		expect(camera(canvas.host)).toBe(before);
 		expect(
 			[...canvas.host.querySelectorAll("[data-frame-label]")].map((frame) => frame.getAttribute("data-frame-label")),
 		).toEqual(frames);
 	});
+});
 
-	/**
-	 * The press is the scroll, which is how you reach the rest of the row: no caret per
-	 * end, no count that opens a menu, and no control added at all.
-	 */
-	it("centres the row on what was pressed", async () => {
+describe("the thread under the pointer", () => {
+	/** the cell cannot name anything, so the hover is the whole of the answer */
+	it("arrives over the log with the name, the last line, the age and the ✕", async () => {
 		const canvas = mount();
-		const centred: ScrollIntoViewOptions[] = [];
-		Element.prototype.scrollIntoView = function scrollIntoView(options?: boolean | ScrollIntoViewOptions) {
-			if (typeof options === "object") centred.push(options);
-		};
+		canvas.stored.served = [
+			storedThread({ id: ONE, ask: "tighten the header", frame: "home", at: Date.now() - 5 * 60_000 }),
+		];
 		await canvas.render();
-		await send(canvas.host, "tighten the header");
-		await answerTurn(canvas.turn.streams[0] as Stream, "done.");
-		await newThread(canvas.host);
-		await send(canvas.host, "write the copy deck");
-		await answerTurn(canvas.turn.streams[1] as Stream, "done.");
+		await settle();
 
-		centred.length = 0;
-		await openTab(canvas.host, "tighten the header");
+		const shown = await point(canvas.host, "home");
 
-		expect(centred).toContainEqual({ inline: "center", block: "nearest", behavior: "smooth" });
+		expect(shown?.textContent).toContain("home");
+		// the last line it drew, in the rail's own nouns rather than the tool's words
+		expect(shown?.textContent).toContain("edit home");
+		expect(shown?.textContent).toContain("5m");
+		expect(shown?.querySelector('[data-agent-thread-close="home"]')).not.toBeNull();
+	});
+
+	it("says so when a thread has drawn no line yet", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		expect((await point(canvas.host, "new thread"))?.textContent).toContain("nothing yet");
+	});
+
+	it("goes when the pointer leaves the column", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await point(canvas.host, "new thread");
+
+		await act(async () => {
+			spine(canvas.host)?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+			spine(canvas.host)?.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
+		});
+
+		expect(canvas.host.querySelector("[data-agent-flyout]")).toBeNull();
 	});
 });
 
@@ -2616,7 +2701,7 @@ describe("a thread's mark", () => {
 		canvas.turn.push(waiting);
 		await settle();
 
-		expect(lifeOfTab(canvas.host, "tighten the header")).toBe("streaming");
+		expect(lifeOfCell(canvas.host, "tighten the header")).toBe("streaming");
 		expect(marks(canvas.host, "tighten the header")).toEqual({ turning: 0, drawn: 0 });
 	});
 
@@ -2628,7 +2713,7 @@ describe("a thread's mark", () => {
 		await settle();
 		await newThread(canvas.host);
 
-		expect(lifeOfTab(canvas.host, "three takes on the empty cart")).toBe("running");
+		expect(lifeOfCell(canvas.host, "three takes on the empty cart")).toBe("running");
 		expect(marks(canvas.host, "three takes on the empty cart").turning).toBe(1);
 		// and the stream it left behind is still open, which is the whole point
 		expect(canvas.turn.streams[0]?.aborted()).toBe(false);
@@ -2643,11 +2728,11 @@ describe("a thread's mark", () => {
 		await newThread(canvas.host);
 
 		await answerTurn(canvas.turn.streams[0] as Stream, "Home is shot.");
-		expect(lifeOfTab(canvas.host, "shoot home")).toBe("unread");
+		expect(lifeOfCell(canvas.host, "shoot home")).toBe("unread");
 
-		await openTab(canvas.host, "shoot home");
+		await openCell(canvas.host, "shoot home");
 		// opening a thread is what reads it, wherever the opening happened
-		expect(lifeOfTab(canvas.host, "shoot home")).toBe("read");
+		expect(lifeOfCell(canvas.host, "shoot home")).toBe("read");
 	});
 
 	it("keeps a collapsed read thread pressable with a hollow dot", async () => {
@@ -2659,7 +2744,7 @@ describe("a thread's mark", () => {
 
 		// out here the mark is the thread, and a thread you cannot see is one you cannot
 		// press, so read falls back to the strength a disabled thing gets
-		expect(lifeOfTab(canvas.host, "shoot home")).toBe("read");
+		expect(lifeOfCell(canvas.host, "shoot home")).toBe("read");
 		expect(marks(canvas.host, "shoot home").drawn).toBe(1);
 	});
 });
@@ -2685,7 +2770,7 @@ describe("a thread waiting on a person", () => {
 		});
 		await settle();
 
-		expect(lifeOfTab(canvas.host, "pick a direction")).toBe("waiting");
+		expect(lifeOfCell(canvas.host, "pick a direction")).toBe("waiting");
 		// nothing turns: the thread has stopped and is costing nothing
 		expect(marks(canvas.host, "pick a direction").turning).toBe(0);
 	});
@@ -2710,7 +2795,7 @@ describe("a thread waiting on a person", () => {
 		});
 		await settle();
 
-		expect(lifeOfTab(canvas.host, "tidy the repo")).toBe("waiting");
+		expect(lifeOfCell(canvas.host, "tidy the repo")).toBe("waiting");
 	});
 
 	it("draws the disc for a signed-out bounce, in the binary's own words", async () => {
@@ -2721,7 +2806,7 @@ describe("a thread waiting on a person", () => {
 		canvas.turn.close();
 		await settle();
 
-		expect(lifeOfTab(canvas.host, "shoot home")).toBe("waiting");
+		expect(lifeOfCell(canvas.host, "shoot home")).toBe("waiting");
 	});
 
 	/** the agent is told to finish and does, so a wind-down is not a thread that is stuck */
@@ -2738,7 +2823,7 @@ describe("a thread waiting on a person", () => {
 		await settle();
 		await newThread(canvas.host);
 
-		expect(lifeOfTab(canvas.host, "three takes on the cart")).toBe("running");
+		expect(lifeOfCell(canvas.host, "three takes on the cart")).toBe("running");
 	});
 
 	/** a look reads a thread; nothing about looking answers a question */
@@ -2761,11 +2846,11 @@ describe("a thread waiting on a person", () => {
 		});
 		await settle();
 		await newThread(canvas.host);
-		expect(lifeOfTab(canvas.host, "pick a direction")).toBe("waiting");
+		expect(lifeOfCell(canvas.host, "pick a direction")).toBe("waiting");
 
-		await openTab(canvas.host, "pick a direction");
+		await openCell(canvas.host, "pick a direction");
 
-		expect(lifeOfTab(canvas.host, "pick a direction")).toBe("waiting");
+		expect(lifeOfCell(canvas.host, "pick a direction")).toBe("waiting");
 	});
 });
 
@@ -2773,17 +2858,17 @@ describe("what survives a restart", () => {
 	it("restores every thread the daemon kept, identical to a live one", async () => {
 		const canvas = mount();
 		canvas.stored.served = [
-			storedThread({ id: ONE, ask: "tighten the header", at: 10 }),
-			storedThread({ id: TWO, ask: "write the copy deck", at: 20 }),
+			storedThread({ id: ONE, ask: "tighten the header", frame: "home", at: 10 }),
+			storedThread({ id: TWO, ask: "write the copy deck", frame: "copy-deck", at: 20 }),
 		];
 		await canvas.render();
 		await settle();
 
-		expect(tabs(canvas.host)).toEqual(["write the copy deck", "tighten the header"]);
+		expect(cells(canvas.host)).toEqual(["copy-deck", "home"]);
 		// the picture is the whole of it: nothing capped, nothing elided, the same view
 		expect(log(canvas.host)).toContain("write the copy deck");
 		expect(log(canvas.host)).toContain("The header is tighter now.");
-		expect(canvas.host.querySelector('[data-agent-row="edit home"]')).not.toBeNull();
+		expect(canvas.host.querySelector('[data-agent-row="edit copy-deck"]')).not.toBeNull();
 		/*
 		 * And it is *drawn*, rather than sitting in the invisible reserve a message still
 		 * arriving holds. A restored message has no clock to be paced against, so both of
@@ -2855,9 +2940,10 @@ describe("what survives a restart", () => {
 		await send(canvas.host, "and now the receipt");
 		await settle();
 
-		// a new thread, rather than a resume that would fail
+		// a new thread, rather than a resume that would fail. The words that started it are
+		// its name until it writes something; the restored one is called what it wrote
 		expect(canvas.turn.streams[0]?.thread).not.toBe(ONE);
-		expect(tabs(canvas.host)).toEqual(["and now the receipt", "tighten the header"]);
+		expect(cells(canvas.host)).toEqual(["and now the receipt", "home"]);
 	});
 
 	/**
@@ -2906,7 +2992,7 @@ describe("what survives a restart", () => {
 		// the conversation keeps what it had drawn, above the turn that continues it
 		expect(log(canvas.host)).toContain("The header is tighter now.");
 		expect(log(canvas.host)).toContain("and now the receipt");
-		expect(tabs(canvas.host)).toEqual(["tighten the header"]);
+		expect(cells(canvas.host)).toEqual(["home"]);
 	});
 
 	it("writes the picture down as it draws it", async () => {
@@ -2948,9 +3034,9 @@ describe("closing a thread", () => {
 		await send(canvas.host, "write the copy deck");
 		await answerTurn(canvas.turn.streams[1] as Stream, "done.");
 
-		await closeTab(canvas.host, "tighten the header");
+		await closeThread(canvas.host, "tighten the header");
 
-		expect(tabs(canvas.host)).toEqual(["write the copy deck"]);
+		expect(cells(canvas.host)).toEqual(["write the copy deck"]);
 		// its own door, which writes one flag: nothing here is a delete
 		expect(canvas.stored.closed).toEqual([canvas.turn.streams[0]?.thread]);
 	});
@@ -2964,9 +3050,9 @@ describe("closing a thread", () => {
 		await send(canvas.host, "write the copy deck");
 		await answerTurn(canvas.turn.streams[1] as Stream, "The copy deck landed.");
 
-		await closeTab(canvas.host, "write the copy deck");
+		await closeThread(canvas.host, "write the copy deck");
 
-		expect(tabs(canvas.host)).toEqual(["tighten the header"]);
+		expect(cells(canvas.host)).toEqual(["tighten the header"]);
 		expect(log(canvas.host)).toContain("The header is tighter now.");
 	});
 
@@ -2980,7 +3066,7 @@ describe("closing a thread", () => {
 		await newThread(canvas.host);
 		expect(canvas.turn.streams[0]?.aborted()).toBe(false);
 
-		await closeTab(canvas.host, "three takes on the cart");
+		await closeThread(canvas.host, "three takes on the cart");
 		await settle();
 
 		expect(canvas.turn.streams[0]?.aborted()).toBe(true);
@@ -2992,9 +3078,9 @@ describe("closing a thread", () => {
 		await send(canvas.host, "tighten the header");
 		await answerTurn(canvas.turn.streams[0] as Stream, "done.");
 
-		await closeTab(canvas.host, "tighten the header");
+		await closeThread(canvas.host, "tighten the header");
 
-		expect(tabs(canvas.host)).toEqual(["new thread"]);
+		expect(cells(canvas.host)).toEqual(["new thread"]);
 		expect(field(canvas.host)?.placeholder).toBe("say what to change");
 	});
 });
@@ -3189,13 +3275,13 @@ describe("the model menu", () => {
 	it("is asked again per thread, because which machine is answering is one thread's fact", async () => {
 		const canvas = mount();
 		canvas.stored.served = [
-			storedThread({ id: ONE, ask: "tighten the header", at: 20 }),
-			storedThread({ id: TWO, ask: "write the copy deck", at: 10 }),
+			storedThread({ id: ONE, ask: "tighten the header", frame: "home", at: 20 }),
+			storedThread({ id: TWO, ask: "write the copy deck", frame: "copy-deck", at: 10 }),
 		];
 		await canvas.render();
 		await until(() => canvas.offered.asked.length > 0);
 
-		await openTab(canvas.host, "write the copy deck");
+		await openCell(canvas.host, "copy-deck");
 		await until(() => canvas.offered.asked.length > 1);
 
 		// a project runs one thread on Opus and another on Haiku, so switching re-asks
@@ -3621,7 +3707,7 @@ describe("signed out", () => {
 		canvas.turn.push(refused);
 		canvas.turn.close();
 		await settle();
-		expect(lifeOfTab(canvas.host, "shoot home")).toBe("waiting");
+		expect(lifeOfCell(canvas.host, "shoot home")).toBe("waiting");
 
 		canvas.preflight.login = { signedIn: true, account: "ada@kaffe.se" };
 		await checkAgain(outStrip(canvas.host));
@@ -3629,7 +3715,7 @@ describe("signed out", () => {
 		await settle(150);
 
 		// the turn that ran is what says the bounce stopped, and it says it while it runs
-		expect(lifeOfTab(canvas.host, "shoot home")).toBe("streaming");
+		expect(lifeOfCell(canvas.host, "shoot home")).toBe("streaming");
 		expect(outStrip(canvas.host)).toBeNull();
 
 		canvas.turn.push(speaking);
@@ -3641,7 +3727,7 @@ describe("signed out", () => {
 
 		// and it stays stopped: the refusal is in the log above, where it happened, and the
 		// thread it happened in is one somebody has read
-		expect(lifeOfTab(canvas.host, "shoot home")).toBe("read");
+		expect(lifeOfCell(canvas.host, "shoot home")).toBe("read");
 		expect(outStrip(canvas.host)).toBeNull();
 	});
 

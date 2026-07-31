@@ -12,12 +12,12 @@ import type { AgentEntry, AgentRow } from "./agent-transcript";
  * many pages or none, so there is no page field here to bind it with — which is also
  * why switching a thread does not move the canvas. There is nowhere to move to.
  *
- * The name is the ask, because there is nothing to borrow. The binary does generate a
- * title, it is stable across a session, and it never reaches print mode: it is absent
- * from both parent captures and a fresh three-turn print-mode session produced none at
- * all, in its output or in its own transcript file. Spool naming a conversation with a
- * side call to a cheap model was rejected as silent spend on somebody's own
- * subscription for a label.
+ * The name is what the thread wrote, derived on read and stored nowhere (`nameOf` below
+ * carries the argument). Nothing is borrowed and nothing is generated: the binary's own
+ * title never reaches print mode — it is absent from both parent captures and from a
+ * fresh three-turn print-mode session, in its output and in its own transcript file —
+ * and spool naming a conversation with a side call to a cheap model was rejected as
+ * silent spend on somebody's own subscription for a label.
  */
 
 /**
@@ -37,11 +37,25 @@ import type { AgentEntry, AgentRow } from "./agent-transcript";
  */
 export type Life = "streaming" | "running" | "waiting" | "unread" | "read";
 
-/** what the strip draws of one thread, which is a mark and the human's own sentence */
+/**
+ * What the column draws of one thread: a mark in it, and the rest behind a hover (#205).
+ *
+ * `name` is derived rather than stored, and it is not the `ask` the record on disk keeps:
+ * an ask is the first thing a person said and stays true whatever the thread went on to
+ * write, while the name is recomputed from the entries every time they are read.
+ *
+ * `at` and `last` are the flyout's. They are fields rather than a second read of the
+ * entries because the fold that derives the name has both in its hand already.
+ */
 export interface Thread {
 	readonly id: string;
-	readonly ask: string;
+	/** what it wrote, or the ask where it has written nothing yet */
+	readonly name: string;
 	readonly life: Life;
+	/** unix ms of the last thing that happened in it, which the flyout says as an age */
+	readonly at: number;
+	/** the last line it drew, in the rail's own nouns, or empty where it has drawn none */
+	readonly last: string;
 }
 
 /**
@@ -110,8 +124,17 @@ export function storedLife(life: Life): StoredLife {
 	return life === "streaming" ? "running" : life;
 }
 
+/**
+ * What a thread with nothing in it is called.
+ *
+ * It is the machine saying there is nothing to say yet rather than a name anybody chose,
+ * which is why the nameplate draws it dimmed: exported so the one surface that has to tell
+ * a name from its absence tests the same string both fallbacks produce.
+ */
+export const UNSAID = "new thread";
+
 /** the human's own first sentence, which is what a thread falls back to being called */
-export function askOf(entries: readonly AgentEntry[], fallback = "new thread"): string {
+export function askOf(entries: readonly AgentEntry[], fallback = UNSAID): string {
 	const said = entries.find((entry) => entry.kind === "user");
 	return said?.kind === "user" && said.text.trim() !== "" ? said.text : fallback;
 }
@@ -161,7 +184,7 @@ const CHANGED = new Set(["write", "edit"]);
  * at all is still `new thread` — this is a better name where there is one, not a
  * different fallback.
  */
-export function nameOf(entries: readonly AgentEntry[], fallback = "new thread"): string {
+export function nameOf(entries: readonly AgentEntry[], fallback = UNSAID): string {
 	const written: string[] = [];
 	const walk = (rows: readonly AgentRow[]) => {
 		for (const row of rows) {
@@ -176,6 +199,23 @@ export function nameOf(entries: readonly AgentEntry[], fallback = "new thread"):
 	if (written.length === 0) return askOf(entries, fallback);
 	const shown = written.slice(0, SHOWN).join(", ");
 	return written.length > SHOWN ? `${shown} +${written.length - SHOWN}` : shown;
+}
+
+/**
+ * The last line the thread drew, in the rail's own nouns (#205).
+ *
+ * Rows only, and the last of them: it is what the thread is *doing*, which the name cannot
+ * say because the name is the set of frames it has touched and carries no verb. A message
+ * is not a line — prose is paragraphs, and the flyout has one line to spend — and the run
+ * count is left off for the same reason the transcript keeps it outside the subject.
+ *
+ * Empty where a thread has drawn no row at all, which the flyout words itself.
+ */
+export function lastOf(entries: readonly AgentEntry[]): string {
+	const rows = entries.filter((entry): entry is AgentRow => entry.kind === "row");
+	const last = rows.at(-1);
+	if (last === undefined) return "";
+	return last.subject === null ? last.verb : `${last.verb} ${last.subject}`;
 }
 
 /**
