@@ -1,77 +1,37 @@
 import type { ComponentType, ReactNode } from "react";
-import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { fitBox, type Placement } from "../fit";
 import { ExternalLinkDialog } from "./external-link-dialog";
+import { accelLabel, accelPressed } from "./platform-keys";
 
 /**
- * The stage, the slate HUD, and the session rail (#60), matching the design
- * canvas frame `spool-player--inspector`: the frame letterboxed at native size
- * on the near-black stage, chrome scattered into the screen corners with no
- * containers, and the session available on demand as a 320px instrument rail.
- * Sleep is the resting state — stillness fades every piece of chrome together
- * and hides the cursor, movement wakes it, and an open rail never sleeps.
+ * The stage and the pill (#210). The frame takes the whole viewport it can and
+ * never more than its authored size, the way a video player letterboxes, and
+ * the only chrome left is one floating pill: restart, fullscreen, close. The
+ * inspector rail, the session tape and the corner registration ticks are gone
+ * — inline play made the canvas the place you read a prototype from, so the
+ * player is the prototype and nothing else. Sleep is still the resting state:
+ * stillness fades the pill and takes the cursor with it, movement wakes it.
  * Styling lives in the served document's chrome stylesheet; this component owns
  * structure and wiring.
  */
 
-/** One hop on the session's tape (#60): what moved, when, and what it changed. */
-export interface WalkEvent {
-	kind: "go" | "back" | "restart" | "rewind";
-	from: string;
-	to: string;
-	/** The click that traveled the edge — absent when code called ui.go. */
-	label?: string;
-	/** Milliseconds since the session opened. */
-	at: number;
-	/** State keys written while standing on `from`, rolled up into this hop. */
-	changed: string[];
-}
-
-/** A mocked call as the rail shows it: shallow by design, never a debugger. */
-export interface MockCall {
-	method: string;
-	path: string;
-	status: number;
-	ms: number;
-}
-
-/** The live store, flattened for the rail: dotted keys, one-line JSON values. */
-export interface SessionState {
-	scenario: string;
-	rows: { key: string; value: string; changed: boolean }[];
-}
-
 export interface PlayerController {
 	subscribe(listener: () => void): () => void;
 	version(): number;
-	/** The session store's own subscription — the rail reads state live. */
-	stateSubscribe(listener: () => void): () => void;
-	stateVersion(): number;
 	read(): {
-		project: string;
 		frame: string;
-		stack: string[];
-		motion: boolean;
 		arrival: number;
 		externalHref: string | null;
-		log: WalkEvent[];
-		mock: MockCall[];
 	};
-	state(): SessionState;
-	/** Milliseconds since the session opened — the tape's clock. */
-	elapsed(): number;
 	geometry(frame: string): { w: number; h: number };
 	/** Whether this screen is a terminal frame (#44). */
 	terminal(frame: string): boolean;
-	back(): void;
 	restart(): void;
-	/** Scrub the tape: restore the snapshot the session stood in at that hop. */
-	rewind(index: number): void;
-	toggleMotion(): void;
 	dismissExternal(): void;
 	close(): void;
 }
 
-const RAIL_W = 320;
 /** Stillness this long puts the chrome to sleep; the fade itself is CSS. */
 const IDLE_MS = 2000;
 
@@ -86,24 +46,41 @@ export function Player({
 	host?: ReactNode;
 }) {
 	useSyncExternalStore(controller.subscribe, controller.version);
-	useSyncExternalStore(controller.stateSubscribe, controller.stateVersion);
-	const { project, frame, stack, motion, arrival, externalHref, log, mock } = controller.read();
+	const { frame, arrival, externalHref } = controller.read();
 	const { w, h } = controller.geometry(frame);
 	const viewport = useViewport();
 	const terminal = controller.terminal(frame);
 	const Screen = frames[frame];
-	// the rail is a preference, not session data: it rides every hop, and the
-	// session opens immersed
-	const [rail, setRail] = useState(false);
-	// reading is stillness: an open rail holds the chrome awake, and a dialog
-	// owns the moment it is up. A terminal screen is another document, so the
-	// hand moving inside it is invisible from here — the player never sleeps on
-	// a stillness it cannot actually see (#44).
-	const { awake, wake } = useWake(!rail && !terminal && externalHref === null);
+	// reading is stillness, and a dialog owns the moment it is up. A terminal
+	// screen is another document, so the hand moving inside it is invisible from
+	// here — the player never sleeps on a stillness it cannot actually see (#44).
+	const { awake, wake } = useWake(!terminal && externalHref === null);
 	const asleep = !coarsePointer && !awake;
 	// the external-link dialog is modal: it owns the moment, chrome and all
 	const blocked = externalHref !== null;
-	const { scale, x, y } = place(w, h, viewport, coarsePointer || !rail ? 0 : RAIL_W);
+	const { scale, x, y } = place(w, h, viewport);
+	const fullscreen = useFullscreen();
+
+	// Spool's own gestures live behind accel, never on a plain key (#210): a live
+	// frame keeps every ordinary key, its own esc for modals included. Focus is
+	// usually inside the frame, so this only fires when the stage itself holds it
+	// — what covers the rest is the runtime forwarding the same two chords.
+	const { close, restart } = controller;
+	const toggleFullscreen = fullscreen.toggle;
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if (!accelPressed(event) || event.altKey || event.shiftKey) return;
+			if (event.key === "Escape") {
+				event.preventDefault();
+				close();
+			} else if (event.key.toLowerCase() === "f") {
+				event.preventDefault();
+				toggleFullscreen();
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [close, toggleFullscreen]);
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: waking is ambient, not an affordance — the stage is the room, never a control
@@ -128,82 +105,60 @@ export function Player({
 			</div>
 			{/* touch is the immersive context (#60): the prototype is the page, no chrome at all */}
 			{!coarsePointer && (
-				<Fragment>
-					<div className="spool-hud" inert={externalHref !== null}>
-						<span
-							className="spool-ticks"
-							style={{ left: x - 7, top: y - 7, width: w * scale + 14, height: h * scale + 14 }}
-						>
-							<i />
-							<i />
-							<i />
-							<i />
+				<div className="spool-pill-dock" inert={blocked}>
+					<div className="spool-pill">
+						<span className="spool-pill-name">
+							<span className="spool-dash" />
+							{frame}
 						</span>
-						<div className="spool-hud-lead">
-							<div className="spool-hud-verbs">
-								<HudButton
-									id="spool-back"
-									label="Back"
-									disabled={blocked || stack.length === 0}
-									onClick={controller.back}
-								>
-									<path
-										d="M10 3.5 L5.5 8 L10 12.5"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="1.5"
-										strokeLinecap="round"
-										strokeLinejoin="round"
-									/>
-								</HudButton>
-								<HudButton id="spool-restart" label="Restart" disabled={blocked} onClick={controller.restart}>
-									<path
-										d="M9.4 3.25 A5 5 0 1 1 6.3 3.3"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="1.5"
-										strokeLinecap="round"
-										strokeLinejoin="round"
-									/>
-									<path
-										d="M8.4 1.5 L6.3 3.3 L8 5"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="1.5"
-										strokeLinecap="round"
-										strokeLinejoin="round"
-									/>
-								</HudButton>
-							</div>
-							<span className="spool-slate">
-								<span className="spool-slate-project">{project}</span>
-								<span className="spool-slate-frame">
-									<span className="spool-dash" />
-									{frame}
-								</span>
-							</span>
-						</div>
-						<div className="spool-hud-trail" style={{ right: rail ? RAIL_W + 24 : 24 }}>
-							<HudButton
-								id="spool-inspector"
-								label={rail ? "Close inspector" : "Inspector"}
-								pressed={rail}
-								disabled={blocked}
-								onClick={() => setRail((open) => !open)}
-							>
-								<rect
-									x="2.5"
-									y="3.5"
-									width="11"
-									height="9"
-									rx="1.5"
-									fill="none"
-									stroke="currentColor"
-									strokeWidth="1.5"
-								/>
-								<path d="M10 4v8" stroke="currentColor" strokeWidth="1.5" />
-							</HudButton>
-							<HudButton id="spool-close" label="Close" disabled={blocked} onClick={controller.close}>
+						<span className="spool-pill-rule" />
+						<span className="spool-pill-readout">
+							{w} × {h} · {Math.round(scale * 100)}%
+						</span>
+						<span className="spool-pill-rule" />
+						<PillButton id="spool-restart" label="Restart the session" disabled={blocked} onClick={restart}>
+							<path
+								d="M9.4 3.25 A5 5 0 1 1 6.3 3.3"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="1.5"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							/>
+							<path
+								d="M8.4 1.5 L6.3 3.3 L8 5"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="1.5"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							/>
+						</PillButton>
+						<PillButton
+							id="spool-fullscreen"
+							label={fullscreen.on ? "Leave fullscreen" : "Fill the screen"}
+							pressed={fullscreen.on}
+							disabled={blocked}
+							onClick={toggleFullscreen}
+						>
+							<path
+								d={fullscreen.on ? "M6.5 2.5v4h-4M9.5 13.5v-4h4" : "M2.5 6.5v-4h4M13.5 9.5v4h-4"}
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="1.5"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							/>
+						</PillButton>
+						<button
+							type="button"
+							id="spool-close"
+							className="spool-pill-close"
+							aria-label="Close the player"
+							disabled={blocked}
+							onClick={close}
+						>
+							<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
 								<path
 									d="M4 4 L12 12 M12 4 L4 12"
 									fill="none"
@@ -211,50 +166,17 @@ export function Player({
 									strokeWidth="1.5"
 									strokeLinecap="round"
 								/>
-							</HudButton>
-						</div>
-						<span className="spool-readout">
-							{w} × {h} · {Math.round(scale * 100)}%
-						</span>
+							</svg>
+							{`${accelLabel()}esc`}
+						</button>
 					</div>
-					<aside
-						className={rail ? "spool-rail" : "spool-rail is-closed"}
-						aria-label="Session"
-						inert={!rail || externalHref !== null}
-					>
-						<WalkSection log={log} running={rail} elapsed={controller.elapsed} onRewind={controller.rewind} />
-						{terminal ? (
-							// The prototype runtime is not present in this Spool-owned surface.
-							<p className="spool-rail-quiet is-section">
-								terminal execution is disabled until it can run in an OS sandbox
-							</p>
-						) : (
-							<Fragment>
-								<StateSection state={controller.state()} />
-								<MockSection mock={mock} />
-							</Fragment>
-						)}
-						<footer className="spool-rail-foot">
-							<button
-								type="button"
-								id="spool-motion"
-								className="spool-rail-row is-button"
-								aria-label="Motion"
-								aria-pressed={motion}
-								onClick={controller.toggleMotion}
-							>
-								<span className="spool-rail-key">motion</span>
-								<span className="spool-rail-value">{motion ? "on" : "off"}</span>
-							</button>
-						</footer>
-					</aside>
-				</Fragment>
+				</div>
 			)}
 		</div>
 	);
 }
 
-function HudButton({
+function PillButton({
 	id,
 	label,
 	disabled,
@@ -273,7 +195,7 @@ function HudButton({
 		<button
 			type="button"
 			id={id}
-			className={pressed === true ? "spool-hud-button is-on" : "spool-hud-button"}
+			className={pressed === true ? "spool-pill-button is-on" : "spool-pill-button"}
 			aria-label={label}
 			aria-pressed={pressed}
 			disabled={disabled}
@@ -284,131 +206,6 @@ function HudButton({
 			</svg>
 		</button>
 	);
-}
-
-/**
- * The tape: every hop the session really took, in order, never truncated. The
- * edge lines above a hop say how it was traveled — the click's own words, then
- * the state keys the stay before it wrote. Clicking an earlier hop rewinds to
- * it, which is itself a hop.
- */
-function WalkSection({
-	log,
-	running,
-	elapsed,
-	onRewind,
-}: {
-	log: WalkEvent[];
-	/** Whether the rail is open — the header's clock only runs while it is read. */
-	running: boolean;
-	/** The session's own clock, so the header and the hop times share one origin. */
-	elapsed: () => number;
-	onRewind: (index: number) => void;
-}) {
-	const last = log.length - 1;
-	// the tape is still rolling: sitting on a screen is part of the walk's
-	// duration, so the header counts on past the last hop
-	const duration = useElapsed(running, elapsed);
-	return (
-		<section className="spool-rail-section spool-walk">
-			<div className="spool-rail-head">
-				<h2>walk</h2>
-				<span>{clock(duration)}</span>
-			</div>
-			<ol>
-				{log.map((event, index) => (
-					// biome-ignore lint/suspicious/noArrayIndexKey: the same frame can sit at two hops — position IS a tape entry's identity
-					<Fragment key={`${index}:${event.to}`}>
-						{event.label !== undefined && <li className="spool-walk-edge">· {event.label}</li>}
-						{event.changed.length > 0 && <li className="spool-walk-edge">{event.changed.join(" ")}</li>}
-						<li>
-							<button
-								type="button"
-								className="spool-walk-hop"
-								disabled={index === last}
-								onClick={() => onRewind(index)}
-							>
-								{index === last && <span className="spool-dash" />}
-								<span className="spool-walk-name">{event.to}</span>
-								<span className="spool-walk-at">{clock(event.at)}</span>
-							</button>
-						</li>
-					</Fragment>
-				))}
-			</ol>
-		</section>
-	);
-}
-
-function StateSection({ state }: { state: SessionState }) {
-	return (
-		<section className="spool-rail-section">
-			<div className="spool-rail-head">
-				<h2>state</h2>
-			</div>
-			<dl>
-				{state.rows.map((row) => (
-					<div key={row.key} className="spool-rail-row">
-						{row.changed && <span className="spool-dash" />}
-						<dt className="spool-rail-key">{row.key}</dt>
-						<dd className="spool-rail-value">{row.value}</dd>
-					</div>
-				))}
-				<div className="spool-rail-row">
-					<dt className="spool-rail-key">scenario</dt>
-					<dd className="spool-rail-value">{JSON.stringify(state.scenario)}</dd>
-				</div>
-			</dl>
-		</section>
-	);
-}
-
-function MockSection({ mock }: { mock: MockCall[] }) {
-	return (
-		<section className="spool-rail-section spool-mock">
-			<div className="spool-rail-head">
-				<h2>mock</h2>
-			</div>
-			{mock.length === 0 ? (
-				<p className="spool-rail-quiet">no calls</p>
-			) : (
-				<ul>
-					{mock.map((call, index) => (
-						// biome-ignore lint/suspicious/noArrayIndexKey: a session calls the same endpoint again and again — position IS a call's identity
-						<li key={`${index}:${call.method}:${call.path}`}>
-							<span className="spool-mock-method">{call.method}</span>
-							<span className="spool-mock-path">{call.path}</span>
-							<span className="spool-mock-meta">
-								{call.status} · {call.ms} ms
-							</span>
-						</li>
-					))}
-				</ul>
-			)}
-		</section>
-	);
-}
-
-/**
- * The walk's running length, ticked once a second while the rail is open. A
- * closed rail keeps no timer: nothing is reading it, and the screen must not
- * re-render for a clock nobody can see.
- */
-function useElapsed(running: boolean, elapsed: () => number): number {
-	const [ms, setMs] = useState(elapsed);
-	useEffect(() => {
-		if (!running) return;
-		setMs(elapsed());
-		const timer = window.setInterval(() => setMs(elapsed()), 1000);
-		return () => window.clearInterval(timer);
-	}, [running, elapsed]);
-	return ms;
-}
-
-/** Tape time, the way a recording reads it. */
-function clock(ms: number): string {
-	const total = Math.floor(ms / 1000);
-	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
 /** A static terminal surface over its last persisted grid. */
@@ -523,26 +320,35 @@ function useWake(armed: boolean): { awake: boolean; wake: () => void } {
 	};
 }
 
+/**
+ * Filling the screen for real (#210), so a prototype reads the way it would if
+ * you had opened it in your own browser. The request needs transient activation
+ * and can be refused outright — a rejected promise is the browser saying no, not
+ * an error the player has anything to add to.
+ */
+function useFullscreen(): { on: boolean; toggle: () => void } {
+	const [on, setOn] = useState(() => document.fullscreenElement != null);
+	useEffect(() => {
+		const sync = () => setOn(document.fullscreenElement != null);
+		document.addEventListener("fullscreenchange", sync);
+		return () => document.removeEventListener("fullscreenchange", sync);
+	}, []);
+	const toggle = useCallback(() => {
+		if (document.fullscreenElement != null) void document.exitFullscreen().catch(() => {});
+		else void document.documentElement.requestFullscreen?.().catch(() => {});
+	}, []);
+	return { on, toggle };
+}
+
 /** Touch is the immersive context; anything with a fine pointer letterboxes. */
 const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
 
-interface Placement {
-	scale: number;
-	x: number;
-	y: number;
-}
-
 /**
- * Fine pointer: keep stage margins for the corner chrome, then center the frame
- * in whatever the rail leaves. Coarse pointer: use the whole viewport. Never
- * scale a frame above its native size.
+ * Edge to edge, the way a video player letterboxes (#210): the frame takes the
+ * whole viewport it can, never past its authored size, and whatever bars are
+ * left are aspect mismatch and nothing else. `fitBox` is the canvas camera's
+ * own fit, which is what lets an inline play flight land exactly here.
  */
-function place(w: number, h: number, { vw, vh }: Viewport, railW: number): Placement {
-	if (coarsePointer) {
-		const scale = Math.min(1, vw / w, vh / h);
-		return { scale, x: (vw - w * scale) / 2, y: (vh - h * scale) / 2 };
-	}
-	const stageW = vw - railW;
-	const scale = Math.min(1, (stageW - 56) / w, (vh - 120) / h);
-	return { scale, x: Math.round((stageW - w * scale) / 2), y: Math.round((vh - h * scale) / 2) };
+function place(w: number, h: number, { vw, vh }: Viewport): Placement {
+	return fitBox(w, h, vw, vh);
 }

@@ -3,15 +3,8 @@ import { createElement, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { type ClipboardCopyResult, parseClipboardCopyResult } from "./clipboard-protocol";
-import {
-	BrokenFrame,
-	type MockCall,
-	Player,
-	type PlayerController,
-	type SessionState,
-	TermScreen,
-	type WalkEvent,
-} from "./player-chrome";
+import { accelPressed } from "./platform-keys";
+import { BrokenFrame, Player, type PlayerController, TermScreen } from "./player-chrome";
 import type { SpoolUi } from "./spool-public";
 import { parseWalkDecision } from "./walk-protocol";
 
@@ -334,8 +327,6 @@ addEventListener("pagehide", abortClipboardWrites);
 const stateTarget: SpoolState = {};
 const listeners = new Set<() => void>();
 const proxies = new WeakMap<object, object>();
-/** Where each reactive object sits in the store, so a write knows its address. */
-const addresses = new WeakMap<object, string>();
 let version = 0;
 let playerBooted = false;
 
@@ -350,51 +341,30 @@ function notify(): void {
  * Deep reactive view over the session state: one version counter, any write
  * anywhere notifies every subscriber. Flat means top-level keys are the unit
  * agents reason about; nesting still reacts so mutation never goes silent.
- * Every write also names itself for the tape (#60) — passive observation of a
- * mutation that was going to happen anyway, never a hook the prototype can see.
  */
-function reactive<T extends object>(target: T, address = ""): T {
+function reactive<T extends object>(target: T): T {
 	const existing = proxies.get(target);
 	if (existing !== undefined) return existing as T;
-	addresses.set(target, address);
 	const proxy = new Proxy(target, {
 		get(t, key, receiver) {
 			const value = Reflect.get(t, key, receiver);
-			return typeof value === "object" && value !== null ? reactive(value, addressOf(t, key)) : value;
+			return typeof value === "object" && value !== null ? reactive(value) : value;
 		},
 		set(t, key, value, receiver) {
 			if (Object.is(Reflect.get(t, key, receiver), value)) return true;
 			const ok = Reflect.set(t, key, value, receiver);
-			if (ok) {
-				touch(addressOf(t, key));
-				notify();
-			}
+			if (ok) notify();
 			return ok;
 		},
 		deleteProperty(t, key) {
 			const had = Reflect.has(t, key);
 			const ok = Reflect.deleteProperty(t, key);
-			if (ok && had) {
-				touch(addressOf(t, key));
-				notify();
-			}
+			if (ok && had) notify();
 			return ok;
 		},
 	});
 	proxies.set(target, proxy);
 	return proxy as T;
-}
-
-/**
- * The dotted address of a key under the object that holds it. A list is one
- * value the whole way down (#60): pushing an item changes `cart.items`, not
- * `cart.items.3` and `cart.items.length` — the rail is not a debugger.
- */
-function addressOf(target: object, key: string | symbol): string {
-	const base = addresses.get(target) ?? "";
-	if (Array.isArray(target)) return base;
-	if (typeof key === "symbol") return "";
-	return base === "" ? key : `${base}.${key}`;
 }
 
 function subscribe(listener: () => void): () => void {
@@ -548,119 +518,6 @@ async function start(): Promise<void> {
 	persist();
 }
 
-// --- the tape (#60) ---------------------------------------------------------
-
-/**
- * The session's recording: append-only, never truncated, so a rewound walk
- * still shows where it had been. Every hop carries the snapshot the session
- * stood in once it landed — state is JSON-serializable by contract, which is
- * what makes scrubbing back to a hop a restore rather than a replay.
- */
-/** What the rail shows, plus the snapshot only a scrub needs. */
-interface Hop extends WalkEvent {
-	snapshot: SessionRecord;
-}
-
-const walkLog: Hop[] = [];
-const mockLog: MockCall[] = [];
-/** State keys written since the last hop; they roll up into the next one. */
-let touched = new Set<string>();
-const opened = now();
-
-function now(): number {
-	return typeof performance === "undefined" ? Date.now() : performance.now();
-}
-
-function elapsed(): number {
-	return Math.round(now() - opened);
-}
-
-function touch(address: string): void {
-	if (address !== "") touched.add(address);
-}
-
-/**
- * Close the stay on `from` and open the one on `to`: whatever the screen wrote
- * while standing there becomes this hop's changed keys, and the tape takes the
- * snapshot only after the walk has committed.
- */
-function recordHop(kind: WalkEvent["kind"], from: string, to: string, label?: string): void {
-	walkLog.push({
-		kind,
-		from,
-		to,
-		...(label === undefined ? {} : { label }),
-		at: elapsed(),
-		changed: [...touched],
-		snapshot: sessionSnapshot(),
-	});
-	touched = new Set();
-}
-
-function recordMock(method: string, path: string, status: number, ms: number): void {
-	mockLog.push({ method, path, status, ms: Math.round(ms) });
-	notifyPlay();
-}
-
-/**
- * The store as the rail reads it: dotted leaf keys, one-line JSON values. An
- * array is a leaf — a prototype's list is one value, not a numbered tree.
- */
-function flatten(value: unknown, address: string, rows: { key: string; value: string }[]): void {
-	if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-		const entries = Object.entries(value);
-		if (entries.length > 0) {
-			for (const [key, nested] of entries) flatten(nested, `${address}.${key}`, rows);
-			return;
-		}
-	}
-	rows.push({ key: address, value: oneLine(value) });
-}
-
-function oneLine(value: unknown): string {
-	try {
-		return JSON.stringify(value) ?? String(value);
-	} catch {
-		// a cyclic prototype value still deserves a row, just not a faithful one
-		return String(value);
-	}
-}
-
-/** A write marks a row when either address contains the other. */
-function isTouched(key: string): boolean {
-	for (const address of touched) {
-		if (address === key || address.startsWith(`${key}.`) || key.startsWith(`${address}.`)) return true;
-	}
-	return false;
-}
-
-function sessionState(): SessionState {
-	// the store itself is never a row: an empty session is an empty list, not "{}"
-	const rows: { key: string; value: string }[] = [];
-	for (const [key, value] of Object.entries(stateTarget)) flatten(value, key, rows);
-	return { scenario: scenarioName, rows: rows.map((row) => ({ ...row, changed: isTouched(row.key) })) };
-}
-
-/**
- * Scrub the tape: restore the snapshot of the hop at `index`. The move is
- * itself a hop, so the recording keeps growing — a rewind never erases what
- * the session already did.
- */
-function rewindTo(index: number): void {
-	if (play === undefined) return;
-	if (deferPlayerAction(() => rewindTo(index))) return;
-	const hop = walkLog[index];
-	if (hop === undefined || index === walkLog.length - 1) return;
-	abortClipboardWrites();
-	const from = currentFrame;
-	stack.length = 0;
-	stack.push(...hop.snapshot.stack);
-	currentFrame = hop.to;
-	seedState(hop.snapshot.state);
-	recordHop("rewind", from, hop.to);
-	requestScreenSwap(from, "rewind");
-}
-
 // --- navigation -------------------------------------------------------------
 
 function post(message: Record<string, unknown>): void {
@@ -735,12 +592,12 @@ async function walkTo(target: string, commit?: () => void): Promise<void> {
 	window.location.assign(url);
 }
 
-function navigate(target: string, patch?: Record<string, unknown>, transition?: string, label?: string): void {
+function navigate(target: string, patch?: Record<string, unknown>, transition?: string): void {
 	if (!isFrameName(target)) {
 		console.error(`spool: not a frame name: "${target}"`);
 		return;
 	}
-	if (play !== undefined && deferPlayerAction(() => navigate(target, patch, transition, label))) return;
+	if (play !== undefined && deferPlayerAction(() => navigate(target, patch, transition))) return;
 	// the patch is a write like any other: it lands in the stay it belongs to,
 	// and rolls up into this hop's changed keys
 	if (patch !== undefined) Object.assign(state, patch);
@@ -757,7 +614,6 @@ function navigate(target: string, patch?: Record<string, unknown>, transition?: 
 		stack.push(from);
 		reportWalk(from, target);
 		currentFrame = target;
-		recordHop("go", from, target, label);
 		requestScreenSwap(from, "forward", transition);
 		return;
 	}
@@ -789,7 +645,6 @@ function back(): void {
 		abortClipboardWrites();
 		const from = currentFrame;
 		currentFrame = target;
-		recordHop("back", from, target);
 		requestScreenSwap(from, "back");
 		return;
 	}
@@ -820,19 +675,8 @@ function bindDataGo(): void {
 		const target = carrier.getAttribute("data-go");
 		if (target === null || target === "") return;
 		event.preventDefault();
-		navigate(target, undefined, carrier.getAttribute("data-transition") ?? undefined, carrierLabel(carrier));
+		navigate(target, undefined, carrier.getAttribute("data-transition") ?? undefined);
 	});
-}
-
-/**
- * How the tape names an edge (#60): the carrier's own accessible name, read at
- * click time. A walk called from code has no element and stays label-less —
- * the recording says what it saw, never what it guessed.
- */
-function carrierLabel(carrier: Element): string | undefined {
-	const name = (carrier.getAttribute("aria-label") ?? carrier.textContent ?? "").replace(/\s+/g, " ").trim();
-	if (name === "") return undefined;
-	return name.length > 24 ? `${name.slice(0, 23)}…` : name;
 }
 
 /** Plain web anchors leave through the owning Spool surface, never through a screen. */
@@ -890,26 +734,13 @@ function postPlayerState(): void {
 		sequence: ++stateSequence,
 		state: {
 			frame: read.frame,
-			stack: read.stack,
-			motion: read.motion,
 			arrival: read.arrival,
 			externalHref: read.externalHref,
-			log: read.log.map(({ kind, from, to, label, at, changed }) => ({
-				kind,
-				from,
-				to,
-				...(label === undefined ? {} : { label }),
-				at,
-				changed,
-			})),
-			mock: read.mock.map(({ method, path, status, ms }) => ({ method, path, status, ms })),
-			elapsed: elapsed(),
-			state: sessionState(),
 		},
 	});
 }
 
-type SwapDirection = "forward" | "back" | "restart" | "rewind";
+type SwapDirection = "forward" | "back" | "restart";
 interface PendingMount {
 	generation: number;
 	from: string;
@@ -1034,7 +865,6 @@ async function restartSession(deferWhenPending = true): Promise<boolean> {
 	stack.length = 0;
 	currentFrame = play.start;
 	seedState(scenario.state);
-	recordHop("restart", from, play.start);
 	requestScreenSwap(from, "restart");
 	return true;
 }
@@ -1117,24 +947,6 @@ function completeAfterNavigation(command: PlayerControllerCommand): void {
 	mount.controllerCommand = command;
 }
 
-function runBackControllerCommand(command: PlayerControllerCommand): void {
-	if (deferPlayerControllerCommand(() => runBackControllerCommand(command))) return;
-	back();
-	completeAfterNavigation(command);
-}
-
-function runRewindControllerCommand(command: PlayerControllerCommand, index: number): void {
-	if (deferPlayerControllerCommand(() => runRewindControllerCommand(command, index))) return;
-	rewindTo(index);
-	completeAfterNavigation(command);
-}
-
-function runToggleMotionControllerCommand(command: PlayerControllerCommand): void {
-	if (deferPlayerControllerCommand(() => runToggleMotionControllerCommand(command))) return;
-	playerController.toggleMotion();
-	completePlayerControllerCommand(command, "completed");
-}
-
 function runDismissExternalControllerCommand(command: PlayerControllerCommand): void {
 	if (deferPlayerControllerCommand(() => runDismissExternalControllerCommand(command))) return;
 	playerController.dismissExternal();
@@ -1157,26 +969,9 @@ async function runRestartControllerCommand(command: PlayerControllerCommand): Pr
 
 function handlePlayerControllerCommand(message: Record<string, unknown>): boolean {
 	switch (message.command) {
-		case "back": {
-			const command = playerControllerCommand(message, "back");
-			if (command !== undefined) runBackControllerCommand(command);
-			return true;
-		}
 		case "restart": {
 			const command = playerControllerCommand(message, "restart");
 			if (command !== undefined) void runRestartControllerCommand(command);
-			return true;
-		}
-		case "rewind": {
-			const command = playerControllerCommand(message, "rewind", ["index"]);
-			if (command !== undefined && typeof message.index === "number" && Number.isInteger(message.index)) {
-				runRewindControllerCommand(command, message.index);
-			}
-			return true;
-		}
-		case "toggle-motion": {
-			const command = playerControllerCommand(message, "toggle-motion");
-			if (command !== undefined) runToggleMotionControllerCommand(command);
 			return true;
 		}
 		case "dismiss-external": {
@@ -1485,6 +1280,19 @@ function followGeometry(): void {
 		addEventListener("mousemove", () => {
 			postPlayerMessage({ spool: "player-wake" });
 		});
+		// Spool never steals a plain key from a live frame; its own gestures live
+		// behind accel (#210). Focus sits in here whenever a prototype is being
+		// used, so these two chords only reach the shell by being forwarded.
+		addEventListener("keydown", (event) => {
+			if (!accelPressed(event) || event.altKey || event.shiftKey) return;
+			if (event.key === "Escape") {
+				event.preventDefault();
+				postPlayerMessage({ spool: "player-key", key: "leave" });
+			} else if (event.key.toLowerCase() === "f") {
+				event.preventDefault();
+				postPlayerMessage({ spool: "player-key", key: "fullscreen" });
+			}
+		});
 	}
 }
 
@@ -1552,20 +1360,7 @@ const playerController: PlayerController = {
 		return () => playListeners.delete(listener);
 	},
 	version: () => playVersion,
-	stateSubscribe: subscribe,
-	stateVersion: () => version,
-	read: () => ({
-		project: doc.project,
-		frame: currentFrame,
-		stack: [...stack],
-		motion: motionOn,
-		arrival,
-		externalHref,
-		log: [...walkLog],
-		mock: [...mockLog],
-	}),
-	state: sessionState,
-	elapsed,
+	read: () => ({ frame: currentFrame, arrival, externalHref }),
 	// the fallback restates the projection's default footprint across the
 	// compile-unit boundary; unreachable while navigate guards membership
 	geometry: (frame) =>
@@ -1573,13 +1368,7 @@ const playerController: PlayerController = {
 			? (play.frames[frame] as { w: number; h: number })
 			: { w: 390, h: 844 },
 	terminal: (frame) => play?.terminals !== undefined && Object.hasOwn(play.terminals, frame),
-	back,
 	restart: () => void restartSession(),
-	rewind: rewindTo,
-	toggleMotion() {
-		motionOn = !motionOn;
-		notifyPlay();
-	},
 	dismissExternal() {
 		if (externalHref === null) return;
 		externalHref = null;
@@ -1625,8 +1414,6 @@ export function bootPlayer(frames: Record<string, ComponentType>): void {
 		]),
 	);
 	followGeometry();
-	// the tape opens where the session does, so hop zero is the start frame
-	recordHop("restart", config.start, config.start);
 	const screens = Object.fromEntries([...Object.entries(frames), ...Object.entries(termScreens)]);
 	playerBooted = true;
 	if (config.shell === true) {
@@ -1739,8 +1526,6 @@ async function mockedFetch(input: RequestInfo | URL, init?: RequestInit): Promis
 		init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET")
 	).toUpperCase();
 	const path = url.split(/[?#]/, 1)[0] ?? url;
-	const started = now();
-
 	const ruleValue = lookupRule(method, path);
 	const rule = asRule(ruleValue);
 	const baseLatency = typeof mockConfig.latency === "number" ? mockConfig.latency : 0;
@@ -1754,9 +1539,6 @@ async function mockedFetch(input: RequestInfo | URL, init?: RequestInit): Promis
 		`spool mock: no response for ${method} ${path} — add a scenario rule or shared/fixtures/<name>.json (served at /api/<name>)`,
 		{ status: 404 },
 	);
-	// the rail shows what the prototype asked for and what came back, never a
-	// header or a body (#60) — this is a prototyping tool, not a debugger
-	recordMock(method, path, response.status, now() - started);
 	return response;
 }
 

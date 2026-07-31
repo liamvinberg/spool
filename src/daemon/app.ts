@@ -122,6 +122,12 @@ export interface DaemonOptions {
 	onMachineStateWatchError?: (error: Error) => void;
 }
 
+/** What inline play asks for (#210): where to open, and in which scenario. */
+const inlinePlayParams = z.object({
+	frame: z.string().refine(isSafeName, { message: "not a frame name" }).optional(),
+	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
+});
+
 /** The player's params (#24): Zod-validated, path-safe names only. */
 const playParams = z.object({
 	frame: z.string().refine(isSafeName, { message: "not a frame name" }).optional(),
@@ -728,6 +734,58 @@ export function createDaemonApp({
 				throw error;
 			}
 		})
+		/**
+		 * A player session for the canvas to host inline (#210). The canvas is the
+		 * shell there, so it needs exactly what the standalone shell document is
+		 * served with: where the session opens, every frame's geometry, which of
+		 * them are terminals, and a single-use handoff on the render-origin URL.
+		 * Minting the handoff is the whole reason this is a door rather than
+		 * something the canvas could assemble itself.
+		 */
+		.get(
+			"/api/p/:project/play",
+			validator("query", (value, c) => {
+				const parsed = inlinePlayParams.safeParse(value);
+				if (parsed.success) return parsed.data;
+				const issues = parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
+				return c.text(`not a playable request — ${issues}`, 400);
+			}),
+			(c) => {
+				const name = c.req.param("project");
+				const { frame, scenario } = c.req.valid("query");
+				const project = resolveProject(c, name);
+				if ("response" in project) return project.response;
+				const projection = listProjectFrames(project.root);
+				const names = projection.frames.map((entry) => entry.name);
+				const first = names[0];
+				if (first === undefined) {
+					return c.text(
+						`nothing to play in "${name}" — a frame is born by writing design/frames/<name>/frame.tsx`,
+						404,
+					);
+				}
+				if (frame !== undefined && !names.includes(frame)) {
+					return c.text(`no frame "${frame}" to play — expected design/frames/${frame}/frame.tsx`, 404);
+				}
+				// the selected-else-first start (#13), the same ladder /play/ climbs
+				const selected = selections.get(project.root).find((entry) => names.includes(entry.frame))?.frame;
+				const start = frame ?? selected ?? first;
+				const playScenario = scenario ?? "default";
+				const inner = new URL(`/play/${encodeURIComponent(name)}`, renderOrigin);
+				inner.searchParams.set("frame", start);
+				inner.searchParams.set("scenario", playScenario);
+				inner.searchParams.set("shell", "1");
+				inner.searchParams.set("handoff", issuePlayerHandoff(name, start, playScenario));
+				c.header("cache-control", "no-store");
+				return c.json({
+					project: name,
+					start,
+					frames: Object.fromEntries(projection.frames.map((entry) => [entry.name, { w: entry.w, h: entry.h }])),
+					terminals: projection.frames.filter((entry) => entry.kind === "term").map((entry) => entry.name),
+					innerUrl: inner.href,
+				});
+			},
+		)
 		.get("/api/p/:project/thumbs/:frame", async (c) => {
 			// A terminal frame's still, for `spool shot` and `spool verify` (#42):
 			// rasterized from the persisted grid in the pinned font, which never

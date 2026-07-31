@@ -66,7 +66,11 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Play session**: One run through the flows: name-stack history, state seeded from the scenario, reset on restart.
 
-**Player**: The immersive standalone page that plays a flow as one composed document; phone-ready on a plain URL. _Avoid_: preview
+**Player**: The surface that plays a flow as one composed document, fitted edge to edge and carrying one pill. Its human door is inline play; the standalone `/play/` page is the same player for agents and phones, phone-ready on a plain URL. _Avoid_: preview
+
+**Inline play**: Play on the canvas: the camera flies into the frame until it fills the screen, the player takes the viewport in a sandboxed layer, and `accel+esc` flies back out of whichever frame the walk ended on. Not a URL — a refresh returns to the canvas, like the camera and the selection.
+
+**Accel**: The one modifier a platform binds its own commands to: cmd on Apple, ctrl everywhere else, never a hardcoded meta key. Spool's own gestures all live behind it, because spool never takes a plain key from a live frame — every ordinary key belongs to the prototype being used, its own `esc` included.
 
 ### Agent surface
 

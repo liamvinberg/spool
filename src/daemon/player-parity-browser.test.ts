@@ -245,29 +245,6 @@ async function installPlayerTransitionApplyGate(page: Page): Promise<void> {
 	});
 }
 
-async function installPlayerRewindIndex(page: Page, index: number): Promise<void> {
-	await page.addInitScript((rewindIndex) => {
-		if (window.top !== window) return;
-		const nativePostMessage = MessagePort.prototype.postMessage;
-		Object.defineProperty(MessagePort.prototype, "postMessage", {
-			configurable: true,
-			value(this: MessagePort, message: unknown) {
-				const candidate = message as { spool?: unknown; command?: unknown } | null;
-				if (
-					candidate !== null &&
-					typeof candidate === "object" &&
-					candidate.spool === "player-command" &&
-					candidate.command === "rewind"
-				) {
-					nativePostMessage.call(this, { ...candidate, index: rewindIndex });
-					return;
-				}
-				nativePostMessage.call(this, message);
-			},
-		});
-	}, index);
-}
-
 async function installPlayerRuntimeMessageGate(page: Page, spool: string): Promise<void> {
 	await page.addInitScript((heldSpool) => {
 		if (window.top === window) return;
@@ -555,7 +532,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 	await player.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "cross",
+			document.querySelector(".spool-pill-name")?.textContent === "cross",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -663,7 +640,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 			}),
 	);
 	expect((await read(live)).viewport).toEqual({ width: 600, height: 600 });
-	expect(await player.locator(".spool-slate-frame").innerText()).toBe("cross");
+	expect(await player.locator(".spool-pill-name").innerText()).toBe("cross");
 	expect(await player.locator('[role="dialog"]').count()).toBe(0);
 });
 
@@ -687,7 +664,7 @@ it("plays a frame whose name is inherited by ordinary objects", { timeout: 60_00
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "constructor",
+			document.querySelector(".spool-pill-name")?.textContent === "constructor",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -719,7 +696,7 @@ it("plays a frame named __proto__", { timeout: 60_000 }, async () => {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "__proto__",
+			document.querySelector(".spool-pill-name")?.textContent === "__proto__",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1053,7 +1030,7 @@ export default function Start() {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "start",
+			document.querySelector(".spool-pill-name")?.textContent === "start",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1074,7 +1051,7 @@ export default function Start() {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "target",
+			document.querySelector(".spool-pill-name")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1273,7 +1250,7 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 	expect(visibleSizes.at(-1)).toBe("600px×600px");
 
 	await inner.locator("#to-target").click();
-	await page.waitForFunction(() => document.querySelector(".spool-slate-frame")?.textContent === "target");
+	await page.waitForFunction(() => document.querySelector(".spool-pill-name")?.textContent === "target");
 	await inner.locator("#target").waitFor();
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 600,
@@ -1474,7 +1451,7 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "from",
+			document.querySelector(".spool-pill-name")?.textContent === "from",
 	);
 	await page.evaluate(() => {
 		(
@@ -1517,7 +1494,7 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "target",
+			document.querySelector(".spool-pill-name")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1531,7 +1508,7 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 
 	await inner.locator("#to-after").click();
 	await inner.locator("#after").waitFor();
-	expect(await page.locator(".spool-slate-frame").innerText()).toBe("after");
+	expect(await page.locator(".spool-pill-name").innerText()).toBe("after");
 });
 
 it("replays a destination mount auto-walk after a cross-size cut settles", { timeout: 60_000 }, async () => {
@@ -1580,7 +1557,7 @@ export default function Target() {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "after",
+			document.querySelector(".spool-pill-name")?.textContent === "after",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1623,7 +1600,7 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "start",
+			document.querySelector(".spool-pill-name")?.textContent === "start",
 	);
 	const framesPath = `/api/p/${project.name}/frames`;
 	let requestNumber = 0;
@@ -1711,7 +1688,7 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "target",
+			document.querySelector(".spool-pill-name")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1780,7 +1757,7 @@ it("classifies old-same new-cross walks from the shell's latest geometry", { tim
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "target",
+			document.querySelector(".spool-pill-name")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1798,7 +1775,7 @@ it("classifies old-same new-cross walks from the shell's latest geometry", { tim
 	});
 	await inner.locator("#to-after").click();
 	await inner.locator("#after").waitFor();
-	expect(await page.locator(".spool-slate-frame").innerText()).toBe("after");
+	expect(await page.locator(".spool-pill-name").innerText()).toBe("after");
 });
 
 it("classifies old-cross new-same walks from the shell's latest geometry", { timeout: 60_000 }, async () => {
@@ -1859,7 +1836,7 @@ it("classifies old-cross new-same walks from the shell's latest geometry", { tim
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "target",
+			document.querySelector(".spool-pill-name")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1877,7 +1854,7 @@ it("classifies old-cross new-same walks from the shell's latest geometry", { tim
 	});
 	await inner.locator("#to-after").click();
 	await inner.locator("#after").waitFor();
-	expect(await page.locator(".spool-slate-frame").innerText()).toBe("after");
+	expect(await page.locator(".spool-pill-name").innerText()).toBe("after");
 });
 
 it("does not publish same-size destination state before the transition commits", { timeout: 60_000 }, async () => {
@@ -1917,7 +1894,7 @@ export default function Start() {
 
 	await inner.locator("#to-target").click();
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-	expect(await page.locator(".spool-slate-frame").innerText()).toBe("start");
+	expect(await page.locator(".spool-pill-name").innerText()).toBe("start");
 	expect(await inner.locator("#start").count()).toBe(1);
 	expect(await inner.locator("#target").count()).toBe(0);
 
@@ -1929,7 +1906,7 @@ export default function Start() {
 		).__spoolTransitionGate.release();
 	});
 	await inner.locator("#target").waitFor();
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("target");
+	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("target");
 });
 
 it("reclassifies a queued transition when newer geometry arrives before runtime delivery", {
@@ -1979,7 +1956,7 @@ it("reclassifies a queued transition when newer geometry arrives before runtime 
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "target",
+			document.querySelector(".spool-pill-name")?.textContent === "target",
 	);
 	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
@@ -2039,7 +2016,7 @@ it("mounts a target at newer geometry while its stale transition is held", { tim
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "target",
+			document.querySelector(".spool-pill-name")?.textContent === "target",
 	);
 	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
 
@@ -2118,7 +2095,7 @@ it("reclassifies newer geometry while a transition commit is held", { timeout: 6
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "target",
+			document.querySelector(".spool-pill-name")?.textContent === "target",
 	);
 	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
 
@@ -2130,7 +2107,7 @@ it("reclassifies newer geometry while a transition commit is held", { timeout: 6
 		).__spoolTransitionCommitGate.release();
 	});
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-	expect(await page.locator(".spool-slate-frame").innerText()).toBe("target");
+	expect(await page.locator(".spool-pill-name").innerText()).toBe("target");
 	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
 });
 
@@ -2206,7 +2183,7 @@ it("settles newer geometry before revealing a transition whose apply is held", {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "target",
+			document.querySelector(".spool-pill-name")?.textContent === "target",
 	);
 	expect(await inner.locator("#viewport").innerText()).toBe("720×480");
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
@@ -2251,12 +2228,13 @@ it("runs Restart after a pending transition settles", { timeout: 60_000 }, async
 				}
 			).__spoolTransitionGate.held() === 1,
 	);
+	// far past MAX_PENDING_CONTROLLER_COMMANDS: the oldest are dropped, and
+	// whatever survives still drains once the transition settles
 	await page.evaluate(() => {
-		const motion = document.querySelector<HTMLButtonElement>("#spool-motion");
-		if (motion === null) throw new Error("missing motion control");
-		for (let index = 0; index < 40; index++) motion.click();
+		const restart = document.querySelector<HTMLButtonElement>("#spool-restart");
+		if (restart === null) throw new Error("missing restart control");
+		for (let index = 0; index < 40; index++) restart.click();
 	});
-	await page.locator("#spool-restart").click();
 	await page.evaluate(() => {
 		(
 			window as unknown as {
@@ -2266,8 +2244,7 @@ it("runs Restart after a pending transition settles", { timeout: 60_000 }, async
 	});
 
 	await inner.locator("#start").waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("start");
-	await expect.poll(() => page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("false");
+	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("start");
 });
 
 it("waits for queued Restart to finish before running the next control", { timeout: 60_000 }, async () => {
@@ -2303,7 +2280,9 @@ it("waits for queued Restart to finish before running the next control", { timeo
 	const scenarioRequested = new Promise<void>((resolve) => {
 		markScenarioRequested = resolve;
 	});
+	let scenarioRequests = 0;
 	await page.route(`**/api/p/${project.name}/scenarios/default`, async (route) => {
+		scenarioRequests++;
 		markScenarioRequested?.();
 		await scenarioRelease;
 		await route.continue();
@@ -2327,9 +2306,9 @@ it("waits for queued Restart to finish before running the next control", { timeo
 	);
 	await page.locator("#spool-restart").click();
 	await page.evaluate(() => {
-		const motion = document.querySelector<HTMLButtonElement>("#spool-motion");
-		if (motion === null) throw new Error("missing motion control");
-		motion.click();
+		const restart = document.querySelector<HTMLButtonElement>("#spool-restart");
+		if (restart === null) throw new Error("missing restart control");
+		restart.click();
 		(
 			window as unknown as {
 				__spoolTransitionGate: { release(): void };
@@ -2338,14 +2317,16 @@ it("waits for queued Restart to finish before running the next control", { timeo
 	});
 
 	await scenarioRequested;
-	expect(await page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("true");
+	// the second Restart has not started: a restart reads its scenario fresh,
+	// so a second read is what running it would look like
+	expect(scenarioRequests).toBe(1);
 	releaseScenario?.();
 	await inner.locator("#to-middle").waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("start");
-	await expect.poll(() => page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("false");
+	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("start");
+	await expect.poll(() => scenarioRequests).toBe(2);
 });
 
-it("continues queued controls in order when Restart fails", { timeout: 60_000 }, async () => {
+it("reports a Restart that fails instead of losing it", { timeout: 60_000 }, async () => {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());
 	const project = await serveProject();
@@ -2379,171 +2360,50 @@ export default function Middle() { return <main id="middle">middle</main>; }
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	onTestFinished(() => page.close());
-	await installPlayerTransitionGate(page);
-	await installPlayerRewindIndex(page, 1);
+	await installPlayerRuntimeMessageGate(page, "player-command-complete");
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#to-middle").waitFor();
 	await inner.locator("#to-middle").click();
 	await inner.locator("#middle").waitFor();
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("middle");
-	await page.locator("#spool-inspector").click();
-	await expect.poll(() => page.locator(".spool-walk-hop").count()).toBe(2);
-	await page.evaluate(() => {
+	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("middle");
+	await inner.locator("body").evaluate(() => {
 		(
 			window as unknown as {
-				__spoolTransitionGate: { hold(): void };
+				__spoolRuntimeMessageGate: { hold(): void };
 			}
-		).__spoolTransitionGate.hold();
+		).__spoolRuntimeMessageGate.hold();
 	});
 
-	await page.locator("#spool-back").click();
-	await page.waitForFunction(
-		() =>
-			(
-				window as unknown as {
-					__spoolTransitionGate: { held(): number };
-				}
-			).__spoolTransitionGate.held() === 1,
-	);
+	// This Restart throws inside the seed clone. What must not happen is the
+	// command going quiet: an outcome comes back either way, or the shell waits
+	// on a completion that will never arrive and every later control is stuck
+	// behind it.
 	await page.locator("#spool-restart").click();
-	await page.evaluate(() => {
-		const motion = document.querySelector<HTMLButtonElement>("#spool-motion");
-		const rewind = document.querySelector<HTMLButtonElement>(".spool-walk-hop");
-		if (motion === null || rewind === null) throw new Error("missing player controls");
-		motion.click();
-		rewind.click();
-		(
-			window as unknown as {
-				__spoolTransitionGate: { release(): void };
-			}
-		).__spoolTransitionGate.release();
-	});
-
-	await inner.locator("#middle").waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("middle");
-	await expect.poll(() => page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("false");
-});
-
-it("runs Back after a pending transition settles", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const project = await serveProject();
-	writeFrame(
-		project.root,
-		"start",
-		'export default function Start() { return <button id="to-middle" data-go="middle">middle</button>; }\n',
-	);
-	writeFrame(
-		project.root,
-		"middle",
-		'export default function Middle() { return <main id="middle"><button id="to-target" data-go="target">target</button></main>; }\n',
-	);
-	writeFrame(project.root, "target", 'export default function Target() { return <main id="target">target</main>; }\n');
-	for (const [index, frame] of ["start", "middle", "target"].entries()) {
-		writeDesignFile(
-			project.root,
-			`frames/${frame}/frame.json`,
-			`{ "x": ${index * 400}, "y": 0, "w": 390, "h": 844 }\n`,
-		);
-	}
-
-	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-	onTestFinished(() => page.close());
-	await installPlayerTransitionGate(page);
-	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
-	const inner = page.frameLocator("#spool-player");
-	await inner.locator("#to-middle").click();
-	await inner.locator("#middle").waitFor();
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("middle");
-	await page.evaluate(() => {
-		(
-			window as unknown as {
-				__spoolTransitionGate: { hold(): void };
-			}
-		).__spoolTransitionGate.hold();
-	});
-
-	await inner.locator("#to-target").click();
-	await page.waitForFunction(
+	await expect
+		.poll(
+			() =>
+				inner.locator("body").evaluate(
+					() =>
+						(
+							window as unknown as {
+								__spoolRuntimeMessageGate: { messages(): Record<string, unknown>[] };
+							}
+						).__spoolRuntimeMessageGate.messages().length,
+				),
+			{ timeout: 5_000 },
+		)
+		.toBe(1);
+	const completion = await inner.locator("body").evaluate(
 		() =>
 			(
 				window as unknown as {
-					__spoolTransitionGate: { held(): number };
+					__spoolRuntimeMessageGate: { messages(): Record<string, unknown>[] };
 				}
-			).__spoolTransitionGate.held() === 1,
+			).__spoolRuntimeMessageGate.messages()[0],
 	);
-	await page.locator("#spool-back").click();
-	await page.evaluate(() => {
-		(
-			window as unknown as {
-				__spoolTransitionGate: { release(): void };
-			}
-		).__spoolTransitionGate.release();
-	});
-
-	await inner.locator("#middle").waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("middle");
-});
-
-it("continues queued controls after Back has no history left", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const project = await serveProject();
-	writeFrame(
-		project.root,
-		"start",
-		'export default function Start() { return <button id="to-middle" data-go="middle">middle</button>; }\n',
-	);
-	writeFrame(project.root, "middle", 'export default function Middle() { return <main id="middle">middle</main>; }\n');
-	for (const [index, frame] of ["start", "middle"].entries()) {
-		writeDesignFile(
-			project.root,
-			`frames/${frame}/frame.json`,
-			`{ "x": ${index * 400}, "y": 0, "w": 390, "h": 844 }\n`,
-		);
-	}
-
-	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-	onTestFinished(() => page.close());
-	await installPlayerTransitionGate(page);
-	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
-	const inner = page.frameLocator("#spool-player");
-	await inner.locator("#to-middle").click();
-	await inner.locator("#middle").waitFor();
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("middle");
-	await page.evaluate(() => {
-		(
-			window as unknown as {
-				__spoolTransitionGate: { hold(): void };
-			}
-		).__spoolTransitionGate.hold();
-	});
-
-	await page.locator("#spool-back").click();
-	await page.waitForFunction(
-		() =>
-			(
-				window as unknown as {
-					__spoolTransitionGate: { held(): number };
-				}
-			).__spoolTransitionGate.held() === 1,
-	);
-	await page.locator("#spool-back").click();
-	await page.evaluate(() => {
-		const motion = document.querySelector<HTMLButtonElement>("#spool-motion");
-		if (motion === null) throw new Error("missing motion control");
-		motion.click();
-		(
-			window as unknown as {
-				__spoolTransitionGate: { release(): void };
-			}
-		).__spoolTransitionGate.release();
-	});
-
-	await inner.locator("#to-middle").waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("start");
-	await expect.poll(() => page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("false");
+	expect(completion?.command).toBe("restart");
+	expect(completion?.outcome).toBe("failed");
 });
 
 it("waits for both navigation and its matching completion before draining controls", {
@@ -2568,12 +2428,17 @@ it("waits for both navigation and its matching completion before draining contro
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	onTestFinished(() => page.close());
+	let scenarioRequests = 0;
+	await page.route(`**/api/p/${project.name}/scenarios/default`, async (route) => {
+		scenarioRequests++;
+		await route.continue();
+	});
 	await installPlayerRuntimeMessageGate(page, "player-command-complete");
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#to-middle").click();
 	await inner.locator("#middle").waitFor();
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("middle");
+	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("middle");
 	await inner.locator("body").evaluate(() => {
 		(
 			window as unknown as {
@@ -2582,15 +2447,14 @@ it("waits for both navigation and its matching completion before draining contro
 		).__spoolRuntimeMessageGate.hold();
 	});
 
-	await page.locator("#spool-back").click();
-	await page.evaluate(() => {
-		const motion = document.querySelector<HTMLButtonElement>("#spool-motion");
-		if (motion === null) throw new Error("missing motion control");
-		motion.click();
-	});
+	const before = scenarioRequests;
+	await page.locator("#spool-restart").click();
+	await page.locator("#spool-restart").click();
 	await inner.locator("#to-middle").waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("start");
-	expect(await page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("true");
+	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("start");
+	// the navigation landed, but its completion is still held: nothing behind it
+	// has run, so the second Restart has not read the scenario again
+	expect(scenarioRequests).toBe(before + 1);
 	const order = await inner.locator("body").evaluate(() =>
 		(
 			window as unknown as {
@@ -2616,7 +2480,7 @@ it("waits for both navigation and its matching completion before draining contro
 			}
 		).__spoolRuntimeMessageGate.releaseNext();
 	});
-	await expect.poll(() => page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("false");
+	await expect.poll(() => scenarioRequests).toBe(before + 2);
 });
 
 it("retains a controller command sent before an authored navigation reaches the shell", {
@@ -2665,13 +2529,8 @@ it("retains a controller command sent before an authored navigation reaches the 
 			),
 		)
 		.toBe(1);
-	expect(await page.locator(".spool-slate-frame").innerText()).toBe("start");
+	expect(await page.locator(".spool-pill-name").innerText()).toBe("start");
 	await page.locator("#spool-restart").click();
-	await page.evaluate(() => {
-		const motion = document.querySelector<HTMLButtonElement>("#spool-motion");
-		if (motion === null) throw new Error("missing motion control");
-		motion.click();
-	});
 	await inner.locator("body").evaluate(() => {
 		(
 			window as unknown as {
@@ -2695,8 +2554,7 @@ it("retains a controller command sent before an authored navigation reaches the 
 		)
 		.toBe(2);
 	await inner.locator("#to-middle").waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("start");
-	await expect.poll(() => page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("false");
+	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("start");
 	const observed = await inner.locator("body").evaluate(() =>
 		(
 			window as unknown as {
@@ -2765,16 +2623,15 @@ it("rejects controller requests outside the current or pending-source context", 
 			}
 		).__spoolCommandInjector;
 		for (const message of [
-			{ spool: "player-command", command: "toggle-motion", request: 101, generation: -1, frame: "start" },
-			{ spool: "player-command", command: "toggle-motion", request: 102, generation: 0, frame: "middle" },
-			{ spool: "player-command", command: "toggle-motion", request: 103, generation: 0, frame: "wrong" },
-			{ spool: "player-command", command: "toggle-motion", request: 104, generation: 2, frame: "start" },
+			{ spool: "player-command", command: "restart", request: 101, generation: -1, frame: "start" },
+			{ spool: "player-command", command: "restart", request: 102, generation: 0, frame: "middle" },
+			{ spool: "player-command", command: "restart", request: 103, generation: 0, frame: "wrong" },
+			{ spool: "player-command", command: "restart", request: 104, generation: 2, frame: "start" },
 		]) {
 			injector.send(message);
 		}
 	});
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-	expect(await page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("true");
 	expect(
 		await inner.locator("body").evaluate(
 			() =>
@@ -2820,25 +2677,7 @@ it("rejects extra private-port fields on every controller command", { timeout: 6
 			}
 		).__spoolCommandInjector;
 		for (const message of [
-			{ spool: "player-command", command: "back", request: 201, generation: 0, frame: "start", extra: true },
 			{ spool: "player-command", command: "restart", request: 202, generation: 0, frame: "start", extra: true },
-			{
-				spool: "player-command",
-				command: "rewind",
-				request: 203,
-				generation: 0,
-				frame: "start",
-				index: 0,
-				extra: true,
-			},
-			{
-				spool: "player-command",
-				command: "toggle-motion",
-				request: 204,
-				generation: 0,
-				frame: "start",
-				extra: true,
-			},
 			{
 				spool: "player-command",
 				command: "dismiss-external",
@@ -2852,8 +2691,7 @@ it("rejects extra private-port fields on every controller command", { timeout: 6
 		}
 	});
 	await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)));
-	expect(await page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("true");
-	expect(await page.locator(".spool-slate-frame").innerText()).toBe("start");
+	expect(await page.locator(".spool-pill-name").innerText()).toBe("start");
 	expect(
 		await inner.locator("body").evaluate(
 			() =>
@@ -2883,6 +2721,18 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#start").waitFor();
+	/** How many Restarts have actually run: each one navigates, exactly once. */
+	const restarts = () =>
+		inner.locator("body").evaluate(
+			() =>
+				(
+					window as unknown as {
+						__spoolRuntimeMessageGate: { observed(): string[] };
+					}
+				).__spoolRuntimeMessageGate
+					.observed()
+					.filter((spool) => spool === "player-navigate").length,
+		);
 	await inner.locator("body").evaluate(() => {
 		(
 			window as unknown as {
@@ -2891,12 +2741,10 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 		).__spoolRuntimeMessageGate.hold();
 	});
 
-	await page.evaluate(() => {
-		const motion = document.querySelector<HTMLButtonElement>("#spool-motion");
-		if (motion === null) throw new Error("missing motion control");
-		motion.click();
-		motion.click();
-	});
+	// two Restarts: the first runs and its completion is held, so the second is
+	// still queued — and a queued Restart has not navigated.
+	await page.locator("#spool-restart").click();
+	await page.locator("#spool-restart").click();
 	await expect
 		.poll(() =>
 			inner.locator("body").evaluate(() =>
@@ -2908,7 +2756,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 			),
 		)
 		.toBe(1);
-	expect(await page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("false");
+	expect(await restarts()).toBe(1);
 	const firstCompletion = await inner.locator("body").evaluate(
 		() =>
 			(
@@ -2934,7 +2782,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 			missingOutcome,
 			{ ...completion, extra: true },
 			{ ...completion, request: Number.MAX_SAFE_INTEGER },
-			{ ...completion, command: "restart" },
+			{ ...completion, command: "dismiss-external" },
 			{ ...completion, generation: 99 },
 			{ ...completion, frame: "wrong" },
 			{ ...completion, outcome: "unknown" },
@@ -2943,7 +2791,8 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 		}
 	});
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-	expect(await page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("false");
+	// none of them was the completion the shell is waiting for
+	expect(await restarts()).toBe(1);
 
 	await inner.locator("body").evaluate(() => {
 		(
@@ -2952,7 +2801,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 			}
 		).__spoolRuntimeMessageGate.releaseNext();
 	});
-	await expect.poll(() => page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("true");
+	await expect.poll(restarts).toBe(2);
 	await expect
 		.poll(() =>
 			inner.locator("body").evaluate(() =>
@@ -2964,11 +2813,8 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 			),
 		)
 		.toBe(1);
-	await page.evaluate(() => {
-		const motion = document.querySelector<HTMLButtonElement>("#spool-motion");
-		if (motion === null) throw new Error("missing motion control");
-		motion.click();
-	});
+	// the first completion arriving a second time is a duplicate, and drains nothing
+	await page.locator("#spool-restart").click();
 	await inner.locator("body").evaluate((_body, completion) => {
 		(
 			window as unknown as {
@@ -2977,7 +2823,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 		).__spoolRuntimeMessageGate.send(completion);
 	}, firstCompletion);
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-	expect(await page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("true");
+	expect(await restarts()).toBe(2);
 
 	await inner.locator("body").evaluate(() => {
 		(
@@ -2986,7 +2832,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 			}
 		).__spoolRuntimeMessageGate.releaseNext();
 	});
-	await expect.poll(() => page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("false");
+	await expect.poll(restarts).toBe(3);
 	await inner.locator("body").evaluate(() => {
 		(
 			window as unknown as {
@@ -2994,135 +2840,6 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 			}
 		).__spoolRuntimeMessageGate.release();
 	});
-});
-
-it("continues queued controls after Rewind points outside the tape", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const project = await serveProject();
-	writeFrame(
-		project.root,
-		"start",
-		'export default function Start() { return <button id="to-middle" data-go="middle">middle</button>; }\n',
-	);
-	writeFrame(project.root, "middle", 'export default function Middle() { return <main id="middle">middle</main>; }\n');
-	for (const [index, frame] of ["start", "middle"].entries()) {
-		writeDesignFile(
-			project.root,
-			`frames/${frame}/frame.json`,
-			`{ "x": ${index * 400}, "y": 0, "w": 390, "h": 844 }\n`,
-		);
-	}
-
-	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-	onTestFinished(() => page.close());
-	await installPlayerTransitionGate(page);
-	await installPlayerRewindIndex(page, 999);
-	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
-	const inner = page.frameLocator("#spool-player");
-	await inner.locator("#to-middle").click();
-	await inner.locator("#middle").waitFor();
-	await page.locator("#spool-inspector").click();
-	await expect.poll(() => page.locator(".spool-walk-hop").count()).toBe(2);
-	await page.evaluate(() => {
-		(
-			window as unknown as {
-				__spoolTransitionGate: { hold(): void };
-			}
-		).__spoolTransitionGate.hold();
-	});
-
-	await page.locator("#spool-back").click();
-	await page.waitForFunction(
-		() =>
-			(
-				window as unknown as {
-					__spoolTransitionGate: { held(): number };
-				}
-			).__spoolTransitionGate.held() === 1,
-	);
-	await page.locator(".spool-walk-hop").first().click();
-	await page.locator("#spool-motion").click();
-	await page.evaluate(() => {
-		(
-			window as unknown as {
-				__spoolTransitionGate: { release(): void };
-			}
-		).__spoolTransitionGate.release();
-	});
-
-	await inner.locator("#to-middle").waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("start");
-	await expect.poll(() => page.locator("#spool-motion").getAttribute("aria-pressed")).toBe("false");
-});
-
-it("runs queued Restart after Rewind points at the current hop", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const project = await serveProject();
-	writeFrame(
-		project.root,
-		"start",
-		`import { ui } from "spool";
-export default function Start() {
-	const state = ui.use();
-	return <main><output id="count">{state.count}</output><button id="to-middle" onClick={() => {
-		ui.state.count = 5;
-		ui.go("middle");
-	}}>middle</button></main>;
-}
-`,
-	);
-	writeFrame(project.root, "middle", 'export default function Middle() { return <main id="middle">middle</main>; }\n');
-	writeDesignFile(project.root, "shared/scenarios/default.json", '{ "state": { "count": 2 }, "mock": {} }\n');
-	for (const [index, frame] of ["start", "middle"].entries()) {
-		writeDesignFile(
-			project.root,
-			`frames/${frame}/frame.json`,
-			`{ "x": ${index * 400}, "y": 0, "w": 390, "h": 844 }\n`,
-		);
-	}
-
-	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-	onTestFinished(() => page.close());
-	await installPlayerTransitionGate(page);
-	await installPlayerRewindIndex(page, 2);
-	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
-	const inner = page.frameLocator("#spool-player");
-	await inner.locator("#count").filter({ hasText: "2" }).waitFor();
-	await inner.locator("#to-middle").click();
-	await inner.locator("#middle").waitFor();
-	await page.locator("#spool-inspector").click();
-	await expect.poll(() => page.locator(".spool-walk-hop").count()).toBe(2);
-	await page.evaluate(() => {
-		(
-			window as unknown as {
-				__spoolTransitionGate: { hold(): void };
-			}
-		).__spoolTransitionGate.hold();
-	});
-
-	await page.locator("#spool-back").click();
-	await page.waitForFunction(
-		() =>
-			(
-				window as unknown as {
-					__spoolTransitionGate: { held(): number };
-				}
-			).__spoolTransitionGate.held() === 1,
-	);
-	await page.locator(".spool-walk-hop").first().click();
-	await page.locator("#spool-restart").click();
-	await page.evaluate(() => {
-		(
-			window as unknown as {
-				__spoolTransitionGate: { release(): void };
-			}
-		).__spoolTransitionGate.release();
-	});
-
-	await inner.locator("#count").filter({ hasText: "2" }).waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-slate-frame").innerText()).toBe("start");
 });
 
 it("cuts when the source viewport no longer matches same-size shell geometry", { timeout: 60_000 }, async () => {
@@ -3194,7 +2911,7 @@ it("cuts when the source viewport no longer matches same-size shell geometry", {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "target",
+			document.querySelector(".spool-pill-name")?.textContent === "target",
 	);
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
@@ -3228,7 +2945,7 @@ export default function Start() {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "next",
+			document.querySelector(".spool-pill-name")?.textContent === "next",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -3266,7 +2983,7 @@ export default function Start() { return <main id="start">start</main>; }
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "next",
+			document.querySelector(".spool-pill-name")?.textContent === "next",
 	);
 });
 
@@ -3304,7 +3021,7 @@ export default function Start() {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-slate-frame")?.textContent === "next",
+			document.querySelector(".spool-pill-name")?.textContent === "next",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -3590,11 +3307,7 @@ it("keeps a ready player visible after a late authored exception", { timeout: 60
 			}
 		).__spoolRuntimeMessageGate.hold();
 	});
-	await page.evaluate(() => {
-		const motion = document.querySelector<HTMLButtonElement>("#spool-motion");
-		if (motion === null) throw new Error("missing motion control");
-		motion.click();
-	});
+	await page.locator("#spool-restart").click();
 	await expect
 		.poll(() =>
 			inner.locator("body").evaluate(() =>
@@ -3733,7 +3446,7 @@ export default function Menu() {
 		`import { ui } from "spool";
 export default function Next() {
 	const state = ui.use();
-	return <main><output id="count">{state.count}</output><a id="external" href="https://example.com/path">external</a></main>;
+	return <main><output id="count">{state.count}</output><a id="external" href="https://example.com/path">external</a><button id="back" onClick={() => ui.back()}>back</button></main>;
 }
 `,
 	);
@@ -3751,24 +3464,18 @@ export default function Next() {
 	await inner.getByText("external").waitFor();
 	expect(await inner.locator("#count").innerText()).toBe("5");
 
-	await page.locator("#spool-inspector").click();
-	await page.getByText("count").last().waitFor();
-	expect(await page.locator(".spool-mock").innerText()).toContain("GET");
-	expect(await page.locator(".spool-mock").innerText()).toContain("/api/value");
-
-	await page.locator("#spool-inspector").click();
 	await inner.locator("#external").click();
 	await page.locator('[role="dialog"]').waitFor();
 	expect(await page.locator('[role="dialog"]').innerText()).toContain("example.com");
 	await page.getByRole("button", { name: "Stay here", exact: true }).click();
 
-	await page.locator("#spool-back").click();
+	await inner.locator("#back").click();
 	await inner.locator("#count").filter({ hasText: "5" }).waitFor();
 	await inner.locator("#key").press("K");
 	expect(await inner.locator("#key").innerText()).toBe("K");
 	await page.locator("#spool-restart").click();
 	await inner.locator("#count").filter({ hasText: "2" }).waitFor();
-	expect(await page.locator(".spool-slate-frame").innerText()).toBe("menu");
+	expect(await page.locator(".spool-pill-name").innerText()).toBe("menu");
 
 	await page.waitForFunction(
 		() => document.querySelector(".spool-stage")?.classList.contains("is-asleep"),

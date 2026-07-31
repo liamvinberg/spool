@@ -30,7 +30,18 @@ import { useAgentInstall } from "./agent-preflight";
 import { AgentRail } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
-import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, K_STEP, toWorld, zoomAt } from "./camera";
+import {
+	type Box,
+	boundsOf,
+	centerOn,
+	clamp,
+	fitCamera,
+	intersects,
+	K_STEP,
+	stageCamera,
+	toWorld,
+	zoomAt,
+} from "./camera";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
 import { CollisionNotice } from "./collision-notice";
@@ -72,6 +83,8 @@ import {
 	stateCameraSlots,
 	switchPage,
 } from "./pages";
+import { flightProgress, OUT, PLAY_IN, PLAY_OUT } from "./play-flight";
+import { PlayLayer, type PlayPhase } from "./play-layer";
 import {
 	clipboardCopyAllowed,
 	type PickedHit,
@@ -212,6 +225,24 @@ export function ProjectCanvas({
 	const [selected, setSelected] = useState<string[]>([]);
 	const [picked, setPicked] = useState<PickedSelection[]>([]);
 	const [entered, setEntered] = useState<string | null>(null);
+	/**
+	 * Inline play (#210). `frame` is where the session stands right now, which a
+	 * walk moves — leaving flies out of that one, not the one it opened on.
+	 * `from` is the camera the press left behind, so coming back is a return.
+	 */
+	const [play, setPlay] = useState<{
+		start: string;
+		frame: string;
+		phase: PlayPhase;
+		from: Camera;
+		page: string;
+	} | null>(null);
+	const playRef = useRef(play);
+	playRef.current = play;
+	/** The canvas chrome dissolves before the flight and comes back after it. */
+	const [chromeGone, setChromeGone] = useState(false);
+	/** Frames go back to their pictures while the player has the machine. */
+	const [hibernating, setHibernating] = useState(false);
 	const [hovered, setHovered] = useState<FrameHover | null>(null);
 	// the hover preview (#37): the element a click would target, outlined live
 	const [preview, setPreview] = useState<ElementPreview | null>(null);
@@ -455,6 +486,7 @@ export function ProjectCanvas({
 		onShot,
 		cameraRef: settledCameraRef,
 		viewportRef,
+		hibernating,
 	});
 	const lifecycleRef = useRef(lifecycle);
 	lifecycleRef.current = lifecycle;
@@ -700,14 +732,14 @@ export function ProjectCanvas({
 	const stopAnimation = useCallback(() => cancelAnimationFrame(animation.current), []);
 
 	const animateCamera = useCallback(
-		(to: Camera, ms = 220) => {
+		(to: Camera, ms = 220, ease: (p: number) => number = OUT) => {
 			const from = cameraRef.current;
 			if (from === null) return;
 			stopAnimation();
 			const t0 = performance.now();
 			const step = (t: number) => {
 				const p = clamp((t - t0) / ms, 0, 1);
-				const e = 1 - (1 - p) ** 3;
+				const e = ease(p);
 				setCamera({
 					x: from.x + (to.x - from.x) * e,
 					y: from.y + (to.y - from.y) * e,
@@ -719,6 +751,17 @@ export function ProjectCanvas({
 		},
 		[stopAnimation],
 	);
+
+	/**
+	 * Where the canvas viewport starts in the window. Inline play's stage covers
+	 * the window, so its landing is worked out there and moved by this (#210).
+	 */
+	const viewportOrigin = useCallback((): Point => {
+		const el = viewportRef.current;
+		if (el === null) return { x: 0, y: 0 };
+		const rect = el.getBoundingClientRect();
+		return { x: rect.left, y: rect.top };
+	}, []);
 
 	const viewportCenter = useCallback((): Point => {
 		const el = viewportRef.current;
@@ -811,17 +854,66 @@ export function ProjectCanvas({
 
 	const toggleArrows = useCallback(() => setArrowsOn((on) => !on), []);
 
-	/** The player's door (#13/#24): its own tab, always naming its frame. */
+	/**
+	 * Play (#210): the camera flies into the frame and the player takes the
+	 * viewport, rather than a tab opening somewhere else. `/play/` is still
+	 * served, as the door for agents and phones; no human door leads there.
+	 *
+	 * The chrome goes first, because a counter-scaled label cannot ride a zoom.
+	 * Then the camera flies, on the staged curve, and lands exactly where the
+	 * player's own stage will place the frame. The layer boots its session from
+	 * the moment of the press, so the flight is what the boot happens behind.
+	 */
 	const playFrame = useCallback(
 		(name: string) => {
-			window.open(
-				`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(name)}`,
-				"_blank",
-				"noopener,noreferrer",
-			);
+			const viewport = viewportRef.current;
+			const cam = cameraRef.current;
+			const frame = framesRef.current.find((candidate) => candidate.name === name);
+			if (viewport === null || cam === null || frame === undefined || playRef.current !== null) return;
+			exitEntered();
+			setMenu(null);
+			setPreview(null);
+			setChromeGone(true);
+			setPlay({ start: name, frame: name, phase: "flying", from: cam, page: activePageRef.current });
+			const to = stageCamera(frame, window.innerWidth, window.innerHeight, viewportOrigin());
+			window.setTimeout(() => {
+				if (playRef.current?.start === name) animateCamera(to, PLAY_IN.fly, flightProgress);
+			}, PLAY_IN.start);
 		},
-		[project],
+		[animateCamera, exitEntered, viewportOrigin],
 	);
+
+	/**
+	 * Out again, reversing the same sequence — and out of the frame the session
+	 * is standing in, which a walk may have moved. The camera agrees with the
+	 * walk: it lands on that frame's own place, keeping the zoom the press left.
+	 */
+	const leavePlay = useCallback(() => {
+		const session = playRef.current;
+		const viewport = viewportRef.current;
+		if (session === null || session.phase === "leaving" || viewport === null) return;
+		setPlay({ ...session, phase: "leaving" });
+		setHibernating(false);
+		const landed = framesRef.current.find((candidate) => candidate.name === session.frame);
+		// A walk that ended somewhere else lands the camera there. The jump is
+		// made while the stage still covers everything, so only the flight shows.
+		if (landed !== undefined && session.frame !== session.start) {
+			setCamera(stageCamera(landed, window.innerWidth, window.innerHeight, viewportOrigin()));
+			setSelected([session.frame]);
+		} else {
+			setSelected([session.start]);
+		}
+		const rest =
+			landed !== undefined && session.frame !== session.start
+				? centerOn(session.from, landed, viewport.clientWidth, viewport.clientHeight)
+				: session.from;
+		window.setTimeout(() => animateCamera(rest, PLAY_OUT.fly), PLAY_OUT.flyAt);
+		window.setTimeout(() => {
+			setPlay(null);
+			viewportRef.current?.focus({ preventScroll: true });
+		}, PLAY_OUT.stageAt + PLAY_OUT.stage);
+		window.setTimeout(() => setChromeGone(false), PLAY_OUT.chromeAt);
+	}, [animateCamera, viewportOrigin]);
 
 	// --- selection sync (#23): what Liam points at, served to agents ------------
 
@@ -2240,6 +2332,13 @@ export function ProjectCanvas({
 			// leaving an entered frame: ⌘esc landing canvas-side (#42), or the
 			// esc the shim relays out of the frame that owned it
 			"canvas.leave": (event) => {
+				// the universal step-out (#210): the same chord leaves inline play and
+				// leaves an entered frame, and play is the outer of the two
+				if (playRef.current !== null) {
+					event?.preventDefault();
+					leavePlay();
+					return;
+				}
 				if (enteredRef.current === null) return;
 				event?.preventDefault();
 				exitEntered(true);
@@ -2423,6 +2522,7 @@ export function ProjectCanvas({
 		toggleArrows,
 		cancelExportDialog,
 		playFrame,
+		leavePlay,
 		jumpBack,
 		jumpForward,
 	]);
@@ -2555,39 +2655,51 @@ export function ProjectCanvas({
 						{/* Labels share one layer above every frame. A transformed frame is
 						    its own stacking context, so keeping its label inside would let a
 						    later neighboring frame paint over the label regardless of the
-						    label's own z-index. */}
-						{visibleFrames.map((frame) => {
-							const state = lifecycle.states[frame.name] ?? "picture";
-							const isEntered = entered === frame.name;
-							const isSelected = selected.includes(frame.name);
-							const isHovered =
-								effectiveTool === "select" && hovered?.visible === true && hovered.frame === frame.name;
-							const paused = frame.kind === "term" && state === "held";
-							return (
-								<div
-									key={`${frame.name}:label`}
-									className="pointer-events-none absolute h-0"
-									style={{
-										transform: `translate(${frame.x}px, ${frame.y}px)`,
-										width: frame.w,
-									}}
-								>
-									{/* Mono, muted; thread when selected; ▸ only marks a terminal
-									    SIGSTOP. Entered swaps it for the state chip (#28). */}
-									<FrameLabel
-										name={frame.name}
-										frameWidth={frame.w}
-										k={k}
-										entered={isEntered}
-										paused={paused}
-										selected={isSelected}
-										hovered={isHovered}
-										terminal={frame.kind === "term"}
-										onPlay={() => playFrame(frame.name)}
-									/>
-								</div>
-							);
-						})}
+						    label's own z-index.
+						
+						    The whole layer dissolves before an inline play flight and comes
+						    back after it (#210): a label is counter-scaled to stay 12px, so it
+						    cannot ride a zoom that grows its frame to fill the viewport. */}
+						<div
+							className="transition-opacity ease-out"
+							style={{
+								opacity: chromeGone ? 0 : 1,
+								transitionDuration: `${chromeGone ? PLAY_IN.chrome : PLAY_OUT.chrome}ms`,
+							}}
+						>
+							{visibleFrames.map((frame) => {
+								const state = lifecycle.states[frame.name] ?? "picture";
+								const isEntered = entered === frame.name;
+								const isSelected = selected.includes(frame.name);
+								const isHovered =
+									effectiveTool === "select" && hovered?.visible === true && hovered.frame === frame.name;
+								const paused = frame.kind === "term" && state === "held";
+								return (
+									<div
+										key={`${frame.name}:label`}
+										className="pointer-events-none absolute h-0"
+										style={{
+											transform: `translate(${frame.x}px, ${frame.y}px)`,
+											width: frame.w,
+										}}
+									>
+										{/* Mono, muted; thread when selected; ▸ only marks a terminal
+										    SIGSTOP. Entered swaps it for the state chip (#28). */}
+										<FrameLabel
+											name={frame.name}
+											frameWidth={frame.w}
+											k={k}
+											entered={isEntered}
+											paused={paused}
+											selected={isSelected}
+											hovered={isHovered}
+											terminal={frame.kind === "term"}
+											onPlay={() => playFrame(frame.name)}
+										/>
+									</div>
+								);
+							})}
+						</div>
 						{/* the tags ride over the frames, because pressing one travels —
 						    the leaders under them are the map and take no pointer */}
 						{arrowsOn && <WalkLayer walks={walks} frames={visibleFrames} k={k} onOpen={landOnFrame} />}
@@ -2595,38 +2707,49 @@ export function ProjectCanvas({
 				)}
 
 				{camera !== null && (
-					<SelectionOverlay
-						camera={camera}
-						frames={visibleFrames}
-						selected={selected}
-						entered={entered}
-						// a row in the rail pointing at a frame gets the ring the pointer itself
-						// would draw, which is the weaker of the two out here: pointing at a frame is
-						// a weaker claim than having gone to it, and the accent stays with the
-						// selection either way
-						hovered={
-							pointedFrame !== null
-								? { frame: pointedFrame, visible: true }
-								: effectiveTool === "select"
-									? hovered
-									: null
-						}
-						editable={effectiveTool === "select"}
-						picked={picked}
-						/*
-						 * A chip and the box it names are one object, so the cursor on one marks the
-						 * other (#116). Only an element's box takes a mark: a chip can only name a
-						 * frame that is selected or entered, and out here that frame is already
-						 * ringed at full strength, so there is nothing left to say about it — where
-						 * five element outlines look alike and the strip is the only thing that can
-						 * say which one a row means.
-						 */
-						lit={lit}
-						preview={effectiveTool === "select" ? preview : null}
-						guides={guides}
-						marquee={marquee}
-						shellRadius={shellRadius}
-					/>
+					// The ring dissolves with the labels before a flight, for its own
+					// reason: it is counter-scaled too, so 1.5px of stroke would stay
+					// 1.5px while the frame it rings grew to fill the viewport (#210).
+					<div
+						className="transition-opacity ease-out"
+						style={{
+							opacity: chromeGone ? 0 : 1,
+							transitionDuration: `${chromeGone ? PLAY_IN.chrome : PLAY_OUT.chrome}ms`,
+						}}
+					>
+						<SelectionOverlay
+							camera={camera}
+							frames={visibleFrames}
+							selected={selected}
+							entered={entered}
+							// a row in the rail pointing at a frame gets the ring the pointer itself
+							// would draw, which is the weaker of the two out here: pointing at a frame is
+							// a weaker claim than having gone to it, and the accent stays with the
+							// selection either way
+							hovered={
+								pointedFrame !== null
+									? { frame: pointedFrame, visible: true }
+									: effectiveTool === "select"
+										? hovered
+										: null
+							}
+							editable={effectiveTool === "select"}
+							picked={picked}
+							/*
+							 * A chip and the box it names are one object, so the cursor on one marks the
+							 * other (#116). Only an element's box takes a mark: a chip can only name a
+							 * frame that is selected or entered, and out here that frame is already
+							 * ringed at full strength, so there is nothing left to say about it — where
+							 * five element outlines look alike and the strip is the only thing that can
+							 * say which one a row means.
+							 */
+							lit={lit}
+							preview={effectiveTool === "select" ? preview : null}
+							guides={guides}
+							marquee={marquee}
+							shellRadius={shellRadius}
+						/>
+					</div>
 				)}
 
 				{menu !== null && (
@@ -2653,12 +2776,9 @@ export function ProjectCanvas({
 									}
 						}
 						onPlay={() => {
-							// the player's second door (#13): a session opening on this frame
-							window.open(
-								`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(menu.frame)}`,
-								"_blank",
-							);
+							const frame = menu.frame;
 							setMenu(null);
+							playFrame(frame);
 						}}
 						onOpenEditor={() => {
 							const pick = pickedRef.current.find((candidate) => candidate.frame === menu.frame);
@@ -2737,6 +2857,29 @@ export function ProjectCanvas({
 				onStop={turn.stop}
 				onAnswer={turn.answer}
 			/>
+			{play !== null && (
+				<PlayLayer
+					project={project}
+					start={play.start}
+					phase={play.phase}
+					frames={frames}
+					onFrame={(frame) =>
+						setPlay((current) => (current === null || current.frame === frame ? current : { ...current, frame }))
+					}
+					onWalked={(from, to) => postWalk(project, from, to)}
+					onSettled={() => {
+						setPlay((current) =>
+							current === null || current.phase !== "flying" ? current : { ...current, phase: "live" },
+						);
+						// the canvas goes to sleep once the stage has covered it, never
+						// while the frame the flight landed on is still being looked at
+						window.setTimeout(() => {
+							if (playRef.current?.phase === "live") setHibernating(true);
+						}, PLAY_IN.stage);
+					}}
+					onExit={leavePlay}
+				/>
+			)}
 			{exportDialog !== null && exportFrames.length > 0 ? (
 				<ExportDialog
 					exporting={exporting}

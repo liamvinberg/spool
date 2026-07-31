@@ -2,14 +2,26 @@ import { createElement, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
-import { type MockCall, Player, type PlayerController, type SessionState, type WalkEvent } from "./player-chrome";
+import { Player, type PlayerController } from "./player-chrome";
+
+/**
+ * The player shell: the trusted half of a played session. It holds the
+ * render-origin player document in an iframe it never reaches into, drives the
+ * navigation choreography over a private port, and owns the chrome — so frame
+ * code and Spool's own UI never share a document.
+ *
+ * Two surfaces run it. `bootPlayerShell` is the standalone `/play/` page, the
+ * door agents and phones come through. `createPlayerShell` is the same machine
+ * with its DOM couplings handed in, which is what lets the canvas host a
+ * session inline and fly its camera into the landing (#210).
+ */
 
 interface FrameGeometry {
 	w: number;
 	h: number;
 }
 
-interface ShellConfig {
+export interface ShellConfig {
 	project: string;
 	start: string;
 	frames: Record<string, FrameGeometry>;
@@ -19,14 +31,52 @@ interface ShellConfig {
 
 interface PlayerState {
 	frame: string;
-	stack: string[];
-	motion: boolean;
 	arrival: number;
 	externalHref: string | null;
-	log: WalkEvent[];
-	mock: MockCall[];
-	elapsed: number;
-	state: SessionState;
+}
+
+/** Everything the shell has to reach out of itself to do, named by its host. */
+export interface PlayerShellHost {
+	/** The iframe holding the render-origin player document. */
+	frame(): HTMLIFrameElement | null;
+	/** Leaving: the standalone tab closes, the canvas flies back out. */
+	close(): void;
+	/** A walk the session really took, for the flow graph's verified marks. */
+	walked(from: string, to: string): void;
+	/** Movement inside the player, so the host's chrome can wake with it. */
+	wake(): void;
+	/** Fill the screen, on whichever element this host makes fullscreen. */
+	fullscreen(): void;
+	/**
+	 * Earn a fresh handoff after a spent one (#88) — reported so the shell knows
+	 * whether the repair was taken or the failure is the reader's to see.
+	 */
+	repair(): boolean;
+	/** The shell wants geometry it may not have; answer through geometryApplied. */
+	refreshGeometry(): void;
+}
+
+/** What a host renders from, read fresh on every change the shell notifies. */
+export interface PlayerShellView {
+	/** The player is not ready to be seen — booting, cutting, or resettling. */
+	hidden: boolean;
+	loadError: string | undefined;
+	/** The bare render-origin player, offered when the embedded one will not boot. */
+	loadEscape: string | undefined;
+}
+
+export interface PlayerShell {
+	controller: PlayerController;
+	view(): PlayerShellView;
+	/** The iframe finished its document fetch; the connect leg starts here. */
+	loaded(): void;
+	/** Geometry is about to change, so what is on screen may be stale. */
+	geometryPending(revision: number): void;
+	/** Geometry as of `revision` — the canvas pushes what it already knows. */
+	geometryApplied(revision: number, frames: { name: string; w: number; h: number }[]): void;
+	/** Replay the last geometry the shell was given, at a fresh revision. */
+	geometryReplay(): void;
+	destroy(): void;
 }
 
 interface Cut {
@@ -51,7 +101,7 @@ interface PendingNavigation {
 	state?: { sequence: number; value: PlayerState } | undefined;
 }
 
-type ControllerCommandName = "back" | "restart" | "rewind" | "toggle-motion" | "dismiss-external";
+type ControllerCommandName = "restart" | "dismiss-external";
 
 interface QueuedControllerCommand {
 	request: number;
@@ -97,22 +147,9 @@ declare global {
 	}
 }
 
-/** Boot the trusted player shell. Frame code never enters this realm. */
-export function bootPlayerShell(config: ShellConfig): void {
-	const root = document.getElementById("root");
-	if (root === null) throw new Error("spool: the player shell has no #root");
-	let snapshot: PlayerState = {
-		frame: config.start,
-		stack: [],
-		motion: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-		arrival: 0,
-		externalHref: null,
-		log: [],
-		mock: [],
-		elapsed: 0,
-		state: { scenario: "default", rows: [] },
-	};
-	let elapsedAt = performance.now();
+/** The shell's machinery, with everything it has to reach out of itself handed in. */
+export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): PlayerShell {
+	let snapshot: PlayerState = { frame: config.start, arrival: 0, externalHref: null };
 	let version = 0;
 	let ready = false;
 	let hidden = true;
@@ -136,6 +173,7 @@ export function bootPlayerShell(config: ShellConfig): void {
 	let activeControllerCommand: ActiveControllerCommand | undefined;
 	const pendingControllerCommands: QueuedControllerCommand[] = [];
 	const listeners = new Set<() => void>();
+	const teardown: (() => void)[] = [];
 	const notify = () => {
 		version++;
 		for (const listener of listeners) listener();
@@ -156,28 +194,6 @@ export function bootPlayerShell(config: ShellConfig): void {
 			revealed = true;
 			disarmBootstrapDeadline();
 		}
-	};
-	/**
-	 * Reload once per cooldown to earn a fresh handoff, reporting whether the
-	 * reload was taken. Storage is per tab and survives the reload, which is what
-	 * makes the cooldown outlive the document that set it.
-	 */
-	const reloadForHandoff = (): boolean => {
-		let last = 0;
-		try {
-			last = Number(window.sessionStorage.getItem(HANDOFF_RELOAD_KEY)) || 0;
-		} catch {
-			// A tab that denies storage still deserves one attempt per load.
-		}
-		const now = Date.now();
-		if (last !== 0 && now - last < HANDOFF_RELOAD_COOLDOWN_MS) return false;
-		try {
-			window.sessionStorage.setItem(HANDOFF_RELOAD_KEY, String(now));
-		} catch {
-			// Losing the marker risks a slow reload loop, not a broken player.
-		}
-		window.location.reload();
-		return true;
 	};
 	/** An inner document that handshakes proves its handoff was taken, so the cooldown has nothing left to suppress. */
 	const clearHandoffReload = () => {
@@ -213,7 +229,6 @@ export function bootPlayerShell(config: ShellConfig): void {
 			notify();
 		}, grace);
 	};
-	const host = () => document.querySelector<HTMLIFrameElement>("#spool-player");
 	const postCommand = (command: string, extra: Record<string, unknown> = {}) =>
 		postToRuntime?.({ spool: "player-command", command, ...extra, generation, frame: snapshot.frame });
 	const allocateControllerRequest = () => {
@@ -273,27 +288,12 @@ export function bootPlayerShell(config: ShellConfig): void {
 			return () => listeners.delete(listener);
 		},
 		version: () => version,
-		stateSubscribe(listener) {
-			listeners.add(listener);
-			return () => listeners.delete(listener);
-		},
-		stateVersion: () => version,
-		read: () => ({ project: config.project, ...snapshot }),
-		state: () => snapshot.state,
-		elapsed: () => snapshot.elapsed + performance.now() - elapsedAt,
+		read: () => ({ ...snapshot }),
 		geometry: (frame) => (hasFrame(config.frames, frame) ? config.frames[frame] : undefined) ?? { w: 390, h: 844 },
 		terminal: (frame) => config.terminals.includes(frame),
-		back: () => command("back"),
 		restart: () => command("restart"),
-		rewind: (index) => command("rewind", { index }),
-		toggleMotion: () => command("toggle-motion"),
 		dismissExternal: () => command("dismiss-external"),
-		close: () => {
-			window.close();
-			window.setTimeout(() => {
-				if (!window.closed) window.location.href = `/p/${encodeURIComponent(config.project)}`;
-			}, 150);
-		},
+		close: () => host.close(),
 	};
 
 	const applyGeometry = (frames: { name: string; w: number; h: number }[]) => {
@@ -329,7 +329,6 @@ export function bootPlayerShell(config: ShellConfig): void {
 		if (navigation.state !== undefined) {
 			stateSequence = navigation.state.sequence;
 			snapshot = navigation.state.value;
-			elapsedAt = performance.now();
 		}
 		pendingNavigation = { ...navigation, kind: "cut", w: to.w, h: to.h, state: undefined };
 		cut = {
@@ -357,51 +356,54 @@ export function bootPlayerShell(config: ShellConfig): void {
 		notify();
 	};
 
-	window.addEventListener("spool-player-geometry-pending", ((event: CustomEvent<{ revision: number }>) => {
-		if (!Number.isInteger(event.detail?.revision) || event.detail.revision <= geometryRevision) return;
-		geometryRevision = event.detail.revision;
+	const geometryPending = (revision: number) => {
+		if (!Number.isInteger(revision) || revision <= geometryRevision) return;
+		geometryRevision = revision;
 		if (!revealed) {
 			geometryReadyRevision = 0;
 			reconcileVisibility();
 		}
 		notify();
-	}) as EventListener);
+	};
 
-	window.addEventListener("spool-player-geometry", ((
-		event: CustomEvent<{ revision: number; frames: { name: string; w: number; h: number }[] }>,
-	) => {
+	const geometryApplied = (revision: number, frames: { name: string; w: number; h: number }[]) => {
 		if (
-			!Number.isInteger(event.detail?.revision) ||
-			event.detail.revision < geometryRevision ||
-			event.detail.revision <= geometryAppliedRevision ||
-			!Array.isArray(event.detail.frames)
+			!Number.isInteger(revision) ||
+			revision < geometryRevision ||
+			revision <= geometryAppliedRevision ||
+			!Array.isArray(frames)
 		) {
 			return;
 		}
-		geometryRevision = event.detail.revision;
-		geometryAppliedRevision = event.detail.revision;
+		geometryRevision = revision;
+		geometryAppliedRevision = revision;
 		if (!revealed) geometryReadyRevision = 0;
-		latestGeometry = { revision: event.detail.revision, frames: event.detail.frames };
-		if (
-			pendingNavigation?.kind === "transition" &&
-			transitionGeometryChanged(pendingNavigation, event.detail.frames)
-		) {
+		latestGeometry = { revision, frames };
+		if (pendingNavigation?.kind === "transition" && transitionGeometryChanged(pendingNavigation, frames)) {
 			if (pendingNavigation.phase === "applying") {
-				geometrySettleRevision = event.detail.revision;
+				geometrySettleRevision = revision;
 				hidden = true;
 				notify();
 				return;
 			}
-			convertTransitionToCut(event.detail.frames);
+			convertTransitionToCut(frames);
 			return;
 		}
-		applyGeometry(event.detail.frames);
+		applyGeometry(frames);
 		postToRuntime?.({ spool: "player-geometry", ...latestGeometry });
 		notify();
-	}) as EventListener);
+	};
 
-	window.addEventListener("message", (event) => {
-		if (event.source !== host()?.contentWindow || !isRecord(event.data)) return;
+	/** Hand the shell the geometry it already holds, at a revision it has not seen. */
+	const geometryReplay = () => {
+		const held = latestGeometry?.frames ?? retainedGeometry(config.frames);
+		const revision = geometryRevision + 1;
+		geometryPending(revision);
+		geometryApplied(revision, held);
+	};
+
+	const onWindowMessage = (event: MessageEvent) => {
+		if (event.source !== host.frame()?.contentWindow || !isRecord(event.data)) return;
 		const message = event.data;
 
 		if (message.spool === "player-connect") {
@@ -436,7 +438,7 @@ export function bootPlayerShell(config: ShellConfig): void {
 			if (latestGeometry !== undefined) {
 				postToRuntime({ spool: "player-geometry", ...latestGeometry });
 			}
-			window.dispatchEvent(new Event("spool-player-geometry-request"));
+			host.refreshGeometry();
 			drainControllerCommands();
 			notify();
 			return;
@@ -474,7 +476,7 @@ export function bootPlayerShell(config: ShellConfig): void {
 			// iframe it discarded, a reloaded frame — and its handoff had expired or
 			// been evicted. Serving this page again mints a new one, and a reload is
 			// what the player already means by a restart (#88).
-			if (reloadForHandoff()) {
+			if (host.repair()) {
 				disarmBootstrapDeadline();
 				return;
 			}
@@ -483,7 +485,9 @@ export function bootPlayerShell(config: ShellConfig): void {
 			notify();
 			return;
 		}
-	});
+	};
+	window.addEventListener("message", onWindowMessage);
+	teardown.push(() => window.removeEventListener("message", onWindowMessage));
 
 	function handleRuntimeMessage(message: Record<string, unknown>): void {
 		const clipboard = parseClipboardCopyRequest(message);
@@ -675,7 +679,6 @@ export function bootPlayerShell(config: ShellConfig): void {
 			if (pending.state !== undefined) {
 				stateSequence = pending.state.sequence;
 				snapshot = pending.state.value;
-				elapsedAt = performance.now();
 			}
 			pendingNavigation = undefined;
 			ready = true;
@@ -756,7 +759,6 @@ export function bootPlayerShell(config: ShellConfig): void {
 			}
 			stateSequence = message.sequence;
 			snapshot = next;
-			elapsedAt = performance.now();
 			notify();
 			return;
 		}
@@ -838,19 +840,110 @@ export function bootPlayerShell(config: ShellConfig): void {
 			hasFrame(config.frames, message.from) &&
 			hasFrame(config.frames, message.to)
 		) {
-			window.dispatchEvent(
-				new CustomEvent("spool-player-walked", { detail: { from: message.from, to: message.to } }),
-			);
+			host.walked(message.from, message.to);
 			return;
 		}
 
 		if (message.spool === "player-wake" && hasOnly(message, ["spool"])) {
-			document.querySelector(".spool-stage")?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+			host.wake();
+			return;
+		}
+
+		// The two chords the inner runtime keeps for Spool (#210). Everything
+		// else in there belongs to the prototype and is never forwarded.
+		if (message.spool === "player-key" && hasOnly(message, ["spool", "key"])) {
+			if (message.key === "leave") host.close();
+			else if (message.key === "fullscreen") host.fullscreen();
 		}
 	}
 
+	armBootstrapDeadline(BOOTSTRAP_BOOT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE);
+
+	return {
+		controller,
+		view: () => ({ hidden, loadError, loadEscape }),
+		loaded: () => armBootstrapDeadline(BOOTSTRAP_CONNECT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE),
+		geometryPending,
+		geometryApplied,
+		geometryReplay,
+		destroy: () => {
+			disarmBootstrapDeadline();
+			for (const undo of teardown.splice(0)) undo();
+			listeners.clear();
+			postToRuntime = undefined;
+			runtimePort?.close();
+			runtimePort = undefined;
+		},
+	};
+}
+
+/**
+ * Reload once per cooldown to earn a fresh handoff, reporting whether the
+ * reload was taken. Storage is per tab and survives the reload, which is what
+ * makes the cooldown outlive the document that set it.
+ */
+function reloadForHandoff(): boolean {
+	let last = 0;
+	try {
+		last = Number(window.sessionStorage.getItem(HANDOFF_RELOAD_KEY)) || 0;
+	} catch {
+		// A tab that denies storage still deserves one attempt per load.
+	}
+	const now = Date.now();
+	if (last !== 0 && now - last < HANDOFF_RELOAD_COOLDOWN_MS) return false;
+	try {
+		window.sessionStorage.setItem(HANDOFF_RELOAD_KEY, String(now));
+	} catch {
+		// Losing the marker risks a slow reload loop, not a broken player.
+	}
+	window.location.reload();
+	return true;
+}
+
+function retainedGeometry(frames: Record<string, FrameGeometry>): { name: string; w: number; h: number }[] {
+	return Object.entries(frames).map(([name, geometry]) => ({ name, w: geometry.w, h: geometry.h }));
+}
+
+/**
+ * Boot the standalone player page — the door `spool url` prints and a phone
+ * opens. Frame code never enters this realm. Geometry arrives through the
+ * served document's own bridge, which is why those custom events are wired
+ * here rather than inside the shell.
+ */
+export function bootPlayerShell(config: ShellConfig): void {
+	const root = document.getElementById("root");
+	if (root === null) throw new Error("spool: the player shell has no #root");
+	const shell = createPlayerShell(config, {
+		frame: () => document.querySelector<HTMLIFrameElement>("#spool-player"),
+		close: () => {
+			window.close();
+			window.setTimeout(() => {
+				if (!window.closed) window.location.href = `/p/${encodeURIComponent(config.project)}`;
+			}, 150);
+		},
+		walked: (from, to) => window.dispatchEvent(new CustomEvent("spool-player-walked", { detail: { from, to } })),
+		wake: () => document.querySelector(".spool-stage")?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true })),
+		fullscreen: () => {
+			if (document.fullscreenElement != null) void document.exitFullscreen().catch(() => {});
+			else void document.documentElement.requestFullscreen?.().catch(() => {});
+		},
+		repair: reloadForHandoff,
+		refreshGeometry: () => window.dispatchEvent(new Event("spool-player-geometry-request")),
+	});
+	window.addEventListener("spool-player-geometry-pending", ((event: CustomEvent<{ revision: number }>) => {
+		if (Number.isInteger(event.detail?.revision)) shell.geometryPending(event.detail.revision);
+	}) as EventListener);
+	window.addEventListener("spool-player-geometry", ((
+		event: CustomEvent<{ revision: number; frames: { name: string; w: number; h: number }[] }>,
+	) => {
+		if (Number.isInteger(event.detail?.revision) && Array.isArray(event.detail?.frames)) {
+			shell.geometryApplied(event.detail.revision, event.detail.frames);
+		}
+	}) as EventListener);
+
 	function Host() {
-		useSyncExternalStore(controller.subscribe, controller.version);
+		useSyncExternalStore(shell.controller.subscribe, shell.controller.version);
+		const { hidden, loadError, loadEscape } = shell.view();
 		if (loadError !== undefined) {
 			return (
 				<div className="spool-player-error" role="alert">
@@ -870,7 +963,7 @@ export function bootPlayerShell(config: ShellConfig): void {
 				title={config.project}
 				sandbox="allow-scripts"
 				src={config.innerUrl}
-				onLoad={() => armBootstrapDeadline(BOOTSTRAP_CONNECT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE)}
+				onLoad={shell.loaded}
 				// Hidden by opacity, never visibility: headed Chromium render-throttles
 				// a visibility-hidden cross-origin iframe, which starves the runtime's
 				// animation-frame gates and deadlocks the reveal it is hiding for
@@ -881,8 +974,9 @@ export function bootPlayerShell(config: ShellConfig): void {
 			/>
 		);
 	}
-	createRoot(root).render(createElement(Player, { frames: {}, controller, host: createElement(Host) }));
-	armBootstrapDeadline(BOOTSTRAP_BOOT_DEADLINE_MS, BOOTSTRAP_SILENT_MESSAGE);
+	createRoot(root).render(
+		createElement(Player, { frames: {}, controller: shell.controller, host: createElement(Host) }),
+	);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -977,33 +1071,16 @@ function matchesNavigation(value: Omit<Cut, "phase">, navigation: PendingNavigat
 }
 
 function isPlayerState(value: unknown, frames: Record<string, FrameGeometry>): value is PlayerState {
-	if (
-		!isRecord(value) ||
-		!hasOnly(value, ["frame", "stack", "motion", "arrival", "externalHref", "log", "mock", "elapsed", "state"]) ||
-		typeof value.frame !== "string" ||
-		!hasFrame(frames, value.frame) ||
-		!Array.isArray(value.stack) ||
-		value.stack.length > 10_000 ||
-		!value.stack.every((frame) => typeof frame === "string" && hasFrame(frames, frame)) ||
-		typeof value.motion !== "boolean" ||
-		typeof value.arrival !== "number" ||
-		!Number.isInteger(value.arrival) ||
-		value.arrival < 0 ||
-		!isExternalHref(value.externalHref) ||
-		!Array.isArray(value.log) ||
-		value.log.length > 10_000 ||
-		!value.log.every((event) => isWalkEvent(event, frames)) ||
-		!Array.isArray(value.mock) ||
-		value.mock.length > 10_000 ||
-		!value.mock.every(isMockCall) ||
-		typeof value.elapsed !== "number" ||
-		!Number.isFinite(value.elapsed) ||
-		value.elapsed < 0 ||
-		!isSessionState(value.state)
-	) {
-		return false;
-	}
-	return true;
+	return (
+		isRecord(value) &&
+		hasOnly(value, ["frame", "arrival", "externalHref"]) &&
+		typeof value.frame === "string" &&
+		hasFrame(frames, value.frame) &&
+		typeof value.arrival === "number" &&
+		Number.isInteger(value.arrival) &&
+		value.arrival >= 0 &&
+		isExternalHref(value.externalHref)
+	);
 }
 
 function isExternalHref(value: unknown): value is string | null {
@@ -1020,52 +1097,4 @@ function isExternalHref(value: unknown): value is string | null {
 	} catch {
 		return false;
 	}
-}
-
-function isWalkEvent(value: unknown, frames: Record<string, FrameGeometry>): value is WalkEvent {
-	if (!isRecord(value) || !hasOnly(value, ["kind", "from", "to", "at", "changed"], ["label"])) return false;
-	return (
-		(value.kind === "go" || value.kind === "back" || value.kind === "restart" || value.kind === "rewind") &&
-		typeof value.from === "string" &&
-		hasFrame(frames, value.from) &&
-		typeof value.to === "string" &&
-		hasFrame(frames, value.to) &&
-		(value.label === undefined || (typeof value.label === "string" && value.label.length <= 24)) &&
-		typeof value.at === "number" &&
-		Number.isFinite(value.at) &&
-		value.at >= 0 &&
-		Array.isArray(value.changed) &&
-		value.changed.length <= 10_000 &&
-		value.changed.every((key) => typeof key === "string")
-	);
-}
-
-function isMockCall(value: unknown): value is MockCall {
-	if (!isRecord(value) || !hasOnly(value, ["method", "path", "status", "ms"])) return false;
-	return (
-		typeof value.method === "string" &&
-		typeof value.path === "string" &&
-		typeof value.status === "number" &&
-		Number.isInteger(value.status) &&
-		typeof value.ms === "number" &&
-		Number.isFinite(value.ms) &&
-		value.ms >= 0
-	);
-}
-
-function isSessionState(value: unknown): value is SessionState {
-	if (!isRecord(value) || !hasOnly(value, ["scenario", "rows"])) return false;
-	return (
-		typeof value.scenario === "string" &&
-		Array.isArray(value.rows) &&
-		value.rows.length <= 10_000 &&
-		value.rows.every(
-			(row) =>
-				isRecord(row) &&
-				hasOnly(row, ["key", "value", "changed"]) &&
-				typeof row.key === "string" &&
-				typeof row.value === "string" &&
-				typeof row.changed === "boolean",
-		)
-	);
 }

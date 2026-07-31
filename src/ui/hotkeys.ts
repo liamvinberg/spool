@@ -91,7 +91,7 @@ export const HOTKEYS = [
 		id: "canvas.leave",
 		scope: "canvas",
 		group: "Frames",
-		label: "Leave the frame you are inside",
+		label: "Leave the player, or the frame you are inside",
 		keys: ["accel+escape"],
 		shown: () => ["esc", `${accelLabel()}esc`],
 	},
