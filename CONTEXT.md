@@ -46,6 +46,8 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Held**: A frame mounted behind its still so the Select tool has real DOM to read. An unreadable HTML selection stays held and keeps running; at readable size it resolves live, because Select must point at what is shown. This rejects cooperative pause and frozen pick geometry: entered frames already allow movement while Select owns the pointer, so neither a second runtime control nor stale geometry earns its complexity. A held terminal alone freezes, by SIGSTOP on its real process. _Avoid_: warm, paused
 
+**Freeze**: A live frame holding its own animation while the camera moves, and getting it back on settle: rAF callbacks are held and re-delivered rather than cancelled, and declarative animations pause and play. It is scoped to the gesture, not to a state — the entered frame and any frame being photographed keep animating throughout, and nothing about the mount changes. This is not the cooperative pause **Held** rejects: that one asked a frame to stop for as long as it was unread, this one only ever spans a camera in motion. _Avoid_: suspend, throttle, pause
+
 **Hands**: The human at the canvas. Hands own geometry and arrangement; agents own frame source. _Avoid_: user, designer
 
 ### Flows

@@ -355,8 +355,11 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
 /**
  * The canvas shim (#8/#22), a classic script installed before any module so it
  * holds native references before frame code can replace them. HTML frames keep
- * running when Select owns the pointer; terminal freeze lives in the terminal
- * runtime. Speaks the host protocol:
+ * running when Select owns the pointer; a terminal's freeze is a SIGSTOP in the
+ * terminal runtime, and an HTML frame's is the rAF gate below. Speaks the host
+ * protocol:
+ * {spool:"freeze", on} holds this document's animations while the camera moves
+ * and re-delivers every held rAF callback on thaw (#171);
  * {spool:"capture", id, targetWidth, settleMs}
  * answers with a sanitized foreignObject source for the trusted capture host
  * to rasterize off this frame's main thread. The frame waits out its own fonts
@@ -379,6 +382,114 @@ const canvasShimJs = `(() => {
 	// own reads and its own frames are spool's, not the frame's.
 	const nativeFetch = window.fetch.bind(window);
 	const nativeRaf = window.requestAnimationFrame.bind(window);
+	const nativeCancelRaf = window.cancelAnimationFrame.bind(window);
+
+	/**
+	 * The freeze (#171). While the camera moves, a live frame holds its own
+	 * animation instead of paying for frames nobody is reading: a 1.5s pan over
+	 * eight animated frames spent 265 ms of it inside their rAF loops.
+	 *
+	 * Gating rAF is the load-bearing half. getAnimations() covers CSS and Web
+	 * Animations and has never heard of a rAF loop, which is what a canvas
+	 * animation and every spring actually are. Held callbacks are re-delivered on
+	 * thaw with that tick's timestamp and never cancelled — a loop that loses its
+	 * callback is a frame that never animates again.
+	 *
+	 * The shim's own nativeRaf stays live under the freeze, for the same reason
+	 * it is bound before frame code runs: a capture's settle rides it. A frozen
+	 * iframe keeps compositing its last painted pixels, so nothing visibly
+	 * changes; the animation simply holds where it stood.
+	 */
+	let frozen = false;
+	let nextRafHandle = 1;
+	// handle -> { cb, native }; a native of 0 is a callback the freeze is holding
+	const rafs = new Map();
+	const paused = new Set();
+
+	window.requestAnimationFrame = function requestAnimationFrame(callback) {
+		if (typeof callback !== "function") {
+			throw new TypeError("requestAnimationFrame: parameter 1 is not of type 'Function'");
+		}
+		const handle = nextRafHandle++;
+		const entry = { cb: callback, native: 0 };
+		rafs.set(handle, entry);
+		if (!frozen) {
+			entry.native = nativeRaf((time) => {
+				rafs.delete(handle);
+				callback(time);
+			});
+		}
+		return handle;
+	};
+
+	window.cancelAnimationFrame = function cancelAnimationFrame(handle) {
+		const entry = rafs.get(handle);
+		if (entry === undefined) return;
+		rafs.delete(handle);
+		if (entry.native !== 0) nativeCancelRaf(entry.native);
+	};
+
+	// The freeze takes hold this tick rather than one frame later: whatever the
+	// renderer had already scheduled joins the held callbacks instead of firing.
+	function holdFrames() {
+		for (const entry of rafs.values()) {
+			if (entry.native === 0) continue;
+			nativeCancelRaf(entry.native);
+			entry.native = 0;
+		}
+	}
+
+	function releaseFrames() {
+		const due = [];
+		for (const pair of rafs) if (pair[1].native === 0) due.push(pair[0]);
+		if (due.length === 0) return;
+		nativeRaf((time) => {
+			// re-frozen inside the same tick: they stay held for the next thaw
+			if (frozen) return;
+			for (const handle of due) {
+				const entry = rafs.get(handle);
+				// cancelled while held, or already delivered by an earlier thaw
+				if (entry === undefined) continue;
+				rafs.delete(handle);
+				try {
+					entry.cb(time);
+				} catch (error) {
+					// one held callback's throw is not the next one's problem —
+					// native rAF isolates them, so this does too
+					setTimeout(() => { throw error; });
+				}
+			}
+		});
+	}
+
+	function holdAnimations() {
+		let running = [];
+		try { running = document.getAnimations(); } catch {}
+		for (const animation of running) {
+			if (animation.playState !== "running") continue;
+			try { animation.pause(); } catch { continue; }
+			paused.add(animation);
+		}
+	}
+
+	function releaseAnimations() {
+		for (const animation of paused) {
+			try { animation.play(); } catch {}
+		}
+		paused.clear();
+	}
+
+	function setFrozen(on) {
+		if (on === frozen) return;
+		frozen = on;
+		if (on) {
+			holdFrames();
+			holdAnimations();
+		} else {
+			releaseAnimations();
+			releaseFrames();
+		}
+	}
 
 	function yieldCaptureTask() {
 		if (typeof scheduler !== "undefined" && typeof scheduler.yield === "function") return scheduler.yield();
@@ -853,6 +964,10 @@ const canvasShimJs = `(() => {
 			let boxes = {};
 			try { boxes = siteBoxes(m.sites); } catch {}
 			parent.postMessage({ spool: "site-boxes", frame, id: m.id, boxes }, "*");
+			return;
+		}
+		if (m.spool === "freeze") {
+			setFrozen(m.on === true);
 			return;
 		}
 		if (m.spool !== "capture") return;

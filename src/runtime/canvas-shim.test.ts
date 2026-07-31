@@ -45,14 +45,25 @@ function runShim(shim: string): () => void {
 		if (options === undefined) addEventListener(type, listener);
 		else addEventListener(type, listener, options);
 	}) as typeof window.addEventListener;
+	// the shim owns rAF for the freeze (#171); one realm serves every test here,
+	// so its wrapper comes back off with its listeners
+	const raf = window.requestAnimationFrame;
+	const cancelRaf = window.cancelAnimationFrame;
 	new Function(shim)();
 	window.addEventListener = addEventListener;
 	return () => {
+		window.requestAnimationFrame = raf;
+		window.cancelAnimationFrame = cancelRaf;
 		for (const { type, listener, options } of listeners) {
 			if (options === undefined) window.removeEventListener(type, listener);
 			else window.removeEventListener(type, listener, options);
 		}
 	};
+}
+
+/** One message hop plus a couple of animation frames — enough for either to land. */
+function beat(): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, 50));
 }
 
 /** The next reply of one spool kind — parent === window here, so it echoes back. */
@@ -247,6 +258,86 @@ describe("the canvas shim", () => {
 		}
 	});
 
+	it("holds the frame's animation frames while the camera moves, and drops none", async () => {
+		const shim = await servedShim();
+		const dispose = runShim(shim);
+		const ticks: number[] = [];
+		let stopped = false;
+
+		try {
+			const loop = (time: number) => {
+				if (stopped) return;
+				ticks.push(time);
+				window.requestAnimationFrame(loop);
+			};
+			window.requestAnimationFrame(loop);
+			await beat();
+			expect(ticks.length, "the loop is the frame's own while the camera rests").toBeGreaterThan(0);
+
+			window.postMessage({ spool: "freeze", on: true }, "*");
+			await beat();
+			const atFreeze = ticks.length;
+			// a callback asked for and taken back while frozen is gone for good
+			let cancelled = 0;
+			window.cancelAnimationFrame(
+				window.requestAnimationFrame(() => {
+					cancelled++;
+				}),
+			);
+			await beat();
+			expect(ticks.length, "a frozen frame runs no animation frames").toBe(atFreeze);
+
+			window.postMessage({ spool: "freeze", on: false }, "*");
+			await beat();
+			expect(ticks.length, "the held callback comes back — a lost one never animates again").toBeGreaterThan(
+				atFreeze,
+			);
+			expect(cancelled).toBe(0);
+		} finally {
+			stopped = true;
+			dispose();
+		}
+	});
+
+	it("pauses the frame's declarative animations for the freeze and plays back only those", async () => {
+		const shim = await servedShim();
+		const dispose = runShim(shim);
+		const getAnimations = document.getAnimations;
+		const log: string[] = [];
+		const running = {
+			playState: "running",
+			pause: () => {
+				running.playState = "paused";
+				log.push("pause");
+			},
+			play: () => {
+				running.playState = "running";
+				log.push("play");
+			},
+		};
+		// already paused by the frame itself: the freeze did not stop it, so the
+		// thaw has no business starting it
+		const idle = {
+			playState: "paused",
+			pause: () => log.push("pause-idle"),
+			play: () => log.push("play-idle"),
+		};
+		document.getAnimations = (() => [running, idle]) as unknown as typeof document.getAnimations;
+
+		try {
+			window.postMessage({ spool: "freeze", on: true }, "*");
+			await beat();
+			expect(running.playState).toBe("paused");
+
+			window.postMessage({ spool: "freeze", on: false }, "*");
+			await beat();
+			expect(log).toEqual(["pause", "play"]);
+		} finally {
+			document.getAnimations = getAnimations;
+			dispose();
+		}
+	});
+
 	it("answers a pick with the ancestry down to the element at the point", async () => {
 		const shim = await servedShim();
 		runShim(shim);
@@ -316,16 +407,24 @@ describe("the canvas shim", () => {
 		expect(((await picked) as { chain: unknown }).chain).toEqual([]);
 	});
 
-	it("leaves the frame's own timers and frames alone", async () => {
-		// The shim once wrapped rAF and setInterval to pause held HTML. Those
-		// documents now keep running, so wrapping either would reintroduce the
-		// cooperative pause mechanism #131 rejected.
+	it("leaves the frame's own timers alone, and its frames alone until a freeze", async () => {
+		// The shim once wrapped rAF *and* setInterval to pause held HTML: the
+		// cooperative pause #131 rejected, because those documents keep running.
+		// #171 reinstates the narrow half — rAF, gated by nothing but a camera in
+		// motion, and passed straight through the rest of the time.
 		const shim = await servedShim();
-		const nativeRaf = window.requestAnimationFrame;
 		const nativeInterval = window.setInterval;
-		runShim(shim);
+		const dispose = runShim(shim);
 
-		expect(window.requestAnimationFrame).toBe(nativeRaf);
-		expect(window.setInterval).toBe(nativeInterval);
+		try {
+			expect(window.setInterval).toBe(nativeInterval);
+			const fired = await new Promise<boolean>((resolve) => {
+				window.requestAnimationFrame(() => resolve(true));
+				setTimeout(() => resolve(false), 200);
+			});
+			expect(fired, "an unfrozen frame's animation frames are the frame's own").toBe(true);
+		} finally {
+			dispose();
+		}
 	});
 });
