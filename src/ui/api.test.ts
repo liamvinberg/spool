@@ -154,3 +154,32 @@ describe("trusted UI API client", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(3);
 	});
 });
+
+describe("picking a turn back up", () => {
+	it("reads attach's 404 as the ordinary answer, never as an error to draw", async () => {
+		// the daemon's own body for a thread that is not mid-turn — it was drawn
+		// into the log verbatim the first time a restart outlived the turns its
+		// rails were reading
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(new Response('no turn to read in thread "6a290038"', { status: 404 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const { attachAgentTurn } = await loadApi();
+
+		const ended = await new Promise<string | undefined>((resolve) => {
+			attachAgentTurn("demo", "6a290038-7520-4555-aad3-fd3f462ab402", 0, { event: () => {}, end: resolve });
+		});
+		expect(ended).toBeUndefined();
+	});
+
+	it("still reports a failure that is not the ordinary answer", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(new Response("the daemon fell over", { status: 500 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const { attachAgentTurn } = await loadApi();
+
+		const ended = await new Promise<string | undefined>((resolve) => {
+			attachAgentTurn("demo", "6a290038-7520-4555-aad3-fd3f462ab402", 0, { event: () => {}, end: resolve });
+		});
+		expect(ended).toBe("the daemon fell over");
+	});
+});
