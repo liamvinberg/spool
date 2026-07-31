@@ -637,7 +637,9 @@ describe("one turn", () => {
 		canvas.turn.push({ kind: "thinking", block: 0, tokens: 61, parent: null });
 		await settle();
 
-		expect(rail(canvas.host)?.querySelectorAll(".animate-agent-spin")).toHaveLength(0);
+		// the log, not the rail: the column's own cell turns while its thread works, and
+		// that is the thread's life rather than a line about the wait
+		expect(canvas.host.querySelectorAll("[data-agent-log] .animate-agent-spin")).toHaveLength(0);
 		expect(log(canvas.host)).not.toContain("thinking");
 		// the human's words and nothing under them
 		expect(log(canvas.host).trim()).toBe("go");
@@ -2751,10 +2753,14 @@ describe("the thread under the pointer", () => {
 
 describe("a thread's mark", () => {
 	/**
-	 * Three of the five lives draw. Streaming draws nothing and keeps the row aligned,
-	 * because the transcript below is already a turning mark and a live edge.
+	 * All five lives draw, and the two working ones draw the same thing.
+	 *
+	 * The cell is the only place a column says whether a thread is moving, and the thread
+	 * you are looking at is the one you are most likely to be waiting on. Leaving it blank
+	 * left an empty square next to neighbours that all carried a mark, which reads as a
+	 * fault rather than as a distinction.
 	 */
-	it("draws nothing for the thread in the rail while its turn runs", async () => {
+	it("turns for the thread in the rail while its turn runs", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "tighten the header");
@@ -2762,7 +2768,7 @@ describe("a thread's mark", () => {
 		await settle();
 
 		expect(lifeOfCell(canvas.host, "tighten the header")).toBe("streaming");
-		expect(marks(canvas.host, "tighten the header")).toEqual({ turning: 0, drawn: 0 });
+		expect(marks(canvas.host, "tighten the header").turning).toBe(1);
 	});
 
 	it("turns for a thread working somewhere you are not looking", async () => {

@@ -741,7 +741,10 @@ function Nameplate({ threads }: { threads: Threads }) {
  * is a hollow dot at the strength a disabled thing gets rather than nothing at all.
  */
 function ThreadMark({ life }: { life: Life }) {
-	const turning = life === "running";
+	// the thread you are watching turns the same ring as the ones you are not: the two
+	// lives are one drawing, and they are separate lives only because `streaming` is a
+	// fact about this browser and never reaches disk
+	const turning = life === "streaming" || life === "running";
 	return (
 		<span data-agent-mark={life} className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
 			{turning ? (
