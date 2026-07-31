@@ -373,6 +373,46 @@ describe("one turn over the wire", () => {
 		expect(agent.spawned[0]?.killed).toBe(false);
 	});
 
+	/**
+	 * A binary that will not go is not a thread that is gone (#211).
+	 *
+	 * The turn ended, stdin closed and the process stayed up: nothing else moves after
+	 * that. The turn reads as running forever, the thread refuses every message sent to
+	 * it, and the only way out was to restart the daemon. So the grace is what the turn is
+	 * left with, and when it runs out the process is taken.
+	 */
+	it("takes a binary still up long after its own ending, and lets the thread go", async () => {
+		vi.useFakeTimers();
+		// the whole capture, ending and all, from a process that then never exits
+		const agent = fixtureAgentExecutor((proc) => proc.replay(readCapture("claude-fanout")));
+		const turn = startAgentTurn({
+			executor: agent.executor,
+			root: "/tmp/product",
+			content: [],
+			session: { id: "6b5c1d2e-1111-4222-8333-444455556666", resume: false },
+		});
+		const seen: AgentEvent[] = [];
+		const reading = (async () => {
+			for await (const event of turn.events) seen.push(event);
+		})();
+		// the spawn is awaited, so the prompt and the answer to it land on the microtasks
+		await vi.advanceTimersByTimeAsync(0);
+		const proc = agent.spawned[0] as (typeof agent.spawned)[number];
+		expect(seen.some((event) => event.kind === "ended")).toBe(true);
+		// asked first, and given the whole grace to answer on its own
+		expect(proc.ended).toBe(true);
+		await vi.advanceTimersByTimeAsync(9_000);
+		expect(proc.killed).toBe(false);
+
+		await vi.advanceTimersByTimeAsync(1_500);
+
+		expect(proc.killed).toBe(true);
+		await reading;
+		// and the turn is over, which is what lets the next message into this thread
+		expect(seen.at(-1)?.kind).toBe("closed");
+		vi.useRealTimers();
+	});
+
 	it("distinguishes an interrupted turn from a clean one at the client", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = makeProject(spoolDir);
