@@ -3,13 +3,13 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MAX_ATTACHMENT_BYTES } from "../attachment";
 import {
+	agentReader,
 	fixtureAgentExecutor,
 	makeApp,
 	makeProject,
 	makeTempDir,
 	readCapture,
 	replayAgentExecutor,
-	sseReader,
 	until,
 	writeFrame,
 } from "../test-helpers";
@@ -21,7 +21,7 @@ import { startAgentTurn } from "./agent-turn";
 
 /** Every event of one turn, read off the stream the way a client would. */
 async function drainTurn(res: Response, limit = 4000): Promise<AgentEvent[]> {
-	const events = sseReader(res);
+	const events = agentReader(res);
 	const seen: AgentEvent[] = [];
 	while (seen.length < limit) {
 		let next: Awaited<ReturnType<typeof events.next>>;
@@ -99,6 +99,122 @@ describe("one turn over the wire", () => {
 		expect(kinds.slice(0, 6)).toEqual(["ready", "limit", "call-input", "call-input", "called", "call"]);
 		expect(kinds.filter((kind) => kind === "ended")).toHaveLength(1);
 		expect(kinds.indexOf("ended")).toBe(kinds.length - 2);
+	});
+
+	/*
+	 * A turn is not the request's to end (#211).
+	 *
+	 * The whole of what the ticket is about, at the door: the reader goes away, the process
+	 * stays up, and whoever comes back reads what happened while nobody was looking.
+	 */
+	it("outlives the reader that started it, and hands the whole turn to the next one", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const agent = fixtureAgentExecutor();
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+
+		const res = await startTurn(name, app);
+		await until(() => agent.spawned.length === 1);
+		const proc = agent.spawned[0] as (typeof agent.spawned)[number];
+		proc.emit(
+			JSON.stringify({
+				type: "stream_event",
+				event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "before" } },
+			}),
+		);
+
+		// the refresh: this reader is gone, and it takes nothing with it
+		const events = agentReader(res);
+		expect((await events.next()).data).toMatchObject({ kind: "say", text: "before" });
+		await events.cancel();
+		proc.emit(
+			JSON.stringify({
+				type: "stream_event",
+				event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "after" } },
+			}),
+		);
+
+		expect(proc.killed).toBe(false);
+
+		// and the page that comes back gets the turn from the top: what it missed and what it
+		// was never there for, in one read
+		const again = await app.request(`/api/p/${name}/agent/turn/${THREAD}`);
+		expect(again.status).toBe(200);
+		const back = agentReader(again);
+		// the turn introduces itself first: what it is called, whether it is up, and how much
+		// of what follows already happened
+		const opening = await back.opening();
+		expect(opening.event).toBe("attached");
+		expect(opening.data).toMatchObject({ running: true, from: 0 });
+		expect((await back.next()).data).toMatchObject({ kind: "say", text: "before" });
+		expect((await back.next()).data).toMatchObject({ kind: "say", text: "after" });
+		await back.cancel();
+	});
+
+	it("refuses a second turn in a conversation that already has one running", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const agent = fixtureAgentExecutor();
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+
+		const first = await startTurn(name, app);
+		await until(() => agent.spawned.length === 1);
+
+		const second = await startTurn(name, app, "and this too");
+		expect(second.status).toBe(409);
+		expect(await second.text()).toContain("already running");
+		// one process, because two agents writing the same files is the thing being refused
+		expect(agent.spawned).toHaveLength(1);
+		await agentReader(first).cancel();
+	});
+
+	it("says there is nothing to read where no turn is being held", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const app = makeApp(spoolDir, { agentExecutor: fixtureAgentExecutor().executor });
+
+		const res = await app.request(`/api/p/${name}/agent/turn/${THREAD}`);
+		expect(res.status).toBe(404);
+		// the ordinary answer for every thread that is not mid-turn, and not a failure: the
+		// picture on disk is the whole of what the rail draws for one of those
+		expect(await res.text()).toContain("no turn to read");
+
+		const bad = await app.request(`/api/p/${name}/agent/turn/not-a-uuid`);
+		expect(bad.status).toBe(400);
+	});
+
+	it("tells the rail which threads have a turn to pick up", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const agent = fixtureAgentExecutor();
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+
+		const res = await startTurn(name, app);
+		await until(() => agent.spawned.length === 1);
+		await app.request(`/api/p/${name}/agent/threads/${THREAD}`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				ask: "make these consistent",
+				life: "running",
+				at: 1_700_000_000_000,
+				entries: [{ key: "u0", kind: "user", text: "make these consistent" }],
+				kept: 1,
+				plan: null,
+				queued: [],
+			}),
+		});
+
+		const listed = (await (await app.request(`/api/p/${name}/agent/threads`)).json()) as {
+			threads: { id: string; live: boolean; stopped: boolean }[];
+		};
+		const thread = listed.threads.find((one) => one.id === THREAD);
+		// live and not cut, which are the two halves of the same question: a picture that says
+		// a process was up either has one here to attach to or lost it to something that was
+		// not a hand
+		expect(thread?.live).toBe(true);
+		expect(thread?.stopped).toBe(false);
+		await agentReader(res).cancel();
 	});
 
 	it("sends the prompt as one line of structured input", async () => {
@@ -427,7 +543,7 @@ describe("the thread a turn runs under", () => {
 		const args: readonly string[] = agent.spawned[0]?.spawn.args ?? [];
 		expect(args[args.indexOf("--session-id") + 1]).toBe(THREAD);
 		expect(args).not.toContain("--resume");
-		await res.body?.cancel();
+		await agentReader(res).cancel();
 	});
 
 	it("resumes it once the binary has a session file under that id", async () => {
@@ -448,7 +564,7 @@ describe("the thread a turn runs under", () => {
 		const args: readonly string[] = agent.spawned[0]?.spawn.args ?? [];
 		expect(args[args.indexOf("--resume") + 1]).toBe(THREAD);
 		expect(args).not.toContain("--session-id");
-		await res.body?.cancel();
+		await agentReader(res).cancel();
 		vi.unstubAllEnvs();
 	});
 });
