@@ -23,6 +23,8 @@ function mount(stored: readonly ServedThread[] = []) {
 	const asked: string[] = [];
 	/** every picture the rail wrote down, in the order it wrote them */
 	const puts: ThreadPut[] = [];
+	/** what each turn was called on the way out, which is the address its stop names (#165) */
+	const named: string[] = [];
 	/**
 	 * Every read of a turn this rail has opened, newest last.
 	 *
@@ -73,8 +75,9 @@ function mount(stored: readonly ServedThread[] = []) {
 				puts.push(JSON.parse(String(init?.body ?? "{}")) as ThreadPut);
 				return new Response(null, { status: 204 });
 			}
-			if (url.pathname.endsWith("/agent/turn") && door.turn !== 0) {
-				return new Response(`the door said ${door.turn}`, { status: door.turn });
+			if (url.pathname.endsWith("/agent/turn")) {
+				named.push((JSON.parse(String(init?.body ?? "{}")) as { turn?: string }).turn ?? "");
+				if (door.turn !== 0) return new Response(`the door said ${door.turn}`, { status: door.turn });
 			}
 			// the attach door's own answer for a thread it is holding nothing for
 			if (url.pathname.includes("/agent/turn/") && door.gone) {
@@ -106,6 +109,7 @@ function mount(stored: readonly ServedThread[] = []) {
 		latest: () => (seen[seen.length - 1] as AgentDeck).turn as AgentTurn,
 		asked,
 		puts,
+		named,
 		door,
 		reads,
 		push: (event: AgentEvent) => write("agent", event),
@@ -192,6 +196,34 @@ describe("the turn a thread is running", () => {
 
 		expect(canvas.latest().phase).toBe("settled");
 		expect(canvas.latest().elapsed).toBe(Number.POSITIVE_INFINITY);
+	});
+
+	/**
+	 * The name a stop quotes has to be this turn's and nobody else's (#165, #234).
+	 *
+	 * The interrupt door matches the name across the whole project, and the name was a
+	 * millisecond and a per-rail counter: two tabs starting a turn in the same millisecond
+	 * minted the same string, and one rail's stop killed the other rail's agent.
+	 */
+	it("names every turn by something no other rail can mint", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		canvas.push(closed);
+		canvas.close();
+		await settle(300);
+		await act(async () => {
+			canvas.latest().send("and again");
+		});
+		await settle(120);
+
+		expect(canvas.named).toHaveLength(2);
+		expect(canvas.named[0]).not.toBe(canvas.named[1]);
+		for (const name of canvas.named) {
+			expect(name).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+		}
 	});
 
 	/** a message that never streamed has no schedule to spend, so the clock must not wait on one */

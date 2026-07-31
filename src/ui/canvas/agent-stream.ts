@@ -333,8 +333,6 @@ interface Live {
 	handback: AgentHandback;
 	/** what the daemon's stop names this turn by, since a stop has no request to quote */
 	named: string;
-	/** turns started, which is the number a turn's name is made unique by */
-	starts: number;
 	/** messages ever held, which is the number a take-back aims at exactly one of */
 	holds: number;
 	/** when its picture was last written down, so a stream throttles its own writes */
@@ -368,7 +366,6 @@ function born(id: string, over: Partial<Live> = {}): Live {
 		stopping: false,
 		handback: { count: 0, messages: [] },
 		named: "",
-		starts: 0,
 		holds: 0,
 		saved: 0,
 		...over,
@@ -681,13 +678,18 @@ export function useAgentThreads(project: string): AgentDeck {
 			thread.restored = false;
 			thread.stopping = false;
 			if (!attaching) {
-				thread.starts += 1;
 				thread.unread = false;
 				thread.at = Date.now();
-				// a name of its own, because a stop has no request to quote: it names the turn the
-				// hands are looking at rather than whatever this project is running. A turn being
-				// picked up already has one, and the daemon says it on the way in
-				thread.named = `${Date.now()}-${thread.starts}`;
+				/*
+				 * A name of its own, because a stop has no request to quote: it names the turn the
+				 * hands are looking at rather than whatever this project is running. A turn being
+				 * picked up already has one, and the daemon says it on the way in.
+				 *
+				 * A uuid rather than a clock and a count (#234). The stop door matches the name
+				 * across the whole project, and two tabs starting a turn in the same millisecond
+				 * had counters of their own — so one rail's stop reached the other rail's agent.
+				 */
+				thread.named = crypto.randomUUID();
 			}
 			/**
 			 * How many of the events still to arrive already happened (#211).
