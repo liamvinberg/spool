@@ -28,6 +28,21 @@ import { type AgentAsk, type AgentSession, agentPromptLine, planAgentSpawn } fro
  * answers it, for as long as that takes, and spool never answers one itself.
  */
 
+/**
+ * How long a binary that has already said everything gets to exit on its own.
+ *
+ * Nothing here runs a clock on the *turn*: a turn is as long as the work is, and one
+ * parked on a question waits for as long as the person does. This clock starts after the
+ * turn is over, on the ending the binary itself reported, and it is about one thing only
+ * — a process that has nothing left to do and has not gone. Ten seconds is longer than
+ * any tidy-up and shorter than a person's patience.
+ *
+ * It is not tidiness. The thread's next message is refused while a turn is running in it,
+ * and running is what the process being up means, so a binary that never exits takes the
+ * conversation with it until the daemon is restarted.
+ */
+const EXIT_GRACE_MS = 10_000;
+
 export interface AgentTurnOptions {
 	readonly executor: AgentExecutor;
 	/** the project root: the agent stands in the product root, not in design/ */
@@ -109,6 +124,8 @@ export function startAgentTurn({ executor, root, content, session, ask }: AgentT
 	 */
 	let interrupts = 0;
 	let asked = 0;
+	/** the grace an ended turn's binary is inside, cancelled by the exit it is waiting for */
+	let leaving: ReturnType<typeof setTimeout> | undefined;
 
 	/** every press not yet down the wire, in one place so the spawn and the door agree */
 	function interruptFrom(target: AgentProcess): void {
@@ -172,10 +189,17 @@ export function startAgentTurn({ executor, root, content, session, ask }: AgentT
 					// stale one would take an answer meant for the next turn
 					asking.clear();
 					started.end();
+					// left to go, and not left forever: a binary still up long after its own
+					// ending is holding the thread against its next message, so the grace runs
+					// out and the process is taken. The timer is nothing to keep a daemon alive
+					// for, which is what a turn already over means
+					leaving ??= setTimeout(() => started.kill(), EXIT_GRACE_MS);
+					leaving.unref?.();
 				}
 			}
 		});
 		started.onExit((code, message) => {
+			if (leaving !== undefined) clearTimeout(leaving);
 			asking.clear();
 			push({ kind: "closed", code, ...(message === undefined ? {} : { message }), parent: null });
 			finish();
@@ -227,6 +251,7 @@ export function startAgentTurn({ executor, root, content, session, ask }: AgentT
 		},
 		abandon: () => {
 			stopped = true;
+			if (leaving !== undefined) clearTimeout(leaving);
 			asking.clear();
 			proc?.kill();
 			finish();
