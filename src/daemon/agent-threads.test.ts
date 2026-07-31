@@ -36,7 +36,9 @@ const picture: ThreadPut = {
 		{ key: "u0", kind: "user", text: "shoot home and fix whatever reads wrong", context: null, attached: null },
 		{ key: "row:t1", kind: "row", state: "done", verb: "shot", subject: "home" },
 	],
+	kept: 2,
 	plan: null,
+	queued: [],
 };
 
 const noSessions = { HOME: "/nowhere" };
