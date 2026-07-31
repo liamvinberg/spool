@@ -29,7 +29,9 @@ spool serve       # daemon at http://localhost:7766 — any spool command starts
 spool autostart   # start at login (launchd); spool autostart off removes it
 ```
 
-Open the canvas in Chrome (install as app for the dock icon). Frames are authored by your agent: `spool skill` prints the complete contract, verify verbs (`spool shot <frame>` and friends) included, and `spool init` writes the signposts that point agents at it.
+Open the canvas in Chrome (install as app for the dock icon), or open [local.spool.page](https://local.spool.page), which listens for the daemon on your own machine and takes you there. Nothing you work on reaches it — it is a door, not a host.
+
+Frames are authored by your agent: `spool skill` prints the complete contract, verify verbs (`spool shot <frame>` and friends) included, and `spool init` writes the signposts that point agents at it.
 
 ## Develop
 
