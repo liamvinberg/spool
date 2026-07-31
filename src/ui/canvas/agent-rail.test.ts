@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { type AgentOffer, modelsOf } from "../../daemon/agent-offer";
 import { longestStreamed, readModelsReply } from "../../test-helpers";
 import type { AgentEvent, SelectionEntry, ServedThread, ThreadPut } from "../api";
@@ -26,6 +26,20 @@ import { type CanvasChrome, ProjectCanvas } from "./canvas";
  * `agent-pace.test.ts`'s, and what a rendered word leaves in the DOM is
  * `agent-said.test.ts`'s.
  */
+
+/**
+ * A browser that has never been dragged, before every test.
+ *
+ * A rail's width outlives a reload on purpose, so the test that pushes one under the snap
+ * point leaves 44px behind in storage and every rail mounted after it opens as a strip —
+ * with no composer, no transcript and no column to look at. It is the only state here that
+ * crosses a test boundary, and it crosses it silently: on a runtime whose own `localStorage`
+ * global shadows happy-dom's, the writes go nowhere and the whole file passes.
+ */
+beforeEach(() => {
+	const box: Storage | undefined = window.localStorage;
+	box?.clear();
+});
 
 /** `receipt` sits one page over, which is the normal case: a thread is not bound to a page */
 const PROJECTION = {

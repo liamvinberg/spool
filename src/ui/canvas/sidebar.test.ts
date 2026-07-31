@@ -2,7 +2,7 @@
 
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
 import { CanvasSidebar } from "./sidebar";
 
@@ -15,6 +15,12 @@ const frames = [
 ];
 
 const mounted: Array<{ root: ReturnType<typeof createRoot>; host: HTMLElement }> = [];
+
+/** the navigator's width is remembered across reloads, and a resized one is not the next test's */
+beforeEach(() => {
+	const box: Storage | undefined = window.localStorage;
+	box?.clear();
+});
 
 afterEach(() => {
 	for (const { root, host } of mounted.splice(0)) {
