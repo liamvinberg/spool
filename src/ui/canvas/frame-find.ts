@@ -170,7 +170,13 @@ export function runsIn(name: string, weights: readonly Weight[]): readonly Run[]
 	return out;
 }
 
-/** How long ago a frame was born, worded the way the empty list prints it. */
+/**
+ * How long ago something happened, worded the way the empty list prints it.
+ *
+ * One wording rather than two: the finder says how long ago a frame was born and the
+ * agent rail's flyout says how long ago a thread last did anything, and an age read in
+ * one place should not be spelled differently in the other.
+ */
 export function ageOf(born: number | undefined, now: number): string | undefined {
 	if (born === undefined) return undefined;
 	const gone = Math.max(0, now - born);

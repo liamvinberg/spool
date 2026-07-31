@@ -13,7 +13,17 @@ import {
 } from "../api";
 import { type LoginDeck, STILL_OUT, signedInAs } from "./agent-preflight";
 import type { AgentHandback, AgentQueued } from "./agent-queue";
-import { askOf, bounced, cutPicture, type Life, lifeOf, storedLife, type Thread } from "./agent-threads";
+import {
+	askOf,
+	bounced,
+	cutPicture,
+	type Life,
+	lastOf,
+	lifeOf,
+	nameOf,
+	storedLife,
+	type Thread,
+} from "./agent-threads";
 import {
 	type AgentEntry,
 	type AgentPlan,
@@ -149,7 +159,7 @@ export interface AgentTurn {
  *
  * `turn` is the open thread's, so everything the rail already drew keeps its shape: the
  * transcript, the composer and the queue are one thread's and always were. What is new
- * is the strip above them and the fact that the others are still running.
+ * is the column beside them and the fact that the others are still running.
  */
 export interface AgentDeck {
 	readonly threads: readonly Thread[];
@@ -166,11 +176,11 @@ export interface AgentDeck {
 	readonly finished: boolean;
 	/** the agent would not start because nobody is signed in, and the way out of it (#201) */
 	readonly login: LoginDeck;
-	/** a press on the strip, which reads the thread and moves nothing else */
+	/** a press on a cell, which reads the thread and moves nothing else */
 	readonly onOpen: (id: string) => void;
-	/** the ✕ on a tab: it leaves the strip, and neither the session nor the picture goes */
+	/** the ✕ in the flyout: it leaves the column, and neither the session nor the picture goes */
 	readonly onClose: (id: string) => void;
-	/** the plus that leads the row */
+	/** the plus that leads the column */
 	readonly onNew: () => void;
 }
 
@@ -219,7 +229,7 @@ interface Live {
 	continuable: boolean;
 	/** it landed somewhere nobody was looking, and nobody has looked since */
 	unread: boolean;
-	/** unix ms of the last thing that happened in it, which is the strip's order */
+	/** unix ms of the last thing that happened in it, which is the column's order */
 	at: number;
 	events: Stamped[];
 	started: number;
@@ -378,7 +388,7 @@ export function useAgentThreads(project: string): AgentDeck {
 	/** climbs whenever anything a render reads has moved, which is what redraws the rail */
 	const [, bump] = useState(0);
 	const redraw = useCallback(() => bump((count) => count + 1), []);
-	/** what the strip has open, for the stream callbacks that outlive the render */
+	/** what the column has open, for the stream callbacks that outlive the render */
 	const openRef = useRef(open);
 	openRef.current = open;
 	/**
@@ -436,7 +446,7 @@ export function useAgentThreads(project: string): AgentDeck {
 	/**
 	 * The look that reads a thread, wherever the looking happened (#136).
 	 *
-	 * A press on the strip, and the opening a restore performs on the newest thread it
+	 * A press on a cell, and the opening a restore performs on the newest thread it
 	 * found: both are somebody looking at it, so both clear the dot. Neither touches the
 	 * waiting mark, because nothing about looking answers a question.
 	 */
@@ -579,7 +589,7 @@ export function useAgentThreads(project: string): AgentDeck {
 			// a project with nothing stored gets one fresh thread, which is what the rail
 			// has always shown
 			if (openRef.current !== "") return;
-			// newest first, which is the strip's own order: the one you were most likely
+			// newest first, which is the column's own order: the one you were most likely
 			// reading is the one it opens on, and opening it is what reads it
 			const newest = [...threads.current.values()].sort((one, two) => two.at - one.at)[0];
 			if (newest === undefined) {
@@ -656,23 +666,29 @@ export function useAgentThreads(project: string): AgentDeck {
 	const phase = phaseOf(here, seen);
 	const entries = entriesOf(here, seen);
 	/*
-	 * The strip, in recency order, fixed once (#136).
+	 * The column, in recency order, fixed once (#136, #205).
 	 *
-	 * Newest leftmost and it stays there, so the one you are reading is the one you can
-	 * always see. A strip that re-sorted as its threads worked would move a name out from
+	 * Newest at the top and it stays there, so the one you are reading is the one you can
+	 * always see. A column that re-sorted as its threads worked would move a cell out from
 	 * under a cursor already reaching for it, which is why the order reads `at` — the last
 	 * time something happened in the thread — and never a life.
 	 *
-	 * Each thread is folded once here and read twice, for its name and for its mark. The
-	 * fold is the only way to know either: the ask is the first thing the human said and
-	 * the mark is what its turn is doing, and both live in the events.
+	 * Each thread is folded once here and read three times: for its name, for its mark and
+	 * for the line the flyout shows. The fold is the only way to know any of them — what a
+	 * thread wrote, what its turn is doing and what it did last all live in the events.
 	 */
-	const strip: readonly Thread[] = [...threads.current.values()]
+	const column: readonly Thread[] = [...threads.current.values()]
 		.sort((one, two) => two.at - one.at)
 		.map((thread) => {
 			const shown = thread.id === open ? seen : shownOf(thread);
 			const drawn = thread.id === open ? entries : entriesOf(thread, shown);
-			return { id: thread.id, ask: askOf(drawn), life: lifeFor(thread, open, shown) };
+			return {
+				id: thread.id,
+				name: nameOf(drawn),
+				life: lifeFor(thread, open, shown),
+				at: thread.at,
+				last: lastOf(drawn),
+			};
 		});
 
 	const hold = useCallback(
@@ -733,7 +749,7 @@ export function useAgentThreads(project: string): AgentDeck {
 			/*
 			 * Closing a thread is a tidy rather than a delete (#136).
 			 *
-			 * It leaves the strip, and neither the agent's own session nor spool's stored
+			 * It leaves the column, and neither the agent's own session nor spool's stored
 			 * picture goes with it. What does stop is the stream, because a tab nobody can
 			 * reach must not go on holding a process the hands cannot see.
 			 */
@@ -816,7 +832,7 @@ export function useAgentThreads(project: string): AgentDeck {
 	}, [project, checkingOn, note, send]);
 
 	return {
-		threads: strip,
+		threads: column,
 		open,
 		finished: here.restored && !here.continuable,
 		// the standing fact, off the turn that ran: it goes the instant a turn does not

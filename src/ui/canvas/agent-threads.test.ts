@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askOf, bounced, cutPicture, lifeOf, nameOf, storedLife } from "./agent-threads";
+import { askOf, bounced, cutPicture, lastOf, lifeOf, nameOf, storedLife } from "./agent-threads";
 import type { AgentEntry } from "./agent-transcript";
 
 /**
@@ -193,6 +193,26 @@ describe("naming a thread after what it wrote", () => {
 	it("falls back to the ask, and then to nothing having happened at all", () => {
 		expect(nameOf([asked])).toBe("shoot home and fix what reads wrong");
 		expect(nameOf([])).toBe("new thread");
+	});
+});
+
+/**
+ * The line under the name in the flyout (#205): what the thread did last rather than what
+ * it is called, which the name cannot say because a name carries no verb.
+ */
+describe("the last line a thread drew", () => {
+	it("is the last row, in the rail's own nouns", () => {
+		expect(lastOf([asked, row("done", "read"), row("running", "edit")])).toBe("edit home");
+	});
+
+	it("is the verb alone where the call names no subject", () => {
+		expect(lastOf([{ ...row("done", "run"), subject: null }])).toBe("run");
+	});
+
+	/** prose is paragraphs and the flyout has one line, so a message is not a line */
+	it("is empty until the thread has drawn a row at all", () => {
+		expect(lastOf([])).toBe("");
+		expect(lastOf([asked, { key: "p0", kind: "prose", full: "done.", landed: [], settled: true }])).toBe("");
 	});
 });
 
