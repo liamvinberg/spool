@@ -2445,7 +2445,7 @@ describe("stopping a turn", () => {
 		expect(canvas.turn.stops).toHaveLength(1);
 	});
 
-	it("is offered against a running turn and against nothing else", async () => {
+	it("is offered against a turn that is still a process, and against nothing else", async () => {
 		const canvas = mount();
 		await canvas.render();
 
@@ -2457,8 +2457,9 @@ describe("stopping a turn", () => {
 		await settle();
 		expect(stopPress(canvas.host)).not.toBeNull();
 
-		// a parked turn is not a running turn: it is spending nothing and moving
-		// nowhere, and its way out is the question's own dismiss
+		// a parked turn is spending nothing and moving nowhere, and it is still a process
+		// standing in the repo: the question's own dismiss answers the question, and this is
+		// the only way out of the turn behind it (#234)
 		canvas.turn.push({ kind: "called", id: "c1", tool: "Bash", input: { command: "spool upgrade" }, parent: null });
 		canvas.turn.push({
 			kind: "asking",
@@ -2473,13 +2474,46 @@ describe("stopping a turn", () => {
 			parent: null,
 		});
 		await until(() => canvas.host.querySelector("[data-agent-ask]") !== null);
-		expect(stopPress(canvas.host)).toBeNull();
+		expect(stopPress(canvas.host)).not.toBeNull();
 
 		canvas.turn.push(ended);
 		canvas.turn.push(closed);
 		canvas.turn.close();
 		await settle();
 		expect(stopPress(canvas.host)).toBeNull();
+	});
+
+	/**
+	 * A queue behind an unanswered question had no bulk exit at all (#170, #234).
+	 *
+	 * The press was not drawn and escape returned before it reached anything, so the only
+	 * way out was answering a question you had parked precisely because you did not want to
+	 * — or taking the messages back one ✕ at a time.
+	 */
+	it("stops a turn parked on a question, and hands its queue back", async () => {
+		const canvas = mount();
+		await running(canvas);
+		await send(canvas.host, "hold off on add-habit");
+		canvas.turn.push({ kind: "called", id: "c1", tool: "Bash", input: { command: "rm -rf build" }, parent: null });
+		canvas.turn.push({
+			kind: "asking",
+			request: "req-1",
+			call: "c1",
+			tool: "Bash",
+			display: "Bash",
+			input: { command: "rm -rf build" },
+			description: "Remove the build folder",
+			interaction: false,
+			suggestions: [],
+			parent: null,
+		});
+		await until(() => canvas.host.querySelector("[data-agent-ask]") !== null);
+
+		await pressEscape(canvas.host, "composer");
+
+		expect(canvas.turn.stops).toHaveLength(1);
+		expect(field(canvas.host)?.value).toBe("hold off on add-habit");
+		expect(queuedRows(canvas.host)).toEqual([]);
 	});
 });
 

@@ -531,6 +531,35 @@ describe("what the queue survives", () => {
 		expect(canvas.latest().send("go")).toBe(true);
 	});
 
+	/**
+	 * What Enter means is the turn's to answer, not the last render's (#234).
+	 *
+	 * The two disagree for one frame every time a turn ends: the stream closes, the queue
+	 * fires, and the rail has not been drawn again yet. A press in that window was held for
+	 * a turn that had already gone — stranded behind the messages that had just left, and
+	 * sent only when whatever they started finished.
+	 */
+	it("says whether a turn is in flight now, asked of a render from before it ended", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		// the deck as one render left it, which is exactly what a press has in its hand
+		const drawn = canvas.latest();
+		expect(drawn.running()).toBe(true);
+		expect(drawn.phase).toBe("playing");
+
+		canvas.push(closed);
+		canvas.close();
+		await settle(300);
+
+		// the render is the one from before the turn ended and still says so; the question
+		// answers about the thread as it is
+		expect(drawn.phase).toBe("playing");
+		expect(drawn.running()).toBe(false);
+	});
+
 	it("hands the words back to the box when the thread is already running a turn", async () => {
 		const canvas = mount();
 		await canvas.render();

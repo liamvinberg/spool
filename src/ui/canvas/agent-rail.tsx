@@ -181,6 +181,7 @@ export function AgentRail({
 	handback,
 	draft,
 	onDraft,
+	running,
 	model,
 	limit,
 	onSend,
@@ -210,6 +211,15 @@ export function AgentRail({
 	draft: string;
 	/** the box saying what it holds now, which is how a draft outlives the tab (#234) */
 	onDraft: (text: string) => void;
+	/**
+	 * Whether a turn is in flight right now, asked rather than rendered (#234).
+	 *
+	 * Enter means one of three things and the turn is what decides between two of them, so
+	 * the press asks the turn at the instant of the press: the window between a stream
+	 * closing and the rail drawing that is exactly where a message was taken for a turn
+	 * that had already ended.
+	 */
+	running: () => boolean;
 	/** which machine is answering, and the list the binary offered instead (#118, #199) */
 	model: AgentModelDeck;
 	/** the usage window, absent until the binary warns, which is most of a session (#122) */
@@ -414,6 +424,7 @@ export function AgentRail({
 								if (took) setSpoke((count) => count + 1);
 								return took;
 							}}
+							running={running}
 							onQueue={onQueue}
 							onUnqueue={onUnqueue}
 							onStop={onStop}
@@ -2149,6 +2160,7 @@ function Composer({
 	queued,
 	model,
 	limit,
+	running,
 	onSend,
 	onQueue,
 	onUnqueue,
@@ -2191,6 +2203,8 @@ function Composer({
 	queued: readonly AgentQueued[];
 	model: AgentModelDeck;
 	limit: AgentLimit | null;
+	/** whether a turn is in flight at the instant of the press, off the turn itself (#234) */
+	running: () => boolean;
 	/** both of them say whether the words were taken, and the field empties on a yes (#234) */
 	onSend: (text: string, sent: AgentSent) => boolean;
 	onQueue: (text: string, sent: AgentSent) => boolean;
@@ -2200,24 +2214,15 @@ function Composer({
 }) {
 	const field = useRef<HTMLTextAreaElement>(null);
 	/*
-	 * A turn parked on a question takes the press as its answer, and everything else in
-	 * flight holds it.
+	 * A stop is offered against every turn that is still a process (#165, #180, #234).
 	 *
-	 * Parked is not finished: a turn held at an approval is still a live process holding
-	 * the repo, so its press is queued the way a streaming one's is. Only a question
-	 * turns the field into somewhere to answer, because only a question has somewhere
-	 * for words to go.
+	 * Parked included. A turn held at a question is spending nothing and moving nowhere,
+	 * which is why the stroke stops there — but it is a live process standing in the repo
+	 * with a queue behind it, and the question's own dismiss answers the question rather
+	 * than ending the turn. That left a queue behind an unanswered ask with no way out at
+	 * all: no bulk exit, and escape returning before it reached anything.
 	 */
-	const busy = (phase === "playing" || phase === "asking") && answering === null;
-	/*
-	 * A stop is only ever offered against a turn in flight (#165, #180).
-	 *
-	 * `playing` and not `busy`: a parked turn has already stopped by itself, it is
-	 * spending nothing and moving nowhere, and its way out is the question's own
-	 * dismiss. Drawing the stop there would be drawing a running turn where there is
-	 * none, which is the defect every parked frame in the prototype had.
-	 */
-	const cutting = phase === "playing";
+	const cutting = phase === "playing" || phase === "asking";
 
 	const resize = (element: HTMLTextAreaElement) => {
 		element.style.height = "auto";
@@ -2238,7 +2243,18 @@ function Composer({
 		// message the queue holds that is the whole contract, because it fires against a
 		// canvas the hands have moved on from
 		const sent: AgentSent = { context: contextOf(strip), attached, selection: pointing.entries };
-		const took = busy ? onQueue(text, sent) : onSend(text, sent);
+		/*
+		 * Asked of the turn itself rather than of the last render (#234).
+		 *
+		 * A press lands between a stream closing and React drawing that, and in that window
+		 * the rendered phase still says a turn is running while the queue has already fired:
+		 * a message taken then was held for a turn that had ended, behind everything that had
+		 * just gone out. The turn knows which it is at the instant of the press, and this asks
+		 * it. A turn parked on a question still holds the press, because a parked turn is a
+		 * live process — only a question with somewhere for words to go answers instead, and
+		 * that is decided above.
+		 */
+		const took = running() ? onQueue(text, sent) : onSend(text, sent);
 		// the field is emptied by something having taken the words and never by the press
 		// alone (#234): a rail whose threads are still arriving has nowhere to put them, and
 		// a box cleared over that is a sentence gone with no way back to it

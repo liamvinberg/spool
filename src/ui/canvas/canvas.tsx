@@ -3067,6 +3067,7 @@ export function ProjectCanvas({
 					handback={turn.handback}
 					draft={turn.draft}
 					onDraft={turn.onDraft}
+					running={turn.running}
 					model={model}
 					limit={turn.limit}
 					onSend={turn.send}
