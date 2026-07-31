@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { type AgentOffer, modelsOf } from "../../daemon/agent-offer";
 import { readModelsReply } from "../../test-helpers";
-import { EFFORT_SAYS, effortLevels, menuLongest, menuSays, modelReadout, NO_OFFER, offerOf } from "./agent-model";
+import {
+	EFFORT_SAYS,
+	effortLevels,
+	menuLongest,
+	menuSays,
+	modelReadout,
+	NO_OFFER,
+	offerOf,
+	pressedOffer,
+} from "./agent-model";
 
 /**
  * The readout and the menu's one sentence (#118, #184, #186, #199).
@@ -130,6 +139,42 @@ describe("the one sentence", () => {
 			const asked = [null, ...offer.models.map((model) => model.value), ...effortLevels(offer)];
 			for (const over of asked) expect(menuSays(offer, over).length).toBeLessThanOrEqual(reserved);
 		}
+	});
+});
+
+describe("the press, before the binary has answered it", () => {
+	it("moves the readout and the highlight to the row that was pressed", () => {
+		const pressed = pressedOffer(OFFERED, { value: "sonnet" });
+
+		expect(modelReadout(pressed)).toBe("Sonnet · high");
+		expect(pressed.current.value).toBe("sonnet");
+		// the row's own resolved id, which is true by the time the row is offered at all
+		expect(pressed.current.resolved).toBe("claude-sonnet-5");
+		// and none of the old machine's report is left behind under the new row: the
+		// binary's product word for this one is the binary's to say, and it has not said it
+		expect(pressed.current.name).toBeNull();
+	});
+
+	it("asserts no level a model says it does not have", () => {
+		// `Haiku · high` for the second the reply is in flight would be a level on a model
+		// carrying no `supportedEffortLevels` at all
+		expect(modelReadout(pressedOffer(OFFERED, { value: "haiku" }))).toBe("Haiku");
+		expect(effortLevels(pressedOffer(OFFERED, { value: "haiku" }))).toEqual([]);
+		// and a level pressed on a model that offers it rides straight to the line
+		expect(modelReadout(pressedOffer(OFFERED, { effort: "xhigh" }))).toBe("Opus (1M context) · xhigh");
+	});
+
+	it("moves nothing the environment holds", () => {
+		// the rows are dead for the same reason the change is never sent: measured, an
+		// exported CLAUDE_CODE_EFFORT_LEVEL refuses in-session changes and names itself
+		const pinned = on({ effort: "max", pin: "max" });
+		expect(pressedOffer(pinned, { effort: "low" }).current.effort).toBe("max");
+	});
+
+	it("keeps the report where the press says nothing about it", () => {
+		// a level survives a model switch that offers it, and a model survives a level
+		expect(pressedOffer(OFFERED, { effort: "low" }).current.value).toBe("opus[1m]");
+		expect(pressedOffer(OFFERED, { value: "claude-fable-5[1m]" }).current.effort).toBe("high");
 	});
 });
 

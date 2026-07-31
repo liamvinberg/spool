@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type AgentAsk, type AgentOffer, modelOf, modelsOf } from "../../daemon/agent-offer";
 import { agentModelOffer, chooseAgentModel } from "../api";
 
@@ -6,11 +6,18 @@ import { agentModelOffer, chooseAgentModel } from "../api";
  * Which machine is answering, and what the menu may offer instead (#118, #199).
  *
  * Nothing in this file knows what a model is called. The names, the sentences and the
- * effort levels all arrive from the binary's own `list_models`, and what is drawn as
- * current is what the binary reported when asked — never what spool asked for. A
- * control that renders its own state is guessing; one that renders the report cannot
- * be wrong, and it can be overruled: an alias the binary does not take, an effort the
- * environment holds, a model that resolved to something else.
+ * effort levels all arrive from the binary's own `list_models`, and the report is what
+ * settles what is current — never what spool asked for. A control that renders its own
+ * state is guessing; one that renders the report cannot be wrong, and it can be
+ * overruled: an alias the binary does not take, an effort the environment holds, a model
+ * that resolved to something else.
+ *
+ * The press is drawn in the meantime, and only in the meantime. Asking costs a spawn —
+ * about a second cold — and a menu that sat unmoved for a second under a finger reads as
+ * broken rather than as careful, so the row lights up and the readout moves at once. What
+ * is on screen for that second is a claim spool is making, and it is a claim with an
+ * expiry: the report replaces it whole the moment it lands, including where it says the
+ * press was refused, which is what puts the line back.
  */
 
 /** the offer before the binary has answered, so the footer has a shape from the first frame */
@@ -161,6 +168,39 @@ export function menuLongest(offer: AgentOffer): string {
 	return said.reduce((tallest, sentence) => (sentence.length > tallest.length ? sentence : tallest), "");
 }
 
+/**
+ * The report with a press laid over it, which is what the menu draws until the reply.
+ *
+ * It asserts what the press asserts and not one thing more. The value is the row that was
+ * pressed, so the highlight and the name move under the finger; the resolved id comes off
+ * that row, because a row's own `resolvedModel` is true by the time it is offered. The
+ * binary's product word for it does not, and is dropped rather than carried: `name` is the
+ * fallback the readout uses when no offered row matches, and the old model's word for
+ * itself under the new model's row is the one lie this could tell.
+ *
+ * Effort is only ever drawn where the model says the level exists. Switching to haiku
+ * takes the level off the line in the same frame the control disappears, rather than
+ * leaving `Haiku · high` up for a second on a model that reports no levels at all — and a
+ * level the environment holds is not moved by a press here either, for the reason the rows
+ * are dead: the change is refused before it is sent.
+ */
+export function pressedOffer(offer: AgentOffer, press: AgentAsk): AgentOffer {
+	const value = press.value ?? offer.current.value;
+	const model = modelOf(offer.models, value);
+	const wanted = offer.current.pin ?? press.effort ?? offer.current.effort;
+	const levels = model?.supportedEffortLevels ?? [];
+	return {
+		models: offer.models,
+		current: {
+			...offer.current,
+			value,
+			resolved: model?.resolvedModel ?? offer.current.resolved,
+			name: model === undefined ? offer.current.name : null,
+			effort: wanted !== null && levels.includes(wanted) ? wanted : null,
+		},
+	};
+}
+
 export interface AgentModelDeck {
 	readonly offer: AgentOffer;
 	/** the readout, and the trigger's own label */
@@ -185,29 +225,42 @@ export interface AgentModelDeck {
  * every thread and which of them is answering does not, so switching thread re-asks
  * rather than carrying the last one's model across.
  *
- * Nothing is drawn about the wait, and the wait is real — a cold spawn is about a
- * second. There is no state to draw: the readout is the binary's report and the report
- * does not exist yet, so anything on screen in that second would be spool asserting a
- * machine it has not been told about, which is the one thing this surface refuses.
+ * Nothing is drawn about the first wait, and that wait is real — a cold spawn is about a
+ * second. There is no state to draw before anything has been pressed: the readout is the
+ * binary's report and the report does not exist yet, so anything on screen in that second
+ * would be spool asserting a machine it has not been told about. A *press* is different,
+ * because the press is the one thing spool does know, so it is held here beside the report
+ * and drawn over it until the report catches up.
+ *
+ * The press is kept with the thread it was made about, so it never lands on a thread it
+ * was not about. It is dropped whenever an answer to it arrives — including an answer that
+ * arrives as nothing, which is the door failing, and which leaves the last true report on
+ * screen rather than a claim nobody can now check.
  */
 export function useAgentModel(project: string, thread: string): AgentModelDeck {
-	const [offer, setOffer] = useState<AgentOffer>(NO_OFFER);
+	const [reported, setReported] = useState<AgentOffer>(NO_OFFER);
+	/** the press no answer has come back for yet, and the thread it was made about */
+	const [pressed, setPressed] = useState<{ thread: string; ask: AgentAsk } | null>(null);
 	/** climbs per ask, which is what re-asks the binary when the menu opens */
 	const [asked, setAsked] = useState(0);
+	/** climbs per press, so a probe that was already in flight cannot land on a newer one */
+	const presses = useRef(0);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `asked` is not read in here, it is the trigger — climbing it is what re-asks the binary
 	useEffect(() => {
 		// a thread with no id yet is the deck before it has minted one, and there is nothing
 		// to ask about it
 		if (thread === "") {
-			setOffer(NO_OFFER);
+			setReported(NO_OFFER);
 			return;
 		}
 		let live = true;
+		const at = presses.current;
 		void agentModelOffer(project, thread).then((answered) => {
 			const read = offerOf(answered);
-			// an answer that arrived after the rail moved on is dropped rather than drawn
-			if (live && read !== null) setOffer(read);
+			// dropped where the rail moved on, and where a press went out after this ask did:
+			// an answer to the older question knows nothing about the newer choice
+			if (live && at === presses.current && read !== null) setReported(read);
 		});
 		return () => {
 			live = false;
@@ -217,15 +270,30 @@ export function useAgentModel(project: string, thread: string): AgentModelDeck {
 	const choose = useCallback(
 		(next: AgentAsk) => {
 			if (thread === "") return;
-			void chooseAgentModel(project, thread, next).then((answered) => {
-				const read = offerOf(answered);
-				// the reply moves the readout and the press does not, which is what keeps the
-				// footer from ever saying a machine the binary refused
-				if (read !== null) setOffer(read);
-			});
+			presses.current += 1;
+			const at = presses.current;
+			// the press is drawn at once, because the reply is a spawn away and a control that
+			// answers a second after the finger reads as broken. It is a claim and not a
+			// record: what the binary reports is still the only thing that stays
+			setPressed((held) => ({ thread, ask: held?.thread === thread ? { ...held.ask, ...next } : next }));
+			void chooseAgentModel(project, thread, next)
+				.then((answered) => offerOf(answered))
+				// a door that failed answers nothing, which is the same as an answer with nothing
+				// in it here: the claim comes off the screen either way
+				.catch(() => null)
+				.then((read) => {
+					// a newer press owns the readout, and its own reply is what will clear it
+					if (at !== presses.current) return;
+					if (read !== null) setReported(read);
+					setPressed(null);
+				});
 		},
 		[project, thread],
 	);
+
+	// the press only ever answers for the thread it was made about, so a rail that moved
+	// on draws the report it has rather than the last thread's finger
+	const offer = pressed === null || pressed.thread !== thread ? reported : pressedOffer(reported, pressed.ask);
 
 	return {
 		offer,
