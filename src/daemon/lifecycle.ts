@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { SpoolError } from "../errors";
+import { DEFAULT_HOST, DEFAULT_PORT, isLoopbackHost } from "./loopback";
 import { renderOriginFor } from "./security";
 
 /**
@@ -34,8 +35,7 @@ export interface ServeConfig {
 	notices: readonly string[];
 }
 
-export const DEFAULT_HOST = "127.0.0.1";
-export const DEFAULT_PORT = 7766; // SPOO on a phone keypad
+export { DEFAULT_HOST, DEFAULT_PORT } from "./loopback";
 
 /**
  * ~/.spool unless SPOOL_DIR says otherwise — the state half of the dogfood
@@ -139,11 +139,6 @@ export function assertLoopbackHost(host: string): void {
 	throw new SpoolError(
 		`Spool daemon host must be a supported loopback host (127.0.0.1, localhost, or ::1), got "${host}"`,
 	);
-}
-
-/** The hosts the daemon binds, and the hosts allowed to read health cross-origin. */
-export function isLoopbackHost(host: string): boolean {
-	return host === "127.0.0.1" || host === "localhost" || host === "::1";
 }
 
 export interface DaemonState {

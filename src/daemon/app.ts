@@ -44,7 +44,7 @@ import { createFlowGraph, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
-import { isLoopbackHost } from "./lifecycle";
+import { isLoopbackHost } from "./loopback";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
