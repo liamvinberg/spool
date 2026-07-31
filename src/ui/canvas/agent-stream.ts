@@ -166,6 +166,15 @@ export interface AgentTurn {
 	/** whatever left the queue un-fired, for whoever is holding the box (#170) */
 	readonly handback: AgentHandback;
 	/**
+	 * Whether a turn is in flight right now, which a render cannot answer (#234).
+	 *
+	 * `phase` is what the rail last drew; this is what the thread is doing at the instant it
+	 * is asked. They disagree for one frame every time a turn ends — the stream closes, the
+	 * queue fires and React has not been told yet — and a press that landed in that window
+	 * was held for a turn that had already gone, behind the messages that had just left.
+	 */
+	readonly running: () => boolean;
+	/**
 	 * The words in the box that nobody has sent, as the picture last had them (#234).
 	 *
 	 * What the composer starts from rather than what it is: the field's live value is the
@@ -1228,6 +1237,9 @@ export function useAgentThreads(project: string): AgentDeck {
 				void interruptAgentTurn(project, thread.named);
 			}, [project, hold, handBack]),
 			handback: here.handback,
+			// the stream writes it and no render is involved, which is the whole point of it
+			// being a question rather than a field (#234)
+			running: useCallback(() => threads.current.get(openRef.current)?.streaming === true, []),
 			/** the words in the box that nobody has sent, as the picture last had them (#234) */
 			draft: here.draft,
 			onDraft: useCallback(
