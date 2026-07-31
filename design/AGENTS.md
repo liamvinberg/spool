@@ -27,6 +27,7 @@ Every frame lives on a page; the root page stays empty on purpose.
 | --- | --- |
 | `app` | Spool as it shipped — home, the canvas, its context menu, the empty project, the player, the system sheet. Walk it end to end: it is a working model of the product. |
 | `agent` | The agent chat, decided by map [#114](https://github.com/liamvinberg/spool/issues/114) and swept to its winners on 2026-08-01 — the deleted explorations read back from `444c39c`. Read `agent-chat` first, the compile ([#180](https://github.com/liamvinberg/spool/issues/180)). `agent-hand` is the one open subject: what the canvas draws while the agent works a frame ([#214](https://github.com/liamvinberg/spool/issues/214)). |
+| `components` | Four unresolved takes on the component library page ([#189](https://github.com/liamvinberg/spool/issues/189)): sheet, index, slots and walk. |
 | `site` | spool.page ([#31](https://github.com/liamvinberg/spool/issues/31)), unbuilt. The hub and its four sections. |
 | `directing` | The directing toolset ([#56](https://github.com/liamvinberg/spool/issues/56), [#65](https://github.com/liamvinberg/spool/issues/65)), unbuilt. `directing--annotate` is the canonical frame the spec is written against. |
 | `play-inline` | Whether play should zoom into the frame rather than open `/play/...` in a new tab. Three transition characters over one mock canvas, built to be felt rather than argued; nothing decided. Each frame is self-contained. |
