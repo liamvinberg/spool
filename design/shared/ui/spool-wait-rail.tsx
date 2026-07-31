@@ -109,6 +109,9 @@ const CHROME = 29;
  *   row     the thought goes back in the log as a receipt and *stays there*. What `b4aef45`
  *           deleted was a line that was removed again; a line that is never removed cannot
  *           drag anything, and it is the only take that leaves a turn readable afterwards.
+ *   both    `row`'s receipt and the shipped stroke together, which is the one this row
+ *           settled on. The two are not competing: the receipt is the record and the stroke
+ *           is the pulse, and only one of them is still there tomorrow.
  */
 export type WaitTake =
 	| "now"
@@ -121,12 +124,13 @@ export type WaitTake =
 	| "under"
 	| "ride"
 	| "gauge"
-	| "row";
+	| "row"
+	| "both";
 
 /** the takes that hang a readout on the transcript's bottom edge */
 const EDGE_SLOT = new Set<WaitTake>(["line", "shimmer", "under", "ride"]);
 /** the takes that draw the shipped hairline, in one shape or another */
-const STROKE = new Set<WaitTake>(["stroke", "under", "ride", "gauge"]);
+const STROKE = new Set<WaitTake>(["stroke", "under", "ride", "gauge", "both"]);
 
 /**
  * A word that is alive because the light moves across it, which is what the two desktop
@@ -490,7 +494,7 @@ function Transcript({
 	/* `row` keeps every one of them, live and finished alike: the whole claim is that a
 	   thought is a receipt, and a receipt that is deleted once the answer lands is the
 	   beat again wearing a verb */
-	const thoughts = take === "row" ? waits : [];
+	const thoughts = take === "row" || take === "both" ? waits : [];
 	for (const entry of entries) {
 		for (const beat of beats)
 			if (beat.before === entry.key) items.push({ key: beat.key, tight: true, node: <Beat id={beat.key} /> });
