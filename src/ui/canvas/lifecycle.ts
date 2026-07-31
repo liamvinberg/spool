@@ -199,6 +199,12 @@ export interface SweepInput {
 	camera: Camera | null;
 	/** The viewport's CSS size, read when this sweep runs. */
 	viewport: { width: number; height: number } | null;
+	/**
+	 * The canvas is asleep beneath inline play (#210). Nothing out here is being
+	 * looked at, so every frame goes back to its picture and the machine the
+	 * player is running gets the whole browser.
+	 */
+	hibernating: boolean;
 }
 
 /**
@@ -235,7 +241,15 @@ export interface SweepResult {
 }
 
 export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
-	const { frames, entered, selectionTargets, held, states, ready, capturing, hasCover, now, camera, viewport } = input;
+	const { frames, states, ready, capturing, hasCover, now, hibernating } = input;
+	// Hibernation is one substitution rather than a branch per rule: nobody is
+	// asking for a frame, and a null camera sees none of them, so every intent
+	// this function can form is already the resting one.
+	const entered = hibernating ? null : input.entered;
+	const selectionTargets = hibernating ? NOTHING : input.selectionTargets;
+	const held = hibernating ? null : input.held;
+	const camera = hibernating ? null : input.camera;
+	const viewport = hibernating ? null : input.viewport;
 	// A frame going back to its picture can be told from a frame you left.
 	// Zooming out must not bill a screenful of frames for a fresh still; going
 	// inside one still must.
@@ -388,6 +402,8 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	};
 }
 
+const NOTHING: ReadonlySet<string> = new Set<string>();
+
 /** Whether the mounted document has been allowed to run. Held HTML runs behind its still. */
 const running = (state: FrameState, kind: ProjectedFrame["kind"]): boolean =>
 	state === "live" || state === "refreshing" || (state === "held" && kind === "html");
@@ -416,10 +432,12 @@ export interface LifecycleDeps {
 	cameraRef: RefObject<Camera | null>;
 	/** The viewport element, for its CSS size. */
 	viewportRef: RefObject<HTMLElement | null>;
+	/** Whether the canvas is asleep beneath inline play (#210). */
+	hibernating: boolean;
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
-	const { framesRef, entered, selectionTargets, hasCover, onShot, cameraRef, viewportRef } = deps;
+	const { framesRef, entered, selectionTargets, hasCover, onShot, cameraRef, viewportRef, hibernating } = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
 	// when each frame reported loaded, not merely that it did: a still is only
@@ -434,6 +452,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	enteredRef.current = entered;
 	const selectionTargetsRef = useRef(selectionTargets);
 	selectionTargetsRef.current = selectionTargets;
+	const hibernatingRef = useRef(hibernating);
+	hibernatingRef.current = hibernating;
 	const hasCoverRef = useRef(hasCover);
 	hasCoverRef.current = hasCover;
 	const onShotRef = useRef(onShot);
@@ -613,6 +633,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				viewportRef.current === null
 					? null
 					: { width: viewportRef.current.clientWidth, height: viewportRef.current.clientHeight },
+			hibernating: hibernatingRef.current,
 		});
 		for (const frame of result.refreshCaptures) {
 			void requestCapture(frame).then((image) => noteErrandShot(model.current, frame, image !== undefined));

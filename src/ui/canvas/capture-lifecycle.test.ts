@@ -58,6 +58,7 @@ async function mountLifecycle(onShot: (frame: string, image: CoverRaster) => voi
 			onShot,
 			cameraRef: { current: null },
 			viewportRef: { current: null },
+			hibernating: false,
 		});
 		return null;
 	}

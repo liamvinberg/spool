@@ -4,6 +4,7 @@
  * exponential wheel zoom, cubic ease-out flights.
  */
 
+import { fitBox, type Placement } from "../../fit";
 import type { Camera } from "../api";
 
 export interface Box {
@@ -60,10 +61,36 @@ export function zoomAt(camera: Camera, cx: number, cy: number, factor: number): 
 	return { k, x: cx - (cx - camera.x) * r, y: cy - (cy - camera.y) * r };
 }
 
+/** The breathing room a canvas fit leaves around what it framed. */
+export const FIT_INSET = 128;
+
+/** The camera that lands a placement's scale and screen origin on a world box. */
+export function cameraFor(placement: Placement, box: Box): Camera {
+	return {
+		k: placement.scale,
+		x: placement.x - box.x * placement.scale,
+		y: placement.y - box.y * placement.scale,
+	};
+}
+
 /** Frame the given bounds inside vw×vh with breathing room, never past 100%. */
 export function fitCamera(bounds: Box, vw: number, vh: number): Camera {
-	const k = clamp(Math.min((vw - 128) / bounds.w, (vh - 128) / bounds.h), K_MIN, 1);
-	return { k, x: (vw - bounds.w * k) / 2 - bounds.x * k, y: (vh - bounds.h * k) / 2 - bounds.y * k };
+	return cameraFor(fitBox(bounds.w, bounds.h, vw, vh, { inset: FIT_INSET, minScale: K_MIN }), bounds);
+}
+
+/**
+ * The camera that puts a frame exactly where the player's stage would (#210):
+ * the same edge-to-edge fit, so the flight's landing values are the placement
+ * values and the handoff into inline play cannot be a pixel out.
+ *
+ * The stage covers the whole window while the camera lives inside the canvas
+ * viewport, which the top bar and the rails inset. So the fit is taken in
+ * window space and then moved by where that viewport starts; without it the
+ * flight would land off by the width of the chrome around it.
+ */
+export function stageCamera(frame: Box, vw: number, vh: number, origin: Point = { x: 0, y: 0 }): Camera {
+	const place = fitBox(frame.w, frame.h, vw, vh);
+	return cameraFor({ scale: place.scale, x: place.x - origin.x, y: place.y - origin.y }, frame);
 }
 
 /** Pan (same zoom) so the box is centered — the flow-walk's camera move (#5). */
