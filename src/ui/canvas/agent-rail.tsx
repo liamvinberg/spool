@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentLimit } from "../../daemon/agent-events";
@@ -486,6 +486,8 @@ const FLYOUT_H = 128;
 interface Hovered {
 	readonly id: string;
 	readonly top: number;
+	/** how far in from the window's right edge the flyout ends, which is the column's left edge */
+	readonly right: number;
 	/** the clock read at the hover, because that is the moment the age is about */
 	readonly now: number;
 }
@@ -497,22 +499,36 @@ interface Hovered {
  * case this column exists to survive: past the cells that fit, a thread's place in the list
  * and its place on the screen are different numbers. So the cell is asked where it is, and
  * the flyout is held clear of the bottom edge from there.
+ *
+ * The numbers are the window's rather than the column's because the flyout is `fixed` (#207):
+ * it belongs to its cell in the tree, so the caret reaches the close from the cell it is on,
+ * and the scroller its cell lives in would otherwise clip it away entirely.
  */
-function flyoutAt(cell: HTMLElement, column: HTMLElement | null): { top: number; now: number } {
-	const now = Date.now();
-	if (column === null) return { top: 0, now };
-	const top = cell.getBoundingClientRect().top - column.getBoundingClientRect().top;
-	return { top: Math.max(0, Math.min(top, column.clientHeight - FLYOUT_H)), now };
+/** whether focus landed inside a flyout, which is the one place a cell may lose it to */
+const inFlyout = (target: EventTarget | null): boolean =>
+	target instanceof Element && target.closest("[data-agent-flyout]") !== null;
+
+function flyoutAt(cell: HTMLElement, column: HTMLElement | null): { top: number; right: number } {
+	if (column === null) return { top: 0, right: 0 };
+	const box = column.getBoundingClientRect();
+	const wanted = cell.getBoundingClientRect().top;
+	return {
+		top: Math.max(box.top, Math.min(wanted, box.bottom - FLYOUT_H)),
+		right: Math.max(0, window.innerWidth - box.left),
+	};
 }
 
 function Spine({ threads, room }: { threads: Threads; room: number }) {
 	const { list, open, onOpen, onClose, onNew } = threads;
 	const column = useRef<HTMLDivElement>(null);
 	const [over, setOver] = useState<Hovered | null>(null);
-	const shown = list.find((thread) => thread.id === over?.id);
+	/** the cell the open flyout was measured off, so a scroll can measure it again */
+	const asked = useRef<HTMLElement | null>(null);
 	/** the pointer and the caret ask the same question, and it is answered the same way */
-	const ask = (id: string) => (event: { currentTarget: HTMLElement }) =>
-		setOver({ id, ...flyoutAt(event.currentTarget, column.current) });
+	const ask = (id: string) => (event: { currentTarget: HTMLElement }) => {
+		asked.current = event.currentTarget;
+		setOver({ id, now: Date.now(), ...flyoutAt(event.currentTarget, column.current) });
+	};
 
 	return (
 		// the flyout is a child, so moving the pointer off a cell and onto it never leaves
@@ -533,41 +549,63 @@ function Spine({ threads, room }: { threads: Threads; room: number }) {
 			>
 				<PlusIcon />
 			</button>
-			<div className="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+			<div
+				className="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+				// a fixed box does not travel with the cell it belongs to, so the cell is asked
+				// again where it is rather than the flyout being taken away mid-read
+				onScroll={() => {
+					const cell = asked.current;
+					if (cell === null) return;
+					setOver((was) => (was === null ? was : { ...was, ...flyoutAt(cell, column.current) }));
+				}}
+			>
 				{list.map((thread) => {
 					const on = thread.id === open;
 					return (
-						<button
-							key={thread.id}
-							type="button"
-							data-agent-thread={thread.name}
-							data-agent-thread-life={thread.life}
-							aria-label={thread.name}
-							aria-current={on ? "true" : undefined}
-							onMouseEnter={ask(thread.id)}
-							onFocus={ask(thread.id)}
-							// a caret leaving takes the flyout it opened with it, and only that one:
-							// the pointer may be somewhere else by now, and it asked more recently
-							onBlur={() => setOver((was) => (was?.id === thread.id ? null : was))}
-							onClick={() => onOpen(thread.id)}
-							className={cn(
-								"relative flex h-[34px] shrink-0 items-center justify-center transition-colors duration-150",
-								on ? "bg-surface/70" : "hover:bg-surface/40",
-							)}
-						>
-							{/* the accent says which one is open, exactly as the tab's underline did, and it
+						<Fragment key={thread.id}>
+							<button
+								type="button"
+								data-agent-thread={thread.name}
+								data-agent-thread-life={thread.life}
+								aria-label={thread.name}
+								aria-current={on ? "true" : undefined}
+								onMouseEnter={ask(thread.id)}
+								onFocus={ask(thread.id)}
+								// a caret leaving takes the flyout it opened with it, and only that one:
+								// the pointer may be somewhere else by now, and it asked more recently. Its
+								// own flyout is not leaving: that is where the close it reached for is (#207)
+								onBlur={(event) => {
+									if (inFlyout(event.relatedTarget)) return;
+									setOver((was) => (was?.id === thread.id ? null : was));
+								}}
+								onClick={() => onOpen(thread.id)}
+								className={cn(
+									"relative flex h-[34px] shrink-0 items-center justify-center transition-colors duration-150",
+									on ? "bg-surface/70" : "hover:bg-surface/40",
+								)}
+							>
+								{/* the accent says which one is open, exactly as the tab's underline did, and it
 							    faces the panel it owns. With one thread there is no which, so it draws none */}
-							{on && list.length > 1 ? (
-								<span className="pointer-events-none absolute inset-y-0 left-0 w-[2px] bg-thread" />
+								{on && list.length > 1 ? (
+									<span className="pointer-events-none absolute inset-y-0 left-0 w-[2px] bg-thread" />
+								) : null}
+								<ThreadMark life={thread.life} />
+							</button>
+							{over?.id === thread.id ? (
+								<Flyout
+									thread={thread}
+									top={over.top}
+									right={over.right}
+									now={over.now}
+									room={room}
+									onClose={() => onClose(thread.id)}
+									onLeave={() => setOver((was) => (was?.id === thread.id ? null : was))}
+								/>
 							) : null}
-							<ThreadMark life={thread.life} />
-						</button>
+						</Fragment>
 					);
 				})}
 			</div>
-			{shown === undefined || over === null ? null : (
-				<Flyout thread={shown} top={over.top} now={over.now} room={room} onClose={() => onClose(shown.id)} />
-			)}
 		</div>
 	);
 }
@@ -583,26 +621,38 @@ function Spine({ threads, room }: { threads: Threads; room: number }) {
  * Its width is the room there is rather than a constant. The rail is draggable and it
  * clips: 268 sits inside the 420 default with the column already paid for, and at the 200
  * floor a flyout that kept it would be cut in half by the edge it hangs over.
+ *
+ * It sits in its own cell's markup and is placed against the window rather than the column,
+ * because the two ways to reach it want opposite things (#207). The pointer wants it clear of
+ * the scroller, which clips anything hanging out of its side; the caret wants it next after
+ * the cell, which is the only ordering that puts the close one tab away. A `fixed` box in the
+ * cell's own subtree is both, and it costs the assumption that nothing above the rail makes a
+ * containing block — nothing does, and a transform anywhere over it would be visible at once.
  */
 function Flyout({
 	thread,
 	top,
+	right,
 	now,
 	room,
 	onClose,
+	onLeave,
 }: {
 	thread: Thread;
 	top: number;
+	right: number;
 	now: number;
 	/** what the panel has left, which is as wide as this may get */
 	room: number;
 	onClose: () => void;
+	/** the caret left the flyout for something that is not in it */
+	onLeave: () => void;
 }) {
 	return (
 		<div
 			data-agent-flyout={thread.name}
-			className="absolute right-full z-20 border border-border-raised bg-surface px-3 py-2.5"
-			style={{ top, width: Math.min(FLYOUT_W, room) }}
+			className="fixed z-20 border border-border-raised bg-surface px-3 py-2.5"
+			style={{ top, right, width: Math.min(FLYOUT_W, room) }}
 		>
 			<p className="font-mono text-sm text-text leading-4">{thread.name}</p>
 			<div className="mt-1.5 flex items-center gap-2">
@@ -617,6 +667,8 @@ function Flyout({
 					data-agent-thread-close={thread.name}
 					aria-label={`close ${thread.name}`}
 					onClick={onClose}
+					// the only thing in here a caret can hold, so its leaving is the flyout's
+					onBlur={onLeave}
 					className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted/45 transition-colors duration-150 hover:text-text"
 				>
 					<CloseIcon />
