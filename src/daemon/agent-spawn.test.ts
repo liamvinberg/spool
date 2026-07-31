@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { skillText } from "../skill";
-import { AGENT_ALLOW_RULES, agentFraming, agentPromptContent, agentPromptLine, planAgentSpawn } from "./agent-spawn";
+import { agentAllowRules, agentFraming, agentPromptContent, agentPromptLine, planAgentSpawn } from "./agent-spawn";
 
 /** a thread nobody has spawned yet, which is the ordinary case a flag test wants */
 const FRESH = { id: "6b5c1d2e-1111-4222-8333-444455556666", resume: false } as const;
@@ -64,11 +64,20 @@ describe("the spawn", () => {
 			permissions?: { allow?: string[]; deny?: string[] };
 			sandbox?: { enabled?: boolean };
 		};
-		expect(settings.permissions?.allow).toEqual(AGENT_ALLOW_RULES);
+		expect(settings.permissions?.allow).toEqual(agentAllowRules("/tmp/product"));
 		// the mutation fence, the harmless three (read anywhere, fetch, search),
 		// and the whole shell: no command ever asks — observed live, the sandbox
-		// still routed a read-only loop to the prompt, so the rule is the floor
-		expect(AGENT_ALLOW_RULES).toEqual(["Edit(./design/**)", "Read(//**)", "WebFetch", "WebSearch", "Bash"]);
+		// still routed a read-only loop to the prompt, so the rule is the floor.
+		// The edit rule is absolute (// prefix) because a relative one anchors to
+		// the shell's current directory, and one persistent `cd design` made
+		// every frame write ask
+		expect(agentAllowRules("/tmp/product")).toEqual([
+			"Edit(//tmp/product/design/**)",
+			"Read(//**)",
+			"WebFetch",
+			"WebSearch",
+			"Bash",
+		]);
 		// deny beats allow and cannot express an exception, so there is no deny
 		expect(settings.permissions?.deny).toBeUndefined();
 		// and the shell is not narrowed: the fence is paths, never commands
