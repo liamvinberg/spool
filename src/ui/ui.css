@@ -107,6 +107,95 @@
 	 * away from where it came from */
 	--animate-agent-menu-in: agent-menu-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
 
+	/* the agent's hand on a frame (#214). Nothing here fades in: every one of these is
+	 * drawn on from where it means something, and the timings are the canonical frame's
+	 * — `design/frames/agent/agent-hand` — rather than this file's taste.
+	 *
+	 * The thread winds off the node. `pathLength: 1` normalizes the dash to the run, so
+	 * one rule winds a full-height thread and a 76px one at the same pace, and the same
+	 * property run the other way is how it lets go. */
+	--animate-hand-wind: hand-wind 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	/* the node arrives at its own size rather than growing into place */
+	--animate-hand-node: hand-node 200ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	/* one envelope, and both ends of it came from the capture rather than from taste:
+	 * 140 opening, 320 held, 400 leaving. The floor is 180, because `frame-shell.tsx`
+	 * fades a rebooted frame's cover out over exactly that and a mark shorter than the
+	 * seam is a flash of nothing; the ceiling is 1,166, the smallest sum of two
+	 * consecutive write gaps in the capture, which is what keeps a third plate off one
+	 * frame. It opens from the block's own centre, so the mark has an origin and the
+	 * origin is the change. */
+	--animate-hand-plate: hand-plate 860ms forwards;
+	/* the ledger, at 6s: a mark must outlive the run that made it (longest 4.84s) and two
+	 * runs must stay apart (shortest gap 6.14s), which leaves a window 1.3s wide. Ink
+	 * carries the age and width carries it again, and it thins toward the frame so what
+	 * recedes is the part furthest from the thing it is about. The decay is linear after
+	 * the hold, because the one thing a ledger has to keep legible is the order of a run
+	 * and an eased one makes two marks a second apart look the same age. */
+	--animate-hand-lane: hand-lane 6000ms linear forwards;
+
+	@keyframes hand-wind {
+		from {
+			stroke-dashoffset: 1;
+		}
+	}
+
+	@keyframes hand-node {
+		from {
+			opacity: 0;
+			transform: scale(0.4);
+		}
+	}
+
+	@keyframes hand-plate {
+		/* out fast, hold flat, in slow: the segments carry their own easing, because one
+		 * curve over the whole 860ms would make the opening lazy and the draining abrupt */
+		0% {
+			opacity: 0;
+			transform: scaleY(0.34);
+			animation-timing-function: ease-out;
+		}
+		16.3% {
+			opacity: 0.15;
+			transform: scaleY(1);
+			animation-timing-function: linear;
+		}
+		53.5% {
+			opacity: 0.15;
+			transform: scaleY(1);
+			animation-timing-function: ease-in;
+		}
+		100% {
+			opacity: 0;
+			transform: scaleY(1);
+		}
+	}
+
+	@keyframes hand-lane {
+		0% {
+			opacity: 0;
+			width: 3px;
+			transform: translateX(0);
+			animation-timing-function: ease-out;
+		}
+		1.3% {
+			opacity: 0.9;
+			width: 3px;
+			transform: translateX(0);
+		}
+		11.7% {
+			opacity: 0.9;
+			width: 3px;
+			transform: translateX(0);
+		}
+		100% {
+			opacity: 0;
+			width: 1px;
+			/* the edge against the frame stays put and the far one comes in, so what
+			 * recedes is the part furthest from the thing the mark is about */
+			transform: translateX(2px);
+		}
+	}
+
 	@keyframes agent-entry {
 		from {
 			opacity: 0;
@@ -279,6 +368,74 @@
 	.animate-agent-wind {
 		transform: translateX(6.372%) scaleX(0.3406);
 	}
+
+	/* the agent's hand (#214). The presence simply stands there: a thread told not to
+	 * wind on is a thread that is already on, which is the picture the gesture was
+	 * heading for. */
+	.animate-hand-wind,
+	.animate-hand-node {
+		animation: none;
+	}
+
+	[data-hand-thread],
+	[data-hand-corner],
+	[data-hand-node] {
+		transition: none;
+	}
+
+	/* a located mark cannot take `animation: none`, because what carries it away is the
+	 * animation: the plate would sit at full ink over the design for the rest of the
+	 * session. It keeps its life and loses its gesture — struck at once, held, gone. */
+	.animate-hand-plate {
+		animation: hand-plate-still 860ms steps(1, end) forwards;
+	}
+
+	.animate-hand-lane {
+		animation: hand-lane-still 6000ms steps(1, end) forwards;
+	}
+
+	@keyframes hand-plate-still {
+		0% {
+			opacity: 0.15;
+		}
+		53.5% {
+			opacity: 0.15;
+		}
+		100% {
+			opacity: 0;
+		}
+	}
+
+	@keyframes hand-lane-still {
+		0% {
+			opacity: 0.9;
+		}
+		11.7% {
+			opacity: 0.9;
+		}
+		100% {
+			opacity: 0;
+		}
+	}
+}
+
+/* the agent's hand, in motion (#214). The durations are the component's, because they
+ * are chosen by what moved — tension arrives over 90ms and slack comes back over 320 —
+ * and the rest of the rule is here so that stillness can take it away. */
+[data-hand-thread] {
+	transition:
+		d var(--hand-pace, 220ms) cubic-bezier(0.22, 0.61, 0.36, 1),
+		stroke-dashoffset 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+[data-hand-corner] {
+	transition: stroke-dashoffset var(--hand-pace, 200ms) cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+[data-hand-node] {
+	transition:
+		opacity 240ms cubic-bezier(0.22, 0.61, 0.36, 1),
+		transform 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 html,

@@ -87,19 +87,27 @@ export interface FramePanMessage {
 	y: number;
 }
 
-/** Frame-local boxes of navigation-site elements, keyed `path:line:col` of
- * the anchor each side derives; null when no element renders for it. */
+/** Frame-local boxes of the elements the canvas asked about, keyed by the
+ * anchor each side derives — `path:line:col` for a point and `path:from-to`
+ * for a range; null when no element renders for it. */
 export type SiteBoxes = Record<string, Box | null>;
 
 /** One anchor the canvas wants located: its stamp position, and for data-go
  * sites the target as a DOM fallback — a component-wrapped element stamps
  * where it is authored (shared/ui), never at the site. A ui.go site carries
- * no target: its only truths are the stamp and the frame edge (#34). */
+ * no target: its only truths are the stamp and the frame edge (#34).
+ *
+ * `through` makes it a range instead: every stamp this file authored between
+ * `line` and it, unioned into one box. That is how a write becomes a mark — the
+ * daemon owns the file and answers lines, and only the document can turn lines
+ * into pixels (#214). A range carries no target and takes no fallback: a write
+ * nothing on screen came from has no box, and the frame edge would be a lie. */
 export interface SiteAnchor {
 	path: string;
 	line: number;
 	col: number;
 	target?: string;
+	through?: number;
 }
 
 export interface CaptureSourceMessage {

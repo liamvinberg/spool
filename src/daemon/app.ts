@@ -45,6 +45,7 @@ import { createFlowGraph, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
+import { locateInDesign } from "./locate";
 import { isLoopbackHost } from "./loopback";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
 import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
@@ -1355,6 +1356,28 @@ export function createDaemonApp({
 			if (doc.kind === "error") return c.json({ kind: "error", message: doc.message }, 500);
 			return c.json({ kind: "ok", etag: doc.etag });
 		})
+		.post(
+			"/api/p/:project/locate",
+			validator("json", (value, c) => {
+				const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+				const { path, find } = body;
+				if (typeof path !== "string" || path === "") return c.text('locate must be { "path", "find": [...] }', 400);
+				if (!Array.isArray(find) || !find.every((one): one is string => typeof one === "string")) {
+					return c.text('locate must be { "path", "find": [...] }', 400);
+				}
+				return { path, find };
+			}),
+			(c) => {
+				// where one write landed (#214): the canvas has the strings the edit was made
+				// of and only this side owns the file, so the line range comes from here
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const { path, find } = c.req.valid("json");
+				// nothing found is an answer rather than an error: a file the agent has
+				// already moved on from is the ordinary case, and it costs a mark, not a turn
+				return c.json({ range: locateInDesign(project.root, path, find) ?? null });
+			},
+		)
 		.get("/api/p/:project/selection", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;

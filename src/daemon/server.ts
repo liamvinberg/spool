@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { serve } from "@hono/node-server";
 import { PortBusyError, SpoolError } from "../errors";
+import type { AgentExecutor } from "./agent-exec";
 import { createDaemonApp } from "./app";
 import { assertLoopbackHost, clearDaemonState, daemonUrl, writeDaemonState } from "./lifecycle";
 import type { TermExecutor } from "./term-exec";
@@ -17,6 +18,8 @@ export interface ServeDaemonOptions {
 	updateCheck?: boolean | undefined;
 	/** Retained only for dormant terminal-session seam tests. */
 	termExecutor?: TermExecutor | undefined;
+	/** A stand-in for the agent binary, so a browser test can drive a whole turn. */
+	agentExecutor?: AgentExecutor | undefined;
 }
 
 export interface RunningDaemon {
@@ -41,6 +44,7 @@ export function serveDaemon({
 	development,
 	updateCheck,
 	termExecutor,
+	agentExecutor,
 }: ServeDaemonOptions): Promise<RunningDaemon> {
 	assertLoopbackHost(host);
 	const daemon = createDaemonApp({
@@ -51,6 +55,7 @@ export function serveDaemon({
 		development,
 		updateCheck,
 		...(termExecutor === undefined ? {} : { termExecutor }),
+		...(agentExecutor === undefined ? {} : { agentExecutor }),
 	});
 
 	return new Promise<RunningDaemon>((resolve, reject) => {

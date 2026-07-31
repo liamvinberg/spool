@@ -2002,3 +2002,93 @@ describe("every capture, replayed whole", () => {
 		});
 	}
 });
+
+describe("the writes a turn lands (#214)", () => {
+	const edit = (id: string, path: string, before: string, after: string): AgentEvent =>
+		called(id, "Edit", { file_path: path, old_string: before, new_string: after });
+
+	it("names each landed write by what it put there and then by what it replaced", () => {
+		const path = `${ROOT}/design/frames/home/frame.tsx`;
+		const { writes } = transcriptOf(
+			[{ text: "warm it up" }],
+			stamp([ready, edit("c1", path, "<p>cold</p>", "<p>warm</p>"), result("c1")]),
+		);
+
+		// what the write put there first, because that is what the file holds once it
+		// lands; what it replaced behind it, for the beat before it reaches disk
+		expect(writes).toEqual([{ key: "c1", path, find: ["<p>warm</p>", "<p>cold</p>"] }]);
+	});
+
+	it("takes a Write whole, since there was nothing there to replace", () => {
+		const path = `${ROOT}/design/frames/home/frame.tsx`;
+		const { writes } = transcriptOf(
+			[{ text: "make it" }],
+			stamp([
+				ready,
+				called("c1", "Write", { file_path: path, content: "export default () => null;\n" }),
+				result("c1"),
+			]),
+		);
+
+		expect(writes).toEqual([{ key: "c1", path, find: ["export default () => null;\n"] }]);
+	});
+
+	it("publishes nothing for a write that did not land", () => {
+		const path = `${ROOT}/design/frames/home/frame.tsx`;
+		const denied = transcriptOf(
+			[{ text: "warm it up" }],
+			stamp([
+				ready,
+				edit("c1", path, "<p>cold</p>", "<p>warm</p>"),
+				result("c1", { failed: true, nonExecution: "user-rejected" }),
+			]),
+		);
+		expect(denied.writes).toEqual([]);
+
+		// a call the wire never answered changed nothing either, whatever it said it would
+		const cut = transcriptOf(
+			[{ text: "warm it up" }],
+			stamp([ready, edit("c1", path, "<p>cold</p>", "<p>warm</p>")]),
+		);
+		expect(cut.writes).toEqual([]);
+	});
+
+	it("says nothing about the two write tools whose arguments name no one block", () => {
+		const path = `${ROOT}/design/frames/home/frame.tsx`;
+		const { writes, entries } = transcriptOf(
+			[{ text: "warm it up" }],
+			stamp([ready, called("c1", "MultiEdit", { file_path: path, edits: [] }), result("c1")]),
+		);
+
+		// still a write on the line — the run and the count are the rail's reading of it
+		expect(rows(entries).map((row) => row.verb)).toEqual(["edit"]);
+		expect(writes).toEqual([]);
+	});
+
+	it("carries a delegate's writes, because a delegate's writes are the thread's", () => {
+		const path = `${ROOT}/design/frames/home/frame.tsx`;
+		const { writes } = transcriptOf(
+			[{ text: "fan out" }],
+			stamp([
+				ready,
+				called("c1", "Agent", { description: "fix home" }),
+				{ ...edit("d1", path, "<p>cold</p>", "<p>warm</p>"), parent: "c1" },
+				{ ...result("d1"), parent: "c1" },
+			]),
+		);
+
+		expect(writes.map((write) => write.key)).toEqual(["d1"]);
+	});
+
+	it("carries every landed write of the edits capture, in the order they landed", () => {
+		const { writes } = transcriptOf([{ text: "make these consistent" }], replay("claude-edits"));
+
+		expect(writes.length).toBeGreaterThan(0);
+		expect(new Set(writes.map((write) => write.key)).size).toBe(writes.length);
+		for (const write of writes) {
+			expect(write.path).toContain("/");
+			expect(write.find.length).toBeGreaterThan(0);
+			for (const one of write.find) expect(one).not.toBe("");
+		}
+	});
+});

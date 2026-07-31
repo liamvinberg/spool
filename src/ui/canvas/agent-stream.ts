@@ -14,6 +14,7 @@ import {
 	putAgentThread,
 	streamAgentTurn,
 } from "../api";
+import type { AgentWrite } from "./agent-nouns";
 import { type LoginDeck, STILL_OUT, signedInAs } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, drawableQueue } from "./agent-queue";
 import {
@@ -167,6 +168,15 @@ export interface AgentTurn {
 	 * and that is what keeps the readout from ever becoming chrome.
 	 */
 	readonly limit: AgentLimit | null;
+	/**
+	 * Every write this turn has landed, in the order they landed (#214).
+	 *
+	 * The turn in flight and nothing else: a thread read back off disk has a log and no
+	 * writes, because a mark on a frame is a thing happening rather than a thing that
+	 * happened, and drawing an hour-old edit on today's document would be a lie about
+	 * what is on screen.
+	 */
+	readonly writes: readonly AgentWrite[];
 }
 
 /**
@@ -962,6 +972,7 @@ export function useAgentThreads(project: string): AgentDeck {
 		onNew,
 		turn: {
 			entries,
+			writes: seen.writes,
 			plan: planOf(here, seen),
 			phase,
 			elapsed: still || here.drained ? Number.POSITIVE_INFINITY : here.ms,

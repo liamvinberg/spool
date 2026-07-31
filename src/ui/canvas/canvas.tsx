@@ -26,6 +26,8 @@ import { cn } from "../cn";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyId, HotkeyIdFor } from "../hotkeys";
 import { RibbonMark } from "../icons";
+import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
+import { AgentHandLayer } from "./agent-hand-layer";
 import { useAgentModel } from "./agent-model";
 import { useAgentInstall } from "./agent-preflight";
 import { AgentRail } from "./agent-rail";
@@ -675,18 +677,26 @@ export function ProjectCanvas({
 		};
 	}, [project, refetchFrames, refetchFlows]);
 
-	// --- site boxes (#34): arrows grow out of the element that causes them ------
+	// --- site boxes (#34, #214): where an arrow grows from, and where a write landed ---
 
 	const edgesRef = useRef(edges);
 	edgesRef.current = edges;
 	const siteBoxSeq = useRef(0);
 	const siteBoxExpected = useRef(new Map<string, number>());
+	/** every located write still waiting for a document to turn its lines into a box */
+	const armedWrites = useRef(new Map<string, ArmedWrite>());
 
 	/**
-	 * Ask one frame's shim where its navigation-site elements sit. Only the
-	 * newest request per frame applies; a frame standing as its picture has no
+	 * Ask one frame's shim where the elements the canvas is asking about sit. Only
+	 * the newest request per frame applies; a frame standing as its picture has no
 	 * document to ask and its arrows keep the frame-edge fallback until the next
 	 * time something borrows it.
+	 *
+	 * Two questions ride the one message: the navigation sites, which move with the
+	 * graph, and the line ranges of writes the agent has just landed (#214). They
+	 * are asked together because they are one question of one document — where does
+	 * this bit of source sit on screen — and because a frame that has just booted
+	 * should be measured once rather than twice.
 	 */
 	const requestSiteBoxes = useCallback((frame: string) => {
 		const target = iframes.current.get(frame)?.contentWindow;
@@ -711,6 +721,12 @@ export function ProjectCanvas({
 				});
 			}
 		}
+		for (const write of armedWrites.current.values()) {
+			const key = rangeKeyOf(write.path, write.from, write.to);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			anchors.push({ path: write.path, line: write.from, col: 0, through: write.to });
+		}
 		if (anchors.length === 0) return;
 		const id = ++siteBoxSeq.current;
 		siteBoxExpected.current.set(frame, id);
@@ -721,6 +737,10 @@ export function ProjectCanvas({
 	useEffect(() => {
 		for (const name of iframes.current.keys()) requestSiteBoxes(name);
 	}, [edges, requestSiteBoxes]);
+
+	// the agent's hand (#214): where it is, and what it has just changed. The arms are a
+	// ref here because `requestSiteBoxes` reads them from inside a message handler
+	const { hand, marks: handMarks, strike } = useAgentHand(project, turn, armedWrites);
 
 	// a staged Trash resolves when the projection stops listing the folder
 	useEffect(() => {
@@ -1674,6 +1694,12 @@ export function ProjectCanvas({
 					if (siteBoxExpected.current.get(message.frame) !== message.id) return;
 					siteBoxExpected.current.delete(message.frame);
 					setSiteBoxes((current) => ({ ...current, [message.frame]: message.boxes }));
+					// a write this document can show is a write this frame gets a mark for,
+					// and one it renders nothing of answers null and gets none (#214)
+					for (const write of armedWrites.current.values()) {
+						const box = message.boxes[rangeKeyOf(write.path, write.from, write.to)];
+						if (box != null) strike(message.frame, write.key, box);
+					}
 					return;
 				}
 				case "key":
@@ -1777,7 +1803,7 @@ export function ProjectCanvas({
 		};
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
-	}, [project, walkTo, stopAnimation, zoomAtPoint, viewportCenter, requestSiteBoxes]);
+	}, [project, walkTo, stopAnimation, zoomAtPoint, viewportCenter, requestSiteBoxes, strike]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
 	useEffect(() => {
@@ -2883,6 +2909,17 @@ export function ProjectCanvas({
 							preview={effectiveTool === "select" ? preview : null}
 							guides={guides}
 							marquee={marquee}
+							shellRadius={shellRadius}
+						/>
+						{/* the agent's hand (#214), in the same screen space as the furniture
+						    beside it: presence on any visible frame at any zoom, and a located
+						    mark wherever a document was live enough to be measured. It dissolves
+						    with the rest of the counter-scaled chrome before a play flight */}
+						<AgentHandLayer
+							camera={camera}
+							frames={visibleFrames}
+							hand={hand}
+							marks={handMarks}
 							shellRadius={shellRadius}
 						/>
 					</div>

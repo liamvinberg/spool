@@ -941,13 +941,23 @@ const canvasShimJs = `(() => {
 		return chainOf(el);
 	}
 
-	// where each navigation site's element sits (#34): stamp match first, and
-	// for data-go sites the rendered attribute as fallback — component-wrapped
-	// elements stamp where they are authored, which is not the site's file.
-	// Answers are keyed by the anchor's own path:line:col, both sides' spelling.
+	// where each anchor's element sits, over the one set of data-spool-source
+	// stamps. Two forms of anchor, one message and one answer shape:
+	//
+	//   a point (#34) — one stamp exactly, keyed path:line:col. Navigation
+	//   sites, with the rendered data-go attribute as fallback, because a
+	//   component-wrapped element stamps where it is authored rather than at
+	//   the site.
+	//
+	//   a range (#214) — every stamp on this file whose line falls inside it,
+	//   unioned, keyed path:from-to. Where one write landed: the daemon reads
+	//   the file and answers lines, and only the document can turn lines into
+	//   a box. The union rather than the outermost, because the lines an edit
+	//   touched need not render one element and a plate has to cover them all.
 	function siteBoxes(sites) {
 		const byStamp = new Map();
-		for (const el of document.querySelectorAll("[data-spool-source]")) {
+		const stamped = Array.from(document.querySelectorAll("[data-spool-source]"));
+		for (const el of stamped) {
 			const stamp = el.getAttribute("data-spool-source");
 			if (stamp && !byStamp.has(stamp)) byStamp.set(stamp, el);
 		}
@@ -956,6 +966,10 @@ const canvasShimJs = `(() => {
 		const boxes = {};
 		for (const site of Array.isArray(sites) ? sites : []) {
 			if (!site || typeof site.path !== "string") continue;
+			if (typeof site.through === "number") {
+				boxes[site.path + ":" + site.line + "-" + site.through] = rangeBox(stamped, site);
+				continue;
+			}
 			const key = site.path + ":" + site.line + ":" + site.col;
 			let el = byStamp.get(key) || null;
 			if (!el && typeof site.target === "string") {
@@ -970,6 +984,40 @@ const canvasShimJs = `(() => {
 			}
 		}
 		return boxes;
+	}
+
+	// the union of every stamped element this file authored inside these lines.
+	// An element with no area is skipped: a stamp resolving to something laid
+	// out nowhere would drag the union to the document's own origin.
+	function rangeBox(stamped, site) {
+		let x0 = 0;
+		let y0 = 0;
+		let x1 = 0;
+		let y1 = 0;
+		let found = false;
+		for (const el of stamped) {
+			const stamp = el.getAttribute("data-spool-source") || "";
+			const cut = stamp.lastIndexOf(":");
+			const split = cut < 0 ? -1 : stamp.lastIndexOf(":", cut - 1);
+			if (split < 0 || stamp.slice(0, split) !== site.path) continue;
+			const line = parseInt(stamp.slice(split + 1, cut), 10);
+			if (!(line >= site.line) || !(line <= site.through)) continue;
+			const rect = el.getBoundingClientRect();
+			if (rect.width === 0 && rect.height === 0) continue;
+			if (!found) {
+				x0 = rect.x;
+				y0 = rect.y;
+				x1 = rect.x + rect.width;
+				y1 = rect.y + rect.height;
+				found = true;
+				continue;
+			}
+			x0 = Math.min(x0, rect.x);
+			y0 = Math.min(y0, rect.y);
+			x1 = Math.max(x1, rect.x + rect.width);
+			y1 = Math.max(y1, rect.y + rect.height);
+		}
+		return found ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
 	}
 
 	let captureInFlight = false;
