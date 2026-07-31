@@ -2561,19 +2561,24 @@ describe("the threads column", () => {
 	 * The claim the column is for: what it costs does not move with the number of threads.
 	 *
 	 * The row's did. #136 measured four names at 112px each and called that the floor, so a
-	 * fifth thread was already scrolling under a fade. A cell is 34px of a column the rail
-	 * has around 864 of, and twelve of them is half of it.
+	 * fifth thread was already scrolling under a fade. Nothing here is laid out — happy-dom
+	 * computes no boxes — so what is asserted is the part that would have to move first:
+	 * every thread has a cell of its own, none is elided into an overflow, and the number of
+	 * them reaches neither the rail's width nor the column's.
 	 */
-	it.each([1, 4, 12])("draws %i threads in the same 34px", async (count) => {
+	it.each([1, 4, 12])("draws %i threads without widening anything", async (count) => {
 		const canvas = mount();
 		canvas.stored.served = written(count);
 		await canvas.render();
 		await settle();
 
 		expect(cells(canvas.host)).toHaveLength(count);
-		expect(spine(canvas.host)?.style.width).toBe("34px");
 		// every one of them is in it: nothing overflows into a menu and nothing is elided
 		expect(cells(canvas.host)).toContain(`frame-${count - 1}`);
+		expect(cells(canvas.host)).toContain("frame-0");
+		// 34 is the ticket's own number, pinned here rather than read back off the component
+		expect(spine(canvas.host)?.style.width).toBe("34px");
+		expect(rail(canvas.host)?.style.width).toBe("420px");
 	});
 
 	/** the name is what it wrote, derived on read: no call, no invention, nothing to store */
@@ -2673,6 +2678,19 @@ describe("the thread under the pointer", () => {
 		await canvas.render();
 
 		expect((await point(canvas.host, "new thread"))?.textContent).toContain("nothing yet");
+	});
+
+	/** a caret opens the same flyout a pointer does, and takes it away again on the way out */
+	it("goes when the caret leaves the cell that opened it", async () => {
+		const canvas = mount();
+		await canvas.render();
+		const one = cell(canvas.host, "new thread");
+		await act(async () => one?.dispatchEvent(new FocusEvent("focusin", { bubbles: true })));
+		expect(canvas.host.querySelector("[data-agent-flyout]")).not.toBeNull();
+
+		await act(async () => one?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+
+		expect(canvas.host.querySelector("[data-agent-flyout]")).toBeNull();
 	});
 
 	it("goes when the pointer leaves the column", async () => {

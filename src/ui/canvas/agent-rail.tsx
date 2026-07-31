@@ -129,11 +129,12 @@ export interface Pointing {
 }
 
 /**
- * The conversations this project has, and what the row may do about them (#136, #200).
+ * The conversations this project has, and what the column may do about them (#136, #205).
  *
  * One bundle rather than six props for the reason `Pointing` and `FrameJump` are: they
  * arrive together, they change together, and the deck upstream already holds them as one
- * object.
+ * object. The column and the nameplate both take the whole of it, because which thread is
+ * open is a fact about the deck rather than a string either of them could be handed.
  */
 export interface Threads {
 	readonly list: readonly Thread[];
@@ -145,11 +146,11 @@ export interface Threads {
 	 * what the next thing said will actually do, which is start a new thread.
 	 */
 	readonly finished: boolean;
-	/** a press on a tab, which reads the thread and moves nothing else */
+	/** a press on a cell, which reads the thread and moves nothing else */
 	readonly onOpen: (id: string) => void;
-	/** the ✕ on a tab: it leaves the row, and neither the session nor the picture goes */
+	/** the ✕ in the flyout: it leaves the column, and neither the session nor the picture goes */
 	readonly onClose: (id: string) => void;
-	/** the plus that leads the row */
+	/** the plus that leads the column */
 	readonly onNew: () => void;
 }
 
@@ -267,6 +268,8 @@ export function AgentRail({
 	 * means. An approval is answered by pressing one of its three, and by nothing else.
 	 */
 	const asking = entries.find((entry) => entry.kind === "ask" && entry.state === "open" && entry.question);
+	/** what the panel has left once the column has taken its 34, which two things measure */
+	const panel = width - SPINE_W;
 	const [dragging, setDragging] = useState(false);
 	const drag = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
 	const collapsed = width <= COLLAPSED_BELOW;
@@ -362,7 +365,7 @@ export function AgentRail({
 							phase={phase}
 							finished={threads.finished}
 							answering={asking?.kind === "ask" ? asking.request : null}
-							strip={stripOf(pointing.entries, composerWidth(width - SPINE_W), pointing.inside)}
+							strip={stripOf(pointing.entries, composerWidth(panel), pointing.inside)}
 							pointing={pointing}
 							draft={holding.draft}
 							onDraft={(draft) => write((was) => ({ ...was, draft }))}
@@ -381,7 +384,7 @@ export function AgentRail({
 							onAnswer={onAnswer}
 						/>
 					</div>
-					<Spine threads={threads} width={width} />
+					<Spine threads={threads} room={panel} />
 				</div>
 			)}
 
@@ -437,10 +440,12 @@ export function AgentRail({
  * hundred scroll a column that had the room to scroll.
  *
  * It stands on the *outer* edge on purpose. The inner edge is the drag handle, a 12px
- * column with pointer capture on it, and the outer edge is the one the rail already
- * collapses to at `STRIP_WIDTH` — so shutting the panel to its strip leaves every thread
- * exactly where it already was. The 34 comes out of the rail's own width rather than being
- * added beside it, at every width, and the honest squeeze is the 200 floor.
+ * column with pointer capture on it, and the outer edge is the one the rail collapses onto
+ * at `STRIP_WIDTH` — so the column and the shut rail want the same edge rather than two
+ * different ones. **The strip does not draw the column**: shutting the rail is asking for
+ * the canvas back, and it stays the one control that opens it again. The 34 comes out of
+ * the rail's own width rather than being added beside it, at every width, and the honest
+ * squeeze is the 200 floor.
  *
  * **Nothing in the column is a name, and the flyout is the whole of the answer.** Hover a
  * cell and the thread arrives to the left of it over the log: what it is called, the last
@@ -452,9 +457,9 @@ export function AgentRail({
  * downward, so *new* belongs above the newest rather than below the oldest.
  *
  * The second cost is the real one and it is on screen: twelve read threads are twelve
- * identical blank cells. This bets that a switcher's job is *what is moving now*, which a
- * column answers at a glance, and that finding one two-hour-old conversation is a different
- * job it does through the hover.
+ * identical blank cells. This bets that the job here is *what is moving now*, which a column
+ * answers at a glance, and that finding one two-hour-old conversation is a different job it
+ * does through the hover.
  *
  * Nothing is coloured and nothing re-sorts. State in this rail is motion, the one accent
  * belongs to the selection, and the order is recency fixed once — a column that re-sorted
@@ -467,8 +472,15 @@ const SPINE_W = 34;
 /** what the flyout wants, and what it settles for once the rail is dragged narrow */
 const FLYOUT_W = 268;
 
-/** the room the last cell's flyout is held above the bottom edge by */
-const FLYOUT_H = 96;
+/**
+ * The tallest the flyout gets, which is what the last cell's is held above the floor by.
+ *
+ * An upper bound rather than a measurement: the name wraps and a name is at most two frames
+ * and a count, which is three lines of mono at the narrowest rail the panel allows. Reserving
+ * the tall case costs a cell near the bottom a few pixels of lift and nothing else, where
+ * measuring the box would cost a second layout pass on every hover.
+ */
+const FLYOUT_H = 128;
 
 /** which thread the pointer is asking about, where its flyout goes, and when it asked */
 interface Hovered {
@@ -486,18 +498,21 @@ interface Hovered {
  * and its place on the screen are different numbers. So the cell is asked where it is, and
  * the flyout is held clear of the bottom edge from there.
  */
-function flyoutAt(cell: HTMLElement, column: HTMLElement | null): Omit<Hovered, "id"> {
+function flyoutAt(cell: HTMLElement, column: HTMLElement | null): { top: number; now: number } {
 	const now = Date.now();
 	if (column === null) return { top: 0, now };
 	const top = cell.getBoundingClientRect().top - column.getBoundingClientRect().top;
 	return { top: Math.max(0, Math.min(top, column.clientHeight - FLYOUT_H)), now };
 }
 
-function Spine({ threads, width }: { threads: Threads; width: number }) {
+function Spine({ threads, room }: { threads: Threads; room: number }) {
 	const { list, open, onOpen, onClose, onNew } = threads;
 	const column = useRef<HTMLDivElement>(null);
 	const [over, setOver] = useState<Hovered | null>(null);
 	const shown = list.find((thread) => thread.id === over?.id);
+	/** the pointer and the caret ask the same question, and it is answered the same way */
+	const ask = (id: string) => (event: { currentTarget: HTMLElement }) =>
+		setOver({ id, ...flyoutAt(event.currentTarget, column.current) });
 
 	return (
 		// the flyout is a child, so moving the pointer off a cell and onto it never leaves
@@ -529,10 +544,11 @@ function Spine({ threads, width }: { threads: Threads; width: number }) {
 							data-agent-thread-life={thread.life}
 							aria-label={thread.name}
 							aria-current={on ? "true" : undefined}
-							onMouseEnter={(event) =>
-								setOver({ id: thread.id, ...flyoutAt(event.currentTarget, column.current) })
-							}
-							onFocus={(event) => setOver({ id: thread.id, ...flyoutAt(event.currentTarget, column.current) })}
+							onMouseEnter={ask(thread.id)}
+							onFocus={ask(thread.id)}
+							// a caret leaving takes the flyout it opened with it, and only that one:
+							// the pointer may be somewhere else by now, and it asked more recently
+							onBlur={() => setOver((was) => (was?.id === thread.id ? null : was))}
 							onClick={() => onOpen(thread.id)}
 							className={cn(
 								"relative flex h-[34px] shrink-0 items-center justify-center transition-colors duration-150",
@@ -550,13 +566,7 @@ function Spine({ threads, width }: { threads: Threads; width: number }) {
 				})}
 			</div>
 			{shown === undefined || over === null ? null : (
-				<Flyout
-					thread={shown}
-					top={over.top}
-					now={over.now}
-					room={width - SPINE_W}
-					onClose={() => onClose(shown.id)}
-				/>
+				<Flyout thread={shown} top={over.top} now={over.now} room={room} onClose={() => onClose(shown.id)} />
 			)}
 		</div>
 	);
@@ -584,7 +594,7 @@ function Flyout({
 	thread: Thread;
 	top: number;
 	now: number;
-	/** what is left of the rail once the column has taken its 34 */
+	/** what the panel has left, which is as wide as this may get */
 	room: number;
 	onClose: () => void;
 }) {
@@ -630,9 +640,11 @@ function Flyout({
  * it would put the two out of step.
  *
  * Mono throughout, because a derived name is machine text — it is the frames the thread
- * wrote. A thread that has written none is still its ask and keeps the one register rather
- * than changing typeface the moment it writes its first frame, and one that has said
- * nothing at all is dimmed, because that is the machine saying there is nothing to say yet.
+ * wrote. A thread that has written none is still its ask, and it keeps the one register
+ * rather than changing typeface the moment it writes its first frame; the row this replaced
+ * drew the ask in mono for its whole life, so nothing about a sentence in here is new. One
+ * that has said nothing at all is dimmed, because that is the machine saying there is
+ * nothing to say yet rather than a name anybody chose.
  */
 function Nameplate({ threads }: { threads: Threads }) {
 	const name = threads.list.find((thread) => thread.id === threads.open)?.name ?? UNSAID;
@@ -656,14 +668,14 @@ function Nameplate({ threads }: { threads: Threads }) {
  * The box is always 14px whatever is inside it, so every cell in the column draws its mark
  * in the same place and a mark appearing never moves the one below it.
  *
- * Three readings of five lives. Streaming draws nothing and keeps the cell aligned: the
+ * Four readings of five lives. Streaming draws nothing and keeps the cell aligned: the
  * transcript beside it is already a turning mark and a live edge, so a second spinner on
  * the cell naming the thread you are watching says nothing the screen does not. Running turns,
  * colourless, because state in this rail is motion and the one accent belongs to the
  * selection. Waiting is `unread`'s disc held inside `running`'s ring — the turn that
  * stopped, with the thing that stopped it sitting in it — and it is the loudest of the
  * three on purpose, because it is the only one of them that is actually stuck. Unread is a
- * solid dot at text strength, the way a mailbox says it. Read is nothing.
+ * solid dot at text strength, the way a mailbox says it. Read is a hollow one.
  *
  * Two candidates for waiting died on facts rather than taste. Freezing the spinner is
  * pixel-identical to what `prefers-reduced-motion` already renders for a working thread,
@@ -710,8 +722,8 @@ function ThreadMark({ life }: { life: Life }) {
  * The way back to the strip.
  *
  * It rides the body's own top fade rather than a row of its own: #144's whole finding is
- * that a line of a 420px column is too expensive to spend on chrome, and the threads row
- * is already spending the one line the shelf can afford. The wall gets it too, because a
+ * that a line of a 420px column is too expensive to spend on chrome, and the nameplate is
+ * already spending the one line the shelf can afford. The wall gets it too, because a
  * rail you cannot collapse is a rail that has taken the column hostage over a state
  * nobody caused.
  */
