@@ -23,6 +23,7 @@ import { isSafeName } from "./daemon/project-files";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
+import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
 import { initProject } from "./init";
 import { openProject } from "./open";
@@ -66,6 +67,10 @@ program
 		const status = await statusDaemon(spoolDir);
 		if (status.running) {
 			process.stdout.write(`canvas: ${status.url}/p/${encodeURIComponent(basename(root))}\n`);
+			// The raw URL is the truth and the thing agents use, so it stays first.
+			// The second line is the one a person can remember tomorrow.
+			const door = doorAddressFor(status.url);
+			if (door !== undefined) process.stdout.write(`        ${door} opens spool from any browser\n`);
 		}
 	});
 
@@ -283,6 +288,8 @@ program
 				throw error;
 			}
 			process.stdout.write(`spool daemon listening at ${daemon.url} (pid ${process.pid})\n`);
+			const door = doorAddressFor(daemon.url);
+			if (door !== undefined) process.stdout.write(`${door} opens it from any browser\n`);
 			let stopping = false;
 			const shutdown = () => {
 				if (stopping) return;
