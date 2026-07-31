@@ -796,8 +796,9 @@ function Quiet({ busy, onClick }: { busy: boolean; onClick: () => void }) {
  * something behind it — the one thing a wall owes you past the bad news is a picture of
  * the good state.
  *
- * The threads row goes with the transcript. A conversation you cannot continue is not
- * something to switch to, and the wall is the whole of the rail's body while it is up.
+ * The threads go with the transcript, column and nameplate both. A conversation you cannot
+ * continue is not something to switch to, and the wall is the whole of the rail's body
+ * while it is up.
  *
  * The words are not spool's where they do not have to be: `code.claude.com/docs` is the
  * docs root the binary links itself. What spool writes is the sentence about why there is
