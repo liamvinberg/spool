@@ -41,13 +41,28 @@ export const AGENT_COMMAND = "claude";
  * not matched by file permission checks and that `Edit` rules cover every
  * file-editing tool.
  *
- * The other three are the tools that cannot change anything: reading anywhere
- * on disk (`//` is the rule syntax's absolute root), fetching pages, and
- * searching the web — all measured to take effect from these bare rules on
+ * The other three tool rules are the tools that cannot change anything: reading
+ * anywhere on disk (`//` is the rule syntax's absolute root), fetching pages,
+ * and searching the web — all measured to take effect from these bare rules on
  * 2.1.220. A prompt on a harmless tool teaches the person to click approve
  * without reading, which is the opposite of what an approval is for.
+ *
+ * The two `Bash(spool …)` rules are spool trusting its own CLI: every verb is
+ * read-only by construction (#6), so a prompt on one is a prompt on spool
+ * asking whether spool may be used. They exist because the verbs also cannot
+ * run sandboxed — see the sandbox's `excludedCommands` below — and a command
+ * outside the sandbox is back in the regular flow, where only a rule keeps it
+ * quiet. Measured on 2.1.220: the rule holds through a pipe
+ * (`spool shot x 2>&1 | head -3` runs unprompted).
  */
-export const AGENT_ALLOW_RULES: readonly string[] = ["Edit(./design/**)", "Read(//**)", "WebFetch", "WebSearch"];
+export const AGENT_ALLOW_RULES: readonly string[] = [
+	"Edit(./design/**)",
+	"Read(//**)",
+	"WebFetch",
+	"WebSearch",
+	"Bash(spool)",
+	"Bash(spool *)",
+];
 
 /**
  * The shell runs sandboxed and unprompted (measured on 2.1.220).
@@ -66,8 +81,15 @@ export const AGENT_ALLOW_RULES: readonly string[] = ["Edit(./design/**)", "Read(
  * does in the permission rules) — so a shell write to `src/` is silent where
  * the same change through `Edit` would ask. The framing carries the intent the
  * settings cannot: changes outside `design/` go through the file tools.
+ *
+ * Spool's own CLI is excluded from the sandbox, because `spool shot` launches
+ * Chrome and Chrome cannot start under Seatbelt (mach port permission denied,
+ * observed live) — the fallback prompt that failure buys is an approval for
+ * taking a screenshot, which is exactly the noise this fence exists to end.
+ * Excluded means back in the regular permission flow, and the
+ * `Bash(spool …)` rules above are what keep it quiet there.
  */
-const AGENT_SANDBOX = { enabled: true } as const;
+const AGENT_SANDBOX = { enabled: true, excludedCommands: ["spool", "spool *"] } as const;
 
 /**
  * The permission mode, set explicitly rather than left to the machine.
