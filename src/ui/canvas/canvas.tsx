@@ -1647,6 +1647,22 @@ export function ProjectCanvas({
 		);
 	}, [project, refetchFrames, refetchFlows, noteCover, reloadFrameDocument, resync]);
 
+	/**
+	 * The tab is being looked at again. A hidden one is throttled down to almost
+	 * nothing — the sweep, the errands and the frames' own animations all — so
+	 * coming back is a moment the canvas has to act on rather than a moment it
+	 * can wait out at a quarter of a second per sweep. The stream checks itself
+	 * (`subscribeSse`); this is the frames.
+	 */
+	useEffect(() => {
+		const onVisible = () => {
+			if (document.visibilityState !== "visible") return;
+			lifecycleRef.current.wake();
+		};
+		document.addEventListener("visibilitychange", onVisible);
+		return () => document.removeEventListener("visibilitychange", onVisible);
+	}, []);
+
 	// the frame protocol: loaded/error/shot route into the lifecycle, session?
 	// answers with the carried walk session, go/back move the entered state
 	useEffect(() => {

@@ -8,6 +8,7 @@ import {
 	ERRANDS_IN_FLIGHT,
 	noteErrandShot,
 	PICTURE_TRIES,
+	renewPictureDebt,
 	sweepLifecycle,
 } from "./lifecycle";
 
@@ -156,6 +157,22 @@ describe("its picture is missing", () => {
 		for (let i = 0; i < 5; i++) {
 			expect(s.sweep(frames, uncovered).states.a).toBe("picture");
 		}
+	});
+
+	it("asks again once the tab it gave up in is being looked at", () => {
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		for (let tries = 0; tries < PICTURE_TRIES; tries++) {
+			s.sweep(frames, uncovered);
+			s.sweep(frames, uncovered);
+			noteErrandShot(s.model, "a", false);
+		}
+		expect(s.sweep(frames, uncovered).states.a).toBe("picture");
+
+		// the three errands were spent in a background tab, against throttled
+		// timers: nothing about the frame said it could not be photographed
+		renewPictureDebt(s.model);
+		expect(s.sweep(frames, uncovered).states.a).toBe("refreshing");
 	});
 
 	it("asks again once something about the frame changes", () => {
