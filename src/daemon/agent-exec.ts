@@ -17,7 +17,7 @@ export interface AgentProcess {
 	write(line: string): void;
 	/** no more input is coming; the binary finishes and exits */
 	end(): void;
-	/** abandon the turn — the client went away, or the daemon is closing */
+	/** give the process up — the daemon let the turn go, or it outstayed its own ending */
 	kill(): void;
 	onLine(cb: (line: string) => void): void;
 	/** `code` is null when the process never started or died on a signal */

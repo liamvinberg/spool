@@ -16,16 +16,19 @@ import { type AgentAsk, type AgentSession, agentPromptLine, planAgentSpawn } fro
  * One turn: spawn the developer's agent, send what the human said, and hand back
  * the union events in the order they arrive (#191, #197).
  *
- * The turn owns the process for exactly as long as the turn lasts. The result
- * event is what closes stdin, the exit is what closes the stream, and a client
- * that goes away takes the process with it — nothing outlives the thing that
- * asked for it.
+ * The turn owns the process for exactly as long as the turn lasts, and the turn is the
+ * daemon's rather than the request's (#211). The result event is what closes stdin and
+ * the exit is what closes the stream; a client that goes away is a reader that stopped
+ * reading, and the process does not notice. What ends a turn is a hand on the stop, the
+ * thread being talked to again, or the daemon closing — `agent-live.ts` is where the turn
+ * is held and where that contract is argued.
  *
  * It is not one-way. The binary asks before it runs what the fence has not made
  * quiet, and the agent asks when it has a question of its own, both down the same
  * request — so the turn holds what is waiting and writes the answer back up stdin.
- * Nothing here runs a clock in either direction: a request waits until somebody
- * answers it, for as long as that takes, and spool never answers one itself.
+ * Nothing here runs a clock on the work in either direction: a request waits until
+ * somebody answers it, for as long as that takes, and spool never answers one itself.
+ * The one clock is below, and it starts only once the turn is already over.
  */
 
 /**
@@ -82,7 +85,7 @@ export interface AgentTurn {
 	 */
 	interrupt(): boolean;
 	/**
-	 * Give the turn up: the client disconnected, or the daemon is closing.
+	 * Give the turn up: the thread is being talked to again, or the daemon is closing.
 	 *
 	 * The blunt one, and not the domain's Stop. Nobody asked for this and nobody is
 	 * reading the answer, so the process is killed rather than asked, and no clean result
