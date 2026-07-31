@@ -34,7 +34,7 @@ export function FrameLabel({
 	return (
 		<div
 			data-frame-label={name}
-			className="absolute bottom-full left-0 origin-bottom-left whitespace-nowrap"
+			className="pointer-events-auto absolute bottom-full left-0 origin-bottom-left whitespace-nowrap"
 			style={{ width, transform: `scale(${1 / k})` }}
 		>
 			{entered ? (
