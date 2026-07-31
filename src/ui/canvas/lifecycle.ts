@@ -4,7 +4,7 @@ import { LIVE_MIN_CSS_PX } from "../../cover";
 import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
 import { intersects } from "./camera";
 import { CAPTURE_WORKER_TIMEOUT_MS, type CoverRaster, captureRequestId, rasterCaptureSource } from "./capture-broker";
-import { type CaptureSourceReply, captureMessage } from "./protocol";
+import { type CaptureSourceReply, captureMessage, freezeMessage } from "./protocol";
 
 /**
  * The engine lifecycle (#8, #13, #40, #54, #112): which frames hold a document,
@@ -31,6 +31,9 @@ import { type CaptureSourceReply, captureMessage } from "./protocol";
  * HTML documents keep running: Select leaves a readable one live, and an
  * unreadable held one runs behind its still. A terminal's held state sends
  * SIGSTOP to its real process (`daemon/term-sessions.ts`).
+ *
+ * Live HTML frames hold their animations while the camera moves and resume on
+ * settle (#171) — the mount is unchanged, only the frames it is running.
  */
 
 export type FrameState = "picture" | "refreshing" | "held" | "live";
@@ -92,18 +95,23 @@ const SHIPPED_ERRANDS_IN_FLIGHT = 3;
  * it: a gesture over a canvas that borrowed nothing reads as "mounting is free"
  * for the one reason that proves nothing.
  *
- * `globalThis.__spoolBench` is `{ errands }` — the cap, unbounded at 0 or
- * below. Read once at module load, because playwright's init script runs before
+ * `globalThis.__spoolBench` is `{ errands, freeze }` — the cap, unbounded at 0
+ * or below, and whether live frames hold their animations while the camera
+ * moves. Read once at module load, because playwright's init script runs before
  * this bundle evaluates and nothing else ever writes it, so an unset hook
- * leaves the sweep comparing against the same constant it always did.
+ * leaves the sweep comparing against the same constants it always did.
  *
- * It folds into the exported cap rather than shadowing it, so the sweep and
- * every test read the one number the decision actually uses. It lives only
- * while that cap is a constant; if the canvas ever derives it, this goes too.
+ * They fold into the exported values rather than shadowing them, so the sweep
+ * and every test read the one number the decision actually uses. `freeze` is
+ * `bench/dither-attribution.ts`'s control arm: the freeze is what that bench
+ * measures, and measuring it against a differently-patched project instead of
+ * against itself would confound the one difference it exists to price.
  */
-const benchErrands = (globalThis as unknown as { __spoolBench?: { errands?: number } }).__spoolBench?.errands;
+const benchHooks = (globalThis as unknown as { __spoolBench?: { errands?: number; freeze?: boolean } }).__spoolBench;
+const benchErrands = benchHooks?.errands;
 export const ERRANDS_IN_FLIGHT =
 	benchErrands === undefined ? SHIPPED_ERRANDS_IN_FLIGHT : benchErrands > 0 ? benchErrands : Number.POSITIVE_INFINITY;
+export const FREEZE_WHILE_MOVING = benchHooks?.freeze !== false;
 /**
  * How many errands a frame gets for one debt before it stops asking. Without a
  * bound, a frame whose capture cannot land — a document that never boots, a
@@ -231,6 +239,26 @@ function isFrameLive(
 		w: w * (1 + LIVE_MARGIN * 2),
 		h: h * (1 + LIVE_MARGIN * 2),
 	});
+}
+
+/**
+ * Whether a frame holds its animations right now (#171). A camera in motion is
+ * the whole cause: nothing out there is being read while it moves, and the
+ * frames' own rAF loops are what the gesture competes with for the renderer.
+ *
+ * Three frames never freeze. The one you went inside is the one being used. A
+ * borrowed frame is mid-errand, and a capture settles on the frame's own rAF
+ * and animations, so a frozen one would photograph itself held; a frame with a
+ * capture already in flight is that same errand, one step later.
+ */
+export function freezesWhileMoving(input: {
+	cameraMoving: boolean;
+	state: FrameState | undefined;
+	entered: boolean;
+	capturing: boolean;
+}): boolean {
+	const { cameraMoving, state, entered, capturing } = input;
+	return cameraMoving && state === "live" && !entered && !capturing;
 }
 
 export interface SweepResult {
@@ -479,6 +507,59 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		abort: AbortController;
 	}
 	const captureWaiters = useRef(new Map<string, PendingCapture>());
+	/** The frames currently told to hold their animations while the camera moves. */
+	const frozen = useRef(new Set<string>());
+	const cameraMoving = useRef(false);
+
+	/**
+	 * Freeze is a message to one document, never a render: the shells are memo'd
+	 * hard against exactly this (frame-shell.tsx), and a gesture that re-rendered
+	 * them would reload every iframe it touched.
+	 */
+	const postFreeze = useCallback((frame: string, on: boolean) => {
+		const sourceWindow = iframes.current.get(frame)?.contentWindow;
+		// a document that left took its freeze with it
+		if (sourceWindow == null) {
+			frozen.current.delete(frame);
+			return;
+		}
+		if (frozen.current.has(frame) === on) return;
+		sourceWindow.postMessage(freezeMessage(on), "*");
+		if (on) frozen.current.add(frame);
+		else frozen.current.delete(frame);
+	}, []);
+
+	const applyFreeze = useCallback(
+		(states: Readonly<Record<string, FrameState>> = statesRef.current) => {
+			// a resting camera with nothing held has nothing to say to anyone
+			if (!cameraMoving.current && frozen.current.size === 0) return;
+			for (const frame of framesRef.current) {
+				// a terminal's freeze is the daemon's SIGSTOP, sent by its shell
+				if (frame.kind !== "html") continue;
+				postFreeze(
+					frame.name,
+					FREEZE_WHILE_MOVING &&
+						freezesWhileMoving({
+							cameraMoving: cameraMoving.current,
+							state: states[frame.name],
+							entered: enteredRef.current === frame.name,
+							capturing: captureWaiters.current.has(frame.name),
+						}),
+				);
+			}
+		},
+		[framesRef, postFreeze],
+	);
+
+	/** The camera started or stopped moving — the canvas already detects both. */
+	const noteCameraMoving = useCallback(
+		(moving: boolean) => {
+			if (cameraMoving.current === moving) return;
+			cameraMoving.current = moving;
+			applyFreeze();
+		},
+		[applyFreeze],
+	);
 
 	const finishExportMount = useCallback((frame: string, ready: boolean) => {
 		const waiter = exportMountWaiter.current;
@@ -504,6 +585,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	const onIframe = useCallback(
 		(frame: string, el: HTMLIFrameElement | null) => {
 			const current = iframes.current.get(frame);
+			// a fresh document is never frozen — the message went to the old one
+			if (current !== el) frozen.current.delete(frame);
 			if (current !== undefined && current !== el) {
 				const pending = captureWaiters.current.get(frame);
 				if (pending !== undefined) noteShot(frame, pending.id, undefined);
@@ -603,10 +686,14 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 					resolveSourceReturned,
 					abort: new AbortController(),
 				});
+				// The capture settles on this frame's own rAF and animations, so a
+				// frozen one would photograph itself held. Both messages ride the same
+				// channel to the same document, so the thaw cannot arrive second.
+				postFreeze(frame, false);
 				sourceWindow.postMessage(captureMessage(id, targetWidth, settleMs), "*");
 			});
 		},
-		[noteShot],
+		[noteShot, postFreeze],
 	);
 
 	useEffect(
@@ -639,7 +726,10 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			void requestCapture(frame).then((image) => noteErrandShot(model.current, frame, image !== undefined));
 		}
 		if (result.changed) setStates(result.states);
-	}, [framesRef, cameraRef, viewportRef, requestCapture]);
+		// against the states this sweep just decided, not last render's: a frame
+		// handed back from an errand becomes freezable as soon as it is live again
+		applyFreeze(result.states);
+	}, [framesRef, cameraRef, viewportRef, requestCapture, applyFreeze]);
 
 	/**
 	 * Hold one HTML frame through the export intent, wait for its document,
@@ -736,6 +826,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		onIframe,
 		noteLoaded,
 		noteCaptureSource,
+		noteCameraMoving,
 		markStale,
 		capture: requestCapture,
 		captureExport,

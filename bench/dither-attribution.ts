@@ -30,17 +30,24 @@ import {
 } from "./harness.ts";
 
 /**
- * Do readable, live-animated frames degrade canvas pan/zoom, and where does the
- * time go (issue: dither-attribution).
+ * Do readable, live-animated frames degrade canvas pan/zoom, where does the time
+ * go, and does freezing them while the camera moves buy it back (#171).
  *
- * Two arms at equal geometry: `animated` is a real project's "dither" page
+ * Three arms at equal geometry. `animated` is a real project's "dither" page
  * as-is — 12 frames each running a 30fps 2D-canvas dithering rAF loop
- * (design/shared/ui/dither-specimen.tsx). `static` is the same project with
- * that loop and its dot-plate.tsx twin patched to paint their first frame and
- * never re-queue rAF again — same DOM, same layout, same first paint, the
- * *only* difference is whether the animation keeps running. Comparing the two
- * isolates "live animation" from every other confound canvas.ts's gesture
- * bench (#82) already covers (frame count, size, throttle).
+ * (design/shared/ui/dither-specimen.tsx) — with the freeze turned off through
+ * the canvas's own bench hook, so it is the behavior that shipped before #171.
+ * `frozen` is that same project and that same build with the freeze on, which
+ * is what ships. `static` is the project with the loop and its dot-plate.tsx
+ * twin patched to paint their first frame and never re-queue rAF again — same
+ * DOM, same layout, same first paint, the *only* difference is whether the
+ * animation keeps running, and so the floor a freeze can reach.
+ *
+ * `animated` against `static` isolates "live animation" from every other
+ * confound canvas.ts's gesture bench (#82) already covers (frame count, size,
+ * throttle). `frozen` against both is the freeze's price: it should land on the
+ * static arm's gesture-window CPU while its idle window stays the animated
+ * arm's, because a resting camera freezes nothing.
  *
  * The attribution question needs per-process CPU, not just frame-interval
  * stats: `SystemInfo.getProcessInfo` (browser-level CDP) reports cpu time per
@@ -80,10 +87,9 @@ interface Options {
 
 /**
  * `--runs` is deliberately not a knob: the ticket asks for exactly 3 clean
- * repetitions per arm in a balanced A B B A A B order (so neither arm always
- * runs first; plus one dedicated trace run each, appended after), and `main`
- * below hardcodes that sequence rather than generalizing a pattern nobody
- * asked for.
+ * repetitions per arm in a balanced order (so no arm always runs first; plus
+ * one dedicated trace run each, appended after), and `main` below hardcodes
+ * that sequence rather than generalizing a pattern nobody asked for.
  */
 function parseArgs(argv: string[]): Options {
 	let project = "";
@@ -111,6 +117,9 @@ const K = 0.52;
 const PAGE_NAME = "dither";
 /** A frame confirmed live at K, used for the paint-behavior screenshot/hash check. */
 const SAMPLE_FRAME = "dither-atkinson";
+
+type Arm = "animated" | "frozen" | "static";
+const ARMS: readonly Arm[] = ["animated", "frozen", "static"];
 
 // --- static-arm patch ------------------------------------------------------
 
@@ -511,7 +520,7 @@ function analyzeTrace(events: readonly TraceEvent[], roles: Roles): TraceAnalysi
 // --- arms --------------------------------------------------------------------
 
 interface ArmSetup {
-	label: "animated" | "static";
+	label: Arm;
 	root: string;
 	name: string;
 	spoolDir: string;
@@ -520,7 +529,7 @@ interface ArmSetup {
 	stop: () => void;
 }
 
-async function setupArm(source: string, label: "animated" | "static"): Promise<ArmSetup> {
+async function setupArm(source: string, label: Arm): Promise<ArmSetup> {
 	const { root, name, spoolDir } = copyProject(source);
 	if (label === "static") patchToStatic(root);
 	const port = await freePort();
@@ -572,7 +581,7 @@ async function verifyPaintBehavior(
 // --- one measured run --------------------------------------------------------
 
 interface RunResult {
-	arm: "animated" | "static";
+	arm: Arm;
 	index: number;
 	traced: boolean;
 	liveMounted: number;
@@ -603,6 +612,15 @@ async function runOnce(
 	writeCamera(arm.root, camera, PAGE_NAME);
 
 	const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+	// The control arm is this same build with the freeze switched off through the
+	// canvas's own bench hook (`ui/canvas/lifecycle.ts`). Pricing the freeze
+	// against a differently-patched project instead would confound it with the
+	// patch; the two animated arms differ in exactly one branch.
+	if (arm.label === "animated") {
+		await context.addInitScript(() => {
+			(globalThis as unknown as { __spoolBench: unknown }).__spoolBench = { freeze: false };
+		});
+	}
 	await context.addInitScript(collector);
 	const page = await context.newPage();
 	page.on("pageerror", (e) =>
@@ -711,11 +729,11 @@ async function runOnce(
 
 const pct = (seconds: number, windowMs: number): string => `${((seconds / (windowMs / 1000)) * 100).toFixed(1)}%`;
 
-function bucketRow(label: string, arm: "animated" | "static", index: number, b: Buckets, windowMs: number): string {
+function bucketRow(label: string, arm: Arm, index: number, b: Buckets, windowMs: number): string {
 	return `| ${label} | ${arm} #${index} | ${b.canvasS.toFixed(3)} s (${pct(b.canvasS, windowMs)}) | ${b.framesS.toFixed(3)} s (${pct(b.framesS, windowMs)}) | ${b.gpuS.toFixed(3)} s (${pct(b.gpuS, windowMs)}) | ${b.browserS.toFixed(3)} s (${pct(b.browserS, windowMs)}) | ${b.otherS.toFixed(3)} s (${pct(b.otherS, windowMs)}) |`;
 }
 
-function gestureRow(label: string, arm: "animated" | "static", index: number, g: GestureStats): string {
+function gestureRow(label: string, arm: Arm, index: number, g: GestureStats): string {
 	return `| ${label} | ${arm} #${index} | ${ms(g.p50)} / ${ms(g.p95)} / ${ms(g.worst)} | ${g.rareIntervals} / ${g.frames} | ${g.loafs} (worst block ${ms(g.loafWorstBlocking)}) | ${g.mountedPeak} |`;
 }
 
@@ -723,9 +741,9 @@ function toMarkdown(
 	options: Options,
 	camera: { x: number; y: number; k: number },
 	boxes: FrameBox[],
-	verify: Record<"animated" | "static", { painted: boolean; changedOverTwoSeconds: boolean }>,
+	verify: Record<Arm, { painted: boolean; changedOverTwoSeconds: boolean }>,
 	results: RunResult[],
-	traceAnalysis: Record<"animated" | "static", TraceAnalysis>,
+	traceAnalysis: Record<Arm, TraceAnalysis>,
 ): string {
 	const clean = results.filter((r) => !r.traced);
 	const traced = results.filter((r) => r.traced);
@@ -747,7 +765,7 @@ function toMarkdown(
 	lines.push("");
 	lines.push("| arm | painted (non-blank) | pixels changed over 2s |");
 	lines.push("|---|---|---|");
-	for (const arm of ["animated", "static"] as const) {
+	for (const arm of ARMS) {
 		lines.push(`| ${arm} | ${verify[arm].painted} | ${verify[arm].changedOverTwoSeconds} |`);
 	}
 	lines.push("");
@@ -807,14 +825,14 @@ function toMarkdown(
 	lines.push("");
 	lines.push("| arm | trace window | canvas renderer busy | frames renderer busy |");
 	lines.push("|---|---|---|---|");
-	for (const arm of ["animated", "static"] as const) {
+	for (const arm of ARMS) {
 		const a = traceAnalysis[arm];
 		lines.push(
 			`| ${arm} | ${ms(a.windowMs)} ms | ${ms(a.canvasBusyMs)} ms (${((a.canvasBusyMs / a.windowMs) * 100).toFixed(0)}%) | ${ms(a.framesBusyMs)} ms (${((a.framesBusyMs / a.windowMs) * 100).toFixed(0)}%) |`,
 		);
 	}
 	lines.push("");
-	for (const arm of ["animated", "static"] as const) {
+	for (const arm of ARMS) {
 		const a = traceAnalysis[arm];
 		lines.push(`**${arm} — top 5 by inclusive duration, canvas renderer main thread**`);
 		lines.push("");
@@ -844,13 +862,17 @@ async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	mkdirSync(options.out, { recursive: true });
 
-	process.stderr.write(`bench: setting up animated arm from ${options.project}\n`);
-	const animated = await setupArm(options.project, "animated");
-	process.stderr.write(`bench: setting up static arm from ${options.project}\n`);
-	const staticArm = await setupArm(options.project, "static");
-	const arms = { animated, static: staticArm };
+	// Each arm gets its own copy and its own daemon, so no arm can warm another's
+	// compile cache or inherit its camera — including the two whose sources are
+	// identical and differ only in the bench hook `runOnce` injects.
+	const arms = {} as Record<Arm, ArmSetup>;
+	for (const label of ARMS) {
+		process.stderr.write(`bench: setting up ${label} arm from ${options.project}\n`);
+		arms[label] = await setupArm(options.project, label);
+	}
+	const setups = ARMS.map((label) => arms[label]);
 
-	const boxes = namedPage(animated.root, PAGE_NAME).frames;
+	const boxes = namedPage(arms.animated.root, PAGE_NAME).frames;
 	if (boxes.length === 0) throw new Error(`${options.project} has no frames on page "${PAGE_NAME}"`);
 	const camera = planCamera(boxes, VIEWPORT.width, VIEWPORT.height, K);
 	process.stderr.write(
@@ -861,29 +883,36 @@ async function main(): Promise<void> {
 	try {
 		browser = await chromium.launch({ channel: "chromium", headless: false });
 
-		for (const arm of [animated, staticArm]) {
+		for (const arm of setups) {
 			process.stderr.write(`bench: preparing covers for ${arm.label}\n`);
 			writeCamera(arm.root, planCamera(boxes, VIEWPORT.width, VIEWPORT.height, DEFAULT_ZOOM), PAGE_NAME);
 			await prepareCurrentCovers(browser, arm.url, arm.root, boxes);
 			writeCamera(arm.root, camera, PAGE_NAME);
 		}
 
+		// A frame document opened on its own has no canvas above it, so no freeze
+		// ever reaches it: this checks the *patch*, and the two unpatched arms are
+		// expected to be indistinguishable here.
 		process.stderr.write("bench: verifying static-arm paint behavior\n");
-		const verify = {
-			animated: await verifyPaintBehavior(browser, animated, options.out),
-			static: await verifyPaintBehavior(browser, staticArm, options.out),
-		};
-		process.stderr.write(`bench:   animated: ${JSON.stringify(verify.animated)}\n`);
-		process.stderr.write(`bench:   static:   ${JSON.stringify(verify.static)}\n`);
+		const verify = {} as Record<Arm, { painted: boolean; changedOverTwoSeconds: boolean }>;
+		for (const label of ARMS) {
+			verify[label] = await verifyPaintBehavior(browser, arms[label], options.out);
+			process.stderr.write(`bench:   ${label}: ${JSON.stringify(verify[label])}\n`);
+		}
 		if (verify.static.changedOverTwoSeconds) {
 			throw new Error("static arm's sample frame still changed pixels over 2s — the patch did not take");
 		}
 		if (!verify.static.painted)
 			throw new Error("static arm's sample frame never painted — the patch broke the first paint");
+		for (const label of ["animated", "frozen"] as const) {
+			if (!verify[label].changedOverTwoSeconds) {
+				throw new Error(`${label} arm's sample frame never moved — its loop is not the one being measured`);
+			}
+		}
 
 		// warm pass per arm: one discarded navigation so the first measured run
 		// is not paying for a cold compile
-		for (const arm of [animated, staticArm]) {
+		for (const arm of setups) {
 			process.stderr.write(`bench: warming ${arm.label}\n`);
 			writeCamera(arm.root, camera, PAGE_NAME);
 			const warm = await browser.newContext({ viewport: VIEWPORT });
@@ -894,16 +923,20 @@ async function main(): Promise<void> {
 			await new Promise((resolveWait) => setTimeout(resolveWait, 1500));
 		}
 
-		const sequence: readonly ("animated" | "static")[] = [
+		// three of each, and no arm twice in the same position of a triple
+		const sequence: readonly Arm[] = [
 			"animated",
+			"frozen",
 			"static",
 			"static",
 			"animated",
-			"animated",
+			"frozen",
+			"frozen",
 			"static",
+			"animated",
 		];
 		const results: RunResult[] = [];
-		const runIndex: Record<"animated" | "static", number> = { animated: 0, static: 0 };
+		const runIndex: Record<Arm, number> = { animated: 0, frozen: 0, static: 0 };
 		for (const label of sequence) {
 			runIndex[label]++;
 			process.stderr.write(`bench: run ${label} #${runIndex[label]}\n`);
@@ -914,12 +947,13 @@ async function main(): Promise<void> {
 			);
 		}
 
-		const traceEventsByArm: Record<"animated" | "static", TraceEvent[]> = { animated: [], static: [] };
-		const traceRolesByArm: Record<"animated" | "static", Roles | undefined> = {
+		const traceEventsByArm: Record<Arm, TraceEvent[]> = { animated: [], frozen: [], static: [] };
+		const traceRolesByArm: Record<Arm, Roles | undefined> = {
 			animated: undefined,
+			frozen: undefined,
 			static: undefined,
 		};
-		for (const label of ["animated", "static"] as const) {
+		for (const label of ARMS) {
 			runIndex[label]++;
 			process.stderr.write(`bench: trace run ${label} #${runIndex[label]}\n`);
 			const { result, traceEvents } = await runOnce(browser, arms[label], camera, runIndex[label], true);
@@ -940,9 +974,11 @@ async function main(): Promise<void> {
 			}
 		}
 
-		const traceAnalysis: Record<"animated" | "static", TraceAnalysis> = {
-			animated:
-				traceRolesByArm.animated === undefined
+		const traceAnalysis = {} as Record<Arm, TraceAnalysis>;
+		for (const label of ARMS) {
+			const roles = traceRolesByArm[label];
+			traceAnalysis[label] =
+				roles === undefined
 					? {
 							canvasBusyMs: Number.NaN,
 							framesBusyMs: Number.NaN,
@@ -950,18 +986,8 @@ async function main(): Promise<void> {
 							framesTop: [],
 							windowMs: Number.NaN,
 						}
-					: analyzeTrace(traceEventsByArm.animated, traceRolesByArm.animated),
-			static:
-				traceRolesByArm.static === undefined
-					? {
-							canvasBusyMs: Number.NaN,
-							framesBusyMs: Number.NaN,
-							canvasTop: [],
-							framesTop: [],
-							windowMs: Number.NaN,
-						}
-					: analyzeTrace(traceEventsByArm.static, traceRolesByArm.static),
-		};
+					: analyzeTrace(traceEventsByArm[label], roles);
+		}
 
 		writeFileSync(
 			join(options.out, "results.json"),
@@ -985,8 +1011,7 @@ async function main(): Promise<void> {
 		process.stderr.write(`bench: wrote ${options.out}/results.json and results.md\n`);
 	} finally {
 		await browser?.close();
-		animated.stop();
-		staticArm.stop();
+		for (const arm of setups) arm.stop();
 	}
 }
 

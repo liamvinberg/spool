@@ -511,6 +511,7 @@ export function ProjectCanvas({
 	const lifecycleRef = useRef(lifecycle);
 	lifecycleRef.current = lifecycle;
 	const sweepLifecycle = lifecycle.sweep;
+	const noteCameraMoving = lifecycle.noteCameraMoving;
 
 	const reloadFrameDocument = useCallback((frame: string) => {
 		setDocNonces((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
@@ -1768,15 +1769,18 @@ export function ProjectCanvas({
 
 	// Camera motion is a React value for drawing only. The lifecycle reads its ref
 	// after this short quiet window, so frames mount where the camera stopped
-	// rather than throughout the gesture.
+	// rather than throughout the gesture. The same window is the whole of "the
+	// camera is moving": live frames hold their animations across it (#171).
 	useEffect(() => {
 		if (camera === null) return;
+		noteCameraMoving(true);
 		const settle = setTimeout(() => {
 			settledCameraRef.current = camera;
+			noteCameraMoving(false);
 			sweepLifecycle();
 		}, LIFECYCLE_CAMERA_SETTLE_MS);
 		return () => clearTimeout(settle);
-	}, [camera, sweepLifecycle]);
+	}, [camera, sweepLifecycle, noteCameraMoving]);
 
 	// persist arrows + the page bookkeeping on settle: last-settle wins
 	// the stored slot (#12); each page keeps its own camera, and the active
