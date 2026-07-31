@@ -1,3 +1,4 @@
+import "../agent-wind.css";
 import { motion, useAnimationFrame, useMotionValue, useReducedMotion } from "motion/react";
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { useShift } from "../lib/edge-shift";
@@ -78,7 +79,54 @@ const CHROME = 29;
  *   fact  the composer footer's readout slot, which carries a fact when nothing is
  *         out and the live count when something is.
  */
-export type WaitTake = "now" | "none" | "mark" | "line" | "fact" | "shimmer";
+/**
+ * Round three, and it is here because round two was drawn against a rail that had no
+ * loader in it.
+ *
+ * `45b5c5d` drew the six takes above at 19:38. `31ee106 feat: lay a stroke along the
+ * composer border` shipped at 22:37 the same evening, and `b4aef45` deleted the beat eight
+ * minutes before that. So every number on this page was measured against a rail where the
+ * indicator under test was the *only* indicator, and the rail people actually use now has
+ * a hairline winding across the top of the composer for the whole of every turn. Adding a
+ * word to that rail is adding a second thing, which is not the question round two answered.
+ *
+ * The stroke is good at exactly one thing and bad at exactly one thing. It says *alive*
+ * without spending a pixel of the transcript, and it says nothing else: `agent-rail.tsx`
+ * states the flatness as the design — "a request out, thinking, saying and doing all draw
+ * the same laying-and-taking-up". So a ninety-second thought and a two-hundred-millisecond
+ * read are the same picture, and the complaint that opened this round is that one of those
+ * reads as stuck.
+ *
+ *   stroke  what ships, and the floor. The hairline alone, no word anywhere. Every take
+ *           below is this plus or instead of something.
+ *   under   the stroke untouched, and `line`'s slot carrying `fact`'s sentence. The two
+ *           halves round two never put together, because `fact` was drawn in the footer
+ *           and lost on the footer's width rather than on its content.
+ *   ride    the stroke stops being rail-wide and becomes the word's own underline. One
+ *           object rather than two, and the travel drops from 420px to the word.
+ *   gauge   the stroke goes determinate. Its length is how long this wait has run against
+ *           the slowest one ever measured, so the loader is the number and there is no word.
+ *   row     the thought goes back in the log as a receipt and *stays there*. What `b4aef45`
+ *           deleted was a line that was removed again; a line that is never removed cannot
+ *           drag anything, and it is the only take that leaves a turn readable afterwards.
+ */
+export type WaitTake =
+	| "now"
+	| "none"
+	| "mark"
+	| "line"
+	| "fact"
+	| "shimmer"
+	| "stroke"
+	| "under"
+	| "ride"
+	| "gauge"
+	| "row";
+
+/** the takes that hang a readout on the transcript's bottom edge */
+const EDGE_SLOT = new Set<WaitTake>(["line", "shimmer", "under", "ride"]);
+/** the takes that draw the shipped hairline, in one shape or another */
+const STROKE = new Set<WaitTake>(["stroke", "under", "ride", "gauge"]);
 
 /**
  * A word that is alive because the light moves across it, which is what the two desktop
@@ -270,6 +318,130 @@ function EdgeLine({
 }
 
 /**
+ * The shipped loader, on the composer's own top border (`31ee106`).
+ *
+ * The keyframes are `agent-wind.css`, copied out of `src/ui/ui.css` byte for byte, because
+ * a round arguing about this object has to draw the object rather than something with a
+ * similar feel. One element for the life of the rail: at rest it is `scaleX(0)` and the
+ * border is a border, and while a turn runs the keyframes take the transform over. Nothing
+ * enters and nothing leaves, which is the bar round two set and the only bar the shipped
+ * stroke already clears.
+ *
+ * `gauge` is the one take that changes what it means rather than where it is. The sweep
+ * comes off and the length becomes a reading: this wait against the slowest one ever
+ * measured, so the line grows while a thought runs and is back to nothing between them.
+ */
+function WindStroke({ take, running, fill }: { take: WaitTake; running: boolean; fill: number }) {
+	if (!STROKE.has(take)) return null;
+	if (take === "gauge")
+		return (
+			<span
+				aria-hidden="true"
+				data-wait-part="gauge"
+				className="pointer-events-none absolute -top-px left-0 block h-px origin-left bg-text/75 transition-[width] duration-100 ease-linear"
+				style={{ width: `${fill}%` }}
+			/>
+		);
+	// `ride` moves the stroke onto the word, so the border keeps none of it
+	if (take === "ride") return null;
+	return (
+		<span
+			aria-hidden="true"
+			data-wait-part="stroke"
+			className={cn(
+				"pointer-events-none absolute -top-px left-0 block h-px w-full origin-left bg-text/75 [transform:scaleX(0)]",
+				running && "agent-wind",
+			)}
+		/>
+	);
+}
+
+/**
+ * `under`: the stroke stays where it is and the sentence goes on `line`'s own slot.
+ *
+ * This is the correction round two never got to make. `fact` was argued down on the
+ * footer's width — 389 of 391 at the shipped rail, 118 over at the 300 the ticket was
+ * written against — and that is a fact about the *footer*, not about the sentence. `line`'s
+ * slot is 243 of 391 with room to spare, and its own frame says so: "line's slot fits it."
+ * So the content that lost is put in the place that won, and the loser turns out to have
+ * been a placement all along.
+ */
+function EdgeFact({ live, fact }: { live: boolean; fact: string }) {
+	return (
+		<div
+			data-wait-part="under"
+			className="pointer-events-none absolute inset-x-0 bottom-0 flex h-9 items-center px-3.5"
+		>
+			<span
+				className={cn("font-mono text-sm tabular-nums leading-4", live ? "text-text/80" : "text-muted/45")}
+			>
+				{fact}
+			</span>
+		</div>
+	);
+}
+
+/**
+ * `ride`: the loader is the word's underline, and there is nothing else on the border.
+ *
+ * The stroke's own doc prices itself honestly — "420px of peripheral travel every 1.6s at
+ * 0.26px/ms, the largest moving thing in the rail" — and that price was worth paying when
+ * the stroke was the whole indicator. Once a word is there anyway, the travel can be spent
+ * under the word instead of across the rail: same track, same 1600ms, roughly a seventh of
+ * the distance, and the two objects collapse into one. What you look at to find out *what*
+ * is the same thing that tells you it is still going.
+ */
+function RideWord({ live, running, text }: { live: boolean; running: boolean; text: string }) {
+	return (
+		<div
+			data-wait-part="ride"
+			className="pointer-events-none absolute inset-x-0 bottom-0 flex h-9 items-center px-3.5"
+		>
+			<span className="inline-flex flex-col items-start">
+				<span className={cn("font-mono text-sm leading-4", live ? "text-muted" : "text-muted/45")}>{text}</span>
+				<span className="relative mt-[3px] block h-px w-full overflow-hidden">
+					<span
+						className={cn(
+							"absolute inset-0 block h-px origin-left bg-text/75 [transform:scaleX(0)]",
+							running && "agent-wind",
+						)}
+					/>
+				</span>
+			</span>
+		</div>
+	);
+}
+
+/**
+ * `row`: the thought is a receipt, and receipts do not leave.
+ *
+ * `b4aef45`'s complaint was never that the wait was in the log. It was that the wait was
+ * "the one line the log ever removed", and removing it dragged everything above it down
+ * 38.3px at the moment an answer landed. A line that is written once and stays cannot do
+ * that: it enters with the rest of the turn, the log follows it the way it follows every
+ * other row, and afterwards the transcript can be read back and it says where the time
+ * went. It is the only take here that survives the turn it describes.
+ *
+ * The grammar is the tool row's, because that is the grammar the log already has for a
+ * thing that took time: a mark, a verb, and what it was about. The number is what the wire
+ * really carries — `AgentThinking` has a token count and no prose, and every thinking field
+ * in every capture is the empty string — so this draws a duration and never pretends to a
+ * thought.
+ */
+function Thought({ ms, live }: { ms: number; live: boolean }) {
+	return (
+		<div
+			data-wait-part="thought"
+			className="-mx-1.5 flex h-[26px] w-fit items-center gap-2.5 rounded-sm px-1.5"
+		>
+			<StateMark state={live ? "running" : "done"} />
+			<span className="shrink-0 font-mono text-sm text-muted/70 leading-4">thinking</span>
+			<span className="shrink-0 font-mono text-sm text-muted/60 tabular-nums leading-4">{duration(ms)}</span>
+		</div>
+	);
+}
+
+/**
  * Today's beat, drawn only by `now`: a mark with no verb beside it, in the log, gone
  * the moment the answer starts. `agent-transcript.ts:1124` calls it "one beat, unnamed,
  * turning" and `:894` takes it back out, stating why: "the wait leaves no receipt: it
@@ -298,6 +470,7 @@ function Transcript({
 	live,
 	waitMs,
 	running,
+	fact,
 	view,
 }: {
 	entries: readonly PlayEntry[];
@@ -306,15 +479,28 @@ function Transcript({
 	live: boolean;
 	waitMs: number;
 	running: boolean;
+	/** the sentence `under` hangs on the edge, which is the same one `fact` puts in the footer */
+	fact: string;
 	view: RefObject<HTMLDivElement | null>;
 }) {
 	const [follow, setFollow] = useState(true);
 
 	const items: Item[] = [];
 	const beats = take === "now" ? waits.filter((one) => one.live) : [];
+	/* `row` keeps every one of them, live and finished alike: the whole claim is that a
+	   thought is a receipt, and a receipt that is deleted once the answer lands is the
+	   beat again wearing a verb */
+	const thoughts = take === "row" ? waits : [];
 	for (const entry of entries) {
 		for (const beat of beats)
 			if (beat.before === entry.key) items.push({ key: beat.key, tight: true, node: <Beat id={beat.key} /> });
+		for (const thought of thoughts)
+			if (thought.before === entry.key)
+				items.push({
+					key: thought.key,
+					tight: true,
+					node: <Thought ms={thought.live ? thought.ms : thought.ttft} live={thought.live} />,
+				});
 		if (entry.kind === "user") items.push({ key: entry.key, tight: false, node: <Asked text={entry.text} context={entry.context ?? ""} /> });
 		else if (entry.kind === "prose") items.push({ key: entry.key, tight: false, node: <Say entry={entry} /> });
 		else if (entry.kind === "line") items.push({ key: entry.key, tight: true, node: <Row entry={entry} /> });
@@ -323,6 +509,13 @@ function Transcript({
 	const held = new Set(items.map((item) => item.key));
 	for (const beat of beats)
 		if (!held.has(beat.key)) items.push({ key: beat.key, tight: true, node: <Beat id={beat.key} /> });
+	for (const thought of thoughts)
+		if (!held.has(thought.key))
+			items.push({
+				key: thought.key,
+				tight: true,
+				node: <Thought ms={thought.live ? thought.ms : thought.ttft} live={thought.live} />,
+			});
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the item list is what moves the end
 	useEffect(() => {
@@ -348,7 +541,7 @@ function Transcript({
 				}}
 				className={cn(
 					"pages-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-3.5 pt-6",
-					take === "line" || take === "shimmer" ? "pb-10" : "pb-4",
+					EDGE_SLOT.has(take) ? "pb-10" : "pb-4",
 				)}
 			>
 				<div className="mt-auto shrink-0">
@@ -360,10 +553,16 @@ function Transcript({
 				</div>
 			</div>
 			<span className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-bg to-transparent" />
-			{take === "line" || take === "shimmer" ? (
+			{EDGE_SLOT.has(take) ? (
 				<>
 					<span className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-b from-transparent to-bg" />
-					<EdgeLine live={live} ms={waitMs} running={running} sweep={take === "shimmer"} />
+					{take === "under" ? (
+						<EdgeFact live={live} fact={fact} />
+					) : take === "ride" ? (
+						<RideWord live={live} running={running} text={live ? "thinking" : running ? "working" : "idle"} />
+					) : (
+						<EdgeLine live={live} ms={waitMs} running={running} sweep={take === "shimmer"} />
+					)}
 				</>
 			) : null}
 		</div>
@@ -417,6 +616,7 @@ function Composer({
 	running,
 	live,
 	fact,
+	fill,
 	onStop,
 	onWanted,
 }: {
@@ -424,6 +624,8 @@ function Composer({
 	running: boolean;
 	live: boolean;
 	fact: string;
+	/** how far `gauge`'s determinate stroke has run, as a percentage of the border */
+	fill: number;
 	onStop: () => void;
 	onWanted: (px: number) => void;
 }) {
@@ -476,7 +678,8 @@ function Composer({
 	);
 
 	return (
-		<div className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5">
+		<div className="relative flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5">
+			<WindStroke take={take} running={running} fill={fill} />
 			<div className="flex min-h-0 flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5">
 				<span className="flex h-6 min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-sm border border-border-raised bg-raised pr-2.5 pl-2">
 					<span className="h-3 w-[2px] shrink-0 rounded-full bg-thread/55" />
@@ -653,6 +856,16 @@ export function WaitFrame({
 
 	const share = churn.ofMs === 0 ? 0 : Math.round((churn.onMs / churn.ofMs) * 100);
 	const box = 420 - CHROME;
+	/*
+	 * What `gauge` fills against, and the reason it is the take with a lie in it.
+	 *
+	 * A determinate bar promises an end, and a request that has not answered has no end to
+	 * promise. The nearest honest denominator is the slowest first token ever measured here
+	 * — 4,043ms of 50 — so the line reads *this wait against the worst one we have seen*,
+	 * and a thought that outruns the record pins at full rather than wrapping. It is drawn
+	 * so the compromise can be looked at rather than described.
+	 */
+	const fill = live ? Math.min(100, Math.round(((wait?.ms ?? 0) / TTFT_MEASURED.max) * 100)) : 0;
 
 	return (
 		<div className="flex h-full w-full flex-col overflow-hidden bg-bg font-sans text-text antialiased [font-synthesis:none]">
@@ -664,6 +877,7 @@ export function WaitFrame({
 					live={live}
 					waitMs={wait?.ms ?? 0}
 					running={running}
+					fact={fact}
 					view={view}
 				/>
 				<Composer
@@ -671,6 +885,7 @@ export function WaitFrame({
 					running={running}
 					live={live}
 					fact={fact}
+					fill={fill}
 					onStop={turn.cut}
 					onWanted={setWanted}
 				/>
