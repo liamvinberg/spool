@@ -825,10 +825,20 @@ export function ProjectCanvas({
 	 * finder pick, a walk, a connection row, a page switch, a sidebar flight —
 	 * records the spot it left through recordDeparture; a move that reframes
 	 * where you already are — pan, zoom, fit, enter — never does.
+	 *
+	 * A spot is the whole standing: the page, the camera, the frame you are
+	 * inside, and what you had chosen — so a jump can hand all of it back.
 	 */
 	const jumpSpot = useCallback((): JumpEntry | undefined => {
 		const cam = cameraRef.current;
-		return cam === null ? undefined : { page: activePageRef.current, camera: { x: cam.x, y: cam.y, k: cam.k } };
+		if (cam === null) return undefined;
+		return {
+			page: activePageRef.current,
+			camera: { x: cam.x, y: cam.y, k: cam.k },
+			entered: enteredRef.current,
+			selected: [...selectedRef.current],
+			picked: [...pickedRef.current],
+		};
 	}, []);
 
 	const recordDeparture = useCallback(() => {
@@ -1484,18 +1494,41 @@ export function ProjectCanvas({
 		[recordDeparture, animateCamera, switchToPage, arrivalAt],
 	);
 
-	/** Land a jump: another page arrives through switchToPage; the same page flies, leaving any entered frame. */
+	/**
+	 * Land a jump: another page arrives through switchToPage; the same page
+	 * flies, leaving whatever it was standing in. Then the recorded standing is
+	 * put back — inside the frame you were inside, holding what you had chosen —
+	 * because a jump returns you to a spot, not to a view of one. Entering here
+	 * keeps the recorded camera rather than fitting the frame the way going
+	 * inside normally does: the landing must be where you left, to the pixel.
+	 * A frame that has since gone takes nobody inside; the camera still lands.
+	 */
 	const arriveAtJump = useCallback(
 		(entry: JumpEntry) => {
 			if (entry.page !== activePageRef.current) {
 				switchToPage(entry.page, entry.camera);
-				return;
+			} else {
+				if (enteredRef.current !== null) exitEntered();
+				clearCanvasSelection();
+				setMenu(null);
+				animateCamera(entry.camera);
 			}
-			if (enteredRef.current !== null) exitEntered();
-			setMenu(null);
-			animateCamera(entry.camera);
+			const onPage = new Set(
+				allFramesRef.current.filter((frame) => pageOf(frame) === entry.page).map((frame) => frame.name),
+			);
+			setSelected(entry.selected.filter((name) => onPage.has(name)));
+			setPicked(entry.picked.filter((pick) => onPage.has(pick.frame)));
+			if (entry.entered === null || !onPage.has(entry.entered)) return;
+			const target = entry.entered;
+			departedFrameDocuments.current.delete(target);
+			walkTarget.current = null;
+			walkSession.current = null;
+			setEntered(target);
+			// a frame still mounted takes the keyboard now; one the page switch
+			// remounts takes it at its loaded report, the way a walk's target does
+			iframes.current.get(target)?.focus();
 		},
-		[switchToPage, exitEntered, animateCamera],
+		[switchToPage, exitEntered, clearCanvasSelection, animateCamera],
 	);
 
 	const jumpBack = useCallback(() => {

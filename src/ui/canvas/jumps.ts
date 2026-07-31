@@ -1,4 +1,5 @@
 import type { Camera } from "../api";
+import type { PickedSelection } from "./overlays";
 
 /**
  * The jump list: vim's ctrl-o/ctrl-i carried to the canvas (#166). A move that
@@ -10,11 +11,21 @@ import type { Camera } from "../api";
  * over vim's default append because nobody predicts the append. The stacks
  * live like the geometry ones (history.ts): per window, in memory, gone on
  * reload.
+ *
+ * A spot is where you stood, not just what you saw: the frame you were inside
+ * and what you had chosen travel with the camera, so coming back puts you back
+ * rather than in front of it.
  */
 
 export interface JumpEntry {
 	page: string;
 	camera: Camera;
+	/** The frame you were live inside, null out on the canvas. */
+	entered: string | null;
+	/** The frames you had chosen. Never a place, only what came with you. */
+	selected: readonly string[];
+	/** The elements you had chosen, including the geometry that draws their outlines. */
+	picked: readonly PickedSelection[];
 }
 
 export interface JumpList {
@@ -28,10 +39,16 @@ export function emptyJumps(): JumpList {
 	return { back: [], forward: [] };
 }
 
-/** The same spot as a hand would judge it: one page, a camera within a pixel. */
+/**
+ * The same spot as a hand would judge it: one page, a camera within a pixel,
+ * standing in the same place. Inside a frame and in front of it are two spots
+ * at one camera — going between them is a move worth landing on. What was
+ * selected is not part of the answer: choosing something moves nobody.
+ */
 function sameSpot(a: JumpEntry, b: JumpEntry): boolean {
 	return (
 		a.page === b.page &&
+		a.entered === b.entered &&
 		Math.round(a.camera.x) === Math.round(b.camera.x) &&
 		Math.round(a.camera.y) === Math.round(b.camera.y) &&
 		Math.abs(a.camera.k - b.camera.k) < 1e-3
