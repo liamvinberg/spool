@@ -3,7 +3,7 @@ import { createElement, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { type ClipboardCopyResult, parseClipboardCopyResult } from "./clipboard-protocol";
-import { accelPressed } from "./platform-keys";
+import { accelChord } from "./platform-keys";
 import { BrokenFrame, Player, type PlayerController, TermScreen } from "./player-chrome";
 import type { SpoolUi } from "./spool-public";
 import { parseWalkDecision } from "./walk-protocol";
@@ -1284,14 +1284,10 @@ function followGeometry(): void {
 		// behind accel (#210). Focus sits in here whenever a prototype is being
 		// used, so these two chords only reach the shell by being forwarded.
 		addEventListener("keydown", (event) => {
-			if (!accelPressed(event) || event.altKey || event.shiftKey) return;
-			if (event.key === "Escape") {
-				event.preventDefault();
-				postPlayerMessage({ spool: "player-key", key: "leave" });
-			} else if (event.key.toLowerCase() === "f") {
-				event.preventDefault();
-				postPlayerMessage({ spool: "player-key", key: "fullscreen" });
-			}
+			const chord = accelChord(event);
+			if (chord === undefined) return;
+			event.preventDefault();
+			postPlayerMessage({ spool: "player-key", key: chord });
 		});
 	}
 }

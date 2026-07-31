@@ -3,6 +3,7 @@ import { fitBox } from "../../fit";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelLabel } from "../../runtime/platform-keys";
 import { createPlayerShell, type PlayerShell } from "../../runtime/player-shell-runtime";
+import { useFullscreen, useViewport, useWake } from "../../runtime/player-stage";
 import { fetchPlaySession, type PlaySession, type ProjectedFrame } from "../api";
 import { cn } from "../cn";
 import { PLAY_IN, PLAY_OUT } from "./play-flight";
@@ -34,7 +35,7 @@ export interface PlayLayerProps {
 	onFrame: (frame: string) => void;
 	/** A walk the session really took, for the flow graph's verified marks. */
 	onWalked: (from: string, to: string) => void;
-	/** The player is up and nothing is moving: the canvas may hibernate. */
+	/** The player is up and nothing is moving: the canvas may go back to its pictures. */
 	onSettled: () => void;
 	onExit: () => void;
 }
@@ -45,6 +46,7 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 	const host = useRef<HTMLDivElement>(null);
 	const iframe = useRef<HTMLIFrameElement>(null);
 	const wake = useRef<() => void>(() => {});
+	const fullscreenRef = useRef<{ on: boolean; toggle: () => void }>({ on: false, toggle: () => {} });
 	const exit = useRef(onExit);
 	exit.current = onExit;
 	const walked = useRef(onWalked);
@@ -65,30 +67,53 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 		};
 	}, [project, start]);
 
+	// The shell lives as long as the session it was built for, and no longer.
+	// Everything it reaches out of itself for is a ref, so a re-render never
+	// rebuilds it and a stale closure has nothing to be stale about.
 	const shellRef = useRef<PlayerShell | undefined>(undefined);
-	const shell = useShell(session, {
-		frame: () => iframe.current,
-		close: () => exit.current(),
-		walked: (from, to) => walked.current(from, to),
-		wake: () => wake.current(),
-		fullscreen: () => {
-			if (document.fullscreenElement != null) void document.exitFullscreen().catch(() => {});
-			else void host.current?.requestFullscreen?.().catch(() => {});
-		},
-		// A spent handoff repairs by minting another (#88). Out here that is a
-		// fresh session rather than a page reload — reloading the canvas to fix
-		// the player would throw away the camera, the selection and the walk.
-		repair: () => {
-			setSession(undefined);
-			void fetchPlaySession(project, start).then((next) => {
-				if (next === undefined) setFailure("the player's handoff expired and could not be renewed");
-				else setSession(next);
-			});
-			return true;
-		},
-		refreshGeometry: () => shellRef.current?.geometryReplay(),
-	});
-	shellRef.current = shell;
+	const [shell, setShell] = useState<PlayerShell | undefined>(undefined);
+	useEffect(() => {
+		if (session === undefined) {
+			setShell(undefined);
+			return;
+		}
+		const next = createPlayerShell(
+			{
+				project: session.project,
+				start: session.start,
+				frames: { ...session.frames },
+				terminals: [...session.terminals],
+				innerUrl: session.innerUrl,
+			},
+			{
+				frame: () => iframe.current,
+				close: () => exit.current(),
+				walked: (from, to) => walked.current(from, to),
+				wake: () => wake.current(),
+				fullscreen: () => fullscreenRef.current.toggle(),
+				// A spent handoff repairs by minting another (#88). Out here that is
+				// a fresh session rather than a page reload — reloading the canvas to
+				// fix the player would throw away the camera, the selection and the
+				// walk it was in the middle of.
+				repair: () => {
+					setSession(undefined);
+					void fetchPlaySession(project, start).then((renewed) => {
+						if (renewed === undefined) setFailure("the player's handoff expired and could not be renewed");
+						else setSession(renewed);
+					});
+					return true;
+				},
+				refreshGeometry: () => shellRef.current?.geometryReplay(),
+			},
+		);
+		shellRef.current = next;
+		setShell(next);
+		return () => {
+			next.destroy();
+			shellRef.current = undefined;
+			setShell(undefined);
+		};
+	}, [session, project, start]);
 
 	// Geometry the canvas already holds, pushed rather than re-fetched: out here
 	// the projection is live in this very component's props. The trigger is the
@@ -124,11 +149,23 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 		onFrame(frame);
 	}, [frame, onFrame]);
 
+	// The stage is held back whether or not the boot was quick (#210): the beat
+	// of dimmed canvas on the way in is the point of the delay, and a cached
+	// player that appeared instantly would skip it and pop the pill mid-flight.
+	const [due, setDue] = useState(false);
+	useEffect(() => {
+		const held = window.setTimeout(() => setDue(true), PLAY_IN.stageAt);
+		return () => window.clearTimeout(held);
+	}, []);
+
 	const revealed = view !== undefined && !view.hidden;
 	const settled = useRef(false);
 	useEffect(() => {
 		if (!revealed || settled.current) return;
 		settled.current = true;
+		// The player owns the keyboard from the moment it is up, so a prototype's
+		// own keys reach it rather than the canvas the press came from.
+		iframe.current?.focus({ preventScroll: true });
 		onSettled();
 	}, [revealed, onSettled]);
 
@@ -138,10 +175,12 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 	// The stage waits for the player as well as for the clock: covering the
 	// canvas before the player can be seen would leave a beat of nothing where
 	// the frame is meant to be.
-	const staged = !leaving && (revealed || failure !== undefined);
-	const { awake, stir } = useWake(staged && failure === undefined);
+	const staged = !leaving && due && (revealed || failure !== undefined);
+	const { awake, wake: stir } = useWake(staged && failure === undefined);
 	wake.current = stir;
 	const blocked = read?.externalHref != null;
+	const fullscreen = useFullscreen(() => host.current);
+	fullscreenRef.current = fullscreen;
 	const dismissExternal = shell?.controller.dismissExternal;
 
 	return (
@@ -191,7 +230,7 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 					className="absolute inset-x-0 top-1/2 mx-auto max-w-[560px] -translate-y-1/2 px-6 font-mono text-muted text-sm leading-sm"
 					role="alert"
 				>
-					<p className="mb-3 text-thread">the player failed to load</p>
+					<p className="mb-3 text-thread">player failed to load</p>
 					<pre className="m-0 whitespace-pre-wrap break-words">{failure ?? view?.loadError}</pre>
 				</div>
 			)}
@@ -203,10 +242,8 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 				phase={phase}
 				visible={staged && awake && !blocked}
 				onRestart={shell?.controller.restart}
-				onFullscreen={() => {
-					if (document.fullscreenElement != null) void document.exitFullscreen().catch(() => {});
-					else void host.current?.requestFullscreen?.().catch(() => {});
-				}}
+				fullscreen={fullscreen.on}
+				onFullscreen={fullscreen.toggle}
 				onClose={onExit}
 			/>
 		</div>
@@ -221,6 +258,7 @@ function Pill({
 	phase,
 	visible,
 	onRestart,
+	fullscreen,
 	onFullscreen,
 	onClose,
 }: {
@@ -231,6 +269,7 @@ function Pill({
 	phase: PlayPhase;
 	visible: boolean;
 	onRestart: (() => void) | undefined;
+	fullscreen: boolean;
 	onFullscreen: () => void;
 	onClose: () => void;
 }) {
@@ -287,13 +326,17 @@ function Pill({
 				</button>
 				<button
 					type="button"
-					aria-label="Fill the screen"
+					aria-label={fullscreen ? "Leave fullscreen" : "Fill the screen"}
+					aria-pressed={fullscreen}
 					onClick={onFullscreen}
-					className="flex cursor-pointer items-center text-muted transition-colors hover:text-text"
+					className={cn(
+						"flex cursor-pointer items-center transition-colors hover:text-text",
+						fullscreen ? "text-text" : "text-muted",
+					)}
 				>
 					<svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
 						<path
-							d="M2.5 6.5v-4h4M13.5 9.5v4h-4"
+							d={fullscreen ? "M6.5 2.5v4h-4M9.5 13.5v-4h4" : "M2.5 6.5v-4h4M13.5 9.5v4h-4"}
 							fill="none"
 							stroke="currentColor"
 							strokeWidth="1.5"
@@ -325,85 +368,10 @@ function Pill({
 	);
 }
 
-/** The shell lives as long as the session it was built for, and no longer. */
-function useShell(
-	session: PlaySession | undefined,
-	host: Parameters<typeof createPlayerShell>[1],
-): PlayerShell | undefined {
-	const [shell, setShell] = useState<PlayerShell | undefined>(undefined);
-	const hostRef = useRef(host);
-	hostRef.current = host;
-	useEffect(() => {
-		if (session === undefined) {
-			setShell(undefined);
-			return;
-		}
-		const next = createPlayerShell(
-			{
-				project: session.project,
-				start: session.start,
-				frames: { ...session.frames },
-				terminals: [...session.terminals],
-				innerUrl: session.innerUrl,
-			},
-			{
-				frame: () => hostRef.current.frame(),
-				close: () => hostRef.current.close(),
-				walked: (from, to) => hostRef.current.walked(from, to),
-				wake: () => hostRef.current.wake(),
-				fullscreen: () => hostRef.current.fullscreen(),
-				repair: () => hostRef.current.repair(),
-				refreshGeometry: () => hostRef.current.refreshGeometry(),
-			},
-		);
-		setShell(next);
-		return () => {
-			next.destroy();
-			setShell(undefined);
-		};
-	}, [session]);
-	return shell;
-}
-
 const noSubscribe = () => () => {};
 const zero = () => 0;
 
 function sizeOf(frames: readonly ProjectedFrame[], name: string): { w: number; h: number } {
 	const frame = frames.find((candidate) => candidate.name === name);
 	return frame === undefined ? { w: 390, h: 844 } : { w: frame.w, h: frame.h };
-}
-
-function useViewport(): { vw: number; vh: number } {
-	const [viewport, setViewport] = useState(() => ({ vw: window.innerWidth, vh: window.innerHeight }));
-	useEffect(() => {
-		const measure = () => setViewport({ vw: window.innerWidth, vh: window.innerHeight });
-		window.addEventListener("resize", measure);
-		return () => window.removeEventListener("resize", measure);
-	}, []);
-	return viewport;
-}
-
-/** Stillness this long puts the pill away; movement anywhere brings it back. */
-const IDLE_MS = 2000;
-
-function useWake(armed: boolean): { awake: boolean; stir: () => void } {
-	const [awake, setAwake] = useState(true);
-	const timer = useRef(0);
-	useEffect(() => {
-		if (!armed) {
-			setAwake(true);
-			return;
-		}
-		timer.current = window.setTimeout(() => setAwake(false), IDLE_MS);
-		return () => window.clearTimeout(timer.current);
-	}, [armed]);
-	return {
-		awake,
-		stir: () => {
-			if (!armed) return;
-			setAwake(true);
-			window.clearTimeout(timer.current);
-			timer.current = window.setTimeout(() => setAwake(false), IDLE_MS);
-		},
-	};
 }

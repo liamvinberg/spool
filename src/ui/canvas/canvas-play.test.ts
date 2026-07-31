@@ -145,6 +145,38 @@ describe("playing a frame inline", () => {
 		expect(chromeOpacity(host, "menu")).toBe("0");
 	});
 
+	it("stands every canvas key down while the player is up", async () => {
+		const { host } = await mountCanvas();
+
+		await act(async () => clickFrame(host, "menu"));
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", bubbles: true }));
+		});
+		await until(() => host.querySelector('iframe[title="test"]') !== null);
+		const canvas = host.querySelector<HTMLElement>('[role="application"]');
+		expect(canvas?.style.cursor).toBe("default");
+
+		// a player filling the screen is a live frame, and spool takes no plain
+		// key from one — not even the ones the canvas owns everywhere else
+		for (const key of ["h", "e", "r", "Backspace"]) {
+			await act(async () => {
+				window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+			});
+		}
+		expect(canvas?.style.cursor).toBe("default");
+		expect(host.querySelector('iframe[title="test"]')).not.toBeNull();
+
+		// and the same key is the canvas's again the moment the player is gone
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", metaKey: true, ctrlKey: true }));
+		});
+		await until(() => host.querySelector('iframe[title="test"]') === null);
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "h", bubbles: true }));
+		});
+		expect(canvas?.style.cursor).toBe("grab");
+	});
+
 	it("leaves on accel+esc and puts the canvas back where it was", async () => {
 		const { host } = await mountCanvas();
 		const before = cameraTransform(host);

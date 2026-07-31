@@ -36,12 +36,9 @@ export const PLAY_IN = {
 	start: 120,
 	/** And is home this long after leaving. */
 	fly: 600,
-	/** The field of other frames dims behind the flight. */
-	fieldAt: 120,
-	field: 380,
 	/**
-	 * The stage closes in around the frame. Held back so one beat of dimmed,
-	 * hibernating canvas is visible on the way in.
+	 * The stage closes in around the frame, and its own fade is the dim: held
+	 * back this long so one beat of canvas going quiet is visible on the way in.
 	 */
 	stageAt: 480,
 	stage: 280,
