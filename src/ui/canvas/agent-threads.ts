@@ -244,7 +244,7 @@ export function cutPicture(entries: readonly AgentEntry[]): AgentEntry[] {
 	const cut = entries.map((entry) => {
 		if (entry.kind === "row") {
 			return entry.state === "running"
-				? { ...entry, state: "stopped" as const, delegated: cutRows(entry.delegated) }
+				? { ...entry, state: "stopped" as const, step: null, delegated: cutRows(entry.delegated) }
 				: { ...entry, delegated: cutRows(entry.delegated) };
 		}
 		// a request nobody can answer any more: there is no process left for an answer to
@@ -263,5 +263,5 @@ export function cutPicture(entries: readonly AgentEntry[]): AgentEntry[] {
 const STOPPED = "stopped";
 
 function cutRows(rows: readonly Extract<AgentEntry, { kind: "row" }>[]): Extract<AgentEntry, { kind: "row" }>[] {
-	return rows.map((row) => (row.state === "running" ? { ...row, state: "stopped" as const } : row));
+	return rows.map((row) => (row.state === "running" ? { ...row, state: "stopped" as const, step: null } : row));
 }

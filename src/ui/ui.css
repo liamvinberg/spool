@@ -73,6 +73,13 @@
 	 * 260 four words are mid-fade at once against two at 170. */
 	--animate-agent-entry: agent-entry 280ms cubic-bezier(0.22, 0.61, 0.36, 1);
 	--animate-agent-word: agent-word 170ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	/* a delegate's live step (#194). One duration for all three of them, and it is the
+	 * word's: the line opens, the line closes, and the words that are being replaced go
+	 * out over exactly the span the ones replacing them come in on. A crossfade is two
+	 * halves of one gesture and they have to be the same length or the line flickers; the
+	 * box closing early or late against the words is the same fault one axis over. */
+	--animate-agent-step: agent-step 170ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	--animate-agent-leave: agent-leave 170ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
 	--animate-agent-spin: agent-spin 1.15s linear infinite;
 	/* the stroke on the composer's top border: the thread is laid out of the left edge,
 	 * carries at its full length, and is taken up into the right edge as the head waits
@@ -109,6 +116,21 @@
 
 	@keyframes agent-word {
 		from {
+			opacity: 0;
+		}
+	}
+
+	/* the line arriving under the row that launched it, out of no height at all: the same
+	 * close its transition draws, run the other way, so nothing below it jumps */
+	@keyframes agent-step {
+		from {
+			grid-template-rows: 0fr;
+			opacity: 0;
+		}
+	}
+
+	@keyframes agent-leave {
+		to {
 			opacity: 0;
 		}
 	}
@@ -236,10 +258,19 @@
 	.animate-find-panel-in,
 	.animate-agent-entry,
 	.animate-agent-word,
+	.animate-agent-step,
 	.animate-agent-menu-in,
 	.animate-agent-spin,
 	.animate-agent-wind {
 		animation: none;
+	}
+
+	/* words on their way out are simply out. Not `animation: none` like the rest of them:
+	 * what carries the fade away is the animation itself, so a step told not to animate
+	 * would sit there at full strength over the words that replaced it — and nothing ends
+	 * the animation that would have taken it down, because it never ran. */
+	.animate-agent-leave {
+		display: none;
 	}
 
 	/* the stroke is the whole indicator, so stillness cannot mean absence: it is held a

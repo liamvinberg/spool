@@ -1380,7 +1380,7 @@ function Entry({
  * `pointed` — so what marks the name is this row's own cursor, and what the pointing
  * produces is a ring out on the canvas or a lit page in the Pages rail. */
 
-function Row({ entry, jump, nested = false }: { entry: AgentRow; jump: FrameJump; nested?: boolean }) {
+function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 	/**
 	 * Whether the disclosure has been pressed, and which way.
 	 *
@@ -1398,7 +1398,7 @@ function Row({ entry, jump, nested = false }: { entry: AgentRow; jump: FrameJump
 	 */
 	const [over, setOver] = useState(false);
 	const shot = entry.shot;
-	const holds = entry.detail !== null || shot !== null || entry.delegated.length > 0;
+	const holds = entry.detail !== null || shot !== null;
 	const open = holds && (clicked ?? shot !== null);
 
 	/*
@@ -1420,8 +1420,8 @@ function Row({ entry, jump, nested = false }: { entry: AgentRow; jump: FrameJump
 		pointing.current = on ? frame : null;
 		jump.onPoint(on ? frame : null);
 	};
-	// a row can leave while the cursor is on its name — a disclosure shutting takes a
-	// delegate's rows with it — and a ring nothing is pointing at would stay lit
+	// a row can leave while the cursor is on its name — a turn restored from disk redraws
+	// the log it was in — and a ring nothing is pointing at would stay lit
 	useEffect(
 		() => () => {
 			if (pointing.current !== null) unpoint.current(null);
@@ -1494,12 +1494,13 @@ function Row({ entry, jump, nested = false }: { entry: AgentRow; jump: FrameJump
 	const row = "-mx-1.5 flex h-[26px] w-fit max-w-[calc(100%+12px)] items-center gap-2.5 rounded-sm px-1.5 text-left";
 	if (!holds)
 		return (
-			<div data-agent-row={said} data-agent-nested={nested ? "" : undefined} className={row}>
-				{line}
+			<div data-agent-row={said} className="flex flex-col">
+				<div className={row}>{line}</div>
+				<Step text={entry.step} />
 			</div>
 		);
 	return (
-		<div data-agent-row={said} data-agent-nested={nested ? "" : undefined} className="flex flex-col">
+		<div data-agent-row={said} className="flex flex-col">
 			<button
 				type="button"
 				aria-label={said}
@@ -1510,6 +1511,7 @@ function Row({ entry, jump, nested = false }: { entry: AgentRow; jump: FrameJump
 				{line}
 				<ChevronIcon open={open} className="ml-0.5 h-2.5 w-2.5 shrink-0 text-muted/35" />
 			</button>
+			<Step text={entry.step} />
 			{open ? (
 				<div className="flex flex-col pt-0.5 pb-1" style={{ paddingLeft: INDENT }}>
 					{/* the picture takes the payload's place rather than sitting under a line of
@@ -1524,24 +1526,85 @@ function Row({ entry, jump, nested = false }: { entry: AgentRow; jump: FrameJump
 							{entry.detail}
 						</span>
 					) : null}
-					{/*
-					 * A sub-agent is one row that expands into its own transcript (#194). What is in
-					 * here is rows rather than a summary, because for a delegate the place is the
-					 * canvas: its frames land out there and a row is how you get to one, so they
-					 * navigate on the same rule as everything else.
-					 */}
-					{entry.delegated.length > 0 ? (
-						<div className="relative flex flex-col">
-							<span className="absolute top-1 bottom-1 left-0 w-px bg-border-raised" />
-							{entry.delegated.map((theirs) => (
-								<div key={theirs.key} className="animate-agent-entry pl-2.5">
-									<Row entry={theirs} jump={jump} nested={true} />
-								</div>
-							))}
-						</div>
-					) : null}
 				</div>
 			) : null}
+		</div>
+	);
+}
+
+/* ---------- what a delegate is doing now ----------
+ * A sub-agent is one row and one line under it (#194): the step it is on, replaced as it
+ * moves. Not its calls — a delegate that reads eleven files is eleven rows of somebody
+ * else's homework, and five of them at once is the turn you launched buried under the
+ * work you delegated precisely so you would not have to watch it. What the delegate
+ * produced is on the canvas, which is where a delegate's work has always been (#143).
+ *
+ * So the line is a status and it is drawn as one: always there while the task is running,
+ * behind no disclosure, in the quiet mono every other payload uses — and gone the moment
+ * the task lands, leaving one settled line.
+ *
+ * It changes under the reader every few seconds, which is the whole reason for the two
+ * animations. The words crossfade, because a hard cut on a line nobody is looking at
+ * directly reads as a flicker in the corner of the eye. The box itself opens and closes
+ * on `grid-template-rows`, so the rows below it are moved rather than jumped: a fan-out
+ * has five of these landing and going at their own pace, and five jumps in a log
+ * somebody is reading is the log fighting them. */
+
+function Step({ text }: { text: string | null }) {
+	/** the words on screen, which are the ones handed in until they are not */
+	const [shown, setShown] = useState(text);
+	/** and the ones on their way out, held so the change is a crossfade and not a cut */
+	const [leaving, setLeaving] = useState<string | null>(null);
+	// adjusted in render rather than in an effect, because an effect paints the new words
+	// once with the old ones already gone, which is the flicker this exists to avoid
+	if (shown !== text) {
+		setLeaving(shown);
+		setShown(text);
+	}
+
+	/*
+	 * The step is over, and the line has to keep saying it while it closes: a track sized
+	 * off a box with nothing in it collapses in one frame, so what fades out is the last
+	 * words in the flow rather than an empty box with a ghost floating over it.
+	 */
+	const ending = shown === null;
+	const held = shown ?? leaving;
+	if (held === null) return null;
+	// the padding is on the words rather than on the box they sit in, because the ones
+	// leaving are laid over the ones arriving and two boxes only line up if they are made
+	// the same way
+	const words = "block truncate pt-0.5 pb-1 font-mono text-2xs text-muted/55 leading-4";
+	return (
+		<div
+			className="grid animate-agent-step transition-[grid-template-rows] duration-[170ms] ease-out motion-reduce:transition-none"
+			style={{ gridTemplateRows: ending ? "0fr" : "1fr" }}
+		>
+			<div className="relative min-h-0 overflow-hidden" style={{ paddingLeft: INDENT }}>
+				<span
+					// keyed on the words, so a step that changes mounts a new one to fade in and a
+					// step that is ending keeps the one it had and fades that
+					key={held}
+					// the hook is on words that are still true: a step that has ended is on screen
+					// only for as long as it takes to go, and nothing should be able to read it
+					data-agent-step={ending ? undefined : ""}
+					onAnimationEnd={ending ? () => setLeaving(null) : undefined}
+					className={cn(words, ending ? "animate-agent-leave" : "animate-agent-word")}
+				>
+					{held}
+				</span>
+				{/* the words being replaced, over the top of the ones replacing them */}
+				{ending || leaving === null ? null : (
+					<span
+						key={`left:${leaving}`}
+						aria-hidden="true"
+						onAnimationEnd={() => setLeaving(null)}
+						className={cn(words, "animate-agent-leave absolute inset-x-0 top-0")}
+						style={{ paddingLeft: INDENT }}
+					>
+						{leaving}
+					</span>
+				)}
+			</div>
 		</div>
 	);
 }

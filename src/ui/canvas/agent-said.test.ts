@@ -198,6 +198,30 @@ describe("the stylesheet the arrival lives in", () => {
 		expect(still).toContain(".animate-agent-word");
 		expect(still).toContain(".animate-agent-entry");
 		expect(still).toContain(".animate-agent-spin");
+		expect(still).toContain(".animate-agent-step");
 		expect(still).toContain("animation: none");
+	});
+
+	/**
+	 * A delegate's step is replaced under the reader every few seconds (#194), so the two
+	 * halves of the change are one gesture and have to last the same time: the words
+	 * leaving go over exactly the span the words arriving come in on.
+	 */
+	it("crosses a delegate's words over the same 170ms a word arrives in", () => {
+		expect(CSS).toContain("--animate-agent-leave: agent-leave 170ms");
+		expect(block("@keyframes agent-leave")).not.toMatch(/filter|blur|transform|translate|scale/);
+	});
+
+	/**
+	 * And stillness cannot mean `animation: none` for that half. What carries the words
+	 * away is the animation itself, so words told not to animate would sit at full
+	 * strength over the words that replaced them, with nothing left to take them down.
+	 */
+	it("takes the words leaving out of the drawing rather than freezing them over the new ones", () => {
+		const at = CSS.indexOf("@media (prefers-reduced-motion: reduce)");
+		const still = CSS.slice(at, CSS.indexOf("\n}", at));
+		const leave = still.slice(still.indexOf(".animate-agent-leave"));
+
+		expect(leave.slice(0, leave.indexOf("}"))).toContain("display: none");
 	});
 });
