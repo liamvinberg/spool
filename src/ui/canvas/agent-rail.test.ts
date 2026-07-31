@@ -237,6 +237,8 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		asked: [] as string[],
 		chose: [] as { thread: string; value?: string; effort?: string }[],
 		reply: reported,
+		/** the door held shut, which is where the second between a press and its reply is */
+		hold: null as Promise<void> | null,
 	};
 	if (still) {
 		vi.stubGlobal("matchMedia", (query: string) => ({
@@ -308,6 +310,9 @@ function mount({ still = false }: { still?: boolean } = {}) {
 				const body = input instanceof Request ? await input.text() : String(init?.body ?? "{}");
 				const wanted = JSON.parse(body) as { value?: string; effort?: string };
 				offered.chose.push({ thread, ...wanted });
+				// a real choice is a spawn away, so a test that wants to look at the menu in
+				// between holds the door here rather than racing it
+				if (offered.hold !== null) await offered.hold;
 				offered.offer = offered.reply(offered.offer, wanted);
 				return Response.json(offered.offer);
 			}
@@ -3349,15 +3354,73 @@ describe("the model menu", () => {
 		expect(canvas.offered.asked).toEqual([ONE, TWO]);
 	});
 
-	it("leaves the readout alone when the binary does not take the choice", async () => {
+	it("moves under the finger, a whole spawn before the binary has answered", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await openModelMenu(canvas);
+		let answer = () => {};
+		canvas.offered.hold = new Promise<void>((done) => {
+			answer = done;
+		});
+
+		await act(async () => modelRow(canvas.host, "Sonnet")?.click());
+		await settle(50);
+
+		// the reply is a spawn away — about a second on a cold binary — and nothing on
+		// screen waits for it. The level rides across because sonnet offers it
+		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet · high");
+
+		canvas.offered.hold = null;
+		answer();
+		await settle(50);
+		// and what stays is the report, which here says the same thing the finger did
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet · high");
+	});
+
+	it("takes the effort with it the moment a model reporting none is pressed", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await openModelMenu(canvas);
+		let answer = () => {};
+		canvas.offered.hold = new Promise<void>((done) => {
+			answer = done;
+		});
+
+		await act(async () => modelRow(canvas.host, "Haiku")?.click());
+		await settle(50);
+		await act(async () => modelTrigger(canvas.host)?.click());
+		await settle(50);
+
+		// `Haiku · high` for the second the door is shut would be a level on a model that
+		// reports no levels at all, so the press asserts the name and drops the rest
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Haiku");
+		expect(modelTrigger(canvas.host)?.textContent).not.toContain("high");
+		expect(modelRows(canvas.host)).not.toContain("max");
+
+		canvas.offered.hold = null;
+		answer();
+		await settle(50);
+	});
+
+	it("puts the readout back when the binary does not take the choice", async () => {
 		const canvas = mount();
 		await canvas.render();
 		// the report comes back unchanged, which is what an alias `list_models` never
-		// offered does: the press is not the authority and nothing local pretends it was
+		// offered does: the press is a claim with an expiry and never the authority
 		canvas.offered.reply = (offer) => offer;
 		await openModelMenu(canvas);
+		let answer = () => {};
+		canvas.offered.hold = new Promise<void>((done) => {
+			answer = done;
+		});
 
 		await act(async () => modelRow(canvas.host, "Sonnet")?.click());
+		await settle(50);
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet · high");
+
+		canvas.offered.hold = null;
+		answer();
 		await settle(50);
 
 		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
