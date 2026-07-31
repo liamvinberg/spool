@@ -92,8 +92,8 @@ export function bounced(entries: readonly AgentEntry[]): boolean {
  * `unread` and `waiting` are told apart by what clears them, and that is the whole
  * reason they are two drawings rather than one. A look clears `unread`, wherever the look
  * happened; nothing about looking answers a question, so `waiting` is decided above it
- * and no look reaches it. A strip that spent the disc on waiting would go silent about a
- * thread that will never finish, which is the one case the strip exists for.
+ * and no look reaches it. A column that spent the disc on waiting would go silent about a
+ * thread that will never finish, which is the one case the column exists for.
  */
 export function lifeOf({
 	phase,
