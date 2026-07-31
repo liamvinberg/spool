@@ -1059,11 +1059,11 @@ function Transcript({
 	const view = useRef<HTMLDivElement>(null);
 	const [follow, setFollow] = useState(true);
 	/**
-	 * Whether the reader is somewhere other than where following would hold them, which
-	 * is the one condition the way-back chip draws on. It is state rather than a read
-	 * off the box because the box moves without scrolling: a streaming entry grows
-	 * under a still scrollbar, and the chip has to appear the moment the live end
-	 * walks away from a reader who never touched anything.
+	 * Whether the reader is somewhere the way-back chip has something to name, which is
+	 * the one condition it draws on. It is state rather than a read off the box because
+	 * the box moves without scrolling: a streaming entry grows under a still scrollbar,
+	 * and the chip has to appear the moment the live end walks away from a reader who
+	 * never touched anything.
 	 */
 	const [away, setAway] = useState(false);
 	/**
@@ -1092,12 +1092,23 @@ function Transcript({
 			tail instanceof HTMLElement ? tail.getBoundingClientRect().top - box.getBoundingClientRect().top : null,
 		);
 	};
-	const pin = (box: HTMLElement) => {
-		const to = aim(box);
+	/** the log scrolling itself, held in `wrote` so the event it causes reads as its own */
+	const carry = (box: HTMLElement, to: number) => {
 		if (Math.abs(box.scrollTop - to) < 1) return;
 		wrote.current = to;
 		box.scrollTop = to;
 	};
+	const pin = (box: HTMLElement) => carry(box, aim(box));
+	/**
+	 * Whether the chip has anything to name: the reader is off the follow point *and*
+	 * there is log below them. The second half is what the first half cannot say. The
+	 * follow point of a last entry taller than the box is that entry's first line, so a
+	 * reader who has read all the way down sits an entry's overflow from it and was
+	 * being offered a way back to something they had already passed — a chip drawn at
+	 * the true bottom, pointing down, that scrolled up when pressed.
+	 */
+	const adrift = (box: HTMLElement) =>
+		box.scrollTop < box.scrollHeight - box.clientHeight - 1 && Math.abs(box.scrollTop - aim(box)) >= 1;
 	/** the reader took the wheel: following ends now, before the scroll it causes lands */
 	const leave = () => {
 		setFollow(false);
@@ -1119,7 +1130,7 @@ function Transcript({
 			pin(box);
 			return;
 		}
-		setAway(Math.abs(box.scrollTop - aim(box)) >= 1);
+		setAway(adrift(box));
 	}, [entries, follow, spoke]);
 
 	/*
@@ -1138,7 +1149,7 @@ function Transcript({
 		if (box === null || body === null || body === undefined) return;
 		const watcher = new ResizeObserver(() => {
 			if (following.current) pin(box);
-			else setAway(Math.abs(box.scrollTop - aim(box)) >= 1);
+			else setAway(adrift(box));
 		});
 		watcher.observe(body);
 		return () => watcher.disconnect();
@@ -1156,17 +1167,17 @@ function Transcript({
 					wrote.current = null;
 					if (own !== null && Math.abs(box.scrollTop - own) < 1) return;
 					const to = aim(box);
+					const end = box.scrollHeight - box.clientHeight;
 					const off = Math.abs(box.scrollTop - to) >= 1;
-					if (follow) {
-						// moved, not by the log, and not to where following sits: a scrollbar
-						// drag, the one way to scroll a log without touching it
-						if (off) leave();
-						return;
-					}
-					setAway(off);
+					// moved, not by the log, and not to where following sits: a scrollbar
+					// drag, the one way to scroll a log without touching it
+					if (follow && off) leave();
 					// the end re-arms follow only when the end is where following would sit
 					// anyway, so re-entering moves nothing
-					if (!off && to >= box.scrollHeight - box.clientHeight - 1) setFollow(true);
+					else if (!follow && !off && to >= end - 1) setFollow(true);
+					// last, so it overrides the optimistic `away` that leaving sets before it
+					// can see where the scroll landed
+					setAway(off && box.scrollTop < end - 1);
 				}}
 				onWheel={(event) => {
 					if (!follow || event.deltaY === 0) return;
@@ -1213,10 +1224,13 @@ function Transcript({
 				</div>
 			</div>
 			<span className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-bg to-transparent" />
-			{/* the way back, drawn only while the reader is somewhere following is not.
-			    It names what is below — live while the turn is writing, latest once it
-			    settles — and pressing it returns to where following holds, which for a
-			    tall live entry is its first line rather than its newest word. */}
+			{/* the way back, drawn only while there is log below the reader that following
+			    would have shown them. It names what is below — live while the turn is
+			    writing, latest once it settles — and pressing it returns to where following
+			    holds, which for a tall live entry is its first line rather than its newest
+			    word. When the reader is already past that line, inside the entry, the
+			    press carries them to the end instead: the arrow points down and the one
+			    thing it may never do is scroll up. */}
 			{follow || !away ? null : (
 				<button
 					type="button"
@@ -1224,9 +1238,15 @@ function Transcript({
 					onClick={() => {
 						const box = view.current;
 						if (box === null) return;
-						setFollow(true);
+						const to = aim(box);
+						const end = box.scrollHeight - box.clientHeight;
+						const target = to > box.scrollTop ? to : end;
 						setAway(false);
-						pin(box);
+						// following resumes only where it holds what the press landed on;
+						// re-arming at the end of a tall entry warps the reader back up by the
+						// entry's overflow on the next write
+						if (to >= target - 1) setFollow(true);
+						carry(box, target);
 					}}
 					className="absolute bottom-3 left-1/2 flex h-6 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-bg px-2.5 font-mono text-2xs text-muted leading-3 transition-colors duration-150 hover:bg-surface hover:text-text"
 				>

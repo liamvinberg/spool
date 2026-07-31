@@ -1110,6 +1110,38 @@ describe("when the reader takes the wheel", () => {
 		expect(log.scrollTop).toBe(90);
 	});
 
+	/**
+	 * The other half of the same field report. The reader who reaches the end of a tall
+	 * entry is away from the follow point by the entry's whole overflow, so the chip
+	 * drew at the true bottom — a way back to something already read, pointing down.
+	 */
+	it("the end of a tall entry draws no chip, because nothing is below it", async () => {
+		const { canvas, log } = await pinned();
+		await wheel(log, 53);
+		await scrolled(log, 400);
+		await until(() => chip(canvas.host) !== null);
+		await scrolled(log, 900);
+		await until(() => chip(canvas.host) === null);
+	});
+
+	it("a press from inside a tall entry carries the reader to the end, never back up", async () => {
+		const { canvas, log } = await pinned();
+		await wheel(log, 53);
+		// past the follow point at 90 and short of the end at 900: the arrow points down
+		// and the follow point is behind them
+		await scrolled(log, 400);
+		await until(() => chip(canvas.host) !== null);
+		await act(async () => {
+			chip(canvas.host)?.click();
+		});
+		expect(log.scrollTop).toBe(900);
+		await until(() => chip(canvas.host) === null);
+		// and following did not re-arm, so the next write leaves them where they are
+		canvas.turn.push(say(" and the rest of it"));
+		await settle(150);
+		expect(log.scrollTop).toBe(900);
+	});
+
 	it("the chip says latest once the turn has settled", async () => {
 		const { canvas, log } = await pinned();
 		canvas.turn.close();
