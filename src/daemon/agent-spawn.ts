@@ -59,14 +59,17 @@ export const AGENT_COMMAND = "claude";
  * `cat`, `grep`, `sed`, loops — and an approval on any of those teaches the
  * person to click allow without reading, which is the opposite of what an
  * approval is for.
+ *
+ * The edit rule is absolute, built per spawn, because a relative rule anchors
+ * to the shell's *current* directory, not the spawn's: `cd` persists across
+ * the agent's Bash calls, so after one `cd design` the rule `./design/**`
+ * meant `design/design/**` and every frame write asked (observed live
+ * 2026-07-31, reproduced in a probe; the absolute form is immune). `//` is
+ * the rule syntax's own absolute-path prefix.
  */
-export const AGENT_ALLOW_RULES: readonly string[] = [
-	"Edit(./design/**)",
-	"Read(//**)",
-	"WebFetch",
-	"WebSearch",
-	"Bash",
-];
+export function agentAllowRules(root: string): readonly string[] {
+	return [`Edit(//${root.replace(/^\/+/, "")}/design/**)`, "Read(//**)", "WebFetch", "WebSearch", "Bash"];
+}
 
 /**
  * The shell runs sandboxed and unprompted (measured on 2.1.220).
@@ -262,7 +265,7 @@ export function planAgentSpawn(
 			"--permission-prompt-tool",
 			AGENT_PERMISSION_PROMPT_TOOL,
 			"--settings",
-			JSON.stringify({ permissions: { allow: AGENT_ALLOW_RULES }, sandbox: AGENT_SANDBOX }),
+			JSON.stringify({ permissions: { allow: agentAllowRules(root) }, sandbox: AGENT_SANDBOX }),
 			// absent rather than defaulted on both: nobody having chosen is not the same
 			// fact as having chosen the binary's default, and only one of them is spool's
 			// to assert
