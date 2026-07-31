@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { initProject } from "../init";
 import {
 	makeApp,
@@ -442,6 +442,30 @@ describe("change events", () => {
 		// geometry is hands-owned, never a source edit — no reload for a sidecar
 		writeDesignFile(root, "frames/hello/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
 		await events.expectQuiet(400);
+	});
+
+	it("keeps saying something on a stream nothing is happening on", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "hello", helloTsx);
+		const app = makeApp(spoolDir);
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		vi.useFakeTimers();
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
+
+		const res = await app.request(`/api/p/${name}/events`, { signal: controller.signal });
+		const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+		const decoder = new TextDecoder();
+		expect(decoder.decode((await reader.read()).value)).toContain("hello");
+
+		// a quiet project and a connection that died read the same on the wire
+		// until this lands, which is what the browser's own watchdog waits for
+		const beat = reader.read();
+		await vi.advanceTimersByTimeAsync(15_000);
+		expect(decoder.decode((await beat).value)).toMatch(/^:/);
 	});
 
 	it("404s events for unregistered projects", async () => {
