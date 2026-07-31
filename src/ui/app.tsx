@@ -96,26 +96,32 @@ export function App() {
 	// hello doubles as the update loop's truth (#30): reload on a version flip,
 	// fail honestly when the same daemon comes back mid-update
 	useEffect(() => {
-		return subscribeSse("/api/events", {
-			hello: (data) => {
-				const { version, latest } = data as { version?: unknown; latest?: unknown };
-				if (typeof version !== "string") return;
-				if (daemonVersion.current === null) {
-					daemonVersion.current = version;
-				} else if (daemonVersion.current !== version) {
-					window.location.reload();
-					return;
-				} else if (toastRef.current?.kind === "updating") {
-					setToast({ kind: "failed" });
-				}
-				if (typeof latest === "string") offerUpdate(latest);
+		return subscribeSse(
+			"/api/events",
+			{
+				hello: (data) => {
+					const { version, latest } = data as { version?: unknown; latest?: unknown };
+					if (typeof version !== "string") return;
+					if (daemonVersion.current === null) {
+						daemonVersion.current = version;
+					} else if (daemonVersion.current !== version) {
+						window.location.reload();
+						return;
+					} else if (toastRef.current?.kind === "updating") {
+						setToast({ kind: "failed" });
+					}
+					if (typeof latest === "string") offerUpdate(latest);
+				},
+				app: (data) => {
+					const event = data as { kind?: unknown; latest?: unknown };
+					if (event.kind === "update" && typeof event.latest === "string") offerUpdate(event.latest);
+					void refetch();
+				},
 			},
-			app: (data) => {
-				const event = data as { kind?: unknown; latest?: unknown };
-				if (event.kind === "update" && typeof event.latest === "string") offerUpdate(event.latest);
-				void refetch();
-			},
-		});
+			// nothing was delivered while the stream was down, and a project opened
+			// or forgotten in a shell across that gap left no other trace here
+			{ onReconnect: () => void refetch() },
+		);
 	}, [refetch, offerUpdate]);
 
 	const startUpgrade = useCallback(async () => {
