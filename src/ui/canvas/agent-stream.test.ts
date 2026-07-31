@@ -31,8 +31,17 @@ function mount(stored: readonly ServedThread[] = []) {
 	 * about that has to be able to drop one and drive the next.
 	 */
 	const reads: { ctrl: ReadableStreamDefaultController<Uint8Array> | undefined; open: boolean }[] = [];
-	/** what the doors answer instead of a stream, for the refusals a rail has to survive */
-	const door = { turn: 0, gone: false };
+	/**
+	 * What the doors answer instead of a stream, for the refusals a rail has to survive.
+	 *
+	 * `threads` is the read of what this project has, held open: the rail has no thread to
+	 * put anything in until it lands, and what a press does in that window is its own claim.
+	 */
+	const door: { turn: number; gone: boolean; threads: Promise<void> | null } = {
+		turn: 0,
+		gone: false,
+		threads: null,
+	};
 
 	const opened = () => {
 		const read: { ctrl: ReadableStreamDefaultController<Uint8Array> | undefined; open: boolean } = {
@@ -56,7 +65,10 @@ function mount(stored: readonly ServedThread[] = []) {
 			asked.push(url.pathname + url.search);
 			// a project with nothing stored, which is what most cases here are about: the
 			// picture coming back off disk is `agent-rail.test.ts`'s
-			if (url.pathname.endsWith("/agent/threads")) return Response.json({ threads: stored });
+			if (url.pathname.endsWith("/agent/threads")) {
+				if (door.threads !== null) await door.threads;
+				return Response.json({ threads: stored });
+			}
 			if (url.pathname.includes("/agent/threads/")) {
 				puts.push(JSON.parse(String(init?.body ?? "{}")) as ThreadPut);
 				return new Response(null, { status: 204 });
@@ -484,6 +496,38 @@ describe("what the queue survives", () => {
 
 		expect(canvas.puts.length).toBeGreaterThan(wrote);
 		expect(canvas.puts.at(-1)?.queued).toEqual([]);
+	});
+
+	/**
+	 * Words the rail cannot take yet are words it has to say it did not take (#234).
+	 *
+	 * The threads of a project arrive over a door, and until they do there is no thread for
+	 * anything to go into. Both ways in returned nothing at all for that, and the composer —
+	 * which had already emptied itself — took it for a send: Enter on a rail that was still
+	 * loading swallowed the sentence, with no draft and no log line left of it.
+	 */
+	it("takes nothing while it has nowhere to put it, and says so", async () => {
+		const canvas = mount();
+		let land = () => {};
+		canvas.door.threads = new Promise<void>((resolve) => {
+			land = resolve;
+		});
+		await canvas.render();
+
+		let said = true;
+		let queued = true;
+		await act(async () => {
+			said = canvas.latest().send("go");
+			queued = canvas.latest().queue("and the footer");
+		});
+
+		expect(said).toBe(false);
+		expect(queued).toBe(false);
+		expect(canvas.asked.some((path) => path.endsWith("/agent/turn"))).toBe(false);
+
+		land();
+		await settle(120);
+		expect(canvas.latest().send("go")).toBe(true);
 	});
 
 	it("hands the words back to the box when the thread is already running a turn", async () => {
