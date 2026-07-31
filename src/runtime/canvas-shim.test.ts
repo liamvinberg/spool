@@ -299,6 +299,42 @@ describe("the canvas shim", () => {
 		}
 	});
 
+	it("holds the animation clock with the frames, so a thawed loop resumes instead of leaping", async () => {
+		const shim = await servedShim();
+		const dispose = runShim(shim);
+		const ticks: number[] = [];
+		let stopped = false;
+
+		try {
+			const loop = (time: number) => {
+				if (stopped) return;
+				ticks.push(time);
+				window.requestAnimationFrame(loop);
+			};
+			window.requestAnimationFrame(loop);
+			await beat();
+
+			window.postMessage({ spool: "freeze", on: true }, "*");
+			await beat();
+			const atFreeze = ticks.length;
+			// long enough that a real-time timestamp would be unmistakable
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			window.postMessage({ spool: "freeze", on: false }, "*");
+			await beat();
+
+			const last = ticks[atFreeze - 1] ?? 0;
+			const first = ticks[atFreeze] ?? 0;
+			expect(ticks.length, "the loop runs again after the thaw").toBeGreaterThan(atFreeze);
+			// a loop that integrates time - last would otherwise take the whole
+			// freeze in one step and land wherever a third of a second put it
+			expect(first - last, "the thawed frame is an ordinary frame's delta later").toBeLessThan(100);
+			expect(first, "the clock holds, and never runs backwards").toBeGreaterThanOrEqual(last);
+		} finally {
+			stopped = true;
+			dispose();
+		}
+	});
+
 	it("pauses the frame's declarative animations for the freeze and plays back only those", async () => {
 		const shim = await servedShim();
 		const dispose = runShim(shim);

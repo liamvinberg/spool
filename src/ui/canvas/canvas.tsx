@@ -498,10 +498,16 @@ export function ProjectCanvas({
 		return edges.some((edge) => edge.from !== edge.to && here.has(edge.from) && here.has(edge.to));
 	}, [edges, visibleFrames, walks]);
 
+	// A hidden hover lingers to fade its ring, and a ring fading out is nobody
+	// pointing at anything (#172).
+	const hoveredFrame = hovered?.visible === true ? hovered.frame : null;
+
 	const lifecycle = useFrameLifecycle({
 		framesRef,
 		entered,
 		selectionTargets,
+		selected,
+		hovered: hoveredFrame,
 		hasCover: hasCover,
 		onShot,
 		cameraRef: settledCameraRef,
@@ -2040,7 +2046,7 @@ export function ProjectCanvas({
 
 		if (active.kind === "idle") {
 			// idle motion previews the frame and, under ⌘ or a scope, its element
-			if (toolRef.current !== "select" || menuOpenRef.current || event.pointerType === "touch") {
+			if (menuOpenRef.current || event.pointerType === "touch") {
 				hideFrameHover();
 				return;
 			}
@@ -2056,6 +2062,11 @@ export function ProjectCanvas({
 						? current
 						: { frame, visible: true },
 			);
+			// The ring and the element preview are Select's, and every reader of
+			// `hovered` out here gates on the tool for that. The frame under the
+			// pointer is nobody's tool: it is what keeps a live frame awake (#172),
+			// and a pointer resting on a frame is resting on it in the Hand too.
+			if (toolRef.current !== "select") return;
 			hoverPickAt(label === null ? frame : null, world, accelPressed(event));
 			return;
 		}

@@ -31,7 +31,8 @@ import {
 
 /**
  * Do readable, live-animated frames degrade canvas pan/zoom, where does the time
- * go, and does freezing them while the camera moves buy it back (#171).
+ * go, and does freezing them buy it back — while the camera moves (#171), and
+ * once the canvas has been left alone for a minute (#172).
  *
  * Three arms at equal geometry. `animated` is a real project's "dither" page
  * as-is — 12 frames each running a 30fps 2D-canvas dithering rAF loop
@@ -46,8 +47,9 @@ import {
  * `animated` against `static` isolates "live animation" from every other
  * confound canvas.ts's gesture bench (#82) already covers (frame count, size,
  * throttle). `frozen` against both is the freeze's price: it should land on the
- * static arm's gesture-window CPU while its idle window stays the animated
- * arm's, because a resting camera freezes nothing.
+ * static arm in both windows — the gesture window because the camera is moving
+ * through it, and the idle window because it is measured past the minute after
+ * which an unattended frame holds its animations too.
  *
  * The attribution question needs per-process CPU, not just frame-interval
  * stats: `SystemInfo.getProcessInfo` (browser-level CDP) reports cpu time per
@@ -601,6 +603,15 @@ interface RunResult {
 }
 
 const IDLE_MS = 10_000;
+/**
+ * How long the idle window is left alone before it starts measuring. The canvas
+ * freezes a live frame a minute after anything last attended it
+ * (`IDLE_FREEZE_MS`, `ui/canvas/lifecycle.ts`), and what this window prices is
+ * what a canvas nobody is at costs — so it has to outlast that minute rather
+ * than sample the way into it. Nothing here touches the pointer or the camera
+ * until the gesture window, so the whole wait counts as idle.
+ */
+const IDLE_SETTLE_MS = 70_000;
 
 async function runOnce(
 	browser: Browser,
@@ -612,8 +623,8 @@ async function runOnce(
 	writeCamera(arm.root, camera, PAGE_NAME);
 
 	const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
-	// The control arm is this same build with the freeze switched off through the
-	// canvas's own bench hook (`ui/canvas/lifecycle.ts`). Pricing the freeze
+	// The control arm is this same build with both freezes switched off through
+	// the canvas's own bench hook (`ui/canvas/lifecycle.ts`). Pricing the freeze
 	// against a differently-patched project instead would confound it with the
 	// patch; the two animated arms differ in exactly one branch.
 	if (arm.label === "animated") {
@@ -644,6 +655,7 @@ async function runOnce(
 	if (idleBorrowed !== 0) {
 		throw new Error(`[${arm.label}#${index}] ${idleBorrowed} picture errands remained before the idle window`);
 	}
+	await page.waitForTimeout(IDLE_SETTLE_MS);
 	const idleBefore = await snapshotProcesses(browserSession);
 	await page.waitForTimeout(IDLE_MS);
 	const idleAfter = await snapshotProcesses(browserSession);
@@ -783,7 +795,9 @@ function toMarkdown(
 	for (const r of clean) lines.push(gestureRow("clean", r.arm, r.index, r.zoom));
 	for (const r of traced) lines.push(gestureRow("traced", r.arm, r.index, r.zoom));
 	lines.push("");
-	lines.push(`## Idle CPU by process (${IDLE_MS / 1000}s window, all ${results[0]?.liveMounted ?? "?"} frames live)`);
+	lines.push(
+		`## Idle CPU by process (${IDLE_MS / 1000}s window after ${IDLE_SETTLE_MS / 1000}s untouched, all ${results[0]?.liveMounted ?? "?"} frames live)`,
+	);
 	lines.push("");
 	lines.push("| set | run | canvas renderer | frames renderer | GPU process | browser process | other |");
 	lines.push("|---|---|---|---|---|---|---|");

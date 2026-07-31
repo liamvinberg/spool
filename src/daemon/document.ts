@@ -359,7 +359,8 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * terminal runtime, and an HTML frame's is the rAF gate below. Speaks the host
  * protocol:
  * {spool:"freeze", on} holds this document's animations while the camera moves
- * and re-delivers every held rAF callback on thaw (#171);
+ * (#171) or while nothing has attended the frame for a long minute (#172), and
+ * re-delivers every held rAF callback on thaw;
  * {spool:"capture", id, targetWidth, settleMs}
  * answers with a sanitized foreignObject source for the trusted capture host
  * to rasterize off this frame's main thread. The frame waits out its own fonts
@@ -385,22 +386,42 @@ const canvasShimJs = `(() => {
 	const nativeCancelRaf = window.cancelAnimationFrame.bind(window);
 
 	/**
-	 * The freeze (#171). While the camera moves, a live frame holds its own
-	 * animation instead of paying for frames nobody is reading: a 1.5s pan over
-	 * eight animated frames spent 265 ms of it inside their rAF loops.
+	 * The freeze (#171, #172). A live frame holds its own animation rather than
+	 * paying for frames nobody is reading — while the camera moves, where a 1.5s
+	 * pan over eight animated frames spent 265 ms of it inside their rAF loops,
+	 * and while nothing has attended the frame for a long minute, where the same
+	 * eight cost 45% of a core for as long as the tab stayed open.
 	 *
 	 * Gating rAF is the load-bearing half. getAnimations() covers CSS and Web
 	 * Animations and has never heard of a rAF loop, which is what a canvas
 	 * animation and every spring actually are. Held callbacks are re-delivered on
-	 * thaw with that tick's timestamp and never cancelled — a loop that loses its
-	 * callback is a frame that never animates again.
+	 * thaw and never cancelled — a loop that loses its callback is a frame that
+	 * never animates again.
 	 *
-	 * The shim's own nativeRaf stays live under the freeze, for the same reason
-	 * it is bound before frame code runs: a capture's settle rides it. A frozen
-	 * iframe keeps compositing its last painted pixels, so nothing visibly
-	 * changes; the animation simply holds where it stood.
+	 * The clock holds with them. Every timestamp this rAF hands out is the real
+	 * one less the time spent frozen, so a loop that integrates \`time - last\`
+	 * resumes with an ordinary frame's delta instead of a minute's worth, and the
+	 * animation continues from where it stood rather than leaping to where it
+	 * would have been. Paused animations already resume this way — the clock
+	 * offset is only rAF being told the same thing. It never runs backwards:
+	 * the offset accrues real elapsed time, so it can never exceed the timestamp
+	 * it is subtracted from.
+	 *
+	 * Only rAF's own timestamp holds. \`performance.now()\` is the frame's, read
+	 * straight, and a loop that stamps a start with one and measures against the
+	 * other reads an elapsed short by the freeze. That is the same trade the
+	 * platform makes for a paused animation's currentTime, and the alternative —
+	 * a shimmed clock the whole document reads — would be spool lying to frame
+	 * code about the time of day.
+	 *
+	 * The shim's own nativeRaf stays live under the freeze, and on real time, for
+	 * the same reason it is bound before frame code runs: a capture's settle rides
+	 * it. A frozen iframe keeps compositing its last painted pixels, so nothing
+	 * visibly changes; the animation simply holds where it stood.
 	 */
 	let frozen = false;
+	let frozenAt = 0;
+	let frozenFor = 0;
 	let nextRafHandle = 1;
 	// handle -> { cb, native }; a native of 0 is a callback the freeze is holding
 	const rafs = new Map();
@@ -416,7 +437,7 @@ const canvasShimJs = `(() => {
 		if (!frozen) {
 			entry.native = nativeRaf((time) => {
 				rafs.delete(handle);
-				callback(time);
+				callback(time - frozenFor);
 			});
 		}
 		return handle;
@@ -452,7 +473,7 @@ const canvasShimJs = `(() => {
 				if (entry === undefined) continue;
 				rafs.delete(handle);
 				try {
-					entry.cb(time);
+					entry.cb(time - frozenFor);
 				} catch (error) {
 					// one held callback's throw is not the next one's problem —
 					// native rAF isolates them, so this does too
@@ -483,9 +504,12 @@ const canvasShimJs = `(() => {
 		if (on === frozen) return;
 		frozen = on;
 		if (on) {
+			frozenAt = performance.now();
 			holdFrames();
 			holdAnimations();
 		} else {
+			// banked before anything is released: the thaw's own callbacks read it
+			frozenFor += performance.now() - frozenAt;
 			releaseAnimations();
 			releaseFrames();
 		}
