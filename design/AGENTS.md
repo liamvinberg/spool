@@ -90,9 +90,13 @@ the queue un-fired land above the draft in fire order, one blank line apart.
 **#200 landed the threads and what survives a restart**: the strip is a row above
 the plan's shelf, the plus leading it, the open thread taking the room it needs
 with its ✕ and the rest collapsed to a mark with theirs, and a press centring the
-row on what was pressed. It draws #161's marks at ship size, with `streaming`
-drawing nothing — the frames here turn a ring for the thread you are watching,
-which is a second spinner saying what the transcript already says. A collapsed
+row on what was pressed. It draws #161's marks at ship size. `streaming`
+drew nothing at first, on the reading that a ring for the thread you are
+watching is a second spinner saying what the transcript already says — which
+held while the marks sat in a row of named tabs. #205 moved them into a 34px
+column where the cell is the whole of the thread, the same ground that already
+earns `read` its hollow dot, and `f0eff75` turned the ring there: all five
+lives draw now, and the frames here were right about this one all along. A collapsed
 `read` thread keeps `agent-nav-strip`'s hollow dot, because out there the mark is
 the thread. A signed-out bounce shares the waiting disc, read off the binary's own
 words now that a printed refusal reaches the log; a wind-down does not. The
