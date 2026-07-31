@@ -192,8 +192,10 @@ describe("playing a frame inline", () => {
 			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", metaKey: true, ctrlKey: true }));
 		});
 		await until(() => host.querySelector('iframe[title="test"]') === null);
+		// the furniture only comes back once the camera has stopped, so both are
+		// waited for rather than read the moment the player goes
+		await until(() => chromeOpacity(host, "menu") === "1");
 		expect(cameraTransform(host)).toBe(before);
-		expect(chromeOpacity(host, "menu")).toBe("1");
 	});
 });
 

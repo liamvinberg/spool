@@ -383,9 +383,9 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 .spool-pill {
 	display: flex;
 	align-items: center;
-	gap: 14px;
+	gap: 10px;
 	height: 36px;
-	padding: 0 14px;
+	padding: 0 8px 0 14px;
 	background: #161616;
 	border: 1px solid #363636;
 	border-radius: 10px;
@@ -396,10 +396,8 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 	font-synthesis: none;
 }
 .spool-stage.is-asleep .spool-pill { pointer-events: none; }
-.spool-pill-name { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.spool-pill-name { display: flex; align-items: center; gap: 8px; margin-right: 4px; white-space: nowrap; }
 .spool-dash { flex: none; width: 8px; height: 2px; background: #f5391a; }
-.spool-pill-rule { flex: none; width: 1px; height: 12px; background: #363636; }
-.spool-pill-readout { flex: none; font-size: 10px; line-height: 1; color: #8e8c88; white-space: nowrap; }
 .spool-pill-button {
 	display: flex;
 	align-items: center;
@@ -418,23 +416,4 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 .spool-pill-button:hover { background: #1c1c1c; color: #f0efed; }
 .spool-pill-button.is-on { color: #f0efed; }
 .spool-pill-button:disabled { background: none; opacity: 0.4; cursor: default; }
-.spool-pill-close {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	flex: none;
-	margin: 0;
-	padding: 0 6px 0 2px;
-	height: 24px;
-	background: none;
-	border: 0;
-	border-radius: 6px;
-	color: #8e8c88;
-	font: inherit;
-	font-size: 10px;
-	line-height: 1;
-	cursor: pointer;
-}
-.spool-pill-close:hover { background: #1c1c1c; color: #f0efed; }
-.spool-pill-close:disabled { background: none; opacity: 0.4; cursor: default; }
 `;

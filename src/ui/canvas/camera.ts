@@ -83,14 +83,13 @@ export function fitCamera(bounds: Box, vw: number, vh: number): Camera {
  * the same edge-to-edge fit, so the flight's landing values are the placement
  * values and the handoff into inline play cannot be a pixel out.
  *
- * The stage covers the whole window while the camera lives inside the canvas
- * viewport, which the top bar and the rails inset. So the fit is taken in
- * window space and then moved by where that viewport starts; without it the
- * flight would land off by the width of the chrome around it.
+ * Both are read in window space, because the canvas takes the whole window for
+ * the length of a flight (`canvas.tsx` spanning). Were it still inside its own
+ * box the landing would be off by the width of the chrome around it — and the
+ * flight would spend its last half sliding under a sidebar.
  */
-export function stageCamera(frame: Box, vw: number, vh: number, origin: Point = { x: 0, y: 0 }): Camera {
-	const place = fitBox(frame.w, frame.h, vw, vh);
-	return cameraFor({ scale: place.scale, x: place.x - origin.x, y: place.y - origin.y }, frame);
+export function stageCamera(frame: Box, vw: number, vh: number): Camera {
+	return cameraFor(fitBox(frame.w, frame.h, vw, vh), frame);
 }
 
 /** Pan (same zoom) so the box is centered — the flow-walk's camera move (#5). */

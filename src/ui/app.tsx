@@ -10,6 +10,7 @@ import {
 	subscribeSse,
 } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
+import { PLAY_IN, PLAY_OUT } from "./canvas/play-flight";
 import { ForgetToast } from "./forget-toast";
 import { Home } from "./home";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
@@ -241,7 +242,17 @@ export function App() {
 
 	return (
 		<div className="flex h-full flex-col bg-bg">
-			<header className="flex h-11 shrink-0 items-center justify-between border-border border-b bg-bg px-4">
+			{/* The bar dissolves for an inline play flight and comes back after it
+			    (#210): the canvas takes the whole window underneath, so the zoom
+			    carries on across where this was rather than stopping under it. */}
+			<header
+				className="relative z-20 flex h-11 shrink-0 items-center justify-between border-border border-b bg-bg px-4 transition-opacity ease-out"
+				style={{
+					opacity: chrome?.playing === true ? 0 : 1,
+					transitionDuration: `${chrome?.playing === true ? PLAY_IN.chrome : PLAY_OUT.chrome}ms`,
+					pointerEvents: chrome?.playing === true ? "none" : undefined,
+				}}
+			>
 				<div className="flex h-full items-center gap-5">
 					<button
 						type="button"

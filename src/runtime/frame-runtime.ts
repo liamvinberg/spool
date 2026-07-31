@@ -1277,8 +1277,11 @@ function followGeometry(): void {
 			announcePendingMount();
 			scheduleGeometryReady();
 		});
-		addEventListener("mousemove", () => {
-			postPlayerMessage({ spool: "player-wake" });
+		// Where the pointer is, not merely that it moved: the pill comes back on
+		// proximity now, and this document is scaled and offset inside the stage,
+		// so only the shell can turn this into a window position (#210).
+		addEventListener("mousemove", (event) => {
+			postPlayerMessage({ spool: "player-wake", y: event.clientY });
 		});
 		// Spool never steals a plain key from a live frame; its own gestures live
 		// behind accel (#210). Focus sits in here whenever a prototype is being

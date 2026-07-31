@@ -44,8 +44,11 @@ export interface PlayerShellHost {
 	close(): void;
 	/** A walk the session really took, for the flow graph's verified marks. */
 	walked(from: string, to: string): void;
-	/** Movement inside the player, so the host's chrome can wake with it. */
-	wake(): void;
+	/**
+	 * Where the pointer moved to inside the player, in that document's own
+	 * coordinates. The host converts: only it knows the stage placement.
+	 */
+	wake(y: number): void;
 	/** Fill the screen, on whichever element this host makes fullscreen. */
 	fullscreen(): void;
 	/**
@@ -845,8 +848,8 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 			return;
 		}
 
-		if (message.spool === "player-wake" && hasOnly(message, ["spool"])) {
-			host.wake();
+		if (message.spool === "player-wake" && hasOnly(message, ["spool", "y"]) && typeof message.y === "number") {
+			host.wake(message.y);
 			return;
 		}
 
@@ -923,7 +926,9 @@ export function bootPlayerShell(config: ShellConfig): void {
 			}, 150);
 		},
 		walked: (from, to) => window.dispatchEvent(new CustomEvent("spool-player-walked", { detail: { from, to } })),
-		wake: () => document.querySelector(".spool-stage")?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true })),
+		// The stage owns the conversion out of frame coordinates, because it is
+		// the only thing that knows where it put the frame.
+		wake: (y) => window.dispatchEvent(new CustomEvent("spool-player-wake", { detail: { y } })),
 		fullscreen: () => toggleFullscreen(() => document.documentElement),
 		repair: reloadForHandoff,
 		refreshGeometry: () => window.dispatchEvent(new Event("spool-player-geometry-request")),

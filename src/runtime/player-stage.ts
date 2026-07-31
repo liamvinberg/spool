@@ -10,8 +10,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * behaviour, so the behaviour lives here and only the markup is written twice.
  */
 
-/** Stillness this long puts the pill away; movement anywhere brings it back. */
+/** How long the pill stays up on arrival before it gets out of the way. */
 export const IDLE_MS = 2000;
+
+/**
+ * How close to the bottom of the screen the pointer has to come to bring the
+ * pill back — the strip it lives in, plus room to be heading for it.
+ */
+export const REACH_PX = 120;
 
 export interface Viewport {
 	vw: number;
@@ -29,12 +35,20 @@ export function useViewport(): Viewport {
 }
 
 /**
- * The chrome's pulse (#60): while armed, stillness longer than IDLE_MS puts it
- * to sleep and movement wakes it; unarmed, it is simply always awake. The wake
- * listener sits on the stage, never inside a screen — the prototype has no
- * listener there to race (the parity law at the input layer).
+ * The chrome's pulse (#60), on proximity rather than on stillness.
+ *
+ * Waking on any movement was wrong: a prototype is used by moving the pointer,
+ * so the pill was up the whole time you were using one, sitting on top of
+ * whatever the frame draws along its own bottom edge. Stillness never comes
+ * while you are working, which is exactly when the chrome has to be gone.
+ *
+ * So it shows itself once on arrival, gets out of the way, and comes back only
+ * when the pointer comes down to where it lives — the way a video player's
+ * controls do. Reaching for a control by moving toward it needs no key and
+ * nothing explained. `y` is in window space, which is why what is inside the
+ * frame has to be converted before it gets here.
  */
-export function useWake(armed: boolean): { awake: boolean; wake: () => void } {
+export function useWake(armed: boolean): { awake: boolean; wake: (y: number) => void } {
 	const [awake, setAwake] = useState(true);
 	const timer = useRef(0);
 	useEffect(() => {
@@ -47,11 +61,13 @@ export function useWake(armed: boolean): { awake: boolean; wake: () => void } {
 	}, [armed]);
 	return {
 		awake,
-		wake: () => {
+		wake: (y: number) => {
 			if (!armed) return;
-			setAwake(true);
+			// The first movement ends the arrival grace whichever way it goes: it
+			// either brought the pointer down here, or it proved the hand is busy
+			// somewhere else and the pill has no business staying up.
 			window.clearTimeout(timer.current);
-			timer.current = window.setTimeout(() => setAwake(false), IDLE_MS);
+			setAwake(window.innerHeight - y <= REACH_PX);
 		},
 	};
 }

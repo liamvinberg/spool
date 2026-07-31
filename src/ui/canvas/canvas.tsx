@@ -22,6 +22,7 @@ import {
 	resolveFlows,
 	subscribeSse,
 } from "../api";
+import { cn } from "../cn";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyId, HotkeyIdFor } from "../hotkeys";
 import { RibbonMark } from "../icons";
@@ -83,7 +84,7 @@ import {
 	stateCameraSlots,
 	switchPage,
 } from "./pages";
-import { flightProgress, OUT, PLAY_IN, PLAY_OUT } from "./play-flight";
+import { flightProgress, OUT, PLAY_IN, PLAY_OUT, PLAY_OUT_LANDS } from "./play-flight";
 import { PlayLayer, type PlayPhase } from "./play-layer";
 import {
 	clipboardCopyAllowed,
@@ -126,6 +127,13 @@ export interface CanvasChrome {
 	 * governs the whole layer (#151), so it counts the whole layer.
 	 */
 	hasThreads: boolean;
+	/**
+	 * A flight is on, so the top bar dissolves with the rest of the furniture
+	 * (#210). The canvas takes the whole window underneath it for the length of
+	 * one, and a bar left sitting over the zoom is the seam the flight exists to
+	 * avoid — but covering it without a fade is just as abrupt, so it fades.
+	 */
+	playing: boolean;
 }
 
 interface Point {
@@ -228,18 +236,30 @@ export function ProjectCanvas({
 	/**
 	 * Inline play (#210). `frame` is where the session stands right now, which a
 	 * walk moves — leaving flies out of that one, not the one it opened on.
-	 * `from` is the camera the press left behind, so coming back is a return.
+	 * `from` is the camera the press left behind, so coming back is a return,
+	 * and `size` is the box it was framed in — the viewport gives that box up
+	 * for the length of the flight, so the return has to remember it.
 	 */
 	const [play, setPlay] = useState<{
 		start: string;
 		frame: string;
 		phase: PlayPhase;
 		from: Camera;
+		size: { w: number; h: number };
 		page: string;
 	} | null>(null);
 	const playRef = useRef(play);
 	playRef.current = play;
-	/** The canvas chrome dissolves before the flight and comes back after it. */
+	/**
+	 * The canvas takes the whole window for the length of a flight, so the zoom
+	 * crosses where the top bar and the rails were rather than sliding under
+	 * them. The camera is shifted by exactly where the viewport used to start,
+	 * in the same commit, so the world does not move when the box grows (#210).
+	 */
+	const [spanning, setSpanning] = useState<Point | null>(null);
+	const spanningRef = useRef(spanning);
+	spanningRef.current = spanning;
+	/** The app's furniture dissolves before the flight and comes back after it. */
 	const [chromeGone, setChromeGone] = useState(false);
 	/** Frames go back to their pictures while the player has the machine. */
 	const [pictured, setPictured] = useState(false);
@@ -859,7 +879,12 @@ export function ProjectCanvas({
 	 * viewport, rather than a tab opening somewhere else. `/play/` is still
 	 * served, as the door for agents and phones; no human door leads there.
 	 *
-	 * The chrome goes first, because a counter-scaled label cannot ride a zoom.
+	 * The furniture goes first — the top bar, the rails, the tools, the labels —
+	 * and the canvas takes the window in the same breath, so the zoom crosses
+	 * where they were instead of sliding under them. Shifting the camera by
+	 * where the viewport used to start keeps the world still while its box
+	 * grows: the only thing that moves is the furniture fading off it.
+	 *
 	 * Then the camera flies, on the staged curve, and lands exactly where the
 	 * player's own stage will place the frame. The layer boots its session from
 	 * the moment of the press, so the flight is what the boot happens behind.
@@ -874,8 +899,18 @@ export function ProjectCanvas({
 			setMenu(null);
 			setPreview(null);
 			setChromeGone(true);
-			setPlay({ start: name, frame: name, phase: "flying", from: cam, page: activePageRef.current });
-			const to = stageCamera(frame, window.innerWidth, window.innerHeight, viewportOrigin());
+			const origin = viewportOrigin();
+			setSpanning(origin);
+			setCamera({ ...cam, x: cam.x + origin.x, y: cam.y + origin.y });
+			setPlay({
+				start: name,
+				frame: name,
+				phase: "flying",
+				from: cam,
+				size: { w: viewport.clientWidth, h: viewport.clientHeight },
+				page: activePageRef.current,
+			});
+			const to = stageCamera(frame, window.innerWidth, window.innerHeight);
 			window.setTimeout(() => {
 				if (playRef.current?.start === name) animateCamera(to, PLAY_IN.fly, flightProgress);
 			}, PLAY_IN.start);
@@ -887,33 +922,46 @@ export function ProjectCanvas({
 	 * Out again, reversing the same sequence — and out of the frame the session
 	 * is standing in, which a walk may have moved. The camera agrees with the
 	 * walk: it lands on that frame's own place, keeping the zoom the press left.
+	 *
+	 * The whole return happens in window space, and the viewport only takes its
+	 * own box back once the camera has stopped — giving it back mid-flight would
+	 * put the rails over a canvas still moving under them.
 	 */
 	const leavePlay = useCallback(() => {
 		const session = playRef.current;
-		const viewport = viewportRef.current;
-		if (session === null || session.phase === "leaving" || viewport === null) return;
+		const origin = spanningRef.current;
+		if (session === null || session.phase === "leaving" || origin === null) return;
 		setPlay({ ...session, phase: "leaving" });
 		setPictured(false);
 		const landed = framesRef.current.find((candidate) => candidate.name === session.frame);
 		// A walk that ended somewhere else lands the camera there. The jump is
 		// made while the stage still covers everything, so only the flight shows.
 		if (landed !== undefined && session.frame !== session.start) {
-			setCamera(stageCamera(landed, window.innerWidth, window.innerHeight, viewportOrigin()));
+			setCamera(stageCamera(landed, window.innerWidth, window.innerHeight));
 			setSelected([session.frame]);
 		} else {
 			setSelected([session.start]);
 		}
+		// The rest is where the press left the camera, read in the viewport's own
+		// box — so it is worked out there and flown to shifted, then handed back
+		// unshifted at the landing, all in one commit so nothing jumps.
 		const rest =
 			landed !== undefined && session.frame !== session.start
-				? centerOn(session.from, landed, viewport.clientWidth, viewport.clientHeight)
+				? centerOn(session.from, landed, session.size.w, session.size.h)
 				: session.from;
-		window.setTimeout(() => animateCamera(rest, PLAY_OUT.fly), PLAY_OUT.flyAt);
+		window.setTimeout(
+			() => animateCamera({ ...rest, x: rest.x + origin.x, y: rest.y + origin.y }, PLAY_OUT.fly),
+			PLAY_OUT.flyAt,
+		);
+		window.setTimeout(() => setPlay(null), PLAY_OUT.stageAt + PLAY_OUT.stage);
 		window.setTimeout(() => {
-			setPlay(null);
+			stopAnimation();
+			setSpanning(null);
+			setCamera(rest);
 			viewportRef.current?.focus({ preventScroll: true });
-		}, PLAY_OUT.stageAt + PLAY_OUT.stage);
+		}, PLAY_OUT_LANDS);
 		window.setTimeout(() => setChromeGone(false), PLAY_OUT.chromeAt);
-	}, [animateCamera, viewportOrigin]);
+	}, [animateCamera, stopAnimation]);
 
 	// --- selection sync (#23): what Liam points at, served to agents ------------
 
@@ -2554,9 +2602,10 @@ export function ProjectCanvas({
 			arrowsOn,
 			toggleArrows,
 			hasThreads,
+			playing: chromeGone,
 		});
 		return () => onChrome(null);
-	}, [zoomPct, onChrome, arrowsOn, toggleArrows, hasThreads]);
+	}, [zoomPct, onChrome, arrowsOn, toggleArrows, hasThreads, chromeGone]);
 
 	// --- render -------------------------------------------------------------------
 
@@ -2566,6 +2615,18 @@ export function ProjectCanvas({
 	const k = camera?.k ?? 1;
 	const shellRadius = Math.min(12 / k, 24);
 	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");
+
+	/**
+	 * Every piece of app furniture fades on the same clock for a flight (#210):
+	 * the sidebar, the agent rail, the tools, the frame labels, and the top bar
+	 * over in `app.tsx`. It goes untouchable as it goes, because the play layer
+	 * only starts taking presses once its stage is up.
+	 */
+	const furniture = {
+		opacity: chromeGone ? 0 : 1,
+		transitionDuration: `${chromeGone ? PLAY_IN.chrome : PLAY_OUT.chrome}ms`,
+		pointerEvents: chromeGone ? ("none" as const) : undefined,
+	};
 
 	if (projectEmpty) {
 		// agent-first, buttonless (#13): the canvas never pretends hands author frames
@@ -2583,18 +2644,20 @@ export function ProjectCanvas({
 
 	return (
 		<div className="relative flex h-full w-full">
-			<CanvasSidebar
-				pages={pages}
-				activePage={activePage}
-				frames={navigatorFrames}
-				selected={selected}
-				onSwitchPage={activatePageFromTree}
-				onSelectFrame={selectFrameRow}
-				onDoubleClickFrame={flyToFrame}
-				// the finder's pick, or the page holding the frame a row in the agent rail is
-				// pointing at (#194)
-				litPage={finding ? findLit : pointedPage}
-			/>
+			<div className="relative z-20 flex shrink-0 transition-opacity ease-out" style={furniture}>
+				<CanvasSidebar
+					pages={pages}
+					activePage={activePage}
+					frames={navigatorFrames}
+					selected={selected}
+					onSwitchPage={activatePageFromTree}
+					onSelectFrame={selectFrameRow}
+					onDoubleClickFrame={flyToFrame}
+					// the finder's pick, or the page holding the frame a row in the agent rail is
+					// pointing at (#194)
+					litPage={finding ? findLit : pointedPage}
+				/>
+			</div>
 			<div
 				ref={viewportRef}
 				role="application"
@@ -2607,7 +2670,14 @@ export function ProjectCanvas({
 				// the browser reveal it by scrolling this box, which carries the canvas
 				// chrome away and offsets every pointer coordinate from the camera's.
 				// The camera owns where the canvas sits; nothing else may move it.
-				className="relative h-full min-w-0 flex-1 touch-none select-none overflow-clip bg-canvas outline-none"
+				//
+				// For the length of a flight this leaves the row and takes the whole
+				// window, under the furniture rather than over it, so the zoom carries
+				// on across where the rails were as they fade (#210).
+				className={cn(
+					"touch-none select-none overflow-clip bg-canvas outline-none",
+					spanning === null ? "relative h-full min-w-0 flex-1" : "fixed inset-0 z-0",
+				)}
 				style={{ cursor }}
 				onPointerDown={onPointerDown}
 				onPointerMove={onPointerMove}
@@ -2825,7 +2895,9 @@ export function ProjectCanvas({
 				{collisions.length > 0 && <CollisionNotice collisions={collisions} />}
 
 				{pendingTrash !== null && <TrashToast frames={pendingTrash} onUndo={undoTrash} />}
-				<CanvasTools tool={effectiveTool} onTool={setTool} />
+				<div className="transition-opacity ease-out" style={furniture}>
+					<CanvasTools tool={effectiveTool} onTool={setTool} />
+				</div>
 				{finding ? (
 					<FindPalette
 						frames={navigatorFrames}
@@ -2838,43 +2910,45 @@ export function ProjectCanvas({
 					/>
 				) : null}
 			</div>
-			<AgentRail
-				entries={turn.entries}
-				plan={turn.plan}
-				phase={turn.phase}
-				elapsed={turn.elapsed}
-				jump={{
-					have: reach.have,
-					gone: reach.gone,
-					onPoint: setPointed,
-					onJump: (name) => {
-						// pointing was the question and landing is the answer, so the weaker mark
-						// goes as the stronger one arrives
-						setPointed(null);
-						landOnFrame(name);
-					},
-				}}
-				pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
-				threads={{
-					list: deck.threads,
-					open: deck.open,
-					finished: deck.finished,
-					onOpen: deck.onOpen,
-					onClose: deck.onClose,
-					onNew: deck.onNew,
-				}}
-				install={install}
-				login={deck.login}
-				queued={turn.queued}
-				handback={turn.handback}
-				model={model}
-				limit={turn.limit}
-				onSend={turn.send}
-				onQueue={turn.queue}
-				onUnqueue={turn.unqueue}
-				onStop={turn.stop}
-				onAnswer={turn.answer}
-			/>
+			<div className="relative z-20 flex shrink-0 transition-opacity ease-out" style={furniture}>
+				<AgentRail
+					entries={turn.entries}
+					plan={turn.plan}
+					phase={turn.phase}
+					elapsed={turn.elapsed}
+					jump={{
+						have: reach.have,
+						gone: reach.gone,
+						onPoint: setPointed,
+						onJump: (name) => {
+							// pointing was the question and landing is the answer, so the weaker mark
+							// goes as the stronger one arrives
+							setPointed(null);
+							landOnFrame(name);
+						},
+					}}
+					pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
+					threads={{
+						list: deck.threads,
+						open: deck.open,
+						finished: deck.finished,
+						onOpen: deck.onOpen,
+						onClose: deck.onClose,
+						onNew: deck.onNew,
+					}}
+					install={install}
+					login={deck.login}
+					queued={turn.queued}
+					handback={turn.handback}
+					model={model}
+					limit={turn.limit}
+					onSend={turn.send}
+					onQueue={turn.queue}
+					onUnqueue={turn.unqueue}
+					onStop={turn.stop}
+					onAnswer={turn.answer}
+				/>
+			</div>
 			{play !== null && (
 				<PlayLayer
 					project={project}

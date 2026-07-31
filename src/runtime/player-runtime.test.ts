@@ -157,6 +157,12 @@ async function waitForFrame(name: string): Promise<void> {
 	await waitForText(".spool-pill-name", name);
 }
 
+/** How far down the screen is scaled to fit the stage. */
+function stageScale(): number {
+	const transform = (document.querySelector(".spool-screen") as HTMLElement).style.transform;
+	return Number(/scale\((-?\d+(?:\.\d+)?)\)/.exec(transform)?.[1]);
+}
+
 /** Where the screen sits on the stage. */
 function stageOffsetX(): number {
 	const transform = (document.querySelector(".spool-screen") as HTMLElement).style.transform;
@@ -502,22 +508,22 @@ export default function Hints() {
 });
 
 describe("the stage and the pill (#210)", () => {
-	it("fits the frame edge to edge and reads the real scale out", async () => {
+	it("fits the frame edge to edge", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
 
 		await loadPlayerDocument(harness, "?frame=menu");
 		await waitForFrame("menu");
 
-		// the stage scales a frame taller than the viewport down, and says so
-		const readout = document.querySelector(".spool-pill-readout")?.textContent;
-		expect(readout).toMatch(/^390 × 844 · \d{1,3}%$/);
-
 		// nothing is reserved for chrome any more: the fit is min(1, vw/w, vh/h)
 		// and the bars it leaves are aspect mismatch, exactly like a video player
 		const scale = Math.min(1, window.innerWidth / 390, window.innerHeight / 844);
-		expect(readout).toBe(`390 × 844 · ${Math.round(scale * 100)}%`);
+		expect(stageScale()).toBeCloseTo(scale, 6);
 		expect(stageOffsetX()).toBeCloseTo((window.innerWidth - 390 * scale) / 2, 6);
+
+		// and the pill says where you are, not how big it is: a size and a zoom
+		// are the canvas's business, and the pill sits over the prototype
+		expect(document.querySelector(".spool-pill")?.textContent).toBe("menu");
 	});
 
 	it("keeps the rail, the tape and the registration ticks out of the player", async () => {
@@ -539,20 +545,32 @@ describe("the stage and the pill (#210)", () => {
 		expect(document.querySelector("#spool-close")).not.toBeNull();
 	});
 
-	it("sleeps when the hand stops and wakes on movement", async () => {
+	it("gets out of the way of the prototype, and comes back when reached for", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
 
 		await loadPlayerDocument(harness, "?frame=menu");
 		await waitForFrame("menu");
 		const stage = document.querySelector(".spool-stage") as HTMLElement;
+		const move = (y: number) => stage.dispatchEvent(new MouseEvent("mousemove", { clientY: y, bubbles: true }));
+		// one look on arrival, so you know it is there
 		expect(stage.classList.contains("is-asleep")).toBe(false);
 
-		// stillness is the resting state: the chrome fades and takes the cursor
-		await vi.waitFor(() => expect(stage.classList.contains("is-asleep")).toBe(true), { timeout: 4000 });
+		// using a prototype means moving the pointer around it, and that must not
+		// keep the pill up: it would sit on whatever the frame draws along its
+		// own bottom edge for as long as the prototype was being used
+		move(window.innerHeight / 2);
+		await vi.waitFor(() => expect(stage.classList.contains("is-asleep")).toBe(true));
+		move(window.innerHeight / 3);
+		expect(stage.classList.contains("is-asleep")).toBe(true);
 
-		stage.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+		// reaching down to where it lives is what brings it back
+		move(window.innerHeight - 10);
 		await vi.waitFor(() => expect(stage.classList.contains("is-asleep")).toBe(false));
+
+		// and leaving again puts it away, with no wait to sit through
+		move(window.innerHeight / 2);
+		await vi.waitFor(() => expect(stage.classList.contains("is-asleep")).toBe(true));
 	});
 
 	it("never takes a plain key from the prototype, and answers only its own chords", async () => {
@@ -667,7 +685,7 @@ describe("static terminal screens", () => {
 		expect.soft(postMessage).toHaveBeenCalledWith({ spool: "focus", surface: "player" }, "*");
 	});
 
-	it("names the terminal frame and its size on the pill like any other screen", async () => {
+	it("names the terminal frame on the pill like any other screen", async () => {
 		const harness = makeHarness();
 		scaffoldTerminal(harness);
 
@@ -675,7 +693,6 @@ describe("static terminal screens", () => {
 		await vi.waitFor(() => termIframe());
 
 		expect(document.querySelector(".spool-pill-name")?.textContent).toBe("dash");
-		expect(document.querySelector(".spool-pill-readout")?.textContent).toBe("720 × 480 · 100%");
 	});
 
 	it("keeps the player chrome awake over a static terminal surface", async () => {

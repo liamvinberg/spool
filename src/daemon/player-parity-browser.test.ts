@@ -15,6 +15,19 @@ interface Probe {
 	};
 }
 
+/**
+ * Bring the pill back. It sleeps while a prototype is being used and returns
+ * only when the pointer comes down to the strip it lives in (#210), so every
+ * press on one of its controls has to reach for it first, exactly as a hand
+ * would.
+ */
+async function reachForPill(page: Page): Promise<void> {
+	const size = page.viewportSize();
+	if (size === null) return;
+	await page.mouse.move(size.width / 2, size.height - 6);
+	await page.locator(".spool-stage:not(.is-asleep)").waitFor();
+}
+
 async function installPlayerMountGate(page: Page): Promise<void> {
 	await page.addInitScript(() => {
 		if (window.top !== window) return;
@@ -2304,6 +2317,8 @@ it("waits for queued Restart to finish before running the next control", { timeo
 				}
 			).__spoolTransitionGate.held() === 1,
 	);
+	await reachForPill(page);
+
 	await page.locator("#spool-restart").click();
 	await page.evaluate(() => {
 		const restart = document.querySelector<HTMLButtonElement>("#spool-restart");
@@ -2379,6 +2394,8 @@ export default function Middle() { return <main id="middle">middle</main>; }
 	// command going quiet: an outcome comes back either way, or the shell waits
 	// on a completion that will never arrive and every later control is stuck
 	// behind it.
+	await reachForPill(page);
+
 	await page.locator("#spool-restart").click();
 	await expect
 		.poll(
@@ -2448,7 +2465,11 @@ it("waits for both navigation and its matching completion before draining contro
 	});
 
 	const before = scenarioRequests;
+	await reachForPill(page);
+
 	await page.locator("#spool-restart").click();
+	await reachForPill(page);
+
 	await page.locator("#spool-restart").click();
 	await inner.locator("#to-middle").waitFor({ timeout: 5_000 });
 	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("start");
@@ -2530,6 +2551,8 @@ it("retains a controller command sent before an authored navigation reaches the 
 		)
 		.toBe(1);
 	expect(await page.locator(".spool-pill-name").innerText()).toBe("start");
+	await reachForPill(page);
+
 	await page.locator("#spool-restart").click();
 	await inner.locator("body").evaluate(() => {
 		(
@@ -2743,7 +2766,11 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 
 	// two Restarts: the first runs and its completion is held, so the second is
 	// still queued — and a queued Restart has not navigated.
+	await reachForPill(page);
+
 	await page.locator("#spool-restart").click();
+	await reachForPill(page);
+
 	await page.locator("#spool-restart").click();
 	await expect
 		.poll(() =>
@@ -2814,6 +2841,8 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 		)
 		.toBe(1);
 	// the first completion arriving a second time is a duplicate, and drains nothing
+	await reachForPill(page);
+
 	await page.locator("#spool-restart").click();
 	await inner.locator("body").evaluate((_body, completion) => {
 		(
@@ -3307,6 +3336,8 @@ it("keeps a ready player visible after a late authored exception", { timeout: 60
 			}
 		).__spoolRuntimeMessageGate.hold();
 	});
+	await reachForPill(page);
+
 	await page.locator("#spool-restart").click();
 	await expect
 		.poll(() =>
@@ -3473,10 +3504,16 @@ export default function Next() {
 	await inner.locator("#count").filter({ hasText: "5" }).waitFor();
 	await inner.locator("#key").press("K");
 	expect(await inner.locator("#key").innerText()).toBe("K");
+	await reachForPill(page);
+
 	await page.locator("#spool-restart").click();
 	await inner.locator("#count").filter({ hasText: "2" }).waitFor();
 	expect(await page.locator(".spool-pill-name").innerText()).toBe("menu");
 
+	// working inside the prototype puts the chrome away, wherever the movement
+	// happens to be — including inside the frame's own document, which reports
+	// its pointer over the wire (#210)
+	await inner.locator("body").hover({ position: { x: 200, y: 300 } });
 	await page.waitForFunction(
 		() => document.querySelector(".spool-stage")?.classList.contains("is-asleep"),
 		undefined,
@@ -3484,8 +3521,7 @@ export default function Next() {
 			timeout: 5_000,
 		},
 	);
-	await inner.locator("body").hover({ position: { x: 200, y: 300 } });
-	await page.waitForFunction(() => !document.querySelector(".spool-stage")?.classList.contains("is-asleep"));
+	await reachForPill(page);
 
 	await page.locator("#spool-close").click();
 	await page.waitForURL(`${project.url}/p/${encodeURIComponent(project.name)}`);
