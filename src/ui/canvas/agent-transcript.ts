@@ -21,9 +21,8 @@ import { LOGIN_REMEDY, NO_KEY, signedOut } from "./agent-preflight";
  * #193).
  *
  * The rail renders these and nothing else: the human's words, the agent's words,
- * one line per tool call, the plan, and spool's own word for a turn that did not
- * end cleanly. The wait before the first token and the model's own thinking draw
- * nothing at all, and `answered` says why. Chips and
+ * one line per tool call, the receipt a request out leaves behind, the plan, and
+ * spool's own word for a turn that did not end cleanly. Chips and
  * threads are later tickets and this projection does not pretend to them — an event
  * it does not draw is dropped rather than guessed at, because `stream-json`
  * publishes no stability guarantee and a rename must cost a blank row rather than a
@@ -56,6 +55,35 @@ import { LOGIN_REMEDY, NO_KEY, signedOut } from "./agent-preflight";
  * list in this rail that exists before anything runs.
  */
 export type RowState = "pending" | "running" | "done" | "failed" | "stopped";
+
+/**
+ * How a request that is out is going (#212).
+ *
+ * Three of the five, and the two it leaves out are the two a wait cannot reach. Nothing
+ * about a request out is `pending`, because a request exists from the moment it goes —
+ * there is no writing-it-down beat the way the plan's tasks have one. And it cannot
+ * fail: what comes back is an answer or the turn is over, and a turn that ends under a
+ * request out was cut rather than errored, which is the distinction `stopped` already
+ * carries for a call the wire never answered.
+ */
+export type WaitState = Extract<RowState, "running" | "done" | "stopped">;
+
+/**
+ * How long something took, in the log's own words.
+ *
+ * Tenths under ten seconds, because the range this is read in is the wait before a
+ * first token and every one of those is under four: 878ms to 4,043ms across the 50
+ * measured, median 1,970, so a whole second would round most of them to the same two
+ * numbers. Whole seconds above ten, where a tenth is noise, and minutes above sixty,
+ * where the count stops being a number anybody reads as a duration.
+ */
+export function duration(ms: number): string {
+	if (!Number.isFinite(ms) || ms < 0) return "";
+	if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+	const whole = Math.round(ms / 1000);
+	if (whole < 60) return `${whole}s`;
+	return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
 
 /**
  * How a waiting request is going (#145, #162).
@@ -215,6 +243,40 @@ export type AgentEntry =
 	  }
 	| AgentRow
 	/**
+	 * A request out, as a receipt the log keeps (#212).
+	 *
+	 * It draws in the row's own grammar — a mark, a verb, and a number — because that is
+	 * the grammar this log already has for a thing that took time. What it says is a
+	 * duration and nothing else, and that is not a shortfall: the wire carries no thought
+	 * at all. `AgentThinking` has a token count and no prose, and every thinking field in
+	 * every capture is the empty string (upstream `claude-code#20127`), so a line pretending
+	 * to a thought would be inventing one.
+	 *
+	 * It opens on the wire's own `waiting` rather than on the thinking block, which is what
+	 * makes the number worth drawing: opened on the block it read `thinking 0.0s`, because
+	 * only 2 of 36 thinking blocks in the captures are substantial. Opened on the wait it is
+	 * the time to first token — 878ms to 4,043ms across the 50 measured — which is exactly
+	 * the range in which a rail with no readout reads as stopped.
+	 *
+	 * Nothing is ever spliced out. It enters with the rest of the turn and stays, so an
+	 * answer landing moves nothing above it, and a transcript read back an hour later still
+	 * says where the time went. That is the whole difference between this and the beat
+	 * `b4aef45` deleted, which was the one entry this log ever removed.
+	 *
+	 * `at` is on the turn's own clock and `ms` is null only while the request is still out,
+	 * which is the one condition under which a reader has to count for itself. Every way a
+	 * turn can end settles it, so nothing that reaches disk is still counting.
+	 */
+	| {
+			readonly key: string;
+			readonly kind: "wait";
+			readonly state: WaitState;
+			/** when the request went out, in milliseconds from the turn's send */
+			readonly at: number;
+			/** how long until the answer began, or null while it has not */
+			readonly ms: number | null;
+	  }
+	/**
 	 * The turn waiting on the person, and what it is waiting for (#121, #145, #162).
 	 *
 	 * One entry for two things, because the wire is one channel: an approval leads with
@@ -269,7 +331,7 @@ export type AgentEntry =
 	  };
 
 /** every kind the union has, as the one runtime list of it (see `drawableEntries`) */
-const KINDS: ReadonlySet<string> = new Set(["user", "prose", "row", "ask", "note"]);
+const KINDS: ReadonlySet<string> = new Set(["user", "prose", "row", "wait", "ask", "note"]);
 
 /**
  * Entries from outside this fold, as things this rail can draw (#120, #200).
@@ -298,11 +360,20 @@ export function drawableEntries(entries: readonly unknown[]): AgentEntry[] {
  * reading it against a clock that starts again at zero draws the message as no characters
  * at all. Dropping it is what `shownBy` already documents for a block that never streamed:
  * a message with no schedule is drawn whole.
+ *
+ * A receipt still counting is the same fact about the same clock (#212). A turn saves
+ * itself on a throttle while it runs, so a request that was out when the lights went out
+ * reaches disk with no total on it — and left running it would turn forever and count up
+ * from a zero that is not its own. It stops here, taking the word every call the wire
+ * never answered takes, and says no number rather than a wrong one: what it knows is that
+ * the request went out, and how long it took is a thing nobody ever found out.
  */
 export function unpaced(entries: readonly AgentEntry[]): AgentEntry[] {
-	return entries.map((entry) =>
-		entry.kind === "prose" && entry.landed.length > 0 ? { ...entry, landed: [], settled: true } : entry,
-	);
+	return entries.map((entry) => {
+		if (entry.kind === "prose" && entry.landed.length > 0) return { ...entry, landed: [], settled: true };
+		if (entry.kind === "wait" && entry.state === "running") return { ...entry, state: "stopped" as const };
+		return entry;
+	});
 }
 
 /** one event and the millisecond it reached the client, measured from the send */
@@ -391,6 +462,14 @@ interface Row {
 	shot: AgentShot | null;
 	foreign: RowForeign | null;
 	parent: string | null;
+}
+
+/** one request out, from the moment it goes to whatever the answer turns out to start with */
+interface Wait {
+	readonly key: string;
+	readonly at: number;
+	state: WaitState;
+	ms: number | null;
 }
 
 /**
@@ -523,8 +602,10 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	const asks = new Map<string, Ask>();
 	/** which ask a control request and a call answer to, since the two arrive apart */
 	const askOf = new Map<string, string>();
+	/** every request that has gone out, by the slot it opened in */
+	const waits = new Map<string, Wait>();
 	/** the order entries were opened in, which is the order the log reads */
-	const order: { kind: "prose" | "row" | "ask"; key: string }[] = [];
+	const order: { kind: "prose" | "row" | "wait" | "ask"; key: string }[] = [];
 	const notes: AgentEntry[] = [];
 	/** open tool blocks by slot, since a fragment carries only its block index */
 	const blocks = new Map<string, Block>();
@@ -562,13 +643,16 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	let opened: string[] = [];
 	let confirmed = 0;
 	/**
-	 * A request is up and nothing has come back, off the wire's own `waiting`.
+	 * The request that is up and has had nothing back, off the wire's own `waiting`.
 	 *
-	 * It draws nothing. It is here because it is what makes the request coming back a
-	 * boundary at all: `answered` may only advance the message once per request, and
-	 * every event that can be the first thing an answer produces calls it.
+	 * It is the receipt being written and it is the gate in one, because they are the
+	 * same fact: `answered` may only advance the message once per request, and the
+	 * request being over is the moment the duration stops. Every event that can be the
+	 * first thing an answer produces goes through it.
 	 */
-	let outstanding = false;
+	let outstanding: Wait | null = null;
+	/** the last stamp seen, so a turn cut under a request can say how long it had been */
+	let last = 0;
 	let over = false;
 	let ended = false;
 	/** the last usage window the binary said anything about, so a crossing can be seen */
@@ -582,11 +666,12 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	 * actually sits in every gap between two runs is the agent going and looking at
 	 * what it just changed, and looking draws a row.
 	 *
-	 * Only what stays drawn counts, and neither the wait for the next request nor the
-	 * model's own thinking draws anything: a run they ended would be a run broken by
-	 * nothing the reader can see, and two identical rows would end up next to each
-	 * other with no reason between them. Writes either side of a silent request are
-	 * the same run, which is what the rule says when nothing is drawn between them.
+	 * Only what stays drawn counts, and the rule has not moved — what moved is the wait,
+	 * which now draws its own receipt and so ends a run like anything else in the log
+	 * (#212). Writes either side of a request out are two runs, and there is a line
+	 * between them saying why. While the wait drew nothing they were one run, on this
+	 * same rule: a run ended by nothing the reader can see is two identical rows next to
+	 * each other with no reason between them.
 	 *
 	 * Per thread rather than across the log, because a fan-out interleaves: three
 	 * delegates and the parent all draw into one transcript at once, and one rule
@@ -806,8 +891,18 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	 * answered stops — spool never claims something errored when it simply never ran —
 	 * and a write that was waiting to find out whether it was a run's next call draws
 	 * as the bare verb it got to, which is beat one of the three every call gets.
+	 *
+	 * A request still out takes the same word for the same reason, and it stops counting
+	 * here: its clock is the turn's, and the turn is over. What it keeps is how long it
+	 * had been out when the lights went out, which is a fact, rather than a total it
+	 * never reached (#212).
 	 */
 	const finish = () => {
+		if (outstanding !== null) {
+			outstanding.ms = Math.max(0, last - outstanding.at);
+			outstanding.state = "stopped";
+			outstanding = null;
+		}
 		for (const thread of [...runs.keys()]) endRun(thread);
 		for (const block of blocks.values()) {
 			if (block.row === null && !block.joined) nameRow(block, block.fragments, false, null);
@@ -824,19 +919,22 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	 *
 	 * Called from every event that can be the first thing an answer produces rather
 	 * than from `speaking` alone, because `speaking` is one runtime's signal and the
-	 * union is meant to survive a thinner one. Nothing is drawn or taken back here —
-	 * the wait is the absence of an answer rather than a thing that happened, and the
-	 * log is receipts. What it does is close the request and file the blocks that
-	 * follow under a new message, which is what keeps two messages that both open at
-	 * block 0 out of one entry.
+	 * union is meant to survive a thinner one. What it does is stop the receipt's
+	 * clock and file the blocks that follow under a new message, which is what keeps
+	 * two messages that both open at block 0 out of one entry.
 	 *
-	 * The gate is the whole of it. Every event after the first is an answer to a
+	 * Nothing is taken back out. The receipt settles where it already stands, which is
+	 * the whole of why it is allowed to be there at all (#212).
+	 *
+	 * The gate is the rest of it. Every event after the first is an answer to a
 	 * request that has already come back, and advancing the message on one of those
 	 * would file a settled message against a block index its own deltas never opened.
 	 */
-	const answered = () => {
-		if (!outstanding) return;
-		outstanding = false;
+	const answered = (at: number) => {
+		if (outstanding === null) return;
+		outstanding.ms = Math.max(0, at - outstanding.at);
+		outstanding.state = "done";
+		outstanding = null;
 		message += 1;
 		opened = [];
 		confirmed = 0;
@@ -844,9 +942,10 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 
 	for (const { at, event } of seen) {
 		const thread = event.parent ?? "";
+		last = at;
 		// the work of every thread reaches the log; the words of only one do
 		if (event.parent !== null && !DELEGATED.has(event.kind)) continue;
-		if (event.parent === null && ANSWERS.has(event.kind)) answered();
+		if (event.parent === null && ANSWERS.has(event.kind)) answered(at);
 		switch (event.kind) {
 			case "call": {
 				// the block opens with a name and an empty input, and the subject types
@@ -1055,27 +1154,46 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				// the project the agent is standing in, which is what makes a path relative
 				if (event.cwd !== null) root = event.cwd;
 				break;
-			case "waiting":
-				// the request is out and nothing has come back, which draws nothing: the wire
-				// is silent here and silence is not a receipt
-				outstanding = true;
+			case "waiting": {
+				/*
+				 * The request goes out, and the log opens the receipt for it now rather than
+				 * when it comes back (#212).
+				 *
+				 * Now, because a duration nobody can watch arriving is a duration nobody trusts:
+				 * the whole complaint was a rail that reads as stopped for the two to four
+				 * seconds before a first token, and a line that appears only once the answer has
+				 * already started would arrive exactly too late to answer it.
+				 *
+				 * One per request. A second `waiting` with no answer between is the same request
+				 * still out, and it must not open a second line.
+				 */
+				if (outstanding !== null) break;
+				const made: Wait = { key: `wait:${waits.size}`, at, state: "running", ms: null };
+				waits.set(made.key, made);
+				order.push({ kind: "wait", key: made.key });
+				outstanding = made;
+				// it is a drawn thing in the log now, so it ends a run the way every other
+				// drawn thing does — which is the rule below, on its own terms
+				endRun("");
 				break;
+			}
 			/*
-			 * The first thing back, in the two shapes it comes in, and neither of them draws.
+			 * The first thing back, in the two shapes it comes in.
 			 *
-			 * A thought is not a thing to show. The wire carries no thinking text at all —
-			 * `AgentThinking` has a token count and no prose, and measured against 2.1.220
-			 * every one of the 346 thinking fields across the captures is the empty string
-			 * (upstream: claude-code#20127). What was drawable was a duration, and across the
-			 * captures only 2 of 36 thinking blocks are substantial, so the line the rail drew
-			 * was `thinking 0.0s`.
+			 * Neither draws a line of its own, and the thinking block least of all: the wire
+			 * carries no thinking text at all — `AgentThinking` has a token count and no prose,
+			 * and measured against 2.1.220 every one of the 346 thinking fields across the
+			 * captures is the empty string (upstream: claude-code#20127). What they do is stop
+			 * the receipt the request opened, which is where the duration was always going to
+			 * come from: the block's own span is `thinking 0.0s` for 34 of the 36 in the
+			 * captures, and the wait before it is the number worth keeping.
 			 */
 			case "speaking":
 			case "thinking":
-				answered();
+				answered(at);
 				break;
 			case "say": {
-				answered();
+				answered(at);
 				const key = `say:${message}:${event.block}`;
 				let block = prose.get(key);
 				if (block === undefined) {
@@ -1090,7 +1208,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				break;
 			}
 			case "said": {
-				answered();
+				answered(at);
 				// the settled message confirms the blocks its own deltas opened, in order.
 				// A runtime that sends no partial messages opens none, so the text arrives
 				// here first and is drawn whole — which is the same entry with no schedule.
@@ -1197,6 +1315,11 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		if (slot.kind === "row") {
 			const row = rowOf(slot.key);
 			if (row !== null) entries.push(row);
+			continue;
+		}
+		if (slot.kind === "wait") {
+			const wait = waits.get(slot.key);
+			if (wait !== undefined) entries.push({ ...wait, kind: "wait" });
 			continue;
 		}
 		if (slot.kind === "ask") {

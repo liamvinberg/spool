@@ -20,6 +20,7 @@ import {
 	type AgentPlan,
 	type AgentRow,
 	type AgentSent,
+	duration,
 	type RowState,
 	shownBy,
 } from "./agent-transcript";
@@ -1238,10 +1239,18 @@ function Transcript({
 	);
 }
 
-/** consecutive rows read as one run, so they sit tighter than a turn boundary */
+/**
+ * Consecutive rows read as one run, so they sit tighter than a turn boundary.
+ *
+ * A request out is row-shaped and packs the same way (#212): it is one line of the same
+ * height in the same grammar, and spacing it like a turn boundary would say a break
+ * happened where the agent only stopped to think.
+ */
+const TIGHT: ReadonlySet<AgentEntry["kind"]> = new Set(["row", "wait"]);
+
 function gapBefore(previous: AgentEntry | undefined, entry: AgentEntry): number {
 	if (previous === undefined) return 0;
-	if (previous.kind === "row" && entry.kind === "row") return 6;
+	if (TIGHT.has(previous.kind) && TIGHT.has(entry.kind)) return 6;
 	return 14;
 }
 
@@ -1306,6 +1315,7 @@ function Entry({
 		);
 	}
 	if (entry.kind === "row") return <Row entry={entry} jump={jump} />;
+	if (entry.kind === "wait") return <Wait entry={entry} elapsed={elapsed} />;
 	if (entry.kind === "ask") return <Ask entry={entry} onAnswer={onAnswer} />;
 	return <Prose entry={entry} elapsed={elapsed} />;
 }
@@ -1493,6 +1503,46 @@ function Row({ entry, jump, nested = false }: { entry: AgentRow; jump: FrameJump
 					) : null}
 				</div>
 			) : null}
+		</div>
+	);
+}
+
+/* ---------- a request out, one line ----------
+ * The receipt for the time before a first token (#212), in the row's own grammar
+ * because the log already has one for a thing that took time: a mark, a verb and a
+ * number. It is drawn a shade quieter than a tool row throughout — `thinking` is
+ * something the machine did rather than something it did to the project, and a
+ * transcript in which every third line is this at full strength reads as busier than
+ * the turn was.
+ *
+ * The number is a duration and never a thought. The wire carries no thinking text at
+ * all, so there is nothing else it could honestly be, and the projection's own comment
+ * on the entry is where that is argued.
+ *
+ * It counts while the request is out and stops where the answer starts. The count is
+ * free: this rail already re-renders on the pace's own tick, so nothing is scheduled
+ * for it and a settled receipt costs one render and then nothing.
+ *
+ * Under reduced motion the clock is handed in as infinite — that is how an arriving
+ * message is drawn whole — so a live receipt has no number to show and draws the mark
+ * and the word alone until it settles. That is the right way round rather than a
+ * shortfall: a digit changing sixty times a second is motion, and the reader who asked
+ * for none gets the duration once, when it is final. */
+
+function Wait({ entry, elapsed }: { entry: Extract<AgentEntry, { kind: "wait" }>; elapsed: number }) {
+	// only a request that is genuinely still out counts, and only its own turn's clock can
+	// count it: a receipt restored with no total on it reads as the request it was and
+	// says no number, rather than climbing from a zero belonging to some other turn
+	const took = entry.ms !== null ? duration(entry.ms) : entry.state === "running" ? duration(elapsed - entry.at) : "";
+	return (
+		<div data-agent-wait={entry.state} className="-mx-1.5 flex h-[26px] w-fit items-center gap-2.5 rounded-sm px-1.5">
+			<StateMark state={entry.state} />
+			<span className="shrink-0 font-mono text-muted/70 text-sm leading-4">thinking</span>
+			{took === "" ? null : (
+				// `tabular-nums` so a tenth ticking over changes no width, which is what keeps
+				// the one moving thing in the log from moving anything else
+				<span className="shrink-0 font-mono text-muted/60 text-sm tabular-nums leading-4">{took}</span>
+			)}
 		</div>
 	);
 }

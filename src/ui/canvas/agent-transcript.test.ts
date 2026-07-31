@@ -3,7 +3,16 @@ import { createClaudeAdapter } from "../../daemon/agent-claude";
 import type { AgentEvent } from "../../daemon/agent-events";
 import { CAPTURES, readCapture } from "../../test-helpers";
 import { drawnBy } from "./agent-pace";
-import { type AgentEntry, type AgentRow, fullyShown, type Stamped, shownBy, transcriptOf } from "./agent-transcript";
+import {
+	type AgentEntry,
+	type AgentRow,
+	duration,
+	fullyShown,
+	type Stamped,
+	shownBy,
+	transcriptOf,
+	unpaced,
+} from "./agent-transcript";
 
 /**
  * The transcript the rail draws (#192, #193), projected off #191's event union.
@@ -95,18 +104,52 @@ describe("the human's words", () => {
 	});
 });
 
+describe("how long something took", () => {
+	/**
+	 * Tenths in the range this is actually read in, which is the wait before a first
+	 * token: 878ms to 4,043ms across the 50 measured, so whole seconds would round most
+	 * of a turn's receipts to the same two numbers.
+	 */
+	it("reads in tenths under ten seconds", () => {
+		expect(duration(878)).toBe("0.9s");
+		expect(duration(1970)).toBe("2.0s");
+		expect(duration(4043)).toBe("4.0s");
+	});
+
+	/** and stops pretending to a tenth once the number is long enough not to need one */
+	it("reads in whole seconds and then in minutes", () => {
+		expect(duration(10_000)).toBe("10s");
+		expect(duration(59_400)).toBe("59s");
+		expect(duration(90_000)).toBe("1:30");
+		expect(duration(605_000)).toBe("10:05");
+	});
+
+	/**
+	 * A clock that is not running has no number to give, and under reduced motion that is
+	 * exactly what the rail is handed: `elapsed` is infinite there, which is how an
+	 * arriving message is drawn whole. An empty string is the receipt drawing its mark and
+	 * its word alone until it settles, rather than the rail printing `NaN`.
+	 */
+	it("says nothing at all when there is no duration to say", () => {
+		expect(duration(Number.POSITIVE_INFINITY)).toBe("");
+		expect(duration(Number.NaN)).toBe("");
+		expect(duration(-1)).toBe("");
+	});
+});
+
 describe("the wait before the first token", () => {
 	/**
-	 * It draws nothing, and neither does the model's own thinking.
+	 * It draws a receipt, and the model's own thinking still draws nothing of its own.
 	 *
-	 * The wire carries no thinking text at all — every one of the 346 thinking fields
-	 * across the captures is the empty string — so what was drawable was a duration, and
-	 * only 2 of 36 thinking blocks are substantial. `thinking 0.0s` was the norm. The wait
-	 * was also the one entry this log ever removed, which dragged everything above it
-	 * down 38.3px the moment an answer landed.
+	 * The two were one line until #212 and are not the same object. The wire carries no
+	 * thinking text at all — every one of the 346 thinking fields across the captures is
+	 * the empty string — and only 2 of 36 thinking blocks are substantial, so a line
+	 * opened on the *block* read `thinking 0.0s` and was deleted for saying nothing.
+	 * Opened on the wait it carries the time to first token, 878ms to 4,043ms across the
+	 * 50 measured, which is the number the rail was missing.
 	 */
-	it("draws nothing while a request is out", () => {
-		expect(kinds(transcriptOf([{ text: "go" }], stamp([[0, waiting]])).entries)).toEqual(["user"]);
+	it("opens a receipt the moment a request goes out", () => {
+		expect(kinds(transcriptOf([{ text: "go" }], stamp([[0, waiting]])).entries)).toEqual(["user", "wait"]);
 		expect(
 			kinds(
 				transcriptOf(
@@ -114,21 +157,75 @@ describe("the wait before the first token", () => {
 					stamp([waiting, speaking, { kind: "thinking", block: 0, tokens: 12, parent: null }]),
 				).entries,
 			),
-		).toEqual(["user"]);
+		).toEqual(["user", "wait"]);
 	});
 
-	/** and nothing appears once it comes back either: the log is receipts */
-	it("draws nothing once the first token lands", () => {
-		const { entries } = transcriptOf([{ text: "go" }], stamp([waiting, speaking, say("done.")]));
+	/** while nothing has come back it is running and has no total to show yet */
+	it("is running and unmeasured while the request is still out", () => {
+		const { entries } = transcriptOf([{ text: "go" }], stamp([[400, waiting]]));
 
-		expect(kinds(entries)).toEqual(["user", "prose"]);
+		expect(entries.at(-1)).toMatchObject({ kind: "wait", state: "running", at: 400, ms: null });
 	});
 
-	/** the wait between two requests in one turn is the same silence */
-	it("draws nothing between two requests in the same turn", () => {
+	/**
+	 * The number is the wait, so it is measured from the request going out to the answer
+	 * beginning — not to the answer finishing, and not from the thinking block, which is
+	 * what the deleted line measured.
+	 */
+	it("settles on the first token, carrying the time it took to get there", () => {
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([
+				[0, waiting],
+				[1970, speaking],
+				[2400, say("done.")],
+			]),
+		);
+
+		expect(kinds(entries)).toEqual(["user", "wait", "prose"]);
+		expect(entries[1]).toMatchObject({ kind: "wait", state: "done", ms: 1970 });
+	});
+
+	/** a receipt is written once and never taken back out, which is what earns it the room */
+	it("keeps the receipt for the rest of the turn", () => {
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([waiting, speaking, say("done."), done, { kind: "closed", code: 0, parent: null }]),
+		);
+
+		expect(kinds(entries)).toEqual(["user", "wait", "prose"]);
+	});
+
+	/** every request in a turn gets its own, because each is its own wait */
+	it("draws one receipt per request in the same turn", () => {
 		const { entries } = transcriptOf([{ text: "go" }], stamp([waiting, speaking, say("one"), waiting]));
 
-		expect(kinds(entries)).toEqual(["user", "prose"]);
+		expect(kinds(entries)).toEqual(["user", "wait", "prose", "wait"]);
+	});
+
+	/** the same request said twice is still one request, and must not open a second line */
+	it("draws one receipt when the wire repeats itself", () => {
+		const { entries } = transcriptOf([{ text: "go" }], stamp([waiting, waiting, speaking, say("one")]));
+
+		expect(kinds(entries)).toEqual(["user", "wait", "prose"]);
+	});
+
+	/**
+	 * A turn cut under a request out took neither of the settled marks: nothing answered
+	 * it, so it is the `stopped` every call the wire never answered already takes. What
+	 * it keeps is how long it had been out, which is a fact, rather than a total it never
+	 * reached — and it must not be left counting, because its clock stops with the turn.
+	 */
+	it("stops the receipt where the turn was cut, rather than leaving it running", () => {
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([
+				[0, waiting],
+				[3200, { kind: "ended", ending: "stopped", reason: null, stopReason: null, parent: null }],
+			]),
+		);
+
+		expect(entries[1]).toMatchObject({ kind: "wait", state: "stopped", ms: 3200 });
 	});
 
 	/**
@@ -143,8 +240,63 @@ describe("the wait before the first token", () => {
 			stamp([waiting, say("one"), waiting, say("two"), done, { kind: "closed", code: 0, parent: null }]),
 		);
 
-		expect(kinds(entries)).toEqual(["user", "prose", "prose"]);
+		expect(kinds(entries)).toEqual(["user", "wait", "prose", "wait", "prose"]);
+		expect(entries.filter((entry) => entry.kind === "wait").every((entry) => entry.ms !== null)).toBe(true);
 		expect(prose(entries).map((entry) => (entry.kind === "prose" ? entry.full : ""))).toEqual(["one", "two"]);
+	});
+
+	/**
+	 * A turn writes itself down on a throttle while it runs, so a request that is out when
+	 * the lights go out reaches disk with no total on it. It must not reach disk running:
+	 * a restored thread has a clock that starts again at zero, and a receipt still counting
+	 * against it would turn forever and climb from a moment that never happened.
+	 */
+	it("stops a receipt that is still counting when it leaves its own turn", () => {
+		const { entries } = transcriptOf([{ text: "go" }], stamp([[400, waiting]]));
+		const [kept] = unpaced(entries).filter((entry) => entry.kind === "wait");
+
+		expect(entries.at(-1)).toMatchObject({ kind: "wait", state: "running", ms: null });
+		expect(kept).toMatchObject({ kind: "wait", state: "stopped", ms: null });
+	});
+
+	/** and a receipt that settled inside its turn keeps the number it settled on */
+	it("leaves a settled receipt alone when it leaves its own turn", () => {
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([
+				[0, waiting],
+				[1970, speaking],
+			]),
+		);
+		const [kept] = unpaced(entries).filter((entry) => entry.kind === "wait");
+
+		expect(kept).toMatchObject({ kind: "wait", state: "done", ms: 1970 });
+	});
+
+	/**
+	 * And it holds against sessions nobody wrote it for. Nothing is left counting in any
+	 * of the seven: a receipt whose clock never stopped would go on climbing against a
+	 * turn that is over, and against a restored one it would climb from a clock that
+	 * starts again at zero.
+	 */
+	it("settles every receipt in every capture", () => {
+		for (const capture of CAPTURES) {
+			const waits = transcriptOf([{ text: "go" }], replay(capture)).entries.filter((entry) => entry.kind === "wait");
+
+			expect(waits.every((wait) => wait.ms !== null && wait.state === "done")).toBe(true);
+		}
+	});
+
+	/**
+	 * Twelve requests in an ordinary editing turn is twelve receipts, which is the cost
+	 * this shape is knowingly paying and the whole of what the open follow-up is about:
+	 * the log already counts runs of writes rather than repeating them, and the same rule
+	 * would take these to one or two lines carrying a count.
+	 */
+	it("draws one receipt per request across a whole editing turn", () => {
+		const { entries } = transcriptOf([{ text: "go" }], replay("claude-edits"));
+
+		expect(entries.filter((entry) => entry.kind === "wait")).toHaveLength(12);
 	});
 
 	/**
@@ -254,7 +406,8 @@ describe("the agent's words", () => {
 	it("draws nothing for a text block that never carried a character", () => {
 		const { entries } = transcriptOf([{ text: "go" }], stamp([waiting, speaking, say("", 0), done]));
 
-		expect(kinds(entries)).toEqual(["user"]);
+		// the receipt for the request is not the message: no prose entry is opened at all
+		expect(kinds(entries)).toEqual(["user", "wait"]);
 	});
 });
 
@@ -263,7 +416,8 @@ describe("a turn that ends", () => {
 	it("says nothing when it ended cleanly", () => {
 		const { entries, over } = transcriptOf([{ text: "go" }], stamp([waiting, speaking, say("done."), done]));
 
-		expect(kinds(entries)).toEqual(["user", "prose"]);
+		// no note: the receipt above is the turn's own, and a clean end adds nothing to it
+		expect(kinds(entries)).toEqual(["user", "wait", "prose"]);
 		expect(over).toBe(true);
 	});
 
@@ -351,7 +505,7 @@ describe("a turn that ends", () => {
 			stamp([waiting, speaking, say("done."), done, { kind: "closed", code: 0, parent: null }]),
 		);
 
-		expect(kinds(entries)).toEqual(["user", "prose"]);
+		expect(kinds(entries)).toEqual(["user", "wait", "prose"]);
 	});
 });
 
@@ -545,12 +699,14 @@ describe("a run of writes", () => {
 	});
 
 	/**
-	 * Only what stays drawn ends it, and neither the wait for the next request nor the
-	 * model's own thinking draws anything: a run either of them ended would be a run
-	 * broken by nothing the reader can see, and two identical rows would end up next to
-	 * each other with no reason between them.
+	 * Only what stays drawn ends it, and the rule has not moved — the wait has (#212).
+	 * It draws its own receipt now, so it ends a run the way every other drawn thing
+	 * does, and the two rows either side of it are two runs with a line between them
+	 * saying why. While it drew nothing they were one run, on this same rule: a run
+	 * ended by nothing the reader can see is two identical rows with no reason between
+	 * them.
 	 */
-	it("is not ended by a wait or a thought, because neither draws", () => {
+	it("is ended by a request going out, now that the request draws", () => {
 		const write = (id: string) => called(id, "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` });
 		const thought: AgentEvent = { kind: "thinking", block: 0, tokens: 40, parent: null };
 		const { entries } = transcriptOf(
@@ -558,7 +714,24 @@ describe("a run of writes", () => {
 			stamp([ready, write("t1"), result("t1"), waiting, speaking, thought, write("t2"), result("t2"), done]),
 		);
 
-		expect(kinds(entries)).toEqual(["user", "row"]);
+		expect(kinds(entries)).toEqual(["user", "row", "wait", "row"]);
+		expect(lines(entries)).toEqual(["edit home", "edit home"]);
+	});
+
+	/**
+	 * The thinking block on its own still ends nothing, because it still draws nothing.
+	 * It is the wait that draws, and a thought arriving inside a request that has already
+	 * come back is not a second boundary.
+	 */
+	it("is not ended by a thought inside a request that already came back", () => {
+		const write = (id: string) => called(id, "Edit", { file_path: `${ROOT}/design/frames/home/frame.tsx` });
+		const thought: AgentEvent = { kind: "thinking", block: 0, tokens: 40, parent: null };
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([ready, waiting, speaking, write("t1"), result("t1"), thought, write("t2"), result("t2"), done]),
+		);
+
+		expect(kinds(entries)).toEqual(["user", "wait", "row"]);
 		expect(lines(entries)).toEqual(["edit home ×2"]);
 	});
 
@@ -1139,12 +1312,12 @@ describe("the plan", () => {
 		]);
 		// the count climbs as the list is written, and then the phrasing carries it
 		expect(readings.slice(0, 7)).toEqual(["0/1 —", "0/2 —", "0/3 —", "0/4 —", "0/5 —", "0/6 —", "0/7 —"]);
-		// and by the time it last changed, fifteen rows sat between it and the line in the
+		// and by the time it last changed, sixteen rows sat between it and the line in the
 		// log that says it was written: a log would have carried it off the top. It was
-		// sixteen while a thought drew a line of its own and so broke a run of writes;
-		// now that it draws nothing it cannot break one, and the two rows either side of
-		// one thought are the one row they always were
-		expect(below.at(-1)).toBe(15);
+		// fifteen for as long as the wait drew nothing, which merged the two writes either
+		// side of one request into a single row; the receipt draws again (#212), so it
+		// breaks that run again and they are two rows again
+		expect(below.at(-1)).toBe(16);
 		expect(lines(rowsOf("claude-plan"))).toContain("plan 7 tasks");
 	});
 
@@ -1484,7 +1657,9 @@ describe("what a delegate does", () => {
 		);
 
 		expect(prose(entries).map((entry) => (entry.kind === "prose" ? entry.full : ""))).toEqual(["delegating."]);
-		expect(kinds(entries)).toEqual(["user", "prose"]);
+		// one receipt, for the conversation's own request: a delegate's wait is its own
+		// business and never reaches here, the same way its words never do
+		expect(kinds(entries)).toEqual(["user", "wait", "prose"]);
 	});
 });
 
