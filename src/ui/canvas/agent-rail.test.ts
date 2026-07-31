@@ -90,6 +90,8 @@ interface Turn {
 interface Stored {
 	/** what a mount reads: null is a project that has never had a thread */
 	served: ServedThread[] | null;
+	/** the read held open, so a test can press Enter before the rail has a thread (#234) */
+	hold: Promise<void> | null;
 	/** every picture the rail wrote down, newest last */
 	readonly puts: { thread: string; body: ThreadPut }[];
 	/** every thread the ✕ closed */
@@ -208,7 +210,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		push: () => {},
 		close: () => {},
 	};
-	const stored: Stored = { served: null, puts: [], closed: [] };
+	const stored: Stored = { served: null, hold: null, puts: [], closed: [] };
 	/** what the rail last called its turn, which is the address a stop names (#165) */
 	let named = "";
 	/** the daemon's own watcher channel: what a frame the turn writes arrives on */
@@ -301,6 +303,8 @@ function mount({ still = false }: { still?: boolean } = {}) {
 			}
 			// the threads this project has, and the picture the rail writes back (#120, #200)
 			if (url.pathname.endsWith("/agent/threads")) {
+				// held open, for the one claim that is about the window before they land (#234)
+				if (stored.hold !== null) await stored.hold;
 				return Response.json({ threads: stored.served ?? [] });
 			}
 			// the binary's own answer to `list_models`, and what a choice does to it: the menu
@@ -631,6 +635,37 @@ describe("one turn", () => {
 		expect(field(canvas.host)?.value).toBe("");
 		await settle(50);
 		expect(canvas.turn.prompts).toEqual(["tidy the receipt"]);
+	});
+
+	/**
+	 * The box empties because something took the words, and never because Enter was
+	 * pressed (#234).
+	 *
+	 * The threads of a project arrive over a door, and until they land there is no thread
+	 * for a message to go into. The press was taken anyway and the field cleared itself
+	 * over it, so a sentence typed into a rail that was still loading went nowhere and left
+	 * nothing behind — no draft, no log line, and no way back to it.
+	 */
+	it("keeps a sentence typed before there was anywhere to put it", async () => {
+		const canvas = mount();
+		let land = () => {};
+		canvas.stored.hold = new Promise<void>((resolve) => {
+			land = resolve;
+		});
+		await canvas.render();
+
+		await send(canvas.host, "tighten the header");
+
+		expect(field(canvas.host)?.value).toBe("tighten the header");
+		expect(canvas.turn.prompts).toEqual([]);
+
+		// and the same words go the moment there is a conversation to say them into
+		land();
+		await settle();
+		await send(canvas.host, "tighten the header");
+		await settle(50);
+		expect(canvas.turn.prompts).toEqual(["tighten the header"]);
+		expect(field(canvas.host)?.value).toBe("");
 	});
 
 	/**

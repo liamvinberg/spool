@@ -124,8 +124,12 @@ export interface AgentTurn {
 	 * `sent` is captured by the caller rather than read later because the selection is a
 	 * live thing and a turn is a record: the chips that were up are the bytes that went
 	 * out, and the line under the words says so for as long as the log lasts.
+	 *
+	 * It says whether the words were taken (#234). False is a rail with nowhere to put them
+	 * — the threads have not arrived yet — and the box keeps them exactly as typed, because
+	 * emptying a field over words that went nowhere is the one loss with no way back.
 	 */
-	readonly send: (text: string, sent?: AgentSent) => void;
+	readonly send: (text: string, sent?: AgentSent) => boolean;
 	/**
 	 * What the person said to a request the turn is parked on (#121, #145).
 	 *
@@ -144,8 +148,10 @@ export interface AgentTurn {
 	 * a send captures it and with far more at stake: this message fires when the turn
 	 * ends, which may be nine minutes and a different selection later, so the chips
 	 * that were up at Enter are the bytes that go out with it.
+	 *
+	 * It says whether the words were taken, for the reason `send` does (#234).
 	 */
-	readonly queue: (text: string, sent?: AgentSent) => void;
+	readonly queue: (text: string, sent?: AgentSent) => boolean;
 	/** take one back by hand, which hands its words to whoever is holding the box */
 	readonly unqueue: (id: string) => void;
 	/**
@@ -946,14 +952,17 @@ export function useAgentThreads(project: string): AgentDeck {
 	const say = useCallback(
 		(text: string, sent: AgentSent = {}) => {
 			const thread = threads.current.get(openRef.current);
-			if (thread === undefined) return;
+			// nowhere to put them: the threads this project has are still on their way, and
+			// words the rail cannot take are words the box has to keep (#234)
+			if (thread === undefined) return false;
 			if (thread.restored && !thread.continuable) {
 				const fresh = start();
 				setOpen(fresh.id);
 				send(fresh, [message(fresh, { text, ...sent })]);
-				return;
+				return true;
 			}
 			send(thread, [message(thread, { text, ...sent })]);
+			return true;
 		},
 		[send, start],
 	);
@@ -1092,8 +1101,9 @@ export function useAgentThreads(project: string): AgentDeck {
 			queue: useCallback(
 				(text: string, sent: AgentSent = {}) => {
 					const thread = threads.current.get(openRef.current);
-					if (thread === undefined) return;
+					if (thread === undefined) return false;
 					hold(thread, [...thread.holding, message(thread, { text, ...sent })]);
+					return true;
 				},
 				[hold],
 			),

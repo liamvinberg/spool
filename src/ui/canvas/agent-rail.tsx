@@ -210,9 +210,10 @@ export function AgentRail({
 	model: AgentModelDeck;
 	/** the usage window, absent until the binary warns, which is most of a session (#122) */
 	limit: AgentLimit | null;
-	onSend: (text: string, sent: AgentSent) => void;
+	/** it says whether the words were taken, and the box only empties on a yes (#234) */
+	onSend: (text: string, sent: AgentSent) => boolean;
 	/** Enter against a running turn: the words are taken and held rather than sent */
-	onQueue: (text: string, sent: AgentSent) => void;
+	onQueue: (text: string, sent: AgentSent) => boolean;
 	onUnqueue: (id: string) => void;
 	/** the press in the footer and the escape in the field, which are one act (#165) */
 	onStop: () => void;
@@ -389,8 +390,11 @@ export function AgentRail({
 							model={model}
 							limit={limit}
 							onSend={(text, sent) => {
-								setSpoke((count) => count + 1);
-								onSend(text, sent);
+								const took = onSend(text, sent);
+								// the log follows the live edge again because something was said, so a press
+								// that said nothing must not move it
+								if (took) setSpoke((count) => count + 1);
+								return took;
 							}}
 							onQueue={onQueue}
 							onUnqueue={onUnqueue}
@@ -2169,8 +2173,9 @@ function Composer({
 	queued: readonly AgentQueued[];
 	model: AgentModelDeck;
 	limit: AgentLimit | null;
-	onSend: (text: string, sent: AgentSent) => void;
-	onQueue: (text: string, sent: AgentSent) => void;
+	/** both of them say whether the words were taken, and the field empties on a yes (#234) */
+	onSend: (text: string, sent: AgentSent) => boolean;
+	onQueue: (text: string, sent: AgentSent) => boolean;
 	onUnqueue: (id: string) => void;
 	onStop: () => void;
 	onAnswer: (request: string, reply: AgentReply) => void;
@@ -2210,15 +2215,19 @@ function Composer({
 	}, [draft]);
 
 	const take = (text: string) => {
-		onDraft("");
-		onAttach(null);
 		// captured here rather than read later: the chips that were up are the bytes
 		// that went out, and the line under the words has to say so afterwards. For a
 		// message the queue holds that is the whole contract, because it fires against a
 		// canvas the hands have moved on from
 		const sent: AgentSent = { context: contextOf(strip), attached, selection: pointing.entries };
-		if (busy) onQueue(text, sent);
-		else onSend(text, sent);
+		const took = busy ? onQueue(text, sent) : onSend(text, sent);
+		// the field is emptied by something having taken the words and never by the press
+		// alone (#234): a rail whose threads are still arriving has nowhere to put them, and
+		// a box cleared over that is a sentence gone with no way back to it
+		if (!took) return false;
+		onDraft("");
+		onAttach(null);
+		return true;
 	};
 
 	return (
@@ -2300,8 +2309,8 @@ function Composer({
 							onAnswer(answering, { kind: "said", text });
 							return;
 						}
-						event.currentTarget.style.height = `${MIN_H}px`;
-						take(text);
+						const box = event.currentTarget;
+						if (take(text)) box.style.height = `${MIN_H}px`;
 					}}
 					className="w-full resize-none bg-transparent text-base text-text leading-base outline-none placeholder:text-muted/50"
 					style={{ height: MIN_H }}
