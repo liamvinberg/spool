@@ -66,16 +66,9 @@ describe("the spawn", () => {
 		};
 		expect(settings.permissions?.allow).toEqual(AGENT_ALLOW_RULES);
 		// the mutation fence, the harmless three (read anywhere, fetch, search),
-		// and spool's own read-only CLI, which runs outside the sandbox where
-		// only a rule keeps it quiet
-		expect(AGENT_ALLOW_RULES).toEqual([
-			"Edit(./design/**)",
-			"Read(//**)",
-			"WebFetch",
-			"WebSearch",
-			"Bash(spool)",
-			"Bash(spool *)",
-		]);
+		// and the whole shell: no command ever asks — observed live, the sandbox
+		// still routed a read-only loop to the prompt, so the rule is the floor
+		expect(AGENT_ALLOW_RULES).toEqual(["Edit(./design/**)", "Read(//**)", "WebFetch", "WebSearch", "Bash"]);
 		// deny beats allow and cannot express an exception, so there is no deny
 		expect(settings.permissions?.deny).toBeUndefined();
 		// and the shell is not narrowed: the fence is paths, never commands
