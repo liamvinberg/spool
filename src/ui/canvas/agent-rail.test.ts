@@ -9,7 +9,7 @@ import { type AgentOffer, modelsOf } from "../../daemon/agent-offer";
 import { longestStreamed, readModelsReply } from "../../test-helpers";
 import type { AgentEvent, SelectionEntry, ServedThread, ThreadPut } from "../api";
 import { chunksOf } from "./agent-markdown";
-import { followTo } from "./agent-rail";
+import { followTo, windStrength } from "./agent-rail";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
 
 /**
@@ -628,10 +628,15 @@ describe("one turn", () => {
 	});
 
 	/**
-	 * The wait before the first token leaves a receipt and the thought that follows it
-	 * still leaves nothing (#212). They are not the same object: the thinking block's own
-	 * span is `0.0s` for 34 of the 36 in the captures, and what is worth keeping is the
-	 * wait in front of it.
+	 * The wait leaves a receipt and the thought that follows it still leaves nothing of
+	 * its own (#212). They are not the same object: the thinking block's own span is
+	 * `0.0s` for 34 of the 36 in the captures, and a line saying that is a line saying
+	 * nothing.
+	 *
+	 * What the thought does instead is keep the one receipt open (#231). A message that
+	 * begins by thinking begins at once, so a receipt settled at the top of it would say
+	 * `0.0s` about a silence that had not started yet — and the log would then hold still
+	 * for the whole of it with every mark in it at rest.
 	 *
 	 * The stroke on the composer's border is untouched and answers a different question.
 	 * It says whether anything is happening, in the periphery, for free; this says what
@@ -648,7 +653,25 @@ describe("one turn", () => {
 		await settle();
 
 		expect(canvas.host.querySelectorAll("[data-agent-log] [data-agent-wait]")).toHaveLength(1);
-		// the answer has started, so the receipt is settled and nothing in the log turns
+		// the thinking is the wait, so the one receipt is still counting it and its mark turns
+		expect(canvas.host.querySelector("[data-agent-log] [data-agent-wait]")?.getAttribute("data-agent-wait")).toBe(
+			"running",
+		);
+		expect(canvas.host.querySelectorAll("[data-agent-log] .animate-agent-spin")).toHaveLength(1);
+	});
+
+	/** and it settles the moment there is something to read, which is what it was counting to */
+	it("settles the receipt when the words start rather than when the thinking does", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "go");
+
+		canvas.turn.push(waiting);
+		canvas.turn.push(speaking);
+		canvas.turn.push({ kind: "thinking", block: 0, tokens: 61, parent: null });
+		canvas.turn.push({ kind: "say", block: 1, text: "done.", parent: null });
+		await settle();
+
 		expect(canvas.host.querySelector("[data-agent-log] [data-agent-wait]")?.getAttribute("data-agent-wait")).toBe(
 			"done",
 		);
@@ -4015,6 +4038,53 @@ describe("the stroke on the composer's border", () => {
 		expect(laying(canvas.host)).toBe(true);
 		expect(stopped(canvas.host)).toBe(false);
 		expect(broken(canvas.host)).toBe(false);
+	});
+
+	/**
+	 * And the one thing it does say about how long is strength, never pace (#231).
+	 *
+	 * The travel is the constraint rather than a detail. This came from a rail that read as
+	 * stopped, so the indicator may not answer *how long has this been* by moving less: a
+	 * take that slowed the only moving thing in the rail would answer *is this alive* with
+	 * less evidence that it is, exactly when a reader is asking. It carries upward instead —
+	 * a longer silence draws a more present line, never a fainter one — and it tops out at
+	 * thirty seconds, because 22 of the 27 thinking blocks in the captures are 1,050
+	 * estimated tokens or fewer, which is under 18 seconds at the measured rate.
+	 */
+	it("carries the length of a silence upward, and tops out at thirty seconds", () => {
+		expect(windStrength(0, true)).toBeCloseTo(0.75, 4);
+		expect(windStrength(15_000, true)).toBeCloseTo(0.875, 4);
+		expect(windStrength(30_000, true)).toBeCloseTo(1, 4);
+		// the worst thought measured is 9,500 tokens, about 159s: it pins rather than wraps
+		expect(windStrength(159_000, true)).toBeCloseTo(1, 4);
+		expect(windStrength(0, true)).toBeLessThan(windStrength(4000, true));
+	});
+
+	/** nothing out is the stroke as it shipped, whatever the turn did before */
+	it("rests at the strength the stroke has always had when nothing is out", () => {
+		expect(windStrength(0, false)).toBeCloseTo(0.75, 4);
+		expect(windStrength(159_000, false)).toBeCloseTo(0.75, 4);
+	});
+
+	/**
+	 * And the rail is wired to it, with the travel left alone.
+	 *
+	 * The arithmetic above is the behaviour; this is the wiring, and the second assertion is
+	 * the one that matters. No `animation-duration` of the stroke's own means the cycle is
+	 * still the stylesheet's 1600ms at every length of wait, which is the constraint this
+	 * take was chosen under.
+	 */
+	it("hands the stroke its strength and leaves the cycle to the stylesheet", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot home");
+
+		canvas.turn.push(waiting);
+		await settle();
+
+		expect(Number(stroke(canvas.host)?.style.opacity ?? "")).toBeCloseTo(0.75, 2);
+		expect(stroke(canvas.host)?.style.animationDuration).toBe("");
+		expect(laying(canvas.host)).toBe(true);
 	});
 
 	/**

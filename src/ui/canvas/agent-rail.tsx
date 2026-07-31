@@ -269,6 +269,19 @@ export function AgentRail({
 	 * means. An approval is answered by pressing one of its three, and by nothing else.
 	 */
 	const asking = entries.find((entry) => entry.kind === "ask" && entry.state === "open" && entry.question);
+	/**
+	 * How long the request now out has been silent, which is the one thing the stroke
+	 * reads (#231).
+	 *
+	 * Off the receipt rather than off a clock of the composer's own, because the receipt
+	 * is already the authority on when a request went out and when it stopped being
+	 * silent. A settled one is not silence any more and contributes nothing.
+	 */
+	const outstanding = entries.find(
+		(entry): entry is Extract<AgentEntry, { kind: "wait" }> =>
+			entry.kind === "wait" && entry.state === "running" && entry.ms === null,
+	);
+	const waited = outstanding === undefined ? 0 : Math.max(0, elapsed - outstanding.at);
 	/** what the panel has left once the column has taken its 34, which two things measure */
 	const panel = width - SPINE_W;
 	const [dragging, setDragging] = useState(false);
@@ -325,7 +338,8 @@ export function AgentRail({
 				<div className="flex h-full min-w-[200px] flex-col">
 					<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
 						<InstallWall install={install} />
-						<CollapseCaret onCollapse={() => setWidth(STRIP_WIDTH)} />
+						{/* the wall has no nameplate to ride, so here alone the caret floats */}
+						<CollapseCaret onCollapse={() => setWidth(STRIP_WIDTH)} className="absolute top-2 right-2 z-10" />
 					</div>
 					<DeadComposer />
 				</div>
@@ -342,7 +356,7 @@ export function AgentRail({
 					<div className="flex min-w-0 flex-1 flex-col">
 						{/* the nameplate leads the shelf, because it says which thread everything
 						    under it belongs to */}
-						<Nameplate threads={threads} />
+						<Nameplate threads={threads} onCollapse={() => setWidth(STRIP_WIDTH)} />
 						{/* the standing half of being signed out, on the shelf the plan would take —
 						    and they never want it at once, because a plan belongs to a turn that is
 						    running and this exists precisely because none can (#201) */}
@@ -355,15 +369,14 @@ export function AgentRail({
 							elapsed={elapsed}
 							jump={jump}
 							onAnswer={onAnswer}
-						>
-							<CollapseCaret onCollapse={() => setWidth(STRIP_WIDTH)} />
-						</Transcript>
+						/>
 						{/* the strip is measured against the composer's own inner width, which is the
 						    rail's drag less the column standing beside it: the same three chips fit at
 						    420 and are a count at the 200 floor, because the rule is one line rather
 						    than one width */}
 						<Composer
 							phase={phase}
+							waited={waited}
 							finished={threads.finished}
 							answering={asking?.kind === "ask" ? asking.request : null}
 							strip={stripOf(pointing.entries, composerWidth(panel), pointing.inside)}
@@ -699,10 +712,10 @@ function Flyout({
  * that has said nothing at all is dimmed, because that is the machine saying there is
  * nothing to say yet rather than a name anybody chose.
  */
-function Nameplate({ threads }: { threads: Threads }) {
+function Nameplate({ threads, onCollapse }: { threads: Threads; onCollapse: () => void }) {
 	const name = threads.list.find((thread) => thread.id === threads.open)?.name ?? UNSAID;
 	return (
-		<div data-agent-nameplate="" className="flex h-[34px] shrink-0 items-center border-border border-b px-3.5">
+		<div data-agent-nameplate="" className="flex h-[34px] shrink-0 items-center gap-2 border-border border-b px-3.5">
 			<span
 				className={cn(
 					"min-w-0 flex-1 truncate font-mono text-sm leading-4",
@@ -711,6 +724,7 @@ function Nameplate({ threads }: { threads: Threads }) {
 			>
 				{name}
 			</span>
+			<CollapseCaret onCollapse={onCollapse} className="-mr-1.5 h-6 w-6" />
 		</div>
 	);
 }
@@ -777,19 +791,25 @@ function ThreadMark({ life }: { life: Life }) {
 /**
  * The way back to the strip.
  *
- * It rides the body's own top fade rather than a row of its own: #144's whole finding is
- * that a line of a 420px column is too expensive to spend on chrome, and the nameplate is
- * already spending the one line the shelf can afford. The wall gets it too, because a
- * rail you cannot collapse is a rail that has taken the column hostage over a state
- * nobody caused.
+ * It rides the nameplate's own row rather than a line of its own. #144's finding still
+ * holds — a line of a 420px column is too expensive to spend on chrome — and the
+ * nameplate is already spending that line, so the caret costs nothing by sitting at the
+ * end of it. Floating it over the log's top fade cost nothing either, but it put a
+ * control inside the reading surface, where it hung over whichever entry happened to
+ * scroll under it. Chrome belongs on the chrome row. The wall keeps the floating
+ * placement, because it has no nameplate and a rail you cannot collapse is a rail that
+ * has taken the column hostage over a state nobody caused.
  */
-function CollapseCaret({ onCollapse }: { onCollapse: () => void }) {
+function CollapseCaret({ onCollapse, className }: { onCollapse: () => void; className?: string }) {
 	return (
 		<button
 			type="button"
 			aria-label="Collapse agent"
 			onClick={onCollapse}
-			className="absolute top-2 right-2 z-10 flex h-7 w-7 items-center justify-center rounded-sm text-muted/40 transition-colors hover:text-text"
+			className={cn(
+				"flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted/40 transition-colors hover:text-text",
+				className,
+			)}
 		>
 			<PanelCaret dir="right" className="h-3.5 w-2.5" />
 		</button>
@@ -1039,7 +1059,6 @@ function Transcript({
 	elapsed,
 	jump,
 	onAnswer,
-	children,
 }: {
 	entries: readonly AgentEntry[];
 	/** whether the turn is still writing, which is the word the chip picks for what is below */
@@ -1054,7 +1073,6 @@ function Transcript({
 	elapsed: number;
 	jump: FrameJump;
 	onAnswer: (request: string, reply: AgentReply) => void;
-	children: React.ReactNode;
 }) {
 	const view = useRef<HTMLDivElement>(null);
 	const [follow, setFollow] = useState(true);
@@ -1254,7 +1272,6 @@ function Transcript({
 					{live ? "live" : "latest"}
 				</button>
 			)}
-			{children}
 		</div>
 	);
 }
@@ -1530,16 +1547,19 @@ function Row({ entry, jump, nested = false }: { entry: AgentRow; jump: FrameJump
 }
 
 /* ---------- a request out, one line ----------
- * The receipt for the time before a first token (#212), in the row's own grammar
- * because the log already has one for a thing that took time: a mark, a verb and a
- * number. It is drawn a shade quieter than a tool row throughout — `thinking` is
- * something the machine did rather than something it did to the project, and a
- * transcript in which every third line is this at full strength reads as busier than
- * the turn was.
+ * The receipt for the silence before the log has anything to show (#212, #231), in the
+ * row's own grammar because the log already has one for a thing that took time: a mark,
+ * a verb and a number. It is drawn a shade quieter than a tool row throughout —
+ * `thinking` is something the machine did rather than something it did to the project,
+ * and a transcript in which every third line is this at full strength reads as busier
+ * than the turn was.
  *
  * The number is a duration and never a thought. The wire carries no thinking text at
  * all, so there is nothing else it could honestly be, and the projection's own comment
- * on the entry is where that is argued.
+ * on the entry is where that is argued. What it does now cover is the thinking itself:
+ * the projection settles it on the first drawn thing rather than the first token, so a
+ * reasoning turn reads `thinking 31.2s` where it used to read `thinking 0.0s` and then
+ * hold still for the other 31 seconds.
  *
  * It counts while the request is out and stops where the answer starts. The count is
  * free: this rail already re-renders on the pace's own tick, so nothing is scheduled
@@ -1905,11 +1925,19 @@ function StateMark({ state, className }: { state: RowState; className?: string }
  * the thing is than a spinner would be — and it says it without spending the logo or a
  * single pixel of the transcript, because it rides the hairline that was already there.
  *
- * **No word, and that is the point.** The stroke is the entire indicator. It tells two
- * states apart: idle draws the border unchanged, and a request out, thinking, saying and
- * doing all draw the same laying-and-taking-up. A reader watching the edge of their own eye
- * learns nothing from the difference between a request being out and a `read` being open,
- * because the answer to *do I need to do anything* is no in both.
+ * **No word, and that is the point.** The stroke is the entire indicator. Idle draws the
+ * border unchanged, and a request out, thinking, saying and doing all draw the same
+ * laying-and-taking-up. A reader watching the edge of their own eye learns nothing from the
+ * difference between a request being out and a `read` being open, because the answer to *do
+ * I need to do anything* is no in both.
+ *
+ * **What it does now say is how long, and only that (#231).** The travel is untouched and
+ * the strength ramps: 75% of the text colour at rest, full at thirty seconds of one
+ * unbroken silence. That reasoning above holds for the four-second wait it was written
+ * against and does not cover a two-and-a-half-minute one, where the peripheral question
+ * stops being *do I need to act* and becomes *is this thing alive at all*. Strength answers
+ * it in the direction that helps — the line gets more present the longer it has been — and
+ * costs neither the accent nor a pixel of travel. `WindStroke` argues the property choice.
  *
  * **The one state that is a call to act gets a shape instead.** Parked on a request, the
  * stroke stops where it was and an 18px break opens in the line. Stopping is
@@ -1922,23 +1950,75 @@ function StateMark({ state, className }: { state: RowState; className?: string }
  * the largest moving thing in the rail. What it buys is that the transcript gives up
  * nothing at all.
  */
-function WindStroke({ phase }: { phase: TurnPhase }) {
+/**
+ * Where the strength ramp tops out, in milliseconds of one silence.
+ *
+ * 30 seconds, off the thinking blocks in the captures rather than off taste: 22 of the 27
+ * are 1,050 estimated tokens or fewer, which is under 18 seconds at the 16.7ms a token the
+ * four sequential captures measure. So an ordinary turn lives in the bottom of the ramp
+ * and never reaches the top, and the five long ones — up to 9,500 tokens, two minutes
+ * thirty-nine — arrive there and stay.
+ */
+const WIND_FULL_AT = 30_000;
+/** what the stroke has always been, and the floor the ramp starts from */
+const WIND_FLOOR = 0.75;
+
+/**
+ * How present the stroke is, for a silence this long.
+ *
+ * Exported because it is the whole of the behaviour and the only part of it worth
+ * asserting: mounted, the ramp can only be read at whatever instant a test happens to
+ * catch, and the thirty seconds it is defined over cannot be waited for. So the
+ * arithmetic is tested as arithmetic and the rail is tested for being wired to it.
+ */
+export function windStrength(waited: number, laying: boolean): number {
+	if (!laying) return WIND_FLOOR;
+	return WIND_FLOOR + (1 - WIND_FLOOR) * Math.max(0, Math.min(1, waited / WIND_FULL_AT));
+}
+
+function WindStroke({ phase, waited }: { phase: TurnPhase; waited: number }) {
 	// every state of a turn in flight draws the same thing, and a parked one draws it
 	// stopped: the animation is the same instance either way, so pausing freezes the two
 	// ends exactly where the request caught them
 	const laying = phase === "playing" || phase === "asking";
 	const parked = phase === "asking";
+	/*
+	 * The one thing the stroke now says about how long (#231).
+	 *
+	 * Strength and never pace, and the reason is the complaint this came from: the rail
+	 * read as stopped, and slowing the only moving thing in it to say so would have been
+	 * answering *is this alive* with less evidence that it is. Brightening says the same
+	 * thing in the opposite direction — the longer it has been, the more present the line
+	 * — and it leaves the travel exactly where it was.
+	 *
+	 * It is opacity on the colour the stroke already had rather than a colour of its own.
+	 * This palette has one accent and `--color-thread` means the human's own thread: on
+	 * the human's words, on the chip's rule, on a hot meter. Spending it here would give
+	 * it a second meaning that has nothing to do with the first. Red would be worse still,
+	 * because a long thought is the product working rather than a fault.
+	 *
+	 * A transition and not a keyframe, which is also why this is not pace. Opacity
+	 * interpolates continuously and costs nothing; `animation-duration` on a running
+	 * keyframe animation remaps the phase, and the head visibly jumps backwards every time
+	 * the number moves.
+	 */
+	const strength = windStrength(waited, laying);
 	return (
 		<>
 			<span
 				aria-hidden="true"
 				data-agent-wind={parked ? "parked" : laying ? "laying" : "idle"}
+				style={{ opacity: strength }}
 				className={cn(
 					// scaled to nothing at rest, so idle is the border and nothing else: the
 					// keyframes take the transform over for as long as they are running.
 					// `transform` rather than Tailwind's `scale-x-0`, which compiles to the
 					// `scale` property and would multiply the animation's own scale by zero
-					"pointer-events-none absolute -top-px left-0 block h-px w-full origin-left bg-text/75 [transform:scaleX(0)]",
+					"pointer-events-none absolute -top-px left-0 block h-px w-full origin-left bg-text [transform:scaleX(0)]",
+					// 400ms, so the ramp is a drift rather than a per-tick step: the rail
+					// re-renders on the pace's own clock and an untransitioned opacity would
+					// change sixty times a second
+					"transition-opacity duration-400 ease-linear motion-reduce:transition-none",
 					laying && "animate-agent-wind",
 					parked && "[animation-play-state:paused]",
 				)}
@@ -1972,6 +2052,7 @@ function fieldSays(answering: string | null, finished: boolean): string {
 
 function Composer({
 	phase,
+	waited,
 	finished,
 	answering,
 	strip,
@@ -1990,6 +2071,8 @@ function Composer({
 	onAnswer,
 }: {
 	phase: TurnPhase;
+	/** how long the request now out has been silent, which is all the stroke reads (#231) */
+	waited: number;
 	/**
 	 * This thread's agent session is gone, so the next thing said starts a new one (#120).
 	 *
@@ -2095,7 +2178,7 @@ function Composer({
 				void readAttachment(file).then(onAttach);
 			}}
 		>
-			<WindStroke phase={phase} />
+			<WindStroke phase={phase} waited={waited} />
 			<div className="flex min-h-0 flex-col gap-2.5 rounded-md border border-border-raised bg-surface px-3 py-2.5 transition-colors duration-150 focus-within:border-muted/45">
 				<QueueBox queued={queued} onUnqueue={onUnqueue} />
 				{attached === null ? null : <Attached attached={attached} onDrop={() => onAttach(null)} />}
