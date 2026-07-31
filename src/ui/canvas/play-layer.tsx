@@ -45,7 +45,8 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 	const [failure, setFailure] = useState<string | undefined>(undefined);
 	const host = useRef<HTMLDivElement>(null);
 	const iframe = useRef<HTMLIFrameElement>(null);
-	const wake = useRef<() => void>(() => {});
+	const wake = useRef<(y: number) => void>(() => {});
+	const placed = useRef({ y: 0, scale: 1 });
 	const fullscreenRef = useRef<{ on: boolean; toggle: () => void }>({ on: false, toggle: () => {} });
 	const exit = useRef(onExit);
 	exit.current = onExit;
@@ -89,7 +90,10 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 				frame: () => iframe.current,
 				close: () => exit.current(),
 				walked: (from, to) => walked.current(from, to),
-				wake: () => wake.current(),
+				// Movement inside the frame arrives in the frame's own coordinates,
+				// and proximity is measured in the window's — only the placement can
+				// bridge them, so the conversion happens here.
+				wake: (y) => wake.current(placed.current.y + y * placed.current.scale),
 				fullscreen: () => fullscreenRef.current.toggle(),
 				// A spent handoff repairs by minting another (#88). Out here that is
 				// a fresh session rather than a page reload — reloading the canvas to
@@ -159,23 +163,30 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 	}, []);
 
 	const revealed = view !== undefined && !view.hidden;
-	const settled = useRef(false);
-	useEffect(() => {
-		if (!revealed || settled.current) return;
-		settled.current = true;
-		// The player owns the keyboard from the moment it is up, so a prototype's
-		// own keys reach it rather than the canvas the press came from.
-		iframe.current?.focus({ preventScroll: true });
-		onSettled();
-	}, [revealed, onSettled]);
 
 	const viewport = useViewport();
 	const place = fitBox(w, h, viewport.vw, viewport.vh);
+	placed.current = place;
 	const leaving = phase === "leaving";
 	// The stage waits for the player as well as for the clock: covering the
 	// canvas before the player can be seen would leave a beat of nothing where
 	// the frame is meant to be.
 	const staged = !leaving && due && (revealed || failure !== undefined);
+
+	// Once, and only once the stage is really up. A player that booted faster
+	// than the flight is revealed before the stage is due, and until then the
+	// iframe is inert — where `focus()` is silently a no-op, leaving every press
+	// including the step-out chord on the canvas the play started from.
+	const settled = useRef(false);
+	useEffect(() => {
+		if (!staged || settled.current) return;
+		settled.current = true;
+		// The player owns the keyboard from the moment it is up, so a prototype's
+		// own keys reach it rather than the canvas the press came from.
+		iframe.current?.focus({ preventScroll: true });
+		onSettled();
+	}, [staged, onSettled]);
+
 	const { awake, wake: stir } = useWake(staged && failure === undefined);
 	wake.current = stir;
 	const blocked = read?.externalHref != null;
@@ -189,7 +200,7 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 			ref={host}
 			className="fixed inset-0 z-50"
 			style={{ pointerEvents: staged ? "auto" : "none" }}
-			onMouseMove={stir}
+			onMouseMove={(event) => stir(event.clientY)}
 		>
 			<div
 				className="absolute inset-0 bg-bg transition-opacity ease-out"
@@ -236,9 +247,6 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 			)}
 			<Pill
 				frame={frame}
-				w={w}
-				h={h}
-				scale={place.scale}
 				phase={phase}
 				visible={staged && awake && !blocked}
 				onRestart={shell?.controller.restart}
@@ -252,9 +260,6 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 
 function Pill({
 	frame,
-	w,
-	h,
-	scale,
 	phase,
 	visible,
 	onRestart,
@@ -263,9 +268,6 @@ function Pill({
 	onClose,
 }: {
 	frame: string;
-	w: number;
-	h: number;
-	scale: number;
 	phase: PlayPhase;
 	visible: boolean;
 	onRestart: (() => void) | undefined;
@@ -285,25 +287,21 @@ function Pill({
 		>
 			<div
 				className={cn(
-					"flex h-9 items-center gap-3.5 rounded-lg border border-border-raised bg-raised px-3.5",
+					"flex h-9 items-center gap-2.5 rounded-lg border border-border-raised bg-raised py-0 pr-2 pl-3.5",
 					visible ? "pointer-events-auto" : "pointer-events-none",
 				)}
 			>
-				<span className="flex items-center gap-2 font-mono text-sm leading-sm">
+				<span className="mr-1 flex items-center gap-2 font-mono text-sm leading-sm">
 					<span className="h-[2px] w-2 bg-thread" />
 					{frame}
 				</span>
-				<span className="h-3 w-px bg-border-raised" />
-				<span className="font-mono text-2xs text-muted leading-3">
-					{w} × {h} · {Math.round(scale * 100)}%
-				</span>
-				<span className="h-3 w-px bg-border-raised" />
 				<button
 					type="button"
 					aria-label="Restart the session"
+					title="Restart the session"
 					disabled={onRestart === undefined}
 					onClick={onRestart}
-					className="flex cursor-pointer items-center text-muted transition-colors hover:text-text disabled:cursor-default disabled:opacity-40"
+					className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-sm text-muted transition-colors hover:bg-surface hover:text-text disabled:cursor-default disabled:opacity-40"
 				>
 					<svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
 						<path
@@ -327,10 +325,11 @@ function Pill({
 				<button
 					type="button"
 					aria-label={fullscreen ? "Leave fullscreen" : "Fill the screen"}
+					title={`${fullscreen ? "Leave fullscreen" : "Fill the screen"}  ${accelLabel()}f`}
 					aria-pressed={fullscreen}
 					onClick={onFullscreen}
 					className={cn(
-						"flex cursor-pointer items-center transition-colors hover:text-text",
+						"flex h-6 w-6 cursor-pointer items-center justify-center rounded-sm transition-colors hover:bg-surface hover:text-text",
 						fullscreen ? "text-text" : "text-muted",
 					)}
 				>
@@ -348,20 +347,21 @@ function Pill({
 				<button
 					type="button"
 					aria-label="Close the player"
+					title={`Close the player  ${accelLabel()}esc`}
 					onClick={onClose}
-					className="flex cursor-pointer items-center gap-1.5 font-mono text-2xs text-muted leading-3 transition-colors hover:text-text"
+					className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-sm text-muted transition-colors hover:bg-surface hover:text-text"
 				>
 					<svg
-						viewBox="0 0 10 10"
-						className="h-2.5 w-2.5"
+						viewBox="0 0 16 16"
+						className="h-3.5 w-3.5"
 						fill="none"
 						stroke="currentColor"
 						strokeWidth="1.5"
+						strokeLinecap="round"
 						aria-hidden="true"
 					>
-						<path d="M2 2 8 8M8 2 2 8" />
+						<path d="M4 4 12 12M12 4 4 12" />
 					</svg>
-					{`${accelLabel()}esc`}
 				</button>
 			</div>
 		</div>

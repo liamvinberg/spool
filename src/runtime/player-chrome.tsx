@@ -11,10 +11,15 @@ import { useFullscreen, useViewport, useWake } from "./player-stage";
  * the only chrome left is one floating pill: restart, fullscreen, close. The
  * inspector rail, the session tape and the corner registration ticks are gone
  * — inline play made the canvas the place you read a prototype from, so the
- * player is the prototype and nothing else. Sleep is still the resting state:
- * stillness fades the pill and takes the cursor with it, movement wakes it.
- * Styling lives in the served document's chrome stylesheet; this component owns
- * structure and wiring.
+ * player is the prototype and nothing else. The pill carries the frame's name
+ * and three controls, and nothing that is merely true: the size and the scale
+ * are the canvas's business, and a chord belongs on a tooltip, not in the way.
+ *
+ * Sleep is the resting state, and it is proximity that ends it — the pill shows
+ * itself once on arrival and then stays gone until the pointer comes down to
+ * where it lives, so it is never sitting on a prototype's own footer while the
+ * prototype is being used. Styling lives in the served document's chrome
+ * stylesheet; this component owns structure and wiring.
  */
 
 export interface PlayerController {
@@ -59,6 +64,15 @@ export function Player({
 	const { scale, x, y } = fitBox(w, h, viewport.vw, viewport.vh);
 	const fullscreen = useFullscreen(() => document.documentElement);
 
+	// Movement inside the frame arrives in the frame's own coordinates, and this
+	// is the only place that knows where the frame was put — so the conversion
+	// into window space, which is what proximity is measured in, lives here.
+	useEffect(() => {
+		const onWake = (event: Event) => wake(y + (event as CustomEvent<{ y: number }>).detail.y * scale);
+		window.addEventListener("spool-player-wake", onWake);
+		return () => window.removeEventListener("spool-player-wake", onWake);
+	}, [wake, y, scale]);
+
 	// Spool's own gestures live behind accel, never on a plain key (#210): a live
 	// frame keeps every ordinary key, its own esc for modals included. Focus is
 	// usually inside the frame, so this only fires when the stage itself holds it
@@ -79,7 +93,7 @@ export function Player({
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: waking is ambient, not an affordance — the stage is the room, never a control
-		<div className={asleep ? "spool-stage is-asleep" : "spool-stage"} onMouseMove={wake}>
+		<div className={asleep ? "spool-stage is-asleep" : "spool-stage"} onMouseMove={(event) => wake(event.clientY)}>
 			<div
 				className={terminal ? "spool-screen is-terminal" : "spool-screen"}
 				style={{ width: w, height: h, transform: `translate(${x}px, ${y}px) scale(${scale})` }}
@@ -106,11 +120,6 @@ export function Player({
 							<span className="spool-dash" />
 							{frame}
 						</span>
-						<span className="spool-pill-rule" />
-						<span className="spool-pill-readout">
-							{w} × {h} · {Math.round(scale * 100)}%
-						</span>
-						<span className="spool-pill-rule" />
 						<PillButton id="spool-restart" label="Restart the session" disabled={blocked} onClick={restart}>
 							<path
 								d="M9.4 3.25 A5 5 0 1 1 6.3 3.3"
@@ -145,25 +154,21 @@ export function Player({
 								strokeLinejoin="round"
 							/>
 						</PillButton>
-						<button
-							type="button"
+						<PillButton
 							id="spool-close"
-							className="spool-pill-close"
-							aria-label="Close the player"
+							label="Close the player"
+							hint={`${accelLabel()}esc`}
 							disabled={blocked}
 							onClick={close}
 						>
-							<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-								<path
-									d="M4 4 L12 12 M12 4 L4 12"
-									fill="none"
-									stroke="currentColor"
-									strokeWidth="1.5"
-									strokeLinecap="round"
-								/>
-							</svg>
-							{`${accelLabel()}esc`}
-						</button>
+							<path
+								d="M4 4 L12 12 M12 4 L4 12"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="1.5"
+								strokeLinecap="round"
+							/>
+						</PillButton>
 					</div>
 				</div>
 			)}
@@ -174,6 +179,7 @@ export function Player({
 function PillButton({
 	id,
 	label,
+	hint,
 	disabled,
 	pressed,
 	onClick,
@@ -181,6 +187,8 @@ function PillButton({
 }: {
 	id: string;
 	label: string;
+	/** The chord that does the same thing, carried on the tooltip and nowhere else. */
+	hint?: string;
 	disabled?: boolean;
 	pressed?: boolean;
 	onClick?: () => void;
@@ -193,6 +201,7 @@ function PillButton({
 			className={pressed === true ? "spool-pill-button is-on" : "spool-pill-button"}
 			aria-label={label}
 			aria-pressed={pressed}
+			title={hint === undefined ? label : `${label}  ${hint}`}
 			disabled={disabled}
 			onClick={onClick}
 		>
