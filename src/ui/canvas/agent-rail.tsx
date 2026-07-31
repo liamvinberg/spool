@@ -167,8 +167,6 @@ interface Holding {
 	readonly attached: Attachment | null;
 }
 
-const EMPTY: Holding = { draft: "", attached: null };
-
 export function AgentRail({
 	entries,
 	plan,
@@ -181,6 +179,8 @@ export function AgentRail({
 	login,
 	queued,
 	handback,
+	draft,
+	onDraft,
 	model,
 	limit,
 	onSend,
@@ -206,6 +206,10 @@ export function AgentRail({
 	queued: readonly AgentQueued[];
 	/** whatever left the queue un-fired, for the box below to take back (#170) */
 	handback: AgentHandback;
+	/** what this thread was left holding and nobody sent, off its own picture (#234) */
+	draft: string;
+	/** the box saying what it holds now, which is how a draft outlives the tab (#234) */
+	onDraft: (text: string) => void;
 	/** which machine is answering, and the list the binary offered instead (#118, #199) */
 	model: AgentModelDeck;
 	/** the usage window, absent until the binary warns, which is most of a session (#122) */
@@ -238,27 +242,41 @@ export function AgentRail({
 	 */
 	const open = threads.open;
 	const [held, setHeld] = useState<Readonly<Record<string, Holding>>>({});
-	const holding = held[open] ?? EMPTY;
-	const write = (patch: (was: Holding) => Holding) =>
-		setHeld((all) => ({ ...all, [open]: patch(all[open] ?? EMPTY) }));
+	/**
+	 * What this thread was last left holding, for a rail that has just been opened (#234).
+	 *
+	 * The words are stored with the thread, so a tab that went away comes back to the
+	 * sentence it was in the middle of. It is a starting point and not a second source of
+	 * truth: the moment anything is typed here the composer's own copy is what the field
+	 * draws, and the thread is told about every change to it.
+	 */
+	const seed: Holding = { draft, attached: null };
+	const holding = held[open] ?? seed;
+	const write = (patch: (was: Holding) => Holding) => setHeld((all) => ({ ...all, [open]: patch(all[open] ?? seed) }));
+	/** the field's words, into the composer and into the thread that outlives it */
+	const writeDraft = (text: string) => {
+		write((was) => ({ ...was, draft: text }));
+		onDraft(text);
+	};
 	/** the handovers already merged per thread, since the same words can come back twice */
 	const merged = useRef(new Map<string, number>());
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the merge is the handover's, and it must run once per handover rather than again on every keystroke the seed and the writer change with
 	useEffect(() => {
 		if (handback.count === (merged.current.get(open) ?? 0)) return;
 		merged.current.set(open, handback.count);
-		setHeld((all) => {
-			const was = all[open] ?? EMPTY;
-			return {
-				...all,
-				[open]: {
-					draft: handedBack(
-						handback.messages.map((one) => one.text),
-						was.draft,
-					),
-					attached: handedBackReference(handback.messages, was.attached),
-				},
-			};
-		});
+		const was = held[open] ?? seed;
+		const landed = handedBack(
+			handback.messages.map((one) => one.text),
+			was.draft,
+		);
+		setHeld((all) => ({
+			...all,
+			[open]: { draft: landed, attached: handedBackReference(handback.messages, was.attached) },
+		}));
+		// the words landed in the box rather than being typed into it, and the box is written
+		// down either way: a stop hands a whole queue back, which is the most there has ever
+		// been in there to lose (#234)
+		onDraft(landed);
 	}, [handback, open]);
 	/**
 	 * The question the composer would answer, read off the log rather than handed in.
@@ -383,7 +401,7 @@ export function AgentRail({
 							strip={stripOf(pointing.entries, composerWidth(panel), pointing.inside)}
 							pointing={pointing}
 							draft={holding.draft}
-							onDraft={(draft) => write((was) => ({ ...was, draft }))}
+							onDraft={writeDraft}
 							attached={holding.attached}
 							onAttach={(attached) => write((was) => ({ ...was, attached }))}
 							queued={queued}

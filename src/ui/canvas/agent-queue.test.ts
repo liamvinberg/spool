@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
+import { type AgentQueued, handedBack, handedBackReference, handover } from "./agent-queue";
 
 /**
  * Words that leave the queue un-fired land back in the box (#170).
@@ -74,5 +74,46 @@ describe("the reference handed back", () => {
 	it("is nothing when nothing rode with any of them", () => {
 		expect(handedBackReference([held("one"), held("two", { attached: null })], null)).toBeNull();
 		expect(handedBackReference([], null)).toBeNull();
+	});
+});
+
+/**
+ * Who can come home, since the box has one slot and the queue may hold several (#234).
+ *
+ * The words of several messages returning as one blob is a bounded loss with a seam a
+ * hand can split. A picture is not: the browser never gave spool the path it came from,
+ * so one dropped on the way back cannot be got again from anywhere — and the whole
+ * queue used to be collapsed into one field with every reference but the first gone.
+ */
+describe("the handover out of the box", () => {
+	const shot = { media: "image/png", data: "AAAA" };
+	const other = { media: "image/jpeg", data: "BBBB" };
+	const held = (id: string, over: Partial<AgentQueued> = {}): AgentQueued => ({ id, text: id, ...over });
+
+	it("takes everything home when nothing is carrying anything", () => {
+		const { back, kept } = handover([held("one"), held("two")]);
+
+		expect(back.map((one) => one.id)).toEqual(["one", "two"]);
+		expect(kept).toEqual([]);
+	});
+
+	it("takes the first reference with it and leaves the rest where they are", () => {
+		const { back, kept } = handover([
+			held("one"),
+			held("two", { attached: shot }),
+			held("three"),
+			held("four", { attached: other }),
+		]);
+
+		// one slot, one picture: the words that can be a blob become one, and the message
+		// whose picture has nowhere to ride stays a row rather than losing it
+		expect(back.map((one) => one.id)).toEqual(["one", "two", "three"]);
+		expect(kept.map((one) => one.id)).toEqual(["four"]);
+		expect(kept[0]?.attached).toEqual(other);
+	});
+
+	it("holds nothing back for a queue with one reference in it, wherever it sits", () => {
+		expect(handover([held("one"), held("two", { attached: shot })]).kept).toEqual([]);
+		expect(handover([held("one", { attached: shot }), held("two")]).kept).toEqual([]);
 	});
 });

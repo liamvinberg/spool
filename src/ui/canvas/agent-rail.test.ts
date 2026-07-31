@@ -2752,6 +2752,7 @@ function storedThread({
 		kept: 3,
 		plan: null,
 		queued: [],
+		draft: "",
 		stopped: false,
 		closed: false,
 		continuable: true,
@@ -3360,6 +3361,74 @@ describe("closing a thread", () => {
 
 		expect(cells(canvas.host)).toEqual(["new thread"]);
 		expect(field(canvas.host)?.placeholder).toBe("say what to change");
+	});
+
+	/**
+	 * Words spool is holding are never thrown away, and a ✕ is not an exception (#170, #234).
+	 *
+	 * A stop hands its queue back into the box and a take-back hands one message back, so a
+	 * close was the one exit that dropped them: the thread went, the queue went with it, and
+	 * nothing said so. It lands in the composer the rail shows next, which is where the hands
+	 * are about to be.
+	 */
+	it("hands the queue back into the composer it opens next", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tighten the header");
+		await answerTurn(canvas.turn.streams[0] as Stream, "done.");
+		await newThread(canvas.host);
+		await send(canvas.host, "three takes on the cart");
+		canvas.turn.push(waiting);
+		await settle();
+		await send(canvas.host, "hold off on the empty state");
+		await send(canvas.host, "swedish weekday chips");
+		expect(queuedRows(canvas.host)).toHaveLength(2);
+
+		await closeThread(canvas.host, "three takes on the cart");
+		await settle();
+
+		// the thread is gone, its turn was stopped, and the words it was holding are in the
+		// box in front of the person who wrote them, in the order they were going to be said
+		expect(cells(canvas.host)).toEqual(["tighten the header"]);
+		expect(field(canvas.host)?.value).toBe("hold off on the empty state\n\nswedish weekday chips");
+		expect(queuedRows(canvas.host)).toEqual([]);
+	});
+});
+
+/**
+ * The box outlives the tab, because a browser is where a thing is lost by a keystroke
+ * (#234).
+ *
+ * A stop hands a whole queue back into the composer, which makes the composer the place a
+ * turn's worth of typing can be sitting — and it was memory only, so a refresh took it.
+ */
+describe("what the composer keeps", () => {
+	it("writes the words in the box down with the thread they belong to", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tighten the header");
+		await answerTurn(canvas.turn.streams[0] as Stream, "done.");
+
+		await act(async () => {
+			const box = field(canvas.host);
+			if (box !== null) type(box, "and now the receipt, but only the");
+		});
+		// on the throttle rather than per keystroke: a PUT a character is what the throttle
+		// is there to stop
+		await settle(2400);
+
+		expect(canvas.stored.puts.at(-1)?.body.draft).toBe("and now the receipt, but only the");
+	});
+
+	it("comes back to the sentence the tab went away in the middle of", async () => {
+		const canvas = mount();
+		canvas.stored.served = [
+			storedThread({ id: ONE, ask: "tighten the header", draft: "and now the receipt, but only the" }),
+		];
+		await canvas.render();
+		await settle();
+
+		expect(field(canvas.host)?.value).toBe("and now the receipt, but only the");
 	});
 });
 

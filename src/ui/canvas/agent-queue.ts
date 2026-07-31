@@ -90,6 +90,41 @@ export function handedBack(words: readonly string[], draft: string): string {
 }
 
 /**
+ * Which of the words on their way home can carry what they were holding (#119, #234).
+ *
+ * The box has one slot for a reference and several messages may each have one, so a
+ * handover of the whole queue has more pictures than there are places to put them. The
+ * first in fire order takes the slot; the rest are not collapsed into the blob and are not
+ * dropped either — they stay where they are, as their own rows, still holding what they
+ * were holding.
+ *
+ * It is the words-and-reference pair that decides this rather than the words alone. Two
+ * sentences returning as one string is a bounded loss the blank line makes visible and a
+ * hand can undo. A picture is not: a browser never gave spool the path it came from, so a
+ * dropped one cannot be got again from anywhere.
+ */
+export function handover(messages: readonly AgentQueued[]): {
+	/** in fire order, which is the order they land back in the field */
+	readonly back: readonly AgentQueued[];
+	/** left in the box, because what they carry has nowhere to ride */
+	readonly kept: readonly AgentQueued[];
+} {
+	const back: AgentQueued[] = [];
+	const kept: AgentQueued[] = [];
+	let slot = true;
+	for (const one of messages) {
+		const carrying = one.attached !== null && one.attached !== undefined;
+		if (carrying && !slot) {
+			kept.push(one);
+			continue;
+		}
+		if (carrying) slot = false;
+		back.push(one);
+	}
+	return { back, kept };
+}
+
+/**
  * The reference that comes home with those words (#119).
  *
  * A message carries at most one and the composer holds at most one, so a handover of

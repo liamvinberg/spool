@@ -347,6 +347,7 @@ describe("a turn picked back up", () => {
 		kept: 1,
 		plan: null,
 		queued: [],
+		draft: "",
 		stopped: false,
 		closed: false,
 		continuable: true,

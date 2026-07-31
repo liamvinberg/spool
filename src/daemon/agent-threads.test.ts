@@ -39,6 +39,7 @@ const picture: ThreadPut = {
 	kept: 2,
 	plan: null,
 	queued: [],
+	draft: "",
 };
 
 const noSessions = { HOME: "/nowhere" };
