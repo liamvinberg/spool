@@ -109,15 +109,23 @@ describe("canvas keyboard navigation", () => {
 
 	it("ctrl+o returns to the walk's departure and ctrl+i retraces it", async () => {
 		const cover = { hash: "c".repeat(32) };
+		const selections: Array<{
+			frames?: string[];
+			elements?: Array<{ frame: string; selector: string }>;
+		}> = [];
 		const walkFrames = [
 			{ name: "origin", x: 0, y: 0, w: 100, h: 100, kind: "html", cover },
 			{ name: "right", x: 180, y: 0, w: 100, h: 100, kind: "html", cover },
 		];
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async (input: RequestInfo | URL) => {
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 				const raw = input instanceof Request ? input.url : String(input);
 				const url = new URL(raw, window.location.href);
+				if (url.pathname.endsWith("/selection") && init?.method === "PUT") {
+					selections.push(JSON.parse(String(init.body)));
+					return Response.json({ selection: [] });
+				}
 				if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 				if (url.pathname.endsWith("/frames")) {
 					return Response.json({ root: "/project", pages: [], frames: walkFrames, collisions: [] });
@@ -172,6 +180,56 @@ describe("canvas keyboard navigation", () => {
 		await until(() => host.querySelector('iframe[title="origin"]') !== null);
 		const source = host.querySelector<HTMLIFrameElement>('iframe[title="origin"]')?.contentWindow ?? null;
 		const departed = cameraTransform(host);
+		const postMessage = vi.spyOn(source as Window, "postMessage");
+
+		await act(async () => {
+			canvas?.dispatchEvent(
+				new PointerEvent("pointerdown", {
+					bubbles: true,
+					button: 0,
+					clientX: 400,
+					clientY: 400,
+					pointerId: 1,
+					ctrlKey: true,
+				}),
+			);
+		});
+		const pick = postMessage.mock.calls
+			.map(([message]) => message)
+			.find(
+				(message): message is { spool: "pick"; id: number } =>
+					typeof message === "object" &&
+					message !== null &&
+					"spool" in message &&
+					message.spool === "pick" &&
+					"id" in message &&
+					typeof message.id === "number",
+			);
+		expect(pick).toBeDefined();
+		await act(async () => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						spool: "picked",
+						frame: "origin",
+						id: pick?.id,
+						chain: [
+							{
+								selector: "button",
+								tag: "button",
+								outerHtml: "<button>Open</button>",
+								rect: { x: 10, y: 10, w: 80, h: 30 },
+								radius: 4,
+								source: null,
+								generated: true,
+							},
+						],
+					},
+					source,
+				}),
+			);
+		});
+		await until(() => selections.at(-1)?.elements?.[0]?.selector === "button");
 
 		await act(async () => {
 			window.dispatchEvent(
@@ -188,6 +246,7 @@ describe("canvas keyboard navigation", () => {
 			);
 		});
 		expect(labelText(host, "right")).toContain("live · esc exits");
+		await until(() => selections.at(-1)?.frames?.[0] === "right");
 		const arrived = cameraTransform(host);
 		expect(arrived).not.toBe(departed);
 
@@ -200,15 +259,113 @@ describe("canvas keyboard navigation", () => {
 				new MessageEvent("message", { data: { spool: "key", frame: "right", key: "ctrl+o" }, source: walked }),
 			);
 		});
+		// the departure was made from inside origin, so back stands there again
 		expect(labelText(host, "right")).not.toContain("live");
+		expect(labelText(host, "origin")).toContain("live · esc exits");
 		expect(cameraTransform(host)).toBe(departed);
+		await until(() => selections.at(-1)?.elements?.[0]?.selector === "button");
 
-		// forward is the canvas's own key once focus is back on it
 		await act(async () => {
 			window.dispatchEvent(new KeyboardEvent("keydown", { key: "i", ctrlKey: true }));
 		});
 		expect(cameraTransform(host)).toBe(arrived);
-		expect(labelText(host, "right")).not.toContain("live");
+		expect(labelText(host, "right")).toContain("live · esc exits");
+		expect(labelText(host, "origin")).not.toContain("live");
+	});
+
+	it("ctrl+o crosses back to the page it left and stands inside the frame again", async () => {
+		const cover = { hash: "c".repeat(32) };
+		const walkFrames = [
+			{ name: "origin", x: 0, y: 0, w: 100, h: 100, kind: "html", cover },
+			{ name: "checkout", page: "shop", x: 0, y: 0, w: 100, h: 100, kind: "html", cover },
+		];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const raw = input instanceof Request ? input.url : String(input);
+				const url = new URL(raw, window.location.href);
+				if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
+				if (url.pathname.endsWith("/frames")) {
+					return Response.json({ root: "/project", pages: ["shop"], frames: walkFrames, collisions: [] });
+				}
+				if (url.pathname.endsWith("/flows")) {
+					return Response.json({
+						frames: walkFrames.map(({ name }) => name),
+						links: [],
+						edges: [],
+						unreadable: [],
+					});
+				}
+				return Response.json({});
+			}),
+		);
+		vi.stubGlobal(
+			"EventSource",
+			class {
+				addEventListener() {}
+				close() {}
+			},
+		);
+		vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+			callback(performance.now() + 1000);
+			return 1;
+		});
+		vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+
+		const host = document.createElement("div");
+		document.body.append(host);
+		const root = createRoot(host);
+		onTestFinished(() => {
+			act(() => root.unmount());
+			host.remove();
+			vi.unstubAllGlobals();
+			vi.restoreAllMocks();
+		});
+
+		await act(async () => {
+			root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} }));
+		});
+		await until(() => host.querySelector('[data-frame-label="origin"]') !== null);
+		const canvas = host.querySelector<HTMLElement>('[role="application"]');
+
+		await act(async () => {
+			canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
+		});
+		expect(labelText(host, "origin")).toContain("live · esc exits");
+		await until(() => host.querySelector('iframe[title="origin"]') !== null);
+		const source = host.querySelector<HTMLIFrameElement>('iframe[title="origin"]')?.contentWindow ?? null;
+		const departed = cameraTransform(host);
+
+		await act(async () => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						spool: "go",
+						frame: "origin",
+						target: "checkout",
+						session: { scenario: "default", state: {}, stack: [] },
+						id: 1,
+					},
+					source,
+				}),
+			);
+		});
+		expect(host.querySelector('[data-frame-label="origin"]')).toBeNull();
+		expect(labelText(host, "checkout")).toContain("live · esc exits");
+
+		await until(() => host.querySelector('iframe[title="checkout"]') !== null);
+		const walked = host.querySelector<HTMLIFrameElement>('iframe[title="checkout"]')?.contentWindow ?? null;
+		await act(async () => {
+			window.dispatchEvent(
+				new MessageEvent("message", { data: { spool: "key", frame: "checkout", key: "ctrl+o" }, source: walked }),
+			);
+		});
+		// the page came back with the camera, and so did the standing
+		expect(host.querySelector('[data-frame-label="checkout"]')).toBeNull();
+		expect(labelText(host, "origin")).toContain("live · esc exits");
+		expect(cameraTransform(host)).toBe(departed);
 	});
 });
 
