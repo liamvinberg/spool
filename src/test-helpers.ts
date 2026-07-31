@@ -181,56 +181,7 @@ export function sseReader(res: Response) {
 		throw new Error(`expected quiet, got ${JSON.stringify(seen)}`);
 	}
 
-	/** let the response go, which is a client hanging up rather than a stream ending */
-	async function cancel(): Promise<void> {
-		await reader.cancel();
-	}
-
-	return { next, drain, expectQuiet, cancel };
-}
-
-/**
- * The agent events off a turn's stream, and only those (#211).
- *
- * A turn's stream opens by saying what is being read — the name a stop quotes, whether the
- * process is up, how much of what follows is replay — and that line is the daemon talking
- * about the turn rather than the agent talking. Every assertion here is about the second
- * kind, so this is the reader that skips the first. `sseReader` is still what a test about
- * the opening line itself uses.
- */
-export function agentReader(res: Response) {
-	const sse = sseReader(res);
-
-	async function next(timeoutMs = 5000): Promise<SseEvent> {
-		const deadline = Date.now() + timeoutMs;
-		for (;;) {
-			const left = deadline - Date.now();
-			if (left <= 0) throw new SseTimeout("timed out waiting for an agent event");
-			const seen = await sse.next(left);
-			if (seen.event === "agent") return seen;
-		}
-	}
-
-	async function drain(quietMs: number): Promise<void> {
-		try {
-			for (;;) await next(quietMs);
-		} catch (error) {
-			if (!(error instanceof SseTimeout)) throw error;
-		}
-	}
-
-	async function expectQuiet(ms: number): Promise<void> {
-		let seen: SseEvent;
-		try {
-			seen = await next(ms);
-		} catch (error) {
-			if (error instanceof SseTimeout) return;
-			throw error;
-		}
-		throw new Error(`expected quiet, got ${JSON.stringify(seen)}`);
-	}
-
-	return { next, drain, expectQuiet, cancel: sse.cancel, opening: sse.next };
+	return { next, drain, expectQuiet };
 }
 
 /** The terminal fixture executor (#42): the injected stand-in for the bun
