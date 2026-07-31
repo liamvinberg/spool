@@ -2707,6 +2707,34 @@ describe("the thread under the pointer", () => {
 		expect(canvas.host.querySelector("[data-agent-flyout]")).toBeNull();
 	});
 
+	/**
+	 * The caret's own route to the ✕ (#207).
+	 *
+	 * The close is in the flyout because a 34px cell has room for one hit target, and that left
+	 * it pointer-only for as long as the flyout was drawn after the whole column: tabbing off a
+	 * cell reached the next cell, never the close the cell had just opened. The flyout belongs
+	 * to its cell in the markup now, so the stop after a cell is its own ✕.
+	 */
+	it("puts the ✕ one stop after the cell that opened it, and holds it there", async () => {
+		const canvas = mount();
+		await canvas.render();
+		const one = cell(canvas.host, "new thread");
+		await act(async () => one?.dispatchEvent(new FocusEvent("focusin", { bubbles: true })));
+		const shown = canvas.host.querySelector("[data-agent-flyout]");
+		expect(one?.nextElementSibling).toBe(shown);
+
+		// a caret moving into the flyout is not a caret leaving the thread
+		const close = shown?.querySelector<HTMLElement>('[data-agent-thread-close="new thread"]') ?? null;
+		await act(async () => {
+			one?.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: close }));
+		});
+		expect(canvas.host.querySelector("[data-agent-flyout]")).not.toBeNull();
+
+		// and leaving the ✕ for anything else is
+		await act(async () => close?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+		expect(canvas.host.querySelector("[data-agent-flyout]")).toBeNull();
+	});
+
 	it("goes when the pointer leaves the column", async () => {
 		const canvas = mount();
 		await canvas.render();
