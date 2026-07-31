@@ -1,0 +1,83 @@
+/*
+ * The shipped loader's own keyframes, copied verbatim from src/ui/ui.css.
+ *
+ * A frame arguing about the stroke has to draw the stroke that exists, not an
+ * approximation of it, so this is the track byte for byte rather than a motion
+ * curve that looks about right. Its duration lives with it: 1600ms linear,
+ * which is what --animate-agent-wind is bound to there.
+ */
+@keyframes agent-wind {
+	0% {
+		transform: translateX(0%) scaleX(0);
+	}
+	5% {
+		transform: translateX(0%) scaleX(0.0118);
+	}
+	10% {
+		transform: translateX(0%) scaleX(0.0451);
+	}
+	15% {
+		transform: translateX(0%) scaleX(0.0967);
+	}
+	20% {
+		transform: translateX(0%) scaleX(0.1635);
+	}
+	25% {
+		transform: translateX(0.432%) scaleX(0.238);
+	}
+	30% {
+		transform: translateX(2.94%) scaleX(0.3006);
+	}
+	35% {
+		transform: translateX(7.407%) scaleX(0.3493);
+	}
+	40% {
+		transform: translateX(13.518%) scaleX(0.384);
+	}
+	45% {
+		transform: translateX(20.957%) scaleX(0.4049);
+	}
+	50% {
+		transform: translateX(29.407%) scaleX(0.4119);
+	}
+	55% {
+		transform: translateX(38.553%) scaleX(0.4049);
+	}
+	60% {
+		transform: translateX(48.077%) scaleX(0.384);
+	}
+	65% {
+		transform: translateX(57.665%) scaleX(0.3493);
+	}
+	70% {
+		transform: translateX(67%) scaleX(0.3006);
+	}
+	75% {
+		transform: translateX(75.767%) scaleX(0.238);
+	}
+	80% {
+		transform: translateX(83.648%) scaleX(0.1635);
+	}
+	85% {
+		transform: translateX(90.328%) scaleX(0.0967);
+	}
+	90% {
+		transform: translateX(95.49%) scaleX(0.0451);
+	}
+	95% {
+		transform: translateX(98.82%) scaleX(0.0118);
+	}
+	100% {
+		transform: translateX(100%) scaleX(0);
+	}
+}
+
+.agent-wind {
+	animation: agent-wind 1600ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.agent-wind {
+		animation: none;
+	}
+}
