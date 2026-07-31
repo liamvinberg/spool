@@ -31,18 +31,25 @@ export type AgentExecutor = (options: AgentSpawn) => Promise<AgentProcess>;
  *
  * A probe is not a turn: it asks the binary a question about itself, reads the answer and
  * ends. Both of them — what the model menu may offer, and whose login this is — want the
- * same three ways to be over and want it to happen once: the process exited, the caller
- * has heard enough, or the binary has had long enough. So the lifecycle lives here, beside
- * the process it is about, and each probe supplies only its own conversation.
+ * same four ways to be over and want it to happen once: the process exited, the caller
+ * has heard enough, the binary has had long enough, or nobody is waiting for the answer
+ * any more. So the lifecycle lives here, beside the process it is about, and each probe
+ * supplies only its own conversation.
  *
  * The timeout is the backstop rather than the plan. Every caller closes stdin, so the
  * binary exits on its own and `onExit` is what normally ends this.
+ *
+ * A probe is asked by one request and by nothing else, so the request going away is the
+ * end of it: a menu that was opened and closed, or a page that was navigated off, would
+ * otherwise leave a whole binary running for its full timeout with nobody to hear it.
  */
 export async function probeAgent(
 	proc: AgentProcess,
 	timeoutMs: number,
 	/** what to ask, and when the answer is complete: `finish` ends the probe early */
 	ask: (finish: () => void) => void,
+	/** the request that wanted the answer, so a client that left takes the process with it */
+	signal?: AbortSignal,
 ): Promise<void> {
 	let settled = false;
 	await new Promise<void>((resolve) => {
@@ -50,11 +57,19 @@ export async function probeAgent(
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			signal?.removeEventListener("abort", done);
 			proc.kill();
 			resolve();
 		};
 		const timer = setTimeout(done, timeoutMs);
 		proc.onExit(done);
+		// already gone: the question is not asked at all, because asking it is what would
+		// give the process something to do
+		if (signal?.aborted === true) {
+			done();
+			return;
+		}
+		signal?.addEventListener("abort", done);
 		ask(done);
 	});
 }

@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { loginAgentExecutor, makeApp, makeProject, makeTempDir } from "../test-helpers";
+import { fixtureAgentExecutor, loginAgentExecutor, makeApp, makeProject, makeTempDir, until } from "../test-helpers";
 import { agentInstalled, askAgentLogin, loginOf, planAgentLogin } from "./agent-preflight";
 
 /**
@@ -172,6 +172,30 @@ describe("the two doors", () => {
 		const res = await app.request(`/api/p/${name}/agent/login`);
 
 		expect(await res.json()).toEqual({ signedIn: true, account: "ada@kaffe.se" });
+	});
+
+	/**
+	 * The probe belongs to the press that asked for it, and to nothing else.
+	 *
+	 * It is a whole binary, spawned to answer one question for one page. A page that
+	 * navigated off, or a rail that was closed, is nobody waiting — and the process would
+	 * otherwise sit there for the length of its own timeout answering into a socket that
+	 * is gone.
+	 */
+	it("takes the probe with the request that asked for it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		// a binary that answers nothing, which is the window this is about
+		const agent = fixtureAgentExecutor();
+		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
+		const leaving = new AbortController();
+
+		const asked = app.request(`/api/p/${name}/agent/login`, { signal: leaving.signal });
+		await until(() => agent.spawned.length === 1);
+		leaving.abort();
+		await asked;
+
+		expect(agent.spawned[0]?.killed).toBe(true);
 	});
 });
 

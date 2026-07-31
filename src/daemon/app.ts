@@ -985,7 +985,17 @@ export function createDaemonApp({
 		.get("/api/p/:project/agent/login", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			return c.json(await askAgentLogin({ executor: spawnAgent, root: project.root, env: process.env }));
+			// the probe is this request's process and nobody else's, so it goes when the
+			// request does: a page navigated off mid-check would otherwise leave a whole
+			// binary running for the length of its own timeout with nobody to hear it
+			return c.json(
+				await askAgentLogin({
+					executor: spawnAgent,
+					root: project.root,
+					env: process.env,
+					signal: c.req.raw.signal,
+				}),
+			);
 		})
 		.post(
 			"/api/p/:project/agent/turn",
@@ -1292,6 +1302,9 @@ export function createDaemonApp({
 					root: project.root,
 					env: process.env,
 					ask: agentAsks.get(askKey(project.root, thread)) ?? {},
+					// a menu that was opened and closed again is nobody waiting: the spawn
+					// this read costs goes with the request that asked for it
+					signal: c.req.raw.signal,
 				}),
 			);
 		})

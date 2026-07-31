@@ -243,6 +243,8 @@ export interface AgentOfferOptions {
 	readonly choose?: AgentAsk;
 	/** how long the binary gets to answer before the probe gives up on it */
 	readonly timeoutMs?: number;
+	/** the request that asked, so a menu that was closed takes the process with it */
+	readonly signal?: AbortSignal;
 }
 
 /** long enough for a cold spawn — measured at 1.4s on the machine this was written on */
@@ -282,6 +284,7 @@ export async function askAgentOffer({
 	ask,
 	choose,
 	timeoutMs = OFFER_TIMEOUT_MS,
+	signal,
 }: AgentOfferOptions): Promise<AgentOffer> {
 	const pin = effortPin(env);
 	/**
@@ -326,35 +329,40 @@ export async function askAgentOffer({
 	/** the control request has been answered, whether or not the answer held models */
 	let listed = false;
 
-	await probeAgent(proc, timeoutMs, (done) => {
-		proc.onLine((line) => {
-			let wire: WireResponse;
-			try {
-				wire = JSON.parse(line) as WireResponse;
-			} catch {
-				return;
-			}
-			if (wire.type === "control_response" && wire.response?.request_id === REQUEST) {
-				listed = true;
-				models = modelsOf(wire.response.response);
-				return;
-			}
-			// every message boundary re-reports the model, so the last init is the model
-			// the change landed on rather than the one the process started at
-			if (wire.type === "system" && wire.subtype === "init" && typeof wire.model === "string") {
-				resolved = wire.model;
-				return;
-			}
-			if (wire.type !== "result") return;
-			if (typeof wire.result === "string") replies.push(wire.result);
-			// both halves have to have landed: the replies say what is answering and the
-			// control response says what may be picked, and their order is the binary's
-			if (listed && replies.length >= messages.length) done();
-		});
-		proc.write(listModelsRequestLine(REQUEST));
-		for (const message of messages) proc.write(agentPromptLine([{ type: "text", text: message }]));
-		proc.end();
-	});
+	await probeAgent(
+		proc,
+		timeoutMs,
+		(done) => {
+			proc.onLine((line) => {
+				let wire: WireResponse;
+				try {
+					wire = JSON.parse(line) as WireResponse;
+				} catch {
+					return;
+				}
+				if (wire.type === "control_response" && wire.response?.request_id === REQUEST) {
+					listed = true;
+					models = modelsOf(wire.response.response);
+					return;
+				}
+				// every message boundary re-reports the model, so the last init is the model
+				// the change landed on rather than the one the process started at
+				if (wire.type === "system" && wire.subtype === "init" && typeof wire.model === "string") {
+					resolved = wire.model;
+					return;
+				}
+				if (wire.type !== "result") return;
+				if (typeof wire.result === "string") replies.push(wire.result);
+				// both halves have to have landed: the replies say what is answering and the
+				// control response says what may be picked, and their order is the binary's
+				if (listed && replies.length >= messages.length) done();
+			});
+			proc.write(listModelsRequestLine(REQUEST));
+			for (const message of messages) proc.write(agentPromptLine([{ type: "text", text: message }]));
+			proc.end();
+		},
+		signal,
+	);
 
 	const report = reportOf(replies.at(-1) ?? "");
 	const value = offeredValue(models, resolved, wanted.value ?? ask?.value);

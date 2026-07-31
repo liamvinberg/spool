@@ -140,6 +140,8 @@ export interface AgentLoginOptions {
 	readonly env: Readonly<Record<string, string | undefined>>;
 	/** how long the binary gets to answer before the probe gives up on it */
 	readonly timeoutMs?: number;
+	/** the request that asked, so a page that navigated off takes the process with it */
+	readonly signal?: AbortSignal;
 }
 
 /** a local read of a local file by the process that owns it; nothing here is a request */
@@ -162,6 +164,7 @@ export async function askAgentLogin({
 	root,
 	env,
 	timeoutMs = LOGIN_TIMEOUT_MS,
+	signal,
 }: AgentLoginOptions): Promise<AgentLogin> {
 	let proc: Awaited<ReturnType<AgentExecutor>>;
 	try {
@@ -172,11 +175,16 @@ export async function askAgentLogin({
 		return NOBODY;
 	}
 	const said: string[] = [];
-	await probeAgent(proc, timeoutMs, () => {
-		proc.onLine((line) => said.push(line));
-		// it is asked nothing at all, so closing its input is what lets it get on with
-		// answering — and it is over when it exits, which is why nothing finishes early here
-		proc.end();
-	});
+	await probeAgent(
+		proc,
+		timeoutMs,
+		() => {
+			proc.onLine((line) => said.push(line));
+			// it is asked nothing at all, so closing its input is what lets it get on with
+			// answering — and it is over when it exits, which is why nothing finishes early here
+			proc.end();
+		},
+		signal,
+	);
 	return loginOf(said.join("\n"));
 }

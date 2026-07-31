@@ -548,6 +548,29 @@ describe("the doors", () => {
 		expect(body.current.value).toBe("claude-fable-5[1m]");
 	});
 
+	/**
+	 * The read costs a whole process, so it is not left running for nobody.
+	 *
+	 * The menu opens, it asks, and it can be closed before the answer lands — the same
+	 * window a page navigated off leaves open. What was spawned for one request goes with
+	 * it rather than sitting out its own timeout answering into a socket that is gone.
+	 */
+	it("takes the probe with the menu that opened it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		// a binary that answers nothing, which is the whole window this is about
+		const silent = fixtureAgentExecutor();
+		const app = makeApp(spoolDir, { agentExecutor: silent.executor });
+		const closing = new AbortController();
+
+		const asked = app.request(`/api/p/${name}/agent/threads/${THREAD}/models`, { signal: closing.signal });
+		await until(() => silent.spawned.length === 1);
+		closing.abort();
+		await asked;
+
+		expect(silent.spawned[0]?.killed).toBe(true);
+	});
+
 	it("refuses a choice it could not send", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = makeProject(spoolDir);
