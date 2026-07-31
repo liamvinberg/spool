@@ -394,6 +394,8 @@ export function createDaemonApp({
 	 * project-wide ask would carry the open thread's choice into the one you switched to.
 	 * It dies with the daemon, because a preference nobody has said is durable is not a
 	 * file to write — a restarted thread reads its model off the next turn's own report.
+	 * It dies with the thread too: a conversation that was closed is not one anything is
+	 * going to spawn for again, and a map only ever written to is a map that only grows.
 	 */
 	const agentAsks = new Map<string, AgentAsk>();
 	const askKey = (root: string, thread: string) => `${root} ${thread}`;
@@ -1257,6 +1259,11 @@ export function createDaemonApp({
 			if (!closeThread(spoolDir, project.root, thread)) {
 				return c.text(`no thread "${thread}" to close`, 404);
 			}
+			// the ask goes with the conversation it was a fact about. It is the one thing
+			// here that is spool's own memory rather than a byte on disk, so nothing else
+			// forgets it: a daemon left open for a week would otherwise hold an entry for
+			// every thread anybody ever opened in it
+			agentAsks.delete(askKey(project.root, thread));
 			return c.body(null, 204);
 		})
 		/*
@@ -1994,6 +2001,7 @@ export function createDaemonApp({
 		close: () => {
 			machineStateWatch.stop();
 			liveTurns.close();
+			agentAsks.clear();
 			void terms.close();
 			hub.close();
 			updateChecker.stop();

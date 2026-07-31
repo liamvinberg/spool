@@ -659,4 +659,39 @@ describe("the doors", () => {
 
 		expect(binary.spawned.at(-1)?.spawn.args).not.toContain("--model");
 	});
+
+	/**
+	 * The choice is a fact about a conversation, so it goes when the conversation does.
+	 *
+	 * The ask is the one thing about a thread the daemon keeps in memory rather than on
+	 * disk, and nothing else forgets it: a thread closed out of the strip would otherwise
+	 * leave its entry behind for as long as the daemon runs, and a daemon that has been
+	 * open for a week has one for every thread anybody opened in it.
+	 */
+	it("forgets a closed thread's choice rather than holding it for the life of the daemon", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const binary = fakeBinary();
+		const app = makeApp(spoolDir, { agentExecutor: binary.executor });
+		await app.request(`/api/p/${name}/agent/threads/${THREAD}`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				ask: "tidy the cart",
+				life: "read",
+				at: 1_700_000_000_000,
+				entries: [{ key: "u0", kind: "user", text: "tidy the cart" }],
+				plan: null,
+			}),
+		});
+		await post(app, name, { value: "haiku" });
+
+		const closed = await app.request(`/api/p/${name}/agent/threads/${THREAD}/close`, { method: "POST" });
+		expect(closed.status).toBe(204);
+
+		const spawns = binary.spawned.length;
+		await app.request(`/api/p/${name}/agent/threads/${THREAD}/models`);
+		expect(binary.spawned.length).toBeGreaterThan(spawns);
+		expect(binary.spawned.at(-1)?.spawn.args).not.toContain("--model");
+	});
 });
