@@ -628,11 +628,16 @@ describe("one turn", () => {
 	});
 
 	/**
-	 * The wait before the first token draws nothing, and neither does the thought that
-	 * follows it. The stroke on the composer's border is what says the turn is alive; the
-	 * log is receipts, and the one thing it must never do is add a line and take it back.
+	 * The wait before the first token leaves a receipt and the thought that follows it
+	 * still leaves nothing (#212). They are not the same object: the thinking block's own
+	 * span is `0.0s` for 34 of the 36 in the captures, and what is worth keeping is the
+	 * wait in front of it.
+	 *
+	 * The stroke on the composer's border is untouched and answers a different question.
+	 * It says whether anything is happening, in the periphery, for free; this says what
+	 * happened and how long, in the log, an hour later.
 	 */
-	it("draws nothing for the wait or the thought", async () => {
+	it("draws one receipt for the request and no line for the thought", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "go");
@@ -642,12 +647,52 @@ describe("one turn", () => {
 		canvas.turn.push({ kind: "thinking", block: 0, tokens: 61, parent: null });
 		await settle();
 
-		// the log, not the rail: the column's own cell turns while its thread works, and
-		// that is the thread's life rather than a line about the wait
+		expect(canvas.host.querySelectorAll("[data-agent-log] [data-agent-wait]")).toHaveLength(1);
+		// the answer has started, so the receipt is settled and nothing in the log turns
+		expect(canvas.host.querySelector("[data-agent-log] [data-agent-wait]")?.getAttribute("data-agent-wait")).toBe(
+			"done",
+		);
 		expect(canvas.host.querySelectorAll("[data-agent-log] .animate-agent-spin")).toHaveLength(0);
-		expect(log(canvas.host)).not.toContain("thinking");
-		// the human's words and nothing under them
-		expect(log(canvas.host).trim()).toBe("go");
+	});
+
+	/** while nothing has come back the mark turns, which is the whole of what it is for */
+	it("turns the receipt's mark while the request is still out", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "go");
+
+		canvas.turn.push(waiting);
+		await settle();
+
+		expect(canvas.host.querySelector("[data-agent-log] [data-agent-wait]")?.getAttribute("data-agent-wait")).toBe(
+			"running",
+		);
+		expect(canvas.host.querySelectorAll("[data-agent-log] .animate-agent-spin")).toHaveLength(1);
+		expect(log(canvas.host)).toContain("thinking");
+	});
+
+	/**
+	 * The one rule that earns it the room: it is written once and never removed, so an
+	 * answer landing moves nothing above it. That is the whole difference between this
+	 * and the beat `b4aef45` deleted, which was the one entry this log ever took back out
+	 * and dragged everything above it down 38.3px on the way.
+	 */
+	it("keeps the receipt once the answer has landed", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "go");
+
+		canvas.turn.push(waiting);
+		await settle();
+		const before = canvas.host.querySelectorAll("[data-agent-log] [data-agent-wait]").length;
+
+		canvas.turn.push(speaking);
+		canvas.turn.push({ kind: "say", block: 0, text: "done.", parent: null });
+		await settle();
+
+		expect(before).toBe(1);
+		expect(canvas.host.querySelectorAll("[data-agent-log] [data-agent-wait]")).toHaveLength(1);
+		expect(log(canvas.host)).toContain("thinking");
 	});
 
 	it("lets the agent's words arrive rather than appear whole", async () => {
