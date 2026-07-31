@@ -259,7 +259,15 @@ interface Live {
 	events: Stamped[];
 	started: number;
 	abandon: (() => void) | null;
-	said: readonly AgentWords[];
+	/**
+	 * What the human said to start this turn, in the shape the box holds words in (#234).
+	 *
+	 * Every message that goes down the wire carries the id a take-back names it by, whether
+	 * it spent time in the queue or went out on the press that wrote it. It is what makes a
+	 * turn that never started reversible: the door refusing hands these straight back to the
+	 * queue rather than spool minting new names for words it already had.
+	 */
+	said: readonly AgentQueued[];
 	/** climbs per send, which is what re-arms the clock */
 	run: number;
 	/** the stream is open, written by the stream rather than by a render */
@@ -371,6 +379,19 @@ function restored(stored: ServedThread): Live {
  * is drawn once. It still goes down the wire — the check runs the prompt they wrote, not a
  * retyped proof that they meant it.
  */
+/**
+ * One message, under the name a take-back reaches it by (#170, #234).
+ *
+ * Everything the rail sends is named, whether or not it ever waits in the box. A turn the
+ * door refuses hands its words straight back to the queue, and a message with no name of
+ * its own would have to be given one on the way home — which is spool inventing an id for
+ * words it was already holding.
+ */
+function message(thread: Live, words: AgentWords): AgentQueued {
+	thread.holds += 1;
+	return { ...words, id: `held-${thread.holds}` };
+}
+
 function shownOf(thread: Live) {
 	return transcriptOf(thread.carried ? [] : thread.said, thread.events);
 }
@@ -460,6 +481,15 @@ export function useAgentThreads(project: string): AgentDeck {
 	 */
 	const [limit, setLimit] = useState<AgentLimit | null>(null);
 
+	/**
+	 * The fire, reached from the stream that ends (#170).
+	 *
+	 * A ref because the two are circular: what a turn's end does is send whatever the box is
+	 * holding, and what a fire does is start a turn. The function is written once, below,
+	 * and never changes what it means.
+	 */
+	const fireRef = useRef<(thread: Live) => void>(() => {});
+
 	/*
 	 * A thread has an id before it has a process, because the id *is* the session id
 	 * (#120). Spool mints a uuid, hands it to the binary as its session on the first
@@ -531,7 +561,7 @@ export function useAgentThreads(project: string): AgentDeck {
 	 * differs between them is three lines at the top and which door is opened at the bottom.
 	 */
 	const run = useCallback(
-		(thread: Live, opening: { saying: readonly AgentWords[]; carried: boolean } | { attach: true }) => {
+		(thread: Live, opening: { saying: readonly AgentQueued[]; carried: boolean } | { attach: true }) => {
 			const attaching = "attach" in opening;
 			if (!attaching && opening.saying.length === 0) return;
 			thread.abandon?.();
@@ -625,6 +655,27 @@ export function useAgentThreads(project: string): AgentDeck {
 				 * and a door that refused before there was a turn at all.
 				 */
 				end: (ending) => {
+					/*
+					 * The thread is already running one, so this rail is behind rather than wrong
+					 * (#170, #234).
+					 *
+					 * Two tabs, or a queue fired at a turn this rail had lost the read of. The words
+					 * are not a failure to report: they never left, so they go back to the head of
+					 * the box in the order they were going to be said in, and the read goes and finds
+					 * the turn that is actually running. It draws no line, because nothing happened
+					 * that a person has to know about.
+					 */
+					if (ending.kind === "refused" && ending.status === 409) {
+						if (!thread.carried) {
+							thread.holding = [...thread.said, ...thread.holding];
+							// and the words leave the log with the turn that never started: one thing
+							// said once, and this one has not been said yet
+							thread.said = [];
+						}
+						save(thread);
+						run(thread, { attach: true });
+						return;
+					}
 					if (ending.kind === "refused") {
 						push({ kind: "closed", code: null, message: ending.why, parent: null });
 					} else if (ending.kind === "cut") {
@@ -653,13 +704,7 @@ export function useAgentThreads(project: string): AgentDeck {
 					 * repo, and sending the next thing into that is spool taking an action on a
 					 * guess: the words stay in the box, where a hand can send them or take them back.
 					 */
-					if (ending.kind !== "cut") {
-						const firing = thread.holding;
-						if (firing.length > 0) {
-							thread.holding = [];
-							run(thread, { saying: firing, carried: false });
-						}
-					}
+					if (ending.kind !== "cut") fireRef.current(thread);
 					redraw();
 				},
 			};
@@ -686,9 +731,29 @@ export function useAgentThreads(project: string): AgentDeck {
 	);
 
 	const send = useCallback(
-		(thread: Live, saying: readonly AgentWords[], carried = false) => run(thread, { saying, carried }),
+		(thread: Live, saying: readonly AgentQueued[], carried = false) => run(thread, { saying, carried }),
 		[run],
 	);
+
+	/**
+	 * Everything the box is holding, as one turn (#170, #234).
+	 *
+	 * The picture is written before the send goes out, and that order is the whole of it: it
+	 * used to be written with the queue still in it and cleared a moment later, so a refresh
+	 * inside that window came back holding words the daemon was already running — and sent
+	 * them a second time when that turn ended.
+	 */
+	const fire = useCallback(
+		(thread: Live) => {
+			const firing = thread.holding;
+			if (firing.length === 0) return;
+			thread.holding = [];
+			save(thread);
+			run(thread, { saying: firing, carried: false });
+		},
+		[save, run],
+	);
+	fireRef.current = fire;
 
 	/*
 	 * The threads this project already has, read once on the way in (#120).
@@ -715,7 +780,20 @@ export function useAgentThreads(project: string): AgentDeck {
 				 * the column opens on, because they were all still working while the page was
 				 * away — which is the same promise #192 made about looking at another thread.
 				 */
-				if (one.live) run(thread, { attach: true });
+				if (one.live) {
+					run(thread, { attach: true });
+					continue;
+				}
+				/*
+				 * A queue with no turn left to wait for is a queue that is due (#170, #234).
+				 *
+				 * The words were held for the end of a turn, and that turn ended while nobody was
+				 * here: the daemon restarted under it, or the page was away when it finished. They
+				 * used to sit in the box for the rest of the project's life, because the only thing
+				 * that ever fired one was a stream closing — and the next thing typed went out
+				 * ahead of them, which is the one order the queue exists to keep.
+				 */
+				fire(thread);
 			}
 			// the row opens on something either way, so this only ever runs before it has:
 			// a project with nothing stored gets one fresh thread, which is what the rail
@@ -735,7 +813,7 @@ export function useAgentThreads(project: string): AgentDeck {
 		return () => {
 			gone = true;
 		};
-	}, [project, start, read, redraw, run]);
+	}, [project, start, read, redraw, run, fire]);
 
 	/*
 	 * One clock for every thread, and the one thing that stops each of them.
@@ -829,12 +907,22 @@ export function useAgentThreads(project: string): AgentDeck {
 			};
 		});
 
+	/**
+	 * What the box is holding, and the disk saying the same thing (#170, #234).
+	 *
+	 * Every change to the queue is written down as it happens rather than on the next
+	 * throttle, because the throttle only ever ran while a turn was streaming: a take-back
+	 * and a stop both change the queue at the moment a turn is ending, so the picture that
+	 * reached disk was the one from before the press, and a refresh brought back words
+	 * somebody had already cancelled.
+	 */
 	const hold = useCallback(
 		(thread: Live, waiting: readonly AgentQueued[]) => {
 			thread.holding = waiting;
+			save(thread);
 			redraw();
 		},
-		[redraw],
+		[save, redraw],
 	);
 
 	/** the one exit both the stop and a take-back go through, so they cannot diverge */
@@ -862,10 +950,10 @@ export function useAgentThreads(project: string): AgentDeck {
 			if (thread.restored && !thread.continuable) {
 				const fresh = start();
 				setOpen(fresh.id);
-				send(fresh, [{ text, ...sent }]);
+				send(fresh, [message(fresh, { text, ...sent })]);
 				return;
 			}
-			send(thread, [{ text, ...sent }]);
+			send(thread, [message(thread, { text, ...sent })]);
 		},
 		[send, start],
 	);
@@ -1005,8 +1093,7 @@ export function useAgentThreads(project: string): AgentDeck {
 				(text: string, sent: AgentSent = {}) => {
 					const thread = threads.current.get(openRef.current);
 					if (thread === undefined) return;
-					thread.holds += 1;
-					hold(thread, [...thread.holding, { id: `held-${thread.holds}`, text, ...sent }]);
+					hold(thread, [...thread.holding, message(thread, { text, ...sent })]);
 				},
 				[hold],
 			),
