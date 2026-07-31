@@ -27,6 +27,23 @@ export interface AgentQueued extends AgentWords {
 }
 
 /**
+ * The queue as it comes back off disk (#211).
+ *
+ * The floor under a file a person can open in an editor, and the same one `drawableEntries`
+ * is: spool's store keeps the queue opaque because the vocabulary is up here, so this is
+ * where the shape is checked rather than down there. A row missing the two fields that
+ * make it a message — words to send and an id to take it back by — is dropped, because
+ * both of its buttons would lie.
+ */
+export function drawableQueue(queued: readonly unknown[]): AgentQueued[] {
+	return queued.filter((one): one is AgentQueued => {
+		if (typeof one !== "object" || one === null) return false;
+		const message = one as { id?: unknown; text?: unknown };
+		return typeof message.id === "string" && typeof message.text === "string" && message.text !== "";
+	});
+}
+
+/**
  * Messages that left the queue un-fired, waiting for the box to take them back.
  *
  * A signal rather than a value, which is why the count is here: whoever holds the
