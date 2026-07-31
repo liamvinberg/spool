@@ -2,6 +2,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+	agentReader,
 	CAPTURES,
 	type FakeAgentProc,
 	fixtureAgentExecutor,
@@ -10,7 +11,6 @@ import {
 	makeTempDir,
 	readCapture,
 	replayAgentExecutor,
-	sseReader,
 	until,
 } from "../test-helpers";
 import { createClaudeAdapter } from "./agent-claude";
@@ -48,7 +48,7 @@ function answer(name: string, app: ReturnType<typeof makeApp>, body: unknown) {
 }
 
 async function drainTurn(res: Response, limit = 4000): Promise<AgentEvent[]> {
-	const events = sseReader(res);
+	const events = agentReader(res);
 	const seen: AgentEvent[] = [];
 	while (seen.length < limit) {
 		try {
@@ -167,7 +167,7 @@ describe("answering", () => {
 		const project = makeProject(spoolDir);
 		const agent = onPrompt((proc) => proc.emit(JSON.stringify(capturedAsk(index))));
 		const app = makeApp(spoolDir, { agentExecutor: agent.executor });
-		const events = sseReader(await startTurn(project.name, app));
+		const events = agentReader(await startTurn(project.name, app));
 		const asking = (await events.next()).data as AgentEvent;
 		if (asking.kind !== "asking") throw new Error(`expected an ask, got ${asking.kind}`);
 		return { ...project, spoolDir, app, agent, events, asking };

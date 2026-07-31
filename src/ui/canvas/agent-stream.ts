@@ -3,7 +3,10 @@ import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentLimit } from "../../daemon/agent-events";
 import type { ServedThread } from "../../daemon/agent-threads";
 import {
+	type AgentAttached,
+	type AgentReading,
 	answerAgentTurn,
+	attachAgentTurn,
 	closeAgentThread,
 	fetchAgentLogin,
 	fetchAgentThreads,
@@ -12,7 +15,7 @@ import {
 	streamAgentTurn,
 } from "../api";
 import { type LoginDeck, STILL_OUT, signedInAs } from "./agent-preflight";
-import type { AgentHandback, AgentQueued } from "./agent-queue";
+import { type AgentHandback, type AgentQueued, drawableQueue } from "./agent-queue";
 import {
 	askOf,
 	bounced,
@@ -75,6 +78,18 @@ const TICK_MS = 100;
  * send, the settle, a look — writes immediately regardless.
  */
 const SAVE_MS = 2000;
+
+/**
+ * How far in the past a picked-up turn's clock is started (#211).
+ *
+ * Everything replayed is stamped at zero, so this is what makes all of it due at once: a
+ * turn arriving whole is drawn whole rather than typed out from the beginning, which is
+ * the rule a picture off disk has always been under. Anything the pace could still be
+ * owed is bounded by the turn's own length, so a day is not a number to tune — it is far
+ * past every schedule a turn can write, and what arrives after the replay paces normally
+ * from wherever the clock then stands.
+ */
+const REPLAYED_MS = 86_400_000;
 
 /**
  * What the turn is doing, and the one member that is about the person (#145).
@@ -317,13 +332,24 @@ function restored(stored: ServedThread): Live {
 	// nothing off disk is being paced: the clock its schedule was written against ended
 	// with the daemon that held it
 	const entries = unpaced(drawableEntries(stored.entries));
+	/*
+	 * A turn this daemon is still holding is not a cut and not a drawing: it is a stream to
+	 * pick back up (#211). What is kept of the picture is everything above the boundary the
+	 * rail wrote with it — the conversation, and the words that started the turn — and the
+	 * turn itself is refolded from the log rather than taken off disk, so it is never drawn
+	 * twice.
+	 */
+	const before = stored.live ? entries.slice(0, stored.kept) : stored.stopped ? cutPicture(entries) : entries;
 	return born(stored.id, {
-		before: stored.stopped ? cutPicture(entries) : entries,
+		before,
 		heldPlan: (stored.plan ?? null) as AgentPlan | null,
 		restored: true,
 		continuable: stored.continuable,
 		unread: stored.life === "unread",
 		at: stored.at,
+		// the words spool was holding when the page went away, which are spool's to hold
+		// across one too (#170, #211)
+		holding: drawableQueue(stored.queued),
 	});
 }
 
@@ -351,6 +377,28 @@ function entriesOf(thread: Live, seen: { entries: readonly AgentEntry[] }): read
 				? seen.entries
 				: [...thread.before, ...seen.entries];
 	return thread.after.length === 0 ? drawn : [...drawn, ...thread.after];
+}
+
+/**
+ * How much of the stored picture is not drawn from the live turn's events (#211).
+ *
+ * The boundary a client picking this turn back up has to cut at. Everything above it came
+ * off earlier turns, out of the log between them, or out of what the human said to start
+ * this one — and none of that is in the event log, so none of it can be refolded. What
+ * sits below it is exactly `transcriptOf`'s fold, which a replay rebuilds whole.
+ *
+ * The words the turn was started with are above the line rather than below it because the
+ * daemon's log does not carry them: the prompt went down stdin and the row was drawn from
+ * what the composer captured. A turn started by a held prompt drew none of its own (#201),
+ * which is what `carried` says and why the count is the transcript's rather than a
+ * constant.
+ *
+ * Everything, for a thread with no turn running: nothing will be replayed over it, and a
+ * picture that claimed a boundary it had no turn for would cut itself short.
+ */
+function keptOf(thread: Live, shown: { entries: readonly AgentEntry[] }): number {
+	if (!thread.streaming) return thread.before.length + shown.entries.length + thread.after.length;
+	return thread.before.length + (thread.carried ? 0 : thread.said.length);
 }
 
 /**
@@ -437,7 +485,12 @@ export function useAgentThreads(project: string): AgentDeck {
 				// nothing on disk is being paced: what a reader will see is drawn whole, so the
 				// schedule goes rather than sitting there meaning nothing
 				entries: unpaced(entries),
+				// where the turn in flight begins, so a reader that can pick that turn up keeps
+				// the conversation and refolds the rest off the log rather than drawing it twice
+				// (#211). Everything, once nothing is running: `keptOf` is the whole rule
+				kept: keptOf(thread, shown),
 				plan: planOf(thread, shown),
+				queued: thread.holding,
 			});
 		},
 		[project],
@@ -459,9 +512,18 @@ export function useAgentThreads(project: string): AgentDeck {
 		[save],
 	);
 
-	const send = useCallback(
-		(thread: Live, saying: readonly AgentWords[], carried = false) => {
-			if (saying.length === 0) return;
+	/**
+	 * One turn read into a thread, whether this rail started it or found it (#191, #211).
+	 *
+	 * Both ways in are the same turn seen from different distances, so they are one
+	 * function: a send says something and reads the answer from the first event, and an
+	 * attach says nothing and reads a turn already in progress from wherever it can. What
+	 * differs between them is three lines at the top and which door is opened at the bottom.
+	 */
+	const run = useCallback(
+		(thread: Live, opening: { saying: readonly AgentWords[]; carried: boolean } | { attach: true }) => {
+			const attaching = "attach" in opening;
+			if (!attaching && opening.saying.length === 0) return;
 			thread.abandon?.();
 			// the conversation keeps what it has already drawn: a turn replaces the events it
 			// is folded from, never the turns before it
@@ -473,23 +535,41 @@ export function useAgentThreads(project: string): AgentDeck {
 				thread.before = [...thread.before, ...thread.after];
 				thread.after = [];
 			}
-			thread.carried = carried;
+			/*
+			 * A turn being picked up draws no words of its own, for #201's reason and a second
+			 * one: the human's sentence is already in the picture this thread came back with —
+			 * it is the last thing above the boundary the daemon replays from — and the log the
+			 * replay rebuilds starts after it.
+			 */
+			thread.carried = attaching || opening.carried;
 			thread.events = [];
 			thread.started = Date.now();
 			thread.parked = { total: 0, since: null };
 			thread.waitingOn = new Map();
-			thread.said = saying;
+			thread.said = attaching ? [] : opening.saying;
 			thread.streaming = true;
 			thread.run += 1;
-			thread.starts += 1;
 			thread.ms = 0;
 			thread.drained = false;
-			thread.unread = false;
-			thread.at = Date.now();
 			thread.restored = false;
-			// a name of its own, because a stop has no request to quote: it names the turn the
-			// hands are looking at rather than whatever this project is running
-			thread.named = `${Date.now()}-${thread.starts}`;
+			if (!attaching) {
+				thread.starts += 1;
+				thread.unread = false;
+				thread.at = Date.now();
+				// a name of its own, because a stop has no request to quote: it names the turn the
+				// hands are looking at rather than whatever this project is running. A turn being
+				// picked up already has one, and the daemon says it on the way in
+				thread.named = `${Date.now()}-${thread.starts}`;
+			}
+			/**
+			 * How many of the events still to arrive already happened (#211).
+			 *
+			 * A replay is not an arrival. Everything before this rail attached is stamped at zero
+			 * against a clock started long enough ago that all of it is due, which draws it whole
+			 * — the same rule a picture off disk is under, and for the same reason: neither of
+			 * them is happening now. What arrives after the replay is paced as it always was.
+			 */
+			let replaying = 0;
 			const clock = () =>
 				Date.now() -
 				thread.started -
@@ -512,61 +592,77 @@ export function useAgentThreads(project: string): AgentDeck {
 				else if (thread.parked.since !== null) {
 					thread.parked = { total: thread.parked.total + (Date.now() - thread.parked.since), since: null };
 				}
-				thread.events.push({ at: clock(), event });
+				thread.events.push({ at: replaying > 0 ? 0 : clock(), event });
+				if (replaying > 0) replaying -= 1;
 			};
-			thread.abandon = streamAgentTurn(
-				project,
-				{
-					thread: thread.id,
-					turn: thread.named,
-					saying: saying.map((words) => ({
-						prompt: words.text,
-						selection: words.selection,
-						attached: words.attached ?? undefined,
-					})),
-				},
-				{
-					event: push,
+			/** what the daemon says as the read opens, which is the turn introducing itself */
+			const attached = (info: AgentAttached) => {
+				if (info.turn !== undefined) thread.named = info.turn;
+				replaying = Math.max(0, info.logged - info.from);
+				if (replaying > 0) thread.started = Date.now() - REPLAYED_MS;
+			};
+			const reading: AgentReading = {
+				attached,
+				event: push,
+				/*
+				 * The stream is the turn's whole life, so its end has to leave the log saying
+				 * why. The daemon ends every turn with a `closed` event; a stream that stops
+				 * without one stopped on this side, and the union already has the member for a
+				 * process that is gone.
+				 */
+				end: (error) => {
+					if (error !== undefined) push({ kind: "closed", code: null, message: error, parent: null });
+					else if (thread.events.at(-1)?.event.kind !== "closed") {
+						push({ kind: "closed", code: null, message: "the turn stream ended", parent: null });
+					}
+					thread.streaming = false;
+					thread.at = Date.now();
+					// it landed while nobody was looking at it, and a look is the only thing that
+					// clears that (#161) — so the flag is set here and read nowhere else
+					if (thread.id !== openRef.current) thread.unread = true;
+					// the conversation continues under the same id from here, whatever the disk
+					// still says about the session that started it
+					thread.continuable = true;
+					save(thread);
 					/*
-					 * The stream is the turn's whole life, so its end has to leave the log saying
-					 * why. The daemon ends every turn with a `closed` event; a stream that stops
-					 * without one stopped on this side, and the union already has the member for a
-					 * process that is gone.
+					 * The queue fires the moment the turn is no longer running (#170).
+					 *
+					 * Every message at once, in order, as one turn: the binary reads all of them as
+					 * the one thing it was asked, so this is a send rather than a run of sends. A
+					 * stop never reaches here, because a stop empties the list before the stream can
+					 * close — which is the invariant, not a race that happens to fall the right way.
 					 */
-					end: (error) => {
-						if (error !== undefined) push({ kind: "closed", code: null, message: error, parent: null });
-						else if (thread.events.at(-1)?.event.kind !== "closed") {
-							push({ kind: "closed", code: null, message: "the turn stream ended", parent: null });
-						}
-						thread.streaming = false;
-						thread.at = Date.now();
-						// it landed while nobody was looking at it, and a look is the only thing that
-						// clears that (#161) — so the flag is set here and read nowhere else
-						if (thread.id !== openRef.current) thread.unread = true;
-						// the conversation continues under the same id from here, whatever the disk
-						// still says about the session that started it
-						thread.continuable = true;
-						save(thread);
-						/*
-						 * The queue fires the moment the turn is no longer running (#170).
-						 *
-						 * Every message at once, in order, as one turn: the binary reads all of them as
-						 * the one thing it was asked, so this is a send rather than a run of sends. A
-						 * stop never reaches here, because a stop empties the list before the stream can
-						 * close — which is the invariant, not a race that happens to fall the right way.
-						 */
-						const firing = thread.holding;
-						if (firing.length > 0) {
-							thread.holding = [];
-							send(thread, firing);
-						}
-						redraw();
-					},
+					const firing = thread.holding;
+					if (firing.length > 0) {
+						thread.holding = [];
+						run(thread, { saying: firing, carried: false });
+					}
+					redraw();
 				},
-			);
+			};
+			thread.abandon = attaching
+				? attachAgentTurn(project, thread.id, 0, reading)
+				: streamAgentTurn(
+						project,
+						{
+							thread: thread.id,
+							turn: thread.named,
+							saying: opening.saying.map((words) => ({
+								prompt: words.text,
+								selection: words.selection,
+								attached: words.attached ?? undefined,
+							})),
+						},
+						reading,
+					);
 			redraw();
 		},
 		[project, save, redraw],
+	);
+
+	const send = useCallback(
+		(thread: Live, saying: readonly AgentWords[], carried = false) => run(thread, { saying, carried }),
+		[run],
 	);
 
 	/*
@@ -583,7 +679,18 @@ export function useAgentThreads(project: string): AgentDeck {
 			if (gone) return;
 			for (const one of stored) {
 				if (threads.current.has(one.id)) continue;
-				threads.current.set(one.id, restored(one));
+				const thread = restored(one);
+				threads.current.set(one.id, thread);
+				/*
+				 * A turn still running here is picked up rather than drawn (#211).
+				 *
+				 * This is the whole of what a refresh costs now: the daemon held the turn, the log
+				 * is replayed into a fold that rebuilds what was on screen, and the rest arrives
+				 * as it always would have. It happens for every live thread and not only the one
+				 * the column opens on, because they were all still working while the page was
+				 * away — which is the same promise #192 made about looking at another thread.
+				 */
+				if (one.live) run(thread, { attach: true });
 			}
 			// the row opens on something either way, so this only ever runs before it has:
 			// a project with nothing stored gets one fresh thread, which is what the rail
@@ -603,7 +710,7 @@ export function useAgentThreads(project: string): AgentDeck {
 		return () => {
 			gone = true;
 		};
-	}, [project, start, read, redraw]);
+	}, [project, start, read, redraw, run]);
 
 	/*
 	 * One clock for every thread, and the one thing that stops each of them.
@@ -652,8 +759,14 @@ export function useAgentThreads(project: string): AgentDeck {
 		return () => clearInterval(timer);
 	}, [still, save, redraw]);
 
-	// every thread belongs to the canvas that opened it: navigating away ends them all,
-	// and the daemon takes each process with its request
+	/*
+	 * Every read belongs to the canvas that opened it: navigating away drops all of them,
+	 * and takes no turn with it (#211).
+	 *
+	 * Which is the point. A refresh, a lid, a tab closed by accident — the daemon holds
+	 * what was running, and the next page attaches to it and carries on. The one exit that
+	 * still stops a turn is a hand: the stop button, or closing the thread it belongs to.
+	 */
 	useEffect(() => {
 		const held = threads.current;
 		return () => {
@@ -750,9 +863,15 @@ export function useAgentThreads(project: string): AgentDeck {
 			 * Closing a thread is a tidy rather than a delete (#136).
 			 *
 			 * It leaves the column, and neither the agent's own session nor spool's stored
-			 * picture goes with it. What does stop is the stream, because a tab nobody can
+			 * picture goes with it. What does stop is the turn, because a tab nobody can
 			 * reach must not go on holding a process the hands cannot see.
+			 *
+			 * Both halves are said out loud now that a turn outlives the read of it (#211):
+			 * letting go of the stream used to take the process with it, and letting go is now
+			 * only letting go. So the turn is stopped the way the stop button stops one — a
+			 * request the binary survives and ends itself on — and then the read is dropped.
 			 */
+			if (thread.streaming) void interruptAgentTurn(project, thread.named);
 			thread.abandon?.();
 			threads.current.delete(id);
 			void closeAgentThread(project, id);
