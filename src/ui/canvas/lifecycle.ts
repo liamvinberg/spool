@@ -494,6 +494,20 @@ const NOTHING: ReadonlySet<string> = new Set<string>();
 const running = (state: FrameState, kind: ProjectedFrame["kind"]): boolean =>
 	state === "live" || state === "refreshing" || (state === "held" && kind === "html");
 
+/**
+ * Every frame that gave up on its picture may ask again.
+ *
+ * The give-up count answers "can this frame be photographed at all", and a
+ * hidden tab makes it answer something else: the timers an errand rides on are
+ * throttled to a crawl there, so three tries can be spent without the frame
+ * ever having had a fair one. Anything that says the conditions have changed —
+ * the tab being looked at again — is worth another go, and the bound is still
+ * the bound the moment it is spent under it.
+ */
+export function renewPictureDebt(model: LifecycleModel): void {
+	model.tries.clear();
+}
+
 /** Something changed about the frame: its picture is wrong, and it may ask again. */
 function markPictureWrong(model: LifecycleModel, frame: string): void {
 	model.stale.add(frame);
@@ -969,6 +983,24 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		markPictureWrong(model.current, frame);
 	}, []);
 
+	/**
+	 * The tab is being looked at again.
+	 *
+	 * Two things are wrong with what a hidden tab left behind, and both of them
+	 * are about the tab rather than about any frame. A background tab throttles
+	 * the timers an errand rides on, so a frame that spent its three tries in one
+	 * was never given a fair go and would otherwise never ask again; the count
+	 * goes back to nothing and the owed pictures are taken now. And nothing had
+	 * attended anything for however long the tab was away, so every live frame is
+	 * frozen — coming back is itself the attention, the way settling a camera is,
+	 * so the minute starts here rather than on the first thing you touch.
+	 */
+	const wake = useCallback(() => {
+		renewPictureDebt(model.current);
+		attendedAt.current.clear();
+		compute();
+	}, [compute]);
+
 	return {
 		states,
 		ready,
@@ -977,6 +1009,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		noteCaptureSource,
 		noteCameraMoving,
 		markStale,
+		wake,
 		capture: requestCapture,
 		captureExport,
 		sweep: compute,

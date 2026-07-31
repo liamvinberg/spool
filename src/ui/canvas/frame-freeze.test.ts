@@ -256,6 +256,23 @@ describe("delivering the freeze", () => {
 		expect(freezes(post)).toEqual([held, handedBack, held]);
 	});
 
+	it("hands it back when the tab comes back, before anybody touches anything", async () => {
+		const { lifecycle, post, wait } = await mountLive();
+		await wait(IDLE_FREEZE_MS);
+		expect(freezes(post)).toEqual([held]);
+
+		// twenty minutes hidden is twenty minutes nobody attended anything, and
+		// the return is the attention: a canvas you are looking at animates
+		await act(() => lifecycle.wake());
+		expect(freezes(post)).toEqual([held, handedBack]);
+
+		// and the minute runs from the return, not from before it
+		await wait(IDLE_FREEZE_MS - 1);
+		expect(freezes(post)).toEqual([held, handedBack]);
+		await wait(1);
+		expect(freezes(post)).toEqual([held, handedBack, held]);
+	});
+
 	it("gives a fresh document the whole minute, so an edit is never watched half-arrived", async () => {
 		const { lifecycle, iframe, post, wait } = await mountLive();
 		await wait(IDLE_FREEZE_MS);
