@@ -6,7 +6,7 @@ import { basename, isAbsolute, join, normalize, sep } from "node:path";
 import type { Duplex } from "node:stream";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { streamSSE } from "hono/streaming";
+import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import trash from "trash";
 import { z } from "zod";
@@ -152,6 +152,32 @@ type LaunchEditor = (file: string, onError?: (fileName: string, message: string 
 const launchEditorDefault = createRequire(import.meta.url)("launch-editor") as LaunchEditor;
 
 /**
+ * How often a long-lived stream says something while nothing is happening.
+ *
+ * A comment rather than an event: it is bytes on the wire and nothing more, so
+ * every parser drops it and no handler has to know it exists. What it buys is
+ * the one thing a quiet stream cannot tell you by itself — that it is still
+ * there. A connection the network dropped under a sleeping laptop reads exactly
+ * like a project nobody is editing, and a browser waits on that forever.
+ */
+const SSE_HEARTBEAT_MS = 15_000;
+
+/**
+ * Keep one stream audible. The returned stop is for a handler that ends of its
+ * own accord; a client that hangs up is covered by the abort.
+ */
+function beatWhileOpen(stream: SSEStreamingApi): () => void {
+	const timer = setInterval(() => {
+		// a write to a stream that has already gone is nothing to report
+		void stream.write(": beat\n\n").catch(() => {});
+	}, SSE_HEARTBEAT_MS);
+	timer.unref?.();
+	const stop = () => clearInterval(timer);
+	stream.onAbort(stop);
+	return stop;
+}
+
+/**
  * One view of a held turn, which is what both doors return (#211).
  *
  * The turn is not this response's to end. A client that goes away closes its own read and
@@ -167,6 +193,7 @@ function attachTurn(c: Context, held: AgentHeld, from: number) {
 	return streamSSE(c, async (stream) => {
 		const view = held.watch(from);
 		stream.onAbort(() => view.close());
+		const stopBeat = beatWhileOpen(stream);
 		try {
 			await stream.writeSSE({
 				event: "attached",
@@ -186,6 +213,7 @@ function attachTurn(c: Context, held: AgentHeld, from: number) {
 				}
 			}
 		} finally {
+			stopBeat();
 			view.close();
 		}
 	});
@@ -667,6 +695,7 @@ export function createDaemonApp({
 				stream.onAbort(() => {
 					appListeners.delete(listener);
 				});
+				beatWhileOpen(stream);
 				// hello carries the daemon's version — the reconnect after an upgrade
 				// answers a different one, and the page reloads itself on it (#30)
 				await stream.writeSSE({
@@ -1710,6 +1739,7 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			return streamSSE(c, async (stream) => {
 				let id = 0;
+				beatWhileOpen(stream);
 				await stream.writeSSE({ event: "hello", data: JSON.stringify({ project: name }), id: String(id++) });
 				const unsubscribe = hub.subscribe(project.root, (event) => {
 					void stream.writeSSE({ event: "change", data: JSON.stringify(event), id: String(id++) }).catch(() => {});
