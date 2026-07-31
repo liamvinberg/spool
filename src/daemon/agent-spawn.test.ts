@@ -65,8 +65,17 @@ describe("the spawn", () => {
 			sandbox?: { enabled?: boolean };
 		};
 		expect(settings.permissions?.allow).toEqual(AGENT_ALLOW_RULES);
-		// the mutation fence, and the harmless three: read anywhere, fetch, search
-		expect(AGENT_ALLOW_RULES).toEqual(["Edit(./design/**)", "Read(//**)", "WebFetch", "WebSearch"]);
+		// the mutation fence, the harmless three (read anywhere, fetch, search),
+		// and spool's own read-only CLI, which runs outside the sandbox where
+		// only a rule keeps it quiet
+		expect(AGENT_ALLOW_RULES).toEqual([
+			"Edit(./design/**)",
+			"Read(//**)",
+			"WebFetch",
+			"WebSearch",
+			"Bash(spool)",
+			"Bash(spool *)",
+		]);
 		// deny beats allow and cannot express an exception, so there is no deny
 		expect(settings.permissions?.deny).toBeUndefined();
 		// and the shell is not narrowed: the fence is paths, never commands
@@ -80,12 +89,15 @@ describe("the spawn", () => {
 		const { args } = planAgentSpawn("/tmp/product", {}, FRESH);
 
 		const settings = JSON.parse(flagValue(args, "--settings") ?? "{}") as {
-			sandbox?: { enabled?: boolean; filesystem?: unknown };
+			sandbox?: { enabled?: boolean; excludedCommands?: string[]; filesystem?: unknown };
 		};
 		// the OS judges the running process where an allowlist could only judge
 		// the command string, and a script the agent wrote is not a string anyone
 		// can judge
 		expect(settings.sandbox?.enabled).toBe(true);
+		// spool's own CLI runs outside the sandbox: `spool shot` launches Chrome,
+		// and Chrome cannot start under Seatbelt (mach ports, observed live)
+		expect(settings.sandbox?.excludedCommands).toEqual(["spool", "spool *"]);
 		// no filesystem narrowing: denyWrite on the root with allowWrite on
 		// design/ blocks design/ too (measured on 2.1.220 — deny beats allow), so
 		// the boundary stays the binary's own cwd + temp and the framing carries
