@@ -53,33 +53,8 @@ export interface StoredThread {
 	readonly at: number;
 	/** the drawn transcript, exactly as the rail drew it */
 	readonly entries: ThreadPicture;
-	/**
-	 * How many of those entries are not drawn from the turn in flight (#211).
-	 *
-	 * The boundary between the conversation and the turn on top of it, which only the rail
-	 * knows: it holds the earlier turns as drawn entries and folds the live one out of its
-	 * events every tick. A client coming back to a turn this daemon is still holding keeps
-	 * this much of the picture and refolds the rest off the replayed log — where taking the
-	 * whole picture would draw the live turn twice, once off disk and once off the wire.
-	 *
-	 * Everything, for a thread with nothing running: a stored picture with no turn under it
-	 * is all conversation, which is also what a file written before #211 reads as.
-	 */
-	readonly kept: number;
 	/** the plan the turn wrote, which is drawn state and so is stored state */
 	readonly plan: unknown;
-	/**
-	 * What spool is holding until this turn ends, in the order it will fire (#170, #211).
-	 *
-	 * Stored for the reason the picture is: it lives in a browser, and a browser is the one
-	 * place a thing can be lost by a keystroke. A refresh used to drop every queued message
-	 * silently — the words were spool's to hold and spool held them in memory only.
-	 *
-	 * Opaque here, like the entries and for the same reason: what a queued message *is* is
-	 * the rail's vocabulary, and a second opinion about its shape down here would be a
-	 * second copy to keep in step.
-	 */
-	readonly queued: ThreadPicture;
 	/** a restart caught this thread mid-turn: it stopped, and it is never resumed */
 	readonly stopped: boolean;
 	/** closing a tab tidies it out of the strip and deletes nothing */
@@ -110,16 +85,6 @@ const WORKING: ReadonlySet<StoredLife> = new Set<StoredLife>(["running", "waitin
  */
 export interface ServedThread extends StoredThread {
 	readonly continuable: boolean;
-	/**
-	 * This daemon is still holding a turn for it, so there is a stream to pick up (#211).
-	 *
-	 * Not the same fact as `stopped`, and the two are opposites on purpose: a thread whose
-	 * picture says a process was up is either one this daemon can still show you — attach,
-	 * replay, carry on — or one whose process went with something that was not a hand. Which
-	 * of the two it is is the only thing the rail needs to decide between reconnecting and
-	 * drawing a cut.
-	 */
-	readonly live: boolean;
 }
 
 /**
@@ -158,20 +123,12 @@ function parseEnvelope(value: unknown): ThreadPut | undefined {
 	if (!STORED.includes(record.life as StoredLife)) return undefined;
 	if (!Array.isArray(record.entries)) return undefined;
 	if (record.at !== undefined && (typeof record.at !== "number" || !Number.isFinite(record.at))) return undefined;
-	// a picture with no boundary in it is a picture with nothing running under it, which is
-	// what every file written before #211 is and what a finished thread means either way
-	const kept =
-		typeof record.kept === "number" && Number.isInteger(record.kept) && record.kept >= 0
-			? Math.min(record.kept, record.entries.length)
-			: record.entries.length;
 	return {
 		ask: record.ask,
 		life: record.life as StoredLife,
 		at: typeof record.at === "number" ? record.at : Date.now(),
 		entries: record.entries,
-		kept,
 		plan: record.plan ?? null,
-		queued: Array.isArray(record.queued) ? record.queued : [],
 	};
 }
 
@@ -278,17 +235,12 @@ export function serveThreads(
 		 * because a background process came back up is spool taking an action nobody asked
 		 * for at that moment.
 		 *
-		 * What identifies one is the store against this daemon's own held turns: a thread
-		 * whose picture says a process was up, with nothing held under that id here, lost its
-		 * process to something that was not a hand. It costs nearly nothing to pick up — the
-		 * agent's memory is intact and one word resumes it.
-		 *
-		 * It says far less than it used to, and that is #211 landing rather than a change of
-		 * rule: a turn now outlives the request that streamed it, so a refresh no longer cuts
-		 * one, and what is left here means what it always claimed to — the daemon went away.
+		 * What identifies one is the store against this daemon's own live turns: a thread
+		 * whose picture says a process was up, with nothing running under that id here,
+		 * lost its process to something that was not a hand. It costs nearly nothing to
+		 * pick up — the agent's memory is intact and one word resumes it.
 		 */
-		const held = live.has(thread.id);
-		const cut = WORKING.has(thread.life) && !held;
+		const cut = WORKING.has(thread.life) && !live.has(thread.id);
 		const stopped = thread.stopped || cut;
 		return {
 			...thread,
@@ -296,7 +248,6 @@ export function serveThreads(
 			// a thread that was working when the lights went out has changed since anybody
 			// looked at it, and the change is that it stopped
 			life: cut ? "unread" : thread.life,
-			live: held,
 			continuable: sessionExists(root, thread.id, env),
 		};
 	});

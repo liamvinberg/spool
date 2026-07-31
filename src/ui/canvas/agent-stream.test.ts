@@ -3,9 +3,8 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import type { AgentEvent, ServedThread } from "../api";
+import type { AgentEvent } from "../api";
 import { type AgentDeck, type AgentTurn, useAgentThreads } from "./agent-stream";
-import { fullyShown } from "./agent-transcript";
 
 /**
  * The hook that owns every thread's turn (#192, #200), on its own rather than under the
@@ -17,21 +16,19 @@ import { fullyShown } from "./agent-transcript";
  * Here nothing else renders, so the tick is the only thing that can.
  */
 
-function mount(stored: readonly ServedThread[] = []) {
+function mount() {
 	const seen: AgentDeck[] = [];
 	let open = false;
 	const encoder = new TextEncoder();
 	let ctrl: ReadableStreamDefaultController<Uint8Array> | undefined;
-	const asked: string[] = [];
 
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
-			asked.push(url.pathname + url.search);
-			// a project with nothing stored, which is what most cases here are about: the
+			// a project with nothing stored, which is what every case here is about: the
 			// picture coming back off disk is `agent-rail.test.ts`'s
-			if (url.pathname.endsWith("/agent/threads")) return Response.json({ threads: stored });
+			if (url.pathname.endsWith("/agent/threads")) return Response.json({ threads: [] });
 			if (url.pathname.includes("/agent/threads/")) return new Response(null, { status: 204 });
 			const stream = new ReadableStream<Uint8Array>({
 				start: (controller) => {
@@ -60,11 +57,7 @@ function mount(stored: readonly ServedThread[] = []) {
 
 	return {
 		latest: () => (seen[seen.length - 1] as AgentDeck).turn as AgentTurn,
-		asked,
 		push: (event: AgentEvent) => ctrl?.enqueue(encoder.encode(`event: agent\ndata: ${JSON.stringify(event)}\n\n`)),
-		/** the line a turn opens with, which is the daemon saying what is being read (#211) */
-		attached: (info: { turn?: string; running: boolean; from: number; logged: number }) =>
-			ctrl?.enqueue(encoder.encode(`event: attached\ndata: ${JSON.stringify(info)}\n\n`)),
 		close: () => {
 			open = false;
 			ctrl?.close();
@@ -175,104 +168,5 @@ describe("the turn a thread is running", () => {
 
 		expect(canvas.latest().phase).toBe("settled");
 		expect(canvas.latest().entries.at(-1)).toMatchObject({ kind: "note", text: "the turn stream ended" });
-	});
-});
-
-/**
- * A page that came back to a turn that never stopped (#211).
- *
- * The turn outlives the request that started it, so a refresh loses the response and
- * nothing else. What the rail has to do with that is keep the conversation it stored,
- * refold the turn off the log the daemon replays, and never draw the two over each other.
- */
-describe("a turn picked back up", () => {
-	const THREAD = "1f0e2d3c-4b5a-4697-8899-aabbccddeeff";
-
-	/** the picture a turn in flight wrote down: the conversation, and the turn so far */
-	const midTurn = (over: Partial<ServedThread> = {}): ServedThread => ({
-		id: THREAD,
-		ask: "make the header tighter",
-		life: "running",
-		at: 1_700_000_000_000,
-		entries: [
-			{ key: "u0", kind: "user", text: "make the header tighter", context: null, attached: null },
-			{ key: "say:1:0", kind: "prose", full: "Reading the header.", landed: [], settled: true },
-		],
-		// the human's words are the conversation's; the prose under them is the turn's, and
-		// the replay is what draws that
-		kept: 1,
-		plan: null,
-		queued: [],
-		stopped: false,
-		closed: false,
-		continuable: true,
-		live: true,
-		...over,
-	});
-
-	it("attaches to the turn the daemon is still holding rather than drawing it cut", async () => {
-		const canvas = mount([midTurn()]);
-		await canvas.render();
-		await settle(120);
-
-		// it went and asked for the turn in that thread, rather than starting one
-		expect(canvas.asked.some((path) => path.includes(`/agent/turn/${THREAD}`))).toBe(true);
-
-		canvas.attached({ turn: "1700000000000-1", running: true, from: 0, logged: 1 });
-		canvas.push({ kind: "say", block: 0, text: "Reading the header.", parent: null });
-		await settle(200);
-
-		const turn = canvas.latest();
-		expect(turn.phase).toBe("playing");
-		// the human's words once, off the stored picture, and the turn's prose once, off the
-		// replay — the boundary is what keeps the second from being drawn twice
-		expect(turn.entries.filter((entry) => entry.kind === "user")).toHaveLength(1);
-		expect(turn.entries.filter((entry) => entry.kind === "prose")).toEqual([
-			{ key: "say:0:0", kind: "prose", full: "Reading the header.", landed: expect.anything(), settled: false },
-		]);
-		// and a replay is not an arrival: it is drawn whole rather than typed out from the
-		// beginning, the way a picture off disk is
-		expect(fullyShown(turn.entries.find((entry) => entry.kind === "prose") as never, turn.elapsed)).toBe(true);
-	});
-
-	it("carries on live from where the replay left off", async () => {
-		const canvas = mount([midTurn()]);
-		await canvas.render();
-		await settle(120);
-
-		canvas.attached({ turn: "1700000000000-1", running: true, from: 0, logged: 1 });
-		canvas.push({ kind: "say", block: 0, text: "Reading the header.", parent: null });
-		await settle(120);
-		canvas.push(ended);
-		canvas.push(closed);
-		canvas.close();
-		await settle(400);
-
-		// it ends the way any turn ends, on the daemon's own word for it — no invented
-		// `stopped`, and no second copy of anything
-		expect(canvas.latest().phase).toBe("settled");
-		expect(canvas.latest().entries.filter((entry) => entry.kind === "note")).toEqual([]);
-	});
-
-	it("takes back the messages it was holding when the page went away", async () => {
-		const canvas = mount([
-			midTurn({ queued: [{ id: "held-1", text: "and the footer", context: null, attached: null }] }),
-		]);
-		await canvas.render();
-		await settle(120);
-
-		// spool holds the queue, and a browser is the one place a thing can be lost by a
-		// keystroke: they come back with the picture rather than going with the page
-		expect(canvas.latest().queued.map((one) => one.text)).toEqual(["and the footer"]);
-	});
-
-	it("draws a thread the daemon is no longer holding as the cut it was", async () => {
-		const canvas = mount([midTurn({ live: false, stopped: true })]);
-		await canvas.render();
-		await settle(120);
-
-		expect(canvas.asked.some((path) => path.includes(`/agent/turn/${THREAD}`))).toBe(false);
-		expect(canvas.latest().phase).toBe("idle");
-		expect(canvas.latest().entries.at(-1)).toMatchObject({ kind: "note", text: "stopped" });
 	});
 });

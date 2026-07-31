@@ -2546,13 +2546,10 @@ function storedThread({
 				settled: true,
 			},
 		],
-		kept: 3,
 		plan: null,
-		queued: [],
 		stopped: false,
 		closed: false,
 		continuable: true,
-		live: false,
 		...over,
 	};
 }
@@ -3125,7 +3122,7 @@ describe("closing a thread", () => {
 	});
 
 	/** a tab nobody can reach must not go on holding a process the hands cannot see */
-	it("stops the turn the tab was holding, and not only the read of it", async () => {
+	it("stops the stream the tab was holding", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "three takes on the cart");
@@ -3138,9 +3135,6 @@ describe("closing a thread", () => {
 		await settle();
 
 		expect(canvas.turn.streams[0]?.aborted()).toBe(true);
-		// and the process with it: a turn outlives the read of it now (#211), so dropping the
-		// read is no longer what stops one — the stop has to be asked for
-		expect(canvas.turn.stops).toHaveLength(1);
 	});
 
 	it("leaves a fresh thread behind when the last one is closed", async () => {
