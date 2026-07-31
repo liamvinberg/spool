@@ -407,4 +407,103 @@ describe("a turn picked back up", () => {
 		expect(canvas.latest().phase).toBe("idle");
 		expect(canvas.latest().entries.at(-1)).toMatchObject({ kind: "note", text: "stopped" });
 	});
+
+	/**
+	 * The queue is spool's to hold, and holding it is not the same as keeping it (#170, #234).
+	 *
+	 * Words waiting on a turn that has already ended are words nobody is going to send: the
+	 * only thing that ever fired a queue was a stream closing, so a daemon restart left them
+	 * in the box for the life of the project, with everything typed afterwards going out in
+	 * front of them.
+	 */
+	it("sends a queue that came back with no turn left to wait for", async () => {
+		const canvas = mount([
+			midTurn({
+				live: false,
+				stopped: true,
+				queued: [{ id: "held-1", text: "and the footer", context: null, attached: null }],
+			}),
+		]);
+		await canvas.render();
+		await settle(200);
+
+		expect(canvas.asked.filter((path) => path.endsWith("/agent/turn"))).toHaveLength(1);
+		expect(canvas.latest().queued).toEqual([]);
+		expect(canvas.latest().phase).toBe("playing");
+		// and the picture no longer claims them, so a second page does not send them again
+		expect(canvas.puts.at(-1)?.queued).toEqual([]);
+	});
+});
+
+/**
+ * The queue against the doors that say no (#170, #234).
+ *
+ * Words spool is holding are spool's to keep hold of, and every one of these is a way the
+ * old rail lost them: fired into a refusal and dropped in an error line, written down as
+ * still-waiting a moment before they went out, or cancelled in memory only.
+ */
+describe("what the queue survives", () => {
+	const queueOne = async (canvas: ReturnType<typeof mount>) => {
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		canvas.push(waiting);
+		await act(async () => {
+			canvas.latest().queue("and the footer");
+		});
+		await settle(120);
+	};
+
+	it("writes the box down before the send goes out, never after", async () => {
+		const canvas = mount();
+		await queueOne(canvas);
+
+		canvas.push(ended);
+		canvas.push(closed);
+		canvas.close();
+		await settle(300);
+
+		// the pictures and the doors are recorded in the one order they were asked in, so the
+		// writes that landed before the queue fired are the ones in front of that POST
+		const fired = canvas.asked.lastIndexOf("/api/p/test/agent/turn");
+		const before = canvas.asked.slice(0, fired).filter((path) => path.includes("/agent/threads/")).length;
+		// a refresh in the window between the write and the send used to come back holding
+		// words the daemon was already running, and send them a second time
+		expect(canvas.puts.slice(0, before).some((put) => put.queued.length === 0)).toBe(true);
+	});
+
+	it("writes a take-back down as it happens rather than on the next throttle", async () => {
+		const canvas = mount();
+		await queueOne(canvas);
+		const wrote = canvas.puts.length;
+
+		await act(async () => {
+			canvas.latest().unqueue(canvas.latest().queued[0]?.id ?? "");
+		});
+
+		expect(canvas.puts.length).toBeGreaterThan(wrote);
+		expect(canvas.puts.at(-1)?.queued).toEqual([]);
+	});
+
+	it("hands the words back to the box when the thread is already running a turn", async () => {
+		const canvas = mount();
+		await canvas.render();
+		// the door's own answer to a second turn in one thread, which is what a rail that
+		// lost its read and came back without attaching gets (#211)
+		canvas.door.turn = 409;
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		await settle(200);
+		canvas.door.turn = 0;
+
+		// the words are the box's again, in the order they were going to be said in, and the
+		// read has gone to find the turn that is actually running
+		expect(canvas.latest().queued.map((one) => one.text)).toEqual(["go"]);
+		expect(canvas.asked.some((path) => path.includes("/agent/turn/"))).toBe(true);
+		// nothing is drawn about it: the refusal is spool's own bookkeeping
+		expect(canvas.latest().entries.filter((entry) => entry.kind === "note")).toEqual([]);
+		expect(canvas.latest().entries.filter((entry) => entry.kind === "user")).toEqual([]);
+	});
 });
