@@ -1,4 +1,4 @@
-import { DEFAULT_PORT } from "./daemon/lifecycle";
+import { DEFAULT_PORT } from "./daemon/loopback";
 
 /**
  * The hosted front door.
