@@ -21,19 +21,23 @@ import type { AgentEntry, AgentRow } from "./agent-transcript";
  */
 
 /**
- * Five lives, and three of them draw a mark.
+ * Five lives, and every one of them draws a mark.
  *
- *   streaming   the thread in the rail right now. The transcript already says it, so
- *               the mark is only there to keep the row aligned with its neighbours.
+ *   streaming   working, in the thread you are looking at. The same turning ring
+ *               `running` draws, because the cell is the one place in a column that
+ *               says whether a thread is moving, and the thread you are watching is
+ *               the one you are most likely to be waiting on. Which one is open is the
+ *               accent's to say, and it says it whether the thread is moving or not.
  *   running     working somewhere you are not looking. A turning ring, colourless,
  *               because state in this rail is motion and the one accent belongs to the
  *               selection.
  *   waiting     stopped, and only a person can move it. The disc held inside that
- *               ring, and the loudest of the three on purpose: it is the only one of
- *               them that is actually stuck.
+ *               ring, and the loudest of them on purpose: it is the only one that is
+ *               actually stuck.
  *   unread      it finished while you were away and nobody has read it. A solid dot at
  *               text strength, the way a mailbox says it, and still not the accent.
- *   read        nothing. An old thread is a name and a time.
+ *   read        an old thread, and out here it has no name beside it, so the mark is
+ *               the whole of the thread. A hollow dot: present, and spent.
  */
 export type Life = "streaming" | "running" | "waiting" | "unread" | "read";
 
