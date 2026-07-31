@@ -338,14 +338,24 @@ export async function putCover(project: string, frame: string, cover: Blob): Pro
 	return (await res.json()) as Cover;
 }
 
-/** Read one SSE body to its end, dispatching each message by its event name. */
-async function drainSse(body: ReadableStream<Uint8Array>, handlers: Record<string, (data: unknown) => void>) {
+/**
+ * Read one SSE body to its end, dispatching each message by its event name.
+ * `onBytes` is told about every chunk, comments and heartbeats included: what
+ * the caller is watching for is a connection that is still there, and a stream
+ * carrying nothing but beats is as alive as one carrying edits.
+ */
+async function drainSse(
+	body: ReadableStream<Uint8Array>,
+	handlers: Record<string, (data: unknown) => void>,
+	onBytes: () => void = () => {},
+) {
 	const reader = body.getReader();
 	const decoder = new TextDecoder();
 	let buffer = "";
 	for (;;) {
 		const next = await reader.read();
 		if (next.done) return;
+		onBytes();
 		buffer += decoder.decode(next.value, { stream: true });
 		const messages = buffer.split("\n\n");
 		buffer = messages.pop() ?? "";
@@ -363,32 +373,120 @@ async function drainSse(body: ReadableStream<Uint8Array>, handlers: Record<strin
 	}
 }
 
+/**
+ * How long a stream may say nothing before it is treated as dead. The daemon
+ * beats every 15 seconds, so three missed beats is the bar: a half-open
+ * connection — a laptop that slept, a network that moved underneath it — never
+ * reports anything, it simply stops arriving, and without a deadline the read
+ * below waits on it for the rest of the session.
+ */
+export const SSE_SILENCE_MS = 45_000;
+/** How often the watchdog asks. Background tabs throttle it; coming back asks straight away. */
+const SSE_WATCH_MS = 15_000;
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_CAP_MS = 10_000;
+
+/**
+ * How long to wait before the next attempt. Exponential from the base to the
+ * cap, and jittered across the top half of each step so a page with several
+ * streams does not knock on a downed daemon in lockstep. A connection that
+ * delivered anything starts the count over: a daemon that is up and dropped one
+ * stream deserves the fast retry, and a daemon that is gone deserves the slow one.
+ */
+function reconnectDelay(attempt: number): number {
+	const ceiling = Math.min(RECONNECT_CAP_MS, RECONNECT_BASE_MS * 2 ** attempt);
+	return ceiling / 2 + Math.random() * (ceiling / 2);
+}
+
+/**
+ * Every live stream's health check. A tab coming back asks all of them at once
+ * rather than waiting out the watchdog it was throttling.
+ */
+const streamChecks = new Set<() => void>();
+
+function checkStreamsOnReturn(): void {
+	if (document.visibilityState !== "visible") return;
+	for (const check of [...streamChecks]) check();
+}
+
+function watchSseHealth(check: () => void): () => void {
+	streamChecks.add(check);
+	if (streamChecks.size === 1) document.addEventListener("visibilitychange", checkStreamsOnReturn);
+	return () => {
+		streamChecks.delete(check);
+		if (streamChecks.size === 0) document.removeEventListener("visibilitychange", checkStreamsOnReturn);
+	};
+}
+
+export interface SseOptions {
+	/**
+	 * A connection after the first one has delivered its first bytes.
+	 *
+	 * The daemon keeps no replay, so whatever it published while nobody was
+	 * listening is gone. The subscriber's job on this is to read the state it
+	 * cares about again rather than to trust what is on screen.
+	 */
+	onReconnect?: () => void;
+}
+
 /** An authenticated SSE fetch stream that dies with the component. */
-export function subscribeSse(url: string, handlers: Record<string, (data: unknown) => void>): () => void {
-	const controller = new AbortController();
+export function subscribeSse(
+	url: string,
+	handlers: Record<string, (data: unknown) => void>,
+	options: SseOptions = {},
+): () => void {
 	let disposed = false;
+	/** Consecutive attempts that delivered nothing — the backoff's whole memory. */
+	let attempt = 0;
+	/** Connections that delivered bytes: the first is an open, every one after it is a return. */
+	let opened = 0;
+	let connection: AbortController | undefined;
+	let lastByteAt = Date.now();
 	let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
+	// a stream that has gone quiet past the bar is hung up on here rather than
+	// waited on: aborting it lands in the reconnect path a dropped stream takes
+	const check = () => {
+		if (disposed || connection === undefined || Date.now() - lastByteAt < SSE_SILENCE_MS) return;
+		connection.abort();
+	};
+	const watchdog = setInterval(check, SSE_WATCH_MS);
+	const unwatch = watchSseHealth(check);
+
 	const connect = async () => {
+		const controller = new AbortController();
+		connection = controller;
+		lastByteAt = Date.now();
+		let delivered = false;
 		try {
 			const res = await controlFetch(url, {
 				headers: { accept: "text/event-stream" },
 				signal: controller.signal,
 			});
 			if (!res.ok || res.body === null) return;
-			await drainSse(res.body, handlers);
+			await drainSse(res.body, handlers, () => {
+				lastByteAt = Date.now();
+				if (delivered) return;
+				delivered = true;
+				attempt = 0;
+				opened += 1;
+				if (opened > 1) options.onReconnect?.();
+			});
 		} catch {
 			// connection failures follow the same reconnect path as a clean EOF
 		} finally {
-			if (!disposed) reconnectTimer = setTimeout(() => void connect(), 500);
+			connection = undefined;
+			if (!disposed) reconnectTimer = setTimeout(() => void connect(), reconnectDelay(attempt++));
 		}
 	};
 
 	void connect();
 	return () => {
 		disposed = true;
+		clearInterval(watchdog);
+		unwatch();
 		if (reconnectTimer !== undefined) clearTimeout(reconnectTimer);
-		controller.abort();
+		connection?.abort();
 	};
 }
 

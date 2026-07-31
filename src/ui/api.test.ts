@@ -22,6 +22,7 @@ function headersOf(call: unknown[]): Headers {
 
 afterEach(() => {
 	vi.useRealTimers();
+	vi.restoreAllMocks();
 	vi.unstubAllGlobals();
 	delete (window as Window & { __SPOOL_CONTROL__?: string }).__SPOOL_CONTROL__;
 	delete (window as Window & { __SPOOL_RENDER_ORIGIN__?: string }).__SPOOL_RENDER_ORIGIN__;
@@ -115,27 +116,11 @@ describe("trusted UI API client", () => {
 		dispose();
 	});
 
-	it("reconnects event streams after failures and EOF until disposed", async () => {
+	it("backs further off each time a daemon that is down refuses, until disposed", async () => {
 		vi.useFakeTimers();
-		const closed = () =>
-			new Response(
-				new ReadableStream<Uint8Array>({
-					start(controller) {
-						controller.close();
-					},
-				}),
-				{ status: 200 },
-			);
-		const fetchMock = vi
-			.fn()
-			.mockRejectedValueOnce(new Error("offline"))
-			.mockResolvedValueOnce(closed())
-			.mockImplementation(
-				() =>
-					new Promise<Response>(() => {
-						// keeps the final connection open until disposal
-					}),
-			);
+		// the bottom of each jittered step, so the waits are the ones being asserted
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		const fetchMock = vi.fn().mockRejectedValue(new Error("offline"));
 		vi.stubGlobal("fetch", fetchMock);
 		const { subscribeSse } = await loadApi();
 
@@ -143,15 +128,140 @@ describe("trusted UI API client", () => {
 		await vi.advanceTimersByTimeAsync(0);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 
-		await vi.advanceTimersByTimeAsync(500);
-		expect(fetchMock).toHaveBeenCalledTimes(2);
-
-		await vi.advanceTimersByTimeAsync(500);
-		expect(fetchMock).toHaveBeenCalledTimes(3);
+		// 250, 500, 1000, 2000: a daemon nobody restarted is knocked on less and
+		// less rather than twice a second for as long as the tab is open
+		for (const wait of [250, 500, 1_000, 2_000]) {
+			await vi.advanceTimersByTimeAsync(wait - 1);
+			const before = fetchMock.mock.calls.length;
+			await vi.advanceTimersByTimeAsync(1);
+			expect(fetchMock.mock.calls.length).toBe(before + 1);
+		}
 
 		dispose();
-		await vi.advanceTimersByTimeAsync(1_000);
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(fetchMock).toHaveBeenCalledTimes(5);
+	});
+
+	it("retries at the base wait again once a connection has delivered something", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		const spoken = () =>
+			new Response(
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(new TextEncoder().encode(": beat\n\n"));
+						controller.close();
+					},
+				}),
+				{ status: 200 },
+			);
+		const fetchMock = vi.fn().mockRejectedValueOnce(new Error("offline")).mockImplementation(spoken);
+		vi.stubGlobal("fetch", fetchMock);
+		const { subscribeSse } = await loadApi();
+
+		const dispose = subscribeSse("/api/events", {});
+		await vi.advanceTimersByTimeAsync(250);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+
+		// the second connection said something before ending, so the daemon is up
+		// and the drop was this stream's: the count starts over
+		await vi.advanceTimersByTimeAsync(250);
 		expect(fetchMock).toHaveBeenCalledTimes(3);
+		dispose();
+	});
+
+	it("hangs up on a stream that has gone quiet, and leaves a beating one alone", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
+		const fetchMock = vi.fn((_url: unknown, init?: RequestInit) =>
+			Promise.resolve(
+				new Response(
+					new ReadableStream<Uint8Array>({
+						start(controller) {
+							streams.push(controller);
+							init?.signal?.addEventListener("abort", () => controller.error(new Error("hung up")));
+						},
+					}),
+					{ status: 200 },
+				),
+			),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+		const { subscribeSse, SSE_SILENCE_MS } = await loadApi();
+
+		const dispose = subscribeSse("/api/events", {});
+		await vi.advanceTimersByTimeAsync(0);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+
+		// a beat is not an event, and it is the whole of what keeps the stream
+		await vi.advanceTimersByTimeAsync(SSE_SILENCE_MS - 1_000);
+		streams[0]?.enqueue(new TextEncoder().encode(": beat\n\n"));
+		await vi.advanceTimersByTimeAsync(SSE_SILENCE_MS - 1_000);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+
+		// nothing after that: the connection is treated as gone rather than waited on
+		await vi.advanceTimersByTimeAsync(SSE_SILENCE_MS + 1_000);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		dispose();
+	});
+
+	it("checks its stream the moment the tab comes back, rather than waiting out the watchdog", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		const fetchMock = vi.fn((_url: unknown, init?: RequestInit) =>
+			Promise.resolve(
+				new Response(
+					new ReadableStream<Uint8Array>({
+						start(controller) {
+							init?.signal?.addEventListener("abort", () => controller.error(new Error("hung up")));
+						},
+					}),
+					{ status: 200 },
+				),
+			),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+		const { subscribeSse } = await loadApi();
+
+		const dispose = subscribeSse("/api/events", {});
+		await vi.advanceTimersByTimeAsync(0);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+
+		// the laptop slept: the clock moved and no timer ran, which is exactly the
+		// half-open connection the watchdog cannot have noticed
+		vi.setSystemTime(Date.now() + 20 * 60_000);
+		document.dispatchEvent(new Event("visibilitychange"));
+		await vi.advanceTimersByTimeAsync(250);
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		dispose();
+	});
+
+	it("tells the subscriber about a connection that came back, never about the first one", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		const spoken = () =>
+			new Response(
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(new TextEncoder().encode('event: hello\ndata: {"project":"demo"}\n\n'));
+						controller.close();
+					},
+				}),
+				{ status: 200 },
+			);
+		vi.stubGlobal("fetch", vi.fn(spoken));
+		const { subscribeSse } = await loadApi();
+		const onReconnect = vi.fn();
+
+		const dispose = subscribeSse("/api/p/demo/events", {}, { onReconnect });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(onReconnect).not.toHaveBeenCalled();
+
+		await vi.advanceTimersByTimeAsync(250);
+		expect(onReconnect).toHaveBeenCalledTimes(1);
+		dispose();
 	});
 });
 
