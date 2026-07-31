@@ -487,6 +487,38 @@ describe("frames that leave the projection", () => {
 		expect(s.model.errands.has("b")).toBe(false);
 		expect(s.model.tries.has("b")).toBe(false);
 	});
+
+	it("keeps what a frame on another page is owed, and hands its errand slot over", () => {
+		// An agent edits a frame on the page you are not on. The page is the
+		// canvas, so the frame is not in this sweep at all — but it is in the
+		// project, and its picture is now wrong.
+		const here = [frame("a", 450, 450)];
+		const project = new Set(["a", "elsewhere"]);
+		const s = sweeper();
+		s.sweep([...here, frame("elsewhere", 350, 450)], { hasCover: () => false, projection: project });
+		expect(s.model.errands.has("elsewhere")).toBe(true);
+		s.model.stale.add("elsewhere");
+
+		const switched = s.sweep(here, { hasCover: () => false, projection: project });
+
+		expect(switched.states).toEqual({ a: "refreshing" });
+		// the borrow ended with the page: its slot belongs to the page arriving
+		expect(s.model.errands.has("elsewhere")).toBe(false);
+		// the debt did not: going back must find a frame that owes a fresh still
+		expect(s.model.stale.has("elsewhere")).toBe(true);
+	});
+
+	it("still forgets a frame the project itself lost", () => {
+		const frames = [frame("a", 450, 450), frame("b", 350, 450)];
+		const s = sweeper();
+		s.sweep(frames, { hasCover: () => false, projection: new Set(["a", "b"]) });
+		s.model.stale.add("b");
+
+		s.sweep([frames[0] as ProjectedFrame], { hasCover: () => false, projection: new Set(["a"]) });
+
+		expect(s.model.stale.has("b")).toBe(false);
+		expect(s.model.tries.has("b")).toBe(false);
+	});
 });
 
 // `frame()` above builds 100x100 boxes, so LIVE_MIN_CSS_PX is reached at k = 4

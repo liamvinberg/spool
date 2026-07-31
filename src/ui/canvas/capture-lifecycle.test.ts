@@ -52,6 +52,8 @@ async function mountLifecycle(onShot: (frame: string, image: CoverRaster) => voi
 	function Harness() {
 		lifecycle = useFrameLifecycle({
 			framesRef,
+			// one page, and it is the whole project
+			allFramesRef: framesRef,
 			entered: null,
 			selectionTargets: new Set(),
 			selected: [],

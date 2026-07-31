@@ -506,6 +506,7 @@ export function ProjectCanvas({
 
 	const lifecycle = useFrameLifecycle({
 		framesRef,
+		allFramesRef,
 		entered,
 		selectionTargets,
 		selected,

@@ -225,6 +225,17 @@ export interface SweepInput {
 	 * the machine the player is running on gets the whole browser.
 	 */
 	pictured: boolean;
+	/**
+	 * Every frame the project has, against which the bookkeeping is pruned (#39).
+	 *
+	 * `frames` is one page's worth, because a page is the canvas. What a frame is
+	 * owed is not: an agent editing a frame on the page you are not on stales its
+	 * picture, and pruning against what is on screen would forget that inside one
+	 * sweep. Then you switch pages and find a picture of the document as it was,
+	 * with nobody owing you a new one. Absent means the caller has no wider list,
+	 * and the page on screen is the whole projection.
+	 */
+	projection?: ReadonlySet<string>;
 }
 
 /**
@@ -451,14 +462,24 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		if (target !== current) changed = true;
 	}
 
-	// Frames that left the projection take their bookkeeping with them.
-	for (const name of [...model.stale]) if (!alive.has(name)) model.stale.delete(name);
+	// Frames that left take their bookkeeping with them, and what "left" means
+	// depends on what is being remembered. A borrowed frame, a boot that has run
+	// long enough, a document you went inside: those are facts about a mounted
+	// document, and leaving the page ends them — a page switch must hand its
+	// errand slots straight over to the page arriving.
 	for (const name of [...model.arrived]) if (!alive.has(name)) model.arrived.delete(name);
-	for (const name of [...model.photographed]) if (!alive.has(name)) model.photographed.delete(name);
 	for (const name of [...model.errands.keys()]) if (!alive.has(name)) model.errands.delete(name);
-	for (const name of [...model.tries.keys()]) if (!alive.has(name)) model.tries.delete(name);
 	for (const name of [...model.modelLive]) if (!alive.has(name)) model.modelLive.delete(name);
 	for (const name of [...model.wentInside]) if (!alive.has(name)) model.wentInside.delete(name);
+	// The debt is not. A frame is owed a picture whether or not its page is the
+	// one on screen, so it is pruned against the project: an agent's edit to a
+	// frame on another page would otherwise lose its stale mark inside one sweep,
+	// and you would go back to a picture of the document as it was with nobody
+	// owing you a new one.
+	const carried = input.projection ?? alive;
+	for (const name of [...model.stale]) if (!carried.has(name)) model.stale.delete(name);
+	for (const name of [...model.photographed]) if (!carried.has(name)) model.photographed.delete(name);
+	for (const name of [...model.tries.keys()]) if (!carried.has(name)) model.tries.delete(name);
 
 	return {
 		states: next,
@@ -482,6 +503,11 @@ function markPictureWrong(model: LifecycleModel, frame: string): void {
 
 export interface LifecycleDeps {
 	framesRef: RefObject<ProjectedFrame[]>;
+	/**
+	 * The whole projection, for the sweep's pruning (#39): `framesRef` is the page
+	 * on screen, and what a frame elsewhere is owed has to outlive not being on it.
+	 */
+	allFramesRef: RefObject<ProjectedFrame[]>;
 	entered: string | null;
 	selectionTargets: ReadonlySet<string>;
 	/**
@@ -518,6 +544,7 @@ export interface LifecycleDeps {
 export function useFrameLifecycle(deps: LifecycleDeps) {
 	const {
 		framesRef,
+		allFramesRef,
 		entered,
 		selectionTargets,
 		selected,
@@ -833,6 +860,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 					? null
 					: { width: viewportRef.current.clientWidth, height: viewportRef.current.clientHeight },
 			pictured: picturedRef.current,
+			projection: new Set(allFramesRef.current.map((frame) => frame.name)),
 		});
 		for (const frame of result.refreshCaptures) {
 			void requestCapture(frame).then((image) => noteErrandShot(model.current, frame, image !== undefined));
@@ -841,7 +869,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		// against the states this sweep just decided, not last render's: a frame
 		// handed back from an errand becomes freezable as soon as it is live again
 		applyFreeze(result.states, now);
-	}, [framesRef, cameraRef, viewportRef, requestCapture, applyFreeze]);
+	}, [framesRef, allFramesRef, cameraRef, viewportRef, requestCapture, applyFreeze]);
 
 	/**
 	 * Hold one HTML frame through the export intent, wait for its document,

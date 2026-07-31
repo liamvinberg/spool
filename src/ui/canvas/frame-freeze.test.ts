@@ -62,6 +62,8 @@ async function mountLive(options: Attention & { frame?: ProjectedFrame } = {}) {
 	function Harness({ props }: { props: Attention }) {
 		lifecycle = useFrameLifecycle({
 			framesRef,
+			// one page, and it is the whole project
+			allFramesRef: framesRef,
 			entered: props.entered ?? null,
 			// deliberately empty: a selection the current tool does not mount for is
 			// still a selection, and the freeze has to see it (#172)
