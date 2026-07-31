@@ -1569,59 +1569,82 @@ export function ProjectCanvas({
 		arriveAtJump(taken.entry);
 	}, [jumpSpot, arriveAtJump]);
 
+	/**
+	 * The stream dropped and came back. Nothing was delivered while it was gone
+	 * and the daemon keeps no replay, so an agent's whole twenty minutes of work
+	 * is simply missing from this canvas — and the canvas cannot tell, because a
+	 * project nobody touched looks the same.
+	 *
+	 * So a return reads everything again rather than trusting what is on screen,
+	 * down to reloading every document. Frames are content-addressed and
+	 * revalidated, so a frame nothing happened to costs one conditional request,
+	 * and a reconnect is rare enough to pay for the frames something did happen
+	 * to. Every picture goes with them: a frame on another page owes a fresh
+	 * still whether or not anyone has looked at it yet.
+	 */
+	const resync = useCallback(() => {
+		void refetchFrames();
+		void refetchFlows();
+		for (const frame of allFramesRef.current) reloadFrameDocument(frame.name);
+	}, [refetchFrames, refetchFlows, reloadFrameDocument]);
+
 	// SSE: the agent loop (#22) — source edits update the canvas without reload
 	useEffect(() => {
-		return subscribeSse(`/api/p/${encodeURIComponent(project)}/events`, {
-			change: (data) => {
-				const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
-				if (event.kind === "frame" && event.frame !== undefined) {
-					const frame = event.frame;
-					reloadFrameDocument(frame);
-					void refetchFrames();
-					// an edit moves the graph: edges re-derive, verified marks may drop —
-					// walks themselves stay canvas-silent (#34): they cannot move the map
-					void refetchFlows();
-				} else if (event.kind === "resolved") {
-					// a render pass filled dark targets: unlike a walk, this really
-					// does add edges, so the graph must be re-read
-					void refetchFlows();
-				} else if (event.kind === "shared") {
-					// a shared file the link graph has read names its own readers (#109);
-					// anything it could not name can stale every document
-					const staled = event.frames;
-					if (staled === undefined) {
-						setDocNonces((current) => {
-							const next: Record<string, number> = { ...current };
-							for (const frame of framesRef.current) next[frame.name] = (next[frame.name] ?? 0) + 1;
-							return next;
-						});
-						setWalkArrivals((current) => (current.size === 0 ? current : new Set<string>()));
-						setPicked([]);
-						pickedChain.current = null;
-					} else {
-						for (const frame of staled) reloadFrameDocument(frame);
-					}
-					void refetchFrames();
-					// a shared source file moves the graph as surely as a frame's own
-					void refetchFlows();
-				} else if (event.kind === "geometry") {
-					// another browser's hands (or our own echo); ours are the truth
-					// while a gesture or an un-flushed nudge is in flight
-					if (
-						(gesture.current.kind === "idle" || gesture.current.kind === "pan") &&
-						nudgeDirty.current.size === 0
-					) {
+		return subscribeSse(
+			`/api/p/${encodeURIComponent(project)}/events`,
+			{
+				change: (data) => {
+					const event = data as { kind: string; frame?: string; frames?: string[]; cover?: Cover };
+					if (event.kind === "frame" && event.frame !== undefined) {
+						const frame = event.frame;
+						reloadFrameDocument(frame);
 						void refetchFrames();
+						// an edit moves the graph: edges re-derive, verified marks may drop —
+						// walks themselves stay canvas-silent (#34): they cannot move the map
+						void refetchFlows();
+					} else if (event.kind === "resolved") {
+						// a render pass filled dark targets: unlike a walk, this really
+						// does add edges, so the graph must be re-read
+						void refetchFlows();
+					} else if (event.kind === "shared") {
+						// a shared file the link graph has read names its own readers (#109);
+						// anything it could not name can stale every document
+						const staled = event.frames;
+						if (staled === undefined) {
+							setDocNonces((current) => {
+								const next: Record<string, number> = { ...current };
+								for (const frame of framesRef.current) next[frame.name] = (next[frame.name] ?? 0) + 1;
+								return next;
+							});
+							setWalkArrivals((current) => (current.size === 0 ? current : new Set<string>()));
+							setPicked([]);
+							pickedChain.current = null;
+						} else {
+							for (const frame of staled) reloadFrameDocument(frame);
+						}
+						void refetchFrames();
+						// a shared source file moves the graph as surely as a frame's own
+						void refetchFlows();
+					} else if (event.kind === "geometry") {
+						// another browser's hands (or our own echo); ours are the truth
+						// while a gesture or an un-flushed nudge is in flight
+						if (
+							(gesture.current.kind === "idle" || gesture.current.kind === "pan") &&
+							nudgeDirty.current.size === 0
+						) {
+							void refetchFrames();
+						}
+					} else if (event.kind === "thumb" && event.frame !== undefined) {
+						// the image rides the event; only a cover the daemon could not
+						// read back costs a projection read
+						if (event.cover !== undefined) noteCover(event.frame, event.cover);
+						else void refetchFrames();
 					}
-				} else if (event.kind === "thumb" && event.frame !== undefined) {
-					// the image rides the event; only a cover the daemon could not
-					// read back costs a projection read
-					if (event.cover !== undefined) noteCover(event.frame, event.cover);
-					else void refetchFrames();
-				}
+				},
 			},
-		});
-	}, [project, refetchFrames, refetchFlows, noteCover, reloadFrameDocument]);
+			{ onReconnect: resync },
+		);
+	}, [project, refetchFrames, refetchFlows, noteCover, reloadFrameDocument, resync]);
 
 	// the frame protocol: loaded/error/shot route into the lifecycle, session?
 	// answers with the carried walk session, go/back move the entered state
