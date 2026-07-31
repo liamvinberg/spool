@@ -551,7 +551,7 @@ function Spine({ threads, room }: { threads: Threads; room: number }) {
 				<PlusIcon />
 			</button>
 			<div
-				className="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+				className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 				// a fixed box does not travel with the cell it belongs to, so the cell is asked
 				// again where it is rather than the flyout being taken away mid-read
 				onScroll={() => {
@@ -1207,7 +1207,7 @@ function Transcript({
 					const room = box.scrollHeight - box.clientHeight - box.scrollTop;
 					if (way < 0 ? box.scrollTop > 0 : room >= 1) leave();
 				}}
-				className="pages-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-3.5 pt-6 pb-4"
+				className="pages-scrollbar flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-3.5 pt-6 pb-4"
 			>
 				{/* `mt-auto` rather than `justify-end`: a flex container that end-justifies its
 				    overflow puts the top of it out of reach of the scrollbar */}
@@ -1317,7 +1317,9 @@ function Entry({
 			return (
 				<div className="flex items-center gap-2.5 py-0.5">
 					<span className="h-px flex-1 bg-border" />
-					<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3">{entry.text}</span>
+					{/* min-w-0, because a label that refuses to shrink pushes the row past the
+					    rail and the log must never scroll sideways */}
+					<span className="min-w-0 truncate font-mono text-2xs text-muted/60 leading-3">{entry.text}</span>
 					<span className="h-px flex-1 bg-border" />
 				</div>
 			);
@@ -2513,7 +2515,7 @@ function QueueBox({ queued, onUnqueue }: { queued: readonly AgentQueued[]; onUnq
 		<div className="flex min-h-0 flex-col gap-2.5">
 			<div
 				data-agent-queue=""
-				className="pages-scrollbar flex min-h-0 flex-col gap-3.5 overflow-y-auto"
+				className="pages-scrollbar flex min-h-0 flex-col gap-3.5 overflow-x-hidden overflow-y-auto"
 				style={{ maxHeight: QUEUE_H }}
 			>
 				{queued.map((message) => (

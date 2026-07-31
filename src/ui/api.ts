@@ -408,11 +408,27 @@ export interface AgentReading {
  * Both doors return the same stream, so both read it the same way: the POST that starts a
  * turn and the GET that picks one up differ in what they send and in nothing after that.
  */
-async function readTurn(open: Promise<Response>, on: AgentReading, disposed: () => boolean): Promise<void> {
+async function readTurn(
+	open: Promise<Response>,
+	on: AgentReading,
+	disposed: () => boolean,
+	/**
+	 * Statuses that end the read cleanly instead of reporting the body (#211).
+	 *
+	 * The attach door's 404 is the ordinary answer for every thread that is not
+	 * mid-turn — the picture on disk is the whole of what the rail draws for one
+	 * of those, and it already has it. Reported, it was drawn into the log as
+	 * `no turn to read in thread "…"` the first time a daemon restart outlived
+	 * the turns its rails were reading.
+	 */
+	ordinary: readonly number[] = [],
+): Promise<void> {
 	try {
 		const res = await open;
 		if (!res.ok || res.body === null) {
-			if (!disposed()) on.end(res.body === null ? "the turn stream never opened" : await res.text());
+			if (disposed()) return;
+			if (ordinary.includes(res.status)) on.end();
+			else on.end(res.body === null ? "the turn stream never opened" : await res.text());
 			return;
 		}
 		// `disposed` gates the events too, not only the end: letting go of a read can leave
@@ -503,6 +519,7 @@ export function attachAgentTurn(project: string, thread: string, from: number, o
 		),
 		on,
 		() => disposed,
+		[404],
 	);
 	return () => {
 		disposed = true;
