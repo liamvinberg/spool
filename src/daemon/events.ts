@@ -40,6 +40,8 @@ type Listener = (event: ChangeEvent) => void;
 
 interface RootWatch {
 	listeners: Set<Listener>;
+	/** The teardown the last subscriber armed, cancelled by the next one to arrive. */
+	linger: NodeJS.Timeout | undefined;
 	stop(): void;
 }
 
@@ -53,6 +55,17 @@ export interface ChangeHubDeps {
 }
 
 const DEBOUNCE_MS = 40;
+/**
+ * How long the watcher outlives its last subscriber.
+ *
+ * A browser reconnecting is a browser that is gone — for its backoff, for a
+ * daemon restart it is waiting out, for the moment a tab spends coming back.
+ * `fs.watch` has no catch-up, so a watcher torn down the instant the last
+ * stream closed makes that whole gap a hole in the record: the edits landing in
+ * it are never announced to anyone. Waiting is what closes the hole, and an
+ * idle daemon still ends up holding no fs handles a few seconds later.
+ */
+const WATCH_LINGER_MS = 10_000;
 
 /**
  * Push side of the agent loop: one recursive design/ watcher per project,
@@ -67,14 +80,23 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 	function subscribe(root: string, listener: Listener): () => void {
 		const entry = roots.get(root) ?? start(root);
 		roots.set(root, entry);
+		// a stream that came back inside the window keeps the watcher it left
+		if (entry.linger !== undefined) {
+			clearTimeout(entry.linger);
+			entry.linger = undefined;
+		}
 		entry.listeners.add(listener);
 		return () => {
 			entry.listeners.delete(listener);
-			// the last subscriber takes the watcher with it — an idle daemon holds no fs handles
-			if (entry.listeners.size === 0 && roots.get(root) === entry) {
+			if (entry.listeners.size > 0 || roots.get(root) !== entry || entry.linger !== undefined) return;
+			// the last subscriber does not take the watcher with it straight away
+			entry.linger = setTimeout(() => {
+				entry.linger = undefined;
+				if (entry.listeners.size > 0 || roots.get(root) !== entry) return;
 				entry.stop();
 				roots.delete(root);
-			}
+			}, WATCH_LINGER_MS);
+			entry.linger.unref?.();
 		};
 	}
 
@@ -82,7 +104,7 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 		const listeners = new Set<Listener>();
 		const pending = new Map<string, ChangeEvent>();
 		let timer: NodeJS.Timeout | undefined;
-		const entry: RootWatch = { listeners, stop: () => clear() };
+		const entry: RootWatch = { listeners, linger: undefined, stop: () => clear() };
 
 		let watcher: ReturnType<typeof watch> | undefined;
 		try {
@@ -117,6 +139,8 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 			watcher?.close();
 			if (timer !== undefined) clearTimeout(timer);
 			timer = undefined;
+			if (entry.linger !== undefined) clearTimeout(entry.linger);
+			entry.linger = undefined;
 		}
 		return entry;
 	}
