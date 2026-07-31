@@ -15,7 +15,7 @@ import {
 } from "../api";
 import type { AgentWrite } from "./agent-nouns";
 import { type LoginDeck, STILL_OUT, signedInAs } from "./agent-preflight";
-import { type AgentHandback, type AgentQueued, drawableQueue } from "./agent-queue";
+import { type AgentHandback, type AgentQueued, drawableQueue, handover } from "./agent-queue";
 import {
 	askOf,
 	bounced,
@@ -166,6 +166,17 @@ export interface AgentTurn {
 	/** whatever left the queue un-fired, for whoever is holding the box (#170) */
 	readonly handback: AgentHandback;
 	/**
+	 * The words in the box that nobody has sent, as the picture last had them (#234).
+	 *
+	 * What the composer starts from rather than what it is: the field's live value is the
+	 * composer's own, and this is the thread saying what it was left holding — read when
+	 * there is nothing typed into this thread yet, which is every thread a page has just
+	 * come back to.
+	 */
+	readonly draft: string;
+	/** the composer saying what it holds now, which is how a draft outlives the tab (#234) */
+	readonly onDraft: (text: string) => void;
+	/**
 	 * The usage window, which is the one thing here that outlives a turn (#122).
 	 *
 	 * It came back on the message before this one and it will still be true tomorrow, so a
@@ -300,6 +311,16 @@ interface Live {
 	 */
 	waitingOn: Map<string, string | null>;
 	holding: readonly AgentQueued[];
+	/**
+	 * The words in the box that nobody has sent, which belong to this conversation (#234).
+	 *
+	 * The composer draws them and this holds them, because a draft outlives the tab it was
+	 * typed in: a stop hands a whole queue back into the field, and that was memory only
+	 * until it landed here.
+	 */
+	draft: string;
+	/** a stop is one act with one outcome, so the ending it causes sends nothing (#165, #170) */
+	stopping: boolean;
 	handback: AgentHandback;
 	/** what the daemon's stop names this turn by, since a stop has no request to quote */
 	named: string;
@@ -334,6 +355,8 @@ function born(id: string, over: Partial<Live> = {}): Live {
 		parked: { total: 0, since: null },
 		waitingOn: new Map(),
 		holding: [],
+		draft: "",
+		stopping: false,
 		handback: { count: 0, messages: [] },
 		named: "",
 		starts: 0,
@@ -374,6 +397,9 @@ function restored(stored: ServedThread): Live {
 		// the words spool was holding when the page went away, which are spool's to hold
 		// across one too (#170, #211)
 		holding: drawableQueue(stored.queued),
+		// and the ones in the box that never left it, which are the same promise one keystroke
+		// further back (#234)
+		draft: stored.draft,
 	});
 }
 
@@ -488,6 +514,16 @@ export function useAgentThreads(project: string): AgentDeck {
 	const [limit, setLimit] = useState<AgentLimit | null>(null);
 
 	/**
+	 * Threads with a picture owed, and the one timer that pays them (#234).
+	 *
+	 * Typing is the one thing here that changes a thread as fast as a hand can move, and it
+	 * is the one thing that must not become a write per keystroke. Everything else a thread
+	 * does — a send, a settle, a take-back — writes itself down as it happens.
+	 */
+	const owed = useRef(new Set<Live>());
+	const paying = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	/**
 	 * The fire, reached from the stream that ends (#170).
 	 *
 	 * A ref because the two are circular: what a turn's end does is send whatever the box is
@@ -520,6 +556,9 @@ export function useAgentThreads(project: string): AgentDeck {
 		(thread: Live) => {
 			const shown = shownOf(thread);
 			const entries = entriesOf(thread, shown);
+			// whatever this thread owed is paid by writing it: the debt is one picture and
+			// this is that picture (#234)
+			owed.current.delete(thread);
 			// a thread nobody has said anything to is not a conversation yet, and an empty
 			// picture on disk would be a tab restored with nothing in it
 			if (entries.length === 0) return;
@@ -537,10 +576,43 @@ export function useAgentThreads(project: string): AgentDeck {
 				kept: keptOf(thread, shown),
 				plan: planOf(thread, shown),
 				queued: thread.holding,
+				draft: thread.draft,
 			});
 		},
 		[project],
 	);
+
+	/** everything owed, written now: the end of the throttle, and what a tab going runs */
+	const settle = useCallback(() => {
+		if (paying.current !== null) clearTimeout(paying.current);
+		paying.current = null;
+		for (const thread of [...owed.current]) save(thread);
+	}, [save]);
+
+	/** this thread's picture, owed and written within the throttle rather than at once */
+	const later = useCallback(
+		(thread: Live) => {
+			owed.current.add(thread);
+			if (paying.current !== null) return;
+			paying.current = setTimeout(settle, SAVE_MS);
+		},
+		[settle],
+	);
+
+	/*
+	 * The tab going is the one deadline a throttle cannot outlast (#234).
+	 *
+	 * `pagehide` rather than `beforeunload`, which is what the rest of this canvas already
+	 * flushes its staged work on: it is the event a phone fires, and the one a back-forward
+	 * cache does not skip.
+	 */
+	useEffect(() => {
+		window.addEventListener("pagehide", settle);
+		return () => {
+			window.removeEventListener("pagehide", settle);
+			settle();
+		};
+	}, [settle]);
 
 	/**
 	 * The look that reads a thread, wherever the looking happened (#136).
@@ -598,6 +670,7 @@ export function useAgentThreads(project: string): AgentDeck {
 			thread.ms = 0;
 			thread.drained = false;
 			thread.restored = false;
+			thread.stopping = false;
 			if (!attaching) {
 				thread.starts += 1;
 				thread.unread = false;
@@ -709,8 +782,14 @@ export function useAgentThreads(project: string): AgentDeck {
 					 * A cut fires nothing (#234). Nobody knows what the turn that vanished did to the
 					 * repo, and sending the next thing into that is spool taking an action on a
 					 * guess: the words stay in the box, where a hand can send them or take them back.
+					 *
+					 * Neither does an ending a hand asked for. A stop empties the box on the press,
+					 * so this used to be true by ordering alone — and it stopped being true the
+					 * moment a stop could leave a row in it (#119).
 					 */
-					if (ending.kind !== "cut") fireRef.current(thread);
+					const stopped = thread.stopping;
+					thread.stopping = false;
+					if (ending.kind !== "cut" && !stopped) fireRef.current(thread);
 					redraw();
 				},
 			};
@@ -995,15 +1074,26 @@ export function useAgentThreads(project: string): AgentDeck {
 			 */
 			if (thread.streaming) void interruptAgentTurn(project, thread.named);
 			thread.abandon?.();
+			// what the box was holding for a conversation that is going does not go with it
+			// (#170, #234): the words are the person's, so they land in the composer they are
+			// about to be looking at, exactly as a stop hands them back
+			const going = thread.holding;
+			thread.holding = [];
 			threads.current.delete(id);
 			void closeAgentThread(project, id);
+			let landing = threads.current.get(openRef.current);
 			if (openRef.current === id) {
-				const newest = [...threads.current.values()].sort((one, two) => two.at - one.at)[0];
-				setOpen((newest ?? start()).id);
+				const newest = [...threads.current.values()].sort((one, two) => two.at - one.at)[0] ?? start();
+				landing = newest;
+				setOpen(newest.id);
 			}
+			// every one of them, and a reference beyond the first is the one thing that cannot
+			// come: there is one slot and the words are what matter, so the text comes home
+			// either way rather than being held back by what it was carrying
+			if (landing !== undefined) handBack(landing, going);
 			redraw();
 		},
-		[project, start, redraw],
+		[project, start, redraw, handBack],
 	);
 
 	const onNew = useCallback(() => setOpen(start().id), [start]);
@@ -1125,13 +1215,32 @@ export function useAgentThreads(project: string): AgentDeck {
 				const thread = threads.current.get(openRef.current);
 				if (thread === undefined) return;
 				// the queue goes first and unconditionally: whether or not there is still a
-				// process to ask, a stop is one act and the words it cancels come back
-				const going = thread.holding;
-				hold(thread, []);
-				handBack(thread, going);
+				// process to ask, a stop is one act and the words it cancels come back. What is
+				// carrying a reference the box has no slot for stays a row rather than being
+				// collapsed into the blob, because a picture cannot be got again (#119, #234)
+				const { back, kept } = handover(thread.holding);
+				// and the ending this press causes sends nothing, whatever is left in the box: a
+				// stop is one act with one outcome, said here rather than left to the order two
+				// things happen in
+				thread.stopping = true;
+				hold(thread, kept);
+				handBack(thread, back);
 				void interruptAgentTurn(project, thread.named);
 			}, [project, hold, handBack]),
 			handback: here.handback,
+			/** the words in the box that nobody has sent, as the picture last had them (#234) */
+			draft: here.draft,
+			onDraft: useCallback(
+				(text: string) => {
+					const thread = threads.current.get(openRef.current);
+					if (thread === undefined || thread.draft === text) return;
+					thread.draft = text;
+					// on the throttle rather than at once, and it is the only thing here that is:
+					// a write per keystroke is a PUT per keystroke, and nothing is drawn from this
+					later(thread);
+				},
+				[later],
+			),
 			limit,
 		},
 	};

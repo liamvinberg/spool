@@ -80,6 +80,18 @@ export interface StoredThread {
 	 * second copy to keep in step.
 	 */
 	readonly queued: ThreadPicture;
+	/**
+	 * What the composer was holding and nobody had sent (#234).
+	 *
+	 * Stored for the reason the queue is: it lives in a browser. A stop hands every word it
+	 * cancels back into the box, which made the box the place a whole turn's worth of typing
+	 * could be sitting when the tab was refreshed — and it was memory only, so it went.
+	 *
+	 * Words rather than a drawing, so this one is a string: what is unsent has no vocabulary
+	 * to keep in step, and a reference riding with it is bytes the disk has no business
+	 * holding for something nobody has sent.
+	 */
+	readonly draft: string;
 	/** a restart caught this thread mid-turn: it stopped, and it is never resumed */
 	readonly stopped: boolean;
 	/** closing a tab tidies it out of the strip and deletes nothing */
@@ -172,6 +184,8 @@ function parseEnvelope(value: unknown): ThreadPut | undefined {
 		kept,
 		plan: record.plan ?? null,
 		queued: Array.isArray(record.queued) ? record.queued : [],
+		// a file written before #234 held nothing unsent, which is the same fact as an empty box
+		draft: typeof record.draft === "string" ? record.draft : "",
 	};
 }
 
