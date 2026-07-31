@@ -205,9 +205,9 @@ export function nameOf(entries: readonly AgentEntry[], fallback = UNSAID): strin
  * The last line the thread drew, in the rail's own nouns (#205).
  *
  * Rows only, and the last of them: it is what the thread is *doing*, which the name cannot
- * say because the name is the set of frames it has touched and carries no verb. A message
- * is not a line — prose is paragraphs, and the flyout has one line to spend — and the run
- * count is left off for the same reason the transcript keeps it outside the subject.
+ * say because the name is the frames it has touched and carries no verb. A message is not a
+ * line — prose is paragraphs and the flyout has one line to spend — and a delegate's rows
+ * are not either, because the transcript keeps them inside the row that launched them.
  *
  * Empty where a thread has drawn no row at all, which the flyout words itself.
  */
