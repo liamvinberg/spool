@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { Player, type PlayerController } from "./player-chrome";
+import { toggleFullscreen } from "./player-stage";
 
 /**
  * The player shell: the trusted half of a played session. It holds the
@@ -923,10 +924,7 @@ export function bootPlayerShell(config: ShellConfig): void {
 		},
 		walked: (from, to) => window.dispatchEvent(new CustomEvent("spool-player-walked", { detail: { from, to } })),
 		wake: () => document.querySelector(".spool-stage")?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true })),
-		fullscreen: () => {
-			if (document.fullscreenElement != null) void document.exitFullscreen().catch(() => {});
-			else void document.documentElement.requestFullscreen?.().catch(() => {});
-		},
+		fullscreen: () => toggleFullscreen(() => document.documentElement),
 		repair: reloadForHandoff,
 		refreshGeometry: () => window.dispatchEvent(new Event("spool-player-geometry-request")),
 	});

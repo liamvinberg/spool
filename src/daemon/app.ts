@@ -122,16 +122,18 @@ export interface DaemonOptions {
 	onMachineStateWatchError?: (error: Error) => void;
 }
 
-/** What inline play asks for (#210): where to open, and in which scenario. */
-const inlinePlayParams = z.object({
+/** What either play door asks for: where to open, and in which scenario. */
+const openingParams = {
 	frame: z.string().refine(isSafeName, { message: "not a frame name" }).optional(),
 	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
-});
+};
 
-/** The player's params (#24): Zod-validated, path-safe names only. */
+/** What inline play asks for (#210) — the opening and nothing else. */
+const inlinePlayParams = z.object(openingParams);
+
+/** The player page's params (#24): Zod-validated, path-safe names only. */
 const playParams = z.object({
-	frame: z.string().refine(isSafeName, { message: "not a frame name" }).optional(),
-	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
+	...openingParams,
 	shell: z.literal("1").optional(),
 	handoff: z
 		.string()
@@ -268,6 +270,33 @@ export function createDaemonApp({
 	const webfonts = createWebfonts({ cacheDir: join(spoolDir, "webfonts") });
 	const compiler = createFrameCompiler(version, webfonts);
 	const playerCompiler = createPlayerCompiler(version, webfonts);
+
+	/**
+	 * Where a session opens, and what it is composed of. Both play doors climb
+	 * the same ladder — an explicit `?frame=` wins, then whatever the canvas
+	 * last pointed at, then the first frame by name (#13) — and both refuse the
+	 * same two ways, so the ladder is written once and the doors differ only in
+	 * how they carry a refusal back.
+	 */
+	function openingOn(
+		root: string,
+		frame: string | undefined,
+		projectName: string,
+	): { start: string; projection: ReturnType<typeof listProjectFrames> } | { message: string } {
+		const projection = listProjectFrames(root);
+		const names = projection.frames.map((entry) => entry.name);
+		const first = names[0];
+		if (first === undefined) {
+			return {
+				message: `nothing to play in "${projectName}" — a frame is born by writing design/frames/<name>/frame.tsx`,
+			};
+		}
+		if (frame !== undefined && !names.includes(frame)) {
+			return { message: `no frame "${frame}" to play — expected design/frames/${frame}/frame.tsx` };
+		}
+		const selected = selections.get(root).find((entry) => names.includes(entry.frame))?.frame;
+		return { start: frame ?? selected ?? first, projection };
+	}
 	const flowGraph = createFlowGraph();
 	// a shared/ edit wakes the frames whose graph reaches it, not every document
 	const hub = createChangeHub({ framesUsing: (root, path) => flowGraph.framesUsing(root, path) });
@@ -755,21 +784,9 @@ export function createDaemonApp({
 				const { frame, scenario } = c.req.valid("query");
 				const project = resolveProject(c, name);
 				if ("response" in project) return project.response;
-				const projection = listProjectFrames(project.root);
-				const names = projection.frames.map((entry) => entry.name);
-				const first = names[0];
-				if (first === undefined) {
-					return c.text(
-						`nothing to play in "${name}" — a frame is born by writing design/frames/<name>/frame.tsx`,
-						404,
-					);
-				}
-				if (frame !== undefined && !names.includes(frame)) {
-					return c.text(`no frame "${frame}" to play — expected design/frames/${frame}/frame.tsx`, 404);
-				}
-				// the selected-else-first start (#13), the same ladder /play/ climbs
-				const selected = selections.get(project.root).find((entry) => names.includes(entry.frame))?.frame;
-				const start = frame ?? selected ?? first;
+				const opening = openingOn(project.root, frame, name);
+				if ("message" in opening) return c.text(opening.message, 404);
+				const { start, projection } = opening;
 				const playScenario = scenario ?? "default";
 				const inner = new URL(`/play/${encodeURIComponent(name)}`, renderOrigin);
 				inner.searchParams.set("frame", start);
@@ -1560,21 +1577,11 @@ export function createDaemonApp({
 					if (shellRender) return shellFailure(await project.response.text(), project.response.status);
 					return project.response;
 				}
-				const projection = listProjectFrames(project.root);
-				const names = projection.frames.map((entry) => entry.name);
-				const first = names[0];
-				if (first === undefined) {
-					const message = `nothing to play in "${name}" — a frame is born by writing design/frames/<name>/frame.tsx`;
-					return shellRender ? shellFailure(message, 404) : c.text(message, 404);
+				const opening = openingOn(project.root, frame, name);
+				if ("message" in opening) {
+					return shellRender ? shellFailure(opening.message, 404) : c.text(opening.message, 404);
 				}
-				if (frame !== undefined && !names.includes(frame)) {
-					const message = `no frame "${frame}" to play — expected design/frames/${frame}/frame.tsx`;
-					return shellRender ? shellFailure(message, 404) : c.text(message, 404);
-				}
-				// the selected-else-first start (#13): an explicit ?frame= wins, then
-				// whatever the canvas last pointed at, then the first frame by name
-				const selected = selections.get(project.root).find((entry) => names.includes(entry.frame))?.frame;
-				const start = frame ?? selected ?? first;
+				const { start, projection } = opening;
 				const frames = Object.fromEntries(
 					projection.frames.map((entry) => [entry.name, { w: entry.w, h: entry.h }]),
 				);

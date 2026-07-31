@@ -23,7 +23,7 @@ import {
 	subscribeSse,
 } from "../api";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
-import type { HotkeyIdFor } from "../hotkeys";
+import type { HotkeyId, HotkeyIdFor } from "../hotkeys";
 import { RibbonMark } from "../icons";
 import { useAgentModel } from "./agent-model";
 import { useAgentInstall } from "./agent-preflight";
@@ -242,7 +242,7 @@ export function ProjectCanvas({
 	/** The canvas chrome dissolves before the flight and comes back after it. */
 	const [chromeGone, setChromeGone] = useState(false);
 	/** Frames go back to their pictures while the player has the machine. */
-	const [hibernating, setHibernating] = useState(false);
+	const [pictured, setPictured] = useState(false);
 	const [hovered, setHovered] = useState<FrameHover | null>(null);
 	// the hover preview (#37): the element a click would target, outlined live
 	const [preview, setPreview] = useState<ElementPreview | null>(null);
@@ -486,7 +486,7 @@ export function ProjectCanvas({
 		onShot,
 		cameraRef: settledCameraRef,
 		viewportRef,
-		hibernating,
+		pictured,
 	});
 	const lifecycleRef = useRef(lifecycle);
 	lifecycleRef.current = lifecycle;
@@ -893,7 +893,7 @@ export function ProjectCanvas({
 		const viewport = viewportRef.current;
 		if (session === null || session.phase === "leaving" || viewport === null) return;
 		setPlay({ ...session, phase: "leaving" });
-		setHibernating(false);
+		setPictured(false);
 		const landed = framesRef.current.find((candidate) => candidate.name === session.frame);
 		// A walk that ended somewhere else lands the camera there. The jump is
 		// made while the stage still covers everything, so only the flight shows.
@@ -2478,7 +2478,25 @@ export function ProjectCanvas({
 				},
 			} satisfies Record<HotkeyIdFor<"finder">, HotkeyHandler>,
 		});
-		const detachCanvas = attachHotkeyLayer({ scope: "canvas", handlers });
+		const detachCanvas = attachHotkeyLayer({
+			scope: "canvas",
+			// A player filling the screen is a live frame, and spool takes no plain
+			// key from one (#210). So every canvas binding stands down while play is
+			// up; `canvas.leave` is the way out and answers throughout. This gate is
+			// belt to the iframe's braces: focus is normally inside the sandbox and
+			// these keys never reach this window at all, but the press that started
+			// play left focus out here.
+			handlers: Object.fromEntries(
+				Object.entries(handlers).map(([id, run]) => [
+					id,
+					id === "canvas.leave"
+						? run
+						: (event?: KeyboardEvent) => {
+								if (playRef.current === null) run?.(event);
+							},
+				]),
+			) as Partial<Record<HotkeyId, HotkeyHandler>>,
+		});
 		const onKeyUp = (event: KeyboardEvent) => {
 			if (event.code === "Space") setSpaceDown(false);
 			// releasing accel outside an element scope ends the deep-hover preview
@@ -2874,7 +2892,7 @@ export function ProjectCanvas({
 						// the canvas goes to sleep once the stage has covered it, never
 						// while the frame the flight landed on is still being looked at
 						window.setTimeout(() => {
-							if (playRef.current?.phase === "live") setHibernating(true);
+							if (playRef.current?.phase === "live") setPictured(true);
 						}, PLAY_IN.stage);
 					}}
 					onExit={leavePlay}

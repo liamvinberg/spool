@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accelLabel, accelPressed, applePlatform } from "./platform-keys";
+import { accelChord, accelLabel, accelPressed, applePlatform } from "./platform-keys";
 
 const APPLE = "MacIntel";
 const OTHER = "Linux x86_64";
@@ -59,5 +59,42 @@ describe("accelLabel — how a platform spells the modifier", () => {
 	it("prefixes a key the way the platform writes it", () => {
 		expect(`${accelLabel(APPLE)}Z`).toBe("⌘Z");
 		expect(`${accelLabel(OTHER)}Z`).toBe("ctrl+Z");
+	});
+});
+
+describe("accelChord — the only presses spool takes from a live frame (#210)", () => {
+	const press = (key: string, mods?: { meta?: boolean; ctrl?: boolean; alt?: boolean; shift?: boolean }) => ({
+		key,
+		metaKey: mods?.meta ?? false,
+		ctrlKey: mods?.ctrl ?? false,
+		altKey: mods?.alt ?? false,
+		shiftKey: mods?.shift ?? false,
+	});
+
+	it("takes esc and f behind the platform's own modifier", () => {
+		expect(accelChord(press("Escape", { meta: true }), APPLE)).toBe("leave");
+		expect(accelChord(press("f", { meta: true }), APPLE)).toBe("fullscreen");
+		expect(accelChord(press("Escape", { ctrl: true }), OTHER)).toBe("leave");
+		expect(accelChord(press("F", { ctrl: true }), OTHER)).toBe("fullscreen");
+	});
+
+	it("leaves every plain key to the prototype, its own esc included", () => {
+		expect(accelChord(press("Escape"), APPLE)).toBeUndefined();
+		expect(accelChord(press("f"), APPLE)).toBeUndefined();
+		expect(accelChord(press("p"), APPLE)).toBeUndefined();
+	});
+
+	it("is the platform's modifier and no other", () => {
+		expect(accelChord(press("Escape", { ctrl: true }), APPLE)).toBeUndefined();
+		expect(accelChord(press("Escape", { meta: true }), OTHER)).toBeUndefined();
+	});
+
+	it("is that chord exactly, so a longer one is somebody else's", () => {
+		expect(accelChord(press("Escape", { meta: true, shift: true }), APPLE)).toBeUndefined();
+		expect(accelChord(press("f", { meta: true, alt: true }), APPLE)).toBeUndefined();
+	});
+
+	it("answers nothing to a key that is not one of the two", () => {
+		expect(accelChord(press("z", { meta: true }), APPLE)).toBeUndefined();
 	});
 });

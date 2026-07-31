@@ -1,8 +1,9 @@
 import type { ComponentType, ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { fitBox, type Placement } from "../fit";
+import { useEffect, useSyncExternalStore } from "react";
+import { fitBox } from "../fit";
 import { ExternalLinkDialog } from "./external-link-dialog";
-import { accelLabel, accelPressed } from "./platform-keys";
+import { accelChord, accelLabel } from "./platform-keys";
+import { useFullscreen, useViewport, useWake } from "./player-stage";
 
 /**
  * The stage and the pill (#210). The frame takes the whole viewport it can and
@@ -32,9 +33,6 @@ export interface PlayerController {
 	close(): void;
 }
 
-/** Stillness this long puts the chrome to sleep; the fade itself is CSS. */
-const IDLE_MS = 2000;
-
 export function Player({
 	frames,
 	controller,
@@ -58,8 +56,8 @@ export function Player({
 	const asleep = !coarsePointer && !awake;
 	// the external-link dialog is modal: it owns the moment, chrome and all
 	const blocked = externalHref !== null;
-	const { scale, x, y } = place(w, h, viewport);
-	const fullscreen = useFullscreen();
+	const { scale, x, y } = fitBox(w, h, viewport.vw, viewport.vh);
+	const fullscreen = useFullscreen(() => document.documentElement);
 
 	// Spool's own gestures live behind accel, never on a plain key (#210): a live
 	// frame keeps every ordinary key, its own esc for modals included. Focus is
@@ -69,14 +67,11 @@ export function Player({
 	const toggleFullscreen = fullscreen.toggle;
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
-			if (!accelPressed(event) || event.altKey || event.shiftKey) return;
-			if (event.key === "Escape") {
-				event.preventDefault();
-				close();
-			} else if (event.key.toLowerCase() === "f") {
-				event.preventDefault();
-				toggleFullscreen();
-			}
+			const chord = accelChord(event);
+			if (chord === undefined) return;
+			event.preventDefault();
+			if (chord === "leave") close();
+			else toggleFullscreen();
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
@@ -277,78 +272,5 @@ export function BrokenFrame({ frame, file, error }: { frame: string; file: strin
 	);
 }
 
-interface Viewport {
-	vw: number;
-	vh: number;
-}
-
-function useViewport(): Viewport {
-	const [viewport, setViewport] = useState<Viewport>(() => ({ vw: window.innerWidth, vh: window.innerHeight }));
-	useEffect(() => {
-		const measure = () => setViewport({ vw: window.innerWidth, vh: window.innerHeight });
-		window.addEventListener("resize", measure);
-		return () => window.removeEventListener("resize", measure);
-	}, []);
-	return viewport;
-}
-
-/**
- * The chrome's pulse (#60): while armed, stillness longer than IDLE_MS puts it
- * to sleep and movement wakes it; unarmed, it is simply always awake. The wake
- * listener sits on the stage, never inside a screen — the prototype has no
- * listener here to race (the parity law at the input layer).
- */
-function useWake(armed: boolean): { awake: boolean; wake: () => void } {
-	const [awake, setAwake] = useState(true);
-	const timer = useRef(0);
-	useEffect(() => {
-		if (!armed) {
-			setAwake(true);
-			return;
-		}
-		timer.current = window.setTimeout(() => setAwake(false), IDLE_MS);
-		return () => window.clearTimeout(timer.current);
-	}, [armed]);
-	return {
-		awake,
-		wake: () => {
-			if (!armed) return;
-			setAwake(true);
-			window.clearTimeout(timer.current);
-			timer.current = window.setTimeout(() => setAwake(false), IDLE_MS);
-		},
-	};
-}
-
-/**
- * Filling the screen for real (#210), so a prototype reads the way it would if
- * you had opened it in your own browser. The request needs transient activation
- * and can be refused outright — a rejected promise is the browser saying no, not
- * an error the player has anything to add to.
- */
-function useFullscreen(): { on: boolean; toggle: () => void } {
-	const [on, setOn] = useState(() => document.fullscreenElement != null);
-	useEffect(() => {
-		const sync = () => setOn(document.fullscreenElement != null);
-		document.addEventListener("fullscreenchange", sync);
-		return () => document.removeEventListener("fullscreenchange", sync);
-	}, []);
-	const toggle = useCallback(() => {
-		if (document.fullscreenElement != null) void document.exitFullscreen().catch(() => {});
-		else void document.documentElement.requestFullscreen?.().catch(() => {});
-	}, []);
-	return { on, toggle };
-}
-
 /** Touch is the immersive context; anything with a fine pointer letterboxes. */
 const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
-
-/**
- * Edge to edge, the way a video player letterboxes (#210): the frame takes the
- * whole viewport it can, never past its authored size, and whatever bars are
- * left are aspect mismatch and nothing else. `fitBox` is the canvas camera's
- * own fit, which is what lets an inline play flight land exactly here.
- */
-function place(w: number, h: number, { vw, vh }: Viewport): Placement {
-	return fitBox(w, h, vw, vh);
-}
