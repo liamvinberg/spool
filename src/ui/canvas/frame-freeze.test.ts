@@ -2,15 +2,16 @@
 
 import { act, createElement, type RefObject } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Camera, ProjectedFrame } from "../api";
-import { freezesWhileMoving, useFrameLifecycle } from "./lifecycle";
+import { IDLE_FREEZE_MS, isFrameAttended, isFrameFrozen, useFrameLifecycle } from "./lifecycle";
 
 /**
- * The freeze (#171): a live HTML frame holds its animations while the camera
- * moves and gets them back on settle. Here it is the traffic on one real frame
- * window — the decision is `freezesWhileMoving`, the delivery is one message per
- * document, and the two are tested apart because only the first is a rule.
+ * The freeze (#171, #172): a live HTML frame holds its animations while the
+ * camera moves, and again once a minute passes with nothing attending it. Here
+ * it is the traffic on one real frame window — the decisions are
+ * `isFrameFrozen` and `isFrameAttended`, the delivery is one message per
+ * document, and they are tested apart because only the first two are rules.
  */
 
 type Lifecycle = ReturnType<typeof useFrameLifecycle>;
@@ -19,12 +20,20 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
+/** The clock the sweep and the idle bookkeeping both read. */
+let clock = 0;
+
+beforeEach(() => {
+	clock = 1_000;
+	vi.spyOn(performance, "now").mockImplementation(() => clock);
+});
 
 afterEach(async () => {
 	if (root !== undefined) await act(() => root?.unmount());
 	host?.remove();
 	root = undefined;
 	host = undefined;
+	vi.restoreAllMocks();
 });
 
 const landing: ProjectedFrame = {
@@ -38,15 +47,27 @@ const landing: ProjectedFrame = {
 	cover: { hash: "0".repeat(32) },
 };
 
-async function mountLive(options: { entered?: string; frame?: ProjectedFrame } = {}) {
-	const frames = [options.frame ?? landing];
-	const framesRef = { current: frames } as unknown as RefObject<ProjectedFrame[]>;
+interface Attention {
+	entered?: string | null;
+	selected?: string | null;
+	hovered?: string | null;
+}
+
+async function mountLive(options: Attention & { frame?: ProjectedFrame } = {}) {
+	const frame = options.frame ?? landing;
+	const framesRef = { current: [frame] } as unknown as RefObject<ProjectedFrame[]>;
 	let lifecycle: Lifecycle | undefined;
-	function Harness() {
+	let attention: Attention = options;
+
+	function Harness({ props }: { props: Attention }) {
 		lifecycle = useFrameLifecycle({
 			framesRef,
-			entered: options.entered ?? null,
+			entered: props.entered ?? null,
+			// deliberately empty: a selection the current tool does not mount for is
+			// still a selection, and the freeze has to see it (#172)
 			selectionTargets: new Set(),
+			selected: props.selected == null ? [] : [props.selected],
+			hovered: props.hovered ?? null,
 			hasCover: () => true,
 			onShot: () => undefined,
 			cameraRef: { current: { x: 0, y: 0, k: 1 } } as RefObject<Camera | null>,
@@ -56,23 +77,33 @@ async function mountLive(options: { entered?: string; frame?: ProjectedFrame } =
 		});
 		return null;
 	}
+
 	host = document.createElement("div");
 	document.body.append(host);
 	root = createRoot(host);
-	await act(() => root?.render(createElement(Harness)));
+	const render = async (next: Attention = {}) => {
+		attention = { ...attention, ...next };
+		await act(() => root?.render(createElement(Harness, { props: attention })));
+	};
+	await render();
 
 	const iframe = document.createElement("iframe");
 	host.append(iframe);
 	const sourceWindow = iframe.contentWindow;
 	if (lifecycle === undefined || sourceWindow === null) throw new Error("lifecycle did not mount");
 	await act(() => {
-		lifecycle?.onIframe(frames[0]?.name ?? "landing", iframe);
-		lifecycle?.noteLoaded(frames[0]?.name ?? "landing");
+		lifecycle?.onIframe(frame.name, iframe);
+		lifecycle?.noteLoaded(frame.name);
 		lifecycle?.sweep();
 	});
 	if (lifecycle === undefined) throw new Error("lifecycle did not update");
 	const post = vi.spyOn(sourceWindow, "postMessage").mockImplementation(() => undefined);
-	return { lifecycle, iframe, post };
+	/** Let `ms` of nothing happening pass, sweeping the way the interval would. */
+	const wait = async (ms: number) => {
+		clock += ms;
+		await act(() => lifecycle?.sweep());
+	};
+	return { lifecycle, iframe, post, render, wait };
 }
 
 interface Posted {
@@ -86,28 +117,52 @@ const posted = (post: { mock: { calls: unknown[][] } }): Posted[] =>
 const freezes = (post: { mock: { calls: unknown[][] } }): Posted[] =>
 	posted(post).filter((message) => message.spool === "freeze");
 
-describe("which frames hold their animations", () => {
-	const resting = { cameraMoving: false, state: "live" as const, entered: false, capturing: false };
+const held = { spool: "freeze", on: true };
+const handedBack = { spool: "freeze", on: false };
 
-	it("freezes a live frame only while the camera is moving", () => {
-		expect(freezesWhileMoving(resting)).toBe(false);
-		expect(freezesWhileMoving({ ...resting, cameraMoving: true })).toBe(true);
+describe("which frames hold their animations", () => {
+	const resting = { cameraMoving: false, idleMs: 0, state: "live" as const, entered: false, capturing: false };
+
+	it("freezes a live frame while the camera is moving", () => {
+		expect(isFrameFrozen(resting)).toBe(false);
+		expect(isFrameFrozen({ ...resting, cameraMoving: true })).toBe(true);
+	});
+
+	it("freezes a live frame nothing has attended for the whole minute", () => {
+		expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS - 1 })).toBe(false);
+		expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS })).toBe(true);
 	});
 
 	it("never freezes the frame you went inside", () => {
-		expect(freezesWhileMoving({ ...resting, cameraMoving: true, entered: true })).toBe(false);
+		expect(isFrameFrozen({ ...resting, cameraMoving: true, entered: true })).toBe(false);
+		expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS * 10, entered: true })).toBe(false);
 	});
 
 	it("never freezes a borrowed frame or one already photographing itself", () => {
 		// a borrowed frame's capture settles on its own rAF and animations
-		expect(freezesWhileMoving({ ...resting, cameraMoving: true, state: "refreshing" })).toBe(false);
-		expect(freezesWhileMoving({ ...resting, cameraMoving: true, capturing: true })).toBe(false);
+		expect(isFrameFrozen({ ...resting, cameraMoving: true, state: "refreshing" })).toBe(false);
+		expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS * 10, state: "refreshing" })).toBe(false);
+		expect(isFrameFrozen({ ...resting, cameraMoving: true, capturing: true })).toBe(false);
+		expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS * 10, capturing: true })).toBe(false);
 	});
 
 	it("leaves a frame showing its picture, and one held behind it, alone", () => {
-		expect(freezesWhileMoving({ ...resting, cameraMoving: true, state: "picture" })).toBe(false);
-		expect(freezesWhileMoving({ ...resting, cameraMoving: true, state: "held" })).toBe(false);
-		expect(freezesWhileMoving({ ...resting, cameraMoving: true, state: undefined })).toBe(false);
+		for (const state of ["picture", "held", undefined] as const) {
+			expect(isFrameFrozen({ ...resting, cameraMoving: true, state })).toBe(false);
+			expect(isFrameFrozen({ ...resting, idleMs: IDLE_FREEZE_MS * 10, state })).toBe(false);
+		}
+	});
+});
+
+describe("what counts as attending a frame", () => {
+	const nobody = { cameraMoving: false, entered: false, selected: false, hovered: false };
+
+	it("is a person doing something, never a frame merely being on screen", () => {
+		expect(isFrameAttended(nobody)).toBe(false);
+		expect(isFrameAttended({ ...nobody, hovered: true })).toBe(true);
+		expect(isFrameAttended({ ...nobody, selected: true })).toBe(true);
+		expect(isFrameAttended({ ...nobody, entered: true })).toBe(true);
+		expect(isFrameAttended({ ...nobody, cameraMoving: true })).toBe(true);
 	});
 });
 
@@ -116,32 +171,31 @@ describe("delivering the freeze", () => {
 		const { lifecycle, post } = await mountLive();
 
 		await act(() => lifecycle.noteCameraMoving(true));
-		expect(freezes(post)).toEqual([{ spool: "freeze", on: true }]);
+		expect(freezes(post)).toEqual([held]);
 
 		// a gesture is thousands of camera values, not two — one message each way
 		await act(() => lifecycle.noteCameraMoving(true));
 		await act(() => lifecycle.sweep());
-		expect(freezes(post)).toEqual([{ spool: "freeze", on: true }]);
+		expect(freezes(post)).toEqual([held]);
 
 		await act(() => lifecycle.noteCameraMoving(false));
-		expect(freezes(post)).toEqual([
-			{ spool: "freeze", on: true },
-			{ spool: "freeze", on: false },
-		]);
+		expect(freezes(post)).toEqual([held, handedBack]);
 	});
 
 	it("says nothing to the frame you went inside", async () => {
-		const { lifecycle, post } = await mountLive({ entered: "landing" });
+		const { lifecycle, post, wait } = await mountLive({ entered: "landing" });
 
 		await act(() => lifecycle.noteCameraMoving(true));
+		await wait(IDLE_FREEZE_MS * 2);
 
 		expect(freezes(post)).toEqual([]);
 	});
 
 	it("says nothing to a terminal, whose freeze is the daemon's own", async () => {
-		const { lifecycle, post } = await mountLive({ frame: { ...landing, kind: "term" } });
+		const { lifecycle, post, wait } = await mountLive({ frame: { ...landing, kind: "term" } });
 
 		await act(() => lifecycle.noteCameraMoving(true));
+		await wait(IDLE_FREEZE_MS * 2);
 
 		expect(freezes(post)).toEqual([]);
 	});
@@ -171,9 +225,78 @@ describe("delivering the freeze", () => {
 		await act(() => lifecycle.onIframe("landing", iframe));
 		await act(() => lifecycle.sweep());
 
-		expect(freezes(post)).toEqual([
-			{ spool: "freeze", on: true },
-			{ spool: "freeze", on: true },
-		]);
+		expect(freezes(post)).toEqual([held, held]);
+	});
+
+	it("holds a frame the canvas has left alone for the minute", async () => {
+		const { post, wait } = await mountLive();
+
+		await wait(IDLE_FREEZE_MS - 1);
+		expect(freezes(post), "a frame still inside the minute keeps running").toEqual([]);
+
+		await wait(1);
+		expect(freezes(post)).toEqual([held]);
+	});
+
+	it("hands it back the moment the pointer arrives, and starts the minute over when it leaves", async () => {
+		const { post, render, wait } = await mountLive();
+		await wait(IDLE_FREEZE_MS);
+		expect(freezes(post)).toEqual([held]);
+
+		// the wake is the hover itself, not the sweep that may be 300ms behind it
+		await render({ hovered: "landing" });
+		expect(freezes(post)).toEqual([held, handedBack]);
+
+		await render({ hovered: null });
+		await wait(IDLE_FREEZE_MS - 1);
+		expect(freezes(post)).toEqual([held, handedBack]);
+		await wait(1);
+		expect(freezes(post)).toEqual([held, handedBack, held]);
+	});
+
+	it("gives a fresh document the whole minute, so an edit is never watched half-arrived", async () => {
+		const { lifecycle, iframe, post, wait } = await mountLive();
+		await wait(IDLE_FREEZE_MS);
+		expect(freezes(post)).toEqual([held]);
+
+		// a source edit lands as a fresh document on a canvas nobody is at
+		await act(() => lifecycle.onIframe("landing", null));
+		await act(() => lifecycle.onIframe("landing", iframe));
+		await wait(0);
+		await wait(IDLE_FREEZE_MS - 1);
+		expect(freezes(post), "the frame that just arrived gets to finish arriving").toEqual([held]);
+
+		await wait(1);
+		expect(freezes(post)).toEqual([held, held]);
+	});
+
+	it("leaves a selected frame running however long it is left", async () => {
+		const { post, render, wait } = await mountLive({ selected: "landing" });
+
+		await wait(IDLE_FREEZE_MS * 5);
+		expect(freezes(post)).toEqual([]);
+
+		// deselected, its minute runs from the deselection
+		await render({ selected: null });
+		await wait(IDLE_FREEZE_MS - 1);
+		expect(freezes(post)).toEqual([]);
+		await wait(1);
+		expect(freezes(post)).toEqual([held]);
+	});
+
+	it("starts the minute over when the camera stops", async () => {
+		const { lifecycle, post, wait } = await mountLive();
+		await wait(IDLE_FREEZE_MS);
+		expect(freezes(post)).toEqual([held]);
+
+		await act(() => lifecycle.noteCameraMoving(true));
+		clock += 2_000;
+		await act(() => lifecycle.noteCameraMoving(false));
+		expect(freezes(post), "a frame frozen by idleness thaws where the camera stopped").toEqual([held, handedBack]);
+
+		await wait(IDLE_FREEZE_MS - 1);
+		expect(freezes(post)).toEqual([held, handedBack]);
+		await wait(1);
+		expect(freezes(post)).toEqual([held, handedBack, held]);
 	});
 });

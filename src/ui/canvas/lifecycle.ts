@@ -32,8 +32,9 @@ import { type CaptureSourceReply, captureMessage, freezeMessage } from "./protoc
  * unreadable held one runs behind its still. A terminal's held state sends
  * SIGSTOP to its real process (`daemon/term-sessions.ts`).
  *
- * Live HTML frames hold their animations while the camera moves and resume on
- * settle (#171) — the mount is unchanged, only the frames it is running.
+ * Live HTML frames hold their animations while the camera moves (#171) and
+ * again once nothing has attended them for a long minute (#172) — the mount is
+ * unchanged either way, only the frames it is running.
  */
 
 export type FrameState = "picture" | "refreshing" | "held" | "live";
@@ -96,10 +97,10 @@ const SHIPPED_ERRANDS_IN_FLIGHT = 3;
  * for the one reason that proves nothing.
  *
  * `globalThis.__spoolBench` is `{ errands, freeze }` — the cap, unbounded at 0
- * or below, and whether live frames hold their animations while the camera
- * moves. Read once at module load, because playwright's init script runs before
- * this bundle evaluates and nothing else ever writes it, so an unset hook
- * leaves the sweep comparing against the same constants it always did.
+ * or below, and whether live frames ever hold their animations. Read once at
+ * module load, because playwright's init script runs before this bundle
+ * evaluates and nothing else ever writes it, so an unset hook leaves the sweep
+ * comparing against the same constants it always did.
  *
  * They fold into the exported values rather than shadowing them, so the sweep
  * and every test read the one number the decision actually uses. `freeze` is
@@ -111,7 +112,18 @@ const benchHooks = (globalThis as unknown as { __spoolBench?: { errands?: number
 const benchErrands = benchHooks?.errands;
 export const ERRANDS_IN_FLIGHT =
 	benchErrands === undefined ? SHIPPED_ERRANDS_IN_FLIGHT : benchErrands > 0 ? benchErrands : Number.POSITIVE_INFINITY;
-export const FREEZE_WHILE_MOVING = benchHooks?.freeze !== false;
+export const FREEZE_ENABLED = benchHooks?.freeze !== false;
+/**
+ * How long a live frame goes unattended before it holds its animations (#172).
+ *
+ * A minute is deliberately long. Comparing two frames' motion side by side is a
+ * real workflow and the pointer is not on either of them while you do it, so
+ * the canvas has to stay alive for the whole of a look, not the whole of a
+ * gesture. What this catches is the other thing: a canvas left open in a tab
+ * somebody walked away from, where eight animated frames were measured holding
+ * 45% of a core and 16% of the GPU process for as long as it stayed open.
+ */
+export const IDLE_FREEZE_MS = 60_000;
 /**
  * How many errands a frame gets for one debt before it stops asking. Without a
  * bound, a frame whose capture cannot land — a document that never boots, a
@@ -242,23 +254,48 @@ function isFrameLive(
 }
 
 /**
- * Whether a frame holds its animations right now (#171). A camera in motion is
- * the whole cause: nothing out there is being read while it moves, and the
- * frames' own rAF loops are what the gesture competes with for the renderer.
+ * Whether a frame holds its animations right now (#171, #172). Two causes, and
+ * both of them are "nobody is reading this frame". The camera is moving, so
+ * nothing out there is being read at all and the frames' own rAF loops are what
+ * the gesture competes with for the renderer. Or the frame has gone
+ * `IDLE_FREEZE_MS` without anything attending it — see `isFrameAttended` for
+ * what counts, and note that a camera at rest is not attention, only its motion.
  *
  * Three frames never freeze. The one you went inside is the one being used. A
  * borrowed frame is mid-errand, and a capture settles on the frame's own rAF
  * and animations, so a frozen one would photograph itself held; a frame with a
  * capture already in flight is that same errand, one step later.
  */
-export function freezesWhileMoving(input: {
+export function isFrameFrozen(input: {
 	cameraMoving: boolean;
+	/** How long since anything last attended this frame. */
+	idleMs: number;
 	state: FrameState | undefined;
 	entered: boolean;
 	capturing: boolean;
 }): boolean {
-	const { cameraMoving, state, entered, capturing } = input;
-	return cameraMoving && state === "live" && !entered && !capturing;
+	const { cameraMoving, idleMs, state, entered, capturing } = input;
+	if (state !== "live" || entered || capturing) return false;
+	return cameraMoving || idleMs >= IDLE_FREEZE_MS;
+}
+
+/**
+ * Whether anything is attending this frame right now (#172) — the idle clock
+ * runs from the last moment this was true.
+ *
+ * Genuine idleness, never viewport position: a frame you are looking at is a
+ * frame you are not touching, and freezing what is merely off to one side would
+ * kill side-by-side comparison outright. So it takes a pointer, a selection, an
+ * entry, or a camera in motion — every one of them something a person did.
+ */
+export function isFrameAttended(input: {
+	cameraMoving: boolean;
+	entered: boolean;
+	selected: boolean;
+	hovered: boolean;
+}): boolean {
+	const { cameraMoving, entered, selected, hovered } = input;
+	return cameraMoving || entered || selected || hovered;
 }
 
 export interface SweepResult {
@@ -447,6 +484,20 @@ export interface LifecycleDeps {
 	framesRef: RefObject<ProjectedFrame[]>;
 	entered: string | null;
 	selectionTargets: ReadonlySet<string>;
+	/**
+	 * The whole frame selection, which keeps those frames awake (#172) and
+	 * nothing else. `selectionTargets` is intent, not the selection — the one
+	 * frame Select mounts for, and nothing at all in another tool — while three
+	 * frames picked to compare are three frames somebody is using, whichever
+	 * tool is up.
+	 */
+	selected: readonly string[];
+	/**
+	 * The frame under the pointer, which keeps it awake (#172) and nothing else.
+	 * Hover is not a mount cause: a frame is already live before you can point at
+	 * it, and pointing at a picture has never been worth a document.
+	 */
+	hovered: string | null;
 	hasCover: (frame: string) => boolean;
 	onShot: (frame: string, image: CoverRaster) => void;
 	/**
@@ -465,7 +516,18 @@ export interface LifecycleDeps {
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
-	const { framesRef, entered, selectionTargets, hasCover, onShot, cameraRef, viewportRef, pictured } = deps;
+	const {
+		framesRef,
+		entered,
+		selectionTargets,
+		selected,
+		hovered,
+		hasCover,
+		onShot,
+		cameraRef,
+		viewportRef,
+		pictured,
+	} = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
 	// when each frame reported loaded, not merely that it did: a still is only
@@ -480,6 +542,10 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	enteredRef.current = entered;
 	const selectionTargetsRef = useRef(selectionTargets);
 	selectionTargetsRef.current = selectionTargets;
+	const selectedRef = useRef(selected);
+	selectedRef.current = selected;
+	const hoveredRef = useRef(hovered);
+	hoveredRef.current = hovered;
 	const picturedRef = useRef(pictured);
 	picturedRef.current = pictured;
 	const hasCoverRef = useRef(hasCover);
@@ -507,9 +573,16 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		abort: AbortController;
 	}
 	const captureWaiters = useRef(new Map<string, PendingCapture>());
-	/** The frames currently told to hold their animations while the camera moves. */
+	/** The frames currently told to hold their animations. */
 	const frozen = useRef(new Set<string>());
 	const cameraMoving = useRef(false);
+	/**
+	 * When each live frame was last attended, for the idle freeze (#172). A frame
+	 * that is not live keeps no clock: it is either showing a picture or running
+	 * behind one for a reason of its own, and coming back to live starts the
+	 * minute over — a document that just arrived has never been idle.
+	 */
+	const attendedAt = useRef(new Map<string, number>());
 
 	/**
 	 * Freeze is a message to one document, never a render: the shells are memo'd
@@ -529,24 +602,50 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		else frozen.current.delete(frame);
 	}, []);
 
+	/**
+	 * Roll the idle clocks forward and tell each frame where that leaves it. Runs
+	 * on every sweep, because idleness is the one cause that arrives by itself:
+	 * the camera stopping and the pointer leaving are both events, but the minute
+	 * after them passes without anybody sending anything.
+	 */
 	const applyFreeze = useCallback(
-		(states: Readonly<Record<string, FrameState>> = statesRef.current) => {
-			// a resting camera with nothing held has nothing to say to anyone
-			if (!cameraMoving.current && frozen.current.size === 0) return;
+		(states: Readonly<Record<string, FrameState>> = statesRef.current, now = performance.now()) => {
+			const entered = enteredRef.current;
+			const alive = new Set<string>();
 			for (const frame of framesRef.current) {
 				// a terminal's freeze is the daemon's SIGSTOP, sent by its shell
 				if (frame.kind !== "html") continue;
+				const name = frame.name;
+				alive.add(name);
+				const state = states[name];
+				if (state !== "live") attendedAt.current.delete(name);
+				else if (
+					!attendedAt.current.has(name) ||
+					isFrameAttended({
+						cameraMoving: cameraMoving.current,
+						entered: entered === name,
+						// picked-in or picked-through: the frames you chose, and the one
+						// Select is holding open for an element inside it
+						selected: selectedRef.current.includes(name) || selectionTargetsRef.current.has(name),
+						hovered: hoveredRef.current === name,
+					})
+				) {
+					attendedAt.current.set(name, now);
+				}
 				postFreeze(
-					frame.name,
-					FREEZE_WHILE_MOVING &&
-						freezesWhileMoving({
+					name,
+					FREEZE_ENABLED &&
+						isFrameFrozen({
 							cameraMoving: cameraMoving.current,
-							state: states[frame.name],
-							entered: enteredRef.current === frame.name,
-							capturing: captureWaiters.current.has(frame.name),
+							idleMs: now - (attendedAt.current.get(name) ?? now),
+							state,
+							entered: entered === name,
+							capturing: captureWaiters.current.has(name),
 						}),
 				);
 			}
+			// frames that left the projection take their clock with them
+			for (const name of [...attendedAt.current.keys()]) if (!alive.has(name)) attendedAt.current.delete(name);
 		},
 		[framesRef, postFreeze],
 	);
@@ -556,6 +655,12 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		(moving: boolean) => {
 			if (cameraMoving.current === moving) return;
 			cameraMoving.current = moving;
+			// Coming to rest is the last thing anybody did, so every frame's minute
+			// runs from the settle. The motion itself is attention too, but only
+			// this says so at the instant it ends: the sweep that would otherwise
+			// notice is up to 300ms late, and it is the settle a person is timed
+			// from, not the last tick of the gesture before it.
+			if (!moving) attendedAt.current.clear();
 			applyFreeze();
 		},
 		[applyFreeze],
@@ -585,8 +690,14 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	const onIframe = useCallback(
 		(frame: string, el: HTMLIFrameElement | null) => {
 			const current = iframes.current.get(frame);
-			// a fresh document is never frozen — the message went to the old one
-			if (current !== el) frozen.current.delete(frame);
+			// A fresh document is never frozen — the message went to the old one —
+			// and its minute starts here. A source edit lands as a fresh document,
+			// and a frame that boots straight into a freeze is one that shows you
+			// half of its own arrival for as long as you leave it (#172).
+			if (current !== el) {
+				frozen.current.delete(frame);
+				attendedAt.current.delete(frame);
+			}
 			if (current !== undefined && current !== el) {
 				const pending = captureWaiters.current.get(frame);
 				if (pending !== undefined) noteShot(frame, pending.id, undefined);
@@ -705,6 +816,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 
 	// The decision function: runs on a sweep interval and urgent intent changes.
 	const compute = useCallback(() => {
+		const now = performance.now();
 		const result = sweepLifecycle(model.current, {
 			frames: framesRef.current,
 			entered: enteredRef.current,
@@ -714,7 +826,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			ready: readyRef.current,
 			capturing: new Set(captureWaiters.current.keys()),
 			hasCover: hasCoverRef.current,
-			now: performance.now(),
+			now,
 			camera: cameraRef.current,
 			viewport:
 				viewportRef.current === null
@@ -728,7 +840,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		if (result.changed) setStates(result.states);
 		// against the states this sweep just decided, not last render's: a frame
 		// handed back from an errand becomes freezable as soon as it is live again
-		applyFreeze(result.states);
+		applyFreeze(result.states, now);
 	}, [framesRef, cameraRef, viewportRef, requestCapture, applyFreeze]);
 
 	/**
@@ -809,6 +921,15 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		selectionTargetsRef.current = selectionTargets;
 		compute();
 	}, [entered, selectionTargets, compute]);
+
+	// So must the wake: a frozen frame you point at or pick animates now, not up
+	// to a sweep later. This is the freeze alone, never a sweep — neither the
+	// pointer nor a selection the current tool ignores mounts anything.
+	useEffect(() => {
+		hoveredRef.current = hovered;
+		selectedRef.current = selected;
+		applyFreeze();
+	}, [hovered, selected, applyFreeze]);
 
 	useEffect(() => {
 		const sweep = setInterval(compute, SWEEP_MS);
