@@ -4,7 +4,9 @@
 
 The log says when the agent was thinking, and how long for.
 
-A request going out writes one line in the transcript — a mark, the word `thinking`, and a duration that counts while nothing has come back and stops at the first word of the answer. It is written once and stays. Nothing above it moves when the answer lands, and the line is still there an hour later, so a transcript with a long gap in it now says where the time went instead of looking like two writes eleven seconds apart.
+A request going out writes one line in the transcript — a mark, the word `thinking`, and a duration that counts until the log has something to show you and stops there. It is written once and stays. Nothing above it moves when the answer lands, and the line is still there an hour later, so a transcript with a long gap in it now says where the time went instead of looking like two writes eleven seconds apart.
+
+The count runs through the model's own reasoning, which is the part of a turn there is otherwise nothing at all to look at for. It stops on the first words or the first tool call, so a turn that reasons for half a minute before saying anything reads as one line counting to `31.2s` rather than a rail that has gone quiet.
 
 It is a duration and never a thought. The wire sends no thinking text at all, so a line claiming to show one would be inventing it.
 

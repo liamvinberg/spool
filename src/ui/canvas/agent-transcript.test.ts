@@ -168,11 +168,11 @@ describe("the wait before the first token", () => {
 	});
 
 	/**
-	 * The number is the wait, so it is measured from the request going out to the answer
-	 * beginning — not to the answer finishing, and not from the thinking block, which is
-	 * what the deleted line measured.
+	 * The number is the silence, so it is measured from the request going out to the log
+	 * having something to show — not to the answer finishing, and not from the thinking
+	 * block, which is what the deleted line measured.
 	 */
-	it("settles on the first token, carrying the time it took to get there", () => {
+	it("settles on the first thing drawn, carrying the time it took to get there", () => {
 		const { entries } = transcriptOf(
 			[{ text: "go" }],
 			stamp([
@@ -183,7 +183,46 @@ describe("the wait before the first token", () => {
 		);
 
 		expect(kinds(entries)).toEqual(["user", "wait", "prose"]);
-		expect(entries[1]).toMatchObject({ kind: "wait", state: "done", ms: 1970 });
+		expect(entries[1]).toMatchObject({ kind: "wait", state: "done", ms: 2400 });
+	});
+
+	/**
+	 * And it runs through the thinking rather than stopping at the top of it (#231).
+	 *
+	 * The reason the anchor moved. A message whose first block is a thought reaches
+	 * `message_start` at once, so settling on the wire's own first token put `thinking
+	 * 0.0s` on the line and then drew nothing for as long as the model reasoned — which
+	 * is the one stretch of a turn this receipt exists to account for. Thinking cannot
+	 * draw its own line to fill it: the wire carries a token count and an empty string.
+	 */
+	it("runs through a thinking block rather than settling at the top of one", () => {
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([
+				[0, waiting],
+				[40, speaking],
+				[80, { kind: "thinking", block: 0, tokens: 0, parent: null }],
+				[9000, { kind: "thinking", block: 0, tokens: 2400, parent: null }],
+				[31200, say("done.")],
+			]),
+		);
+
+		expect(entries[1]).toMatchObject({ kind: "wait", state: "done", ms: 31200 });
+	});
+
+	/** a turn that thinks and then calls something settles on the call, which is drawn */
+	it("settles on a call when the answer starts by doing rather than saying", () => {
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([
+				[0, waiting],
+				[40, speaking],
+				[80, { kind: "thinking", block: 0, tokens: 0, parent: null }],
+				[12400, called("t1", "Read", { file_path: `${ROOT}/src/cli.ts` })],
+			]),
+		);
+
+		expect(entries[1]).toMatchObject({ kind: "wait", state: "done", ms: 12400 });
 	});
 
 	/** a receipt is written once and never taken back out, which is what earns it the room */
@@ -265,7 +304,7 @@ describe("the wait before the first token", () => {
 			[{ text: "go" }],
 			stamp([
 				[0, waiting],
-				[1970, speaking],
+				[1970, say("done.")],
 			]),
 		);
 		const [kept] = unpaced(entries).filter((entry) => entry.kind === "wait");
@@ -283,8 +322,25 @@ describe("the wait before the first token", () => {
 		for (const capture of CAPTURES) {
 			const waits = transcriptOf([{ text: "go" }], replay(capture)).entries.filter((entry) => entry.kind === "wait");
 
-			expect(waits.every((wait) => wait.ms !== null && wait.state === "done")).toBe(true);
+			expect(waits.every((wait) => wait.ms !== null && wait.state !== "running")).toBe(true);
 		}
+	});
+
+	/**
+	 * `stopped` is one of the two settled marks, and `claude-turn` is why it has to be
+	 * allowed here: that session ends on 61 turns of thinking deltas and then an error,
+	 * so its last request is one nothing was ever drawn for. Under the old anchor that
+	 * receipt read `thinking 0.0s` and the log then sat still through every one of those
+	 * deltas — the exact failure #231 moved the anchor for, sitting in the fixtures the
+	 * whole time. Now it says the request went out and the turn died under it.
+	 */
+	it("marks the one capture request nothing was ever drawn for as stopped", () => {
+		const waits = transcriptOf([{ text: "go" }], replay("claude-turn")).entries.filter(
+			(entry) => entry.kind === "wait",
+		);
+
+		expect(waits.map((wait) => wait.state)).toEqual(["done", "done", "done", "done", "stopped"]);
+		expect(waits.every((wait) => wait.ms !== null)).toBe(true);
 	});
 
 	/**

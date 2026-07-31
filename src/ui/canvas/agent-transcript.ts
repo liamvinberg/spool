@@ -254,9 +254,15 @@ export type AgentEntry =
 	 *
 	 * It opens on the wire's own `waiting` rather than on the thinking block, which is what
 	 * makes the number worth drawing: opened on the block it read `thinking 0.0s`, because
-	 * only 2 of 36 thinking blocks in the captures are substantial. Opened on the wait it is
-	 * the time to first token — 878ms to 4,043ms across the 50 measured — which is exactly
-	 * the range in which a rail with no readout reads as stopped.
+	 * only 2 of 36 thinking blocks in the captures are substantial.
+	 *
+	 * It closes on the first thing the log draws, and not on the first thing on the wire
+	 * (#231). Both anchors agree on a plain answer, where the time to first token is the
+	 * whole wait — 878ms to 4,043ms across the 50 measured, exactly the range in which a
+	 * rail with no readout reads as stopped. They come apart on a reasoning one, where the
+	 * message starts with a thought and so starts at once: the wire anchor put `0.0s` on
+	 * the line and then went quiet for as long as the model reasoned, which is the one case
+	 * the receipt exists for. What it measures now is the silence, whatever fills it.
 	 *
 	 * Nothing is ever spliced out. It enters with the rest of the turn and stays, so an
 	 * answer landing moves nothing above it, and a transcript read back an hour later still
@@ -643,14 +649,19 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	let opened: string[] = [];
 	let confirmed = 0;
 	/**
-	 * The request that is up and has had nothing back, off the wire's own `waiting`.
+	 * The request that is up and has drawn nothing yet, off the wire's own `waiting`.
 	 *
-	 * It is the receipt being written and it is the gate in one, because they are the
-	 * same fact: `answered` may only advance the message once per request, and the
-	 * request being over is the moment the duration stops. Every event that can be the
-	 * first thing an answer produces goes through it.
+	 * It is the receipt being written. It was the message gate too until #231 split
+	 * them, because they turned out not to be the same fact: the message boundary is
+	 * the first event of any kind, and the receipt's clock runs past it.
 	 */
 	let outstanding: Wait | null = null;
+	/**
+	 * Nothing has come back from the request now out, which is what makes the next
+	 * thing back a new message. True before any request has gone out at all, so a
+	 * runtime that never says `waiting` advances nothing.
+	 */
+	let begun = true;
 	/** the last stamp seen, so a turn cut under a request can say how long it had been */
 	let last = 0;
 	let over = false;
@@ -919,25 +930,46 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	 *
 	 * Called from every event that can be the first thing an answer produces rather
 	 * than from `speaking` alone, because `speaking` is one runtime's signal and the
-	 * union is meant to survive a thinner one. What it does is stop the receipt's
-	 * clock and file the blocks that follow under a new message, which is what keeps
-	 * two messages that both open at block 0 out of one entry.
-	 *
-	 * Nothing is taken back out. The receipt settles where it already stands, which is
-	 * the whole of why it is allowed to be there at all (#212).
+	 * union is meant to survive a thinner one. What it does is file the blocks that
+	 * follow under a new message, which is what keeps two messages that both open at
+	 * block 0 out of one entry.
 	 *
 	 * The gate is the rest of it. Every event after the first is an answer to a
 	 * request that has already come back, and advancing the message on one of those
 	 * would file a settled message against a block index its own deltas never opened.
 	 */
-	const answered = (at: number) => {
+	const arrived = () => {
+		if (begun) return;
+		begun = true;
+		message += 1;
+		opened = [];
+		confirmed = 0;
+	};
+
+	/**
+	 * The wait is over, because the log finally has something to show for it (#231).
+	 *
+	 * Later than `arrived` on purpose, and that gap is the whole of the fix. The two
+	 * fired together until a reasoning turn showed what that measured: a message whose
+	 * first block is a thought starts within milliseconds of the request, so the
+	 * receipt settled at `thinking 0.0s` and the model went on reasoning for half a
+	 * minute underneath a log that had stopped moving. The receipt was at its least
+	 * useful exactly where the wait was longest.
+	 *
+	 * So it stops on the first thing the reader can see rather than the first thing on
+	 * the wire. Thinking is not one of those and cannot be made into one: the wire
+	 * carries a token count and an empty string for it (upstream `claude-code#20127`),
+	 * so the only honest thing left to measure is the silence itself, from the request
+	 * going out to prose or a call landing.
+	 *
+	 * Nothing is taken back out. The receipt settles where it already stands, which is
+	 * the whole of why it is allowed to be there at all (#212).
+	 */
+	const settled = (at: number) => {
 		if (outstanding === null) return;
 		outstanding.ms = Math.max(0, at - outstanding.at);
 		outstanding.state = "done";
 		outstanding = null;
-		message += 1;
-		opened = [];
-		confirmed = 0;
 	};
 
 	for (const { at, event } of seen) {
@@ -945,7 +977,11 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		last = at;
 		// the work of every thread reaches the log; the words of only one do
 		if (event.parent !== null && !DELEGATED.has(event.kind)) continue;
-		if (event.parent === null && ANSWERS.has(event.kind)) answered(at);
+		if (event.parent === null && ANSWERS.has(event.kind)) {
+			arrived();
+			// every one of them draws a row, so every one of them ends the wait
+			settled(at);
+		}
 		switch (event.kind) {
 			case "call": {
 				// the block opens with a name and an empty input, and the subject types
@@ -1172,6 +1208,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				waits.set(made.key, made);
 				order.push({ kind: "wait", key: made.key });
 				outstanding = made;
+				begun = false;
 				// it is a drawn thing in the log now, so it ends a run the way every other
 				// drawn thing does — which is the rule below, on its own terms
 				endRun("");
@@ -1183,17 +1220,22 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			 * Neither draws a line of its own, and the thinking block least of all: the wire
 			 * carries no thinking text at all — `AgentThinking` has a token count and no prose,
 			 * and measured against 2.1.220 every one of the 346 thinking fields across the
-			 * captures is the empty string (upstream: claude-code#20127). What they do is stop
-			 * the receipt the request opened, which is where the duration was always going to
-			 * come from: the block's own span is `thinking 0.0s` for 34 of the 36 in the
-			 * captures, and the wait before it is the number worth keeping.
+			 * captures is the empty string (upstream: claude-code#20127).
+			 *
+			 * So they open the message and leave the receipt running (#231). They are the
+			 * request arriving, not the wait ending: `speaking` is the wire's `message_start`
+			 * and lands milliseconds after the request on a message that begins by thinking,
+			 * and what follows it is the part of the turn a reader has nothing to look at
+			 * for. Settling here is what made the receipt say `thinking 0.0s` over a model
+			 * that had another half minute of thinking to do.
 			 */
 			case "speaking":
 			case "thinking":
-				answered(at);
+				arrived();
 				break;
 			case "say": {
-				answered(at);
+				arrived();
+				settled(at);
 				const key = `say:${message}:${event.block}`;
 				let block = prose.get(key);
 				if (block === undefined) {
@@ -1208,7 +1250,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				break;
 			}
 			case "said": {
-				answered(at);
+				arrived();
+				settled(at);
 				// the settled message confirms the blocks its own deltas opened, in order.
 				// A runtime that sends no partial messages opens none, so the text arrives
 				// here first and is drawn whole — which is the same entry with no schedule.
