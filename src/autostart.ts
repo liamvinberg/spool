@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SpoolError } from "./errors";
 
@@ -80,17 +80,53 @@ export interface InstallOptions {
 	run?: LaunchctlRun;
 }
 
+const readIfPresent = (path: string): string | undefined => {
+	try {
+		return readFileSync(path, "utf8");
+	} catch {
+		return undefined;
+	}
+};
+
+/**
+ * Put back the plist that was here and hand it to launchd again. Answers the
+ * reason it could not, so the caller can say autostart is off out loud.
+ */
+function restorePlist(plist: string, contents: string, uid: number, run: LaunchctlRun): string | undefined {
+	try {
+		writeFileSync(plist, contents);
+	} catch (error) {
+		return error instanceof Error ? error.message : String(error);
+	}
+	run(["bootout", serviceTarget(uid)]); // best-effort: the failed attempt may have left a husk
+	const bootstrap = run(["bootstrap", `gui/${uid}`, plist]);
+	if (bootstrap.status !== 0) return bootstrap.stderr.trim() || `status ${bootstrap.status}`;
+	return undefined;
+}
+
 /** Write the agent and hand it to launchd; returns the plist path. */
 export function installAutostart({ home, uid, spec, spoolDir, run = runLaunchctl }: InstallOptions): string {
 	const plist = launchAgentPath(home);
 	mkdirSync(dirname(plist), { recursive: true });
 	mkdirSync(spoolDir, { recursive: true });
+	// this is destructive in order — bootout, then bootstrap — so the agent the
+	// machine already had is held onto: a bootstrap that fails must land back on
+	// it, never on no autostart at all (the upgrade that lost it entirely)
+	const previous = readIfPresent(plist);
 	writeFileSync(plist, launchAgentPlist(spec));
 	run(["bootout", serviceTarget(uid)]); // best-effort: clear any previous incarnation
 	run(["enable", serviceTarget(uid)]); // best-effort: undo an old disable, or bootstrap refuses
 	const bootstrap = run(["bootstrap", `gui/${uid}`, plist]);
 	if (bootstrap.status !== 0) {
-		throw new SpoolError(`launchctl bootstrap failed: ${bootstrap.stderr.trim() || `status ${bootstrap.status}`}`);
+		const reason = bootstrap.stderr.trim() || `status ${bootstrap.status}`;
+		if (previous === undefined) throw new SpoolError(`launchctl bootstrap failed: ${reason}`);
+		const failedRestore = restorePlist(plist, previous, uid, run);
+		if (failedRestore !== undefined) {
+			throw new SpoolError(
+				`launchctl bootstrap failed: ${reason}; putting the previous launch agent back failed too (${failedRestore}) — autostart is off until you run: spool autostart`,
+			);
+		}
+		throw new SpoolError(`launchctl bootstrap failed: ${reason} — the previous launch agent was put back`);
 	}
 	return plist;
 }
