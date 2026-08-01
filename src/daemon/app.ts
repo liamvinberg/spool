@@ -444,7 +444,7 @@ export function createDaemonApp({
 	 * going to spawn for again, and a map only ever written to is a map that only grows.
 	 */
 	const agentAsks = new Map<string, AgentAsk>();
-	const askKey = (root: string, thread: string) => `${root} ${thread}`;
+	const askKey = (root: string, thread: string) => `${root}\x00${thread}`;
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
 		const lookup = lookupProjectByName(spoolDir, name);
