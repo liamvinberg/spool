@@ -285,6 +285,26 @@ describe("skill", () => {
 		expect(verbs).toMatch(/createRequire\(".*[/\\]package\.json"\)/);
 	});
 
+	it("scopes the session contract to the canvas and the player (#182)", () => {
+		const flows = skillText("flows");
+		expect(flows).not.toContain("A frame document keeps its session across walks and reloads");
+		expect(flows).toContain("Two surfaces carry a session across a walk");
+		expect(flows).toContain("sandboxed onto an opaque origin with no storage");
+		expect(flows).toContain("a walk out of it starts the next frame from the scenario");
+		expect(flows).toContain("stays put on the canvas and in the player");
+		expect(flows).toContain("lands on the daemon's 404 instead");
+	});
+
+	it("says what the raw frame document is for and what it cannot do (#182)", () => {
+		const verbs = skillText("verbs");
+		expect(verbs).toContain("The raw document is one frame and nothing else");
+		expect(verbs).toContain("no storage, so a reload starts over");
+		expect(verbs).toContain("the next frame boots from the scenario with the state left behind");
+		expect(verbs).toContain("every walk logs a CORS error");
+		expect(verbs).toContain("lands on the daemon's 404 text instead of staying put");
+		expect(verbs).toContain("Drive the player for anything that walks or carries state");
+	});
+
 	it("reaches player frames through the iframe and sizes the viewport to the frame (#178)", () => {
 		const verbs = skillText("verbs");
 		expect(verbs).toContain('page.frameLocator("#spool-player")');

@@ -228,7 +228,7 @@ program
 	.command("url")
 	.description("mint a player-session URL to drive in a browser")
 	.argument("<frame>", "frame folder name")
-	.option("--raw", "mint the direct frame document URL")
+	.option("--raw", "mint the bare frame document URL: one frame, no session")
 	.action(async (frame: string, options: { raw?: boolean }) => {
 		const { root, name, daemonUrl, controlToken } = await verbContext();
 		process.stdout.write(
