@@ -224,6 +224,10 @@ describe("frame documents", () => {
 		const etag = first.headers.get("etag") ?? "";
 		const conditional = await app.request(`/p/${name}/frames/hello`, { headers: { "if-none-match": etag } });
 		expect(conditional.status).toBe(304);
+
+		// the document is only ever as good as its etag, so every read revalidates
+		expect(first.headers.get("cache-control")).toBe("no-cache");
+		expect(conditional.headers.get("cache-control")).toBe("no-cache");
 	});
 
 	it("recompiles when the frame source changes", async () => {

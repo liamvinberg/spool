@@ -1607,6 +1607,11 @@ export function createDaemonApp({
 			const doc = await compiler.getDocument(project.root, frame, frameAuthority(project.root));
 			if (doc.kind === "missing") return c.text(doc.message, 404);
 			if (doc.kind === "error") return c.html(doc.document, 500);
+			// A frame document changes whenever its source does, and the etag is the
+			// whole of how a browser learns that. Without this the browser is free to
+			// guess a freshness lifetime from nothing, so say it: ask every time, and
+			// the ask is a 304 for as long as the source stands still.
+			c.header("cache-control", "no-cache");
 			if (c.req.header("if-none-match") === doc.etag) return c.body(null, 304);
 			c.header("etag", doc.etag);
 			c.header("x-spool-cache", doc.cache);
