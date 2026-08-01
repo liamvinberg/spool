@@ -10,6 +10,21 @@ const frames = [
 	{ name: "right", x: 180, y: 0, w: 100, h: 100 },
 ];
 
+/**
+ * The events door, answered the way the daemon answers it: a body that stays open.
+ *
+ * `subscribeSse` reads this stream over `fetch`, so a door that hands back a finished
+ * body is a connection that dropped the instant it opened. It reconnects on a 250-500ms
+ * backoff and, because every connection after the first is a return, tells the canvas to
+ * resync each time — and a resync reloads every frame document, which drops the picks.
+ * Left finished, that is a reconnect storm wiping the standing these tests assert on,
+ * roughly every other run. A stream nobody ends is one connection and no returns.
+ */
+const openEventStream = () =>
+	new Response(new ReadableStream<Uint8Array>({ start: () => {} }), {
+		headers: { "content-type": "text/event-stream" },
+	});
+
 describe("canvas keyboard navigation", () => {
 	it("returns from an entered frame, moves spatially, and enters the target without walking", async () => {
 		const requests: string[] = [];
@@ -19,6 +34,7 @@ describe("canvas keyboard navigation", () => {
 				const raw = input instanceof Request ? input.url : String(input);
 				const url = new URL(raw, window.location.href);
 				requests.push(url.pathname);
+				if (url.pathname.endsWith("/events")) return openEventStream();
 				if (url.pathname.endsWith("/state")) {
 					return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 				}
@@ -122,6 +138,7 @@ describe("canvas keyboard navigation", () => {
 			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 				const raw = input instanceof Request ? input.url : String(input);
 				const url = new URL(raw, window.location.href);
+				if (url.pathname.endsWith("/events")) return openEventStream();
 				if (url.pathname.endsWith("/selection") && init?.method === "PUT") {
 					selections.push(JSON.parse(String(init.body)));
 					return Response.json({ selection: [] });
@@ -369,8 +386,14 @@ describe("canvas keyboard navigation", () => {
 	});
 });
 
-async function until(done: () => boolean): Promise<void> {
-	for (let attempt = 0; attempt < 20; attempt++) {
+/**
+ * A deadline rather than a tick count: the canvas holds a selection PUT back 150ms, and
+ * twenty ticks of ten is a budget that only just covers it on a machine with nothing else
+ * to do. What is being waited for is a settle, so what bounds the wait is a clock.
+ */
+async function until(done: () => boolean, ms = 2000): Promise<void> {
+	const deadline = Date.now() + ms;
+	while (Date.now() < deadline) {
 		if (done()) return;
 		await act(() => new Promise((resolve) => setTimeout(resolve, 10)));
 	}
