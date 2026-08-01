@@ -36,6 +36,8 @@ import {
 	drawableEntries,
 	fullyShown,
 	type Stamped,
+	shownBy,
+	type Transcript,
 	transcriptOf,
 	unpaced,
 } from "./agent-transcript";
@@ -45,8 +47,10 @@ import {
  *
  * A thread owns three things and nothing else: the events as they land, the clock they
  * are read against, and the request itself. Everything the rail draws is derived — the
- * transcript is projected fresh from the events on every tick, so there is one source of
- * truth and no second copy to keep in step.
+ * transcript is projected from the events rather than kept beside them, so there is one
+ * source of truth and no second copy to keep in step. What a thread does hold is the last
+ * projection and the revision it was folded at, which is a cache rather than a copy: it
+ * answers to the events and is gone the moment one of them lands.
  *
  * The clock is the pace's clock. #149's smoother is a closed-form function of elapsed
  * milliseconds rather than an accumulator, so a tick is a read rather than a step: a
@@ -294,6 +298,20 @@ interface Live {
 	 * queue rather than spool minting new names for words it already had.
 	 */
 	said: readonly AgentQueued[];
+	/**
+	 * Climbs whenever what the fold reads has moved, which is what dates the fold.
+	 *
+	 * Three things go into a transcript — the words the turn was started with, whether it
+	 * draws them, and the events since — and nothing else in this object can change what
+	 * comes out. So a revision is the whole identity of a fold: two reads at the same
+	 * number are the same transcript, and handing back the same one is what lets the rail
+	 * skip an entry nothing happened to.
+	 */
+	rev: number;
+	/** the last transcript folded out of this thread, under the revision it was folded at */
+	folded: { rev: number; shown: Transcript } | null;
+	/** the revision the clock last drew, so a tick knows whether it has anything to say */
+	ticked: number;
 	/** climbs per send, which is what re-arms the clock */
 	run: number;
 	/** the stream is open, written by the stream rather than by a render */
@@ -355,6 +373,9 @@ function born(id: string, over: Partial<Live> = {}): Live {
 		started: 0,
 		abandon: null,
 		said: [],
+		rev: 0,
+		folded: null,
+		ticked: 0,
 		run: 0,
 		streaming: false,
 		ms: 0,
@@ -430,8 +451,30 @@ function message(thread: Live, words: AgentWords): AgentQueued {
 	return { ...words, id: `held-${thread.holds}` };
 }
 
-function shownOf(thread: Live) {
-	return transcriptOf(thread.carried ? [] : thread.said, thread.events);
+/** what the fold reads has moved, so whatever was folded out of it is no longer it */
+function stirred(thread: Live): void {
+	thread.rev += 1;
+}
+
+/**
+ * This thread's transcript, folded once per change to the things it is folded from.
+ *
+ * The fold is a pure function of the words that started the turn and the events that
+ * followed it — the clock is not one of its inputs, because pacing is a schedule the
+ * fold writes and the renderer reads — so the same revision is the same transcript, and
+ * the one already in hand is the honest answer.
+ *
+ * It is a cache because of how many things ask. The tick asks per thread, every render
+ * asks for the open thread and then again for every other one, and a render happens on
+ * every pointermove the camera takes: unheld, one arriving message was folded a hundred
+ * times a second across every conversation the project had.
+ */
+function shownOf(thread: Live): Transcript {
+	const held = thread.folded;
+	if (held !== null && held.rev === thread.rev) return held.shown;
+	const shown = transcriptOf(thread.carried ? [] : thread.said, thread.events);
+	thread.folded = { rev: thread.rev, shown };
+	return shown;
 }
 
 /**
@@ -677,6 +720,7 @@ export function useAgentThreads(project: string): AgentDeck {
 			thread.drained = false;
 			thread.restored = false;
 			thread.stopping = false;
+			stirred(thread);
 			if (!attaching) {
 				thread.unread = false;
 				thread.at = Date.now();
@@ -723,6 +767,7 @@ export function useAgentThreads(project: string): AgentDeck {
 					thread.parked = { total: thread.parked.total + (Date.now() - thread.parked.since), since: null };
 				}
 				thread.events.push({ at: replaying > 0 ? 0 : clock(), event });
+				stirred(thread);
 				if (replaying > 0) replaying -= 1;
 			};
 			/** what the daemon says as the read opens, which is the turn introducing itself */
@@ -761,6 +806,7 @@ export function useAgentThreads(project: string): AgentDeck {
 							// and the words leave the log with the turn that never started: one thing
 							// said once, and this one has not been said yet
 							thread.said = [];
+							stirred(thread);
 						}
 						save(thread);
 						run(thread, { attach: true });
@@ -923,35 +969,70 @@ export function useAgentThreads(project: string): AgentDeck {
 	 * last words of a message arrive after the process has gone. A thread stops ticking
 	 * when its edge has reached the end of every message, which is the only moment at
 	 * which there is nothing left to draw.
+	 *
+	 * **A tick that changed nothing draws nothing.** The interval used to redraw for every
+	 * thread that had ever run, which is a render of the whole canvas ten times a second
+	 * for as long as a turn stayed open — including the long middle of a turn where the
+	 * agent is running a tool, no words are arriving and not one pixel is owed. So each
+	 * thread is asked what it has moved, and there are only three answers: events landed
+	 * that nothing else draws, the pace moved the edge of a message, or a request that is
+	 * still out has a number climbing on it.
 	 */
 	useEffect(() => {
 		const timer = setInterval(() => {
 			let moved = false;
 			for (const thread of threads.current.values()) {
 				if (thread.run === 0 || thread.drained) continue;
-				moved = true;
+				// the clock the rail was last handed, which is what is on screen right now
+				const drawn = thread.ms;
 				const now =
 					Date.now() -
 					thread.started -
 					thread.parked.total -
 					(thread.parked.since === null ? 0 : Date.now() - thread.parked.since);
 				thread.ms = now;
-				if (thread.streaming) {
-					// a turn in flight writes itself down on a throttle, so what a restart costs is
-					// bounded by SAVE_MS rather than by the length of the turn
-					if (Date.now() - thread.saved >= SAVE_MS) {
-						save(thread);
-					}
-					continue;
+				// a turn in flight writes itself down on a throttle, so what a restart costs is
+				// bounded by SAVE_MS rather than by the length of the turn
+				if (thread.streaming && Date.now() - thread.saved >= SAVE_MS) save(thread);
+				// the stream writes its events down and tells nobody, so the tick is the only
+				// thing that puts them on screen: a thread whose fold has moved is owed a draw
+				// whatever else it is or is not doing
+				if (thread.ticked !== thread.rev) {
+					thread.ticked = thread.rev;
+					moved = true;
 				}
 				const { entries } = shownOf(thread);
+				const clock = still ? Number.POSITIVE_INFINITY : now;
+				const was = still ? Number.POSITIVE_INFINITY : drawn;
+				/*
+				 * The edge moved since the rail last drew it, which is the only reading that can
+				 * decide this. Asking whether a message is finished cannot: the tick that finds
+				 * the last character is the tick that has to hand it over, and a thread that
+				 * stopped one step short would sit at the second-to-last word for the rest of the
+				 * turn. `shownBy` is what the renderer itself spends the clock on, so comparing
+				 * two of them is exactly the question of whether anything would look different.
+				 */
+				if (entries.some((entry) => entry.kind === "prose" && shownBy(entry, was) !== shownBy(entry, clock))) {
+					moved = true;
+				}
+				/*
+				 * A request still out is the one thing in a quiet log that moves on the clock
+				 * alone: its receipt counts up until something answers it. Under stillness it
+				 * counts nothing — the clock goes to the rail as infinite and the receipt draws no
+				 * number — so there is nothing to redraw for.
+				 */
 				if (
-					entries.some(
-						(entry) => entry.kind === "prose" && !fullyShown(entry, still ? Number.POSITIVE_INFINITY : now),
-					)
-				)
-					continue;
+					!still &&
+					entries.some((entry) => entry.kind === "wait" && entry.state === "running" && entry.ms === null)
+				) {
+					moved = true;
+				}
+				if (thread.streaming) continue;
+				if (entries.some((entry) => entry.kind === "prose" && !fullyShown(entry, clock))) continue;
 				thread.drained = true;
+				// the drain is drawn: it is what hands the rail an infinite clock, which is the
+				// difference between a message still arriving and a message that is over
+				moved = true;
 			}
 			if (moved) redraw();
 		}, TICK_MS);

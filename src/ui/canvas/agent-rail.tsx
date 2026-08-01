@@ -1166,7 +1166,13 @@ function Transcript({
 		setAway(true);
 	};
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: the entry list is what moves the end
+	/*
+	 * The list and the clock, because both of them move the end: a new entry lengthens the
+	 * log and a paced one grows where it stands. The clock used to be implied — the fold
+	 * handed down a fresh list on every tick whether or not anything had happened in it —
+	 * and now that an unchanged transcript is the same list, the growing has to be said.
+	 */
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the entry list and the clock are what move the end
 	useEffect(() => {
 		following.current = follow;
 		const box = view.current;
@@ -1182,7 +1188,7 @@ function Transcript({
 			return;
 		}
 		setAway(adrift(box));
-	}, [entries, follow, spoke]);
+	}, [entries, elapsed, follow, spoke]);
 
 	/*
 	 * The pin above re-runs when the list changes; height changes on more than the

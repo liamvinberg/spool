@@ -107,6 +107,8 @@ function mount(stored: readonly ServedThread[] = []) {
 
 	return {
 		latest: () => (seen[seen.length - 1] as AgentDeck).turn as AgentTurn,
+		/** how many times the hook has run, which is how many renders it has cost the canvas */
+		renders: () => seen.length,
 		asked,
 		puts,
 		named,
@@ -242,6 +244,67 @@ describe("the turn a thread is running", () => {
 		await settle(600);
 
 		expect(canvas.latest().elapsed).toBe(Number.POSITIVE_INFINITY);
+	});
+});
+
+/**
+ * What an open turn costs the canvas it is open in.
+ *
+ * The hook lives in `ProjectCanvas`, so every redraw it asks for renders the whole canvas
+ * — the frames, the arrows, the sidebar and the rail — and every render folds the log of
+ * every thread the project has. Both used to happen ten times a second for as long as a
+ * turn stayed open, whether or not anything in it had moved.
+ */
+describe("what an open turn costs", () => {
+	it("hands back the transcript it already folded when nothing it reads has moved", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		canvas.push(waiting);
+		canvas.push(speaking);
+		canvas.push({ kind: "say", block: 0, text: "done.", parent: null });
+		await settle(400);
+
+		const drawn = canvas.latest().entries;
+		// the box takes a message and the log is not one of the things that changes: the
+		// fold reads the words the turn was started with and the events since, and neither
+		// of them moved
+		await act(async () => {
+			canvas.latest().queue("and the footer");
+		});
+		expect(canvas.latest().entries).toBe(drawn);
+
+		// and an event is exactly what does move them
+		canvas.push({ kind: "say", block: 1, text: "and the footer.", parent: null });
+		await settle(300);
+		expect(canvas.latest().entries).not.toBe(drawn);
+		expect(canvas.latest().entries.filter((entry) => entry.kind === "prose")).toHaveLength(2);
+	});
+
+	/**
+	 * The long middle of a turn: the stream is open, the agent is off running something,
+	 * and the last message has been on screen whole for half a second. Nothing is arriving
+	 * and nothing is paced, so there is nothing to draw.
+	 */
+	it("draws nothing on a tick where nothing moved", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await act(async () => {
+			canvas.latest().send("go");
+		});
+		canvas.push(waiting);
+		canvas.push(speaking);
+		canvas.push({ kind: "say", block: 0, text: "done.", parent: null });
+		await settle(400);
+
+		const quiet = canvas.renders();
+		await settle(500);
+
+		expect(canvas.renders()).toBe(quiet);
+		// and the turn is still a turn, which is what makes the silence worth something
+		expect(canvas.latest().phase).toBe("playing");
 	});
 });
 
