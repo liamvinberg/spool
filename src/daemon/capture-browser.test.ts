@@ -139,6 +139,77 @@ async function serveCapture(): Promise<ServedCapture> {
 	};
 }
 
+/** A frame with a single WebGL canvas, cleared to solid red once and never redrawn — the #174 repro shape. */
+async function serveWebglCapture(): Promise<{ controlOrigin: string; url: string; close(): Promise<void> }> {
+	let frameDocument = "";
+	let controlDocument = "";
+	const server = createServer((request, response) => {
+		const authority = request.headers.host;
+		if (authority === undefined) {
+			response.writeHead(400).end("missing host");
+			return;
+		}
+		const url = new URL(request.url ?? "/", `http://${authority}`);
+		if (url.hostname === "127.0.0.1" && url.pathname === "/") {
+			response.setHeader("content-type", "text/html; charset=utf-8");
+			response.setHeader("cache-control", "no-store");
+			response.end(controlDocument);
+			return;
+		}
+		if (url.hostname === RENDER_HOST && url.pathname === "/frame") {
+			response.setHeader("content-type", "text/html; charset=utf-8");
+			response.setHeader("content-security-policy", "sandbox allow-scripts");
+			response.end(frameDocument);
+			return;
+		}
+		if (url.hostname === CAPTURE_HOST && url.pathname === "/capture") {
+			response.setHeader("content-type", "text/html; charset=utf-8");
+			response.setHeader("cache-control", "no-store");
+			response.setHeader("content-security-policy", captureWorkerCsp(controlOrigin));
+			response.end(captureWorkerDocument(controlOrigin));
+			return;
+		}
+		response.writeHead(404).end("not found");
+	});
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => resolve());
+	});
+	const address = server.address();
+	if (address === null || typeof address === "string") throw new Error("capture test server did not bind");
+	const controlOrigin = `http://127.0.0.1:${address.port}`;
+	const renderOrigin = `http://${RENDER_HOST}:${address.port}`;
+	frameDocument = assembleFrameDocument({
+		project: "capture-test-webgl",
+		frame: "capture",
+		projectCapability: "capture-test-webgl",
+		controlOrigin,
+		css: "",
+		importMap: { imports: {} },
+		// No preserveDrawingBuffer here — the shim is what's expected to add it
+		// (#174). Left to the spec, the drawing buffer clears once the browser is
+		// done compositing it, so an unpatched self-capture reads this back black.
+		bootJs: `
+			document.getElementById("root").innerHTML = '<canvas id="gl" width="800" height="600" style="position: absolute; inset: 0; width: 100%; height: 100%"></canvas>';
+			const gl = document.getElementById("gl").getContext("webgl");
+			gl.clearColor(1, 0, 0, 1);
+			gl.clear(gl.COLOR_BUFFER_BIT);
+		`,
+	});
+	controlDocument = `<!doctype html><html><body>
+<iframe id="frame" width="800" height="600" sandbox="allow-scripts" src="${renderOrigin}/frame"></iframe>
+</body></html>`;
+	return {
+		controlOrigin,
+		url: `${controlOrigin}/`,
+		close: () =>
+			new Promise<void>((resolve) => {
+				server.close(() => resolve());
+				server.closeAllConnections();
+			}),
+	};
+}
+
 async function readImage(url: string, page: Page) {
 	return page.evaluate(async (url) => {
 		const response = await fetch(url);
@@ -600,4 +671,41 @@ it("captures through the isolated worker while preserving output and cleanup", {
 		iframe.src = "about:blank";
 		iframe.remove();
 	});
+});
+
+it("captures a WebGL canvas as its cleared color, not black (#174)", {
+	timeout: 30_000,
+}, async () => {
+	const served = await serveWebglCapture();
+	onTestFinished(() => served.close());
+	const captureOrigin = new URL(served.controlOrigin);
+	captureOrigin.hostname = CAPTURE_HOST;
+
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const context = await browser.newContext({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 2 });
+	onTestFinished(() => context.close());
+	const page = await context.newPage();
+	await page.goto(served.url);
+	const authored = page.frames().find((frame) => new URL(frame.url()).hostname === RENDER_HOST);
+	if (authored === undefined) throw new Error("authored frame did not load");
+	await authored.locator("canvas").waitFor();
+	// The clear happens synchronously in the boot module, but the compositor
+	// paints it asynchronously; wait out a couple of frames so the drawing
+	// buffer has actually been presented at least once before capturing it,
+	// otherwise this races the paint independently of the shim's fix.
+	await authored.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+	const cover = await requestCapture(page, captureOrigin.origin, LIVE_MIN_CSS_PX);
+	expect(cover.resultReplies).toBe(1);
+	const coverImage = await readImage(cover.image.url, page);
+	expect(coverImage.type).toBe("image/jpeg");
+	// The shim's getContext wrap (#174) forces preserveDrawingBuffer on webgl
+	// contexts, so the self-capture reads back the red gl.clear() rather than
+	// whatever the drawing buffer holds once the browser is done compositing —
+	// nominally black. JPEG's lossy encoding gets an approximate assertion.
+	expect(coverImage.center[0]).toBeGreaterThanOrEqual(230);
+	expect(coverImage.center[1]).toBeLessThanOrEqual(25);
+	expect(coverImage.center[2]).toBeLessThanOrEqual(25);
+	expect(coverImage.center[3]).toBe(255);
 });
