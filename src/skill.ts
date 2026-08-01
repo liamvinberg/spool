@@ -213,16 +213,17 @@ The first HTML browser boot on a machine downloads spool's pinned headless Chrom
 
 The drive loop — \`spool url <frame>\` prints the player URL after checking the frame exists. Append &scenario=<name> to pick its seed. \`spool url --raw <frame>\` prints the stable bare frame document instead; append ?scenario=<name> there. Drive the player for walks, or the raw document when its chrome would get in the way.
 
-For Playwright, wait for DOMContentLoaded and then a meaningful selector from the frame. Do not wait for networkidle: Spool's live reload connection stays open. To use the dependency belonging to this exact Spool install from a repo script, copy the installed-package anchor printed below verbatim:
+For Playwright, wait for DOMContentLoaded and then a meaningful selector from the frame. Do not wait for networkidle: Spool's live reload connection stays open. The player mounts every frame inside a sandboxed \`<iframe id="spool-player">\`, so its selectors go through \`page.frameLocator("#spool-player")\` — a top-level locator never resolves there and the wait times out. On a --raw URL the frame is the page, so top-level locators are the right ones. Open the page at a viewport at least the frame's w×h: the player stage fits the frame into the window with min(1, vw/w, vh/h), so a 1440×900 frame in a 1248px-wide window renders at scale(0.87) and every screenshot comes back downsampled. To use the dependency belonging to this exact Spool install from a repo script, copy the installed-package anchor printed below verbatim:
 
   import { createRequire } from "node:module";
   const requireFromSpool = createRequire(${JSON.stringify(spoolPackageJson())});
   const { chromium } = requireFromSpool("playwright-core");
 
   const browser = await chromium.launch();
-  const page = await browser.newPage();
-  await page.goto(rawUrl, { waitUntil: "domcontentloaded" });
-  await page.locator("[data-ready='true']").waitFor(); // use a meaningful selector
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } }); // at least the frame's size
+  await page.goto(playerUrl, { waitUntil: "domcontentloaded" });
+  const frame = page.frameLocator("#spool-player"); // on a --raw URL, use page itself
+  await frame.locator("[data-ready='true']").waitFor(); // use a meaningful selector
 
 Walks you take in the player flip verified marks on the map's derived edges — \`spool flows\` shows which claims a real session has confirmed, most valuable on might edges: a verified faint edge is a branch that actually fired. The player's restart re-reads the scenario, so edit-seed-restart iterates on one URL.
 
