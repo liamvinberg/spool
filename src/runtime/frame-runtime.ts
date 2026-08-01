@@ -646,6 +646,14 @@ function frameUrl(target: string): string {
  * but harmless (#5), never a dead-end 404 page that eats the session. Any
  * served answer walks — a compile-failure document is its own loud surface —
  * and the probe doubles as a prefetch that warms the compile cache.
+ *
+ * Only this standalone path walks by navigation, and a served frame document
+ * always answers under `Content-Security-Policy: sandbox allow-scripts` (#182,
+ * app.ts), so in a real browser the probe reads as cross-origin: the request
+ * still warms the compile, the status never arrives, and the browser logs a
+ * CORS error that this walk ignores. The 404 branch below is reachable
+ * same-origin only — a bare frame document lands on the daemon's 404 text
+ * instead of staying put, which the skill's url topic says out loud.
  */
 async function walkTo(target: string, commit?: () => void): Promise<void> {
 	const url = frameUrl(target);

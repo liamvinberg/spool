@@ -375,4 +375,74 @@ describe("hostile project browser boundary", () => {
 		});
 		expect(await state.json()).not.toMatchObject({ camera: { x: 999, y: 999, zoom: 9 } });
 	});
+
+	/**
+	 * The price of the opaque origin, priced out loud (#182): a bare frame document
+	 * has no storage, so its session cannot outlive the document. The skill says
+	 * exactly this under the url verb and scopes the session contract to the canvas
+	 * and the player — if this test ever fails, that text is what to fix first.
+	 */
+	it("keeps no session in a bare frame document, across a walk or a reload", { timeout: 60_000 }, async () => {
+		const browser = await launchBrowser();
+		if (browser === undefined) return;
+		onTestFinished(() => browser.close());
+
+		const project = await serveProject();
+		writeDesignFile(project.root, "shared/scenarios/default.json", JSON.stringify({ state: { count: 0 } }));
+		writeFrame(
+			project.root,
+			"one",
+			`import { ui } from "spool";
+export default function One() {
+	ui.use();
+	return (
+		<main>
+			<span id="count">{String(ui.state.count)}</span>
+			<button id="bump" onClick={() => { ui.state.count = (ui.state.count as number) + 1; }}>bump</button>
+			<button id="walk" onClick={() => ui.go("two")}>walk</button>
+		</main>
+	);
+}`,
+		);
+		writeFrame(
+			project.root,
+			"two",
+			`import { ui } from "spool";
+export default function Two() {
+	ui.use();
+	return <main id="two">{String(ui.state.count)}</main>;
+}`,
+		);
+
+		const context = await browser.newContext({ viewport: { width: 800, height: 600 } });
+		onTestFinished(() => context.close());
+		const page = await context.newPage();
+		const raw = `${project.renderUrl}/p/${encodeURIComponent(project.name)}/frames/one`;
+
+		await page.goto(raw);
+		await page.locator("#bump").click();
+		await expect.poll(() => page.locator("#count").innerText()).toBe("1");
+		expect(
+			await page.evaluate(() => {
+				try {
+					void window.sessionStorage;
+					return "readable";
+				} catch (error) {
+					return (error as Error).name;
+				}
+			}),
+		).toBe("SecurityError");
+
+		// the walk really happens — it is the state that stays behind
+		await page.locator("#walk").click();
+		await page.locator("#two").waitFor();
+		expect(page.url()).toBe(`${project.renderUrl}/p/${encodeURIComponent(project.name)}/frames/two`);
+		expect(await page.locator("#two").innerText()).toBe("0");
+
+		await page.goto(raw);
+		await page.locator("#bump").click();
+		await expect.poll(() => page.locator("#count").innerText()).toBe("1");
+		await page.reload();
+		await expect.poll(() => page.locator("#count").innerText()).toBe("0");
+	});
 });

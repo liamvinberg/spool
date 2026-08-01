@@ -372,6 +372,9 @@ describe("walking a flow", () => {
 		});
 	});
 
+	// Same-origin only: the harness answers the probe, a served frame document
+	// cannot (it is sandboxed onto an opaque origin), so a bare frame document
+	// really does land on the daemon's 404 — see walkTo and the skill's url topic.
 	it("a missing data-go target is loud but harmless — never a dead-end page", async () => {
 		const harness = makeHarness();
 		scaffoldFlow(harness);
