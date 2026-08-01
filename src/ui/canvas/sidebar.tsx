@@ -1,11 +1,92 @@
-import { useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { accelPressed } from "../../runtime/platform-keys";
-import type { ProjectedFrame } from "../api";
-import { framesOnPage, pageLabel, pageList } from "./pages";
+import {
+	type CanvasOrder,
+	createPage,
+	duplicateFrames,
+	duplicatePage,
+	type FrameCopy,
+	fetchOrder,
+	moveFrames,
+	type ProjectedFrame,
+	putOrder,
+	renameFrame,
+	renamePage,
+} from "../api";
+import { cn } from "../cn";
+import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
+import type { HotkeyIdFor } from "../hotkeys";
+import {
+	insertAt,
+	mergeOrder,
+	placeAfter,
+	renameInOrder,
+	reorder,
+	withFrameOrder,
+	without,
+	withoutPageOrder,
+	withPageOrder,
+} from "./order";
+import { framesOnPage, pageLabel, pageList, pageOf, ROOT_PAGE } from "./pages";
+import {
+	type BornRow,
+	type FrameRow,
+	frameLanding,
+	type Landing,
+	LIST_PAD,
+	landingGuideX,
+	listHeight,
+	type PageRow,
+	pageLanding,
+	type RailFrame,
+	type RailRow,
+	railRows,
+	rowAt,
+	rowKey,
+	sameLanding,
+} from "./rail-rows";
 import { COLLAPSED_BELOW, MAX_WIDTH, STRIP_WIDTH, settledWidth, useRailWidth } from "./rail-width";
+import { type MenuTarget, RailMenu, type RailMenuState } from "./sidebar-menu";
+
+/**
+ * The pages rail as a file explorer (#229).
+ *
+ * A page is a folder under `design/frames/` and a frame is a folder with one
+ * entry file, so this rail was always a view of the disk — it just could not do
+ * anything to it. Now it carries the explorer verbs: drag to reorder and to move
+ * a frame between pages, rename in place, duplicate, copy and paste, delete onto
+ * the same staged-trash toast the canvas uses, a menu per row kind, and keyboard
+ * travel through the whole list.
+ *
+ * Two things it still does not do, and both are laws rather than gaps. It never
+ * writes frame source: rename and move are folder operations, and a `data-go`
+ * literal naming a renamed frame re-derives as missing, which is where an agent
+ * fixes it. And it never writes geometry for a row it moved: order is the rail's
+ * list and the canvas is a plane, so reordering rows moves nothing out there and
+ * arranging frames out there changes no row. The one geometry write anywhere
+ * near this surface is the cascade a fresh copy needs so it does not land exactly
+ * on top of its original, and that belongs to the canvas — which is why it is
+ * asked for here rather than done here.
+ *
+ * Rows are absolutely placed at an offset the list already knows, so they slide
+ * to a new home on the house curve without anything measuring the DOM, and the
+ * insertion line lands on an exact pixel. There is no animation library in this
+ * bundle and this rail does not add one.
+ */
 
 const PANEL_WIDTH = 248;
+/** how far a press travels before it is a drag rather than a click */
+const SLOP = 5;
+/** the band at each end of the list that pulls the scroll along */
+const EDGE = 36;
+const EDGE_SPEED = 14;
+/** how long a shut page is rested on before it opens itself */
+const SPRING_MS = 450;
+/** how long a typed jump keeps collecting letters */
+const TYPED_MS = 700;
+/** the house curve, which every rail transition already wears */
+const CURVE = "cubic-bezier(0.23,1,0.32,1)";
 
 export interface SelectModifiers {
 	shift: boolean;
@@ -17,8 +98,47 @@ const modifiersOf = (event: React.MouseEvent): SelectModifiers => ({
 	toggle: accelPressed(event),
 });
 
-/** The pages navigator: a collapsible folder tree over the full projection. */
+interface RenameState {
+	readonly key: string;
+	readonly draft: string;
+	/** a page that has never existed: cancelling drops the row rather than reverting */
+	readonly born: boolean;
+	/** the daemon's refusal, said on the row that asked for it */
+	readonly error: string | null;
+	readonly busy: boolean;
+}
+
+/** The open rename, as the one thing a row has to be handed to draw it. */
+interface RenameHandle {
+	readonly state: RenameState;
+	readonly onDraft: (draft: string) => void;
+	readonly onCommit: () => void;
+	readonly onCancel: () => void;
+}
+
+interface DragLive {
+	pointerId: number;
+	kind: "page" | "frame";
+	names: readonly string[];
+	startX: number;
+	startY: number;
+	x: number;
+	y: number;
+	grabY: number;
+	active: boolean;
+	springPage: string | null;
+	springAt: number;
+}
+
+interface DragKit {
+	readonly kind: "page" | "frame";
+	readonly names: readonly string[];
+	readonly label: string;
+}
+
+/** The pages navigator: a file explorer over the projection and the stored order. */
 export function CanvasSidebar({
+	project,
 	pages,
 	activePage,
 	frames,
@@ -26,8 +146,15 @@ export function CanvasSidebar({
 	onSwitchPage,
 	onSelectFrame,
 	onDoubleClickFrame,
+	onTrashFrames,
+	onTrashPage,
+	onRevealFrame,
+	onOpenEditor,
+	onCopiesLanded,
+	onRefresh,
 	litPage = null,
 }: {
+	project: string;
 	/** Named pages, sorted; the root page is implied and listed first. */
 	pages: readonly string[];
 	activePage: string;
@@ -37,28 +164,717 @@ export function CanvasSidebar({
 	onSwitchPage: (page: string) => void;
 	onSelectFrame: (name: string, modifiers: SelectModifiers) => void;
 	onDoubleClickFrame: (name: string) => void;
+	onTrashFrames: (names: string[]) => void;
+	/** A page and everything inside it, as one entry on the trash toast. */
+	onTrashPage: (page: string, frames: string[]) => void;
+	onRevealFrame: (name: string) => void;
+	onOpenEditor: (name: string) => void;
+	/** Fresh copies exist: the canvas cascades them off their originals and selects them. */
+	onCopiesLanded: (copies: readonly FrameCopy[]) => void;
+	/** A folder operation landed; the projection is behind until it is read again. */
+	onRefresh: () => void;
 	/** The page holding the finder's pick — its row lights while the palette is up. */
 	litPage?: string | null;
 }) {
 	const [width, setWidth] = useRailWidth("pages", PANEL_WIDTH);
-	const [dragging, setDragging] = useState(false);
-	const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+	const [resizing, setResizing] = useState(false);
+	const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+	const [order, setOrder] = useState<CanvasOrder>({});
+	const [cursor, setCursor] = useState<string | null>(null);
+	const [renaming, setRenaming] = useState<RenameState | null>(null);
+	const [born, setBorn] = useState(false);
+	const [clipboard, setClipboard] = useState<readonly string[]>([]);
+	const [menu, setMenu] = useState<RailMenuState | null>(null);
+	const [kit, setKit] = useState<DragKit | null>(null);
+	const [landing, setLanding] = useState<Landing | null>(null);
+	const [springPage, setSpringPage] = useState<string | null>(null);
 	const [pageTooltip, setPageTooltip] = useState<{ page: string; x: number; y: number } | null>(null);
-	const drag = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
-	const tooltipId = useId();
-	const collapsed = width <= COLLAPSED_BELOW;
-	const orderedPages = pageList(pages);
 
-	function activatePage(page: string) {
-		onSwitchPage(page);
+	const asideRef = useRef<HTMLElement | null>(null);
+	const listRef = useRef<HTMLDivElement | null>(null);
+	const overlayRef = useRef<HTMLDivElement | null>(null);
+	const live = useRef<DragLive | null>(null);
+	const ticking = useRef<number | null>(null);
+	const landingRef = useRef<Landing | null>(null);
+	/** a press that became a drag must not also read as a click on the row it left */
+	const justDragged = useRef(false);
+	const grip = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
+	const typed = useRef({ buffer: "", at: 0 });
+	const tooltipId = useId();
+
+	const collapsed = width <= COLLAPSED_BELOW;
+
+	/* ── the list: the projection, arranged by the stored order ──────── */
+
+	const orderedPages = useMemo(() => pageList(mergeOrder(order.pages, pages)), [order.pages, pages]);
+
+	const framesByPage = useMemo(() => {
+		const byPage = new Map<string, readonly RailFrame[]>();
+		for (const page of orderedPages) {
+			const here = framesOnPage(frames, page);
+			const kinds = new Map(here.map((frame) => [frame.name, frame.kind]));
+			byPage.set(
+				page,
+				mergeOrder(
+					order.frames?.[page],
+					here.map((frame) => frame.name),
+				).map((name) => ({ name, kind: kinds.get(name) ?? "html" }) satisfies RailFrame),
+			);
+		}
+		return byPage;
+	}, [orderedPages, frames, order.frames]);
+
+	const rows = useMemo(
+		() => railRows(orderedPages, framesByPage, expanded, born),
+		[orderedPages, framesByPage, expanded, born],
+	);
+	const total = listHeight(rows);
+	const namedPages = useMemo(() => without(orderedPages, [ROOT_PAGE]), [orderedPages]);
+
+	const namesOn = useCallback(
+		(page: string) => (framesByPage.get(page) ?? []).map((frame) => frame.name),
+		[framesByPage],
+	);
+
+	const cursorRow = useMemo(() => rows.find((row) => rowKey(row) === cursor) ?? null, [rows, cursor]);
+	/** what a verb acts on: the canvas selection, or the one row the cursor is on */
+	const chosenFrames = useMemo(
+		() => (selected.length > 0 ? selected : cursorRow?.kind === "frame" ? [cursorRow.name] : []),
+		[selected, cursorRow],
+	);
+
+	/**
+	 * What a handler that outlives its render needs to read.
+	 *
+	 * The drag loop runs on rAF and the hotkey layer answers window events, so
+	 * both would otherwise close over the list as it was when they were built.
+	 */
+	const now = useRef({
+		rows,
+		order,
+		namedPages,
+		framesByPage,
+		cursor,
+		cursorRow,
+		chosenFrames,
+		clipboard,
+		activePage,
+		menu,
+	});
+	useEffect(() => {
+		now.current = {
+			rows,
+			order,
+			namedPages,
+			framesByPage,
+			cursor,
+			cursorRow,
+			chosenFrames,
+			clipboard,
+			activePage,
+			menu,
+		};
+	});
+
+	/* ── the stored order ────────────────────────────────────────────── */
+
+	useEffect(() => {
+		let reading = true;
+		void fetchOrder(project).then((stored) => {
+			if (reading) setOrder(stored);
+		});
+		return () => {
+			reading = false;
+		};
+	}, [project]);
+
+	/** A drop is an explicit gesture, so it lands on disk at once, unlike the camera. */
+	const storeOrder = useCallback(
+		(next: CanvasOrder) => {
+			setOrder(next);
+			putOrder(project, next);
+		},
+		[project],
+	);
+
+	/* ── expanding ───────────────────────────────────────────────────── */
+
+	const setOpen = useCallback((page: string, open: boolean) => {
+		setExpanded((was) => {
+			const next = new Set(was);
+			if (open) next.add(page);
+			else next.delete(page);
+			return next;
+		});
+	}, []);
+
+	/** ⌥ on a chevron means every page, which is what "deep" is worth in a flat tree. */
+	const foldAll = useCallback((open: boolean) => {
+		setExpanded(open ? new Set(now.current.namedPages.concat(ROOT_PAGE)) : new Set());
+	}, []);
+
+	/**
+	 * A frame picked from somewhere that is not this rail gets a row to stand on.
+	 *
+	 * The finder, a row in the agent rail, an exit tag somebody walked: all of
+	 * them land on a frame, and a selection you cannot see is a selection the
+	 * rail is lying about. Only ever opens — activating a page still does not,
+	 * because switching page is not picking anything.
+	 */
+	const shown = useRef<readonly string[]>([]);
+	useEffect(() => {
+		if (selected === shown.current) return;
+		shown.current = selected;
+		const holding = new Set(frames.filter((frame) => selected.includes(frame.name)).map(pageOf));
+		if (holding.size === 0) return;
+		setExpanded((was) => ([...holding].every((page) => was.has(page)) ? was : new Set([...was, ...holding])));
+	}, [selected, frames]);
+
+	/* ── travelling ──────────────────────────────────────────────────── */
+
+	const scrollRowIntoView = useCallback((key: string) => {
+		const list = listRef.current;
+		const row = now.current.rows.find((each) => rowKey(each) === key);
+		if (list === null || row === undefined) return;
+		const top = row.top + LIST_PAD;
+		if (top < list.scrollTop) list.scrollTop = top - 4;
+		else if (top + row.height > list.scrollTop + list.clientHeight) {
+			list.scrollTop = top + row.height - list.clientHeight + 4;
+		}
+	}, []);
+
+	/**
+	 * Land the cursor on a row.
+	 *
+	 * A frame row selects on the canvas the way a click on it does, page switch
+	 * included — that is what makes arrowing through the rail a way of looking at
+	 * frames rather than of moving a highlight. A page row only takes the cursor:
+	 * pressing a folder switches the page, and travelling is not a press.
+	 */
+	const landOn = useCallback(
+		(row: RailRow | undefined) => {
+			if (row === undefined) return;
+			const key = rowKey(row);
+			setCursor(key);
+			scrollRowIntoView(key);
+			if (row.kind === "frame") onSelectFrame(row.name, { shift: false, toggle: false });
+		},
+		[onSelectFrame, scrollRowIntoView],
+	);
+
+	const step = useCallback(
+		(delta: number) => {
+			const all = now.current.rows;
+			const at = all.findIndex((row) => rowKey(row) === now.current.cursor);
+			const next = at === -1 ? (delta > 0 ? 0 : all.length - 1) : Math.max(0, Math.min(all.length - 1, at + delta));
+			landOn(all[next]);
+		},
+		[landOn],
+	);
+
+	/* ── renaming ────────────────────────────────────────────────────── */
+
+	const beginRename = useCallback((row: RailRow | null) => {
+		// the root page is the frames directory itself, and a page still being
+		// named is already in the only state this puts a row into
+		if (row === null || row.kind === "born" || (row.kind === "page" && row.page === ROOT_PAGE)) return;
+		setRenaming({
+			key: rowKey(row),
+			draft: row.kind === "page" ? row.page : row.name,
+			born: false,
+			error: null,
+			busy: false,
+		});
+	}, []);
+
+	const cancelRename = useCallback(() => {
+		setBorn(false);
+		setRenaming(null);
+	}, []);
+
+	const newPage = useCallback(() => {
+		setBorn(true);
+		setMenu(null);
+		setRenaming({ key: "born", draft: "", born: true, error: null, busy: false });
+	}, []);
+
+	/**
+	 * Commit what was typed.
+	 *
+	 * The daemon owns the answer: a name claimed anywhere in the project — by a
+	 * frame or by a page — comes back 409, and the row keeps its input and says
+	 * so rather than quietly minting a different name. Renaming a row to what it
+	 * is already called never travels at all, which is what commit-on-blur does
+	 * most of the time.
+	 */
+	const commitRename = useCallback(async () => {
+		const at = renaming;
+		if (at === null || at.busy) return;
+		const wanted = at.draft.trim();
+		if (at.born) {
+			if (wanted === "") {
+				cancelRename();
+				return;
+			}
+			setRenaming({ ...at, busy: true, error: null });
+			const done = await createPage(project, wanted);
+			if (done.kind === "refused") {
+				setRenaming({ ...at, busy: false, error: refusalLine(done.status) });
+				return;
+			}
+			// a new page waits at the end of the list while it is named, and that is
+			// where it stays: nothing about naming it says where it belongs
+			const named = now.current.namedPages;
+			storeOrder(withPageOrder(now.current.order, insertAt(named, [wanted], named.length)));
+			setBorn(false);
+			setRenaming(null);
+			setExpanded((was) => new Set([...was, wanted]));
+			setCursor(`page:${wanted}`);
+			onSwitchPage(wanted);
+			onRefresh();
+			return;
+		}
+		const row = now.current.rows.find((each) => rowKey(each) === at.key);
+		if (row === undefined || row.kind === "born") {
+			setRenaming(null);
+			return;
+		}
+		const from = row.kind === "page" ? row.page : row.name;
+		if (wanted === "" || wanted === from) {
+			setRenaming(null);
+			return;
+		}
+		setRenaming({ ...at, busy: true, error: null });
+		const done =
+			row.kind === "page" ? await renamePage(project, from, wanted) : await renameFrame(project, from, wanted);
+		if (done.kind === "refused") {
+			setRenaming({ ...at, busy: false, error: refusalLine(done.status) });
+			return;
+		}
+		setRenaming(null);
+		if (row.kind === "page") {
+			// the daemon carried the page's own bookkeeping across with the folder
+			// (#228); this is that same move applied to what is on screen, so
+			// neither side has to read the other back
+			const held = now.current.order.frames?.[from];
+			const dropped = withoutPageOrder(now.current.order, from);
+			storeOrder({
+				...dropped,
+				pages: renameInOrder(now.current.namedPages, from, wanted),
+				...(held === undefined ? {} : { frames: { ...dropped.frames, [wanted]: held } }),
+			});
+			setCursor(`page:${wanted}`);
+			if (activePage === from) onSwitchPage(wanted);
+		} else {
+			// the daemon leaves frame names in the order alone, because from where it
+			// sits a stale name is not damage. Here it is: without this the frame
+			// would leave the place somebody put it the moment it was renamed
+			storeOrder(withFrameOrder(now.current.order, row.page, renameInOrder(namesOn(row.page), from, wanted)));
+			setCursor(`frame:${wanted}`);
+		}
+		onRefresh();
+	}, [renaming, project, storeOrder, cancelRename, namesOn, activePage, onSwitchPage, onRefresh]);
+
+	/* ── the verbs ───────────────────────────────────────────────────── */
+
+	/**
+	 * Fresh copies, placed and then shown.
+	 *
+	 * Order first, because a copy with no place in it would slide off to its
+	 * alphabetical spot the moment the projection arrives. Then the canvas, which
+	 * cascades them off their originals and takes the selection: a duplicate
+	 * copies the geometry sidecar verbatim (#228), so a same-page copy would
+	 * otherwise land exactly on top of what it was made from.
+	 */
+	/**
+	 * A verb carrying no typed name came back refused.
+	 *
+	 * It is pathological by construction: the daemon mints copy names itself and
+	 * cannot collide with one, so what is left is the disk having moved
+	 * underneath the projection this rail is drawing — a frame trashed in Finder,
+	 * a folder an agent renamed a moment ago. There is nothing to say to a person
+	 * about a name they never typed, so the answer is to read the disk again and
+	 * let reality reassert itself.
+	 */
+	const refuted = useCallback(() => onRefresh(), [onRefresh]);
+
+	const landCopies = useCallback(
+		(copies: readonly FrameCopy[], beside: boolean) => {
+			let next = now.current.order;
+			const byPage = new Map<string, string[]>();
+			for (const copy of copies) {
+				const page = copy.page ?? ROOT_PAGE;
+				const list = byPage.get(page) ?? [...(next.frames?.[page] ?? namesOn(page))];
+				byPage.set(page, beside ? placeAfter(list, copy.from, [copy.to]) : insertAt(list, [copy.to], list.length));
+			}
+			for (const [page, list] of byPage) next = withFrameOrder(next, page, list);
+			storeOrder(next);
+			onCopiesLanded(copies);
+			onRefresh();
+		},
+		[namesOn, storeOrder, onCopiesLanded, onRefresh],
+	);
+
+	/**
+	 * Move the row to the Trash, and say nothing about the order.
+	 *
+	 * A staged page still exists on disk, so its order entries are not stale and
+	 * there is nothing to clean; and once the toast drains, #228's trash route
+	 * drops them itself. Writing them out here would only mean that undoing the
+	 * toast brought the page back to its alphabetical spot with its frames'
+	 * arrangement gone — the one thing an undo must not do.
+	 */
+	const trash = useCallback(() => {
+		const row = now.current.cursorRow;
+		if (row?.kind === "page") {
+			if (row.page === ROOT_PAGE) return;
+			onTrashPage(row.page, namesOn(row.page));
+			setCursor(null);
+			return;
+		}
+		const names = now.current.chosenFrames;
+		if (names.length > 0) onTrashFrames([...names]);
+	}, [onTrashPage, onTrashFrames, namesOn]);
+
+	const duplicate = useCallback(async () => {
+		const row = now.current.cursorRow;
+		if (row?.kind === "page") {
+			if (row.page === ROOT_PAGE) return;
+			const done = await duplicatePage(project, row.page);
+			if (done.kind === "refused") {
+				refuted();
+				return;
+			}
+			storeOrder(withPageOrder(now.current.order, placeAfter(now.current.namedPages, row.page, [done.page])));
+			setExpanded((was) => new Set([...was, done.page]));
+			setCursor(`page:${done.page}`);
+			onRefresh();
+			return;
+		}
+		const names = now.current.chosenFrames;
+		if (names.length === 0) return;
+		const done = await duplicateFrames(project, [...names]);
+		if (done.kind === "refused") {
+			refuted();
+			return;
+		}
+		landCopies(done.copies, true);
+	}, [project, storeOrder, onRefresh, landCopies, refuted]);
+
+	const copy = useCallback(() => {
+		const names = now.current.chosenFrames;
+		if (names.length > 0) setClipboard([...names]);
+	}, []);
+
+	const paste = useCallback(
+		async (page?: string) => {
+			const held = now.current.clipboard;
+			const target = page ?? now.current.activePage;
+			if (held.length === 0) return;
+			const done = await duplicateFrames(project, [...held], target);
+			if (done.kind === "refused") {
+				refuted();
+				return;
+			}
+			setExpanded((was) => new Set([...was, target]));
+			landCopies(done.copies, false);
+		},
+		[project, landCopies, refuted],
+	);
+
+	/* ── dragging ────────────────────────────────────────────────────── */
+
+	const tick = useCallback(() => {
+		const current = live.current;
+		const list = listRef.current;
+		if (current !== null && list !== null && current.active) {
+			// the lifted row hangs just left of the pointer: the insertion line's
+			// notch has to stay readable underneath it
+			const overlay = overlayRef.current;
+			if (overlay !== null) {
+				overlay.style.transform = `translate3d(${current.x - 14}px, ${current.y - current.grabY}px, 0)`;
+			}
+			const box = list.getBoundingClientRect();
+			const above = current.y - box.top;
+			const below = box.bottom - current.y;
+			if (above < EDGE) list.scrollTop -= Math.min(EDGE_SPEED, (EDGE - above) / 2.2);
+			else if (below < EDGE) list.scrollTop += Math.min(EDGE_SPEED, (EDGE - below) / 2.2);
+
+			const all = now.current.rows;
+			const contentY = current.y - box.top + list.scrollTop - LIST_PAD;
+			const next = current.kind === "page" ? pageLanding(all, contentY) : frameLanding(all, contentY);
+			if (!sameLanding(next, landingRef.current)) {
+				landingRef.current = next;
+				setLanding(next);
+			}
+
+			// spring-loaded folders: rest on a shut page and it opens itself
+			const at = rowAt(all, contentY);
+			const over = at === -1 ? undefined : all[at];
+			const candidate = current.kind === "frame" && over?.kind === "page" && !over.open ? over.page : null;
+			if (candidate !== current.springPage) {
+				current.springPage = candidate;
+				current.springAt = performance.now();
+				setSpringPage(candidate);
+			} else if (candidate !== null && performance.now() - current.springAt > SPRING_MS) {
+				setOpen(candidate, true);
+				current.springPage = null;
+				setSpringPage(null);
+			}
+		}
+		ticking.current = requestAnimationFrame(tick);
+	}, [setOpen]);
+
+	const applyDrop = useCallback(
+		(current: DragLive, target: Landing) => {
+			const held = now.current.order;
+			if (current.kind === "page") {
+				if (target.kind !== "pages") return;
+				storeOrder(withPageOrder(held, reorder(now.current.namedPages, current.names, target.index)));
+				return;
+			}
+			if (target.kind === "pages") return;
+			const page = target.page;
+			const names = [...current.names];
+			const sources = new Set(
+				names.flatMap((name) => {
+					const row = now.current.rows.find((each) => each.kind === "frame" && each.name === name);
+					return row?.kind === "frame" ? [row.page] : [];
+				}),
+			);
+			const index = target.kind === "frames" ? target.index : (now.current.framesByPage.get(page)?.length ?? 0);
+			if (sources.size === 1 && sources.has(page)) {
+				storeOrder(withFrameOrder(held, page, reorder(namesOn(page), names, index)));
+				return;
+			}
+			// a frame that changes page changes folder, and the folder is the whole
+			// move: geometry, stills, its URL and every flow into it ride along
+			let next = held;
+			for (const source of sources) {
+				if (source !== page) next = withFrameOrder(next, source, without(namesOn(source), names));
+			}
+			next = withFrameOrder(next, page, insertAt(without(namesOn(page), names), names, index));
+			storeOrder(next);
+			setOpen(page, true);
+			void moveFrames(project, names, page).then((done) => {
+				// the move never happened: put the rail back rather than let it claim it did
+				if (done.kind === "refused") storeOrder(held);
+				onRefresh();
+			});
+		},
+		[project, namesOn, storeOrder, setOpen, onRefresh],
+	);
+
+	const stopDrag = useCallback(
+		(drop: boolean) => {
+			const current = live.current;
+			const target = landingRef.current;
+			if (ticking.current !== null) cancelAnimationFrame(ticking.current);
+			ticking.current = null;
+			live.current = null;
+			landingRef.current = null;
+			if (current?.active === true) justDragged.current = true;
+			setKit(null);
+			setLanding(null);
+			setSpringPage(null);
+			if (drop && current?.active === true && target !== null) applyDrop(current, target);
+		},
+		[applyDrop],
+	);
+
+	useEffect(() => {
+		const onMove = (event: PointerEvent) => {
+			const current = live.current;
+			if (current === null || event.pointerId !== current.pointerId) return;
+			current.x = event.clientX;
+			current.y = event.clientY;
+			if (!current.active && Math.hypot(event.clientX - current.startX, event.clientY - current.startY) > SLOP) {
+				current.active = true;
+				setKit({ kind: current.kind, names: current.names, label: labelOf(current) });
+			}
+			if (current.active) event.preventDefault();
+		};
+		const onUp = (event: PointerEvent) => {
+			if (live.current?.pointerId === event.pointerId) stopDrag(true);
+		};
+		const onCancel = () => stopDrag(false);
+		window.addEventListener("pointermove", onMove, { passive: false });
+		window.addEventListener("pointerup", onUp);
+		window.addEventListener("pointercancel", onCancel);
+		return () => {
+			window.removeEventListener("pointermove", onMove);
+			window.removeEventListener("pointerup", onUp);
+			window.removeEventListener("pointercancel", onCancel);
+			if (ticking.current !== null) cancelAnimationFrame(ticking.current);
+		};
+	}, [stopDrag]);
+
+	function pressRow(event: React.PointerEvent<HTMLElement>, row: RailRow) {
+		// the empty list behind the rows drops the cursor on a press; a row owns its own
+		event.stopPropagation();
+		justDragged.current = false;
+		if (event.button !== 0 || renaming?.key === rowKey(row)) return;
+		setMenu(null);
+		// clicking a button does not focus it everywhere, and the rail's scope is
+		// up only while the rail holds focus
+		listRef.current?.focus({ preventScroll: true });
+		setCursor(rowKey(row));
+		// the root page is permanent and a page still being named has no folder:
+		// neither is a thing to pick up
+		if (row.kind === "born" || (row.kind === "page" && row.page === ROOT_PAGE)) return;
+		live.current = {
+			pointerId: event.pointerId,
+			kind: row.kind,
+			names:
+				row.kind === "page"
+					? [row.page]
+					: selected.includes(row.name) && selected.length > 1
+						? [...selected]
+						: [row.name],
+			startX: event.clientX,
+			startY: event.clientY,
+			x: event.clientX,
+			y: event.clientY,
+			grabY: event.clientY - event.currentTarget.getBoundingClientRect().top,
+			active: false,
+			springPage: null,
+			springAt: 0,
+		};
+		if (ticking.current === null) ticking.current = requestAnimationFrame(tick);
 	}
 
-	function finishDrag(target: HTMLElement, pointerId: number) {
-		const current = drag.current;
+	/* ── the menu ────────────────────────────────────────────────────── */
+
+	const openMenu = useCallback(
+		(event: React.MouseEvent, target: MenuTarget) => {
+			event.preventDefault();
+			event.stopPropagation();
+			listRef.current?.focus({ preventScroll: true });
+			if (target.kind === "frame" && !selected.includes(target.name)) {
+				onSelectFrame(target.name, { shift: false, toggle: false });
+			}
+			if (target.kind !== "empty")
+				setCursor(target.kind === "page" ? `page:${target.page}` : `frame:${target.name}`);
+			setMenu({ x: event.clientX, y: event.clientY, target });
+		},
+		[selected, onSelectFrame],
+	);
+
+	useEffect(() => {
+		if (menu === null) return;
+		const close = () => setMenu(null);
+		window.addEventListener("pointerdown", close);
+		return () => window.removeEventListener("pointerdown", close);
+	}, [menu]);
+
+	/* ── keys ────────────────────────────────────────────────────────── */
+
+	useEffect(() => {
+		// the rail's own scope, above the canvas and not exclusive: what it does
+		// not claim carries straight on to the canvas (#229)
+		const detachMenu = attachHotkeyLayer({
+			scope: "sidebar",
+			active: () => now.current.menu !== null,
+			handlers: {
+				"sidebar.close-menu": (event) => {
+					event?.preventDefault();
+					setMenu(null);
+				},
+			},
+		});
+		const detach = attachHotkeyLayer({
+			scope: "sidebar",
+			active: () => asideRef.current?.contains(document.activeElement) === true,
+			handlers: {
+				"sidebar.walk": (event) => {
+					event?.preventDefault();
+					step(event?.key === "ArrowUp" ? -1 : 1);
+				},
+				"sidebar.expand": (event) => {
+					event?.preventDefault();
+					const row = now.current.cursorRow;
+					if (row?.kind !== "page") return;
+					if (row.open) step(1);
+					else setOpen(row.page, true);
+				},
+				"sidebar.collapse": (event) => {
+					event?.preventDefault();
+					const row = now.current.cursorRow;
+					if (row === null || row.kind === "born") return;
+					if (row.kind === "page") {
+						if (row.open) setOpen(row.page, false);
+						return;
+					}
+					landOn(now.current.rows.find((each) => each.kind === "page" && each.page === row.page));
+				},
+				"sidebar.rename": (event) => {
+					event?.preventDefault();
+					beginRename(now.current.cursorRow);
+				},
+				"sidebar.trash": (event) => {
+					event?.preventDefault();
+					trash();
+				},
+				"sidebar.duplicate": (event) => {
+					event?.preventDefault();
+					void duplicate();
+				},
+				"sidebar.copy": (event) => {
+					event?.preventDefault();
+					copy();
+				},
+				"sidebar.paste": (event) => {
+					event?.preventDefault();
+					void paste();
+				},
+			} satisfies Omit<Record<HotkeyIdFor<"sidebar">, HotkeyHandler>, "sidebar.close-menu">,
+		});
+		return () => {
+			detachMenu();
+			detach();
+		};
+	}, [step, setOpen, landOn, beginRename, trash, duplicate, copy, paste]);
+
+	/**
+	 * Type a name and the cursor walks to it.
+	 *
+	 * Answered on the rail rather than in the register, and stopped short of the
+	 * window listener exactly as the resize grip stops its arrows: these are the
+	 * characters a spool name is made of, and while the rail holds focus they
+	 * belong to this list rather than to the canvas's one-letter verbs. Every
+	 * chord and every other key is left alone and reaches the canvas untouched.
+	 */
+	function typeAhead(event: React.KeyboardEvent) {
+		if (event.metaKey || event.ctrlKey || event.altKey || !/^[a-z0-9-]$/i.test(event.key)) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const at = Date.now();
+		typed.current.buffer = (at - typed.current.at > TYPED_MS ? "" : typed.current.buffer) + event.key.toLowerCase();
+		typed.current.at = at;
+		const query = typed.current.buffer;
+		const all = now.current.rows;
+		const here = all.findIndex((row) => rowKey(row) === now.current.cursor);
+		const from = query.length === 1 ? here + 1 : Math.max(here, 0);
+		for (let walked = 0; walked < all.length; walked += 1) {
+			const row = all[(from + walked + all.length) % all.length];
+			if (row === undefined) continue;
+			if (row.kind === "born") continue;
+			const name = row.kind === "page" ? pageLabel(row.page) : row.name;
+			if (name.toLowerCase().startsWith(query)) {
+				landOn(row);
+				return;
+			}
+		}
+	}
+
+	/* ── drawing ─────────────────────────────────────────────────────── */
+
+	function finishResize(target: HTMLElement, pointerId: number) {
+		const current = grip.current;
 		if (current === null || current.pointerId !== pointerId) return;
 		target.releasePointerCapture(pointerId);
-		drag.current = null;
-		setDragging(false);
+		grip.current = null;
+		setResizing(false);
 		setWidth(settledWidth(current.latestWidth));
 	}
 
@@ -67,13 +883,16 @@ export function CanvasSidebar({
 		setPageTooltip({ page, x: box.right + 8, y: box.top + box.height / 2 });
 	}
 
+	const menuRow = menu === null ? null : (rows.find((row) => rowKey(row) === targetKey(menu.target)) ?? null);
+
 	return (
 		<aside
-			className={`relative z-20 h-full shrink-0 overflow-hidden border-border border-r bg-bg ${
-				dragging
-					? ""
-					: "transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none"
-			}`}
+			ref={asideRef}
+			className={cn(
+				"relative z-20 h-full shrink-0 overflow-hidden border-border border-r bg-bg",
+				!resizing &&
+					"transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
+			)}
 			style={{ width }}
 		>
 			{collapsed ? (
@@ -99,7 +918,7 @@ export function CanvasSidebar({
 									aria-label={`${pageLabel(page)} page`}
 									aria-current={active ? "page" : undefined}
 									aria-describedby={pageTooltip?.page === page ? tooltipId : undefined}
-									onClick={() => activatePage(page)}
+									onClick={() => onSwitchPage(page)}
 									onPointerEnter={(event) => showPageTooltip(page, event.currentTarget)}
 									onPointerLeave={(event) => {
 										if (document.activeElement !== event.currentTarget) setPageTooltip(null);
@@ -124,111 +943,108 @@ export function CanvasSidebar({
 							<h1 className="font-semibold text-base leading-base">Pages</h1>
 							<span className="font-mono text-muted text-xs leading-xs">{orderedPages.length}</span>
 						</div>
-						<button
-							type="button"
-							aria-label="Collapse pages"
-							onClick={() => setWidth(STRIP_WIDTH)}
-							className="flex h-7 w-7 items-center justify-center rounded-sm text-muted/60 hover:text-text"
-						>
-							<PanelCaret dir="left" className="h-3.5 w-2.5" />
-						</button>
+						<div className="flex items-center">
+							<button
+								type="button"
+								aria-label="New page"
+								onClick={newPage}
+								className="flex h-7 w-7 items-center justify-center rounded-sm text-muted/60 transition-[color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface hover:text-text active:scale-90 motion-reduce:transition-none"
+							>
+								<PlusIcon className="h-2.5 w-2.5" />
+							</button>
+							<button
+								type="button"
+								aria-label="Collapse pages"
+								onClick={() => setWidth(STRIP_WIDTH)}
+								className="flex h-7 w-7 items-center justify-center rounded-sm text-muted/60 hover:text-text"
+							>
+								<PanelCaret dir="left" className="h-3.5 w-2.5" />
+							</button>
+						</div>
 					</div>
 
-					<div className="pages-scrollbar min-h-0 flex-1 overflow-y-auto py-2">
-						{orderedPages.map((page) => {
-							const pageFrames = framesOnPage(frames, page);
-							const active = page === activePage;
-							const open = expanded[page] ?? false;
-							return (
-								<div key={page}>
-									<div
-										// something outside this rail is pointing at this page: the finder's pick, or
-										// a row in the agent rail naming a frame that is not on screen (#194)
-										data-page-lit={page === litPage ? "" : undefined}
-										className={`group relative flex h-8 items-center pr-1.5 hover:bg-surface ${active || page === litPage ? "bg-surface" : ""}`}
-									>
-										{active ? (
-											<span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-thread" />
-										) : null}
-										<button
-											type="button"
-											aria-label={`${open ? "Collapse" : "Expand"} ${pageLabel(page)}`}
-											aria-expanded={open}
-											onClick={() => setExpanded((current) => ({ ...current, [page]: !open }))}
-											className="flex h-8 w-6 shrink-0 items-center justify-center"
-										>
-											<ChevronIcon open={open} className="h-2.5 w-2.5" />
-										</button>
-										<button
-											type="button"
-											aria-label={`${pageLabel(page)} page`}
-											aria-current={active ? "page" : undefined}
-											onClick={() => activatePage(page)}
-											className="flex h-8 min-w-0 flex-1 items-center gap-2 text-left"
-										>
-											<FolderIcon
-												className={`h-3.5 w-3.5 shrink-0 ${active ? "text-thread" : "text-muted"}`}
-											/>
-											<span
-												className={`min-w-0 flex-1 truncate font-mono text-sm leading-sm ${active ? "text-text" : "text-muted"}`}
-											>
-												{pageLabel(page)}
-											</span>
-										</button>
-										<span className="font-mono text-2xs text-muted/60 leading-3">{pageFrames.length}</span>
-									</div>
+					<div
+						ref={listRef}
+						role="tree"
+						tabIndex={0}
+						aria-label="Pages tree"
+						className="pages-scrollbar min-h-0 flex-1 overflow-y-auto py-2 outline-none"
+						onPointerDown={() => {
+							setMenu(null);
+							setCursor(null);
+						}}
+						onContextMenu={(event) => openMenu(event, { kind: "empty" })}
+						onScroll={() => {
+							setMenu(null);
+							setPageTooltip(null);
+						}}
+						onKeyDown={typeAhead}
+					>
+						<div className="relative" style={{ height: total, minHeight: "100%" }}>
+							{rows.map((row) => {
+								const rename: RenameHandle | null =
+									renaming === null || renaming.key !== rowKey(row)
+										? null
+										: {
+												state: renaming,
+												onDraft: (draft) => setRenaming((was) => (was === null ? null : { ...was, draft })),
+												onCommit: () => void commitRename(),
+												onCancel: cancelRename,
+											};
+								if (row.kind === "born") {
+									return rename === null ? null : <NewPageRow key="born" row={row} rename={rename} />;
+								}
+								return (
+									<TreeRow
+										key={rowKey(row)}
+										row={row}
+										activePage={activePage}
+										litPage={litPage}
+										selected={row.kind === "frame" && selected.includes(row.name)}
+										cursored={cursor === rowKey(row)}
+										lifted={kit !== null && kit.kind === row.kind && kit.names.includes(rowName(row))}
+										into={landing?.kind === "into" && row.kind === "page" && landing.page === row.page}
+										springing={row.kind === "page" && springPage === row.page}
+										rename={rename}
+										onPress={pressRow}
+										onActivate={() => {
+											if (justDragged.current || row.kind !== "page") return;
+											onSwitchPage(row.page);
+										}}
+										onSelect={(event) => {
+											if (justDragged.current || row.kind !== "frame") return;
+											onSelectFrame(row.name, modifiersOf(event));
+										}}
+										onOpen={(deep) => {
+											if (row.kind !== "page") return;
+											if (deep) foldAll(!row.open);
+											else setOpen(row.page, !row.open);
+										}}
+										onRename={() => beginRename(row)}
+										onFly={() => {
+											if (row.kind === "frame") onDoubleClickFrame(row.name);
+										}}
+										onMenu={openMenu}
+									/>
+								);
+							})}
 
-									<div
-										className={`grid transition-[grid-template-rows,opacity] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none ${
-											open
-												? "grid-rows-[1fr] opacity-100 duration-[180ms]"
-												: "grid-rows-[0fr] opacity-0 duration-[140ms]"
-										}`}
-									>
-										<div className="min-h-0 overflow-hidden" inert={!open} aria-hidden={!open}>
-											<div className="relative pb-0.5">
-												<span className="absolute top-0 bottom-1 left-[18px] w-px bg-border-raised" />
-												{pageFrames.map((frame) => {
-													const isSelected = selected.includes(frame.name);
-													return (
-														<div
-															key={frame.name}
-															className={`group/row relative flex h-7 items-center hover:bg-surface ${isSelected ? "bg-surface" : ""}`}
-														>
-															<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
-															<button
-																type="button"
-																aria-label={`${frame.name} frame`}
-																aria-pressed={isSelected}
-																onClick={(event) => onSelectFrame(frame.name, modifiersOf(event))}
-																onDoubleClick={() => onDoubleClickFrame(frame.name)}
-																className="flex h-7 w-full min-w-0 items-center gap-2 pr-3 pl-[34px] text-left"
-															>
-																<FrameIcon
-																	className={`h-3.5 w-3.5 shrink-0 ${isSelected ? "text-thread" : "text-muted"}`}
-																/>
-																<span
-																	className={`min-w-0 flex-1 truncate font-mono text-xs leading-xs ${isSelected ? "text-text" : "text-muted"}`}
-																>
-																	{frame.name}
-																</span>
-																<span className="pr-1 font-mono text-2xs text-muted/50 leading-3 opacity-0 transition-opacity group-hover/row:opacity-100">
-																	{frame.kind === "term" ? "term.tsx" : "frame.tsx"}
-																</span>
-															</button>
-														</div>
-													);
-												})}
-											</div>
-										</div>
-									</div>
+							{landing === null || landing.kind === "into" ? null : (
+								<div
+									aria-hidden="true"
+									className="pointer-events-none absolute z-20 h-[2px]"
+									style={{ left: landingGuideX(landing), top: landing.y - 1, right: 10 }}
+								>
+									<span className="block h-full w-full rounded-full bg-thread" />
+									<span className="-left-px -top-[1.5px] absolute h-[5px] w-[5px] rounded-full bg-thread" />
 								</div>
-							);
-						})}
+							)}
+						</div>
 					</div>
 
-					<div className="flex h-9 shrink-0 items-center border-border border-t px-3.5 font-mono text-2xs text-muted leading-3">
-						folder switches page
+					<div className="flex h-9 shrink-0 items-center justify-between border-border border-t px-3.5 font-mono text-2xs text-muted leading-3">
+						<span>folder switches page</span>
+						{clipboard.length > 0 ? <span className="text-muted/50">{clipboard.length} copied</span> : null}
 					</div>
 				</div>
 			)}
@@ -247,6 +1063,54 @@ export function CanvasSidebar({
 					)
 				: null}
 
+			{kit === null
+				? null
+				: createPortal(
+						<div ref={overlayRef} className="pointer-events-none fixed top-0 left-0 z-50 will-change-transform">
+							<div className="flex h-8 w-fit max-w-[190px] items-center gap-2 rounded-sm border border-border-raised bg-raised px-2.5">
+								{kit.kind === "page" ? (
+									<FolderIcon className="h-3.5 w-3.5 shrink-0 text-thread" />
+								) : (
+									<FrameIcon className="h-3.5 w-3.5 shrink-0 text-thread" />
+								)}
+								<span className="min-w-0 truncate font-mono text-sm text-text leading-sm">{kit.label}</span>
+								{kit.names.length > 1 ? (
+									<span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-thread px-1 font-mono text-2xs text-on-thread leading-3">
+										{kit.names.length}
+									</span>
+								) : null}
+							</div>
+						</div>,
+						document.body,
+					)}
+
+			{menu === null
+				? null
+				: createPortal(
+						<RailMenu
+							menu={menu}
+							pasteable={clipboard.length > 0}
+							selection={selected.length}
+							onClose={() => setMenu(null)}
+							actions={{
+								newPage,
+								rename: () => beginRename(menuRow),
+								duplicate: () => void duplicate(),
+								copy,
+								paste: () => void paste(menu.target.kind === "page" ? menu.target.page : undefined),
+								reveal: () => {
+									if (menu.target.kind === "frame") onRevealFrame(menu.target.name);
+								},
+								openEditor: () => {
+									if (menu.target.kind === "frame") onOpenEditor(menu.target.name);
+								},
+								trash,
+								collapseAll: () => foldAll(false),
+							}}
+						/>,
+						document.body,
+					)}
+
 			<button
 				type="button"
 				aria-label="Resize pages"
@@ -261,16 +1125,16 @@ export function CanvasSidebar({
 				onPointerDown={(event) => {
 					if (event.button !== 0) return;
 					event.currentTarget.setPointerCapture(event.pointerId);
-					drag.current = {
+					grip.current = {
 						pointerId: event.pointerId,
 						startWidth: width,
 						startX: event.clientX,
 						latestWidth: width,
 					};
-					setDragging(true);
+					setResizing(true);
 				}}
 				onPointerMove={(event) => {
-					const current = drag.current;
+					const current = grip.current;
 					if (current === null || current.pointerId !== event.pointerId) return;
 					const next = Math.min(
 						MAX_WIDTH,
@@ -279,14 +1143,364 @@ export function CanvasSidebar({
 					current.latestWidth = next;
 					setWidth(next);
 				}}
-				onPointerUp={(event) => finishDrag(event.currentTarget, event.pointerId)}
-				onPointerCancel={(event) => finishDrag(event.currentTarget, event.pointerId)}
+				onPointerUp={(event) => finishResize(event.currentTarget, event.pointerId)}
+				onPointerCancel={(event) => finishResize(event.currentTarget, event.pointerId)}
 				className="group -right-1.5 absolute top-0 z-30 h-full w-3 cursor-col-resize touch-none outline-none"
 			>
 				<span className="absolute top-0 bottom-0 left-[5px] w-px bg-transparent group-hover:bg-thread group-focus-visible:bg-thread" />
 			</button>
 		</aside>
 	);
+}
+
+/* ── one row ─────────────────────────────────────────────────────────── */
+
+/** Where every row sits: the offset the list already knows, on the house curve. */
+function RowShell({ row, lifted = false, children }: { row: RailRow; lifted?: boolean; children: React.ReactNode }) {
+	return (
+		<div
+			role="presentation"
+			className="absolute inset-x-0 animate-find-in"
+			style={{
+				height: row.height,
+				transform: `translateY(${row.top}px)`,
+				transition: `transform 280ms ${CURVE}, opacity 140ms ease-out`,
+				opacity: lifted ? 0.3 : 1,
+			}}
+		>
+			{children}
+		</div>
+	);
+}
+
+/**
+ * The page that is being named and does not exist yet.
+ *
+ * A folder icon and a field, and nothing else: no chevron because there is
+ * nothing to open, no count because there is nothing in it, no menu and no
+ * drag because there is no folder to act on. Committing makes it a page and
+ * Esc takes it away, so it is never a row you can leave behind.
+ */
+function NewPageRow({ row, rename }: { row: BornRow; rename: RenameHandle }) {
+	return (
+		<RowShell row={row}>
+			<div
+				role="treeitem"
+				tabIndex={-1}
+				aria-selected
+				aria-level={1}
+				className="relative flex h-full items-center pr-1.5 bg-surface"
+			>
+				<span className="flex h-full w-6 shrink-0" />
+				<div className="flex h-full min-w-0 flex-1 items-center gap-2 pr-1">
+					<FolderIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+					<RenameField
+						state={rename.state}
+						size="page"
+						onDraft={rename.onDraft}
+						onCommit={rename.onCommit}
+						onCancel={rename.onCancel}
+					/>
+				</div>
+			</div>
+		</RowShell>
+	);
+}
+
+function TreeRow({
+	row,
+	activePage,
+	litPage,
+	selected,
+	cursored,
+	lifted,
+	into,
+	springing,
+	rename,
+	onPress,
+	onActivate,
+	onSelect,
+	onOpen,
+	onRename,
+	onFly,
+	onMenu,
+}: {
+	row: PageRow | FrameRow;
+	activePage: string;
+	litPage: string | null;
+	selected: boolean;
+	cursored: boolean;
+	lifted: boolean;
+	into: boolean;
+	springing: boolean;
+	rename: RenameHandle | null;
+	onPress: (event: React.PointerEvent<HTMLElement>, row: RailRow) => void;
+	onActivate: () => void;
+	onSelect: (event: React.MouseEvent) => void;
+	onOpen: (deep: boolean) => void;
+	onRename: () => void;
+	onFly: () => void;
+	onMenu: (event: React.MouseEvent, target: MenuTarget) => void;
+}) {
+	const label = row.kind === "page" ? pageLabel(row.page) : row.name;
+	const target: MenuTarget =
+		row.kind === "page" ? { kind: "page", page: row.page } : { kind: "frame", name: row.name };
+	const active = row.kind === "page" && row.page === activePage;
+	const lit = row.kind === "page" && row.page === litPage;
+
+	return (
+		<RowShell row={row} lifted={lifted}>
+			{/* the row itself, which takes the whole width of drags and right-clicks;
+			    the controls inside it are what a keyboard reaches, exactly as before */}
+			<div
+				role="treeitem"
+				// the tree itself carries the tab stop and its keys walk the rows, which
+				// is the roving-tabindex a tree is supposed to have
+				tabIndex={-1}
+				aria-selected={selected || cursored}
+				aria-level={row.kind === "page" ? 1 : 2}
+				// something outside this rail is pointing at this page: the finder's pick, or
+				// a row in the agent rail naming a frame that is not on screen (#194)
+				data-page-lit={lit ? "" : undefined}
+				className={cn(
+					"group/row relative flex h-full items-center pr-1.5",
+					(selected || active || cursored || lit) && "bg-surface",
+					!selected && !active && !cursored && !into && "hover:bg-surface/60",
+					into && "-outline-offset-1 outline-1 outline-thread/70",
+				)}
+				onPointerDown={(event) => onPress(event, row)}
+				onContextMenu={(event) => onMenu(event, target)}
+			>
+				{active ? <span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-thread" /> : null}
+
+				{row.kind === "page" ? (
+					<>
+						<button
+							type="button"
+							aria-label={`${row.open ? "Collapse" : "Expand"} ${label}`}
+							aria-expanded={row.open}
+							onPointerDown={(event) => event.stopPropagation()}
+							onClick={(event) => onOpen(event.altKey)}
+							className="relative flex h-full w-6 shrink-0 items-center justify-center"
+						>
+							<ChevronIcon open={row.open} className="h-2.5 w-2.5" />
+							{springing ? <SpringArc /> : null}
+						</button>
+						{rename === null ? (
+							<>
+								<button
+									type="button"
+									aria-label={`${label} page`}
+									aria-current={active ? "page" : undefined}
+									onClick={onActivate}
+									onDoubleClick={onRename}
+									className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
+								>
+									<FolderIcon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-thread" : "text-muted")} />
+									<span
+										className={cn(
+											"min-w-0 flex-1 truncate font-mono text-sm leading-sm",
+											active || cursored ? "text-text" : "text-muted",
+										)}
+									>
+										{label}
+									</span>
+								</button>
+								<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3">{row.count}</span>
+							</>
+						) : (
+							<div className="flex h-full min-w-0 flex-1 items-center gap-2 pr-1">
+								<FolderIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+								<RenameField
+									state={rename.state}
+									size="page"
+									onDraft={rename.onDraft}
+									onCommit={rename.onCommit}
+									onCancel={rename.onCancel}
+								/>
+							</div>
+						)}
+					</>
+				) : (
+					<>
+						<span
+							className="absolute w-px bg-border-raised"
+							style={{ left: 18, top: 0, height: row.last ? row.height - 6 : row.height }}
+						/>
+						<span className="absolute h-px w-2.5 bg-border-raised" style={{ left: 18, top: row.height / 2 }} />
+						{rename === null ? (
+							<button
+								type="button"
+								aria-label={`${row.name} frame`}
+								aria-pressed={selected}
+								onClick={onSelect}
+								onDoubleClick={onFly}
+								className="flex h-full w-full min-w-0 items-center gap-2 pr-3 pl-[34px] text-left"
+							>
+								<FrameIcon className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-thread" : "text-muted")} />
+								<span
+									className={cn(
+										"min-w-0 flex-1 truncate font-mono text-xs leading-xs",
+										selected || cursored ? "text-text" : "text-muted",
+									)}
+								>
+									{row.name}
+								</span>
+								<span className="pr-1 font-mono text-2xs text-muted/50 leading-3 opacity-0 transition-opacity group-hover/row:opacity-100">
+									{row.entry}
+								</span>
+							</button>
+						) : (
+							<div className="flex h-full w-full min-w-0 items-center gap-2 pr-3 pl-[34px]">
+								<FrameIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+								<RenameField
+									state={rename.state}
+									size="frame"
+									onDraft={rename.onDraft}
+									onCommit={rename.onCommit}
+									onCancel={rename.onCancel}
+								/>
+							</div>
+						)}
+					</>
+				)}
+			</div>
+		</RowShell>
+	);
+}
+
+/**
+ * The name, replaced in place by an input wearing the same mono metrics.
+ *
+ * Enter commits, Esc reverts, blur commits. A refusal keeps the input up rather
+ * than closing the row: a name the project already holds has to be retyped, and
+ * closing would leave nothing to retype into.
+ */
+function RenameField({
+	state,
+	size,
+	onDraft,
+	onCommit,
+	onCancel,
+}: {
+	state: RenameState;
+	size: "page" | "frame";
+	onDraft: (draft: string) => void;
+	onCommit: () => void;
+	onCancel: () => void;
+}) {
+	const cancelled = useRef(false);
+	const primed = useRef(false);
+	const field = useRef<HTMLInputElement | null>(null);
+	/**
+	 * A refusal arrives after the blur that asked for it, so the name that was
+	 * turned down is sitting in a field nobody is in. Take the caret back: the
+	 * whole point of staying open is that the name has to be retyped, and Esc has
+	 * to have somewhere to land.
+	 */
+	useEffect(() => {
+		if (state.error === null) return;
+		field.current?.focus();
+		field.current?.select();
+	}, [state.error]);
+	return (
+		<span className="relative flex min-w-0 flex-1 items-center">
+			<input
+				ref={(element) => {
+					field.current = element;
+					// once, on arrival: focus and pre-select. Re-running it on every
+					// render would re-select the text under each keystroke
+					if (element === null || primed.current) return;
+					primed.current = true;
+					element.focus();
+					element.select();
+				}}
+				aria-label={state.born ? "New page name" : "Rename"}
+				aria-invalid={state.error !== null}
+				value={state.draft}
+				spellCheck={false}
+				autoComplete="off"
+				onChange={(event) => onDraft(event.target.value)}
+				onPointerDown={(event) => event.stopPropagation()}
+				onKeyDown={(event) => {
+					event.stopPropagation();
+					if (event.key === "Enter") event.currentTarget.blur();
+					if (event.key === "Escape") {
+						cancelled.current = true;
+						event.currentTarget.blur();
+					}
+				}}
+				onBlur={() => {
+					if (!cancelled.current) {
+						onCommit();
+						return;
+					}
+					cancelled.current = false;
+					onCancel();
+				}}
+				className={cn(
+					"-my-px min-w-0 flex-1 rounded-xs bg-bg px-1 font-mono text-text caret-thread outline-1 outline-thread/70",
+					size === "page" ? "text-sm leading-sm" : "text-xs leading-xs",
+				)}
+			/>
+			{state.error === null ? null : (
+				<span
+					role="alert"
+					className="pointer-events-none absolute right-1.5 font-mono text-2xs text-thread leading-3"
+				>
+					{state.error}
+				</span>
+			)}
+		</span>
+	);
+}
+
+/** The 450ms a shut page is rested on before it opens itself, drawn on its chevron. */
+function SpringArc() {
+	return (
+		<svg
+			viewBox="0 0 20 20"
+			className="pointer-events-none absolute h-5 w-5 text-thread"
+			fill="none"
+			aria-hidden="true"
+		>
+			<circle
+				cx="10"
+				cy="10"
+				r="8"
+				pathLength={1}
+				stroke="currentColor"
+				strokeWidth="1.4"
+				strokeLinecap="round"
+				strokeDasharray="1"
+				className="-rotate-90 origin-center animate-spring-arc"
+			/>
+		</svg>
+	);
+}
+
+/* ── plumbing ────────────────────────────────────────────────────────── */
+
+function rowName(row: RailRow): string {
+	if (row.kind === "born") return "";
+	return row.kind === "page" ? row.page : row.name;
+}
+
+function targetKey(target: MenuTarget): string {
+	if (target.kind === "page") return `page:${target.page}`;
+	return target.kind === "frame" ? `frame:${target.name}` : "";
+}
+
+function labelOf(current: DragLive): string {
+	const first = current.names[0] ?? "";
+	return current.kind === "page" ? pageLabel(first) : first;
+}
+
+/** The daemon's refusal in the machine register, at the width a row has for it. */
+function refusalLine(status: number): string {
+	if (status === 409) return "name taken";
+	if (status === 400) return "bad name";
+	return "refused";
 }
 
 function FrameIcon({ className }: { className?: string }) {
@@ -307,6 +1521,14 @@ export function FolderIcon({ className }: { className?: string }) {
 				strokeWidth="1.15"
 				strokeLinejoin="round"
 			/>
+		</svg>
+	);
+}
+
+function PlusIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 10 10" className={className} fill="none" aria-hidden="true">
+			<path d="M5 .75v8.5M.75 5h8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
 		</svg>
 	);
 }

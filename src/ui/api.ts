@@ -7,6 +7,8 @@ import type { AgentAsk } from "../daemon/agent-offer";
 import type { AgentLogin } from "../daemon/agent-preflight";
 import type { ServedThread, ThreadPut } from "../daemon/agent-threads";
 import type { AppType } from "../daemon/app";
+import type { CanvasOrder } from "../daemon/canvas-order";
+import type { FrameCopy } from "../daemon/explorer";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsListing } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
@@ -26,6 +28,7 @@ declare global {
 export type {
 	AgentEvent,
 	Camera,
+	CanvasOrder,
 	CanvasState,
 	Cover,
 	EdgeSite,
@@ -33,6 +36,7 @@ export type {
 	Flows,
 	FlowUnreadable,
 	FrameCollision,
+	FrameCopy,
 	FsListing,
 	Geometry,
 	LocatedRange,
@@ -251,20 +255,132 @@ export async function putGeometry(project: string, frames: Record<string, Geomet
 	}
 }
 
-export async function postTrash(project: string, frames: string[]): Promise<boolean> {
+export async function postTrash(project: string, frames: string[], pages: string[] = []): Promise<boolean> {
 	try {
-		return (await client.api.p[":project"].trash.$post({ param: { project }, json: { frames } })).ok;
+		return (await client.api.p[":project"].trash.$post({ param: { project }, json: { frames, pages } })).ok;
 	} catch {
 		return false;
 	}
 }
 
+/**
+ * The explorer's verbs (#228, #229).
+ *
+ * Every one of them is a folder operation the daemon refuses before it starts
+ * rather than resolves by guessing, so what comes back here is either the thing
+ * happening or the reason it did not.
+ *
+ * Who says the reason depends on whose name it is about. A rename and a new
+ * page carry a name somebody typed, so the rail keeps the row's input open and
+ * says why, rather than quietly minting a different name. A duplicate, a paste
+ * and a move carry no typed name and can only be refused pathologically — the
+ * daemon mints the copy names itself and cannot collide, so a refusal means the
+ * disk moved underneath the projection — and there the rail re-reads the
+ * projection instead, which is the only thing that would make it right again.
+ */
+export type ExplorerRefusal = { kind: "refused"; status: number; message: string };
+
+/** A verb that either happened or was refused, with nothing else to hand back. */
+export type ExplorerDone = { kind: "done" } | ExplorerRefusal;
+
+/** A duplicate hands back the names it minted: only the daemon knows them. */
+export type ExplorerCopies = { kind: "done"; copies: readonly FrameCopy[] } | ExplorerRefusal;
+
+async function refusalOf(res: Response): Promise<ExplorerRefusal> {
+	return { kind: "refused", status: res.status, message: await errorText(res) };
+}
+
+/** A door that never answered reads as a refusal with no status behind it. */
+const unreachable: ExplorerRefusal = { kind: "refused", status: 0, message: "the daemon is unreachable" };
+
+export async function renameFrame(project: string, from: string, to: string): Promise<ExplorerDone> {
+	try {
+		const res = await client.api.p[":project"].frames.rename.$post({ param: { project }, json: { from, to } });
+		return res.ok ? { kind: "done" } : await refusalOf(res);
+	} catch {
+		return unreachable;
+	}
+}
+
+export async function renamePage(project: string, from: string, to: string): Promise<ExplorerDone> {
+	try {
+		const res = await client.api.p[":project"].pages.rename.$post({ param: { project }, json: { from, to } });
+		return res.ok ? { kind: "done" } : await refusalOf(res);
+	} catch {
+		return unreachable;
+	}
+}
+
+/** Drag's other meaning: the frames move page, folder and sidecar and all. */
+export async function moveFrames(project: string, frames: string[], page: string): Promise<ExplorerDone> {
+	try {
+		const res = await client.api.p[":project"].frames.move.$post({ param: { project }, json: { frames, page } });
+		return res.ok ? { kind: "done" } : await refusalOf(res);
+	} catch {
+		return unreachable;
+	}
+}
+
+/** No page asked for leaves each copy where its original lives. */
+export async function duplicateFrames(project: string, frames: string[], page?: string): Promise<ExplorerCopies> {
+	try {
+		const res = await client.api.p[":project"].frames.duplicate.$post({ param: { project }, json: { frames, page } });
+		if (!res.ok) return await refusalOf(res);
+		return { kind: "done", copies: ((await res.json()) as { frames: FrameCopy[] }).frames };
+	} catch {
+		return unreachable;
+	}
+}
+
+export type PageCopy = { kind: "done"; page: string; copies: readonly FrameCopy[] } | ExplorerRefusal;
+
+export async function duplicatePage(project: string, name: string): Promise<PageCopy> {
+	try {
+		const res = await client.api.p[":project"].pages.duplicate.$post({ param: { project }, json: { name } });
+		if (!res.ok) return await refusalOf(res);
+		const done = (await res.json()) as { page: string; frames: FrameCopy[] };
+		return { kind: "done", page: done.page, copies: done.frames };
+	} catch {
+		return unreachable;
+	}
+}
+
+export async function createPage(project: string, name: string): Promise<ExplorerDone> {
+	try {
+		const res = await client.api.p[":project"].pages.create.$post({ param: { project }, json: { name } });
+		return res.ok ? { kind: "done" } : await refusalOf(res);
+	} catch {
+		return unreachable;
+	}
+}
+
+/**
+ * The rail's manual arrangement (#228).
+ *
+ * Advisory on the wire in both directions: a stale name round-trips untouched
+ * and a missing one is not an error, because the client is what merges the
+ * stored list against the projection. Nothing empty is stored — an order
+ * naming nothing and no order at all are the same fact about a canvas.
+ */
+export async function fetchOrder(project: string): Promise<CanvasOrder> {
+	try {
+		const res = await client.api.p[":project"].order.$get({ param: { project } });
+		return res.ok ? ((await res.json()) as CanvasOrder) : {};
+	} catch {
+		return {};
+	}
+}
+
+export function putOrder(project: string, order: CanvasOrder): void {
+	void client.api.p[":project"].order.$put({ param: { project }, json: order }).catch(() => {});
+}
+
 /** The page is going away — keepalive preserves the control credential a beacon cannot carry. */
-export function beaconTrash(project: string, frames: string[]): void {
+export function beaconTrash(project: string, frames: string[], pages: string[] = []): void {
 	void controlFetch(`/api/p/${encodeURIComponent(project)}/trash`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ frames }),
+		body: JSON.stringify({ frames, pages }),
 		keepalive: true,
 	});
 }
