@@ -1,11 +1,12 @@
 import { type Dirent, lstatSync, readdirSync } from "node:fs";
+import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Cover } from "../cover";
 import { DEFAULT_COLS, DEFAULT_ROWS, pxForCells } from "../term/cells";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { readGeometry, writeGeometryIfAbsent } from "./geometry";
 import { isSafeName } from "./project-files";
-import { coverModified, scanCovers } from "./thumbs";
+import { type DatedCover, scanCovers, scanDatedCovers } from "./thumbs";
 
 /**
  * The canvas projection of design/frames (#22), one level of grouping deep
@@ -154,6 +155,54 @@ function defaultFootprint(kind: FrameKind): { w: number; h: number } {
 	return kind === "term" ? TERM_DEFAULT : { w: DEFAULT_W, h: DEFAULT_H };
 }
 
+/** One folder claiming a frame name, before anything knows whether two do. */
+interface FrameClaim {
+	name: string;
+	page: string | undefined;
+	dir: string;
+	kind: FrameKind | "conflict";
+}
+
+/** Where a project's frames live, or nothing when design/ cannot be read. */
+function framesDirOf(root: string): { designDir: string; framesDir: string } | undefined {
+	try {
+		const designDir = realDesignDir(root);
+		return { designDir, framesDir: resolveDesignPath(designDir, join(designDir, "frames")) };
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return undefined;
+	}
+}
+
+/**
+ * What a walk collected, read as a discovery: a name claimed once is a frame, a
+ * name claimed twice is a collision nobody resolves by guessing. Both walks
+ * below share this, so the two can never disagree about what a project holds.
+ */
+function assemble(designDir: string, claimed: FrameClaim[], pages: string[]): Discovery {
+	const claims = new Map<string, FrameClaim[]>();
+	for (const claim of claimed) {
+		const list = claims.get(claim.name);
+		if (list === undefined) claims.set(claim.name, [claim]);
+		else list.push(claim);
+	}
+	const frames: DiscoveredFrame[] = [];
+	const collisions: FrameCollision[] = [];
+	for (const [name, list] of claims) {
+		const first = list[0];
+		if (list.length === 1 && first !== undefined) {
+			// a both-entries folder projects as html so the error document shows (#42)
+			frames.push({ name, page: first.page, dir: first.dir, kind: first.kind === "conflict" ? "html" : first.kind });
+		} else {
+			collisions.push({ name, paths: list.map((entry) => frameFolder(name, entry.page)).sort() });
+		}
+	}
+	frames.sort((a, b) => a.name.localeCompare(b.name));
+	collisions.sort((a, b) => a.name.localeCompare(b.name));
+	pages.sort((a, b) => a.localeCompare(b));
+	return { designDir, frames, pages, collisions };
+}
+
 /**
  * One walk of design/frames: top-level folders with a frame entry are
  * root-page frames; safe-named folders without one are pages, their frame
@@ -161,38 +210,24 @@ function defaultFootprint(kind: FrameKind): { w: number; h: number } {
  * discovery's.
  */
 function discover(root: string): Discovery | undefined {
-	let designDir: string;
-	let framesDir: string;
-	try {
-		designDir = realDesignDir(root);
-		framesDir = resolveDesignPath(designDir, join(designDir, "frames"));
-	} catch (error) {
-		if (error instanceof DesignBoundaryError) throw error;
-		return undefined;
-	}
+	const dirs = framesDirOf(root);
+	if (dirs === undefined) return undefined;
 	let entries: Dirent[];
 	try {
-		entries = readdirSync(framesDir, { withFileTypes: true });
+		entries = readdirSync(dirs.framesDir, { withFileTypes: true });
 	} catch {
 		return undefined;
 	}
-	const claims = new Map<string, { page: string | undefined; dir: string; kind: FrameKind }[]>();
-	const claim = (name: string, page: string | undefined, dir: string, kind: FrameKind | "conflict") => {
-		// a both-entries folder projects as html so the error document shows (#42)
-		const entry = { page, dir, kind: kind === "conflict" ? ("html" as const) : kind };
-		const list = claims.get(name);
-		if (list === undefined) claims.set(name, [entry]);
-		else list.push(entry);
-	};
+	const claimed: FrameClaim[] = [];
 	const pages: string[] = [];
 	// framesDir is resolved, and a directory entry is never a symlink, so every
 	// path built from here down is inside design/ without asking again
 	for (const entry of entries) {
 		if (!entry.isDirectory() || !isSafeName(entry.name)) continue;
-		const dir = join(framesDir, entry.name);
+		const dir = join(dirs.framesDir, entry.name);
 		const kind = entryKind(dir);
 		if (kind !== undefined) {
-			claim(entry.name, undefined, dir, kind);
+			claimed.push({ name: entry.name, page: undefined, dir, kind });
 			continue;
 		}
 		pages.push(entry.name);
@@ -206,24 +241,78 @@ function discover(root: string): Discovery | undefined {
 			if (!sub.isDirectory() || !isSafeName(sub.name)) continue;
 			const subDir = join(dir, sub.name);
 			const subKind = entryKind(subDir);
-			if (subKind !== undefined) claim(sub.name, entry.name, subDir, subKind);
+			if (subKind !== undefined) claimed.push({ name: sub.name, page: entry.name, dir: subDir, kind: subKind });
 		}
 	}
+	return assemble(dirs.designDir, claimed, pages);
+}
 
-	const frames: DiscoveredFrame[] = [];
-	const collisions: FrameCollision[] = [];
-	for (const [name, list] of claims) {
-		const first = list[0];
-		if (list.length === 1 && first !== undefined) {
-			frames.push({ name, page: first.page, dir: first.dir, kind: first.kind });
-		} else {
-			collisions.push({ name, paths: list.map((entry) => frameFolder(name, entry.page)).sort() });
-		}
+/**
+ * The same walk, off the event loop and with every folder read at once. The
+ * home list walks each registered project before the app can show anything, and
+ * a serial pass through one project's pages is enough to hold every other
+ * request behind it.
+ */
+async function discoverAwaited(root: string): Promise<Discovery | undefined> {
+	const dirs = framesDirOf(root);
+	if (dirs === undefined) return undefined;
+	let entries: Dirent[];
+	try {
+		entries = await readdir(dirs.framesDir, { withFileTypes: true });
+	} catch {
+		return undefined;
 	}
-	frames.sort((a, b) => a.name.localeCompare(b.name));
-	collisions.sort((a, b) => a.name.localeCompare(b.name));
-	pages.sort((a, b) => a.localeCompare(b));
-	return { designDir, frames, pages, collisions };
+	const walked = await Promise.all(
+		entries
+			.filter((entry) => entry.isDirectory() && isSafeName(entry.name))
+			.map(async (entry): Promise<{ page?: string; claimed: FrameClaim[] }> => {
+				const dir = join(dirs.framesDir, entry.name);
+				const kind = await entryKindAwaited(dir);
+				if (kind !== undefined) return { claimed: [{ name: entry.name, page: undefined, dir, kind }] };
+				let inner: Dirent[];
+				try {
+					inner = await readdir(dir, { withFileTypes: true });
+				} catch {
+					return { page: entry.name, claimed: [] };
+				}
+				const claimed = await Promise.all(
+					inner
+						.filter((sub) => sub.isDirectory() && isSafeName(sub.name))
+						.map(async (sub): Promise<FrameClaim[]> => {
+							const subDir = join(dir, sub.name);
+							const subKind = await entryKindAwaited(subDir);
+							return subKind === undefined
+								? []
+								: [{ name: sub.name, page: entry.name, dir: subDir, kind: subKind }];
+						}),
+				);
+				return { page: entry.name, claimed: claimed.flat() };
+			}),
+	);
+	const pages: string[] = [];
+	const claimed: FrameClaim[] = [];
+	for (const entry of walked) {
+		if (entry.page !== undefined) pages.push(entry.page);
+		claimed.push(...entry.claimed);
+	}
+	return assemble(dirs.designDir, claimed, pages);
+}
+
+/** `entryKind` without the blocking stats; the same lexical marker either way. */
+async function entryKindAwaited(directory: string): Promise<FrameKind | "conflict" | undefined> {
+	const present = async (entry: string): Promise<boolean> => {
+		try {
+			await lstat(join(directory, entry));
+			return true;
+		} catch {
+			return false;
+		}
+	};
+	const [html, term] = await Promise.all([present("frame.tsx"), present("term.tsx")]);
+	if (html && term) return "conflict";
+	if (term) return "term";
+	if (html) return "html";
+	return undefined;
 }
 
 /** The design-relative folder a frame name resolves to, wire-format slashes —
@@ -391,27 +480,31 @@ export interface ProjectCard extends ProjectSummary {
 	openedAt: string;
 }
 
-/** The home card's read: a pure scan, never fills sidecars, tolerates a vanished disk. */
-export function summarizeProject(root: string): ProjectSummary {
-	const names = frameNames(root);
-	if (names === undefined) return { frameCount: 0, covers: [] };
-	const held = readCovers(root);
-	const covers = names
-		.flatMap((frame) => {
-			const cover = held.get(frame);
-			return cover === undefined ? [] : [{ frame, cover, shotAt: coverMtime(root, frame) ?? 0 }];
+/**
+ * The home card's read: a pure scan, never fills sidecars, tolerates a vanished
+ * disk. Asynchronous because the home list is the app's first request and asks
+ * for one of these per registered project — every one of them a walk of a whole
+ * design folder, which no other request should have to wait behind.
+ */
+export async function summarizeProject(root: string): Promise<ProjectSummary> {
+	const [discovery, held] = await Promise.all([discoverAwaited(root), readDatedCovers(root)]);
+	if (discovery === undefined) return { frameCount: 0, covers: [] };
+	const covers = discovery.frames
+		.flatMap(({ name }) => {
+			const dated = held.get(name);
+			return dated === undefined ? [] : [{ frame: name, ...dated }];
 		})
 		.sort((a, b) => b.shotAt - a.shotAt)
 		.slice(0, 3)
 		.map(({ frame, cover }) => ({ frame, cover }));
-	return { frameCount: names.length, covers };
+	return { frameCount: discovery.frames.length, covers };
 }
 
-function coverMtime(root: string, frame: string): number | undefined {
+async function readDatedCovers(root: string): Promise<Map<string, DatedCover>> {
 	try {
-		return coverModified(root, frame);
+		return await scanDatedCovers(root);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
-		return undefined;
+		return new Map();
 	}
 }

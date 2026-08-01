@@ -758,15 +758,18 @@ export function createDaemonApp({
 				return c.body(null, 204);
 			},
 		)
-		.get("/api/projects", (c) => {
-			const projects: ProjectCard[] = readRegistry(spoolDir)
-				.projects.map((project) => ({
+		.get("/api/projects", async (c) => {
+			// the app waits on this before it shows anything, and every card is a
+			// walk of a project's design folder — so they run together (#13)
+			const projects: ProjectCard[] = await Promise.all(
+				readRegistry(spoolDir).projects.map(async (project) => ({
 					name: basename(project.root),
 					root: project.root,
 					openedAt: project.openedAt,
-					...summarizeProject(project.root),
-				}))
-				.sort((a, b) => b.openedAt.localeCompare(a.openedAt));
+					...(await summarizeProject(project.root)),
+				})),
+			);
+			projects.sort((a, b) => b.openedAt.localeCompare(a.openedAt));
 			return c.json({ projects });
 		})
 		.get("/api/p/:project/frames", (c) => {
