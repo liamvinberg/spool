@@ -88,8 +88,16 @@ describe("app session", () => {
 		expect(events).toEqual(["registry", "session"]);
 	});
 
+	/**
+	 * Three waits on a filesystem watcher, so the budget is the platform's notification
+	 * latency and not this code's speed. On darwin that is FSEvents, which coalesces, and
+	 * the directory does not exist when the watch opens — so the first event waits out the
+	 * creation as well. Under the rest of the suite it has run past `until`'s 8s default.
+	 * A watcher that never reports still fails here; it is given room to be late first.
+	 */
+	const WATCH_MS = 20_000;
 	it("observes external register, open, and remove writes from an absent machine directory", {
-		timeout: 20_000,
+		timeout: 75_000,
 	}, async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const root = realpathSync(makeTempDir());
@@ -99,15 +107,15 @@ describe("app session", () => {
 		expect(existsSync(spoolDir)).toBe(true);
 
 		registerProject(spoolDir, root);
-		await until(() => events.includes("registry"));
+		await until(() => events.includes("registry"), WATCH_MS);
 
 		events.length = 0;
 		expect(updateSession(spoolDir, root, true)).toEqual({ kind: "written", session: { open: [root] } });
-		await until(() => events.includes("session"));
+		await until(() => events.includes("session"), WATCH_MS);
 
 		events.length = 0;
 		expect(removeProject(root, spoolDir)).toEqual({ root, removed: true });
-		await until(() => events.includes("registry") && events.includes("session"));
+		await until(() => events.includes("registry") && events.includes("session"), WATCH_MS);
 		expect(readRegistry(spoolDir).projects).toEqual([]);
 		expect(readSession(spoolDir)).toEqual({ open: [] });
 	});
