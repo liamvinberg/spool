@@ -132,7 +132,7 @@ data-go="<frame-name>" on any element walks there on click — nearest data-go a
 
 For a shared html component, keep the literal ui.go("target") call or data-go navigation in the frame-owned file and pass a callback or prop into shared UI. Spool does not traverse imports to guess a flow claim.
 
-Coded walks carry no transition name — data-transition rides the element, ui.go has no third argument. Walking to a frame that doesn't exist logs an error and stays put; a typo never eats the session. ui.state is schemaless and shared by every frame in the session: initialize defensively (ui.state.items ??= [...]) because any frame can be a session's first. Top-level keys are the unit of reasoning; nested writes still react.
+Coded walks carry no transition name — data-transition rides the element, ui.go has no third argument. Walking to a frame that doesn't exist logs an error and stays put; a typo never eats the session. ui.state is schemaless and shared by every frame in the session: initialize defensively (ui.state.items ??= [...]) because any frame can be a session's first. Top-level keys are the unit of reasoning; nested writes still react. Writes belong in handlers and effects, never in a render — a write from a component body makes React run that render again, so the value that render read is dropped, and the runtime warns once per site in the frame's console. A one-shot flag a walk hands over is read in render and cleared in an effect, never cleared by the render that reads it.
 
 Clipboard writes are \`await ui.copy(text)\` directly inside a click or non-reserved key handler. Show copied state only after that promise fulfills; browser denial rejects with its original error name and message. Clipboard reads and paste are not available.
 
