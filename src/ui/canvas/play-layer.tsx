@@ -214,6 +214,8 @@ export function PlayLayer({ project, start, phase, frames, onFrame, onWalked, on
 				<iframe
 					ref={iframe}
 					title={project}
+					// Frames keep the clipboard they would have on their own (#181).
+					allow="clipboard-write"
 					sandbox="allow-scripts"
 					src={session.innerUrl}
 					onLoad={() => shellRef.current?.loaded()}
