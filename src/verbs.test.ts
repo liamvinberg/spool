@@ -276,4 +276,14 @@ describe("skill", () => {
 		expect(verbs).toContain("live reload connection stays open");
 		expect(verbs).toMatch(/createRequire\(".*[/\\]package\.json"\)/);
 	});
+
+	it("reaches player frames through the iframe and sizes the viewport to the frame (#178)", () => {
+		const verbs = skillText("verbs");
+		expect(verbs).toContain('page.frameLocator("#spool-player")');
+		expect(verbs).not.toMatch(/^\s*await page\.locator\(/m);
+		expect(verbs).toContain("a top-level locator never resolves there");
+		expect(verbs).toContain("On a --raw URL the frame is the page");
+		expect(verbs).toContain("viewport at least the frame's w×h");
+		expect(verbs).toContain("min(1, vw/w, vh/h)");
+	});
 });
