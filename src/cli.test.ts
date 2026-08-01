@@ -43,7 +43,16 @@ function spoolAsync(args: string[], home: string, cwd: string) {
 	});
 }
 
-describe("spool cli", () => {
+/**
+ * Every test in here runs the CLI as a real process, most of them more than once, and a
+ * `tsx` cold start is the bulk of what that costs. Vitest's default five seconds is a
+ * budget for a computation, not for three of those under a suite that is already using
+ * every core — which is how `remove prunes the project from the machine session`, three
+ * spawns with no override of its own, came to fail two runs in three while passing alone
+ * every time. The two tests that had been given their own timeout keep it; this is the
+ * same allowance for the twenty-nine that had not.
+ */
+describe("spool cli", { timeout: 30_000 }, () => {
 	it("checks every html frame from a nested directory without registering or writing", () => {
 		const home = makeTempDir();
 		const root = makeTempDir();
