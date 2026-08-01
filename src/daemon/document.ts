@@ -1003,9 +1003,19 @@ const canvasShimJs = `(() => {
 		return boxes;
 	}
 
-	// the union of every stamped element this file authored inside these lines.
-	// An element with no area is skipped: a stamp resolving to something laid
-	// out nowhere would drag the union to the document's own origin.
+	// the union of every stamped element this file authored inside these lines,
+	// clipped to the frame. An element with no area is skipped: a stamp
+	// resolving to something laid out nowhere would drag the union to the
+	// document's own origin.
+	//
+	// The clip is what keeps a mark about the frame (#222). A union is bounded
+	// by the elements it covers and by nothing else, so a whole-file write takes
+	// every stamp in the document and an edit below the fold measures past the
+	// bottom edge — either one draws a lane taller than the frame it is beside.
+	// These rects are viewport-relative and a frame document's viewport is the
+	// frame, so the frame's own rectangle is the clip. A range that renders
+	// nothing inside it answers no box, the same as one that renders nothing at
+	// all, and a rewrite of the whole file legitimately answers the whole frame.
 	function rangeBox(stamped, site) {
 		let x0 = 0;
 		let y0 = 0;
@@ -1034,7 +1044,13 @@ const canvasShimJs = `(() => {
 			x1 = Math.max(x1, rect.x + rect.width);
 			y1 = Math.max(y1, rect.y + rect.height);
 		}
-		return found ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+		if (!found) return null;
+		const left = Math.min(Math.max(x0, 0), innerWidth);
+		const top = Math.min(Math.max(y0, 0), innerHeight);
+		const right = Math.min(Math.max(x1, 0), innerWidth);
+		const bottom = Math.min(Math.max(y1, 0), innerHeight);
+		if (!(right > left) || !(bottom > top)) return null;
+		return { x: left, y: top, w: right - left, h: bottom - top };
 	}
 
 	let captureInFlight = false;
