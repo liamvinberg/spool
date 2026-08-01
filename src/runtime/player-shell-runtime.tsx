@@ -964,6 +964,7 @@ export function bootPlayerShell(config: ShellConfig): void {
 			<iframe
 				id="spool-player"
 				title={config.project}
+				allow="clipboard-write"
 				sandbox="allow-scripts"
 				src={config.innerUrl}
 				onLoad={shell.loaded}

@@ -40,9 +40,20 @@ export default function ClipboardFrame() {
 			setResult(String(value.name) + ":" + String(value.message));
 		}
 	}
+	async function copyDirect(value: string) {
+		setResult("writing");
+		try {
+			await navigator.clipboard.writeText(value);
+			setResult("wrote " + value);
+		} catch (error) {
+			const failure = error as { name?: unknown; message?: unknown };
+			setResult(String(failure.name) + ":" + String(failure.message));
+		}
+	}
 	return (
 		<main>
 			<button id="copy" onClick={() => void copy()}>copy</button>
+			<button id="copy-direct" onClick={() => void copyDirect("frame clipboard value")}>direct</button>
 			<output id="result">{result}</output>
 		</main>
 	);
@@ -236,7 +247,19 @@ it("copies from real canvas and player clicks over their trusted transports", { 
 	await context.grantPermissions(["clipboard-read", "clipboard-write"], {
 		origin: new URL(project.url).origin,
 	});
+	// The frame documents are served from the render origin, and headless Chromium
+	// grants no clipboard on a gesture alone.
+	await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+		origin: new URL(project.renderUrl).origin,
+	});
 	const page = await context.newPage();
+	const blocked: string[] = [];
+	const watchClipboardPolicy = (target: Page) => {
+		target.on("console", (message) => {
+			if (message.text().includes("Clipboard API has been blocked")) blocked.push(message.text());
+		});
+	};
+	watchClipboardPolicy(page);
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	const label = page.locator('[data-frame-label="clipboard"]');
 	await label.dispatchEvent("dblclick");
@@ -264,7 +287,16 @@ it("copies from real canvas and player clicks over their trusted transports", { 
 	await page.waitForTimeout(100);
 	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("ownership baseline");
 
+	// A frame document opened on its own may write the clipboard, and embedding it
+	// on the canvas does not take that away (#181).
+	const directBox = await frame.locator("#copy-direct").boundingBox();
+	if (directBox === null) throw new Error("direct copy button has no box");
+	await page.mouse.click(directBox.x + directBox.width / 2, directBox.y + directBox.height / 2);
+	await expect.poll(() => frame.locator("#result").innerText()).toBe("wrote frame clipboard value");
+	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("frame clipboard value");
+
 	const player = await context.newPage();
+	watchClipboardPolicy(player);
 	await player.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=clipboard`);
 	const playerFrame = await childFrame(player, "#spool-player");
 	await playerFrame.locator("#copy").waitFor();
@@ -285,6 +317,15 @@ it("copies from real canvas and player clicks over their trusted transports", { 
 	});
 	await player.waitForTimeout(100);
 	expect(await player.evaluate(() => navigator.clipboard.readText())).toBe("player public baseline");
+
+	const playerDirect = await playerFrame.locator("#copy-direct").boundingBox();
+	if (playerDirect === null) throw new Error("player direct copy button has no box");
+	await player.mouse.click(playerDirect.x + playerDirect.width / 2, playerDirect.y + playerDirect.height / 2);
+	await expect.poll(() => playerFrame.locator("#result").innerText()).toBe("wrote frame clipboard value");
+	expect(await player.evaluate(() => navigator.clipboard.readText())).toBe("frame clipboard value");
+
+	// Neither surface leaves the frame arguing with a permissions policy.
+	expect(blocked).toEqual([]);
 });
 
 it("rejects retained html clipboard writes after the player enters a terminal frame", { timeout: 90_000 }, async () => {

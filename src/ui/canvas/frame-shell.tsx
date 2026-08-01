@@ -158,6 +158,11 @@ export const FrameShell = memo(function FrameShell({
 						ref={refCb}
 						key={docNonce}
 						title={name}
+						// A frame document opened on its own may write the clipboard, so
+						// embedding it must not take that away (#181). Chrome's default
+						// clipboard-write allowlist is self, which never matches a sandboxed
+						// frame's opaque origin, so the delegation has to be spelled out.
+						allow="clipboard-write"
 						sandbox="allow-scripts"
 						src={frameDocumentUrl(project, name, docNonce)}
 						className="block h-full w-full border-0 bg-white"
