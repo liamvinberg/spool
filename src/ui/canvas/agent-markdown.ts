@@ -136,7 +136,51 @@ const RULE = /^\s*-{3,}\s*$/;
 
 const QUOTE = /^\s*>\s?(.*)$/;
 
+/**
+ * How many parses are kept, which is bounded because a stream mints keys.
+ *
+ * A message arriving is parsed again at every length the edge passes through, so the
+ * keys a turn produces are unbounded and none of the partial ones is ever asked for
+ * twice. What is asked for over and over is the settled text: the block above the live
+ * one is re-parsed on every render for the rest of the conversation, and so is the
+ * invisible full-length copy the arriving block reserves its height with.
+ *
+ * So the cache is least-recently-asked-for rather than first-in: the prefixes wash
+ * through it and the finished messages stay. Well past what a rail can hold at once,
+ * and small enough that a session cannot grow a copy of its own transcript here.
+ */
+const KEPT = 256;
+
+/** what has been parsed, in the order it was last asked for, oldest first */
+const parsed = new Map<string, readonly Chunk[]>();
+
+/**
+ * The blocks of one message, parsed once per distinct string.
+ *
+ * The parse is a pure function of the text and the rail calls it for every block it
+ * draws on every render it does, which for the message being written is ten times a
+ * second across a document of them. Handing back the same array is also what lets a
+ * memoised block skip its own render, so this is a cache the tree above it can see.
+ */
 export function chunksOf(text: string): readonly Chunk[] {
+	const held = parsed.get(text);
+	if (held !== undefined) {
+		// asked for again, so it goes to the back: a Map iterates in insertion order, and
+		// deleting before setting is how a key is moved there
+		parsed.delete(text);
+		parsed.set(text, held);
+		return held;
+	}
+	const chunks = parseChunks(text);
+	parsed.set(text, chunks);
+	if (parsed.size > KEPT) {
+		const oldest = parsed.keys().next();
+		if (oldest.done !== true) parsed.delete(oldest.value);
+	}
+	return chunks;
+}
+
+function parseChunks(text: string): readonly Chunk[] {
 	const chunks: Chunk[] = [];
 	const lines = text.split("\n");
 	let paragraph: string[] = [];

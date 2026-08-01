@@ -140,6 +140,26 @@ describe("the markdown subset", () => {
 		expect(chunksOf("# not a heading")).toEqual([{ kind: "p", spans: [{ text: "# not a heading" }] }]);
 		expect(chunksOf("| a | b |").map((chunk) => chunk.kind)).toEqual(["p"]);
 	});
+
+	/**
+	 * The same text is the same blocks, and the rail asks for the same text constantly:
+	 * every settled message is re-parsed on every render of the log it sits in, and the
+	 * one being written reserves its height with an invisible copy of its whole self.
+	 * Handing the same array back is also what lets the block that draws it skip a render.
+	 */
+	it("parses one string once", () => {
+		const text = "**done.** the `cart` frame\n\n- one\n- two";
+
+		expect(chunksOf(text)).toBe(chunksOf(text));
+	});
+
+	/** and the cache is bounded, because a message arriving mints a key per character */
+	it("lets go of what nothing has asked for lately", () => {
+		const held = chunksOf("the frame is live.");
+		for (let at = 0; at < 400; at += 1) chunksOf(`filler ${at}`);
+
+		expect(chunksOf("the frame is live.")).not.toBe(held);
+	});
 });
 
 describe("closing what has not been written yet", () => {
