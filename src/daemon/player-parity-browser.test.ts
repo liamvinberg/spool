@@ -24,8 +24,26 @@ interface Probe {
 async function reachForPill(page: Page): Promise<void> {
 	const size = page.viewportSize();
 	if (size === null) return;
-	await page.mouse.move(size.width / 2, size.height - 6);
-	await page.locator(".spool-stage:not(.is-asleep)").waitFor();
+	/*
+	 * The strip the pill lives in is over the frame, and mouse events inside an iframe
+	 * never reach the document around it — so this reach only counts once the frame's
+	 * own runtime is listening and forwarding it as `player-wake` (#210). A reach that
+	 * lands while the frame is still booting, which is every reach just after a Restart,
+	 * is dropped, and one move followed by a wait then sat out its whole timeout waiting
+	 * for a wake nobody was going to send.
+	 *
+	 * So it keeps reaching until the chrome answers, rather than trusting one to land.
+	 */
+	const stage = page.locator(".spool-stage");
+	await expect
+		.poll(
+			async () => {
+				await page.mouse.move(size.width / 2, size.height - 6);
+				return (await stage.getAttribute("class")) ?? "";
+			},
+			{ timeout: 30_000 },
+		)
+		.not.toContain("is-asleep");
 }
 
 async function installPlayerMountGate(page: Page): Promise<void> {
