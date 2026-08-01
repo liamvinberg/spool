@@ -78,7 +78,14 @@ import { createShotTaker } from "./shots";
 import type { TermExecutor } from "./term-exec";
 import { termFontDataCss, termFontFile } from "./term-fonts";
 import { createTermSessions } from "./term-sessions";
-import { createThumbHealer, isCoverHash, readCoverImage, UnservableCoverError, writeCover } from "./thumbs";
+import {
+	createThumbHealer,
+	isCoverHash,
+	readCoverImage,
+	UnservableCoverError,
+	writeCaptureError,
+	writeCover,
+} from "./thumbs";
 import { readUiAsset, readUiIndex, UI_MISSING_NOTICE } from "./ui";
 import { createUpdateChecker } from "./update-check";
 import {
@@ -1600,6 +1607,32 @@ export function createDaemonApp({
 			hub.publish(project.root, { kind: "thumb", frame, cover });
 			return c.json(cover);
 		})
+		.post(
+			"/api/p/:project/thumbs/:frame/error",
+			validator("json", (value, c) => {
+				const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+				const { error } = body;
+				if (typeof error !== "string" || error === "") return c.text('a capture error is { "error": "..." }', 400);
+				return { error: error.slice(0, 240) };
+			}),
+			(c) => {
+				// The reason a self-capture failed (#173), recorded beside the cover it
+				// never wrote. Same existence and kind checks as the PUT above — a
+				// ghost or a terminal frame has nothing to record a capture reason
+				// against — and no SSE event: the placeholder it explains is already on
+				// screen, and this is read by `spool logs`, never drawn on the canvas.
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const frame = c.req.param("frame");
+				const kind = isSafeName(frame) ? projectedKind(project.root, frame) : undefined;
+				if (kind === undefined) return c.text(`no frame "${frame}" to cover`, 404);
+				if (kind === "term") {
+					return c.text(`"${frame}" is a terminal frame — its stills rasterize from the grid`, 400);
+				}
+				writeCaptureError(project.root, frame, c.req.valid("json").error);
+				return c.body(null, 204);
+			},
+		)
 		.get("/p/:project/frames/:frame", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;

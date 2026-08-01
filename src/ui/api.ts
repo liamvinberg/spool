@@ -339,6 +339,19 @@ export async function putCover(project: string, frame: string, cover: Blob): Pro
 }
 
 /**
+ * A self-capture failed, and the reason is worth keeping (#173) — but never
+ * worth waiting on: `spool logs` is the only reader, so a lost post costs the
+ * next look a blank line, not a stuck errand.
+ */
+export function postCaptureFailure(project: string, frame: string, error: string): void {
+	void controlFetch(`/api/p/${encodeURIComponent(project)}/thumbs/${encodeURIComponent(frame)}/error`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ error }),
+	}).catch(() => {});
+}
+
+/**
  * Read one SSE body to its end, dispatching each message by its event name.
  * `onBytes` is told about every chunk, comments and heartbeats included: what
  * the caller is watching for is a connection that is still there, and a stream

@@ -4,11 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 import { makeProject, makeTempDir } from "../test-helpers";
 import {
 	createThumbHealer,
+	readCaptureError,
 	readCover,
 	readCoverImage,
 	scanCovers,
 	scanDatedCovers,
 	UnservableCoverError,
+	writeCaptureError,
 	writeCover,
 } from "./thumbs";
 
@@ -98,6 +100,53 @@ describe("writing a cover", () => {
 
 	it("refuses bytes the store cannot serve", () => {
 		expect(() => writeCover(project(), "home", Buffer.from("nope"))).toThrow(UnservableCoverError);
+	});
+});
+
+describe("recording a capture failure (#173)", () => {
+	it("round-trips a reason and when it happened", () => {
+		const root = project();
+		expect(readCaptureError(root, "home")).toBeUndefined();
+
+		writeCaptureError(root, "home", "capture canvases too large");
+
+		const recorded = readCaptureError(root, "home");
+		expect(recorded?.error).toBe("capture canvases too large");
+		expect(recorded?.at).toEqual(expect.any(String));
+		expect(new Date(recorded?.at ?? "").toString()).not.toBe("Invalid Date");
+	});
+
+	it("reads malformed or absent records as no recorded error", () => {
+		const root = project();
+		expect(readCaptureError(root, "home")).toBeUndefined();
+
+		mkdirSync(storeDir(root), { recursive: true });
+		writeFileSync(join(storeDir(root), "error.json"), "{ not json");
+		expect(readCaptureError(root, "home")).toBeUndefined();
+
+		writeFileSync(join(storeDir(root), "error.json"), JSON.stringify({ error: "missing the at field" }));
+		expect(readCaptureError(root, "home")).toBeUndefined();
+
+		writeFileSync(join(storeDir(root), "error.json"), JSON.stringify([]));
+		expect(readCaptureError(root, "home")).toBeUndefined();
+	});
+
+	it("clears a recorded error the moment a landed cover retires every other file", () => {
+		const root = project();
+		writeCaptureError(root, "home", "capture reply timed out");
+		expect(readCaptureError(root, "home")).toBeDefined();
+
+		writeCover(root, "home", JPEG);
+
+		expect(readCaptureError(root, "home")).toBeUndefined();
+	});
+
+	it("never confuses its own record with a cover", () => {
+		const root = project();
+		writeCaptureError(root, "home", "capture source too large");
+
+		expect(readCover(root, "home")).toBeUndefined();
+		expect(scanCovers(root)).toEqual(new Map());
 	});
 });
 

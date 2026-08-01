@@ -341,6 +341,13 @@ export interface SweepResult {
 	 * before the next write retires it.
 	 */
 	refreshCaptures: Array<{ frame: string; overdue: boolean }>;
+	/**
+	 * Frames whose errand was retired by ERRAND_DEADLINE_MS rather than by a
+	 * picture landing or a reason of its own (#173) — the boot never reported
+	 * loaded, so nothing else in this sweep ever finds out why the frame stayed
+	 * a placeholder.
+	 */
+	expiredErrands: string[];
 }
 
 export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
@@ -359,8 +366,12 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	const wasModelLive = model.modelLive;
 	model.modelLive = new Set();
 
+	const expiredErrands: string[] = [];
 	for (const [name, startedAt] of [...model.errands]) {
-		if (now - startedAt >= ERRAND_DEADLINE_MS) noteErrandShot(model, name, false);
+		if (now - startedAt >= ERRAND_DEADLINE_MS) {
+			noteErrandShot(model, name, false);
+			expiredErrands.push(name);
+		}
 	}
 
 	interface Entry {
@@ -534,6 +545,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		states: next,
 		changed: changed || Object.keys(states).length !== frames.length,
 		refreshCaptures,
+		expiredErrands,
 	};
 }
 
@@ -590,6 +602,13 @@ export interface LifecycleDeps {
 	hasCover: (frame: string) => boolean;
 	onShot: (frame: string, image: CoverRaster) => void;
 	/**
+	 * A self-capture failed for a reason worth keeping (#173) — never fired on a
+	 * frame merely being retired mid-errand (a document swap, an unmount), only
+	 * when the errand itself came back with something to say. Optional so a
+	 * fabricated harness with nothing to assert about it can omit the wiring.
+	 */
+	onCaptureFailure?: (frame: string, reason: string) => void;
+	/**
 	 * Where the camera rests, read by the sweep.
 	 *
 	 * A ref rather than a value, and deliberately not urgent: a camera moves every
@@ -614,6 +633,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		hovered,
 		hasCover,
 		onShot,
+		onCaptureFailure,
 		cameraRef,
 		viewportRef,
 		pictured,
@@ -642,6 +662,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	hasCoverRef.current = hasCover;
 	const onShotRef = useRef(onShot);
 	onShotRef.current = onShot;
+	const onCaptureFailureRef = useRef(onCaptureFailure);
+	onCaptureFailureRef.current = onCaptureFailure;
 
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
 	const model = useRef(createLifecycleModel());
@@ -764,8 +786,18 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		waiter.resolve(ready);
 	}, []);
 
-	/** Resolve exactly the request that produced this shot; stale work cannot satisfy its successor. */
-	const noteShot = useCallback((frame: string, id: string, image: CoverRaster | undefined) => {
+	/**
+	 * Resolve exactly the request that produced this shot; stale work cannot
+	 * satisfy its successor.
+	 *
+	 * `reason` is the failure worth keeping (#173): the shim's own error, a
+	 * raster that threw, or a reply that never came. Its absence is not "no
+	 * reason" but "no failure worth recording" — a retirement mid-errand (a
+	 * document swap, an unmount) hands the same `undefined` image back with no
+	 * reason at all, because a reload mid-capture is ordinary under an edit
+	 * stream, not a failure.
+	 */
+	const noteShot = useCallback((frame: string, id: string, image: CoverRaster | undefined, reason?: string) => {
 		const pending = captureWaiters.current.get(frame);
 		if (pending?.id !== id) return;
 		clearTimeout(pending.timeout);
@@ -775,6 +807,10 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		pending.resolve(image);
 		// Full-resolution PNG is an export artifact, never a replacement cover.
 		if (image !== undefined && pending.targetWidth > 0) onShotRef.current(frame, image);
+		// Bounded defensively even though the shim's own reply is already capped
+		// at 240 chars (protocol.ts): a reason authored on this side (a timeout, a
+		// raster rejection) carries no such guarantee of its own.
+		if (reason !== undefined) onCaptureFailureRef.current?.(frame, reason.slice(0, 240));
 	}, []);
 
 	const onIframe = useCallback(
@@ -836,7 +872,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			}
 			pending.resolveSourceReturned(true);
 			if ("error" in message) {
-				noteShot(message.frame, message.id, undefined);
+				noteShot(message.frame, message.id, undefined, message.error);
 				return;
 			}
 			if (pending.targetWidth !== message.targetWidth || pending.rasterStarted) return;
@@ -847,7 +883,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				pending.abort.signal,
 			).then(
 				(image) => noteShot(message.frame, message.id, image),
-				() => noteShot(message.frame, message.id, undefined),
+				() => noteShot(message.frame, message.id, undefined, "capture raster failed"),
 			);
 		},
 		[noteShot],
@@ -875,7 +911,10 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				const sourceReturned = new Promise<boolean>((sourceResolve) => {
 					resolveSourceReturned = sourceResolve;
 				});
-				const timeout = setTimeout(() => noteShot(frame, id, undefined), CAPTURE_REPLY_TIMEOUT_MS + settleMs);
+				const timeout = setTimeout(
+					() => noteShot(frame, id, undefined, "capture reply timed out"),
+					CAPTURE_REPLY_TIMEOUT_MS + settleMs,
+				);
 				captureWaiters.current.set(frame, {
 					id,
 					targetWidth,
@@ -931,6 +970,13 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			void requestCapture(frame, LIVE_MIN_CSS_PX, overdue ? 0 : CAPTURE_SETTLE_BUDGET_MS).then((image) =>
 				noteErrandShot(model.current, frame, image !== undefined),
 			);
+		}
+		// A boot that never reported loaded (#173): the errand deadline is what
+		// ends it, so this sweep is the only place that ever learns why the frame
+		// stayed a placeholder — nothing downstream of the deadline carries a
+		// reason of its own.
+		for (const frame of result.expiredErrands) {
+			onCaptureFailureRef.current?.(frame, "the borrowed document never reported loaded");
 		}
 		if (result.changed) setStates(result.states);
 		// against the states this sweep just decided, not last render's: a frame

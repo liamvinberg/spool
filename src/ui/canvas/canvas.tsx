@@ -13,6 +13,7 @@ import {
 	fetchFlows,
 	fetchProjection,
 	openInEditor,
+	postCaptureFailure,
 	postTrash,
 	postWalk,
 	putCanvasState,
@@ -478,6 +479,16 @@ export function ProjectCanvas({
 		[project, noteCover],
 	);
 
+	// A self-capture failed with a reason worth keeping (#173): posted and
+	// forgotten, since `spool logs` is the only reader and nothing on screen is
+	// waiting on it.
+	const onCaptureFailure = useCallback(
+		(frame: string, error: string) => {
+			postCaptureFailure(project, frame, error);
+		},
+		[project],
+	);
+
 	const selectedFrame = selected[selected.length - 1];
 	// Select owns every frame represented by its element picks. Without picks,
 	// the selected frame and entered-frame modifier keep their existing intent.
@@ -513,6 +524,7 @@ export function ProjectCanvas({
 		hovered: hoveredFrame,
 		hasCover: hasCover,
 		onShot,
+		onCaptureFailure,
 		cameraRef: settledCameraRef,
 		viewportRef,
 		pictured,

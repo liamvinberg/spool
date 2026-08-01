@@ -504,10 +504,19 @@ describe("what is worth photographing", () => {
 		s.sweep(frames, unbooted);
 		expect(s.states().a).toBe("refreshing");
 
-		// the deadline is the only thing that can end an errand nobody can finish
-		while (s.model.errands.has("a") && s.clock() < ERRAND_DEADLINE_MS * 2) s.sweep(frames, unbooted);
+		// the deadline is the only thing that can end an errand nobody can finish —
+		// and a frame that still owes a picture is re-borrowed the same tick it
+		// expires, so `model.errands` never actually empties out on its own
+		const expired: string[] = [];
+		while (s.model.tries.get("a") === undefined && s.clock() < ERRAND_DEADLINE_MS * 2) {
+			expired.push(...s.sweep(frames, unbooted).expiredErrands);
+		}
 		expect(s.clock()).toBeGreaterThanOrEqual(ERRAND_DEADLINE_MS);
 		expect(s.model.tries.get("a")).toBe(1);
+		// the sweep that retired it is the one and only place this frame is ever
+		// named as an expired errand (#173) — the boot-failure case `spool logs`
+		// has to be told about, since nothing later carries a reason of its own
+		expect(expired).toEqual(["a"]);
 	});
 
 	it("never photographs a terminal: its still is the daemon's grid", () => {
@@ -553,6 +562,44 @@ describe("what an errand waits for", () => {
 		// the arrival lands, and the rest of the page fills itself in behind it
 		const arrived = { hasCover: () => false, entered: "target" };
 		expect(mounted(s.sweep(frames, arrived).states)).toEqual(["a", "b", "target"]);
+	});
+});
+
+describe("expired errands (#173)", () => {
+	it("names nothing while the deadline has not passed, and nothing once it is retired", () => {
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		const unbooted = { hasCover: () => false, ready: new Map<string, number>() };
+		s.sweep(frames, unbooted);
+
+		// a frame that still owes a picture is re-borrowed the same tick its
+		// errand expires, so the loop watches for the naming itself rather than
+		// for `model.errands` emptying out — it never does on its own
+		const before: string[][] = [];
+		let onExpiry: string[] = [];
+		while (s.clock() < ERRAND_DEADLINE_MS * 2) {
+			onExpiry = s.sweep(frames, unbooted).expiredErrands;
+			if (onExpiry.length > 0) break;
+			before.push(onExpiry);
+		}
+
+		expect(before.every((expired) => expired.length === 0)).toBe(true);
+		expect(onExpiry).toEqual(["a"]);
+		// the re-borrow's own clock starts fresh, so the very next sweep has
+		// nothing to expire again
+		expect(s.sweep(frames, unbooted).expiredErrands).toEqual([]);
+	});
+
+	it("never names a picture that landed on its own", () => {
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		const uncovered = { hasCover: () => false };
+		s.sweep(frames, uncovered);
+		s.sweep(frames, uncovered);
+
+		noteErrandShot(s.model, "a", true);
+
+		expect(s.sweep(frames, uncovered).expiredErrands).toEqual([]);
 	});
 });
 

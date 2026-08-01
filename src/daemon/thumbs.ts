@@ -157,6 +157,9 @@ export function writeCover(root: string, frame: string, bytes: Buffer): Cover {
 	const hash = createHash("sha256").update(bytes).digest("hex").slice(0, HASH_CHARS);
 	const name = `${hash}.${format.ext}`;
 	writeAtomic(join(dir, name), bytes);
+	// Every other file in the dir retires with the image it lost to, `error.json`
+	// (#173) included: a landed cover is proof the reason it recorded no longer
+	// applies, and nothing here treats that name specially.
 	for (const old of filesIn(dir)) {
 		if (old !== name) rmSync(join(dir, old), { force: true });
 	}
@@ -171,6 +174,42 @@ export class UnservableCoverError extends Error {
 		super("a cover must be one PNG or JPEG image");
 		this.name = "UnservableCoverError";
 	}
+}
+
+const CAPTURE_ERROR_NAME = "error.json";
+
+function captureErrorFile(root: string, frame: string): string {
+	return join(coverDir(root, frame), CAPTURE_ERROR_NAME);
+}
+
+export interface CaptureError {
+	error: string;
+	/** ISO timestamp of the failed errand, not of the read. */
+	at: string;
+}
+
+/**
+ * The reason a self-capture failed, beside the cover it never wrote (#173).
+ * `writeCover`'s own cleanup — every file in the frame's cover dir that is not
+ * the new image gets removed — retires this the moment a later capture lands,
+ * so a stale reason never outlives the picture that made it moot.
+ */
+export function writeCaptureError(root: string, frame: string, error: string): void {
+	writeAtomic(captureErrorFile(root, frame), `${JSON.stringify({ error, at: new Date().toISOString() })}\n`);
+}
+
+/** Machine-written cache: anything malformed reads as no recorded error (mirrors readLogsCache in verify.ts). */
+export function readCaptureError(root: string, frame: string): CaptureError | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(readFileSync(captureErrorFile(root, frame), "utf8"));
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return undefined;
+	}
+	if (typeof parsed !== "object" || parsed === null) return undefined;
+	const { error, at } = parsed as { error?: unknown; at?: unknown };
+	return typeof error === "string" && typeof at === "string" ? { error, at } : undefined;
 }
 
 export interface HealRequest {
