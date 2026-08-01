@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { makeApp, makeProject, makeTempDir, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
+import { makeApp, makeProject, makeTempDir, SseTimeout, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
 
 /**
  * The canvas's hands over the API (#23), under the one law: the canvas never
@@ -289,8 +289,17 @@ describe("the geometry API", () => {
 		await app.request(`/api/p/${name}/geometry`, jsonPut({ frames: { checkout: { x: 1, y: 2, w: 300, h: 400 } } }));
 
 		expect(await events.next()).toEqual({ event: "change", data: { kind: "geometry", frame: "checkout" } });
-		// the watcher stays silent about frame.json — no reload-inducing echo
-		await events.expectQuiet(300);
+		// the watcher sees the same sidecar and says the same thing about it (#113),
+		// and a move heard twice moves nothing twice. What must never arrive for a
+		// frame.json write is a frame change, because that is what reloads a document
+		for (;;) {
+			try {
+				expect(await events.next(300)).toEqual({ event: "change", data: { kind: "geometry", frame: "checkout" } });
+			} catch (error) {
+				if (error instanceof SseTimeout) break;
+				throw error;
+			}
+		}
 	});
 
 	it("rejects unknown frames before writing anything, and malformed geometry", async () => {

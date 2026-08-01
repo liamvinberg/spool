@@ -1,12 +1,17 @@
-import type { watch } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, type watch, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { ChangeEvent } from "./events";
 
 /**
- * The watcher's own lifetime (#22). What it watches and how it classifies a
- * path is `app.test.ts`'s business, against a real design/ folder; this is
- * about the one thing a real folder cannot show, which is when the handle is
- * opened and when it is let go.
+ * The watcher's own lifetime (#22), and what it makes of a path it is handed.
+ *
+ * Whether the OS really delivers a path is `app.test.ts`'s business, against a
+ * real folder and a real stream. Here the disk is the test: `fs.watch` is a
+ * mock, so a path arrives exactly when the test says so and the two things a
+ * real folder cannot show — when the handle is opened and let go, and what one
+ * named path means — are both plain.
  */
 
 const fs = vi.hoisted(() => ({ watch: vi.fn() }));
@@ -36,6 +41,72 @@ afterEach(() => {
 	fs.watch.mockClear();
 	watcher.close.mockClear();
 	onChange = undefined;
+});
+
+/**
+ * A project on disk, because classification asks the folder whether a name is a
+ * frame or a page: `frames/hello` is a frame and `frames/shop` is a page with
+ * `cart` inside it, which is the two shapes every path below comes in.
+ */
+function project(): string {
+	const root = mkdtempSync(join(tmpdir(), "spool-events-"));
+	onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+	for (const dir of ["frames/hello", "frames/shop/cart"]) {
+		mkdirSync(join(root, "design", dir), { recursive: true });
+		writeFileSync(join(root, "design", dir, "frame.tsx"), "export default () => null;\n");
+	}
+	return root;
+}
+
+describe("what a changed path means", () => {
+	/** every event one batch of paths produced, once the debounce has run */
+	async function landed(root: string, paths: string[]): Promise<ChangeEvent[]> {
+		const hub = createChangeHub();
+		const seen: ChangeEvent[] = [];
+		hub.subscribe(root, (event) => seen.push(event));
+		for (const path of paths) onChange?.("change", path);
+		await vi.advanceTimersByTimeAsync(100);
+		hub.close();
+		return seen;
+	}
+
+	it("announces a sidecar write as a move of the frame it names, in both shapes (#113)", async () => {
+		vi.useFakeTimers();
+		const root = project();
+
+		// an agent writing geometry is placing the frame, which is a thing an open
+		// canvas has to hear — and never a reason to reload the document
+		expect(await landed(root, ["frames/hello/frame.json"])).toEqual([{ kind: "geometry", frame: "hello" }]);
+		// a frame inside a page sits one deeper, and the sidecar rule moves with it
+		expect(await landed(root, ["frames/shop/cart/frame.json"])).toEqual([{ kind: "geometry", frame: "cart" }]);
+	});
+
+	it("keeps a source edit a source edit, whichever shape the frame is in", async () => {
+		vi.useFakeTimers();
+		const root = project();
+
+		expect(await landed(root, ["frames/hello/frame.tsx"])).toEqual([{ kind: "frame", frame: "hello" }]);
+		expect(await landed(root, ["frames/shop/cart/frame.tsx"])).toEqual([{ kind: "frame", frame: "cart" }]);
+	});
+
+	it("carries a move and an edit to one frame as the two facts they are", async () => {
+		vi.useFakeTimers();
+		const root = project();
+
+		// a resize writes both, inside one debounce window: the canvas has to move
+		// the frame and reload it, and a single slot would lose one of them
+		expect(await landed(root, ["frames/hello/frame.tsx", "frames/hello/frame.json"])).toEqual([
+			{ kind: "frame", frame: "hello" },
+			{ kind: "geometry", frame: "hello" },
+		]);
+	});
+
+	it("still says nothing for the app's own state", async () => {
+		vi.useFakeTimers();
+		const root = project();
+
+		expect(await landed(root, [".spool/thumbs/hello/cover.png", "canvas.json"])).toEqual([]);
+	});
 });
 
 describe("how long a watcher outlives its last subscriber", () => {
