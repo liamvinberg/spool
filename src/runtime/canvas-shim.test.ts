@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { makeApp, makeProject, makeTempDir, writeFrame } from "../test-helpers";
 
 /**
@@ -96,6 +96,20 @@ function layOut(selector: string, box: { x: number; y: number; w: number; h: num
 		right: box.x + box.w,
 		bottom: box.y + box.h,
 	})) as unknown as Element["getBoundingClientRect"];
+}
+
+/**
+ * The frame's own viewport, which is the frame: one realm serves every test
+ * here, so the size a test needs comes back off afterwards.
+ */
+function seeThrough(width: number, height: number): void {
+	const was = { innerWidth: window.innerWidth, innerHeight: window.innerHeight };
+	const set = (size: { innerWidth: number; innerHeight: number }) => {
+		Object.defineProperty(window, "innerWidth", { configurable: true, value: size.innerWidth });
+		Object.defineProperty(window, "innerHeight", { configurable: true, value: size.innerHeight });
+	};
+	set({ innerWidth: width, innerHeight: height });
+	onTestFinished(() => set(was));
 }
 
 describe("the canvas shim", () => {
@@ -499,6 +513,51 @@ describe("the canvas shim", () => {
 			"shared/ui/badge.tsx:1-4": { x: 300, y: 20, w: 60, h: 20 },
 			"frames/host/frame.tsx:40-44": null,
 			"frames/host/frame.tsx:9:3": { x: 20, y: 500, w: 360, h: 30 },
+		});
+	});
+
+	it("clips a range anchor to the frame it was measured in (#222)", async () => {
+		const shim = await servedShim();
+		onTestFinished(runShim(shim));
+		// the frame is the viewport of its own document, and a union answers in
+		// that document's coordinates
+		seeThrough(390, 844);
+		document.body.innerHTML = `<div id="root"><main data-spool-source="frames/host/frame.tsx:1:1">
+			<h1 data-spool-source="frames/host/frame.tsx:2:2">kaffe</h1>
+			<p data-spool-source="frames/host/frame.tsx:8:2">open until six</p>
+			<footer data-spool-source="frames/host/frame.tsx:20:2">closed sundays</footer>
+		</main></div>`;
+		// a page longer and wider than the frame showing it, which is most of them
+		layOut("main", { x: -20, y: 0, w: 440, h: 2400 });
+		layOut("h1", { x: 20, y: 20, w: 200, h: 40 });
+		layOut("p", { x: 20, y: 800, w: 350, h: 120 });
+		layOut("footer", { x: 20, y: 1600, w: 350, h: 40 });
+
+		const boxes = nextSiteBoxes();
+		window.postMessage(
+			{
+				spool: "sites",
+				id: 5,
+				sites: [
+					// a whole-file rewrite really is the whole frame, and no more of it
+					{ path: "frames/host/frame.tsx", line: 1, col: 0, through: 99 },
+					// a block that runs off the bottom edge is marked as far as it shows
+					{ path: "frames/host/frame.tsx", line: 8, col: 0, through: 8 },
+					// and one that landed entirely below the fold is no mark at all
+					{ path: "frames/host/frame.tsx", line: 20, col: 0, through: 20 },
+					// the point form anchors an arrow rather than marking a frame, so it
+					// keeps answering where the element is
+					{ path: "frames/host/frame.tsx", line: 20, col: 2 },
+				],
+			},
+			"*",
+		);
+
+		expect((await boxes).boxes).toEqual({
+			"frames/host/frame.tsx:1-99": { x: 0, y: 0, w: 390, h: 844 },
+			"frames/host/frame.tsx:8-8": { x: 20, y: 800, w: 350, h: 44 },
+			"frames/host/frame.tsx:20-20": null,
+			"frames/host/frame.tsx:20:2": { x: 20, y: 1600, w: 350, h: 40 },
 		});
 	});
 
