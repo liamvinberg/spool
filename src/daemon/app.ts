@@ -24,7 +24,7 @@ import { parseAgentReply } from "./agent-control";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { type AgentHeld, createAgentTurns } from "./agent-live";
 import { type AgentAsk, askAgentOffer, askFrom, isEffortShaped, isModelShaped } from "./agent-offer";
-import { agentInstalled, askAgentLogin } from "./agent-preflight";
+import { agentInstalled, askAgentLogin, type Look } from "./agent-preflight";
 import { agentPromptContent } from "./agent-spawn";
 import { closeThread, isThreadId, parseThreadPut, putThread, serveThreads, sessionExists } from "./agent-threads";
 import { startAgentTurn } from "./agent-turn";
@@ -124,6 +124,15 @@ export interface DaemonOptions {
 	termExecutor?: TermExecutor;
 	/** The agent spawn (#191) — swapped for a capture replayer so CI never runs a real agent. */
 	agentExecutor?: AgentExecutor;
+	/**
+	 * The `which` behind the install wall (#201) — swapped so a test says what this
+	 * machine has rather than inheriting whatever the machine running it happens to have.
+	 *
+	 * The executor's counterpart: a test that hands the daemon a fixture agent has said
+	 * there is one, and the wall must not then contradict it because no `claude` is on the
+	 * runner's PATH.
+	 */
+	agentLook?: Look;
 	/** Machine-state filesystem lifecycle boundary. */
 	machineStateWatchAdapter?: MachineStateWatchAdapter;
 	/** Machine-state observation failures stay visible without escaping a watcher callback. */
@@ -249,6 +258,7 @@ export function createDaemonApp({
 	upgrade,
 	termExecutor,
 	agentExecutor,
+	agentLook,
 	machineStateWatchAdapter,
 	onMachineStateWatchError,
 }: DaemonOptions) {
@@ -1019,7 +1029,7 @@ export function createDaemonApp({
 		.get("/api/p/:project/agent/installed", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			return c.json({ installed: agentInstalled(process.env) });
+			return c.json({ installed: agentInstalled(process.env, agentLook) });
 		})
 		.get("/api/p/:project/agent/login", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
