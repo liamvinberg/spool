@@ -427,7 +427,10 @@ describe("a session for the canvas to play inline (#210)", () => {
 		const res = await app.request(`/api/p/${name}/play?frame=ghost`);
 
 		expect(res.status).toBe(404);
-		expect(await res.text()).toContain('no frame "ghost" to play');
+		const refusal = await res.text();
+		expect(refusal).toContain('no frame "ghost" to play');
+		// a name nothing claims gets no invented folder, paged or flat (#156)
+		expect(refusal).not.toContain("frames/ghost");
 	});
 
 	it("refuses a frame name that is not one", async () => {

@@ -120,12 +120,22 @@ describe("url", () => {
 		);
 	});
 
-	it("refuses a frame that does not exist, teaching how one is born", async () => {
-		const { spoolDir, name, url } = await serveProject();
+	it("refuses a frame that does not exist, teaching how one is born without inventing a path", async () => {
+		const { spoolDir, root, name, url } = await serveProject();
+		// a paged project: `frames/site-local--thread/frame.tsx` is a location this
+		// canvas never reads, so the hint must not name it (#156)
+		writeDesignFile(root, "frames/site/site-local--plate/frame.tsx", plainTsx);
+		const born =
+			'no frame "site-local--thread" on the canvas — a frame is born by writing frame.tsx in its own folder under design/frames/, flat or inside a page folder';
 
-		await expect(mintPlayerUrl(url, name, "ghost", controlToken(spoolDir))).rejects.toThrowError(
-			/design\/frames\/ghost\/frame\.tsx/,
+		const player = await mintPlayerUrl(url, name, "site-local--thread", controlToken(spoolDir)).catch(
+			(error: Error) => error.message,
 		);
+		const raw = await mintRawUrl(url, name, "site-local--thread", root).catch((error: Error) => error.message);
+
+		expect(player).toBe(born);
+		expect(raw).toBe(born);
+		expect(player).not.toContain("frames/site-local--thread");
 	});
 
 	it("mints direct render URLs for flat and paged frames without using the control origin", async () => {
