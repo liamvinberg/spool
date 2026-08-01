@@ -29,6 +29,12 @@ const BEFORE = `export default function Home() {
 `;
 
 const PROMPT = "close on sundays";
+
+/** the two numbers of an SVG `translate(x y)` */
+const numbersIn = (transform: string | null): [number, number] => {
+	const [x, y] = (transform ?? "").match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+	return [x ?? Number.NaN, y ?? Number.NaN];
+};
 const OLD = '<p id="hours">open until six</p>';
 const NEW = '<p id="hours">closed sundays</p>';
 
@@ -156,6 +162,22 @@ it("marks the block a write changed, on the frame showing it", { timeout: 180_00
 	// of it — never the heading's, and never the whole page's
 	expect(marked?.height ?? 0).toBeGreaterThan(0.3 * (changed?.height ?? 0));
 	expect(marked?.height ?? 0).toBeLessThan((changed?.height ?? 0) + 2);
+
+	// the presence is fixed to the frame: the camera moving moves both by the same amount,
+	// on the same frame it moves. Nothing here may ease into place — the thread's shape is
+	// the one thing that eases, and where the frame is must never be inside it
+	const wall = () => page.locator("[data-hand-wall]").getAttribute("transform");
+	const iframe = () => page.locator('iframe[title="home"]').boundingBox();
+	const walled = await wall();
+	const stood = await iframe();
+	await page.mouse.move(700, 450);
+	await page.mouse.wheel(120, 80);
+	await expect.poll(async () => (await iframe())?.x).not.toBe(stood?.x);
+	const moved = await iframe();
+	const [wasX, wasY] = numbersIn(walled);
+	const [nowX, nowY] = numbersIn(await wall());
+	expect(nowX - wasX).toBeCloseTo((moved?.x ?? 0) - (stood?.x ?? 0), 0);
+	expect(nowY - wasY).toBeCloseTo((moved?.y ?? 0) - (stood?.y ?? 0), 0);
 
 	// the frame really did take the write, so the mark is about something that happened
 	expect(await says()).toBe("closed sundays");

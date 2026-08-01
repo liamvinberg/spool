@@ -175,8 +175,42 @@ describe("what the canvas draws", () => {
 		expect(nodes(host)).toEqual(["home", "cart"]);
 		expect(host.querySelector('[data-hand-node="home"]')?.getAttribute("style")).toContain("opacity: 0");
 
+		// the turn ended, and the hand that is done is still on the same element it was
+		// drawn on — winding off it, rather than replaced by a fresh one already wound off
+		const before = host.querySelector('[data-hand-node="cart"]');
 		at(null);
 		expect(nodes(host)).toEqual(["cart"]);
+		expect(host.querySelector('[data-hand-node="cart"]')).toBe(before);
+		expect(host.querySelector('[data-hand-node="cart"]')?.getAttribute("style")).toContain("opacity: 0");
+		expect(offsets(host, "[data-hand-thread]")).toEqual([1, 1]);
+	});
+
+	it("holds the thread on the frame when the camera moves, and eases only its shape", () => {
+		const host = document.createElement("div");
+		document.body.append(host);
+		const root = createRoot(host);
+		onTestFinished(() => {
+			act(() => root.unmount());
+			host.remove();
+		});
+		const at = (camera: Camera) =>
+			act(() =>
+				root.render(
+					createElement(AgentHandLayer, { camera, frames: FRAMES, hand: hand(), marks: [], shellRadius: 12 }),
+				),
+			);
+
+		at(CAMERA);
+		const shape = paths(host);
+		const wall = () => host.querySelector("[data-hand-wall]")?.getAttribute("transform");
+		expect(wall()).toBe("translate(88 522)");
+
+		// the path is the only thing here that eases between its own states, so where the
+		// frame *is* must not be inside it: a pan that moved the shape would drag the
+		// thread after the camera for a fifth of a second every time
+		at({ x: 300, y: -40, k: 1 });
+		expect(paths(host)).toEqual(shape);
+		expect(wall()).toBe("translate(388 482)");
 	});
 
 	it("draws no presence for a frame that is not on the field", () => {
@@ -263,10 +297,12 @@ function spanOf(host: HTMLElement): number {
 	return Math.abs((ends[0] ?? 0) - (ends[1] ?? 0));
 }
 
-const offsets = (host: HTMLElement): number[] =>
-	[...host.querySelectorAll("[data-hand-corner]")].map((path) =>
-		Number.parseFloat(path.getAttribute("stroke-dashoffset") ?? "0"),
-	);
+const offsets = (host: HTMLElement, selector = "[data-hand-corner]"): number[] =>
+	[...host.querySelectorAll(selector)].map((path) => Number.parseFloat(path.getAttribute("stroke-dashoffset") ?? "0"));
+
+/** every drawn thread shape, which is what may ease — and so what a pan may not touch */
+const paths = (host: HTMLElement): (string | null)[] =>
+	[...host.querySelectorAll("[data-hand-thread]")].map((path) => path.getAttribute("d"));
 
 describe("the marks' own lives, which came from the capture", () => {
 	const CSS = readFileSync(join(import.meta.dirname, "..", "ui.css"), "utf8");

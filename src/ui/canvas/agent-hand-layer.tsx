@@ -63,9 +63,20 @@ const MARK_W = 3;
  */
 const TINT = "#17171A";
 
-/** how many points each half of the wall run is sampled at — fixed, so one path can
- * interpolate into the next: `d` animates in CSS only between paths of the same shape */
-const STEPS = 24;
+/**
+ * How many points each half of the wall run is sampled at.
+ *
+ * Fixed, and that is the constraint everything else here bends to: `d` interpolates in CSS
+ * only between paths built the same way, and the thread's length and tension both live
+ * inside `d`. A count that grew with the thread would make every posture change a jump.
+ *
+ * So the count is set by the density the curve needs at its worst rather than by the
+ * length. The wave is 46px whatever the thread is doing, and a sine needs roughly ten
+ * points per period before the polyline stops reading as a polygon — at 160 that holds out
+ * to a thread 1,280px tall, which is past any frame anybody is looking at the whole of.
+ * The canonical frame samples every 4px and this is 4px at a 640px half.
+ */
+const STEPS = 160;
 
 interface Wall {
 	/** the thread's line, outside the frame's own edge */
@@ -86,21 +97,28 @@ function wallOf(rect: { x: number; y: number; w: number; h: number }): Wall {
 }
 
 /**
- * One half of the wall run, sampled from the node outward.
+ * One half of the wall run, sampled from the node outward — **around the origin, never
+ * where it stands**.
  *
  * Two halves rather than one line, because that is what lets the thread wind off the node
  * and back onto it: each half grows from its own first point, and its own first point is
  * the node. A sine displaces it with a zero at the node itself, so the two halves meet as
  * one thread rather than as two lines that happen to touch.
+ *
+ * Shape only, and that is load-bearing. This path is the one thing here that eases between
+ * its own states, so anything inside it eases too — and where the frame *is* must never
+ * ease. Put the wall's coordinates in here and the thread swims after the camera for a
+ * fifth of a second on every pan. The group's own transform carries the place instead, and
+ * a transform is not in the transition.
  */
-function halfPath(length: number, amp: number, wall: Wall, dir: 1 | -1): string {
+function halfPath(length: number, amp: number, dir: 1 | -1): string {
 	const half = Math.max(0, length) / 2;
 	const points: string[] = [];
 	for (let step = 0; step <= STEPS; step += 1) {
 		const y = dir * ((half * step) / STEPS);
 		// away from the frame, since the wall is its left edge
-		const x = wall.line - amp * Math.sin((2 * Math.PI * y) / WAVE);
-		points.push(`${x.toFixed(2)} ${(wall.mid + y).toFixed(2)}`);
+		const x = -amp * Math.sin((2 * Math.PI * y) / WAVE);
+		points.push(`${x.toFixed(2)} ${y.toFixed(2)}`);
 	}
 	return `M ${points.join(" L ")}`;
 }
@@ -233,27 +251,32 @@ function Held({
 				fill="none"
 				aria-hidden="true"
 			>
-				{([1, -1] as const).map((dir) => {
-					const d = halfPath(length, amp, wall, dir);
-					return (
-						<path
-							key={dir}
-							className={going ? "" : "animate-hand-wind"}
-							data-hand-thread={dir}
-							d={d}
-							// `pathLength` normalizes the dash to the run, so one rule winds a
-							// full-height thread and a 76px one at the same pace
-							pathLength={1}
-							strokeDasharray={1}
-							strokeDashoffset={going ? 1 : undefined}
-							stroke="var(--color-text)"
-							strokeOpacity={INK}
-							strokeWidth={THREAD}
-							strokeLinecap="round"
-							style={{ d: `path("${d}")`, "--hand-pace": `${ms}ms` } as CSSProperties}
-						/>
-					);
-				})}
+				{/* the thread stands here and is shaped in its own coordinates: the place is a
+				    transform and moves with the camera on the frame it moves, and only the shape
+				    is inside the eased path */}
+				<g data-hand-wall={hand.frame} transform={`translate(${wall.line} ${wall.mid})`}>
+					{([1, -1] as const).map((dir) => {
+						const d = halfPath(length, amp, dir);
+						return (
+							<path
+								key={dir}
+								className="animate-hand-wind"
+								data-hand-thread={dir}
+								d={d}
+								// `pathLength` normalizes the dash to the run, so one rule winds a
+								// full-height thread and a 76px one at the same pace
+								pathLength={1}
+								strokeDasharray={1}
+								strokeDashoffset={going ? 1 : 0}
+								stroke="var(--color-text)"
+								strokeOpacity={INK}
+								strokeWidth={THREAD}
+								strokeLinecap="round"
+								style={{ d: `path("${d}")`, "--hand-pace": `${ms}ms` } as CSSProperties}
+							/>
+						);
+					})}
+				</g>
 				{/* the `shot` posture: four corners at their own stand-off, struck on from their
 				    arms and never closing */}
 				{corners.map((path) => (
@@ -293,24 +316,41 @@ function Held({
 /**
  * The hands on screen: the one that has hold, and the one still letting go.
  *
- * React would take a presence away the instant its frame stopped being the one, and a
- * mark that disappears has no more origin than one that fades in. So the hand that is
- * done stays for the length of the gesture with `going` set, which is the winding-on run
- * backwards — and there are two of them exactly while the agent is moving from one frame
- * to the next, which is what letting go there and taking hold here looks like.
+ * React would take a presence away the instant its frame stopped being the one, and a mark
+ * that disappears has no more origin than one that fades in. So the hand that is done
+ * stays for the length of the gesture with `going` set, which is the winding-on run
+ * backwards — and there are two of them exactly while the agent moves from one frame to
+ * the next, which is what letting go there and taking hold here looks like.
+ *
+ * **The leaving hand is decided during render and not in an effect**, which is the whole
+ * of why the gesture runs at all. An effect notices the change one commit late, and that
+ * one commit has nothing drawn in it: React takes the element out and puts a fresh one
+ * back, and a fresh thread mounts already wound off, so letting go is a disappearance.
+ * Adjusting state during render is React's own answer for a value derived from the last
+ * one, and here it keeps the element the transition is running on alive.
+ *
+ * `was` holds a whole hand rather than a name because a thread has to retract from the
+ * shape it had; it is compared by frame, so a posture changing ten times a second moves
+ * nothing here.
  */
 function useWindOff(hand: Hand | null): { hand: Hand; going: boolean }[] {
+	const at = hand?.frame ?? null;
+	const [was, setWas] = useState<Hand | null>(hand);
 	const [going, setGoing] = useState<Hand | null>(null);
-	const last = useRef<Hand | null>(null);
+
+	if ((was?.frame ?? null) !== at) {
+		if (was !== null) setGoing(was);
+		setWas(hand);
+	}
+
 	useEffect(() => {
-		const before = last.current;
-		last.current = hand;
-		if (before === null || before.frame === hand?.frame) return;
-		setGoing(before);
-		const timer = setTimeout(() => setGoing((now) => (now === before ? null : now)), WIND_MS);
+		if (going === null) return;
+		const timer = setTimeout(() => setGoing((now) => (now === going ? null : now)), WIND_MS);
 		return () => clearTimeout(timer);
-	}, [hand]);
-	const letting = going !== null && going.frame !== hand?.frame ? [{ hand: going, going: true }] : [];
+	}, [going]);
+
+	// a hand that came back to the frame it was leaving is not leaving it
+	const letting = going !== null && going.frame !== at ? [{ hand: going, going: true }] : [];
 	return hand === null ? letting : [...letting, { hand, going: false }];
 }
 
