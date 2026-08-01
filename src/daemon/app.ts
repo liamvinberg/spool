@@ -51,6 +51,7 @@ import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChr
 import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
 import {
+	FRAME_BIRTH,
 	type FrameKind,
 	frameGeometry,
 	listProjectFrames,
@@ -334,11 +335,11 @@ export function createDaemonApp({
 		const first = names[0];
 		if (first === undefined) {
 			return {
-				message: `nothing to play in "${projectName}" — a frame is born by writing design/frames/<name>/frame.tsx`,
+				message: `nothing to play in "${projectName}" — ${FRAME_BIRTH}`,
 			};
 		}
 		if (frame !== undefined && !names.includes(frame)) {
-			return { message: `no frame "${frame}" to play — expected design/frames/${frame}/frame.tsx` };
+			return { message: `no frame "${frame}" to play — ${FRAME_BIRTH}` };
 		}
 		const selected = selections.get(root).find((entry) => names.includes(entry.frame))?.frame;
 		return { start: frame ?? selected ?? first, projection };

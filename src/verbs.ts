@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { renderOrigin } from "./daemon/lifecycle";
-import { lookupFrame } from "./daemon/projection";
+import { describeMissingFrame, lookupFrame } from "./daemon/projection";
 import type { SelectionEntry } from "./daemon/selection";
 import { selectionBlock } from "./daemon/selection-block";
 import { SpoolError } from "./errors";
@@ -68,7 +68,7 @@ export async function mintPlayerUrl(
 /** A direct frame document, for browser automation without player chrome. */
 export async function mintRawUrl(daemonUrl: string, name: string, frame: string, root: string): Promise<string> {
 	if (lookupFrame(root, frame).kind !== "found") {
-		throw new SpoolError(`no frame "${frame}" — a frame is born by writing design/frames/${frame}/frame.tsx`);
+		throw new SpoolError(describeMissingFrame(frame));
 	}
 	return `${renderOrigin(daemonUrl)}/p/${encodeURIComponent(name)}/frames/${encodeURIComponent(frame)}`;
 }
@@ -78,7 +78,7 @@ async function assertFrameExists(daemonUrl: string, name: string, frame: string,
 		frames: { name: string }[];
 	};
 	if (!projection.frames.some((entry) => entry.name === frame)) {
-		throw new SpoolError(`no frame "${frame}" — a frame is born by writing design/frames/${frame}/frame.tsx`);
+		throw new SpoolError(describeMissingFrame(frame));
 	}
 }
 

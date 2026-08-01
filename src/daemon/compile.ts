@@ -12,7 +12,7 @@ import {
 } from "./design-path";
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
 import { isSafeName, readIfExists } from "./project-files";
-import { describeCollision, frameKind, lookupFrame } from "./projection";
+import { describeCollision, describeMissingFrame, frameFolder, frameKind, lookupFrame } from "./projection";
 import { buildFrameCss } from "./tailwind";
 import { assembleTermDocument, termDocumentEtag } from "./term-document";
 import { importMapPins } from "./vendor";
@@ -59,10 +59,7 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 			return { kind: "error", document: errorDocument(frame, message), message };
 		}
 		if (lookup.kind === "missing") {
-			return {
-				kind: "missing",
-				message: `no frame "${frame}" — expected design/frames/${frame}/frame.tsx`,
-			};
+			return { kind: "missing", message: describeMissingFrame(frame) };
 		}
 		const frameDir = lookup.dir;
 		const designDir = realDesignDir(root);
@@ -70,9 +67,11 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 		// folder must serve its error, not compile as html (#42)
 		const kind = frameKind(frameDir, designDir);
 		if (kind === undefined) {
+			// discovery saw an entry here and the raw read no longer does: the folder
+			// is known, so name it exactly, page segment and all
 			return {
 				kind: "missing",
-				message: `no frame "${frame}" — expected design/frames/${frame}/frame.tsx`,
+				message: `no frame "${frame}" — expected design/${frameFolder(frame, lookup.page)}/frame.tsx`,
 			};
 		}
 		if (kind === "conflict") {

@@ -56,13 +56,25 @@ describe("shot and logs, compile paths", () => {
 		expect((shot as { message: string }).message).toContain("Unexpected end of file");
 	});
 
-	it("refuses a frame that does not exist", async () => {
-		const { deps } = await serveVerifyProject();
+	it("refuses a frame that does not exist without inventing where it would live", async () => {
+		const { root, deps } = await serveVerifyProject();
+		// every frame here lives on a page, so the flat folder the hint used to name
+		// was never a location this project reads (#156)
+		writeDesignFile(
+			root,
+			join("frames", "site", "site-local--plate", "frame.tsx"),
+			"export default function Plate() { return <main>plate</main>; }\n",
+		);
 
-		const shot = await shotFrame(deps("ghost"));
+		const shot = await shotFrame(deps("site-local--thread"));
+		const logs = await logsFrame(deps("site-local--thread"));
 
 		expect(shot.kind).toBe("missing");
-		expect((shot as { message: string }).message).toContain("ghost");
+		expect(logs.kind).toBe("missing");
+		expect((shot as { message: string }).message).toBe(
+			'no frame "site-local--thread" on the canvas — a frame is born by writing frame.tsx in its own folder under design/frames/, flat or inside a page folder',
+		);
+		expect((logs as { message: string }).message).not.toContain("frames/site-local--thread");
 	});
 
 	it("does not write a terminal shot through an escaped verify directory", async () => {

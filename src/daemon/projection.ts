@@ -337,6 +337,20 @@ export function lookupFrame(root: string, frame: string): FrameLookup {
 	};
 }
 
+/**
+ * Where a frame comes from, for every refusal that has no folder to name (#156).
+ * A name nothing claims could have lived on any page, so `frames/<name>/frame.tsx`
+ * names the one location a paged project never uses: say where frames come from
+ * rather than invent where this one would have been.
+ */
+export const FRAME_BIRTH =
+	"a frame is born by writing frame.tsx in its own folder under design/frames/, flat or inside a page folder";
+
+/** The miss told straight: the canvas holds no such frame, anywhere. */
+export function describeMissingFrame(name: string): string {
+	return `no frame "${name}" on the canvas — ${FRAME_BIRTH}`;
+}
+
 /** The collision told straight: both locations named, the law restated. */
 export function describeCollision(name: string, paths: string[]): string {
 	return `two frames named "${name}" — ${paths.join(" and ")} — frame names are identity and must be unique across the project`;
