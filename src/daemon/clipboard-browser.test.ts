@@ -381,6 +381,11 @@ it("can copy after the canvas ignores an automatic walk from the same held frame
 	const project = await serveProject({ uiDir });
 	writeFrame(project.root, "warm", warmNavigationClipboardFrame);
 	writeFrame(project.root, "other", "export default function Other() { return <main>other</main> }");
+	// Under the readable threshold on purpose. This test is about a frame that
+	// has no document until something asks for one, and a default phone-shaped
+	// frame fit on the canvas is now drawn big enough to run on its own (#223).
+	writeDesignFile(project.root, "frames/warm/frame.json", '{ "x": 0, "y": 0, "w": 360, "h": 360 }\n');
+	writeDesignFile(project.root, "frames/other/frame.json", '{ "x": 440, "y": 0, "w": 360, "h": 360 }\n');
 	await buildUi({
 		configFile: join(process.cwd(), "vite.config.ts"),
 		logLevel: "silent",
@@ -505,6 +510,9 @@ it("replaces a self-walked document before it can walk or copy again", { timeout
 	const uiDir = join(makeTempDir(), "ui");
 	const project = await serveProject({ uiDir });
 	writeFrame(project.root, "self", selfWalkClipboardFrame);
+	// as above: the frame has to be a picture until it is entered, and a frame
+	// fit on the canvas is live at its longer edge now (#223)
+	writeDesignFile(project.root, "frames/self/frame.json", '{ "x": 0, "y": 0, "w": 360, "h": 360 }\n');
 	await buildUi({
 		configFile: join(process.cwd(), "vite.config.ts"),
 		logLevel: "silent",

@@ -262,12 +262,18 @@ export interface SweepInput {
 
 /**
  * Whether a readable frame gets a document:
- * drawn wide enough to read, and inside the viewport's own ring.
+ * drawn big enough to read, and inside the viewport's own ring.
  *
  * Both conditions are load-bearing and neither is sufficient. Size alone would
  * mount a whole zoomed-in page including the part of it a mile off screen; the
  * ring alone would mount fifty frames at overview zoom, which `bench/canvas.ts`
  * prices at the first dropped frame.
+ *
+ * Size is the frame's larger drawn edge, not its width (#223). Width is what a
+ * capture is scaled by, because a still is read across; how much of a frame is
+ * on screen is how much of it there is, and a phone is 390 across and 844 down.
+ * Keying on width alone left every portrait frame a photograph until 103% zoom,
+ * where the same area of landscape frame had been live for a while.
  */
 function isFrameLive(
 	frame: ProjectedFrame,
@@ -275,7 +281,7 @@ function isFrameLive(
 	viewport: { width: number; height: number } | null,
 ): boolean {
 	if (camera == null || viewport == null) return false;
-	if (frame.w * camera.k < LIVE_MIN_CSS_PX) return false;
+	if (Math.max(frame.w, frame.h) * camera.k < LIVE_MIN_CSS_PX) return false;
 	const w = viewport.width / camera.k;
 	const h = viewport.height / camera.k;
 	return intersects(frame, {
