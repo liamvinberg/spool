@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DaemonStatus } from "./daemon/lifecycle";
+import { SpoolError } from "./errors";
 import { makeTempDir } from "./test-helpers";
 import { planUpgrade, requestUpgrade, runUpgrade, type UpgradeIo } from "./upgrade";
 
@@ -318,6 +319,23 @@ describe("runUpgrade", () => {
 			to: "0.2.0",
 			daemon: { running: true, url: "http://y", restarted: true },
 		});
+	});
+
+	it("with autostart on: reports what the plist install said, not just a missing daemon", async () => {
+		// the put-back happens inside installAutostart; the upgrade's job is to say
+		// what it said instead of blaming the daemon that never came up
+		const said = "launchctl bootstrap failed: 5: I/O error — the previous launch agent was put back";
+		const { io } = fakeIo({
+			statuses: [{ running: true, url: "http://x", pid: 1, version: "0.1.0" }],
+			plistExists: () => true,
+			reinstallAutostart: () => {
+				throw new SpoolError(said);
+			},
+		});
+
+		const outcome = await runUpgrade(makeTempDir(), "0.1.0", io);
+
+		expect(outcome).toEqual({ kind: "failed", message: said });
 	});
 
 	it("with autostart on: fails loud when no new-version daemon comes up", async () => {

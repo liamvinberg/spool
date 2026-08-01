@@ -13,12 +13,19 @@ const spec = {
 	logFile: "/home/liam/.spool/daemon.log",
 };
 
-/** A launchctl stand-in that records calls and answers success. */
-function fakeLaunchctl(failOn?: string) {
+/**
+ * A launchctl stand-in that records calls and answers success. `failTimes`
+ * fails only the first n matching calls, so a retry can succeed.
+ */
+function fakeLaunchctl(failOn?: string, failTimes = Number.POSITIVE_INFINITY) {
 	const calls: string[][] = [];
+	let failed = 0;
 	const run = (args: string[]) => {
 		calls.push(args);
-		if (failOn !== undefined && args[0] === failOn) return { status: 5, stderr: "Bootstrap failed: 5: I/O error" };
+		if (failOn !== undefined && args[0] === failOn && failed < failTimes) {
+			failed++;
+			return { status: 5, stderr: "Bootstrap failed: 5: I/O error" };
+		}
 		return { status: 0, stderr: "" };
 	};
 	return { calls, run };
@@ -90,6 +97,50 @@ describe("installAutostart", () => {
 		const { run } = fakeLaunchctl("bootout");
 
 		expect(() => installAutostart({ home, uid: 501, spec, spoolDir: join(home, ".spool"), run })).not.toThrow();
+	});
+
+	it("puts the previous agent back and bootstraps it when bootstrap fails", () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const target = `gui/501/${AUTOSTART_LABEL}`;
+		const plist = launchAgentPath(home);
+		installAutostart({
+			home,
+			uid: 501,
+			spec: { ...spec, cliPath: "/opt/old/dist/cli.js" },
+			spoolDir,
+			run: fakeLaunchctl().run,
+		});
+		const { calls, run } = fakeLaunchctl("bootstrap", 1); // only the new agent's bootstrap fails
+
+		expect(() => installAutostart({ home, uid: 501, spec, spoolDir, run })).toThrow(
+			/Bootstrap failed: 5.*previous launch agent was put back/,
+		);
+		expect(readFileSync(plist, "utf8")).toContain("<string>/opt/old/dist/cli.js</string>");
+		expect(calls).toEqual([
+			["bootout", target],
+			["enable", target],
+			["bootstrap", "gui/501", plist],
+			["bootout", target],
+			["bootstrap", "gui/501", plist],
+		]);
+	});
+
+	it("says autostart is off and names the command that restores it when the put-back fails too", () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		installAutostart({
+			home,
+			uid: 501,
+			spec: { ...spec, cliPath: "/opt/old/dist/cli.js" },
+			spoolDir,
+			run: fakeLaunchctl().run,
+		});
+		const { run } = fakeLaunchctl("bootstrap"); // every bootstrap fails, the restore included
+
+		expect(() => installAutostart({ home, uid: 501, spec, spoolDir, run })).toThrow(
+			/autostart is off until you run: spool autostart/,
+		);
 	});
 
 	it("fails loud when bootstrap fails, with launchctl's own words", () => {
