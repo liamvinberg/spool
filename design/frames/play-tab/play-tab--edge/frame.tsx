@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "../../../shared/lib/utils";
 import { PlayedTab } from "../../../shared/ui/browser-tab";
 import { TidemarkLanding } from "../../../shared/ui/tidemark-landing";
@@ -13,11 +13,14 @@ import { TidemarkLanding } from "../../../shared/ui/tidemark-landing";
  * pill cannot hold — back to the canvas, and a switcher that walks to another
  * frame without a round trip through the canvas tab.
  *
- * Drawn in its revealed state, which is also its honest state: the top edge is
- * where a marketing page puts its own nav, so the bar is always covering
- * something. Translucent so what it covers stays legible, and a 40px wide nub
- * stays at the edge while it is away, because a control with no resting trace is
- * a control most people never find.
+ * The reveal is a dwell, the way a hidden macOS menu bar works: the cursor has
+ * to rest against the page's top edge for 300ms before the bar comes down.
+ * Passing through on the way to the browser chrome never triggers it, and the
+ * page's own nav sits below the strip, so using it never does either. Here the
+ * page's top edge is the line under the mocked url bar; in the real thing it is
+ * the literal top of the viewport. A 40px wide nub stays at the edge while the
+ * bar is away, because a control with no resting trace is a control most people
+ * never find.
  *
  * The frame switcher is the reason this shape earns its cost. Closed by default,
  * because that is how it will be seen nine times in ten.
@@ -26,13 +29,16 @@ import { TidemarkLanding } from "../../../shared/ui/tidemark-landing";
 const FRAMES = ["home", "landing", "pricing", "docs", "changelog", "sign-up"];
 
 export default function PlayTabEdgeFrame() {
-	const [revealed, setRevealed] = useState(true);
+	const [revealed, setRevealed] = useState(false);
 	const [picking, setPicking] = useState(false);
+	const stripRef = useRef<HTMLDivElement>(null);
+	const dwell = useRef<number>(undefined);
 
+	// hiding is still instant — only the reveal earns a dwell
 	useEffect(() => {
 		const onMove = (event: PointerEvent) => {
-			if (event.clientY <= 12) setRevealed(true);
-			else if (event.clientY > 140 && !picking) setRevealed(false);
+			const top = stripRef.current?.getBoundingClientRect().top ?? 0;
+			if (event.clientY - top > 140 && !picking) setRevealed(false);
 		};
 		window.addEventListener("pointermove", onMove);
 		return () => window.removeEventListener("pointermove", onMove);
@@ -41,6 +47,15 @@ export default function PlayTabEdgeFrame() {
 	return (
 		<PlayedTab title="landing · tidemark" url="127.0.0.1:7766/play/tidemark?frame=landing">
 			<TidemarkLanding />
+
+			<div
+				ref={stripRef}
+				className="absolute inset-x-0 top-0 z-20 h-2"
+				onPointerEnter={() => {
+					dwell.current = window.setTimeout(() => setRevealed(true), 300);
+				}}
+				onPointerLeave={() => window.clearTimeout(dwell.current)}
+			/>
 
 			<span
 				className={cn(
@@ -73,7 +88,6 @@ export default function PlayTabEdgeFrame() {
 						onClick={() => setPicking((p) => !p)}
 						className="-mx-1.5 flex cursor-pointer items-center gap-2 rounded-xs px-1.5 py-1 font-mono text-sm text-text leading-none transition-colors hover:bg-surface"
 					>
-						<span className="h-[2px] w-2 bg-thread" />
 						<span className="text-muted">tidemark /</span>
 						landing
 						<svg viewBox="0 0 10 10" className={cn("h-2.5 w-2.5 text-muted transition-transform", picking && "rotate-180")} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
