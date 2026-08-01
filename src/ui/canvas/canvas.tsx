@@ -1891,6 +1891,20 @@ export function ProjectCanvas({
 		return () => clearTimeout(settle);
 	}, [camera, sweepLifecycle, noteCameraMoving]);
 
+	/**
+	 * The canvas is open: it has somewhere to look from and something to look at.
+	 * The camera it opens on is not a gesture — it is where the canvas already
+	 * is — and the frames it opens on were not there yet when it landed. Left to
+	 * the settle and the sweep, the first documents wait out a window nobody
+	 * moved anything in, and then up to a sweep on top of it. This is the
+	 * opening: the rest is what it rests at, and the mounting starts now.
+	 */
+	useEffect(() => {
+		if (camera === null || !loaded || settledCameraRef.current !== null) return;
+		settledCameraRef.current = camera;
+		sweepLifecycle();
+	}, [camera, loaded, sweepLifecycle]);
+
 	// persist arrows + the page bookkeeping on settle: last-settle wins
 	// the stored slot (#12); each page keeps its own camera, and the active
 	// page rides along so reopening resumes it (#39)
