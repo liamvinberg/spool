@@ -214,9 +214,14 @@ program
 		if (outcome.replayed) narrate("replaying cached logs — cache matches current compiled source");
 		if (outcome.entries.length === 0) {
 			narrate("the boot logged nothing");
-			return;
+		} else {
+			process.stdout.write(`${outcome.entries.map((entry) => `[${entry.type}] ${entry.text}`).join("\n")}\n`);
 		}
-		process.stdout.write(`${outcome.entries.map((entry) => `[${entry.type}] ${entry.text}`).join("\n")}\n`);
+		// The frame's last self-capture failure (#173), if one is on record — a
+		// dark placeholder is otherwise silent about why it never got a picture.
+		if (outcome.captureError !== undefined) {
+			process.stdout.write(`cover capture failed: ${outcome.captureError.error} (${outcome.captureError.at})\n`);
+		}
 	});
 
 program

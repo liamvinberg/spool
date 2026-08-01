@@ -4,6 +4,7 @@ import { chromium } from "playwright-core";
 import { describe, expect, it } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
 import { terminalSourceVersion } from "./daemon/term-source";
+import { writeCaptureError } from "./daemon/thumbs";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
 import { type BootDeps, logsFrame, shotFrame } from "./verify";
 
@@ -38,7 +39,7 @@ async function serveVerifyProject() {
 		narrate: () => {},
 		...overrides,
 	});
-	return { root, deps };
+	return { root, name, url, controlToken, deps };
 }
 
 describe("shot and logs, compile paths", () => {
@@ -98,6 +99,42 @@ describe("shot and logs, compile paths", () => {
 			'design boundary: ".spool/verify/quiet.logs.json" resolves outside design/',
 		);
 		expect(readdirSync(outside)).toEqual([]);
+	});
+
+	it("surfaces a recorded self-capture failure alongside replayed logs (#173)", async () => {
+		const { root, name, url, controlToken, deps } = await serveVerifyProject();
+		writeFrame(root, "quiet", "export default function Quiet() { return <main>quiet</main> }\n");
+		const verify = await fetch(`${url}/api/p/${name}/verify/quiet`, {
+			headers: { "X-Spool-Control": controlToken },
+		});
+		const { etag } = (await verify.json()) as { etag: string };
+		writeDesignFile(
+			root,
+			".spool/verify/quiet.logs.json",
+			`${JSON.stringify({ etag, scenario: "default", entries: [] })}\n`,
+		);
+		writeCaptureError(root, "quiet", "capture canvases too large");
+
+		const logs = await logsFrame(deps("quiet"));
+
+		expect(logs).toMatchObject({ kind: "logs", replayed: true });
+		expect((logs as { captureError?: { error: string; at: string } }).captureError).toMatchObject({
+			error: "capture canvases too large",
+		});
+
+		// a frame with nothing recorded carries no captureError at all
+		writeFrame(root, "clean", "export default function Clean() { return <main>clean</main> }\n");
+		const cleanVerify = await fetch(`${url}/api/p/${name}/verify/clean`, {
+			headers: { "X-Spool-Control": controlToken },
+		});
+		const { etag: cleanEtag } = (await cleanVerify.json()) as { etag: string };
+		writeDesignFile(
+			root,
+			".spool/verify/clean.logs.json",
+			`${JSON.stringify({ etag: cleanEtag, scenario: "default", entries: [] })}\n`,
+		);
+		const cleanLogs = await logsFrame(deps("clean"));
+		expect((cleanLogs as { captureError?: unknown }).captureError).toBeUndefined();
 	});
 
 	it("does not reclassify a terminal when its persisted-screen read escapes design", async () => {

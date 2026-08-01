@@ -97,6 +97,33 @@ describe("trusted UI API client", () => {
 		expect((fetchMock.mock.calls[1]?.[1] as RequestInit | undefined)?.keepalive).toBe(true);
 	});
 
+	it("posts a self-capture's failure reason, fired and forgotten", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const { postCaptureFailure } = await loadApi();
+
+		postCaptureFailure("demo project", "home/card", "capture canvases too large");
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+		const call = fetchMock.mock.calls[0] ?? [];
+		expect(new URL(String(call[0]), window.location.href).pathname).toBe(
+			"/api/p/demo%20project/thumbs/home%2Fcard/error",
+		);
+		const init = call[1] as RequestInit | undefined;
+		expect(init?.method).toBe("POST");
+		expect(headersOf(call).get("x-spool-control")).toBe("control-test-token");
+		expect(JSON.parse(String(init?.body))).toEqual({ error: "capture canvases too large" });
+	});
+
+	it("swallows a failed capture-failure post: nothing on screen is waiting on it", async () => {
+		const fetchMock = vi.fn().mockRejectedValue(new Error("offline"));
+		vi.stubGlobal("fetch", fetchMock);
+		const { postCaptureFailure } = await loadApi();
+
+		expect(() => postCaptureFailure("demo", "home", "capture reply timed out")).not.toThrow();
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+	});
+
 	it("reads project events through an authenticated fetch stream", async () => {
 		const body = new ReadableStream<Uint8Array>({
 			start(controller) {

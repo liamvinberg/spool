@@ -46,7 +46,11 @@ function source(id: string, targetWidth: number): CaptureSourceMessage {
 	};
 }
 
-async function mountLifecycle(onShot: (frame: string, image: CoverRaster) => void, frames: ProjectedFrame[] = []) {
+async function mountLifecycle(
+	onShot: (frame: string, image: CoverRaster) => void,
+	frames: ProjectedFrame[] = [],
+	onCaptureFailure: (frame: string, reason: string) => void = vi.fn(),
+) {
 	const framesRef = { current: frames } as unknown as RefObject<ProjectedFrame[]>;
 	let lifecycle: Lifecycle | undefined;
 	function Harness() {
@@ -60,6 +64,7 @@ async function mountLifecycle(onShot: (frame: string, image: CoverRaster) => voi
 			hovered: null,
 			hasCover: (frame) => frames.some((candidate) => candidate.name === frame && candidate.cover !== undefined),
 			onShot,
+			onCaptureFailure,
 			cameraRef: { current: null },
 			viewportRef: { current: null },
 			pictured: false,
@@ -220,5 +225,52 @@ describe("capture request lifecycle", () => {
 		await expect(capture).resolves.toBeUndefined();
 		expect(signal?.aborted).toBe(true);
 		expect(onShot).not.toHaveBeenCalled();
+	});
+});
+
+describe("capture-failure reasons (#173)", () => {
+	it("reports the shim's own error reply", async () => {
+		const id = "77777777777777777777777777777777";
+		broker.id.mockReturnValue(id);
+		const onCaptureFailure = vi.fn();
+		const { lifecycle, sourceWindow } = await mountLifecycle(vi.fn(), [], onCaptureFailure);
+
+		const capture = lifecycle.capture("landing");
+		lifecycle.noteCaptureSource(
+			{ spool: "capture-source", frame: "landing", id, error: "capture canvases too large" },
+			sourceWindow,
+		);
+
+		await expect(capture).resolves.toBeUndefined();
+		expect(broker.raster).not.toHaveBeenCalled();
+		expect(onCaptureFailure).toHaveBeenCalledOnce();
+		expect(onCaptureFailure).toHaveBeenCalledWith("landing", "capture canvases too large");
+	});
+
+	it("reports a reply that never came, but not a document swap that merely retires the wait", async () => {
+		vi.useFakeTimers();
+		const firstId = "88888888888888888888888888888888";
+		const secondId = "99999999999999999999999999999999";
+		broker.id.mockReturnValueOnce(firstId).mockReturnValueOnce(secondId);
+		broker.raster.mockImplementation(() => new Promise<CoverRaster>(() => {}));
+		const onCaptureFailure = vi.fn();
+		const { iframe, lifecycle } = await mountLifecycle(vi.fn(), [], onCaptureFailure);
+
+		const timedOut = lifecycle.capture("landing");
+		await act(() => vi.advanceTimersByTimeAsync(CAPTURE_REPLY_TIMEOUT_MS + CAPTURE_SETTLE_BUDGET_MS));
+		await expect(timedOut).resolves.toBeUndefined();
+		expect(onCaptureFailure).toHaveBeenCalledOnce();
+		expect(onCaptureFailure).toHaveBeenCalledWith("landing", "capture reply timed out");
+
+		// a fresh request, then the document underneath it is swapped mid-flight —
+		// ordinary under an edit stream, and never a reason to record
+		onCaptureFailure.mockClear();
+		lifecycle.capture("landing");
+		const replacement = document.createElement("iframe");
+		host?.append(replacement);
+		await act(() => lifecycle.onIframe("landing", replacement));
+
+		expect(onCaptureFailure).not.toHaveBeenCalled();
+		iframe.remove();
 	});
 });

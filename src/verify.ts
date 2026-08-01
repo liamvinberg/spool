@@ -4,7 +4,7 @@ import { writeAtomic } from "./atomic-write";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./daemon/design-path";
 import { renderOrigin } from "./daemon/lifecycle";
 import { projectedKind, readFrameGeometry } from "./daemon/projection";
-import { termScreenFile } from "./daemon/thumbs";
+import { type CaptureError, readCaptureError, termScreenFile } from "./daemon/thumbs";
 import { SpoolError } from "./errors";
 import { launchHeadlessShell } from "./headless-shell";
 
@@ -51,7 +51,7 @@ export type ShotOutcome =
 export type LogsOutcome =
 	| { kind: "broken"; message: string }
 	| { kind: "missing"; message: string }
-	| { kind: "logs"; entries: LogEntry[]; replayed: boolean };
+	| { kind: "logs"; entries: LogEntry[]; replayed: boolean; captureError?: CaptureError };
 
 export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 	if (await isTermFrame(deps)) return termShot(deps);
@@ -74,12 +74,27 @@ export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
 	if (probe.kind === "error") return { kind: "broken", message: probe.message };
 	if (probe.kind === "missing") return probe;
 	const cached = readLogsCache(deps.root, deps.frame);
+	// The frame's last self-capture failure (#173), read alongside its logs
+	// rather than folded into either cache: a boot can replay while a capture
+	// keeps failing, and the reason belongs on every answer this returns, not
+	// only a fresh boot's.
+	const captureError = readCaptureError(deps.root, deps.frame);
 	if (cached !== undefined && cached.etag === probe.etag && cached.scenario === scenarioName(deps)) {
-		return { kind: "logs", entries: cached.entries, replayed: true };
+		return {
+			kind: "logs",
+			entries: cached.entries,
+			replayed: true,
+			...(captureError === undefined ? {} : { captureError }),
+		};
 	}
 	const boot = await bootFrame(deps, probe.etag);
 	if (boot.kind === "broken") return boot;
-	return { kind: "logs", entries: boot.entries, replayed: false };
+	return {
+		kind: "logs",
+		entries: boot.entries,
+		replayed: false,
+		...(captureError === undefined ? {} : { captureError }),
+	};
 }
 
 /**

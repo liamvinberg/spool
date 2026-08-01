@@ -14,6 +14,7 @@ import { createDaemonApp } from "./app";
 import { writeSession } from "./session";
 import { createMachineStateWatchHarness } from "./session-test-harness";
 import { terminalSourceVersion } from "./term-source";
+import { readCaptureError } from "./thumbs";
 
 /** Smallest real PNG: 1×1 transparent pixel. */
 const PNG_BYTES = Buffer.from(
@@ -41,6 +42,13 @@ function coverBody(bytes: Buffer): FormData {
 
 const putCover = (app: ReturnType<typeof makeApp>, name: string, frame: string, body: FormData) =>
 	app.request(`/api/p/${name}/thumbs/${frame}`, { method: "PUT", body });
+
+const postCaptureError = (app: ReturnType<typeof makeApp>, name: string, frame: string, error: unknown) =>
+	app.request(`/api/p/${name}/thumbs/${frame}/error`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ error }),
+	});
 
 interface Cover {
 	hash: string;
@@ -1076,6 +1084,76 @@ describe("thumbnails", () => {
 		expect(await events.next()).toEqual({
 			event: "change",
 			data: { kind: "thumb", frame: "checkout", cover: await put.json() },
+		});
+	});
+
+	describe("recording a capture failure (#173)", () => {
+		it("stores the reason beside the frame's cover", async () => {
+			const spoolDir = join(makeTempDir(), ".spool");
+			const { root, name } = makeProject(spoolDir);
+			writeFrame(root, "checkout", frameTsx("checkout"));
+			const app = makeApp(spoolDir);
+
+			const post = await postCaptureError(app, name, "checkout", "capture canvases too large");
+
+			expect(post.status).toBe(204);
+			expect(readCaptureError(root, "checkout")).toMatchObject({ error: "capture canvases too large" });
+		});
+
+		it("requires the same control token and origin policy as the cover PUT", async () => {
+			const spoolDir = join(makeTempDir(), ".spool");
+			const { root, name } = makeProject(spoolDir);
+			writeFrame(root, "checkout", frameTsx("checkout"));
+			const app = makeApp(spoolDir);
+
+			const bare = await app.fetch(`/api/p/${name}/thumbs/checkout/error`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ error: "capture reply timed out" }),
+			});
+			expect(bare.status).toBe(401);
+		});
+
+		it("rejects a non-string or empty reason", async () => {
+			const spoolDir = join(makeTempDir(), ".spool");
+			const { root, name } = makeProject(spoolDir);
+			writeFrame(root, "checkout", frameTsx("checkout"));
+			const app = makeApp(spoolDir);
+
+			expect((await postCaptureError(app, name, "checkout", "")).status).toBe(400);
+			expect((await postCaptureError(app, name, "checkout", 1)).status).toBe(400);
+			expect(
+				(
+					await app.request(`/api/p/${name}/thumbs/checkout/error`, {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({}),
+					})
+				).status,
+			).toBe(400);
+		});
+
+		it("rejects a frame that does not exist or is a terminal", async () => {
+			const spoolDir = join(makeTempDir(), ".spool");
+			const { root, name } = makeProject(spoolDir);
+			writeDesignFile(root, "frames/dash/term.tsx", "// inert terminal\n");
+			const app = makeApp(spoolDir);
+
+			expect((await postCaptureError(app, name, "ghost", "capture reply timed out")).status).toBe(404);
+			expect((await postCaptureError(app, name, "dash", "capture reply timed out")).status).toBe(400);
+		});
+
+		it("clears once a landed cover retires every other file in the frame's cover dir", async () => {
+			const spoolDir = join(makeTempDir(), ".spool");
+			const { root, name } = makeProject(spoolDir);
+			writeFrame(root, "checkout", frameTsx("checkout"));
+			const app = makeApp(spoolDir);
+			await postCaptureError(app, name, "checkout", "capture reply timed out");
+			expect(readCaptureError(root, "checkout")).toBeDefined();
+
+			await putCover(app, name, "checkout", coverBody(JPEG_BYTES));
+
+			expect(readCaptureError(root, "checkout")).toBeUndefined();
 		});
 	});
 });
