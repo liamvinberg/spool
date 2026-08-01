@@ -31,6 +31,7 @@ Every frame lives on a page; the root page stays empty on purpose.
 | `site` | spool.page ([#31](https://github.com/liamvinberg/spool/issues/31)), unbuilt. The hub and its four sections. |
 | `directing` | The directing toolset ([#56](https://github.com/liamvinberg/spool/issues/56), [#65](https://github.com/liamvinberg/spool/issues/65)), unbuilt. `directing--annotate` is the canonical frame the spec is written against. |
 | `play-inline` | Whether play should zoom into the frame rather than open `/play/...` in a new tab. Three transition characters over one mock canvas, built to be felt rather than argued; nothing decided. Each frame is self-contained. |
+| `play-tab` | The other branch of the same question: play opens a real browser tab, and the frame gets the viewport. Four chrome models over one identical page, from no spool pixel at all to an edge bar that peels in. The page is `shared/ui/tidemark-landing.tsx` so the only variable is the chrome; nothing decided. |
 
 `app` is the baseline. Every frame on it must match the code in `src/ui/` and `src/runtime/`; when a design ships, the frame here becomes what shipped, and reading the implementation before trusting a frame is how it stays honest. A new prototype starts by copying the frame it changes, not from nothing — so the thing being proposed is legible as a diff against what exists.
 
