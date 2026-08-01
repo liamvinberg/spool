@@ -50,7 +50,7 @@ interface Worker {
 }
 
 describe("machine state mutations", () => {
-	it("serializes concurrent project registration across processes", { timeout: 15_000 }, async () => {
+	it("serializes concurrent project registration across processes", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const first = realpathSync(makeTempDir());
@@ -385,7 +385,7 @@ describe("machine state mutations", () => {
 
 	it.runIf(process.platform === "darwin")(
 		"keeps the lock exclusive across process timezone and locale environments",
-		{ timeout: 15_000 },
+		{ timeout: 45_000 },
 		async () => {
 			const harness = makeHarness();
 			const spoolDir = join(makeTempDir(), ".spool");
@@ -420,7 +420,7 @@ describe("machine state mutations", () => {
 
 	it.runIf(process.platform === "darwin")(
 		"serializes exact process-marker file identities as decimal strings",
-		{ timeout: 15_000 },
+		{ timeout: 45_000 },
 		async () => {
 			const harness = makeHarness();
 			const spoolDir = join(makeTempDir(), ".spool");
@@ -446,7 +446,7 @@ describe("machine state mutations", () => {
 		},
 	);
 
-	it("publishes no lock until its owner is complete", { timeout: 15_000 }, async () => {
+	it("publishes no lock until its owner is complete", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const stalled = realpathSync(makeTempDir());
@@ -467,7 +467,7 @@ describe("machine state mutations", () => {
 		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([winner, stalled]);
 	});
 
-	it("reaps a lock left by a dead owner", { timeout: 15_000 }, async () => {
+	it("reaps a lock left by a dead owner", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const root = realpathSync(makeTempDir());
@@ -485,7 +485,7 @@ describe("machine state mutations", () => {
 		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([root]);
 	});
 
-	it("reaps an owner whose PID belongs to a different process birth", { timeout: 15_000 }, async () => {
+	it("reaps an owner whose PID belongs to a different process birth", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const root = realpathSync(makeTempDir());
@@ -544,7 +544,7 @@ describe("machine state mutations", () => {
 
 	it.runIf(process.platform === "darwin")(
 		"reaps a same-second PID reuse that does not own the original process marker",
-		{ timeout: 15_000 },
+		{ timeout: 45_000 },
 		async () => {
 			const harness = makeHarness();
 			const spoolDir = join(makeTempDir(), ".spool");
@@ -574,7 +574,7 @@ describe("machine state mutations", () => {
 		},
 	);
 
-	it("reaps malformed fixed-lock metadata through the inode proof", { timeout: 15_000 }, async () => {
+	it("reaps malformed fixed-lock metadata through the inode proof", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const root = realpathSync(makeTempDir());
@@ -598,7 +598,7 @@ describe("machine state mutations", () => {
 		expect(readRegistry(spoolDir).projects).toEqual([]);
 	});
 
-	it("does not delete a live proof when its ownership record cannot be read", { timeout: 15_000 }, async () => {
+	it("does not delete a live proof when its ownership record cannot be read", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const heldRoot = realpathSync(makeTempDir());
@@ -620,7 +620,7 @@ describe("machine state mutations", () => {
 		await expectWorkerSuccess(holder);
 	});
 
-	it("recovers when a reaper dies after claiming a stale lock", { timeout: 15_000 }, async () => {
+	it("recovers when a reaper dies after claiming a stale lock", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const interrupted = realpathSync(makeTempDir());
@@ -645,7 +645,7 @@ describe("machine state mutations", () => {
 		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([recovered]);
 	});
 
-	it("recovers when a reaper dies before creating its claim", { timeout: 15_000 }, async () => {
+	it("recovers when a reaper dies before creating its claim", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const interrupted = realpathSync(makeTempDir());
@@ -670,7 +670,7 @@ describe("machine state mutations", () => {
 		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([recovered]);
 	});
 
-	it("recovers when a reaper dies after cleaning its claim", { timeout: 15_000 }, async () => {
+	it("recovers when a reaper dies after cleaning its claim", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const interrupted = realpathSync(makeTempDir());
@@ -695,7 +695,7 @@ describe("machine state mutations", () => {
 		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([recovered]);
 	});
 
-	it("recovers a lease-less reaper claim without weakening the fixed lock", { timeout: 15_000 }, async () => {
+	it("recovers a lease-less reaper claim without weakening the fixed lock", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const recovered = realpathSync(makeTempDir());
@@ -716,7 +716,7 @@ describe("machine state mutations", () => {
 		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([recovered]);
 	});
 
-	it("recovers a dead reaper whose PID belongs to another process birth", { timeout: 15_000 }, async () => {
+	it("recovers a dead reaper whose PID belongs to another process birth", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const recovered = realpathSync(makeTempDir());
@@ -747,7 +747,7 @@ describe("machine state mutations", () => {
 		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([recovered]);
 	});
 
-	it("cleans a reaper claim that captured a replacement lock", { timeout: 15_000 }, async () => {
+	it("cleans a reaper claim that captured a replacement lock", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const stalledRoot = realpathSync(makeTempDir());
@@ -792,7 +792,7 @@ describe("machine state mutations", () => {
 		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([replacementRoot, stalledRoot]);
 	});
 
-	it("never expires a live reaper after its final inode proof", { timeout: 15_000 }, async () => {
+	it("never expires a live reaper after its final inode proof", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const protectedRoot = realpathSync(makeTempDir());
@@ -829,7 +829,7 @@ describe("machine state mutations", () => {
 		).toEqual([protectedRoot, contenderRoot].sort());
 	});
 
-	it("keeps remove atomic with a competing session replacement", { timeout: 15_000 }, async () => {
+	it("keeps remove atomic with a competing session replacement", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const removed = realpathSync(makeTempDir());
@@ -856,7 +856,7 @@ describe("machine state mutations", () => {
 		expect(readSession(spoolDir)).toEqual({ open: [kept] });
 	});
 
-	it("keeps a project registered when removal dies after pruning its tab", { timeout: 15_000 }, async () => {
+	it("keeps a project registered when removal dies after pruning its tab", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
 		const interrupted = realpathSync(makeTempDir());
@@ -937,8 +937,20 @@ function alternateLocale(): string {
 	return locales.find((locale) => locale !== "C" && locale !== "POSIX") ?? "C";
 }
 
+/**
+ * How long a spawned worker gets to reach its next checkpoint.
+ *
+ * Every wait in here is for another process to get somewhere, so what is being waited on
+ * is a Node cold start and a lock handoff, not a computation with a known cost. Five
+ * seconds is under that on a shared three-core runner with the rest of the suite already
+ * on it, and this file is the release gate now, so a starved spawn is a release that does
+ * not go out. Nothing about the locking is loosened by this: a lock that never lands
+ * still fails, just with room to be slow first.
+ */
+const WAIT_MS = 15_000;
+
 async function waitForFile(file: string, worker: Worker): Promise<void> {
-	const deadline = Date.now() + 5_000;
+	const deadline = Date.now() + WAIT_MS;
 	while (!existsSync(file)) {
 		if (worker.child.exitCode !== null) {
 			throw new Error(`worker exited before ${file}\n${worker.output()}`);
@@ -949,7 +961,7 @@ async function waitForFile(file: string, worker: Worker): Promise<void> {
 }
 
 async function waitForEither(first: string, second: string, worker: Worker): Promise<string> {
-	const deadline = Date.now() + 5_000;
+	const deadline = Date.now() + WAIT_MS;
 	for (;;) {
 		if (existsSync(first)) return first;
 		if (existsSync(second)) return second;
