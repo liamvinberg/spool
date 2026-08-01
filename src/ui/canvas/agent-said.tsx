@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { cn } from "../cn";
 import { type Chunk, chunksOf, drawnText, type Span } from "./agent-markdown";
 
@@ -108,7 +108,16 @@ export function Caret() {
  */
 const INDENT = 14;
 
-export function Said({ text, live = 0, caret }: { text: string; live?: number; caret?: ReactNode }) {
+/**
+ * Rendered on its props and nothing else, which is why it is held.
+ *
+ * The block that is arriving draws twice: an invisible copy of the whole landed message
+ * holding the height open, and the words the edge has reached drawn over it. The
+ * invisible one is the same string for the whole of the message's life and the visible
+ * one changes ten times a second, so the reserve is re-rendered a hundred times for
+ * nothing unless it is told it may sit still.
+ */
+export const Said = memo(function Said({ text, live = 0, caret }: { text: string; live?: number; caret?: ReactNode }) {
 	const chunks = chunksOf(text);
 	const total = drawnText(chunks).length;
 	let seen = 0;
@@ -254,4 +263,4 @@ export function Said({ text, live = 0, caret }: { text: string; live?: number; c
 			})}
 		</div>
 	);
-}
+});

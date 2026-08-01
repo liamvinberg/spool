@@ -30,7 +30,7 @@ import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
 import { AgentHandLayer } from "./agent-hand-layer";
 import { useAgentModel } from "./agent-model";
 import { useAgentInstall } from "./agent-preflight";
-import { AgentRail } from "./agent-rail";
+import { AgentRail, type FrameJump } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
 import {
@@ -2418,6 +2418,31 @@ export function ProjectCanvas({
 		[recordDeparture, switchToPage, arrivalAt, animateCamera],
 	);
 
+	/**
+	 * What a row in the rail may do about the frame it names, as one object that holds
+	 * still (#143, #194).
+	 *
+	 * Built here rather than in the element because the rail draws a row per tool call and
+	 * a nine-minute turn is nineteen of them: a fresh object per render is a fresh prop for
+	 * every one of those rows, which is every row re-rendering on every step of the pace and
+	 * on every pointermove the camera takes. It changes when the frames do, which is the
+	 * only thing in it that is ever about to be different.
+	 */
+	const jump = useMemo<FrameJump>(
+		() => ({
+			have: reach.have,
+			gone: reach.gone,
+			onPoint: setPointed,
+			onJump: (name) => {
+				// pointing was the question and landing is the answer, so the weaker mark
+				// goes as the stronger one arrives
+				setPointed(null);
+				landOnFrame(name);
+			},
+		}),
+		[reach, landOnFrame],
+	);
+
 	// --- keys -------------------------------------------------------------------
 
 	const menuOpenRef = useRef(false);
@@ -3041,17 +3066,7 @@ export function ProjectCanvas({
 					plan={turn.plan}
 					phase={turn.phase}
 					elapsed={turn.elapsed}
-					jump={{
-						have: reach.have,
-						gone: reach.gone,
-						onPoint: setPointed,
-						onJump: (name) => {
-							// pointing was the question and landing is the answer, so the weaker mark
-							// goes as the stronger one arrives
-							setPointed(null);
-							landOnFrame(name);
-						},
-					}}
+					jump={jump}
 					pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
 					threads={{
 						list: deck.threads,

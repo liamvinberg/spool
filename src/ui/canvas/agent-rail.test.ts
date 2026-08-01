@@ -9,7 +9,8 @@ import { type AgentOffer, modelsOf } from "../../daemon/agent-offer";
 import { longestStreamed, readModelsReply } from "../../test-helpers";
 import type { AgentEvent, SelectionEntry, ServedThread, ThreadPut } from "../api";
 import { chunksOf } from "./agent-markdown";
-import { followTo, windStrength } from "./agent-rail";
+import { type FrameJump, followTo, sameEntry, windStrength } from "./agent-rail";
+import type { AgentEntry } from "./agent-transcript";
 import { type CanvasChrome, ProjectCanvas } from "./canvas";
 
 /**
@@ -1069,6 +1070,70 @@ describe("what the log scrolls to", () => {
 
 	it("never scrolls above the top of the log", () => {
 		expect(followTo({ scrollTop: 0, scrollHeight: 100, clientHeight: 500 }, 0)).toBe(0);
+	});
+});
+
+/**
+ * What an entry redraws for, which is what a nine-minute turn costs.
+ *
+ * Every entry in the log is handed the turn's clock and the clock steps ten times a
+ * second for as long as the turn is open, so drawing them all on every step is the
+ * transcript re-rendering itself a hundred times for the sake of the one word arriving at
+ * the bottom. Two entries actually read the clock and both of them settle.
+ */
+describe("what an entry redraws for", () => {
+	/** one object for every reading, because a fresh one is a real change and says so */
+	const jump: FrameJump = { have: new Set(), gone: new Set(), onPoint: () => {}, onJump: () => {} };
+	const onAnswer = () => {};
+	const props = (entry: AgentEntry, elapsed: number) => ({ entry, elapsed, jump, onAnswer });
+	const row: AgentEntry = {
+		key: "call:c1",
+		kind: "row",
+		state: "done",
+		verb: "read",
+		subject: "receipt.tsx",
+		frame: null,
+		count: 1,
+		detail: null,
+		shot: null,
+		foreign: null,
+		parent: null,
+		delegated: [],
+	};
+	const arriving: AgentEntry = {
+		key: "say:1:0",
+		kind: "prose",
+		full: "the frame is live.",
+		landed: [{ at: 0, upto: 18 }],
+		settled: false,
+	};
+	const out: AgentEntry = { key: "wait:1", kind: "wait", state: "running", at: 0, ms: null };
+
+	it("sits out a clock it does not read", () => {
+		expect(sameEntry(props(row, 400), props(row, 900))).toBe(true);
+	});
+
+	it("draws again while the edge is still moving through a message", () => {
+		expect(sameEntry(props(arriving, 40), props(arriving, 140))).toBe(false);
+	});
+
+	it("sits out the clock once the whole message is on screen", () => {
+		expect(sameEntry(props(arriving, 4000), props(arriving, 9000))).toBe(true);
+	});
+
+	it("draws again while a request out still has a digit to turn over", () => {
+		expect(sameEntry(props(out, 1400), props(out, 1900))).toBe(false);
+	});
+
+	it("sits out the clock once the request has a total on it", () => {
+		const answered: AgentEntry = { ...out, state: "done", ms: 1_970 };
+
+		expect(sameEntry(props(answered, 2000), props(answered, 9000))).toBe(true);
+	});
+
+	/** a fresh fold is a different entry, whatever it says: the log has moved under it */
+	it("never sits out an entry it has not seen before", () => {
+		expect(sameEntry(props(row, 400), props({ ...row }, 400))).toBe(false);
 	});
 });
 
