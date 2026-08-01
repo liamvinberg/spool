@@ -2778,8 +2778,10 @@ export function ProjectCanvas({
 
 	// --- render -------------------------------------------------------------------
 
-	// no frames and no pages anywhere: the project is untouched — the page
-	// surface only exists once something does (#39)
+	// no frames and no pages anywhere: the project is untouched — the canvas
+	// surface says so and the tools stay away until the first frame lands (#39).
+	// The rails either side of it stand regardless: the pages tree over its root
+	// page, and the agent rail, which is how a frame gets written at all.
 	const projectEmpty = loaded && frames.length === 0 && pages.length === 0;
 	const k = camera?.k ?? 1;
 	const shellRadius = Math.min(12 / k, 24);
@@ -2796,20 +2798,6 @@ export function ProjectCanvas({
 		transitionDuration: `${chromeGone ? PLAY_IN.chrome : PLAY_OUT.chrome}ms`,
 		pointerEvents: chromeGone ? ("none" as const) : undefined,
 	};
-
-	if (projectEmpty) {
-		// agent-first, buttonless (#13): the canvas never pretends hands author frames
-		return (
-			<div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-canvas pb-20">
-				<RibbonMark className="h-7 w-[22px] opacity-40" />
-				<p className="font-medium text-base text-text leading-base">No frames yet.</p>
-				<p className="font-mono text-muted text-sm leading-sm">
-					An agent births a frame by writing frames/&lt;name&gt;/frame.tsx
-				</p>
-				<p className="font-mono text-muted text-xs leading-xs">spool skill · spool url</p>
-			</div>
-		);
-	}
 
 	return (
 		<div className="relative flex h-full w-full">
@@ -3075,9 +3063,29 @@ export function ProjectCanvas({
 				{collisions.length > 0 && <CollisionNotice collisions={collisions} />}
 
 				{pendingTrash !== null && <TrashToast frames={pendingTrash} onUndo={undoTrash} />}
-				<div className="transition-opacity ease-out" style={furniture}>
-					<CanvasTools tool={effectiveTool} onTool={setTool} />
-				</div>
+				{/* agent-first, buttonless (#13): the canvas never pretends hands author
+				    frames. It says so over the canvas surface rather than in place of the
+				    whole row, because the agent that writes the first frame is asked for
+				    it in the rail beside this notice. */}
+				{projectEmpty && (
+					<div
+						data-canvas-empty=""
+						className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 pb-20"
+					>
+						<RibbonMark className="h-7 w-[22px] opacity-40" />
+						<p className="font-medium text-base text-text leading-base">No frames yet.</p>
+						<p className="font-mono text-muted text-sm leading-sm">
+							An agent births a frame by writing frames/&lt;name&gt;/frame.tsx
+						</p>
+						<p className="font-mono text-muted text-xs leading-xs">spool skill · spool url</p>
+					</div>
+				)}
+				{/* nothing to arrange, nothing to walk: the tools arrive with the first frame */}
+				{!projectEmpty && (
+					<div className="transition-opacity ease-out" style={furniture}>
+						<CanvasTools tool={effectiveTool} onTool={setTool} />
+					</div>
+				)}
 				{finding ? (
 					<FindPalette
 						frames={navigatorFrames}

@@ -51,6 +51,30 @@ describe("canvas boot", () => {
 		expect(host.querySelector('[data-frame-label="home"]')).not.toBeNull();
 		expect(host.querySelector('iframe[title="home"]')).not.toBeNull();
 	});
+
+	it("keeps both rails standing over an empty project", async () => {
+		stubFetch(async (url) => {
+			if (url.pathname.endsWith("/frames")) {
+				return Response.json({ root: "/project", pages: [], frames: [], collisions: [] });
+			}
+			if (url.pathname.endsWith("/flows")) {
+				return Response.json({ frames: [], links: [], edges: [], unreadable: [] });
+			}
+			return undefined;
+		});
+		const host = mountCanvas();
+		await flush();
+
+		// the surface says there is nothing on it, and the agent that writes the
+		// first frame is reachable in the rail beside it
+		expect(host.querySelector("[data-canvas-empty]")).not.toBeNull();
+		expect(host.querySelector("[data-agent-rail]")).not.toBeNull();
+		// the pages tree stands over its root page, holding no frames
+		expect(host.querySelector('button[aria-label="root page"]')).not.toBeNull();
+		expect(host.querySelector("[data-frame-label]")).toBeNull();
+		// nothing to arrange yet
+		expect(host.querySelector('[aria-label="canvas tools"]')).toBeNull();
+	});
 });
 
 /** The canvas's own reads; anything a test does not answer for itself. */
