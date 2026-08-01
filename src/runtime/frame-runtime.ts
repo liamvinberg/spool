@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import * as React from "react";
 import { createElement, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -337,6 +338,66 @@ function notify(): void {
 	schedulePersist();
 }
 
+interface ReactDispatcher {
+	useState?: unknown;
+	useMemo?: unknown;
+}
+
+interface ReactInternals {
+	H?: ReactDispatcher | null;
+	ReactCurrentDispatcher?: { current: ReactDispatcher | null };
+}
+
+/**
+ * "Is a component body running right now?" React publishes no such flag, but
+ * its shared dispatcher is one: while a component renders, the dispatcher is
+ * the real hooks implementation — a distinct function per hook — and
+ * everywhere else (commit, effects, event handlers, timers) React installs the
+ * context-only dispatcher, whose every hook is the same throwing stub. Before
+ * the first render there is no dispatcher at all. A React that renames these
+ * fields reads as "not rendering", so the warning goes quiet instead of
+ * guessing.
+ */
+function renderingComponent(): boolean {
+	const react = React as unknown as {
+		__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE?: ReactInternals;
+		__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED?: ReactInternals;
+	};
+	const internals =
+		react.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE ??
+		react.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
+	const dispatcher = internals?.H ?? internals?.ReactCurrentDispatcher?.current;
+	return dispatcher != null && dispatcher.useState !== dispatcher.useMemo;
+}
+
+const warnedRenderWrites = new Set<string>();
+
+/** The first stack frame outside this module: the frame's own write site. */
+function writeSite(): string {
+	const here = import.meta.url;
+	const lines = (new Error().stack ?? "").split("\n").slice(1);
+	return lines.find((line) => line.includes("at ") && !line.includes(here))?.trim() ?? "";
+}
+
+/**
+ * Writing session state from a render is silent data loss (#183): the write
+ * lands in the object, but it notifies the subscribed frame mid-render, React
+ * re-runs the body, and the value that render read is gone — the one-shot flag
+ * a walk hands over reads as if the frame arrived fresh. Named once per site,
+ * because renders repeat and a spammed console teaches nothing.
+ */
+function warnRenderWrite(key: PropertyKey, verb: "written" | "deleted"): void {
+	if (!renderingComponent()) return;
+	const site = writeSite();
+	const id = `${verb} ${String(key)} ${site}`;
+	if (warnedRenderWrites.has(id)) return;
+	warnedRenderWrites.add(id);
+	console.warn(
+		`spool: ui.state.${String(key)} was ${verb} during render — a write during render makes React run that render again, so the value this frame read is dropped. Move the write into an event handler or an effect: read a one-shot flag in render, clear it in an effect.`,
+		site,
+	);
+}
+
 /**
  * Deep reactive view over the session state: one version counter, any write
  * anywhere notifies every subscriber. Flat means top-level keys are the unit
@@ -352,14 +413,24 @@ function reactive<T extends object>(target: T): T {
 		},
 		set(t, key, value, receiver) {
 			if (Object.is(Reflect.get(t, key, receiver), value)) return true;
+			// creating a key that was absent is the documented defensive seed
+			// (ui.state.items ??= []) — idempotent, so a render is free to do it;
+			// replacing a value that was already there is the trap
+			const replaced = Reflect.has(t, key);
 			const ok = Reflect.set(t, key, value, receiver);
-			if (ok) notify();
+			if (ok) {
+				if (replaced) warnRenderWrite(key, "written");
+				notify();
+			}
 			return ok;
 		},
 		deleteProperty(t, key) {
 			const had = Reflect.has(t, key);
 			const ok = Reflect.deleteProperty(t, key);
-			if (ok && had) notify();
+			if (ok && had) {
+				warnRenderWrite(key, "deleted");
+				notify();
+			}
 			return ok;
 		},
 	});

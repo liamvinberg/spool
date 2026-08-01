@@ -213,6 +213,14 @@ describe("skill", () => {
 		expect(flows).toContain("pass a callback");
 	});
 
+	it("keeps ui.state writes out of a render, one-shot flags included", () => {
+		const flows = skillText("flows");
+		expect(flows).toContain("Writes belong in handlers and effects, never in a render");
+		expect(flows).toContain("the value that render read is dropped");
+		expect(flows).toContain("warns once per site");
+		expect(flows).toContain("read in render and cleared in an effect");
+	});
+
 	it("teaches clipboard writes as awaited user interactions", () => {
 		const flows = skillText("flows");
 		expect(flows).toContain("await ui.copy(text)");
