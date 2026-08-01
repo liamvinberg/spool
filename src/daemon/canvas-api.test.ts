@@ -1,7 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { makeApp, makeProject, makeTempDir, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
+import {
+	makeApp,
+	makeProject,
+	makeTempDir,
+	sseReader,
+	writeDesignFile,
+	writeFrame,
+	writePageFrame,
+} from "../test-helpers";
 import { createDaemonApp } from "./app";
 import { writeSession } from "./session";
 import { createMachineStateWatchHarness } from "./session-test-harness";
@@ -266,6 +274,34 @@ describe("the project registry for home", () => {
 			covers: [{ frame: "cart", cover: await put.json() }],
 		});
 		expect(projects[1]).toMatchObject({ frameCount: 1, covers: [] });
+	});
+
+	it("summarizes across pages: three freshest covers, a name claimed twice counted as none", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "one", frameTsx("one"));
+		writeFrame(root, "two", frameTsx("two"));
+		writePageFrame(root, "shop", "three", frameTsx("three"));
+		writePageFrame(root, "shop", "four", frameTsx("four"));
+		// the same name from two folders is a collision, and a collision is not a frame
+		writeFrame(root, "twin", frameTsx("twin"));
+		writePageFrame(root, "shop", "twin", frameTsx("twin"));
+		const app = makeApp(spoolDir);
+		for (const frame of ["one", "two", "three", "four"]) {
+			expect((await putCover(app, name, frame, coverBody(PNG_BYTES))).status).toBe(200);
+		}
+		// the store's own folder times order the cards, so name them rather than race the clock
+		const shotAt = { one: 1_000, two: 4_000, three: 2_000, four: 3_000 };
+		for (const [frame, seconds] of Object.entries(shotAt)) {
+			utimesSync(join(root, "design", ".spool", "thumbs", frame), seconds, seconds);
+		}
+
+		const { projects } = (await (await app.request("/api/projects")).json()) as {
+			projects: { frameCount: number; covers: { frame: string }[] }[];
+		};
+
+		expect(projects[0]?.frameCount).toBe(4);
+		expect(projects[0]?.covers.map((cover) => cover.frame)).toEqual(["two", "four", "three"]);
 	});
 
 	it("keeps listing projects whose disk has vanished", async () => {

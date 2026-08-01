@@ -3,11 +3,11 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { makeProject, makeTempDir } from "../test-helpers";
 import {
-	coverModified,
 	createThumbHealer,
 	readCover,
 	readCoverImage,
 	scanCovers,
+	scanDatedCovers,
 	UnservableCoverError,
 	writeCover,
 } from "./thumbs";
@@ -56,7 +56,7 @@ describe("writing a cover", () => {
 		expect(existsSync(join(storeDir(root), `${cover.hash}.png`))).toBe(true);
 	});
 
-	it("scans every covered frame and exposes its freshness", () => {
+	it("scans every covered frame and exposes its freshness", async () => {
 		const root = project();
 		const home = writeCover(root, "home", JPEG);
 		const cart = writeCover(root, "cart", PNG);
@@ -66,7 +66,19 @@ describe("writing a cover", () => {
 				["home", home],
 			]),
 		);
-		expect(coverModified(root, "home")).toBeTypeOf("number");
+		const dated = await scanDatedCovers(root);
+		expect([...dated].map(([frame, held]) => [frame, held.cover]).sort()).toEqual([
+			["cart", cart],
+			["home", home],
+		]);
+		expect(dated.get("home")?.shotAt).toBeTypeOf("number");
+	});
+
+	it("dates nothing for a frame whose folder holds no readable cover", async () => {
+		const root = project();
+		mkdirSync(storeDir(root), { recursive: true });
+		writeFileSync(join(storeDir(root), `${"a".repeat(32)}.780.jpg`), JPEG);
+		expect(await scanDatedCovers(root)).toEqual(new Map());
 	});
 
 	it("answers only the exact immutable address", () => {
