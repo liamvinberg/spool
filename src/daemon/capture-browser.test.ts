@@ -681,7 +681,16 @@ it("captures a WebGL canvas as its cleared color, not black (#174)", {
 	const captureOrigin = new URL(served.controlOrigin);
 	captureOrigin.hostname = CAPTURE_HOST;
 
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	// The one test here that needs a GL context rather than a 2D one, so it is the one
+	// that says which GL: left to the runner, a headless shell with no usable backend
+	// hands back a null context, the clear never happens, and the capture comes back the
+	// page's own white — which reads as the shim failing and is nothing of the sort.
+	// SwiftShader is software, so the answer is the same on every machine.
+	const browser = await chromium.launch({
+		channel: "chromium-headless-shell",
+		headless: true,
+		args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
+	});
 	onTestFinished(() => browser.close());
 	const context = await browser.newContext({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 2 });
 	onTestFinished(() => context.close());
@@ -690,6 +699,13 @@ it("captures a WebGL canvas as its cleared color, not black (#174)", {
 	const authored = page.frames().find((frame) => new URL(frame.url()).hostname === RENDER_HOST);
 	if (authored === undefined) throw new Error("authored frame did not load");
 	await authored.locator("canvas").waitFor();
+	// and it says so before reading pixels: a missing context is a fact about the runner,
+	// and it must not arrive dressed as a colour assertion about the shim
+	expect(
+		await authored
+			.locator("canvas")
+			.evaluate((element) => (element as HTMLCanvasElement).getContext("webgl") !== null),
+	).toBe(true);
 	// The clear happens synchronously in the boot module, but the compositor
 	// paints it asynchronously; wait out a couple of frames so the drawing
 	// buffer has actually been presented at least once before capturing it,
