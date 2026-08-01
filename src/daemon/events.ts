@@ -20,16 +20,29 @@ export interface FrameChange {
 	frame: string;
 }
 
+/**
+ * One frame's geometry sidecar moved (#23, #113).
+ *
+ * Geometry is hands-owned, so this is never a source edit and never reloads a
+ * document — the frame moves on the canvas and its pixels are left alone. Two
+ * things say it. The geometry API says it the moment it writes a sidecar, so
+ * another browser sees the drag without waiting on a watcher. The watcher says
+ * it too, because an agent placing a frame by editing `frame.json` is doing
+ * what a hand does by dragging it, and until #113 nobody heard that at all.
+ */
+export interface GeometryChange {
+	kind: "geometry";
+	frame: string;
+}
+
 export type ChangeEvent =
 	| FrameChange
 	| SharedChange
+	| GeometryChange
 	// a cover was written: the image rides along, so a canvas can swap addresses
 	// without re-reading the projection. Absent means it could not be read back,
 	// and the canvas falls back to a frames read.
 	| { kind: "thumb"; frame: string; cover?: Cover }
-	// a hands write to a frame.json sidecar (#23), published by the geometry
-	// API so other browsers see the move — never emitted by the fs watcher
-	| { kind: "geometry"; frame: string }
 	// a session witnessed an edge (#25), published by the walked API — .spool
 	// is invisible to the watcher, so the store announces its own writes
 	| { kind: "walked" }
@@ -113,6 +126,9 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 				const event = classify(designDir, filename, (path) => deps.framesUsing(root, path));
 				if (event === undefined) return;
 				if (event.kind === "frame") pending.set(`frame ${event.frame}`, event);
+				// a move and an edit to the same frame are two facts about it, so a
+				// sidecar keeps its own slot rather than collapsing into the source one
+				else if (event.kind === "geometry") pending.set(`geometry ${event.frame}`, event);
 				else pending.set("shared", mergeShared(pending.get("shared"), event));
 				timer ??= setTimeout(() => {
 					timer = undefined;
@@ -169,13 +185,18 @@ export type ChangeHub = ReturnType<typeof createChangeHub>;
 /**
  * Only source-relevant paths become events: a frame folder names its frame,
  * anything in shared/ can stale every document. App-owned state (.spool/,
- * canvas.json) never fires — thumbnail writes must not echo as edits — and
- * neither does frame.json: geometry is hands-owned (#3), so a sidecar fill or
- * a resize must never read as a source edit and reload the frame. A top-level
- * folder without frame.tsx is a page (#39): its frame folders sit one deeper,
- * and the sidecar exemption moves down with them. A path a delete has made
- * unreadable may misname its frame — any frame event refreshes discovery, so
- * over-firing is safe and guessing wrong is cheap.
+ * canvas.json) never fires — thumbnail writes must not echo as edits.
+ *
+ * frame.json is not a source edit either, and never reloads a frame: geometry
+ * is hands-owned (#3), so a sidecar fill or a resize is a move rather than a
+ * change to what the frame draws. It is still a move somebody has to hear about
+ * (#113) — an agent placing a frame by writing the sidecar is doing what a hand
+ * does by dragging it — so it classifies as its own kind and the canvas re-reads
+ * where the frames are without touching a document. A top-level folder without
+ * frame.tsx is a page (#39): its frame folders sit one deeper, and the sidecar
+ * rule moves down with them. A path a delete has made unreadable may misname its
+ * frame — any frame event refreshes discovery, so over-firing is safe and
+ * guessing wrong is cheap.
  *
  * A shared file the link graph has already read names its own readers (#109),
  * so editing one component wakes the frames that mount it instead of every
@@ -187,7 +208,7 @@ function classify(
 	designDir: string,
 	filename: string | null,
 	framesUsing: (path: string) => string[] | undefined,
-): FrameChange | SharedChange | undefined {
+): FrameChange | GeometryChange | SharedChange | undefined {
 	if (filename === null) return { kind: "shared" };
 	const parts = filename.split(sep);
 	const [head, first] = parts;
@@ -195,10 +216,14 @@ function classify(
 		if (parts.length >= 3 && frameKind(join(designDir, "frames", first), designDir) === undefined) {
 			const second = parts[2];
 			if (second === undefined || second === "") return { kind: "frame", frame: first };
-			if (parts.length === 4 && parts[3]?.startsWith("frame.json") === true) return undefined;
+			if (parts.length === 4 && parts[3]?.startsWith("frame.json") === true) {
+				return { kind: "geometry", frame: second };
+			}
 			return { kind: "frame", frame: second };
 		}
-		if (parts.length === 3 && parts[2]?.startsWith("frame.json") === true) return undefined;
+		if (parts.length === 3 && parts[2]?.startsWith("frame.json") === true) {
+			return { kind: "geometry", frame: first };
+		}
 		return { kind: "frame", frame: first };
 	}
 	if (head !== "shared") return undefined;

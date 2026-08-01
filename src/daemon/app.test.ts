@@ -443,9 +443,10 @@ describe("change events", () => {
 		writeDesignFile(root, ".spool/thumbs/hello/deadbeefdeadbeefdeadbeefdeadbeef.195.png", "not really a png");
 		await events.expectQuiet(400);
 
-		// geometry is hands-owned, never a source edit — no reload for a sidecar
+		// geometry is hands-owned: a sidecar write is a move rather than a source
+		// edit, so it is announced as one and no document reloads for it (#113)
 		writeDesignFile(root, "frames/hello/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
-		await events.expectQuiet(400);
+		await nextMatching({ event: "change", data: { kind: "geometry", frame: "hello" } });
 	});
 
 	it("keeps saying something on a stream nothing is happening on", async () => {

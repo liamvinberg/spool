@@ -331,10 +331,11 @@ describe("page-aware change events", () => {
 		writeDesignFile(root, "frames/console/term.tsx", "export default function T() {\n\treturn <p>hi</p>;\n}\n");
 		await nextMatching({ event: "change", data: { kind: "frame", frame: "console" } });
 
-		// geometry stays hands-owned at its new depth — a page sidecar is no edit
+		// geometry stays hands-owned at its new depth: a page sidecar is a move of
+		// the leaf frame rather than an edit of it, and names it (#113)
 		await events.drain(300);
 		writeDesignFile(root, "frames/shop/checkout/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
-		await events.expectQuiet(400);
+		await nextMatching({ event: "change", data: { kind: "geometry", frame: "checkout" } });
 	});
 });
 
