@@ -25,7 +25,8 @@ function coverStoreDir(root: string): string {
 	return resolveDesignPath(designDir, join(designDir, ".spool", "thumbs"));
 }
 
-function coverDir(root: string, frame: string): string {
+/** A frame's cover folder, keyed by its bare name — so a rename has to carry it (#228). */
+export function coverDir(root: string, frame: string): string {
 	const designDir = realDesignDir(root);
 	return resolveDesignPath(designDir, join(designDir, ".spool", "thumbs", frame));
 }

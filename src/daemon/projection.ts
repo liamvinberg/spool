@@ -434,6 +434,24 @@ export function frameNames(root: string): string[] | undefined {
 }
 
 /**
+ * What a new name must miss (#228): every name a frame claims anywhere,
+ * ambiguous ones included, and every named page. One walk answers both, and it
+ * fills no sidecar — a rename, a copy and a page create all have to know this
+ * before they write, and a bare name is identity across the whole project.
+ */
+export interface ClaimedNames {
+	frames: Set<string>;
+	pages: Set<string>;
+}
+
+export function claimedNames(root: string): ClaimedNames {
+	const discovery = discover(root);
+	if (discovery === undefined) return { frames: new Set(), pages: new Set() };
+	const claimed = [...discovery.frames, ...discovery.collisions].map((entry) => entry.name);
+	return { frames: new Set(claimed), pages: new Set(discovery.pages) };
+}
+
+/**
  * Every unambiguous frame's folder, keyed by name, in name order — one
  * discovery for a whole project-wide read. Asking `lookupFrame` per frame
  * re-walks design/frames once per frame, which a 145-frame read pays 145 times.
