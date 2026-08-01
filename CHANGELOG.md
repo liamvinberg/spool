@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.1
+
+### Patch Changes
+
+- bbbd41f: An upgrade that cannot hand the new launch agent to launchd now puts the old one back and starts it again, so start-on-login survives a failed upgrade. If putting it back also fails, spool says autostart is off and tells you to run `spool autostart`.
+- 9ebcee8: An empty project kept its rails to itself: with no frames and no pages, the canvas replaced the whole row with "No frames yet.", so the agent rail that writes the first frame was not there to ask. The notice now sits over the canvas surface with the pages tree on one side and the agent rail on the other. The tools still wait for the first frame, because there is nothing yet to select, pan to or arrange.
+- 06899c8: A frame that writes the clipboard with `navigator.clipboard.writeText` — most shared copy buttons do — was blocked on the canvas and in the player, with "the Clipboard API has been blocked because of a permissions policy" in the frame's console, while the same frame opened on its own could write. Both surfaces now delegate clipboard writes to the frame they embed, so a frame keeps the clipboard it would have had. `ui.copy` is unchanged and still the way to copy through the canvas or player; clipboard reads remain unavailable.
+- 495f603: Asking for a frame that is not on the canvas no longer points at a folder path that frames inside a page never use. The refusal now says the frame is not there and where a frame comes from.
+- 5e5dce1: A `ui.state` write from inside a component body used to fail in silence: the write makes React run that render again, so the value the render just read was gone. The one that cost real time was a one-shot flag handed over by a walk, read and cleared in the same render, which left the next frame looking like it had arrived fresh. The runtime now warns in the frame's console when a render replaces or deletes a state key, once per site, naming the key and where it happened. Seeding a key that was not there yet (`ui.state.items ??= []`) stays quiet, because it is idempotent. The `spool skill flows` topic says the rule: writes belong in handlers and effects, and a one-shot flag is read in render and cleared in an effect.
+- a909258: The `spool skill verbs` Playwright recipe now works on a player URL: it reaches frame content through the player's iframe instead of a top-level selector that could never match, and it says to open the browser at least as large as the frame so screenshots are not scaled down.
+
 ## 0.5.0
 
 ### Minor Changes
