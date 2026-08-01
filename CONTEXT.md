@@ -50,6 +50,8 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Attending**: What keeps a frame out of the idle freeze: the pointer over it, the frame selected, the frame entered, or the camera in motion. Every one of them is something the hands did, never where a frame happens to sit — freezing by viewport position would kill side-by-side comparison, which is the reason the idle window is a whole minute rather than a few seconds. _Avoid_: active, focused, visible
 
+**Order**: The manual arrangement of pages and of the frames within a page, a canvas-wide durable in `canvas.json` beside the format stamp, committed and cloned rather than kept per machine. It is advisory over the projection — a stored name can be stale and an arrival can be missing from it, so the client merges the two — and it never touches geometry: reordering rows moves nothing on the canvas, and arranging frames on the canvas changes no row. _Avoid_: sort, index, position
+
 **Hands**: The human at the canvas. Hands own geometry and arrangement; agents own frame source. _Avoid_: user, designer
 
 ### Flows

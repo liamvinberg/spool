@@ -5,7 +5,16 @@ import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
 import { snapPxToCells } from "../../term/cells";
-import type { Camera, FlowEdge, FrameCollision, Geometry, ProjectedFrame, SelectionEntry, SelectionPut } from "../api";
+import type {
+	Camera,
+	FlowEdge,
+	FrameCollision,
+	FrameCopy,
+	Geometry,
+	ProjectedFrame,
+	SelectionEntry,
+	SelectionPut,
+} from "../api";
 import {
 	beaconTrash,
 	fetchCanvasState,
@@ -171,6 +180,20 @@ const SELECTION_PUT_MS = 150;
 const PICK_REPLY_MS = 400;
 const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
+/** how far each fresh copy steps off the frame it was made from (#229) */
+const COPY_CASCADE_PX = 24;
+
+/**
+ * One entry on the trash toast (#23, #229).
+ *
+ * A page carries the frames inside it so the canvas can empty at once, but it
+ * is still one entry with one undo: the folder is what moves, so the folder is
+ * what comes back.
+ */
+interface StagedTrash {
+	frames: string[];
+	page: string | null;
+}
 
 function spatialDirection(key: string): SpatialDirection | undefined {
 	switch (key) {
@@ -289,8 +312,11 @@ export function ProjectCanvas({
 	const [findLit, setFindLit] = useState<string | null>(null);
 	const findingRef = useRef(finding);
 	findingRef.current = finding;
-	const [pendingTrash, setPendingTrash] = useState<string[] | null>(null);
+	const [pendingTrash, setPendingTrash] = useState<StagedTrash | null>(null);
 	const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set<string>());
+	// a page staged for the Trash leaves the rail with everything inside it, and
+	// comes back whole if the toast is undone (#229)
+	const [hiddenPages, setHiddenPages] = useState<ReadonlySet<string>>(new Set<string>());
 	const [docNonces, setDocNonces] = useState<Record<string, number>>({});
 	// frames whose current boot is a walk arrival (#28): quiet cover, no veil
 	const [walkArrivals, setWalkArrivals] = useState<ReadonlySet<string>>(new Set<string>());
@@ -307,6 +333,7 @@ export function ProjectCanvas({
 		[frames, activePage, hidden],
 	);
 	const navigatorFrames = useMemo(() => frames.filter((frame) => !hidden.has(frame.name)), [frames, hidden]);
+	const navigatorPages = useMemo(() => pages.filter((page) => !hiddenPages.has(page)), [pages, hiddenPages]);
 	// the agent rail's one turn (#192). It owns the stream and nothing else here has
 	// to know about it: a frame the turn writes lands as an ordinary `change` event,
 	// so the canvas repaints while the transcript is still arriving.
@@ -434,7 +461,9 @@ export function ProjectCanvas({
 	const nudgeOrigins = useRef(new Map<string, Geometry>());
 	const nudgeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const trashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-	const pendingTrashRef = useRef<string[] | null>(null);
+	const pendingTrashRef = useRef<StagedTrash | null>(null);
+	// staging a page has to leave it, and the switch is declared further down
+	const leavePage = useRef<(target: string) => void>(() => {});
 	// the geometry undo/redo stacks: per window, in memory, hands' writes only
 	const geometryHistory = useRef(emptyHistory());
 	// the jump list (jumps.ts): the spots teleports left, the hands' travel only
@@ -1160,6 +1189,42 @@ export function ProjectCanvas({
 		[project, refetchFrames],
 	);
 
+	/**
+	 * Fresh copies from the rail (#229), given somewhere to be.
+	 *
+	 * A duplicate copies the geometry sidecar verbatim (#228), so a copy that
+	 * stayed on its original's page would land exactly on top of it. The rail
+	 * made the copies and the canvas owns the plane, so the offset is written
+	 * here: each copy steps a little further off the frame it was made from, and
+	 * they end up selected, the way duplicating out on the canvas would leave
+	 * them. It takes no undo slot — there is nothing to put back, because the
+	 * copies were not anywhere a moment ago.
+	 */
+	const cascadeCopies = useCallback(
+		(copies: readonly FrameCopy[]) => {
+			const rects: Record<string, Geometry> = {};
+			copies.forEach((copy, index) => {
+				const from = allFramesRef.current.find((frame) => frame.name === copy.from);
+				if (from === undefined) return;
+				const step = COPY_CASCADE_PX * (index + 1);
+				rects[copy.to] = {
+					x: Math.round(from.x + step),
+					y: Math.round(from.y + step),
+					w: Math.round(from.w),
+					h: Math.round(from.h),
+				};
+			});
+			if (Object.keys(rects).length > 0) void putGeometry(project, rects);
+			const landed = copies.map((copy) => copy.to);
+			if (landed.length === 0) return;
+			setPicked([]);
+			pickedChain.current = null;
+			setSelected(landed);
+			frameAnchor.current = landed[0] ?? null;
+		},
+		[project],
+	);
+
 	const undoGeometry = useCallback(() => {
 		flushNudge(); // a pending nudge becomes the entry this ⌘Z pops
 		const alive = new Set(allFramesRef.current.map((frame) => frame.name));
@@ -1205,53 +1270,71 @@ export function ProjectCanvas({
 	// --- trash (#23): instant canvas removal, disk move deferred on the toast ---
 
 	const commitTrash = useCallback(() => {
-		const names = pendingTrashRef.current;
+		const staged = pendingTrashRef.current;
 		pendingTrashRef.current = null;
 		clearTimeout(trashTimer.current);
 		setPendingTrash(null);
-		if (names === null || names.length === 0) return;
-		void postTrash(project, names).then((ok) => {
+		if (staged === null || (staged.frames.length === 0 && staged.page === null)) return;
+		const pages = staged.page === null ? [] : [staged.page];
+		void postTrash(project, staged.frames, pages).then((ok) => {
 			if (ok) return;
-			// the move never happened: resurface the frames instead of losing them
-			setHidden((current) => new Set([...current].filter((name) => !names.includes(name))));
+			// the move never happened: resurface what was staged instead of losing it
+			setHidden((current) => new Set([...current].filter((name) => !staged.frames.includes(name))));
+			setHiddenPages((current) => new Set([...current].filter((page) => page !== staged.page)));
 			void refetchFrames();
 		});
 	}, [project, refetchFrames]);
 
-	const stageTrash = useCallback(
-		(names: string[]) => {
-			if (names.length === 0) return;
+	/**
+	 * Stage one entry on the trash toast.
+	 *
+	 * A page is one entry rather than one per frame inside it: the folder is what
+	 * moves, so it is also what is undone. Everything else is unchanged — the
+	 * canvas empties instantly and the disk move waits out the toast.
+	 */
+	const stageEntry = useCallback(
+		(staged: StagedTrash) => {
+			if (staged.frames.length === 0 && staged.page === null) return;
 			commitTrash(); // an earlier toast still open commits now — one undo slot (#7)
-			setHidden((current) => new Set([...current, ...names]));
-			setSelected((current) => current.filter((name) => !names.includes(name)));
+			const page = staged.page;
+			// leave the page before staging it, never after: switching commits a
+			// pending trash to keep one undo slot, and doing it the other way round
+			// would commit the very entry that caused the switch — no toast, no undo
+			if (page !== null && activePageRef.current === page) leavePage.current(ROOT_PAGE);
+			setHidden((current) => new Set([...current, ...staged.frames]));
+			if (page !== null) setHiddenPages((current) => new Set([...current, page]));
+			setSelected((current) => current.filter((name) => !staged.frames.includes(name)));
 			setPicked((current) => {
-				const kept = current.filter((pick) => !names.includes(pick.frame));
+				const kept = current.filter((pick) => !staged.frames.includes(pick.frame));
 				return kept.length === current.length ? current : kept;
 			});
-			if (enteredRef.current !== null && names.includes(enteredRef.current)) exitEntered();
-			pendingTrashRef.current = names;
-			setPendingTrash(names);
+			if (enteredRef.current !== null && staged.frames.includes(enteredRef.current)) exitEntered();
+			pendingTrashRef.current = staged;
+			setPendingTrash(staged);
 			trashTimer.current = setTimeout(commitTrash, TRASH_UNDO_MS);
 		},
 		[commitTrash, exitEntered],
 	);
 
+	const stageTrash = useCallback((names: string[]) => stageEntry({ frames: names, page: null }), [stageEntry]);
+
 	const undoTrash = useCallback(() => {
-		const names = pendingTrashRef.current;
-		if (names === null) return;
+		const staged = pendingTrashRef.current;
+		if (staged === null) return;
 		pendingTrashRef.current = null;
 		clearTimeout(trashTimer.current);
 		setPendingTrash(null);
-		setHidden((current) => new Set([...current].filter((name) => !names.includes(name))));
+		setHidden((current) => new Set([...current].filter((name) => !staged.frames.includes(name))));
+		setHiddenPages((current) => new Set([...current].filter((page) => page !== staged.page)));
 	}, []);
 
 	// leaving the page (or the tab) mid-toast: the staged move still happens
 	useEffect(() => {
 		const flush = () => {
-			const names = pendingTrashRef.current;
-			if (names === null) return;
+			const staged = pendingTrashRef.current;
+			if (staged === null) return;
 			pendingTrashRef.current = null;
-			beaconTrash(project, names);
+			beaconTrash(project, staged.frames, staged.page === null ? [] : [staged.page]);
 		};
 		window.addEventListener("pagehide", flush);
 		return () => {
@@ -1473,6 +1556,7 @@ export function ProjectCanvas({
 		},
 		[flushNudge, commitTrash, clearCanvasSelection, exitEntered, stopAnimation],
 	);
+	leavePage.current = switchToPage;
 
 	/** Page-folder clicks return selection to the page, even when it is already active. */
 	const activatePageFromTree = useCallback(
@@ -1487,11 +1571,13 @@ export function ProjectCanvas({
 		[clearCanvasSelection, recordDeparture, switchToPage],
 	);
 
-	// a page deleted on disk cannot stay active: snap back to the root page
+	// a page deleted on disk cannot stay active, and neither can one staged for
+	// the Trash: either way the canvas has nowhere to be, so it snaps back to
+	// the root page and the toast is what puts a staged one back
 	useEffect(() => {
 		if (!loaded) return;
-		if (resolveActivePage(activePage, pages) !== activePage) switchToPage(ROOT_PAGE);
-	}, [loaded, activePage, pages, switchToPage]);
+		if (hiddenPages.has(activePage) || resolveActivePage(activePage, pages) !== activePage) switchToPage(ROOT_PAGE);
+	}, [loaded, activePage, pages, hiddenPages, switchToPage]);
 
 	/**
 	 * An entered walk: fresh boot for the target (#5), session carried, camera
@@ -2803,13 +2889,20 @@ export function ProjectCanvas({
 		<div className="relative flex h-full w-full">
 			<div className="relative z-20 flex shrink-0 transition-opacity ease-out" style={furniture}>
 				<CanvasSidebar
-					pages={pages}
+					project={project}
+					pages={navigatorPages}
 					activePage={activePage}
 					frames={navigatorFrames}
 					selected={selected}
 					onSwitchPage={activatePageFromTree}
 					onSelectFrame={selectFrameRow}
 					onDoubleClickFrame={flyToFrame}
+					onTrashFrames={stageTrash}
+					onTrashPage={(page, names) => stageEntry({ frames: names, page })}
+					onRevealFrame={landOnFrame}
+					onOpenEditor={(name) => openEditorFor({ path: frameSourcePath(name, framePageOf(name)) })}
+					onCopiesLanded={cascadeCopies}
+					onRefresh={() => void refetchFrames()}
 					// the finder's pick, or the page holding the frame a row in the agent rail is
 					// pointing at (#194)
 					litPage={finding ? findLit : pointedPage}
@@ -3062,7 +3155,9 @@ export function ProjectCanvas({
 
 				{collisions.length > 0 && <CollisionNotice collisions={collisions} />}
 
-				{pendingTrash !== null && <TrashToast frames={pendingTrash} onUndo={undoTrash} />}
+				{pendingTrash !== null && (
+					<TrashToast frames={pendingTrash.frames} page={pendingTrash.page} onUndo={undoTrash} />
+				)}
 				{/* agent-first, buttonless (#13): the canvas never pretends hands author
 				    frames. It says so over the canvas surface rather than in place of the
 				    whole row, because the agent that writes the first frame is asked for

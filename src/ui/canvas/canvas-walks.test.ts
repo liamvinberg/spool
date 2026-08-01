@@ -105,7 +105,11 @@ describe("the walk layer", () => {
 		// the page it lands on, and the certainty the arrows already distinguish
 		expect(tag?.textContent).toContain("checkout");
 		expect(tag?.textContent).toContain("shop");
-		// nothing was selected to earn it
+		// nothing was selected to earn it — read off the rail, whose rows exist
+		// once the folder holding them is open (#229)
+		await act(async () => {
+			canvas.host.querySelector<HTMLButtonElement>('button[aria-label="Expand root"]')?.click();
+		});
 		expect(canvas.host.querySelector('button[aria-label="home frame"]')?.getAttribute("aria-pressed")).toBe("false");
 	});
 

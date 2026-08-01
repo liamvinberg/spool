@@ -18,12 +18,16 @@ import { formatCombo } from "./hotkey-combos";
  * only knows what exists, never what is currently possible.
  */
 
-export type HotkeyScope = "dialog" | "finder" | "picker" | "help" | "toast" | "canvas" | "home" | "app";
+export type HotkeyScope = "dialog" | "finder" | "picker" | "help" | "toast" | "sidebar" | "canvas" | "home" | "app";
 
 /**
  * Most modal first; dispatch stops at the first exclusive scope that is up.
  * The toast sits above help on purpose: an undo window keeps draining while
  * the sheet is read, so ⌘Z must reach it even then.
+ *
+ * The sidebar sits above the canvas and is not exclusive (#229): while the
+ * rail has focus its own list answers ⌫, ↵ and the arrows, and every key it
+ * does not claim carries on to the canvas exactly as it did before.
  */
 export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 	"dialog",
@@ -31,6 +35,7 @@ export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 	"picker",
 	"toast",
 	"help",
+	"sidebar",
 	"canvas",
 	"home",
 	"app",
@@ -46,6 +51,7 @@ export const HOTKEY_GROUPS = [
 	"Tools",
 	"Find and jump",
 	"Threads",
+	"Pages",
 	"Undo",
 	"Home",
 	"Help",
@@ -274,6 +280,82 @@ export const HOTKEYS = [
 		keys: ["t"],
 		repeats: false,
 	},
+
+	// --- Pages: the rail's own keys, while the rail has focus (#229) -------------
+	{
+		id: "sidebar.walk",
+		scope: "sidebar",
+		group: "Pages",
+		label: "Walk the rows",
+		keys: ["arrowup", "arrowdown"],
+		shown: ["↑↓"],
+	},
+	{
+		id: "sidebar.collapse",
+		scope: "sidebar",
+		group: "Pages",
+		label: "Collapse a page, or step up to it",
+		keys: ["arrowleft"],
+		shown: ["←"],
+	},
+	{
+		id: "sidebar.expand",
+		scope: "sidebar",
+		group: "Pages",
+		label: "Expand a page",
+		keys: ["arrowright"],
+		shown: ["→"],
+	},
+	{
+		id: "sidebar.rename",
+		scope: "sidebar",
+		group: "Pages",
+		label: "Rename the selected row",
+		keys: ["enter", "f2"],
+		repeats: false,
+	},
+	{
+		id: "sidebar.duplicate",
+		scope: "sidebar",
+		group: "Pages",
+		label: "Duplicate the selection",
+		keys: ["accel+d"],
+		repeats: false,
+	},
+	{ id: "sidebar.copy", scope: "sidebar", group: "Pages", label: "Copy frames", keys: ["accel+c"], repeats: false },
+	{
+		id: "sidebar.paste",
+		scope: "sidebar",
+		group: "Pages",
+		label: "Paste frames onto the active page",
+		keys: ["accel+v"],
+		repeats: false,
+	},
+	{
+		id: "sidebar.trash",
+		scope: "sidebar",
+		group: "Pages",
+		label: "Move the selection to the Trash",
+		keys: ["backspace", "delete", "accel+backspace"],
+		shown: ["⌫"],
+	},
+	{ id: "sidebar.jump", scope: "sidebar", group: "Pages", label: "Jump to a name by typing it", shown: ["a-z"] },
+	{ id: "sidebar.menu", scope: "sidebar", group: "Pages", label: "Open the row menu", gesture: "right-click" },
+	{
+		id: "sidebar.move",
+		scope: "sidebar",
+		group: "Pages",
+		label: "Reorder, or move a frame to a page",
+		gesture: "drag",
+	},
+	{
+		id: "sidebar.fold-all",
+		scope: "sidebar",
+		group: "Pages",
+		label: "Open or shut every page",
+		gesture: "⌥ click a chevron",
+	},
+	{ id: "sidebar.close-menu", scope: "sidebar", group: "Pages", label: "", keys: ["escape"], listed: false },
 
 	// --- Undo -------------------------------------------------------------------
 	{ id: "canvas.undo", scope: "canvas", group: "Undo", label: "Undo", keys: ["accel+z"] },
