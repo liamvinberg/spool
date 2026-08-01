@@ -28,6 +28,7 @@ import { agentInstalled, askAgentLogin, type Look } from "./agent-preflight";
 import { agentPromptContent } from "./agent-spawn";
 import { closeThread, isThreadId, parseThreadPut, putThread, serveThreads, sessionExists } from "./agent-threads";
 import { startAgentTurn } from "./agent-turn";
+import { CanvasFileError, parseOrder, readOrder, writeOrder } from "./canvas-order";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import {
@@ -41,6 +42,17 @@ import {
 	playerLoadErrorDocument,
 } from "./document";
 import { createChangeHub } from "./events";
+import {
+	createPage,
+	duplicateFrames,
+	duplicatePage,
+	forgetPages,
+	moveFrames,
+	pageDir,
+	type Refusal,
+	renameFrame,
+	renamePage,
+} from "./explorer";
 import { createFlowGraph, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
@@ -162,6 +174,66 @@ const playParams = z.object({
 const PLAYER_HANDOFF_TTL_MS = 30_000;
 /** Browser handoffs are deliberately short and bounded: issuing the control document is a public GET. */
 const MAX_PLAYER_HANDOFFS = 64;
+
+/** A JSON body as fields to read, whatever arrived. */
+const bodyFields = (value: unknown): Record<string, unknown> =>
+	typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+
+/** A `[name, ...]` field, or nothing when it is not one. */
+const nameList = (value: unknown): string[] | undefined =>
+	Array.isArray(value) && value.every((name): name is string => typeof name === "string") ? value : undefined;
+
+/**
+ * What a trash names (#228): frames, pages, or both. Both sides are optional on
+ * the wire and the handler requires one of them to be there, so a caller that
+ * only ever deletes frames writes what it always wrote.
+ */
+interface TrashBody {
+	frames?: string[];
+	pages?: string[];
+}
+
+/**
+ * A design/ read or write, with the two refusals it can throw already answered
+ * (#228): a path that resolves out of design/, and a canvas.json spool will not
+ * overwrite because it cannot read what overwriting it would lose.
+ */
+function answeringDiskRefusals<T>(c: Context, work: () => T): { value: T } | { response: Response } {
+	try {
+		return { value: work() };
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) return { response: c.text(error.message, 400) };
+		if (error instanceof CanvasFileError) return { response: c.text(error.message, 500) };
+		throw error;
+	}
+}
+
+const isRefusal = (outcome: { kind: string }): outcome is Refusal => outcome.kind === "refused";
+
+/**
+ * One explorer verb, answered (#228): the disk's refusals first, then the
+ * operation's own — which already carries the status it wants said — and what
+ * is left is the verb having happened, which only the route can phrase.
+ */
+function explorerVerb<T extends { kind: string }, R extends Response>(
+	c: Context,
+	work: () => T | Refusal,
+	done: (value: T) => R,
+): R | Response {
+	const outcome = answeringDiskRefusals(c, work);
+	if ("response" in outcome) return outcome.response;
+	if (isRefusal(outcome.value)) return c.text(outcome.value.message, outcome.value.status);
+	return done(outcome.value);
+}
+
+/** Both renames read one body; only what they move differs. */
+const renameBody = validator("json", (value: unknown, c: Context) => {
+	const { from, to } = bodyFields(value);
+	if (typeof from !== "string" || typeof to !== "string") {
+		return c.text('a rename is { "from": "…", "to": "…" }', 400);
+	}
+	return { from, to };
+});
 
 type LaunchEditor = (file: string, onError?: (fileName: string, message: string | null) => void) => void;
 
@@ -950,6 +1022,43 @@ export function createDaemonApp({
 				return c.body(null, 204);
 			},
 		)
+		/*
+		 * Manual order (#228), beside the camera because both are arrangement —
+		 * and in a different file, because this one is the canvas rather than
+		 * this machine's view of it: canvas.json is committed and cloned where
+		 * .spool/ is per-machine ephemera.
+		 *
+		 * What is stored is advisory. A name in it can be stale, can name a
+		 * frame that has since moved page, and can be missing one born a second
+		 * ago, so a PUT is never refused for naming a frame the projection does
+		 * not have and a read never rewrites the file to agree — the client
+		 * merges the two, and cleaning here would drop the place a frame an
+		 * agent is halfway through writing is about to come back to.
+		 */
+		.get("/api/p/:project/order", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const order = answeringDiskRefusals(c, () => readOrder(project.root));
+			if ("response" in order) return order.response;
+			return c.json(order.value);
+		})
+		.put(
+			"/api/p/:project/order",
+			validator("json", (value, c) => {
+				const order = parseOrder(value);
+				if (order === undefined) {
+					return c.text('order must be { "pages": [page, ...], "frames": { "<page>": [frame, ...] } }', 400);
+				}
+				return order;
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const written = answeringDiskRefusals(c, () => writeOrder(project.root, c.req.valid("json")));
+				if ("response" in written) return written.response;
+				return c.body(null, 204);
+			},
+		)
 		.get("/api/p/:project/flows", async (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
@@ -1516,38 +1625,173 @@ export function createDaemonApp({
 				return c.body(null, 204);
 			},
 		)
+		/*
+		 * The explorer's verbs (#228). Every one of them moves or copies a
+		 * folder, so the law that the canvas never writes frame source stands: a
+		 * rename leaves the `data-go` literals naming the old name exactly as
+		 * the author wrote them, and the flow map re-derives and reports a
+		 * target it can no longer find, which is where that fix belongs.
+		 *
+		 * None of them publishes an event. Each is a folder move under design/
+		 * that the watcher sees and names for itself — unlike a geometry write,
+		 * which the watcher classifies as a move rather than an edit and which
+		 * the API says early so a drag reaches another browser at once.
+		 */
+		.post("/api/p/:project/frames/rename", renameBody, (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { from, to } = c.req.valid("json");
+			return explorerVerb(
+				c,
+				() => renameFrame(project.root, from, to),
+				() => c.body(null, 204),
+			);
+		})
+		.post("/api/p/:project/pages/rename", renameBody, (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { from, to } = c.req.valid("json");
+			return explorerVerb(
+				c,
+				() => renamePage(project.root, from, to),
+				() => c.body(null, 204),
+			);
+		})
+		.post(
+			"/api/p/:project/frames/move",
+			validator("json", (value, c) => {
+				const body = bodyFields(value);
+				const frames = nameList(body.frames);
+				const { page } = body;
+				if (frames === undefined || typeof page !== "string") {
+					return c.text('a move is { "frames": [name, ...], "page": "…" }, "" being the root page', 400);
+				}
+				return { frames, page };
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const { frames, page } = c.req.valid("json");
+				return explorerVerb(
+					c,
+					() => moveFrames(project.root, frames, page),
+					() => c.body(null, 204),
+				);
+			},
+		)
+		.post(
+			"/api/p/:project/frames/duplicate",
+			validator("json", (value, c) => {
+				const body = bodyFields(value);
+				const frames = nameList(body.frames);
+				const { page } = body;
+				if (frames === undefined || (page !== undefined && typeof page !== "string")) {
+					return c.text('a duplicate is { "frames": [name, ...], "page"?: "…" }', 400);
+				}
+				return { frames, page };
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const { frames, page } = c.req.valid("json");
+				// the minted names come straight back: only this side knows them, and
+				// the rail has copies to select the moment it hears they exist
+				return explorerVerb(
+					c,
+					() => duplicateFrames(project.root, frames, page),
+					(done) => c.json({ frames: done.copies }),
+				);
+			},
+		)
+		.post(
+			"/api/p/:project/pages/duplicate",
+			validator("json", (value, c) => {
+				const { name } = bodyFields(value);
+				if (typeof name !== "string") return c.text('a page duplicate is { "name": "…" }', 400);
+				return { name };
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				return explorerVerb(
+					c,
+					() => duplicatePage(project.root, c.req.valid("json").name),
+					(done) => c.json({ page: done.page, frames: done.copies }),
+				);
+			},
+		)
+		.post(
+			"/api/p/:project/pages/create",
+			validator("json", (value, c) => {
+				const { name } = bodyFields(value);
+				if (typeof name !== "string") return c.text('a page is { "name": "…" }', 400);
+				return { name };
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				return explorerVerb(
+					c,
+					() => createPage(project.root, c.req.valid("json").name),
+					() => c.body(null, 204),
+				);
+			},
+		)
 		.post(
 			"/api/p/:project/trash",
 			validator("json", (value, c) => {
-				const frames =
-					typeof value === "object" && value !== null ? (value as { frames?: unknown }).frames : undefined;
-				if (
-					!Array.isArray(frames) ||
-					frames.length === 0 ||
-					!frames.every((name): name is string => typeof name === "string")
-				) {
-					return c.text('trash must be { "frames": [name, ...] }', 400);
+				const body = bodyFields(value);
+				const frames = body.frames === undefined ? [] : nameList(body.frames);
+				const pages = body.pages === undefined ? [] : nameList(body.pages);
+				if (frames === undefined || pages === undefined || frames.length + pages.length === 0) {
+					return c.text('trash must be { "frames": [name, ...] } or { "pages": [name, ...] }', 400);
 				}
-				return { frames };
+				const named: TrashBody = { frames, pages };
+				return named;
 			}),
 			async (c) => {
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
+				// the wire's shape, not the validator's: both sides are optional so a
+				// frames-only caller keeps the body it always wrote, and the validator
+				// has already refused anything either side is not a list of names
+				const { frames = [], pages = [] } = c.req.valid("json");
 				const dirs: string[] = [];
+				const pageDirs: string[] = [];
 				try {
 					const designDir = realDesignDir(project.root);
-					for (const name of c.req.valid("json").frames) {
+					for (const page of pages) {
+						const found = pageDir(project.root, page);
+						if (found.kind === "refused") return c.text(found.message, found.status);
+						pageDirs.push(found.dir);
+					}
+					for (const name of frames) {
 						if (!isSafeName(name)) return c.text(`not a frame name: "${name}"`, 400);
 						const found = lookupFrame(project.root, name);
 						if (found.kind !== "found") return c.text(`no frame "${name}" to trash`, 404);
-						dirs.push(resolveDesignPath(designDir, found.dir));
+						const dir = resolveDesignPath(designDir, found.dir);
+						// a frame inside a page being trashed rides along inside its folder,
+						// so naming both is one move rather than a move and a miss (#228)
+						if (!pageDirs.some((pageFolder) => dir.startsWith(`${pageFolder}${sep}`))) dirs.push(dir);
 					}
 				} catch (error) {
 					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
 					throw error;
 				}
 				// the whole folder moves; the OS Trash owns restore from here (#7)
-				await trashImpl(dirs);
+				await trashImpl([...pageDirs, ...dirs]);
+				// a page that is gone leaves the canvas nowhere to be, and its camera
+				// and its place in the rail nothing to describe (#228)
+				if (pages.length > 0) {
+					try {
+						forgetPages(project.root, pages);
+					} catch {
+						// bookkeeping is not worth un-saying the move for: order is advisory
+						// and state validates on read, so a cleanup that threw heals the next
+						// time either is read, where answering 500 from here would claim
+						// folders that have already gone had never moved at all
+					}
+				}
 				return c.body(null, 204);
 			},
 		)

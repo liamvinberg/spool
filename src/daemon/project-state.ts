@@ -87,6 +87,42 @@ export function parseCanvasState(value: unknown): CanvasState | undefined {
 	return state;
 }
 
+/**
+ * The state a renamed page leaves, or nothing when the state never named it
+ * (#228). The page the canvas is on and that page's camera are both keyed by
+ * the page's name, so a rename that left them behind would put the canvas on a
+ * page that no longer exists.
+ */
+export function pageRenamedInState(state: CanvasState, from: string, to: string): CanvasState | undefined {
+	const camera = state.pageCameras?.[from];
+	if (state.activePage !== from && camera === undefined) return undefined;
+	const carried: CanvasState = { ...state };
+	if (state.activePage === from) carried.activePage = to;
+	if (state.pageCameras !== undefined && camera !== undefined) {
+		const cameras = { ...state.pageCameras, [to]: camera };
+		delete cameras[from];
+		carried.pageCameras = cameras;
+	}
+	return carried;
+}
+
+/** The state trashed pages leave, or nothing when the state never named one. */
+export function pagesDroppedFromState(state: CanvasState, pages: readonly string[]): CanvasState | undefined {
+	const gone = new Set(pages);
+	const active = state.activePage !== undefined && gone.has(state.activePage);
+	const held = Object.keys(state.pageCameras ?? {}).some((page) => gone.has(page));
+	if (!active && !held) return undefined;
+	const dropped: CanvasState = { ...state };
+	// the canvas falls back to the root page, which is permanent and cannot go
+	if (active) delete dropped.activePage;
+	if (state.pageCameras !== undefined) {
+		const cameras = { ...state.pageCameras };
+		for (const page of gone) delete cameras[page];
+		dropped.pageCameras = cameras;
+	}
+	return dropped;
+}
+
 function parseCamera(value: unknown): Camera | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const { x, y, k } = value as Record<string, unknown>;
