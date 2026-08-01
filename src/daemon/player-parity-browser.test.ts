@@ -3561,3 +3561,124 @@ it("keeps terminal poster and chrome behavior through the control shell", { time
 	await page.waitForFunction((at) => performance.now() - at > 2_300, started);
 	expect(await page.locator(".spool-stage").getAttribute("class")).not.toContain("is-asleep");
 });
+
+const typedHome = `export default function TypedHome() {
+	return <main><button id="to-next" data-go="typed-next">forward</button><button id="to-next-lift" data-go="typed-next" data-transition="lift">lift</button></main>;
+}
+`;
+
+const typedNext = `import { ui } from "spool";
+
+export default function TypedNext() {
+	return <main><output id="typed-next">next</output><button id="back" onClick={() => ui.back()}>back</button></main>;
+}
+`;
+
+/**
+ * The direction and any data-transition ride the swap as View Transitions
+ * *types*, which is what the skill's flows topic promises transitions.css can
+ * style apart. Types are not attributes on the root, so only a real engine
+ * running `:active-view-transition-type()` against a real transition can show
+ * that the promise holds — and that a back walk is not styled as a forward one.
+ */
+const typedTransitions = `@keyframes spool-probe-forward { from { opacity: 0.5; } }
+@keyframes spool-probe-back { from { opacity: 0.5; } }
+@keyframes spool-probe-lift { from { opacity: 0.5; } }
+
+html:active-view-transition-type(forward)::view-transition-new(root) {
+	animation-name: spool-probe-forward;
+	animation-duration: 0.3s;
+}
+html:active-view-transition-type(back)::view-transition-new(root) {
+	animation-name: spool-probe-back;
+	animation-duration: 0.3s;
+}
+html:active-view-transition-type(lift)::view-transition-new(root) {
+	animation-name: spool-probe-lift;
+	animation-duration: 0.3s;
+}
+`;
+
+/** Names every probe keyframe the engine actually put on the pseudo tree. */
+async function recordSwapTypes(live: Frame): Promise<void> {
+	await live.evaluate(() => {
+		const swaps: { types: string[]; animations: string[] }[] = [];
+		Object.defineProperty(window, "__spoolSwapTypes", { value: swaps });
+		const start = document.startViewTransition?.bind(document);
+		if (start === undefined) throw new Error("no View Transitions API in this engine");
+		document.startViewTransition = ((options: unknown) => {
+			const types =
+				options !== null && typeof options === "object" && "types" in options
+					? [...((options as { types: string[] }).types ?? [])]
+					: ["<callback-form>"];
+			const transition = start(options as Parameters<typeof start>[0]);
+			void transition.ready.then(
+				() => {
+					swaps.push({
+						types,
+						animations: document
+							.getAnimations()
+							.filter((animation): animation is CSSAnimation => animation instanceof CSSAnimation)
+							.map((animation) => {
+								const effect = animation.effect;
+								const pseudo = effect instanceof KeyframeEffect ? (effect.pseudoElement ?? "") : "";
+								return `${pseudo}:${animation.animationName}`;
+							})
+							.filter((entry) => entry.includes("spool-probe-")),
+					});
+				},
+				() => swaps.push({ types, animations: ["<skipped>"] }),
+			);
+			return transition;
+		}) as typeof document.startViewTransition;
+	});
+}
+
+const swapCount = (live: Frame) =>
+	live.evaluate(() => (window as unknown as { __spoolSwapTypes: unknown[] }).__spoolSwapTypes.length);
+
+it("styles one direction and one data-transition apart in transitions.css", { timeout: 60_000 }, async () => {
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const project = await serveProject();
+	writeFrame(project.root, "typed-home", typedHome);
+	writeFrame(project.root, "typed-next", typedNext);
+	writeDesignFile(project.root, "shared/transitions.css", typedTransitions);
+
+	const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+	onTestFinished(() => page.close());
+	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=typed-home`);
+	const inner = page.frameLocator("#spool-player");
+	await inner.locator("#to-next").waitFor();
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1");
+	const live = page.frames().find((frame) => frame !== page.mainFrame()) as Frame;
+
+	// the engine has to be able to say the thing at all, or the rest is vacuous
+	expect(await live.evaluate(() => CSS.supports("selector(html:active-view-transition-type(forward))"))).toBe(true);
+	await recordSwapTypes(live);
+
+	await inner.locator("#to-next").click();
+	await inner.locator("#typed-next").waitFor();
+	await expect.poll(() => swapCount(live), { timeout: 20_000 }).toBe(1);
+
+	await inner.locator("#back").click();
+	await inner.locator("#to-next").waitFor();
+	await expect.poll(() => swapCount(live), { timeout: 20_000 }).toBe(2);
+
+	await inner.locator("#to-next-lift").click();
+	await inner.locator("#typed-next").waitFor();
+	await expect.poll(() => swapCount(live), { timeout: 20_000 }).toBe(3);
+
+	expect(
+		await live.evaluate(
+			() =>
+				(window as unknown as { __spoolSwapTypes: { types: string[]; animations: string[] }[] }).__spoolSwapTypes,
+		),
+	).toEqual([
+		{ types: ["forward"], animations: ["::view-transition-new(root):spool-probe-forward"] },
+		// a back walk is not a forward one: the forward-keyed rule never applies
+		{ types: ["back"], animations: ["::view-transition-new(root):spool-probe-back"] },
+		// data-transition rides over the direction, and the narrower rule wins
+		{ types: ["forward", "lift"], animations: ["::view-transition-new(root):spool-probe-lift"] },
+	]);
+});
