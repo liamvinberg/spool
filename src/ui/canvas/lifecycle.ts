@@ -65,6 +65,20 @@ export const CAPTURE_REPLY_TIMEOUT_MS = CAPTURE_WORKER_TIMEOUT_MS + 3000;
  */
 export const CAPTURE_AFTER_READY_MS = 1500;
 /**
+ * How long a frame's picture may stay wrong before the sweep stops waiting out
+ * CAPTURE_AFTER_READY_MS. That wait is right for one write: it buys the
+ * settle a source edit's own reboot deserves. It has no ceiling past that, and
+ * a steady stream of writes reloads the frame on every one of them — a reload
+ * takes the boot's memory with it, so the wait restarts before it ever
+ * finishes, and the cover falls up to tens of seconds behind the file an
+ * agent is still streaming into (#215). Past this cap the sweep stops waiting
+ * for the reboot to settle and takes the shot the moment the borrowed
+ * document reports loaded, mid-arrival warts and all. That photograph may be
+ * a little wrong, but never wrong for longer than this, and the next capture
+ * — settled or not — heals whatever it got wrong.
+ */
+export const CAPTURE_MAX_STALE_MS = 4000;
+/**
  * How long a frame may wait, inside the capture itself, for its fonts to load
  * and its entry animations to finish before it photographs itself.
  *
@@ -147,7 +161,13 @@ export const ERRAND_DEADLINE_MS = 20_000 + CAPTURE_AFTER_READY_MS + CAPTURE_REPL
 export interface LifecycleModel {
 	/** Frames whose picture is wrong — a source edit, a document that ran, a fresh boot. */
 	stale: Set<string>;
-	/** Frames that have run long enough since booting to be worth photographing. */
+	/** When each stale frame's picture first became wrong, for the CAPTURE_MAX_STALE_MS cap (#215). */
+	staleSince: Map<string, number>;
+	/**
+	 * Frames that have run long enough since booting to be worth photographing —
+	 * or overdue enough past CAPTURE_MAX_STALE_MS (#215) that the sweep stops
+	 * waiting to find out.
+	 */
 	arrived: Set<string>;
 	/** Frames borrowed to be photographed, and when the errand began. */
 	errands: Map<string, number>;
@@ -164,6 +184,7 @@ export interface LifecycleModel {
 export function createLifecycleModel(): LifecycleModel {
 	return {
 		stale: new Set(),
+		staleSince: new Map(),
 		arrived: new Set(),
 		errands: new Map(),
 		photographed: new Set(),
@@ -190,6 +211,7 @@ export function noteErrandShot(model: LifecycleModel, frame: string, captured: b
 	model.errands.delete(frame);
 	if (captured) {
 		model.stale.delete(frame);
+		model.staleSince.delete(frame);
 		model.photographed.add(frame);
 		model.tries.delete(frame);
 		return;
@@ -312,8 +334,13 @@ export function isFrameAttended(input: {
 export interface SweepResult {
 	states: Record<string, FrameState>;
 	changed: boolean;
-	/** Borrowed frames that have run long enough to be worth photographing now. */
-	refreshCaptures: string[];
+	/**
+	 * Borrowed frames that have run long enough to be worth photographing now, or
+	 * are overdue enough (#215) that mid-arrival is worth photographing too. An
+	 * overdue capture asks for none of CAPTURE_SETTLE_BUDGET_MS: it has to land
+	 * before the next write retires it.
+	 */
+	refreshCaptures: Array<{ frame: string; overdue: boolean }>;
 }
 
 export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
@@ -343,6 +370,8 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		intent: FrameState | null;
 		/** Its picture is missing or wrong, and it may still ask for one. */
 		debt: boolean;
+		/** Stale long enough that CAPTURE_AFTER_READY_MS is no longer worth waiting out (#215). */
+		overdue: boolean;
 	}
 	const entries: Entry[] = [];
 	const candidates: string[] = [];
@@ -375,18 +404,6 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 			intent = null;
 		}
 
-		// A still is only worth what the frame was doing when it was taken. A
-		// frame that booted a moment ago is still arriving, and one that never
-		// ran never arrived at all — both photograph as an absence, and the
-		// canvas would then show that absence in the frame's own place. Having
-		// run long enough once is remembered, and a reload takes the memory with
-		// the boot.
-		const readyAt = ready.get(name);
-		if (readyAt === undefined) model.arrived.delete(name);
-		else if (running(current, frame.kind) && now - readyAt >= CAPTURE_AFTER_READY_MS && !model.arrived.has(name)) {
-			model.arrived.add(name);
-		}
-
 		// A frame you were inside ran, and what it showed while it ran is not
 		// what its still records — leaving it is a change like any other.
 		// Zooming past a frame is not using it, and a still of a freshly booted
@@ -394,6 +411,36 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		if (current === "live" && intent !== "live" && frame.kind !== "term" && !wasModelLive.has(name)) {
 			markPictureWrong(model, name);
 			model.wentInside.delete(name);
+		}
+
+		// The clock on how long this frame's picture has been wrong, not on how
+		// long it has lacked a cover outright: a cold-boot frame with no cover yet
+		// gets the settle its first still is owed, same as always. Only a picture
+		// that was once right and went wrong starts owing a deadline (#215).
+		if (model.stale.has(name)) {
+			if (!model.staleSince.has(name)) model.staleSince.set(name, now);
+		} else {
+			model.staleSince.delete(name);
+		}
+		const staleSince = model.staleSince.get(name);
+		const overdue = staleSince !== undefined && now - staleSince >= CAPTURE_MAX_STALE_MS;
+
+		// A still is only worth what the frame was doing when it was taken. A
+		// frame that booted a moment ago is still arriving, and one that never
+		// ran never arrived at all — both photograph as an absence, and the
+		// canvas would then show that absence in the frame's own place. Having
+		// run long enough once is remembered, and a reload takes the memory with
+		// the boot. Overdue skips the wait outright: a mid-arrival photograph
+		// beats one that is tens of seconds behind the file (#215), and the next
+		// capture heals whatever this one gets wrong.
+		const readyAt = ready.get(name);
+		if (readyAt === undefined) model.arrived.delete(name);
+		else if (
+			running(current, frame.kind) &&
+			!model.arrived.has(name) &&
+			(now - readyAt >= CAPTURE_AFTER_READY_MS || overdue)
+		) {
+			model.arrived.add(name);
 		}
 
 		// A frame with no picture, or the wrong one, is worth a document for as
@@ -418,7 +465,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 			if (readyAt === undefined) awaited = true;
 		}
 
-		entries.push({ frame, current, intent, debt });
+		entries.push({ frame, current, intent, debt, overdue });
 		if (intent === null && debt && !model.errands.has(name)) candidates.push(name);
 	}
 
@@ -448,15 +495,16 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	}
 
 	const next: Record<string, FrameState> = {};
-	const refreshCaptures: string[] = [];
+	const refreshCaptures: Array<{ frame: string; overdue: boolean }> = [];
 	let changed = false;
-	for (const { frame, current, intent, debt } of entries) {
+	for (const { frame, current, intent, debt, overdue } of entries) {
 		const name = frame.name;
 		const target: FrameState = intent ?? (model.errands.has(name) ? "refreshing" : "picture");
 		// The photograph is the errand's whole point, taken the moment the
-		// borrowed document has run long enough to be worth one.
+		// borrowed document has run long enough to be worth one — or, past
+		// CAPTURE_MAX_STALE_MS, the moment it merely holds one (#215).
 		if (intent === null && target === "refreshing" && debt && model.arrived.has(name) && !capturing.has(name)) {
-			refreshCaptures.push(name);
+			refreshCaptures.push({ frame: name, overdue });
 		}
 		next[name] = target;
 		if (target !== current) changed = true;
@@ -478,6 +526,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	// owing you a new one.
 	const carried = input.projection ?? alive;
 	for (const name of [...model.stale]) if (!carried.has(name)) model.stale.delete(name);
+	for (const name of [...model.staleSince.keys()]) if (!carried.has(name)) model.staleSince.delete(name);
 	for (const name of [...model.photographed]) if (!carried.has(name)) model.photographed.delete(name);
 	for (const name of [...model.tries.keys()]) if (!carried.has(name)) model.tries.delete(name);
 
@@ -876,8 +925,12 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			pictured: picturedRef.current,
 			projection: new Set(allFramesRef.current.map((frame) => frame.name)),
 		});
-		for (const frame of result.refreshCaptures) {
-			void requestCapture(frame).then((image) => noteErrandShot(model.current, frame, image !== undefined));
+		for (const { frame, overdue } of result.refreshCaptures) {
+			// Overdue skips the settle budget outright: it has to land before the
+			// next write retires it, not draw out its own picture first (#215).
+			void requestCapture(frame, LIVE_MIN_CSS_PX, overdue ? 0 : CAPTURE_SETTLE_BUDGET_MS).then((image) =>
+				noteErrandShot(model.current, frame, image !== undefined),
+			);
 		}
 		if (result.changed) setStates(result.states);
 		// against the states this sweep just decided, not last render's: a frame

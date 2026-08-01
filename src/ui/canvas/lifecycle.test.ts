@@ -3,6 +3,7 @@ import type { ProjectedFrame } from "../api";
 import type { FrameState, SweepInput } from "./lifecycle";
 import {
 	CAPTURE_AFTER_READY_MS,
+	CAPTURE_MAX_STALE_MS,
 	createLifecycleModel,
 	ERRAND_DEADLINE_MS,
 	ERRANDS_IN_FLIGHT,
@@ -122,7 +123,7 @@ describe("its picture is missing", () => {
 
 		// the sweep after the mount finds it arrived and asks for the picture
 		const shot = s.sweep(frames, uncovered);
-		expect(shot.refreshCaptures).toEqual(["a"]);
+		expect(shot.refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
 
 		// the shot lands; the frame goes straight back to being a picture, even
 		// though the cover is still on its way to disk
@@ -134,7 +135,7 @@ describe("its picture is missing", () => {
 		const frames = [frame("a", 450, 450)];
 		const s = sweeper();
 		s.sweep(frames, uncovered);
-		expect(s.sweep(frames, uncovered).refreshCaptures).toEqual(["a"]);
+		expect(s.sweep(frames, uncovered).refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
 
 		for (let i = 0; i < 3; i++) {
 			const held = s.sweep(frames, { ...uncovered, capturing: new Set(["a"]) });
@@ -148,7 +149,7 @@ describe("its picture is missing", () => {
 		const s = sweeper();
 		for (let tries = 0; tries < PICTURE_TRIES; tries++) {
 			s.sweep(frames, uncovered);
-			expect(s.sweep(frames, uncovered).refreshCaptures).toEqual(["a"]);
+			expect(s.sweep(frames, uncovered).refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
 			noteErrandShot(s.model, "a", false);
 		}
 
@@ -200,7 +201,7 @@ describe("its picture is wrong", () => {
 
 		s.model.stale.add("a");
 		expect(s.sweep(frames).states.a).toBe("refreshing");
-		expect(s.sweep(frames).refreshCaptures).toEqual(["a"]);
+		expect(s.sweep(frames).refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
 
 		noteErrandShot(s.model, "a", true);
 		expect(s.sweep(frames).states.a).toBe("picture");
@@ -217,7 +218,7 @@ describe("its picture is wrong", () => {
 
 		for (let tries = 0; tries < PICTURE_TRIES; tries++) {
 			expect(s.sweep(frames).states.a).toBe("refreshing");
-			expect(s.sweep(frames).refreshCaptures).toEqual(["a"]);
+			expect(s.sweep(frames).refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
 			noteErrandShot(s.model, "a", false);
 		}
 
@@ -229,7 +230,7 @@ describe("its picture is wrong", () => {
 		const s = sweeper();
 		s.model.stale.add("a");
 		s.sweep(frames);
-		expect(s.sweep(frames).refreshCaptures).toEqual(["a"]);
+		expect(s.sweep(frames).refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
 
 		noteErrandShot(s.model, "a", true);
 		for (let i = 0; i < 5; i++) expect(s.sweep(frames).states.a).toBe("picture");
@@ -252,6 +253,70 @@ describe("its picture is wrong", () => {
 
 		// and if it later goes missing, the frame is owed one again
 		expect(s.sweep(frames, uncovered).states.a).toBe("refreshing");
+	});
+});
+
+describe("a picture staled by a steady stream of writes (#215)", () => {
+	it("never captures before the cap while every reboot resets the ready wait, then captures overdue past it", () => {
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		const uncovered = { hasCover: () => false };
+		s.model.stale.add("a");
+
+		// The document keeps rebooting: readyAt stays under CAPTURE_AFTER_READY_MS
+		// old on every sweep, exactly what a steady stream of writes does to the
+		// frame's own arrival clock. The first sweep only borrows the errand — a
+		// state that was not already running cannot be timed as arrived — so it is
+		// excluded from the loop below same as the other "borrows, then" cases.
+		s.sweep(frames, { ...uncovered, ready: new Map([["a", s.clock() + SWEEP_MS - 100]]) });
+
+		while (s.clock() < CAPTURE_MAX_STALE_MS) {
+			const nextNow = s.clock() + SWEEP_MS;
+			const result = s.sweep(frames, { ...uncovered, ready: new Map([["a", nextNow - 100]]) });
+			expect(result.refreshCaptures).toEqual([]);
+		}
+
+		// staleSince is old enough now: the sweep stops waiting for a reboot that
+		// never finishes settling and takes the shot mid-arrival instead.
+		const nextNow = s.clock() + SWEEP_MS;
+		const overdue = s.sweep(frames, { ...uncovered, ready: new Map([["a", nextNow - 100]]) });
+		expect(overdue.refreshCaptures).toEqual([{ frame: "a", overdue: true }]);
+	});
+
+	it("clears staleSince when a capture lands; the next staling restarts the clock", () => {
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		const uncovered = { hasCover: () => false };
+		s.model.stale.add("a");
+		s.sweep(frames, uncovered);
+		const firstStaleSince = s.model.staleSince.get("a");
+		expect(firstStaleSince).toBe(s.clock());
+
+		noteErrandShot(s.model, "a", true);
+		expect(s.model.stale.has("a")).toBe(false);
+		expect(s.model.staleSince.has("a")).toBe(false);
+
+		// staled again, later: the clock starts over, not from the first staling
+		s.sweep(frames, uncovered);
+		s.model.stale.add("a");
+		s.sweep(frames, uncovered);
+		expect(s.model.staleSince.get("a")).toBe(s.clock());
+		expect(s.model.staleSince.get("a")).not.toBe(firstStaleSince);
+	});
+
+	it("never treats a cold frame with no cover as overdue, however long it waits", () => {
+		// Cover absence alone is not staleness: a frame that never had a picture
+		// keeps the patient cold-boot path, and its first still still gets the
+		// full CAPTURE_AFTER_READY_MS settle.
+		const frames = [frame("a", 450, 450)];
+		const s = sweeper();
+		const uncovered = { hasCover: () => false };
+
+		for (let sweeps = 0; sweeps < 20; sweeps++) {
+			const result = s.sweep(frames, uncovered);
+			expect(result.refreshCaptures.some((capture) => capture.overdue)).toBe(false);
+		}
+		expect(s.model.staleSince.size).toBe(0);
 	});
 });
 
@@ -418,7 +483,7 @@ describe("what is worth photographing", () => {
 		while (s.clock() + SWEEP_MS - bootedAt < CAPTURE_AFTER_READY_MS) {
 			expect(s.sweep(frames, booting).refreshCaptures).toEqual([]);
 		}
-		expect(s.sweep(frames, booting).refreshCaptures).toEqual(["a"]);
+		expect(s.sweep(frames, booting).refreshCaptures).toEqual([{ frame: "a", overdue: false }]);
 	});
 
 	it("never photographs a frame that never reported loaded", () => {
