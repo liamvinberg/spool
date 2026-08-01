@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentLimit } from "../../daemon/agent-events";
@@ -1330,17 +1330,41 @@ function gapBefore(previous: AgentEntry | undefined, entry: AgentEntry): number 
 	return 14;
 }
 
-function Entry({
-	entry,
-	elapsed,
-	jump,
-	onAnswer,
-}: {
+interface EntryDrawn {
 	entry: AgentEntry;
 	elapsed: number;
 	jump: FrameJump;
 	onAnswer: (request: string, reply: AgentReply) => void;
-}) {
+}
+
+/**
+ * Whether this entry would draw itself the same way twice, which is what lets it sit out
+ * a render.
+ *
+ * The clock is handed to every entry and read by two of them, so comparing it as an
+ * ordinary prop would re-render the whole log on every step of the pace — which is the
+ * cost this exists to remove. What each of the two reads is a function of the clock
+ * rather than the clock itself, so the question is asked in the terms they draw in: how
+ * much of a message is on screen, and what the digit under a request still out says. Both
+ * settle, and once they have, the entry is finished with time.
+ *
+ * Exported because it is the whole rule and a rule this quiet has to be readable
+ * on its own.
+ */
+export function sameEntry(before: EntryDrawn, after: EntryDrawn): boolean {
+	if (before.entry !== after.entry || before.jump !== after.jump || before.onAnswer !== after.onAnswer) return false;
+	if (before.elapsed === after.elapsed) return true;
+	const entry = after.entry;
+	if (entry.kind === "prose") return shownBy(entry, before.elapsed) === shownBy(entry, after.elapsed);
+	// a receipt with a total on it is a record rather than a clock, and one that is not
+	// running has nothing left to count
+	if (entry.kind === "wait" && entry.ms === null && entry.state === "running") {
+		return duration(before.elapsed - entry.at) === duration(after.elapsed - entry.at);
+	}
+	return true;
+}
+
+const Entry = memo(function Entry({ entry, elapsed, jump, onAnswer }: EntryDrawn) {
 	if (entry.kind === "user") {
 		/*
 		 * The words, and under them what was sent with them (#116).
@@ -1396,7 +1420,7 @@ function Entry({
 	if (entry.kind === "wait") return <Wait entry={entry} elapsed={elapsed} />;
 	if (entry.kind === "ask") return <Ask entry={entry} onAnswer={onAnswer} />;
 	return <Prose entry={entry} elapsed={elapsed} />;
-}
+}, sameEntry);
 
 /* ---------- one tool call, one line ----------
  * A mark, a verb and a subject, and the payload the projection kept separate stays
