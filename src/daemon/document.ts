@@ -386,6 +386,23 @@ const canvasShimJs = `(() => {
 	const nativeCancelRaf = window.cancelAnimationFrame.bind(window);
 
 	/**
+	 * A self-capture reads a canvas after frame code's own task has finished
+	 * (#174): whatever WebGL drew is already gone by then, because the spec has
+	 * the browser clear the drawing buffer once it is done compositing, unless
+	 * the context was created with preserveDrawingBuffer. A 2D context has no
+	 * such step, so only webgl/webgl2 need the override — and it overrides a
+	 * frame author's own \`false\` too, since an accurate cover is the point, not
+	 * a setting to negotiate with.
+	 */
+	const nativeGetContext = HTMLCanvasElement.prototype.getContext;
+	HTMLCanvasElement.prototype.getContext = function getContext(type, attributes) {
+		if (type === "webgl" || type === "webgl2" || type === "experimental-webgl") {
+			attributes = { ...attributes, preserveDrawingBuffer: true };
+		}
+		return Reflect.apply(nativeGetContext, this, [type, attributes]);
+	};
+
+	/**
 	 * The freeze (#171, #172). A live frame holds its own animation rather than
 	 * paying for frames nobody is reading — while the camera moves, where a 1.5s
 	 * pan over eight animated frames spent 265 ms of it inside their rAF loops,
