@@ -671,6 +671,32 @@ describe("a readable frame", () => {
 		expect(s.sweep(frames, at(1)).states).toEqual({ a: "picture" });
 	});
 
+	/** a phone: 390 across, 844 down, and the shape most frames are (#223) */
+	const portrait = (name: string): ProjectedFrame => ({ ...frame(name, 0, 0), w: 390, h: 844 });
+
+	it("runs a portrait frame drawn big enough down, though it is narrow across", () => {
+		const s = sweeper();
+
+		// 390 across at 100% never reached a gate keyed on width, so a phone was a
+		// photograph at the zoom you read one at
+		expect(s.sweep([portrait("a")], at(1)).states).toEqual({ a: "live" });
+	});
+
+	it("leaves a portrait frame whose longer edge is too small as its picture", () => {
+		const s = sweeper();
+
+		// 844 * 0.4 is 338: neither edge is drawn big enough to be worth a document
+		expect(s.sweep([portrait("a")], at(0.4)).states).toEqual({ a: "picture" });
+	});
+
+	it("keys a landscape frame on the edge it always did", () => {
+		const wide = (name: string): ProjectedFrame => ({ ...frame(name, 0, 0), w: 800, h: 200 });
+		const s = sweeper();
+
+		expect(s.sweep([wide("a")], at(0.4)).states).toEqual({ a: "picture" });
+		expect(s.sweep([wide("a")], at(0.5)).states).toEqual({ a: "live" });
+	});
+
 	it("leaves a frame far outside the viewport as its picture, however big it draws", () => {
 		const frames = [frame("near", 0, 0), frame("far", 100_000, 0)];
 		const s = sweeper();
