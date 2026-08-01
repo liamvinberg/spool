@@ -663,15 +663,19 @@ export function ProjectCanvas({
 			}
 			// arrows arrive when they arrive (#109): the canvas opens on frames and
 			// cameras, and nothing on screen waits for the link graph
-			if (alive) {
-				void refetchFlows();
-				await refetchFrames();
-			}
+			if (!alive) return;
+			void refetchFlows();
+			await refetchFrames();
 			// dark targets get one render pass per canvas open (#34): frames whose
-			// read is already fresh cost nothing, so this is a no-op on reopen
-			if (alive && (await resolveFlows(project))?.read !== 0) {
-				if (alive) await refetchFlows();
-			}
+			// read is already fresh cost nothing, so this is a no-op on reopen. The
+			// boot does not wait on it — a first read renders every frame that
+			// declares one, in a browser this may have to start, and the arrows it
+			// finds redraw whenever they land.
+			if (!alive) return;
+			void (async () => {
+				const resolved = await resolveFlows(project);
+				if (alive && resolved?.read !== 0) await refetchFlows();
+			})();
 		})();
 		return () => {
 			alive = false;
