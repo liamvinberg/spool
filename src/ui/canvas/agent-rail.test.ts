@@ -1098,6 +1098,7 @@ describe("what an entry redraws for", () => {
 		shot: null,
 		foreign: null,
 		parent: null,
+		step: null,
 		delegated: [],
 	};
 	const arriving: AgentEntry = {
