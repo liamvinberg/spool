@@ -213,6 +213,14 @@ describe("skill", () => {
 		expect(flows).toContain("pass a callback");
 	});
 
+	it("names the selector that actually discriminates a swap's direction and type", () => {
+		const flows = skillText("flows");
+		expect(flows).toContain("View Transitions types, not root attributes");
+		expect(flows).toContain(
+			"html:active-view-transition-type(forward)::view-transition-old(root) { animation: 0.2s slide-out; }",
+		);
+	});
+
 	it("keeps ui.state writes out of a render, one-shot flags included", () => {
 		const flows = skillText("flows");
 		expect(flows).toContain("Writes belong in handlers and effects, never in a render");
