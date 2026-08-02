@@ -5,8 +5,9 @@ import type { Camera, CanvasState, ProjectedFrame } from "../api";
  * The pure page logic (#39, #231): which page a frame belongs to, which page
  * the canvas shows, and where each page's camera rests. A page is its path
  * under frames/, and the root page is the frames directory itself, spelled ""
- * — it is permanent, listed first, and keeps the original camera slot in the
- * state file so flat projects' state reads unchanged.
+ * — it is permanent, it has no row of its own in the rail, and it keeps the
+ * original camera slot in the state file so flat projects' state reads
+ * unchanged.
  */
 
 /** The page a projected frame sits on — the root page when unattributed. */

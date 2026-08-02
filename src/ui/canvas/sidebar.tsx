@@ -60,7 +60,7 @@ import { COLLAPSED_BELOW, MAX_WIDTH, STRIP_WIDTH, settledWidth, useRailWidth } f
 import { type MenuTarget, RailMenu, type RailMenuState } from "./sidebar-menu";
 
 /**
- * The pages rail as a file explorer (#229, #231).
+ * The pages rail as a file explorer (#229, #231, #232).
  *
  * A page is a folder under `design/frames/` and a frame is a folder with one
  * entry file, so this rail was always a view of the disk — it just could not do
@@ -72,6 +72,11 @@ import { type MenuTarget, RailMenu, type RailMenuState } from "./sidebar-menu";
  * Pages hold pages, so a row's depth is a fact about its own path and a drop is
  * two questions rather than one: the pointer's y says which gap, and its
  * sideways travel says which of the depths that gap could mean.
+ *
+ * The root page is the frames directory itself rather than a folder inside it,
+ * so it has no row of its own: the list is the root. Its frames are loose rows
+ * at the top level beside the page rows, and they reorder, move and take drops
+ * like any others — a flat project's rail is just its frames.
  *
  * Two things it still does not do, and both are laws rather than gaps. It never
  * writes frame source: rename and move are folder operations, and a `data-go`
@@ -197,7 +202,7 @@ export function CanvasSidebar({
 	litPage = null,
 }: {
 	project: string;
-	/** Every named page's path, sorted; the root page is implied and listed first. */
+	/** Every named page's path, sorted; the root page is implied and has no row. */
 	pages: readonly string[];
 	activePage: string;
 	/** Every projected frame; the canvas itself mounts only the active page. */
@@ -255,11 +260,12 @@ export function CanvasSidebar({
 
 	/** Each page's own pages, arranged; the root page's are the top level. */
 	const pageTree = useMemo(() => mergePageTree(order.pages, pages), [order.pages, pages]);
-	const orderedPages = useMemo(() => [ROOT_PAGE, ...flatPages(pageTree)], [pageTree]);
+	/** Every named page, in rail order. The root page is not one of them: it has no row. */
+	const orderedPages = useMemo(() => flatPages(pageTree), [pageTree]);
 
 	const framesByPage = useMemo(() => {
 		const byPage = new Map<string, readonly RailFrame[]>();
-		for (const page of orderedPages) {
+		for (const page of [ROOT_PAGE, ...orderedPages]) {
 			const here = framesOnPage(frames, page);
 			const kinds = new Map(here.map((frame) => [frame.name, frame.kind]));
 			byPage.set(
@@ -388,11 +394,10 @@ export function CanvasSidebar({
 	useEffect(() => {
 		if (selected === shown.current) return;
 		shown.current = selected;
-		// every page above it too: a row inside a shut page is a row nobody can see
+		// every page above it too: a row inside a shut page is a row nobody can see,
+		// and a frame on the root page has no page above it to open
 		const holding = new Set(
-			frames
-				.filter((frame) => selected.includes(frame.name))
-				.flatMap((frame) => [ROOT_PAGE, ...pageChain(pageOf(frame))]),
+			frames.filter((frame) => selected.includes(frame.name)).flatMap((frame) => pageChain(pageOf(frame))),
 		);
 		if (holding.size === 0) return;
 		setExpanded((was) => ([...holding].every((page) => was.has(page)) ? was : new Set([...was, ...holding])));
@@ -443,9 +448,8 @@ export function CanvasSidebar({
 	/* ── renaming ────────────────────────────────────────────────────── */
 
 	const beginRename = useCallback((row: RailRow | null) => {
-		// the root page is the frames directory itself, and a page still being
-		// named is already in the only state this puts a row into
-		if (row === null || row.kind === "born" || (row.kind === "page" && row.page === ROOT_PAGE)) return;
+		// a page still being named is already in the only state this puts a row into
+		if (row === null || row.kind === "born") return;
 		// a page is named by its own folder, so what is typed over is that name and
 		// the path around it stays where it is
 		setRenaming({
@@ -466,7 +470,7 @@ export function CanvasSidebar({
 	const newPage = useCallback((parent: string = ROOT_PAGE) => {
 		setBorn(parent);
 		setMenu(null);
-		setExpanded((was) => new Set([...was, ...pageChain(parent), ROOT_PAGE]));
+		setExpanded((was) => new Set([...was, ...pageChain(parent)]));
 		setRenaming({ key: "born", draft: "", born: parent, error: null, busy: false });
 	}, []);
 
@@ -651,7 +655,6 @@ export function CanvasSidebar({
 	const trash = useCallback(() => {
 		const row = now.current.cursorRow;
 		if (row?.kind === "page") {
-			if (row.page === ROOT_PAGE) return;
 			// the folder is what moves, so every frame inside it goes — the ones on
 			// its own pages included
 			onTrashPage(row.page, framesUnder(row.page));
@@ -665,7 +668,6 @@ export function CanvasSidebar({
 	const duplicate = useCallback(async () => {
 		const row = now.current.cursorRow;
 		if (row?.kind === "page") {
-			if (row.page === ROOT_PAGE) return;
 			const done = await duplicatePage(project, row.page);
 			if (done.kind === "refused") {
 				refuted();
@@ -712,7 +714,7 @@ export function CanvasSidebar({
 				refuted();
 				return;
 			}
-			setExpanded((was) => new Set([...was, ...pageChain(target), ROOT_PAGE]));
+			setExpanded((was) => new Set([...was, ...pageChain(target)]));
 			landCopies(done.copies, false);
 		},
 		[project, landCopies, refuted],
@@ -1008,9 +1010,8 @@ export function CanvasSidebar({
 		// up only while the rail holds focus
 		listRef.current?.focus({ preventScroll: true });
 		setCursor(rowKey(row));
-		// the root page is permanent and a page still being named has no folder:
-		// neither is a thing to pick up
-		if (row.kind === "born" || (row.kind === "page" && row.page === ROOT_PAGE)) return;
+		// a page still being named has no folder, so there is nothing to pick up
+		if (row.kind === "born") return;
 		live.current = {
 			pointerId: event.pointerId,
 			kind: row.kind,
@@ -1231,7 +1232,10 @@ export function CanvasSidebar({
 					<div className="flex h-11 shrink-0 items-center justify-between border-border border-b pr-2 pl-3.5">
 						<div className="flex items-baseline gap-2">
 							<h1 className="font-semibold text-base leading-base">Pages</h1>
-							<span className="font-mono text-muted text-xs leading-xs">{orderedPages.length}</span>
+							{/* a count of nothing is a number saying nothing: zero reads as absence */}
+							{orderedPages.length === 0 ? null : (
+								<span className="font-mono text-muted text-xs leading-xs">{orderedPages.length}</span>
+							)}
 						</div>
 						<div className="flex items-center">
 							<button
@@ -1617,14 +1621,21 @@ function TreeRow({
 					</>
 				) : (
 					<>
-						<span
-							className="absolute w-px bg-border-raised"
-							style={{ left: guideX(row.depth), top: 0, height: row.last ? row.height - 6 : row.height }}
-						/>
-						<span
-							className="absolute h-px w-2.5 bg-border-raised"
-							style={{ left: guideX(row.depth), top: row.height / 2 }}
-						/>
+						{/* the spine hangs off the row of the page holding the frame, and the
+						    root page has no row: its frames stand at the margin with nothing
+						    drawn around them */}
+						{row.page === ROOT_PAGE ? null : (
+							<>
+								<span
+									className="absolute w-px bg-border-raised"
+									style={{ left: guideX(row.depth), top: 0, height: row.last ? row.height - 6 : row.height }}
+								/>
+								<span
+									className="absolute h-px w-2.5 bg-border-raised"
+									style={{ left: guideX(row.depth), top: row.height / 2 }}
+								/>
+							</>
+						)}
 						{rename === null ? (
 							<button
 								type="button"

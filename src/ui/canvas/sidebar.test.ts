@@ -82,9 +82,10 @@ describe("page tree", () => {
 		const onDoubleClickFrame = vi.fn();
 		const { host } = await render({ onSwitchPage, onSelectFrame, onDoubleClickFrame });
 
-		expect(host.textContent).toContain("Pages2");
+		expect(host.textContent).toContain("Pages1");
 		expect(host.textContent).toContain("folder switches page");
-		expect(host.querySelector('button[aria-label="Expand root"]')).not.toBeNull();
+		// the root page has no row, so its own frame is already on the list
+		expect(host.querySelector('button[aria-label="home frame"]')).not.toBeNull();
 		expect(host.querySelector('button[aria-label="Expand shop"]')).not.toBeNull();
 		expect(host.querySelector('button[aria-label="checkout frame"]')).toBeNull();
 
@@ -115,7 +116,7 @@ describe("page tree", () => {
 		expect(onDoubleClickFrame).toHaveBeenCalledWith("checkout");
 	});
 
-	it("collapses to a page strip that can switch every page", async () => {
+	it("collapses to a strip of the pages, which the root page is not one of", async () => {
 		const onSwitchPage = vi.fn();
 		const { host } = await render({ onSwitchPage });
 
@@ -123,13 +124,13 @@ describe("page tree", () => {
 			host.querySelector<HTMLButtonElement>('button[aria-label="Collapse pages"]')?.click();
 		});
 		expect(host.querySelector('button[aria-label="Expand pages"]')).not.toBeNull();
-		expect(host.querySelector('button[aria-label="root page"]')).not.toBeNull();
+		expect(host.querySelector('button[aria-label="root page"]')).toBeNull();
 		expect(host.querySelector('button[aria-label="shop page"]')).not.toBeNull();
 
 		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="root page"]')?.focus();
+			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.focus();
 		});
-		expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe("root");
+		expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe("shop");
 
 		await act(async () => {
 			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
@@ -183,9 +184,6 @@ describe("the stored order", () => {
 			pages: ["shop", "admin"],
 			frames: [...frames, { name: "shell", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 }],
 		});
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="Expand root"]')?.click();
-		});
 		const tree = host.querySelector('[aria-label="Pages tree"]');
 		const listed = [
 			...(tree?.querySelectorAll('button[aria-label$=" frame"], button[aria-label$=" page"]') ?? []),
@@ -193,7 +191,7 @@ describe("the stored order", () => {
 		// the stored root list wins over the projection's alphabetical order, and
 		// the page the file never mentioned takes its alphabetical spot rather than
 		// piling up at the bottom of a list somebody arranged
-		expect(listed).toEqual(["root page", "shell frame", "home frame", "admin page", "shop page"]);
+		expect(listed).toEqual(["shell frame", "home frame", "admin page", "shop page"]);
 	});
 
 	it("writes the order the moment a page is dropped, and never touches geometry", async () => {
@@ -225,7 +223,7 @@ describe("the stored order", () => {
 		expect(framesListed(host)).toEqual(["cart frame", "checkout frame"]);
 
 		// drag checkout above cart
-		await dragRow(host, 'button[aria-label="checkout frame"]', 108, 76);
+		await dragRow(host, 'button[aria-label="checkout frame"]', 76, 44);
 		expect(framesListed(host)).toEqual(["checkout frame", "cart frame"]);
 		expect(lastOrder()?.frames?.shop).toEqual(["checkout", "cart"]);
 
@@ -251,9 +249,6 @@ describe("renaming in place", () => {
 	it("opens on the selected row, commits on blur, and keeps the frame where it was", async () => {
 		const onRefresh = vi.fn();
 		const { host } = await render({ onRefresh });
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="Expand root"]')?.click();
-		});
 		const row = host.querySelector<HTMLElement>('button[aria-label="home frame"]')?.parentElement;
 		await act(async () => {
 			row?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 4 }));
@@ -278,9 +273,6 @@ describe("renaming in place", () => {
 	it("stays in the input with a mono reason when the name is claimed", async () => {
 		stubDaemon({ "/frames/rename": { status: 409 } });
 		const { host } = await render();
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="Expand root"]')?.click();
-		});
 		const row = host.querySelector<HTMLElement>('button[aria-label="home frame"]')?.parentElement;
 		await act(async () => {
 			row?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 5 }));
@@ -312,20 +304,20 @@ describe("renaming in place", () => {
 		});
 		expect(host.querySelector('input[aria-label="New page name"]')).toBeNull();
 		expect(asked.some((call) => call.url.endsWith("/pages/create"))).toBe(false);
-		expect(host.textContent).toContain("Pages2");
+		expect(host.textContent).toContain("Pages1");
 	});
 });
 
 describe("the row menu", () => {
 	it("offers the verbs of the kind it was opened on, and no New frame anywhere", async () => {
 		const { host } = await render();
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="Expand root"]')?.click();
-		});
 
 		const pageRow = host.querySelector<HTMLElement>('button[aria-label="shop page"]')?.parentElement;
 		await act(async () => pageRow?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
 		expect(labelsOf()).toEqual(["New page", "Rename", "Duplicate", "Paste", "Move to Trash"]);
+		// every page row is a folder somebody made, so no page verb is dead on one:
+		// the list with dead items in it was the root page's, and it has no row
+		expect(deadItems()).toEqual(["Paste"]);
 
 		await act(async () => press("Escape"));
 		expect(document.body.querySelector('[role="menu"]')).toBeNull();
@@ -350,23 +342,10 @@ describe("the row menu", () => {
 		expect(labelsOf().some((label) => label?.includes("frame"))).toBe(false);
 	});
 
-	it("keeps the permanent root page's own verbs dead rather than missing", async () => {
-		const { host } = await render();
-		const rootRow = host.querySelector<HTMLElement>('button[aria-label="root page"]')?.parentElement;
-		await act(async () => rootRow?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
-		const disabled = [...document.body.querySelectorAll('[role="menuitem"]')]
-			.filter((item) => item.hasAttribute("disabled"))
-			.map((item) => item.querySelector("span")?.textContent);
-		expect(disabled).toEqual(["Rename", "Duplicate", "Paste", "Move to Trash"]);
-	});
-
 	it("reveals and opens the frame it was opened on", async () => {
 		const onRevealFrame = vi.fn();
 		const onOpenEditor = vi.fn();
 		const { host } = await render({ onRevealFrame, onOpenEditor });
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="Expand root"]')?.click();
-		});
 		const frameRow = host.querySelector<HTMLElement>('button[aria-label="home frame"]')?.parentElement;
 		await act(async () =>
 			frameRow?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
@@ -396,14 +375,12 @@ describe("the sidebar scope", () => {
 		await act(async () => press("Backspace"));
 		expect(onTrashFrames).toHaveBeenCalledWith(["home"]);
 
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="Expand root"]')?.click();
-		});
-		focusList(host);
-		await act(async () => press("ArrowDown"));
-		expect(onSelectFrame).not.toHaveBeenCalled(); // the first row is the root page
+		// the first row is a frame on the root page, so the first press lands on it
 		await act(async () => press("ArrowDown"));
 		expect(onSelectFrame).toHaveBeenCalledWith("home", { shift: false, toggle: false });
+		// and the next is the shop folder, which travelling never presses
+		await act(async () => press("ArrowDown"));
+		expect(onSelectFrame).toHaveBeenCalledTimes(1);
 	});
 
 	it("takes a whole page to the Trash as one entry", async () => {
@@ -453,9 +430,6 @@ describe("the sidebar scope", () => {
 	it("walks the rows by typing a name", async () => {
 		const onSelectFrame = vi.fn();
 		const { host } = await render({ onSelectFrame });
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="Expand root"]')?.click();
-		});
 		const list = host.querySelector<HTMLElement>('[aria-label="Pages tree"]');
 		list?.focus();
 		await act(async () =>
@@ -488,14 +462,6 @@ describe("the sidebar scope", () => {
  * the runner the rail hands out, which is the whole seam.
  */
 describe("the one undo stack", () => {
-	/** What was recorded, as the rail's own runner takes it — and an assertion in itself. */
-	function railEntry(entry: HistoryEntry | undefined): RailEntry {
-		if (entry === undefined || entry.kind === "geometry" || entry.kind === "mint") {
-			throw new Error(`not an entry this rail runs: ${entry?.kind ?? "nothing recorded"}`);
-		}
-		return entry;
-	}
-
 	const shopFrames = [
 		{ name: "cart", page: "shop", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
 		{ name: "checkout", page: "shop", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
@@ -509,7 +475,7 @@ describe("the one undo stack", () => {
 			host.querySelector<HTMLButtonElement>('button[aria-label="Expand shop"]')?.click();
 		});
 
-		await dragRow(host, 'button[aria-label="checkout frame"]', 108, 76);
+		await dragRow(host, 'button[aria-label="checkout frame"]', 76, 44);
 		expect(framesListed(host)).toEqual(["checkout frame", "cart frame"]);
 		expect(kept).toEqual([
 			{
@@ -529,12 +495,10 @@ describe("the one undo stack", () => {
 		const kept: HistoryEntry[] = [];
 		const run: { current: RunEntry | null } = { current: null };
 		const { host } = await render({ onRecord: (e) => kept.push(e), run });
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="Expand root"]')?.click();
-		});
 
-		// onto the middle band of the shop row, which is how a frame changes page
-		await dragRow(host, 'button[aria-label="home frame"]', 40, 84);
+		// out of the loose block and onto the middle band of the shop row, which is
+		// how a frame changes page
+		await dragRow(host, 'button[aria-label="home frame"]', 20, 52);
 		expect(asked.find((call) => call.url.endsWith("/frames/move"))?.body).toEqual({ frames: ["home"], page: "shop" });
 		expect(kept).toEqual([
 			{
@@ -613,25 +577,17 @@ describe("pages inside pages", () => {
 		{ name: "agent-chat", page: "explorations/chat", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
 	];
 
-	/** every page row on screen, by the name it draws, in list order */
-	function pagesListed(host: HTMLElement): Array<string | null> {
-		const tree = host.querySelector('[aria-label="Pages tree"]');
-		return [...(tree?.querySelectorAll('button[aria-label$=" page"]') ?? [])].map((node) =>
-			node.getAttribute("aria-label"),
-		);
-	}
-
 	it("draws a page inside a page by its own name, one step further in", async () => {
 		const { host } = await render({ pages: deepPages, frames: deepFrames });
 
 		// a shut page keeps its own pages off the list, exactly as it does its frames
-		expect(pagesListed(host)).toEqual(["root page", "application page", "explorations page"]);
+		expect(pagesListed(host)).toEqual(["application page", "explorations page"]);
 
 		await act(async () => {
 			host.querySelector<HTMLButtonElement>('button[aria-label="Expand explorations"]')?.click();
 		});
 
-		expect(pagesListed(host)).toEqual(["root page", "application page", "explorations page", "chat page"]);
+		expect(pagesListed(host)).toEqual(["application page", "explorations page", "chat page"]);
 		const nested = host.querySelector<HTMLElement>('button[aria-label="chat page"]')?.parentElement;
 		const top = host.querySelector<HTMLElement>('button[aria-label="explorations page"]')?.parentElement;
 		expect(nested?.getAttribute("aria-level")).toBe("2");
@@ -646,7 +602,7 @@ describe("pages inside pages", () => {
 		const { host } = await render({ pages: deepPages, frames: deepFrames, onRecord: (e) => kept.push(e), run });
 
 		// onto the middle band of the application row, which is how a page nests
-		await dragRow(host, 'button[aria-label="explorations page"]', 88, 56);
+		await dragRow(host, 'button[aria-label="explorations page"]', 84, 52);
 
 		expect(asked.find((call) => call.url.endsWith("/pages/move"))?.body).toEqual({
 			pages: ["explorations"],
@@ -683,9 +639,114 @@ describe("pages inside pages", () => {
 		});
 
 		// onto the middle band of its own page inside it, which is no landing at all
-		await dragRow(host, 'button[aria-label="explorations page"]', 88, 120);
+		await dragRow(host, 'button[aria-label="explorations page"]', 84, 116);
 
 		expect(asked.some((call) => call.url.endsWith("/pages/move"))).toBe(false);
+	});
+});
+
+/**
+ * The list is the root (#232). The root page is the frames directory itself
+ * rather than a folder in it, so it has no row: its frames are loose rows at
+ * the top level, answering every verb the rows beside them answer.
+ */
+describe("the root page has no row", () => {
+	const loose = [
+		{ name: "home", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+		{ name: "shell", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+	];
+
+	it("draws a flat project as its frames alone, with no folder ceremony around them", async () => {
+		const { host } = await render({ pages: [], frames: loose });
+
+		expect(framesListed(host)).toEqual(["home frame", "shell frame"]);
+		expect(pagesListed(host)).toEqual([]);
+		expect(host.querySelector('[aria-label="Pages tree"] button[aria-label^="Expand "]')).toBeNull();
+		// no pages to count, so the header says Pages and stops
+		expect(host.querySelector("h1")?.parentElement?.textContent).toBe("Pages");
+
+		// a loose frame is a treeitem at the top level, and there is no page row
+		// above it for a spine to hang off
+		const row = rowOf(host, "home frame");
+		expect(row?.getAttribute("aria-level")).toBe("1");
+		expect(row?.querySelectorAll(".bg-border-raised").length).toBe(0);
+	});
+
+	it("keeps a frame inside a page one level in, on the spine of the row holding it", async () => {
+		const { host } = await render();
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="Expand shop"]')?.click();
+		});
+		const row = rowOf(host, "checkout frame");
+		expect(row?.getAttribute("aria-level")).toBe("2");
+		expect(row?.querySelectorAll(".bg-border-raised").length).toBe(2);
+	});
+
+	it("lights no page row while the root page is the one on the canvas", async () => {
+		const { host, rerender } = await render();
+		expect(host.querySelector('[aria-current="page"]')).toBeNull();
+
+		await rerender({ activePage: "shop" });
+		expect(host.querySelector('button[aria-label="shop page"]')?.getAttribute("aria-current")).toBe("page");
+	});
+
+	it("reorders the root page's own frames, and states that list on the way back", async () => {
+		const kept: HistoryEntry[] = [];
+		const run: { current: RunEntry | null } = { current: null };
+		const { host } = await render({ pages: [], frames: loose, onRecord: (e) => kept.push(e), run });
+
+		// shell above home, which is the gap over the first row: nothing stands
+		// there any more, so it is a place a drop can mean
+		await dragRow(host, 'button[aria-label="shell frame"]', 50, 6);
+		expect(framesListed(host)).toEqual(["shell frame", "home frame"]);
+		expect(lastOrder()?.frames?.[""]).toEqual(["shell", "home"]);
+		expect(kept).toEqual([
+			{
+				kind: "reorder",
+				lists: [{ of: "frames", page: "", before: ["home", "shell"], after: ["shell", "home"] }],
+			},
+		]);
+
+		await act(async () => {
+			await run.current?.(railEntry(kept[0]), "undo");
+		});
+		expect(lastOrder()?.frames?.[""]).toEqual(["home", "shell"]);
+		expect(framesListed(host)).toEqual(["home frame", "shell frame"]);
+	});
+
+	it("moves a frame out of a page and onto the root page, and puts it back", async () => {
+		const kept: HistoryEntry[] = [];
+		const run: { current: RunEntry | null } = { current: null };
+		const { host } = await render({ onRecord: (e) => kept.push(e), run });
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="Expand shop"]')?.click();
+		});
+
+		// out of shop and into the top-level block, under the frame already there
+		await dragRow(host, 'button[aria-label="checkout frame"]', 76, 28);
+		expect(asked.find((call) => call.url.endsWith("/frames/move"))?.body).toEqual({
+			frames: ["checkout"],
+			page: "",
+		});
+		expect(kept).toEqual([
+			{
+				kind: "move",
+				frames: [{ name: "checkout", from: "shop" }],
+				to: "",
+				lists: [
+					{ of: "frames", page: "shop", before: ["checkout"], after: [] },
+					{ of: "frames", page: "", before: ["home"], after: ["home", "checkout"] },
+				],
+			},
+		]);
+
+		await act(async () => {
+			await run.current?.(railEntry(kept[0]), "undo");
+		});
+		expect(asked.filter((call) => call.url.endsWith("/frames/move")).at(-1)?.body).toEqual({
+			frames: ["checkout"],
+			page: "shop",
+		});
 	});
 });
 
@@ -705,6 +766,11 @@ async function dragRow(host: HTMLElement, selector: string, fromY: number, toY: 
 	if (list !== null) {
 		list.getBoundingClientRect = () =>
 			({ top: 0, bottom: 800, left: 0, right: 248, width: 248, height: 800, x: 0, y: 0 }) as DOMRect;
+		// these lists are shorter than the box they sit in, so there is nothing to
+		// scroll: happy-dom takes a negative scrollTop where a browser clamps at
+		// zero, and without this the drag's edge band pulls the list above its own
+		// start and every drop near the top drifts
+		Object.defineProperty(list, "scrollTop", { configurable: true, get: () => 0, set: () => {} });
 	}
 	const row = host.querySelector<HTMLElement>(selector)?.parentElement;
 	await act(async () => {
@@ -728,6 +794,27 @@ function framesListed(host: HTMLElement): Array<string | null> {
 	);
 }
 
+/** every page row on screen, by the name it draws, in list order */
+function pagesListed(host: HTMLElement): Array<string | null> {
+	const tree = host.querySelector('[aria-label="Pages tree"]');
+	return [...(tree?.querySelectorAll('button[aria-label$=" page"]') ?? [])].map((node) =>
+		node.getAttribute("aria-label"),
+	);
+}
+
+/** the treeitem a row's own control sits in, which is what carries its place in the tree */
+function rowOf(host: HTMLElement, label: string): HTMLElement | null | undefined {
+	return host.querySelector<HTMLElement>(`button[aria-label="${label}"]`)?.parentElement;
+}
+
+/** What was recorded, as the rail's own runner takes it — and an assertion in itself. */
+function railEntry(entry: HistoryEntry | undefined): RailEntry {
+	if (entry === undefined || entry.kind === "geometry" || entry.kind === "mint") {
+		throw new Error(`not an entry this rail runs: ${entry?.kind ?? "nothing recorded"}`);
+	}
+	return entry;
+}
+
 /** the last order the rail put on the wire */
 function lastOrder(): { pages?: string[]; frames?: Record<string, string[]> } | undefined {
 	return asked.filter((call) => call.url.endsWith("/order")).at(-1)?.body as
@@ -740,6 +827,13 @@ function labelsOf(scope: ParentNode = document.body): Array<string | null> {
 	return [...scope.querySelectorAll('[role="menuitem"]')].map(
 		(item) => item.querySelector("span")?.textContent ?? null,
 	);
+}
+
+/** the menu rows the list offers and refuses in the same breath */
+function deadItems(): Array<string | null | undefined> {
+	return [...document.body.querySelectorAll('[role="menuitem"]')]
+		.filter((item) => item.hasAttribute("disabled"))
+		.map((item) => item.querySelector("span")?.textContent);
 }
 
 function itemNamed(label: string): HTMLButtonElement | undefined {

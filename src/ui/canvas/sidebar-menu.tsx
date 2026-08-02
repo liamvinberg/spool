@@ -10,7 +10,6 @@
  */
 
 import { useEffect } from "react";
-import { ROOT_PAGE } from "../../page-path";
 import { hotkeyKey } from "../hotkeys";
 import { MenuItem, MenuRule } from "./context-menu";
 import { pageLabel } from "./pages";
@@ -59,10 +58,11 @@ type Entry =
 /**
  * The list one target earns.
  *
- * The root page is the frames directory itself: permanent and first, so it
- * cannot be renamed, duplicated or trashed, and its items are told and dead
- * rather than missing — a menu whose shape changes under the pointer is a
- * menu you cannot learn.
+ * Every page row is a folder somebody made, so every page verb is live on it:
+ * the root page had the one list with dead items in it, and it lost its row
+ * with #232. What is left off a list is off it for the kind rather than for
+ * the row — a menu whose shape changes under the pointer is a menu you cannot
+ * learn.
  */
 export function menuEntries(target: MenuTarget, at: { pasteable: boolean; selection: number }): readonly Entry[] {
 	if (target.kind === "empty") {
@@ -74,15 +74,14 @@ export function menuEntries(target: MenuTarget, at: { pasteable: boolean; select
 		];
 	}
 	if (target.kind === "page") {
-		const permanent = target.page === ROOT_PAGE;
 		return [
 			{ run: "newPage", label: "New page" },
 			{ rule: true },
-			{ run: "rename", label: "Rename", keys: hotkeyKey("sidebar.rename"), off: permanent },
-			{ run: "duplicate", label: "Duplicate", keys: hotkeyKey("sidebar.duplicate"), off: permanent },
+			{ run: "rename", label: "Rename", keys: hotkeyKey("sidebar.rename") },
+			{ run: "duplicate", label: "Duplicate", keys: hotkeyKey("sidebar.duplicate") },
 			{ run: "paste", label: "Paste", keys: hotkeyKey("sidebar.paste"), off: !at.pasteable },
 			{ rule: true },
-			{ run: "trash", label: "Move to Trash", keys: hotkeyKey("sidebar.trash"), off: permanent },
+			{ run: "trash", label: "Move to Trash", keys: hotkeyKey("sidebar.trash") },
 		];
 	}
 	const many = at.selection > 1;

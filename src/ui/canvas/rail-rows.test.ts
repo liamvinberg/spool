@@ -26,7 +26,7 @@ const framesByPage = new Map<string, readonly RailFrame[]>([
 	["shop", [html("cart")]],
 	["admin", [html("users")]],
 ]);
-const rows = railRows(pages, framesByPage, new Set([ROOT_PAGE, "admin"]));
+const rows = railRows(pages, framesByPage, new Set(["admin"]));
 
 /** the middle of a row, in content space */
 const midOf = (index: number): number => {
@@ -36,19 +36,28 @@ const midOf = (index: number): number => {
 };
 
 describe("the visible list", () => {
-	it("draws a page and then the frames of an open one, at the shipped metrics", () => {
-		expect(rows.map(rowKey)).toEqual([
-			"page:",
-			"frame:home",
-			"frame:shell",
-			"page:shop",
-			"page:admin",
-			"frame:users",
-		]);
-		expect(rows[0]?.height).toBe(PAGE_ROW);
-		expect(rows[1]?.height).toBe(FRAME_ROW);
-		expect(rows[1]?.top).toBe(PAGE_ROW);
-		expect(listHeight(rows)).toBe(PAGE_ROW * 3 + FRAME_ROW * 3);
+	/**
+	 * The root page has no row, so a project with no pages in it is its frames
+	 * and nothing else: nothing to open, nothing indented, no folder ceremony
+	 * wrapped around the whole list.
+	 */
+	it("draws a flat project as its frames alone", () => {
+		const flat = railRows(new Map(), new Map([[ROOT_PAGE, [html("home"), html("shell")]]]), new Set());
+		expect(flat.map(rowKey)).toEqual(["frame:home", "frame:shell"]);
+		expect(flat.map((row) => row.depth)).toEqual([0, 0]);
+		expect(flat.every((row) => row.kind === "frame")).toBe(true);
+		expect(listHeight(flat)).toBe(FRAME_ROW * 2);
+	});
+
+	it("draws the root page's frames, then its pages, then the frames of an open one", () => {
+		expect(rows.map(rowKey)).toEqual(["frame:home", "frame:shell", "page:shop", "page:admin", "frame:users"]);
+		// the root page's own frames sit at the top level beside its page rows; a
+		// named page's step in one level from the row holding them
+		expect(rows.map((row) => row.depth)).toEqual([0, 0, 0, 0, 1]);
+		expect(rows[0]?.height).toBe(FRAME_ROW);
+		expect(rows[2]?.height).toBe(PAGE_ROW);
+		expect(rows[2]?.top).toBe(FRAME_ROW * 2);
+		expect(listHeight(rows)).toBe(PAGE_ROW * 2 + FRAME_ROW * 3);
 	});
 
 	it("keeps a shut page's frames out of the list without forgetting the count", () => {
@@ -63,21 +72,12 @@ describe("the visible list", () => {
 	});
 
 	it("waits a page still being named at the end of the pages it will belong to", () => {
-		const naming = railRows(pages, framesByPage, new Set([ROOT_PAGE, "admin"]), ROOT_PAGE);
+		const naming = railRows(pages, framesByPage, new Set(["admin"]), ROOT_PAGE);
 		const last = naming.at(-1);
 		expect(last?.kind).toBe("born");
 		if (last !== undefined) expect(rowKey(last)).toBe("born");
 		expect(last?.height).toBe(PAGE_ROW);
 		expect(last?.top).toBe(listHeight(rows));
-	});
-
-	/**
-	 * The root page's own pages are the top level rather than its contents, so its
-	 * chevron takes its frames off the list and never them.
-	 */
-	it("keeps every page drawn when the root page is shut", () => {
-		const shut = railRows(pages, framesByPage, new Set(["admin"]));
-		expect(shut.map(rowKey)).toEqual(["page:", "page:shop", "page:admin", "frame:users"]);
 	});
 });
 
@@ -92,12 +92,11 @@ describe("depth", () => {
 		["explorations", [html("notes")]],
 		["explorations/chat", [html("agent-chat")]],
 	]);
-	const open = new Set([ROOT_PAGE, "explorations", "explorations/chat", "application"]);
+	const open = new Set(["explorations", "explorations/chat", "application"]);
 	const deep = railRows(deepPages, deepFrames, open);
 
 	it("draws a page's frames and then the pages inside it, one step deeper each level", () => {
 		expect(deep.map(rowKey)).toEqual([
-			"page:",
 			"frame:home",
 			"page:explorations",
 			"frame:notes",
@@ -105,7 +104,7 @@ describe("depth", () => {
 			"frame:agent-chat",
 			"page:application",
 		]);
-		expect(deep.map((row) => row.depth)).toEqual([0, 1, 0, 1, 1, 2, 0]);
+		expect(deep.map((row) => row.depth)).toEqual([0, 0, 1, 1, 2, 0]);
 	});
 
 	it("steps one INDENT per level, landing the shipped rail's own metrics at depth one", () => {
@@ -136,15 +135,17 @@ describe("depth", () => {
 	it("draws each of those lines at its own depth", () => {
 		const under = listHeight(deep) - PAGE_ROW;
 		const deepest = frameLanding(deep, under, 2);
+		// the root page has no row for a line to hang off, so its own list draws at
+		// the margin, where every other top-level row starts
 		const shallowest = frameLanding(deep, under, 0);
 		expect(deepest === null ? -1 : landingGuideX(deepest)).toBe(guideX(2));
-		expect(shallowest === null ? -1 : landingGuideX(shallowest)).toBe(guideX(1));
+		expect(shallowest === null ? -1 : landingGuideX(shallowest)).toBe(guideX(0));
 	});
 
 	it("never lets a line sit shallower than the row under the gap", () => {
-		// between the two root-page rows there is only one depth to mean, however
+		// between the two top-level rows there is only one depth to mean, however
 		// far sideways the pointer has travelled
-		const between = (deep[1]?.top ?? 0) + FRAME_ROW / 2 + 1;
+		const between = (deep[0]?.top ?? 0) + FRAME_ROW / 2 + 1;
 		expect(frameLanding(deep, between, 0)).toMatchObject({ kind: "frames", page: ROOT_PAGE, index: 1 });
 		expect(frameLanding(deep, between, 5)).toMatchObject({ kind: "frames", page: ROOT_PAGE, index: 1 });
 	});
@@ -165,42 +166,49 @@ describe("depth", () => {
 
 describe("where dragged frames land", () => {
 	it("reads the middle of a page row as that page taking them", () => {
-		expect(frameLanding(rows, midOf(3))).toEqual({ kind: "into", page: "shop" });
+		expect(frameLanding(rows, midOf(2))).toEqual({ kind: "into", page: "shop" });
 	});
 
 	it("reads a gap between two frames as their own page's list", () => {
-		const between = (rows[2]?.top ?? 0) - 2;
+		const between = (rows[1]?.top ?? 0) - 2;
 		expect(frameLanding(rows, between)).toEqual({
 			kind: "frames",
 			page: ROOT_PAGE,
 			index: 1,
-			depth: 1,
-			y: rows[2]?.top,
+			depth: 0,
+			y: rows[1]?.top,
 		});
 	});
 
 	it("reads the gap under an open page row as the top of its list", () => {
-		const under = (rows[4]?.top ?? 0) + PAGE_ROW * 0.85;
+		const under = (rows[3]?.top ?? 0) + PAGE_ROW * 0.85;
 		expect(frameLanding(rows, under)).toEqual({
 			kind: "frames",
 			page: "admin",
 			index: 0,
 			depth: 1,
-			y: rows[5]?.top,
+			y: rows[4]?.top,
 		});
 	});
 
 	it("reads the gap under a shut page as that page taking them, since it has no list to draw in", () => {
-		const under = (rows[3]?.top ?? 0) + PAGE_ROW * 0.85;
+		const under = (rows[2]?.top ?? 0) + PAGE_ROW * 0.85;
 		expect(frameLanding(rows, under)).toEqual({ kind: "into", page: "shop" });
 	});
 
-	it("lands nothing above the root page's own row", () => {
-		expect(frameLanding(rows, -10)).toBeNull();
+	/** Nothing stands above the first row now, so the gap over it is the one place it can mean. */
+	it("lands at the top of the root page's own frames above everything", () => {
+		expect(frameLanding(rows, -10)).toEqual({
+			kind: "frames",
+			page: ROOT_PAGE,
+			index: 0,
+			depth: 0,
+			y: rows[0]?.top,
+		});
 	});
 
 	it("lands nothing in or under a page that has no folder yet", () => {
-		const naming = railRows(pages, framesByPage, new Set([ROOT_PAGE, "admin"]), ROOT_PAGE);
+		const naming = railRows(pages, framesByPage, new Set(["admin"]), ROOT_PAGE);
 		const born = naming.at(-1);
 		const inside = (born?.top ?? 0) + PAGE_ROW / 2;
 		expect(frameLanding(naming, inside)).toBeNull();
@@ -228,35 +236,42 @@ describe("where a dragged page lands", () => {
 			page: ROOT_PAGE,
 			index: 0,
 			depth: 0,
-			y: rows[3]?.top,
+			y: rows[2]?.top,
 		});
 	});
 
 	it("counts in the pages of the page it lands in, so the slot under the root block is the first", () => {
-		expect(pageLanding(rows, (rows[3]?.top ?? 0) + 4)).toEqual({
+		expect(pageLanding(rows, (rows[2]?.top ?? 0) + 4)).toEqual({
 			kind: "pages",
 			page: ROOT_PAGE,
 			index: 0,
 			depth: 0,
-			y: rows[3]?.top,
+			y: rows[2]?.top,
 		});
-		expect(pageLanding(rows, (rows[4]?.top ?? 0) + 4)).toEqual({
+		expect(pageLanding(rows, (rows[3]?.top ?? 0) + 4)).toEqual({
 			kind: "pages",
 			page: ROOT_PAGE,
 			index: 1,
 			depth: 0,
-			y: rows[4]?.top,
+			y: rows[3]?.top,
 		});
 	});
 
-	it("refuses to sort anything above the permanent root page", () => {
-		expect(pageLanding(rows, -10)).toBeNull();
+	/** Above the loose frames is still the top of the root page's pages, drawn under them. */
+	it("lands a page dropped above everything at the head of the top level", () => {
+		expect(pageLanding(rows, -10)).toEqual({
+			kind: "pages",
+			page: ROOT_PAGE,
+			index: 0,
+			depth: 0,
+			y: rows[2]?.top,
+		});
 	});
 });
 
 describe("what the drag layer draws", () => {
-	it("puts a frame's insertion line on the spine and a top-level page's at the margin", () => {
-		const frames: Landing = { kind: "frames", page: ROOT_PAGE, index: 0, depth: 1, y: 0 };
+	it("puts a frame's insertion line on its page's spine and a top-level page's at the margin", () => {
+		const frames: Landing = { kind: "frames", page: "shop", index: 0, depth: 1, y: 0 };
 		const pagesLanding: Landing = { kind: "pages", page: ROOT_PAGE, index: 0, depth: 0, y: 0 };
 		expect(landingGuideX(frames)).toBeGreaterThan(landingGuideX(pagesLanding));
 	});

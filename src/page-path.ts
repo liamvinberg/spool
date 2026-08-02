@@ -2,9 +2,10 @@
  * A page's identity, which is its path under design/frames/ (#231).
  *
  * `explorations/chat` is one page, `explorations` is the page holding it, and
- * the frames directory itself is the root page, spelled `""` — permanent,
- * listed first, and the one page with no folder to name it. A flat project's
- * page paths are its page names, so nothing here reads differently for one.
+ * the frames directory itself is the root page, spelled `""` — permanent, the
+ * one page with no folder to name it, and the one page the rail draws no row
+ * for. A flat project's page paths are its page names, so nothing here reads
+ * differently for one.
  *
  * Pure, and deliberately free of node: the daemon owns the disk and the canvas
  * owns the rail, and both of them have to spell a page the same way.
@@ -59,9 +60,9 @@ export function pageWithin(ancestor: string, page: string): boolean {
 }
 
 /**
- * How deep a page is drawn, which is one less than its segments because the
- * root page's own children are the top level: `shop` sits beside `root` and
- * `shop/sale` sits under it. The one thing about the root page the rail knows.
+ * How deep a page's row is drawn, which is one less than its segments because
+ * the root page has no row: `shop` stands at the margin and `shop/sale` one
+ * step in under it. The one thing about the root page the rail knows.
  */
 export function pageDepth(page: string): number {
 	return page === ROOT_PAGE ? 0 : page.split("/").length - 1;
