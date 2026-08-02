@@ -242,12 +242,6 @@ export interface SweepInput {
 	/** The viewport's CSS size, read when this sweep runs. */
 	viewport: { width: number; height: number } | null;
 	/**
-	 * Every frame goes back to its picture, whatever it was doing (#210).
-	 * Inline play covers the canvas, so nothing out here is being looked at and
-	 * the machine the player is running on gets the whole browser.
-	 */
-	pictured: boolean;
-	/**
 	 * Every frame the project has, against which the bookkeeping is pruned (#39).
 	 *
 	 * `frames` is one page's worth, because a page is the canvas. What a frame is
@@ -357,15 +351,7 @@ export interface SweepResult {
 }
 
 export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepResult {
-	const { frames, states, ready, capturing, hasCover, now, pictured } = input;
-	// One substitution rather than a branch per rule: nobody is asking for a
-	// frame, and a null camera sees none of them, so every intent this function
-	// can form is already the resting one.
-	const entered = pictured ? null : input.entered;
-	const selectionTargets = pictured ? NOTHING : input.selectionTargets;
-	const held = pictured ? null : input.held;
-	const camera = pictured ? null : input.camera;
-	const viewport = pictured ? null : input.viewport;
+	const { frames, entered, selectionTargets, held, states, ready, capturing, hasCover, now, camera, viewport } = input;
 	// A frame going back to its picture can be told from a frame you left.
 	// Zooming out must not bill a screenful of frames for a fresh still; going
 	// inside one still must.
@@ -555,8 +541,6 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	};
 }
 
-const NOTHING: ReadonlySet<string> = new Set<string>();
-
 /** Whether the mounted document has been allowed to run. Held HTML runs behind its still. */
 const running = (state: FrameState, kind: ProjectedFrame["kind"]): boolean =>
 	state === "live" || state === "refreshing" || (state === "held" && kind === "html");
@@ -625,8 +609,6 @@ export interface LifecycleDeps {
 	cameraRef: RefObject<Camera | null>;
 	/** The viewport element, for its CSS size. */
 	viewportRef: RefObject<HTMLElement | null>;
-	/** Whether every frame is back to its picture beneath inline play (#210). */
-	pictured: boolean;
 }
 
 export function useFrameLifecycle(deps: LifecycleDeps) {
@@ -642,7 +624,6 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		onCaptureFailure,
 		cameraRef,
 		viewportRef,
-		pictured,
 	} = deps;
 
 	const [states, setStates] = useState<Record<string, FrameState>>({});
@@ -662,8 +643,6 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	selectedRef.current = selected;
 	const hoveredRef = useRef(hovered);
 	hoveredRef.current = hovered;
-	const picturedRef = useRef(pictured);
-	picturedRef.current = pictured;
 	const hasCoverRef = useRef(hasCover);
 	hasCoverRef.current = hasCover;
 	const onShotRef = useRef(onShot);
@@ -967,7 +946,6 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				viewportRef.current === null
 					? null
 					: { width: viewportRef.current.clientWidth, height: viewportRef.current.clientHeight },
-			pictured: picturedRef.current,
 			projection: new Set(allFramesRef.current.map((frame) => frame.name)),
 		});
 		for (const { frame, overdue } of result.refreshCaptures) {

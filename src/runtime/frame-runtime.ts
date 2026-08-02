@@ -819,7 +819,7 @@ function postPlayerState(): void {
 	});
 }
 
-type SwapDirection = "forward" | "back" | "restart";
+type SwapDirection = "forward" | "back";
 interface PendingMount {
 	generation: number;
 	from: string;
@@ -926,28 +926,6 @@ function swapScreen(direction: SwapDirection, transition?: string, committed?: (
 	}
 }
 
-async function restartSession(deferWhenPending = true): Promise<boolean> {
-	if (play === undefined) return true;
-	if (pendingMount !== undefined) {
-		if (deferWhenPending) deferPlayerAction(() => void restartSession());
-		return false;
-	}
-	// a fresh read, so an edited seed lands without a reload
-	const scenario = await loadScenario(scenarioName);
-	if (pendingMount !== undefined) {
-		if (deferWhenPending) deferPlayerAction(() => void restartSession());
-		return false;
-	}
-	abortClipboardWrites();
-	mockConfig = scenario.mock;
-	const from = currentFrame;
-	stack.length = 0;
-	currentFrame = play.start;
-	seedState(scenario.state);
-	requestScreenSwap(from, "restart");
-	return true;
-}
-
 interface PlayerControllerCommand {
 	request: number;
 	command: string;
@@ -1032,25 +1010,25 @@ function runDismissExternalControllerCommand(command: PlayerControllerCommand): 
 	completePlayerControllerCommand(command, "completed");
 }
 
-async function runRestartControllerCommand(command: PlayerControllerCommand): Promise<void> {
-	if (deferPlayerControllerCommand(() => void runRestartControllerCommand(command))) return;
-	try {
-		const restarted = await restartSession(false);
-		if (!restarted) {
-			deferPlayerControllerCommand(() => void runRestartControllerCommand(command));
-			return;
-		}
-		completeAfterNavigation(command);
-	} catch {
+/** The edge bar's switcher, and the browser's back button: a walk like any other (#227). */
+function runWalkControllerCommand(command: PlayerControllerCommand, to: string): void {
+	if (deferPlayerControllerCommand(() => runWalkControllerCommand(command, to))) return;
+	// A screen that left the composition mid-session is a walk that cannot be
+	// taken, and it says so: a command that went quiet would leave the shell
+	// waiting on a completion that never comes, with everything behind it stuck.
+	if (play === undefined || !Object.hasOwn(play.frames, to)) {
 		completePlayerControllerCommand(command, "failed");
+		return;
 	}
+	navigate(to);
+	completeAfterNavigation(command);
 }
 
 function handlePlayerControllerCommand(message: Record<string, unknown>): boolean {
 	switch (message.command) {
-		case "restart": {
-			const command = playerControllerCommand(message, "restart");
-			if (command !== undefined) void runRestartControllerCommand(command);
+		case "walk": {
+			const command = playerControllerCommand(message, "walk", ["to"]);
+			if (command !== undefined && typeof message.to === "string") runWalkControllerCommand(command, message.to);
 			return true;
 		}
 		case "dismiss-external": {
@@ -1356,20 +1334,25 @@ function followGeometry(): void {
 			announcePendingMount();
 			scheduleGeometryReady();
 		});
-		// Where the pointer is, not merely that it moved: the pill comes back on
-		// proximity now, and this document is scaled and offset inside the stage,
-		// so only the shell can turn this into a window position (#210).
+		// Where the pointer is, not merely that it moved: the edge bar is summoned
+		// by resting against the top of the window, and this document covers it,
+		// so the shell can only know where the hand is by being told (#227).
 		addEventListener("mousemove", (event) => {
 			postPlayerMessage({ spool: "player-wake", y: event.clientY });
 		});
-		// Spool never steals a plain key from a live frame; its own gestures live
-		// behind accel (#210). Focus sits in here whenever a prototype is being
-		// used, so these two chords only reach the shell by being forwarded.
+		// And that it has gone. A pointer on its way to the browser's own chrome
+		// crosses the top edge and leaves; without this the dwell it started on
+		// the way through would finish and peel the bar in behind it.
+		window.document.documentElement.addEventListener("mouseleave", () => {
+			postPlayerMessage({ spool: "player-wake", y: -1 });
+		});
+		// Spool never steals a plain key from a live frame; its own gesture lives
+		// behind accel (#227). Focus sits in here whenever a prototype is being
+		// used, so this chord only reaches the shell by being forwarded.
 		addEventListener("keydown", (event) => {
-			const chord = accelChord(event);
-			if (chord === undefined) return;
+			if (accelChord(event) === undefined) return;
 			event.preventDefault();
-			postPlayerMessage({ spool: "player-key", key: chord });
+			postPlayerMessage({ spool: "player-key", key: "leave" });
 		});
 	}
 }
@@ -1445,8 +1428,9 @@ const playerController: PlayerController = {
 		play !== undefined && Object.hasOwn(play.frames, frame)
 			? (play.frames[frame] as { w: number; h: number })
 			: { w: 390, h: 844 },
+	frames: () => (play === undefined ? [] : Object.keys(play.frames)),
 	terminal: (frame) => play?.terminals !== undefined && Object.hasOwn(play.terminals, frame),
-	restart: () => void restartSession(),
+	walk: (frame) => navigate(frame),
 	dismissExternal() {
 		if (externalHref === null) return;
 		externalHref = null;
@@ -1514,7 +1498,9 @@ export function bootPlayer(frames: Record<string, ComponentType>): void {
 		});
 		return;
 	}
-	createRoot(root).render(createElement(Player, { frames: screens, controller: playerController }));
+	createRoot(root).render(
+		createElement(Player, { project: config.project, frames: screens, controller: playerController }),
+	);
 }
 
 function PlayerDocument({ frames }: { frames: Record<string, ComponentType> }) {

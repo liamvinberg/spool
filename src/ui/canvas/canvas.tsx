@@ -33,9 +33,8 @@ import {
 	resolveFlows,
 	subscribeSse,
 } from "../api";
-import { cn } from "../cn";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
-import type { HotkeyId, HotkeyIdFor } from "../hotkeys";
+import type { HotkeyIdFor } from "../hotkeys";
 import { RibbonMark } from "../icons";
 import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
 import { AgentHandLayer } from "./agent-hand-layer";
@@ -44,18 +43,7 @@ import { useAgentInstall } from "./agent-preflight";
 import { AgentRail, type FrameJump } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
-import {
-	type Box,
-	boundsOf,
-	centerOn,
-	clamp,
-	fitCamera,
-	intersects,
-	K_STEP,
-	stageCamera,
-	toWorld,
-	zoomAt,
-} from "./camera";
+import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, K_STEP, toWorld, zoomAt } from "./camera";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
 import { CollisionNotice } from "./collision-notice";
@@ -101,8 +89,6 @@ import {
 	SelectionOverlay,
 } from "./overlays";
 import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
-import { flightProgress, OUT, PLAY_IN, PLAY_OUT, PLAY_OUT_LANDS } from "./play-flight";
-import { PlayLayer, type PlayPhase } from "./play-layer";
 import {
 	clipboardCopyAllowed,
 	type PickedHit,
@@ -144,13 +130,6 @@ export interface CanvasChrome {
 	 * governs the whole layer (#151), so it counts the whole layer.
 	 */
 	hasThreads: boolean;
-	/**
-	 * A flight is on, so the top bar dissolves with the rest of the furniture
-	 * (#210). The canvas takes the whole window underneath it for the length of
-	 * one, and a bar left sitting over the zoom is the seam the flight exists to
-	 * avoid — but covering it without a fade is just as abrupt, so it fades.
-	 */
-	playing: boolean;
 }
 
 interface Point {
@@ -263,36 +242,6 @@ export function ProjectCanvas({
 	const [selected, setSelected] = useState<string[]>([]);
 	const [picked, setPicked] = useState<PickedSelection[]>([]);
 	const [entered, setEntered] = useState<string | null>(null);
-	/**
-	 * Inline play (#210). `frame` is where the session stands right now, which a
-	 * walk moves — leaving flies out of that one, not the one it opened on.
-	 * `from` is the camera the press left behind, so coming back is a return,
-	 * and `size` is the box it was framed in — the viewport gives that box up
-	 * for the length of the flight, so the return has to remember it.
-	 */
-	const [play, setPlay] = useState<{
-		start: string;
-		frame: string;
-		phase: PlayPhase;
-		from: Camera;
-		size: { w: number; h: number };
-		page: string;
-	} | null>(null);
-	const playRef = useRef(play);
-	playRef.current = play;
-	/**
-	 * The canvas takes the whole window for the length of a flight, so the zoom
-	 * crosses where the top bar and the rails were rather than sliding under
-	 * them. The camera is shifted by exactly where the viewport used to start,
-	 * in the same commit, so the world does not move when the box grows (#210).
-	 */
-	const [spanning, setSpanning] = useState<Point | null>(null);
-	const spanningRef = useRef(spanning);
-	spanningRef.current = spanning;
-	/** The app's furniture dissolves before the flight and comes back after it. */
-	const [chromeGone, setChromeGone] = useState(false);
-	/** Frames go back to their pictures while the player has the machine. */
-	const [pictured, setPictured] = useState(false);
 	const [hovered, setHovered] = useState<FrameHover | null>(null);
 	// the hover preview (#37): the element a click would target, outlined live
 	const [preview, setPreview] = useState<ElementPreview | null>(null);
@@ -564,7 +513,6 @@ export function ProjectCanvas({
 		onCaptureFailure,
 		cameraRef: settledCameraRef,
 		viewportRef,
-		pictured,
 	});
 	const lifecycleRef = useRef(lifecycle);
 	lifecycleRef.current = lifecycle;
@@ -833,14 +781,14 @@ export function ProjectCanvas({
 	const stopAnimation = useCallback(() => cancelAnimationFrame(animation.current), []);
 
 	const animateCamera = useCallback(
-		(to: Camera, ms = 220, ease: (p: number) => number = OUT) => {
+		(to: Camera, ms = 220) => {
 			const from = cameraRef.current;
 			if (from === null) return;
 			stopAnimation();
 			const t0 = performance.now();
 			const step = (t: number) => {
 				const p = clamp((t - t0) / ms, 0, 1);
-				const e = ease(p);
+				const e = 1 - (1 - p) ** 3;
 				setCamera({
 					x: from.x + (to.x - from.x) * e,
 					y: from.y + (to.y - from.y) * e,
@@ -852,17 +800,6 @@ export function ProjectCanvas({
 		},
 		[stopAnimation],
 	);
-
-	/**
-	 * Where the canvas viewport starts in the window. Inline play's stage covers
-	 * the window, so its landing is worked out there and moved by this (#210).
-	 */
-	const viewportOrigin = useCallback((): Point => {
-		const el = viewportRef.current;
-		if (el === null) return { x: 0, y: 0 };
-		const rect = el.getBoundingClientRect();
-		return { x: rect.left, y: rect.top };
-	}, []);
 
 	const viewportCenter = useCallback((): Point => {
 		const el = viewportRef.current;
@@ -966,93 +903,21 @@ export function ProjectCanvas({
 	const toggleArrows = useCallback(() => setArrowsOn((on) => !on), []);
 
 	/**
-	 * Play (#210): the camera flies into the frame and the player takes the
-	 * viewport, rather than a tab opening somewhere else. `/play/` is still
-	 * served, as the door for agents and phones; no human door leads there.
-	 *
-	 * The furniture goes first — the top bar, the rails, the tools, the labels —
-	 * and the canvas takes the window in the same breath, so the zoom crosses
-	 * where they were instead of sliding under them. Shifting the camera by
-	 * where the viewport used to start keeps the world still while its box
-	 * grows: the only thing that moves is the furniture fading off it.
-	 *
-	 * Then the camera flies, on the staged curve, and lands exactly where the
-	 * player's own stage will place the frame. The layer boots its session from
-	 * the moment of the press, so the flight is what the boot happens behind.
+	 * Play (#227): a browser tab on `/play/`, the door that already exists for
+	 * agents and phones. The canvas holds no play state at all — zooming on it
+	 * is navigation and nothing modal, and the tab is closed the way every tab
+	 * is closed.
 	 */
 	const playFrame = useCallback(
 		(name: string) => {
-			const viewport = viewportRef.current;
-			const cam = cameraRef.current;
-			const frame = framesRef.current.find((candidate) => candidate.name === name);
-			if (viewport === null || cam === null || frame === undefined || playRef.current !== null) return;
-			exitEntered();
-			setMenu(null);
-			setPreview(null);
-			setChromeGone(true);
-			const origin = viewportOrigin();
-			setSpanning(origin);
-			setCamera({ ...cam, x: cam.x + origin.x, y: cam.y + origin.y });
-			setPlay({
-				start: name,
-				frame: name,
-				phase: "flying",
-				from: cam,
-				size: { w: viewport.clientWidth, h: viewport.clientHeight },
-				page: activePageRef.current,
-			});
-			const to = stageCamera(frame, window.innerWidth, window.innerHeight);
-			window.setTimeout(() => {
-				if (playRef.current?.start === name) animateCamera(to, PLAY_IN.fly, flightProgress);
-			}, PLAY_IN.start);
+			window.open(
+				`/play/${encodeURIComponent(project)}?frame=${encodeURIComponent(name)}`,
+				"_blank",
+				"noopener,noreferrer",
+			);
 		},
-		[animateCamera, exitEntered, viewportOrigin],
+		[project],
 	);
-
-	/**
-	 * Out again, reversing the same sequence — and out of the frame the session
-	 * is standing in, which a walk may have moved. The camera agrees with the
-	 * walk: it lands on that frame's own place, keeping the zoom the press left.
-	 *
-	 * The whole return happens in window space, and the viewport only takes its
-	 * own box back once the camera has stopped — giving it back mid-flight would
-	 * put the rails over a canvas still moving under them.
-	 */
-	const leavePlay = useCallback(() => {
-		const session = playRef.current;
-		const origin = spanningRef.current;
-		if (session === null || session.phase === "leaving" || origin === null) return;
-		setPlay({ ...session, phase: "leaving" });
-		setPictured(false);
-		const landed = framesRef.current.find((candidate) => candidate.name === session.frame);
-		// A walk that ended somewhere else lands the camera there. The jump is
-		// made while the stage still covers everything, so only the flight shows.
-		if (landed !== undefined && session.frame !== session.start) {
-			setCamera(stageCamera(landed, window.innerWidth, window.innerHeight));
-			setSelected([session.frame]);
-		} else {
-			setSelected([session.start]);
-		}
-		// The rest is where the press left the camera, read in the viewport's own
-		// box — so it is worked out there and flown to shifted, then handed back
-		// unshifted at the landing, all in one commit so nothing jumps.
-		const rest =
-			landed !== undefined && session.frame !== session.start
-				? centerOn(session.from, landed, session.size.w, session.size.h)
-				: session.from;
-		window.setTimeout(
-			() => animateCamera({ ...rest, x: rest.x + origin.x, y: rest.y + origin.y }, PLAY_OUT.fly),
-			PLAY_OUT.flyAt,
-		);
-		window.setTimeout(() => setPlay(null), PLAY_OUT.stageAt + PLAY_OUT.stage);
-		window.setTimeout(() => {
-			stopAnimation();
-			setSpanning(null);
-			setCamera(rest);
-			viewportRef.current?.focus({ preventScroll: true });
-		}, PLAY_OUT_LANDS);
-		window.setTimeout(() => setChromeGone(false), PLAY_OUT.chromeAt);
-	}, [animateCamera, stopAnimation]);
 
 	// --- selection sync (#23): what Liam points at, served to agents ------------
 
@@ -2684,13 +2549,6 @@ export function ProjectCanvas({
 			// leaving an entered frame: ⌘esc landing canvas-side (#42), or the
 			// esc the shim relays out of the frame that owned it
 			"canvas.leave": (event) => {
-				// the universal step-out (#210): the same chord leaves inline play and
-				// leaves an entered frame, and play is the outer of the two
-				if (playRef.current !== null) {
-					event?.preventDefault();
-					leavePlay();
-					return;
-				}
 				if (enteredRef.current === null) return;
 				event?.preventDefault();
 				exitEntered(true);
@@ -2830,25 +2688,7 @@ export function ProjectCanvas({
 				},
 			} satisfies Record<HotkeyIdFor<"finder">, HotkeyHandler>,
 		});
-		const detachCanvas = attachHotkeyLayer({
-			scope: "canvas",
-			// A player filling the screen is a live frame, and spool takes no plain
-			// key from one (#210). So every canvas binding stands down while play is
-			// up; `canvas.leave` is the way out and answers throughout. This gate is
-			// belt to the iframe's braces: focus is normally inside the sandbox and
-			// these keys never reach this window at all, but the press that started
-			// play left focus out here.
-			handlers: Object.fromEntries(
-				Object.entries(handlers).map(([id, run]) => [
-					id,
-					id === "canvas.leave"
-						? run
-						: (event?: KeyboardEvent) => {
-								if (playRef.current === null) run?.(event);
-							},
-				]),
-			) as Partial<Record<HotkeyId, HotkeyHandler>>,
-		});
+		const detachCanvas = attachHotkeyLayer({ scope: "canvas", handlers });
 		const onKeyUp = (event: KeyboardEvent) => {
 			if (event.code === "Space") setSpaceDown(false);
 			// releasing accel outside an element scope ends the deep-hover preview
@@ -2891,7 +2731,6 @@ export function ProjectCanvas({
 		toggleArrows,
 		cancelExportDialog,
 		playFrame,
-		leavePlay,
 		jumpBack,
 		jumpForward,
 	]);
@@ -2905,10 +2744,9 @@ export function ProjectCanvas({
 			arrowsOn,
 			toggleArrows,
 			hasThreads,
-			playing: chromeGone,
 		});
 		return () => onChrome(null);
-	}, [zoomPct, onChrome, arrowsOn, toggleArrows, hasThreads, chromeGone]);
+	}, [zoomPct, onChrome, arrowsOn, toggleArrows, hasThreads]);
 
 	// --- render -------------------------------------------------------------------
 
@@ -2921,21 +2759,9 @@ export function ProjectCanvas({
 	const shellRadius = Math.min(12 / k, 24);
 	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");
 
-	/**
-	 * Every piece of app furniture fades on the same clock for a flight (#210):
-	 * the sidebar, the agent rail, the tools, the frame labels, and the top bar
-	 * over in `app.tsx`. It goes untouchable as it goes, because the play layer
-	 * only starts taking presses once its stage is up.
-	 */
-	const furniture = {
-		opacity: chromeGone ? 0 : 1,
-		transitionDuration: `${chromeGone ? PLAY_IN.chrome : PLAY_OUT.chrome}ms`,
-		pointerEvents: chromeGone ? ("none" as const) : undefined,
-	};
-
 	return (
 		<div className="relative flex h-full w-full">
-			<div className="relative z-20 flex shrink-0 transition-opacity ease-out" style={furniture}>
+			<div className="relative z-20 flex shrink-0">
 				<CanvasSidebar
 					project={project}
 					pages={navigatorPages}
@@ -2970,14 +2796,7 @@ export function ProjectCanvas({
 				// the browser reveal it by scrolling this box, which carries the canvas
 				// chrome away and offsets every pointer coordinate from the camera's.
 				// The camera owns where the canvas sits; nothing else may move it.
-				//
-				// For the length of a flight this leaves the row and takes the whole
-				// window, under the furniture rather than over it, so the zoom carries
-				// on across where the rails were as they fade (#210).
-				className={cn(
-					"touch-none select-none overflow-clip bg-canvas outline-none",
-					spanning === null ? "relative h-full min-w-0 flex-1" : "fixed inset-0 z-0",
-				)}
+				className="relative h-full min-w-0 flex-1 touch-none select-none overflow-clip bg-canvas outline-none"
 				style={{ cursor }}
 				onPointerDown={onPointerDown}
 				onPointerMove={onPointerMove}
@@ -3043,51 +2862,39 @@ export function ProjectCanvas({
 						{/* Labels share one layer above every frame. A transformed frame is
 						    its own stacking context, so keeping its label inside would let a
 						    later neighboring frame paint over the label regardless of the
-						    label's own z-index.
-						
-						    The whole layer dissolves before an inline play flight and comes
-						    back after it (#210): a label is counter-scaled to stay 12px, so it
-						    cannot ride a zoom that grows its frame to fill the viewport. */}
-						<div
-							className="transition-opacity ease-out"
-							style={{
-								opacity: chromeGone ? 0 : 1,
-								transitionDuration: `${chromeGone ? PLAY_IN.chrome : PLAY_OUT.chrome}ms`,
-							}}
-						>
-							{visibleFrames.map((frame) => {
-								const state = lifecycle.states[frame.name] ?? "picture";
-								const isEntered = entered === frame.name;
-								const isSelected = selected.includes(frame.name);
-								const isHovered =
-									effectiveTool === "select" && hovered?.visible === true && hovered.frame === frame.name;
-								const paused = frame.kind === "term" && state === "held";
-								return (
-									<div
-										key={`${frame.name}:label`}
-										className="pointer-events-none absolute h-0"
-										style={{
-											transform: `translate(${frame.x}px, ${frame.y}px)`,
-											width: frame.w,
-										}}
-									>
-										{/* Mono, muted; thread when selected; ▸ only marks a terminal
+						    label's own z-index. */}
+						{visibleFrames.map((frame) => {
+							const state = lifecycle.states[frame.name] ?? "picture";
+							const isEntered = entered === frame.name;
+							const isSelected = selected.includes(frame.name);
+							const isHovered =
+								effectiveTool === "select" && hovered?.visible === true && hovered.frame === frame.name;
+							const paused = frame.kind === "term" && state === "held";
+							return (
+								<div
+									key={`${frame.name}:label`}
+									className="pointer-events-none absolute h-0"
+									style={{
+										transform: `translate(${frame.x}px, ${frame.y}px)`,
+										width: frame.w,
+									}}
+								>
+									{/* Mono, muted; thread when selected; ▸ only marks a terminal
 										    SIGSTOP. Entered swaps it for the state chip (#28). */}
-										<FrameLabel
-											name={frame.name}
-											frameWidth={frame.w}
-											k={k}
-											entered={isEntered}
-											paused={paused}
-											selected={isSelected}
-											hovered={isHovered}
-											terminal={frame.kind === "term"}
-											onPlay={() => playFrame(frame.name)}
-										/>
-									</div>
-								);
-							})}
-						</div>
+									<FrameLabel
+										name={frame.name}
+										frameWidth={frame.w}
+										k={k}
+										entered={isEntered}
+										paused={paused}
+										selected={isSelected}
+										hovered={isHovered}
+										terminal={frame.kind === "term"}
+										onPlay={() => playFrame(frame.name)}
+									/>
+								</div>
+							);
+						})}
 						{/* the tags ride over the frames, because pressing one travels —
 						    the leaders under them are the map and take no pointer */}
 						{arrowsOn && <WalkLayer walks={walks} frames={visibleFrames} k={k} onOpen={landOnFrame} />}
@@ -3095,16 +2902,7 @@ export function ProjectCanvas({
 				)}
 
 				{camera !== null && (
-					// The ring dissolves with the labels before a flight, for its own
-					// reason: it is counter-scaled too, so 1.5px of stroke would stay
-					// 1.5px while the frame it rings grew to fill the viewport (#210).
-					<div
-						className="transition-opacity ease-out"
-						style={{
-							opacity: chromeGone ? 0 : 1,
-							transitionDuration: `${chromeGone ? PLAY_IN.chrome : PLAY_OUT.chrome}ms`,
-						}}
-					>
+					<>
 						<SelectionOverlay
 							camera={camera}
 							frames={visibleFrames}
@@ -3139,8 +2937,7 @@ export function ProjectCanvas({
 						/>
 						{/* the agent's hand (#214), in the same screen space as the furniture
 						    beside it: presence on any visible frame at any zoom, and a located
-						    mark wherever a document was live enough to be measured. It dissolves
-						    with the rest of the counter-scaled chrome before a play flight */}
+						    mark wherever a document was live enough to be measured */}
 						<AgentHandLayer
 							camera={camera}
 							frames={visibleFrames}
@@ -3148,7 +2945,7 @@ export function ProjectCanvas({
 							marks={handMarks}
 							shellRadius={shellRadius}
 						/>
-					</div>
+					</>
 				)}
 
 				{menu !== null && (
@@ -3226,11 +3023,7 @@ export function ProjectCanvas({
 					</div>
 				)}
 				{/* nothing to arrange, nothing to walk: the tools arrive with the first frame */}
-				{!projectEmpty && (
-					<div className="transition-opacity ease-out" style={furniture}>
-						<CanvasTools tool={effectiveTool} onTool={setTool} />
-					</div>
-				)}
+				{!projectEmpty && <CanvasTools tool={effectiveTool} onTool={setTool} />}
 				{finding ? (
 					<FindPalette
 						frames={navigatorFrames}
@@ -3243,7 +3036,7 @@ export function ProjectCanvas({
 					/>
 				) : null}
 			</div>
-			<div className="relative z-20 flex shrink-0 transition-opacity ease-out" style={furniture}>
+			<div className="relative z-20 flex shrink-0">
 				<AgentRail
 					entries={turn.entries}
 					plan={turn.plan}
@@ -3275,29 +3068,6 @@ export function ProjectCanvas({
 					onAnswer={turn.answer}
 				/>
 			</div>
-			{play !== null && (
-				<PlayLayer
-					project={project}
-					start={play.start}
-					phase={play.phase}
-					frames={frames}
-					onFrame={(frame) =>
-						setPlay((current) => (current === null || current.frame === frame ? current : { ...current, frame }))
-					}
-					onWalked={(from, to) => postWalk(project, from, to)}
-					onSettled={() => {
-						setPlay((current) =>
-							current === null || current.phase !== "flying" ? current : { ...current, phase: "live" },
-						);
-						// the canvas goes to sleep once the stage has covered it, never
-						// while the frame the flight landed on is still being looked at
-						window.setTimeout(() => {
-							if (playRef.current?.phase === "live") setPictured(true);
-						}, PLAY_IN.stage);
-					}}
-					onExit={leavePlay}
-				/>
-			)}
 			{exportDialog !== null && exportFrames.length > 0 ? (
 				<ExportDialog
 					exporting={exporting}

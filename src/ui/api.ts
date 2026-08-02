@@ -203,31 +203,6 @@ export function postWalk(project: string, from: string, to: string): void {
 	void client.api.p[":project"].walked.$post({ param: { project }, json: { from, to } }).catch(() => {});
 }
 
-/** A player session for the canvas to host inline (#210): where it opens and what it needs. */
-export interface PlaySession {
-	project: string;
-	start: string;
-	frames: Record<string, { w: number; h: number }>;
-	terminals: string[];
-	/** The render-origin player document, carrying its single-use handoff. */
-	innerUrl: string;
-}
-
-/**
- * Ask for a session to play inline. The handoff on the URL is single-use and
- * short-lived, so this is asked for at the moment the flight starts and never
- * held: booting the player is what hides the flight's own latency (#210).
- */
-export async function fetchPlaySession(project: string, frame: string): Promise<PlaySession | undefined> {
-	try {
-		const res = await client.api.p[":project"].play.$get({ param: { project }, query: { frame } });
-		if (!res.ok) return undefined;
-		return (await res.json()) as PlaySession;
-	} catch {
-		return undefined;
-	}
-}
-
 /**
  * What Liam points at (#23) — daemon memory, the agent's read surface.
  *

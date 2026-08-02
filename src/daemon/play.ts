@@ -273,7 +273,7 @@ export function assemblePlayerDocument(config: PlayerConfig, bundle: PlayerBundl
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<title>${escapeHtml(config.project)} · spool</title>
+<title>${escapeHtml(config.start)} · ${escapeHtml(config.project)}</title>
 <script>window.__SPOOL_PLAY__ = JSON.parse(${escapeJsonScript(JSON.stringify(config))})</script>
 <style>html, body, #root { height: 100%; }</style>
 <style>${escapeInlineStyle(bundle.css)}</style>
@@ -301,11 +301,11 @@ export function chromeFontFile(name: string): string | undefined {
 }
 
 /**
- * The stage and the pill (#210): near-black stage, the frame fitted edge to
- * edge and never past its authored size, and one floating pill for the frame's
- * name, its readout, restart, fullscreen and close. Solid fills and hairlines,
- * never blur or shadows (#13 law 4). The pill carries a view-transition-name,
- * so a screen transition films the screen and never smears the chrome.
+ * The played page (#227): near-black page, the frame laid out at the real
+ * viewport width and capped at its authored width, centred on that background.
+ * No fit and no scale — the document is the document. Solid fills and
+ * hairlines, never blur or shadows (#13 law 4). The screen carries a
+ * view-transition-name, so a screen swap films the screen and never the chrome.
  */
 export function playerChromeCss(fontBase = "/vendor/fonts/"): string {
 	return CHROME_CSS.replaceAll("/vendor/fonts/", fontBase);
@@ -319,42 +319,41 @@ const CHROME_CSS = `:root { color-scheme: dark; }
 	font-display: swap;
 	src: url("/vendor/fonts/fragment-mono-latin-400-normal.woff2") format("woff2");
 }
-html, body, #root { height: 100%; }
-body { margin: 0; background: #0e0e0e; overflow: hidden; }
-.spool-stage { position: relative; width: 100%; height: 100%; }
-/* the chrome's typography stops at the chrome: the stage is the screen's
-   ancestor, so anything set there would inherit into the frame and break the
-   parity law — a frame must render identically here and in a canvas iframe */
-/* sleep is the resting state (#60): stillness fades every piece of chrome
-   together and takes the cursor with it */
-.spool-stage.is-asleep { cursor: none; }
+/* the page is as tall as its content and the browser scrolls it: no clipped
+   body, no scroll container of spool's own (#227) */
+body { margin: 0; background: #0e0e0e; }
+#root, .spool-page { min-height: 100vh; }
+/* a grid so the screen is a stretched item: it has a definite height for the
+   frame's own \`height: 100%\` to resolve against, and still grows past the
+   viewport when the content does */
+.spool-page { position: relative; display: grid; }
+/* the frame's own document, centred on the page's background. Its width is set
+   from script — the authored width as a cap, the viewport below it — and its
+   height is whatever its content is. The chrome's typography stops at the
+   chrome: this is the screen's ancestor, so anything set here would inherit
+   into the frame and break the parity law */
 .spool-screen {
-	position: absolute;
-	top: 0;
-	left: 0;
-	transform-origin: top left;
+	position: relative;
+	z-index: 0;
+	isolation: isolate;
+	margin: 0 auto;
+	min-height: 100vh;
 	color-scheme: light;
 	color: #000;
 	background: #fff;
-	border: 1px solid #363636;
-	border-radius: 12px;
-	overflow: clip;
 	view-transition-name: spool-screen;
 }
-.spool-screen.is-terminal { color-scheme: dark; background: #111110; }
-.spool-screen-scroll {
-	width: 100%;
-	height: 100%;
-	overflow: auto;
-	overscroll-behavior: contain;
-}
-.spool-screen-scroll.is-terminal { overflow: hidden; }
+/* the outward-link confirmation is modal, and this page scrolls: pinned to the
+   window rather than to the page, or a tall document puts it out of sight */
+.spool-page > .spool-external-backdrop { position: fixed; }
+/* a terminal is a character grid, not a document: it keeps the box it was
+   authored at rather than growing into the window */
+.spool-screen.is-terminal { min-height: 0; overflow: hidden; color-scheme: dark; background: #111110; }
 .spool-player-error {
 	box-sizing: border-box;
 	width: 100%;
-	min-height: 100%;
+	min-height: 100vh;
 	padding: 24px;
-	overflow: auto;
 	background: #111110;
 	color: #b5b3ad;
 	font: 400 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -362,58 +361,141 @@ body { margin: 0; background: #0e0e0e; overflow: hidden; }
 .spool-player-error strong { display: block; margin-bottom: 16px; color: #f5391a; font-weight: 400; }
 .spool-player-error pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .spool-player-escape { display: inline-block; margin-top: 16px; color: #f0efed; text-decoration: underline; text-underline-offset: 3px; }
-/* the pill: the one piece of chrome left, floating over the bottom of the
-   stage and asleep until the hand moves */
-.spool-pill-dock {
+/* the edge bar (#227): away by default, peeled in by a dwell against the top
+   edge. The nub is the resting trace — a control with none is a control most
+   people never find */
+.spool-nub {
 	position: fixed;
-	inset: auto 0 28px;
+	top: 0;
+	left: 50%;
 	z-index: 10;
-	display: flex;
-	justify-content: center;
+	width: 40px;
+	height: 3px;
+	margin-left: -20px;
+	border-radius: 0 0 999px 999px;
+	background: #363636;
+	opacity: 0.7;
 	pointer-events: none;
-	transition: opacity 300ms ease;
-	view-transition-name: spool-pill;
+	transition: opacity 200ms ease;
 }
-/* asleep is gone, not merely invisible: a faded button must never take a click
-   the prototype's own control underneath it was meant to get */
-.spool-stage.is-asleep .spool-pill-dock { opacity: 0; }
-/* the chrome's typography stops at the chrome: the stage is the screen's
-   ancestor, so anything set there would inherit into the frame and break the
-   parity law — a frame must render identically here and in a canvas iframe */
-.spool-pill {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	height: 36px;
-	padding: 0 8px 0 14px;
-	background: #161616;
-	border: 1px solid #363636;
-	border-radius: 10px;
-	pointer-events: auto;
+.spool-nub.is-hidden { opacity: 0; }
+.spool-edge {
+	position: fixed;
+	inset: 0 0 auto;
+	z-index: 10;
+	translate: 0 -100%;
+	opacity: 0;
+	pointer-events: none;
+	transition: translate 200ms ease-out, opacity 200ms ease-out;
 	color: #f0efed;
-	font: 400 12px/18px "Fragment Mono", ui-monospace, monospace;
+	font: 400 12px/1 "Fragment Mono", ui-monospace, monospace;
 	-webkit-font-smoothing: antialiased;
 	font-synthesis: none;
 }
-.spool-stage.is-asleep .spool-pill { pointer-events: none; }
-.spool-pill-name { display: flex; align-items: center; gap: 8px; margin-right: 4px; white-space: nowrap; }
-.spool-dash { flex: none; width: 8px; height: 2px; background: #f5391a; }
-.spool-pill-button {
+.spool-edge.is-open { translate: 0 0; opacity: 1; pointer-events: auto; }
+.spool-bar {
+	position: relative;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 40px;
+	padding: 0 16px;
+	background: #282828;
+	border-bottom: 1px solid #363636;
+}
+.spool-bar-rule { flex: none; width: 1px; height: 14px; background: #363636; }
+.spool-bar-back {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 8px 4px 4px;
+	border-radius: 4px;
+	color: #8e8c88;
+	font-size: 10px;
+	text-decoration: none;
+}
+.spool-bar-back:hover { color: #f0efed; }
+.spool-bar-switcher { position: relative; display: flex; }
+.spool-bar-frame {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0 -6px;
+	padding: 4px 6px;
+	background: none;
+	border: 0;
+	border-radius: 4px;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+.spool-bar-frame:hover { background: #1c1c1c; }
+.spool-bar-project { color: #8e8c88; }
+.spool-bar-name { white-space: nowrap; }
+.spool-bar-chevron { color: #8e8c88; transition: rotate 150ms ease; }
+.spool-bar-chevron.is-open { rotate: 180deg; }
+.spool-bar-end { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.spool-bar-hint { color: #8e8c88; font-size: 10px; }
+.spool-bar-close {
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	flex: none;
+	width: 20px;
+	height: 20px;
 	margin: 0;
 	padding: 0;
-	width: 24px;
-	height: 24px;
 	background: none;
 	border: 0;
-	border-radius: 6px;
+	border-radius: 4px;
 	color: #8e8c88;
 	cursor: pointer;
 }
-.spool-pill-button:hover { background: #1c1c1c; color: #f0efed; }
-.spool-pill-button.is-on { color: #f0efed; }
-.spool-pill-button:disabled { background: none; opacity: 0.4; cursor: default; }
+.spool-bar-close:hover { background: #1c1c1c; color: #f0efed; }
+/* the scrim a video player draws under its controls: the page is not cut in
+   half by the bar's edge, it fades under it */
+.spool-edge-scrim {
+	position: absolute;
+	inset: 40px 0 auto;
+	height: 56px;
+	background: linear-gradient(to bottom, #0e0e0e, transparent);
+	pointer-events: none;
+}
+/* the switcher, closed by default: that is how it will be seen nine times in ten */
+.spool-picker {
+	position: absolute;
+	top: calc(100% + 8px);
+	left: -6px;
+	z-index: 1;
+	width: 212px;
+	overflow: hidden;
+	background: #161616;
+	border: 1px solid #363636;
+	border-radius: 12px;
+	translate: 0 -4px;
+	opacity: 0;
+	pointer-events: none;
+	transition: translate 150ms ease, opacity 150ms ease;
+}
+.spool-picker.is-open { translate: 0 0; opacity: 1; pointer-events: auto; }
+.spool-picker-list { display: flex; flex-direction: column; max-height: 320px; overflow: auto; padding: 6px; }
+.spool-picker-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	background: none;
+	border: 0;
+	border-radius: 4px;
+	color: #8e8c88;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.spool-picker-row:hover { background: #1c1c1c; color: #f0efed; }
+.spool-picker-row.is-here { color: #f0efed; }
+.spool-dash { flex: none; width: 8px; height: 2px; background: transparent; }
+.spool-picker-row.is-here .spool-dash { background: #f5391a; }
+.spool-picker-foot { display: block; padding: 8px 14px; border-top: 1px solid #262626; color: #8e8c88; font-size: 10px; }
 `;

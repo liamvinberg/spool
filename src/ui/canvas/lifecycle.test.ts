@@ -56,7 +56,6 @@ function sweeper() {
 			now,
 			camera: { x: 0, y: 0, k: 1 },
 			viewport: { width: 1000, height: 1000 },
-			pictured: false,
 			...input,
 		});
 		states = result.states;

@@ -4,7 +4,6 @@
  * exponential wheel zoom, cubic ease-out flights.
  */
 
-import { fitBox, type Placement } from "../../fit";
 import type { Camera } from "../api";
 
 export interface Box {
@@ -61,35 +60,10 @@ export function zoomAt(camera: Camera, cx: number, cy: number, factor: number): 
 	return { k, x: cx - (cx - camera.x) * r, y: cy - (cy - camera.y) * r };
 }
 
-/** The breathing room a canvas fit leaves around what it framed. */
-export const FIT_INSET = 128;
-
-/** The camera that lands a placement's scale and screen origin on a world box. */
-export function cameraFor(placement: Placement, box: Box): Camera {
-	return {
-		k: placement.scale,
-		x: placement.x - box.x * placement.scale,
-		y: placement.y - box.y * placement.scale,
-	};
-}
-
 /** Frame the given bounds inside vw×vh with breathing room, never past 100%. */
 export function fitCamera(bounds: Box, vw: number, vh: number): Camera {
-	return cameraFor(fitBox(bounds.w, bounds.h, vw, vh, { inset: FIT_INSET, minScale: K_MIN }), bounds);
-}
-
-/**
- * The camera that puts a frame exactly where the player's stage would (#210):
- * the same edge-to-edge fit, so the flight's landing values are the placement
- * values and the handoff into inline play cannot be a pixel out.
- *
- * Both are read in window space, because the canvas takes the whole window for
- * the length of a flight (`canvas.tsx` spanning). Were it still inside its own
- * box the landing would be off by the width of the chrome around it — and the
- * flight would spend its last half sliding under a sidebar.
- */
-export function stageCamera(frame: Box, vw: number, vh: number): Camera {
-	return cameraFor(fitBox(frame.w, frame.h, vw, vh), frame);
+	const k = clamp(Math.min((vw - 128) / bounds.w, (vh - 128) / bounds.h), K_MIN, 1);
+	return { k, x: (vw - bounds.w * k) / 2 - bounds.x * k, y: (vh - bounds.h * k) / 2 - bounds.y * k };
 }
 
 /** Pan (same zoom) so the box is centered — the flow-walk's camera move (#5). */
