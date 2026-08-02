@@ -1,5 +1,5 @@
 /**
- * The rail's visible list, and where a drag over it would land (#229, #231).
+ * The rail's visible list, and where a drag over it would land (#229, #231, #232).
  *
  * Rows are placed by arithmetic rather than measured: each one carries the
  * offset the list already knows, so an insertion line lands on an exact pixel
@@ -12,11 +12,13 @@
  * which depth a person means, and the pointer handler converts client space to
  * content space once so everything after that is a function of the list.
  *
- * A page holds its frames and then its pages: that is the order the shipped
- * rail already drew a flat project in, so nothing about one moves.
+ * A page holds its frames and then its pages, and the root page is the frames
+ * directory itself rather than a folder in it, so it has no row: the list is
+ * its contents. Its frames are the top of the list, its pages are the level
+ * beside them, and a flat project draws as its frames and nothing else.
  */
 
-import { pageDepth, pageParent, pageWithin, ROOT_PAGE } from "../../page-path";
+import { pageDepth, pageParent, pageSegments, pageWithin, ROOT_PAGE } from "../../page-path";
 
 /** The shipped rail's own metrics: a page row, a frame row, and the list's py-2. */
 export const PAGE_ROW = 32;
@@ -38,13 +40,25 @@ export function contentX(depth: number): number {
 	return depth * INDENT + 24;
 }
 
+/**
+ * How deep a page's own rows are drawn — its frames and its pages alike, since
+ * a page holds both beside each other.
+ *
+ * It is the number of page rows standing above them, which is the number of
+ * segments in the page's path: the root page has none, so its own are the top
+ * level, and `shop`'s are one step in from `shop`'s own row.
+ */
+function depthIn(page: string): number {
+	return pageSegments(page).length;
+}
+
 export interface RailFrame {
 	readonly name: string;
 	readonly kind: "html" | "term";
 }
 
 interface RowPlace {
-	/** How far in the row is drawn; the root page's own pages sit beside it. */
+	/** How far in the row is drawn; the root page has no row, so its own start at the margin. */
 	readonly depth: number;
 	/** The page whose children this row is one of; `""` is the root page. */
 	readonly parent: string;
@@ -103,16 +117,52 @@ export function railRows(
 ): RailRow[] {
 	const rows: RailRow[] = [];
 	let top = 0;
-	const block = (page: string, index: number, siblings: number, tail: boolean): void => {
+	/** One page's own, in the order every page draws them: its frames, then its pages. */
+	function contents(page: string): void {
 		const frames = framesByPage.get(page) ?? [];
 		const held = pages.get(page) ?? [];
+		const depth = depthIn(page);
+		frames.forEach((frame, at) => {
+			rows.push({
+				kind: "frame",
+				name: frame.name,
+				page,
+				parent: page,
+				depth,
+				index: at,
+				siblings: frames.length,
+				// a page's own pages are drawn under its frames, so a last frame is
+				// only the end of the block when there are none
+				tail: at === frames.length - 1 && held.length === 0,
+				last: at === frames.length - 1,
+				entry: frame.kind === "term" ? "term.tsx" : "frame.tsx",
+				top,
+				height: FRAME_ROW,
+			});
+			top += FRAME_ROW;
+		});
+		for (const [at, child] of held.entries()) block(child, at, held.length, at === held.length - 1);
+		if (born !== page) return;
+		rows.push({
+			kind: "born",
+			parent: page,
+			depth,
+			index: held.length,
+			siblings: held.length + 1,
+			tail: true,
+			top,
+			height: PAGE_ROW,
+		});
+		top += PAGE_ROW;
+	}
+	function block(page: string, index: number, siblings: number, tail: boolean): void {
+		const frames = framesByPage.get(page) ?? [];
 		const open = expanded.has(page);
-		const depth = pageDepth(page);
 		rows.push({
 			kind: "page",
 			page,
-			parent: page === ROOT_PAGE ? ROOT_PAGE : pageParent(page),
-			depth,
+			parent: pageParent(page),
+			depth: pageDepth(page),
 			index,
 			siblings,
 			tail,
@@ -122,48 +172,11 @@ export function railRows(
 			height: PAGE_ROW,
 		});
 		top += PAGE_ROW;
-		if (open) {
-			frames.forEach((frame, at) => {
-				rows.push({
-					kind: "frame",
-					name: frame.name,
-					page,
-					parent: page,
-					depth: depth + 1,
-					index: at,
-					siblings: frames.length,
-					// a page's own pages are drawn under its frames, so a last frame is
-					// only the end of the block when there are none
-					tail: at === frames.length - 1 && held.length === 0,
-					last: at === frames.length - 1,
-					entry: frame.kind === "term" ? "term.tsx" : "frame.tsx",
-					top,
-					height: FRAME_ROW,
-				});
-				top += FRAME_ROW;
-			});
-		}
-		// the root page's own pages are the top level rather than its contents, so
-		// shutting it takes its own frames off the list and never them
-		if (!open && page !== ROOT_PAGE) return;
-		for (const [at, child] of held.entries()) block(child, at, held.length, at === held.length - 1);
-		if (born === page) {
-			rows.push({
-				kind: "born",
-				parent: page,
-				depth: depthIn(page, "page"),
-				index: held.length,
-				siblings: held.length + 1,
-				tail: true,
-				top,
-				height: PAGE_ROW,
-			});
-			top += PAGE_ROW;
-		}
-	};
-	// the root page is the head of the list rather than one of anybody's children:
-	// it is permanent, it is first, and its own pages sit beside it
-	block(ROOT_PAGE, -1, 0, false);
+		if (open) contents(page);
+	}
+	// the root page has no row of its own: the list is its contents, so nothing
+	// here opens it and nothing shuts it
+	contents(ROOT_PAGE);
 	return rows;
 }
 
@@ -239,12 +252,6 @@ interface Slot {
 	readonly into: boolean;
 }
 
-/** How deep a row dropped into a page's list is drawn. */
-function depthIn(page: string, kind: "frame" | "page"): number {
-	if (kind === "page" && page === ROOT_PAGE) return 0;
-	return pageDepth(page) + 1;
-}
-
 /**
  * Every depth a drop in one gap could mean, shallowest first.
  *
@@ -255,7 +262,11 @@ function depthIn(page: string, kind: "frame" | "page"): number {
  */
 function slotsAt(rows: readonly RailRow[], gap: number, kind: "frame" | "page"): Slot[] {
 	const prev = rows[gap - 1];
-	if (prev === undefined || prev.kind === "born") return [];
+	// a page with no folder yet takes nothing, and nothing lands under it either
+	if (prev?.kind === "born") return [];
+	// the gap above the first row is the one gap with nothing over it to say what
+	// else it could mean: it is the top of the root page's own list
+	if (prev === undefined) return [{ depth: depthIn(ROOT_PAGE), page: ROOT_PAGE, after: null, into: false }];
 	const slots: Slot[] = [];
 	// a shut page has no frame list to draw a line in, so for frames it reads as
 	// that page taking them; a page dropped in the same gap has the list it is
@@ -267,7 +278,8 @@ function slotsAt(rows: readonly RailRow[], gap: number, kind: "frame" | "page"):
 	while (cursor !== undefined) {
 		const here: RailRow = cursor;
 		slots.push({ depth: here.depth, page: here.parent, after: here, into: false });
-		if (here.parent === ROOT_PAGE || !here.tail) break;
+		if (!here.tail) break;
+		// the root page has no row to step out to, which is where this walk ends
 		cursor = rows.find((row) => row.kind === "page" && row.page === here.parent);
 	}
 	const floor = rows[gap]?.depth ?? 0;
@@ -314,7 +326,7 @@ function landingOf(rows: readonly RailRow[], slot: Slot, kind: "frame" | "page")
 			kind: "frames",
 			page: slot.page,
 			index,
-			depth: depthIn(slot.page, "frame"),
+			depth: depthIn(slot.page),
 			y: landingY(rows, slot.page, "frame", index),
 		};
 	}
@@ -323,7 +335,7 @@ function landingOf(rows: readonly RailRow[], slot: Slot, kind: "frame" | "page")
 		kind: "pages",
 		page: slot.page,
 		index,
-		depth: depthIn(slot.page, "page"),
+		depth: depthIn(slot.page),
 		y: landingY(rows, slot.page, "page", index),
 	};
 }
@@ -344,8 +356,8 @@ function landingAt(
 		const within = (contentY - over.top) / over.height;
 		if (within > 0.26 && within < 0.74) return { kind: "into", page: over.page };
 	}
-	// nothing lands above the root page's own row, and nothing lands in a page
-	// that has no folder yet
+	// everywhere else is a gap in some page's list, the top of the list being the
+	// top of the root page's own
 	const slots = slotsAt(rows, gapAt(rows, contentY, at), kind);
 	const pick = choose(slots, wanted);
 	return pick === undefined ? null : landingOf(rows, pick, kind);

@@ -69,8 +69,10 @@ describe("canvas boot", () => {
 		// first frame is reachable in the rail beside it
 		expect(host.querySelector("[data-canvas-empty]")).not.toBeNull();
 		expect(host.querySelector("[data-agent-rail]")).not.toBeNull();
-		// the pages tree stands over its root page, holding no frames
-		expect(host.querySelector('button[aria-label="root page"]')).not.toBeNull();
+		// the pages tree stands over a project with nothing in it, and draws no row:
+		// the root page has none of its own, and there is nothing on it yet
+		expect(host.querySelector('[aria-label="Pages tree"]')).not.toBeNull();
+		expect(host.querySelector('[aria-label="Pages tree"] [role="treeitem"]')).toBeNull();
 		expect(host.querySelector("[data-frame-label]")).toBeNull();
 		// nothing to arrange yet
 		expect(host.querySelector('[aria-label="canvas tools"]')).toBeNull();
