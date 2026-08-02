@@ -72,7 +72,19 @@ import {
 } from "./frame-export";
 import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
-import { emptyHistory, entryOf, record, takeRedo, takeUndo } from "./history";
+import {
+	drop,
+	emptyHistory,
+	entryOf,
+	type HistoryEntry,
+	type Liveness,
+	record,
+	rectsOf,
+	type Staging,
+	takeRedo,
+	takeUndo,
+	type Way,
+} from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import { useFrameLifecycle } from "./lifecycle";
 import {
@@ -110,7 +122,7 @@ import {
 	sitesMessage,
 	walkRejectionReason,
 } from "./protocol";
-import { CanvasSidebar, type SelectModifiers } from "./sidebar";
+import { CanvasSidebar, type RunEntry, type SelectModifiers } from "./sidebar";
 import { snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { TrashToast } from "./trash-toast";
@@ -188,12 +200,11 @@ const COPY_CASCADE_PX = 24;
  *
  * A page carries the frames inside it so the canvas can empty at once, but it
  * is still one entry with one undo: the folder is what moves, so the folder is
- * what comes back.
+ * what comes back. It is history's `Staging` rather than a twin of it, because
+ * undoing a mint hands one straight to this toast (#230) — one shape, named
+ * here for what it is out on the canvas.
  */
-interface StagedTrash {
-	frames: string[];
-	page: string | null;
-}
+type StagedTrash = Staging;
 
 function spatialDirection(key: string): SpatialDirection | undefined {
 	switch (key) {
@@ -464,8 +475,12 @@ export function ProjectCanvas({
 	const pendingTrashRef = useRef<StagedTrash | null>(null);
 	// staging a page has to leave it, and the switch is declared further down
 	const leavePage = useRef<(target: string) => void>(() => {});
-	// the geometry undo/redo stacks: per window, in memory, hands' writes only
-	const geometryHistory = useRef(emptyHistory());
+	// the one undo/redo stack: per window, in memory, hands' writes only — the
+	// canvas's geometry and the rail's file operations on the same ⌘Z (#230)
+	const history = useRef(emptyHistory());
+	// the rail's runner, put here by the rail itself: it owns the stored order
+	// and the explorer calls, so an explorer entry has to be run from there
+	const runEntry = useRef<RunEntry | null>(null);
 	// the jump list (jumps.ts): the spots teleports left, the hands' travel only
 	const jumpList = useRef(emptyJumps());
 
@@ -1124,7 +1139,7 @@ export function ProjectCanvas({
 			if (Object.keys(patch).length === 0) return;
 			if (before !== undefined) {
 				const entry = entryOf(before, patch);
-				if (entry !== undefined) geometryHistory.current = record(geometryHistory.current, entry);
+				if (entry !== undefined) history.current = record(history.current, entry);
 			}
 			setFrames((current) => {
 				return current.map((frame) => {
@@ -1225,24 +1240,19 @@ export function ProjectCanvas({
 		[project],
 	);
 
-	const undoGeometry = useCallback(() => {
-		flushNudge(); // a pending nudge becomes the entry this ⌘Z pops
-		const alive = new Set(allFramesRef.current.map((frame) => frame.name));
-		const taken = takeUndo(geometryHistory.current, alive);
-		if (taken === undefined) return;
-		geometryHistory.current = taken.history;
-		applyRects(taken.rects);
-	}, [applyRects, flushNudge]);
+	/** What a history entry is checked against: the disk as the canvas has it now. */
+	const liveness = useCallback(
+		(): Liveness => ({
+			frames: new Map(allFramesRef.current.map((frame) => [frame.name, pageOf(frame)])),
+			pages: new Set(pagesRef.current),
+			pending: pendingTrashRef.current,
+		}),
+		[],
+	);
 
-	const redoGeometry = useCallback(() => {
-		// a pending nudge is a fresh edit: flushing voids redo, exactly as typed
-		flushNudge();
-		const alive = new Set(allFramesRef.current.map((frame) => frame.name));
-		const taken = takeRedo(geometryHistory.current, alive);
-		if (taken === undefined) return;
-		geometryHistory.current = taken.history;
-		applyRects(taken.rects);
-	}, [applyRects, flushNudge]);
+	const recordEntry = useCallback((entry: HistoryEntry) => {
+		history.current = record(history.current, entry);
+	}, []);
 
 	// --- tidy: the layered drawing of the graph, laid over the field ------------
 
@@ -1263,7 +1273,7 @@ export function ProjectCanvas({
 		const rects = arrange(scope, edgesRef.current);
 		const entry = entryOf(before, rects);
 		if (entry === undefined) return; // already tidy: nothing to undo
-		geometryHistory.current = record(geometryHistory.current, entry);
+		history.current = record(history.current, entry);
 		applyRects(rects);
 	}, [applyRects, flushNudge]);
 
@@ -1276,7 +1286,7 @@ export function ProjectCanvas({
 		setPendingTrash(null);
 		if (staged === null || (staged.frames.length === 0 && staged.page === null)) return;
 		const pages = staged.page === null ? [] : [staged.page];
-		void postTrash(project, staged.frames, pages).then((ok) => {
+		void postTrash(project, [...staged.frames], pages).then((ok) => {
 			if (ok) return;
 			// the move never happened: resurface what was staged instead of losing it
 			setHidden((current) => new Set([...current].filter((name) => !staged.frames.includes(name))));
@@ -1328,13 +1338,55 @@ export function ProjectCanvas({
 		setHiddenPages((current) => new Set([...current].filter((page) => page !== staged.page)));
 	}, []);
 
+	/**
+	 * One step of the one stack (#230).
+	 *
+	 * The pure module already skipped whatever the projection no longer holds, so
+	 * what arrives here is real. Where it goes is who owns it: geometry is the
+	 * sidecar write it always was, a mint's inverse is the staged trash right
+	 * here, and everything else is the rail's to run, because the rail owns the
+	 * stored order and the explorer calls. A refusal is staleness discovered one
+	 * round trip late — the entry comes back off the stack it was just pushed
+	 * onto and the projection is read again, rather than the press chasing the
+	 * next entry, because what a refusal says is that the disk moved underneath
+	 * all of them.
+	 */
+	const walk = useCallback(
+		(way: Way) => {
+			flushNudge(); // a pending nudge is its own entry: undo pops it, redo is voided by it
+			const held = history.current;
+			const alive = liveness();
+			const taken = way === "undo" ? takeUndo(held, alive) : takeRedo(held, alive);
+			if (taken === undefined) return;
+			history.current = taken.history;
+			const entry = taken.entry;
+			if (entry.kind === "geometry") {
+				applyRects(rectsOf(entry.rects, way));
+				return;
+			}
+			if (entry.kind === "mint") {
+				if (way === "undo") stageEntry(entry.staged);
+				else undoTrash();
+				return;
+			}
+			const taking = taken.history;
+			void runEntry.current?.(entry, way).then((ran) => {
+				// a press that landed after this one owns the stacks now
+				if (ran || history.current !== taking) return;
+				history.current = drop(history.current, way);
+				void refetchFrames();
+			});
+		},
+		[applyRects, flushNudge, liveness, refetchFrames, stageEntry, undoTrash],
+	);
+
 	// leaving the page (or the tab) mid-toast: the staged move still happens
 	useEffect(() => {
 		const flush = () => {
 			const staged = pendingTrashRef.current;
 			if (staged === null) return;
 			pendingTrashRef.current = null;
-			beaconTrash(project, staged.frames, staged.page === null ? [] : [staged.page]);
+			beaconTrash(project, [...staged.frames], staged.page === null ? [] : [staged.page]);
 		};
 		window.addEventListener("pagehide", flush);
 		return () => {
@@ -2612,15 +2664,15 @@ export function ProjectCanvas({
 				event?.preventDefault();
 				jumpForward();
 			},
-			// ⌘Z answers the trash toast first (#7), then walks the geometry stack
+			// ⌘Z answers the trash toast first (#7), then walks the one stack (#230)
 			"canvas.undo": (event) => {
 				event?.preventDefault();
 				if (pendingTrashRef.current !== null) undoTrash();
-				else if (gestureStill()) undoGeometry();
+				else if (gestureStill()) walk("undo");
 			},
 			"canvas.redo": (event) => {
 				event?.preventDefault();
-				if (gestureStill()) redoGeometry();
+				if (gestureStill()) walk("redo");
 			},
 			"canvas.zoom-in": (event) => zoomStep(event, K_STEP),
 			"canvas.zoom-out": (event) => zoomStep(event, 1 / K_STEP),
@@ -2832,8 +2884,7 @@ export function ProjectCanvas({
 		enterFrame,
 		nudge,
 		undoTrash,
-		undoGeometry,
-		redoGeometry,
+		walk,
 		arrangeFrames,
 		reloadFrameDocument,
 		openExport,
@@ -2903,6 +2954,8 @@ export function ProjectCanvas({
 					onOpenEditor={(name) => openEditorFor({ path: frameSourcePath(name, framePageOf(name)) })}
 					onCopiesLanded={cascadeCopies}
 					onRefresh={() => void refetchFrames()}
+					onRecord={recordEntry}
+					run={runEntry}
 					// the finder's pick, or the page holding the frame a row in the agent rail is
 					// pointing at (#194)
 					litPage={finding ? findLit : pointedPage}

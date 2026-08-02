@@ -19,6 +19,7 @@
  */
 
 import type { CanvasOrder } from "../api";
+import type { OrderList, Way } from "./history";
 
 /** How a name compares for placement — the projection's own sort. */
 const before = (a: string, b: string): boolean => a.localeCompare(b) < 0;
@@ -130,6 +131,22 @@ export function withPageOrder(order: CanvasOrder, pages: readonly string[]): Can
 
 export function withFrameOrder(order: CanvasOrder, page: string, names: readonly string[]): CanvasOrder {
 	return { ...order, frames: { ...order.frames, [page]: [...names] } };
+}
+
+/**
+ * The lists one history entry rewrote, stated again, run this way (#230).
+ *
+ * List by list rather than a whole stored order, for the same reason a drop
+ * states one list: undoing a move must not take back a row somebody arranged
+ * on a page this entry never touched.
+ */
+export function withLists(order: CanvasOrder, lists: readonly OrderList[], way: Way): CanvasOrder {
+	let next = order;
+	for (const list of lists) {
+		const names = way === "undo" ? list.before : list.after;
+		next = list.page === null ? withPageOrder(next, names) : withFrameOrder(next, list.page, names);
+	}
+	return next;
 }
 
 /** A page that is gone takes its own row and its frame list with it. */

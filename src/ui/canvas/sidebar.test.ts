@@ -5,7 +5,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
-import { CanvasSidebar } from "./sidebar";
+import type { HistoryEntry } from "./history";
+import { CanvasSidebar, type RailEntry, type RunEntry } from "./sidebar";
 
 /** The toggle modifier as this environment binds it — ctrl under happy-dom, ⌘ on a Mac. */
 const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
@@ -475,6 +476,125 @@ describe("the sidebar scope", () => {
 		const paste = asked.find((call) => call.url.endsWith("/frames/duplicate"));
 		expect(paste?.body).toEqual({ frames: ["home"], page: "shop" });
 		expect(onCopiesLanded).toHaveBeenCalledWith([{ from: "home", to: "home-copy", page: "shop" }]);
+	});
+});
+
+/**
+ * The rail's half of the one undo stack (#230).
+ *
+ * The canvas holds the entries and decides which press they answer; what is
+ * this rail's is saying what it did and being able to do it the other way
+ * round. So each of these records a verb and then runs the entry back through
+ * the runner the rail hands out, which is the whole seam.
+ */
+describe("the one undo stack", () => {
+	/** What was recorded, as the rail's own runner takes it — and an assertion in itself. */
+	function railEntry(entry: HistoryEntry | undefined): RailEntry {
+		if (entry === undefined || entry.kind === "geometry" || entry.kind === "mint") {
+			throw new Error(`not an entry this rail runs: ${entry?.kind ?? "nothing recorded"}`);
+		}
+		return entry;
+	}
+
+	const shopFrames = [
+		{ name: "cart", page: "shop", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+		{ name: "checkout", page: "shop", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+	];
+
+	it("records a reorder, and states the list it replaced again on the way back", async () => {
+		const kept: HistoryEntry[] = [];
+		const run: { current: RunEntry | null } = { current: null };
+		const { host } = await render({ pages: ["shop"], frames: shopFrames, onRecord: (e) => kept.push(e), run });
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="Expand shop"]')?.click();
+		});
+
+		await dragRow(host, 'button[aria-label="checkout frame"]', 108, 76);
+		expect(framesListed(host)).toEqual(["checkout frame", "cart frame"]);
+		expect(kept).toEqual([
+			{ kind: "reorder", lists: [{ page: "shop", before: ["cart", "checkout"], after: ["checkout", "cart"] }] },
+		]);
+
+		await act(async () => {
+			await run.current?.(railEntry(kept[0]), "undo");
+		});
+		expect(lastOrder()?.frames?.shop).toEqual(["cart", "checkout"]);
+		expect(framesListed(host)).toEqual(["cart frame", "checkout frame"]);
+	});
+
+	it("records a move against the page each frame came from, and puts it back there", async () => {
+		const kept: HistoryEntry[] = [];
+		const run: { current: RunEntry | null } = { current: null };
+		const { host } = await render({ onRecord: (e) => kept.push(e), run });
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="Expand root"]')?.click();
+		});
+
+		// onto the middle band of the shop row, which is how a frame changes page
+		await dragRow(host, 'button[aria-label="home frame"]', 40, 84);
+		expect(asked.find((call) => call.url.endsWith("/frames/move"))?.body).toEqual({ frames: ["home"], page: "shop" });
+		expect(kept).toEqual([
+			{
+				kind: "move",
+				frames: [{ name: "home", from: "" }],
+				to: "shop",
+				lists: [
+					{ page: "", before: ["home"], after: [] },
+					{ page: "shop", before: ["checkout"], after: ["checkout", "home"] },
+				],
+			},
+		]);
+
+		await act(async () => {
+			await run.current?.(railEntry(kept[0]), "undo");
+		});
+		expect(asked.filter((call) => call.url.endsWith("/frames/move")).at(-1)?.body).toEqual({
+			frames: ["home"],
+			page: "",
+		});
+		expect(lastOrder()?.frames?.[""]).toEqual(["home"]);
+	});
+
+	/**
+	 * A copy was nowhere a moment ago, so the only inverse is a delete, and this
+	 * canvas's delete is the staged one. The entry names what the daemon minted,
+	 * which is the only thing the toast could take back.
+	 */
+	it("records a duplicate as the copies it minted", async () => {
+		stubDaemon({ "/frames/duplicate": { json: { frames: [{ from: "home", to: "home-copy" }] } } });
+		const kept: HistoryEntry[] = [];
+		const { host } = await render({ selected: ["home"], onRecord: (e) => kept.push(e) });
+		focusList(host);
+		await act(async () => press("c", ACCEL));
+		await act(async () => press("v", ACCEL));
+		expect(kept).toEqual([{ kind: "mint", staged: { frames: ["home-copy"], page: null } }]);
+	});
+
+	it("records a new page as a mint of the page itself", async () => {
+		const kept: HistoryEntry[] = [];
+		const { host } = await render({ onRecord: (e) => kept.push(e) });
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="New page"]')?.click();
+		});
+		const input = host.querySelector<HTMLInputElement>('input[aria-label="New page name"]');
+		await act(async () => type(input, "admin"));
+		await act(async () => input?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+		expect(kept).toEqual([{ kind: "mint", staged: { frames: [], page: "admin" } }]);
+	});
+
+	it("leaves the stacks alone when the daemon refuses the way back", async () => {
+		stubDaemon({ "/frames/rename": { status: 409 } });
+		const onRefresh = vi.fn();
+		const run: { current: RunEntry | null } = { current: null };
+		await render({ run, onRefresh });
+		let ran: boolean | undefined;
+		await act(async () => {
+			ran = await run.current?.({ kind: "rename", of: "frame", from: "home", to: "landing" }, "undo");
+		});
+		// the name was re-claimed while the entry sat on the stack: the canvas is
+		// told the run never happened, and the projection is read again
+		expect(ran).toBe(false);
+		expect(onRefresh).toHaveBeenCalled();
 	});
 });
 
