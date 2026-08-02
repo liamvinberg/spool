@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { build, formatMessagesSync, type Plugin } from "esbuild";
+import { isSafeName } from "../page-path";
 import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes } from "./assets";
 import {
 	assertDesignFile,
@@ -11,7 +12,7 @@ import {
 	resolveDesignPath,
 } from "./design-path";
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
-import { isSafeName, readIfExists } from "./project-files";
+import { readIfExists } from "./project-files";
 import { describeCollision, describeMissingFrame, frameFolder, frameKind, lookupFrame } from "./projection";
 import { buildFrameCss } from "./tailwind";
 import { assembleTermDocument, termDocumentEtag } from "./term-document";

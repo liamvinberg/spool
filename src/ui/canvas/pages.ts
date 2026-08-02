@@ -1,23 +1,17 @@
+import { pageName, ROOT_PAGE } from "../../page-path";
 import type { Camera, CanvasState, ProjectedFrame } from "../api";
 
 /**
- * The pure page logic (#39): which page a frame belongs to, which page the
- * canvas shows, and where each page's camera rests. The root page is the
- * frames directory itself, spelled "" here — it is permanent, listed first,
- * and keeps the original camera slot in the state file so flat projects'
- * state reads unchanged.
+ * The pure page logic (#39, #231): which page a frame belongs to, which page
+ * the canvas shows, and where each page's camera rests. A page is its path
+ * under frames/, and the root page is the frames directory itself, spelled ""
+ * — it is permanent, listed first, and keeps the original camera slot in the
+ * state file so flat projects' state reads unchanged.
  */
-
-export const ROOT_PAGE = "";
 
 /** The page a projected frame sits on — the root page when unattributed. */
 export function pageOf(frame: ProjectedFrame): string {
 	return frame.page ?? ROOT_PAGE;
-}
-
-/** Sidebar order: the permanent root page first, named pages as discovered. */
-export function pageList(pages: readonly string[]): string[] {
-	return [ROOT_PAGE, ...pages];
 }
 
 /** The stored active page if it still exists; the root page otherwise. */
@@ -29,8 +23,17 @@ export function framesOnPage(frames: readonly ProjectedFrame[], page: string): P
 	return frames.filter((frame) => pageOf(frame) === page);
 }
 
-/** How a page reads in chrome: the root page has no folder to name it. */
+/** What a page is called: its own folder's name, the root page having none. */
 export function pageLabel(page: string): string {
+	return page === ROOT_PAGE ? "root" : pageName(page);
+}
+
+/**
+ * The whole of where a page is, for chrome with no tree around it to say. A
+ * flat project's pages read the same either way, because a page at the top
+ * level is its own name.
+ */
+export function pagePathLabel(page: string): string {
 	return page === ROOT_PAGE ? "root" : page;
 }
 

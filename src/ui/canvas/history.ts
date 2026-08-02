@@ -1,5 +1,5 @@
+import { pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
 import type { Geometry } from "../api";
-import { ROOT_PAGE } from "./pages";
 
 /**
  * One undo stack for the hands (#23, #230).
@@ -34,7 +34,11 @@ export type Way = "undo" | "redo";
 /** One gesture's rects, per frame: where each was, and where it ended up. */
 export type Rects = Record<string, { before: Geometry; after: Geometry }>;
 
-/** A frame that changed page, against the page it left. */
+/**
+ * Something that changed the page holding it, against the page it left. A
+ * frame is named by its own name and a page by its path, which is the whole of
+ * what tells the two entries apart.
+ */
 export interface Moved {
 	readonly name: string;
 	readonly from: string;
@@ -64,8 +68,10 @@ export interface Staging {
  * must not take back a list nobody touched.
  */
 export interface OrderList {
-	/** The page whose frames this orders; `null` for the list of pages itself. */
-	readonly page: string | null;
+	/** Which of that page's two lists this is: the frames on it, or the pages in it. */
+	readonly of: "frames" | "pages";
+	/** The page whose list this is; `""` is the root page, whose pages are the top level. */
+	readonly page: string;
 	readonly before: readonly string[];
 	readonly after: readonly string[];
 }
@@ -77,6 +83,15 @@ export type HistoryEntry =
 	| {
 			readonly kind: "move";
 			readonly frames: readonly Moved[];
+			readonly to: string;
+			readonly lists: readonly OrderList[];
+	  }
+	// a page that changed the page holding it, which carries its whole subtree
+	// (#231): its own kind rather than a second list on a move, because putting
+	// it back is a different call and the thing that moved is a path
+	| {
+			readonly kind: "move-page";
+			readonly pages: readonly Moved[];
 			readonly to: string;
 			readonly lists: readonly OrderList[];
 	  }
@@ -165,9 +180,19 @@ export function drop(history: History, way: Way): History {
 		: { undo: history.undo.slice(0, -1), redo: history.redo };
 }
 
-/** A name nothing answers to: frames and pages are one namespace (#228). */
-function free(alive: Liveness, name: string): boolean {
-	return !alive.frames.has(name) && !alive.pages.has(name);
+/**
+ * A name nothing answers to (#228, #231).
+ *
+ * A frame's name has to be free of every frame and of every page's name, at
+ * whatever depth that page sits; a page's path has to be free of every page,
+ * and its own name of every frame. Two pages under different parents may share
+ * a name, which is why one of these asks about a path and the other about a
+ * name. The daemon has the last word either way — this is the same law asked
+ * one round trip early, so a press does the next real thing.
+ */
+function free(alive: Liveness, of: "frame" | "page", name: string): boolean {
+	if (of === "page") return !alive.pages.has(name) && !alive.frames.has(pageName(name));
+	return !alive.frames.has(name) && ![...alive.pages].some((page) => pageName(page) === name);
 }
 
 function holds(alive: Liveness, of: "frame" | "page", name: string): boolean {
@@ -208,6 +233,34 @@ function liveMoved(frames: readonly Moved[], to: string, alive: Liveness, way: W
 }
 
 /**
+ * The pages of a move that are still where this run expects them, and still
+ * have somewhere to land. A page is named by the path it had before the move,
+ * so undo looks for it under the page it landed in and redo looks for it where
+ * it started.
+ */
+function livePaged(pages: readonly Moved[], to: string, alive: Liveness, way: Way): Moved[] {
+	return pages.filter((moved) => {
+		const landed = pageUnder(to, pageName(moved.name));
+		return way === "undo"
+			? alive.pages.has(landed) && hasPage(alive, moved.from) && canHold(moved.from, landed)
+			: alive.pages.has(moved.name) && hasPage(alive, to) && canHold(to, moved.name);
+	});
+}
+
+/**
+ * Whether a page can hold another one: never itself, and never one of its own.
+ *
+ * The daemon refuses both and the rail refuses to draw the drop, so this is the
+ * same law a third time, asked of the projection. It matters here because a
+ * restructure somebody did in between can turn an entry's own destination into
+ * a page inside what is moving, and an undo the daemon would 409 is worse than
+ * a press that quietly does the next real thing.
+ */
+function canHold(parent: string, page: string): boolean {
+	return parent !== page && !pageWithin(page, parent);
+}
+
+/**
  * One entry against what is still true: what is left of it, or nothing.
  *
  * A rename needs both ends to hold — the name it is moving from has to be on
@@ -225,11 +278,15 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 		case "rename": {
 			const from = way === "undo" ? entry.to : entry.from;
 			const to = way === "undo" ? entry.from : entry.to;
-			return holds(alive, entry.of, from) && free(alive, to) ? entry : undefined;
+			return holds(alive, entry.of, from) && free(alive, entry.of, to) ? entry : undefined;
 		}
 		case "move": {
 			const frames = liveMoved(entry.frames, entry.to, alive, way);
 			return frames.length === 0 ? undefined : { ...entry, frames };
+		}
+		case "move-page": {
+			const pages = livePaged(entry.pages, entry.to, alive, way);
+			return pages.length === 0 ? undefined : { ...entry, pages };
 		}
 		case "reorder":
 			return entry;

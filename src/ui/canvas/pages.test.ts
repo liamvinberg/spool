@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ROOT_PAGE } from "../../page-path";
 import type { ProjectedFrame } from "../api";
 import {
 	camerasFromState,
@@ -6,8 +7,7 @@ import {
 	frameSourceRel,
 	framesOnPage,
 	pageLabel,
-	pageList,
-	ROOT_PAGE,
+	pagePathLabel,
 	resolveActivePage,
 	stateCameraSlots,
 	switchPage,
@@ -39,20 +39,24 @@ describe("page-switch state", () => {
 });
 
 describe("sidebar list derivation", () => {
-	it("lists the permanent root page first", () => {
-		expect(pageList(["admin", "shop"])).toEqual([ROOT_PAGE, "admin", "shop"]);
-		expect(pageList([])).toEqual([ROOT_PAGE]);
-	});
-
 	it("names the root page for chrome and pages by their folder", () => {
 		expect(pageLabel(ROOT_PAGE)).toBe("root");
 		expect(pageLabel("shop")).toBe("shop");
+		// a row sits in a tree that already says where it is, so it says its own name
+		expect(pageLabel("explorations/chat")).toBe("chat");
 	});
 
-	it("builds a frame's source path through its page", () => {
+	it("says the whole of where a page is where there is no tree to say it", () => {
+		expect(pagePathLabel(ROOT_PAGE)).toBe("root");
+		expect(pagePathLabel("shop")).toBe("shop");
+		expect(pagePathLabel("explorations/chat")).toBe("explorations/chat");
+	});
+
+	it("builds a frame's source path through its page, at whatever depth it sits", () => {
 		expect(frameSourceRel("home", ROOT_PAGE)).toBe("frames/home/frame.tsx");
 		expect(frameSourceRel("checkout", "shop")).toBe("frames/shop/checkout/frame.tsx");
 		expect(frameSourcePath("checkout", "shop")).toBe("design/frames/shop/checkout/frame.tsx");
+		expect(frameSourceRel("agent-chat", "explorations/chat")).toBe("frames/explorations/chat/agent-chat/frame.tsx");
 	});
 });
 

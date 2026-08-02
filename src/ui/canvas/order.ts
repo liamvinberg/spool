@@ -18,6 +18,7 @@
  * no row.
  */
 
+import { carriedKeys, pageName, pageParent, pageUnder, ROOT_PAGE } from "../../page-path";
 import type { CanvasOrder } from "../api";
 import type { OrderList, Way } from "./history";
 
@@ -125,8 +126,8 @@ export function placeAfter(list: readonly string[], anchor: string, names: reado
  * same reason the daemon never cleans it on a read. So a drop states the list
  * the hands just arranged and says nothing about any other.
  */
-export function withPageOrder(order: CanvasOrder, pages: readonly string[]): CanvasOrder {
-	return { ...order, pages: [...pages] };
+export function withPageOrder(order: CanvasOrder, parent: string, names: readonly string[]): CanvasOrder {
+	return { ...order, pages: { ...order.pages, [parent]: [...names] } };
 }
 
 export function withFrameOrder(order: CanvasOrder, page: string, names: readonly string[]): CanvasOrder {
@@ -144,14 +145,63 @@ export function withLists(order: CanvasOrder, lists: readonly OrderList[], way: 
 	let next = order;
 	for (const list of lists) {
 		const names = way === "undo" ? list.before : list.after;
-		next = list.page === null ? withPageOrder(next, names) : withFrameOrder(next, list.page, names);
+		next = list.of === "pages" ? withPageOrder(next, list.page, names) : withFrameOrder(next, list.page, names);
 	}
 	return next;
 }
 
-/** A page that is gone takes its own row and its frame list with it. */
-export function withoutPageOrder(order: CanvasOrder, page: string): CanvasOrder {
-	const frames = { ...order.frames };
-	delete frames[page];
-	return { ...order, ...(order.pages === undefined ? {} : { pages: without(order.pages, [page]) }), frames };
+/**
+ * A page that moved, in the order this side is holding.
+ *
+ * The daemon carries the stored file across with the folder (#231); this is
+ * that same move applied to what is on screen, so neither side has to read the
+ * other back. Where the page lands in its new list is the drop's to say, so
+ * this only takes it out of the one it left.
+ */
+export function pageMovedInOrder(order: CanvasOrder, from: string, to: string): CanvasOrder {
+	const held = pageParent(from);
+	const next: CanvasOrder = {
+		...order,
+		...(order.pages === undefined ? {} : { pages: carriedKeys(order.pages, from, to) }),
+		...(order.frames === undefined ? {} : { frames: carriedKeys(order.frames, from, to) }),
+	};
+	const names = next.pages?.[held] ?? [];
+	return withPageOrder(
+		next,
+		held,
+		held === pageParent(to) ? renameInOrder(names, pageName(from), pageName(to)) : without(names, [pageName(from)]),
+	);
+}
+
+/**
+ * The stored page order merged against what the projection holds, per parent.
+ *
+ * A page path says which page holds it, so the arrangement is one list per
+ * parent and a list only has to name what its own children are called. What
+ * comes back is every page in the project, keyed by the page holding it, in
+ * the order the rail draws them.
+ */
+export function mergePageTree(
+	stored: Record<string, string[]> | undefined,
+	pages: readonly string[],
+): Map<string, string[]> {
+	const held = new Map<string, string[]>();
+	for (const page of pages) {
+		const parent = pageParent(page);
+		held.set(parent, [...(held.get(parent) ?? []), pageName(page)]);
+	}
+	const tree = new Map<string, string[]>();
+	for (const [parent, names] of held) {
+		tree.set(
+			parent,
+			mergeOrder(stored?.[parent], names).map((name) => pageUnder(parent, name)),
+		);
+	}
+	return tree;
+}
+
+/** Every page, in the order the rail draws them: a page and then the pages it holds. */
+export function flatPages(tree: ReadonlyMap<string, readonly string[]>): string[] {
+	const walk = (page: string): string[] => (tree.get(page) ?? []).flatMap((child) => [child, ...walk(child)]);
+	return walk(ROOT_PAGE);
 }

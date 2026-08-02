@@ -512,7 +512,10 @@ describe("the one undo stack", () => {
 		await dragRow(host, 'button[aria-label="checkout frame"]', 108, 76);
 		expect(framesListed(host)).toEqual(["checkout frame", "cart frame"]);
 		expect(kept).toEqual([
-			{ kind: "reorder", lists: [{ page: "shop", before: ["cart", "checkout"], after: ["checkout", "cart"] }] },
+			{
+				kind: "reorder",
+				lists: [{ of: "frames", page: "shop", before: ["cart", "checkout"], after: ["checkout", "cart"] }],
+			},
 		]);
 
 		await act(async () => {
@@ -539,8 +542,8 @@ describe("the one undo stack", () => {
 				frames: [{ name: "home", from: "" }],
 				to: "shop",
 				lists: [
-					{ page: "", before: ["home"], after: [] },
-					{ page: "shop", before: ["checkout"], after: ["checkout", "home"] },
+					{ of: "frames", page: "", before: ["home"], after: [] },
+					{ of: "frames", page: "shop", before: ["checkout"], after: ["checkout", "home"] },
 				],
 			},
 		]);
@@ -595,6 +598,94 @@ describe("the one undo stack", () => {
 		// told the run never happened, and the projection is read again
 		expect(ran).toBe(false);
 		expect(onRefresh).toHaveBeenCalled();
+	});
+});
+
+/**
+ * Depth (#231). A page holds pages, so a row's indent is a fact about its own
+ * path, a drag over a page row nests what it is carrying, and a page can never
+ * be dropped inside itself.
+ */
+describe("pages inside pages", () => {
+	const deepPages = ["explorations", "explorations/chat", "application"];
+	const deepFrames = [
+		{ name: "home", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+		{ name: "agent-chat", page: "explorations/chat", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+	];
+
+	/** every page row on screen, by the name it draws, in list order */
+	function pagesListed(host: HTMLElement): Array<string | null> {
+		const tree = host.querySelector('[aria-label="Pages tree"]');
+		return [...(tree?.querySelectorAll('button[aria-label$=" page"]') ?? [])].map((node) =>
+			node.getAttribute("aria-label"),
+		);
+	}
+
+	it("draws a page inside a page by its own name, one step further in", async () => {
+		const { host } = await render({ pages: deepPages, frames: deepFrames });
+
+		// a shut page keeps its own pages off the list, exactly as it does its frames
+		expect(pagesListed(host)).toEqual(["root page", "application page", "explorations page"]);
+
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="Expand explorations"]')?.click();
+		});
+
+		expect(pagesListed(host)).toEqual(["root page", "application page", "explorations page", "chat page"]);
+		const nested = host.querySelector<HTMLElement>('button[aria-label="chat page"]')?.parentElement;
+		const top = host.querySelector<HTMLElement>('button[aria-label="explorations page"]')?.parentElement;
+		expect(nested?.getAttribute("aria-level")).toBe("2");
+		expect(top?.getAttribute("aria-level")).toBe("1");
+		expect(nested?.style.paddingLeft).toBe("10px");
+		expect(top?.style.paddingLeft).toBe("0px");
+	});
+
+	it("moves a page into another one, and puts it back where it came from", async () => {
+		const kept: HistoryEntry[] = [];
+		const run: { current: RunEntry | null } = { current: null };
+		const { host } = await render({ pages: deepPages, frames: deepFrames, onRecord: (e) => kept.push(e), run });
+
+		// onto the middle band of the application row, which is how a page nests
+		await dragRow(host, 'button[aria-label="explorations page"]', 88, 56);
+
+		expect(asked.find((call) => call.url.endsWith("/pages/move"))?.body).toEqual({
+			pages: ["explorations"],
+			page: "application",
+		});
+		expect(kept).toEqual([
+			{
+				kind: "move-page",
+				pages: [{ name: "explorations", from: "" }],
+				to: "application",
+				lists: [
+					{ of: "pages", page: "", before: ["application", "explorations"], after: ["application"] },
+					{ of: "pages", page: "application", before: [], after: ["explorations"] },
+				],
+			},
+		]);
+
+		const entry = kept[0];
+		if (entry?.kind !== "move-page") throw new Error("the drag recorded no page move");
+		await act(async () => {
+			await run.current?.(entry, "undo");
+		});
+		// the page is named by the path the move left it at, and goes back to the root page
+		expect(asked.filter((call) => call.url.endsWith("/pages/move")).at(-1)?.body).toEqual({
+			pages: ["application/explorations"],
+			page: "",
+		});
+	});
+
+	it("never offers a page a drop inside itself", async () => {
+		const { host } = await render({ pages: deepPages, frames: deepFrames });
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="Expand explorations"]')?.click();
+		});
+
+		// onto the middle band of its own page inside it, which is no landing at all
+		await dragRow(host, 'button[aria-label="explorations page"]', 88, 120);
+
+		expect(asked.some((call) => call.url.endsWith("/pages/move"))).toBe(false);
 	});
 });
 

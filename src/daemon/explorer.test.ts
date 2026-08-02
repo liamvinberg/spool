@@ -672,3 +672,351 @@ describe("the explorer's door", () => {
 		expect(readJson(designFile(root, "canvas.json"))).toEqual({ format: 1 });
 	});
 });
+
+/**
+ * Depth (#231). A page's identity is its path under frames/, so every verb here
+ * takes one and a page carries its whole subtree — the frames inside it, the
+ * pages inside those, and the cameras and lists keyed by all of them.
+ */
+describe("pages inside pages", () => {
+	/** explorations > chat > agent-chat, beside explorations/landing-page */
+	function nested() {
+		const held = explorerProject();
+		writePageFrame(held.root, "explorations/chat", "agent-chat", label("agent-chat"));
+		writePageFrame(held.root, "explorations/landing-page", "hero", label("hero"));
+		writeFrame(held.root, "home", label("home"));
+		return held;
+	}
+
+	it("discovers a page at every depth and attributes its frames to the path", async () => {
+		const { spoolDir, name } = nested();
+		const app = makeApp(spoolDir);
+
+		const read = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
+			pages: string[];
+			frames: { name: string; page?: string }[];
+		};
+
+		expect(read.pages).toEqual(["explorations", "explorations/chat", "explorations/landing-page"]);
+		expect(read.frames).toMatchObject([
+			{ name: "agent-chat", page: "explorations/chat" },
+			{ name: "hero", page: "explorations/landing-page" },
+			{ name: "home" },
+		]);
+	});
+
+	it("creates a page inside a page, and refuses one whose page nothing holds", async () => {
+		const { spoolDir, root, name } = nested();
+		const app = makeApp(spoolDir);
+
+		expect(
+			(await app.request(`/api/p/${name}/pages/create`, jsonPost({ name: "explorations/pricing" }))).status,
+		).toBe(204);
+		expect(existsSync(designFile(root, "frames", "explorations", "pricing"))).toBe(true);
+
+		const orphan = await app.request(`/api/p/${name}/pages/create`, jsonPost({ name: "nowhere/deep" }));
+		expect(orphan.status).toBe(404);
+		expect(await orphan.text()).toContain('no page "nowhere"');
+		expect(existsSync(designFile(root, "frames", "nowhere"))).toBe(false);
+	});
+
+	it("names the folder that already holds one when a page name is taken where it lands", async () => {
+		const { spoolDir, name } = nested();
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(`/api/p/${name}/pages/create`, jsonPost({ name: "explorations/chat" }));
+
+		expect(res.status).toBe(409);
+		expect(await res.text()).toBe('design/frames/explorations/ already holds a folder named "chat"');
+	});
+
+	/** Two pages under different parents are two pages, not a collision. */
+	it("lets two pages share a name under different pages", async () => {
+		const { spoolDir, name } = nested();
+		const app = makeApp(spoolDir);
+
+		expect((await app.request(`/api/p/${name}/pages/create`, jsonPost({ name: "site" }))).status).toBe(204);
+		expect((await app.request(`/api/p/${name}/pages/create`, jsonPost({ name: "site/chat" }))).status).toBe(204);
+
+		const read = (await (await app.request(`/api/p/${name}/frames`)).json()) as { pages: string[] };
+		expect(read.pages).toContain("explorations/chat");
+		expect(read.pages).toContain("site/chat");
+	});
+
+	it("renames a page mid-tree, carrying every frame, camera and list under it", async () => {
+		const { spoolDir, root, name } = nested();
+		const app = makeApp(spoolDir);
+		await app.request(
+			`/api/p/${name}/state`,
+			jsonPut({
+				activePage: "explorations/chat",
+				pageCameras: { explorations: { x: 1, y: 1, k: 1 }, "explorations/chat": { x: 2, y: 2, k: 2 } },
+			}),
+		);
+		await app.request(
+			`/api/p/${name}/order`,
+			jsonPut({
+				pages: { "": ["explorations"], explorations: ["chat", "landing-page"] },
+				frames: { "explorations/chat": ["agent-chat"] },
+			}),
+		);
+
+		const res = await app.request(`/api/p/${name}/pages/rename`, jsonPost({ from: "explorations", to: "research" }));
+
+		expect(res.status).toBe(204);
+		expect(existsSync(designFile(root, "frames", "research", "chat", "agent-chat", "frame.tsx"))).toBe(true);
+		expect(await (await app.request(`/api/p/${name}/state`)).json()).toMatchObject({
+			activePage: "research/chat",
+			pageCameras: { research: { x: 1, y: 1, k: 1 }, "research/chat": { x: 2, y: 2, k: 2 } },
+		});
+		expect(await (await app.request(`/api/p/${name}/order`)).json()).toEqual({
+			pages: { "": ["research"], research: ["chat", "landing-page"] },
+			frames: { "research/chat": ["agent-chat"] },
+		});
+	});
+
+	it("refuses a rename that would change the page holding it", async () => {
+		const { spoolDir, name } = nested();
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(`/api/p/${name}/pages/rename`, jsonPost({ from: "explorations/chat", to: "chat" }));
+
+		expect(res.status).toBe(400);
+		expect(await res.text()).toContain("a rename keeps a page where it is");
+	});
+
+	it("moves a page into another and back out, carrying its subtree's bookkeeping", async () => {
+		const { spoolDir, root, name } = nested();
+		const app = makeApp(spoolDir);
+		await app.request(`/api/p/${name}/pages/create`, jsonPost({ name: "application" }));
+		await app.request(
+			`/api/p/${name}/state`,
+			jsonPut({ activePage: "explorations/chat", pageCameras: { "explorations/chat": { x: 3, y: 3, k: 1 } } }),
+		);
+		await app.request(`/api/p/${name}/order`, jsonPut({ frames: { "explorations/chat": ["agent-chat"] } }));
+
+		const into = await app.request(
+			`/api/p/${name}/pages/move`,
+			jsonPost({ pages: ["explorations/chat"], page: "application" }),
+		);
+
+		expect(into.status).toBe(204);
+		expect(existsSync(designFile(root, "frames", "application", "chat", "agent-chat", "frame.tsx"))).toBe(true);
+		expect(await (await app.request(`/api/p/${name}/state`)).json()).toMatchObject({
+			activePage: "application/chat",
+			pageCameras: { "application/chat": { x: 3, y: 3, k: 1 } },
+		});
+		expect(await (await app.request(`/api/p/${name}/order`)).json()).toEqual({
+			frames: { "application/chat": ["agent-chat"] },
+		});
+
+		// "" is the root page, the same spelling the frame move wire uses
+		const out = await app.request(`/api/p/${name}/pages/move`, jsonPost({ pages: ["application/chat"], page: "" }));
+		expect(out.status).toBe(204);
+		expect(existsSync(designFile(root, "frames", "chat", "agent-chat", "frame.tsx"))).toBe(true);
+	});
+
+	it("refuses to move a page into itself or into a page inside it", async () => {
+		const { spoolDir, root, name } = nested();
+		const app = makeApp(spoolDir);
+
+		const itself = await app.request(
+			`/api/p/${name}/pages/move`,
+			jsonPost({ pages: ["explorations"], page: "explorations" }),
+		);
+		expect(itself.status).toBe(409);
+		expect(await itself.text()).toContain("cannot move into itself");
+
+		const inside = await app.request(
+			`/api/p/${name}/pages/move`,
+			jsonPost({ pages: ["explorations"], page: "explorations/chat" }),
+		);
+		expect(inside.status).toBe(409);
+		expect(existsSync(designFile(root, "frames", "explorations", "chat", "agent-chat", "frame.tsx"))).toBe(true);
+	});
+
+	it("moves frames onto a nested page and duplicates them there", async () => {
+		const { spoolDir, root, name } = nested();
+		const app = makeApp(spoolDir);
+
+		expect(
+			(await app.request(`/api/p/${name}/frames/move`, jsonPost({ frames: ["home"], page: "explorations/chat" })))
+				.status,
+		).toBe(204);
+		expect(existsSync(designFile(root, "frames", "explorations", "chat", "home", "frame.tsx"))).toBe(true);
+
+		const copied = await app.request(
+			`/api/p/${name}/frames/duplicate`,
+			jsonPost({ frames: ["hero"], page: "explorations/chat" }),
+		);
+		expect(await copied.json()).toEqual({
+			frames: [{ from: "hero", to: "hero-copy", page: "explorations/chat" }],
+		});
+	});
+
+	it("copies a page's whole subtree, renaming every frame at every depth", async () => {
+		const { spoolDir, root, name } = nested();
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(`/api/p/${name}/pages/duplicate`, jsonPost({ name: "explorations" }));
+
+		expect(await res.json()).toEqual({
+			page: "explorations-copy",
+			frames: [
+				{ from: "agent-chat", to: "agent-chat-copy", page: "explorations-copy/chat" },
+				{ from: "hero", to: "hero-copy", page: "explorations-copy/landing-page" },
+			],
+		});
+		expect(existsSync(designFile(root, "frames", "explorations-copy", "chat", "agent-chat-copy", "frame.tsx"))).toBe(
+			true,
+		);
+	});
+
+	it("takes a page, the pages inside it and their frames as one move to the Trash", async () => {
+		const { spoolDir, root, name } = nested();
+		const trashed: string[] = [];
+		const app = makeApp(spoolDir);
+		await app.request(
+			`/api/p/${name}/state`,
+			jsonPut({ activePage: "explorations/chat", pageCameras: { "explorations/chat": { x: 1, y: 1, k: 1 } } }),
+		);
+		await app.request(
+			`/api/p/${name}/order`,
+			jsonPut({
+				pages: { "": ["explorations"], explorations: ["chat"] },
+				frames: { "explorations/chat": ["agent-chat"] },
+			}),
+		);
+		const held = makeApp(spoolDir, { moveToTrash: async (paths) => void trashed.push(...paths) });
+
+		const res = await held.request(
+			`/api/p/${name}/trash`,
+			jsonPost({ pages: ["explorations", "explorations/chat"], frames: ["agent-chat"] }),
+		);
+
+		expect(res.status).toBe(204);
+		// one folder move: the page inside it and the frame inside that ride along
+		expect(trashed).toEqual([designFile(root, "frames", "explorations")]);
+		expect(await (await held.request(`/api/p/${name}/state`)).json()).toEqual({ pageCameras: {} });
+		// nothing is left of the order, and an order naming nothing is no order
+		expect(await (await held.request(`/api/p/${name}/order`)).json()).toEqual({});
+	});
+
+	it("refuses a page path with a segment that is not a name", async () => {
+		const { spoolDir, name } = nested();
+		const app = makeApp(spoolDir);
+		const create = (page: string) => app.request(`/api/p/${name}/pages/create`, jsonPost({ name: page }));
+
+		expect((await create("explorations/../escape")).status).toBe(400);
+		expect((await create("explorations/.hidden")).status).toBe(400);
+		expect((await create("explorations//chat")).status).toBe(400);
+		expect((await create("")).status).toBe(400);
+		expect(
+			(await app.request(`/api/p/${name}/frames/move`, jsonPost({ frames: ["home"], page: "explorations/../x" })))
+				.status,
+		).toBe(400);
+		expect((await app.request(`/api/p/${name}/order`, jsonPut({ pages: { "a/../b": ["c"] } }))).status).toBe(400);
+		expect((await app.request(`/api/p/${name}/state`, jsonPut({ activePage: "a/.b" }))).status).toBe(400);
+	});
+
+	it("keeps a nested page's own list, and writes a flat one as the bare list it has always been", async () => {
+		const { spoolDir, root, name } = nested();
+		const app = makeApp(spoolDir);
+
+		await app.request(
+			`/api/p/${name}/order`,
+			jsonPut({ pages: { "": ["explorations"], explorations: ["landing-page", "chat"] } }),
+		);
+
+		// keyed the moment a second page has a list of its own
+		expect(readJson(designFile(root, "canvas.json"))).toMatchObject({
+			order: { pages: { "": ["explorations"], explorations: ["landing-page", "chat"] } },
+		});
+		await app.request(`/api/p/${name}/order`, jsonPut({ pages: { "": ["explorations"] } }));
+		expect(readJson(designFile(root, "canvas.json"))).toMatchObject({ order: { pages: ["explorations"] } });
+	});
+});
+
+/**
+ * The carry, three pages down (#231). A page takes its whole subtree, so the
+ * test that matters is the one nothing on the path is named in: a grandchild's
+ * camera and lists have to arrive at their new paths without anybody naming it.
+ */
+describe("what a page carries at depth", () => {
+	/** explorations > chat > deeper > buried */
+	function threeDeep() {
+		const held = explorerProject();
+		writePageFrame(held.root, "explorations/chat/deeper", "buried", label("buried"));
+		return held;
+	}
+
+	async function bookkeep(app: ReturnType<typeof makeApp>, name: string): Promise<void> {
+		await app.request(
+			`/api/p/${name}/state`,
+			jsonPut({
+				activePage: "explorations/chat/deeper",
+				pageCameras: {
+					"explorations/chat": { x: 1, y: 1, k: 1 },
+					"explorations/chat/deeper": { x: 9, y: 9, k: 2 },
+				},
+			}),
+		);
+		await app.request(
+			`/api/p/${name}/order`,
+			jsonPut({
+				pages: { "": ["explorations"], explorations: ["chat"], "explorations/chat": ["deeper"] },
+				frames: { "explorations/chat/deeper": ["buried"] },
+			}),
+		);
+	}
+
+	it("carries a grandchild's camera and lists when the page above them all is renamed", async () => {
+		const { spoolDir, root, name } = threeDeep();
+		const app = makeApp(spoolDir);
+		await bookkeep(app, name);
+
+		const res = await app.request(`/api/p/${name}/pages/rename`, jsonPost({ from: "explorations", to: "research" }));
+
+		expect(res.status).toBe(204);
+		expect(existsSync(designFile(root, "frames", "research", "chat", "deeper", "buried", "frame.tsx"))).toBe(true);
+		expect(await (await app.request(`/api/p/${name}/state`)).json()).toMatchObject({
+			activePage: "research/chat/deeper",
+			pageCameras: {
+				"research/chat": { x: 1, y: 1, k: 1 },
+				"research/chat/deeper": { x: 9, y: 9, k: 2 },
+			},
+		});
+		expect(await (await app.request(`/api/p/${name}/order`)).json()).toEqual({
+			pages: { "": ["research"], research: ["chat"], "research/chat": ["deeper"] },
+			frames: { "research/chat/deeper": ["buried"] },
+		});
+	});
+
+	it("carries a grandchild when the page in the middle is the one that moved", async () => {
+		const { spoolDir, root, name } = threeDeep();
+		const app = makeApp(spoolDir);
+		await app.request(`/api/p/${name}/pages/create`, jsonPost({ name: "application" }));
+		await bookkeep(app, name);
+
+		const res = await app.request(
+			`/api/p/${name}/pages/move`,
+			jsonPost({ pages: ["explorations/chat"], page: "application" }),
+		);
+
+		expect(res.status).toBe(204);
+		expect(existsSync(designFile(root, "frames", "application", "chat", "deeper", "buried", "frame.tsx"))).toBe(true);
+		expect(await (await app.request(`/api/p/${name}/state`)).json()).toMatchObject({
+			activePage: "application/chat/deeper",
+			pageCameras: {
+				"application/chat": { x: 1, y: 1, k: 1 },
+				"application/chat/deeper": { x: 9, y: 9, k: 2 },
+			},
+		});
+		// the page leaves the list it was in; where it lands in the new one is the
+		// drop's to say, so the daemon writes no list for it
+		expect(await (await app.request(`/api/p/${name}/order`)).json()).toEqual({
+			pages: { "": ["explorations"], explorations: [], "application/chat": ["deeper"] },
+			frames: { "application/chat/deeper": ["buried"] },
+		});
+	});
+});

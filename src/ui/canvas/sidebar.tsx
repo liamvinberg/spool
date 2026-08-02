@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { carriedPage, pageChain, pageName, pageParent, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
 import { accelPressed } from "../../runtime/platform-keys";
 import {
 	type CanvasOrder,
@@ -9,6 +10,7 @@ import {
 	type FrameCopy,
 	fetchOrder,
 	moveFrames,
+	movePages,
 	type ProjectedFrame,
 	putOrder,
 	renameFrame,
@@ -19,22 +21,28 @@ import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import type { HistoryEntry, Moved, OrderList, Way } from "./history";
 import {
+	flatPages,
 	insertAt,
 	mergeOrder,
+	mergePageTree,
+	pageMovedInOrder,
 	placeAfter,
 	renameInOrder,
 	reorder,
 	withFrameOrder,
 	withLists,
 	without,
-	withoutPageOrder,
 	withPageOrder,
 } from "./order";
-import { framesOnPage, pageLabel, pageList, pageOf, ROOT_PAGE } from "./pages";
+import { framesOnPage, pageLabel, pageOf, pagePathLabel } from "./pages";
 import {
 	type BornRow,
+	contentX,
+	DEPTH_BAND,
 	type FrameRow,
 	frameLanding,
+	guideX,
+	INDENT,
 	type Landing,
 	LIST_PAD,
 	landingGuideX,
@@ -52,14 +60,18 @@ import { COLLAPSED_BELOW, MAX_WIDTH, STRIP_WIDTH, settledWidth, useRailWidth } f
 import { type MenuTarget, RailMenu, type RailMenuState } from "./sidebar-menu";
 
 /**
- * The pages rail as a file explorer (#229).
+ * The pages rail as a file explorer (#229, #231).
  *
  * A page is a folder under `design/frames/` and a frame is a folder with one
  * entry file, so this rail was always a view of the disk — it just could not do
- * anything to it. Now it carries the explorer verbs: drag to reorder and to move
- * a frame between pages, rename in place, duplicate, copy and paste, delete onto
- * the same staged-trash toast the canvas uses, a menu per row kind, and keyboard
- * travel through the whole list.
+ * anything to it. Now it carries the explorer verbs: drag to reorder, to move a
+ * frame between pages and to move a page into or out of another, rename in
+ * place, duplicate, copy and paste, delete onto the same staged-trash toast the
+ * canvas uses, a menu per row kind, and keyboard travel through the whole list.
+ *
+ * Pages hold pages, so a row's depth is a fact about its own path and a drop is
+ * two questions rather than one: the pointer's y says which gap, and its
+ * sideways travel says which of the depths that gap could mean.
  *
  * Two things it still does not do, and both are laws rather than gaps. It never
  * writes frame source: rename and move are folder operations, and a `data-go`
@@ -103,8 +115,8 @@ const modifiersOf = (event: React.MouseEvent): SelectModifiers => ({
 interface RenameState {
 	readonly key: string;
 	readonly draft: string;
-	/** a page that has never existed: cancelling drops the row rather than reverting */
-	readonly born: boolean;
+	/** the page a row that never existed will belong to; cancelling drops the row rather than reverting */
+	readonly born: string | null;
 	/** the daemon's refusal, said on the row that asked for it */
 	readonly error: string | null;
 	readonly busy: boolean;
@@ -122,6 +134,8 @@ interface DragLive {
 	pointerId: number;
 	kind: "page" | "frame";
 	names: readonly string[];
+	/** the depth the lifted row had, which is what no sideways travel means */
+	depth: number;
 	startX: number;
 	startY: number;
 	x: number;
@@ -146,7 +160,7 @@ interface DragKit {
  * the type rather than in a `default` branch is what keeps the runner from
  * reporting success for work it never did.
  */
-export type RailEntry = Extract<HistoryEntry, { kind: "rename" | "move" | "reorder" }>;
+export type RailEntry = Extract<HistoryEntry, { kind: "rename" | "move" | "move-page" | "reorder" }>;
 
 /**
  * The rail's half of the canvas's one undo stack (#230).
@@ -183,7 +197,7 @@ export function CanvasSidebar({
 	litPage = null,
 }: {
 	project: string;
-	/** Named pages, sorted; the root page is implied and listed first. */
+	/** Every named page's path, sorted; the root page is implied and listed first. */
 	pages: readonly string[];
 	activePage: string;
 	/** Every projected frame; the canvas itself mounts only the active page. */
@@ -214,7 +228,8 @@ export function CanvasSidebar({
 	const [order, setOrder] = useState<CanvasOrder>({});
 	const [cursor, setCursor] = useState<string | null>(null);
 	const [renaming, setRenaming] = useState<RenameState | null>(null);
-	const [born, setBorn] = useState(false);
+	/** the page a new one is being named inside, when one is */
+	const [born, setBorn] = useState<string | null>(null);
 	const [clipboard, setClipboard] = useState<readonly string[]>([]);
 	const [menu, setMenu] = useState<RailMenuState | null>(null);
 	const [kit, setKit] = useState<DragKit | null>(null);
@@ -238,7 +253,9 @@ export function CanvasSidebar({
 
 	/* ── the list: the projection, arranged by the stored order ──────── */
 
-	const orderedPages = useMemo(() => pageList(mergeOrder(order.pages, pages)), [order.pages, pages]);
+	/** Each page's own pages, arranged; the root page's are the top level. */
+	const pageTree = useMemo(() => mergePageTree(order.pages, pages), [order.pages, pages]);
+	const orderedPages = useMemo(() => [ROOT_PAGE, ...flatPages(pageTree)], [pageTree]);
 
 	const framesByPage = useMemo(() => {
 		const byPage = new Map<string, readonly RailFrame[]>();
@@ -257,15 +274,29 @@ export function CanvasSidebar({
 	}, [orderedPages, frames, order.frames]);
 
 	const rows = useMemo(
-		() => railRows(orderedPages, framesByPage, expanded, born),
-		[orderedPages, framesByPage, expanded, born],
+		() => railRows(pageTree, framesByPage, expanded, born),
+		[pageTree, framesByPage, expanded, born],
 	);
 	const total = listHeight(rows);
-	const namedPages = useMemo(() => without(orderedPages, [ROOT_PAGE]), [orderedPages]);
 
 	const namesOn = useCallback(
 		(page: string) => (framesByPage.get(page) ?? []).map((frame) => frame.name),
 		[framesByPage],
+	);
+
+	/** What a page's own pages are called, in rail order — one list of the order. */
+	const pagesIn = useCallback((parent: string) => (pageTree.get(parent) ?? []).map(pageName), [pageTree]);
+
+	/** A page and every page inside it, which is what its folder holds. */
+	const pagesUnder = useCallback(
+		(page: string) => [page, ...orderedPages.filter((each) => pageWithin(page, each))],
+		[orderedPages],
+	);
+
+	/** Every frame the folder holds, the ones on its own pages included. */
+	const framesUnder = useCallback(
+		(page: string) => pagesUnder(page).flatMap((each) => namesOn(each)),
+		[pagesUnder, namesOn],
 	);
 
 	const cursorRow = useMemo(() => rows.find((row) => rowKey(row) === cursor) ?? null, [rows, cursor]);
@@ -284,7 +315,7 @@ export function CanvasSidebar({
 	const now = useRef({
 		rows,
 		order,
-		namedPages,
+		orderedPages,
 		framesByPage,
 		cursor,
 		cursorRow,
@@ -297,7 +328,7 @@ export function CanvasSidebar({
 		now.current = {
 			rows,
 			order,
-			namedPages,
+			orderedPages,
 			framesByPage,
 			cursor,
 			cursorRow,
@@ -340,9 +371,9 @@ export function CanvasSidebar({
 		});
 	}, []);
 
-	/** ⌥ on a chevron means every page, which is what "deep" is worth in a flat tree. */
+	/** ⌥ on a chevron means every page, at every depth — the whole tree at once. */
 	const foldAll = useCallback((open: boolean) => {
-		setExpanded(open ? new Set(now.current.namedPages.concat(ROOT_PAGE)) : new Set());
+		setExpanded(open ? new Set(now.current.orderedPages) : new Set());
 	}, []);
 
 	/**
@@ -357,7 +388,12 @@ export function CanvasSidebar({
 	useEffect(() => {
 		if (selected === shown.current) return;
 		shown.current = selected;
-		const holding = new Set(frames.filter((frame) => selected.includes(frame.name)).map(pageOf));
+		// every page above it too: a row inside a shut page is a row nobody can see
+		const holding = new Set(
+			frames
+				.filter((frame) => selected.includes(frame.name))
+				.flatMap((frame) => [ROOT_PAGE, ...pageChain(pageOf(frame))]),
+		);
 		if (holding.size === 0) return;
 		setExpanded((was) => ([...holding].every((page) => was.has(page)) ? was : new Set([...was, ...holding])));
 	}, [selected, frames]);
@@ -410,24 +446,28 @@ export function CanvasSidebar({
 		// the root page is the frames directory itself, and a page still being
 		// named is already in the only state this puts a row into
 		if (row === null || row.kind === "born" || (row.kind === "page" && row.page === ROOT_PAGE)) return;
+		// a page is named by its own folder, so what is typed over is that name and
+		// the path around it stays where it is
 		setRenaming({
 			key: rowKey(row),
-			draft: row.kind === "page" ? row.page : row.name,
-			born: false,
+			draft: row.kind === "page" ? pageLabel(row.page) : row.name,
+			born: null,
 			error: null,
 			busy: false,
 		});
 	}, []);
 
 	const cancelRename = useCallback(() => {
-		setBorn(false);
+		setBorn(null);
 		setRenaming(null);
 	}, []);
 
-	const newPage = useCallback(() => {
-		setBorn(true);
+	/** A page being named, in the page it will belong to — the root page by default. */
+	const newPage = useCallback((parent: string = ROOT_PAGE) => {
+		setBorn(parent);
 		setMenu(null);
-		setRenaming({ key: "born", draft: "", born: true, error: null, busy: false });
+		setExpanded((was) => new Set([...was, ...pageChain(parent), ROOT_PAGE]));
+		setRenaming({ key: "born", draft: "", born: parent, error: null, busy: false });
 	}, []);
 
 	/** Which page holds a frame, read off the list the rail is drawing. */
@@ -439,27 +479,32 @@ export function CanvasSidebar({
 	}, []);
 
 	/**
-	 * A renamed page's own bookkeeping on this side.
+	 * A page that moved's own bookkeeping on this side.
 	 *
 	 * The daemon carried the page's state and stored order across with the folder
-	 * (#228); this is that same move applied to what is on screen, so neither side
-	 * has to read the other back. It is a function rather than four lines inline
-	 * because undoing a rename is this exact move with the names the other way
-	 * round (#230).
+	 * (#228, #231); this is that same move applied to what is on screen, so
+	 * neither side has to read the other back. It is a function rather than four
+	 * lines inline because undoing a rename is this exact move with the paths the
+	 * other way round (#230), and because a page carries its whole subtree: what
+	 * is open, where the cursor is and which page the canvas is on all name pages
+	 * that just changed path.
 	 */
-	const pageRenamed = useCallback(
+	const pageCarried = useCallback(
 		(from: string, to: string) => {
-			const held = now.current.order.frames?.[from];
-			const dropped = withoutPageOrder(now.current.order, from);
-			storeOrder({
-				...dropped,
-				pages: renameInOrder(now.current.namedPages, from, to),
-				...(held === undefined ? {} : { frames: { ...dropped.frames, [to]: held } }),
-			});
+			setExpanded((was) => new Set([...was].map((page) => carriedPage(page, from, to) ?? page)));
 			setCursor(`page:${to}`);
-			if (now.current.activePage === from) onSwitchPage(to);
+			const active = carriedPage(now.current.activePage, from, to);
+			if (active !== undefined) onSwitchPage(active);
 		},
-		[storeOrder, onSwitchPage],
+		[onSwitchPage],
+	);
+
+	const pageMoved = useCallback(
+		(from: string, to: string) => {
+			storeOrder(pageMovedInOrder(now.current.order, from, to));
+			pageCarried(from, to);
+		},
+		[storeOrder, pageCarried],
 	);
 
 	/**
@@ -488,29 +533,32 @@ export function CanvasSidebar({
 		const at = renaming;
 		if (at === null || at.busy) return;
 		const wanted = at.draft.trim();
-		if (at.born) {
+		if (at.born !== null) {
 			if (wanted === "") {
 				cancelRename();
 				return;
 			}
+			const parent = at.born;
+			const path = pageUnder(parent, wanted);
 			setRenaming({ ...at, busy: true, error: null });
-			const done = await createPage(project, wanted);
+			const done = await createPage(project, path);
 			if (done.kind === "refused") {
 				setRenaming({ ...at, busy: false, error: refusalLine(done.status) });
 				return;
 			}
-			// a new page waits at the end of the list while it is named, and that is
-			// where it stays: nothing about naming it says where it belongs
-			const named = now.current.namedPages;
-			storeOrder(withPageOrder(now.current.order, insertAt(named, [wanted], named.length)));
-			setBorn(false);
+			// a new page waits at the end of the pages it will belong to while it is
+			// named, and that is where it stays: naming it says nothing about where
+			// in that list it belongs
+			const held = pagesIn(parent);
+			storeOrder(withPageOrder(now.current.order, parent, insertAt(held, [wanted], held.length)));
+			setBorn(null);
 			setRenaming(null);
-			setExpanded((was) => new Set([...was, wanted]));
-			setCursor(`page:${wanted}`);
-			onSwitchPage(wanted);
+			setExpanded((was) => new Set([...was, path]));
+			setCursor(`page:${path}`);
+			onSwitchPage(path);
 			// a page that was nowhere a moment ago: the only inverse is a delete,
 			// which on this canvas is the staged one (#230)
-			onRecord?.({ kind: "mint", staged: { frames: [], page: wanted } });
+			onRecord?.({ kind: "mint", staged: { frames: [], page: path } });
 			onRefresh();
 			return;
 		}
@@ -520,23 +568,35 @@ export function CanvasSidebar({
 			return;
 		}
 		const from = row.kind === "page" ? row.page : row.name;
-		if (wanted === "" || wanted === from) {
+		// a page keeps the page holding it, so what was typed is its last segment
+		const to = row.kind === "page" ? pageUnder(pageParent(row.page), wanted) : wanted;
+		if (wanted === "" || to === from) {
 			setRenaming(null);
 			return;
 		}
 		setRenaming({ ...at, busy: true, error: null });
-		const done =
-			row.kind === "page" ? await renamePage(project, from, wanted) : await renameFrame(project, from, wanted);
+		const done = row.kind === "page" ? await renamePage(project, from, to) : await renameFrame(project, from, to);
 		if (done.kind === "refused") {
 			setRenaming({ ...at, busy: false, error: refusalLine(done.status) });
 			return;
 		}
 		setRenaming(null);
-		if (row.kind === "page") pageRenamed(from, wanted);
-		else frameRenamed(row.page, from, wanted);
-		onRecord?.({ kind: "rename", of: row.kind === "page" ? "page" : "frame", from, to: wanted });
+		if (row.kind === "page") pageMoved(from, to);
+		else frameRenamed(row.page, from, to);
+		onRecord?.({ kind: "rename", of: row.kind === "page" ? "page" : "frame", from, to });
 		onRefresh();
-	}, [renaming, project, storeOrder, cancelRename, pageRenamed, frameRenamed, onSwitchPage, onRecord, onRefresh]);
+	}, [
+		renaming,
+		project,
+		storeOrder,
+		cancelRename,
+		pageMoved,
+		frameRenamed,
+		pagesIn,
+		onSwitchPage,
+		onRecord,
+		onRefresh,
+	]);
 
 	/* ── the verbs ───────────────────────────────────────────────────── */
 
@@ -592,13 +652,15 @@ export function CanvasSidebar({
 		const row = now.current.cursorRow;
 		if (row?.kind === "page") {
 			if (row.page === ROOT_PAGE) return;
-			onTrashPage(row.page, namesOn(row.page));
+			// the folder is what moves, so every frame inside it goes — the ones on
+			// its own pages included
+			onTrashPage(row.page, framesUnder(row.page));
 			setCursor(null);
 			return;
 		}
 		const names = now.current.chosenFrames;
 		if (names.length > 0) onTrashFrames([...names]);
-	}, [onTrashPage, onTrashFrames, namesOn]);
+	}, [onTrashPage, onTrashFrames, framesUnder]);
 
 	const duplicate = useCallback(async () => {
 		const row = now.current.cursorRow;
@@ -609,7 +671,14 @@ export function CanvasSidebar({
 				refuted();
 				return;
 			}
-			storeOrder(withPageOrder(now.current.order, placeAfter(now.current.namedPages, row.page, [done.page])));
+			const parent = pageParent(row.page);
+			storeOrder(
+				withPageOrder(
+					now.current.order,
+					parent,
+					placeAfter(pagesIn(parent), pageName(row.page), [pageName(done.page)]),
+				),
+			);
 			setExpanded((was) => new Set([...was, done.page]));
 			setCursor(`page:${done.page}`);
 			// the folder is what was made, so the folder and its children are what
@@ -626,7 +695,7 @@ export function CanvasSidebar({
 			return;
 		}
 		landCopies(done.copies, true);
-	}, [project, storeOrder, onRecord, onRefresh, landCopies, refuted]);
+	}, [project, storeOrder, pagesIn, onRecord, onRefresh, landCopies, refuted]);
 
 	const copy = useCallback(() => {
 		const names = now.current.chosenFrames;
@@ -643,7 +712,7 @@ export function CanvasSidebar({
 				refuted();
 				return;
 			}
-			setExpanded((was) => new Set([...was, target]));
+			setExpanded((was) => new Set([...was, ...pageChain(target), ROOT_PAGE]));
 			landCopies(done.copies, false);
 		},
 		[project, landCopies, refuted],
@@ -667,7 +736,7 @@ export function CanvasSidebar({
 						refuted();
 						return false;
 					}
-					if (entry.of === "page") pageRenamed(from, to);
+					if (entry.of === "page") pageMoved(from, to);
 					else if (page !== undefined) frameRenamed(page, from, to);
 					onRefresh();
 					return true;
@@ -697,12 +766,41 @@ export function CanvasSidebar({
 					onRefresh();
 					return true;
 				}
+				case "move-page": {
+					const held = now.current.order;
+					// a page is named by the path it had before the move, so undo reaches
+					// for it where the move left it and redo where it started
+					const groups = new Map<string, string[]>();
+					for (const moved of entry.pages) {
+						const from = way === "undo" ? pageUnder(entry.to, pageName(moved.name)) : moved.name;
+						const parent = way === "undo" ? moved.from : entry.to;
+						groups.set(parent, [...(groups.get(parent) ?? []), from]);
+					}
+					let next = withLists(held, entry.lists, way);
+					for (const [parent, moving] of groups) {
+						const done = await movePages(project, moving, parent);
+						if (done.kind === "refused") {
+							storeOrder(held);
+							onRefresh();
+							return false;
+						}
+						for (const page of moving) {
+							const landed = pageUnder(parent, pageName(page));
+							next = pageMovedInOrder(next, page, landed);
+							pageCarried(page, landed);
+						}
+						setOpen(parent, true);
+					}
+					storeOrder(next);
+					onRefresh();
+					return true;
+				}
 				case "reorder":
 					storeOrder(withLists(now.current.order, entry.lists, way));
 					return true;
 			}
 		},
-		[project, pageHolding, pageRenamed, frameRenamed, storeOrder, setOpen, refuted, onRefresh],
+		[project, pageHolding, pageMoved, pageCarried, frameRenamed, storeOrder, setOpen, refuted, onRefresh],
 	);
 	if (run !== undefined) run.current = runEntry;
 
@@ -726,7 +824,12 @@ export function CanvasSidebar({
 
 			const all = now.current.rows;
 			const contentY = current.y - box.top + list.scrollTop - LIST_PAD;
-			const next = current.kind === "page" ? pageLanding(all, contentY) : frameLanding(all, contentY);
+			// the pointer's sideways travel picks the depth: no travel keeps the one
+			// the row already had, right nests, left steps back out
+			const wanted = current.depth + Math.round((current.x - current.startX) / DEPTH_BAND);
+			const found =
+				current.kind === "page" ? pageLanding(all, contentY, wanted) : frameLanding(all, contentY, wanted);
+			const next = allowed(current, found) ? found : null;
 			if (!sameLanding(next, landingRef.current)) {
 				landingRef.current = next;
 				setLanding(next);
@@ -735,7 +838,10 @@ export function CanvasSidebar({
 			// spring-loaded folders: rest on a shut page and it opens itself
 			const at = rowAt(all, contentY);
 			const over = at === -1 ? undefined : all[at];
-			const candidate = current.kind === "frame" && over?.kind === "page" && !over.open ? over.page : null;
+			const candidate =
+				over?.kind === "page" && !over.open && allowed(current, { kind: "into", page: over.page })
+					? over.page
+					: null;
 			if (candidate !== current.springPage) {
 				current.springPage = candidate;
 				current.springAt = performance.now();
@@ -753,11 +859,49 @@ export function CanvasSidebar({
 		(current: DragLive, target: Landing) => {
 			const held = now.current.order;
 			if (current.kind === "page") {
-				if (target.kind !== "pages") return;
-				const before = now.current.namedPages;
-				const after = reorder(before, current.names, target.index);
-				storeOrder(withPageOrder(held, after));
-				onRecord?.({ kind: "reorder", lists: [{ page: null, before, after }] });
+				if (!allowed(current, target)) return;
+				const parent = target.page;
+				const moving = [...current.names];
+				const leaves = moving.map(pageName);
+				const index = target.kind === "pages" ? target.index : pagesIn(parent).length;
+				const sources = new Set(moving.map(pageParent));
+				if (sources.size === 1 && sources.has(parent)) {
+					const before = pagesIn(parent);
+					const after = reorder(before, leaves, index);
+					storeOrder(withPageOrder(held, parent, after));
+					onRecord?.({ kind: "reorder", lists: [{ of: "pages", page: parent, before, after }] });
+					return;
+				}
+				// a page that changes the page holding it changes folder, and the folder
+				// is the whole move: every frame inside it and every page under it ride
+				// along, and their cameras and lists with them
+				let next = held;
+				const lists: OrderList[] = [];
+				for (const source of sources) {
+					if (source === parent) continue;
+					const before = pagesIn(source);
+					const after = without(before, leaves);
+					next = withPageOrder(next, source, after);
+					lists.push({ of: "pages", page: source, before, after });
+				}
+				const into = pagesIn(parent);
+				const arrived = insertAt(without(into, leaves), leaves, index);
+				next = withPageOrder(next, parent, arrived);
+				lists.push({ of: "pages", page: parent, before: into, after: arrived });
+				storeOrder(next);
+				setOpen(parent, true);
+				const moved: Moved[] = moving.flatMap((page) =>
+					pageParent(page) === parent ? [] : [{ name: page, from: pageParent(page) }],
+				);
+				void movePages(project, moving, parent).then((done) => {
+					// the move never happened: put the rail back rather than let it claim it did
+					if (done.kind === "refused") storeOrder(held);
+					else if (moved.length > 0) {
+						for (const each of moved) pageCarried(each.name, pageUnder(parent, pageName(each.name)));
+						onRecord?.({ kind: "move-page", pages: moved, to: parent, lists });
+					}
+					onRefresh();
+				});
 				return;
 			}
 			if (target.kind === "pages") return;
@@ -774,7 +918,7 @@ export function CanvasSidebar({
 				const before = namesOn(page);
 				const after = reorder(before, names, index);
 				storeOrder(withFrameOrder(held, page, after));
-				onRecord?.({ kind: "reorder", lists: [{ page, before, after }] });
+				onRecord?.({ kind: "reorder", lists: [{ of: "frames", page, before, after }] });
 				return;
 			}
 			// a frame that changes page changes folder, and the folder is the whole
@@ -786,12 +930,12 @@ export function CanvasSidebar({
 				const before = namesOn(source);
 				const after = without(before, names);
 				next = withFrameOrder(next, source, after);
-				lists.push({ page: source, before, after });
+				lists.push({ of: "frames", page: source, before, after });
 			}
 			const landing = namesOn(page);
 			const arrived = insertAt(without(landing, names), names, index);
 			next = withFrameOrder(next, page, arrived);
-			lists.push({ page, before: landing, after: arrived });
+			lists.push({ of: "frames", page, before: landing, after: arrived });
 			storeOrder(next);
 			setOpen(page, true);
 			// where each frame stands right now, read before the move lands: the
@@ -807,7 +951,7 @@ export function CanvasSidebar({
 				onRefresh();
 			});
 		},
-		[project, namesOn, pageHolding, storeOrder, setOpen, onRecord, onRefresh],
+		[project, namesOn, pagesIn, pageHolding, pageCarried, storeOrder, setOpen, onRecord, onRefresh],
 	);
 
 	const stopDrag = useCallback(
@@ -870,6 +1014,7 @@ export function CanvasSidebar({
 		live.current = {
 			pointerId: event.pointerId,
 			kind: row.kind,
+			depth: row.depth,
 			names:
 				row.kind === "page"
 					? [row.page]
@@ -1060,7 +1205,7 @@ export function CanvasSidebar({
 								<button
 									key={page}
 									type="button"
-									aria-label={`${pageLabel(page)} page`}
+									aria-label={`${pagePathLabel(page)} page`}
 									aria-current={active ? "page" : undefined}
 									aria-describedby={pageTooltip?.page === page ? tooltipId : undefined}
 									onClick={() => onSwitchPage(page)}
@@ -1092,7 +1237,7 @@ export function CanvasSidebar({
 							<button
 								type="button"
 								aria-label="New page"
-								onClick={newPage}
+								onClick={() => newPage()}
 								className="flex h-7 w-7 items-center justify-center rounded-sm text-muted/60 transition-[color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-surface hover:text-text active:scale-90 motion-reduce:transition-none"
 							>
 								<PlusIcon className="h-2.5 w-2.5" />
@@ -1202,7 +1347,7 @@ export function CanvasSidebar({
 							className="pointer-events-none fixed z-50 -translate-y-1/2 whitespace-nowrap rounded-md border border-border-raised bg-bg px-2 py-1 font-mono text-2xs text-text leading-3"
 							style={{ left: pageTooltip.x, top: pageTooltip.y }}
 						>
-							{pageLabel(pageTooltip.page)}
+							{pagePathLabel(pageTooltip.page)}
 						</span>,
 						document.body,
 					)
@@ -1238,7 +1383,7 @@ export function CanvasSidebar({
 							selection={selected.length}
 							onClose={() => setMenu(null)}
 							actions={{
-								newPage,
+								newPage: () => newPage(menu.target.kind === "page" ? menu.target.page : ROOT_PAGE),
 								rename: () => beginRename(menuRow),
 								duplicate: () => void duplicate(),
 								copy,
@@ -1333,8 +1478,9 @@ function NewPageRow({ row, rename }: { row: BornRow; rename: RenameHandle }) {
 				role="treeitem"
 				tabIndex={-1}
 				aria-selected
-				aria-level={1}
-				className="relative flex h-full items-center pr-1.5 bg-surface"
+				aria-level={row.depth + 1}
+				className="relative flex h-full items-center bg-surface pr-1.5"
+				style={{ paddingLeft: row.depth * INDENT }}
 			>
 				<span className="flex h-full w-6 shrink-0" />
 				<div className="flex h-full min-w-0 flex-1 items-center gap-2 pr-1">
@@ -1403,7 +1549,7 @@ function TreeRow({
 				// is the roving-tabindex a tree is supposed to have
 				tabIndex={-1}
 				aria-selected={selected || cursored}
-				aria-level={row.kind === "page" ? 1 : 2}
+				aria-level={row.depth + 1}
 				// something outside this rail is pointing at this page: the finder's pick, or
 				// a row in the agent rail naming a frame that is not on screen (#194)
 				data-page-lit={lit ? "" : undefined}
@@ -1413,6 +1559,9 @@ function TreeRow({
 					!selected && !active && !cursored && !into && "hover:bg-surface/60",
 					into && "-outline-offset-1 outline-1 outline-thread/70",
 				)}
+				// a page's own rows step in one INDENT per level; a frame's spine and
+				// content are placed outright, so only a page row needs the padding
+				style={{ paddingLeft: row.kind === "page" ? row.depth * INDENT : 0 }}
 				onPointerDown={(event) => onPress(event, row)}
 				onContextMenu={(event) => onMenu(event, target)}
 			>
@@ -1470,9 +1619,12 @@ function TreeRow({
 					<>
 						<span
 							className="absolute w-px bg-border-raised"
-							style={{ left: 18, top: 0, height: row.last ? row.height - 6 : row.height }}
+							style={{ left: guideX(row.depth), top: 0, height: row.last ? row.height - 6 : row.height }}
 						/>
-						<span className="absolute h-px w-2.5 bg-border-raised" style={{ left: 18, top: row.height / 2 }} />
+						<span
+							className="absolute h-px w-2.5 bg-border-raised"
+							style={{ left: guideX(row.depth), top: row.height / 2 }}
+						/>
 						{rename === null ? (
 							<button
 								type="button"
@@ -1480,7 +1632,8 @@ function TreeRow({
 								aria-pressed={selected}
 								onClick={onSelect}
 								onDoubleClick={onFly}
-								className="flex h-full w-full min-w-0 items-center gap-2 pr-3 pl-[34px] text-left"
+								className="flex h-full w-full min-w-0 items-center gap-2 pr-3 text-left"
+								style={{ paddingLeft: contentX(row.depth) }}
 							>
 								<FrameIcon className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-thread" : "text-muted")} />
 								<span
@@ -1496,7 +1649,10 @@ function TreeRow({
 								</span>
 							</button>
 						) : (
-							<div className="flex h-full w-full min-w-0 items-center gap-2 pr-3 pl-[34px]">
+							<div
+								className="flex h-full w-full min-w-0 items-center gap-2 pr-3"
+								style={{ paddingLeft: contentX(row.depth) }}
+							>
 								<FrameIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
 								<RenameField
 									state={rename.state}
@@ -1560,7 +1716,7 @@ function RenameField({
 					element.focus();
 					element.select();
 				}}
-				aria-label={state.born ? "New page name" : "Rename"}
+				aria-label={state.born === null ? "Rename" : "New page name"}
 				aria-invalid={state.error !== null}
 				value={state.draft}
 				spellCheck={false}
@@ -1639,6 +1795,20 @@ function targetKey(target: MenuTarget): string {
 function labelOf(current: DragLive): string {
 	const first = current.names[0] ?? "";
 	return current.kind === "page" ? pageLabel(first) : first;
+}
+
+/**
+ * Whether a drag can land where the pointer says.
+ *
+ * A page can never go inside itself or inside one of its own pages: the folder
+ * would have to be its own parent. The daemon refuses it too, so this is the
+ * same law asked while the line is still being drawn — the drop is never
+ * offered rather than taken back a round trip later.
+ */
+function allowed(current: DragLive, landing: Landing | null): boolean {
+	if (landing === null) return false;
+	if (current.kind !== "page") return true;
+	return !current.names.some((page) => page === landing.page || pageWithin(page, landing.page));
 }
 
 /** The daemon's refusal in the machine register, at the width a row has for it. */

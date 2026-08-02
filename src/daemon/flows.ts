@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
+import { isSafeName } from "../page-path";
 import { DesignBoundaryError, designRelativePath, realDesignDir, resolveDesignPath } from "./design-path";
 import {
 	createSourcePass,
@@ -14,7 +15,6 @@ import {
 	type SourcePass,
 	type UnreadableSite,
 } from "./nav-sites";
-import { isSafeName } from "./project-files";
 import { frameDirectories, frameNames } from "./projection";
 import { createRenderedReader, projectScenarios, type RenderedReader, type RenderedTarget } from "./resolved-targets";
 

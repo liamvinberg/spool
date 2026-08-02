@@ -182,7 +182,10 @@ describe("move entries", () => {
 
 describe("reorder entries", () => {
 	it("is always live, because the stored order is advisory and the merge drops what went stale", () => {
-		const entry: HistoryEntry = { kind: "reorder", lists: [{ page: "", before: ["a", "b"], after: ["b", "a"] }] };
+		const entry: HistoryEntry = {
+			kind: "reorder",
+			lists: [{ of: "frames", page: "", before: ["a", "b"], after: ["b", "a"] }],
+		};
 		const history = record(emptyHistory(), entry);
 		expect(takeUndo(history, at())?.entry).toEqual(entry);
 	});
@@ -226,7 +229,7 @@ describe("one stack", () => {
 		const rename: HistoryEntry = { kind: "rename", of: "frame", from: "home", to: "landing" };
 		const shuffle: HistoryEntry = {
 			kind: "reorder",
-			lists: [{ page: "", before: ["landing", "cart"], after: ["cart", "landing"] }],
+			lists: [{ of: "frames", page: "", before: ["landing", "cart"], after: ["cart", "landing"] }],
 		};
 		let history = record(record(record(emptyHistory(), move), rename), shuffle);
 
@@ -291,5 +294,108 @@ describe("one stack", () => {
 		const taken = takeUndo(record(emptyHistory(), rename), at({}, ["store"]));
 		expect(taken?.history.redo).toHaveLength(1);
 		expect(drop(taken?.history ?? emptyHistory(), "undo")).toEqual({ undo: [], redo: [] });
+	});
+});
+
+/**
+ * Depth (#231). A page is named by its path, so an entry about one carries a
+ * path and the check is against paths — two pages under different pages may
+ * share a name, and a frame's name still has to miss every one of them.
+ */
+describe("entries about a nested page", () => {
+	const renamed: HistoryEntry = {
+		kind: "rename",
+		of: "page",
+		from: "explorations/chat",
+		to: "explorations/agent-chat",
+	};
+
+	it("serves a nested rename while both paths hold, and the forward one back", () => {
+		const history = record(emptyHistory(), renamed);
+		const undone = takeUndo(history, at({}, ["explorations", "explorations/agent-chat"]));
+		expect(undone?.entry).toEqual(renamed);
+		expect(takeRedo(undone?.history ?? history, at({}, ["explorations", "explorations/chat"]))?.entry).toEqual(
+			renamed,
+		);
+	});
+
+	it("skips when the path it would take is a page already", () => {
+		const history = record(emptyHistory(), renamed);
+		const taken = at({}, ["explorations", "explorations/agent-chat", "explorations/chat"]);
+		expect(takeUndo(history, taken)).toBeUndefined();
+	});
+
+	it("tells one page from another with the same name under a different page", () => {
+		const history = record(emptyHistory(), renamed);
+		// site/chat is a different page entirely, so it claims nothing here
+		expect(takeUndo(history, at({}, ["explorations", "explorations/agent-chat", "site/chat"]))?.entry).toEqual(
+			renamed,
+		);
+	});
+
+	it("holds a frame name against a page's name wherever that page sits", () => {
+		const frame: HistoryEntry = { kind: "rename", of: "frame", from: "chat", to: "home" };
+		const history = record(emptyHistory(), frame);
+		// undoing takes "chat" back, and a page answers to it at whatever depth it sits
+		expect(takeUndo(history, at({ home: "" }, ["explorations/chat"]))).toBeUndefined();
+		expect(takeUndo(history, at({ home: "" }, ["explorations/notes"]))?.entry).toEqual(frame);
+	});
+
+	const moved: HistoryEntry = {
+		kind: "move-page",
+		pages: [{ name: "explorations/chat", from: "explorations" }],
+		to: "application",
+		lists: [
+			{ of: "pages", page: "explorations", before: ["chat"], after: [] },
+			{ of: "pages", page: "application", before: [], after: ["chat"] },
+		],
+	};
+
+	it("looks for a moved page where the move left it, and puts it back where it came from", () => {
+		const history = record(emptyHistory(), moved);
+		const undone = takeUndo(history, at({}, ["explorations", "application", "application/chat"]));
+		expect(undone?.entry).toEqual(moved);
+		// redo reaches for it where it started instead
+		expect(
+			takeRedo(undone?.history ?? history, at({}, ["explorations", "application", "explorations/chat"]))?.entry,
+		).toEqual(moved);
+	});
+
+	it("skips a page somebody moved elsewhere while the entry sat on the stack", () => {
+		const history = record(emptyHistory(), moved);
+		expect(takeUndo(history, at({}, ["explorations", "application", "site/chat"]))).toBeUndefined();
+	});
+
+	it("skips when the page it would go back into is gone", () => {
+		const history = record(emptyHistory(), moved);
+		expect(takeUndo(history, at({}, ["application", "application/chat"]))).toBeUndefined();
+	});
+
+	/**
+	 * A page can never land inside itself or inside one of its own. The daemon
+	 * refuses it and the rail will not draw the drop, so a stale entry whose way
+	 * back has become a page inside what is moving skips here rather than serving
+	 * an undo the daemon would refuse a round trip later.
+	 */
+	it("skips a move whose way back is now a page inside what is moving", () => {
+		const restructured: HistoryEntry = {
+			kind: "move-page",
+			pages: [{ name: "site/chat", from: "application/chat/inner" }],
+			to: "application",
+			lists: [],
+		};
+		const alive = at({}, ["application", "application/chat", "application/chat/inner"]);
+		expect(takeUndo(record(emptyHistory(), restructured), alive)).toBeUndefined();
+	});
+
+	it("skips a redo whose destination has moved inside the page it would take", () => {
+		const restructured: HistoryEntry = {
+			kind: "move-page",
+			pages: [{ name: "application", from: "" }],
+			to: "application/chat",
+			lists: [],
+		};
+		const alive = at({}, ["application", "application/chat"]);
+		expect(takeRedo({ undo: [], redo: [restructured] }, alive)).toBeUndefined();
 	});
 });

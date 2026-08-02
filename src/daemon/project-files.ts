@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isSafeName } from "../page-path";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 
 /**
@@ -64,11 +65,6 @@ export function readFixture(root: string, name: string): ProjectJson {
 	const parsed = parseJson(raw, rel);
 	if (parsed.kind === "invalid") return parsed;
 	return { kind: "ok", json: raw };
-}
-
-/** One rule for every name that becomes a path segment: frames, scenarios, fixture parts. */
-export function isSafeName(segment: string): boolean {
-	return segment.length > 0 && !segment.startsWith(".") && !segment.includes("/") && !segment.includes("\\");
 }
 
 function parseJson(

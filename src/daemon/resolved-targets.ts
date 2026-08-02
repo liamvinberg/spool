@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
+import { isSafeName } from "../page-path";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
-import { isSafeName } from "./project-files";
 
 /**
  * What a render already knows (#34, extending the claim reader): a target the
