@@ -2,7 +2,7 @@ import { watch } from "node:fs";
 import { join, sep } from "node:path";
 import type { Cover } from "../cover";
 import { realDesignDir } from "./design-path";
-import { frameKind } from "./projection";
+import { isPageFolder } from "./projection";
 
 /**
  * Something outside a frame folder moved. `frames` names the frames whose source
@@ -192,9 +192,10 @@ export type ChangeHub = ReturnType<typeof createChangeHub>;
  * change to what the frame draws. It is still a move somebody has to hear about
  * (#113) — an agent placing a frame by writing the sidecar is doing what a hand
  * does by dragging it — so it classifies as its own kind and the canvas re-reads
- * where the frames are without touching a document. A top-level folder without
- * frame.tsx is a page (#39): its frame folders sit one deeper, and the sidecar
- * rule moves down with them. A path a delete has made unreadable may misname its
+ * where the frames are without touching a document. A folder without a frame
+ * entry is a page (#39), at any depth (#231), so this walks the path down
+ * through the pages rather than counting segments, and the sidecar rule sits
+ * wherever the walk stops. A path a delete has made unreadable may misname its
  * frame — any frame event refreshes discovery, so over-firing is safe and
  * guessing wrong is cheap.
  *
@@ -213,18 +214,18 @@ function classify(
 	const parts = filename.split(sep);
 	const [head, first] = parts;
 	if (head === "frames" && first !== undefined && first !== "") {
-		if (parts.length >= 3 && frameKind(join(designDir, "frames", first), designDir) === undefined) {
-			const second = parts[2];
-			if (second === undefined || second === "") return { kind: "frame", frame: first };
-			if (parts.length === 4 && parts[3]?.startsWith("frame.json") === true) {
-				return { kind: "geometry", frame: second };
-			}
-			return { kind: "frame", frame: second };
+		const segments = parts.slice(1);
+		// walk down while the folder is a page; what stops the walk is the frame,
+		// and the last folder on the path when nothing on it is a frame yet
+		let at = 0;
+		while (at < segments.length - 1 && isPageFolder(join(designDir, "frames", ...segments.slice(0, at + 1)))) {
+			at += 1;
 		}
-		if (parts.length === 3 && parts[2]?.startsWith("frame.json") === true) {
-			return { kind: "geometry", frame: first };
-		}
-		return { kind: "frame", frame: first };
+		const frame = segments[at];
+		if (frame === undefined || frame === "") return { kind: "frame", frame: first };
+		const rest = segments.slice(at + 1);
+		if (rest.length === 1 && rest[0]?.startsWith("frame.json") === true) return { kind: "geometry", frame };
+		return { kind: "frame", frame };
 	}
 	if (head !== "shared") return undefined;
 	const readers = framesUsing(parts.join("/"));

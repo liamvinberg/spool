@@ -17,6 +17,7 @@ import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { initProject } from "../init";
 import { openProject } from "../open";
+import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
 import { gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
@@ -28,7 +29,7 @@ import { agentInstalled, askAgentLogin, type Look } from "./agent-preflight";
 import { agentPromptContent } from "./agent-spawn";
 import { closeThread, isThreadId, parseThreadPut, putThread, serveThreads, sessionExists } from "./agent-threads";
 import { startAgentTurn } from "./agent-turn";
-import { CanvasFileError, parseOrder, readOrder, writeOrder } from "./canvas-order";
+import { CanvasFileError, parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import {
@@ -48,6 +49,7 @@ import {
 	duplicatePage,
 	forgetPages,
 	moveFrames,
+	movePages,
 	pageDir,
 	type Refusal,
 	renameFrame,
@@ -60,7 +62,7 @@ import { createGoReader } from "./go-reader";
 import { locateInDesign } from "./locate";
 import { isLoopbackHost } from "./loopback";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
-import { isSafeName, type ProjectJson, readFixture, readScenario } from "./project-files";
+import { type ProjectJson, readFixture, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
 import {
 	FRAME_BIRTH,
@@ -1038,7 +1040,9 @@ export function createDaemonApp({
 		.get("/api/p/:project/order", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			const order = answeringDiskRefusals(c, () => readOrder(project.root));
+			// the document rather than the daemon's reading of it: a flat project's
+			// pages are the bare list they have always been (#231)
+			const order = answeringDiskRefusals(c, () => storedOrder(readOrder(project.root)));
 			if ("response" in order) return order.response;
 			return c.json(order.value);
 		})
@@ -1047,7 +1051,10 @@ export function createDaemonApp({
 			validator("json", (value, c) => {
 				const order = parseOrder(value);
 				if (order === undefined) {
-					return c.text('order must be { "pages": [page, ...], "frames": { "<page>": [frame, ...] } }', 400);
+					return c.text(
+						'order must be { "pages": [page, ...] or { "<page>": [page, ...] }, "frames": { "<page>": [frame, ...] } }',
+						400,
+					);
 				}
 				return order;
 			}),
@@ -1680,6 +1687,28 @@ export function createDaemonApp({
 			},
 		)
 		.post(
+			"/api/p/:project/pages/move",
+			validator("json", (value, c) => {
+				const body = bodyFields(value);
+				const pages = nameList(body.pages);
+				const { page } = body;
+				if (pages === undefined || typeof page !== "string") {
+					return c.text('a page move is { "pages": [page, ...], "page": "…" }, "" being the root page', 400);
+				}
+				return { pages, page };
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const { pages, page } = c.req.valid("json");
+				return explorerVerb(
+					c,
+					() => movePages(project.root, pages, page),
+					() => c.body(null, 204),
+				);
+			},
+		)
+		.post(
 			"/api/p/:project/frames/duplicate",
 			validator("json", (value, c) => {
 				const body = bodyFields(value);
@@ -1760,10 +1789,16 @@ export function createDaemonApp({
 				const pageDirs: string[] = [];
 				try {
 					const designDir = realDesignDir(project.root);
+					const held: string[] = [];
 					for (const page of pages) {
 						const found = pageDir(project.root, page);
 						if (found.kind === "refused") return c.text(found.message, found.status);
-						pageDirs.push(found.dir);
+						held.push(found.dir);
+					}
+					// a page inside a page being trashed rides along inside its folder, so
+					// naming both is one move rather than a move and a miss (#231)
+					for (const dir of held) {
+						if (!held.some((outer) => dir.startsWith(`${outer}${sep}`))) pageDirs.push(dir);
 					}
 					for (const name of frames) {
 						if (!isSafeName(name)) return c.text(`not a frame name: "${name}"`, 400);

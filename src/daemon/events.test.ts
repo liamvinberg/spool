@@ -51,7 +51,7 @@ afterEach(() => {
 function project(): string {
 	const root = mkdtempSync(join(tmpdir(), "spool-events-"));
 	onTestFinished(() => rmSync(root, { recursive: true, force: true }));
-	for (const dir of ["frames/hello", "frames/shop/cart"]) {
+	for (const dir of ["frames/hello", "frames/shop/cart", "frames/explorations/chat/agent-chat"]) {
 		mkdirSync(join(root, "design", dir), { recursive: true });
 		writeFileSync(join(root, "design", dir, "frame.tsx"), "export default () => null;\n");
 	}
@@ -86,6 +86,37 @@ describe("what a changed path means", () => {
 		const root = project();
 
 		expect(await landed(root, ["frames/hello/frame.tsx"])).toEqual([{ kind: "frame", frame: "hello" }]);
+		expect(await landed(root, ["frames/shop/cart/frame.tsx"])).toEqual([{ kind: "frame", frame: "cart" }]);
+	});
+
+	/**
+	 * A page is a page at any depth (#231), so this walks the path down through
+	 * the pages rather than counting segments — and what stops the walk is the
+	 * frame, wherever that turns out to be.
+	 */
+	it("names the frame at the end of however many pages there are", async () => {
+		vi.useFakeTimers();
+		const root = project();
+		const deep = "frames/explorations/chat/agent-chat";
+
+		expect(await landed(root, [`${deep}/frame.tsx`])).toEqual([{ kind: "frame", frame: "agent-chat" }]);
+		expect(await landed(root, [`${deep}/frame.json`])).toEqual([{ kind: "geometry", frame: "agent-chat" }]);
+		// a file inside the frame's own folder is still that frame's edit
+		expect(await landed(root, [`${deep}/parts/row.tsx`])).toEqual([{ kind: "frame", frame: "agent-chat" }]);
+		// a page folder itself is a discovery change, named for the folder that moved
+		expect(await landed(root, ["frames/explorations/chat"])).toEqual([{ kind: "frame", frame: "chat" }]);
+	});
+
+	/**
+	 * A delete makes the path unreadable, and the folder it took looks exactly
+	 * like a page that has nothing in it. Naming the folder that went is what
+	 * keeps the walk from carrying on into what used to be inside it.
+	 */
+	it("names the frame that vanished rather than the file that was in it", async () => {
+		vi.useFakeTimers();
+		const root = project();
+		rmSync(join(root, "design", "frames", "shop", "cart"), { recursive: true, force: true });
+
 		expect(await landed(root, ["frames/shop/cart/frame.tsx"])).toEqual([{ kind: "frame", frame: "cart" }]);
 	});
 

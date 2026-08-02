@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, sep } from "node:path";
+import { isSafeName } from "../page-path";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { extractJsxSpan, type JsxSpan } from "./jsx-span";
-import { isSafeName } from "./project-files";
 import { frameFolder, frameGeometry, lookupFrame } from "./projection";
 
 /**

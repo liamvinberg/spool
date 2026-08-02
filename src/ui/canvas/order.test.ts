@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
+import { ROOT_PAGE } from "../../page-path";
 import {
+	flatPages,
 	insertAt,
 	mergeOrder,
+	mergePageTree,
+	pageMovedInOrder,
 	placeAfter,
 	renameInOrder,
 	reorder,
 	variantBase,
 	withFrameOrder,
 	without,
-	withoutPageOrder,
 	withPageOrder,
 } from "./order";
 
@@ -104,20 +107,80 @@ describe("names that change or arrive", () => {
 });
 
 describe("what a write says about the rest of the file", () => {
-	const stored = { pages: ["shop", "admin"], frames: { shop: ["cart"], admin: ["users"] } };
+	const stored = { pages: { "": ["shop", "admin"] }, frames: { shop: ["cart"], admin: ["users"] } };
 
 	it("states one list and carries every other one through", () => {
 		expect(withFrameOrder(stored, "shop", ["cart", "checkout"])).toEqual({
-			pages: ["shop", "admin"],
+			pages: { "": ["shop", "admin"] },
 			frames: { shop: ["cart", "checkout"], admin: ["users"] },
 		});
-		expect(withPageOrder(stored, ["admin", "shop"])).toEqual({
-			pages: ["admin", "shop"],
+		expect(withPageOrder(stored, ROOT_PAGE, ["admin", "shop"])).toEqual({
+			pages: { "": ["admin", "shop"] },
 			frames: { shop: ["cart"], admin: ["users"] },
 		});
 	});
 
-	it("takes a trashed page's row and its frame list together", () => {
-		expect(withoutPageOrder(stored, "shop")).toEqual({ pages: ["admin"], frames: { admin: ["users"] } });
+	it("keeps each page's own pages in their own list", () => {
+		expect(withPageOrder(stored, "shop", ["sale"])).toEqual({
+			pages: { "": ["shop", "admin"], shop: ["sale"] },
+			frames: { shop: ["cart"], admin: ["users"] },
+		});
+	});
+});
+
+describe("the page tree", () => {
+	it("keeps a flat project's one list, arranged the way the file says", () => {
+		const tree = mergePageTree({ "": ["admin", "shop"] }, ["shop", "admin"]);
+		expect(tree.get(ROOT_PAGE)).toEqual(["admin", "shop"]);
+		expect(flatPages(tree)).toEqual(["admin", "shop"]);
+	});
+
+	it("arranges each page's own pages against its own list, and merges arrivals in", () => {
+		const pages = [
+			"explorations",
+			"explorations/chat",
+			"explorations/landing-page",
+			"explorations/pricing",
+			"application",
+		];
+		const tree = mergePageTree(
+			{ "": ["explorations", "application"], explorations: ["landing-page", "chat"] },
+			pages,
+		);
+		expect(tree.get(ROOT_PAGE)).toEqual(["explorations", "application"]);
+		// the stored arrangement, and then the page nobody has placed yet
+		expect(tree.get("explorations")).toEqual([
+			"explorations/landing-page",
+			"explorations/chat",
+			"explorations/pricing",
+		]);
+		expect(flatPages(tree)).toEqual([
+			"explorations",
+			"explorations/landing-page",
+			"explorations/chat",
+			"explorations/pricing",
+			"application",
+		]);
+	});
+});
+
+describe("a page that moved", () => {
+	const stored = {
+		pages: { "": ["explorations", "application"], explorations: ["chat"] },
+		frames: { "": ["home"], explorations: ["notes"], "explorations/chat": ["agent-chat"] },
+	};
+
+	it("carries every list under it and renames it where it stands", () => {
+		expect(pageMovedInOrder(stored, "explorations", "research")).toEqual({
+			pages: { "": ["research", "application"], research: ["chat"] },
+			frames: { "": ["home"], research: ["notes"], "research/chat": ["agent-chat"] },
+		});
+	});
+
+	it("leaves the list it came out of, because where it lands is the drop's to say", () => {
+		expect(pageMovedInOrder(stored, "explorations/chat", "application/chat")).toEqual({
+			pages: { "": ["explorations", "application"], explorations: [] },
+			frames: { "": ["home"], explorations: ["notes"], "application/chat": ["agent-chat"] },
+		});
 	});
 });

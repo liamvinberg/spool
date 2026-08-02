@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { pxForCells } from "../term/cells";
@@ -101,5 +101,69 @@ describe("projection placement", () => {
 			h: 480,
 		});
 		expect(readFileSync(sidecar, "utf8")).toBe(authored);
+	});
+});
+
+/**
+ * Discovery to any depth (#231): a safe folder holding a frame entry is a
+ * frame, one holding none is a page, and its own folders get the same question.
+ * A page's identity is its path under frames/; a frame's is still its bare name.
+ */
+describe("pages at any depth", () => {
+	function deep(): string {
+		const root = makeTempDir();
+		writeDesignFile(root, join("frames", "home", "frame.tsx"), "export default () => null;\n");
+		writeDesignFile(root, join("frames", "explorations", "notes", "frame.tsx"), "export default () => null;\n");
+		writeDesignFile(
+			root,
+			join("frames", "explorations", "chat", "agent-chat", "frame.tsx"),
+			"export default () => null;\n",
+		);
+		writeDesignFile(root, join("frames", "explorations", "chat", "deeper", "shell", "term.tsx"), "// tui\n");
+		return root;
+	}
+
+	it("lists a page at every level and attributes each frame to its own path", () => {
+		const { pages, frames } = listProjectFrames(deep());
+
+		expect(pages).toEqual(["explorations", "explorations/chat", "explorations/chat/deeper"]);
+		expect(frames.map((frame) => ({ name: frame.name, page: frame.page, kind: frame.kind }))).toEqual([
+			{ name: "agent-chat", page: "explorations/chat", kind: "html" },
+			{ name: "home", page: undefined, kind: "html" },
+			{ name: "notes", page: "explorations", kind: "html" },
+			{ name: "shell", page: "explorations/chat/deeper", kind: "term" },
+		]);
+	});
+
+	it("counts an empty folder at any depth as a page with nothing on it", () => {
+		const root = deep();
+		mkdirSync(join(root, "design", "frames", "explorations", "chat", "pricing"), { recursive: true });
+
+		expect(listProjectFrames(root).pages).toContain("explorations/chat/pricing");
+	});
+
+	/** A frame born without a sidecar lands beside its own page's field, never another's. */
+	it("places a new frame against the field of the page it is on", () => {
+		const root = deep();
+		writeDesignFile(
+			root,
+			join("frames", "explorations", "chat", "second", "frame.tsx"),
+			"export default () => null;\n",
+		);
+
+		const { frames } = listProjectFrames(root);
+		const held = frames.filter((frame) => frame.page === "explorations/chat");
+		expect(held).toHaveLength(2);
+		expect(new Set(held.map((frame) => frame.y)).size).toBe(1);
+		expect(new Set(held.map((frame) => frame.x)).size).toBe(2);
+	});
+
+	it("keeps a frame name identity across depths, so two claimants is a collision", () => {
+		const root = deep();
+		writeDesignFile(root, join("frames", "site", "notes", "frame.tsx"), "export default () => null;\n");
+
+		const { frames, collisions } = listProjectFrames(root);
+		expect(frames.some((frame) => frame.name === "notes")).toBe(false);
+		expect(collisions).toEqual([{ name: "notes", paths: ["frames/explorations/notes", "frames/site/notes"] }]);
 	});
 });

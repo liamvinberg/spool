@@ -240,7 +240,8 @@ export function readProse(input: CallInput, key: string): string | null {
  * The frame a path names, or null when the path is a file that is not one (#143).
  *
  * A frame is the folder that holds its entry — `frames/<name>/frame.tsx` at the
- * root page, `frames/<page>/<name>/frame.tsx` where a page holds it — so the frame
+ * root page, `frames/<page>/<name>/frame.tsx` where a page holds it, and one more
+ * segment for every page above that — so the frame
  * is the last folder rather than the file, which is also why the geometry sidecar
  * beside it needs no rule of its own: both files are the frame, and twelve rows
  * that each read `write frame.tsx` would name nothing at all.
@@ -251,7 +252,7 @@ export function readProse(input: CallInput, key: string): string | null {
  */
 export function frameOf(path: string): string | null {
 	const trimmed = path.replace(/\/+$/, "");
-	const held = /(?:^|\/)frames\/(?:[^/]+\/)?([^/]+)\/[^/]*$/.exec(trimmed);
+	const held = /(?:^|\/)frames\/(?:[^/]+\/)*([^/]+)\/[^/]*$/.exec(trimmed);
 	const shot = /(?:^|\/)\.spool\/verify\/(.+)\.png$/.exec(trimmed);
 	return held?.[1] ?? shot?.[1] ?? null;
 }

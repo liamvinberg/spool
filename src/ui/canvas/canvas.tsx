@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Cover } from "../../cover";
+import { pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
@@ -99,15 +100,7 @@ import {
 	type PickedSelection,
 	SelectionOverlay,
 } from "./overlays";
-import {
-	camerasFromState,
-	frameSourcePath,
-	pageOf,
-	ROOT_PAGE,
-	resolveActivePage,
-	stateCameraSlots,
-	switchPage,
-} from "./pages";
+import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
 import { flightProgress, OUT, PLAY_IN, PLAY_OUT, PLAY_OUT_LANDS } from "./play-flight";
 import { PlayLayer, type PlayPhase } from "./play-layer";
 import {
@@ -1310,7 +1303,11 @@ export function ProjectCanvas({
 			// leave the page before staging it, never after: switching commits a
 			// pending trash to keep one undo slot, and doing it the other way round
 			// would commit the very entry that caused the switch — no toast, no undo
-			if (page !== null && activePageRef.current === page) leavePage.current(ROOT_PAGE);
+			// a page inside the one being staged goes with the folder, so being on one
+			// of those is being on a page that is about to be gone
+			if (page !== null && (activePageRef.current === page || pageWithin(page, activePageRef.current))) {
+				leavePage.current(ROOT_PAGE);
+			}
 			setHidden((current) => new Set([...current, ...staged.frames]));
 			if (page !== null) setHiddenPages((current) => new Set([...current, page]));
 			setSelected((current) => current.filter((name) => !staged.frames.includes(name)));

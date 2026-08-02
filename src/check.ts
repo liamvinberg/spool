@@ -488,18 +488,20 @@ function discoverHtmlFrames(designDir: string): string[] {
 		throw error;
 	}
 	const entries: string[] = [];
-	for (const entry of directories(designDir, framesDir)) {
-		const frame = join(framesDir, entry, "frame.tsx");
-		if (designFileExists(designDir, frame)) {
-			entries.push(frame);
-			continue;
+	// discovery's own walk: a folder holding an entry is a frame, and one holding
+	// neither is a page whose own folders get the same question (#231)
+	const walk = (dir: string): void => {
+		for (const entry of directories(designDir, dir)) {
+			const frame = join(dir, entry, "frame.tsx");
+			if (designFileExists(designDir, frame)) {
+				entries.push(frame);
+				continue;
+			}
+			if (entryMarkerExists(join(dir, entry, "term.tsx"))) continue;
+			walk(join(dir, entry));
 		}
-		if (entryMarkerExists(join(framesDir, entry, "term.tsx"))) continue;
-		for (const pageFrame of directories(designDir, join(framesDir, entry))) {
-			const file = join(framesDir, entry, pageFrame, "frame.tsx");
-			if (designFileExists(designDir, file)) entries.push(file);
-		}
-	}
+	};
+	walk(framesDir);
 	return entries.sort((a, b) => compareCodeUnits(designPath(designDir, a), designPath(designDir, b)));
 }
 

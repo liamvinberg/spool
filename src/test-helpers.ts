@@ -51,7 +51,7 @@ export function writeFrame(root: string, name: string, tsx: string): void {
 	writeDesignFile(root, join("frames", name, "frame.tsx"), tsx);
 }
 
-/** A frame on a named page (#39): one level down, identity still the leaf name. */
+/** A frame on a named page (#39, #231): the page is a path, identity still the leaf name. */
 export function writePageFrame(root: string, page: string, name: string, tsx: string): void {
 	writeDesignFile(root, join("frames", page, name, "frame.tsx"), tsx);
 }

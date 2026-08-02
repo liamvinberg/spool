@@ -10,9 +10,10 @@
  */
 
 import { useEffect } from "react";
+import { ROOT_PAGE } from "../../page-path";
 import { hotkeyKey } from "../hotkeys";
 import { MenuItem, MenuRule } from "./context-menu";
-import { pageLabel, ROOT_PAGE } from "./pages";
+import { pageLabel } from "./pages";
 
 const MENU_WIDTH = 200;
 const ITEM_HEIGHT = 30;

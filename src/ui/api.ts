@@ -321,6 +321,16 @@ export async function moveFrames(project: string, frames: string[], page: string
 	}
 }
 
+/** The same drag over a page: the folder moves, and its whole subtree with it. */
+export async function movePages(project: string, pages: string[], page: string): Promise<ExplorerDone> {
+	try {
+		const res = await client.api.p[":project"].pages.move.$post({ param: { project }, json: { pages, page } });
+		return res.ok ? { kind: "done" } : await refusalOf(res);
+	} catch {
+		return unreachable;
+	}
+}
+
 /** No page asked for leaves each copy where its original lives. */
 export async function duplicateFrames(project: string, frames: string[], page?: string): Promise<ExplorerCopies> {
 	try {
@@ -361,14 +371,29 @@ export async function createPage(project: string, name: string): Promise<Explore
  * and a missing one is not an error, because the client is what merges the
  * stored list against the projection. Nothing empty is stored — an order
  * naming nothing and no order at all are the same fact about a canvas.
+ *
+ * The wire carries the document rather than this side's reading of it, so a
+ * flat project's `pages` arrives as the bare list it has always been (#231) and
+ * this is where it becomes the root parent's list. One door, one normalization.
  */
 export async function fetchOrder(project: string): Promise<CanvasOrder> {
 	try {
 		const res = await client.api.p[":project"].order.$get({ param: { project } });
-		return res.ok ? ((await res.json()) as CanvasOrder) : {};
+		return res.ok ? storedAsOrder(await res.json()) : {};
 	} catch {
 		return {};
 	}
+}
+
+function storedAsOrder(value: unknown): CanvasOrder {
+	const stored = (value ?? {}) as { pages?: unknown; frames?: Record<string, string[]> };
+	const pages = Array.isArray(stored.pages)
+		? { "": stored.pages as string[] }
+		: (stored.pages as Record<string, string[]> | undefined);
+	return {
+		...(pages === undefined ? {} : { pages }),
+		...(stored.frames === undefined ? {} : { frames: stored.frames }),
+	};
 }
 
 export function putOrder(project: string, order: CanvasOrder): void {

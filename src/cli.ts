@@ -19,7 +19,6 @@ import {
 	statusDaemon,
 	stopDaemon,
 } from "./daemon/lifecycle";
-import { isSafeName } from "./daemon/project-files";
 import { type RunningDaemon, serveDaemon } from "./daemon/server";
 import { isNewer, readUpdateCache } from "./daemon/update-check";
 import { startRegisteredUiWatcher, type UiBuildWatcher } from "./dev-ui-hook";
@@ -27,6 +26,7 @@ import { doorAddressFor } from "./door";
 import { PortBusyError, SpoolError } from "./errors";
 import { initProject } from "./init";
 import { openProject } from "./open";
+import { isSafeName } from "./page-path";
 import { removeProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
 import { skillText } from "./skill";
