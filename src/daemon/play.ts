@@ -347,8 +347,16 @@ body { margin: 0; background: #0e0e0e; }
    window rather than to the page, or a tall document puts it out of sight */
 .spool-page > .spool-external-backdrop { position: fixed; }
 /* a terminal is a character grid, not a document: it keeps the box it was
-   authored at rather than growing into the window */
-.spool-screen.is-terminal { min-height: 0; overflow: hidden; color-scheme: dark; background: #111110; }
+   authored at rather than growing into the window, and sits centred on the
+   page's background — which is also what leaves the top edge reachable, since a
+   terminal's own document swallows every pointer report the bar is summoned by */
+.spool-screen.is-terminal {
+	min-height: 0;
+	align-self: center;
+	overflow: hidden;
+	color-scheme: dark;
+	background: #111110;
+}
 .spool-player-error {
 	box-sizing: border-box;
 	width: 100%;
@@ -465,14 +473,15 @@ body { margin: 0; background: #0e0e0e; }
 /* the switcher, closed by default: that is how it will be seen nine times in ten */
 .spool-picker {
 	position: absolute;
-	top: calc(100% + 8px);
+	top: 100%;
 	left: -6px;
 	z-index: 1;
 	width: 212px;
 	overflow: hidden;
 	background: #161616;
 	border: 1px solid #363636;
-	border-radius: 12px;
+	border-top: 0;
+	border-radius: 0 0 12px 12px;
 	translate: 0 -4px;
 	opacity: 0;
 	pointer-events: none;

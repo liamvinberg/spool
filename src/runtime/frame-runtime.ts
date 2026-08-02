@@ -741,6 +741,33 @@ function back(): void {
 }
 
 /**
+ * A walk the reader asked spool for rather than the prototype: the edge bar's
+ * switcher, and the browser's own back and forward buttons (#227).
+ *
+ * It moves the session exactly the way an authored walk does — same name-stack,
+ * same screen swap, same direction riding the View Transition — and witnesses
+ * nothing. Nobody pressed anything inside the prototype, so there is no claim on
+ * the flow map for this to verify (#25): reporting it would mint a verified edge
+ * out of a press on spool's own chrome.
+ */
+function jump(target: string, back: boolean): void {
+	if (play === undefined) return;
+	if (deferPlayerAction(() => jump(target, back))) return;
+	if (!Object.hasOwn(play.frames, target)) {
+		console.error(`spool: no frame "${target}" to walk to`);
+		return;
+	}
+	abortClipboardWrites();
+	const from = currentFrame;
+	// Stepping back onto the frame the stack was holding pops it, so the walk
+	// history and the browser's agree on where back goes next.
+	if (back && stack.at(-1) === target) stack.pop();
+	else stack.push(from);
+	currentFrame = target;
+	requestScreenSwap(from, back ? "back" : "forward");
+}
+
+/**
  * data-go: click-only sugar on any element, nearest ancestor wins, anchors
  * get preventDefault. A data-transition on the same element names the
  * per-link transition type (#24) — meaningful in the player, inert elsewhere.
@@ -1010,9 +1037,8 @@ function runDismissExternalControllerCommand(command: PlayerControllerCommand): 
 	completePlayerControllerCommand(command, "completed");
 }
 
-/** The edge bar's switcher, and the browser's back button: a walk like any other (#227). */
-function runWalkControllerCommand(command: PlayerControllerCommand, to: string): void {
-	if (deferPlayerControllerCommand(() => runWalkControllerCommand(command, to))) return;
+function runWalkControllerCommand(command: PlayerControllerCommand, to: string, back: boolean): void {
+	if (deferPlayerControllerCommand(() => runWalkControllerCommand(command, to, back))) return;
 	// A screen that left the composition mid-session is a walk that cannot be
 	// taken, and it says so: a command that went quiet would leave the shell
 	// waiting on a completion that never comes, with everything behind it stuck.
@@ -1020,15 +1046,17 @@ function runWalkControllerCommand(command: PlayerControllerCommand, to: string):
 		completePlayerControllerCommand(command, "failed");
 		return;
 	}
-	navigate(to);
+	jump(to, back);
 	completeAfterNavigation(command);
 }
 
 function handlePlayerControllerCommand(message: Record<string, unknown>): boolean {
 	switch (message.command) {
 		case "walk": {
-			const command = playerControllerCommand(message, "walk", ["to"]);
-			if (command !== undefined && typeof message.to === "string") runWalkControllerCommand(command, message.to);
+			const command = playerControllerCommand(message, "walk", ["to", "back"]);
+			if (command !== undefined && typeof message.to === "string" && typeof message.back === "boolean") {
+				runWalkControllerCommand(command, message.to, message.back);
+			}
 			return true;
 		}
 		case "dismiss-external": {
@@ -1050,23 +1078,39 @@ function followGeometry(): void {
 	if (config === undefined || !embedded) return;
 	let geometryRevision = 0;
 	let geometryReadyScheduled = false;
+	/**
+	 * Something asked while a pass was already in flight. The ask is kept rather
+	 * than dropped, because the two are not the same question: a resize landing
+	 * mid-pass means the frame this pass is about to measure has not finished
+	 * changing size, so the pass reads the old box, says nothing, and nothing is
+	 * left to ask again. That is a shell that waits on a reveal forever.
+	 */
+	let geometryReadyAgain = false;
 	const scheduleGeometryReady = () => {
-		if (geometryReadyScheduled || geometryRevision === 0) return;
+		if (geometryRevision === 0) return;
+		if (geometryReadyScheduled) {
+			geometryReadyAgain = true;
+			return;
+		}
 		geometryReadyScheduled = true;
 		requestAnimationFrame(() => {
 			requestAnimationFrame(() => {
 				geometryReadyScheduled = false;
 				const geometry = config.frames[currentFrame];
-				if (geometry === undefined || window.innerWidth !== geometry.w || window.innerHeight !== geometry.h) {
+				if (geometry !== undefined && window.innerWidth === geometry.w && window.innerHeight === geometry.h) {
+					geometryReadyAgain = false;
+					postPlayerMessage({
+						spool: "player-geometry-ready",
+						revision: geometryRevision,
+						frame: currentFrame,
+						w: window.innerWidth,
+						h: window.innerHeight,
+					});
 					return;
 				}
-				postPlayerMessage({
-					spool: "player-geometry-ready",
-					revision: geometryRevision,
-					frame: currentFrame,
-					w: window.innerWidth,
-					h: window.innerHeight,
-				});
+				if (!geometryReadyAgain) return;
+				geometryReadyAgain = false;
+				scheduleGeometryReady();
 			});
 		});
 	};
@@ -1430,7 +1474,7 @@ const playerController: PlayerController = {
 			: { w: 390, h: 844 },
 	frames: () => (play === undefined ? [] : Object.keys(play.frames)),
 	terminal: (frame) => play?.terminals !== undefined && Object.hasOwn(play.terminals, frame),
-	walk: (frame) => navigate(frame),
+	walk: (frame, back = false) => jump(frame, back),
 	dismissExternal() {
 		if (externalHref === null) return;
 		externalHref = null;

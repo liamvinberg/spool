@@ -546,10 +546,18 @@ describe("the played page and the edge bar (#227)", () => {
 		// the last thing seen inside the page is a point in the strip, and then
 		// the pointer is gone — up into the browser's own chrome
 		page.dispatchEvent(new MouseEvent("mousemove", { clientY: 2, bubbles: true }));
-		window.dispatchEvent(new CustomEvent("spool-player-wake", { detail: { y: null } }));
+		document.documentElement.dispatchEvent(new MouseEvent("mouseleave"));
 
 		await new Promise((resolve) => setTimeout(resolve, 400));
 		expect(document.querySelector(".spool-edge.is-open")).toBeNull();
+
+		// but a frame reporting that it lost the pointer is not the window losing
+		// it: on a capped page the hand leaves the column every time it moves out
+		// onto the background beside it, and that is where the bar is asked for
+		page.dispatchEvent(new MouseEvent("mousemove", { clientY: 2, bubbles: true }));
+		window.dispatchEvent(new CustomEvent("spool-player-wake", { detail: { y: null } }));
+
+		await vi.waitFor(() => expect(document.querySelector(".spool-edge.is-open")).not.toBeNull());
 	});
 
 	it("carries the switcher and the exits, and nothing the pill used to", async () => {
@@ -606,6 +614,38 @@ describe("the played page and the edge bar (#227)", () => {
 		window.history.back();
 		await waitForFrame("menu");
 		expect(new URL(window.location.href).searchParams.get("frame")).toBe("menu");
+	});
+
+	it("walks back on the browser's own button, and witnesses no edge doing it", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+
+		const { fetched } = await loadPlayerDocument(harness, "?frame=menu");
+		await waitForFrame("menu");
+		const calls = stubViewTransitions();
+		const witnessed = () => fetched.filter((call) => call.method === "POST" && call.url.endsWith("/walked")).length;
+
+		// a press inside the prototype is a walk the session really took
+		click("#walk");
+		await waitForFrame("cart");
+		expect(calls.at(-1)?.types).toEqual(["forward", "lift"]);
+		expect(witnessed()).toBe(1);
+
+		// the browser's own button is a step back through the walk, so it plays as
+		// one — and nobody pressed anything inside the prototype, so there is no
+		// claim on the map for it to confirm (#25)
+		window.history.back();
+		await waitForFrame("menu");
+		expect(calls.at(-1)?.types).toEqual(["back"]);
+		expect(witnessed()).toBe(1);
+
+		// and the switcher is the same: spool's own chrome never mints an edge
+		await summonEdgeBar();
+		click("#spool-switcher");
+		click(".spool-picker-row:not(.is-here)");
+		await waitForFrame("cart");
+		expect(calls.at(-1)?.types).toEqual(["forward"]);
+		expect(witnessed()).toBe(1);
 	});
 
 	it("never takes a plain key from the prototype, and answers only its own chord", async () => {

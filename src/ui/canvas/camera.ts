@@ -60,9 +60,12 @@ export function zoomAt(camera: Camera, cx: number, cy: number, factor: number): 
 	return { k, x: cx - (cx - camera.x) * r, y: cy - (cy - camera.y) * r };
 }
 
+/** The breathing room a canvas fit leaves around what it framed. */
+const FIT_INSET = 128;
+
 /** Frame the given bounds inside vw×vh with breathing room, never past 100%. */
 export function fitCamera(bounds: Box, vw: number, vh: number): Camera {
-	const k = clamp(Math.min((vw - 128) / bounds.w, (vh - 128) / bounds.h), K_MIN, 1);
+	const k = clamp(Math.min((vw - FIT_INSET) / bounds.w, (vh - FIT_INSET) / bounds.h), K_MIN, 1);
 	return { k, x: (vw - bounds.w * k) / 2 - bounds.x * k, y: (vh - bounds.h * k) / 2 - bounds.y * k };
 }
 

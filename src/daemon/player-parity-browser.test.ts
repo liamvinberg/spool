@@ -3442,9 +3442,10 @@ it("keeps terminal poster and chrome behavior through the control shell", { time
 	expect(viewport).toEqual({ width: 720, height: 480 });
 	expect(await page.locator("#spool-player").evaluate((host) => getComputedStyle(host).opacity)).toBe("1");
 
-	// nothing inside a terminal reports a pointer, so nothing could ever summon
-	// the bar over one: it stands instead, the way the pill never slept there
-	await expect.poll(() => page.locator(".spool-edge.is-open").count()).toBe(1);
+	// nothing inside a terminal's own document reports a pointer, so the bar is
+	// summoned from the page background the centred grid leaves above it
+	expect(await page.locator(".spool-edge.is-open").count()).toBe(0);
+	await summonEdgeBar(page);
 	expect(await page.locator(".spool-bar-name").textContent()).toBe("dash");
 });
 

@@ -23,6 +23,9 @@ export const EDGE_PX = 8;
  */
 export const KEEP_PX = 140;
 
+/** Which document saw the pointer: the page around the frame, or the frame itself. */
+export type PointerSource = "page" | "frame";
+
 export interface Viewport {
 	vw: number;
 	vh: number;
@@ -55,13 +58,24 @@ export function useViewport(): Viewport {
  * `y` is in window space, which is why what happens inside an embedded frame
  * has to be forwarded before it gets here.
  */
-export function useEdgeBar(armed: boolean, held: boolean): { revealed: boolean; point: (y: number | null) => void } {
+export function useEdgeBar(
+	armed: boolean,
+	held: boolean,
+): { revealed: boolean; point: (y: number | null, source: PointerSource) => void } {
 	const [revealed, setRevealed] = useState(false);
 	const dwell = useRef(0);
 	const heldRef = useRef(held);
 	heldRef.current = held;
 	const revealedRef = useRef(revealed);
 	revealedRef.current = revealed;
+	/**
+	 * Which surface last said where the pointer is. A frame reports that it lost
+	 * the pointer whenever the pointer leaves *it*, which on a capped page is
+	 * every time the hand moves out onto the background beside the column — so
+	 * that report only means "gone from the window" while the frame is also the
+	 * one that last saw it. Whichever of the two arrives last is right.
+	 */
+	const from = useRef<PointerSource>("page");
 	useEffect(() => () => window.clearTimeout(dwell.current), []);
 	useEffect(() => {
 		if (armed) return;
@@ -69,19 +83,24 @@ export function useEdgeBar(armed: boolean, held: boolean): { revealed: boolean; 
 		setRevealed(false);
 	}, [armed]);
 	const point = useCallback(
-		(y: number | null) => {
+		(y: number | null, source: PointerSource) => {
 			if (!armed) return;
-			if (y !== null && y <= EDGE_PX) {
+			if (y === null) {
+				if (source === "frame" && from.current !== "frame") return;
+				window.clearTimeout(dwell.current);
+				return;
+			}
+			from.current = source;
+			if (y <= EDGE_PX) {
 				// Resting is the ask, so every fresh report starts the wait over.
 				window.clearTimeout(dwell.current);
 				dwell.current = window.setTimeout(() => setRevealed(true), DWELL_MS);
 				return;
 			}
 			window.clearTimeout(dwell.current);
-			// A pointer that left the document has gone up to the browser's own
-			// chrome, which is no reason to take away a bar already up. An open
-			// switcher is a held conversation and outlives the pointer either way.
-			if (y === null || heldRef.current || y <= KEEP_PX) return;
+			// An open switcher is a held conversation and outlives the pointer, and
+			// a bar the hand is still reaching for is not one it has left.
+			if (heldRef.current || y <= KEEP_PX) return;
 			if (revealedRef.current) setRevealed(false);
 		},
 		[armed],

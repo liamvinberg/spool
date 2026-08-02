@@ -2,7 +2,7 @@ import type { ComponentType, ReactNode } from "react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLinkDialog } from "./external-link-dialog";
 import { accelChord, accelLabel } from "./platform-keys";
-import { useEdgeBar, useViewport } from "./player-stage";
+import { useEdgeBar, useViewport } from "./player-page";
 
 /**
  * The played page (#227). Play opens a browser tab, so the frame stops being a
@@ -34,8 +34,12 @@ export interface PlayerController {
 	frames(): string[];
 	/** Whether this screen is a terminal frame (#44). */
 	terminal(frame: string): boolean;
-	/** Walk to another screen: the switcher's press, and the browser's back button. */
-	walk(frame: string): void;
+	/**
+	 * Walk to another screen because the reader asked spool rather than the
+	 * prototype: the switcher's press, and the browser's own back and forward.
+	 * `back` is a step back through the walk, so it plays as one.
+	 */
+	walk(frame: string, back?: boolean): void;
 	dismissExternal(): void;
 	close(): void;
 }
@@ -64,25 +68,28 @@ export function Player({
 	const [picking, setPicking] = useState(false);
 	// the external-link dialog is modal: it owns the moment, chrome and all
 	const blocked = externalHref !== null;
-	const { revealed: summoned, point } = useEdgeBar(!coarsePointer && !blocked, picking);
-	// A terminal screen is another document, so the hand moving inside it is
-	// invisible from here (#44) — nothing would ever summon the bar over one, and
-	// there would be no way back. So over a terminal the bar simply stands.
-	const revealed = summoned || (terminal && !coarsePointer && !blocked);
+	const { revealed, point } = useEdgeBar(!coarsePointer && !blocked, picking);
 	useEffect(() => {
 		if (!revealed) setPicking(false);
 	}, [revealed]);
 
-	// Where the pointer is, forwarded out of an embedded frame: only this
-	// document knows what the numbers mean, and a frame that has lost the pointer
-	// altogether reports null so a pass through the edge never summons the bar.
+	// Where the pointer is, forwarded out of an embedded frame: only this document
+	// knows what the numbers mean, and a frame that has lost the pointer reports
+	// null so a pass through the edge on the way out never summons the bar.
 	useEffect(() => {
 		const onPoint = (event: Event) => {
 			const { y } = (event as CustomEvent<{ y: number | null }>).detail;
-			point(y);
+			point(y, "frame");
 		};
 		window.addEventListener("spool-player-wake", onPoint);
-		return () => window.removeEventListener("spool-player-wake", onPoint);
+		// And this document's own leave, for the hand that goes up from the page
+		// background beside a capped column rather than from the frame itself.
+		const onLeave = () => point(null, "page");
+		window.document.documentElement.addEventListener("mouseleave", onLeave);
+		return () => {
+			window.removeEventListener("spool-player-wake", onPoint);
+			window.document.documentElement.removeEventListener("mouseleave", onLeave);
+		};
 	}, [point]);
 
 	usePlayedUrl(project, frame, controller);
@@ -103,7 +110,7 @@ export function Player({
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: summoning is ambient, not an affordance — the page is the page, never a control
-		<div className="spool-page" onMouseMove={(event) => point(event.clientY)}>
+		<div className="spool-page" onMouseMove={(event) => point(event.clientY, "page")}>
 			<div
 				className={terminal ? "spool-screen is-terminal" : "spool-screen"}
 				// The one number spool imposes: the authored width as a cap, and the
@@ -130,7 +137,7 @@ export function Player({
 					project={project}
 					frame={frame}
 					frames={controller.frames()}
-					revealed={revealed && !blocked}
+					revealed={revealed}
 					picking={picking}
 					onPicking={setPicking}
 					onWalk={controller.walk}
@@ -156,6 +163,8 @@ export function Player({
 function usePlayedUrl(project: string, frame: string, controller: PlayerController): void {
 	const named = useRef<string | undefined>(undefined);
 	const popped = useRef<string | undefined>(undefined);
+	/** Where in the pushed history this page stands, so a pop can be told from a press. */
+	const index = useRef(0);
 	useEffect(() => {
 		if (named.current === frame) return;
 		const first = named.current === undefined;
@@ -168,21 +177,33 @@ function usePlayedUrl(project: string, frame: string, controller: PlayerControll
 		if (wasPopped) return;
 		const url = new URL(window.location.href);
 		url.searchParams.set("frame", frame);
-		const state = { spool: "play", frame };
+		if (!first) index.current += 1;
+		const state = { spool: "play", frame, index: index.current };
 		if (first) window.history.replaceState(state, "", url);
 		else window.history.pushState(state, "", url);
 	}, [frame, project]);
 
 	useEffect(() => {
 		const onPop = (event: PopStateEvent) => {
-			const state = event.state as { spool?: unknown; frame?: unknown } | null;
-			const to =
-				state?.spool === "play" && typeof state.frame === "string"
-					? state.frame
-					: new URL(window.location.href).searchParams.get("frame");
-			if (to === null || to === controller.read().frame) return;
+			const state = event.state as { spool?: unknown; frame?: unknown; index?: unknown } | null;
+			const named = state?.spool === "play" && typeof state.frame === "string" ? state.frame : undefined;
+			const to = named ?? new URL(window.location.href).searchParams.get("frame");
+			const here = controller.read().frame;
+			if (to === null || to === here) return;
+			// A screen the composition no longer has cannot be walked to, and an
+			// address bar naming a frame the page is not showing is a lie: put the
+			// entry back on where the session really stands.
+			if (!controller.frames().includes(to)) {
+				const url = new URL(window.location.href);
+				url.searchParams.set("frame", here);
+				window.history.replaceState({ spool: "play", frame: here, index: index.current }, "", url);
+				return;
+			}
+			const at = typeof state?.index === "number" ? state.index : index.current;
+			const back = at < index.current;
+			index.current = at;
 			popped.current = to;
-			controller.walk(to);
+			controller.walk(to, back);
 		};
 		window.addEventListener("popstate", onPop);
 		return () => window.removeEventListener("popstate", onPop);

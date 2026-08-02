@@ -175,7 +175,7 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	let latestGeometry: { revision: number; frames: { name: string; w: number; h: number }[] } | undefined;
 	/**
 	 * Geometry as the canvas authored it. `config.frames` holds the played box
-	 * instead — see `play` below — and a window that changes size re-derives one
+	 * instead — see `playedBox` below — and a window that changes size re-derives one
 	 * from the other, so the authored numbers have to survive somewhere.
 	 */
 	let authoredGeometry: { name: string; w: number; h: number }[] = retainedGeometry(config.frames);
@@ -302,14 +302,14 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	 * A terminal is a character grid rather than a document, so it keeps the
 	 * height it was authored at instead of growing into the window.
 	 */
-	const play = (name: string, geometry: FrameGeometry): FrameGeometry => ({
+	const playedBox = (name: string, geometry: FrameGeometry): FrameGeometry => ({
 		w: Math.min(window.innerWidth, geometry.w),
 		h: config.terminals.includes(name) ? geometry.h : window.innerHeight,
 	});
 	const playedList = (frames: { name: string; w: number; h: number }[]) =>
-		frames.map((frame) => (isGeometry(frame) ? { name: frame.name, ...play(frame.name, frame) } : frame));
+		frames.map((frame) => (isGeometry(frame) ? { name: frame.name, ...playedBox(frame.name, frame) } : frame));
 	const playedRecord = (frames: Record<string, FrameGeometry>): Record<string, FrameGeometry> =>
-		Object.fromEntries(Object.entries(frames).map(([name, geometry]) => [name, play(name, geometry)]));
+		Object.fromEntries(Object.entries(frames).map(([name, geometry]) => [name, playedBox(name, geometry)]));
 	config.frames = playedRecord(config.frames);
 
 	const controller: PlayerController = {
@@ -322,8 +322,8 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		geometry: (frame) => (hasFrame(config.frames, frame) ? config.frames[frame] : undefined) ?? { w: 390, h: 844 },
 		frames: () => Object.keys(config.frames),
 		terminal: (frame) => config.terminals.includes(frame),
-		walk: (frame) => {
-			if (hasFrame(config.frames, frame) && frame !== snapshot.frame) command("walk", { to: frame });
+		walk: (frame, back = false) => {
+			if (hasFrame(config.frames, frame) && frame !== snapshot.frame) command("walk", { to: frame, back });
 		},
 		dismissExternal: () => command("dismiss-external"),
 		close: () => host.close(),
