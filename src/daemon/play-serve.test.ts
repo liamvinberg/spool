@@ -362,90 +362,7 @@ describe("serving the player", () => {
 	});
 });
 
-describe("a session for the canvas to play inline (#210)", () => {
-	it("hands back the start, every frame's geometry, and a render-origin URL carrying a handoff", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { name } = scaffold(spoolDir);
-		const app = makeApp(spoolDir);
-
-		const res = await app.request(`/api/p/${name}/play?frame=menu`);
-
-		expect(res.status).toBe(200);
-		expect(res.headers.get("cache-control")).toBe("no-store");
-		const session = (await res.json()) as {
-			project: string;
-			start: string;
-			frames: Record<string, { w: number; h: number }>;
-			terminals: string[];
-			innerUrl: string;
-		};
-		expect(session.project).toBe(name);
-		expect(session.start).toBe("menu");
-		expect(Object.keys(session.frames).sort()).toEqual(["cart", "menu", "pay--done"]);
-		expect(session.frames.menu).toEqual({ w: 390, h: 844 });
-		expect(session.terminals).toEqual([]);
-
-		const inner = new URL(session.innerUrl);
-		// the render origin, never the control one: frame code and the canvas
-		// must not share a document, which is the whole point of the handoff
-		expect(inner.origin).not.toBe(new URL("http://localhost/", "http://localhost/").origin);
-		expect(inner.pathname).toBe(`/play/${name}`);
-		expect(inner.searchParams.get("frame")).toBe("menu");
-		expect(inner.searchParams.get("scenario")).toBe("default");
-		expect(inner.searchParams.get("shell")).toBe("1");
-		expect(inner.searchParams.get("handoff")).toMatch(/^[A-Za-z0-9_-]{43}$/);
-	});
-
-	it("mints a fresh handoff every time, because a spent one is spent", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { name } = scaffold(spoolDir);
-		const app = makeApp(spoolDir);
-
-		const first = (await (await app.request(`/api/p/${name}/play?frame=menu`)).json()) as { innerUrl: string };
-		const second = (await (await app.request(`/api/p/${name}/play?frame=menu`)).json()) as { innerUrl: string };
-
-		expect(new URL(first.innerUrl).searchParams.get("handoff")).not.toBe(
-			new URL(second.innerUrl).searchParams.get("handoff"),
-		);
-	});
-
-	it("opens where /play/ would when no frame is named", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { name } = scaffold(spoolDir);
-		const app = makeApp(spoolDir);
-
-		const session = (await (await app.request(`/api/p/${name}/play`)).json()) as { start: string };
-
-		expect(session.start).toBe("cart");
-	});
-
-	it("refuses a frame the project does not have", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { name } = scaffold(spoolDir);
-		const app = makeApp(spoolDir);
-
-		const res = await app.request(`/api/p/${name}/play?frame=ghost`);
-
-		expect(res.status).toBe(404);
-		const refusal = await res.text();
-		expect(refusal).toContain('no frame "ghost" to play');
-		// a name nothing claims gets no invented folder, paged or flat (#156)
-		expect(refusal).not.toContain("frames/ghost");
-	});
-
-	it("refuses a frame name that is not one", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { name } = scaffold(spoolDir);
-		const app = makeApp(spoolDir);
-
-		const res = await app.request(`/api/p/${name}/play?frame=../escape`);
-
-		expect(res.status).toBe(400);
-		expect(await res.text()).toContain("not a frame name");
-	});
-});
-
-describe("the pill's font", () => {
+describe("the chrome's font", () => {
 	it("serves the chrome's mono woff2 and 404s anything else", async () => {
 		const app = makeApp(makeTempDir());
 
@@ -505,7 +422,7 @@ describe("terminal frames in the player (#42)", () => {
 		expect(config.terminals?.dash?.svg).toContain("data:font/woff2;base64,");
 		expect(shellInner).not.toContain("Spool Terminal Mono");
 		expect(shellInner).not.toContain("Spool Boot Mono");
-		expect(shellInner).not.toContain(".spool-stage");
+		expect(shellInner).not.toContain(".spool-page");
 	});
 
 	it("rejects a never-run terminal instead of inventing a blank player grid", async () => {

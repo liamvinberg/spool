@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { Player, type PlayerController } from "./player-chrome";
-import { toggleFullscreen } from "./player-stage";
 
 /**
  * The player shell: the trusted half of a played session. It holds the
@@ -11,10 +10,11 @@ import { toggleFullscreen } from "./player-stage";
  * navigation choreography over a private port, and owns the chrome — so frame
  * code and Spool's own UI never share a document.
  *
- * Two surfaces run it. `bootPlayerShell` is the standalone `/play/` page, the
- * door agents and phones come through. `createPlayerShell` is the same machine
- * with its DOM couplings handed in, which is what lets the canvas host a
- * session inline and fly its camera into the landing (#210).
+ * It is the played tab (#227): a control-origin document whose whole job is to
+ * be the page around the frame, so the URL, the title and the edge bar live out
+ * here where frame code cannot reach them. The frame itself is sized by this
+ * side too — the authored width as a cap, the real viewport below it — because
+ * the iframe's box is the viewport the runtime inside it measures.
  */
 
 interface FrameGeometry {
@@ -40,17 +40,17 @@ interface PlayerState {
 export interface PlayerShellHost {
 	/** The iframe holding the render-origin player document. */
 	frame(): HTMLIFrameElement | null;
-	/** Leaving: the standalone tab closes, the canvas flies back out. */
+	/** Leaving: the tab closes, or falls back to the canvas it was opened from. */
 	close(): void;
 	/** A walk the session really took, for the flow graph's verified marks. */
 	walked(from: string, to: string): void;
 	/**
-	 * Where the pointer moved to inside the player, in that document's own
-	 * coordinates. The host converts: only it knows the stage placement.
+	 * Where the pointer is inside the player, in window space — the iframe sits
+	 * at the top of the page unscaled, so those are the same coordinates. Null
+	 * means it left the document altogether, which is what stops a pass through
+	 * the top edge from summoning the edge bar.
 	 */
-	wake(y: number): void;
-	/** Fill the screen, on whichever element this host makes fullscreen. */
-	fullscreen(): void;
+	point(y: number | null): void;
 	/**
 	 * Earn a fresh handoff after a spent one (#88) — reported so the shell knows
 	 * whether the repair was taken or the failure is the reader's to see.
@@ -105,7 +105,7 @@ interface PendingNavigation {
 	state?: { sequence: number; value: PlayerState } | undefined;
 }
 
-type ControllerCommandName = "restart" | "dismiss-external";
+type ControllerCommandName = "walk" | "dismiss-external";
 
 interface QueuedControllerCommand {
 	request: number;
@@ -173,6 +173,12 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	let runtimePort: MessagePort | undefined;
 	let postToRuntime: ((message: Record<string, unknown>) => void) | undefined;
 	let latestGeometry: { revision: number; frames: { name: string; w: number; h: number }[] } | undefined;
+	/**
+	 * Geometry as the canvas authored it. `config.frames` holds the played box
+	 * instead — see `playedBox` below — and a window that changes size re-derives one
+	 * from the other, so the authored numbers have to survive somewhere.
+	 */
+	let authoredGeometry: { name: string; w: number; h: number }[] = retainedGeometry(config.frames);
 	let nextControllerRequest = 1;
 	let activeControllerCommand: ActiveControllerCommand | undefined;
 	const pendingControllerCommands: QueuedControllerCommand[] = [];
@@ -286,6 +292,26 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		drainControllerCommands();
 	};
 
+	/**
+	 * The box the page really gives a frame (#227): the authored width as a cap
+	 * and the real viewport below it, over the whole height of the window. The
+	 * frame is never scaled, so this is both what the iframe is sized to and what
+	 * the runtime inside it will measure — which is why every w/h that crosses
+	 * the port is in this space and not the authored one.
+	 *
+	 * A terminal is a character grid rather than a document, so it keeps the
+	 * height it was authored at instead of growing into the window.
+	 */
+	const playedBox = (name: string, geometry: FrameGeometry): FrameGeometry => ({
+		w: Math.min(window.innerWidth, geometry.w),
+		h: config.terminals.includes(name) ? geometry.h : window.innerHeight,
+	});
+	const playedList = (frames: { name: string; w: number; h: number }[]) =>
+		frames.map((frame) => (isGeometry(frame) ? { name: frame.name, ...playedBox(frame.name, frame) } : frame));
+	const playedRecord = (frames: Record<string, FrameGeometry>): Record<string, FrameGeometry> =>
+		Object.fromEntries(Object.entries(frames).map(([name, geometry]) => [name, playedBox(name, geometry)]));
+	config.frames = playedRecord(config.frames);
+
 	const controller: PlayerController = {
 		subscribe(listener) {
 			listeners.add(listener);
@@ -294,8 +320,11 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		version: () => version,
 		read: () => ({ ...snapshot }),
 		geometry: (frame) => (hasFrame(config.frames, frame) ? config.frames[frame] : undefined) ?? { w: 390, h: 844 },
+		frames: () => Object.keys(config.frames),
 		terminal: (frame) => config.terminals.includes(frame),
-		restart: () => command("restart"),
+		walk: (frame, back = false) => {
+			if (hasFrame(config.frames, frame) && frame !== snapshot.frame) command("walk", { to: frame, back });
+		},
 		dismissExternal: () => command("dismiss-external"),
 		close: () => host.close(),
 	};
@@ -370,15 +399,20 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		notify();
 	};
 
-	const geometryApplied = (revision: number, frames: { name: string; w: number; h: number }[]) => {
+	const geometryApplied = (revision: number, authored: { name: string; w: number; h: number }[]) => {
 		if (
 			!Number.isInteger(revision) ||
 			revision < geometryRevision ||
 			revision <= geometryAppliedRevision ||
-			!Array.isArray(frames)
+			!Array.isArray(authored)
 		) {
 			return;
 		}
+		// The cap is taken once, here at the door: everything downstream — what is
+		// stored, what is compared against a cut, what crosses the port — is in
+		// played space, and only the replay ever looks at the authored numbers.
+		authoredGeometry = authored;
+		const frames = playedList(authored);
 		geometryRevision = revision;
 		geometryAppliedRevision = revision;
 		if (!revealed) geometryReadyRevision = 0;
@@ -398,12 +432,15 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		notify();
 	};
 
-	/** Hand the shell the geometry it already holds, at a revision it has not seen. */
+	/**
+	 * Hand the shell the geometry it already holds, at a revision it has not
+	 * seen. The authored numbers are what is replayed, so a window that has
+	 * changed size since they arrived re-derives the played box from them.
+	 */
 	const geometryReplay = () => {
-		const held = latestGeometry?.frames ?? retainedGeometry(config.frames);
 		const revision = geometryRevision + 1;
 		geometryPending(revision);
-		geometryApplied(revision, held);
+		geometryApplied(revision, authoredGeometry);
 	};
 
 	const onWindowMessage = (event: MessageEvent) => {
@@ -433,7 +470,8 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 			armBootstrapDeadline(BOOTSTRAP_READY_DEADLINE_MS, BOOTSTRAP_UNREVEALED_MESSAGE);
 			clearHandoffReload();
 			postToRuntime = (outbound) => postMessage(outbound);
-			config.frames = frames;
+			authoredGeometry = retainedGeometry(frames);
+			config.frames = playedRecord(frames);
 			if (latestGeometry !== undefined) applyGeometry(latestGeometry.frames);
 			addMessageListener("message", (incoming) => {
 				if (isRecord(incoming.data)) handleRuntimeMessage(incoming.data);
@@ -725,7 +763,18 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 				return;
 			}
 			geometryReadyRevision = geometryRevision;
-			if (message.revision === geometrySettleRevision) geometrySettleRevision = 0;
+			// Any report that reaches here discharges a settle, not only one naming
+			// the revision that armed it: a report is accepted at the newest revision
+			// or not at all, so geometry newer than the settle is geometry the settle
+			// was waiting for. Pinning it to one number wedged the reveal shut the
+			// moment a revision superseded it between `player-transitioned` and the
+			// frame's report — reports for the armed revision are refused as stale,
+			// reports for the new one did not match the number, and nothing rescues a
+			// shell that has already revealed once, since the bootstrap deadline
+			// (#185) only guards the first reveal. One sidecar write now produces two
+			// geometry events, the API's and the watcher's (#113), so that window is
+			// hit by an ordinary drag rather than by anything exotic.
+			geometrySettleRevision = 0;
 			reconcileVisibility();
 			notify();
 			return;
@@ -848,16 +897,17 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 			return;
 		}
 
+		// Where the pointer is inside the frame, or that it has gone. A negative
+		// y is how "gone" crosses a protocol that only carries numbers.
 		if (message.spool === "player-wake" && hasOnly(message, ["spool", "y"]) && typeof message.y === "number") {
-			host.wake(message.y);
+			host.point(message.y < 0 ? null : message.y);
 			return;
 		}
 
-		// The two chords the inner runtime keeps for Spool (#210). Everything
-		// else in there belongs to the prototype and is never forwarded.
-		if (message.spool === "player-key" && hasOnly(message, ["spool", "key"])) {
-			if (message.key === "leave") host.close();
-			else if (message.key === "fullscreen") host.fullscreen();
+		// The one chord the inner runtime keeps for Spool (#227). Everything else
+		// in there belongs to the prototype and is never forwarded.
+		if (message.spool === "player-key" && hasOnly(message, ["spool", "key"]) && message.key === "leave") {
+			host.close();
 		}
 	}
 
@@ -909,9 +959,9 @@ function retainedGeometry(frames: Record<string, FrameGeometry>): { name: string
 }
 
 /**
- * Boot the standalone player page — the door `spool url` prints and a phone
- * opens. Frame code never enters this realm. Geometry arrives through the
- * served document's own bridge, which is why those custom events are wired
+ * Boot the played tab — the door `spool url` prints, the canvas opens, and a
+ * phone visits. Frame code never enters this realm. Geometry arrives through
+ * the served document's own bridge, which is why those custom events are wired
  * here rather than inside the shell.
  */
 export function bootPlayerShell(config: ShellConfig): void {
@@ -926,13 +976,14 @@ export function bootPlayerShell(config: ShellConfig): void {
 			}, 150);
 		},
 		walked: (from, to) => window.dispatchEvent(new CustomEvent("spool-player-walked", { detail: { from, to } })),
-		// The stage owns the conversion out of frame coordinates, because it is
-		// the only thing that knows where it put the frame.
-		wake: (y) => window.dispatchEvent(new CustomEvent("spool-player-wake", { detail: { y } })),
-		fullscreen: () => toggleFullscreen(() => document.documentElement),
+		point: (y) => window.dispatchEvent(new CustomEvent("spool-player-wake", { detail: { y } })),
 		repair: reloadForHandoff,
 		refreshGeometry: () => window.dispatchEvent(new Event("spool-player-geometry-request")),
 	});
+	// The played box is measured against the window, so a window that changes
+	// size is a geometry change: the same replay the bridge asks for, re-derived
+	// from the authored numbers.
+	window.addEventListener("resize", () => shell.geometryReplay());
 	window.addEventListener("spool-player-geometry-pending", ((event: CustomEvent<{ revision: number }>) => {
 		if (Number.isInteger(event.detail?.revision)) shell.geometryPending(event.detail.revision);
 	}) as EventListener);
@@ -979,7 +1030,14 @@ export function bootPlayerShell(config: ShellConfig): void {
 		);
 	}
 	createRoot(root).render(
-		createElement(Player, { frames: {}, controller: shell.controller, host: createElement(Host) }),
+		createElement(Player, {
+			project: config.project,
+			frames: {},
+			controller: shell.controller,
+			host: createElement(Host),
+			// This document is the control origin, so the canvas is one link away.
+			canvasHref: `/p/${encodeURIComponent(config.project)}`,
+		}),
 	);
 }
 

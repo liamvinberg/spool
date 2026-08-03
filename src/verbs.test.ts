@@ -319,7 +319,7 @@ describe("skill", () => {
 		expect(verbs).not.toMatch(/^\s*await page\.locator\(/m);
 		expect(verbs).toContain("a top-level locator never resolves there");
 		expect(verbs).toContain("On a --raw URL the frame is the page");
-		expect(verbs).toContain("viewport at least the frame's w×h");
-		expect(verbs).toContain("min(1, vw/w, vh/h)");
+		expect(verbs).toContain("The played page is never scaled");
+		expect(verbs).toContain("capped at the frame's authored w");
 	});
 });
