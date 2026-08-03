@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.6.0
+
+### Minor Changes
+
+- 0a59a5d: One undo stack for the canvas and the rail. `⌘Z` (`ctrl+Z` elsewhere) now walks back through everything you did, in the order you did it, and `⌘⇧Z` walks forward again.
+
+  It used to be geometry only. Renaming a frame or a page, dragging a row to a new place, dragging a frame onto another page, duplicating, pasting and making a page all take an undo slot now, mixed in with moving and resizing frames on the canvas. Undo a duplicate or a new page and the copy goes to the Trash with the usual toast, because there is nothing else to put it back to.
+
+  Deleting is unchanged. The toast still answers the first `⌘Z` after a delete, and once it drains the OS Trash owns what comes back.
+
+  If something changed on disk while you were away, the entry that talked about it is skipped and the press does the next real thing instead of nothing. The stack lives in the window and starts empty after a reload.
+
+- 5db3394: Pages hold pages now, to any depth. A page is a folder under `design/frames/`, so a page inside a page is a folder inside a folder. `explorations/chat` is a page, `explorations` is the page holding it, and both are ordinary pages with their own canvas.
+
+  In the rail, drag a page onto another to nest it. Drag it back out to return it to the top level. Rows step in one level at a time, and each page opens and shuts on its own. Resting on a shut page opens it. Some gaps are ambiguous: the one under the last frame of a nested page could mean three different places. Move the pointer sideways to pick which. A page can never be dropped inside itself.
+
+  Every explorer verb works at any depth: rename, duplicate, move, new page, and delete to the Trash. Moving or renaming a page takes everything under it. The frames inside it, the pages inside those, their cameras and their arrangement all arrive with the folder.
+
+  A frame's name is still identity across the whole project. A page's name only has to be free among the pages beside it, so `explorations/chat` and `site/chat` are two pages rather than a collision.
+
+  Flat projects are untouched. Nothing migrates, `canvas.json` keeps the shape it had, and a project with no depth in it behaves exactly as it did.
+
+- f7d2fae: The pages rail is a file explorer. A page is a folder and a frame is a folder with one entry file, so the rail can now do what a folder tree does.
+
+  Drag rows to arrange them, and drag a frame onto a page to move it there. Rename in place with Enter, F2, a double-click on a page name, or the menu. Duplicate with `⌘D` (`ctrl+D` elsewhere), copy and paste frames with `⌘C` and `⌘V`, and press `⌫` to move a frame or a whole page to the Trash, with the same undo toast the canvas has. Right-click any row for the verbs it has, and the `+` in the header makes a page that starts out being named. Arrow keys walk the rows and typing a name jumps to it.
+
+  The order you arrange rows in is saved in `design/canvas.json`, so it survives a reload and travels with the repo. It never moves anything on the canvas. Frames an agent writes while you are away land where they belong: a new variant appears under the frame it is a take on, and everything else at its alphabetical spot.
+
+  Renaming and moving are folder operations. Spool still never writes frame source, so a link that names a frame you renamed reads as missing until an agent fixes the name in the code.
+
+- 18a64d0: Play opens a browser tab again, and the played page is a real page.
+
+  `p`, `shift+enter`, the play control on a frame's label and "Play from here" all open the frame in a new tab. The inline flight, the floating pill and the canvas's play state are gone, so zooming on the canvas is navigation again and nothing more.
+
+  A played frame is now a document the browser owns rather than a scaled picture. The page lays out at the real viewport width, capped at the frame's authored width: 1440 means 1440 and never more, and a 390 frame is a phone-width column centred on the page's background. Below the cap the frame's own CSS is in charge. Breakpoints fire, padding compresses, columns stack, and a frame that makes no accommodation overflows sideways exactly as that site would in production. Height is unconstrained: the page is as tall as its content and the browser scrolls it. Nothing is scaled to rescue a layout, because the rescue lies to the CSS.
+
+  Chrome is nothing, by default. The tab title carries the frame and the project, and closing the tab is the exit everyone already knows. Rest the cursor against the top edge of the window for a moment and a bar peels in with back to canvas, a frame switcher and close. A small nub at the edge is its resting trace. Passing through on the way to the browser's own chrome never reveals it, and moving back down into the page hides it at once. On touch there is no chrome at all.
+
+  The URL follows the walk. Every screen you land on names itself in the address bar, browser back and forward walk the session, a refresh reopens where you left off, and any moment is a link you can copy and send.
+
+  Restart and fullscreen lose their buttons. The session is the page, so reloading the tab restarts it and re-reads the scenario, and the browser's own fullscreen fills the screen.
+
+- 511362f: The rail's `root` row is gone. The root page is the `frames/` folder itself rather than a folder inside it, so the list is the root: frames at the top level draw as loose rows beside the page rows, and a flat project's rail is just its frames with no folder wrapped around them.
+
+  Those loose rows are ordinary rows. Reorder them, drag one into a page, and drag a frame out of a page onto the top level to put it back on the root page. Every page draws its frames first and then its pages, so the root page's frames sit above the top-level page rows. Clicking a root frame takes the canvas to the root page, exactly as clicking any frame row takes it to that frame's page.
+
+  Root frames answer every verb the rows beside them answer: rename, duplicate, copy, and Move to Trash. The collapsed strip lists the pages, and no page row lights while the root page is the one on the canvas.
+
+### Patch Changes
+
+- 9b0f5d5: While an agent worked, the mark the canvas drew for a write could run far past the frame it belonged to: rewriting a whole file drew a lane the height of the whole document, and an edit below the fold drew one that started off the bottom edge. A mark is now clipped to the frame it is about, so it never claims more than the frame shows, and a write that landed entirely out of view draws nothing.
+- 18a64d0: Moving frames on the canvas while a play tab is mid-walk no longer leaves that tab stuck on a blank screen. The player holds the screen back until the frame is laid out at its new size, and it was waiting for a report about one particular move. A second move landing a moment later retired that report before it arrived, so nothing ever released the screen and the tab had to be reloaded.
+- e558445: A phone-shaped frame stayed a still picture at the zoom you actually read one at. The canvas decided a frame was drawn big enough to run only from its width, so a 390 by 844 frame needed 103% zoom before it booted, while a wide frame of the same area had been running for a while. It now goes by the frame's longer drawn edge, so portrait frames come alive at sensible zooms. Wide frames are unchanged.
+- b4bf1f8: An agent that places a frame by writing its `frame.json` now moves it on an open canvas. The daemon used to drop sidecar writes entirely, so the frame stayed where it was until you reloaded, and only a drag in the browser ever moved anything. The canvas still never reloads a frame's document for a sidecar write, and your own drag is not echoed back at you mid-gesture.
+
 ## 0.5.2
 
 ### Patch Changes
