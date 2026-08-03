@@ -2238,6 +2238,119 @@ it("settles newer geometry before revealing a transition whose apply is held", {
 	});
 });
 
+/*
+ * The settle above waits on a revision, and a revision can go stale. Geometry
+ * that lands between the transition finishing and the frame reporting itself
+ * laid out leaves the shell holding a report for the revision it armed on and a
+ * frame that will only ever report the newest one. Nothing rescues that: the
+ * bootstrap deadline (#185) only guards a shell that has never revealed.
+ *
+ * A single sidecar write publishes two geometry events, the API's and the
+ * watcher's (#113), so this is what an ordinary drag mid-walk looks like.
+ */
+it("reveals a settling transition on geometry newer than the one it armed on", { timeout: 60_000 }, async () => {
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const project = await serveProject();
+	writeFrame(
+		project.root,
+		"start",
+		'export default function Start() { return <button id="to-target" data-go="target">target</button>; }\n',
+	);
+	writeFrame(
+		project.root,
+		"target",
+		`export default function Target() {
+	return <main id="target"><output id="viewport">{innerWidth + "×" + innerHeight}</output></main>;
+}
+`,
+	);
+	writeDesignFile(project.root, "frames/start/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+	writeDesignFile(project.root, "frames/target/frame.json", '{ "x": 400, "y": 0, "w": 390, "h": 844 }\n');
+
+	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+	onTestFinished(() => page.close());
+	await installPlayerTransitionApplyGate(page);
+	await installPlayerRuntimeMessageGate(page, "player-geometry-ready");
+	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
+	const inner = page.frameLocator("#spool-player");
+	await inner.locator("#to-target").waitFor();
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1");
+
+	const placeFrames = async (w: number, h: number) => {
+		const response = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/geometry`, {
+			method: "PUT",
+			headers: { "content-type": "application/json", "X-Spool-Control": project.controlToken },
+			body: JSON.stringify({ frames: { start: { x: 0, y: 0, w, h }, target: { x: 800, y: 0, w, h } } }),
+		});
+		expect(response.status).toBe(204);
+	};
+	const geometryReportsHeld = () =>
+		inner
+			.locator("body")
+			.evaluate(() =>
+				(window as unknown as { __spoolRuntimeMessageGate: { held(): number } }).__spoolRuntimeMessageGate.held(),
+			);
+
+	await page.evaluate(() => {
+		(
+			window as unknown as {
+				__spoolTransitionApplyGate: { hold(): void };
+			}
+		).__spoolTransitionApplyGate.hold();
+	});
+	await inner.locator("#to-target").click();
+	await page.waitForFunction(
+		() =>
+			(
+				window as unknown as {
+					__spoolTransitionApplyGate: { held(): number };
+				}
+			).__spoolTransitionApplyGate.held() === 1,
+	);
+
+	await placeFrames(720, 480);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "0");
+
+	// From here the frame says nothing about its own layout, so the shell cannot
+	// leave the settle until the reports are let through in one go at the end.
+	await inner.locator("body").evaluate(() => {
+		(
+			window as unknown as {
+				__spoolRuntimeMessageGate: { hold(): void };
+			}
+		).__spoolRuntimeMessageGate.hold();
+	});
+	await page.evaluate(() => {
+		(
+			window as unknown as {
+				__spoolTransitionApplyGate: { release(): void };
+			}
+		).__spoolTransitionApplyGate.release();
+	});
+	await inner.locator("#target").waitFor({ timeout: 5_000 });
+	await expect.poll(geometryReportsHeld).toBeGreaterThanOrEqual(1);
+
+	// The frames move again while the shell is still settling, which retires the
+	// revision it armed on.
+	await placeFrames(640, 420);
+	await expect.poll(geometryReportsHeld).toBeGreaterThanOrEqual(2);
+
+	await inner.locator("body").evaluate(() => {
+		(
+			window as unknown as {
+				__spoolRuntimeMessageGate: { release(): void };
+			}
+		).__spoolRuntimeMessageGate.release();
+	});
+	await page.waitForFunction(
+		() =>
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
+			document.querySelector(".spool-bar-name")?.textContent === "target",
+	);
+	expect(await inner.locator("#viewport").innerText()).toBe("640×900");
+});
+
 it("runs a queued walk after a pending transition settles", { timeout: 60_000 }, async () => {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());

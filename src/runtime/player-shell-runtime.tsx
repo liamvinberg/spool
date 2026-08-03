@@ -763,7 +763,18 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 				return;
 			}
 			geometryReadyRevision = geometryRevision;
-			if (message.revision === geometrySettleRevision) geometrySettleRevision = 0;
+			// Any report that reaches here discharges a settle, not only one naming
+			// the revision that armed it: a report is accepted at the newest revision
+			// or not at all, so geometry newer than the settle is geometry the settle
+			// was waiting for. Pinning it to one number wedged the reveal shut the
+			// moment a revision superseded it between `player-transitioned` and the
+			// frame's report — reports for the armed revision are refused as stale,
+			// reports for the new one did not match the number, and nothing rescues a
+			// shell that has already revealed once, since the bootstrap deadline
+			// (#185) only guards the first reveal. One sidecar write now produces two
+			// geometry events, the API's and the watcher's (#113), so that window is
+			// hit by an ordinary drag rather than by anything exotic.
+			geometrySettleRevision = 0;
 			reconcileVisibility();
 			notify();
 			return;
