@@ -16,34 +16,48 @@ interface Probe {
 }
 
 /**
- * Bring the pill back. It sleeps while a prototype is being used and returns
- * only when the pointer comes down to the strip it lives in (#210), so every
- * press on one of its controls has to reach for it first, exactly as a hand
+ * Summon the edge bar. It is away while a prototype is being used and comes
+ * back only when the cursor rests against the top edge of the window (#227), so
+ * every press on one of its controls has to ask for it first, exactly as a hand
  * would.
  */
-async function reachForPill(page: Page): Promise<void> {
+async function summonEdgeBar(page: Page): Promise<void> {
 	const size = page.viewportSize();
 	if (size === null) return;
 	/*
-	 * The strip the pill lives in is over the frame, and mouse events inside an iframe
-	 * never reach the document around it — so this reach only counts once the frame's
-	 * own runtime is listening and forwarding it as `player-wake` (#210). A reach that
-	 * lands while the frame is still booting, which is every reach just after a Restart,
-	 * is dropped, and one move followed by a wait then sat out its whole timeout waiting
-	 * for a wake nobody was going to send.
+	 * The strip the bar answers is over the frame, and mouse events inside an iframe
+	 * never reach the document around it — so this ask only counts once the frame's
+	 * own runtime is listening and forwarding it as `player-wake` (#227). An ask that
+	 * lands while the frame is still booting is dropped, and one move followed by a
+	 * wait then sat out its whole timeout waiting for a report nobody was going to send.
 	 *
-	 * So it keeps reaching until the chrome answers, rather than trusting one to land.
+	 * So it keeps asking until the chrome answers, rather than trusting one to land.
 	 */
-	const stage = page.locator(".spool-stage");
+	const edge = page.locator(".spool-edge");
 	await expect
 		.poll(
 			async () => {
-				await page.mouse.move(size.width / 2, size.height - 6);
-				return (await stage.getAttribute("class")) ?? "";
+				// Away and back, because a move to where the pointer already is is
+				// not a move — and because the reveal is a dwell, which every fresh
+				// report starts over.
+				await page.mouse.move(size.width / 2, size.height / 2);
+				await page.mouse.move(size.width / 2, 2);
+				await page.waitForTimeout(400);
+				return (await edge.getAttribute("class")) ?? "";
 			},
 			{ timeout: 30_000 },
 		)
-		.not.toContain("is-asleep");
+		.toContain("is-open");
+}
+
+/** Ask for the bar, open the switcher, and walk to a screen — a controller command a hand can send. */
+async function walkFromSwitcher(page: Page, name: string): Promise<void> {
+	await summonEdgeBar(page);
+	await page.locator("#spool-switcher").click();
+	await page
+		.locator(".spool-picker-row")
+		.filter({ hasText: new RegExp(`^${name}$`) })
+		.click();
 }
 
 async function installPlayerMountGate(page: Page): Promise<void> {
@@ -494,7 +508,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 			const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 			const screen = document.querySelector<HTMLElement>(".spool-screen");
 			if (host === null || screen === null) return;
-			const record = () => trace.push(`${host.style.opacity}:${screen.style.width}×${screen.style.height}`);
+			const record = () => trace.push(`${host.style.opacity}:${screen.style.width}`);
 			if (!seen.has(host)) {
 				seen.add(host);
 				record();
@@ -510,15 +524,22 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 		() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1",
 	);
 	const live = player.frames().find((frame) => frame !== player.mainFrame()) as Frame;
+	// The played page is the authored width capped against the window and the
+	// window's own height (#227), so the bare document it is measured against
+	// has to be that box — the law is that one viewport renders one way, not
+	// that every surface hands a frame the same viewport.
+	await bare.setViewportSize({ width: 390, height: 900 });
+	await bareFrame.locator("#probe").waitFor();
+	const barePlayedProbe = await read(bareFrame);
 	const playerProbe = await read(live);
-	expect(playerProbe.viewport).toEqual({ width: 390, height: 844 });
-	expect(playerProbe).toEqual(bareProbe);
+	expect(playerProbe.viewport).toEqual({ width: 390, height: 900 });
+	expect(playerProbe).toEqual(barePlayedProbe);
 	expect(canvasProbe).toEqual(bareProbe);
 	const initialTrace = await player.evaluate(
 		() => (window as unknown as { __spoolInitialTrace: string[] }).__spoolInitialTrace,
 	);
-	expect(initialTrace[0]).toBe("0:390px×844px");
-	expect(initialTrace.at(-1)).toBe("1:390px×844px");
+	expect(initialTrace[0]).toBe("0:390px");
+	expect(initialTrace.at(-1)).toBe("1:390px");
 
 	await live.evaluate(() => {
 		const original = document.startViewTransition?.bind(document);
@@ -552,7 +573,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 		const screen = document.querySelector<HTMLElement>(".spool-screen");
 		if (host === null || screen === null) throw new Error("player shell did not mount its host");
 		const trace: string[] = [];
-		const record = () => trace.push(`${host.style.opacity}:${screen.style.width}×${screen.style.height}`);
+		const record = () => trace.push(`${host.style.opacity}:${screen.style.width}`);
 		record();
 		new MutationObserver(record).observe(host, { attributes: true, attributeFilter: ["style"] });
 		new MutationObserver(record).observe(screen, { attributes: true, attributeFilter: ["style"] });
@@ -563,20 +584,20 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 	await player.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "cross",
+			document.querySelector(".spool-bar-name")?.textContent === "cross",
 		undefined,
 		{ timeout: 5_000 },
 	);
 	const crossProbe = await read(live);
-	expect(crossProbe.viewport).toEqual({ width: 720, height: 480 });
-	expect(await playerFrame.locator("#first-viewport").innerText()).toBe("720×480");
+	expect(crossProbe.viewport).toEqual({ width: 720, height: 900 });
+	expect(await playerFrame.locator("#first-viewport").innerText()).toBe("720×900");
 	expect(crossProbe.rect).toEqual({ width: 200, height: 100, x: bareProbe.rect.x, y: bareProbe.rect.y });
 	expect(
 		await live.evaluate(() => (window as unknown as { __spoolTransitions: () => number }).__spoolTransitions()),
 	).toBe(1);
 	const cutTrace = await player.evaluate(() => (window as unknown as { __spoolCutTrace: string[] }).__spoolCutTrace);
 	const hidden = cutTrace.findIndex((entry) => entry.startsWith("0:"));
-	const resized = cutTrace.findIndex((entry) => entry.includes("720px×480px"));
+	const resized = cutTrace.findIndex((entry) => entry.includes("720px"));
 	const revealed = cutTrace.findIndex((entry, index) => index > resized && entry.startsWith("1:"));
 	expect(hidden).toBeGreaterThanOrEqual(0);
 	expect(resized).toBeGreaterThan(hidden);
@@ -593,8 +614,8 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 	});
 	expect(liveGeometry.status).toBe(204);
 	await geometryRefresh;
-	await live.waitForFunction(() => innerWidth === 600 && innerHeight === 600, undefined, { timeout: 5_000 });
-	expect((await read(live)).viewport).toEqual({ width: 600, height: 600 });
+	await live.waitForFunction(() => innerWidth === 600 && innerHeight === 900, undefined, { timeout: 5_000 });
+	expect((await read(live)).viewport).toEqual({ width: 600, height: 900 });
 
 	// Stale generation, stale frame, wrong dimensions, malformed nested state,
 	// and a forged WindowProxy are all inert.
@@ -670,8 +691,8 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 				requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
 			}),
 	);
-	expect((await read(live)).viewport).toEqual({ width: 600, height: 600 });
-	expect(await player.locator(".spool-pill-name").innerText()).toBe("cross");
+	expect((await read(live)).viewport).toEqual({ width: 600, height: 900 });
+	expect(await player.locator(".spool-bar-name").textContent()).toBe("cross");
 	expect(await player.locator('[role="dialog"]').count()).toBe(0);
 });
 
@@ -695,7 +716,7 @@ it("plays a frame whose name is inherited by ordinary objects", { timeout: 60_00
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "constructor",
+			document.querySelector(".spool-bar-name")?.textContent === "constructor",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -703,7 +724,7 @@ it("plays a frame whose name is inherited by ordinary objects", { timeout: 60_00
 		await inner.locator("#constructor-frame").evaluate(() => ({ width: innerWidth, height: innerHeight })),
 	).toEqual({
 		width: 390,
-		height: 844,
+		height: 900,
 	});
 });
 
@@ -727,7 +748,7 @@ it("plays a frame named __proto__", { timeout: 60_000 }, async () => {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "__proto__",
+			document.querySelector(".spool-bar-name")?.textContent === "__proto__",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1061,7 +1082,7 @@ export default function Start() {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "start",
+			document.querySelector(".spool-bar-name")?.textContent === "start",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1082,14 +1103,14 @@ export default function Start() {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "target",
+			document.querySelector(".spool-bar-name")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
 	);
 	await inner.locator("#target").waitFor();
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 480,
+		height: 900,
 	});
 	await expect.poll(targetVerified).toBe(true);
 });
@@ -1138,7 +1159,7 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 			const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 			const screen = document.querySelector<HTMLElement>(".spool-screen");
 			if (host?.style.opacity === "1" && screen !== null) {
-				visibleSizes.push(`${screen.style.width}×${screen.style.height}`);
+				visibleSizes.push(screen.style.width);
 			}
 		};
 		new MutationObserver(record).observe(document, {
@@ -1230,7 +1251,7 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 	await page.waitForFunction(() => {
 		const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 		const screen = document.querySelector<HTMLElement>(".spool-screen");
-		return host?.style.opacity === "0" && screen?.style.width === "500px" && screen.style.height === "500px";
+		return host?.style.opacity === "0" && screen?.style.width === "500px";
 	});
 
 	const update = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/geometry`, {
@@ -1256,36 +1277,34 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 			}),
 	);
 	expect(await page.locator("#spool-player").evaluate((host) => host.style.opacity)).toBe("0");
-	expect(
-		await page.locator(".spool-screen").evaluate((screen) => `${screen.style.width}×${screen.style.height}`),
-	).toBe("500px×500px");
+	expect(await page.locator(".spool-screen").evaluate((screen) => screen.style.width)).toBe("500px");
 
 	releaseNextGeometryResolve();
 	await page.waitForFunction(
 		() => {
 			const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 			const screen = document.querySelector<HTMLElement>(".spool-screen");
-			return host?.style.opacity === "1" && screen?.style.width === "600px" && screen.style.height === "600px";
+			return host?.style.opacity === "1" && screen?.style.width === "600px";
 		},
 		undefined,
 		{ timeout: 5_000 },
 	);
 	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 600,
-		height: 600,
+		height: 900,
 	});
 	const visibleSizes = await page.evaluate(
 		() => (window as unknown as { __spoolVisibleSizes: string[] }).__spoolVisibleSizes,
 	);
-	expect(visibleSizes).not.toContain("500px×500px");
-	expect(visibleSizes.at(-1)).toBe("600px×600px");
+	expect(visibleSizes).not.toContain("500px");
+	expect(visibleSizes.at(-1)).toBe("600px");
 
 	await inner.locator("#to-target").click();
-	await page.waitForFunction(() => document.querySelector(".spool-pill-name")?.textContent === "target");
+	await page.waitForFunction(() => document.querySelector(".spool-bar-name")?.textContent === "target");
 	await inner.locator("#target").waitFor();
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 600,
-		height: 600,
+		height: 900,
 	});
 });
 
@@ -1319,7 +1338,7 @@ it("reveals the last valid geometry while live geometry transport retries", { ti
 	);
 	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 390,
-		height: 844,
+		height: 900,
 	});
 	await expect.poll(() => geometryRequests, { timeout: 5_000 }).toBeGreaterThanOrEqual(2);
 });
@@ -1348,7 +1367,7 @@ it("reveals the preflight geometry while the first live geometry request hangs",
 	);
 	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 390,
-		height: 844,
+		height: 900,
 	});
 });
 
@@ -1443,7 +1462,7 @@ export default function Start() {
 	);
 	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 640,
-		height: 640,
+		height: 900,
 	});
 });
 
@@ -1482,7 +1501,7 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "from",
+			document.querySelector(".spool-bar-name")?.textContent === "from",
 	);
 	await page.evaluate(() => {
 		(
@@ -1509,7 +1528,7 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 		() => {
 			const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 			const screen = document.querySelector<HTMLElement>(".spool-screen");
-			return host?.style.opacity === "0" && screen?.style.width === "600px" && screen.style.height === "600px";
+			return host?.style.opacity === "0" && screen?.style.width === "600px";
 		},
 		undefined,
 		{ timeout: 5_000 },
@@ -1525,21 +1544,21 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "target",
+			document.querySelector(".spool-bar-name")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
 	);
-	expect(await inner.locator("#target-viewport").innerText()).toBe("600×600");
+	expect(await inner.locator("#target-viewport").innerText()).toBe("600×900");
 	expect(await inner.locator("#target-viewport").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual(
 		{
 			width: 600,
-			height: 600,
+			height: 900,
 		},
 	);
 
 	await inner.locator("#to-after").click();
 	await inner.locator("#after").waitFor();
-	expect(await page.locator(".spool-pill-name").innerText()).toBe("after");
+	expect(await page.locator(".spool-bar-name").innerText()).toBe("after");
 });
 
 it("replays a destination mount auto-walk after a cross-size cut settles", { timeout: 60_000 }, async () => {
@@ -1588,7 +1607,7 @@ export default function Target() {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "after",
+			document.querySelector(".spool-bar-name")?.textContent === "after",
 		undefined,
 		{ timeout: 5_000 },
 	);
@@ -1596,7 +1615,7 @@ export default function Target() {
 	expect(await inner.locator("#attempts").innerText()).toBe("1");
 	expect(await inner.locator("#after").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 480,
+		height: 900,
 	});
 });
 
@@ -1631,7 +1650,7 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "start",
+			document.querySelector(".spool-bar-name")?.textContent === "start",
 	);
 	const framesPath = `/api/p/${project.name}/frames`;
 	let requestNumber = 0;
@@ -1683,7 +1702,7 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 	await page.waitForFunction(
 		() => {
 			const screen = document.querySelector<HTMLElement>(".spool-screen");
-			return screen?.style.width === "600px" && screen.style.height === "600px";
+			return screen?.style.width === "600px";
 		},
 		undefined,
 		{ timeout: 5_000 },
@@ -1702,12 +1721,8 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 				requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
 			}),
 	);
-	expect(
-		await page.locator(".spool-screen").evaluate((screen) => ({
-			width: (screen as HTMLElement).style.width,
-			height: (screen as HTMLElement).style.height,
-		})),
-	).toEqual({ width: "600px", height: "600px" });
+	// width is the only number spool imposes: the page's height is its content's
+	expect(await page.locator(".spool-screen").evaluate((screen) => (screen as HTMLElement).style.width)).toBe("600px");
 
 	await page.evaluate(() => {
 		(
@@ -1719,14 +1734,14 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "target",
+			document.querySelector(".spool-bar-name")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
 	);
-	expect(await inner.locator("#target-viewport").innerText()).toBe("600×600");
+	expect(await inner.locator("#target-viewport").innerText()).toBe("600×900");
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 600,
-		height: 600,
+		height: 900,
 	});
 });
 
@@ -1788,13 +1803,13 @@ it("classifies old-same new-cross walks from the shell's latest geometry", { tim
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "target",
+			document.querySelector(".spool-bar-name")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
 	);
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 480,
+		height: 900,
 	});
 
 	await page.evaluate(() => {
@@ -1806,7 +1821,7 @@ it("classifies old-same new-cross walks from the shell's latest geometry", { tim
 	});
 	await inner.locator("#to-after").click();
 	await inner.locator("#after").waitFor();
-	expect(await page.locator(".spool-pill-name").innerText()).toBe("after");
+	expect(await page.locator(".spool-bar-name").innerText()).toBe("after");
 });
 
 it("classifies old-cross new-same walks from the shell's latest geometry", { timeout: 60_000 }, async () => {
@@ -1867,13 +1882,13 @@ it("classifies old-cross new-same walks from the shell's latest geometry", { tim
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "target",
+			document.querySelector(".spool-bar-name")?.textContent === "target",
 		undefined,
 		{ timeout: 5_000 },
 	);
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 390,
-		height: 844,
+		height: 900,
 	});
 
 	await page.evaluate(() => {
@@ -1885,7 +1900,7 @@ it("classifies old-cross new-same walks from the shell's latest geometry", { tim
 	});
 	await inner.locator("#to-after").click();
 	await inner.locator("#after").waitFor();
-	expect(await page.locator(".spool-pill-name").innerText()).toBe("after");
+	expect(await page.locator(".spool-bar-name").innerText()).toBe("after");
 });
 
 it("does not publish same-size destination state before the transition commits", { timeout: 60_000 }, async () => {
@@ -1925,7 +1940,7 @@ export default function Start() {
 
 	await inner.locator("#to-target").click();
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-	expect(await page.locator(".spool-pill-name").innerText()).toBe("start");
+	expect(await page.locator(".spool-bar-name").innerText()).toBe("start");
 	expect(await inner.locator("#start").count()).toBe(1);
 	expect(await inner.locator("#target").count()).toBe(0);
 
@@ -1937,7 +1952,7 @@ export default function Start() {
 		).__spoolTransitionGate.release();
 	});
 	await inner.locator("#target").waitFor();
-	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("target");
+	await expect.poll(() => page.locator(".spool-bar-name").innerText()).toBe("target");
 });
 
 it("reclassifies a queued transition when newer geometry arrives before runtime delivery", {
@@ -1987,12 +2002,12 @@ it("reclassifies a queued transition when newer geometry arrives before runtime 
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "target",
+			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×900");
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 480,
+		height: 900,
 	});
 });
 
@@ -2047,9 +2062,9 @@ it("mounts a target at newer geometry while its stale transition is held", { tim
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "target",
+			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×900");
 
 	await page.evaluate(() => {
 		(
@@ -2059,7 +2074,7 @@ it("mounts a target at newer geometry while its stale transition is held", { tim
 		).__spoolTransitionGate.release();
 	});
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×900");
 });
 
 it("reclassifies newer geometry while a transition commit is held", { timeout: 60_000 }, async () => {
@@ -2126,9 +2141,9 @@ it("reclassifies newer geometry while a transition commit is held", { timeout: 6
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "target",
+			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×900");
 
 	await page.evaluate(() => {
 		(
@@ -2138,8 +2153,8 @@ it("reclassifies newer geometry while a transition commit is held", { timeout: 6
 		).__spoolTransitionCommitGate.release();
 	});
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-	expect(await page.locator(".spool-pill-name").innerText()).toBe("target");
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×480");
+	expect(await page.locator(".spool-bar-name").innerText()).toBe("target");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×900");
 });
 
 it("settles newer geometry before revealing a transition whose apply is held", { timeout: 60_000 }, async () => {
@@ -2214,16 +2229,129 @@ it("settles newer geometry before revealing a transition whose apply is held", {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "target",
+			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#viewport").innerText()).toBe("720×480");
+	expect(await inner.locator("#viewport").innerText()).toBe("720×900");
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 480,
+		height: 900,
 	});
 });
 
-it("runs Restart after a pending transition settles", { timeout: 60_000 }, async () => {
+/*
+ * The settle above waits on a revision, and a revision can go stale. Geometry
+ * that lands between the transition finishing and the frame reporting itself
+ * laid out leaves the shell holding a report for the revision it armed on and a
+ * frame that will only ever report the newest one. Nothing rescues that: the
+ * bootstrap deadline (#185) only guards a shell that has never revealed.
+ *
+ * A single sidecar write publishes two geometry events, the API's and the
+ * watcher's (#113), so this is what an ordinary drag mid-walk looks like.
+ */
+it("reveals a settling transition on geometry newer than the one it armed on", { timeout: 60_000 }, async () => {
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const project = await serveProject();
+	writeFrame(
+		project.root,
+		"start",
+		'export default function Start() { return <button id="to-target" data-go="target">target</button>; }\n',
+	);
+	writeFrame(
+		project.root,
+		"target",
+		`export default function Target() {
+	return <main id="target"><output id="viewport">{innerWidth + "×" + innerHeight}</output></main>;
+}
+`,
+	);
+	writeDesignFile(project.root, "frames/start/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+	writeDesignFile(project.root, "frames/target/frame.json", '{ "x": 400, "y": 0, "w": 390, "h": 844 }\n');
+
+	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+	onTestFinished(() => page.close());
+	await installPlayerTransitionApplyGate(page);
+	await installPlayerRuntimeMessageGate(page, "player-geometry-ready");
+	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
+	const inner = page.frameLocator("#spool-player");
+	await inner.locator("#to-target").waitFor();
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1");
+
+	const placeFrames = async (w: number, h: number) => {
+		const response = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/geometry`, {
+			method: "PUT",
+			headers: { "content-type": "application/json", "X-Spool-Control": project.controlToken },
+			body: JSON.stringify({ frames: { start: { x: 0, y: 0, w, h }, target: { x: 800, y: 0, w, h } } }),
+		});
+		expect(response.status).toBe(204);
+	};
+	const geometryReportsHeld = () =>
+		inner
+			.locator("body")
+			.evaluate(() =>
+				(window as unknown as { __spoolRuntimeMessageGate: { held(): number } }).__spoolRuntimeMessageGate.held(),
+			);
+
+	await page.evaluate(() => {
+		(
+			window as unknown as {
+				__spoolTransitionApplyGate: { hold(): void };
+			}
+		).__spoolTransitionApplyGate.hold();
+	});
+	await inner.locator("#to-target").click();
+	await page.waitForFunction(
+		() =>
+			(
+				window as unknown as {
+					__spoolTransitionApplyGate: { held(): number };
+				}
+			).__spoolTransitionApplyGate.held() === 1,
+	);
+
+	await placeFrames(720, 480);
+	await page.waitForFunction(() => document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "0");
+
+	// From here the frame says nothing about its own layout, so the shell cannot
+	// leave the settle until the reports are let through in one go at the end.
+	await inner.locator("body").evaluate(() => {
+		(
+			window as unknown as {
+				__spoolRuntimeMessageGate: { hold(): void };
+			}
+		).__spoolRuntimeMessageGate.hold();
+	});
+	await page.evaluate(() => {
+		(
+			window as unknown as {
+				__spoolTransitionApplyGate: { release(): void };
+			}
+		).__spoolTransitionApplyGate.release();
+	});
+	await inner.locator("#target").waitFor({ timeout: 5_000 });
+	await expect.poll(geometryReportsHeld).toBeGreaterThanOrEqual(1);
+
+	// The frames move again while the shell is still settling, which retires the
+	// revision it armed on.
+	await placeFrames(640, 420);
+	await expect.poll(geometryReportsHeld).toBeGreaterThanOrEqual(2);
+
+	await inner.locator("body").evaluate(() => {
+		(
+			window as unknown as {
+				__spoolRuntimeMessageGate: { release(): void };
+			}
+		).__spoolRuntimeMessageGate.release();
+	});
+	await page.waitForFunction(
+		() =>
+			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
+			document.querySelector(".spool-bar-name")?.textContent === "target",
+	);
+	expect(await inner.locator("#viewport").innerText()).toBe("640×900");
+});
+
+it("runs a queued walk after a pending transition settles", { timeout: 60_000 }, async () => {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());
 	const project = await serveProject();
@@ -2261,10 +2389,12 @@ it("runs Restart after a pending transition settles", { timeout: 60_000 }, async
 	);
 	// far past MAX_PENDING_CONTROLLER_COMMANDS: the oldest are dropped, and
 	// whatever survives still drains once the transition settles
+	await summonEdgeBar(page);
+	await page.locator("#spool-switcher").click();
 	await page.evaluate(() => {
-		const restart = document.querySelector<HTMLButtonElement>("#spool-restart");
-		if (restart === null) throw new Error("missing restart control");
-		for (let index = 0; index < 40; index++) restart.click();
+		const row = document.querySelector<HTMLButtonElement>(".spool-picker-row");
+		if (row === null) throw new Error("missing switcher row");
+		for (let index = 0; index < 40; index++) row.click();
 	});
 	await page.evaluate(() => {
 		(
@@ -2275,170 +2405,7 @@ it("runs Restart after a pending transition settles", { timeout: 60_000 }, async
 	});
 
 	await inner.locator("#start").waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("start");
-});
-
-it("waits for queued Restart to finish before running the next control", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const project = await serveProject();
-	writeFrame(
-		project.root,
-		"start",
-		'export default function Start() { return <button id="to-middle" data-go="middle">middle</button>; }\n',
-	);
-	writeFrame(project.root, "middle", 'export default function Middle() { return <main id="middle">middle</main>; }\n');
-	for (const [index, frame] of ["start", "middle"].entries()) {
-		writeDesignFile(
-			project.root,
-			`frames/${frame}/frame.json`,
-			`{ "x": ${index * 400}, "y": 0, "w": 390, "h": 844 }\n`,
-		);
-	}
-
-	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-	onTestFinished(() => page.close());
-	await installPlayerTransitionGate(page);
-	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
-	const inner = page.frameLocator("#spool-player");
-	await inner.locator("#to-middle").waitFor();
-
-	let releaseScenario: (() => void) | undefined;
-	const scenarioRelease = new Promise<void>((resolve) => {
-		releaseScenario = resolve;
-	});
-	let markScenarioRequested: (() => void) | undefined;
-	const scenarioRequested = new Promise<void>((resolve) => {
-		markScenarioRequested = resolve;
-	});
-	let scenarioRequests = 0;
-	await page.route(`**/api/p/${project.name}/scenarios/default`, async (route) => {
-		scenarioRequests++;
-		markScenarioRequested?.();
-		await scenarioRelease;
-		await route.continue();
-	});
-	await page.evaluate(() => {
-		(
-			window as unknown as {
-				__spoolTransitionGate: { hold(): void };
-			}
-		).__spoolTransitionGate.hold();
-	});
-
-	await inner.locator("#to-middle").click();
-	await page.waitForFunction(
-		() =>
-			(
-				window as unknown as {
-					__spoolTransitionGate: { held(): number };
-				}
-			).__spoolTransitionGate.held() === 1,
-	);
-	await reachForPill(page);
-
-	await page.locator("#spool-restart").click();
-	await page.evaluate(() => {
-		const restart = document.querySelector<HTMLButtonElement>("#spool-restart");
-		if (restart === null) throw new Error("missing restart control");
-		restart.click();
-		(
-			window as unknown as {
-				__spoolTransitionGate: { release(): void };
-			}
-		).__spoolTransitionGate.release();
-	});
-
-	await scenarioRequested;
-	// the second Restart has not started: a restart reads its scenario fresh,
-	// so a second read is what running it would look like
-	expect(scenarioRequests).toBe(1);
-	releaseScenario?.();
-	await inner.locator("#to-middle").waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("start");
-	await expect.poll(() => scenarioRequests).toBe(2);
-});
-
-it("reports a Restart that fails instead of losing it", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const project = await serveProject();
-	writeFrame(
-		project.root,
-		"start",
-		'export default function Start() { return <button id="to-middle" data-go="middle">middle</button>; }\n',
-	);
-	writeFrame(
-		project.root,
-		"middle",
-		`const nativeStructuredClone = globalThis.structuredClone;
-Object.defineProperty(globalThis, "structuredClone", {
-	configurable: true,
-	value() {
-		Object.defineProperty(globalThis, "structuredClone", { configurable: true, value: nativeStructuredClone });
-		throw new Error("clone failed");
-	},
-});
-export default function Middle() { return <main id="middle">middle</main>; }
-`,
-	);
-	writeDesignFile(project.root, "shared/scenarios/default.json", '{ "state": { "count": 2 }, "mock": {} }\n');
-	for (const [index, frame] of ["start", "middle"].entries()) {
-		writeDesignFile(
-			project.root,
-			`frames/${frame}/frame.json`,
-			`{ "x": ${index * 400}, "y": 0, "w": 390, "h": 844 }\n`,
-		);
-	}
-
-	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-	onTestFinished(() => page.close());
-	await installPlayerRuntimeMessageGate(page, "player-command-complete");
-	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
-	const inner = page.frameLocator("#spool-player");
-	await inner.locator("#to-middle").waitFor();
-	await inner.locator("#to-middle").click();
-	await inner.locator("#middle").waitFor();
-	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("middle");
-	await inner.locator("body").evaluate(() => {
-		(
-			window as unknown as {
-				__spoolRuntimeMessageGate: { hold(): void };
-			}
-		).__spoolRuntimeMessageGate.hold();
-	});
-
-	// This Restart throws inside the seed clone. What must not happen is the
-	// command going quiet: an outcome comes back either way, or the shell waits
-	// on a completion that will never arrive and every later control is stuck
-	// behind it.
-	await reachForPill(page);
-
-	await page.locator("#spool-restart").click();
-	await expect
-		.poll(
-			() =>
-				inner.locator("body").evaluate(
-					() =>
-						(
-							window as unknown as {
-								__spoolRuntimeMessageGate: { messages(): Record<string, unknown>[] };
-							}
-						).__spoolRuntimeMessageGate.messages().length,
-				),
-			{ timeout: 5_000 },
-		)
-		.toBe(1);
-	const completion = await inner.locator("body").evaluate(
-		() =>
-			(
-				window as unknown as {
-					__spoolRuntimeMessageGate: { messages(): Record<string, unknown>[] };
-				}
-			).__spoolRuntimeMessageGate.messages()[0],
-	);
-	expect(completion?.command).toBe("restart");
-	expect(completion?.outcome).toBe("failed");
+	await expect.poll(() => page.locator(".spool-bar-name").textContent()).toBe("start");
 });
 
 it("waits for both navigation and its matching completion before draining controls", {
@@ -2453,7 +2420,8 @@ it("waits for both navigation and its matching completion before draining contro
 		'export default function Start() { return <button id="to-middle" data-go="middle">middle</button>; }\n',
 	);
 	writeFrame(project.root, "middle", 'export default function Middle() { return <main id="middle">middle</main>; }\n');
-	for (const [index, frame] of ["start", "middle"].entries()) {
+	writeFrame(project.root, "end", 'export default function End() { return <main id="end">end</main>; }\n');
+	for (const [index, frame] of ["start", "middle", "end"].entries()) {
 		writeDesignFile(
 			project.root,
 			`frames/${frame}/frame.json`,
@@ -2463,17 +2431,12 @@ it("waits for both navigation and its matching completion before draining contro
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	onTestFinished(() => page.close());
-	let scenarioRequests = 0;
-	await page.route(`**/api/p/${project.name}/scenarios/default`, async (route) => {
-		scenarioRequests++;
-		await route.continue();
-	});
 	await installPlayerRuntimeMessageGate(page, "player-command-complete");
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#to-middle").click();
 	await inner.locator("#middle").waitFor();
-	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("middle");
+	await expect.poll(() => page.locator(".spool-bar-name").textContent()).toBe("middle");
 	await inner.locator("body").evaluate(() => {
 		(
 			window as unknown as {
@@ -2482,18 +2445,22 @@ it("waits for both navigation and its matching completion before draining contro
 		).__spoolRuntimeMessageGate.hold();
 	});
 
-	const before = scenarioRequests;
-	await reachForPill(page);
+	// Two walks, back to back, with the first one's completion held.
+	await summonEdgeBar(page);
+	await page.evaluate(() => {
+		const rows = [...document.querySelectorAll<HTMLButtonElement>(".spool-picker-row")];
+		const find = (name: string) => rows.find((row) => row.textContent === name);
+		const first = find("end");
+		const second = find("start");
+		if (first === undefined || second === undefined) throw new Error("missing switcher rows");
+		first.click();
+		second.click();
+	});
 
-	await page.locator("#spool-restart").click();
-	await reachForPill(page);
-
-	await page.locator("#spool-restart").click();
-	await inner.locator("#to-middle").waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("start");
+	await inner.locator("#end").waitFor({ timeout: 5_000 });
+	await expect.poll(() => page.locator(".spool-bar-name").textContent()).toBe("end");
 	// the navigation landed, but its completion is still held: nothing behind it
-	// has run, so the second Restart has not read the scenario again
-	expect(scenarioRequests).toBe(before + 1);
+	// has run, so the second walk has not left "end"
 	const order = await inner.locator("body").evaluate(() =>
 		(
 			window as unknown as {
@@ -2519,7 +2486,8 @@ it("waits for both navigation and its matching completion before draining contro
 			}
 		).__spoolRuntimeMessageGate.releaseNext();
 	});
-	await expect.poll(() => scenarioRequests).toBe(before + 2);
+	await inner.locator("#to-middle").waitFor({ timeout: 5_000 });
+	await expect.poll(() => page.locator(".spool-bar-name").textContent()).toBe("start");
 });
 
 it("retains a controller command sent before an authored navigation reaches the shell", {
@@ -2534,7 +2502,8 @@ it("retains a controller command sent before an authored navigation reaches the 
 		'export default function Start() { return <button id="to-middle" data-go="middle">middle</button>; }\n',
 	);
 	writeFrame(project.root, "middle", 'export default function Middle() { return <main id="middle">middle</main>; }\n');
-	for (const [index, frame] of ["start", "middle"].entries()) {
+	writeFrame(project.root, "end", 'export default function End() { return <main id="end">end</main>; }\n');
+	for (const [index, frame] of ["start", "middle", "end"].entries()) {
 		writeDesignFile(
 			project.root,
 			`frames/${frame}/frame.json`,
@@ -2568,10 +2537,8 @@ it("retains a controller command sent before an authored navigation reaches the 
 			),
 		)
 		.toBe(1);
-	expect(await page.locator(".spool-pill-name").innerText()).toBe("start");
-	await reachForPill(page);
-
-	await page.locator("#spool-restart").click();
+	expect(await page.locator(".spool-bar-name").textContent()).toBe("start");
+	await walkFromSwitcher(page, "end");
 	await inner.locator("body").evaluate(() => {
 		(
 			window as unknown as {
@@ -2594,8 +2561,8 @@ it("retains a controller command sent before an authored navigation reaches the 
 			),
 		)
 		.toBe(2);
-	await inner.locator("#to-middle").waitFor({ timeout: 5_000 });
-	await expect.poll(() => page.locator(".spool-pill-name").innerText()).toBe("start");
+	await inner.locator("#end").waitFor({ timeout: 5_000 });
+	await expect.poll(() => page.locator(".spool-bar-name").textContent()).toBe("end");
 	const observed = await inner.locator("body").evaluate(() =>
 		(
 			window as unknown as {
@@ -2664,10 +2631,10 @@ it("rejects controller requests outside the current or pending-source context", 
 			}
 		).__spoolCommandInjector;
 		for (const message of [
-			{ spool: "player-command", command: "restart", request: 101, generation: -1, frame: "start" },
-			{ spool: "player-command", command: "restart", request: 102, generation: 0, frame: "middle" },
-			{ spool: "player-command", command: "restart", request: 103, generation: 0, frame: "wrong" },
-			{ spool: "player-command", command: "restart", request: 104, generation: 2, frame: "start" },
+			{ spool: "player-command", command: "walk", request: 101, to: "middle", generation: -1, frame: "start" },
+			{ spool: "player-command", command: "walk", request: 102, to: "middle", generation: 0, frame: "middle" },
+			{ spool: "player-command", command: "walk", request: 103, to: "middle", generation: 0, frame: "wrong" },
+			{ spool: "player-command", command: "walk", request: 104, to: "middle", generation: 2, frame: "start" },
 		]) {
 			injector.send(message);
 		}
@@ -2718,7 +2685,15 @@ it("rejects extra private-port fields on every controller command", { timeout: 6
 			}
 		).__spoolCommandInjector;
 		for (const message of [
-			{ spool: "player-command", command: "restart", request: 202, generation: 0, frame: "start", extra: true },
+			{
+				spool: "player-command",
+				command: "walk",
+				request: 202,
+				to: "middle",
+				generation: 0,
+				frame: "start",
+				extra: true,
+			},
 			{
 				spool: "player-command",
 				command: "dismiss-external",
@@ -2732,7 +2707,7 @@ it("rejects extra private-port fields on every controller command", { timeout: 6
 		}
 	});
 	await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)));
-	expect(await page.locator(".spool-pill-name").innerText()).toBe("start");
+	expect(await page.locator(".spool-bar-name").innerText()).toBe("start");
 	expect(
 		await inner.locator("body").evaluate(
 			() =>
@@ -2754,7 +2729,9 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 	onTestFinished(() => browser.close());
 	const project = await serveProject();
 	writeFrame(project.root, "start", 'export default function Start() { return <main id="start">start</main>; }\n');
+	writeFrame(project.root, "next", 'export default function Next() { return <main id="next">next</main>; }\n');
 	writeDesignFile(project.root, "frames/start/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+	writeDesignFile(project.root, "frames/next/frame.json", '{ "x": 400, "y": 0, "w": 390, "h": 844 }\n');
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	onTestFinished(() => page.close());
@@ -2762,8 +2739,8 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#start").waitFor();
-	/** How many Restarts have actually run: each one navigates, exactly once. */
-	const restarts = () =>
+	/** How many walks have actually run: each one navigates, exactly once. */
+	const walks = () =>
 		inner.locator("body").evaluate(
 			() =>
 				(
@@ -2782,14 +2759,10 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 		).__spoolRuntimeMessageGate.hold();
 	});
 
-	// two Restarts: the first runs and its completion is held, so the second is
-	// still queued — and a queued Restart has not navigated.
-	await reachForPill(page);
-
-	await page.locator("#spool-restart").click();
-	await reachForPill(page);
-
-	await page.locator("#spool-restart").click();
+	// two walks: the first runs and its completion is held, so the second is
+	// still queued — and a queued walk has not navigated.
+	await walkFromSwitcher(page, "next");
+	await walkFromSwitcher(page, "start");
 	await expect
 		.poll(() =>
 			inner.locator("body").evaluate(() =>
@@ -2801,7 +2774,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 			),
 		)
 		.toBe(1);
-	expect(await restarts()).toBe(1);
+	expect(await walks()).toBe(1);
 	const firstCompletion = await inner.locator("body").evaluate(
 		() =>
 			(
@@ -2837,7 +2810,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 	});
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 	// none of them was the completion the shell is waiting for
-	expect(await restarts()).toBe(1);
+	expect(await walks()).toBe(1);
 
 	await inner.locator("body").evaluate(() => {
 		(
@@ -2846,7 +2819,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 			}
 		).__spoolRuntimeMessageGate.releaseNext();
 	});
-	await expect.poll(restarts).toBe(2);
+	await expect.poll(walks).toBe(2);
 	await expect
 		.poll(() =>
 			inner.locator("body").evaluate(() =>
@@ -2859,9 +2832,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 		)
 		.toBe(1);
 	// the first completion arriving a second time is a duplicate, and drains nothing
-	await reachForPill(page);
-
-	await page.locator("#spool-restart").click();
+	await walkFromSwitcher(page, "next");
 	await inner.locator("body").evaluate((_body, completion) => {
 		(
 			window as unknown as {
@@ -2870,7 +2841,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 		).__spoolRuntimeMessageGate.send(completion);
 	}, firstCompletion);
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-	expect(await restarts()).toBe(2);
+	expect(await walks()).toBe(2);
 
 	await inner.locator("body").evaluate(() => {
 		(
@@ -2879,7 +2850,7 @@ it("ignores malformed, stale, and duplicate controller completions without reord
 			}
 		).__spoolRuntimeMessageGate.releaseNext();
 	});
-	await expect.poll(restarts).toBe(3);
+	await expect.poll(walks).toBe(3);
 	await inner.locator("body").evaluate(() => {
 		(
 			window as unknown as {
@@ -2958,11 +2929,11 @@ it("cuts when the source viewport no longer matches same-size shell geometry", {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "target",
+			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 480,
+		height: 900,
 	});
 });
 
@@ -2992,14 +2963,14 @@ export default function Start() {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "next",
+			document.querySelector(".spool-bar-name")?.textContent === "next",
 		undefined,
 		{ timeout: 5_000 },
 	);
 	await inner.locator("#next").waitFor();
 	expect(await inner.locator("#next").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 390,
-		height: 844,
+		height: 900,
 	});
 });
 
@@ -3030,7 +3001,7 @@ export default function Start() { return <main id="start">start</main>; }
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "next",
+			document.querySelector(".spool-bar-name")?.textContent === "next",
 	);
 });
 
@@ -3068,15 +3039,15 @@ export default function Start() {
 	await page.waitForFunction(
 		() =>
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
-			document.querySelector(".spool-pill-name")?.textContent === "next",
+			document.querySelector(".spool-bar-name")?.textContent === "next",
 		undefined,
 		{ timeout: 5_000 },
 	);
 	await inner.locator("#next").waitFor();
-	expect(await inner.locator("#next-viewport").innerText()).toBe("720×480");
+	expect(await inner.locator("#next-viewport").innerText()).toBe("720×900");
 	expect(await inner.locator("#next").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 480,
+		height: 900,
 	});
 });
 
@@ -3339,6 +3310,16 @@ it("keeps a ready player visible after a late authored exception", { timeout: 60
 }
 `,
 	);
+	writeFrame(
+		project.root,
+		"away",
+		`export default function Away() {
+	return <button id="away" onClick={() => setTimeout(() => { throw new Error("late authored exception"); }, 100)}>away</button>;
+}
+`,
+	);
+	writeDesignFile(project.root, "frames/home/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
+	writeDesignFile(project.root, "frames/away/frame.json", '{ "x": 400, "y": 0, "w": 390, "h": 844 }\n');
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	onTestFinished(() => page.close());
@@ -3354,9 +3335,7 @@ it("keeps a ready player visible after a late authored exception", { timeout: 60
 			}
 		).__spoolRuntimeMessageGate.hold();
 	});
-	await reachForPill(page);
-
-	await page.locator("#spool-restart").click();
+	await walkFromSwitcher(page, "away");
 	await expect
 		.poll(() =>
 			inner.locator("body").evaluate(() =>
@@ -3368,12 +3347,15 @@ it("keeps a ready player visible after a late authored exception", { timeout: 60
 			),
 		)
 		.toBe(1);
-	await inner.locator("#home").click();
+	// the bar is still up from the switcher, and it sits over the top of the page
+	await page.mouse.move(640, 500);
+	await expect.poll(() => page.locator(".spool-edge.is-open").count()).toBe(0);
+	await inner.locator("#away").click();
 	await page.waitForTimeout(250);
 
 	expect(await page.locator('[role="alert"]').count()).toBe(0);
 	expect(await page.locator("#spool-player").count()).toBe(1);
-	expect(await inner.locator("#home").innerText()).toBe("home");
+	expect(await inner.locator("#away").innerText()).toBe("away");
 	await inner.locator("body").evaluate(() => {
 		(
 			window as unknown as {
@@ -3522,24 +3504,20 @@ export default function Next() {
 	await inner.locator("#count").filter({ hasText: "5" }).waitFor();
 	await inner.locator("#key").press("K");
 	expect(await inner.locator("#key").innerText()).toBe("K");
-	await reachForPill(page);
 
-	await page.locator("#spool-restart").click();
+	// the session is the page, so reloading the tab is what restarting means:
+	// the seed is read fresh and the walk starts over at the named frame
+	await page.reload();
 	await inner.locator("#count").filter({ hasText: "2" }).waitFor();
-	expect(await page.locator(".spool-pill-name").innerText()).toBe("menu");
+	expect(await page.locator(".spool-bar-name").textContent()).toBe("menu");
 
-	// working inside the prototype puts the chrome away, wherever the movement
+	// working inside the prototype keeps the chrome away, wherever the movement
 	// happens to be — including inside the frame's own document, which reports
-	// its pointer over the wire (#210)
+	// its pointer over the wire (#227)
 	await inner.locator("body").hover({ position: { x: 200, y: 300 } });
-	await page.waitForFunction(
-		() => document.querySelector(".spool-stage")?.classList.contains("is-asleep"),
-		undefined,
-		{
-			timeout: 5_000,
-		},
-	);
-	await reachForPill(page);
+	await page.waitForTimeout(500);
+	expect(await page.locator(".spool-edge.is-open").count()).toBe(0);
+	await summonEdgeBar(page);
 
 	await page.locator("#spool-close").click();
 	await page.waitForURL(`${project.url}/p/${encodeURIComponent(project.name)}`);
@@ -3572,12 +3550,16 @@ it("keeps terminal poster and chrome behavior through the control shell", { time
 	const viewport = await inner
 		.locator(".spool-term-screen")
 		.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+	// a terminal is a character grid, not a document: it keeps the box it was
+	// authored at rather than growing into the window
 	expect(viewport).toEqual({ width: 720, height: 480 });
 	expect(await page.locator("#spool-player").evaluate((host) => getComputedStyle(host).opacity)).toBe("1");
 
-	const started = await page.evaluate(() => performance.now());
-	await page.waitForFunction((at) => performance.now() - at > 2_300, started);
-	expect(await page.locator(".spool-stage").getAttribute("class")).not.toContain("is-asleep");
+	// nothing inside a terminal's own document reports a pointer, so the bar is
+	// summoned from the page background the centred grid leaves above it
+	expect(await page.locator(".spool-edge.is-open").count()).toBe(0);
+	await summonEdgeBar(page);
+	expect(await page.locator(".spool-bar-name").textContent()).toBe("dash");
 });
 
 const typedHome = `export default function TypedHome() {

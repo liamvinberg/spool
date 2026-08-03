@@ -3,15 +3,12 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { fitBox } from "../../fit";
 import { ProjectCanvas } from "./canvas";
 
 /**
- * Inline play (#210): pressing play flies the camera into the frame and the
- * player takes the viewport, and `accel+esc` flies back out. What is asserted
- * here is the seam — the door no longer opens a tab, the layer asks the daemon
- * for a session, the landing is the player's own placement, and leaving puts
- * the canvas back.
+ * Play opens a tab (#227). What is asserted here is the seam: the press names
+ * one frame on the `/play/` door, nothing on the canvas changes state, and the
+ * canvas keeps every key it owns — there is no player over it to stand down for.
  */
 
 const frames = [
@@ -40,15 +37,6 @@ async function mountCanvas(): Promise<Harness> {
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: frames.map(({ name }) => name), links: [], edges: [], unreadable: [] });
 			}
-			if (url.pathname.endsWith("/play")) {
-				return Response.json({
-					project: "test",
-					start: url.searchParams.get("frame") ?? "menu",
-					frames: Object.fromEntries(frames.map((frame) => [frame.name, { w: frame.w, h: frame.h }])),
-					terminals: [],
-					innerUrl: `http://render.localhost/play/test?frame=${url.searchParams.get("frame") ?? "menu"}&shell=1&handoff=x`,
-				});
-			}
 			return Response.json({});
 		}),
 	);
@@ -61,13 +49,6 @@ async function mountCanvas(): Promise<Harness> {
 	);
 	const opened = vi.fn();
 	vi.stubGlobal("open", opened);
-	// the flight is a real animation; run every frame straight through so the
-	// camera is wherever it was going by the time the next assertion reads it
-	vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
-		callback(performance.now() + 10_000);
-		return 1;
-	});
-	vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
 
 	const host = document.createElement("div");
 	document.body.append(host);
@@ -85,117 +66,46 @@ async function mountCanvas(): Promise<Harness> {
 	return { host, requests, opened };
 }
 
-describe("playing a frame inline", () => {
-	it("asks the daemon for a session and never opens a tab", async () => {
-		const { host, requests, opened } = await mountCanvas();
+describe("playing a frame", () => {
+	it("opens the play door on the frame the press meant", async () => {
+		const { host, opened } = await mountCanvas();
 
 		await act(async () => {
 			host.querySelector<HTMLElement>('[role="application"]')?.focus();
 			window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", bubbles: true }));
 		});
 		// nothing is selected: the press has no single frame to mean
-		expect(requests.some((path) => path.startsWith("/api/p/test/play"))).toBe(false);
-
-		await act(async () => {
-			clickFrame(host, "menu");
-		});
-		await act(async () => {
-			window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", bubbles: true }));
-		});
-		await until(() => requests.some((path) => path.startsWith("/api/p/test/play")));
-
-		expect(requests.find((path) => path.startsWith("/api/p/test/play"))).toBe("/api/p/test/play?frame=menu");
 		expect(opened).not.toHaveBeenCalled();
-	});
 
-	it("mounts the player at the placement the camera flies to", async () => {
-		const { host } = await mountCanvas();
-
-		await act(async () => clickFrame(host, "menu"));
+		await act(async () => clickFrame(host, "cart"));
 		await act(async () => {
 			window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", bubbles: true }));
 		});
-		await until(() => host.querySelector('iframe[title="test"]') !== null);
-		const place = fitBox(390, 844, window.innerWidth, window.innerHeight);
-		await until(() => transformOf(cameraTransform(host))[2] !== 1);
 
-		const player = host.querySelector<HTMLIFrameElement>('iframe[title="test"]');
-		expect(player?.getAttribute("sandbox")).toBe("allow-scripts");
-		expect(player?.src).toContain("shell=1");
-
-		// the stage's own fit, so the flight's landing values are the placement
-		expect(player?.style.width).toBe("390px");
-		expect(player?.style.transform).toBe(`translate(${place.x}px, ${place.y}px) scale(${place.scale})`);
-		// and the camera came to rest on exactly that
-		const [x, y, k] = transformOf(cameraTransform(host));
-		expect(x).toBeCloseTo(place.x, 6);
-		expect(y).toBeCloseTo(place.y, 6);
-		expect(k).toBeCloseTo(place.scale, 9);
+		expect(opened).toHaveBeenCalledWith("/play/test?frame=cart", "_blank", "noopener,noreferrer");
 	});
 
-	it("dissolves the canvas chrome before the camera moves", async () => {
-		const { host } = await mountCanvas();
-
-		await act(async () => clickFrame(host, "menu"));
-		expect(chromeOpacity(host, "menu")).toBe("1");
-
-		await act(async () => {
-			window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", bubbles: true }));
-		});
-		expect(chromeOpacity(host, "menu")).toBe("0");
-	});
-
-	it("stands every canvas key down while the player is up", async () => {
-		const { host } = await mountCanvas();
-
-		await act(async () => clickFrame(host, "menu"));
-		await act(async () => {
-			window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", bubbles: true }));
-		});
-		await until(() => host.querySelector('iframe[title="test"]') !== null);
-		const canvas = host.querySelector<HTMLElement>('[role="application"]');
-		expect(canvas?.style.cursor).toBe("default");
-
-		// a player filling the screen is a live frame, and spool takes no plain
-		// key from one — not even the ones the canvas owns everywhere else
-		for (const key of ["h", "e", "r", "Backspace"]) {
-			await act(async () => {
-				window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-			});
-		}
-		expect(canvas?.style.cursor).toBe("default");
-		expect(host.querySelector('iframe[title="test"]')).not.toBeNull();
-
-		// and the same key is the canvas's again the moment the player is gone
-		await act(async () => {
-			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", metaKey: true, ctrlKey: true }));
-		});
-		await until(() => host.querySelector('iframe[title="test"]') === null);
-		await act(async () => {
-			window.dispatchEvent(new KeyboardEvent("keydown", { key: "h", bubbles: true }));
-		});
-		expect(canvas?.style.cursor).toBe("grab");
-	});
-
-	it("leaves on accel+esc and puts the canvas back where it was", async () => {
-		const { host } = await mountCanvas();
+	it("leaves the canvas exactly as it found it", async () => {
+		const { host, opened, requests } = await mountCanvas();
 		const before = cameraTransform(host);
 
 		await act(async () => clickFrame(host, "menu"));
 		await act(async () => {
 			window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", bubbles: true }));
 		});
-		await until(() => host.querySelector('iframe[title="test"]') !== null);
-		await until(() => cameraTransform(host) !== before);
 
-		await act(async () => {
-			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", metaKey: true, ctrlKey: true }));
-		});
-		await until(() => host.querySelector('iframe[title="test"]') === null);
-		// the furniture only comes back once the camera has stopped, so both are
-		// waited for rather than read the moment the player goes
-		await until(() => chromeOpacity(host, "menu") === "1");
+		expect(opened).toHaveBeenCalledTimes(1);
+		// the canvas holds no play state at all: no camera flight, no session
+		// fetched, and the frame layer is still the frame layer
 		expect(cameraTransform(host)).toBe(before);
+		expect(requests.some((path) => path.startsWith("/api/p/test/play"))).toBe(false);
+		expect(host.querySelector('[data-frame-label="menu"]')).not.toBeNull();
+
+		// and every canvas key still answers, because nothing is over it
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "h", bubbles: true }));
+		});
+		expect(host.querySelector<HTMLElement>('[role="application"]')?.style.cursor).toBe("grab");
 	});
 });
 
@@ -206,25 +116,6 @@ function clickFrame(host: HTMLElement, name: string): void {
 	const at = { clientX: frame.x + 10, clientY: frame.y + 10, bubbles: true, button: 0, pointerId: 1 };
 	canvas?.dispatchEvent(new PointerEvent("pointerdown", at));
 	canvas?.dispatchEvent(new PointerEvent("pointerup", at));
-}
-
-/** The label layer's opacity: the chrome dissolve, read where it is applied. */
-function chromeOpacity(host: HTMLElement, name: string): string {
-	const label = host.querySelector(`[data-frame-label="${name}"]`);
-	let node = label?.parentElement ?? null;
-	while (node !== null) {
-		if (node.style.transitionProperty === "opacity" || node.className.includes("transition-opacity")) {
-			return node.style.opacity;
-		}
-		node = node.parentElement;
-	}
-	throw new Error("no chrome layer above the label");
-}
-
-/** `translate(Xpx, Ypx) scale(K)` taken apart. */
-function transformOf(transform: string): [number, number, number] {
-	const [, x, y, k] = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(transform) ?? [];
-	return [Number(x), Number(y), Number(k)];
 }
 
 /** The field's transform is the camera made visible — one string per resting spot. */

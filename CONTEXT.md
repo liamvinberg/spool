@@ -70,13 +70,11 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Mock**: The declarative layer answering a frame's relative fetches with named fixtures, per route. _Avoid_: stub
 
-**Play session**: One run through the flows: name-stack history, state seeded from the scenario, reset on restart.
+**Play session**: One run through the flows: name-stack history, state seeded from the scenario. The session is the page, so reloading the tab starts it over.
 
-**Player**: The surface that plays a flow as one composed document, fitted edge to edge and carrying one pill. Its human door is inline play; the standalone `/play/` page is the same player for agents and phones, phone-ready on a plain URL. _Avoid_: preview
+**Player**: The surface that plays a flow as one composed document, in its own browser tab. The page lays out at the real viewport width, capped at the frame's authored width, and is as tall as its content — never scaled, never letterboxed. One door for everybody: `/play/<project>?frame=<name>`, which the canvas opens, agents mint, and a phone visits. _Avoid_: preview
 
-**Inline play**: Play on the canvas: the camera flies into the frame until it fills the screen, the player takes the viewport in a sandboxed layer, and `accel+esc` flies back out of whichever frame the walk ended on. The canvas takes the whole window for the length of a flight and its furniture dissolves, so the zoom crosses the top bar and the rails rather than sliding under them. Not a URL — a refresh returns to the canvas, like the camera and the selection.
-
-**Pill**: The player's only chrome: the frame's name and three controls, restart, fullscreen and close. It shows itself once on arrival and then stays gone until the pointer reaches the strip it lives in, so it is never sitting on a prototype's own footer while the prototype is being used. _Avoid_: toolbar, HUD, overlay
+**Edge bar**: The player's only chrome, and it is summoned: rest the cursor against the top edge of the viewport for ~300ms and a 40px bar peels in with back to canvas, the frame switcher and close. A 40px nub at the edge is its resting trace. Passing through the edge on the way to the browser's own chrome never reveals it, and moving back down into the page hides it at once. Touch gets nothing. _Avoid_: toolbar, HUD, overlay, pill
 
 **Accel**: The one modifier a platform binds its own commands to: cmd on Apple, ctrl everywhere else, never a hardcoded meta key. Spool's own gestures all live behind it, because spool never takes a plain key from a live frame — every ordinary key belongs to the prototype being used, its own `esc` included.
 

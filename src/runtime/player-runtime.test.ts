@@ -152,21 +152,17 @@ async function waitForText(selector: string, text: string): Promise<void> {
 	});
 }
 
-/** The pill names the frame the session stands in — the only live readout there is. */
+/** The bar names the frame the session stands in — the only live readout there is. */
 async function waitForFrame(name: string): Promise<void> {
-	await waitForText(".spool-pill-name", name);
+	await waitForText(".spool-bar-name", name);
 }
 
-/** How far down the screen is scaled to fit the stage. */
-function stageScale(): number {
-	const transform = (document.querySelector(".spool-screen") as HTMLElement).style.transform;
-	return Number(/scale\((-?\d+(?:\.\d+)?)\)/.exec(transform)?.[1]);
-}
-
-/** Where the screen sits on the stage. */
-function stageOffsetX(): number {
-	const transform = (document.querySelector(".spool-screen") as HTMLElement).style.transform;
-	return Number(/translate\((-?\d+(?:\.\d+)?)px/.exec(transform)?.[1]);
+/** Rest the pointer against the top edge until the bar peels in. */
+async function summonEdgeBar(): Promise<HTMLElement> {
+	const page = document.querySelector(".spool-page") as HTMLElement;
+	page.dispatchEvent(new MouseEvent("mousemove", { clientY: 2, bubbles: true }));
+	await vi.waitFor(() => expect(document.querySelector(".spool-edge.is-open")).not.toBeNull());
+	return page;
 }
 
 /** An accel chord as the platform this test runs on spells it. */
@@ -254,9 +250,12 @@ describe("the player session", () => {
 		await loadPlayerDocument(harness, "?frame=menu");
 		await waitForText("output", "2");
 
+		// the authored width is a cap, never a size: the page takes the viewport
+		// below it, and its height is whatever its content is
 		const screen = document.querySelector(".spool-screen") as HTMLElement;
-		expect(screen.style.width).toBe("390px");
-		expect(screen.style.height).toBe("844px");
+		expect(screen.style.width).toBe(`${Math.min(window.innerWidth, 390)}px`);
+		expect(screen.style.height).toBe("");
+		expect(screen.style.transform).toBe("");
 		await waitForFrame("menu");
 	});
 
@@ -306,18 +305,18 @@ describe("the player session", () => {
 		expect(open?.target).toBe("_blank");
 		expect(open?.rel).toBe("noopener noreferrer");
 		expect(document.querySelector("output")?.textContent).toBe("5");
-		expect(document.querySelector(".spool-pill-name")?.textContent).toBe("menu");
-		expect((document.querySelector("#spool-restart") as HTMLButtonElement).disabled).toBe(true);
-		expect((document.querySelector(".spool-screen-scroll") as HTMLElement).style.getPropertyValue("isolation")).toBe(
-			"isolate",
+		expect(document.querySelector(".spool-bar-name")?.textContent).toBe("menu");
+		// the dialog owns the moment: the edge bar cannot be summoned over it
+		(document.querySelector(".spool-page") as HTMLElement).dispatchEvent(
+			new MouseEvent("mousemove", { clientY: 2, bubbles: true }),
 		);
-		(document.querySelector("#spool-restart") as HTMLButtonElement).click();
-		expect(document.querySelector("output")?.textContent).toBe("5");
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		expect(document.querySelector(".spool-edge.is-open")).toBeNull();
 
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
 		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
 		expect(document.querySelector("output")?.textContent).toBe("5");
-		expect(document.querySelector(".spool-pill-name")?.textContent).toBe("menu");
+		expect(document.querySelector(".spool-bar-name")?.textContent).toBe("menu");
 
 		click("#external-port");
 		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
@@ -350,29 +349,6 @@ describe("the player session", () => {
 		await waitForFrame("menu");
 	});
 
-	it("restart re-seeds the session from a fresh scenario read at the start frame", async () => {
-		const harness = makeHarness();
-		scaffold(harness);
-
-		await loadPlayerDocument(harness, "?frame=menu");
-		await waitForText("output", "2");
-		click("#bump");
-		await waitForText("output", "5");
-		click("#walk");
-		await waitForFrame("cart");
-
-		// the agent edits the seed mid-session; restart reads it fresh
-		writeDesignFile(
-			harness.root,
-			"shared/scenarios/default.json",
-			'{\n\t"state": { "count": 9 },\n\t"mock": {}\n}\n',
-		);
-		click("#spool-restart");
-
-		await waitForFrame("menu");
-		await waitForText("output", "9");
-	});
-
 	it("hands the View Transitions API its direction types and per-link overrides", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
@@ -390,8 +366,12 @@ describe("the player session", () => {
 		await waitForFrame("menu");
 		expect(calls.at(-1)?.types).toEqual(["back"]);
 
-		click("#spool-restart");
-		await vi.waitFor(() => expect(calls.at(-1)?.types).toEqual(["restart"]));
+		// the switcher walks like anything else, so its swap is filmed like one
+		await summonEdgeBar();
+		click("#spool-switcher");
+		click(".spool-picker-row:not(.is-here)");
+		await waitForFrame("cart");
+		expect(calls.at(-1)?.types).toEqual(["forward"]);
 	});
 
 	it("a missing walk target is loud but harmless", async () => {
@@ -507,73 +487,168 @@ export default function Hints() {
 	});
 });
 
-describe("the stage and the pill (#210)", () => {
-	it("fits the frame edge to edge", async () => {
+describe("the played page and the edge bar (#227)", () => {
+	it("lays the page out at the viewport, capped at the authored width", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
 
 		await loadPlayerDocument(harness, "?frame=menu");
 		await waitForFrame("menu");
 
-		// nothing is reserved for chrome any more: the fit is min(1, vw/w, vh/h)
-		// and the bars it leaves are aspect mismatch, exactly like a video player
-		const scale = Math.min(1, window.innerWidth / 390, window.innerHeight / 844);
-		expect(stageScale()).toBeCloseTo(scale, 6);
-		expect(stageOffsetX()).toBeCloseTo((window.innerWidth - 390 * scale) / 2, 6);
-
-		// and the pill says where you are, not how big it is: a size and a zoom
-		// are the canvas's business, and the pill sits over the prototype
-		expect(document.querySelector(".spool-pill")?.textContent).toBe("menu");
+		// the authored width is the cap and the viewport is the rest: nothing is
+		// scaled, nothing is letterboxed, and the height is the content's own
+		const screen = document.querySelector(".spool-screen") as HTMLElement;
+		expect(screen.style.width).toBe(`${Math.min(window.innerWidth, 390)}px`);
+		expect(screen.style.height).toBe("");
+		expect(screen.style.transform).toBe("");
 	});
 
-	it("keeps the rail, the tape and the registration ticks out of the player", async () => {
+	it("draws nothing over the page until the cursor rests against the top edge", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
 
 		await loadPlayerDocument(harness, "?frame=menu");
 		await waitForFrame("menu");
+		const page = document.querySelector(".spool-page") as HTMLElement;
+		const move = (y: number) => page.dispatchEvent(new MouseEvent("mousemove", { clientY: y, bubbles: true }));
 
-		for (const gone of [".spool-rail", ".spool-walk-hop", ".spool-mock", ".spool-ticks", ".spool-hud"]) {
-			expect(document.querySelector(gone), gone).toBeNull();
-		}
-		// and no controls that only made sense beside them
-		for (const gone of ["#spool-inspector", "#spool-motion", "#spool-back"]) {
-			expect(document.querySelector(gone), gone).toBeNull();
-		}
-		expect(document.querySelector("#spool-restart")).not.toBeNull();
-		expect(document.querySelector("#spool-fullscreen")).not.toBeNull();
-		expect(document.querySelector("#spool-close")).not.toBeNull();
-	});
+		// at rest there is a nub and nothing else — the page is the page
+		expect(document.querySelector(".spool-edge.is-open")).toBeNull();
+		expect(document.querySelector(".spool-nub")).not.toBeNull();
 
-	it("gets out of the way of the prototype, and comes back when reached for", async () => {
-		const harness = makeHarness();
-		scaffold(harness);
-
-		await loadPlayerDocument(harness, "?frame=menu");
-		await waitForFrame("menu");
-		const stage = document.querySelector(".spool-stage") as HTMLElement;
-		const move = (y: number) => stage.dispatchEvent(new MouseEvent("mousemove", { clientY: y, bubbles: true }));
-		// one look on arrival, so you know it is there
-		expect(stage.classList.contains("is-asleep")).toBe(false);
-
-		// using a prototype means moving the pointer around it, and that must not
-		// keep the pill up: it would sit on whatever the frame draws along its
-		// own bottom edge for as long as the prototype was being used
+		// using a prototype means moving the pointer around it, and none of that
+		// may summon chrome over what is being used
 		move(window.innerHeight / 2);
-		await vi.waitFor(() => expect(stage.classList.contains("is-asleep")).toBe(true));
-		move(window.innerHeight / 3);
-		expect(stage.classList.contains("is-asleep")).toBe(true);
-
-		// reaching down to where it lives is what brings it back
 		move(window.innerHeight - 10);
-		await vi.waitFor(() => expect(stage.classList.contains("is-asleep")).toBe(false));
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		expect(document.querySelector(".spool-edge.is-open")).toBeNull();
 
-		// and leaving again puts it away, with no wait to sit through
+		// resting against the top edge is the ask, and the dwell is what makes it
+		// a rest rather than a pass
+		move(2);
+		expect(document.querySelector(".spool-edge.is-open")).toBeNull();
+		await vi.waitFor(() => expect(document.querySelector(".spool-edge.is-open")).not.toBeNull());
+		expect(document.querySelector(".spool-nub.is-hidden")).not.toBeNull();
+
+		// and moving back down into the page takes it away at once
 		move(window.innerHeight / 2);
-		await vi.waitFor(() => expect(stage.classList.contains("is-asleep")).toBe(true));
+		await vi.waitFor(() => expect(document.querySelector(".spool-edge.is-open")).toBeNull());
 	});
 
-	it("never takes a plain key from the prototype, and answers only its own chords", async () => {
+	it("never reveals on a pass through the edge on the way out of the document", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+
+		await loadPlayerDocument(harness, "?frame=menu");
+		await waitForFrame("menu");
+		const page = document.querySelector(".spool-page") as HTMLElement;
+
+		// the last thing seen inside the page is a point in the strip, and then
+		// the pointer is gone — up into the browser's own chrome
+		page.dispatchEvent(new MouseEvent("mousemove", { clientY: 2, bubbles: true }));
+		document.documentElement.dispatchEvent(new MouseEvent("mouseleave"));
+
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		expect(document.querySelector(".spool-edge.is-open")).toBeNull();
+
+		// but a frame reporting that it lost the pointer is not the window losing
+		// it: on a capped page the hand leaves the column every time it moves out
+		// onto the background beside it, and that is where the bar is asked for
+		page.dispatchEvent(new MouseEvent("mousemove", { clientY: 2, bubbles: true }));
+		window.dispatchEvent(new CustomEvent("spool-player-wake", { detail: { y: null } }));
+
+		await vi.waitFor(() => expect(document.querySelector(".spool-edge.is-open")).not.toBeNull());
+	});
+
+	it("carries the switcher and the exits, and nothing the pill used to", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+
+		await loadPlayerDocument(harness, "?frame=menu");
+		await waitForFrame("menu");
+		await summonEdgeBar();
+
+		for (const gone of [
+			".spool-rail",
+			".spool-walk-hop",
+			".spool-mock",
+			".spool-ticks",
+			".spool-hud",
+			".spool-pill",
+		]) {
+			expect(document.querySelector(gone), gone).toBeNull();
+		}
+		// the pill's own controls are gone with it: a tab reloads to restart and
+		// fills the screen through the browser
+		for (const gone of ["#spool-inspector", "#spool-motion", "#spool-back", "#spool-restart", "#spool-fullscreen"]) {
+			expect(document.querySelector(gone), gone).toBeNull();
+		}
+		expect(document.querySelector("#spool-close")).not.toBeNull();
+
+		// the switcher is closed by default, and names every screen when opened
+		expect(document.querySelector(".spool-picker.is-open")).toBeNull();
+		click("#spool-switcher");
+		await vi.waitFor(() => expect(document.querySelector(".spool-picker.is-open")).not.toBeNull());
+		expect([...document.querySelectorAll(".spool-picker-row")].map((row) => row.textContent)).toEqual([
+			"cart",
+			"menu",
+			"pay--done",
+		]);
+	});
+
+	it("walks from the switcher and names the arrival in the URL and the title", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+
+		await loadPlayerDocument(harness, "?frame=menu");
+		await waitForFrame("menu");
+		expect(new URL(window.location.href).searchParams.get("frame")).toBe("menu");
+		expect(document.title).toBe(`menu · ${harness.name}`);
+
+		click("#walk");
+		await waitForFrame("cart");
+		expect(new URL(window.location.href).searchParams.get("frame")).toBe("cart");
+		expect(document.title).toBe(`cart · ${harness.name}`);
+
+		// and the browser's own back button walks the session back
+		window.history.back();
+		await waitForFrame("menu");
+		expect(new URL(window.location.href).searchParams.get("frame")).toBe("menu");
+	});
+
+	it("walks back on the browser's own button, and witnesses no edge doing it", async () => {
+		const harness = makeHarness();
+		scaffold(harness);
+
+		const { fetched } = await loadPlayerDocument(harness, "?frame=menu");
+		await waitForFrame("menu");
+		const calls = stubViewTransitions();
+		const witnessed = () => fetched.filter((call) => call.method === "POST" && call.url.endsWith("/walked")).length;
+
+		// a press inside the prototype is a walk the session really took
+		click("#walk");
+		await waitForFrame("cart");
+		expect(calls.at(-1)?.types).toEqual(["forward", "lift"]);
+		expect(witnessed()).toBe(1);
+
+		// the browser's own button is a step back through the walk, so it plays as
+		// one — and nobody pressed anything inside the prototype, so there is no
+		// claim on the map for it to confirm (#25)
+		window.history.back();
+		await waitForFrame("menu");
+		expect(calls.at(-1)?.types).toEqual(["back"]);
+		expect(witnessed()).toBe(1);
+
+		// and the switcher is the same: spool's own chrome never mints an edge
+		await summonEdgeBar();
+		click("#spool-switcher");
+		click(".spool-picker-row:not(.is-here)");
+		await waitForFrame("cart");
+		expect(calls.at(-1)?.types).toEqual(["forward"]);
+		expect(witnessed()).toBe(1);
+	});
+
+	it("never takes a plain key from the prototype, and answers only its own chord", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
 
@@ -583,38 +658,18 @@ describe("the stage and the pill (#210)", () => {
 		await waitForFrame("cart");
 		const close = vi.spyOn(window, "close").mockImplementation(() => {});
 
-		// every ordinary key belongs to the app being played, esc included (#210)
+		// every ordinary key belongs to the app being played, esc included (#227)
 		for (const key of ["Escape", "Backspace", "ArrowLeft", "i", "r", "f"]) {
 			window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
 			document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
 		}
 		await new Promise((resolve) => setTimeout(resolve, 50));
-		expect(document.querySelector(".spool-pill-name")?.textContent).toBe("cart");
+		expect(document.querySelector(".spool-bar-name")?.textContent).toBe("cart");
 		expect(close).not.toHaveBeenCalled();
 
 		// behind accel, the same key is spool's
 		accelKeydown("Escape");
 		expect(close).toHaveBeenCalled();
-	});
-
-	it("fills the screen behind accel+f and from the pill", async () => {
-		const harness = makeHarness();
-		scaffold(harness);
-
-		await loadPlayerDocument(harness, "?frame=menu");
-		await waitForFrame("menu");
-		const request = vi.fn(() => Promise.resolve());
-		document.documentElement.requestFullscreen =
-			request as unknown as typeof document.documentElement.requestFullscreen;
-
-		// earlier tests in this file leave their own players mounted in the same
-		// document, so what is asserted is the delta this player adds
-		accelKeydown("f");
-		const afterChord = request.mock.calls.length;
-		expect(afterChord).toBeGreaterThan(0);
-
-		click("#spool-fullscreen");
-		expect(request.mock.calls.length).toBe(afterChord + 1);
 	});
 });
 
@@ -669,12 +724,14 @@ describe("static terminal screens", () => {
 		// once its Spool-owned document loads.
 		expect.soft(document.querySelector(".spool-term-chord")).toBeNull();
 		expect.soft(document.querySelector("#spool-hint")).toBeNull();
-		expect.soft(document.querySelector(".spool-screen-scroll")?.classList.contains("is-terminal")).toBe(true);
+		expect.soft(document.querySelector(".spool-screen")?.classList.contains("is-terminal")).toBe(true);
 
+		// a terminal is a character grid, not a document: it keeps the box it was
+		// authored at, capped by the window like anything else, and never scales
 		const screen = document.querySelector<HTMLElement>(".spool-screen");
-		expect
-			.soft(screen?.style.transform)
-			.toBe(`translate(${(window.innerWidth - 720) / 2}px, ${(window.innerHeight - 480) / 2}px) scale(1)`);
+		expect.soft(screen?.style.width).toBe(`${Math.min(window.innerWidth, 720)}px`);
+		expect.soft(screen?.style.height).toBe("480px");
+		expect.soft(screen?.style.transform).toBe("");
 
 		const postMessage = vi.fn();
 		Object.defineProperty(iframe, "contentWindow", {
@@ -685,28 +742,14 @@ describe("static terminal screens", () => {
 		expect.soft(postMessage).toHaveBeenCalledWith({ spool: "focus", surface: "player" }, "*");
 	});
 
-	it("names the terminal frame on the pill like any other screen", async () => {
+	it("names the terminal frame on the bar like any other screen", async () => {
 		const harness = makeHarness();
 		scaffoldTerminal(harness);
 
 		await loadPlayerDocument(harness, "?frame=dash");
 		await vi.waitFor(() => termIframe());
 
-		expect(document.querySelector(".spool-pill-name")?.textContent).toBe("dash");
-	});
-
-	it("keeps the player chrome awake over a static terminal surface", async () => {
-		const harness = makeHarness();
-		scaffoldTerminal(harness);
-
-		await loadPlayerDocument(harness, "?frame=dash");
-		await vi.waitFor(() => termIframe());
-		const stage = document.querySelector(".spool-stage") as HTMLElement;
-
-		// mousemove inside the term document never reaches the stage, so stillness
-		// here means nothing — sleeping would strand the chrome with no way back
-		await new Promise((resolve) => setTimeout(resolve, 2400));
-		expect(stage.classList.contains("is-asleep")).toBe(false);
+		expect(document.querySelector(".spool-bar-name")?.textContent).toBe("dash");
 	});
 
 	it("has no keyboard exit state", async () => {

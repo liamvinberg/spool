@@ -75,7 +75,6 @@ async function mountLive(options: Attention & { frame?: ProjectedFrame } = {}) {
 			cameraRef: { current: { x: 0, y: 0, k: 1 } } as RefObject<Camera | null>,
 			// only the CSS size is read, and happy-dom gives a real div none
 			viewportRef: { current: { clientWidth: 1200, clientHeight: 1200 } } as unknown as RefObject<HTMLElement>,
-			pictured: false,
 		});
 		return null;
 	}

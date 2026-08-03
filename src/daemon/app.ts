@@ -154,18 +154,10 @@ export interface DaemonOptions {
 	onMachineStateWatchError?: (error: Error) => void;
 }
 
-/** What either play door asks for: where to open, and in which scenario. */
-const openingParams = {
-	frame: z.string().refine(isSafeName, { message: "not a frame name" }).optional(),
-	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
-};
-
-/** What inline play asks for (#210) — the opening and nothing else. */
-const inlinePlayParams = z.object(openingParams);
-
 /** The player page's params (#24): Zod-validated, path-safe names only. */
 const playParams = z.object({
-	...openingParams,
+	frame: z.string().refine(isSafeName, { message: "not a frame name" }).optional(),
+	scenario: z.string().refine(isSafeName, { message: "not a scenario name" }).optional(),
 	shell: z.literal("1").optional(),
 	handoff: z
 		.string()
@@ -890,46 +882,6 @@ export function createDaemonApp({
 				throw error;
 			}
 		})
-		/**
-		 * A player session for the canvas to host inline (#210). The canvas is the
-		 * shell there, so it needs exactly what the standalone shell document is
-		 * served with: where the session opens, every frame's geometry, which of
-		 * them are terminals, and a single-use handoff on the render-origin URL.
-		 * Minting the handoff is the whole reason this is a door rather than
-		 * something the canvas could assemble itself.
-		 */
-		.get(
-			"/api/p/:project/play",
-			validator("query", (value, c) => {
-				const parsed = inlinePlayParams.safeParse(value);
-				if (parsed.success) return parsed.data;
-				const issues = parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
-				return c.text(`not a playable request — ${issues}`, 400);
-			}),
-			(c) => {
-				const name = c.req.param("project");
-				const { frame, scenario } = c.req.valid("query");
-				const project = resolveProject(c, name);
-				if ("response" in project) return project.response;
-				const opening = openingOn(project.root, frame, name);
-				if ("message" in opening) return c.text(opening.message, 404);
-				const { start, projection } = opening;
-				const playScenario = scenario ?? "default";
-				const inner = new URL(`/play/${encodeURIComponent(name)}`, renderOrigin);
-				inner.searchParams.set("frame", start);
-				inner.searchParams.set("scenario", playScenario);
-				inner.searchParams.set("shell", "1");
-				inner.searchParams.set("handoff", issuePlayerHandoff(name, start, playScenario));
-				c.header("cache-control", "no-store");
-				return c.json({
-					project: name,
-					start,
-					frames: Object.fromEntries(projection.frames.map((entry) => [entry.name, { w: entry.w, h: entry.h }])),
-					terminals: projection.frames.filter((entry) => entry.kind === "term").map((entry) => entry.name),
-					innerUrl: inner.href,
-				});
-			},
-		)
 		.get("/api/p/:project/thumbs/:frame", async (c) => {
 			// A terminal frame's still, for `spool shot` and `spool verify` (#42):
 			// rasterized from the persisted grid in the pinned font, which never
@@ -2331,9 +2283,9 @@ export function createDaemonApp({
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>${escapeHtml(project)} · spool</title>
+<title>${escapeHtml(start)} · ${escapeHtml(project)}</title>
 <style>${escapeInlineStyle(playerChromeCss("/player-assets/fonts/"))}</style>
-<style>html, body, #root { width: 100%; height: 100%; } body { margin: 0; overflow: hidden; background: #0e0e0e; } .spool-screen-scroll > iframe { display: block; width: 100%; height: 100%; border: 0; }</style>
+<style>html, body, #root { width: 100%; height: 100%; } body { margin: 0; overflow: hidden; background: #0e0e0e; } .spool-screen { height: 100%; min-height: 0; } .spool-screen > iframe { display: block; width: 100%; height: 100%; border: 0; }</style>
 </head>
 <body>
 <div id="root"></div>

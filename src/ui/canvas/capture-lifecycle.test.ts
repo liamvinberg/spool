@@ -67,7 +67,6 @@ async function mountLifecycle(
 			onCaptureFailure,
 			cameraRef: { current: null },
 			viewportRef: { current: null },
-			pictured: false,
 		});
 		return null;
 	}

@@ -741,6 +741,33 @@ function back(): void {
 }
 
 /**
+ * A walk the reader asked spool for rather than the prototype: the edge bar's
+ * switcher, and the browser's own back and forward buttons (#227).
+ *
+ * It moves the session exactly the way an authored walk does — same name-stack,
+ * same screen swap, same direction riding the View Transition — and witnesses
+ * nothing. Nobody pressed anything inside the prototype, so there is no claim on
+ * the flow map for this to verify (#25): reporting it would mint a verified edge
+ * out of a press on spool's own chrome.
+ */
+function jump(target: string, back: boolean): void {
+	if (play === undefined) return;
+	if (deferPlayerAction(() => jump(target, back))) return;
+	if (!Object.hasOwn(play.frames, target)) {
+		console.error(`spool: no frame "${target}" to walk to`);
+		return;
+	}
+	abortClipboardWrites();
+	const from = currentFrame;
+	// Stepping back onto the frame the stack was holding pops it, so the walk
+	// history and the browser's agree on where back goes next.
+	if (back && stack.at(-1) === target) stack.pop();
+	else stack.push(from);
+	currentFrame = target;
+	requestScreenSwap(from, back ? "back" : "forward");
+}
+
+/**
  * data-go: click-only sugar on any element, nearest ancestor wins, anchors
  * get preventDefault. A data-transition on the same element names the
  * per-link transition type (#24) — meaningful in the player, inert elsewhere.
@@ -819,7 +846,7 @@ function postPlayerState(): void {
 	});
 }
 
-type SwapDirection = "forward" | "back" | "restart";
+type SwapDirection = "forward" | "back";
 interface PendingMount {
 	generation: number;
 	from: string;
@@ -926,28 +953,6 @@ function swapScreen(direction: SwapDirection, transition?: string, committed?: (
 	}
 }
 
-async function restartSession(deferWhenPending = true): Promise<boolean> {
-	if (play === undefined) return true;
-	if (pendingMount !== undefined) {
-		if (deferWhenPending) deferPlayerAction(() => void restartSession());
-		return false;
-	}
-	// a fresh read, so an edited seed lands without a reload
-	const scenario = await loadScenario(scenarioName);
-	if (pendingMount !== undefined) {
-		if (deferWhenPending) deferPlayerAction(() => void restartSession());
-		return false;
-	}
-	abortClipboardWrites();
-	mockConfig = scenario.mock;
-	const from = currentFrame;
-	stack.length = 0;
-	currentFrame = play.start;
-	seedState(scenario.state);
-	requestScreenSwap(from, "restart");
-	return true;
-}
-
 interface PlayerControllerCommand {
 	request: number;
 	command: string;
@@ -1032,25 +1037,26 @@ function runDismissExternalControllerCommand(command: PlayerControllerCommand): 
 	completePlayerControllerCommand(command, "completed");
 }
 
-async function runRestartControllerCommand(command: PlayerControllerCommand): Promise<void> {
-	if (deferPlayerControllerCommand(() => void runRestartControllerCommand(command))) return;
-	try {
-		const restarted = await restartSession(false);
-		if (!restarted) {
-			deferPlayerControllerCommand(() => void runRestartControllerCommand(command));
-			return;
-		}
-		completeAfterNavigation(command);
-	} catch {
+function runWalkControllerCommand(command: PlayerControllerCommand, to: string, back: boolean): void {
+	if (deferPlayerControllerCommand(() => runWalkControllerCommand(command, to, back))) return;
+	// A screen that left the composition mid-session is a walk that cannot be
+	// taken, and it says so: a command that went quiet would leave the shell
+	// waiting on a completion that never comes, with everything behind it stuck.
+	if (play === undefined || !Object.hasOwn(play.frames, to)) {
 		completePlayerControllerCommand(command, "failed");
+		return;
 	}
+	jump(to, back);
+	completeAfterNavigation(command);
 }
 
 function handlePlayerControllerCommand(message: Record<string, unknown>): boolean {
 	switch (message.command) {
-		case "restart": {
-			const command = playerControllerCommand(message, "restart");
-			if (command !== undefined) void runRestartControllerCommand(command);
+		case "walk": {
+			const command = playerControllerCommand(message, "walk", ["to", "back"]);
+			if (command !== undefined && typeof message.to === "string" && typeof message.back === "boolean") {
+				runWalkControllerCommand(command, message.to, message.back);
+			}
 			return true;
 		}
 		case "dismiss-external": {
@@ -1072,23 +1078,39 @@ function followGeometry(): void {
 	if (config === undefined || !embedded) return;
 	let geometryRevision = 0;
 	let geometryReadyScheduled = false;
+	/**
+	 * Something asked while a pass was already in flight. The ask is kept rather
+	 * than dropped, because the two are not the same question: a resize landing
+	 * mid-pass means the frame this pass is about to measure has not finished
+	 * changing size, so the pass reads the old box, says nothing, and nothing is
+	 * left to ask again. That is a shell that waits on a reveal forever.
+	 */
+	let geometryReadyAgain = false;
 	const scheduleGeometryReady = () => {
-		if (geometryReadyScheduled || geometryRevision === 0) return;
+		if (geometryRevision === 0) return;
+		if (geometryReadyScheduled) {
+			geometryReadyAgain = true;
+			return;
+		}
 		geometryReadyScheduled = true;
 		requestAnimationFrame(() => {
 			requestAnimationFrame(() => {
 				geometryReadyScheduled = false;
 				const geometry = config.frames[currentFrame];
-				if (geometry === undefined || window.innerWidth !== geometry.w || window.innerHeight !== geometry.h) {
+				if (geometry !== undefined && window.innerWidth === geometry.w && window.innerHeight === geometry.h) {
+					geometryReadyAgain = false;
+					postPlayerMessage({
+						spool: "player-geometry-ready",
+						revision: geometryRevision,
+						frame: currentFrame,
+						w: window.innerWidth,
+						h: window.innerHeight,
+					});
 					return;
 				}
-				postPlayerMessage({
-					spool: "player-geometry-ready",
-					revision: geometryRevision,
-					frame: currentFrame,
-					w: window.innerWidth,
-					h: window.innerHeight,
-				});
+				if (!geometryReadyAgain) return;
+				geometryReadyAgain = false;
+				scheduleGeometryReady();
 			});
 		});
 	};
@@ -1356,20 +1378,25 @@ function followGeometry(): void {
 			announcePendingMount();
 			scheduleGeometryReady();
 		});
-		// Where the pointer is, not merely that it moved: the pill comes back on
-		// proximity now, and this document is scaled and offset inside the stage,
-		// so only the shell can turn this into a window position (#210).
+		// Where the pointer is, not merely that it moved: the edge bar is summoned
+		// by resting against the top of the window, and this document covers it,
+		// so the shell can only know where the hand is by being told (#227).
 		addEventListener("mousemove", (event) => {
 			postPlayerMessage({ spool: "player-wake", y: event.clientY });
 		});
-		// Spool never steals a plain key from a live frame; its own gestures live
-		// behind accel (#210). Focus sits in here whenever a prototype is being
-		// used, so these two chords only reach the shell by being forwarded.
+		// And that it has gone. A pointer on its way to the browser's own chrome
+		// crosses the top edge and leaves; without this the dwell it started on
+		// the way through would finish and peel the bar in behind it.
+		window.document.documentElement.addEventListener("mouseleave", () => {
+			postPlayerMessage({ spool: "player-wake", y: -1 });
+		});
+		// Spool never steals a plain key from a live frame; its own gesture lives
+		// behind accel (#227). Focus sits in here whenever a prototype is being
+		// used, so this chord only reaches the shell by being forwarded.
 		addEventListener("keydown", (event) => {
-			const chord = accelChord(event);
-			if (chord === undefined) return;
+			if (accelChord(event) === undefined) return;
 			event.preventDefault();
-			postPlayerMessage({ spool: "player-key", key: chord });
+			postPlayerMessage({ spool: "player-key", key: "leave" });
 		});
 	}
 }
@@ -1445,8 +1472,9 @@ const playerController: PlayerController = {
 		play !== undefined && Object.hasOwn(play.frames, frame)
 			? (play.frames[frame] as { w: number; h: number })
 			: { w: 390, h: 844 },
+	frames: () => (play === undefined ? [] : Object.keys(play.frames)),
 	terminal: (frame) => play?.terminals !== undefined && Object.hasOwn(play.terminals, frame),
-	restart: () => void restartSession(),
+	walk: (frame, back = false) => jump(frame, back),
 	dismissExternal() {
 		if (externalHref === null) return;
 		externalHref = null;
@@ -1514,7 +1542,9 @@ export function bootPlayer(frames: Record<string, ComponentType>): void {
 		});
 		return;
 	}
-	createRoot(root).render(createElement(Player, { frames: screens, controller: playerController }));
+	createRoot(root).render(
+		createElement(Player, { project: config.project, frames: screens, controller: playerController }),
+	);
 }
 
 function PlayerDocument({ frames }: { frames: Record<string, ComponentType> }) {
