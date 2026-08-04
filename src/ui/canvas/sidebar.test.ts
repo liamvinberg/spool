@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { accelKeyName } from "../../runtime/platform-keys";
 import { attachHotkeyLayer } from "../hotkey-dispatch";
 import type { HistoryEntry } from "./history";
-import { CanvasSidebar, type RailEntry, type RunEntry } from "./sidebar";
+import { CanvasSidebar, type FrameSpan, type RailEntry, type RunEntry } from "./sidebar";
 
 /** The toggle modifier as this environment binds it — ctrl under happy-dom, ⌘ on a Mac. */
 const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
@@ -383,6 +383,32 @@ describe("the sidebar scope", () => {
 		// and the next is the shop folder, which travelling never presses
 		await act(async () => press("ArrowDown"));
 		expect(onSelectFrame).toHaveBeenCalledTimes(1);
+	});
+
+	/**
+	 * A navigation key must never edit the layout. Unclaimed, ⇧↓ falls past the
+	 * rail to the canvas and nudges the selection ten pixels, so the rail claims
+	 * it and answers with the range the rows it swept name.
+	 */
+	it("stretches the selection on ⇧ travel instead of nudging the frames", async () => {
+		const spans: FrameSpan[] = [];
+		const { host } = await render({
+			pages: [],
+			frames: [
+				{ name: "home", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+				{ name: "shell", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+			],
+			onExtendSelection: (span: FrameSpan) => spans.push(span),
+		});
+		const nudgeFar = vi.fn();
+		detachers.push(attachHotkeyLayer({ scope: "canvas", handlers: { "canvas.nudge-far": nudgeFar } }));
+
+		focusList(host);
+		await act(async () => press("ArrowDown"));
+		await act(async () => press("ArrowDown", { shiftKey: true }));
+
+		expect(nudgeFar).not.toHaveBeenCalled();
+		expect(spans.at(-1)?.("home")).toEqual(["home", "shell"]);
 	});
 
 	it("takes a whole page to the Trash as one entry", async () => {
@@ -857,6 +883,7 @@ async function render(overrides: Partial<React.ComponentProps<typeof CanvasSideb
 		selected: [],
 		onSwitchPage: vi.fn(),
 		onSelectFrame: vi.fn(),
+		onExtendSelection: vi.fn(),
 		onDoubleClickFrame: vi.fn(),
 		onTrashFrames: vi.fn(),
 		onTrashPage: vi.fn(),

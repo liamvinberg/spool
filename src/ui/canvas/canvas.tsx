@@ -1422,6 +1422,26 @@ export function ProjectCanvas({
 		}
 	};
 
+	/**
+	 * ⇧ travel in the rail, as a selection out here.
+	 *
+	 * The same range a ⇧ click asks for, so it comes from the same place; what it
+	 * does not do is press the row it reached, which is why it is its own call.
+	 * With no anchor there is nothing to stretch from, and a page this canvas is
+	 * not on holds frames it could not show a selection of.
+	 */
+	const extendFrameRange = (span: FrameSpan) => {
+		const anchor = frameAnchor.current;
+		const held = anchor === null ? undefined : navigatorFrames.find((candidate) => candidate.name === anchor);
+		if (anchor === null || held === undefined || pageOf(held) !== activePageRef.current) return;
+		const range = span(anchor);
+		if (range.length === 0) return;
+		setTool("select");
+		setPicked([]);
+		pickedChain.current = null;
+		setSelected([...range]);
+	};
+
 	const flyToFrame = (name: string) => {
 		const frame = framesRef.current.find((candidate) => candidate.name === name);
 		const viewport = viewportRef.current;
@@ -2765,6 +2785,7 @@ export function ProjectCanvas({
 					selected={selected}
 					onSwitchPage={activatePageFromTree}
 					onSelectFrame={selectFrameRow}
+					onExtendSelection={extendFrameRange}
 					onDoubleClickFrame={flyToFrame}
 					onTrashFrames={stageTrash}
 					onTrashPage={(page, names) => stageEntry({ frames: names, page })}

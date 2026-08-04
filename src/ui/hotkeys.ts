@@ -291,6 +291,14 @@ export const HOTKEYS = [
 		shown: ["↑↓"],
 	},
 	{
+		id: "sidebar.extend",
+		scope: "sidebar",
+		group: "Pages",
+		label: "Extend the selection as you walk",
+		keys: ["shift+arrowup", "shift+arrowdown"],
+		shown: ["⇧↑↓"],
+	},
+	{
 		id: "sidebar.collapse",
 		scope: "sidebar",
 		group: "Pages",

@@ -202,6 +202,7 @@ export function CanvasSidebar({
 	selected,
 	onSwitchPage,
 	onSelectFrame,
+	onExtendSelection,
 	onDoubleClickFrame,
 	onTrashFrames,
 	onTrashPage,
@@ -223,6 +224,8 @@ export function CanvasSidebar({
 	onSwitchPage: (page: string) => void;
 	/** `span` answers what a ⇧ range covers; only a click that could be one carries it. */
 	onSelectFrame: (name: string, modifiers: SelectModifiers, span?: FrameSpan) => void;
+	/** ⇧ travel: the rows the cursor has swept from the anchor, as the selection they name. */
+	onExtendSelection: (span: FrameSpan) => void;
 	onDoubleClickFrame: (name: string) => void;
 	onTrashFrames: (names: string[]) => void;
 	/** A page and everything inside it, as one entry on the trash toast. */
@@ -448,14 +451,35 @@ export function CanvasSidebar({
 		[onSelectFrame, scrollRowIntoView],
 	);
 
-	const step = useCallback(
+	/** The row a step from the cursor reaches; from nowhere, the near end of the list. */
+	const stepped = useCallback((delta: number): RailRow | undefined => {
+		const all = now.current.rows;
+		const at = all.findIndex((row) => rowKey(row) === now.current.cursor);
+		const next = at === -1 ? (delta > 0 ? 0 : all.length - 1) : Math.max(0, Math.min(all.length - 1, at + delta));
+		return all[next];
+	}, []);
+
+	const step = useCallback((delta: number) => landOn(stepped(delta)), [landOn, stepped]);
+
+	/**
+	 * ⇧ travel: the cursor moves and the selection stretches to it.
+	 *
+	 * Registered rather than left to fall through, because a navigation key that
+	 * nobody claims reaches the canvas and nudges the selection ten pixels — an
+	 * arrow silently editing the layout. It takes the cursor without pressing the
+	 * row, so travelling into a page adds nothing and switches nothing: a page row
+	 * is a place the cursor can be and not a thing a selection can hold.
+	 */
+	const sweep = useCallback(
 		(delta: number) => {
-			const all = now.current.rows;
-			const at = all.findIndex((row) => rowKey(row) === now.current.cursor);
-			const next = at === -1 ? (delta > 0 ? 0 : all.length - 1) : Math.max(0, Math.min(all.length - 1, at + delta));
-			landOn(all[next]);
+			const row = stepped(delta);
+			if (row === undefined) return;
+			const key = rowKey(row);
+			setCursor(key);
+			scrollRowIntoView(key);
+			onExtendSelection((anchor) => framesBetween(now.current.rows, anchor, key));
 		},
-		[landOn],
+		[stepped, scrollRowIntoView, onExtendSelection],
 	);
 
 	/* ── renaming ────────────────────────────────────────────────────── */
@@ -1094,6 +1118,10 @@ export function CanvasSidebar({
 					event?.preventDefault();
 					step(event?.key === "ArrowUp" ? -1 : 1);
 				},
+				"sidebar.extend": (event) => {
+					event?.preventDefault();
+					sweep(event?.key === "ArrowUp" ? -1 : 1);
+				},
 				"sidebar.expand": (event) => {
 					event?.preventDefault();
 					const row = now.current.cursorRow;
@@ -1137,7 +1165,7 @@ export function CanvasSidebar({
 			detachMenu();
 			detach();
 		};
-	}, [step, setOpen, landOn, beginRename, trash, duplicate, copy, paste]);
+	}, [step, sweep, setOpen, landOn, beginRename, trash, duplicate, copy, paste]);
 
 	/**
 	 * Type a name and the cursor walks to it.
