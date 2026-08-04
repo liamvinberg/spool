@@ -624,6 +624,31 @@ describe("pages inside pages", () => {
 		expect(top?.style.paddingLeft).toBe("0px");
 	});
 
+	/**
+	 * Reach is what tells the two verbs apart: a control on one row may act on
+	 * that row's folder and everything in it, and the whole tree is the header's
+	 * to fold — which is also the only place it can be reached from once the tree
+	 * is open enough to leave no empty space to right-click.
+	 */
+	it("folds one page's subtree from ⌥ on its chevron, and the whole tree from the header", async () => {
+		const { host } = await render({ pages: deepPages, frames: deepFrames });
+		expect(host.querySelector<HTMLButtonElement>('button[aria-label="Collapse all"]')?.disabled).toBe(true);
+
+		await act(async () => {
+			host
+				.querySelector<HTMLButtonElement>('button[aria-label="Expand explorations"]')
+				?.dispatchEvent(new MouseEvent("click", { bubbles: true, altKey: true }));
+		});
+		expect(host.querySelector('button[aria-label="Collapse explorations"]')).not.toBeNull();
+		expect(host.querySelector('button[aria-label="Collapse chat"]')).not.toBeNull();
+		expect(host.querySelector('button[aria-label="Expand application"]')).not.toBeNull();
+
+		const foldAll = host.querySelector<HTMLButtonElement>('button[aria-label="Collapse all"]');
+		expect(foldAll?.disabled).toBe(false);
+		await act(async () => foldAll?.click());
+		expect(pagesListed(host)).toEqual(["application page", "explorations page"]);
+	});
+
 	it("moves a page into another one, and puts it back where it came from", async () => {
 		const kept: HistoryEntry[] = [];
 		const run: { current: RunEntry | null } = { current: null };

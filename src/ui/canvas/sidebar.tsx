@@ -384,19 +384,26 @@ export function CanvasSidebar({
 
 	/* ── expanding ───────────────────────────────────────────────────── */
 
-	const setOpen = useCallback((page: string, open: boolean) => {
+	/**
+	 * A page, and with `deep` the pages inside it too.
+	 *
+	 * Deep is what ⌥ on a chevron means: the folder and everything it holds, which
+	 * is the reach a control on one row is allowed to have. Every page in the
+	 * project is the header's verb, and it says so in a word.
+	 */
+	const setOpen = useCallback((page: string, open: boolean, deep = false) => {
+		const pages = deep ? [page, ...now.current.orderedPages.filter((each) => pageWithin(page, each))] : [page];
 		setExpanded((was) => {
 			const next = new Set(was);
-			if (open) next.add(page);
-			else next.delete(page);
+			for (const each of pages) {
+				if (open) next.add(each);
+				else next.delete(each);
+			}
 			return next;
 		});
 	}, []);
 
-	/** ⌥ on a chevron means every page, at every depth — the whole tree at once. */
-	const foldAll = useCallback((open: boolean) => {
-		setExpanded(open ? new Set(now.current.orderedPages) : new Set());
-	}, []);
+	const collapseAll = useCallback(() => setExpanded(new Set()), []);
 
 	/**
 	 * A frame picked from somewhere that is not this rail gets a row to stand on.
@@ -1287,6 +1294,24 @@ export function CanvasSidebar({
 							>
 								<PlusIcon className="h-2.5 w-2.5" />
 							</button>
+							{/* a fully open tree has no empty space left to right-click, which is
+							    where this verb used to be the only place it was. Dimmed rather
+							    than taken away when everything is already shut: a header that
+							    reflows as you fold the tree is a header you cannot aim at */}
+							<button
+								type="button"
+								aria-label="Collapse all"
+								disabled={expanded.size === 0}
+								onClick={collapseAll}
+								className={cn(
+									"flex h-7 w-7 items-center justify-center rounded-sm transition-[color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
+									expanded.size === 0
+										? "text-muted/25"
+										: "text-muted/60 hover:bg-surface hover:text-text active:scale-90",
+								)}
+							>
+								<FoldIcon className="h-2.5 w-2.5" />
+							</button>
 							<button
 								type="button"
 								aria-label="Collapse pages"
@@ -1354,8 +1379,7 @@ export function CanvasSidebar({
 										}}
 										onOpen={(deep) => {
 											if (row.kind !== "page") return;
-											if (deep) foldAll(!row.open);
-											else setOpen(row.page, !row.open);
+											setOpen(row.page, !row.open, deep);
 										}}
 										onRename={() => beginRename(row)}
 										onFly={() => {
@@ -1442,7 +1466,7 @@ export function CanvasSidebar({
 									if (menu.target.kind === "frame") onOpenEditor(menu.target.name);
 								},
 								trash,
-								collapseAll: () => foldAll(false),
+								collapseAll,
 							}}
 						/>,
 						document.body,
@@ -1898,6 +1922,21 @@ function PlusIcon({ className }: { className?: string }) {
 	return (
 		<svg viewBox="0 0 10 10" className={className} fill="none" aria-hidden="true">
 			<path d="M5 .75v8.5M.75 5h8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+		</svg>
+	);
+}
+
+/** Two chevrons closing on the line between them: the whole tree folding shut. */
+function FoldIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 10 10" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M1.75 1.5 5 4.25 8.25 1.5M1.75 8.5 5 5.75 8.25 8.5"
+				stroke="currentColor"
+				strokeWidth="1.3"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
 		</svg>
 	);
 }

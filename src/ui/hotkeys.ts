@@ -360,7 +360,7 @@ export const HOTKEYS = [
 		id: "sidebar.fold-all",
 		scope: "sidebar",
 		group: "Pages",
-		label: "Open or shut every page",
+		label: "Open or shut a page and every page inside it",
 		gesture: "⌥ click a chevron",
 	},
 	{ id: "sidebar.close-menu", scope: "sidebar", group: "Pages", label: "", keys: ["escape"], listed: false },
