@@ -260,6 +260,52 @@ describe("the stored order", () => {
 	});
 });
 
+/**
+ * A drag across the tree looks into the folders it passes without reshaping
+ * them: a shut page opens the instant the drag arrives, and shuts again behind
+ * it unless the drop landed inside. The dwell this replaced left every page a
+ * drag rested on open for good.
+ */
+describe("a drag through the tree", () => {
+	it("opens a shut page on arrival and closes it again behind itself", async () => {
+		const { host } = await render();
+		await liftRow(host, 'button[aria-label="home frame"]', 20, 20);
+
+		// the middle band of the shop row, which is how a frame changes page
+		await dragTo(52, 20);
+		expect(host.querySelector('button[aria-label="Collapse shop"]')).not.toBeNull();
+
+		// out again, and dropped on the root page's own list
+		await dragTo(6, 20);
+		await letGo(6, 20);
+		expect(host.querySelector('button[aria-label="Expand shop"]')).not.toBeNull();
+		expect(asked.some((call) => call.url.endsWith("/frames/move"))).toBe(false);
+	});
+
+	it("keeps the page open when that is where the drop landed", async () => {
+		const { host } = await render();
+		await liftRow(host, 'button[aria-label="home frame"]', 20, 21);
+		await dragTo(52, 21);
+		await letGo(52, 21);
+
+		expect(asked.find((call) => call.url.endsWith("/frames/move"))?.body).toEqual({ frames: ["home"], page: "shop" });
+		expect(host.querySelector('button[aria-label="Collapse shop"]')).not.toBeNull();
+	});
+
+	it("never shuts a page somebody had open already", async () => {
+		const { host } = await render();
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="Expand shop"]')?.click();
+		});
+		await liftRow(host, 'button[aria-label="home frame"]', 20, 22);
+		await dragTo(52, 22);
+		await dragTo(6, 22);
+		await letGo(6, 22);
+
+		expect(host.querySelector('button[aria-label="Collapse shop"]')).not.toBeNull();
+	});
+});
+
 describe("renaming in place", () => {
 	it("opens on the selected row, commits on blur, and keeps the frame where it was", async () => {
 		const onRefresh = vi.fn();
@@ -824,11 +870,16 @@ describe("the root page has no row", () => {
  * Drag one row to a pointer y and let go.
  *
  * Rows are placed by arithmetic rather than measured, so a client y maps onto a
- * gap even here, where every box reads as zero. The wait is the drag loop's own
- * animation frame: the landing is resolved there, so letting go before one has
- * run is a drag that never chose anywhere to land.
+ * gap even here, where every box reads as zero.
  */
 async function dragRow(host: HTMLElement, selector: string, fromY: number, toY: number, pointerId = 8) {
+	await liftRow(host, selector, fromY, pointerId);
+	await dragTo(toY, pointerId);
+	await letGo(toY, pointerId);
+}
+
+/** Press a row and travel far enough that the press became a drag. */
+async function liftRow(host: HTMLElement, selector: string, fromY: number, pointerId: number) {
 	// every box reads as zero here, which would put the pointer inside the list's
 	// bottom auto-scroll band for the whole drag and drift the drop; give the
 	// list the height it has on screen
@@ -846,13 +897,26 @@ async function dragRow(host: HTMLElement, selector: string, fromY: number, toY: 
 	await act(async () => {
 		row?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId, clientY: fromY }));
 		window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId, clientY: fromY - 10 }));
-		window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId, clientY: toY }));
+	});
+}
+
+/**
+ * Carry the drag to a y and let it be read there. The wait is the drag loop's
+ * own animation frame: where the pointer is is resolved there, so arriving
+ * before one has run is a drag that was never anywhere.
+ */
+async function dragTo(y: number, pointerId: number) {
+	await act(async () => {
+		window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId, clientY: y }));
 	});
 	await act(async () => {
 		await new Promise((resolve) => setTimeout(resolve, 40));
 	});
+}
+
+async function letGo(y: number, pointerId: number) {
 	await act(async () => {
-		window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId, clientY: toY }));
+		window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId, clientY: y }));
 	});
 }
 

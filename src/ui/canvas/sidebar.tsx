@@ -101,8 +101,6 @@ const SLOP = 5;
 /** the band at each end of the list that pulls the scroll along */
 const EDGE = 36;
 const EDGE_SPEED = 14;
-/** how long a shut page is rested on before it opens itself */
-const SPRING_MS = 450;
 /** how long a typed jump keeps collecting letters */
 const TYPED_MS = 700;
 /** the house curve, which every rail transition already wears */
@@ -159,8 +157,8 @@ interface DragLive {
 	y: number;
 	grabY: number;
 	active: boolean;
-	springPage: string | null;
-	springAt: number;
+	/** the shut pages this drag opened, which are the ones it closes behind itself */
+	opened: Set<string>;
 }
 
 interface DragKit {
@@ -255,7 +253,6 @@ export function CanvasSidebar({
 	const [menu, setMenu] = useState<RailMenuState | null>(null);
 	const [kit, setKit] = useState<DragKit | null>(null);
 	const [landing, setLanding] = useState<Landing | null>(null);
-	const [springPage, setSpringPage] = useState<string | null>(null);
 	const [pageTooltip, setPageTooltip] = useState<{ page: string; x: number; y: number } | null>(null);
 
 	const asideRef = useRef<HTMLElement | null>(null);
@@ -899,21 +896,19 @@ export function CanvasSidebar({
 				setLanding(next);
 			}
 
-			// spring-loaded folders: rest on a shut page and it opens itself
+			// a shut page opens the instant the drag arrives at it, and shuts again
+			// behind the drag unless the drop landed inside: passing over a folder is
+			// how you look into it, not how you reshape the tree
 			const at = rowAt(all, contentY);
 			const over = at === -1 ? undefined : all[at];
-			const candidate =
-				over?.kind === "page" && !over.open && allowed(current, { kind: "into", page: over.page })
-					? over.page
-					: null;
-			if (candidate !== current.springPage) {
-				current.springPage = candidate;
-				current.springAt = performance.now();
-				setSpringPage(candidate);
-			} else if (candidate !== null && performance.now() - current.springAt > SPRING_MS) {
-				setOpen(candidate, true);
-				current.springPage = null;
-				setSpringPage(null);
+			if (
+				over?.kind === "page" &&
+				!over.open &&
+				!current.opened.has(over.page) &&
+				allowed(current, { kind: "into", page: over.page })
+			) {
+				current.opened.add(over.page);
+				setOpen(over.page, true);
 			}
 		}
 		ticking.current = requestAnimationFrame(tick);
@@ -1029,10 +1024,18 @@ export function CanvasSidebar({
 			if (current?.active === true) justDragged.current = true;
 			setKit(null);
 			setLanding(null);
-			setSpringPage(null);
-			if (drop && current?.active === true && target !== null) applyDrop(current, target);
+			const landed = drop && current?.active === true && target !== null ? target : null;
+			if (landed !== null && current !== null) applyDrop(current, landed);
+			// the pages this drag opened close behind it, all but the one the drop
+			// landed in and the ones it is inside: a row nobody can see is not where
+			// somebody just put it. A page that was open before the drag was never
+			// this drag's to shut.
+			const kept = new Set(landed === null ? [] : pageChain(landed.page));
+			for (const page of current?.opened ?? []) {
+				if (!kept.has(page)) setOpen(page, false);
+			}
 		},
-		[applyDrop],
+		[applyDrop, setOpen],
 	);
 
 	useEffect(() => {
@@ -1090,8 +1093,7 @@ export function CanvasSidebar({
 			y: event.clientY,
 			grabY: event.clientY - event.currentTarget.getBoundingClientRect().top,
 			active: false,
-			springPage: null,
-			springAt: 0,
+			opened: new Set(),
 		};
 		if (ticking.current === null) ticking.current = requestAnimationFrame(tick);
 	}
@@ -1382,7 +1384,6 @@ export function CanvasSidebar({
 										cursored={cursor === rowKey(row)}
 										lifted={kit !== null && kit.kind === row.kind && kit.names.includes(rowName(row))}
 										into={landing?.kind === "into" && row.kind === "page" && landing.page === row.page}
-										springing={row.kind === "page" && springPage === row.page}
 										rename={rename}
 										onPress={pressRow}
 										onActivate={() => {
@@ -1595,7 +1596,6 @@ function TreeRow({
 	cursored,
 	lifted,
 	into,
-	springing,
 	rename,
 	onPress,
 	onActivate,
@@ -1612,7 +1612,6 @@ function TreeRow({
 	cursored: boolean;
 	lifted: boolean;
 	into: boolean;
-	springing: boolean;
 	rename: RenameHandle | null;
 	onPress: (event: React.PointerEvent<HTMLElement>, row: RailRow) => void;
 	onActivate: () => void;
@@ -1664,10 +1663,9 @@ function TreeRow({
 							aria-expanded={row.open}
 							onPointerDown={(event) => event.stopPropagation()}
 							onClick={(event) => onOpen(event.altKey)}
-							className="relative flex h-full w-6 shrink-0 items-center justify-center"
+							className="flex h-full w-6 shrink-0 items-center justify-center"
 						>
 							<ChevronIcon open={row.open} className="h-2.5 w-2.5" />
-							{springing ? <SpringArc /> : null}
 						</button>
 						{rename === null ? (
 							<>
@@ -1849,30 +1847,6 @@ function RenameField({
 				</span>
 			)}
 		</span>
-	);
-}
-
-/** The 450ms a shut page is rested on before it opens itself, drawn on its chevron. */
-function SpringArc() {
-	return (
-		<svg
-			viewBox="0 0 20 20"
-			className="pointer-events-none absolute h-5 w-5 text-thread"
-			fill="none"
-			aria-hidden="true"
-		>
-			<circle
-				cx="10"
-				cy="10"
-				r="8"
-				pathLength={1}
-				stroke="currentColor"
-				strokeWidth="1.4"
-				strokeLinecap="round"
-				strokeDasharray="1"
-				className="-rotate-90 origin-center animate-spring-arc"
-			/>
-		</svg>
 	);
 }
 
