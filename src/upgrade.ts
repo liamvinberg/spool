@@ -300,6 +300,24 @@ export async function runUpgrade(
 }
 
 /**
+ * Whether this install can take an upgrade at all — the gate on offering one.
+ * Only a package manager's install has a door: a checkout upgrades by `git
+ * pull`, and any other unmanaged layout by hand, so `planUpgrade` refuses
+ * both. A daemon that offered one anyway would toast a button that can only
+ * fail, which is what the dogfood checkout did until this gate existed. False
+ * also silences the daily registry ask: nothing worth phoning home about.
+ */
+export function selfUpgradeable(
+	io: Pick<UpgradeIo, "cliPath" | "resolveReal" | "env" | "execPath" | "isFile"> = {},
+): boolean {
+	try {
+		return planUpgrade((io.resolveReal ?? realpathSync)(io.cliPath ?? selfCliPath()), io).ok;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * The toast door: refuse what the CLI would refuse (so the canvas hears the
  * reason immediately), otherwise spawn `spool upgrade` detached, logging
  * with the daemon. The SSE drop and the version flip tell the rest.

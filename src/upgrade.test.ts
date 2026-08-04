@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { DaemonStatus } from "./daemon/lifecycle";
 import { SpoolError } from "./errors";
 import { makeTempDir } from "./test-helpers";
-import { planUpgrade, requestUpgrade, runUpgrade, type UpgradeIo } from "./upgrade";
+import { planUpgrade, requestUpgrade, runUpgrade, selfUpgradeable, type UpgradeIo } from "./upgrade";
 
 describe("planUpgrade", () => {
 	it("classifies an npm-global install and resolves npm beside node", () => {
@@ -369,6 +369,49 @@ describe("runUpgrade", () => {
 		await runUpgrade(makeTempDir(), "0.1.0", io);
 
 		expect(lines.some((line) => line.includes("npm"))).toBe(true);
+	});
+});
+
+describe("selfUpgradeable", () => {
+	const globalCli = "/opt/homebrew/lib/node_modules/spool.page/dist/cli.js";
+
+	it("is true for an install a package manager owns", () => {
+		expect(
+			selfUpgradeable({
+				cliPath: globalCli,
+				resolveReal: (path) => path,
+				execPath: "/opt/homebrew/bin/node",
+				isFile: (p) => p === "/opt/homebrew/bin/npm",
+			}),
+		).toBe(true);
+	});
+
+	it("is false for the checkout, whose only upgrade is git", () => {
+		expect(selfUpgradeable({ cliPath: "/Users/liam/projects/spool/src/cli.ts", resolveReal: (path) => path })).toBe(
+			false,
+		);
+	});
+
+	it("is false when the manager that owns the install cannot be found", () => {
+		expect(
+			selfUpgradeable({
+				cliPath: globalCli,
+				resolveReal: (path) => path,
+				execPath: "/opt/homebrew/bin/node",
+				isFile: () => false,
+			}),
+		).toBe(false);
+	});
+
+	it("is false when the running cli path cannot be resolved", () => {
+		expect(
+			selfUpgradeable({
+				cliPath: globalCli,
+				resolveReal: () => {
+					throw new Error("ENOENT");
+				},
+			}),
+		).toBe(false);
 	});
 });
 
