@@ -680,13 +680,34 @@ export function CanvasSidebar({
 	);
 
 	/**
+	 * Whether the project already answers to a name (#228's law, asked here).
+	 *
+	 * A frame's name has to miss every frame and every page's own name, at whatever
+	 * depth that page sits; a page's path has to miss every page, and its own name
+	 * every frame. Two pages under different parents may share a name, which is why
+	 * one of these asks about a path and the other about a name.
+	 */
+	const claimedBy = useCallback(
+		(of: "frame" | "page", name: string): boolean =>
+			of === "page"
+				? pages.includes(name) || frames.some((frame) => frame.name === pageName(name))
+				: frames.some((frame) => frame.name === name) || pages.some((page) => pageName(page) === name),
+		[frames, pages],
+	);
+
+	/**
 	 * Commit what was typed.
 	 *
-	 * The daemon owns the answer: a name claimed anywhere in the project — by a
-	 * frame or by a page — comes back 409, and the row keeps its input and says
-	 * so rather than quietly minting a different name. Renaming a row to what it
-	 * is already called never travels at all, which is what commit-on-blur does
-	 * most of the time.
+	 * A name the project already holds is refused where it was typed: the rail is
+	 * drawing every frame and every page, so a collision it can see does not need a
+	 * round trip to be told about. Everything that gets past that is the daemon's
+	 * to answer — it is reading the disk and this is reading a projection — and its
+	 * refusal keeps the input up and says why rather than quietly minting a
+	 * different name. Renaming a row to what it is already called never travels at
+	 * all, which is what commit-on-blur does most of the time.
+	 *
+	 * Nothing here is painted before the answer arrives. A name is identity in
+	 * spool, so a rename taken back a moment later is worse than the wait.
 	 */
 	const commitRename = useCallback(async () => {
 		const at = renaming;
@@ -699,6 +720,10 @@ export function CanvasSidebar({
 			}
 			const parent = at.born;
 			const path = pageUnder(parent, wanted);
+			if (claimedBy("page", path)) {
+				setRenaming({ ...at, error: refusalLine(409) });
+				return;
+			}
 			setRenaming({ ...at, busy: true, error: null });
 			const done = await createPage(project, path);
 			if (done.kind === "refused") {
@@ -736,6 +761,10 @@ export function CanvasSidebar({
 			setRenaming(null);
 			return;
 		}
+		if (claimedBy(row.kind === "page" ? "page" : "frame", to)) {
+			setRenaming({ ...at, error: refusalLine(409) });
+			return;
+		}
 		setRenaming({ ...at, busy: true, error: null });
 		const done = row.kind === "page" ? await renamePage(project, from, to) : await renameFrame(project, from, to);
 		if (done.kind === "refused") {
@@ -751,6 +780,7 @@ export function CanvasSidebar({
 		renaming,
 		gathering,
 		project,
+		claimedBy,
 		storeOrder,
 		cancelRename,
 		moveFramesInto,

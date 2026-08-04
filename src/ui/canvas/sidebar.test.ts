@@ -331,23 +331,58 @@ describe("renaming in place", () => {
 		expect(onRefresh).toHaveBeenCalled();
 	});
 
-	it("stays in the input with a mono reason when the name is claimed", async () => {
+	/** The disk moved under the projection: only the daemon could have known. */
+	it("stays in the input with a mono reason when the daemon refuses the name", async () => {
 		stubDaemon({ "/frames/rename": { status: 409 } });
 		const { host } = await render();
-		const row = host.querySelector<HTMLElement>('button[aria-label="home frame"]')?.parentElement;
-		await act(async () => {
-			row?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 5 }));
-			window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 5 }));
-		});
-		focusList(host);
-		await act(async () => press("F2"));
+		await beginRenameOf(host, "home frame", 5);
 		const input = host.querySelector<HTMLInputElement>('input[aria-label="Rename"]');
-		await act(async () => type(input, "checkout"));
+		await act(async () => type(input, "landing"));
 		await act(async () => input?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
 
+		expect(asked.some((call) => call.url.endsWith("/frames/rename"))).toBe(true);
 		expect(host.querySelector('input[aria-label="Rename"]')).not.toBeNull();
 		expect(host.querySelector('[role="alert"]')?.textContent).toBe("name taken");
 		expect(host.querySelector('input[aria-label="Rename"]')?.getAttribute("aria-invalid")).toBe("true");
+	});
+
+	/**
+	 * The rail is drawing every frame and every page, so a name it can see is
+	 * taken is refused where it was typed. The wording is the daemon's own,
+	 * because it is the same refusal, said sooner.
+	 */
+	it("refuses a name the project already holds without asking the daemon", async () => {
+		const { host } = await render();
+		await beginRenameOf(host, "home frame", 11);
+		const input = host.querySelector<HTMLInputElement>('input[aria-label="Rename"]');
+		// checkout is a frame on another page, and shop is a page's own name
+		await act(async () => type(input, "checkout"));
+		await act(async () => input?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+		expect(host.querySelector('[role="alert"]')?.textContent).toBe("name taken");
+		expect(asked.some((call) => call.url.endsWith("/frames/rename"))).toBe(false);
+
+		await act(async () => type(host.querySelector<HTMLInputElement>('input[aria-label="Rename"]'), "shop"));
+		await act(async () =>
+			host
+				.querySelector<HTMLInputElement>('input[aria-label="Rename"]')
+				?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })),
+		);
+		expect(host.querySelector('[role="alert"]')?.textContent).toBe("name taken");
+		expect(asked.some((call) => call.url.endsWith("/frames/rename"))).toBe(false);
+	});
+
+	it("refuses a new page named after a page that exists, in the row that is naming it", async () => {
+		const { host } = await render();
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="New page"]')?.click();
+		});
+		const input = host.querySelector<HTMLInputElement>('input[aria-label="New page name"]');
+		await act(async () => type(input, "shop"));
+		await act(async () => input?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+
+		expect(host.querySelector('input[aria-label="New page name"]')).not.toBeNull();
+		expect(host.querySelector('[role="alert"]')?.textContent).toBe("name taken");
+		expect(asked.some((call) => call.url.endsWith("/pages/create"))).toBe(false);
 	});
 
 	it("is born in rename mode from the plus, and leaves nothing behind on escape", async () => {
@@ -1063,6 +1098,17 @@ function deadItems(): Array<string | null | undefined> {
 	return [...document.body.querySelectorAll('[role="menuitem"]')]
 		.filter((item) => item.hasAttribute("disabled"))
 		.map((item) => item.querySelector("span")?.textContent);
+}
+
+/** Put the cursor on a row and open its rename field, the way F2 does. */
+async function beginRenameOf(host: HTMLElement, label: string, pointerId: number) {
+	const row = host.querySelector<HTMLElement>(`button[aria-label="${label}"]`)?.parentElement;
+	await act(async () => {
+		row?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId }));
+		window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId }));
+	});
+	focusList(host);
+	await act(async () => press("F2"));
 }
 
 /** the pages the move picker is offering, in the order it lists them */
