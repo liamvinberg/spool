@@ -174,8 +174,11 @@ interface DragKit {
  * the canvas's trash toast, so neither is this rail's to run. Saying that in
  * the type rather than in a `default` branch is what keeps the runner from
  * reporting success for work it never did.
+ *
+ * A gather is in because half of it is: the frames are the rail's to move, and
+ * the page they were gathered into is the toast's to take away.
  */
-export type RailEntry = Extract<HistoryEntry, { kind: "rename" | "move" | "move-page" | "reorder" }>;
+export type RailEntry = Extract<HistoryEntry, { kind: "rename" | "move" | "move-page" | "reorder" | "gather" }>;
 
 /**
  * The rail's half of the canvas's one undo stack (#230).
@@ -249,6 +252,8 @@ export function CanvasSidebar({
 	const [renaming, setRenaming] = useState<RenameState | null>(null);
 	/** the page a new one is being named inside, when one is */
 	const [born, setBorn] = useState<string | null>(null);
+	/** the frames a new page is being made to hold, when it is being made for some */
+	const [gathering, setGathering] = useState<readonly string[]>([]);
 	const [clipboard, setClipboard] = useState<readonly string[]>([]);
 	const [menu, setMenu] = useState<RailMenuState | null>(null);
 	const [kit, setKit] = useState<DragKit | null>(null);
@@ -522,12 +527,20 @@ export function CanvasSidebar({
 
 	const cancelRename = useCallback(() => {
 		setBorn(null);
+		setGathering([]);
 		setRenaming(null);
 	}, []);
 
-	/** A page being named, in the page it will belong to — the root page by default. */
-	const newPage = useCallback((parent: string = ROOT_PAGE) => {
+	/**
+	 * A page being named, in the page it will belong to — the root page by default.
+	 *
+	 * `carry` is the frames it is being made to hold, which is Finder's New Folder
+	 * with Selection: the page is named first, because a page named `untitled` that
+	 * has to be renamed afterwards is two gestures where this is one.
+	 */
+	const newPage = useCallback((parent: string = ROOT_PAGE, carry: readonly string[] = []) => {
 		setBorn(parent);
+		setGathering(carry);
 		setMenu(null);
 		setExpanded((was) => new Set([...was, ...pageChain(parent)]));
 		setRenaming({ key: "born", draft: "", born: parent, error: null, busy: false });
@@ -540,6 +553,62 @@ export function CanvasSidebar({
 		}
 		return undefined;
 	}, []);
+
+	/**
+	 * Frames gathered onto a page, wherever the gesture came from.
+	 *
+	 * A frame that changes page changes folder, and the folder is the whole move:
+	 * geometry, stills, its URL and every flow into it ride along. On this side
+	 * that is two lists rewritten at once, so a verb that moves frames with no
+	 * pointer anywhere near it does exactly what the drag does — the same lists,
+	 * the same wire, the same rail put back when the daemon refuses.
+	 *
+	 * `minted` says the page was made by the same gesture, which is one entry
+	 * rather than two: the press that takes the frames back has to take the page
+	 * with them.
+	 */
+	const moveFramesInto = useCallback(
+		(names: readonly string[], page: string, index: number, minted = false) => {
+			const held = now.current.order;
+			// where each frame stands right now, read before the move lands: the
+			// inverse has to put every one of them back on its own page
+			const moved: Moved[] = [];
+			for (const name of names) {
+				const from = pageHolding(name);
+				if (from !== undefined && from !== page) moved.push({ name, from });
+			}
+			let next = held;
+			const lists: OrderList[] = [];
+			for (const source of new Set(moved.map((each) => each.from))) {
+				const before = namesOn(source);
+				const after = without(before, names);
+				next = withFrameOrder(next, source, after);
+				lists.push({ of: "frames", page: source, before, after });
+			}
+			const landing = namesOn(page);
+			const arrived = insertAt(without(landing, names), names, index);
+			next = withFrameOrder(next, page, arrived);
+			lists.push({ of: "frames", page, before: landing, after: arrived });
+			storeOrder(next);
+			setOpen(page, true);
+			void moveFrames(project, [...names], page).then((done) => {
+				const carried = done.kind !== "refused" && moved.length > 0;
+				// the page exists whatever happened to the frames, so a move that never
+				// happened leaves it with the staged delete a fresh page has always had
+				if (minted) {
+					onRecord?.(
+						carried
+							? { kind: "gather", page, frames: moved, lists }
+							: { kind: "mint", staged: { frames: [], page } },
+					);
+				} else if (carried) onRecord?.({ kind: "move", frames: moved, to: page, lists });
+				// the move never happened: put the rail back rather than let it claim it did
+				if (done.kind === "refused") storeOrder(held);
+				onRefresh();
+			});
+		},
+		[project, namesOn, pageHolding, storeOrder, setOpen, onRecord, onRefresh],
+	);
 
 	/**
 	 * A page that moved's own bookkeeping on this side.
@@ -615,13 +684,16 @@ export function CanvasSidebar({
 			const held = pagesIn(parent);
 			storeOrder(withPageOrder(now.current.order, parent, insertAt(held, [wanted], held.length)));
 			setBorn(null);
+			setGathering([]);
 			setRenaming(null);
 			setExpanded((was) => new Set([...was, path]));
 			setCursor(`page:${path}`);
 			onSwitchPage(path);
-			// a page that was nowhere a moment ago: the only inverse is a delete,
-			// which on this canvas is the staged one (#230)
-			onRecord?.({ kind: "mint", staged: { frames: [], page: path } });
+			// the frames it was made for follow it in, and the two halves are one entry
+			// because one press has to take both of them back. A page made for nothing
+			// was nowhere a moment ago, so its only inverse is the staged delete (#230)
+			if (gathering.length > 0) moveFramesInto(gathering, path, 0, true);
+			else onRecord?.({ kind: "mint", staged: { frames: [], page: path } });
 			onRefresh();
 			return;
 		}
@@ -650,9 +722,11 @@ export function CanvasSidebar({
 		onRefresh();
 	}, [
 		renaming,
+		gathering,
 		project,
 		storeOrder,
 		cancelRename,
+		moveFramesInto,
 		pageMoved,
 		frameRenamed,
 		pagesIn,
@@ -802,14 +876,18 @@ export function CanvasSidebar({
 					onRefresh();
 					return true;
 				}
+				// one body, because a gather is a move whose destination the same gesture
+				// made: the page half of it is the toast's, and the frames are these lines
+				case "gather":
 				case "move": {
 					const held = now.current.order;
+					const to = entry.kind === "gather" ? entry.page : entry.to;
 					storeOrder(withLists(held, entry.lists, way));
 					// undo scatters the frames back to the pages they each came from;
 					// redo gathers them onto the one page the drop landed on
 					const groups = new Map<string, string[]>();
 					for (const moved of entry.frames) {
-						const page = way === "undo" ? moved.from : entry.to;
+						const page = way === "undo" ? moved.from : to;
 						groups.set(page, [...(groups.get(page) ?? []), moved.name]);
 					}
 					// one call per page, so a refusal partway leaves the groups before it
@@ -966,12 +1044,7 @@ export function CanvasSidebar({
 			if (target.kind === "pages") return;
 			const page = target.page;
 			const names = [...current.names];
-			const sources = new Set(
-				names.flatMap((name) => {
-					const row = now.current.rows.find((each) => each.kind === "frame" && each.name === name);
-					return row?.kind === "frame" ? [row.page] : [];
-				}),
-			);
+			const sources = new Set(names.map((name) => pageHolding(name)));
 			const index = target.kind === "frames" ? target.index : (now.current.framesByPage.get(page)?.length ?? 0);
 			if (sources.size === 1 && sources.has(page)) {
 				const before = namesOn(page);
@@ -980,37 +1053,9 @@ export function CanvasSidebar({
 				onRecord?.({ kind: "reorder", lists: [{ of: "frames", page, before, after }] });
 				return;
 			}
-			// a frame that changes page changes folder, and the folder is the whole
-			// move: geometry, stills, its URL and every flow into it ride along
-			let next = held;
-			const lists: OrderList[] = [];
-			for (const source of sources) {
-				if (source === page) continue;
-				const before = namesOn(source);
-				const after = without(before, names);
-				next = withFrameOrder(next, source, after);
-				lists.push({ of: "frames", page: source, before, after });
-			}
-			const landing = namesOn(page);
-			const arrived = insertAt(without(landing, names), names, index);
-			next = withFrameOrder(next, page, arrived);
-			lists.push({ of: "frames", page, before: landing, after: arrived });
-			storeOrder(next);
-			setOpen(page, true);
-			// where each frame stands right now, read before the move lands: the
-			// inverse has to put every one of them back on its own page
-			const moved: Moved[] = names.flatMap((name) => {
-				const from = pageHolding(name);
-				return from === undefined || from === page ? [] : [{ name, from }];
-			});
-			void moveFrames(project, names, page).then((done) => {
-				// the move never happened: put the rail back rather than let it claim it did
-				if (done.kind === "refused") storeOrder(held);
-				else if (moved.length > 0) onRecord?.({ kind: "move", frames: moved, to: page, lists });
-				onRefresh();
-			});
+			moveFramesInto(names, page, index);
 		},
-		[project, namesOn, pagesIn, pageHolding, pageCarried, storeOrder, setOpen, onRecord, onRefresh],
+		[project, namesOn, pagesIn, pageHolding, pageCarried, storeOrder, setOpen, onRecord, onRefresh, moveFramesInto],
 	);
 
 	const stopDrag = useCallback(
@@ -1474,6 +1519,12 @@ export function CanvasSidebar({
 							onClose={() => setMenu(null)}
 							actions={{
 								newPage: () => newPage(menu.target.kind === "page" ? menu.target.page : ROOT_PAGE),
+								newPageWith: () => {
+									// inside the page holding them: the frames are meant to stay where
+									// they are and gain a folder, not travel to the top level
+									const names = chosenFrames;
+									if (names.length > 0) newPage(pageHolding(names[0] ?? "") ?? activePage, names);
+								},
 								rename: () => beginRename(menuRow),
 								duplicate: () => void duplicate(),
 								copy,

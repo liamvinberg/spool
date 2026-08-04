@@ -96,7 +96,20 @@ export type HistoryEntry =
 			readonly lists: readonly OrderList[];
 	  }
 	| { readonly kind: "reorder"; readonly lists: readonly OrderList[] }
-	| { readonly kind: "mint"; readonly staged: Staging };
+	| { readonly kind: "mint"; readonly staged: Staging }
+	// a page minted with frames gathered into it, which is one gesture and so one
+	// entry: two would take two presses, and the press in between would leave a
+	// page nobody asked for holding frames that were already back where they
+	// started. The two halves are owned by different places — the page's inverse
+	// is the trash toast, the frames' is the rail's own move — so what this entry
+	// says is what both of them need and the order they have to run in
+	| {
+			readonly kind: "gather";
+			/** the page the gesture made, and the page the frames were gathered onto */
+			readonly page: string;
+			readonly frames: readonly Moved[];
+			readonly lists: readonly OrderList[];
+	  };
 
 export interface History {
 	undo: readonly HistoryEntry[];
@@ -290,6 +303,16 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 		}
 		case "reorder":
 			return entry;
+		case "gather": {
+			// undo needs the page to still be there to empty, and redo needs the toast
+			// to still be holding it: putting a page back is un-staging it, exactly as
+			// it is for the mint this is half of
+			const held =
+				way === "undo" ? alive.pages.has(entry.page) : sameStaging(alive.pending, { frames: [], page: entry.page });
+			if (!held) return undefined;
+			const frames = liveMoved(entry.frames, entry.page, alive, way);
+			return frames.length === 0 ? undefined : { ...entry, frames };
+		}
 		case "mint": {
 			// the copies are still on disk while the toast is up, so redo is that
 			// toast's own undo; once it has drained there is nothing to put back

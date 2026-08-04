@@ -26,9 +26,11 @@ interface Ask {
 let asked: Ask[] = [];
 /** the disk, as the daemon would report it — a landed operation moves it */
 let projected: Array<Record<string, unknown>> = [];
+let projectedPages: string[] = [];
 
 beforeEach(() => {
 	asked = [];
+	projectedPages = [];
 	projected = [
 		{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html" },
 		{ name: "shell", x: 400, y: 0, w: 320, h: 240, kind: "html" },
@@ -99,9 +101,62 @@ it("walks a rename the rail made back through the rail's own call", async () => 
 	expect((lastOrder()?.frames as Record<string, string[]> | undefined)?.[""]).toEqual(["landing", "shell"]);
 });
 
+/**
+ * A page made with the selection, walked back and forward again in one press
+ * each. The page's inverse is the trash toast and the frames' is the rail's own
+ * move, so this is the one place both halves of that entry can be seen at once.
+ */
+it("takes a page made with the selection back in one press, and puts it back in one more", async () => {
+	const { host } = await renderCanvas();
+
+	const row = host.querySelector<HTMLElement>('button[aria-label="home frame"]')?.parentElement;
+	await act(async () => row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+	await act(async () => itemNamed("New page with selection")?.click());
+	const input = host.querySelector<HTMLInputElement>('input[aria-label="New page name"]');
+	await act(async () => type(input, "loose"));
+	// the daemon makes the folder and moves the frame in, so the projection has moved
+	gatheredIn(true);
+	await act(async () => input?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+	await settle(20);
+	expect(moves().at(-1)).toEqual({ frames: ["home"], page: "loose" });
+	expect(host.querySelector('button[aria-label="loose page"]')).not.toBeNull();
+
+	// one press: the frame goes back where it was and the page goes on the toast
+	gatheredIn(false);
+	await act(async () => press("z", ACCEL));
+	await settle(20);
+	expect(moves().at(-1)).toEqual({ frames: ["home"], page: "" });
+	expect(host.querySelector('button[aria-label="loose page"]')).toBeNull();
+
+	// and one more press puts both halves back
+	gatheredIn(true);
+	await act(async () => press("z", { ...ACCEL, shiftKey: true }));
+	await settle(20);
+	expect(moves().at(-1)).toEqual({ frames: ["home"], page: "loose" });
+	expect(host.querySelector('button[aria-label="loose page"]')).not.toBeNull();
+});
+
 /** The daemon answered: the first frame goes by another name from here on. */
 function renamedTo(name: string) {
 	projected = [{ name, x: 0, y: 0, w: 320, h: 240, kind: "html" }, ...projected.slice(1)];
+}
+
+/** The page exists from here on, and the first frame is inside it or back out of it. */
+function gatheredIn(inside: boolean) {
+	projectedPages = ["loose"];
+	projected = [{ ...projected[0], page: inside ? "loose" : undefined }, ...projected.slice(1)];
+}
+
+function itemNamed(label: string): HTMLButtonElement | undefined {
+	return [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+		(item) => item.querySelector("span")?.textContent === label,
+	);
+}
+
+function moves(): Array<{ frames: string[]; page: string }> {
+	return asked
+		.filter((ask) => ask.url.endsWith("/frames/move"))
+		.map((ask) => ask.body as { frames: string[]; page: string });
 }
 
 function press(key: string, extra: KeyboardEventInit = {}) {
@@ -190,7 +245,7 @@ function stubCanvasApis(): void {
 			asked.push({ url: url.pathname, body });
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) {
-				return Response.json({ root: "/project", pages: [], frames: projected, collisions: [] });
+				return Response.json({ root: "/project", pages: projectedPages, frames: projected, collisions: [] });
 			}
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });

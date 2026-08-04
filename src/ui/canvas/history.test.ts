@@ -219,6 +219,29 @@ describe("mint entries", () => {
 	});
 });
 
+/**
+ * A page made with frames gathered into it: two halves owned by two places, and
+ * one entry so that one press takes both. Undo needs the page to still be there
+ * to empty; redo is the toast's own undo, exactly as it is for the mint this is
+ * half of.
+ */
+describe("gather entries", () => {
+	const gathered: HistoryEntry = { kind: "gather", page: "loose", frames: [{ name: "home", from: "" }], lists: [] };
+
+	it("undoes while the page is still there and the frames are still in it", () => {
+		const history = record(emptyHistory(), gathered);
+		expect(takeUndo(history, at({ home: "loose" }, ["loose"]))?.entry).toEqual(gathered);
+		// the page went away in the meantime, so there is nothing left to take back
+		expect(takeUndo(history, at({ home: "" }, []))).toBeUndefined();
+	});
+
+	it("redoes only against the toast that is holding the page it made", () => {
+		const history = { undo: [], redo: [gathered] };
+		expect(takeRedo(history, at({ home: "" }, ["loose"], { frames: [], page: "loose" }))?.entry).toEqual(gathered);
+		expect(takeRedo(history, at({ home: "" }, ["loose"], null))).toBeUndefined();
+	});
+});
+
 describe("one stack", () => {
 	/**
 	 * The projection walks with the entries, exactly as it does on the canvas:

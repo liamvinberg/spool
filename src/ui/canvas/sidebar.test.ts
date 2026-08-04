@@ -391,6 +391,7 @@ describe("the row menu", () => {
 			"Rename",
 			"Duplicate",
 			"Copy",
+			"New page with selection",
 			"Reveal on canvas",
 			"Open in editor",
 			"Move to Trash",
@@ -626,6 +627,54 @@ describe("the one undo stack", () => {
 		await act(async () => press("c", ACCEL));
 		await act(async () => press("v", ACCEL));
 		expect(kept).toEqual([{ kind: "mint", staged: { frames: ["home-copy"], page: null } }]);
+	});
+
+	/**
+	 * Finder's New Folder with Selection, in spool's vocabulary. One gesture, so
+	 * one entry: two would take two presses, and the press in between would leave
+	 * a page nobody asked for holding frames that were already back where they
+	 * started.
+	 */
+	it("records a page made with the selection as one entry, frames and all", async () => {
+		const kept: HistoryEntry[] = [];
+		const run: { current: RunEntry | null } = { current: null };
+		const { host } = await render({ selected: ["home"], onRecord: (e) => kept.push(e), run });
+
+		const frameRow = host.querySelector<HTMLElement>('button[aria-label="home frame"]')?.parentElement;
+		await act(async () =>
+			frameRow?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+		);
+		await act(async () => itemNamed("New page with selection")?.click());
+		const input = host.querySelector<HTMLInputElement>('input[aria-label="New page name"]');
+		await act(async () => type(input, "loose"));
+		await act(async () => input?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+
+		expect(asked.find((call) => call.url.endsWith("/pages/create"))?.body).toEqual({ name: "loose" });
+		expect(asked.find((call) => call.url.endsWith("/frames/move"))?.body).toEqual({
+			frames: ["home"],
+			page: "loose",
+		});
+		expect(kept).toEqual([
+			{
+				kind: "gather",
+				page: "loose",
+				frames: [{ name: "home", from: "" }],
+				lists: [
+					{ of: "frames", page: "", before: ["home"], after: [] },
+					{ of: "frames", page: "loose", before: [], after: ["home"] },
+				],
+			},
+		]);
+
+		// the rail's half of the way back is the frames leaving; the page itself is
+		// the toast's, which is the canvas's half of the same press
+		await act(async () => {
+			await run.current?.(railEntry(kept[0]), "undo");
+		});
+		expect(asked.filter((call) => call.url.endsWith("/frames/move")).at(-1)?.body).toEqual({
+			frames: ["home"],
+			page: "",
+		});
 	});
 
 	it("records a new page as a mint of the page itself", async () => {

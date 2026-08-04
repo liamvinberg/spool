@@ -1231,10 +1231,20 @@ export function ProjectCanvas({
 				else undoTrash();
 				return;
 			}
+			// a gather is a page the rail made and the frames it gathered into it, and
+			// the order the two halves go in is the whole reason it is one entry: going
+			// back, the frames leave before the page is staged, or they would ride into
+			// the Trash inside it; going forward, the page is put back before they
+			// arrive, because there would be nowhere to put them otherwise
+			if (entry.kind === "gather" && way === "redo") undoTrash();
 			const taking = taken.history;
 			void runEntry.current?.(entry, way).then((ran) => {
+				if (ran) {
+					if (entry.kind === "gather" && way === "undo") stageEntry({ frames: [], page: entry.page });
+					return;
+				}
 				// a press that landed after this one owns the stacks now
-				if (ran || history.current !== taking) return;
+				if (history.current !== taking) return;
 				history.current = drop(history.current, way);
 				void refetchFrames();
 			});

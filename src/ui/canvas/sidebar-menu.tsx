@@ -35,6 +35,7 @@ export interface RailMenuState {
 
 export interface RailMenuActions {
 	readonly newPage: () => void;
+	readonly newPageWith: () => void;
 	readonly rename: () => void;
 	readonly duplicate: () => void;
 	readonly copy: () => void;
@@ -89,6 +90,9 @@ export function menuEntries(target: MenuTarget, at: { pasteable: boolean; select
 		{ run: "rename", label: "Rename", keys: hotkeyKey("sidebar.rename"), off: many },
 		{ run: "duplicate", label: "Duplicate", keys: hotkeyKey("sidebar.duplicate") },
 		{ run: "copy", label: "Copy", keys: hotkeyKey("sidebar.copy") },
+		// the page is named before it exists and the frames follow it in, which is
+		// why this is a new page rather than a move into one
+		{ run: "newPageWith", label: "New page with selection", off: at.selection === 0 },
 		{ rule: true },
 		{ run: "reveal", label: "Reveal on canvas", off: many },
 		{ run: "openEditor", label: "Open in editor", off: many },
