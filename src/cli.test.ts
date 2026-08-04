@@ -492,7 +492,7 @@ describe("spool cli", { timeout: 30_000 }, () => {
 		expect(result.stderr).toContain("git");
 	});
 
-	it("status mentions a cached newer release without phoning home (#30)", () => {
+	it("status keeps a cached release to itself when this install cannot take it (#30)", () => {
 		const home = makeTempDir();
 		mkdirSync(join(home, ".spool"), { recursive: true });
 		writeFileSync(
@@ -500,11 +500,14 @@ describe("spool cli", { timeout: 30_000 }, () => {
 			JSON.stringify({ latest: "99.0.0", checkedAt: new Date().toISOString() }),
 		);
 
+		// the cli under test is this checkout, whose only upgrade is git: no
+		// checkout daemon writes that cache any more, so one found there is stale
+		// and "run `spool upgrade`" is an instruction that refuses itself
 		const result = spool(["status"], home);
 
 		expect(result.status).toBe(1); // daemon still not running
-		expect(result.stdout).toContain("v99.0.0 available");
-		expect(result.stdout).toContain("spool upgrade");
+		expect(result.stdout).not.toContain("99.0.0");
+		expect(result.stdout).not.toContain("spool upgrade");
 	});
 
 	it("fails cleanly on an unknown command", () => {

@@ -30,7 +30,7 @@ import { isSafeName } from "./page-path";
 import { removeProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
 import { skillText } from "./skill";
-import { runUpgrade } from "./upgrade";
+import { runUpgrade, selfUpgradeable } from "./upgrade";
 import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
 import { logsFrame, shotFrame } from "./verify";
 
@@ -269,7 +269,9 @@ program
 					port: config.port,
 					uiDir,
 					development,
-					updateCheck: config.updateCheck,
+					// #30: an install no package manager owns cannot take an upgrade,
+					// so it is never offered one — the checkout included
+					updateCheck: config.updateCheck && selfUpgradeable(),
 				});
 			} catch (error) {
 				if (error instanceof PortBusyError) {
@@ -414,8 +416,10 @@ program
 	.description("report whether the daemon is running")
 	.action(async () => {
 		const status = await statusDaemon(spoolDir);
-		// the daemon's cached daily check (#30) — status itself never phones home
-		const cache = readUpdateCache(spoolDir);
+		const upgradeable = selfUpgradeable();
+		// the daemon's cached daily check (#30) — status itself never phones home,
+		// and stays quiet where no daemon writes that cache any more
+		const cache = upgradeable ? readUpdateCache(spoolDir) : undefined;
 		const available =
 			cache !== undefined && isNewer(cache.latest, pkg.version)
 				? ` — v${cache.latest} available, run \`spool upgrade\``
@@ -425,8 +429,10 @@ program
 			process.exitCode = 1;
 			return;
 		}
-		const skew =
-			status.version === pkg.version ? "" : ` — cli is v${pkg.version}, \`spool upgrade\` brings them in step`;
+		// a skew is real news either way, but the way out of it differs: a managed
+		// install reinstalls, a checkout restarts onto the code already on disk
+		const fix = upgradeable ? "`spool upgrade` brings them in step" : "restart it to catch it up";
+		const skew = status.version === pkg.version ? "" : ` — cli is v${pkg.version}, ${fix}`;
 		process.stdout.write(
 			`spool daemon running at ${status.url} (pid ${status.pid}, v${status.version})${skew}${available}\n`,
 		);
