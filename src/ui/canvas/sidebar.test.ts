@@ -106,7 +106,9 @@ describe("page tree", () => {
 				.querySelector<HTMLButtonElement>('button[aria-label="checkout frame"]')
 				?.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true, ...ACCEL }));
 		});
-		expect(onSelectFrame).toHaveBeenCalledWith("checkout", { shift: true, toggle: true });
+		// the range the modifiers ask for is the rail's to answer, so a click hands
+		// the canvas the question rather than a list
+		expect(onSelectFrame).toHaveBeenCalledWith("checkout", { shift: true, toggle: true }, expect.any(Function));
 
 		await act(async () => {
 			host

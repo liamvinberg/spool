@@ -107,6 +107,33 @@ export function rowKey(row: RailRow): string {
 	return row.kind === "page" ? `page:${row.page}` : `frame:${row.name}`;
 }
 
+/**
+ * The frames a ⇧ range covers, in the order the rail is drawing them.
+ *
+ * The order matters and it is this module's: the projection arrives sorted by
+ * name and the list on screen is whatever somebody arranged it into, so a range
+ * worked out anywhere else picks frames that are not the rows between the two
+ * ends. The anchor is a frame the canvas is holding, by name, and the other end
+ * is any row, by key, because ⇧ travel can land the cursor on a page row — one
+ * that contributes nothing, since a selection holds frame names.
+ *
+ * A range never leaves the anchor's page. Arriving on another page clears the
+ * selection, so a range across two of them could not survive the trip, and one
+ * that is asked for is no range at all rather than a clamped one.
+ */
+export function framesBetween(rows: readonly RailRow[], anchor: string, to: string): readonly string[] {
+	const from = rows.findIndex((row) => row.kind === "frame" && row.name === anchor);
+	const at = rows.findIndex((row) => rowKey(row) === to);
+	const start = rows[from];
+	if (start?.kind !== "frame" || at === -1) return [];
+	const target = rows[at];
+	if (target?.kind === "frame" && target.page !== start.page) return [];
+	return rows
+		.slice(Math.min(from, at), Math.max(from, at) + 1)
+		.filter((row): row is FrameRow => row.kind === "frame" && row.page === start.page)
+		.map((row) => row.name);
+}
+
 export function railRows(
 	/** Each page's own pages in rail order, keyed by the page holding them. */
 	pages: ReadonlyMap<string, readonly string[]>,

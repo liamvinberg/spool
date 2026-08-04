@@ -101,7 +101,7 @@ import {
 	sitesMessage,
 	walkRejectionReason,
 } from "./protocol";
-import { CanvasSidebar, type RunEntry, type SelectModifiers } from "./sidebar";
+import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { TrashToast } from "./trash-toast";
@@ -1395,7 +1395,7 @@ export function ProjectCanvas({
 	);
 
 	/** The tree grammar on frame rows: shift ranges, ⌘ toggles, click replaces. */
-	const selectFrameRow = (name: string, modifiers: SelectModifiers) => {
+	const selectFrameRow = (name: string, modifiers: SelectModifiers, span?: FrameSpan) => {
 		const frame = navigatorFrames.find((candidate) => candidate.name === name);
 		if (frame === undefined) return;
 		const targetPage = pageOf(frame);
@@ -1407,17 +1407,12 @@ export function ProjectCanvas({
 		setTool("select");
 		setPicked([]);
 		pickedChain.current = null;
-		if (modifiers.shift && frameAnchor.current !== null) {
-			const names = navigatorFrames
-				.filter((candidate) => pageOf(candidate) === targetPage)
-				.map((candidate) => candidate.name);
-			const a = names.indexOf(frameAnchor.current);
-			const b = names.indexOf(name);
-			if (a !== -1 && b !== -1) {
-				const range = names.slice(Math.min(a, b), Math.max(a, b) + 1);
-				setSelected(modifiers.toggle && !changedPage ? [...new Set([...selectedRef.current, ...range])] : range);
-				return;
-			}
+		// the range is the rail's to work out: the projection this reads is sorted by
+		// name and the rows are in whatever order somebody arranged them into
+		const range = modifiers.shift && frameAnchor.current !== null ? (span?.(frameAnchor.current) ?? []) : [];
+		if (range.length > 0) {
+			setSelected(modifiers.toggle && !changedPage ? [...new Set([...selectedRef.current, ...range])] : [...range]);
+			return;
 		}
 		frameAnchor.current = name;
 		if (modifiers.toggle) {

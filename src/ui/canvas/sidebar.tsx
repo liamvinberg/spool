@@ -41,6 +41,7 @@ import {
 	DEPTH_BAND,
 	type FrameRow,
 	frameLanding,
+	framesBetween,
 	guideX,
 	INDENT,
 	type Landing,
@@ -111,6 +112,17 @@ export interface SelectModifiers {
 	shift: boolean;
 	toggle: boolean;
 }
+
+/**
+ * A ⇧ range, asked of the rail once the canvas says where the anchor is.
+ *
+ * The two halves of a range live in different places: the anchor is the
+ * canvas's, because that is what a click and a copy and an arrival all move,
+ * and the order is the rail's, because the rail is the only thing that knows
+ * what somebody arranged. So the rail hands over the question rather than the
+ * answer, and the canvas asks it with the anchor it is holding.
+ */
+export type FrameSpan = (anchor: string) => readonly string[];
 
 const modifiersOf = (event: React.MouseEvent): SelectModifiers => ({
 	shift: event.shiftKey,
@@ -209,7 +221,8 @@ export function CanvasSidebar({
 	frames: readonly ProjectedFrame[];
 	selected: readonly string[];
 	onSwitchPage: (page: string) => void;
-	onSelectFrame: (name: string, modifiers: SelectModifiers) => void;
+	/** `span` answers what a ⇧ range covers; only a click that could be one carries it. */
+	onSelectFrame: (name: string, modifiers: SelectModifiers, span?: FrameSpan) => void;
 	onDoubleClickFrame: (name: string) => void;
 	onTrashFrames: (names: string[]) => void;
 	/** A page and everything inside it, as one entry on the trash toast. */
@@ -1307,7 +1320,9 @@ export function CanvasSidebar({
 										}}
 										onSelect={(event) => {
 											if (justDragged.current || row.kind !== "frame") return;
-											onSelectFrame(row.name, modifiersOf(event));
+											onSelectFrame(row.name, modifiersOf(event), (anchor) =>
+												framesBetween(now.current.rows, anchor, rowKey(row)),
+											);
 										}}
 										onOpen={(deep) => {
 											if (row.kind !== "page") return;
