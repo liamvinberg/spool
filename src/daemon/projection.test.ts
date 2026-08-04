@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 import { pxForCells } from "../term/cells";
 import { makeTempDir, writeDesignFile } from "../test-helpers";
 import { realDesignDir } from "./design-path";
-import { writeGeometryIfAbsent } from "./geometry";
-import { frameKind, listProjectFrames } from "./projection";
+import { writePlacement } from "./geometry";
+import { frameKind, listProjectFrames, readFrameGeometry } from "./projection";
 
 describe("frame kinds", () => {
 	it("discovers term.tsx folders as terminal frames beside html ones", () => {
@@ -73,10 +73,24 @@ describe("projection placement", () => {
 		const authored = '{ "x": 19, "y": 23, "w": 640, "h": 480 }\n';
 		writeFileSync(sidecar, authored);
 
-		const won = writeGeometryIfAbsent(sidecar, { x: 80, y: 80, w: 390, h: 844 }, designDir);
+		const won = writePlacement(sidecar, { x: 80, y: 80, w: 390, h: 844 }, designDir);
 
 		expect(won).toEqual({ x: 19, y: 23, w: 640, h: 480 });
 		expect(readFileSync(sidecar, "utf8")).toBe(authored);
+	});
+
+	it("completes a size authored between the sidecar read and the placing write", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, join("frames", "authored", "frame.tsx"), "export default () => null;\n");
+		const designDir = realDesignDir(root);
+		const sidecar = join(designDir, "frames", "authored", "frame.json");
+		writeFileSync(sidecar, '{ "w": 1440, "h": 900 }\n');
+
+		// the caller computed its geometry against a footprint that is now stale
+		const won = writePlacement(sidecar, { x: 80, y: 80, w: 390, h: 844 }, designDir);
+
+		expect(won).toEqual({ x: 80, y: 80, w: 1440, h: 900 });
+		expect(JSON.parse(readFileSync(sidecar, "utf8"))).toEqual({ x: 80, y: 80, w: 1440, h: 900 });
 	});
 
 	it("never replaces a sidecar observed during an authored partial write", () => {
@@ -101,6 +115,103 @@ describe("projection placement", () => {
 			h: 480,
 		});
 		expect(readFileSync(sidecar, "utf8")).toBe(authored);
+	});
+});
+
+/**
+ * The agent writes size, spool writes position (#113). A sidecar holding a size
+ * and no coordinate is a legal sidecar, so an agent asking for a desktop frame
+ * never has to invent an x and y and never lands on top of another frame.
+ */
+describe("a sidecar that states size without position", () => {
+	const sized = (root: string, frame: string, footprint: string): void => {
+		writeDesignFile(root, join("frames", frame, "frame.json"), footprint);
+	};
+
+	it("projects at the authored size and comes back holding four numbers", () => {
+		const root = makeTempDir();
+		sized(root, "pricing", '{ "w": 1440, "h": 900 }\n');
+		writeDesignFile(root, join("frames", "pricing", "frame.tsx"), "export default () => null;\n");
+
+		expect(listProjectFrames(root).frames[0]).toMatchObject({ x: 80, y: 80, w: 1440, h: 900 });
+
+		const sidecar = join(root, "design", "frames", "pricing", "frame.json");
+		expect(JSON.parse(readFileSync(sidecar, "utf8"))).toEqual({ x: 80, y: 80, w: 1440, h: 900 });
+		// durable: the second read is the first, not a fresh roll
+		expect(listProjectFrames(root).frames[0]).toMatchObject({ x: 80, y: 80, w: 1440, h: 900 });
+	});
+
+	it("lands in clear space past the field, measured at the size it asked for", () => {
+		const root = makeTempDir();
+		writeDesignFile(root, join("frames", "home", "frame.tsx"), "export default () => null;\n");
+		listProjectFrames(root);
+		sized(root, "wide", '{ "w": 1440, "h": 900 }\n');
+		writeDesignFile(root, join("frames", "wide", "frame.tsx"), "export default () => null;\n");
+
+		const frames = listProjectFrames(root).frames;
+		const home = frames.find((frame) => frame.name === "home");
+		const wide = frames.find((frame) => frame.name === "wide");
+
+		expect(home).toMatchObject({ x: 80, y: 80, w: 390, h: 844 });
+		expect(wide).toMatchObject({ x: 80 + 390 + 80, y: 80, w: 1440, h: 900 });
+		// the whole point: no overlap, at either size
+		expect(wide?.x).toBeGreaterThan((home?.x ?? 0) + (home?.w ?? 0));
+	});
+
+	it("sizes a terminal frame the same way, past its 80×24 floor", () => {
+		const root = makeTempDir();
+		sized(root, "shell", '{ "w": 1080, "h": 720 }\n');
+		writeDesignFile(root, join("frames", "shell", "term.tsx"), "// tui\n");
+
+		expect(listProjectFrames(root).frames[0]).toMatchObject({ kind: "term", w: 1080, h: 720 });
+	});
+
+	it("shoots at the authored size before anything has placed the frame", () => {
+		const root = makeTempDir();
+		sized(root, "pricing", '{ "w": 1440, "h": 900 }\n');
+		writeDesignFile(root, join("frames", "pricing", "frame.tsx"), "export default () => null;\n");
+
+		expect(readFrameGeometry(root, "pricing")).toEqual({ w: 1440, h: 900, persisted: true });
+	});
+
+	it("leaves a size it cannot place alone, and the frame keeps the default", () => {
+		const root = makeTempDir();
+		for (const [frame, bytes] of [
+			["zero", '{ "w": 0, "h": 900 }\n'],
+			["negative", '{ "w": 1440, "h": -900 }\n'],
+			["strings", '{ "w": "1440", "h": "900" }\n'],
+			["half-placed", '{ "x": 19, "w": 1440, "h": 900 }\n'],
+		] as const) {
+			sized(root, frame, bytes);
+			writeDesignFile(root, join("frames", frame, "frame.tsx"), "export default () => null;\n");
+		}
+
+		const frames = listProjectFrames(root).frames;
+
+		for (const frame of frames) expect(frame).toMatchObject({ w: 390, h: 844 });
+		// nothing spool cannot read is rewritten, so an author's bytes survive
+		for (const [frame, bytes] of [
+			["zero", '{ "w": 0, "h": 900 }\n'],
+			["negative", '{ "w": 1440, "h": -900 }\n'],
+			["strings", '{ "w": "1440", "h": "900" }\n'],
+			["half-placed", '{ "x": 19, "w": 1440, "h": 900 }\n'],
+		] as const) {
+			expect(readFileSync(join(root, "design", "frames", frame, "frame.json"), "utf8")).toBe(bytes);
+		}
+	});
+
+	it("is not a frame until the source entry lands, so nothing places a bare sidecar", () => {
+		const root = makeTempDir();
+		sized(root, "pricing", '{ "w": 1440, "h": 900 }\n');
+
+		const { frames, pages } = listProjectFrames(root);
+
+		expect(frames).toEqual([]);
+		// a folder with no frame entry is a page, and pages own no geometry
+		expect(pages).toEqual(["pricing"]);
+		expect(readFileSync(join(root, "design", "frames", "pricing", "frame.json"), "utf8")).toBe(
+			'{ "w": 1440, "h": 900 }\n',
+		);
 	});
 });
 

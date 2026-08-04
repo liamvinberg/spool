@@ -5,7 +5,7 @@ import type { Cover } from "../cover";
 import { isSafeName, pageName, pageUnder, ROOT_PAGE } from "../page-path";
 import { DEFAULT_COLS, DEFAULT_ROWS, pxForCells } from "../term/cells";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
-import { readGeometry, writeGeometryIfAbsent } from "./geometry";
+import { type Footprint, readSidecar, writePlacement } from "./geometry";
 import { type DatedCover, scanCovers, scanDatedCovers } from "./thumbs";
 
 /**
@@ -167,7 +167,7 @@ const GUTTER = 80;
 /** New terminal frames start at the conventional floor, in exact cell pixels. */
 const TERM_DEFAULT = pxForCells(DEFAULT_COLS, DEFAULT_ROWS);
 
-function defaultFootprint(kind: FrameKind): { w: number; h: number } {
+function defaultFootprint(kind: FrameKind): Footprint {
 	return kind === "term" ? TERM_DEFAULT : { w: DEFAULT_W, h: DEFAULT_H };
 }
 
@@ -364,23 +364,27 @@ export function listProjectFrames(root: string): Projection {
 	const covers = readCovers(root);
 
 	const placed: ProjectedFrame[] = [];
-	const unplaced: DiscoveredFrame[] = [];
+	// a frame awaiting a position carries the size it will get it at: the one its
+	// sidecar states, else the default for its kind (#113)
+	const unplaced: { frame: DiscoveredFrame; footprint: Footprint }[] = [];
 	for (const frame of discovery.frames) {
-		const geometry = readGeometry(join(frame.dir, "frame.json"), discovery.designDir);
-		if (geometry === undefined) unplaced.push(frame);
-		else placed.push(projected(frame, geometry, covers.get(frame.name)));
+		const sidecar = readSidecar(join(frame.dir, "frame.json"), discovery.designDir);
+		if (sidecar.kind === "placed") placed.push(projected(frame, sidecar.geometry, covers.get(frame.name)));
+		else {
+			const footprint = sidecar.kind === "sized" ? sidecar.footprint : defaultFootprint(frame.kind);
+			unplaced.push({ frame, footprint });
+		}
 	}
 
 	// a new frame lands beside its own page's field, on its top line, never on
 	// top of it — and never beside another page's (#39)
-	for (const frame of unplaced) {
+	for (const { frame, footprint } of unplaced) {
 		const field = placed.filter((candidate) => candidate.page === frame.page);
-		const footprint = defaultFootprint(frame.kind);
 		const cursor = field.length === 0 ? GUTTER : Math.max(...field.map((f) => f.x + f.w)) + GUTTER;
 		const baseline = field.length === 0 ? GUTTER : Math.min(...field.map((f) => f.y));
 		const geometry = { x: cursor, y: baseline, ...footprint };
 		try {
-			const persisted = writeGeometryIfAbsent(join(frame.dir, "frame.json"), geometry, discovery.designDir);
+			const persisted = writePlacement(join(frame.dir, "frame.json"), geometry, discovery.designDir);
 			if (persisted !== undefined) {
 				placed.push(projected(frame, persisted, covers.get(frame.name)));
 				continue;
@@ -501,8 +505,11 @@ export function readFrameGeometry(root: string, frame: string): { w: number; h: 
 		if (error instanceof DesignBoundaryError) throw error;
 		return { w: DEFAULT_W, h: DEFAULT_H, persisted: false };
 	}
-	const geometry = readGeometry(join(found.dir, "frame.json"), designDir);
-	if (geometry !== undefined) return { w: geometry.w, h: geometry.h, persisted: true };
+	// a stated size is a stated size, placed or not: a shot of a sized frame is
+	// the size its author asked for, and nothing narrates a missing default
+	const sidecar = readSidecar(join(found.dir, "frame.json"), designDir);
+	if (sidecar.kind === "placed") return { w: sidecar.geometry.w, h: sidecar.geometry.h, persisted: true };
+	if (sidecar.kind === "sized") return { ...sidecar.footprint, persisted: true };
 	return { ...defaultFootprint(found.frameKind), persisted: false };
 }
 

@@ -16,7 +16,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Variant**: A frame whose `--`-suffixed name marks it as an alternative take on its base frame (`home--empty`).
 
-**Geometry sidecar**: The app-owned `frame.json` beside a frame's source, holding its place and size on the canvas. _Avoid_: layout file
+**Geometry sidecar**: The `frame.json` beside a frame's source, holding its place and size on the canvas. Both hands write it, along one seam: an agent states the size, spool states the position, and only a hand that means to move something writes a coordinate. So a size with no position is a whole sidecar rather than a broken one — spool completes it with a place beside that page's frames, which is the placement no agent can guess and therefore the overlap no agent can cause. A placement already on disk is never overwritten, and bytes that do not parse are a write in flight and are left exactly alone. _Avoid_: layout file
 
 **Asset**: A project file whose bytes ride inside the served document instead of being fetched: an image or text file a frame imports, or a font `shared/fonts.css` names by a relative `url()`. There is no asset route and no asset URL, and the import is what puts the file in a frame's closure. _Avoid_: static file, public folder
 
