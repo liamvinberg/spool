@@ -440,12 +440,29 @@ export function CanvasSidebar({
 	}, []);
 
 	/**
+	 * Going into a page, which is the one gesture that opens one.
+	 *
+	 * One direction only: going in opens, and opening does not go in. So this
+	 * never closes either — pressing the name of a page that is already open is
+	 * still going into it, and folding it away under the hand that reached for it
+	 * would be the chevron's job done by something that is not the chevron.
+	 */
+	const enterPage = useCallback(
+		(page: string) => {
+			onSwitchPage(page);
+			setOpen(page, true);
+		},
+		[onSwitchPage, setOpen],
+	);
+
+	/**
 	 * Land the cursor on a row.
 	 *
 	 * A frame row selects on the canvas the way a click on it does, page switch
 	 * included — that is what makes arrowing through the rail a way of looking at
-	 * frames rather than of moving a highlight. A page row only takes the cursor:
-	 * pressing a folder switches the page, and travelling is not a press.
+	 * frames rather than of moving a highlight. A page row is the same sentence
+	 * about a folder: travel already commits for frames, so a folder the cursor
+	 * arrives at is one it has gone into.
 	 */
 	const landOn = useCallback(
 		(row: RailRow | undefined) => {
@@ -454,8 +471,9 @@ export function CanvasSidebar({
 			setCursor(key);
 			scrollRowIntoView(key);
 			if (row.kind === "frame") onSelectFrame(row.name, { shift: false, toggle: false });
+			else if (row.kind === "page") enterPage(row.page);
 		},
-		[onSelectFrame, scrollRowIntoView],
+		[onSelectFrame, enterPage, scrollRowIntoView],
 	);
 
 	/** The row a step from the cursor reaches; from nowhere, the near end of the list. */
@@ -1369,7 +1387,7 @@ export function CanvasSidebar({
 										onPress={pressRow}
 										onActivate={() => {
 											if (justDragged.current || row.kind !== "page") return;
-											onSwitchPage(row.page);
+											enterPage(row.page);
 										}}
 										onSelect={(event) => {
 											if (justDragged.current || row.kind !== "frame") return;

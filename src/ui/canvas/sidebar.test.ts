@@ -76,7 +76,8 @@ afterEach(() => {
 });
 
 describe("page tree", () => {
-	it("switches pages without opening folders, then expands only from the chevron", async () => {
+	/** One direction: going into a page opens it, and opening one does not go in. */
+	it("opens the page it goes into, and expands from the chevron without going anywhere", async () => {
 		const onSwitchPage = vi.fn();
 		const onSelectFrame = vi.fn();
 		const onDoubleClickFrame = vi.fn();
@@ -93,10 +94,22 @@ describe("page tree", () => {
 			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
 		});
 		expect(onSwitchPage).toHaveBeenCalledWith("shop");
-		expect(host.querySelector('button[aria-label="Expand shop"]')).not.toBeNull();
+		expect(host.querySelector('button[aria-label="Collapse shop"]')).not.toBeNull();
+		expect(host.querySelector('button[aria-label="checkout frame"]')).not.toBeNull();
 
+		// the chevron is the other direction, and it goes nowhere
 		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="Expand shop"]')?.click();
+			host.querySelector<HTMLButtonElement>('button[aria-label="Collapse shop"]')?.click();
+		});
+		expect(host.querySelector('button[aria-label="checkout frame"]')).toBeNull();
+		expect(onSwitchPage).toHaveBeenCalledTimes(1);
+
+		// and going in again only ever opens: the name of an open page never folds it
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
+		});
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
 		});
 		expect(host.querySelector('button[aria-label="Collapse shop"]')).not.toBeNull();
 		expect(host.querySelector('button[aria-label="checkout frame"]')).not.toBeNull();
@@ -367,7 +380,8 @@ describe("the sidebar scope", () => {
 	it("answers ⌫ and the arrows only while the rail holds focus", async () => {
 		const onTrashFrames = vi.fn();
 		const onSelectFrame = vi.fn();
-		const { host } = await render({ onTrashFrames, onSelectFrame, selected: ["home"] });
+		const onSwitchPage = vi.fn();
+		const { host } = await render({ onTrashFrames, onSelectFrame, onSwitchPage, selected: ["home"] });
 
 		// nothing focused in the rail: the press belongs to the canvas below it
 		await act(async () => press("Backspace"));
@@ -380,9 +394,12 @@ describe("the sidebar scope", () => {
 		// the first row is a frame on the root page, so the first press lands on it
 		await act(async () => press("ArrowDown"));
 		expect(onSelectFrame).toHaveBeenCalledWith("home", { shift: false, toggle: false });
-		// and the next is the shop folder, which travelling never presses
+		// and the next is the shop folder: travel goes into it, which is a page it
+		// arrives on rather than a frame it picks
 		await act(async () => press("ArrowDown"));
 		expect(onSelectFrame).toHaveBeenCalledTimes(1);
+		expect(onSwitchPage).toHaveBeenCalledWith("shop");
+		expect(host.querySelector('button[aria-label="checkout frame"]')).not.toBeNull();
 	});
 
 	/**
