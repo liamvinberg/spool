@@ -38,6 +38,7 @@ export interface RailMenuActions {
 	readonly newPageWith: () => void;
 	readonly rename: () => void;
 	readonly duplicate: () => void;
+	readonly moveTo: () => void;
 	readonly copy: () => void;
 	readonly paste: () => void;
 	readonly reveal: () => void;
@@ -65,7 +66,15 @@ type Entry =
  * the row — a menu whose shape changes under the pointer is a menu you cannot
  * learn.
  */
-export function menuEntries(target: MenuTarget, at: { pasteable: boolean; selection: number }): readonly Entry[] {
+export function menuEntries(
+	target: MenuTarget,
+	at: {
+		pasteable: boolean;
+		selection: number;
+		/** whether there is any page this row could move to that it is not in already */
+		movable: boolean;
+	},
+): readonly Entry[] {
 	if (target.kind === "empty") {
 		return [
 			{ run: "newPage", label: "New page" },
@@ -80,6 +89,9 @@ export function menuEntries(target: MenuTarget, at: { pasteable: boolean; select
 			{ rule: true },
 			{ run: "rename", label: "Rename", keys: hotkeyKey("sidebar.rename") },
 			{ run: "duplicate", label: "Duplicate", keys: hotkeyKey("sidebar.duplicate") },
+			// moving a page into a page is the same verb a drag runs, so it is the same
+			// item on both lists
+			{ run: "moveTo", label: "Move to page…", off: !at.movable },
 			{ run: "paste", label: "Paste", keys: hotkeyKey("sidebar.paste"), off: !at.pasteable },
 			{ rule: true },
 			{ run: "trash", label: "Move to Trash", keys: hotkeyKey("sidebar.trash") },
@@ -90,6 +102,7 @@ export function menuEntries(target: MenuTarget, at: { pasteable: boolean; select
 		{ run: "rename", label: "Rename", keys: hotkeyKey("sidebar.rename"), off: many },
 		{ run: "duplicate", label: "Duplicate", keys: hotkeyKey("sidebar.duplicate") },
 		{ run: "copy", label: "Copy", keys: hotkeyKey("sidebar.copy") },
+		{ run: "moveTo", label: "Move to page…", off: !at.movable },
 		// the page is named before it exists and the frames follow it in, which is
 		// why this is a new page rather than a move into one
 		{ run: "newPageWith", label: "New page with selection", off: at.selection === 0 },
@@ -109,12 +122,14 @@ export function RailMenu({
 	menu,
 	pasteable,
 	selection,
+	movable,
 	actions,
 	onClose,
 }: {
 	menu: RailMenuState;
 	pasteable: boolean;
 	selection: number;
+	movable: boolean;
 	actions: RailMenuActions;
 	onClose: () => void;
 }) {
@@ -126,7 +141,7 @@ export function RailMenu({
 		return () => window.removeEventListener("resize", onClose);
 	}, [onClose]);
 
-	const entries = menuEntries(menu.target, { pasteable, selection });
+	const entries = menuEntries(menu.target, { pasteable, selection, movable });
 	const height = heightOf(entries);
 	const flipX = menu.x + MENU_WIDTH > window.innerWidth - SCREEN_MARGIN;
 	const flipY = menu.y + height > window.innerHeight - SCREEN_MARGIN;

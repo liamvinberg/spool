@@ -375,10 +375,10 @@ describe("the row menu", () => {
 
 		const pageRow = host.querySelector<HTMLElement>('button[aria-label="shop page"]')?.parentElement;
 		await act(async () => pageRow?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
-		expect(labelsOf()).toEqual(["New page", "Rename", "Duplicate", "Paste", "Move to Trash"]);
-		// every page row is a folder somebody made, so no page verb is dead on one:
-		// the list with dead items in it was the root page's, and it has no row
-		expect(deadItems()).toEqual(["Paste"]);
+		expect(labelsOf()).toEqual(["New page", "Rename", "Duplicate", "Move to page…", "Paste", "Move to Trash"]);
+		// nothing on the clipboard, and the only page in the project has nowhere to
+		// move to: itself and the page it is already in are the two refusals
+		expect(deadItems()).toEqual(["Move to page…", "Paste"]);
 
 		await act(async () => press("Escape"));
 		expect(document.body.querySelector('[role="menu"]')).toBeNull();
@@ -391,6 +391,7 @@ describe("the row menu", () => {
 			"Rename",
 			"Duplicate",
 			"Copy",
+			"Move to page…",
 			"New page with selection",
 			"Reveal on canvas",
 			"Open in editor",
@@ -402,6 +403,51 @@ describe("the row menu", () => {
 		await act(async () => list?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
 		expect(labelsOf()).toEqual(["New page", "Paste", "Collapse all"]);
 		expect(labelsOf().some((label) => label?.includes("frame"))).toBe(false);
+	});
+
+	/**
+	 * The same move a drag runs, with the destination typed instead of travelled
+	 * to. What it must never offer is a page inside the one being moved, or the
+	 * page the row is already in: both are refusals the daemon would answer a
+	 * round trip later.
+	 */
+	it("moves to a page found by typing, and never offers one the move could not land in", async () => {
+		const deep = ["explorations", "explorations/chat", "application"];
+		const kept: HistoryEntry[] = [];
+		const { host } = await render({
+			pages: deep,
+			frames: [{ name: "home", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 }],
+			onRecord: (e) => kept.push(e),
+		});
+
+		const pageRow = host.querySelector<HTMLElement>('button[aria-label="explorations page"]')?.parentElement;
+		await act(async () => pageRow?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+		await act(async () => itemNamed("Move to page…")?.click());
+
+		// itself, its own page and the page it already sits in are all off the list
+		expect(pickable()).toEqual(["application"]);
+
+		const field = document.body.querySelector<HTMLInputElement>('input[aria-label="Move to page"]');
+		await act(async () => type(field, "app"));
+		await act(async () => field?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+
+		expect(document.body.querySelector('[aria-label="Move to page"]')).toBeNull();
+		expect(asked.find((call) => call.url.endsWith("/pages/move"))?.body).toEqual({
+			pages: ["explorations"],
+			page: "application",
+		});
+		// the same entry a dragged move records, so one press takes it back
+		expect(kept).toEqual([
+			{
+				kind: "move-page",
+				pages: [{ name: "explorations", from: "" }],
+				to: "application",
+				lists: [
+					{ of: "pages", page: "", before: ["application", "explorations"], after: ["application"] },
+					{ of: "pages", page: "application", before: [], after: ["explorations"] },
+				],
+			},
+		]);
 	});
 
 	it("reveals and opens the frame it was opened on", async () => {
@@ -1017,6 +1063,13 @@ function deadItems(): Array<string | null | undefined> {
 	return [...document.body.querySelectorAll('[role="menuitem"]')]
 		.filter((item) => item.hasAttribute("disabled"))
 		.map((item) => item.querySelector("span")?.textContent);
+}
+
+/** the pages the move picker is offering, in the order it lists them */
+function pickable(): Array<string | null> {
+	return [...document.body.querySelectorAll('[aria-label="Move to page"] button[data-at]')].map(
+		(row) => row.querySelector("span")?.textContent ?? null,
+	);
 }
 
 function itemNamed(label: string): HTMLButtonElement | undefined {

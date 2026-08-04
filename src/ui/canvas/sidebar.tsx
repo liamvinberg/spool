@@ -35,6 +35,7 @@ import {
 	withPageOrder,
 } from "./order";
 import { framesOnPage, pageLabel, pageOf, pagePathLabel } from "./pages";
+import { PagePicker } from "./rail-move";
 import {
 	type BornRow,
 	contentX,
@@ -256,6 +257,13 @@ export function CanvasSidebar({
 	const [gathering, setGathering] = useState<readonly string[]>([]);
 	const [clipboard, setClipboard] = useState<readonly string[]>([]);
 	const [menu, setMenu] = useState<RailMenuState | null>(null);
+	/** the move that is looking for a page to land in, and where its picker stands */
+	const [moving, setMoving] = useState<{
+		readonly x: number;
+		readonly y: number;
+		readonly kind: "page" | "frame";
+		readonly names: readonly string[];
+	} | null>(null);
 	const [kit, setKit] = useState<DragKit | null>(null);
 	const [landing, setLanding] = useState<Landing | null>(null);
 	const [pageTooltip, setPageTooltip] = useState<{ page: string; x: number; y: number } | null>(null);
@@ -321,6 +329,30 @@ export function CanvasSidebar({
 	const framesUnder = useCallback(
 		(page: string) => pagesUnder(page).flatMap((each) => namesOn(each)),
 		[pagesUnder, namesOn],
+	);
+
+	/**
+	 * The pages a move could land in, which is every page but the ones it would be
+	 * a refusal or a no-op in.
+	 *
+	 * A page can never go inside itself or inside one of its own — the folder would
+	 * have to be its own parent — and the daemon refuses a landing where the folder
+	 * already is, so offering the page something is in already would be offering it
+	 * a 409. The root page is a destination like any other: it is the frames
+	 * directory itself, and a move out to the top level lands there.
+	 */
+	const destinations = useCallback(
+		(kind: "page" | "frame", names: readonly string[]): readonly string[] => {
+			const all = [ROOT_PAGE, ...orderedPages];
+			if (kind === "page") {
+				return all.filter((page) =>
+					names.every((each) => page !== each && !pageWithin(each, page) && pageParent(each) !== page),
+				);
+			}
+			const held = new Set(names.map((name) => pageHoldingIn(framesByPage, name)));
+			return all.filter((page) => !(held.size === 1 && held.has(page)));
+		},
+		[orderedPages, framesByPage],
 	);
 
 	const cursorRow = useMemo(() => rows.find((row) => rowKey(row) === cursor) ?? null, [rows, cursor]);
@@ -547,12 +579,7 @@ export function CanvasSidebar({
 	}, []);
 
 	/** Which page holds a frame, read off the list the rail is drawing. */
-	const pageHolding = useCallback((name: string): string | undefined => {
-		for (const [page, list] of now.current.framesByPage) {
-			if (list.some((frame) => frame.name === name)) return page;
-		}
-		return undefined;
-	}, []);
+	const pageHolding = useCallback((name: string) => pageHoldingIn(now.current.framesByPage, name), []);
 
 	/**
 	 * Frames gathered onto a page, wherever the gesture came from.
@@ -992,6 +1019,49 @@ export function CanvasSidebar({
 		ticking.current = requestAnimationFrame(tick);
 	}, [setOpen]);
 
+	/**
+	 * Pages moved into a page, which is the frame move one level up.
+	 *
+	 * A page that changes the page holding it changes folder, and the folder is the
+	 * whole move: every frame inside it and every page under it ride along, and
+	 * their cameras and lists with them. The paths of everything inside change with
+	 * it, which is what `pageCarried` says on this side.
+	 */
+	const movePagesInto = useCallback(
+		(moving: readonly string[], parent: string, index: number) => {
+			const held = now.current.order;
+			const leaves = moving.map(pageName);
+			let next = held;
+			const lists: OrderList[] = [];
+			for (const source of new Set(moving.map(pageParent))) {
+				if (source === parent) continue;
+				const before = pagesIn(source);
+				const after = without(before, leaves);
+				next = withPageOrder(next, source, after);
+				lists.push({ of: "pages", page: source, before, after });
+			}
+			const into = pagesIn(parent);
+			const arrived = insertAt(without(into, leaves), leaves, index);
+			next = withPageOrder(next, parent, arrived);
+			lists.push({ of: "pages", page: parent, before: into, after: arrived });
+			storeOrder(next);
+			setOpen(parent, true);
+			const moved: Moved[] = moving.flatMap((page) =>
+				pageParent(page) === parent ? [] : [{ name: page, from: pageParent(page) }],
+			);
+			void movePages(project, [...moving], parent).then((done) => {
+				// the move never happened: put the rail back rather than let it claim it did
+				if (done.kind === "refused") storeOrder(held);
+				else if (moved.length > 0) {
+					for (const each of moved) pageCarried(each.name, pageUnder(parent, pageName(each.name)));
+					onRecord?.({ kind: "move-page", pages: moved, to: parent, lists });
+				}
+				onRefresh();
+			});
+		},
+		[project, pagesIn, pageCarried, storeOrder, setOpen, onRecord, onRefresh],
+	);
+
 	const applyDrop = useCallback(
 		(current: DragLive, target: Landing) => {
 			const held = now.current.order;
@@ -999,46 +1069,17 @@ export function CanvasSidebar({
 				if (!allowed(current, target)) return;
 				const parent = target.page;
 				const moving = [...current.names];
-				const leaves = moving.map(pageName);
 				const index = target.kind === "pages" ? target.index : pagesIn(parent).length;
 				const sources = new Set(moving.map(pageParent));
 				if (sources.size === 1 && sources.has(parent)) {
+					const leaves = moving.map(pageName);
 					const before = pagesIn(parent);
 					const after = reorder(before, leaves, index);
 					storeOrder(withPageOrder(held, parent, after));
 					onRecord?.({ kind: "reorder", lists: [{ of: "pages", page: parent, before, after }] });
 					return;
 				}
-				// a page that changes the page holding it changes folder, and the folder
-				// is the whole move: every frame inside it and every page under it ride
-				// along, and their cameras and lists with them
-				let next = held;
-				const lists: OrderList[] = [];
-				for (const source of sources) {
-					if (source === parent) continue;
-					const before = pagesIn(source);
-					const after = without(before, leaves);
-					next = withPageOrder(next, source, after);
-					lists.push({ of: "pages", page: source, before, after });
-				}
-				const into = pagesIn(parent);
-				const arrived = insertAt(without(into, leaves), leaves, index);
-				next = withPageOrder(next, parent, arrived);
-				lists.push({ of: "pages", page: parent, before: into, after: arrived });
-				storeOrder(next);
-				setOpen(parent, true);
-				const moved: Moved[] = moving.flatMap((page) =>
-					pageParent(page) === parent ? [] : [{ name: page, from: pageParent(page) }],
-				);
-				void movePages(project, moving, parent).then((done) => {
-					// the move never happened: put the rail back rather than let it claim it did
-					if (done.kind === "refused") storeOrder(held);
-					else if (moved.length > 0) {
-						for (const each of moved) pageCarried(each.name, pageUnder(parent, pageName(each.name)));
-						onRecord?.({ kind: "move-page", pages: moved, to: parent, lists });
-					}
-					onRefresh();
-				});
+				movePagesInto(moving, parent, index);
 				return;
 			}
 			if (target.kind === "pages") return;
@@ -1055,7 +1096,22 @@ export function CanvasSidebar({
 			}
 			moveFramesInto(names, page, index);
 		},
-		[project, namesOn, pagesIn, pageHolding, pageCarried, storeOrder, setOpen, onRecord, onRefresh, moveFramesInto],
+		[namesOn, pagesIn, pageHolding, storeOrder, onRecord, moveFramesInto, movePagesInto],
+	);
+
+	/**
+	 * A move that was typed rather than dragged, landing at the end of the list it
+	 * arrives in — the same place a drop onto the page row itself lands.
+	 */
+	const moveToPicked = useCallback(
+		(page: string) => {
+			const at = moving;
+			setMoving(null);
+			if (at === null) return;
+			if (at.kind === "page") movePagesInto(at.names, page, pagesIn(page).length);
+			else moveFramesInto(at.names, page, namesOn(page).length);
+		},
+		[moving, movePagesInto, moveFramesInto, pagesIn, namesOn],
 	);
 
 	const stopDrag = useCallback(
@@ -1288,6 +1344,12 @@ export function CanvasSidebar({
 	}
 
 	const menuRow = menu === null ? null : (rows.find((row) => rowKey(row) === targetKey(menu.target)) ?? null);
+	/** what the open menu's row would move, and where it could go */
+	const menuMove =
+		menu === null || menu.target.kind === "empty"
+			? null
+			: { kind: menu.target.kind, names: menu.target.kind === "page" ? [menu.target.page] : chosenFrames };
+	const menuTargets = menuMove === null ? [] : destinations(menuMove.kind, menuMove.names);
 
 	return (
 		<aside
@@ -1400,7 +1462,9 @@ export function CanvasSidebar({
 						}}
 						onContextMenu={(event) => openMenu(event, { kind: "empty" })}
 						onScroll={() => {
+							// both of these stand at a point the scroll just moved out from under
 							setMenu(null);
+							setMoving(null);
 							setPageTooltip(null);
 						}}
 						onKeyDown={typeAhead}
@@ -1516,6 +1580,7 @@ export function CanvasSidebar({
 							menu={menu}
 							pasteable={clipboard.length > 0}
 							selection={selected.length}
+							movable={menuMove !== null && menuMove.names.length > 0 && menuTargets.length > 0}
 							onClose={() => setMenu(null)}
 							actions={{
 								newPage: () => newPage(menu.target.kind === "page" ? menu.target.page : ROOT_PAGE),
@@ -1527,6 +1592,11 @@ export function CanvasSidebar({
 								},
 								rename: () => beginRename(menuRow),
 								duplicate: () => void duplicate(),
+								moveTo: () => {
+									// where the menu stood: the picker answers the question that menu
+									// item asked, so it opens in its place rather than beside it
+									if (menuMove !== null) setMoving({ x: menu.x, y: menu.y, ...menuMove });
+								},
 								copy,
 								paste: () => void paste(menu.target.kind === "page" ? menu.target.page : undefined),
 								reveal: () => {
@@ -1538,6 +1608,18 @@ export function CanvasSidebar({
 								trash,
 								collapseAll,
 							}}
+						/>,
+						document.body,
+					)}
+
+			{moving === null
+				? null
+				: createPortal(
+						<PagePicker
+							at={moving}
+							pages={destinations(moving.kind, moving.names)}
+							onPick={moveToPicked}
+							onClose={() => setMoving(null)}
 						/>,
 						document.body,
 					)}
@@ -1902,6 +1984,14 @@ function RenameField({
 }
 
 /* ── plumbing ────────────────────────────────────────────────────────── */
+
+/** Which page holds a frame, according to a list the rail drew. */
+function pageHoldingIn(byPage: ReadonlyMap<string, readonly RailFrame[]>, name: string): string | undefined {
+	for (const [page, list] of byPage) {
+		if (list.some((frame) => frame.name === name)) return page;
+	}
+	return undefined;
+}
 
 function rowName(row: RailRow): string {
 	if (row.kind === "born") return "";
