@@ -180,8 +180,14 @@ export async function buildDesignEntry(options: {
 		logLevel: "silent",
 	});
 
+	// esbuild keys the stdin entry by its sourcefile resolved against resolveDir
+	// and written relative to absWorkingDir, so a frame's entry lands under its
+	// own folder and never as the bare name passed in. Comparing to the bare name
+	// only ever matched when resolveDir was designDir, which left every frame's
+	// closure carrying a path no file answers to (#124).
+	const bootKey = relative(designDir, resolve(resolveDir, sourcefile));
 	const sourceFiles = Object.keys(result.metafile.inputs)
-		.filter((input) => input !== sourcefile)
+		.filter((input) => input !== bootKey)
 		.map((input) => resolve(designDir, input));
 	const bootJs = result.outputFiles.find((file) => file.path.endsWith(".js"))?.text;
 	if (bootJs === undefined) throw new Error(`${label} compiled to no module`);
