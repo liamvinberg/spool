@@ -74,6 +74,20 @@ program
 		}
 	});
 
+/**
+ * The bare verb (#154): take me to my canvas.
+ *
+ * `open` above stays registration-only and daemon-less by design (#12) — it is a
+ * step a script composes. A bare `spool` is a person asking to see the thing, so
+ * it is the one entry that ensures a daemon and always prints where the canvas
+ * is. It never scaffolds: no project here means the same pointer at `spool init`.
+ */
+async function openCanvas(): Promise<void> {
+	const { root } = openProject(process.cwd(), spoolDir);
+	const { url } = await ensureDaemon(spoolDir);
+	process.stdout.write(`canvas: ${url}/p/${encodeURIComponent(basename(root))}\n`);
+}
+
 program
 	.command("remove")
 	.description("forget one exact registered project root without deleting it")
@@ -446,7 +460,12 @@ program
 	});
 
 try {
-	await program.parseAsync();
+	// The default is routed here rather than as a commander action handler,
+	// because one on the root swallows every operand it does not recognize —
+	// `spool frobnicate` has to stay an unknown command, not a canvas.
+	const args = process.argv.slice(2);
+	if (args.length === 0) await openCanvas();
+	else await program.parseAsync();
 } catch (error) {
 	if (error instanceof SpoolError) {
 		// a version skew refuses exactly like a bad token; name it here rather

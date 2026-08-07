@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
@@ -311,6 +311,40 @@ describe("spool cli", { timeout: 30_000 }, () => {
 
 		expect(result.status).toBe(0);
 		expect(result.stdout).toContain(realpathSync(repo));
+	});
+
+	it("bare spool registers the project, opens its tab, and prints the canvas url", async () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const repo = makeTempDir();
+		markProject(repo);
+		const nested = join(repo, "src");
+		mkdirSync(nested);
+		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
+		onTestFinished(() => daemon.close());
+
+		const result = await spoolAsync([], home, nested);
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toBe(`canvas: ${daemon.url}/p/${basename(realpathSync(repo))}\n`);
+		expect(JSON.parse(readFileSync(join(spoolDir, "registry.json"), "utf8")).projects).toMatchObject([
+			{ root: realpathSync(repo) },
+		]);
+		expect(JSON.parse(readFileSync(join(spoolDir, "session.json"), "utf8"))).toMatchObject({
+			open: [realpathSync(repo)],
+		});
+	});
+
+	it("bare spool outside a project points at init and scaffolds nothing", async () => {
+		const home = makeTempDir();
+		const elsewhere = makeTempDir();
+
+		const result = await spoolAsync([], home, elsewhere);
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("run `spool init`");
+		expect(existsSync(join(elsewhere, "design"))).toBe(false);
+		expect(existsSync(join(home, ".spool"))).toBe(false);
 	});
 
 	it("remove forgets a live project without deleting its files", () => {
