@@ -290,6 +290,68 @@ describe("trusted UI API client", () => {
 		expect(onReconnect).toHaveBeenCalledTimes(1);
 		dispose();
 	});
+
+	// a restarted daemon mints a new capability, so this page's is answered with
+	// a 401 forever. Backing off on that is backing off on a stream that cannot
+	// come back — the page has to be served again to be given the new one (#30).
+	it("goes and gets served again when a daemon refuses this page's capability", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		const reload = vi.fn();
+		vi.spyOn(window, "location", "get").mockReturnValue({ ...window.location, reload } as unknown as Location);
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("unauthenticated", { status: 401 })));
+		const { subscribeSse } = await loadApi();
+
+		const dispose = subscribeSse("/api/events", {});
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(reload).toHaveBeenCalledTimes(1);
+
+		// once per load: a page cannot be made to reload over and over by whatever
+		// is answering on the port
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(reload).toHaveBeenCalledTimes(1);
+		dispose();
+	});
+
+	it("keeps waiting on a daemon that is merely down, rather than reloading onto nothing", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		const reload = vi.fn();
+		vi.spyOn(window, "location", "get").mockReturnValue({ ...window.location, reload } as unknown as Location);
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+		const { subscribeSse } = await loadApi();
+
+		const dispose = subscribeSse("/api/events", {});
+		await vi.advanceTimersByTimeAsync(5_000);
+
+		expect(reload).not.toHaveBeenCalled();
+		dispose();
+	});
+});
+
+describe("which daemon is answering", () => {
+	it("reads health without spending a capability, so a restart can be seen across", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(
+				new Response(
+					JSON.stringify({ name: "spool", version: "0.6.0", pid: 1, startedAt: "2026-08-04T00:00:00.000Z" }),
+				),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+		const { fetchDaemonIdentity } = await loadApi();
+
+		expect(await fetchDaemonIdentity()).toEqual({ version: "0.6.0", startedAt: "2026-08-04T00:00:00.000Z" });
+		expect(headersOf(fetchMock.mock.calls[0] ?? []).get("x-spool-control")).toBeNull();
+	});
+
+	it("answers nothing while the port is empty — the middle of a restart, not a verdict", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connection refused")));
+		const { fetchDaemonIdentity } = await loadApi();
+
+		expect(await fetchDaemonIdentity()).toBeUndefined();
+	});
 });
 
 const THREAD = "6a290038-7520-4555-aad3-fd3f462ab402";

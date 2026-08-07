@@ -82,6 +82,20 @@ describe("daemon authority matrix", () => {
 		expect((await request("spool.localhost.attacker.example", "/")).status).toBe(421);
 	});
 
+	it("sends the machine's other loopback names to the bound one rather than refusing them", async () => {
+		const { request } = makeSecurityHarness();
+
+		for (const alias of ["127.0.0.1", "[::1]"]) {
+			const bounced = await request(alias, "/p/demo?frame=home");
+			expect(bounced.status).toBe(307);
+			expect(bounced.headers.get("location")).toBe(`http://${CONTROL_HOST}/p/demo?frame=home`);
+		}
+		// the redirect names this daemon's own origin, so nothing a Host header
+		// carries can steer it, and no capability is spent reaching it
+		const unauthenticated = await request("127.0.0.1", "/api/projects");
+		expect(unauthenticated.status).toBe(307);
+	});
+
 	it("serves only the static worker route from the capture host", async () => {
 		const { project, capture, control, render, request } = makeSecurityHarness();
 

@@ -528,6 +528,53 @@ function reconnectDelay(attempt: number): number {
 }
 
 /**
+ * The one answer no amount of reconnecting can survive (#30).
+ *
+ * A daemon mints its capability per process and bakes it into the documents it
+ * serves, so a restarted daemon — an upgrade, a crash, a `spool serve` by hand —
+ * leaves every open page holding a credential for a daemon that no longer
+ * exists. Every stream it owns then 401s forever, and the page sits there
+ * looking alive while nothing reaches it. The page cannot be given the new
+ * capability without being served again, so it goes and gets served again.
+ *
+ * Once per load. A 401 means a daemon is answering and this page is not its own,
+ * which is a fact one reload settles; anything that could keep saying it — some
+ * other server on the port — must not be able to turn this into a loop.
+ */
+let credentialSpent = false;
+
+function reloadForNewDaemon(): void {
+	if (credentialSpent || uiWindow === undefined) return;
+	credentialSpent = true;
+	uiWindow.location.reload();
+}
+
+/**
+ * Which daemon is answering, asked without a capability.
+ *
+ * Health is the one route that takes no credential, which is exactly what makes
+ * it readable across a restart the page's own capability cannot survive. The
+ * version says whether an upgrade landed; the start time separates a daemon
+ * that came back from one that never left.
+ */
+export interface DaemonIdentity {
+	version: string;
+	startedAt: string;
+}
+
+export async function fetchDaemonIdentity(): Promise<DaemonIdentity | undefined> {
+	try {
+		const res = await fetch("/api/health", { cache: "no-store" });
+		if (!res.ok) return undefined;
+		const body = (await res.json()) as { version?: unknown; startedAt?: unknown };
+		if (typeof body.version !== "string" || typeof body.startedAt !== "string") return undefined;
+		return { version: body.version, startedAt: body.startedAt };
+	} catch {
+		return undefined;
+	}
+}
+
+/**
  * Every live stream's health check. A tab coming back asks all of them at once
  * rather than waiting out the watchdog it was throttling.
  */
@@ -592,6 +639,9 @@ export function subscribeSse(
 				headers: { accept: "text/event-stream" },
 				signal: controller.signal,
 			});
+			// a daemon that will not have this page's capability is not a daemon
+			// this page can back off and wait for
+			if (res.status === 401) return reloadForNewDaemon();
 			if (!res.ok || res.body === null) return;
 			await drainSse(res.body, handlers, () => {
 				lastByteAt = Date.now();

@@ -2,15 +2,21 @@ import { CloseIcon } from "./icons";
 
 /**
  * The update toast (#30), on the Trash-toast pattern (#13): raised pill,
- * bottom center, thread only on the one action. Three states — offer,
- * updating (client-local: the daemon's death and return carry the truth),
- * failed (the daemon refused, or came back unchanged). Success needs no
- * state: the page reloads itself on the reconnect's new version.
+ * bottom center, thread only on the one action. Three states — offer, updating,
+ * failed. Success needs no state: the page reloads itself onto the new daemon.
+ *
+ * Updating carries a stage because the two halves of an upgrade feel different
+ * and take different amounts of time — the install runs against a daemon that
+ * is still answering, the restart against one that is gone — and a person
+ * watching a pill that says one thing for a minute has no way to tell a slow
+ * step from a dead one. The hairline sweeps for the same reason the drain bar
+ * on the Trash toast empties: motion is what says the thing is still running.
  */
 
 export type UpdateToast =
 	| { kind: "offer"; latest: string }
-	| { kind: "updating" }
+	/** installing: the old daemon still answers. restarting: it has gone to be replaced. */
+	| { kind: "updating"; stage: "installing" | "restarting" }
 	| { kind: "failed"; message?: string };
 
 export function UpdateToastPill({
@@ -29,7 +35,7 @@ export function UpdateToastPill({
 }) {
 	return (
 		<div
-			className={`-translate-x-1/2 fixed left-1/2 z-20 flex items-center gap-4 rounded-md border border-border-raised bg-raised px-3.5 py-2.5 ${
+			className={`-translate-x-1/2 fixed left-1/2 z-20 flex items-center gap-4 overflow-hidden rounded-md border border-border-raised bg-raised px-3.5 py-2.5 ${
 				aboveCanvasTools ? "bottom-[120px]" : stacked ? "bottom-[72px]" : "bottom-6"
 			}`}
 		>
@@ -41,15 +47,20 @@ export function UpdateToastPill({
 					</button>
 				</>
 			)}
-			{toast.kind === "updating" && <span className="text-base text-muted leading-base">Updating…</span>}
+			{toast.kind === "updating" && (
+				<>
+					<span className="text-base text-muted leading-base">
+						{toast.stage === "installing" ? "Installing update…" : "Restarting…"}
+					</span>
+					<span className="absolute bottom-0 left-0 h-px w-1/3 animate-toast-sweep bg-thread" />
+				</>
+			)}
 			{toast.kind === "failed" && (
-				<span className="text-base text-text leading-base">
-					{toast.message ?? (
-						<>
-							Update failed — run <span className="font-mono text-sm">spool upgrade</span> in a terminal
-						</>
-					)}
-				</span>
+				<>
+					<span className="text-base text-text leading-base">{toast.message ?? "Update failed"}</span>
+					<span className="h-4 w-px bg-border-raised" />
+					<span className="font-mono text-muted text-xs leading-xs">spool upgrade</span>
+				</>
 			)}
 			{toast.kind !== "updating" && (
 				<button

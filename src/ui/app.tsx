@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ProjectCard } from "./api";
+import type { DaemonIdentity, ProjectCard } from "./api";
 import {
 	beaconForgetProject,
+	fetchDaemonIdentity,
 	fetchProjects,
 	fetchSession,
 	postForgetProject,
@@ -34,6 +35,15 @@ interface TabProject {
 /** Same undo window the Trash toast stands for (#23) — one feel across the app. */
 const FORGET_UNDO_MS = 5000;
 
+/** How often the page asks who is answering while an upgrade runs. */
+const UPDATE_POLL_MS = 1000;
+/**
+ * How long the pill may keep promising. Long enough for a cold global install
+ * and a supervised restart on a slow machine, short enough that an upgrade
+ * which quietly did nothing says so while the person is still watching.
+ */
+const UPDATE_DEADLINE_MS = 120_000;
+
 export function App() {
 	const [projects, setProjects] = useState<ProjectCard[]>([]);
 	const [open, setOpen] = useState<string[]>([]);
@@ -50,9 +60,6 @@ export function App() {
 	const [toast, setToast] = useState<UpdateToast | null>(null);
 	const toastRef = useRef(toast);
 	toastRef.current = toast;
-	// the daemon version this page first heard — a different one on a later
-	// hello is the upgraded daemon back up (#30)
-	const daemonVersion = useRef<string | null>(null);
 	const dismissedLatest = useRef<string | null>(null);
 
 	const byRoot = useMemo(() => new Map(projects.map((p) => [p.root, p])), [projects]);
@@ -91,24 +98,18 @@ export function App() {
 		setToast({ kind: "offer", latest });
 	}, []);
 
-	// `spool open` in a shell lands here as a session event — a background tab;
-	// hello doubles as the update loop's truth (#30): reload on a version flip,
-	// fail honestly when the same daemon comes back mid-update
+	// `spool open` in a shell lands here as a session event — a background tab.
+	// hello carries what the daily check found, on every connection, so a page
+	// left open overnight hears about a release without being reloaded (#30).
+	// It says nothing about an upgrade in flight: a successor daemon refuses
+	// this page's capability rather than greeting it, so the reload that answers
+	// that lives in the client, and how an upgrade went is health's to tell.
 	useEffect(() => {
 		return subscribeSse(
 			"/api/events",
 			{
 				hello: (data) => {
-					const { version, latest } = data as { version?: unknown; latest?: unknown };
-					if (typeof version !== "string") return;
-					if (daemonVersion.current === null) {
-						daemonVersion.current = version;
-					} else if (daemonVersion.current !== version) {
-						window.location.reload();
-						return;
-					} else if (toastRef.current?.kind === "updating") {
-						setToast({ kind: "failed" });
-					}
+					const { latest } = data as { latest?: unknown };
 					if (typeof latest === "string") offerUpdate(latest);
 				},
 				app: (data) => {
@@ -124,10 +125,72 @@ export function App() {
 	}, [refetch, offerUpdate]);
 
 	const startUpgrade = useCallback(async () => {
-		setToast({ kind: "updating" });
+		setToast({ kind: "updating", stage: "installing" });
 		const res = await postUpgrade();
 		if (!res.ok) setToast({ kind: "failed", message: res.error });
 	}, []);
+
+	/**
+	 * Watching the upgrade happen (#30).
+	 *
+	 * The daemon spawns the upgrader and stands back, then dies partway through
+	 * its own replacement, so nothing it could have said survives to say how it
+	 * went — and the stream is no help either, because the successor will not
+	 * have this page's capability. Health will: it takes no credential, so it
+	 * can be asked straight across the restart, and it names the daemon that
+	 * answers. A version it did not have before is the upgrade landing, and the
+	 * page reloads onto it. The same daemon back on the same version is an
+	 * upgrade that decided there was nothing to install, or could not. And a
+	 * deadline covers everything that leaves no trace at all — an install that
+	 * failed, an orchestrator that never started. Any of those used to leave
+	 * "Updating…" on the screen for as long as the tab stayed open.
+	 *
+	 * Deliberately not the last word: whenever a new daemon does come up, the
+	 * 401 on the stream reloads the page anyway. This only decides how long the
+	 * pill keeps promising.
+	 */
+	const updating = toast?.kind === "updating";
+	useEffect(() => {
+		if (!updating) return;
+		let stopped = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let before: DaemonIdentity | undefined;
+		const deadline = Date.now() + UPDATE_DEADLINE_MS;
+
+		const tick = async () => {
+			const answering = await fetchDaemonIdentity();
+			if (stopped) return;
+			if (answering === undefined) {
+				// nothing on the port: the daemon has gone to be replaced, which is
+				// the last step rather than a failure. The stage never walks back —
+				// what follows is a reload or a verdict, not a return to installing.
+				setToast((current) =>
+					current?.kind === "updating" && current.stage !== "restarting"
+						? { kind: "updating", stage: "restarting" }
+						: current,
+				);
+			} else if (before === undefined) {
+				before = answering;
+			} else if (answering.version !== before.version) {
+				window.location.reload();
+				return;
+			} else if (answering.startedAt !== before.startedAt) {
+				setToast({ kind: "failed", message: `Update did not land — still v${answering.version}` });
+				return;
+			}
+			if (Date.now() >= deadline) {
+				setToast({ kind: "failed", message: "Update is taking too long" });
+				return;
+			}
+			timer = setTimeout(() => void tick(), UPDATE_POLL_MS);
+		};
+
+		void tick();
+		return () => {
+			stopped = true;
+			clearTimeout(timer);
+		};
+	}, [updating]);
 
 	const dismissToast = useCallback(() => {
 		if (toastRef.current?.kind === "offer") dismissedLatest.current = toastRef.current.latest;

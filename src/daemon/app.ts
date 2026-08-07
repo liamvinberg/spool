@@ -589,14 +589,16 @@ export function createDaemonApp({
 		return { path };
 	}
 
-	type HostClass = "control" | "render" | "capture" | "unexpected";
+	type HostClass = "control" | "alias" | "render" | "capture" | "unexpected";
 
 	function hostClass(url: string): HostClass {
 		const hostname = normalizeHostname(new URL(url).hostname);
 		if (hostname === controlHostname) return "control";
 		if (hostname === RENDER_HOST) return "render";
 		if (hostname === CAPTURE_HOST) return "capture";
-		return "unexpected";
+		// The other names for this machine reach the same listener but are not the
+		// same origin. They are not strangers either — see the redirect above.
+		return isLoopbackHost(hostname) ? "alias" : "unexpected";
 	}
 
 	/**
@@ -688,6 +690,19 @@ export function createDaemonApp({
 	const app = new Hono()
 		.use("*", async (c, next) => {
 			const host = hostClass(c.req.url);
+			// localhost and 127.0.0.1 are the same machine and the same daemon, but
+			// not the same origin — and the bound one is the origin everything here
+			// hangs off: the capability's audience, the Origin checks below, and the
+			// browser storage a canvas keeps. Serving both would quietly fork a
+			// person's canvas in two. So the other loopback names are sent to the
+			// bound one instead of refused: one address to type, still one origin to
+			// trust. The target is this daemon's own, never the request's, so no Host
+			// header can steer it; every other name is still a stranger's (a rebound
+			// DNS record pointed at this port) and still gets 421.
+			if (host === "alias") {
+				const { pathname, search } = new URL(c.req.url);
+				return c.redirect(`${controlOrigin}${pathname}${search}`, 307);
+			}
 			if (host === "unexpected") return c.text("unexpected host", 421);
 			const path = c.req.path;
 			if (host === "capture") {
