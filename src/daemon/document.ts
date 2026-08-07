@@ -361,6 +361,9 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * {spool:"freeze", on} holds this document's animations while the camera moves
  * (#171) or while nothing has attended the frame for a long minute (#172), and
  * re-delivers every held rAF callback on thaw;
+ * {spool:"arrive", settleMs} answers {spool:"arrived"} once this document has
+ * finished arriving — the same settle a capture waits out, reported rather than
+ * photographed, so a promoted frame's cover fades onto a settled frame (#177);
  * {spool:"capture", id, targetWidth, settleMs}
  * answers with a sanitized foreignObject source for the trusted capture host
  * to rasterize off this frame's main thread. The frame waits out its own fonts
@@ -1054,9 +1057,42 @@ const canvasShimJs = `(() => {
 	}
 
 	let captureInFlight = false;
+	/**
+	 * Arrival is reported once per document (#177). A frame arrives once; a
+	 * second report would be about something the document did later, and the
+	 * canvas is asking when it may stop standing a picture in front of this one.
+	 */
+	let arrivalReported = false;
 	addEventListener("message", async (event) => {
 		const m = event.data;
 		if (!m || typeof m !== "object") return;
+		if (m.spool === "arrive") {
+			// The same settle a capture waits out, answered as a bare report (#177).
+			// Loaded is mid-arrival: an entry animation is at its beginning where
+			// the still photographed its end, and a canvas frame may not have drawn
+			// a tick yet. Waiting out the settle is how the cover fades onto the
+			// frame its picture is a picture of.
+			const config = window.__SPOOL__ || {};
+			const settleMs = m.settleMs;
+			if (
+				arrivalReported ||
+				event.source !== parent ||
+				event.origin !== config.controlOrigin ||
+				typeof settleMs !== "number" ||
+				!Number.isFinite(settleMs) ||
+				!Number.isInteger(settleMs) ||
+				settleMs < 0 ||
+				settleMs > 900
+			) {
+				return;
+			}
+			arrivalReported = true;
+			// A settle that threw still arrived: the canvas is holding a cover on
+			// this answer, and its own deadline is the only other thing that frees it.
+			try { await settle(settleMs); } catch {}
+			parent.postMessage({ spool: "arrived", frame: config.frame }, "*");
+			return;
+		}
 		if (m.spool === "pick") {
 			const frame = (window.__SPOOL__ || {}).frame;
 			let chain = [];

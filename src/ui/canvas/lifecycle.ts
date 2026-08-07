@@ -4,7 +4,7 @@ import { LIVE_MIN_CSS_PX } from "../../cover";
 import { type Camera, captureOrigin, type ProjectedFrame } from "../api";
 import { intersects } from "./camera";
 import { CAPTURE_WORKER_TIMEOUT_MS, type CoverRaster, captureRequestId, rasterCaptureSource } from "./capture-broker";
-import { type CaptureSourceReply, captureMessage, freezeMessage } from "./protocol";
+import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage } from "./protocol";
 
 /**
  * The engine lifecycle (#8, #13, #40, #54, #112): which frames hold a document,
@@ -92,6 +92,20 @@ export const CAPTURE_MAX_STALE_MS = 4000;
  * is a truer picture, and the picture is the only thing anyone looks at.
  */
 export const CAPTURE_SETTLE_BUDGET_MS = 900;
+/**
+ * How long a promoted frame's cover waits for the document's arrival report
+ * before it fades anyway (#177).
+ *
+ * The report is the shim's own settle, already bounded by
+ * CAPTURE_SETTLE_BUDGET_MS — a frame that animates forever or never goes quiet
+ * reports at that deadline rather than never. This is the outer bound on the
+ * whole errand: the two message hops around that settle, a main thread busy
+ * enough to overrun its own budget, and every document that will never answer
+ * at all — a boot that broke after it reported loaded, a document served before
+ * this shim existed. A cover held forever is a frame you can never see, which
+ * is worse than the seam this is fixing.
+ */
+export const ARRIVE_DEADLINE_MS = CAPTURE_SETTLE_BUDGET_MS + 600;
 /**
  * How many frames may be borrowed for a picture at once — the whole of the
  * pacing, and a count in flight rather than a rate per tick: a rate is a
@@ -630,6 +644,12 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	// when each frame reported loaded, not merely that it did: a still is only
 	// worth taking once the frame has had time to finish arriving
 	const [ready, setReady] = useState<ReadonlyMap<string, number>>(new Map<string, number>());
+	/**
+	 * Frames whose document has finished arriving (#177) — its own settle done,
+	 * or ARRIVE_DEADLINE_MS spent waiting to hear so. What the cover of a frame
+	 * nobody went inside waits for, because loaded is mid-arrival.
+	 */
+	const [settled, setSettled] = useState<ReadonlySet<string>>(new Set<string>());
 
 	const statesRef = useRef(states);
 	statesRef.current = states;
@@ -670,6 +690,8 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		abort: AbortController;
 	}
 	const captureWaiters = useRef(new Map<string, PendingCapture>());
+	/** Frames whose arrival report is outstanding, holding their ARRIVE_DEADLINE_MS. */
+	const arrivalTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 	/** The frames currently told to hold their animations. */
 	const frozen = useRef(new Set<string>());
 	const cameraMoving = useRef(false);
@@ -798,6 +820,65 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 		if (reason !== undefined) onCaptureFailureRef.current?.(frame, reason.slice(0, 240));
 	}, []);
 
+	/** The frame has arrived — it said so, or its deadline said so for it. */
+	const noteArrived = useCallback((frame: string) => {
+		const timer = arrivalTimers.current.get(frame);
+		if (timer !== undefined) {
+			clearTimeout(timer);
+			arrivalTimers.current.delete(frame);
+		}
+		setSettled((current) => (current.has(frame) ? current : new Set(current).add(frame)));
+	}, []);
+
+	/** The document that was arriving left. Its successor arrives on its own. */
+	const forgetArrival = useCallback((frame: string) => {
+		const timer = arrivalTimers.current.get(frame);
+		if (timer !== undefined) {
+			clearTimeout(timer);
+			arrivalTimers.current.delete(frame);
+		}
+		setSettled((current) => {
+			if (!current.has(frame)) return current;
+			const next = new Set(current);
+			next.delete(frame);
+			return next;
+		});
+	}, []);
+
+	/**
+	 * The boot reported loaded, which is where arrival starts rather than ends
+	 * (#177): ask the document to say when it has settled, and keep a deadline
+	 * against the answer never coming.
+	 *
+	 * A terminal document carries the small canvas protocol, not the shim
+	 * (`daemon/term-document.ts`) — it has no settle to report and animates
+	 * nothing in, so loaded is its arrival.
+	 */
+	const askArrival = useCallback(
+		(frame: string) => {
+			const kind = allFramesRef.current.find((candidate) => candidate.name === frame)?.kind;
+			const sourceWindow = iframes.current.get(frame)?.contentWindow;
+			if (kind === "term" || sourceWindow == null) {
+				noteArrived(frame);
+				return;
+			}
+			sourceWindow.postMessage(arriveMessage(CAPTURE_SETTLE_BUDGET_MS), "*");
+			arrivalTimers.current.set(
+				frame,
+				setTimeout(() => noteArrived(frame), ARRIVE_DEADLINE_MS),
+			);
+		},
+		[allFramesRef, noteArrived],
+	);
+
+	useEffect(
+		() => () => {
+			for (const timer of arrivalTimers.current.values()) clearTimeout(timer);
+			arrivalTimers.current.clear();
+		},
+		[],
+	);
+
 	const onIframe = useCallback(
 		(frame: string, el: HTMLIFrameElement | null) => {
 			const current = iframes.current.get(frame);
@@ -825,18 +906,22 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				next.delete(frame);
 				return next;
 			});
+			forgetArrival(frame);
 		},
-		[noteShot],
+		[forgetArrival, noteShot],
 	);
 
 	/** The frame's loaded report (commit-time effect, #17) — routed in by the canvas's message listener. */
-	const noteLoaded = useCallback((frame: string) => {
-		if (!readyRef.current.has(frame)) {
+	const noteLoaded = useCallback(
+		(frame: string) => {
+			if (readyRef.current.has(frame)) return;
 			const next = new Map(readyRef.current).set(frame, performance.now());
 			readyRef.current = next;
 			setReady(next);
-		}
-	}, []);
+			askArrival(frame);
+		},
+		[askArrival],
+	);
 
 	/**
 	 * Accept a source only from the current window that received this exact
@@ -1087,8 +1172,10 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	return {
 		states,
 		ready,
+		settled,
 		onIframe,
 		noteLoaded,
+		noteArrived,
 		noteCaptureSource,
 		noteCameraMoving,
 		markStale,

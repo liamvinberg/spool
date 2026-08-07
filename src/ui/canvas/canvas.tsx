@@ -1741,6 +1741,11 @@ export function ProjectCanvas({
 					// a fresh document renders fresh elements: re-anchor its arrows (#34)
 					requestSiteBoxes(message.frame);
 					return;
+				case "arrived":
+					// the frame finished arriving (#177): a promoted frame's cover has
+					// been waiting for this rather than for loaded
+					lifecycleRef.current.noteArrived(message.frame);
+					return;
 				case "capture-source":
 					lifecycleRef.current.noteCaptureSource(message, event.source);
 					return;
@@ -2865,6 +2870,7 @@ export function ProjectCanvas({
 											name={frame.name}
 											state={state}
 											ready={lifecycle.ready.has(frame.name)}
+											settled={lifecycle.settled.has(frame.name)}
 											entered={isEntered}
 											interactive={isEntered && !accelDown}
 											terminal={frame.kind === "term"}

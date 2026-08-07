@@ -27,7 +27,7 @@ vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
  */
 
 const plan = (over: Partial<Parameters<typeof coverPlan>[0]>) =>
-	coverPlan({ state: "live", ready: false, entered: true, covered: true, walk: false, ...over });
+	coverPlan({ state: "live", ready: false, settled: false, entered: true, covered: true, walk: false, ...over });
 
 describe("coverPlan", () => {
 	it("covers a frame standing as its picture, no badge", () => {
@@ -53,7 +53,22 @@ describe("coverPlan", () => {
 	});
 
 	it("leaves a readable canvas frame uncovered while Select owns the pointer", () => {
-		expect(plan({ state: "live", entered: false, ready: true }).cover).toBe(false);
+		expect(plan({ state: "live", entered: false, ready: true, settled: true }).cover).toBe(false);
+	});
+
+	it("holds a promoted frame's cover past loaded, until the document says it arrived", () => {
+		// #177: loaded is mid-arrival — the entry animation is at its beginning
+		// where the still photographed its end. Fading here shows the entrance
+		// again, or nothing at all, and then the settled frame a third time.
+		const promoted = { state: "live", entered: false, ready: true } as const;
+		expect(plan({ ...promoted, settled: false }).cover).toBe(true);
+		expect(plan({ ...promoted, settled: true }).cover).toBe(false);
+	});
+
+	it("uncovers the frame you went inside at loaded, arrived or not", () => {
+		// going in is asking to watch it run, and the entrance is the first thing
+		// it runs — the wait belongs to the promotion nobody asked for
+		expect(plan({ ready: true, settled: false }).cover).toBe(false);
 	});
 
 	it("shows the placeholder for a frame with nothing to stand in for it", () => {
@@ -84,7 +99,7 @@ describe("coverPlan", () => {
 
 	it("never uncovers a frame you are not inside, however booted", () => {
 		for (const state of ["refreshing", "held", "picture"] as const) {
-			expect(plan({ state, entered: false, ready: true }).cover).toBe(true);
+			expect(plan({ state, entered: false, ready: true, settled: true }).cover).toBe(true);
 		}
 	});
 
@@ -109,6 +124,7 @@ describe("FrameShell documents", () => {
 		project: "demo",
 		name: "hero",
 		ready: true,
+		settled: true,
 		entered: false,
 		interactive: false,
 		terminal: false,
@@ -238,6 +254,7 @@ describe("FrameShell terminal covers", () => {
 			name: "dash",
 			state: "picture" as const,
 			ready: false,
+			settled: false,
 			entered: false,
 			interactive: false,
 			terminal: true,
@@ -278,6 +295,7 @@ describe("FrameShell terminal covers", () => {
 			name: "dash",
 			state: "held" as const,
 			ready: true,
+			settled: true,
 			entered: false,
 			interactive: false,
 			terminal: true,

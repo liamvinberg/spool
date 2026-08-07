@@ -133,6 +133,7 @@ export type CaptureSourceReply = CaptureSourceMessage | CaptureSourceErrorMessag
 export type FrameMessage =
 	| ClipboardCopyRequest
 	| { spool: "loaded"; frame: string }
+	| { spool: "arrived"; frame: string }
 	| { spool: "error"; frame: string; error: string }
 	| { spool: "shot"; frame: string; url?: string; error?: string }
 	| CaptureSourceReply
@@ -155,6 +156,7 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 		case "copy":
 			return parseClipboardCopyRequest(data);
 		case "loaded":
+		case "arrived":
 		case "error":
 		case "shot":
 		case "session?":
@@ -300,6 +302,13 @@ function webHref(value: unknown): value is string {
 }
 
 export const freezeMessage = (on: boolean) => ({ spool: "freeze", on }) as const;
+/**
+ * Ask a freshly loaded document to say when it has finished arriving (#177) —
+ * fonts, entry animations, a quiet DOM. `settleMs` is the frame's own budget for
+ * that wait, spent inside the frame; the caller keeps a deadline of its own,
+ * because a document that never answers is exactly the one this asks about.
+ */
+export const arriveMessage = (settleMs: number) => ({ spool: "arrive", settleMs }) as const;
 /**
  * `targetWidth` asks for a sharp cover at the live threshold; 0 asks for a full-resolution export.
  * `id` binds the reply to the exact request and frame document.

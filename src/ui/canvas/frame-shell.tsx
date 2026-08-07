@@ -31,8 +31,8 @@ export interface CoverPlan {
 }
 
 /**
- * The cover law (#8, #28, #112): the still covers everything but the frame you
- * went inside, and covers that one until its loaded report. The veil +
+ * The cover law (#8, #28, #112, #177): the still covers everything but the frame
+ * you went inside, and covers that one until its loaded report. The veil +
  * "booting" badge belongs to a boot somebody asked for — going inside, or a
  * frame with nothing at all to stand in for it. The canvas borrows frames of
  * its own accord to photograph them, and announcing those is how one arrival
@@ -40,10 +40,20 @@ export interface CoverPlan {
  * holds its still and boots out of sight. A walk arrival is quiet the same way,
  * on the freshest still it has — its stored one (#110), a picture of a freshly
  * booted frame and so of the state a reboot lands in.
+ *
+ * A frame nobody went inside waits past loaded for its arrival report (#177).
+ * Loaded is mid-arrival: an entry animation is at its beginning where the still
+ * photographed its end, and a canvas frame may not have drawn a tick, so fading
+ * there swaps a settled picture for black or a replayed entrance and then back.
+ * Nothing was asking to interact with a frame the zoom promoted, so the wait
+ * costs nothing; the frame you asked to go into keeps fading at loaded, because
+ * watching the entrance play is what going in looks like.
  */
 export function coverPlan(input: {
 	state: FrameState;
 	ready: boolean;
+	/** Whether the document has reported that it finished arriving (#177). */
+	settled: boolean;
 	/** Whether this is the frame you went inside — looked at whether or not its time runs. */
 	entered: boolean;
 	/** Whether the frame has a cover to stand in for it at all. */
@@ -52,7 +62,7 @@ export function coverPlan(input: {
 	walk: boolean;
 	terminalCover?: TerminalCoverState | undefined;
 }): CoverPlan {
-	const { state, ready, entered, covered, walk, terminalCover } = input;
+	const { state, ready, settled, entered, covered, walk, terminalCover } = input;
 	if (terminalCover?.kind === "stale" || terminalCover?.kind === "never-run") {
 		return {
 			cover: true,
@@ -64,7 +74,7 @@ export function coverPlan(input: {
 	return {
 		// A live frame is what the canvas is showing, whether it is entered or
 		// Select currently owns the pointer above it.
-		cover: (state !== "live" && !entered) || !ready,
+		cover: (state !== "live" && !entered) || !ready || (!entered && !settled),
 		image: covered ? "cover" : "placeholder",
 		// Going inside is the whole of "a boot somebody asked for". A borrowed
 		// frame boots out of sight, and badging those is how one arrival becomes
@@ -78,6 +88,7 @@ export const FrameShell = memo(function FrameShell({
 	name,
 	state,
 	ready,
+	settled,
 	entered,
 	interactive,
 	docNonce,
@@ -91,6 +102,8 @@ export const FrameShell = memo(function FrameShell({
 	name: string;
 	state: FrameState;
 	ready: boolean;
+	/** Whether the document reported it finished arriving (#177). */
+	settled: boolean;
 	/** Whether this is the frame you went inside. */
 	entered: boolean;
 	/** Whether the entered iframe currently owns pointer input. */
@@ -132,7 +145,15 @@ export const FrameShell = memo(function FrameShell({
 	// The marker needs no latch of its own: it only silences the badge, which is
 	// already gone by the time the cover fades. If a broken boot or mid-walk edit
 	// retires the marker while the frame stays covered, the honest cover returns.
-	const plan = coverPlan({ state, ready, entered, covered: cover !== undefined, walk: walkArrival, terminalCover });
+	const plan = coverPlan({
+		state,
+		ready,
+		settled,
+		entered,
+		covered: cover !== undefined,
+		walk: walkArrival,
+		terminalCover,
+	});
 	const [veil, setVeil] = useState(plan.cover);
 	useEffect(() => {
 		if (plan.cover) {
