@@ -248,7 +248,8 @@ export async function poll<T>(
 	return undefined;
 }
 
-async function fetchHealth(url: string): Promise<DaemonHealth | undefined> {
+/** What the daemon at this URL says it is, asked without a control token. */
+export async function fetchHealth(url: string): Promise<DaemonHealth | undefined> {
 	let body: unknown;
 	try {
 		const res = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(1000) });

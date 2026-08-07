@@ -3,7 +3,7 @@ import { renderOrigin } from "./daemon/lifecycle";
 import { describeMissingFrame, lookupFrame } from "./daemon/projection";
 import type { SelectionEntry } from "./daemon/selection";
 import { selectionBlock } from "./daemon/selection-block";
-import { SpoolError } from "./errors";
+import { RefusedError, SpoolError } from "./errors";
 import { readRegistry } from "./registry";
 import { resolveProjectRoot } from "./resolve";
 
@@ -84,8 +84,18 @@ async function assertFrameExists(daemonUrl: string, name: string, frame: string,
 
 async function apiJson(url: string, controlToken: string): Promise<unknown> {
 	const res = await fetch(url, { headers: { "X-Spool-Control": controlToken } });
-	if (!res.ok) throw new SpoolError(await res.text());
+	if (!res.ok) throw await refusalOf(res, url);
 	return res.json();
+}
+
+/**
+ * A refused control request carries the daemon it asked, so the boundary can
+ * name a version skew instead of leaving it as an auth mystery (#155).
+ */
+export async function refusalOf(res: Response, url: string): Promise<SpoolError> {
+	const message = await res.text();
+	if (res.status !== 401 && res.status !== 403) return new SpoolError(message);
+	return new RefusedError(message, new URL(url).origin);
 }
 
 function pretty(value: unknown): string {

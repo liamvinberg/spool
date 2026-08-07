@@ -30,7 +30,7 @@ import { isSafeName } from "./page-path";
 import { removeProject } from "./remove";
 import { resolveProjectRoot } from "./resolve";
 import { skillText } from "./skill";
-import { runUpgrade, selfUpgradeable } from "./upgrade";
+import { describeSkew, runUpgrade, selfUpgradeable, skewBehind } from "./upgrade";
 import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
 import { logsFrame, shotFrame } from "./verify";
 
@@ -429,10 +429,7 @@ program
 			process.exitCode = 1;
 			return;
 		}
-		// a skew is real news either way, but the way out of it differs: a managed
-		// install reinstalls, a checkout restarts onto the code already on disk
-		const fix = upgradeable ? "`spool upgrade` brings them in step" : "restart it to catch it up";
-		const skew = status.version === pkg.version ? "" : ` — cli is v${pkg.version}, ${fix}`;
+		const skew = describeSkew(status.version, pkg.version);
 		process.stdout.write(
 			`spool daemon running at ${status.url} (pid ${status.pid}, v${status.version})${skew}${available}\n`,
 		);
@@ -452,7 +449,9 @@ try {
 	await program.parseAsync();
 } catch (error) {
 	if (error instanceof SpoolError) {
-		process.stderr.write(`spool: ${error.message}\n`);
+		// a version skew refuses exactly like a bad token; name it here rather
+		// than leave the failing verb saying only `unauthenticated` (#155)
+		process.stderr.write(`spool: ${error.message}${await skewBehind(error, pkg.version)}\n`);
 		process.exitCode = 1;
 	} else {
 		throw error;

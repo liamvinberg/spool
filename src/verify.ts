@@ -7,6 +7,7 @@ import { projectedKind, readFrameGeometry } from "./daemon/projection";
 import { type CaptureError, readCaptureError, termScreenFile } from "./daemon/thumbs";
 import { SpoolError } from "./errors";
 import { launchHeadlessShell } from "./headless-shell";
+import { refusalOf } from "./verbs";
 
 /**
  * shot and logs (#25): two outputs of one headless scenario-seeded boot of the
@@ -104,6 +105,8 @@ export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
 async function termShot(deps: BootDeps): Promise<ShotOutcome> {
 	const url = `${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/thumbs/${encodeURIComponent(deps.frame)}`;
 	const res = await fetch(url, { headers: controlHeaders(deps.controlToken) });
+	// a refusal is not a broken frame: it throws, so the boundary can name a skew
+	if (res.status === 401 || res.status === 403) throw await refusalOf(res, url);
 	if (!res.ok) return { kind: "broken", message: await res.text() };
 	const file = verifyFile(deps.root, deps.frame, "svg");
 	writeAtomic(file, await res.text());
@@ -142,6 +145,7 @@ type Probe = { kind: "ok"; etag: string } | { kind: "error"; message: string } |
 async function probeCompile(deps: BootDeps): Promise<Probe> {
 	const url = `${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/verify/${encodeURIComponent(deps.frame)}`;
 	const res = await fetch(url, { headers: controlHeaders(deps.controlToken) });
+	if (res.status === 401 || res.status === 403) throw await refusalOf(res, url);
 	const body: unknown =
 		res.headers.get("content-type")?.includes("json") === true ? await res.json() : await res.text();
 	if (typeof body === "object" && body !== null) {

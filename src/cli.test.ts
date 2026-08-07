@@ -236,6 +236,32 @@ describe("spool cli", { timeout: 30_000 }, () => {
 		expect(url.stdout).toContain("--raw");
 	});
 
+	/**
+	 * The daemon turns a skewed cli away with the same 401 it gives a bad token.
+	 * `spool status` always knew the real story; the verb that actually broke used
+	 * to say only `unauthenticated` and send you looking at credentials (#155).
+	 */
+	it("names a version skew on the verb that breaks, not just on status", async () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "quiet", "export default function Quiet() { return <main>quiet</main>; }\n");
+		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
+		onTestFinished(() => daemon.close());
+		// the cli holds a key this daemon will not take, which is exactly the shape
+		// a skew arrives in: the token is stale because the daemon is a different build
+		const stateFile = join(spoolDir, "daemon.json");
+		const state = JSON.parse(readFileSync(stateFile, "utf8")) as Record<string, unknown>;
+		writeFileSync(stateFile, JSON.stringify({ ...state, controlToken: "stale-key" }));
+
+		const result = await spoolAsync(["shot", "quiet"], home, root);
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("unauthenticated");
+		expect(result.stderr).toContain("cli is v");
+		expect(result.stderr).toMatch(/spool upgrade|restart it to catch it up/);
+	});
+
 	it("says a replayed cache matches current compiled source", async () => {
 		const home = makeTempDir();
 		const spoolDir = join(home, ".spool");

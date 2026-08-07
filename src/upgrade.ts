@@ -3,9 +3,17 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync,
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { installAutostart, launchAgentPath } from "./autostart";
-import { type DaemonStatus, ensureDaemon, poll, selfCliPath, statusDaemon, stopDaemon } from "./daemon/lifecycle";
+import {
+	type DaemonStatus,
+	ensureDaemon,
+	fetchHealth,
+	poll,
+	selfCliPath,
+	statusDaemon,
+	stopDaemon,
+} from "./daemon/lifecycle";
 import { fetchLatestVersion, isNewer } from "./daemon/update-check";
-import { SpoolError } from "./errors";
+import { RefusedError, SpoolError } from "./errors";
 
 /**
  * The update loop's one orchestrator (#30): always a CLI process, never the
@@ -315,6 +323,30 @@ export function selfUpgradeable(
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * The one sentence a version skew gets, wherever it surfaces (#155): `status`
+ * reporting a running daemon, and any verb the daemon refused. Matching
+ * versions say nothing. The way out differs by install — a managed one
+ * reinstalls, a checkout restarts onto the code already on disk.
+ */
+export function describeSkew(daemonVersion: string, cliVersion: string): string {
+	if (daemonVersion === cliVersion) return "";
+	const fix = selfUpgradeable() ? "`spool upgrade` brings them in step" : "restart it to catch it up";
+	return ` — cli is v${cliVersion}, ${fix}`;
+}
+
+/**
+ * The skew behind a refusal, if that is what it was. A skewed cli is turned
+ * away exactly like a bad token, so the verb that broke asks health — which
+ * takes no token — which version answered, and says what `status` would have
+ * said. A genuine auth failure against a matching daemon adds nothing (#155).
+ */
+export async function skewBehind(error: unknown, cliVersion: string): Promise<string> {
+	if (!(error instanceof RefusedError)) return "";
+	const health = await fetchHealth(error.daemonUrl);
+	return health === undefined ? "" : describeSkew(health.version, cliVersion);
 }
 
 /**

@@ -1,9 +1,17 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DaemonStatus } from "./daemon/lifecycle";
-import { SpoolError } from "./errors";
-import { makeTempDir } from "./test-helpers";
-import { planUpgrade, requestUpgrade, runUpgrade, selfUpgradeable, type UpgradeIo } from "./upgrade";
+import { RefusedError, SpoolError } from "./errors";
+import { makeTempDir, serveProject } from "./test-helpers";
+import {
+	describeSkew,
+	planUpgrade,
+	requestUpgrade,
+	runUpgrade,
+	selfUpgradeable,
+	skewBehind,
+	type UpgradeIo,
+} from "./upgrade";
 
 describe("planUpgrade", () => {
 	it("classifies an npm-global install and resolves npm beside node", () => {
@@ -422,5 +430,46 @@ describe("requestUpgrade", () => {
 
 		expect(outcome.ok).toBe(false);
 		if (!outcome.ok) expect(outcome.error.length).toBeGreaterThan(0);
+	});
+});
+
+/**
+ * A skewed cli is refused with the same 401 a bad token gets, and used to be
+ * left there: `spool shot` said only `unauthenticated` while `spool status`
+ * knew the real story (#155). One sentence now, wherever a skew surfaces.
+ */
+describe("describeSkew", () => {
+	it("says nothing when the daemon and the cli are the same version", () => {
+		expect(describeSkew("0.4.0", "0.4.0")).toBe("");
+	});
+
+	it("names the cli's version and a way out when they differ", () => {
+		const line = describeSkew("0.4.0", "0.3.0");
+
+		expect(line).toContain("cli is v0.3.0");
+		// the checkout arm: no package manager owns the test runner's install
+		expect(line).toContain("restart it to catch it up");
+	});
+});
+
+describe("skewBehind", () => {
+	it("names the skew behind a refusal, asking the daemon that refused", async () => {
+		const { url } = await serveProject();
+
+		expect(await skewBehind(new RefusedError("unauthenticated", url), "9.9.9")).toContain("cli is v9.9.9");
+	});
+
+	it("adds nothing to a genuine auth failure against a daemon on the same version", async () => {
+		const { url } = await serveProject();
+
+		expect(await skewBehind(new RefusedError("unauthenticated", url), "0.0.0-test")).toBe("");
+	});
+
+	it("adds nothing to a failure that was never a refusal, and asks no daemon", async () => {
+		expect(await skewBehind(new SpoolError('no frame "ghost" on the canvas'), "9.9.9")).toBe("");
+	});
+
+	it("adds nothing when nothing answers health", async () => {
+		expect(await skewBehind(new RefusedError("unauthenticated", "http://127.0.0.1:1"), "9.9.9")).toBe("");
 	});
 });

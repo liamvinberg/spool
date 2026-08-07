@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
-import { SpoolError } from "./errors";
+import { RefusedError, SpoolError } from "./errors";
 import { skillText } from "./skill";
 import { makeProject, makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
 import { mintPlayerUrl, mintRawUrl, readFlows, readSelection, resolveRegisteredProject } from "./verbs";
@@ -107,6 +107,30 @@ describe("selection and flows over the daemon", () => {
 			],
 			unreadable: [],
 		});
+	});
+
+	/**
+	 * A refusal is a kind, not a string. The daemon turns a skewed cli away with
+	 * the same 401 it gives a bad token, so the failure has to carry which daemon
+	 * said it for the boundary to tell the two apart (#155).
+	 */
+	it("classifies a refused request as a refusal carrying the daemon it asked", async () => {
+		const { name, url } = await serveProject();
+
+		const error = await readSelection(url, name, "not-the-token").catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(RefusedError);
+		expect((error as RefusedError).message).toBe("unauthenticated");
+		expect((error as RefusedError).daemonUrl).toBe(new URL(url).origin);
+	});
+
+	it("leaves a failure that is not a refusal a plain error", async () => {
+		const { spoolDir, url } = await serveProject();
+
+		const error = await readFlows(url, "no-such-project", controlToken(spoolDir)).catch((thrown: unknown) => thrown);
+
+		expect(error).toBeInstanceOf(SpoolError);
+		expect(error).not.toBeInstanceOf(RefusedError);
 	});
 });
 
