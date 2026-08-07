@@ -76,7 +76,9 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 			};
 		}
 		if (kind === "conflict") {
-			const message = `design/frames/${frame} holds both frame.tsx and term.tsx — a frame is one kind; remove one entry`;
+			// same as the missing case above: the folder is known, so name it exactly
+			const folder = frameFolder(frame, lookup.page);
+			const message = `design/${folder} holds both frame.tsx and term.tsx — a frame is one kind; remove one entry`;
 			return { kind: "error", document: errorDocument(frame, message), message };
 		}
 		if (kind === "term") {

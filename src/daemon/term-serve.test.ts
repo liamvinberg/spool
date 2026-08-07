@@ -69,6 +69,26 @@ describe("terminal frame documents", () => {
 		expect(body.message).toContain("design/frames/both");
 	});
 
+	it("names a paged conflict by its real folder, page segment and all", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		// the folder is known here, so the message must not invent the flat
+		// `frames/cart` the way the missing case used to (#219, same class as #156)
+		writeDesignFile(root, join("frames", "shop", "cart", "frame.tsx"), "export default () => null;\n");
+		writeDesignFile(root, join("frames", "shop", "cart", "term.tsx"), "// tui\n");
+		const app = makeApp(spoolDir);
+
+		const doc = await app.request(`/p/${name}/frames/cart`);
+		expect(doc.status).toBe(500);
+		expect(await doc.text()).toContain("design/frames/shop/cart holds both frame.tsx and term.tsx");
+
+		const verify = await app.request(`/api/p/${name}/verify/cart`);
+		expect(verify.status).toBe(500);
+		const body = (await verify.json()) as { kind: string; message: string };
+		expect(body.message).toContain("design/frames/shop/cart");
+		expect(body.message).not.toContain("design/frames/cart ");
+	});
+
 	it("verify reports a terminal frame as ok — kind is knowable without a compile", async () => {
 		const { spawned, executor } = fixtureTermExecutor();
 		const spoolDir = join(makeTempDir(), ".spool");
