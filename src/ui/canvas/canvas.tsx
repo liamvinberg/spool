@@ -528,6 +528,40 @@ export function ProjectCanvas({
 		lifecycleRef.current.markStale(frame);
 	}, []);
 
+	/**
+	 * A frame that changed size is a frame whose picture is wrong.
+	 *
+	 * A cover is the document photographed at one width and drawn `object-cover`
+	 * into the frame's box, so a resize invalidates it twice over: the layout it
+	 * recorded is not the layout the frame now has, and the raster it recorded is
+	 * the wrong shape for the box it now fills. Nothing else notices. A geometry
+	 * write never touches the document, and a frame that drops out of live
+	 * because you zoomed away keeps its picture on purpose (`lifecycle.ts`), so
+	 * the wrong one would stand until the next source edit.
+	 *
+	 * Every hand that writes a size lands here — a drag, an undo, and the agent's
+	 * own frame.json arriving over the stream — which is what makes stating a size
+	 * before the frame entry advice rather than a race. A size written after the
+	 * frame appeared costs its first paint and nothing else.
+	 *
+	 * A drag in flight is skipped, and deliberately records nothing while it is:
+	 * the size worth photographing is the one you let go of, and marking every
+	 * frame of the gesture would start the staleness clock at the grab, leaving
+	 * the eventual capture overdue (#215) and shooting the reboot mid-arrival.
+	 */
+	const footprints = useRef(new Map<string, string>());
+	useEffect(() => {
+		if (gesture.current.kind === "resize") return;
+		const seen = new Map<string, string>();
+		for (const frame of frames) {
+			const footprint = `${Math.round(frame.w)}×${Math.round(frame.h)}`;
+			seen.set(frame.name, footprint);
+			const before = footprints.current.get(frame.name);
+			if (before !== undefined && before !== footprint) lifecycleRef.current.markStale(frame.name);
+		}
+		footprints.current = seen;
+	}, [frames]);
+
 	const onIframe = useCallback((name: string, el: HTMLIFrameElement | null) => {
 		if (el === null) iframes.current.delete(name);
 		else {
