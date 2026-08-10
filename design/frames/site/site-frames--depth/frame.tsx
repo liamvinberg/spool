@@ -592,10 +592,10 @@ export default function SiteFramesDepth() {
 	return (
 		<SiteSection
 			title="Frames"
-			lead="One file, running. Point at either side and the other one answers."
+			lead="This is one TSX file and what it renders. Hover a row, a bar or a pill, and the lines that made it light up."
 			foot={[
-				"The bars are not drawn. They are a number over the largest number.",
-				"State, motion and arithmetic. A screenshot holds none of them.",
+				"Switch the pill and the bars resize against the new largest value.",
+				"State, motion and arithmetic, all running in the page you are reading.",
 			]}
 			morph="site-frames-card"
 			back={

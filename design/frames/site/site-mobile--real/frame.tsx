@@ -155,7 +155,7 @@ export default function SiteMobileReal() {
 						</h1>
 					</div>
 					<p className="mt-4 text-[15px] text-muted leading-[23px]">
-						A live prototyping canvas. Your agent authors real TSX frames, you arrange them and walk the flows. It feels real because it is.
+						spool is a prototyping canvas for real code. Your agent writes TSX frames into your repo, you arrange them, and you click through the flow the way a user would.
 					</p>
 
 					{/* A band cut clean through the page: full bleed on both edges, and
@@ -185,7 +185,7 @@ export default function SiteMobileReal() {
 							</div>
 						</div>
 						<p className="mt-4 pl-5 text-[13px] text-muted leading-[20px]">
-							spool runs on your machine, beside your repo. Open spool.page on a laptop to walk the canvas.
+							spool runs on your machine, next to your repo. Open this page on a laptop to try the canvas.
 						</p>
 					</div>
 				</main>

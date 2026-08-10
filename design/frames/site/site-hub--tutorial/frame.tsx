@@ -172,7 +172,7 @@ const SECTIONS: readonly FrameSpec[] = [
 	{
 		id: "frames",
 		name: "frames",
-		sub: "Real TSX, real depth",
+		sub: "The code and what it renders",
 		x: 124,
 		y: 656,
 		w: 276,
@@ -513,7 +513,7 @@ function LandingBody() {
 								before it exists
 							</h1>
 							<p className="mt-6 max-w-[452px] text-[17px] text-muted leading-[26px]">
-								A live prototyping canvas. Your agent authors real TSX frames, you arrange them and walk the flows. It feels real because it is.
+								spool is a prototyping canvas for real code. Your agent writes TSX frames into your repo, you arrange them, and you click through the flow the way a user would.
 							</p>
 
 							<div className="mt-9">

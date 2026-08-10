@@ -15,7 +15,10 @@ How spool talks, wherever words face a user — frames, chrome, the site, docs.
 
 - One rule, two registers. If the machine would print it, it is verbatim lowercase mono: commands, paths, frame names, chips, counts, status lines (`live · esc exits`, `no frames yet`). If a person is saying it, it is a sentence: sentence case, proper nouns restored (Node, Chrome, TSX, GitHub), a period when it is a whole sentence.
 - The name is "spool" in every register, sentence start included — wordmark, command and prose share the one form.
-- Plain declaratives that carry their own proof ("It feels real because it is."). No hype adjectives, no exclamation marks, no em-dashes in copy.
+- Say what the thing is, then stop. One evocative line is allowed per page and the sentence after it has to be literal. No hype adjectives, no exclamation marks, no em-dashes in copy.
+- Two constructions are banned, because they are the ones a language model reaches for first: the correction ("The bars are not drawn. They are a number over the largest number.") and the stacked negation ("No server, no seed script."). State what is true and let the reader draw the contrast.
+- Vary sentence length inside a block. Four leads built to the same two-fragment shape read as generated even when every one of them is accurate.
+- Reach for a filename, a number or a key before an abstraction. "frame.json is where it sits on the canvas" beats "spatial configuration".
 - When the terminal is the subject, let it speak: the prompt names the working directory rather than a sentence saying "in your repo".
 - A demo product on a frame speaks like a real product — its own name, its own sentence case — never in spool's costume.
 

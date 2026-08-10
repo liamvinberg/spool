@@ -155,7 +155,7 @@ const SOURCES: readonly Source[] = [
 			{ text: "  Add $10" },
 			{ text: "</button>" },
 		],
-		note: "A computed target. Nothing to read, so nothing is drawn.",
+		note: "A computed target. spool marks the edge unreadable.",
 	},
 ];
 
@@ -652,10 +652,10 @@ export default function SiteFlowsGraph() {
 	return (
 		<SiteSection
 			title="Flows"
-			lead="Every go in your code is an arrow. Nobody draws this map by hand."
+			lead="spool reads the navigation out of your frames and draws this map from it. Every arrow below comes from a line of code you can see."
 			foot={[
-				"Solid means the walk will happen. Faint means it might.",
-				"A target spool can't read draws nothing, and says so.",
+				"A solid arrow is a target spool resolved. A faint one is a branch it could take.",
+				"Move a frame on the canvas and the arrows follow it.",
 			]}
 			morph="site-flows-card"
 			back={

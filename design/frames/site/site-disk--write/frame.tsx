@@ -591,10 +591,10 @@ export default function SiteDiskWrite() {
 	return (
 		<SiteSection
 			title="Your disk"
-			lead="Plain files in your repo. One folder, two files, and the screen they render."
+			lead="A frame is a folder with two files in it. frame.tsx is the screen, frame.json is where it sits on the canvas."
 			foot={[
-				"Your agent writes the files. spool renders them and never owns them.",
-				"Commit them, branch them, delete them. They are source files like any other.",
+				"Your agent writes both files straight into your repo.",
+				"Commit them, branch them, review them in a pull request.",
 			]}
 			morph="site-disk-card"
 			back={
