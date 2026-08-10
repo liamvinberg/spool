@@ -64,6 +64,20 @@ function Cap({ children }: { children: ReactNode }) {
 	);
 }
 
+/**
+ * One bar per kilometre. Height is speed rather than pace, so the tallest bar is
+ * the fastest one and colouring it is the same statement as reading it.
+ */
+const SPLITS: readonly { km: number; h: number; fastest?: boolean }[] = [
+	{ km: 1, h: 62 },
+	{ km: 2, h: 78 },
+	{ km: 3, h: 71 },
+	{ km: 4, h: 92 },
+	{ km: 5, h: 84 },
+	{ km: 6, h: 100, fastest: true },
+	{ km: 7, h: 66 },
+];
+
 /** The route, traced once in the accent over a very quiet street grid. */
 function Route({ height }: { height: number | string }) {
 	return (
@@ -201,11 +215,11 @@ export function PaceSummary() {
 			<div className="px-7 pt-8">
 				<Cap>Splits</Cap>
 				<div className="flex items-end gap-2.5 pt-4" style={{ height: 108 }}>
-					{[62, 78, 71, 92, 84, 100, 66].map((h, i) => (
-						<div key={i} className="flex-1">
+					{SPLITS.map((s) => (
+						<div key={s.km} className="flex-1">
 							<div
 								className="w-full rounded-t-[5px]"
-								style={{ height: h, background: h === 100 ? ACCENT : "#2A2E33" }}
+								style={{ height: s.h, background: s.fastest ? ACCENT : "#2A2E33" }}
 							/>
 						</div>
 					))}
