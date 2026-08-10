@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.7.0
+
+### Minor Changes
+
+- 885c191: An agent can now state a frame's size without stating where it goes. Write `{ "w": 1440, "h": 900 }` into `frame.json` and the frame arrives that size, in clear space beside the other frames on its page, and spool fills in the position. Before this, a size on its own was ignored: the frame came out 390×844 with nothing said about it, so the only way to get a size was to make up coordinates too, and the guess landed on top of another frame.
+- a6c384a: Running `spool` with nothing after it takes you to your canvas. It finds the project you are standing in, registers it, starts the daemon if one is not already running, and prints the canvas address. Before, a bare `spool` printed the list of commands, and reaching a visible canvas took `spool open`, then `spool serve`, then retyping a URL you had to remember.
+
+  Nothing else moved. `spool open` still registers a project without starting anything, a bare `spool` outside a project still points you at `spool init` rather than scaffolding one, and a misspelled verb is still an unknown command rather than a canvas.
+
+- 6577d70: The pages rail behaves like a real file explorer.
+
+  Going into a page now opens it: clicking a page's name, or arrowing onto its row, switches the canvas to that page and expands it. The chevron is the other direction and still only expands, without going anywhere. Dragging a frame across the tree opens each shut page it arrives at, with no wait, and closes it again behind you unless you dropped something inside, so passing over a folder no longer leaves it open.
+
+  Two new verbs on a frame's menu. "New page with selection" makes a page inside the one the frames are on and moves them into it, and one press of undo takes both halves back. "Move to page" opens a list of pages you can type at, which is how you move a frame or a page somewhere too far away to drag to. "Collapse all" is a button in the rail's header now, so you can reach it when the tree is too full to leave any empty space to right-click, and holding option while clicking a chevron folds just that page and what is inside it rather than the whole tree.
+
+  Three things that were wrong are right. Shift-clicking two rows selects the rows between them in the order the rail is drawing rather than in alphabetical order. Shift with an arrow key extends the selection instead of quietly nudging the frames on the canvas by ten pixels. And a name a frame or a page already answers to is refused the moment you commit it, without a trip to the daemon first.
+
+### Patch Changes
+
+- 259d9a0: A cli and a daemon on different versions now say so, on whichever verb breaks. Running `spool shot` against a daemon built from another version failed with only `spool: unauthenticated`, which reads as a credentials problem and sends you looking at the wrong thing. `spool status` already knew the real story and said it, but the verb that actually broke did not. It now adds the same sentence: which version the cli is, and how to bring the two back in step. A genuine authentication failure against a matching daemon is unchanged.
+- 260accb: Typing `localhost:7766` now opens spool. It used to answer "unexpected host" because the daemon only recognized the name it was bound under, so the other name for your own machine was turned away. It sends you to the bound address instead. A name that is not this machine is still refused.
+
+  The update toast now tells you how the update is going and always ends. Pressing Update used to say "Updating…" and could sit there forever: an upgraded daemon issues a new key, and an open canvas had no way to be given it, so the page never came back and never said why. It now reloads onto the new version by itself, says whether it is installing or restarting while it waits, and says so plainly when an update did not land instead of leaving you guessing. A canvas left open through any daemon restart now comes back the same way, rather than looking fine while nothing reaches it.
+
+- 659a34c: Spool only offers an update when it can actually install one. Running from a git checkout, or any install no package manager owns, no longer shows the update toast and no longer asks npm daily whether a newer release exists. The Update button there could only ever fail, because that kind of install updates with `git pull`.
+- a9e7dcd: A frame folder holding both `frame.tsx` and `term.tsx` now names the folder it actually is. When the frame lives inside a page, the error used to point at `design/frames/<name>`, a flat folder that does not exist, so the one message telling you to remove an entry sent you looking in the wrong place.
+- fd2a486: Zooming into a frame no longer replays its arrival. When a frame gets big enough to read, spool now holds its picture until the real document has finished arriving: fonts loaded, entry animations played out, nothing still moving. What you see is the picture, then the frame it is a picture of.
+
+  Before this, the picture came away the instant the document reported loaded, which is halfway through its arrival. A frame that fades its content in was caught at the start of that fade, and a frame that draws to a canvas had not drawn anything yet, so a settled picture was replaced by black or by a replayed entrance and then settled a second time.
+
+  The wait is bounded, so a frame that animates forever or never stops changing still appears after about a second. Going into a frame is unchanged: you asked to be inside it, and watching the entrance play is part of that.
+
 ## 0.6.0
 
 ### Minor Changes
