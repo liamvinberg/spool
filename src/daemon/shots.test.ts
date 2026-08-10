@@ -86,6 +86,6 @@ describe("the thumbnail fallback", () => {
 		// a healed cover is bounded and lossy, like the canvas's own (#8)
 		expect(image.headers.get("content-type")).toBe("image/jpeg");
 		expect(image.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
-		expect(jpegSize(new Uint8Array(await image.arrayBuffer()))).toEqual([800, 1731]);
+		expect(jpegSize(new Uint8Array(await image.arrayBuffer()))).toEqual([800, 500]);
 	});
 });

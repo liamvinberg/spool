@@ -102,7 +102,7 @@ describe("projection placement", () => {
 
 		const duringWrite = listProjectFrames(root).frames.find((frame) => frame.name === "authored");
 
-		expect(duringWrite).toMatchObject({ w: 390, h: 844 });
+		expect(duringWrite).toMatchObject({ w: 1440, h: 900 });
 		expect(readFileSync(sidecar, "utf8")).toBe(partial);
 
 		const authored = '{ "x": 19, "y": 23, "w": 640, "h": 480 }\n';
@@ -145,15 +145,15 @@ describe("a sidecar that states size without position", () => {
 		const root = makeTempDir();
 		writeDesignFile(root, join("frames", "home", "frame.tsx"), "export default () => null;\n");
 		listProjectFrames(root);
-		sized(root, "wide", '{ "w": 1440, "h": 900 }\n');
+		sized(root, "wide", '{ "w": 2560, "h": 1440 }\n');
 		writeDesignFile(root, join("frames", "wide", "frame.tsx"), "export default () => null;\n");
 
 		const frames = listProjectFrames(root).frames;
 		const home = frames.find((frame) => frame.name === "home");
 		const wide = frames.find((frame) => frame.name === "wide");
 
-		expect(home).toMatchObject({ x: 80, y: 80, w: 390, h: 844 });
-		expect(wide).toMatchObject({ x: 80 + 390 + 80, y: 80, w: 1440, h: 900 });
+		expect(home).toMatchObject({ x: 80, y: 80, w: 1440, h: 900 });
+		expect(wide).toMatchObject({ x: 80 + 1440 + 80, y: 80, w: 2560, h: 1440 });
 		// the whole point: no overlap, at either size
 		expect(wide?.x).toBeGreaterThan((home?.x ?? 0) + (home?.w ?? 0));
 	});
@@ -188,7 +188,7 @@ describe("a sidecar that states size without position", () => {
 
 		const frames = listProjectFrames(root).frames;
 
-		for (const frame of frames) expect(frame).toMatchObject({ w: 390, h: 844 });
+		for (const frame of frames) expect(frame).toMatchObject({ w: 1440, h: 900 });
 		// nothing spool cannot read is rewritten, so an author's bytes survive
 		for (const [frame, bytes] of [
 			["zero", '{ "w": 0, "h": 900 }\n'],

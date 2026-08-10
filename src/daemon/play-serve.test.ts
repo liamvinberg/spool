@@ -68,7 +68,7 @@ describe("serving the player", () => {
 		expect(config.start).toBe("cart");
 		expect(config.scenario).toBe("default");
 		expect(Object.keys(config.frames).sort()).toEqual(["cart", "menu", "pay--done"]);
-		expect(config.frames.menu).toEqual({ w: 390, h: 844 });
+		expect(config.frames.menu).toEqual({ w: 1440, h: 900 });
 
 		// one bundle composing every frame's source, booted through the runtime
 		const boot = doc.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1] ?? "";
@@ -93,7 +93,7 @@ describe("serving the player", () => {
 
 		expect(config.start).toBe("__proto__");
 		expect(Object.hasOwn(config.frames, "__proto__")).toBe(true);
-		expect(Object.getOwnPropertyDescriptor(config.frames, "__proto__")?.value).toEqual({ w: 390, h: 844 });
+		expect(Object.getOwnPropertyDescriptor(config.frames, "__proto__")?.value).toEqual({ w: 1440, h: 900 });
 		expect(boot).toContain("Object.fromEntries");
 		expect(boot).toContain('["__proto__"');
 	});

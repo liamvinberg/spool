@@ -237,6 +237,9 @@ export default function Products() {
 
 function scaffold(harness: Harness): void {
 	writeFrame(harness.root, "menu", menuTsx);
+	// stated rather than inherited: the width cap is what these tests are about,
+	// and a default wider than the test viewport would never reach one
+	writeDesignFile(harness.root, join("frames", "menu", "frame.json"), '{ "w": 390, "h": 844 }\n');
 	writeFrame(harness.root, "cart", cartTsx);
 	writeFrame(harness.root, "pay--done", payDoneTsx);
 	writeDesignFile(harness.root, "shared/scenarios/default.json", '{\n\t"state": { "count": 2 },\n\t"mock": {}\n}\n');

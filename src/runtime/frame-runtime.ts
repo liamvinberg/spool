@@ -1471,7 +1471,7 @@ const playerController: PlayerController = {
 	geometry: (frame) =>
 		play !== undefined && Object.hasOwn(play.frames, frame)
 			? (play.frames[frame] as { w: number; h: number })
-			: { w: 390, h: 844 },
+			: { w: 1440, h: 900 },
 	frames: () => (play === undefined ? [] : Object.keys(play.frames)),
 	terminal: (frame) => play?.terminals !== undefined && Object.hasOwn(play.terminals, frame),
 	walk: (frame, back = false) => jump(frame, back),

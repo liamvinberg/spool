@@ -82,15 +82,15 @@ describe("frame projection", () => {
 		const res = await app.request(`/api/p/${name}/frames`);
 
 		const { frames } = (await res.json()) as { frames: { name: string; x: number; w: number }[] };
-		// name order, phone-sized defaults, gutter apart, no overlap
+		// name order, page-sized defaults, gutter apart, no overlap
 		expect(frames.map((f) => f.name)).toEqual(["cart", "menu"]);
 		expect(frames).toMatchObject([
-			{ name: "cart", x: 80, y: 80, w: 390, h: 844 },
-			{ name: "menu", x: 80 + 390 + 80, y: 80, w: 390, h: 844 },
+			{ name: "cart", x: 80, y: 80, w: 1440, h: 900 },
+			{ name: "menu", x: 80 + 1440 + 80, y: 80, w: 1440, h: 900 },
 		]);
 		// the app fills in the sidecar (#3): geometry is durable, not re-rolled per request
 		const sidecar = JSON.parse(readFileSync(join(root, "design", "frames", "cart", "frame.json"), "utf8"));
-		expect(sidecar).toEqual({ x: 80, y: 80, w: 390, h: 844 });
+		expect(sidecar).toEqual({ x: 80, y: 80, w: 1440, h: 900 });
 
 		const again = (await (await app.request(`/api/p/${name}/frames`)).json()) as { frames: unknown[] };
 		expect(again.frames).toEqual(frames);
@@ -127,7 +127,7 @@ describe("frame projection", () => {
 		expect(res.status).toBe(200);
 		const { frames } = (await res.json()) as { frames: { name: string; w: number }[] };
 		expect(frames).toHaveLength(2);
-		for (const frame of frames) expect(frame.w).toBe(390);
+		for (const frame of frames) expect(frame.w).toBe(1440);
 	});
 
 	it("projects only folders holding a frame.tsx and 404s unknown projects", async () => {

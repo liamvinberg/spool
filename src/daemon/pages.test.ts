@@ -84,7 +84,7 @@ describe("page discovery", () => {
 		expect(born?.y).toBe(40);
 		// placement is durable, written into the page folder's own sidecar
 		const sidecar = join(root, "design", "frames", "shop", "checkout--empty", "frame.json");
-		expect(JSON.parse(readFileSync(sidecar, "utf8"))).toEqual({ x: 570, y: 40, w: 390, h: 844 });
+		expect(JSON.parse(readFileSync(sidecar, "utf8"))).toEqual({ x: 570, y: 40, w: 1440, h: 900 });
 	});
 });
 

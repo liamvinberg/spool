@@ -160,8 +160,16 @@ interface Discovery {
 	collisions: FrameCollision[];
 }
 
-const DEFAULT_W = 390;
-const DEFAULT_H = 844;
+/**
+ * What a frame is when nobody said. A size left out is a size nobody thought
+ * about, and the frame it belongs to is far more often a page than a phone: a
+ * phone is a deliberate shape and states itself, while a desktop frame is what
+ * you get when the thought was about the design rather than the viewport.
+ * Everything here still holds the sizes it asked for; this is only the floor
+ * under a frame that asked for nothing.
+ */
+const DEFAULT_W = 1440;
+const DEFAULT_H = 900;
 const GUTTER = 80;
 
 /** New terminal frames start at the conventional floor, in exact cell pixels. */

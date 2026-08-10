@@ -319,7 +319,7 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		},
 		version: () => version,
 		read: () => ({ ...snapshot }),
-		geometry: (frame) => (hasFrame(config.frames, frame) ? config.frames[frame] : undefined) ?? { w: 390, h: 844 },
+		geometry: (frame) => (hasFrame(config.frames, frame) ? config.frames[frame] : undefined) ?? { w: 1440, h: 900 },
 		frames: () => Object.keys(config.frames),
 		terminal: (frame) => config.terminals.includes(frame),
 		walk: (frame, back = false) => {

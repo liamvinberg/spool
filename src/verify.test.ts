@@ -193,7 +193,7 @@ export default function Noisy() {
 				}),
 			),
 		).resolves.toMatchObject({ kind: "shot" });
-		expect(defaultNarrations).toEqual(['no valid frame.json for "defaulted" — using the 390×844 default viewport']);
+		expect(defaultNarrations).toEqual(['no valid frame.json for "defaulted" — using the 1440×900 default viewport']);
 		expect(defaultWaits).toEqual([300]);
 		expect(existsSync(join(root, "design", "frames", "defaulted", "frame.json"))).toBe(false);
 

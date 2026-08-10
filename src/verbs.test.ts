@@ -64,7 +64,7 @@ describe("selection and flows over the daemon", () => {
 
 		await point({ frames: ["cart"] });
 		expect(await readSelection(url, name, token)).toBe(
-			["<selection>", "cart — design/frames/cart/frame.tsx — 390×844", "</selection>"].join("\n"),
+			["<selection>", "cart — design/frames/cart/frame.tsx — 1440×900", "</selection>"].join("\n"),
 		);
 
 		// an element prints its noun, its lines and its excerpt under it

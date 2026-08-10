@@ -248,8 +248,8 @@ describe("one turn over the wire", () => {
 		expect(sentText(agent.spawned[0]?.inputs[0])).toBe(
 			[
 				"<selection>",
-				"cart — design/frames/cart/frame.tsx — 390×844",
-				"menu — design/frames/menu/frame.tsx — 390×844",
+				"cart — design/frames/cart/frame.tsx — 1440×900",
+				"menu — design/frames/menu/frame.tsx — 1440×900",
 				"</selection>",
 				"",
 				"make these consistent",
