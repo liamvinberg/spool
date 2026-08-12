@@ -4,10 +4,21 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Camera, ProjectedFrame } from "../api";
-import { type Hand, type HandMark, handOf, LANE_MS, markKeyOf, rangeKeyOf } from "./agent-hand";
+import {
+	type ArmedWrite,
+	HAND_LINGER_MS,
+	type Hand,
+	type HandMark,
+	handOf,
+	LANE_MS,
+	markKeyOf,
+	rangeKeyOf,
+	useAgentHand,
+} from "./agent-hand";
 import { AgentHandLayer } from "./agent-hand-layer";
+import type { AgentTurn } from "./agent-stream";
 import type { AgentEntry, AgentRow } from "./agent-transcript";
 
 /**
@@ -60,15 +71,16 @@ describe("where the agent is", () => {
 		expect(handOf([row({ state: "running", verb: "grep" })], true)).toMatchObject({ hold: "whole" });
 	});
 
-	it("stays where it was left between calls, slack rather than gone", () => {
-		const hand = handOf([row({ key: "a", verb: "edit", state: "done", count: 3 })], true);
-
-		// the thread is still on the frame and no call is open on it, which is what the
-		// tension channel says and the length channel does not
-		expect(hand).toMatchObject({ frame: "home", hold: "part", verb: null, count: 0, picturing: false });
+	it("is nowhere while every call the log holds has ended", () => {
+		// a hand is the agent's hands on the frame now. The log carries every turn this
+		// conversation has run, so a rule that read the last frame any row named put a hand
+		// on the frame the *previous* turn ended at the instant somebody pressed send —
+		// work claimed before a byte was read. What holds the thread between two calls of
+		// one run is the linger, and it is bounded
+		expect(handOf([row({ key: "a", verb: "edit", state: "done", count: 3 })], true)).toBeNull();
 	});
 
-	it("takes the open call over the last one, wherever the open one is", () => {
+	it("takes the open call, wherever in the log it is", () => {
 		const hand = handOf(
 			[
 				row({ key: "a", frame: "home", verb: "edit" }),
@@ -98,6 +110,90 @@ describe("where the agent is", () => {
 		);
 
 		expect(hand).toMatchObject({ frame: "cart" });
+	});
+});
+
+describe("how long the hand stays after the call that made it", () => {
+	/** the hook, mounted, with the turn it is folded from swappable underneath it */
+	function watch(): { at: (entries: AgentEntry[], playing?: boolean) => Promise<void>; now: () => Hand | null } {
+		const armed = { current: new Map<string, ArmedWrite>() };
+		let hand: Hand | null = null;
+		function Probe({ turn }: { turn: AgentTurn }) {
+			hand = useAgentHand("p", turn, armed).hand;
+			return null;
+		}
+		const host = document.createElement("div");
+		document.body.append(host);
+		const root = createRoot(host);
+		onTestFinished(() => {
+			act(() => root.unmount());
+			host.remove();
+			vi.useRealTimers();
+		});
+		vi.useFakeTimers();
+		return {
+			at: async (entries, playing = true) => {
+				const turn = { entries, phase: playing ? "playing" : "settled", writes: [] } as unknown as AgentTurn;
+				await act(async () => root.render(createElement(Probe, { turn })));
+			},
+			now: () => hand,
+		};
+	}
+
+	const open = (over: Partial<AgentRow> = {}) => row({ state: "running", verb: "edit", ...over });
+	const done = (over: Partial<AgentRow> = {}) => row({ state: "done", verb: "edit", ...over });
+
+	it("holds the frame slack when the call ends, and lets go when the linger runs out", async () => {
+		const turn = watch();
+
+		await turn.at([open()]);
+		expect(turn.now()).toMatchObject({ frame: "home", verb: "edit" });
+
+		// the call ended and the agent is between two calls of one run: still there, and
+		// nothing pulling the thread
+		await turn.at([done()]);
+		expect(turn.now()).toMatchObject({ frame: "home", verb: null, count: 0 });
+
+		await act(() => vi.advanceTimersByTimeAsync(HAND_LINGER_MS - 1));
+		expect(turn.now()).not.toBeNull();
+		await act(() => vi.advanceTimersByTimeAsync(1));
+		expect(turn.now()).toBeNull();
+	});
+
+	it("keeps one run's gaps unbroken, so the thread never blinks between calls", async () => {
+		const turn = watch();
+
+		await turn.at([open()]);
+		await turn.at([done()]);
+		// the longest gap inside a run in `claude-edits.json` is 3.2s
+		await act(() => vi.advanceTimersByTimeAsync(3200));
+		expect(turn.now()).not.toBeNull();
+
+		await turn.at([done({ key: "a" }), open({ key: "b" })]);
+		expect(turn.now()).toMatchObject({ verb: "edit" });
+
+		// and the next gap gets the whole linger over again rather than what was left of it
+		await turn.at([done({ key: "a" }), done({ key: "b" })]);
+		await act(() => vi.advanceTimersByTimeAsync(HAND_LINGER_MS - 1));
+		expect(turn.now()).not.toBeNull();
+	});
+
+	it("lets go on the instant the turn ends, because that is not a gap", async () => {
+		const turn = watch();
+
+		await turn.at([open()]);
+		await turn.at([done()], false);
+
+		expect(turn.now()).toBeNull();
+	});
+
+	it("puts no hand on the frame the turn before this one worked", async () => {
+		const turn = watch();
+
+		// a thread's log carries every turn it has run, and pressing send is not work
+		await turn.at([done({ key: "before" })]);
+
+		expect(turn.now()).toBeNull();
 	});
 });
 

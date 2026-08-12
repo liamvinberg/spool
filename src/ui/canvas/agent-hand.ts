@@ -86,28 +86,50 @@ function allRows(entries: readonly AgentEntry[]): AgentRow[] {
 /**
  * Where the agent is, read off the same rows the rail is reading.
  *
- * The open call if there is one, and the last frame it named if there is not — so the
- * thread stays where the agent left it between calls and goes slack rather than
- * vanishing and coming back. Only while the turn is running: a settled turn has nobody
- * at any frame, and a turn parked on a question is waiting on a person rather than
- * working a frame.
+ * **An open call on a frame, and nothing else.** A hand is the agent's hands on that
+ * frame right now — so it is drawn from a call in flight rather than from the last one
+ * that ended, and a turn that has called nothing yet has nobody anywhere. The rule was
+ * the other way around for the whole of #214: the last frame any row named, so the
+ * thread stayed put between calls. Two things were wrong with it in the flesh, and they
+ * are the same thing. A thread's log carries every turn before this one (`thread.before`
+ * in `agent-stream`), so pressing send in a conversation that had touched a frame put a
+ * hand on it on the instant, before the agent had read a byte — the canvas claiming work
+ * that had not started. And within a turn nothing ever took it off: one read in the first
+ * second held the frame through nine minutes of thinking and talking.
+ *
+ * What that rule was right about is the flicker, and that is what `HAND_LINGER_MS` keeps.
+ * Only while the turn is running: a settled turn has nobody at any frame, and a turn
+ * parked on a question is waiting on a person rather than working a frame.
  */
 export function handOf(entries: readonly AgentEntry[], running: boolean): Hand | null {
 	if (!running) return null;
-	const named = allRows(entries).filter((row) => row.frame !== null);
-	const last = named.at(-1);
-	if (last === undefined) return null;
-	const open = named.filter((row) => row.state === "running").at(-1) ?? null;
-	const on = open ?? last;
-	if (on.frame === null) return null;
+	const open = allRows(entries)
+		.filter((row) => row.frame !== null && row.state === "running")
+		.at(-1);
+	if (open?.frame == null) return null;
 	return {
-		frame: on.frame,
-		hold: HOLD_OF[on.verb] ?? "whole",
-		verb: open === null ? null : open.verb,
-		count: open === null ? 0 : open.count,
-		picturing: open !== null && open.verb === PICTURING,
+		frame: open.frame,
+		hold: HOLD_OF[open.verb] ?? "whole",
+		verb: open.verb,
+		count: open.count,
+		picturing: open.verb === PICTURING,
 	};
 }
+
+/**
+ * How long the hand stays after a call ends, waiting for the next one.
+ *
+ * Calls come in runs, and a run is one piece of work with gaps in it. Measured on
+ * `fixtures/captures/claude-edits.json`, the thirteen gaps between consecutive calls on
+ * one frame fall in two groups with nothing between them: **1.3s to 3.2s inside a run**,
+ * and 17s, 31s and 41s between one run and the next. So the hand holds through the first
+ * group and lets go through the second, and there is a factor of five of daylight around
+ * the number rather than a taste call.
+ *
+ * It holds slack — `verb` null, which is the tension channel the layer already draws —
+ * because a hand between calls is a hand that has not let go, not a hand mid-call.
+ */
+export const HAND_LINGER_MS = 4000;
 
 /* ---------- what it has just changed ---------- */
 
@@ -206,7 +228,9 @@ export function useAgentHand(
 	 * itself is: the same events give the same posture, so nothing here can drift out of
 	 * step with the log six inches away.
 	 */
-	const hand = useMemo(() => handOf(turn.entries, turn.phase === "playing"), [turn.entries, turn.phase]);
+	const running = turn.phase === "playing";
+	const open = useMemo(() => handOf(turn.entries, running), [turn.entries, running]);
+	const hand = useLinger(open, running);
 	const [marks, setMarks] = useState<HandMark[]>([]);
 	/** every write already sent for locating, since the projection re-lists them each tick */
 	const locating = useRef(new Set<string>());
@@ -248,4 +272,48 @@ export function useAgentHand(
 	}, []);
 
 	return { hand, marks, strike };
+}
+
+/**
+ * The hand a call left behind, held slack until the next call or the linger runs out.
+ *
+ * Between two calls of one run there is nothing open and the agent has not gone anywhere,
+ * so a hand drawn from the open call alone would wind off and back on every second and a
+ * half — twelve times in the capture's thirty-seven seconds. This is the whole of what
+ * survived the old last-named-row rule: it holds the hand where the call left it, and it
+ * is bounded, so a turn that has moved on to thinking or talking takes it off.
+ *
+ * The slack posture is the previous hand with its call taken out, which is the state the
+ * layer already draws for a thread nobody is pulling. It never outlives the turn, and
+ * that is why the turn's own state is an argument here rather than something inferred
+ * from `open` being null: a gap between two calls is the agent still there, and a turn
+ * that has ended is the agent gone. The end is a fact off the wire and there is nothing
+ * to wait for, so the linger is skipped entirely and `AgentHandLayer` winds the thread
+ * back onto the node on the instant.
+ */
+function useLinger(open: Hand | null, running: boolean): Hand | null {
+	const [slack, setSlack] = useState<Hand | null>(null);
+	/** the last call's hand, so the linger has a posture to hold */
+	const held = useRef<Hand | null>(null);
+
+	useEffect(() => {
+		if (!running) {
+			held.current = null;
+			setSlack(null);
+			return;
+		}
+		if (open !== null) {
+			held.current = open;
+			setSlack(null);
+			return;
+		}
+		const last = held.current;
+		held.current = null;
+		if (last === null) return;
+		setSlack({ ...last, verb: null, count: 0, picturing: false });
+		const timer = setTimeout(() => setSlack(null), HAND_LINGER_MS);
+		return () => clearTimeout(timer);
+	}, [open, running]);
+
+	return open ?? slack;
 }
