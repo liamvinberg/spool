@@ -475,8 +475,16 @@ body {
 	overflow: hidden;
 }
 
+/**
+ * The one scrollbar, wherever a panel scrolls: a grey capsule inset from the
+ * edge by a transparent border, so it reads as a handle laid on the surface
+ * rather than a rule drawn down it. It used to be a 2px thread-coloured hair,
+ * which spent the accent on a control nobody was looking at and gave a pointer
+ * nothing to grab.
+ */
 .pages-scrollbar::-webkit-scrollbar {
-	width: 2px;
+	width: 10px;
+	height: 10px;
 }
 
 .pages-scrollbar::-webkit-scrollbar-track {
@@ -484,13 +492,22 @@ body {
 }
 
 .pages-scrollbar::-webkit-scrollbar-thumb {
-	background: var(--color-thread);
+	background: var(--color-border-raised);
 	border-radius: 999px;
+	border: 3px solid transparent;
+	background-clip: content-box;
 }
 
+.pages-scrollbar::-webkit-scrollbar-thumb:hover {
+	background: var(--color-muted);
+	background-clip: content-box;
+}
+
+/* Firefox has no thumb selector, and Chrome honours `scrollbar-width` over
+   `::-webkit-scrollbar` when both are set — so this stays behind the guard */
 @supports not selector(::-webkit-scrollbar) {
 	.pages-scrollbar {
-		scrollbar-color: var(--color-thread) transparent;
+		scrollbar-color: var(--color-border-raised) transparent;
 		scrollbar-width: thin;
 	}
 }
