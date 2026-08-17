@@ -474,20 +474,16 @@ export function CanvasSidebar({
 	}, []);
 
 	/**
-	 * Going into a page, which is the one gesture that opens one.
+	 * Going into a page, which is switching the canvas to it and nothing else.
 	 *
-	 * One direction only: going in opens, and opening does not go in. So this
-	 * never closes either — pressing the name of a page that is already open is
-	 * still going into it, and folding it away under the hand that reached for it
-	 * would be the chevron's job done by something that is not the chevron.
+	 * The chevron is the only thing that folds a page, in both directions. Picking
+	 * a folder used to unfold it too, which made the tree reshape itself under
+	 * every press: a click meant to switch page dropped the rest of the list down
+	 * the screen, and there was no way to stand on a folder without opening it.
+	 * Every explorer worth copying keeps these two apart — the disclosure control
+	 * discloses, and the name selects.
 	 */
-	const enterPage = useCallback(
-		(page: string) => {
-			onSwitchPage(page);
-			setOpen(page, true);
-		},
-		[onSwitchPage, setOpen],
-	);
+	const enterPage = useCallback((page: string) => onSwitchPage(page), [onSwitchPage]);
 
 	/**
 	 * Land the cursor on a row.

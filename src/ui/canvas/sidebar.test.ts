@@ -76,8 +76,8 @@ afterEach(() => {
 });
 
 describe("page tree", () => {
-	/** One direction: going into a page opens it, and opening one does not go in. */
-	it("opens the page it goes into, and expands from the chevron without going anywhere", async () => {
+	/** Two controls, two jobs: the name goes into a page, the chevron unfolds it. */
+	it("switches page without unfolding it, and unfolds from the chevron without going anywhere", async () => {
 		const onSwitchPage = vi.fn();
 		const onSelectFrame = vi.fn();
 		const onDoubleClickFrame = vi.fn();
@@ -90,24 +90,23 @@ describe("page tree", () => {
 		expect(host.querySelector('button[aria-label="Expand shop"]')).not.toBeNull();
 		expect(host.querySelector('button[aria-label="checkout frame"]')).toBeNull();
 
+		// the name switches the canvas to the page and leaves the tree exactly as it
+		// was: a press that reshapes the list is a press you cannot aim the next one after
 		await act(async () => {
 			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
 		});
 		expect(onSwitchPage).toHaveBeenCalledWith("shop");
-		expect(host.querySelector('button[aria-label="Collapse shop"]')).not.toBeNull();
-		expect(host.querySelector('button[aria-label="checkout frame"]')).not.toBeNull();
+		expect(host.querySelector('button[aria-label="Expand shop"]')).not.toBeNull();
+		expect(host.querySelector('button[aria-label="checkout frame"]')).toBeNull();
 
 		// the chevron is the other direction, and it goes nowhere
 		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="Collapse shop"]')?.click();
+			host.querySelector<HTMLButtonElement>('button[aria-label="Expand shop"]')?.click();
 		});
-		expect(host.querySelector('button[aria-label="checkout frame"]')).toBeNull();
+		expect(host.querySelector('button[aria-label="checkout frame"]')).not.toBeNull();
 		expect(onSwitchPage).toHaveBeenCalledTimes(1);
 
-		// and going in again only ever opens: the name of an open page never folds it
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
-		});
+		// and the name of an open page still only ever switches: it never folds it
 		await act(async () => {
 			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
 		});
@@ -523,10 +522,14 @@ describe("the sidebar scope", () => {
 		await act(async () => press("ArrowDown"));
 		expect(onSelectFrame).toHaveBeenCalledWith("home", { shift: false, toggle: false });
 		// and the next is the shop folder: travel goes into it, which is a page it
-		// arrives on rather than a frame it picks
+		// arrives on rather than a frame it picks. It unfolds nothing — → is the
+		// keyboard's chevron, and it is the only thing that opens a folder
 		await act(async () => press("ArrowDown"));
 		expect(onSelectFrame).toHaveBeenCalledTimes(1);
 		expect(onSwitchPage).toHaveBeenCalledWith("shop");
+		expect(host.querySelector('button[aria-label="checkout frame"]')).toBeNull();
+
+		await act(async () => press("ArrowRight"));
 		expect(host.querySelector('button[aria-label="checkout frame"]')).not.toBeNull();
 	});
 
