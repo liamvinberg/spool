@@ -550,6 +550,50 @@ describe("the app session", () => {
 		expect(rogue.status).toBe(400);
 	});
 
+	/**
+	 * Tabs dragged into an arrangement. The list is the whole mutation: it says
+	 * where the open tabs stand and nothing about which ones are open, so a root
+	 * it never names stays exactly where it was rather than being closed by it.
+	 */
+	it("arranges the open tabs without opening or closing one", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const first = makeProject(spoolDir);
+		const second = makeProject(spoolDir);
+		const third = makeProject(spoolDir);
+		const app = makeApp(spoolDir);
+		expect(await (await app.request("/api/session")).json()).toEqual({
+			open: [first.root, second.root, third.root],
+		});
+
+		const put = await app.request("/api/session/order", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ order: [third.root, first.root, second.root] }),
+		});
+		expect(put.status).toBe(204);
+		expect(await (await app.request("/api/session")).json()).toEqual({
+			open: [third.root, first.root, second.root],
+		});
+
+		// a list that has never heard of the third tab leaves it open, at the end
+		const partial = await app.request("/api/session/order", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ order: [second.root, first.root, "/somewhere/never-registered"] }),
+		});
+		expect(partial.status).toBe(204);
+		expect(await (await app.request("/api/session")).json()).toEqual({
+			open: [second.root, first.root, third.root],
+		});
+
+		const rogue = await app.request("/api/session/order", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ order: first.root }),
+		});
+		expect(rogue.status).toBe(400);
+	});
+
 	it("emits every successful API session mutation inside one watcher debounce", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root } = makeProject(spoolDir);

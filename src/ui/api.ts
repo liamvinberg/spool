@@ -114,6 +114,11 @@ export function putSession(root: string, open: boolean): void {
 	void client.api.session.$put({ json: { root, open } });
 }
 
+/** The tabs in the order somebody dragged them into. */
+export function putSessionOrder(order: readonly string[]): void {
+	void client.api.session.order.$put({ json: { order: [...order] } });
+}
+
 export async function fetchProjection(project: string): Promise<Projection | undefined> {
 	const res = await client.api.p[":project"].frames.$get({ param: { project } });
 	if (!res.ok) return undefined;

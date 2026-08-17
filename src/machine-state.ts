@@ -90,15 +90,18 @@ export type MachineStateMutation =
 	| { kind: "register-project"; root: string }
 	| { kind: "register-and-open-project"; root: string }
 	| { kind: "update-session"; root: string; open: boolean }
+	| { kind: "order-session"; order: readonly string[] }
 	| { kind: "remove-project"; root: string };
 
 export type MachineStateMutationResult<Mutation extends MachineStateMutation> = Mutation extends {
 	kind: "update-session";
 }
 	? SessionMutationResult
-	: Mutation extends { kind: "remove-project" }
-		? MachineProjectRemoval
-		: undefined;
+	: Mutation extends { kind: "order-session" }
+		? AppSession
+		: Mutation extends { kind: "remove-project" }
+			? MachineProjectRemoval
+			: undefined;
 
 let ownBirth: string | undefined;
 
@@ -153,6 +156,8 @@ function executeMachineStateMutation(spoolDir: string, mutation: MachineStateMut
 		}
 		case "update-session":
 			return updateSessionUnlocked(spoolDir, mutation.root, mutation.open);
+		case "order-session":
+			return orderSessionUnlocked(spoolDir, mutation.order);
 		case "remove-project":
 			return removeProjectUnlocked(spoolDir, mutation.root);
 	}
@@ -200,6 +205,25 @@ function updateSessionUnlocked(spoolDir: string, root: string, open: boolean): S
 	const next = open ? [...new Set([...session.open, root])] : session.open.filter((candidate) => candidate !== root);
 	if (next.length !== session.open.length) writeMachineSession(spoolDir, { open: next });
 	return { kind: "written", session: { open: next } };
+}
+
+/**
+ * Arrange the open tabs, without opening or closing one.
+ *
+ * The list somebody dragged is a claim about the tabs that page can see, so it
+ * only ever reorders what is already open: a root it names that has since been
+ * closed is dropped, and a tab opened somewhere else while the drag was in the
+ * hand keeps its place at the end rather than being closed by an arrangement
+ * that never knew about it.
+ */
+function orderSessionUnlocked(spoolDir: string, order: readonly string[]): AppSession {
+	const session = readMachineSession(spoolDir);
+	const held = new Set(session.open);
+	const wanted = [...new Set(order)].filter((root) => held.has(root));
+	const rest = session.open.filter((root) => !wanted.includes(root));
+	const next = [...wanted, ...rest];
+	if (next.some((root, index) => root !== session.open[index])) writeMachineSession(spoolDir, { open: next });
+	return { open: next };
 }
 
 function removeProjectUnlocked(spoolDir: string, root: string, afterSessionPruned?: () => void): MachineProjectRemoval {
@@ -254,6 +278,11 @@ function normalizeMachineStateMutation(value: unknown): MachineStateMutation | u
 			const open = dataValue(mutation, "open");
 			return typeof root === "string" && typeof open === "boolean" ? { kind, root, open } : undefined;
 		}
+		case "order-session": {
+			if (!hasExactDataKeys(mutation, ["kind", "order"])) return undefined;
+			const order = normalizeRoots(dataValue(mutation, "order"));
+			return order === undefined ? undefined : { kind, order };
+		}
 		default:
 			return undefined;
 	}
@@ -262,7 +291,12 @@ function normalizeMachineStateMutation(value: unknown): MachineStateMutation | u
 function normalizeSession(value: unknown): AppSession | undefined {
 	const session = plainDataRecord(value);
 	if (session === undefined || !hasExactDataKeys(session, ["open"])) return undefined;
-	const source = dataValue(session, "open");
+	const open = normalizeRoots(dataValue(session, "open"));
+	return open === undefined ? undefined : { open };
+}
+
+/** A plain array of project roots, and nothing wearing one as a costume. */
+function normalizeRoots(source: unknown): string[] | undefined {
 	if (
 		typeof source !== "object" ||
 		source === null ||
@@ -282,13 +316,13 @@ function normalizeSession(value: unknown): AppSession | undefined {
 	) {
 		return undefined;
 	}
-	const open: string[] = [];
+	const roots: string[] = [];
 	for (let index = 0; index < (length as number); index++) {
 		const root = dataValue(items, String(index));
 		if (typeof root !== "string") return undefined;
-		open.push(root);
+		roots.push(root);
 	}
-	return { open };
+	return roots;
 }
 
 function plainDataRecord(value: unknown): Record<string, PropertyDescriptor> | undefined {

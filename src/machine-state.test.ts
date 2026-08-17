@@ -253,6 +253,19 @@ describe("machine state mutations", () => {
 			}),
 		).toThrow("invalid machine-state mutation");
 
+		// a tab arrangement is the same list of roots, read by the same normaliser:
+		// an accessor in it is refused before anything invokes one
+		const arrangement = [root];
+		Object.defineProperty(arrangement, "0", {
+			get: () => {
+				sessionGetterRan = true;
+				return root;
+			},
+		});
+		expect(() => mutateMachineState(spoolDir, { kind: "order-session", order: arrangement })).toThrow(
+			"invalid machine-state mutation",
+		);
+
 		const symbol = Symbol("extra");
 		expect(() =>
 			mutateMachineState(spoolDir, {

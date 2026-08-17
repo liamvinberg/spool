@@ -88,7 +88,14 @@ import {
 } from "./security";
 import { createSelectionStore, parseSelectionEntries, parseSelectionPut, type SelectionEntry } from "./selection";
 import { selectionBlock } from "./selection-block";
-import { type AppEvent, type MachineStateWatchAdapter, readSession, updateSession, watchMachineState } from "./session";
+import {
+	type AppEvent,
+	type MachineStateWatchAdapter,
+	orderSession,
+	readSession,
+	updateSession,
+	watchMachineState,
+} from "./session";
 import { createShotTaker } from "./shots";
 import type { TermExecutor } from "./term-exec";
 import { termFontDataCss, termFontFile } from "./term-fonts";
@@ -778,6 +785,24 @@ export function createDaemonApp({
 					return c.text(`not a registered project root: ${result.root}`, 400);
 				}
 				machineStateWatch.acknowledgeSession(result.session);
+				emitAppEvent({ kind: "session" });
+				return c.body(null, 204);
+			},
+		)
+		// tabs dragged into an arrangement: the list is the whole mutation, and it
+		// opens and closes nothing — a root it no longer names stays open
+		.put(
+			"/api/session/order",
+			validator("json", (value, c) => {
+				const { order } = value as { order?: unknown };
+				if (!Array.isArray(order) || order.some((root) => typeof root !== "string")) {
+					return c.text('a tab arrangement must be { "order": string[] }', 400);
+				}
+				return { order: order as string[] };
+			}),
+			(c) => {
+				const session = orderSession(spoolDir, c.req.valid("json").order);
+				machineStateWatch.acknowledgeSession(session);
 				emitAppEvent({ kind: "session" });
 				return c.body(null, 204);
 			},

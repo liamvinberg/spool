@@ -8,6 +8,7 @@ import {
 	postForgetProject,
 	postUpgrade,
 	putSession,
+	putSessionOrder,
 	subscribeSse,
 } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
@@ -16,8 +17,9 @@ import { Home } from "./home";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
-import { CloseIcon, EdgeIcon, PlusIcon, RibbonMark } from "./icons";
+import { EdgeIcon, RibbonMark } from "./icons";
 import { FolderPicker } from "./picker";
+import { type TabProject, TabStrip } from "./tab-strip";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
 
 /**
@@ -26,11 +28,6 @@ import { type UpdateToast, UpdateToastPill } from "./update-toast";
  * as the picker — and the focused view below. Routerless: / and /p/<name>
  * only; the path is read once at boot and replaceState'd on focus.
  */
-
-interface TabProject {
-	root: string;
-	name: string;
-}
 
 /** Same undo window the Trash toast stands for (#23) — one feel across the app. */
 const FORGET_UNDO_MS = 5000;
@@ -224,6 +221,16 @@ export function App() {
 		[focusProject],
 	);
 
+	/**
+	 * The tabs, arranged. Local state moves first and the PUT follows, exactly as
+	 * opening one does: the session event that comes back says the same thing this
+	 * page already drew.
+	 */
+	const reorderTabs = useCallback((order: readonly string[]) => {
+		setOpen([...order]);
+		putSessionOrder(order);
+	}, []);
+
 	const closeTab = useCallback(
 		(root: string) => {
 			const next = openRef.current.filter((r) => r !== root);
@@ -322,46 +329,14 @@ export function App() {
 						<span className="font-semibold text-md text-text tracking-tight leading-sm">spool</span>
 					</button>
 
-					<nav className="flex items-center gap-unit">
-						{tabs.map((tab) => {
-							const active = focused === tab.root;
-							return (
-								<div
-									key={tab.root}
-									className={`group flex h-[26px] items-center rounded-md ${
-										active ? "border border-border-raised bg-raised" : ""
-									}`}
-								>
-									<button
-										type="button"
-										className={`h-full pl-3 text-base leading-none ${
-											active ? "pr-1 font-medium text-text" : "pr-1 text-muted hover:text-text"
-										}`}
-										onClick={() => focusProject(tab.root)}
-										title={tab.root}
-									>
-										{tab.name}
-									</button>
-									<button
-										type="button"
-										className="flex h-full w-5 items-center justify-center pr-1 text-muted opacity-0 hover:text-text group-hover:opacity-100"
-										onClick={() => closeTab(tab.root)}
-										title="Close tab"
-									>
-										<CloseIcon />
-									</button>
-								</div>
-							);
-						})}
-						<button
-							type="button"
-							className="flex h-[26px] w-[26px] items-center justify-center rounded-sm text-muted hover:bg-surface"
-							onClick={() => setPicking(true)}
-							title="Open a project folder"
-						>
-							<PlusIcon />
-						</button>
-					</nav>
+					<TabStrip
+						tabs={tabs}
+						focused={focused}
+						onFocus={focusProject}
+						onClose={closeTab}
+						onReorder={reorderTabs}
+						onPick={() => setPicking(true)}
+					/>
 				</div>
 
 				{focusedTab !== undefined && chrome !== null && (

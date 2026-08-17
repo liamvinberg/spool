@@ -61,6 +61,11 @@ export function updateSession(spoolDir: string, root: string, open: boolean): Se
 	return mutateMachineState(spoolDir, { kind: "update-session", root, open });
 }
 
+/** Arrange the tabs somebody dragged, opening and closing nothing. */
+export function orderSession(spoolDir: string, order: readonly string[]): AppSession {
+	return mutateMachineState(spoolDir, { kind: "order-session", order });
+}
+
 /**
  * Observe ~/.spool registry and session writes and notify already-running
  * pages. Commands own the state transition; the watcher never infers one file
