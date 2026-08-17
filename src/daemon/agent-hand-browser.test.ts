@@ -110,7 +110,14 @@ it("marks the block a write changed, on the frame showing it", { timeout: 180_00
 	// the fixture agent is the agent this machine has, so the `which` behind the wall has
 	// to say so too: left to the runner's own PATH the rail draws the install wall, whose
 	// composer is dead, and nothing below can be typed into (#201)
-	const project = await serveProject({ uiDir, agentExecutor: executor, agentLook: () => true });
+	// and the rail is behind the agent-panel experiment (#238), so this daemon is one
+	// whose config.json switched it on
+	const project = await serveProject({
+		uiDir,
+		agentExecutor: executor,
+		agentLook: () => true,
+		experiments: ["agent-panel"],
+	});
 	root = project.root;
 	writeFrame(project.root, "home", BEFORE);
 	// wide enough to hold a document at rest: below LIVE_MIN_CSS_PX a frame is a stored

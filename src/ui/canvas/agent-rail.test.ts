@@ -28,6 +28,10 @@ import { type CanvasChrome, ProjectCanvas } from "./canvas";
  * `agent-said.test.ts`'s.
  */
 
+// the rail stands only where the machine switched the experiment on (#238), so
+// this whole file is a canvas that did
+Object.assign(window, { __SPOOL_EXPERIMENTS__: ["agent-panel"] });
+
 /**
  * A browser that has never been dragged, before every test.
  *

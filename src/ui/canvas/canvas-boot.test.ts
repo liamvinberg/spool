@@ -52,23 +52,13 @@ describe("canvas boot", () => {
 		expect(host.querySelector('iframe[title="home"]')).not.toBeNull();
 	});
 
-	it("keeps both rails standing over an empty project", async () => {
-		stubFetch(async (url) => {
-			if (url.pathname.endsWith("/frames")) {
-				return Response.json({ root: "/project", pages: [], frames: [], collisions: [] });
-			}
-			if (url.pathname.endsWith("/flows")) {
-				return Response.json({ frames: [], links: [], edges: [], unreadable: [] });
-			}
-			return undefined;
-		});
+	it("keeps the pages rail standing over an empty project", async () => {
+		stubEmptyProject();
 		const host = mountCanvas();
 		await flush();
 
-		// the surface says there is nothing on it, and the agent that writes the
-		// first frame is reachable in the rail beside it
+		// the surface says there is nothing on it
 		expect(host.querySelector("[data-canvas-empty]")).not.toBeNull();
-		expect(host.querySelector("[data-agent-rail]")).not.toBeNull();
 		// the pages tree stands over a project with nothing in it, and draws no row:
 		// the root page has none of its own, and there is nothing on it yet
 		expect(host.querySelector('[aria-label="Pages tree"]')).not.toBeNull();
@@ -77,7 +67,48 @@ describe("canvas boot", () => {
 		// nothing to arrange yet
 		expect(host.querySelector('[aria-label="canvas tools"]')).toBeNull();
 	});
+
+	it("leaves no agent rail behind unless the machine switched it on (#238)", async () => {
+		stubEmptyProject();
+		const host = mountCanvas();
+		await flush();
+
+		// off is absent rather than hidden: no rail, and no strip to expand one from
+		expect(host.querySelector("[data-agent-rail]")).toBeNull();
+		expect(host.querySelector('[aria-label="Expand agent"]')).toBeNull();
+		expect(host.querySelector('[aria-label="Agent"]')).toBeNull();
+	});
+
+	it("stands the agent rail where the experiment names it (#238)", async () => {
+		switchOn("agent-panel");
+		stubEmptyProject();
+		const host = mountCanvas();
+		await flush();
+
+		expect(host.querySelector("[data-agent-rail]")).not.toBeNull();
+	});
 });
+
+/** A project with nothing in it, which is what both rail states are read over. */
+function stubEmptyProject(): void {
+	stubFetch(async (url) => {
+		if (url.pathname.endsWith("/frames")) {
+			return Response.json({ root: "/project", pages: [], frames: [], collisions: [] });
+		}
+		if (url.pathname.endsWith("/flows")) {
+			return Response.json({ frames: [], links: [], edges: [], unreadable: [] });
+		}
+		return undefined;
+	});
+}
+
+/** The experiments this machine's config named, as the boot script would have left them. */
+function switchOn(...names: string[]): void {
+	Object.assign(window, { __SPOOL_EXPERIMENTS__: names });
+	onTestFinished(() => {
+		delete window.__SPOOL_EXPERIMENTS__;
+	});
+}
 
 /** The canvas's own reads; anything a test does not answer for itself. */
 function stubFetch(answer: (url: URL) => Promise<Response | undefined>): void {

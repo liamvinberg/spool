@@ -35,6 +35,7 @@ import {
 	resolveFlows,
 	subscribeSse,
 } from "../api";
+import { experimentOn } from "../experiments";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { RibbonMark } from "../icons";
@@ -2920,9 +2921,10 @@ export function ProjectCanvas({
 
 	// no frames and no pages anywhere: the project is untouched — the canvas
 	// surface says so and the tools stay away until the first frame lands (#39).
-	// The rails either side of it stand regardless: the pages tree over its root
-	// page, and the agent rail, which is how a frame gets written at all.
+	// The pages tree stands regardless, over its root page, and so does the agent
+	// rail where this machine has switched it on.
 	const projectEmpty = loaded && frames.length === 0 && pages.length === 0;
+	const agentPanel = experimentOn("agent-panel");
 	const k = camera?.k ?? 1;
 	const shellRadius = Math.min(12 / k, 24);
 	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");
@@ -3209,38 +3211,43 @@ export function ProjectCanvas({
 					/>
 				) : null}
 			</div>
-			<div className="relative z-20 flex shrink-0">
-				<AgentRail
-					entries={turn.entries}
-					plan={turn.plan}
-					phase={turn.phase}
-					elapsed={turn.elapsed}
-					jump={jump}
-					pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
-					threads={{
-						list: deck.threads,
-						open: deck.open,
-						finished: deck.finished,
-						onOpen: deck.onOpen,
-						onClose: deck.onClose,
-						onNew: deck.onNew,
-					}}
-					install={install}
-					login={deck.login}
-					queued={turn.queued}
-					handback={turn.handback}
-					draft={turn.draft}
-					onDraft={turn.onDraft}
-					running={turn.running}
-					model={model}
-					limit={turn.limit}
-					onSend={turn.send}
-					onQueue={turn.queue}
-					onUnqueue={turn.unqueue}
-					onStop={turn.stop}
-					onAnswer={turn.answer}
-				/>
-			</div>
+			{/* the agent rail is experimental, and stands only when config.json names it
+			    (#238). Off is absent rather than hidden: no strip, no expand control and
+			    nothing in the document for a press or a key to find. */}
+			{agentPanel ? (
+				<div className="relative z-20 flex shrink-0">
+					<AgentRail
+						entries={turn.entries}
+						plan={turn.plan}
+						phase={turn.phase}
+						elapsed={turn.elapsed}
+						jump={jump}
+						pointing={{ ...pointing, lit: lit ?? litOut, onLight: setLit, onDrop: dropPointed }}
+						threads={{
+							list: deck.threads,
+							open: deck.open,
+							finished: deck.finished,
+							onOpen: deck.onOpen,
+							onClose: deck.onClose,
+							onNew: deck.onNew,
+						}}
+						install={install}
+						login={deck.login}
+						queued={turn.queued}
+						handback={turn.handback}
+						draft={turn.draft}
+						onDraft={turn.onDraft}
+						running={turn.running}
+						model={model}
+						limit={turn.limit}
+						onSend={turn.send}
+						onQueue={turn.queue}
+						onUnqueue={turn.unqueue}
+						onStop={turn.stop}
+						onAnswer={turn.answer}
+					/>
+				</div>
+			) : null}
 			{exportDialog !== null && exportFrames.length > 0 ? (
 				<ExportDialog
 					exporting={exporting}
