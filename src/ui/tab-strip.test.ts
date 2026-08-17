@@ -44,6 +44,15 @@ describe("the tab strip", () => {
 		await act(async () => {
 			window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: 170 }));
 		});
+		// let go and the tab travels the last of the way itself, onto the exact left
+		// edge of the slot it took: the order is not written until it has arrived
+		expect(tabOf(host, 0)?.style.transform).toBe("translateX(110px)");
+		expect(tabOf(host, 0)?.style.transition).toContain("200ms");
+		expect(onReorder).not.toHaveBeenCalled();
+
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 260));
+		});
 		expect(onReorder).toHaveBeenCalledWith(["/w/beta", "/w/alpha", "/w/gamma"]);
 
 		// the press that became a drag is not also a click on the tab it left
