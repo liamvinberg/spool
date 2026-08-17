@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { carriedPage, pageChain, pageName, pageParent, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
 import { accelPressed } from "../../runtime/platform-keys";
@@ -102,6 +102,17 @@ const SLOP = 5;
 /** the band at each end of the list that pulls the scroll along */
 const EDGE = 36;
 const EDGE_SPEED = 14;
+/**
+ * How long a drag has to rest on a shut page before it springs open.
+ *
+ * A drag crosses folders on its way to somewhere else, so opening every one it
+ * touches unfolds the tree under the hand that is trying to cross it — the list
+ * grows, the rows move, and the gap being aimed at is somewhere else by the time
+ * the pointer gets there. Resting is the difference between passing over a folder
+ * and looking into one, and the arc on the chevron says the rest is being counted.
+ * Mirrored by `--spring-ms` on that arc.
+ */
+const SPRING_MS = 450;
 /** how long a typed jump keeps collecting letters */
 const TYPED_MS = 700;
 /** the house curve, which every rail transition already wears */
@@ -158,6 +169,9 @@ interface DragLive {
 	y: number;
 	grabY: number;
 	active: boolean;
+	/** the shut page the drag is resting on, and when it arrived there */
+	springPage: string | null;
+	springAt: number;
 	/** the shut pages this drag opened, which are the ones it closes behind itself */
 	opened: Set<string>;
 }
@@ -267,6 +281,8 @@ export function CanvasSidebar({
 	const [kit, setKit] = useState<DragKit | null>(null);
 	const [landing, setLanding] = useState<Landing | null>(null);
 	const [pageTooltip, setPageTooltip] = useState<{ page: string; x: number; y: number } | null>(null);
+	/** the shut page a drag is resting on, which is the one drawing the dwell arc */
+	const [springing, setSpringing] = useState<string | null>(null);
 
 	const asideRef = useRef<HTMLElement | null>(null);
 	const listRef = useRef<HTMLDivElement | null>(null);
@@ -1027,19 +1043,24 @@ export function CanvasSidebar({
 				setLanding(next);
 			}
 
-			// a shut page opens the instant the drag arrives at it, and shuts again
-			// behind the drag unless the drop landed inside: passing over a folder is
-			// how you look into it, not how you reshape the tree
+			// spring-loaded folders: rest on a shut page and it opens itself, and shuts
+			// again behind the drag unless the drop landed inside. Crossing one at speed
+			// leaves it exactly as it was — passing over a folder is not looking into it
 			const at = rowAt(all, contentY);
 			const over = at === -1 ? undefined : all[at];
-			if (
-				over?.kind === "page" &&
-				!over.open &&
-				!current.opened.has(over.page) &&
-				allowed(current, { kind: "into", page: over.page })
-			) {
-				current.opened.add(over.page);
-				setOpen(over.page, true);
+			const candidate =
+				over?.kind === "page" && !over.open && allowed(current, { kind: "into", page: over.page })
+					? over.page
+					: null;
+			if (candidate !== current.springPage) {
+				current.springPage = candidate;
+				current.springAt = performance.now();
+				setSpringing(candidate);
+			} else if (candidate !== null && performance.now() - current.springAt > SPRING_MS) {
+				current.springPage = null;
+				current.opened.add(candidate);
+				setSpringing(null);
+				setOpen(candidate, true);
 			}
 		}
 		ticking.current = requestAnimationFrame(tick);
@@ -1151,6 +1172,7 @@ export function CanvasSidebar({
 			if (current?.active === true) justDragged.current = true;
 			setKit(null);
 			setLanding(null);
+			setSpringing(null);
 			const landed = drop && current?.active === true && target !== null ? target : null;
 			if (landed !== null && current !== null) applyDrop(current, landed);
 			// the pages this drag opened close behind it, all but the one the drop
@@ -1220,6 +1242,8 @@ export function CanvasSidebar({
 			y: event.clientY,
 			grabY: event.clientY - event.currentTarget.getBoundingClientRect().top,
 			active: false,
+			springPage: null,
+			springAt: 0,
 			opened: new Set(),
 		};
 		if (ticking.current === null) ticking.current = requestAnimationFrame(tick);
@@ -1519,6 +1543,7 @@ export function CanvasSidebar({
 										cursored={cursor === rowKey(row)}
 										lifted={kit !== null && kit.kind === row.kind && kit.names.includes(rowName(row))}
 										into={landing?.kind === "into" && row.kind === "page" && landing.page === row.page}
+										springing={row.kind === "page" && springing === row.page}
 										rename={rename}
 										onPress={pressRow}
 										onActivate={() => {
@@ -1755,6 +1780,7 @@ function TreeRow({
 	cursored,
 	lifted,
 	into,
+	springing,
 	rename,
 	onPress,
 	onActivate,
@@ -1771,6 +1797,8 @@ function TreeRow({
 	cursored: boolean;
 	lifted: boolean;
 	into: boolean;
+	/** a drag is resting here: the chevron counts the rest out */
+	springing: boolean;
 	rename: RenameHandle | null;
 	onPress: (event: React.PointerEvent<HTMLElement>, row: RailRow) => void;
 	onActivate: () => void;
@@ -1822,9 +1850,10 @@ function TreeRow({
 							aria-expanded={row.open}
 							onPointerDown={(event) => event.stopPropagation()}
 							onClick={(event) => onOpen(event.altKey)}
-							className="flex h-full w-6 shrink-0 items-center justify-center"
+							className="relative flex h-full w-6 shrink-0 items-center justify-center"
 						>
 							<ChevronIcon open={row.open} className="h-2.5 w-2.5" />
+							{springing ? <SpringArc /> : null}
 						</button>
 						{rename === null ? (
 							<>
@@ -2053,6 +2082,35 @@ function refusalLine(status: number): string {
 	if (status === 409) return "name taken";
 	if (status === 400) return "bad name";
 	return "refused";
+}
+
+/**
+ * The dwell, drawn around the chevron of the page a drag is resting on.
+ *
+ * A ring that fills over exactly the rest the folder is asking for, so the wait
+ * is a thing being watched rather than a delay being suffered. `stroke-dasharray`
+ * is the circumference of an r=8 circle, which is what the keyframe unwinds.
+ */
+function SpringArc() {
+	return (
+		<svg
+			viewBox="0 0 20 20"
+			className="pointer-events-none absolute h-5 w-5 text-thread"
+			fill="none"
+			aria-hidden="true"
+		>
+			<circle
+				cx="10"
+				cy="10"
+				r="8"
+				stroke="currentColor"
+				strokeWidth="1.4"
+				strokeLinecap="round"
+				className="animate-spring-load origin-center -rotate-90"
+				style={{ strokeDasharray: 50.3, strokeDashoffset: 0, "--spring-ms": `${SPRING_MS}ms` } as CSSProperties}
+			/>
+		</svg>
+	);
 }
 
 function FrameIcon({ className }: { className?: string }) {

@@ -260,18 +260,21 @@ describe("the stored order", () => {
 });
 
 /**
- * A drag across the tree looks into the folders it passes without reshaping
- * them: a shut page opens the instant the drag arrives, and shuts again behind
- * it unless the drop landed inside. The dwell this replaced left every page a
- * drag rested on open for good.
+ * A drag across the tree looks into the folders it rests on and leaves the ones
+ * it merely crosses alone: a shut page springs open after the dwell, and shuts
+ * again behind the drag unless the drop landed inside. Opening on arrival
+ * instead unfolded every folder on the way to the one being aimed at.
  */
 describe("a drag through the tree", () => {
-	it("opens a shut page on arrival and closes it again behind itself", async () => {
+	it("leaves a page it crosses shut, springs one it rests on, and closes it behind itself", async () => {
 		const { host } = await render();
 		await liftRow(host, 'button[aria-label="home frame"]', 20, 20);
 
 		// the middle band of the shop row, which is how a frame changes page
 		await dragTo(52, 20);
+		expect(host.querySelector('button[aria-label="Expand shop"]')).not.toBeNull();
+
+		await rest();
 		expect(host.querySelector('button[aria-label="Collapse shop"]')).not.toBeNull();
 
 		// out again, and dropped on the root page's own list
@@ -298,10 +301,24 @@ describe("a drag through the tree", () => {
 		});
 		await liftRow(host, 'button[aria-label="home frame"]', 20, 22);
 		await dragTo(52, 22);
+		await rest();
 		await dragTo(6, 22);
 		await letGo(6, 22);
 
 		expect(host.querySelector('button[aria-label="Collapse shop"]')).not.toBeNull();
+	});
+
+	/** The dwell is a wait being watched, so it says so on the page it is counting for. */
+	it("draws the dwell on the page the drag is resting on, and takes it away when it leaves", async () => {
+		const { host } = await render();
+		await liftRow(host, 'button[aria-label="home frame"]', 20, 23);
+
+		await dragTo(52, 23);
+		expect(host.querySelector(".animate-spring-load")).not.toBeNull();
+
+		await dragTo(6, 23);
+		expect(host.querySelector(".animate-spring-load")).toBeNull();
+		await letGo(6, 23);
 	});
 });
 
@@ -1044,6 +1061,16 @@ async function dragTo(y: number, pointerId: number) {
 	});
 	await act(async () => {
 		await new Promise((resolve) => setTimeout(resolve, 40));
+	});
+}
+
+/**
+ * Hold the drag where it is for longer than the spring-load dwell, so a shut
+ * page under it has been rested on rather than crossed.
+ */
+async function rest() {
+	await act(async () => {
+		await new Promise((resolve) => setTimeout(resolve, 520));
 	});
 }
 

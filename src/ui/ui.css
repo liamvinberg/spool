@@ -197,6 +197,16 @@
 		}
 	}
 
+	/* the dwell a spring-loaded folder asks for, drawn as it fills. The fallback is
+	 * `SPRING_MS` in `canvas/sidebar.tsx`, which sets `--spring-ms` on the arc */
+	--animate-spring-load: spring-load var(--spring-ms, 450ms) linear forwards;
+
+	@keyframes spring-load {
+		from {
+			stroke-dashoffset: 50.3;
+		}
+	}
+
 	@keyframes agent-entry {
 		from {
 			opacity: 0;
