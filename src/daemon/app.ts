@@ -140,6 +140,8 @@ export interface DaemonOptions {
 	launchEditor?: (target: string) => void;
 	/** #30 phone-home: on only when `spool serve` resolves it on from config. */
 	updateCheck?: boolean | undefined;
+	/** #238: the experiment names config.json switched on, handed to the canvas at boot. */
+	experiments?: readonly string[] | undefined;
 	/** The registry probe — swapped out by seam tests. */
 	fetchLatest?: () => Promise<string | undefined>;
 	/** The toast door's detached `spool upgrade` spawn — swapped out by seam tests. */
@@ -330,6 +332,7 @@ export function createDaemonApp({
 	moveToTrash,
 	launchEditor,
 	updateCheck,
+	experiments,
 	fetchLatest,
 	upgrade,
 	termExecutor,
@@ -2218,7 +2221,10 @@ export function createDaemonApp({
 		protectControlDocument(c);
 		c.header("content-type", index.contentType);
 		c.header("cache-control", "no-store");
-		const boot = `<script>window.__SPOOL_CONTROL__ = ${escapeJsonScript(controlToken)}; window.__SPOOL_RENDER_ORIGIN__ = ${escapeJsonScript(renderOrigin)}; window.__SPOOL_CAPTURE_ORIGIN__ = ${escapeJsonScript(captureOrigin)};</script>`;
+		// the experiments ride the same boot script rather than a route: a surface
+		// that is off has to be absent from the first paint, and a fetch the page
+		// waits for would show it first and take it away after
+		const boot = `<script>window.__SPOOL_CONTROL__ = ${escapeJsonScript(controlToken)}; window.__SPOOL_RENDER_ORIGIN__ = ${escapeJsonScript(renderOrigin)}; window.__SPOOL_CAPTURE_ORIGIN__ = ${escapeJsonScript(captureOrigin)}; window.__SPOOL_EXPERIMENTS__ = ${escapeJsonScript([...(experiments ?? [])])};</script>`;
 		const html = index.body.toString("utf8");
 		return c.body(html.includes("</head>") ? html.replace("</head>", `${boot}\n</head>`) : `${boot}\n${html}`);
 	}

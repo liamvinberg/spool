@@ -956,6 +956,23 @@ describe("serving the canvas page", () => {
 		expect((await app.request(`/ui/assets/${encodeURIComponent("../../../etc/passwd")}`)).status).toBe(404);
 	});
 
+	it("boots the page with the experiments this machine switched on (#238)", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		makeProject(spoolDir);
+		const uiDir = makeUi();
+
+		// nothing named: the page boots with an empty list rather than with no
+		// answer, so every surface reading it says off without asking anybody
+		const plain = makeApp(spoolDir, { uiDir });
+		expect(await (await plain.request("/")).text()).toContain("window.__SPOOL_EXPERIMENTS__ = []");
+
+		// the daemon carries the names across and judges none of them
+		const switched = makeApp(spoolDir, { uiDir, experiments: ["agent-panel", "not-a-thing"] });
+		expect(await (await switched.request("/")).text()).toContain(
+			'window.__SPOOL_EXPERIMENTS__ = ["agent-panel","not-a-thing"]',
+		);
+	});
+
 	it("serves the blue mark for the development daemon", async () => {
 		const app = makeApp(join(makeTempDir(), ".spool-dev"), { development: true });
 

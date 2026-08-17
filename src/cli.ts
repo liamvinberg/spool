@@ -286,6 +286,7 @@ program
 					// #30: an install no package manager owns cannot take an upgrade,
 					// so it is never offered one — the checkout included
 					updateCheck: config.updateCheck && selfUpgradeable(),
+					experiments: config.experiments,
 				});
 			} catch (error) {
 				if (error instanceof PortBusyError) {

@@ -49,6 +49,7 @@ describe("resolveServeConfig", () => {
 			host: "127.0.0.1",
 			port: 7766,
 			updateCheck: true,
+			experiments: [],
 			notices: [],
 		});
 	});
@@ -58,7 +59,13 @@ describe("resolveServeConfig", () => {
 		mkdirSync(spoolDir, { recursive: true });
 		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ host, port: 7800 }));
 
-		expect(resolveServeConfig(spoolDir, {})).toEqual({ host, port: 7800, updateCheck: true, notices: [] });
+		expect(resolveServeConfig(spoolDir, {})).toEqual({
+			host,
+			port: 7800,
+			updateCheck: true,
+			experiments: [],
+			notices: [],
+		});
 	});
 
 	it("lets the environment override config for checkout-on-its-own-port development", () => {
@@ -68,7 +75,7 @@ describe("resolveServeConfig", () => {
 
 		const config = resolveServeConfig(spoolDir, { SPOOL_PORT: "7801", SPOOL_HOST: "::1" });
 
-		expect(config).toEqual({ host: "::1", port: 7801, updateCheck: true, notices: [] });
+		expect(config).toEqual({ host: "::1", port: 7801, updateCheck: true, experiments: [], notices: [] });
 	});
 
 	it("honors the phone-home opt-out and rejects a non-boolean one (#30)", () => {
@@ -80,6 +87,26 @@ describe("resolveServeConfig", () => {
 
 		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ updateCheck: "never" }));
 		expect(() => resolveServeConfig(spoolDir, {})).toThrow(/updateCheck/);
+	});
+
+	it("reads the experiments the machine switched on, and judges none of them (#238)", () => {
+		const spoolDir = makeSpoolDir();
+		mkdirSync(spoolDir, { recursive: true });
+
+		// no file at all, and a file that never mentions them: nothing is on
+		expect(resolveServeConfig(spoolDir, {}).experiments).toEqual([]);
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ port: 7800 }));
+		expect(resolveServeConfig(spoolDir, {}).experiments).toEqual([]);
+
+		// a name this version has never heard of is carried across rather than
+		// refused: the vocabulary belongs to the surface that reads it
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ experiments: ["agent-panel", "not-a-thing"] }));
+		expect(resolveServeConfig(spoolDir, {}).experiments).toEqual(["agent-panel", "not-a-thing"]);
+
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ experiments: "agent-panel" }));
+		expect(() => resolveServeConfig(spoolDir, {})).toThrow(/experiments/);
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ experiments: ["agent-panel", 7] }));
+		expect(() => resolveServeConfig(spoolDir, {})).toThrow(/experiments/);
 	});
 
 	it("rejects malformed config loudly instead of guessing", () => {

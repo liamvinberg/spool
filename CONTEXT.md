@@ -10,6 +10,8 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Daemon**: The one per-machine local server every spool surface is served from.
 
+**Experiment**: A surface that stands only where `~/.spool/config.json` names it in `experiments`, switched per machine rather than per command because the daemon outlives any one of them. Off is absent rather than hidden: the names ride the boot script the canvas document already carries, so a surface that is off never renders and leaves nothing to press. The daemon carries whatever the file said and judges none of it, so a name nothing answers to does nothing. _Avoid_: feature flag, beta toggle
+
 **Frame**: A folder under `design/frames/<name>/` holding one entry file — `frame.tsx` (html) or `term.tsx` (terminal); the unit prototypes are made of. The entry filename is the kind, and a folder holding both is a discovery error. _Avoid_: screen, artboard, mockup
 
 **Terminal frame**: A frame recognized by its `term.tsx` entry. Until project code can run inside an OS sandbox, spool never compiles or executes the entry; the canvas and player render a spool-owned static disabled surface instead. The second and final frame kind.
