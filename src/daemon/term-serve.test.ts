@@ -149,8 +149,9 @@ describe("shot for terminal frames", () => {
 		const outcome = await shotFrame({ daemonUrl: url, controlToken, root, name, frame: "dash", narrate: () => {} });
 		expect(outcome.kind).toBe("shot");
 		if (outcome.kind === "shot") {
-			expect(outcome.file.endsWith("dash.svg")).toBe(true);
-			expect(readFileSync(outcome.file, "utf8")).toContain("all systems go");
+			expect(outcome.files).toHaveLength(1);
+			expect(outcome.files[0]?.endsWith("dash.svg")).toBe(true);
+			expect(readFileSync(outcome.files[0] as string, "utf8")).toContain("all systems go");
 		}
 		expect(spawned).toEqual([]);
 	});

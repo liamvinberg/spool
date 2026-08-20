@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { writeAtomic } from "./atomic-write";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./daemon/design-path";
 import { renderOrigin } from "./daemon/lifecycle";
@@ -47,7 +47,7 @@ export interface LogEntry {
 export type ShotOutcome =
 	| { kind: "broken"; message: string }
 	| { kind: "missing"; message: string }
-	| { kind: "shot"; file: string; bootErrors: string[] };
+	| { kind: "shot"; files: string[]; bootErrors: string[] };
 
 export type LogsOutcome =
 	| { kind: "broken"; message: string }
@@ -61,7 +61,7 @@ export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 	if (probe.kind === "missing") return probe;
 	const boot = await bootFrame(deps, probe.etag);
 	if (boot.kind === "broken") return boot;
-	return { kind: "shot", file: shotFile(deps.root, deps.frame), bootErrors: boot.errors };
+	return { kind: "shot", files: boot.files, bootErrors: boot.errors };
 }
 
 export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
@@ -110,7 +110,7 @@ async function termShot(deps: BootDeps): Promise<ShotOutcome> {
 	if (!res.ok) return { kind: "broken", message: await res.text() };
 	const file = verifyFile(deps.root, deps.frame, "svg");
 	writeAtomic(file, await res.text());
-	return { kind: "shot", file, bootErrors: [] };
+	return { kind: "shot", files: [file], bootErrors: [] };
 }
 
 async function isTermFrame(deps: BootDeps): Promise<boolean> {
@@ -124,6 +124,73 @@ async function isTermFrame(deps: BootDeps): Promise<boolean> {
 
 export function shotFile(root: string, frame: string): string {
 	return verifyFile(root, frame, "png");
+}
+
+/** Slice n of a tiled shot, 1-based so the printed paths read top to bottom. */
+export function shotTileFile(root: string, frame: string, tile: number): string {
+	return verifyFile(root, frame, `${tile}.png`);
+}
+
+/**
+ * How a frame becomes images an agent can actually read. A shot exists
+ * to be looked at by a vision model, and every model normalizes what it is
+ * given down to a fixed budget — about 1.5 megapixels, longest edge around
+ * 1600px — before looking. One screenshot of a long frame spends that whole
+ * budget on height and hands back mush where the text was, so a frame much
+ * taller than a screen is shot as a stack of slices instead, each one near the
+ * budget on its own.
+ */
+/** Raster width a vision model keeps: capture wider and the downscale throws it away. */
+const SHOT_TARGET_RASTER_W = 1600;
+/** Raster height of one slice — a hair over the budget's long edge, never far past it. */
+const SHOT_TILE_RASTER_H = 2000;
+/** CSS px repeated across a cut, so no line of text is ever halved by one. */
+const SHOT_TILE_OVERLAP = 48;
+/** Headroom before slicing: one image up to 20% over budget beats two near-duplicates. */
+const SHOT_SINGLE_TOLERANCE = 1.2;
+/** Chromium renders the whole viewport as one surface, which caps out near 16384. */
+const MAX_RASTER_EDGE = 16_000;
+
+export interface ShotPlan {
+	/** Device scale: 2× while that fits the budget, tapering instead of overshooting it. */
+	scale: number;
+	/** One full-height tile, or top-to-bottom slices with the last anchored to the bottom edge. */
+	tiles: Array<{ y: number; height: number }>;
+}
+
+export function planShot(width: number, height: number): ShotPlan {
+	const w = Math.max(1, Math.round(width));
+	const h = Math.max(1, Math.round(height));
+	const scale = Math.min(Math.min(2, Math.max(1, SHOT_TARGET_RASTER_W / w)), Math.max(0.25, MAX_RASTER_EDGE / h));
+	const tileHeight = Math.round(SHOT_TILE_RASTER_H / scale);
+	if (h <= tileHeight * SHOT_SINGLE_TOLERANCE) return { scale, tiles: [{ y: 0, height: h }] };
+	const step = tileHeight - SHOT_TILE_OVERLAP;
+	const count = Math.ceil((h - tileHeight) / step) + 1;
+	const tiles = Array.from({ length: count }, (_, index) => ({
+		y: Math.min(index * step, h - tileHeight),
+		height: tileHeight,
+	}));
+	return { scale, tiles };
+}
+
+/**
+ * Retire every shot address this run did not write. The files are named
+ * outputs an agent reads back by path, so a five-slice shot followed by a
+ * two-slice one must not leave slices three to five telling last week's truth.
+ */
+function sweepShotFiles(root: string, frame: string, kept: string[]): void {
+	const dir = dirname(shotFile(root, frame));
+	const keep = new Set(kept.map((file) => file.slice(dir.length + 1)));
+	let names: string[];
+	try {
+		names = readdirSync(dir);
+	} catch {
+		return;
+	}
+	for (const name of names) {
+		if (!name.startsWith(`${frame}.`) || keep.has(name)) continue;
+		if (/^(\d+\.)?png$/.test(name.slice(frame.length + 1))) rmSync(join(dir, name), { force: true });
+	}
 }
 
 function logsFile(root: string, frame: string): string {
@@ -158,13 +225,16 @@ async function probeCompile(deps: BootDeps): Promise<Probe> {
 	throw new SpoolError(typeof body === "string" && body !== "" ? body : `the daemon could not verify "${deps.frame}"`);
 }
 
-type Boot = { kind: "booted"; entries: LogEntry[]; errors: string[] } | { kind: "broken"; message: string };
+type Boot =
+	| { kind: "booted"; files: string[]; entries: LogEntry[]; errors: string[] }
+	| { kind: "broken"; message: string };
 
 async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
 	const { w, h } = frameSize(deps);
+	const plan = planShot(w, h);
 	const browser = await launchHeadlessShell(deps.narrate);
 	try {
-		const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 2 });
+		const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: plan.scale });
 		const entries: LogEntry[] = [];
 		const errors: string[] = [];
 		page.on("console", (message) => entries.push({ type: message.type(), text: message.text() }));
@@ -194,14 +264,28 @@ async function bootFrame(deps: BootDeps, etag: string): Promise<Boot> {
 			})
 			.catch(() => {});
 		await (deps.wait?.(deps.at ?? DEFAULT_SETTLE_MS) ?? page.waitForTimeout(deps.at ?? DEFAULT_SETTLE_MS));
-		const png = await page.screenshot({ type: "png" });
-
-		writeAtomic(shotFile(deps.root, deps.frame), png);
+		const files: string[] = [];
+		if (plan.tiles.length === 1) {
+			writeAtomic(shotFile(deps.root, deps.frame), await page.screenshot({ type: "png" }));
+			files.push(shotFile(deps.root, deps.frame));
+		} else {
+			deps.narrate(`"${deps.frame}" is ${h}px tall — shooting ${plan.tiles.length} slices, top to bottom`);
+			for (const [index, tile] of plan.tiles.entries()) {
+				const png = await page.screenshot({
+					type: "png",
+					clip: { x: 0, y: tile.y, width: w, height: tile.height },
+				});
+				const file = shotTileFile(deps.root, deps.frame, index + 1);
+				writeAtomic(file, png);
+				files.push(file);
+			}
+		}
+		sweepShotFiles(deps.root, deps.frame, files);
 		writeAtomic(
 			logsFile(deps.root, deps.frame),
 			`${JSON.stringify({ etag, scenario: scenarioName(deps), at: new Date().toISOString(), entries }, null, "\t")}\n`,
 		);
-		return { kind: "booted", entries, errors };
+		return { kind: "booted", files, entries, errors };
 	} finally {
 		await browser.close();
 	}

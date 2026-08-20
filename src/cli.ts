@@ -204,7 +204,7 @@ program
 			process.exitCode = 1;
 			return;
 		}
-		process.stdout.write(`${outcome.file}\n`);
+		process.stdout.write(`${outcome.files.join("\n")}\n`);
 		if (outcome.bootErrors.length > 0) {
 			process.stderr.write(`${outcome.bootErrors.join("\n")}\n`);
 			process.exitCode = 1;

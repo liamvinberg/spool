@@ -6,7 +6,7 @@ import { readDaemonState } from "./daemon/lifecycle";
 import { terminalSourceVersion } from "./daemon/term-source";
 import { writeCaptureError } from "./daemon/thumbs";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
-import { type BootDeps, logsFrame, shotFrame } from "./verify";
+import { type BootDeps, logsFrame, planShot, shotFrame } from "./verify";
 
 /**
  * shot/logs against a really-served daemon. The compile paths never need a
@@ -164,6 +164,43 @@ describe("shot and logs, compile paths", () => {
 	});
 });
 
+describe("planShot", () => {
+	it("keeps a screen-sized frame one image at 2×", () => {
+		expect(planShot(390, 844)).toEqual({ scale: 2, tiles: [{ y: 0, height: 844 }] });
+	});
+
+	it("tapers the scale on wide frames instead of overshooting the raster budget", () => {
+		const plan = planShot(1440, 900);
+		expect(plan.scale).toBeCloseTo(1600 / 1440);
+		expect(plan.tiles).toEqual([{ y: 0, height: 900 }]);
+	});
+
+	it("never scales below 1× for width alone", () => {
+		expect(planShot(3200, 900).scale).toBe(1);
+	});
+
+	it("slices a long frame into overlapping tiles, the last anchored to the bottom edge", () => {
+		expect(planShot(160, 2600)).toEqual({
+			scale: 2,
+			tiles: [
+				{ y: 0, height: 1000 },
+				{ y: 952, height: 1000 },
+				{ y: 1600, height: 1000 },
+			],
+		});
+	});
+
+	it("tolerates a fifth over budget before slicing into near-duplicates", () => {
+		expect(planShot(160, 1200).tiles).toHaveLength(1);
+		expect(planShot(160, 1201).tiles).toHaveLength(2);
+	});
+
+	it("lowers the scale before the raster surface outgrows Chromium", () => {
+		const plan = planShot(990, 20_000);
+		expect(plan.scale).toBeCloseTo(16_000 / 20_000);
+	});
+});
+
 describe("the one boot smoke", () => {
 	it("boots, shoots, logs, replays, refreshes on edit, surfaces boot errors", { timeout: 180_000 }, async () => {
 		if (!(await browserAvailable())) return; // no build on this machine: #27 covers the fetch path
@@ -209,8 +246,9 @@ export default function Noisy() {
 			}),
 		);
 		expect(shot.kind).toBe("shot");
-		const file = (shot as { file: string }).file;
-		expect(file).toBe(join(root, "design", ".spool", "verify", "noisy.png"));
+		const files = (shot as { files: string[] }).files;
+		expect(files).toEqual([join(root, "design", ".spool", "verify", "noisy.png")]);
+		const file = files[0] as string;
 		expect(existsSync(file)).toBe(true);
 		expect((shot as { bootErrors: string[] }).bootErrors).toEqual([]);
 		expect(waits).toEqual([17]);
@@ -248,6 +286,21 @@ export default function Noisy() {
 			type: "log",
 			text: "edited boot",
 		});
+
+		// A frame much taller than a screen shoots as slices, each legible on its
+		// own, and every address the run did not write retires with it — a stack
+		// read back by path must never serve last shot's truth.
+		const tiled = await shotFrame(deps("noisy", { viewport: { width: 160, height: 2600 } }));
+		expect(tiled.kind).toBe("shot");
+		const tiles = (tiled as { files: string[] }).files;
+		expect(tiles).toEqual([1, 2, 3].map((n) => join(root, "design", ".spool", "verify", `noisy.${n}.png`)));
+		expect(existsSync(file)).toBe(false);
+		for (const tile of tiles) expect(readPngSize(tile)).toEqual({ width: 320, height: 2000 });
+
+		// and back: one short shot retires the whole stack
+		const single = await shotFrame(deps("noisy", { viewport: { width: 160, height: 120 } }));
+		expect((single as { files: string[] }).files).toEqual([file]);
+		expect(tiles.some((tile) => existsSync(tile))).toBe(false);
 
 		// a frame that throws on boot: the shot lands, the errors mark it broken
 		writeFrame(

@@ -196,10 +196,11 @@ The document's baseline: preflight (the same zero a product starts from), tokens
 
 	verbs: () => `The project verbs — selection, flows, shot, logs, url — resolve the project by walking up from cwd to design/canvas.json and refuse roots they don't know (\`spool open\` once per machine registers), and auto-start the daemon; \`spool status\` prints where it listens and warns when a running daemon predates the CLI (\`spool stop\`, then any verb, updates it). init and open work offline; skill needs nothing.
 
-The verify loop has two paths. For HTML frames, shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 1440×900) at 2×. Reading a missing or invalid sidecar never creates it. A terminal shot does not boot or execute source; it only rasterizes a persisted source-current grid to SVG.
+The verify loop has two paths. For HTML frames, shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 1440×900). Device scale is picked for legibility: 2× for narrow frames, tapering above 800px wide so the raster stays near what a vision model keeps. Reading a missing or invalid sidecar never creates it. A terminal shot does not boot or execute source; it only rasterizes a persisted source-current grid to SVG.
 
   spool shot <frame> [--viewport <width>x<height>] [--at <milliseconds>] [--scenario <name>]
                        HTML boots headless and writes design/.spool/verify/<frame>.png, printing the path.
+                       A frame much taller than a screen writes top-to-bottom slices <frame>.1.png … <frame>.N.png instead, one printed path per line, each slice legible on its own with a small overlap across cuts. Read every printed file — the layout's truth is the whole stack.
                        --viewport sets exact positive-integer CSS pixels instead of frame.json.
                        --at sets the post-commit settle wait; the default is 300ms.
                        A terminal never executes for a shot; its persisted source-current grid rasterizes to <frame>.svg, otherwise stale/never-run is reported (topic: terminals).
