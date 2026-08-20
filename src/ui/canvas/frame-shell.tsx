@@ -206,7 +206,7 @@ export const FrameShell = memo(function FrameShell({
 					// a fresh capture replaces this image while the canvas is in
 					// use; decoding it off the main thread keeps that invisible
 					decoding="async"
-					className="pointer-events-none absolute inset-0 h-full w-full object-cover object-top"
+					className="pointer-events-none absolute inset-0 h-full w-full bg-surface object-contain object-left-top"
 					style={{ visibility: "hidden" }}
 				/>
 			)}
@@ -224,13 +224,22 @@ export const FrameShell = memo(function FrameShell({
 							<span className="max-w-lg font-mono text-xs leading-relaxed text-muted">{plan.message}</span>
 						</div>
 					) : plan.image === "cover" && cover !== undefined ? (
+						// The still at its true shape, never stretched to the box: a cover
+						// is the document photographed at one footprint, and a resize gives
+						// the frame another before the recapture lands. Those seconds — and
+						// every tick of the resize drag itself — used to draw the old
+						// picture smeared `object-cover` across the new box. Contained at
+						// the top-left corner it stays the picture it is, over the same
+						// surface the placeholder stands on, which reads as a frame awaiting
+						// its next paint. A cover whose shape matches its box — every frame
+						// not mid-resize — fills it edge to edge exactly as before.
 						<Thumbnail
 							project={project}
 							frame={name}
 							cover={cover}
 							alt={name}
 							draggable={false}
-							className="absolute inset-0 h-full w-full object-cover object-top"
+							className="absolute inset-0 h-full w-full bg-surface object-contain object-left-top"
 						/>
 					) : (
 						<div className="absolute inset-0 flex items-center justify-center bg-surface">

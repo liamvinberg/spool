@@ -9,8 +9,8 @@ import type { FrameState } from "./lifecycle";
 vi.mock("../thumbnail", async () => {
 	const { createElement } = await import("react");
 	return {
-		Thumbnail: ({ alt, style }: { alt: string; style?: Record<string, string> }) =>
-			createElement("img", { alt, style, "data-terminal-cover": "image" }),
+		Thumbnail: ({ alt, style, className }: { alt: string; style?: Record<string, string>; className?: string }) =>
+			createElement("img", { alt, style, className, "data-terminal-cover": "image" }),
 	};
 });
 
@@ -214,6 +214,18 @@ describe("FrameShell documents", () => {
 		const { host, root } = await render({ state: "live" });
 		const still = host.querySelector("img");
 		expect(still?.style.visibility).toBe("hidden");
+		act(() => root.unmount());
+	});
+
+	it("draws the still at its true shape over the surface, never stretched to the box", async () => {
+		// A cover is photographed at one footprint; a resize gives the frame
+		// another before the recapture lands. Contained on the surface it stays an
+		// honest picture through those seconds instead of a smear.
+		const { host, root } = await render({ state: "picture" });
+		const still = host.querySelector("img");
+		expect(still?.className).toContain("object-contain");
+		expect(still?.className).toContain("bg-surface");
+		expect(still?.className).not.toContain("object-cover");
 		act(() => root.unmount());
 	});
 
