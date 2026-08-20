@@ -281,7 +281,11 @@ function Row({
 			style={{ height: ROW }}
 		>
 			{picked ? <span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-thread" /> : null}
-			{mark === undefined ? null : <UnseenMark mark={mark} className="-ml-1.5" />}
+			{mark === undefined ? null : mark === null ? (
+				<span aria-hidden="true" className="-ml-1.5 h-3.5 w-3.5 shrink-0" />
+			) : (
+				<UnseenMark mark={mark} className="-ml-1.5" />
+			)}
 			{rows === "dim" ? (
 				<Dim name={hit.row.name} weights={weights} />
 			) : rows === "tail" ? (
