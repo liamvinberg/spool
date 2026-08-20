@@ -47,6 +47,12 @@ export function PropertiesCart({ classes, texts }: CartProps) {
 				</span>
 			</div>
 
+			<div data-node="promo" data-key="promo" className={c("promo")}>
+				<span data-node="promo-label" data-key="promo-label" className={c("promo-label")}>
+					{t("promo-label", "Kanelbulle på köpet över 120 kr")}
+				</span>
+			</div>
+
 			<div data-node="items" data-key="items" className={c("items")}>
 				{ITEMS.map((item) => (
 					<div key={item.id} data-node="row" data-key={item.id} className={c("row")}>

@@ -63,7 +63,7 @@ export const ELEMENTS: readonly SourceElement[] = [
 		line: 16,
 		parent: "screen",
 		display: "flex",
-		className: "flex h-12 shrink-0 items-center gap-3 px-4",
+		className: "flex h-12 shrink-0 items-center gap-3 border-b border-border px-4",
 	},
 	{
 		id: "back",
@@ -86,19 +86,38 @@ export const ELEMENTS: readonly SourceElement[] = [
 		text: { literal: "Din beställning" },
 	},
 	{
+		id: "promo",
+		name: "promo",
+		tag: "div",
+		line: 20,
+		parent: "screen",
+		display: "flex",
+		className: "mx-4 mt-3 flex h-16 shrink-0 items-end rounded-lg bg-linear-to-br from-thread via-thread/70 to-raised p-3",
+	},
+	{
+		id: "promo-label",
+		name: "label",
+		tag: "span",
+		line: 21,
+		parent: "promo",
+		display: "inline",
+		className: "font-medium text-sm text-on-thread leading-sm",
+		text: { literal: "Kanelbulle på köpet över 120 kr" },
+	},
+	{
 		id: "items",
 		name: "items",
 		tag: "div",
-		line: 21,
+		line: 24,
 		parent: "screen",
 		display: "flex",
-		className: "flex min-h-0 flex-1 flex-col gap-2 px-4 pt-2",
+		className: "flex min-h-0 flex-1 flex-col gap-2 ps-4 pe-4 pt-3",
 	},
 	{
 		id: "row",
 		name: "row",
 		tag: "div",
-		line: 24,
+		line: 27,
 		parent: "items",
 		display: "flex",
 		className: "flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2.5",
@@ -108,7 +127,7 @@ export const ELEMENTS: readonly SourceElement[] = [
 		id: "name",
 		name: "name",
 		tag: "span",
-		line: 27,
+		line: 30,
 		parent: "row",
 		display: "inline",
 		className: "text-base leading-base",
@@ -119,7 +138,7 @@ export const ELEMENTS: readonly SourceElement[] = [
 		id: "price",
 		name: "price",
 		tag: "span",
-		line: 30,
+		line: 33,
 		parent: "row",
 		display: "inline",
 		className: null,
@@ -131,7 +150,7 @@ export const ELEMENTS: readonly SourceElement[] = [
 		id: "footer",
 		name: "footer",
 		tag: "div",
-		line: 36,
+		line: 39,
 		parent: "screen",
 		display: "flex",
 		className: "flex shrink-0 flex-col gap-3 p-4",
@@ -140,7 +159,7 @@ export const ELEMENTS: readonly SourceElement[] = [
 		id: "total",
 		name: "total",
 		tag: "div",
-		line: 37,
+		line: 40,
 		parent: "footer",
 		display: "flex",
 		className: "flex items-baseline justify-between",
@@ -149,7 +168,7 @@ export const ELEMENTS: readonly SourceElement[] = [
 		id: "total-label",
 		name: "label",
 		tag: "span",
-		line: 38,
+		line: 41,
 		parent: "total",
 		display: "inline",
 		className: "text-base text-muted leading-base",
@@ -159,26 +178,26 @@ export const ELEMENTS: readonly SourceElement[] = [
 		id: "total-sum",
 		name: "sum",
 		tag: "span",
-		line: 39,
+		line: 42,
 		parent: "total",
 		display: "inline",
-		className: "font-mono text-md leading-md",
+		className: "font-mono text-md leading-md tabular-nums",
 		text: { literal: "126 kr" },
 	},
 	{
 		id: "pay",
 		name: "pay",
 		tag: "button",
-		line: 41,
+		line: 44,
 		parent: "footer",
 		display: "flex",
-		className: "flex h-11 items-center justify-center rounded-md bg-thread",
+		className: "flex h-11 items-center justify-center rounded-md bg-thread transition-colors duration-150 hover:bg-thread/90 active:scale-[0.99] disabled:opacity-50",
 	},
 	{
 		id: "pay-label",
 		name: "label",
 		tag: "span",
-		line: 42,
+		line: 45,
 		parent: "pay",
 		display: "inline",
 		className: "font-medium text-base text-on-thread leading-base",
@@ -224,6 +243,8 @@ const NUMERIC = [
 	"pr",
 	"pb",
 	"pl",
+	"ps",
+	"pe",
 	"p",
 	"mx",
 	"my",
@@ -231,6 +252,8 @@ const NUMERIC = [
 	"mr",
 	"mb",
 	"ml",
+	"ms",
+	"me",
 	"m",
 	"min-w",
 	"max-w",
@@ -242,6 +265,8 @@ const NUMERIC = [
 	"right",
 	"bottom",
 	"left",
+	"inset-x",
+	"inset-y",
 	"inset",
 	"opacity",
 	"border",
@@ -327,16 +352,25 @@ export function nudge(token: string | null, measured: number, direction: 1 | -1)
 
 export type Side = "t" | "r" | "b" | "l";
 
-/** each side's value, read through p, px/py and the four sides, in that order of specificity */
+/**
+ * Each side's value, read through p, px/py and the four sides, in that order
+ * of specificity. The logical spellings read too: `ps-4` is the left side and
+ * `pe-4` the right in this left-to-right document.
+ */
 export function paddingOf(className: string | null): Record<Side, string | null> {
 	const all = tokenOf(className, "p");
 	const x = tokenOf(className, "px");
 	const y = tokenOf(className, "py");
-	const side = (family: Numeric, axis: string | null): string | null => {
-		const own = tokenOf(className, family);
+	const side = (family: Numeric, logical: Numeric | null, axis: string | null): string | null => {
+		const own = tokenOf(className, family) ?? (logical === null ? null : tokenOf(className, logical));
 		return own !== null ? valueOf(own) : axis !== null ? valueOf(axis) : all !== null ? valueOf(all) : null;
 	};
-	return { t: side("pt", y), r: side("pr", x), b: side("pb", y), l: side("pl", x) };
+	return { t: side("pt", null, y), r: side("pr", "pe", x), b: side("pb", null, y), l: side("pl", "ps", x) };
+}
+
+/** a literal written in logical terms keeps them on the way back */
+export function paddingIsLogical(className: string | null): boolean {
+	return tokenOf(className, "ps") !== null || tokenOf(className, "pe") !== null;
 }
 
 /**
@@ -346,18 +380,34 @@ export function paddingOf(className: string | null): Record<Side, string | null>
  * run in both directions.
  */
 export function withPadding(className: string | null, sides: Record<Side, string | null>): string {
+	const logical = paddingIsLogical(className);
 	let next = className;
-	for (const family of ["p", "px", "py", "pt", "pr", "pb", "pl"] as const) next = withToken(next, family, null);
+	for (const family of ["p", "px", "py", "pt", "pr", "pb", "pl", "ps", "pe"] as const) next = withToken(next, family, null);
 	const { t, r, b, l } = sides;
 	if (t === r && r === b && b === l) return withToken(next, "p", t);
+	// three agree: the whole plus the one exception, `p-4 pt-2`, which sorts after it in the compiled order
+	for (const [key, family] of [
+		["t", "pt"],
+		["r", logical ? "pe" : "pr"],
+		["b", "pb"],
+		["l", logical ? "ps" : "pl"],
+	] as const) {
+		const own = sides[key];
+		const others = (["t", "r", "b", "l"] as const).filter((side) => side !== key).map((side) => sides[side]);
+		const rest = others[0];
+		if (rest !== null && rest !== undefined && others.every((value) => value === rest) && own !== rest) {
+			next = withToken(next, "p", rest);
+			return withToken(next, family, own ?? "0");
+		}
+	}
 	if (t === b && l === r) {
 		next = withToken(next, "px", l);
 		return withToken(next, "py", t);
 	}
 	next = withToken(next, "pt", t);
-	next = withToken(next, "pr", r);
+	next = withToken(next, logical ? "pe" : "pr", r);
 	next = withToken(next, "pb", b);
-	return withToken(next, "pl", l);
+	return withToken(next, logical ? "ps" : "pl", l);
 }
 
 export function gapOf(className: string | null): { x: string | null; y: string | null } {
