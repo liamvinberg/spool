@@ -234,8 +234,10 @@ export interface Ladder {
 	doubleRuns: boolean;
 	/** at the leaf, the rung after the last one is the live document */
 	leafRuns: boolean;
-	/** Enter takes one rung down, Figma's keyboard twin of the double-click */
-	enterDescends: boolean;
+	/** Enter runs the frame, as the shipped canvas already binds it */
+	enterRuns: boolean;
+	/** the keyboard half of the ladder: accel-Enter descends, ⇧Enter climbs, Tab walks */
+	keyboardLadder: boolean;
 	/** hover draws the rung a double-click would take as well as the one a click would */
 	twoRing: boolean;
 	/** a double-click on the frame label runs the frame */
@@ -246,26 +248,27 @@ export const LADDERS: Record<LadderName, Ladder> = {
 	descend: {
 		name: "descend",
 		title: "double-click descends",
-		claim: "Figma's ladder, whole, keyboard included: Enter descends, ⇧Enter climbs, Tab walks the row. Hover shows the rung you are on and the one under it, so a descent lands where you were already looking.",
-		cost: "Enter is Figma's descent, so running the frame is left without a key and has to find a gesture.",
+		claim: "Figma's ladder wherever it is free: double-click descends, ⌘-click lands deepest, Tab walks the row. Enter keeps the meaning it already ships with, so going in stays one key, and keyboard descent takes ⌘Enter.",
+		cost: "Figma binds Enter to the descent, so the one reflex this does not answer is a Figma hand reaching for it. ⇧Enter climbs here, which costs play a key it shares with p.",
 		bindings: [
 			{ keys: "hover", does: "this rung, and the next one faint", changed: true },
 			{ keys: "click", does: "the element at the scope", changed: true },
 			{ keys: "click label", does: "the frame", changed: true },
 			{ keys: "⌥ click", does: "the deepest element" },
 			{ keys: "double", does: "down one rung", changed: true },
-			{ keys: "enter", does: "down one rung", changed: true },
+			{ keys: "enter", does: "run the frame" },
+			{ keys: "⌥ enter", does: "down one rung", changed: true },
 			{ keys: "⇧ enter", does: "up one rung", changed: true },
 			{ keys: "tab", does: "the next sibling", changed: true },
 			{ keys: "⇧ tab", does: "the one before", changed: true },
-			{ keys: "double label", does: "run the frame", changed: true },
 			{ keys: "esc", does: "leave, then up one rung" },
 		],
 		clickTakesElement: true,
 		accelStairs: false,
 		doubleRuns: false,
 		leafRuns: false,
-		enterDescends: true,
+		enterRuns: true,
+		keyboardLadder: true,
 		twoRing: true,
 		labelRuns: true,
 	},
@@ -281,17 +284,18 @@ export const LADDERS: Record<LadderName, Ladder> = {
 			{ keys: "⌥ click", does: "the deepest element" },
 			{ keys: "double", does: "down one rung" },
 			{ keys: "double at the leaf", does: "run the frame", changed: true },
-			{ keys: "enter", does: "down one rung" },
+			{ keys: "enter", does: "run the frame" },
+			{ keys: "⌥ enter", does: "down one rung" },
 			{ keys: "⇧ enter", does: "up one rung" },
 			{ keys: "tab", does: "the next sibling" },
-			{ keys: "double label", does: "run the frame" },
 			{ keys: "esc", does: "leave, then up one rung" },
 		],
 		clickTakesElement: true,
 		accelStairs: false,
 		doubleRuns: false,
 		leafRuns: true,
-		enterDescends: true,
+		enterRuns: true,
+		keyboardLadder: true,
 		twoRing: true,
 		labelRuns: true,
 	},
@@ -311,7 +315,8 @@ export const LADDERS: Record<LadderName, Ladder> = {
 		accelStairs: false,
 		doubleRuns: true,
 		leafRuns: false,
-		enterDescends: false,
+		enterRuns: true,
+		keyboardLadder: false,
 		twoRing: false,
 		labelRuns: false,
 	},
@@ -332,7 +337,8 @@ export const LADDERS: Record<LadderName, Ladder> = {
 		accelStairs: true,
 		doubleRuns: true,
 		leafRuns: false,
-		enterDescends: false,
+		enterRuns: true,
+		keyboardLadder: false,
 		twoRing: false,
 		labelRuns: false,
 	},
@@ -353,7 +359,8 @@ export const LADDERS: Record<LadderName, Ladder> = {
 		accelStairs: false,
 		doubleRuns: false,
 		leafRuns: true,
-		enterDescends: false,
+		enterRuns: true,
+		keyboardLadder: false,
 		twoRing: false,
 		labelRuns: false,
 	},

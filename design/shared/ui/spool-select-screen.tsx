@@ -59,9 +59,10 @@ export function SelectScreen({ ladder: name }: { ladder: LadderName }) {
 	}, []);
 
 	/**
-	 * The keyboard half of the ladder, which is Figma's and which the canvas has
-	 * never had: Enter descends, ⇧Enter climbs, Tab walks the row. ⌥ is held
-	 * rather than pressed, so the ring answers while the key is down.
+	 * Enter goes in, the way the shipped canvas already binds it. The rest of the
+	 * keyboard is Figma's wherever Figma left it free: accel-Enter takes one rung
+	 * down, ⇧Enter climbs, Tab walks the row. ⌥ is held rather than pressed, so
+	 * the ring answers while the key is down.
 	 */
 	useEffect(() => {
 		const down = (event: KeyboardEvent) => {
@@ -73,16 +74,16 @@ export function SelectScreen({ ladder: name }: { ladder: LadderName }) {
 				leave();
 				return;
 			}
-			if (liveRef.current || !ladder.enterDescends) return;
-			if (event.key === "Enter" || event.key === "\\") {
+			if (liveRef.current) return;
+			if (event.key === "Enter") {
 				event.preventDefault();
-				// ⇧Enter and the backslash Figma added beside it both climb
-				setSelection((held) =>
-					event.shiftKey || event.key === "\\" ? ascend(held) : firstChildOf(held, FRAME),
-				);
+				// ⌥ stands in for ⌘ in here, so the descent chord does too
+				if (event.altKey) setSelection((held) => firstChildOf(held, FRAME));
+				else if (event.shiftKey) setSelection((held) => ascend(held));
+				else if (ladder.enterRuns) setLive(true);
 				return;
 			}
-			if (event.key === "Tab") {
+			if (event.key === "Tab" && ladder.keyboardLadder) {
 				event.preventDefault();
 				setSelection((held) => siblingOf(held, FRAME, event.shiftKey ? -1 : 1));
 			}
@@ -96,7 +97,7 @@ export function SelectScreen({ ladder: name }: { ladder: LadderName }) {
 			removeEventListener("keydown", down);
 			removeEventListener("keyup", up);
 		};
-	}, [leave, ladder.enterDescends]);
+	}, [leave, ladder.enterRuns, ladder.keyboardLadder]);
 
 	const chain = pointer.where === "document" ? pointer.chain : [];
 	const gesture = { chain, frame: FRAME, accel, selection };
