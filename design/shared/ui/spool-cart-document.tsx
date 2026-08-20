@@ -16,18 +16,29 @@ const ITEMS = [
 	{ id: "latte", label: "Havrelatte", price: "49 kr" },
 ] as const;
 
-export function CartDocument({ live, ring, picked }: { live: boolean; ring: string | null; picked: string | null }) {
+export function CartDocument({
+	live,
+	ring,
+	next,
+	picked,
+}: {
+	live: boolean;
+	ring: string | null;
+	/** the rung a double-click would take, drawn under the one a click would */
+	next: string | null;
+	picked: string | null;
+}) {
 	const [checked, setChecked] = useState<readonly string[]>([]);
 	const [paying, setPaying] = useState(false);
 
-	const mark = (id: string) => nodeClass(id, ring, picked);
+	const mark = (id: string) => nodeClass(id, ring, next, picked);
 
 	return (
 		<div data-node="screen" className={cn("flex h-full w-full flex-col bg-bg", mark("screen"))}>
 			<Corners on={picked === "screen"} inset />
 
 			<div data-node="header" className={cn("relative flex h-12 shrink-0 items-center gap-3 px-4", mark("header"))}>
-				<Corners on={picked === "header"} />
+				<Corners on={picked === "header"} inset />
 				<span data-node="back" className={cn("relative text-muted", mark("back"))}>
 					<Corners on={picked === "back"} />
 					<svg viewBox="0 0 10 10" className="h-2.5 w-2.5" fill="none" aria-hidden="true">
@@ -41,7 +52,7 @@ export function CartDocument({ live, ring, picked }: { live: boolean; ring: stri
 			</div>
 
 			<div data-node="items" className={cn("relative flex min-h-0 flex-1 flex-col gap-2 px-4 pt-2", mark("items"))}>
-				<Corners on={picked === "items"} />
+				<Corners on={picked === "items"} inset />
 				{ITEMS.map((item) => {
 					const rowId = `row-${item.id}`;
 					const on = checked.includes(item.id);
@@ -85,7 +96,7 @@ export function CartDocument({ live, ring, picked }: { live: boolean; ring: stri
 			</div>
 
 			<div data-node="footer" className={cn("relative flex shrink-0 flex-col gap-3 p-4", mark("footer"))}>
-				<Corners on={picked === "footer"} />
+				<Corners on={picked === "footer"} inset />
 				<div
 					data-node="total"
 					className={cn("relative flex items-baseline justify-between", mark("total"))}
@@ -120,13 +131,22 @@ export function CartDocument({ live, ring, picked }: { live: boolean; ring: stri
 }
 
 /**
- * A picked element wears the ring and its four handles; a hovered one, the ring
- * alone. The root draws its ring inwards, because the frame clips at its edge.
+ * The containers that run the full width of the frame: their rings turn inwards,
+ * because an outline offset outwards is clipped by the frame's own edge and
+ * comes back as two floating hairlines.
  */
-function nodeClass(id: string, ring: string | null, picked: string | null): string {
-	const offset = id === "screen" ? "outline-offset-[-2px]" : "outline-offset-[2px]";
+const BLEED = new Set(["screen", "header", "items", "footer"]);
+
+/**
+ * A picked element wears the ring and its four handles; a hovered one, the ring
+ * alone; the rung under it, a dashed hairline, so a descent lands where the eye
+ * already was.
+ */
+function nodeClass(id: string, ring: string | null, next: string | null, picked: string | null): string {
+	const offset = BLEED.has(id) ? "outline-offset-[-2px]" : "outline-offset-[2px]";
 	if (picked === id) return `outline outline-[1.5px] outline-thread rounded-[3px] ${offset}`;
 	if (ring === id) return `outline outline-1 outline-thread/55 rounded-[3px] ${offset}`;
+	if (next === id) return `outline outline-1 outline-dashed outline-thread/30 rounded-[3px] ${offset}`;
 	return "";
 }
 

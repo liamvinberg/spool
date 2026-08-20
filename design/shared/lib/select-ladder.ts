@@ -13,7 +13,7 @@
  * table rather than in four screens.
  */
 
-export type LadderName = "shipped" | "descend" | "run" | "depth";
+export type LadderName = "descend" | "fallthrough" | "shipped" | "run" | "depth";
 
 /** One element in the mock document. Children are what descent descends into. */
 export interface Node {
@@ -155,16 +155,17 @@ export interface Gesture {
 /** What a plain click, or a hover, is aimed at. */
 export function aim(ladder: LadderName, gesture: Gesture): Target {
 	const { chain, frame, accel, selection } = gesture;
+	const rules = LADDERS[ladder];
 	const held = heldIn(selection, frame);
 	if (chain.length === 0) return { kind: "frame", frame };
 	if (accel) {
-		return ladder === "run"
+		return rules.accelStairs
 			? { kind: "element", frame, path: oneDown(chain, held) }
 			: { kind: "element", frame, path: chain };
 	}
 	// The Figma port drops the frame off the click: a click on the body takes
 	// the shallowest child, and the frame is reached from its label or by Esc.
-	if (ladder === "descend") return { kind: "element", frame, path: atDepth(chain, held) };
+	if (rules.clickTakesElement) return { kind: "element", frame, path: atDepth(chain, held) };
 	if (held !== null) return { kind: "element", frame, path: atDepth(chain, held) };
 	return { kind: "frame", frame };
 }
@@ -172,17 +173,18 @@ export function aim(ladder: LadderName, gesture: Gesture): Target {
 /** What a double-click is aimed at — the question this whole ticket turns on. */
 export function aimDouble(ladder: LadderName, gesture: Gesture): Target {
 	const { chain, frame, selection } = gesture;
+	const rules = LADDERS[ladder];
 	const held = heldIn(selection, frame);
-	if (ladder === "shipped" || ladder === "run") return { kind: "run", frame };
+	if (rules.doubleRuns) return { kind: "run", frame };
+	// the frame label and anything that is not an element: there is no rung under
+	// the pointer, so a double-click there can only mean the frame itself
 	if (chain.length === 0) return { kind: "run", frame };
-	const next = oneDown(chain, held);
-	if (ladder === "descend") {
-		// nothing below the leaf: the ladder simply ends, and running is Enter's
-		return held !== null && held.length === chain.length ? { kind: "element", frame, path: held } : { kind: "element", frame, path: next };
+	if (held !== null && held.length === chain.length) {
+		// the leaf: either the ladder simply ends and running is Enter's, or the
+		// rung after the last one is the live document
+		return rules.leafRuns ? { kind: "run", frame } : { kind: "element", frame, path: held };
 	}
-	// depth: the bottom rung is the live document, so the ladder falls through
-	if (held !== null && held.length === chain.length) return { kind: "run", frame };
-	return { kind: "element", frame, path: next };
+	return { kind: "element", frame, path: oneDown(chain, held) };
 }
 
 export interface Binding {
@@ -200,11 +202,70 @@ export interface Ladder {
 	/** what it costs, said plainly */
 	cost: string;
 	bindings: readonly Binding[];
+	/** a click on the body takes the element at the scope rather than the frame */
+	clickTakesElement: boolean;
+	/** accel walks one rung instead of landing on the deepest element */
+	accelStairs: boolean;
+	/** every double-click runs the frame, whatever is under the pointer */
+	doubleRuns: boolean;
+	/** at the leaf, the rung after the last one is the live document */
+	leafRuns: boolean;
 	/** Enter runs the frame */
 	enterRuns: boolean;
+	/** hover draws the rung a double-click would take as well as the one a click would */
+	twoRing: boolean;
+	/** a double-click on the frame label runs the frame */
+	labelRuns: boolean;
 }
 
 export const LADDERS: Record<LadderName, Ladder> = {
+	descend: {
+		name: "descend",
+		title: "double-click descends",
+		claim: "Figma's ladder, whole. Hover shows the rung you are on and the one under it, so a descent lands where you were already looking. Running the frame is Enter's.",
+		cost: "A click on the body no longer takes the frame, and running the frame has no gesture of its own.",
+		bindings: [
+			{ keys: "hover", does: "this rung, and the next one faint", changed: true },
+			{ keys: "click", does: "the element at the scope", changed: true },
+			{ keys: "click label", does: "the frame", changed: true },
+			{ keys: "⌥ click", does: "the deepest element" },
+			{ keys: "double", does: "down one rung", changed: true },
+			{ keys: "double label", does: "run the frame", changed: true },
+			{ keys: "enter", does: "run the frame", changed: true },
+			{ keys: "esc", does: "up one rung" },
+		],
+		clickTakesElement: true,
+		accelStairs: false,
+		doubleRuns: false,
+		leafRuns: false,
+		enterRuns: true,
+		twoRing: true,
+		labelRuns: true,
+	},
+	fallthrough: {
+		name: "fallthrough",
+		title: "descend, and keep going past the last rung",
+		claim: "Everything descend does, plus one more: at the leaf there is nothing left to descend into, so the next double-click falls through into the live document.",
+		cost: "Enter is still the taught way in, so this rung only pays for itself if the hand finds it before the keyboard does.",
+		bindings: [
+			{ keys: "hover", does: "this rung, and the next one faint" },
+			{ keys: "click", does: "the element at the scope" },
+			{ keys: "click label", does: "the frame" },
+			{ keys: "⌥ click", does: "the deepest element" },
+			{ keys: "double", does: "down one rung" },
+			{ keys: "double at the leaf", does: "run the frame", changed: true },
+			{ keys: "double label", does: "run the frame" },
+			{ keys: "enter", does: "run the frame" },
+			{ keys: "esc", does: "up one rung" },
+		],
+		clickTakesElement: true,
+		accelStairs: false,
+		doubleRuns: false,
+		leafRuns: true,
+		enterRuns: true,
+		twoRing: true,
+		labelRuns: true,
+	},
 	shipped: {
 		name: "shipped",
 		title: "as it ships",
@@ -217,23 +278,13 @@ export const LADDERS: Record<LadderName, Ladder> = {
 			{ keys: "double", does: "run the frame" },
 			{ keys: "esc", does: "up one rung" },
 		],
+		clickTakesElement: false,
+		accelStairs: false,
+		doubleRuns: true,
+		leafRuns: false,
 		enterRuns: false,
-	},
-	descend: {
-		name: "descend",
-		title: "double-click descends",
-		claim: "Figma's ladder, whole. Running the frame moves to Enter.",
-		cost: "A click on the body no longer takes the frame, and running loses its gesture.",
-		bindings: [
-			{ keys: "hover", does: "the element at the scope", changed: true },
-			{ keys: "click", does: "the element at the scope", changed: true },
-			{ keys: "click label", does: "the frame", changed: true },
-			{ keys: "⌥ click", does: "the deepest element" },
-			{ keys: "double", does: "down one rung", changed: true },
-			{ keys: "enter", does: "run the frame", changed: true },
-			{ keys: "esc", does: "up one rung" },
-		],
-		enterRuns: true,
+		twoRing: false,
+		labelRuns: false,
 	},
 	run: {
 		name: "run",
@@ -248,7 +299,13 @@ export const LADDERS: Record<LadderName, Ladder> = {
 			{ keys: "double", does: "run the frame" },
 			{ keys: "esc", does: "up one rung" },
 		],
+		clickTakesElement: false,
+		accelStairs: true,
+		doubleRuns: true,
+		leafRuns: false,
 		enterRuns: false,
+		twoRing: false,
+		labelRuns: false,
 	},
 	depth: {
 		name: "depth",
@@ -263,6 +320,12 @@ export const LADDERS: Record<LadderName, Ladder> = {
 			{ keys: "double again", does: "run the frame", changed: true },
 			{ keys: "esc", does: "up one rung" },
 		],
+		clickTakesElement: false,
+		accelStairs: false,
+		doubleRuns: false,
+		leafRuns: true,
 		enterRuns: false,
+		twoRing: false,
+		labelRuns: false,
 	},
 };

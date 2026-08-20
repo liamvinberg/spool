@@ -94,11 +94,16 @@ export function SelectScreen({ ladder: name }: { ladder: LadderName }) {
 	};
 
 	const ringId = single.kind === "element" ? lastOf(single.path) : null;
+	// the rung under the pointer's own, drawn faint: only worth a line when it is
+	// somewhere the click would not already have taken you
+	const nextId =
+		ladder.twoRing && double.kind === "element" && lastOf(double.path) !== ringId ? lastOf(double.path) : null;
 	const pickedId = !live && selection.kind === "element" ? lastOf(selection.path) : null;
 	const framePicked = !live && selection.kind === "frame";
 	const frameRing = single.kind === "frame" && !framePicked;
-	// only the ladder that ends in the document has a rung the ring must name
-	const willRun = ladder.name === "depth" && double.kind === "run";
+	// a ladder whose double-click always runs has nothing to announce; one where
+	// running is the rung after the last one has to say so under the pointer
+	const willRun = !ladder.doubleRuns && double.kind === "run";
 
 	return (
 		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="72%">
@@ -125,7 +130,15 @@ export function SelectScreen({ ladder: name }: { ladder: LadderName }) {
 					<div className="flex w-[300px] items-center gap-1.5 font-mono text-sm leading-4">
 						<button
 							type="button"
-							onClick={() => !live && setSelection({ kind: "frame", frame: FRAME })}
+							onClick={(event) => {
+								if (live) return;
+								if (ladder.labelRuns && event.detail >= 2) {
+									setLive(true);
+									setPointer({ where: "away" });
+									return;
+								}
+								setSelection({ kind: "frame", frame: FRAME });
+							}}
 							onPointerEnter={() => !live && setPointer({ where: "label" })}
 							onPointerLeave={() => setPointer({ where: "away" })}
 							className={cn("cursor-pointer", framePicked ? "text-thread" : "text-muted")}
@@ -160,7 +173,7 @@ export function SelectScreen({ ladder: name }: { ladder: LadderName }) {
 							}}
 							className="relative h-full w-full overflow-hidden rounded-[10px] border border-border"
 						>
-							<CartDocument live={live} ring={ringId} picked={pickedId} />
+							<CartDocument live={live} ring={ringId} next={nextId} picked={pickedId} />
 							{frameRing ? (
 								<span className="pointer-events-none absolute inset-0 rounded-[10px] border-[1.5px] border-thread/55" />
 							) : null}
