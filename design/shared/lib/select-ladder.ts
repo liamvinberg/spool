@@ -128,6 +128,30 @@ export function oneDown(chain: Path, held: Path | null): Path {
 	return chain.slice(0, Math.min(held.length + 1, chain.length));
 }
 
+/**
+ * Enter's target: one rung down with no pointer to aim it, so it takes the
+ * first child. Figma selects every child at once; a canvas whose selection is
+ * a handle wants one, and Tab walks the rest of the row from there.
+ */
+export function firstChildOf(selection: Selection, frame: string): Selection {
+	if (selection.kind !== "element" || selection.frame !== frame) {
+		return { kind: "element", frame, path: [CART.id] };
+	}
+	const child = nodeOf(selection.path[selection.path.length - 1] ?? "")?.children?.[0];
+	return child === undefined ? selection : { kind: "element", frame, path: [...selection.path, child.id] };
+}
+
+/** Tab and shift-Tab: the next or previous child of the same parent. */
+export function siblingOf(selection: Selection, frame: string, step: 1 | -1): Selection {
+	if (selection.kind !== "element" || selection.frame !== frame || selection.path.length < 2) return selection;
+	const parent = nodeOf(selection.path[selection.path.length - 2] ?? "");
+	const row = parent?.children ?? [];
+	const at = row.findIndex((child) => child.id === selection.path[selection.path.length - 1]);
+	const next = row[at + step];
+	if (at < 0 || next === undefined) return selection;
+	return { kind: "element", frame, path: [...selection.path.slice(0, -1), next.id] };
+}
+
 /** One rung up: the parent element, then the frame, then nothing. */
 export function ascend(selection: Selection): Selection {
 	if (selection.kind === "element" && selection.path.length > 1) {
@@ -210,8 +234,8 @@ export interface Ladder {
 	doubleRuns: boolean;
 	/** at the leaf, the rung after the last one is the live document */
 	leafRuns: boolean;
-	/** Enter runs the frame */
-	enterRuns: boolean;
+	/** Enter takes one rung down, Figma's keyboard twin of the double-click */
+	enterDescends: boolean;
 	/** hover draws the rung a double-click would take as well as the one a click would */
 	twoRing: boolean;
 	/** a double-click on the frame label runs the frame */
@@ -222,31 +246,34 @@ export const LADDERS: Record<LadderName, Ladder> = {
 	descend: {
 		name: "descend",
 		title: "double-click descends",
-		claim: "Figma's ladder, whole. Hover shows the rung you are on and the one under it, so a descent lands where you were already looking. Running the frame is Enter's.",
-		cost: "A click on the body no longer takes the frame, and running the frame has no gesture of its own.",
+		claim: "Figma's ladder, whole, keyboard included: Enter descends, ⇧Enter climbs, Tab walks the row. Hover shows the rung you are on and the one under it, so a descent lands where you were already looking.",
+		cost: "Enter is Figma's descent, so running the frame is left without a key and has to find a gesture.",
 		bindings: [
 			{ keys: "hover", does: "this rung, and the next one faint", changed: true },
 			{ keys: "click", does: "the element at the scope", changed: true },
 			{ keys: "click label", does: "the frame", changed: true },
 			{ keys: "⌥ click", does: "the deepest element" },
 			{ keys: "double", does: "down one rung", changed: true },
+			{ keys: "enter", does: "down one rung", changed: true },
+			{ keys: "⇧ enter", does: "up one rung", changed: true },
+			{ keys: "tab", does: "the next sibling", changed: true },
+			{ keys: "⇧ tab", does: "the one before", changed: true },
 			{ keys: "double label", does: "run the frame", changed: true },
-			{ keys: "enter", does: "run the frame", changed: true },
-			{ keys: "esc", does: "up one rung" },
+			{ keys: "esc", does: "leave, then up one rung" },
 		],
 		clickTakesElement: true,
 		accelStairs: false,
 		doubleRuns: false,
 		leafRuns: false,
-		enterRuns: true,
+		enterDescends: true,
 		twoRing: true,
 		labelRuns: true,
 	},
 	fallthrough: {
 		name: "fallthrough",
 		title: "descend, and keep going past the last rung",
-		claim: "Everything descend does, plus one more: at the leaf there is nothing left to descend into, so the next double-click falls through into the live document.",
-		cost: "Enter is still the taught way in, so this rung only pays for itself if the hand finds it before the keyboard does.",
+		claim: "Everything descend does, plus the one gesture it is missing: at the leaf there is nothing left to descend into, so the next double-click falls through into the live document.",
+		cost: "Whether a leaf is a leaf is a fact about the document, so how far the fall is varies by what the agent wrote.",
 		bindings: [
 			{ keys: "hover", does: "this rung, and the next one faint" },
 			{ keys: "click", does: "the element at the scope" },
@@ -254,15 +281,17 @@ export const LADDERS: Record<LadderName, Ladder> = {
 			{ keys: "⌥ click", does: "the deepest element" },
 			{ keys: "double", does: "down one rung" },
 			{ keys: "double at the leaf", does: "run the frame", changed: true },
+			{ keys: "enter", does: "down one rung" },
+			{ keys: "⇧ enter", does: "up one rung" },
+			{ keys: "tab", does: "the next sibling" },
 			{ keys: "double label", does: "run the frame" },
-			{ keys: "enter", does: "run the frame" },
-			{ keys: "esc", does: "up one rung" },
+			{ keys: "esc", does: "leave, then up one rung" },
 		],
 		clickTakesElement: true,
 		accelStairs: false,
 		doubleRuns: false,
 		leafRuns: true,
-		enterRuns: true,
+		enterDescends: true,
 		twoRing: true,
 		labelRuns: true,
 	},
@@ -282,7 +311,7 @@ export const LADDERS: Record<LadderName, Ladder> = {
 		accelStairs: false,
 		doubleRuns: true,
 		leafRuns: false,
-		enterRuns: false,
+		enterDescends: false,
 		twoRing: false,
 		labelRuns: false,
 	},
@@ -303,7 +332,7 @@ export const LADDERS: Record<LadderName, Ladder> = {
 		accelStairs: true,
 		doubleRuns: true,
 		leafRuns: false,
-		enterRuns: false,
+		enterDescends: false,
 		twoRing: false,
 		labelRuns: false,
 	},
@@ -324,7 +353,7 @@ export const LADDERS: Record<LadderName, Ladder> = {
 		accelStairs: false,
 		doubleRuns: false,
 		leafRuns: true,
-		enterRuns: false,
+		enterDescends: false,
 		twoRing: false,
 		labelRuns: false,
 	},

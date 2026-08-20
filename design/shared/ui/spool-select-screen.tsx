@@ -4,12 +4,14 @@ import {
 	aimDouble,
 	ascend,
 	CART,
+	firstChildOf,
 	type Ladder,
 	type LadderName,
 	LADDERS,
 	nameOf,
 	type Path,
 	type Selection,
+	siblingOf,
 	type Target,
 } from "../lib/select-ladder";
 import { cn } from "../lib/utils";
@@ -56,12 +58,34 @@ export function SelectScreen({ ladder: name }: { ladder: LadderName }) {
 		setSelection((held) => ascend(held));
 	}, []);
 
-	// ⌥ is held rather than pressed: the ring answers while the key is down
+	/**
+	 * The keyboard half of the ladder, which is Figma's and which the canvas has
+	 * never had: Enter descends, ⇧Enter climbs, Tab walks the row. ⌥ is held
+	 * rather than pressed, so the ring answers while the key is down.
+	 */
 	useEffect(() => {
 		const down = (event: KeyboardEvent) => {
-			if (event.key === "Alt") setAccel(true);
-			else if (event.key === "Escape") leave();
-			else if (event.key === "Enter" && ladder.enterRuns) setLive(true);
+			if (event.key === "Alt") {
+				setAccel(true);
+				return;
+			}
+			if (event.key === "Escape") {
+				leave();
+				return;
+			}
+			if (liveRef.current || !ladder.enterDescends) return;
+			if (event.key === "Enter" || event.key === "\\") {
+				event.preventDefault();
+				// ⇧Enter and the backslash Figma added beside it both climb
+				setSelection((held) =>
+					event.shiftKey || event.key === "\\" ? ascend(held) : firstChildOf(held, FRAME),
+				);
+				return;
+			}
+			if (event.key === "Tab") {
+				event.preventDefault();
+				setSelection((held) => siblingOf(held, FRAME, event.shiftKey ? -1 : 1));
+			}
 		};
 		const up = (event: KeyboardEvent) => {
 			if (event.key === "Alt") setAccel(false);
@@ -72,7 +96,7 @@ export function SelectScreen({ ladder: name }: { ladder: LadderName }) {
 			removeEventListener("keydown", down);
 			removeEventListener("keyup", up);
 		};
-	}, [leave, ladder.enterRuns]);
+	}, [leave, ladder.enterDescends]);
 
 	const chain = pointer.where === "document" ? pointer.chain : [];
 	const gesture = { chain, frame: FRAME, accel, selection };
