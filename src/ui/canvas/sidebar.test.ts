@@ -130,26 +130,19 @@ describe("page tree", () => {
 		expect(onDoubleClickFrame).toHaveBeenCalledWith("checkout");
 	});
 
-	it("collapses to a strip of the pages, which the root page is not one of", async () => {
-		const onSwitchPage = vi.fn();
-		const { host } = await render({ onSwitchPage });
+	it("collapses to a bare strip: the rail is the navigator, so a shut one lists nothing", async () => {
+		const { host } = await render();
 
 		await act(async () => {
 			host.querySelector<HTMLButtonElement>('button[aria-label="Collapse pages"]')?.click();
 		});
 		expect(host.querySelector('button[aria-label="Expand pages"]')).not.toBeNull();
-		expect(host.querySelector('button[aria-label="root page"]')).toBeNull();
+		expect(host.querySelector('button[aria-label="shop page"]')).toBeNull();
+
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="Expand pages"]')?.click();
+		});
 		expect(host.querySelector('button[aria-label="shop page"]')).not.toBeNull();
-
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.focus();
-		});
-		expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe("shop");
-
-		await act(async () => {
-			host.querySelector<HTMLButtonElement>('button[aria-label="shop page"]')?.click();
-		});
-		expect(onSwitchPage).toHaveBeenCalledWith("shop");
 	});
 
 	it("resizes up to 480 pixels and snaps to the page strip below 144 pixels", async () => {

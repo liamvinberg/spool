@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { carriedPage, pageChain, pageName, pageParent, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
 import { accelPressed } from "../../runtime/platform-keys";
@@ -34,7 +34,7 @@ import {
 	without,
 	withPageOrder,
 } from "./order";
-import { framesOnPage, pageLabel, pageOf, pagePathLabel } from "./pages";
+import { framesOnPage, pageLabel, pageOf } from "./pages";
 import { PagePicker } from "./rail-move";
 import {
 	type BornRow,
@@ -280,7 +280,6 @@ export function CanvasSidebar({
 	} | null>(null);
 	const [kit, setKit] = useState<DragKit | null>(null);
 	const [landing, setLanding] = useState<Landing | null>(null);
-	const [pageTooltip, setPageTooltip] = useState<{ page: string; x: number; y: number } | null>(null);
 	/** the shut page a drag is resting on, which is the one drawing the dwell arc */
 	const [springing, setSpringing] = useState<string | null>(null);
 
@@ -294,7 +293,6 @@ export function CanvasSidebar({
 	const justDragged = useRef(false);
 	const grip = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
 	const typed = useRef({ buffer: "", at: 0 });
-	const tooltipId = useId();
 
 	const collapsed = width <= COLLAPSED_BELOW;
 
@@ -1388,11 +1386,6 @@ export function CanvasSidebar({
 		setWidth(settledWidth(current.latestWidth));
 	}
 
-	function showPageTooltip(page: string, target: HTMLButtonElement) {
-		const box = target.getBoundingClientRect();
-		setPageTooltip({ page, x: box.right + 8, y: box.top + box.height / 2 });
-	}
-
 	const menuRow = menu === null ? null : (rows.find((row) => rowKey(row) === targetKey(menu.target)) ?? null);
 	/** what the open menu's row would move, and where it could go */
 	const menuMove =
@@ -1412,6 +1405,11 @@ export function CanvasSidebar({
 			style={{ width }}
 		>
 			{collapsed ? (
+				/* an edge with the one control that opens it, and nothing else. A strip of
+				   folder icons was a second navigator that disagreed with the first: it
+				   listed every page at every depth, so a project whose tree was folded
+				   read as more folders shut than open. The rail is the navigator, and
+				   the way to navigate is to open it */
 				<div className="flex h-full w-11 flex-col items-center">
 					<button
 						type="button"
@@ -1421,36 +1419,6 @@ export function CanvasSidebar({
 					>
 						<PanelCaret dir="right" className="h-3.5 w-2.5" />
 					</button>
-					<div
-						className="pages-scrollbar flex min-h-0 flex-1 flex-col items-center gap-0.5 overflow-y-auto pt-1"
-						onScroll={() => setPageTooltip(null)}
-					>
-						{orderedPages.map((page) => {
-							const active = page === activePage;
-							return (
-								<button
-									key={page}
-									type="button"
-									aria-label={`${pagePathLabel(page)} page`}
-									aria-current={active ? "page" : undefined}
-									aria-describedby={pageTooltip?.page === page ? tooltipId : undefined}
-									onClick={() => onSwitchPage(page)}
-									onPointerEnter={(event) => showPageTooltip(page, event.currentTarget)}
-									onPointerLeave={(event) => {
-										if (document.activeElement !== event.currentTarget) setPageTooltip(null);
-									}}
-									onFocus={(event) => showPageTooltip(page, event.currentTarget)}
-									onBlur={() => setPageTooltip(null)}
-									className="relative flex h-9 w-11 items-center justify-center"
-								>
-									{active ? (
-										<span className="absolute top-2 bottom-2 left-0 w-[2px] rounded-full bg-thread" />
-									) : null}
-									<FolderIcon className={`h-4 w-4 ${active ? "text-thread" : "text-muted"}`} />
-								</button>
-							);
-						})}
-					</div>
 				</div>
 			) : (
 				<div className="flex h-full min-w-[200px] flex-col">
@@ -1515,7 +1483,6 @@ export function CanvasSidebar({
 							// both of these stand at a point the scroll just moved out from under
 							setMenu(null);
 							setMoving(null);
-							setPageTooltip(null);
 						}}
 						onKeyDown={typeAhead}
 					>
@@ -1539,8 +1506,7 @@ export function CanvasSidebar({
 										row={row}
 										activePage={activePage}
 										litPage={litPage}
-										selected={row.kind === "frame" && selected.includes(row.name)}
-										cursored={cursor === rowKey(row)}
+										selected={row.kind === "frame" && selected.includes(row.name)}										cursored={cursor === rowKey(row)}
 										lifted={kit !== null && kit.kind === row.kind && kit.names.includes(rowName(row))}
 										into={landing?.kind === "into" && row.kind === "page" && landing.page === row.page}
 										springing={row.kind === "page" && springing === row.page}
@@ -1588,20 +1554,6 @@ export function CanvasSidebar({
 					</div>
 				</div>
 			)}
-
-			{collapsed && pageTooltip !== null
-				? createPortal(
-						<span
-							id={tooltipId}
-							role="tooltip"
-							className="pointer-events-none fixed z-50 -translate-y-1/2 whitespace-nowrap rounded-md border border-border-raised bg-bg px-2 py-1 font-mono text-2xs text-text leading-3"
-							style={{ left: pageTooltip.x, top: pageTooltip.y }}
-						>
-							{pagePathLabel(pageTooltip.page)}
-						</span>,
-						document.body,
-					)
-				: null}
 
 			{kit === null
 				? null
