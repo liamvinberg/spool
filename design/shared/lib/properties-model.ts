@@ -2,16 +2,19 @@
  * The properties surface's model: what an element is made of in source, what
  * the hands may write back, and why not.
  *
- * Every rule here is a spike verdict, not a guess. Resize writes the axis token
- * of a literal className (#13); spacing is a single-token splice on the owner,
- * with `gap` on the parent and mapped rows edited as one (#14); text edits in
- * place when the text is written in the file (#202). Everything that is not one
- * of those is a typed refusal, and the surface names it rather than hiding the
- * field.
+ * One rule decides what writes: **numbers and words write, tokens wait.** A
+ * number on the scale (`h-11`, `p-4`, `opacity-50`, `border-2`) and a word
+ * from an enum (`flex`, `items-center`, `absolute`, `text-right`) are each one
+ * token on a literal className, and swapping one token is the single-token
+ * splice the spikes proved (#13, #14). A named token (`bg-thread`, `text-base`,
+ * `rounded-md`, `font-medium`) is a value that lives in tokens.css, and editing
+ * those is the designers-as-users fog on the map, so they read and do not
+ * write in v1. Text writes when it is typed in the file (#202). Everything
+ * else is a typed refusal, and the surface says why rather than hiding the row.
  *
  * The cart in `spool-properties-cart.tsx` renders straight out of this table,
  * so an edit is real: the token changes, the element re-lays, the box is
- * measured again. Tokens are the pinned Tailwind v4 scale at 4px a step.
+ * measured again. The scale is the pinned Tailwind v4 scale at 4px a step.
  */
 
 export type Display = "flex" | "block" | "inline";
@@ -46,7 +49,7 @@ export const FILE = "frames/app/cart/frame.tsx";
 export const ELEMENTS: readonly SourceElement[] = [
 	{
 		id: "screen",
-		name: "screen",
+		name: "cart",
 		tag: "div",
 		line: 14,
 		parent: null,
@@ -204,12 +207,12 @@ export function childrenOf(id: string): readonly SourceElement[] {
 	return ELEMENTS.filter((element) => element.parent === id);
 }
 
-/* ---------- the class literal, token by token ---------- */
+/* ---------- numbers: one scale token on the literal ---------- */
 
 export const STEP = 4;
 
-/** every family the surface knows how to splice, longest first so `px` wins over `p` */
-const FAMILIES = [
+/** every numeric family the surface writes, longest first so `px` wins over `p` and `gap-x` over `gap` */
+const NUMERIC = [
 	"space-y",
 	"space-x",
 	"gap-x",
@@ -229,28 +232,47 @@ const FAMILIES = [
 	"mb",
 	"ml",
 	"m",
+	"min-w",
+	"max-w",
+	"min-h",
+	"max-h",
 	"w",
 	"h",
+	"top",
+	"right",
+	"bottom",
+	"left",
+	"inset",
+	"opacity",
+	"border",
+	"grid-cols",
 ] as const;
 
-export type Family = (typeof FAMILIES)[number];
+export type Numeric = (typeof NUMERIC)[number];
 
-export function familyOf(token: string): Family | null {
-	for (const family of FAMILIES) {
-		if (token.startsWith(`${family}-`) && token.length > family.length + 1) return family;
+export function numericOf(token: string): Numeric | null {
+	for (const family of NUMERIC) {
+		if (token.startsWith(`${family}-`) && token.length > family.length + 1) {
+			// `border-border` is a colour, `border-2` a width: a width is a number or a bracket
+			if (family === "border" && !/^border-(\d|\[)/.test(token)) return null;
+			return family;
+		}
 	}
 	return null;
 }
 
+export function tokens(className: string | null): string[] {
+	return className === null ? [] : className.split(/\s+/).filter(Boolean);
+}
+
 /** the token on this family, `p-4`, or null when nothing sets it */
-export function tokenOf(className: string | null, family: Family): string | null {
-	if (className === null) return null;
-	return className.split(/\s+/).find((token) => familyOf(token) === family) ?? null;
+export function tokenOf(className: string | null, family: Numeric): string | null {
+	return tokens(className).find((token) => numericOf(token) === family) ?? null;
 }
 
 /** the value half of a token: `p-4` is `4`, `w-[347px]` is `[347px]` */
 export function valueOf(token: string): string {
-	const family = familyOf(token);
+	const family = numericOf(token);
 	return family === null ? token : token.slice(family.length + 1);
 }
 
@@ -274,92 +296,300 @@ export function pxValue(px: number): string {
 }
 
 /** replace the family's token in place, append when absent, drop on null */
-export function withToken(className: string | null, family: Family, value: string | null): string {
-	const tokens = className === null ? [] : className.split(/\s+/).filter(Boolean);
-	const index = tokens.findIndex((token) => familyOf(token) === family);
+export function withToken(className: string | null, family: Numeric, value: string | null): string {
+	const list = tokens(className);
+	const index = list.findIndex((token) => numericOf(token) === family);
 	const next = value === null ? null : `${family}-${value}`;
-	if (index === -1) return next === null ? tokens.join(" ") : [...tokens, next].join(" ");
-	if (next === null) return tokens.filter((_, at) => at !== index).join(" ");
-	return tokens.map((token, at) => (at === index ? next : token)).join(" ");
+	if (index === -1) return next === null ? list.join(" ") : [...list, next].join(" ");
+	if (next === null) return list.filter((_, at) => at !== index).join(" ");
+	return list.map((token, at) => (at === index ? next : token)).join(" ");
 }
 
-/* ---------- layout: one word on the literal ---------- */
+/** what a typed value becomes on the class: a scale number stays, pixels become the policy's token */
+export function parse(typed: string): string | null {
+	const text = typed.trim();
+	if (text === "") return null;
+	if (/^\[\d+(?:\.\d+)?px\]$/.test(text)) return text;
+	const px = /^(\d+(?:\.\d+)?)px$/.exec(text);
+	if (px?.[1] !== undefined) return pxValue(Number(px[1]));
+	if (/^\d+(?:\.\d+)?$/.test(text)) return text;
+	if (text === "full" || text === "auto" || text === "px" || text === "screen") return text;
+	return null;
+}
+
+/** a step up or down on the arrow keys: one scale unit, 4px */
+export function nudge(token: string | null, measured: number, direction: 1 | -1): string {
+	const current = token === null ? measured : (valuePx(valueOf(token)) ?? measured);
+	return pxValue(current + direction * STEP);
+}
+
+/* ---------- padding and gap: sides that fold and unfold ---------- */
+
+export type Side = "t" | "r" | "b" | "l";
+
+/** each side's value, read through p, px/py and the four sides, in that order of specificity */
+export function paddingOf(className: string | null): Record<Side, string | null> {
+	const all = tokenOf(className, "p");
+	const x = tokenOf(className, "px");
+	const y = tokenOf(className, "py");
+	const side = (family: Numeric, axis: string | null): string | null => {
+		const own = tokenOf(className, family);
+		return own !== null ? valueOf(own) : axis !== null ? valueOf(axis) : all !== null ? valueOf(all) : null;
+	};
+	return { t: side("pt", y), r: side("pr", x), b: side("pb", y), l: side("pl", x) };
+}
 
 /**
- * The layout properties are enum tokens, and an enum token is the same
- * single-token splice the spacing spike proved: swap one word in the literal,
- * parse fresh, measure after. Nothing new has to be spiked for them.
+ * Write four sides back as the fewest tokens that say them: `p-4` when all
+ * agree, `px-4 py-2` when opposite sides do, the sides themselves otherwise.
+ * That is the spacing spike's shorthand split (`gap-4` into `gap-x gap-y`),
+ * run in both directions.
  */
-export type Layout = "display" | "direction" | "align" | "justify";
+export function withPadding(className: string | null, sides: Record<Side, string | null>): string {
+	let next = className;
+	for (const family of ["p", "px", "py", "pt", "pr", "pb", "pl"] as const) next = withToken(next, family, null);
+	const { t, r, b, l } = sides;
+	if (t === r && r === b && b === l) return withToken(next, "p", t);
+	if (t === b && l === r) {
+		next = withToken(next, "px", l);
+		return withToken(next, "py", t);
+	}
+	next = withToken(next, "pt", t);
+	next = withToken(next, "pr", r);
+	next = withToken(next, "pb", b);
+	return withToken(next, "pl", l);
+}
 
-export interface LayoutFamily {
-	label: string;
-	/** the CSS property the row translates to */
-	css: string;
-	/** token → CSS value; the token order is the picker's order */
-	options: readonly { token: string; css: string }[];
+export function gapOf(className: string | null): { x: string | null; y: string | null } {
+	const both = tokenOf(className, "gap");
+	const x = tokenOf(className, "gap-x");
+	const y = tokenOf(className, "gap-y");
+	return {
+		x: x !== null ? valueOf(x) : both !== null ? valueOf(both) : null,
+		y: y !== null ? valueOf(y) : both !== null ? valueOf(both) : null,
+	};
+}
+
+export function withGap(className: string | null, gap: { x: string | null; y: string | null }): string {
+	let next = className;
+	for (const family of ["gap", "gap-x", "gap-y"] as const) next = withToken(next, family, null);
+	if (gap.x === gap.y) return withToken(next, "gap", gap.x);
+	next = withToken(next, "gap-x", gap.x);
+	return withToken(next, "gap-y", gap.y);
+}
+
+/* ---------- words: one enum token on the literal ---------- */
+
+export type Word = "display" | "direction" | "wrap" | "align" | "justify" | "position" | "overflow" | "textAlign";
+
+export interface WordFamily {
+	/** token → what the surface calls it; the order is the control's order */
+	options: readonly { token: string; says: string }[];
 	/** what the property is when nothing sets it */
 	fallback: string;
 }
 
-export const LAYOUT: Record<Layout, LayoutFamily> = {
+export const WORDS: Record<Word, WordFamily> = {
 	display: {
-		label: "display",
-		css: "display",
 		options: [
-			{ token: "flex", css: "flex" },
-			{ token: "grid", css: "grid" },
-			{ token: "block", css: "block" },
-			{ token: "hidden", css: "none" },
+			{ token: "flex", says: "flex" },
+			{ token: "grid", says: "grid" },
+			{ token: "block", says: "block" },
+			{ token: "inline-flex", says: "inline-flex" },
+			{ token: "inline-block", says: "inline-block" },
+			{ token: "hidden", says: "none" },
 		],
 		fallback: "inline",
 	},
 	direction: {
-		label: "direction",
-		css: "flex-direction",
 		options: [
-			{ token: "flex-row", css: "row" },
-			{ token: "flex-col", css: "column" },
+			{ token: "flex-row", says: "row" },
+			{ token: "flex-col", says: "column" },
 		],
 		fallback: "row",
 	},
-	align: {
-		label: "align",
-		css: "align-items",
+	wrap: {
 		options: [
-			{ token: "items-start", css: "start" },
-			{ token: "items-center", css: "center" },
-			{ token: "items-baseline", css: "baseline" },
-			{ token: "items-stretch", css: "stretch" },
+			{ token: "flex-wrap", says: "wrap" },
+			{ token: "flex-nowrap", says: "nowrap" },
+		],
+		fallback: "nowrap",
+	},
+	align: {
+		options: [
+			{ token: "items-start", says: "start" },
+			{ token: "items-center", says: "center" },
+			{ token: "items-end", says: "end" },
+			{ token: "items-baseline", says: "baseline" },
+			{ token: "items-stretch", says: "stretch" },
 		],
 		fallback: "stretch",
 	},
 	justify: {
-		label: "justify",
-		css: "justify-content",
 		options: [
-			{ token: "justify-start", css: "start" },
-			{ token: "justify-center", css: "center" },
-			{ token: "justify-between", css: "between" },
-			{ token: "justify-end", css: "end" },
+			{ token: "justify-start", says: "start" },
+			{ token: "justify-center", says: "center" },
+			{ token: "justify-end", says: "end" },
+			{ token: "justify-between", says: "between" },
+			{ token: "justify-around", says: "around" },
+			{ token: "justify-evenly", says: "evenly" },
 		],
 		fallback: "start",
 	},
+	position: {
+		options: [
+			{ token: "static", says: "static" },
+			{ token: "relative", says: "relative" },
+			{ token: "absolute", says: "absolute" },
+			{ token: "fixed", says: "fixed" },
+			{ token: "sticky", says: "sticky" },
+		],
+		fallback: "static",
+	},
+	overflow: {
+		options: [
+			{ token: "overflow-visible", says: "visible" },
+			{ token: "overflow-hidden", says: "hidden" },
+			{ token: "overflow-auto", says: "auto" },
+			{ token: "overflow-scroll", says: "scroll" },
+		],
+		fallback: "visible",
+	},
+	textAlign: {
+		options: [
+			{ token: "text-left", says: "left" },
+			{ token: "text-center", says: "center" },
+			{ token: "text-right", says: "right" },
+		],
+		fallback: "left",
+	},
 };
 
-export function layoutOf(className: string | null, layout: Layout): string | null {
-	if (className === null) return null;
-	const tokens = className.split(/\s+/);
-	return LAYOUT[layout].options.find((option) => tokens.includes(option.token))?.token ?? null;
+export function wordOf(className: string | null, word: Word): string | null {
+	const list = tokens(className);
+	return WORDS[word].options.find((option) => list.includes(option.token))?.token ?? null;
 }
 
-export function withLayout(className: string | null, layout: Layout, token: string | null): string {
-	const known = new Set(LAYOUT[layout].options.map((option) => option.token));
-	const tokens = (className === null ? [] : className.split(/\s+/).filter(Boolean));
-	const index = tokens.findIndex((candidate) => known.has(candidate));
-	if (index === -1) return token === null ? tokens.join(" ") : [...tokens, token].join(" ");
-	if (token === null) return tokens.filter((_, at) => at !== index).join(" ");
-	return tokens.map((candidate, at) => (at === index ? token : candidate)).join(" ");
+export function withWord(className: string | null, word: Word, token: string | null): string {
+	const known = new Set(WORDS[word].options.map((option) => option.token));
+	const list = tokens(className);
+	const index = list.findIndex((candidate) => known.has(candidate));
+	if (index === -1) return token === null ? list.join(" ") : [...list, token].join(" ");
+	if (token === null) return list.filter((_, at) => at !== index).join(" ");
+	return list.map((candidate, at) => (at === index ? token : candidate)).join(" ");
+}
+
+/* ---------- tokens: what the literal names and does not write ---------- */
+
+export const COLORS: Record<string, string> = {
+	bg: "#0E0E0E",
+	canvas: "#161616",
+	surface: "#1C1C1C",
+	raised: "#282828",
+	border: "#262626",
+	"border-raised": "#363636",
+	text: "#F0EFED",
+	muted: "#8E8C88",
+	thread: "#F5391A",
+	"on-thread": "#FFFFFF",
+};
+
+const TEXT_SIZE: Record<string, { size: string; leading: string }> = {
+	"text-2xs": { size: "10px", leading: "12px" },
+	"text-xs": { size: "11px", leading: "16px" },
+	"text-sm": { size: "12px", leading: "18px" },
+	"text-base": { size: "13px", leading: "20px" },
+	"text-md": { size: "14px", leading: "22px" },
+	"text-lg": { size: "18px", leading: "26px" },
+};
+
+const LEADING: Record<string, string> = {
+	"leading-xs": "16px",
+	"leading-sm": "18px",
+	"leading-base": "20px",
+	"leading-md": "22px",
+	"leading-lg": "26px",
+};
+
+const RADIUS: Record<string, string> = {
+	"rounded-xs": "4px",
+	"rounded-sm": "6px",
+	"rounded-md": "8px",
+	"rounded-lg": "12px",
+	"rounded-full": "9999px",
+};
+
+/** a named token the element wears, its value, and where the value comes from */
+export interface Named {
+	token: string | null;
+	value: string;
+	/** the token's own name, or what else decided the value */
+	from: string;
+}
+
+function named(list: readonly string[], table: Record<string, string>, fallback: string, inherits: string): Named {
+	const token = list.find((candidate) => candidate in table) ?? null;
+	return token === null
+		? { token: null, value: fallback, from: inherits }
+		: { token, value: table[token] ?? "", from: token };
+}
+
+/** the static half of a cn() call, so the tokens can still be read off it */
+export function staticTokens(element: SourceElement, className: string | null): string[] {
+	if (element.computed === undefined) return tokens(className);
+	const literal = /cn\("([^"]*)"/.exec(element.computed);
+	return tokens(literal?.[1] ?? "");
+}
+
+export function colorOf(list: readonly string[], prefix: "text" | "bg" | "border"): Named {
+	const token = list.find((candidate) => candidate.startsWith(`${prefix}-`) && candidate.slice(prefix.length + 1) in COLORS) ?? null;
+	if (token === null) {
+		if (prefix === "text") return { token: null, value: COLORS.text ?? "", from: "inherited" };
+		if (prefix === "border") return { token: null, value: COLORS.border ?? "", from: "tokens.css" };
+		return { token: null, value: "", from: "none" };
+	}
+	return { token, value: COLORS[token.slice(prefix.length + 1)] ?? "", from: token };
+}
+
+export interface Type {
+	family: Named;
+	size: Named;
+	weight: Named;
+	leading: Named;
+	tracking: Named;
+}
+
+export function typeOf(list: readonly string[]): Type {
+	const mono = list.includes("font-mono");
+	const size = list.find((candidate) => candidate in TEXT_SIZE) ?? null;
+	const sizeRow = size === null ? undefined : TEXT_SIZE[size];
+	const leading = named(list, LEADING, sizeRow?.leading ?? "20px", size === null ? "inherited" : `${size} sets it`);
+	const weight = list.includes("font-semibold")
+		? { token: "font-semibold", value: "600", from: "font-semibold" }
+		: list.includes("font-medium")
+			? { token: "font-medium", value: "500", from: "font-medium" }
+			: { token: null, value: "400", from: "inherited" };
+	const tracking = list.includes("tracking-tight")
+		? { token: "tracking-tight", value: "-0.01em", from: "tracking-tight" }
+		: { token: null, value: "0", from: "inherited" };
+	return {
+		family: mono
+			? { token: "font-mono", value: "Fragment Mono", from: "font-mono" }
+			: { token: null, value: "Familjen Grotesk", from: "inherited" },
+		size: size === null ? { token: null, value: "13px", from: "inherited" } : { token: size, value: sizeRow?.size ?? "", from: size },
+		weight,
+		leading,
+		tracking,
+	};
+}
+
+export function radiusOf(list: readonly string[]): Named {
+	return named(list, RADIUS, "0", "none");
+}
+
+export function shadowOf(list: readonly string[]): Named {
+	const token = list.find((candidate) => candidate === "shadow" || candidate.startsWith("shadow-")) ?? null;
+	return token === null ? { token: null, value: "none", from: "none" } : { token, value: token, from: token };
 }
 
 /* ---------- what the hands may write ---------- */
@@ -367,7 +597,7 @@ export function withLayout(className: string | null, layout: Layout, token: stri
 export type Verdict = { ok: true; scope?: string } | { ok: false; reason: string };
 
 /** the refusals every axis shares, said once */
-function literalVerdict(element: SourceElement): Verdict {
+export function literalVerdict(element: SourceElement): Verdict {
 	if (element.shared !== undefined) {
 		return {
 			ok: false,
@@ -381,15 +611,10 @@ function literalVerdict(element: SourceElement): Verdict {
 export function sizeVerdict(element: SourceElement, axis: "w" | "h"): Verdict {
 	const literal = literalVerdict(element);
 	if (!literal.ok) return literal;
-	if (element.id === "screen") return { ok: false, reason: "the frame's size, in frame.json" };
+	if (element.id === "screen") return { ok: true, scope: "frame.json" };
 	if (element.display === "inline") return { ok: false, reason: "inline, the text decides" };
 	if (axis === "h" && element.className?.includes("flex-1")) return { ok: false, reason: "flex-1, layout decides" };
 	return literal;
-}
-
-/** every layout word is writable on a literal; a picker on the frame root still writes the root's own class */
-export function layoutVerdict(element: SourceElement): Verdict {
-	return literalVerdict(element);
 }
 
 export function spacingVerdict(element: SourceElement): Verdict {
@@ -398,6 +623,14 @@ export function spacingVerdict(element: SourceElement): Verdict {
 	if (element.display === "inline") return { ok: false, reason: "inline, padding has no box" };
 	return literal;
 }
+
+/** every word is writable on a literal */
+export function wordVerdict(element: SourceElement): Verdict {
+	return literalVerdict(element);
+}
+
+/** a named token reads and waits; the reason is the map's, not the element's */
+export const TOKEN_WAITS = "tokens read only in v1";
 
 export function textVerdict(element: SourceElement): Verdict {
 	if (element.text === undefined) return { ok: false, reason: "no text of its own" };
@@ -411,131 +644,21 @@ export function textVerdict(element: SourceElement): Verdict {
 	return element.mapped === undefined ? { ok: true } : { ok: true, scope: `all ${element.mapped} rows` };
 }
 
-/* ---------- the long tail: what the element computes to ---------- */
+/* ---------- size modes: hug, fill, fixed, the HTML way ---------- */
 
-export interface TailRow {
-	/** the CSS property, which is how the long tail is always named */
-	prop: string;
-	css: string;
-	/** the class token that produces it, or what else does */
-	from: string;
-	/** the token's own value, for the Tailwind vocabulary */
-	tw: string | null;
+export type SizeMode = "hug" | "fill" | "fixed";
+
+export function sizeModeOf(className: string | null, axis: "w" | "h"): SizeMode {
+	const token = tokenOf(className, axis);
+	if (token === null) return className?.includes("flex-1") === true && axis === "h" ? "fill" : "hug";
+	const value = valueOf(token);
+	if (value === "full" || value === "screen") return "fill";
+	return "fixed";
 }
 
-const TEXT_SIZE: Record<string, [string, string]> = {
-	"text-2xs": ["10px", "12px"],
-	"text-xs": ["11px", "16px"],
-	"text-sm": ["12px", "18px"],
-	"text-base": ["13px", "20px"],
-	"text-md": ["14px", "22px"],
-	"text-lg": ["18px", "26px"],
-};
-
-const COLORS: Record<string, string> = {
-	bg: "#0E0E0E",
-	canvas: "#161616",
-	surface: "#1C1C1C",
-	raised: "#282828",
-	border: "#262626",
-	"border-raised": "#363636",
-	text: "#F0EFED",
-	muted: "#8E8C88",
-	thread: "#F5391A",
-	"on-thread": "#FFFFFF",
-};
-
-const RADIUS: Record<string, string> = {
-	"rounded-xs": "4px",
-	"rounded-sm": "6px",
-	"rounded-md": "8px",
-	"rounded-lg": "12px",
-};
-
-/**
- * Every property the element computes to, in stylesheet order, with where each
- * one comes from. Built from the literal when there is one and from what the
- * frame inherits when there is not, so a read-only row is still true.
- */
-export function tailOf(element: SourceElement): readonly TailRow[] {
-	const tokens = (element.className ?? expressionTokens(element.computed)).split(/\s+/).filter(Boolean);
-	const has = (token: string) => tokens.includes(token);
-	const find = (prefix: string) => tokens.find((token) => token.startsWith(prefix));
-	const rows: TailRow[] = [];
-	const row = (prop: string, css: string, from: string, tw: string | null = null) => rows.push({ prop, css, from, tw });
-
-	if (has("flex-1")) row("flex", "1 1 0%", "flex-1", "flex-1");
-	if (has("shrink-0")) row("flex-shrink", "0", "shrink-0", "shrink-0");
-	if (has("min-h-0")) row("min-height", "0px", "min-h-0", "min-h-0");
-
-	// typography, which every element has even when nothing sets it
-	const mono = has("font-mono");
-	row("font-family", mono ? "Fragment Mono" : "Familjen Grotesk", mono ? "font-mono" : "inherited from screen", mono ? "font-mono" : null);
-	const size = find("text-") !== undefined ? tokens.find((token) => token in TEXT_SIZE) : undefined;
-	const [fontSize, lineHeight] = size === undefined ? ["13px", "20px"] : (TEXT_SIZE[size] ?? ["13px", "20px"]);
-	row("font-size", fontSize, size ?? "inherited from screen", size ?? null);
-	const leading = find("leading-");
-	row("line-height", lineHeight, leading ?? "inherited from screen", leading ?? null);
-	const weight = has("font-medium") ? "500" : has("font-semibold") ? "600" : "400";
-	row("font-weight", weight, weight === "400" ? "inherited from screen" : has("font-medium") ? "font-medium" : "font-semibold", weight === "400" ? null : has("font-medium") ? "font-medium" : "font-semibold");
-
-	// colour
-	const textColor = tokens.find((token) => token.startsWith("text-") && token.slice(5) in COLORS);
-	row("color", textColor === undefined ? "#F0EFED" : (COLORS[textColor.slice(5)] ?? ""), textColor ?? "inherited from screen", textColor ?? null);
-	const bg = tokens.find((token) => token.startsWith("bg-"));
-	if (bg !== undefined) row("background-color", COLORS[bg.slice(3)] ?? bg, bg, bg);
-	if (has("border")) {
-		row("border-width", "1px", "border", "border");
-		const borderColor = tokens.find((token) => token.startsWith("border-") && token.slice(7) in COLORS);
-		row("border-color", borderColor === undefined ? "#262626" : (COLORS[borderColor.slice(7)] ?? ""), borderColor ?? "tokens.css", borderColor ?? null);
-	}
-	const radius = tokens.find((token) => token in RADIUS);
-	if (radius !== undefined) row("border-radius", RADIUS[radius] ?? "", radius, radius);
-
-	if (element.computed !== undefined) {
-		row("color", "#8E8C88 or #F5391A", "item.sale ? text-thread : text-muted", null);
-	}
-	return rows;
-}
-
-/** the static half of a cn() call, so the tail can still be read off it */
-function expressionTokens(computed: string | undefined): string {
-	if (computed === undefined) return "";
-	const literal = /cn\("([^"]*)"/.exec(computed);
-	return literal?.[1] ?? "";
-}
-
-/* ---------- the vocabulary: the token is the field, the pixels sit beside it ---------- */
-
-export interface Shown {
-	/** the class prefix, which is the row's name */
-	label: string;
-	/** the token's own value, `11` or `[347px]`; `–` when nothing sets it */
-	value: string;
-	/** what it means in pixels, from the token when it has one and the layout when it does not */
-	px: string | null;
-}
-
-export function show(family: Family, token: string | null, measured: number): Shown {
-	const fromToken = token === null ? null : valuePx(valueOf(token));
-	const px = fromToken ?? (measured > 0 ? Math.round(measured) : null);
-	return { label: family, value: token === null ? "–" : valueOf(token), px: px === null ? null : `${px}px` };
-}
-
-/** what a typed value becomes on the class: a scale number stays, pixels become the policy's token */
-export function parse(typed: string): string | null {
-	const text = typed.trim();
-	if (text === "") return null;
-	if (/^\[\d+(?:\.\d+)?px\]$/.test(text)) return text;
-	const px = /^(\d+(?:\.\d+)?)px$/.exec(text);
-	if (px?.[1] !== undefined) return pxValue(Number(px[1]));
-	if (/^\d+(?:\.\d+)?$/.test(text)) return text;
-	if (text === "full" || text === "auto" || text === "px") return text;
-	return null;
-}
-
-/** a step up or down on the arrow keys: one scale unit, 4px */
-export function nudge(token: string | null, measured: number, direction: 1 | -1): string {
-	const current = token === null ? measured : (valuePx(valueOf(token)) ?? measured);
-	return pxValue(current + direction * STEP);
+/** mode back to the class: hug drops the token, fill writes `full`, fixed pins the measured box */
+export function withSizeMode(className: string | null, axis: "w" | "h", mode: SizeMode, measured: number): string {
+	if (mode === "hug") return withToken(className, axis, null);
+	if (mode === "fill") return withToken(className, axis, "full");
+	return withToken(className, axis, pxValue(measured));
 }
