@@ -7,6 +7,10 @@ import {
 	type Family,
 	FILE,
 	familyOf,
+	LAYOUT,
+	type Layout,
+	layoutOf,
+	layoutVerdict,
 	nudge,
 	parse,
 	pxValue,
@@ -19,7 +23,7 @@ import {
 	textVerdict,
 	tokenOf,
 	type Verdict,
-	type Vocab,
+	withLayout,
 	withToken,
 } from "../lib/properties-model";
 import { cn } from "../lib/utils";
@@ -29,34 +33,29 @@ import { PropertiesCart } from "./spool-properties-cart";
 import { SpoolShell } from "./spool-shell";
 
 /**
- * One canvas, one cart, seven surfaces. Everything but the surface is held
- * still: the chrome is the shipped chrome, the cart is the same document on
- * every frame, and what the hands may write is the spikes' verdict, not the
- * frame's. What differs is where a selected element's properties live, what
- * vocabulary they speak, how much of the element they show, and what happens
- * when the agent rail is on.
+ * The properties surface, decided (spool-cloud#16): a right rail, and only a
+ * rail. The right column holds one thing at a time, properties by default and
+ * the agent when its flag (#238) is on and you switch to it, so the rail never
+ * shares the column with a transcript.
+ *
+ * The vocabulary is Tailwind's with pixels beside it, always both: the field
+ * holds the token (`h-11`, `items-center`) and the faint readout says what it
+ * means (`44px`, `center`). Typing `347px` is accepted and becomes `w-[347px]`;
+ * typing `90` becomes `w-90`; a whole step writes the bare class and anything
+ * off it stays in pixels, which is the resize spike's policy.
+ *
+ * What the hands may write is the spikes' verdict plus the layout words, which
+ * are the same single-token splice: text when it is typed in the file, w and h
+ * and the spacing tokens on a literal className, and display, direction, align
+ * and justify as pickers. Colour, type and radius are read-only rows under
+ * `computed` for v1, because their values are tokens and editing tokens is the
+ * designers-as-users fog on the map. A refusal is a greyed row with its reason,
+ * never a missing row.
  *
  * Click an element to select it; click a crumb, or press Esc, to climb. A
- * selected element with a writable axis grows a knob on that edge; drag it and
- * the class changes under the pointer, on the scale when the drop lands on a
- * whole step and in pixels when it does not. Every field writes the same way.
- * Tokens the surface has changed read in thread colour on the source line.
- *
- * Where the shipped canvas stands: the right column is the agent rail, and
- * nothing else, and #238 turns it off by default. A right-rail surface is
- * therefore a rail the canvas does not have today; a floating surface needs
- * nothing the canvas lacks.
+ * writable edge grows a knob; drag it and the class changes under the pointer.
+ * Spliced tokens read in thread colour on the source line. ⌘Z undoes.
  */
-
-export interface PropertiesConfig {
-	/** where the surface lives: a right rail, on the element, or both with the rail holding the long tail */
-	surface: "rail" | "float" | "both";
-	vocab: Vocab;
-	/** the rail shows everything the element computes to, read-only, under the writable few */
-	tail: boolean;
-	/** the agent rail is on: properties stack above its composer, or float at the element */
-	agent: "off" | "stack" | "float";
-}
 
 const PAGES: readonly PageRow[] = [
 	{ name: "app", frames: ["menu", "cart", "receipt"], active: true, open: true },
@@ -66,12 +65,7 @@ const PAGES: readonly PageRow[] = [
 
 const FRAME = "cart";
 const STAGE = { left: 288, top: 112, w: 300, h: 640 } as const;
-const LABEL_H = 22;
 const RAIL_W = 300;
-const AGENT_W = 420;
-const FLOAT_W = 236;
-/** the field's height under the 44px bar */
-const FIELD_H = 900 - 44;
 
 interface Pick {
 	id: string;
@@ -91,7 +85,6 @@ interface Drag {
 	axis: "w" | "h";
 	startPx: number;
 	startAt: number;
-	/** the other axis, for the readout */
 	other: number;
 	live: number;
 }
@@ -105,7 +98,7 @@ const INITIAL: Snapshot = {
 
 const ORIGINAL = new Map(ELEMENTS.map((element) => [element.id, element.className ?? ""]));
 
-export function PropertiesScreen({ config }: { config: PropertiesConfig }) {
+export function PropertiesScreen() {
 	const [state, setState] = useState<Snapshot>(INITIAL);
 	const [history, setHistory] = useState<readonly Snapshot[]>([]);
 	const [selection, setSelection] = useState<Pick | null>({ id: "pay", key: "pay" });
@@ -114,6 +107,7 @@ export function PropertiesScreen({ config }: { config: PropertiesConfig }) {
 	const [drag, setDrag] = useState<Drag | null>(null);
 	const fieldRef = useRef<HTMLDivElement | null>(null);
 	const stageRef = useRef<HTMLDivElement | null>(null);
+	const stateBeforeDrag = useRef<Snapshot | null>(null);
 
 	/* ---------- measuring: the document's own boxes, in the field's space ---------- */
 
@@ -149,20 +143,15 @@ export function PropertiesScreen({ config }: { config: PropertiesConfig }) {
 		});
 	}, []);
 
-	const setClass = useCallback(
-		(id: string, family: Family, value: string | null, provisional = false) => {
+	const setClassName = useCallback(
+		(id: string, next: (className: string | null) => string, provisional = false) => {
 			const apply = (snapshot: Snapshot): Snapshot => ({
 				...snapshot,
-				classes: { ...snapshot.classes, [id]: withToken(snapshot.classes[id] ?? null, family, value) },
+				classes: { ...snapshot.classes, [id]: next(snapshot.classes[id] ?? null) },
 			});
 			if (provisional) setState(apply);
 			else commit(apply);
 		},
-		[commit],
-	);
-
-	const setText = useCallback(
-		(id: string, text: string) => commit((snapshot) => ({ ...snapshot, texts: { ...snapshot.texts, [id]: text } })),
 		[commit],
 	);
 
@@ -237,11 +226,8 @@ export function PropertiesScreen({ config }: { config: PropertiesConfig }) {
 		const live = Math.max(8, Math.round(drag.startPx + delta));
 		if (live === drag.live) return;
 		setDrag({ ...drag, live });
-		setClass(drag.id, drag.axis, `[${live}px]`, true);
+		setClassName(drag.id, (className) => withToken(className, drag.axis, `[${live}px]`), true);
 	};
-
-	// what the classes were when the knob was taken, so one drag is one undo
-	const stateBeforeDrag = useRef<Snapshot | null>(null);
 
 	const endDrag = () => {
 		if (drag === null) return;
@@ -259,7 +245,7 @@ export function PropertiesScreen({ config }: { config: PropertiesConfig }) {
 		setDrag(null);
 	};
 
-	/* ---------- what the surfaces read ---------- */
+	/* ---------- what the rail reads ---------- */
 
 	const element = selection === null ? null : (elementOf(selection.id) ?? null);
 	const box = selection === null ? undefined : boxes.get(`${selection.id}:${selection.key}`);
@@ -270,32 +256,20 @@ export function PropertiesScreen({ config }: { config: PropertiesConfig }) {
 					element,
 					pick: selection,
 					className: state.classes[element.id] ?? "",
-					text: state.texts[element.id] ?? (element.text !== undefined && "literal" in element.text ? element.text.literal : null),
+					text:
+						state.texts[element.id] ??
+						(element.text !== undefined && "literal" in element.text ? element.text.literal : null),
 					box: box ?? { x: 0, y: 0, w: 0, h: 0 },
 				};
 
 	const acts: Acts = {
-		vocab: config.vocab,
-		setClass: (id, family, value) => setClass(id, family, value),
-		setText,
+		setToken: (id, family, value) => setClassName(id, (className) => withToken(className, family, value)),
+		setLayout: (id, layout, token) => setClassName(id, (className) => withLayout(className, layout, token)),
+		setText: (id, text) => commit((snapshot) => ({ ...snapshot, texts: { ...snapshot.texts, [id]: text } })),
 		select: (pick) => setSelection(pick),
 		undo,
 		canUndo: history.length > 0,
 	};
-
-	const showFloat = config.surface !== "rail" || config.agent === "float";
-	const showRail = config.agent === "off" && config.surface !== "float";
-	const railFull = config.surface === "rail";
-
-	const rail =
-		config.agent !== "off" ? (
-			<AgentColumn
-				reading={reading}
-				shelf={config.agent === "stack" && reading !== null ? <Shelf reading={reading} acts={acts} /> : null}
-			/>
-		) : showRail ? (
-			<RailSurface reading={reading} acts={acts} editables={railFull} tail={config.tail || !railFull} />
-		) : null;
 
 	return (
 		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="100%">
@@ -303,17 +277,16 @@ export function PropertiesScreen({ config }: { config: PropertiesConfig }) {
 				pages={PAGES}
 				selected={FRAME}
 				tool="select"
-				railLabel={config.agent !== "off" ? "Agent" : "properties"}
-				railWidth={config.agent !== "off" ? AGENT_W : showRail ? RAIL_W : 0}
-				rail={rail ?? <span />}
+				railLabel="properties"
+				railWidth={RAIL_W}
+				rail={<Rail reading={reading} acts={acts} />}
 			>
 				<div ref={fieldRef} className="absolute inset-0">
 					<Still left={36} top={190} name="menu" />
-					{/* the agent rail takes 420 of the field, and the receipt is what it costs */}
-					{config.agent === "off" ? <Still left={664} top={150} name="receipt" /> : null}
+					<Still left={664} top={150} name="receipt" />
 
 					<div className="absolute flex flex-col gap-1.5" style={{ left: STAGE.left, top: STAGE.top }}>
-						<div className="flex w-[300px] items-center gap-1.5 font-mono text-sm leading-4" style={{ height: LABEL_H - 6 }}>
+						<div className="flex h-4 w-[300px] items-center gap-1.5 font-mono text-sm leading-4">
 							<span className="text-muted">{FRAME}</span>
 							<span className="ml-auto font-mono text-2xs text-muted/55 leading-3">300 × 640</span>
 						</div>
@@ -334,7 +307,6 @@ export function PropertiesScreen({ config }: { config: PropertiesConfig }) {
 						</div>
 					</div>
 
-					{/* the ring, the knobs and the readout: canvas furniture, drawn over the document */}
 					<Overlay
 						boxes={boxes}
 						hover={hover}
@@ -344,10 +316,6 @@ export function PropertiesScreen({ config }: { config: PropertiesConfig }) {
 						onKnobMove={moveDrag}
 						onKnobUp={endDrag}
 					/>
-
-					{showFloat && reading !== null && drag === null ? (
-						<FloatSurface reading={reading} acts={acts} full={config.surface === "float" || config.agent === "float"} />
-					) : null}
 				</div>
 			</CanvasChrome>
 		</SpoolShell>
@@ -365,8 +333,8 @@ interface Reading {
 }
 
 interface Acts {
-	vocab: Vocab;
-	setClass: (id: string, family: Family, value: string | null) => void;
+	setToken: (id: string, family: Family, value: string | null) => void;
+	setLayout: (id: string, layout: Layout, token: string | null) => void;
 	setText: (id: string, text: string) => void;
 	select: (pick: Pick) => void;
 	undo: () => void;
@@ -376,14 +344,18 @@ interface Acts {
 /** the spacing families an element shows: every one its literal carries, and gap for a container */
 function spacingFamilies(reading: Reading): readonly Family[] {
 	const tokens = reading.className.split(/\s+/).filter(Boolean);
-	const present = tokens.map(familyOf).filter((family): family is Family => family !== null && family !== "w" && family !== "h");
+	const present = tokens
+		.map(familyOf)
+		.filter((family): family is Family => family !== null && family !== "w" && family !== "h");
 	const families = new Set<Family>(present);
-	if (!families.has("p") && ![...families].some((family) => family.startsWith("p"))) families.add("p");
-	if (reading.element.display === "flex" && childrenOf(reading.element.id).length > 1 && !families.has("gap")) families.add("gap");
+	if (![...families].some((family) => family.startsWith("p"))) families.add("p");
+	if (reading.element.display === "flex" && childrenOf(reading.element.id).length > 1 && !families.has("gap")) {
+		families.add("gap");
+	}
 	return [...families];
 }
 
-/* ---------- the overlay ---------- */
+/* ---------- the overlay: ring, knobs, readout ---------- */
 
 function Overlay({
 	boxes,
@@ -411,11 +383,14 @@ function Overlay({
 	const wOk = element !== undefined && sizeVerdict(element, "w").ok;
 	const hOk = element !== undefined && sizeVerdict(element, "h").ok;
 	const anyOk =
-		element !== undefined && (wOk || hOk || spacingVerdict(element).ok || textVerdict(element).ok);
+		element !== undefined &&
+		(wOk || hOk || spacingVerdict(element).ok || textVerdict(element).ok || layoutVerdict(element).ok);
 	const siblings =
 		selection === null || element?.mapped === undefined
 			? []
-			: [...boxes.entries()].filter(([key]) => key.startsWith(`${selection.id}:`) && key !== `${selection.id}:${selection.key}`);
+			: [...boxes.entries()].filter(
+					([key]) => key.startsWith(`${selection.id}:`) && key !== `${selection.id}:${selection.key}`,
+				);
 
 	return (
 		<div className="pointer-events-none absolute inset-0">
@@ -472,7 +447,9 @@ function Overlay({
 								top: drag.axis === "w" ? selected.y + selected.h / 2 - 9 : selected.y + selected.h + 8,
 							}}
 						>
-							{drag.axis === "w" ? `${drag.live} × ${Math.round(drag.other)}` : `${Math.round(drag.other)} × ${drag.live}`}
+							{drag.axis === "w"
+								? `${drag.live} × ${Math.round(drag.other)}`
+								: `${Math.round(drag.other)} × ${drag.live}`}
 						</span>
 					)}
 				</>
@@ -481,38 +458,30 @@ function Overlay({
 	);
 }
 
-/* ---------- fields ---------- */
+/* ---------- rows ---------- */
 
-function ValueField({
+const LABEL_W = "w-[56px]";
+
+/** a token field with its pixels beside it; a refused one is the value greyed and the reason after it */
+function TokenRow({
 	shown,
 	verdict,
-	compact = false,
 	onCommit,
 	onNudge,
 }: {
 	shown: Shown;
 	verdict: Verdict;
-	/** the float's density: label and value on one short line */
-	compact?: boolean;
 	onCommit: (typed: string) => void;
 	onNudge: (direction: 1 | -1) => void;
 }) {
 	const [draft, setDraft] = useState<string | null>(null);
-	const value = draft ?? shown.value;
 	return (
-		<label className={cn("flex min-w-0 items-center", compact ? "gap-1.5" : "gap-2")}>
-			<span
-				className={cn(
-					"shrink-0 font-mono text-2xs text-muted leading-3",
-					compact ? "w-auto" : "w-[74px] truncate",
-				)}
-			>
-				{shown.label}
-			</span>
+		<label className="flex min-w-0 items-center gap-2">
+			<span className={cn("shrink-0 truncate font-mono text-2xs text-muted leading-3", LABEL_W)}>{shown.label}</span>
 			{verdict.ok ? (
-				<span className={cn("relative flex min-w-0 items-center", compact ? "w-[56px]" : "flex-1")}>
+				<>
 					<input
-						value={value}
+						value={draft ?? shown.value}
 						onChange={(event) => setDraft(event.target.value)}
 						onBlur={() => {
 							if (draft !== null && draft !== shown.value) onCommit(draft);
@@ -531,38 +500,71 @@ function ValueField({
 								onNudge(event.key === "ArrowUp" ? 1 : -1);
 							}
 						}}
-						className={cn(
-							"h-6 w-full min-w-0 rounded-sm border border-border bg-surface px-1.5 font-mono text-sm text-text leading-sm outline-none focus:border-border-raised",
-							shown.unit !== null && "pr-6",
-						)}
+						className="h-6 w-[88px] min-w-0 rounded-sm border border-border bg-surface px-1.5 font-mono text-sm text-text leading-sm outline-none focus:border-border-raised"
 					/>
-					{shown.unit === null || (compact && shown.value === "–") ? null : (
-						<span className="pointer-events-none absolute right-1.5 font-mono text-2xs text-muted/55 leading-3">
-							{shown.unit}
-						</span>
-					)}
-				</span>
+					<span className="min-w-0 truncate font-mono text-2xs text-muted/55 leading-3">{shown.px ?? ""}</span>
+				</>
 			) : (
-				<span className={cn("flex min-w-0 items-baseline gap-2", compact ? "" : "flex-1")}>
-					<span className="shrink-0 font-mono text-muted text-sm leading-sm">
+				<>
+					<span className="w-[88px] shrink-0 truncate font-mono text-muted text-sm leading-sm">
 						{shown.value}
-						{shown.unit === null ? "" : shown.value === "–" ? ` ${shown.unit}` : shown.unit}
+						{shown.px === null ? "" : <span className="text-muted/55"> {shown.px}</span>}
 					</span>
-					{compact ? null : <span className="min-w-0 truncate font-mono text-2xs text-muted/55 leading-3">{verdict.reason}</span>}
-				</span>
+					<span className="min-w-0 truncate font-mono text-2xs text-muted/55 leading-3">{verdict.reason}</span>
+				</>
 			)}
 		</label>
 	);
 }
 
-function TextField({ reading, acts, compact = false }: { reading: Reading; acts: Acts; compact?: boolean }) {
+/** a layout word: the options as chips, the chosen one lit, its token beside */
+function LayoutRow({ reading, layout, acts }: { reading: Reading; layout: Layout; acts: Acts }) {
+	const family = LAYOUT[layout];
+	const verdict = layoutVerdict(reading.element);
+	const current = layoutOf(reading.className, layout);
+	const css = family.options.find((option) => option.token === current)?.css ?? family.fallback;
+	return (
+		<div className="flex min-w-0 items-start gap-2">
+			<span className={cn("shrink-0 truncate pt-1 font-mono text-2xs text-muted leading-3", LABEL_W)}>{family.label}</span>
+			{verdict.ok ? (
+				<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+					<div className="flex flex-wrap items-center gap-px rounded-sm border border-border bg-surface p-px">
+						{family.options.map((option) => (
+							<button
+								key={option.token}
+								type="button"
+								title={option.token}
+								onClick={() =>
+									acts.setLayout(reading.element.id, layout, option.token === current ? null : option.token)
+								}
+								className={cn(
+									"h-5 cursor-pointer rounded-[3px] px-[5px] font-mono text-2xs leading-3",
+									option.token === current ? "bg-raised text-text" : "text-muted/70 hover:text-text",
+								)}
+							>
+								{option.css}
+							</button>
+						))}
+					</div>
+				</div>
+			) : (
+				<>
+					<span className="w-[88px] shrink-0 truncate font-mono text-muted text-sm leading-sm">{css}</span>
+					<span className="min-w-0 truncate font-mono text-2xs text-muted/55 leading-3">{verdict.reason}</span>
+				</>
+			)}
+		</div>
+	);
+}
+
+function TextRow({ reading, acts }: { reading: Reading; acts: Acts }) {
 	const verdict = textVerdict(reading.element);
 	const [draft, setDraft] = useState<string | null>(null);
 	if (reading.element.text === undefined) return null;
 	const shownText = reading.text ?? ("expr" in reading.element.text ? reading.element.text.expr : "");
 	return (
-		<label className={cn("flex min-w-0 items-center", compact ? "gap-1.5" : "gap-2")}>
-			<span className={cn("shrink-0 font-mono text-2xs text-muted leading-3", compact ? "" : "w-[74px]")}>text</span>
+		<label className="flex min-w-0 items-center gap-2">
+			<span className={cn("shrink-0 font-mono text-2xs text-muted leading-3", LABEL_W)}>text</span>
 			{verdict.ok ? (
 				<input
 					value={draft ?? shownText}
@@ -582,64 +584,12 @@ function TextField({ reading, acts, compact = false }: { reading: Reading; acts:
 					className="h-6 min-w-0 flex-1 rounded-sm border border-border bg-surface px-1.5 font-sans text-base text-text leading-sm outline-none focus:border-border-raised"
 				/>
 			) : (
-				<span className="flex min-w-0 flex-1 items-baseline gap-2">
+				<>
 					<span className="truncate font-mono text-muted text-sm leading-sm">{shownText}</span>
-					{compact ? null : <span className="min-w-0 truncate font-mono text-2xs text-muted/55 leading-3">{verdict.reason}</span>}
-				</span>
+					<span className="min-w-0 truncate font-mono text-2xs text-muted/55 leading-3">{verdict.reason}</span>
+				</>
 			)}
 		</label>
-	);
-}
-
-/** the w and h rows, which the rail and the float both draw */
-function SizeFields({ reading, acts, compact = false }: { reading: Reading; acts: Acts; compact?: boolean }) {
-	return (
-		<>
-			{(["w", "h"] as const).map((axis) => {
-				const token = tokenOf(reading.className, axis);
-				const measured = axis === "w" ? reading.box.w : reading.box.h;
-				return (
-					<ValueField
-						key={axis}
-						compact={compact}
-						shown={show(acts.vocab, axis, token, measured)}
-						verdict={sizeVerdict(reading.element, axis)}
-						onCommit={(typed) => {
-							const value = parse(acts.vocab, typed);
-							if (value !== null) acts.setClass(reading.element.id, axis, value);
-						}}
-						onNudge={(direction) =>
-							acts.setClass(reading.element.id, axis, nudge(acts.vocab, token, measured, direction))
-						}
-					/>
-				);
-			})}
-		</>
-	);
-}
-
-function SpacingFields({ reading, acts, compact = false }: { reading: Reading; acts: Acts; compact?: boolean }) {
-	const verdict = spacingVerdict(reading.element);
-	const families = compact ? spacingFamilies(reading).slice(0, 2) : spacingFamilies(reading);
-	return (
-		<>
-			{families.map((family) => {
-				const token = tokenOf(reading.className, family);
-				return (
-					<ValueField
-						key={family}
-						compact={compact}
-						shown={show(acts.vocab, family, token, 0)}
-						verdict={verdict}
-						onCommit={(typed) => {
-							const value = parse(acts.vocab, typed);
-							if (value !== null) acts.setClass(reading.element.id, family, value);
-						}}
-						onNudge={(direction) => acts.setClass(reading.element.id, family, nudge(acts.vocab, token, 0, direction))}
-					/>
-				);
-			})}
-		</>
 	);
 }
 
@@ -683,7 +633,7 @@ function SourceLine({ reading, acts }: { reading: Reading; acts: Acts }) {
 	);
 }
 
-function Crumbs({ reading, acts, dim = false }: { reading: Reading; acts: Acts; dim?: boolean }) {
+function Crumbs({ reading, acts }: { reading: Reading; acts: Acts }) {
 	const chain = chainOf(reading.element.id);
 	return (
 		<span className="flex min-w-0 items-center gap-1 truncate font-mono text-sm leading-sm">
@@ -696,7 +646,7 @@ function Crumbs({ reading, acts, dim = false }: { reading: Reading; acts: Acts; 
 							onClick={() =>
 								acts.select({ id: element.id, key: element.mapped === undefined ? element.id : reading.pick.key })
 							}
-							className={cn("cursor-pointer", last ? "text-text" : dim ? "text-muted/55 hover:text-text" : "text-muted hover:text-text")}
+							className={cn("cursor-pointer", last ? "text-text" : "text-muted hover:text-text")}
 						>
 							{element.name}
 						</button>
@@ -708,29 +658,25 @@ function Crumbs({ reading, acts, dim = false }: { reading: Reading; acts: Acts; 
 	);
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, note, children }: { title: string; note?: string | undefined; children: ReactNode }) {
 	return (
 		<div className="flex flex-col gap-2 border-border border-b px-4 py-3">
-			<span className="font-mono text-2xs text-muted/55 leading-3">{title}</span>
+			<div className="flex items-baseline gap-2">
+				<span className="font-mono text-2xs text-muted/55 leading-3">{title}</span>
+				{note === undefined ? null : <span className="font-mono text-2xs text-muted/40 leading-3">{note}</span>}
+			</div>
 			{children}
 		</div>
 	);
 }
 
-/* ---------- the rail surface ---------- */
+function scopeOf(verdict: Verdict): string | undefined {
+	return verdict.ok ? verdict.scope : undefined;
+}
 
-function RailSurface({
-	reading,
-	acts,
-	editables,
-	tail,
-}: {
-	reading: Reading | null;
-	acts: Acts;
-	/** the rail carries the writable fields; off when the float has them */
-	editables: boolean;
-	tail: boolean;
-}) {
+/* ---------- the rail ---------- */
+
+function Rail({ reading, acts }: { reading: Reading | null; acts: Acts }) {
 	return (
 		<div className="flex h-full min-h-0 flex-col">
 			<div className="flex h-11 shrink-0 items-center gap-2 border-border border-b pr-2 pl-4">
@@ -747,46 +693,68 @@ function RailSurface({
 				<p className="px-4 pt-3 font-mono text-2xs text-muted/55 leading-4">select an element</p>
 			) : (
 				<div className="min-h-0 flex-1 overflow-y-auto">
-					{editables ? (
-						<>
-							{reading.element.text === undefined ? null : (
-								<Section title="text">
-									<TextField reading={reading} acts={acts} />
-								</Section>
-							)}
-							<Section title="size">
-								<SizeFields reading={reading} acts={acts} />
-								{sizeVerdict(reading.element, "w").ok || sizeVerdict(reading.element, "h").ok ? (
-									<span className="font-mono text-2xs text-muted/45 leading-3">
-										{acts.vocab === "tailwind" ? "↑↓ a step, or drag the knob" : "↑↓ a pixel, or drag the knob"}
-										{scopeOf(sizeVerdict(reading.element, "w"))}
-									</span>
-								) : null}
-							</Section>
-							<Section title="spacing">
-								<SpacingFields reading={reading} acts={acts} />
-								{scopeOf(spacingVerdict(reading.element)) === "" ? null : (
-									<span className="font-mono text-2xs text-muted/45 leading-3">{scopeOf(spacingVerdict(reading.element)).trim()}</span>
-								)}
-							</Section>
-						</>
-					) : null}
+					{reading.element.text === undefined ? null : (
+						<Section title="text" note={scopeOf(textVerdict(reading.element))}>
+							<TextRow reading={reading} acts={acts} />
+						</Section>
+					)}
+					<Section title="size" note={scopeOf(sizeVerdict(reading.element, "w"))}>
+						{(["w", "h"] as const).map((axis) => {
+							const token = tokenOf(reading.className, axis);
+							const measured = axis === "w" ? reading.box.w : reading.box.h;
+							return (
+								<TokenRow
+									key={axis}
+									shown={show(axis, token, measured)}
+									verdict={sizeVerdict(reading.element, axis)}
+									onCommit={(typed) => {
+										const value = parse(typed);
+										if (value !== null) acts.setToken(reading.element.id, axis, value);
+									}}
+									onNudge={(direction) => acts.setToken(reading.element.id, axis, nudge(token, measured, direction))}
+								/>
+							);
+						})}
+					</Section>
+					<Section title="spacing" note={scopeOf(spacingVerdict(reading.element))}>
+						{spacingFamilies(reading).map((family) => {
+							const token = tokenOf(reading.className, family);
+							return (
+								<TokenRow
+									key={family}
+									shown={show(family, token, 0)}
+									verdict={spacingVerdict(reading.element)}
+									onCommit={(typed) => {
+										const value = parse(typed);
+										if (value !== null) acts.setToken(reading.element.id, family, value);
+									}}
+									onNudge={(direction) => acts.setToken(reading.element.id, family, nudge(token, 0, direction))}
+								/>
+							);
+						})}
+					</Section>
+					<Section title="layout" note={scopeOf(layoutVerdict(reading.element))}>
+						<LayoutRow reading={reading} layout="display" acts={acts} />
+						{layoutOf(reading.className, "display") === "flex" ? (
+							<>
+								<LayoutRow reading={reading} layout="direction" acts={acts} />
+								<LayoutRow reading={reading} layout="align" acts={acts} />
+								<LayoutRow reading={reading} layout="justify" acts={acts} />
+							</>
+						) : null}
+					</Section>
 					<Section title="source">
 						<SourceLine reading={reading} acts={acts} />
 					</Section>
-					{tail ? <Tail reading={reading} vocab={acts.vocab} /> : null}
+					<Tail reading={reading} />
 				</div>
 			)}
 		</div>
 	);
 }
 
-function scopeOf(verdict: Verdict): string {
-	return verdict.ok && verdict.scope !== undefined ? ` · ${verdict.scope}` : "";
-}
-
 /** everything else the element computes to, read-only, named the way a stylesheet names it */
-function Tail({ reading, vocab }: { reading: Reading; vocab: Vocab }) {
+function Tail({ reading }: { reading: Reading }) {
 	const [open, setOpen] = useState(true);
 	const rows = tailOf(reading.element);
 	return (
@@ -805,11 +773,9 @@ function Tail({ reading, vocab }: { reading: Reading; vocab: Vocab }) {
 					{rows.map((row, index) => (
 						<div key={`${row.prop}-${index}`} className="flex items-baseline gap-2">
 							<span className="w-[104px] shrink-0 truncate font-mono text-2xs text-muted/70 leading-4">{row.prop}</span>
-							<span className="shrink-0 font-mono text-2xs text-muted leading-4">
-								{vocab === "tailwind" && row.tw !== null ? row.tw : row.css}
-							</span>
+							<span className="shrink-0 font-mono text-2xs text-muted leading-4">{row.tw ?? row.css}</span>
 							<span className="ml-auto min-w-0 truncate text-right font-mono text-2xs text-muted/40 leading-4">
-								{vocab === "tailwind" && row.tw !== null ? row.css : row.from}
+								{row.tw === null ? row.from : row.css}
 							</span>
 						</div>
 					))}
@@ -819,165 +785,7 @@ function Tail({ reading, vocab }: { reading: Reading; vocab: Vocab }) {
 	);
 }
 
-/* ---------- the floating surface ---------- */
-
-function FloatSurface({ reading, acts, full }: { reading: Reading; acts: Acts; full: boolean }) {
-	// under the element when the field has room; otherwise beside the frame at the
-	// element's own top, so the card never covers the document it is editing
-	const below = reading.box.y + reading.box.h + 12;
-	const fits = below + 124 < FIELD_H - 8;
-	const top = fits ? below : Math.min(reading.box.y, FIELD_H - 132);
-	const left = fits ? Math.max(8, reading.box.x) : STAGE.left + STAGE.w + 16;
-	const noSize = !sizeVerdict(reading.element, "w").ok && !sizeVerdict(reading.element, "h").ok;
-	const noSpacing = !spacingVerdict(reading.element).ok;
-	const noText = !textVerdict(reading.element).ok;
-	return (
-		<div
-			onPointerDown={(event) => event.stopPropagation()}
-			onClick={(event) => event.stopPropagation()}
-			className="absolute z-30 flex flex-col gap-2 rounded-md border border-border-raised bg-bg/95 p-2.5 backdrop-blur"
-			style={{ left, top, width: FLOAT_W }}
-		>
-			<div className="flex items-center gap-2">
-				<Crumbs reading={reading} acts={acts} dim />
-				<span className="ml-auto shrink-0 font-mono text-2xs text-muted/45 leading-3">
-					{reading.element.shared === undefined ? `:${reading.element.line}` : "shared"}
-				</span>
-			</div>
-			{noSize && noSpacing && noText ? (
-				<span className="font-mono text-2xs text-muted/55 leading-4">
-					read-only · {firstReason(reading.element)}
-				</span>
-			) : (
-				<>
-					<div className="flex items-center gap-3">
-						<SizeFields reading={reading} acts={acts} compact />
-					</div>
-					{noSpacing ? null : (
-						<div className="flex items-center gap-3">
-							<SpacingFields reading={reading} acts={acts} compact />
-						</div>
-					)}
-					{reading.element.text === undefined || noText ? null : <TextField reading={reading} acts={acts} compact />}
-				</>
-			)}
-			{full ? (
-				<span className="truncate font-mono text-2xs text-muted/40 leading-3">
-					{reading.element.computed !== undefined
-						? "className is an expression"
-						: reading.className === ""
-							? "no className"
-							: reading.className}
-				</span>
-			) : null}
-		</div>
-	);
-}
-
-function firstReason(element: SourceElement): string {
-	const size = sizeVerdict(element, "w");
-	if (!size.ok) return size.reason;
-	const spacing = spacingVerdict(element);
-	if (!spacing.ok) return spacing.reason;
-	const text = textVerdict(element);
-	return text.ok ? "" : text.reason;
-}
-
-/* ---------- the agent rail, on ---------- */
-
-/**
- * The rail as it ships, reduced to its shape: nameplate, a turn, the composer
- * with the selection chip. A `shelf` slides in between the transcript and the
- * composer, which is where a stacked properties surface would stand.
- */
-function AgentColumn({ reading, shelf }: { reading: Reading | null; shelf: ReactNode }) {
-	const chip = reading === null ? "cart" : `cart › ${chainOf(reading.element.id).slice(1).map((element) => element.name).join(" › ")}`;
-	return (
-		<div className="flex h-full min-h-0 flex-col">
-			<div className="flex h-11 shrink-0 items-center gap-2 border-border border-b pr-2 pl-4">
-				<span className="h-1.5 w-1.5 rounded-full bg-thread" />
-				<span className="font-mono text-sm text-text leading-sm">cart</span>
-				<span className="font-mono text-2xs text-muted/55 leading-3">sonnet · 41k</span>
-				<span className="ml-auto flex h-7 w-7 items-center justify-center text-muted/60">
-					<PanelCaret dir="right" className="h-3.5 w-2.5" />
-				</span>
-			</div>
-			<div className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-hidden px-3.5 pb-3">
-				<div className="flex flex-col gap-1">
-					<span className="self-start rounded-xs border border-border-raised px-1.5 py-[2px] font-mono text-2xs text-muted leading-3">
-						pay
-					</span>
-					<p className="text-base text-text leading-base">Make the pay button feel heavier.</p>
-				</div>
-				<div className="flex flex-col gap-1.5 font-mono text-sm leading-sm">
-					<Row state="done" verb="read" subject="cart" />
-					<Row state="done" verb="edit" subject="cart" meta="+1 −1" />
-					<Row state="done" verb="shot" subject="cart" />
-				</div>
-				<p className="text-base text-muted leading-base">
-					Set it to h-12 and font-semibold. The row above it keeps its gap.
-				</p>
-			</div>
-			{shelf}
-			<div className="shrink-0 border-border border-t p-3">
-				<div className="flex flex-col gap-2 rounded-md border border-border bg-surface p-2.5">
-					<span className="self-start truncate rounded-xs border border-thread/50 px-1.5 py-[2px] font-mono text-2xs text-text leading-3">
-						{chip}
-					</span>
-					<span className="font-sans text-base text-muted/55 leading-base">Ask about the selection</span>
-					<div className="flex items-center gap-2">
-						<span className="font-mono text-2xs text-muted/45 leading-3">⏎ send</span>
-						<span className="ml-auto font-mono text-2xs text-muted/45 leading-3">sonnet</span>
-					</div>
-				</div>
-			</div>
-		</div>
-	);
-}
-
-function Row({ state, verb, subject, meta }: { state: "done" | "running"; verb: string; subject: string; meta?: string }) {
-	return (
-		<div className="flex items-center gap-2">
-			<span
-				className={cn(
-					"flex h-3 w-3 items-center justify-center rounded-full border",
-					state === "done" ? "border-muted/50" : "border-muted",
-				)}
-			>
-				{state === "done" ? <span className="h-1 w-1 rounded-full bg-muted/70" /> : null}
-			</span>
-			<span className="text-muted">{verb}</span>
-			<span className="text-text">{subject}</span>
-			{meta === undefined ? null : <span className="ml-auto text-2xs text-muted/55">{meta}</span>}
-		</div>
-	);
-}
-
-/** the stacked surface: the chip, opened, between the transcript and the composer */
-function Shelf({ reading, acts }: { reading: Reading; acts: Acts }) {
-	return (
-		<div className="shrink-0 border-border border-t">
-			<div className="flex items-center gap-2 px-3.5 pt-3 pb-1">
-				<Crumbs reading={reading} acts={acts} dim />
-				<span className="ml-auto font-mono text-2xs text-muted/45 leading-3">
-					{reading.element.shared === undefined ? `frame.tsx:${reading.element.line}` : "shared"}
-				</span>
-			</div>
-			<div className="grid grid-cols-2 gap-x-4 gap-y-1.5 px-3.5 pb-3">
-				<SizeFields reading={reading} acts={acts} />
-				<SpacingFields reading={reading} acts={acts} />
-				{reading.element.text === undefined ? null : (
-					<div className="col-span-2">
-						<TextField reading={reading} acts={acts} />
-					</div>
-				)}
-			</div>
-		</div>
-	);
-}
-
-/* ---------- the field's other frames ---------- */
-
+/** a neighbour on the field, so the frame under the pointer is a choice */
 function Still({ left, top, name }: { left: number; top: number; name: string }) {
 	return (
 		<div className="absolute flex flex-col gap-1.5" style={{ left, top }}>

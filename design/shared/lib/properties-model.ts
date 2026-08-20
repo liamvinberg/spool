@@ -14,8 +14,6 @@
  * measured again. Tokens are the pinned Tailwind v4 scale at 4px a step.
  */
 
-export type Vocab = "tailwind" | "css";
-
 export type Display = "flex" | "block" | "inline";
 
 export interface SourceElement {
@@ -285,6 +283,85 @@ export function withToken(className: string | null, family: Family, value: strin
 	return tokens.map((token, at) => (at === index ? next : token)).join(" ");
 }
 
+/* ---------- layout: one word on the literal ---------- */
+
+/**
+ * The layout properties are enum tokens, and an enum token is the same
+ * single-token splice the spacing spike proved: swap one word in the literal,
+ * parse fresh, measure after. Nothing new has to be spiked for them.
+ */
+export type Layout = "display" | "direction" | "align" | "justify";
+
+export interface LayoutFamily {
+	label: string;
+	/** the CSS property the row translates to */
+	css: string;
+	/** token → CSS value; the token order is the picker's order */
+	options: readonly { token: string; css: string }[];
+	/** what the property is when nothing sets it */
+	fallback: string;
+}
+
+export const LAYOUT: Record<Layout, LayoutFamily> = {
+	display: {
+		label: "display",
+		css: "display",
+		options: [
+			{ token: "flex", css: "flex" },
+			{ token: "grid", css: "grid" },
+			{ token: "block", css: "block" },
+			{ token: "hidden", css: "none" },
+		],
+		fallback: "inline",
+	},
+	direction: {
+		label: "direction",
+		css: "flex-direction",
+		options: [
+			{ token: "flex-row", css: "row" },
+			{ token: "flex-col", css: "column" },
+		],
+		fallback: "row",
+	},
+	align: {
+		label: "align",
+		css: "align-items",
+		options: [
+			{ token: "items-start", css: "start" },
+			{ token: "items-center", css: "center" },
+			{ token: "items-baseline", css: "baseline" },
+			{ token: "items-stretch", css: "stretch" },
+		],
+		fallback: "stretch",
+	},
+	justify: {
+		label: "justify",
+		css: "justify-content",
+		options: [
+			{ token: "justify-start", css: "start" },
+			{ token: "justify-center", css: "center" },
+			{ token: "justify-between", css: "between" },
+			{ token: "justify-end", css: "end" },
+		],
+		fallback: "start",
+	},
+};
+
+export function layoutOf(className: string | null, layout: Layout): string | null {
+	if (className === null) return null;
+	const tokens = className.split(/\s+/);
+	return LAYOUT[layout].options.find((option) => tokens.includes(option.token))?.token ?? null;
+}
+
+export function withLayout(className: string | null, layout: Layout, token: string | null): string {
+	const known = new Set(LAYOUT[layout].options.map((option) => option.token));
+	const tokens = (className === null ? [] : className.split(/\s+/).filter(Boolean));
+	const index = tokens.findIndex((candidate) => known.has(candidate));
+	if (index === -1) return token === null ? tokens.join(" ") : [...tokens, token].join(" ");
+	if (token === null) return tokens.filter((_, at) => at !== index).join(" ");
+	return tokens.map((candidate, at) => (at === index ? token : candidate)).join(" ");
+}
+
 /* ---------- what the hands may write ---------- */
 
 export type Verdict = { ok: true; scope?: string } | { ok: false; reason: string };
@@ -308,6 +385,11 @@ export function sizeVerdict(element: SourceElement, axis: "w" | "h"): Verdict {
 	if (element.display === "inline") return { ok: false, reason: "inline, the text decides" };
 	if (axis === "h" && element.className?.includes("flex-1")) return { ok: false, reason: "flex-1, layout decides" };
 	return literal;
+}
+
+/** every layout word is writable on a literal; a picker on the frame root still writes the root's own class */
+export function layoutVerdict(element: SourceElement): Verdict {
+	return literalVerdict(element);
 }
 
 export function spacingVerdict(element: SourceElement): Verdict {
@@ -382,15 +464,6 @@ export function tailOf(element: SourceElement): readonly TailRow[] {
 	const rows: TailRow[] = [];
 	const row = (prop: string, css: string, from: string, tw: string | null = null) => rows.push({ prop, css, from, tw });
 
-	// layout
-	row("display", element.display === "inline" ? "inline" : element.display, has("flex") ? "flex" : "preflight", has("flex") ? "flex" : null);
-	if (has("flex")) {
-		row("flex-direction", has("flex-col") ? "column" : "row", has("flex-col") ? "flex-col" : "default", has("flex-col") ? "flex-col" : null);
-		const align = has("items-center") ? "center" : has("items-baseline") ? "baseline" : "stretch";
-		row("align-items", align, align === "stretch" ? "default" : `items-${align}`, align === "stretch" ? null : `items-${align}`);
-		const justify = has("justify-center") ? "center" : has("justify-between") ? "space-between" : "flex-start";
-		row("justify-content", justify, justify === "flex-start" ? "default" : has("justify-center") ? "justify-center" : "justify-between", justify === "flex-start" ? null : has("justify-center") ? "justify-center" : "justify-between");
-	}
 	if (has("flex-1")) row("flex", "1 1 0%", "flex-1", "flex-1");
 	if (has("shrink-0")) row("flex-shrink", "0", "shrink-0", "shrink-0");
 	if (has("min-h-0")) row("min-height", "0px", "min-h-0", "min-h-0");
@@ -432,65 +505,27 @@ function expressionTokens(computed: string | undefined): string {
 	return literal?.[1] ?? "";
 }
 
-/* ---------- the vocabulary ---------- */
+/* ---------- the vocabulary: the token is the field, the pixels sit beside it ---------- */
 
 export interface Shown {
-	/** what the field's label says */
+	/** the class prefix, which is the row's name */
 	label: string;
-	/** what the field holds */
+	/** the token's own value, `11` or `[347px]`; `–` when nothing sets it */
 	value: string;
-	/** the unit the field implies, drawn faint after the value; Tailwind has none */
-	unit: string | null;
+	/** what it means in pixels, from the token when it has one and the layout when it does not */
+	px: string | null;
 }
 
-const CSS_NAMES: Record<Family, string> = {
-	w: "width",
-	h: "height",
-	p: "padding",
-	px: "padding-x",
-	py: "padding-y",
-	pt: "padding-top",
-	pr: "padding-right",
-	pb: "padding-bottom",
-	pl: "padding-left",
-	gap: "gap",
-	"gap-x": "column-gap",
-	"gap-y": "row-gap",
-	m: "margin",
-	mx: "margin-x",
-	my: "margin-y",
-	mt: "margin-top",
-	mr: "margin-right",
-	mb: "margin-bottom",
-	ml: "margin-left",
-	"space-y": "row-gap",
-	"space-x": "column-gap",
-};
-
-/**
- * One family, said in one vocabulary. Tailwind shows the token's own value and
- * the label is the class prefix; CSS shows pixels under the property's name and
- * the token is something the source line knows. `measured` stands in when the
- * class says nothing numeric, which is what a `full` or an absent token is.
- */
-export function show(vocab: Vocab, family: Family, token: string | null, measured: number): Shown {
-	if (vocab === "tailwind") {
-		// nothing on the class: the measured box says what the layout decided, faintly
-		const unit = token === null && measured > 0 ? `${Math.round(measured)}px` : null;
-		return { label: family, value: token === null ? "–" : valueOf(token), unit };
-	}
-	const px = token === null ? null : valuePx(valueOf(token));
-	return { label: CSS_NAMES[family], value: String(px ?? Math.round(measured)), unit: "px" };
+export function show(family: Family, token: string | null, measured: number): Shown {
+	const fromToken = token === null ? null : valuePx(valueOf(token));
+	const px = fromToken ?? (measured > 0 ? Math.round(measured) : null);
+	return { label: family, value: token === null ? "–" : valueOf(token), px: px === null ? null : `${px}px` };
 }
 
-/** what a typed value becomes on the class, in either vocabulary; null when it is not a value */
-export function parse(vocab: Vocab, typed: string): string | null {
+/** what a typed value becomes on the class: a scale number stays, pixels become the policy's token */
+export function parse(typed: string): string | null {
 	const text = typed.trim();
 	if (text === "") return null;
-	if (vocab === "css") {
-		const px = /^(\d+(?:\.\d+)?)(?:px)?$/.exec(text);
-		return px?.[1] === undefined ? null : pxValue(Number(px[1]));
-	}
 	if (/^\[\d+(?:\.\d+)?px\]$/.test(text)) return text;
 	const px = /^(\d+(?:\.\d+)?)px$/.exec(text);
 	if (px?.[1] !== undefined) return pxValue(Number(px[1]));
@@ -499,9 +534,8 @@ export function parse(vocab: Vocab, typed: string): string | null {
 	return null;
 }
 
-/** a step up or down on the arrow keys: a scale unit in Tailwind, a pixel in CSS */
-export function nudge(vocab: Vocab, token: string | null, measured: number, direction: 1 | -1): string {
+/** a step up or down on the arrow keys: one scale unit, 4px */
+export function nudge(token: string | null, measured: number, direction: 1 | -1): string {
 	const current = token === null ? measured : (valuePx(valueOf(token)) ?? measured);
-	const step = vocab === "tailwind" ? STEP : 1;
-	return pxValue(current + direction * step);
+	return pxValue(current + direction * STEP);
 }
