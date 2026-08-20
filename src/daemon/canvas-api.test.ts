@@ -72,6 +72,52 @@ describe("frame projection", () => {
 		]);
 	});
 
+	/**
+	 * Seen-state end to end (seen.ts): the first read seeds and says nothing, a
+	 * frame written after that is `new`, and the canvas can say it has been looked
+	 * at. Marking is the canvas's word — nothing here decides it for itself.
+	 */
+	it("marks frames unseen until the canvas says it has looked at them", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "home", frameTsx("home"));
+		const app = makeApp(spoolDir);
+
+		const marks = async (): Promise<Record<string, string | undefined>> => {
+			const body = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
+				frames: { name: string; unseen?: string }[];
+			};
+			return Object.fromEntries(body.frames.map((frame) => [frame.name, frame.unseen]));
+		};
+
+		expect(await marks()).toEqual({ home: undefined });
+
+		writeFrame(root, "pricing", frameTsx("pricing"));
+		expect(await marks()).toEqual({ home: undefined, pricing: "new" });
+
+		const said = await app.request(`/api/p/${name}/seen`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ frames: ["pricing"] }),
+		});
+		expect(said.status).toBe(204);
+		expect(await marks()).toEqual({ home: undefined, pricing: undefined });
+	});
+
+	it("refuses a seen list that is not frame names", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "home", frameTsx("home"));
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(`/api/p/${name}/seen`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ frames: ["../elsewhere"] }),
+		});
+		expect(res.status).toBe(400);
+	});
+
 	it("fills in missing sidecars on disk, placing frames side by side", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);

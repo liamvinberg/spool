@@ -67,6 +67,7 @@ import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-s
 import {
 	FRAME_BIRTH,
 	type FrameKind,
+	frameDirectories,
 	frameGeometry,
 	listProjectFrames,
 	lookupFrame,
@@ -86,6 +87,7 @@ import {
 	RENDER_HOST,
 	renderOriginFor,
 } from "./security";
+import { markSeen } from "./seen";
 import { createSelectionStore, parseSelectionEntries, parseSelectionPut, type SelectionEntry } from "./selection";
 import { selectionBlock } from "./selection-block";
 import {
@@ -901,7 +903,7 @@ export function createDaemonApp({
 			const project = resolveProject(c, name);
 			if ("response" in project) return project.response;
 			try {
-				const projection = listProjectFrames(project.root);
+				const projection = listProjectFrames(project.root, { seen: true });
 				return c.json({
 					...projection,
 					frames: projection.frames.map((frame) => {
@@ -1110,6 +1112,38 @@ export function createDaemonApp({
 				// silent — the map never claims more than source (#34)
 				try {
 					if (recordWalk(project.root, from, to)) hub.publish(project.root, { kind: "walked" });
+				} catch (error) {
+					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+					throw error;
+				}
+				return c.body(null, 204);
+			},
+		)
+		/**
+		 * These frames have been looked at (seen.ts). The canvas says so when a
+		 * frame has held enough of the viewport long enough to have been read, and
+		 * when one is pressed. Names the project does not hold are ignored rather
+		 * than refused: a browser one beat behind a delete is not an error.
+		 */
+		.post(
+			"/api/p/:project/seen",
+			validator("json", (value, c) => {
+				const { frames } = (value ?? {}) as { frames?: unknown };
+				if (!Array.isArray(frames) || frames.some((name) => typeof name !== "string" || !isSafeName(name))) {
+					return c.text('seen is { "frames": ["<frame>", ...] }', 400);
+				}
+				return { frames: frames as string[] };
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				try {
+					const dirs = frameDirectories(project.root);
+					markSeen(
+						project.root,
+						[...dirs].map(([name, dir]) => ({ name, dir })),
+						c.req.valid("json").frames,
+					);
 				} catch (error) {
 					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
 					throw error;

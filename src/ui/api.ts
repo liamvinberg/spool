@@ -203,6 +203,21 @@ export async function resolveFlows(project: string): Promise<{ read: number } | 
 	}
 }
 
+/**
+ * These frames have been looked at — the canvas is the witness.
+ *
+ * Fire and forget, then read the projection back: the mark goes out when the
+ * record agrees, so nothing on screen claims a state the daemon does not hold.
+ */
+export async function postSeen(project: string, frames: readonly string[]): Promise<boolean> {
+	if (frames.length === 0) return false;
+	try {
+		return (await client.api.p[":project"].seen.$post({ param: { project }, json: { frames: [...frames] } })).ok;
+	} catch {
+		return false;
+	}
+}
+
 /** An entered walk really happened — the canvas is the witness (#25). */
 export function postWalk(project: string, from: string, to: string): void {
 	void client.api.p[":project"].walked.$post({ param: { project }, json: { from, to } }).catch(() => {});

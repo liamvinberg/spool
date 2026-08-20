@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Cover } from "../../cover";
+import type { Unseen } from "../../daemon/seen";
 import { pageWithin, ROOT_PAGE } from "../../page-path";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboard-host";
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
@@ -24,6 +25,7 @@ import {
 	fetchProjection,
 	openInEditor,
 	postCaptureFailure,
+	postSeen,
 	postTrash,
 	postWalk,
 	putCanvasState,
@@ -105,6 +107,7 @@ import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } fr
 import { snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { TrashToast } from "./trash-toast";
+import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
 import { WalkLayer, walksOf } from "./walk-layer";
 
 /**
@@ -671,6 +674,104 @@ export function ProjectCanvas({
 		setCollisions(projection.collisions);
 		setLoaded(true);
 	}, [project]);
+
+	/**
+	 * What nobody has looked at (seen.ts), as the projection says minus what this
+	 * canvas has just cleared.
+	 *
+	 * The overlay exists because the record is the daemon's: marking a frame read
+	 * is a round trip, and a mark that outlives the click by a third of a second
+	 * reads as a click that missed. Names leave the overlay when the read they
+	 * belong to has landed and the projection has been read back, so a frame that
+	 * changed again in that window comes back marked rather than staying quiet.
+	 */
+	const [read, setRead] = useState<ReadonlySet<string>>(new Set());
+	const unseen = useMemo(() => {
+		const marks = new Map<string, Unseen>();
+		for (const frame of frames) {
+			if (frame.unseen !== undefined && !read.has(frame.name)) marks.set(frame.name, frame.unseen);
+		}
+		return marks;
+	}, [frames, read]);
+	const unseenRef = useRef(unseen);
+	unseenRef.current = unseen;
+	/** the last thing a person did here: the dwell clock stops when it goes stale */
+	const attention = useRef(Date.now());
+	const dwell = useRef(new Map<string, number>());
+	const reading = useRef(new Set<string>());
+	const readFlush = useRef<number | null>(null);
+
+	const markRead = useCallback(
+		(names: readonly string[]) => {
+			const fresh = names.filter((name) => unseenRef.current.has(name));
+			if (fresh.length === 0) return;
+			for (const name of fresh) reading.current.add(name);
+			setRead((current) => new Set([...current, ...fresh]));
+			if (readFlush.current !== null) return;
+			// one write per burst: panning across a row clears six marks and posts once
+			readFlush.current = window.setTimeout(() => {
+				readFlush.current = null;
+				const batch = [...reading.current];
+				reading.current.clear();
+				void (async () => {
+					await postSeen(project, batch);
+					await refetchFrames();
+					setRead((current) => {
+						const next = new Set(current);
+						for (const name of batch) next.delete(name);
+						return next;
+					});
+				})();
+			}, 260);
+		},
+		[project, refetchFrames],
+	);
+
+	/**
+	 * The dwell clock. A frame that has held enough of the viewport for long enough
+	 * has been read, and the mark goes out behind you as you pan across a row.
+	 *
+	 * It runs only while there is something to clear, and only while somebody is
+	 * here: an unfocused window and a canvas nobody has touched in half a minute
+	 * both stop it, or the field would clear itself overnight — including the
+	 * frames an agent writes into it while nobody is looking.
+	 */
+	useEffect(() => {
+		if (unseen.size === 0) return;
+		const timer = window.setInterval(() => {
+			if (!document.hasFocus() || Date.now() - attention.current > ATTENTION_MS) {
+				dwell.current.clear();
+				return;
+			}
+			const camera = cameraRef.current;
+			const viewport = viewportRef.current;
+			if (camera === null || viewport === null) return;
+			const vw = viewport.clientWidth;
+			const vh = viewport.clientHeight;
+			const looking = framesRef.current
+				.filter((frame) => unseenRef.current.has(frame.name) && looked(frame, camera, vw, vh))
+				.map((frame) => frame.name);
+			const crossed = advanceDwell(dwell.current, looking);
+			if (crossed.length > 0) markRead(crossed);
+		}, TICK_MS);
+		return () => window.clearInterval(timer);
+	}, [unseen.size, markRead]);
+
+	useEffect(() => {
+		const touch = () => {
+			attention.current = Date.now();
+		};
+		window.addEventListener("pointermove", touch, { passive: true });
+		window.addEventListener("pointerdown", touch, { passive: true });
+		window.addEventListener("wheel", touch, { passive: true });
+		window.addEventListener("keydown", touch);
+		return () => {
+			window.removeEventListener("pointermove", touch);
+			window.removeEventListener("pointerdown", touch);
+			window.removeEventListener("wheel", touch);
+			window.removeEventListener("keydown", touch);
+		};
+	}, []);
 
 	const refetchFlows = useCallback(async () => {
 		const flows = await fetchFlows(project);
@@ -2177,6 +2278,9 @@ export function ProjectCanvas({
 			return;
 		}
 
+		// the other way a mark clears: pressing a frame is going to it
+		markRead([hit]);
+
 		// inside an element scope, shift toggles membership (#37): the at-depth
 		// target under the cursor, or with accel the deepest — the two hover previews
 		if (toolRef.current === "select" && event.shiftKey && pickedRef.current.length > 0 && label === null) {
@@ -2847,6 +2951,7 @@ export function ProjectCanvas({
 					// the finder's pick, or the page holding the frame a row in the agent rail is
 					// pointing at (#194)
 					litPage={finding ? findLit : pointedPage}
+					unseen={unseen}
 				/>
 			</div>
 			<div
@@ -2956,6 +3061,7 @@ export function ProjectCanvas({
 										selected={isSelected}
 										hovered={isHovered}
 										terminal={frame.kind === "term"}
+										unseen={unseen.get(frame.name)}
 										onPlay={() => playFrame(frame.name)}
 									/>
 								</div>
@@ -3093,6 +3199,7 @@ export function ProjectCanvas({
 				{finding ? (
 					<FindPalette
 						frames={navigatorFrames}
+						unseen={unseen}
 						onPick={setFindLit}
 						onClose={() => setFinding(false)}
 						onLand={(name) => {

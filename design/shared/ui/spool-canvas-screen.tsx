@@ -3,6 +3,7 @@ import { cn } from "../lib/utils";
 import { CanvasChrome, type PageRow } from "./spool-canvas-chrome";
 import { CoffeeScreen, type CoffeeScreenName } from "./coffee-screens";
 import { SpoolShell } from "./spool-shell";
+import { type Mark, UnseenMark } from "./spool-unseen-mark";
 
 /**
  * The canvas: the app's main surface. Pages rail, the frames on their field
@@ -17,10 +18,18 @@ import { SpoolShell } from "./spool-shell";
 
 export type CanvasSpecimen = "rest" | "menu";
 
+/**
+ * What nobody has looked at yet. `receipt` is a frame the agent wrote while the
+ * canvas was somewhere else; `site` is shut over one of its own, so it says only
+ * that something inside it is unseen. A mark clears when the frame has held half
+ * the viewport for the best part of a second, or when it is pressed.
+ */
+const UNSEEN: Readonly<Record<string, Mark>> = { receipt: "new" };
+
 const PAGES: readonly PageRow[] = [
-	{ name: "app", frames: ["menu", "cart", "receipt"], active: true, open: true },
-	{ name: "site", frames: [] },
-	{ name: "directing", frames: [] },
+	{ name: "app", frames: ["menu", "cart", "receipt"], active: true, open: true, unseen: UNSEEN },
+	{ name: "site", frames: ["landing", "pricing"], unseen: { landing: "changed" } },
+	{ name: "directing", frames: [], unseen: {} },
 ];
 
 interface SpoolCanvasScreenProps {
@@ -137,11 +146,23 @@ function CanvasFrame({
 	selected?: boolean;
 	playTarget?: string | undefined;
 }) {
+	const mark = UNSEEN[screen];
 	return (
 		<div className="absolute flex flex-col gap-1.5" style={{ left, top }}>
 			<div className="flex w-[240px] min-w-0 items-center gap-1.5 font-mono text-sm leading-4">
 				{paused ? <span className="shrink-0 text-2xs text-muted leading-3">▸</span> : null}
-				<span className={cn("min-w-0 truncate", selected ? "text-thread" : "text-muted")}>{screen}</span>
+				{/* the mark rides the label because the label is the one thing on the field
+				    that does not scale: a disc on the frame itself shrinks with the zoom, and
+				    zoomed out is when you most need to know which of these is new */}
+				{mark === undefined ? null : <UnseenMark mark={mark} className="-ml-0.5" />}
+				<span
+					className={cn(
+						"min-w-0 truncate",
+						selected ? "text-thread" : mark === undefined ? "text-muted" : "text-text",
+					)}
+				>
+					{screen}
+				</span>
 				{/* the selection's own verb, at the far end of its own row (#13/#24):
 				    play never lived in the bar, where it could only guess the frame */}
 				{selected ? (

@@ -1,5 +1,6 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import type { Unseen } from "../../daemon/seen";
 import { carriedPage, pageChain, pageName, pageParent, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
 import { accelPressed } from "../../runtime/platform-keys";
 import {
@@ -60,6 +61,7 @@ import {
 } from "./rail-rows";
 import { COLLAPSED_BELOW, MAX_WIDTH, STRIP_WIDTH, settledWidth, useRailWidth } from "./rail-width";
 import { type MenuTarget, RailMenu, type RailMenuState } from "./sidebar-menu";
+import { UnseenMark } from "./unseen-mark";
 
 /**
  * The pages rail as a file explorer (#229, #231, #232).
@@ -210,6 +212,9 @@ export type RailEntry = Extract<HistoryEntry, { kind: "rename" | "move" | "move-
 export type RunEntry = (entry: RailEntry, way: Way) => Promise<boolean>;
 
 /** The pages navigator: a file explorer over the projection and the stored order. */
+/** a project whose record says nothing: every row draws exactly as it did */
+const NOTHING_UNSEEN: ReadonlyMap<string, Unseen> = new Map();
+
 export function CanvasSidebar({
 	project,
 	pages,
@@ -229,6 +234,7 @@ export function CanvasSidebar({
 	onRecord,
 	run,
 	litPage = null,
+	unseen = NOTHING_UNSEEN,
 }: {
 	project: string;
 	/** Every named page's path, sorted; the root page is implied and has no row. */
@@ -258,6 +264,13 @@ export function CanvasSidebar({
 	run?: React.RefObject<RunEntry | null>;
 	/** The page holding the finder's pick — its row lights while the palette is up. */
 	litPage?: string | null;
+	/**
+	 * What nobody has looked at (seen.ts). A frame row wears its own mark; a page
+	 * row wears one only while it is shut, and says only that something inside it
+	 * is unseen — the count of how much is one chevron away, and two numbers side
+	 * by side read as one wrong number.
+	 */
+	unseen?: ReadonlyMap<string, Unseen> | undefined;
 }) {
 	const [width, setWidth] = useRailWidth("pages", PANEL_WIDTH);
 	const [resizing, setResizing] = useState(false);
@@ -295,6 +308,24 @@ export function CanvasSidebar({
 	const typed = useRef({ buffer: "", at: 0 });
 
 	const collapsed = width <= COLLAPSED_BELOW;
+
+	/**
+	 * The unseen inside each page, for the rows that are shut over it. A page is
+	 * marked by anything unseen anywhere below it, and `new` outranks `changed`:
+	 * the louder of the two is what a shut folder has to answer with.
+	 */
+	const unseenIn = useMemo(() => {
+		const rolled = new Map<string, Unseen>();
+		if (unseen.size === 0) return rolled;
+		for (const frame of frames) {
+			const mark = unseen.get(frame.name);
+			if (mark === undefined) continue;
+			for (const page of pageChain(pageOf(frame))) {
+				if (rolled.get(page) !== "new") rolled.set(page, mark === "new" ? "new" : (rolled.get(page) ?? mark));
+			}
+		}
+		return rolled;
+	}, [frames, unseen]);
 
 	/* ── the list: the projection, arranged by the stored order ──────── */
 
@@ -1506,7 +1537,15 @@ export function CanvasSidebar({
 										row={row}
 										activePage={activePage}
 										litPage={litPage}
-										selected={row.kind === "frame" && selected.includes(row.name)}										cursored={cursor === rowKey(row)}
+										selected={row.kind === "frame" && selected.includes(row.name)}
+										mark={
+											row.kind === "frame"
+												? unseen.get(row.name)
+												: row.open
+													? undefined
+													: unseenIn.get(row.page)
+										}
+										cursored={cursor === rowKey(row)}
 										lifted={kit !== null && kit.kind === row.kind && kit.names.includes(rowName(row))}
 										into={landing?.kind === "into" && row.kind === "page" && landing.page === row.page}
 										springing={row.kind === "page" && springing === row.page}
@@ -1729,6 +1768,7 @@ function TreeRow({
 	activePage,
 	litPage,
 	selected,
+	mark,
 	cursored,
 	lifted,
 	into,
@@ -1746,6 +1786,8 @@ function TreeRow({
 	activePage: string;
 	litPage: string | null;
 	selected: boolean;
+	/** nobody has looked at this frame, or at something inside this shut page */
+	mark: Unseen | undefined;
 	cursored: boolean;
 	lifted: boolean;
 	into: boolean;
@@ -1827,6 +1869,7 @@ function TreeRow({
 										{label}
 									</span>
 								</button>
+								{mark === undefined ? null : <UnseenMark mark={mark} className="mr-0.5" />}
 								<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3">{row.count}</span>
 							</>
 						) : (
@@ -1873,11 +1916,12 @@ function TreeRow({
 								<span
 									className={cn(
 										"min-w-0 flex-1 truncate font-mono text-xs leading-xs",
-										selected || cursored ? "text-text" : "text-muted",
+										selected || cursored || mark !== undefined ? "text-text" : "text-muted",
 									)}
 								>
 									{row.name}
 								</span>
+								{mark === undefined ? null : <UnseenMark mark={mark} />}
 								<span className="pr-1 font-mono text-2xs text-muted/50 leading-3 opacity-0 transition-opacity group-hover/row:opacity-100">
 									{row.entry}
 								</span>

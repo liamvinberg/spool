@@ -11,10 +11,9 @@ import {
 	splitVariant,
 	type Weight,
 } from "../lib/frame-find";
-import type { Mark } from "../lib/unseen-model";
 import { cn } from "../lib/utils";
 import { FolderIcon } from "./spool-icons";
-import { UnseenMark } from "./spool-unseen-mark";
+import { type Mark, UnseenMark } from "./spool-unseen-mark";
 
 /**
  * The frame finder: press `/` on the canvas and a palette opens over it, filtering

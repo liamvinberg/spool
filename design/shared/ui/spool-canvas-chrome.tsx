@@ -1,10 +1,9 @@
 import type { ReactNode } from "react";
 import type { Life } from "../lib/agent-threads";
-import type { Mark } from "../lib/unseen-model";
 import { cn } from "../lib/utils";
 import { ChevronIcon, FolderIcon, HandIcon, PanelCaret, SelectIcon } from "./spool-icons";
 import { ThreadMark } from "./spool-thread-mark";
-import { UnseenMark } from "./spool-unseen-mark";
+import { type Mark, UnseenMark } from "./spool-unseen-mark";
 
 /**
  * The canvas chrome: the Pages rail on the left, the viewport between, the
@@ -49,8 +48,6 @@ export interface PageRow {
 	 * Absent unless a proposal puts seen-state out here.
 	 */
 	unseen?: Readonly<Record<string, Mark>> | undefined;
-	/** marks the whole page seen from the row, for a rule that never clears by itself */
-	onSeen?: (() => void) | undefined;
 }
 
 export function CanvasChrome({
@@ -199,18 +196,7 @@ function PageBlock({
 				{page.mark === undefined ? null : <ThreadMark life={page.mark} className="mr-1.5" />}
 				{/* the same restraint one column over: collapsed, the page says that something on
 				    it is unseen and nothing about how much */}
-				{page.open === true || page.unseen === undefined ? null : (
-					<UnseenMark mark={loudest(page.unseen)} className="mr-0.5" />
-				)}
-				{page.onSeen === undefined || loudest(page.unseen) === null ? null : (
-					<button
-						type="button"
-						onClick={page.onSeen}
-						className="mr-2 cursor-pointer font-mono text-2xs text-muted leading-3 opacity-0 transition-opacity hover:text-text group-hover:opacity-100"
-					>
-						seen
-					</button>
-				)}
+				{page.open === true || page.unseen === undefined ? null : <PageMark unseen={page.unseen} />}
 				{/* a collapsed page says only *that* it is walked to: how many is one row of
 				    grey away, and two numbers side by side read as one wrong number */}
 				{page.open === true || !page.frames.some((frame) => reached.has(frame)) ? null : (
@@ -241,9 +227,7 @@ function PageBlock({
 								>
 									{frame}
 								</span>
-									{page.unseen === undefined ? null : (
-										<UnseenMark mark={page.unseen[frame] ?? null} className="ml-auto" />
-									)}
+									<FrameMark mark={page.unseen?.[frame]} className="ml-auto" />
 								{target === undefined ? null : (
 									<WalkTick
 										className={cn(
@@ -261,12 +245,20 @@ function PageBlock({
 	);
 }
 
-/** what a collapsed page shows of the unseen inside it: the louder of the two, or nothing */
-function loudest(unseen: Readonly<Record<string, Mark>> | undefined): Mark | null {
-	if (unseen === undefined) return null;
+/**
+ * What a shut page shows of the unseen inside it: the louder of the two, or the
+ * 14px it would have taken, so the counts down the rail stay in one column.
+ */
+function PageMark({ unseen }: { unseen: Readonly<Record<string, Mark>> }) {
 	const marks = Object.values(unseen);
-	if (marks.includes("new")) return "new";
-	return marks.length > 0 ? "changed" : null;
+	const loudest = marks.includes("new") ? "new" : marks.length > 0 ? "changed" : undefined;
+	return <FrameMark mark={loudest} className="mr-0.5" />;
+}
+
+/** one row's mark, or the space it would take: a name never moves when one arrives */
+function FrameMark({ mark, className }: { mark: Mark | undefined; className?: string | undefined }) {
+	if (mark === undefined) return <span aria-hidden="true" className={cn("h-3.5 w-3.5 shrink-0", className)} />;
+	return <UnseenMark mark={mark} className={className} />;
 }
 
 /** the arrow a walked-to frame wears in the tree: the canvas's own edge, one row long */

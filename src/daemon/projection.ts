@@ -6,6 +6,7 @@ import { isSafeName, pageName, pageUnder, ROOT_PAGE } from "../page-path";
 import { DEFAULT_COLS, DEFAULT_ROWS, pxForCells } from "../term/cells";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { type Footprint, readSidecar, writePlacement } from "./geometry";
+import { type Unseen, unseenNow } from "./seen";
 import { type DatedCover, scanCovers, scanDatedCovers } from "./thumbs";
 
 /**
@@ -65,6 +66,13 @@ export interface ProjectedFrame {
 	cover?: Cover;
 	/** Terminal-only cover truth; unavailable states carry the canvas message. */
 	terminalCover?: TerminalCoverState;
+	/**
+	 * Nobody has looked at this frame yet, or nobody has looked at it since its
+	 * folder last moved. Only the canvas asks for it — `listProjectFrames` leaves
+	 * it out unless a caller wants seen-state, so a shot or a play never seeds a
+	 * record for a person who is not looking at anything.
+	 */
+	unseen?: Unseen;
 }
 
 export interface FrameCollision {
@@ -363,7 +371,11 @@ export function describeCollision(name: string, paths: string[]): string {
 	return `two frames named "${name}" — ${paths.join(" and ")} — frame names are identity and must be unique across the project`;
 }
 
-export function listProjectFrames(root: string): Projection {
+/**
+ * Every frame, placed. `seen` decorates each one with whether it has been
+ * looked at since it last moved (seen.ts) — the canvas asks, the CLI does not.
+ */
+export function listProjectFrames(root: string, options: { seen?: boolean } = {}): Projection {
 	const discovery = discover(root);
 	if (discovery === undefined) return { root, pages: [], frames: [], collisions: [] };
 
@@ -405,6 +417,13 @@ export function listProjectFrames(root: string): Projection {
 	}
 
 	placed.sort((a, b) => a.name.localeCompare(b.name));
+	if (options.seen === true) {
+		const marks = unseenNow(root, discovery.frames);
+		for (const frame of placed) {
+			const mark = marks.get(frame.name);
+			if (mark !== undefined) frame.unseen = mark;
+		}
+	}
 	return { root, pages: discovery.pages, frames: placed, collisions: discovery.collisions };
 }
 

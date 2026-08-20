@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Unseen } from "../../daemon/seen";
 import type { ProjectedFrame } from "../api";
 import { cn } from "../cn";
 import { ageOf, charWeights, findFrames, newestFirst, runsIn, type Weight } from "./frame-find";
 import { pageLabel, pageOf } from "./pages";
 import { FolderIcon } from "./sidebar";
+import { UnseenMark } from "./unseen-mark";
 
 /**
  * The frame finder: press `/` on the canvas and a palette opens over the
@@ -33,17 +35,31 @@ const TONE: Record<Weight, string> = {
 	plain: "text-text",
 };
 
+/** a project whose record says nothing shows no marks and keeps no gutter */
+const EMPTY: ReadonlyMap<string, Unseen> = new Map();
+
 const VISIBLE = 10;
 const ROW = 30;
 
 export function FindPalette({
 	frames,
+	unseen = EMPTY,
 	onPick,
 	onLand,
 	onClose,
 }: {
 	/** every frame the finder may answer with, any order */
 	frames: readonly ProjectedFrame[];
+	/**
+	 * What nobody has looked at (seen.ts). The palette shows the state and never
+	 * clears it: a name in a list is not a frame, and Enter only takes you to where
+	 * it is — what happens when you get there is the canvas's rule, not this one's.
+	 *
+	 * It needed nothing invented. The empty query is already every frame newest
+	 * first, and what an agent just wrote is what is newest, so the unseen are
+	 * already the rows under the caret when the palette opens.
+	 */
+	unseen?: ReadonlyMap<string, Unseen> | undefined;
 	/** the page under the pick, so the rail can light the row holding it */
 	onPick: (page: string | null) => void;
 	onLand: (name: string) => void;
@@ -147,9 +163,16 @@ export function FindPalette({
 							className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none placeholder:text-muted/40"
 							aria-label="Find a frame"
 						/>
-						{/* an order you did not ask for has to say what it is; an order you typed does not */}
-						<span className="shrink-0 font-mono text-2xs text-muted/50 leading-3">
-							{empty ? `${fresh.length} frames, newest first` : `${hits.length} of ${fresh.length}`}
+						<span className="flex shrink-0 items-center gap-2 font-mono text-2xs leading-3">
+							{unseen.size === 0 ? null : (
+								<span className="flex items-center gap-1 text-text/80">
+									<UnseenMark mark="new" className="-mr-1" />
+									{unseen.size} unseen
+								</span>
+							)}
+							<span className="text-muted/50">
+								{empty ? `${fresh.length} frames, newest first` : `${hits.length} of ${fresh.length}`}
+							</span>
 						</span>
 					</label>
 
@@ -174,6 +197,8 @@ export function FindPalette({
 									<FindRow
 										key={hit.frame.name}
 										name={hit.frame.name}
+										mark={unseen.get(hit.frame.name)}
+										gutter={unseen.size > 0}
 										page={pageLabel(pageOf(hit.frame))}
 										matched={hit.matched}
 										index={index}
@@ -204,6 +229,8 @@ export function FindPalette({
 function FindRow({
 	name,
 	page,
+	mark,
+	gutter,
 	matched,
 	index,
 	age,
@@ -213,6 +240,9 @@ function FindRow({
 }: {
 	name: string;
 	page: string;
+	mark: Unseen | undefined;
+	/** the project has a mark somewhere, so every row keeps the 14px and the column combs straight */
+	gutter: boolean;
 	matched: readonly number[];
 	index: number;
 	/** how long ago the frame was born — printed only while the order is recency */
@@ -236,6 +266,13 @@ function FindRow({
 			style={{ height: ROW }}
 		>
 			{picked ? <span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-thread" /> : null}
+			{gutter ? (
+				mark === undefined ? (
+					<span aria-hidden="true" className="-ml-1.5 h-3.5 w-3.5 shrink-0" />
+				) : (
+					<UnseenMark mark={mark} className="-ml-1.5" />
+				)
+			) : null}
 			{/* the name, whole and in place. Only brightness moves. */}
 			<span className="min-w-0 flex-1 truncate font-mono text-sm leading-sm">
 				{runsIn(name, weights).map((run) => (

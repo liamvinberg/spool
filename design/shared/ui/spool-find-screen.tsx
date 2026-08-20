@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { FRAMES, type FrameRow, pageCounts } from "../lib/frame-find";
-import type { Mark } from "../lib/unseen-model";
 import { cn } from "../lib/utils";
 import { CanvasChrome, type PageRow } from "./spool-canvas-chrome";
 import { type FindRows, FindPalette } from "./spool-find-palette";
+import type { Mark } from "./spool-unseen-mark";
 import { SpoolShell } from "./spool-shell";
 
 /**

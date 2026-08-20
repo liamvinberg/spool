@@ -1,4 +1,6 @@
+import type { Unseen } from "../../daemon/seen";
 import { exitChordLabel } from "../../runtime/term-keys";
+import { UnseenMark } from "./unseen-mark";
 
 /** The exit binding as this platform spells it — the chip must show a chord that works here. */
 const EXIT_CHORD = exitChordLabel();
@@ -12,6 +14,7 @@ export function FrameLabel({
 	selected,
 	hovered,
 	terminal = false,
+	unseen,
 	onPlay,
 }: {
 	name: string;
@@ -23,6 +26,13 @@ export function FrameLabel({
 	hovered: boolean;
 	/** An entered terminal owns every key (#42) — the chip must show the one way out. */
 	terminal?: boolean;
+	/**
+	 * Nobody has looked at this frame, or nobody has since it moved. The mark rides
+	 * the label because the label is the one thing on the field that does not scale:
+	 * a disc painted on the frame itself shrinks with the zoom, and being zoomed out
+	 * is when you most need to know which of these is new.
+	 */
+	unseen?: Unseen | undefined;
 	/** Play this frame. Offered on the selection, where the attention already is. */
 	onPlay?: () => void;
 }) {
@@ -46,9 +56,10 @@ export function FrameLabel({
 			) : (
 				<div className="flex w-full min-w-0 items-center gap-1.5 pb-2.5">
 					{paused && <span className="shrink-0 font-mono text-2xs text-muted leading-3">▸</span>}
+					{unseen !== undefined && <UnseenMark mark={unseen} className="-ml-0.5" />}
 					<span
 						className={`min-w-0 truncate font-mono text-sm leading-4 ${
-							selected ? "text-thread" : hovered ? "text-text" : "text-muted"
+							selected ? "text-thread" : hovered || unseen !== undefined ? "text-text" : "text-muted"
 						}`}
 					>
 						{name}
