@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FRAMES, type FrameRow, pageCounts } from "../lib/frame-find";
+import type { Mark } from "../lib/unseen-model";
 import { cn } from "../lib/utils";
 import { CanvasChrome, type PageRow } from "./spool-canvas-chrome";
 import { type FindRows, FindPalette } from "./spool-find-palette";
@@ -62,15 +63,28 @@ function framesOn(page: string): readonly string[] {
 		.sort((a, b) => a.localeCompare(b));
 }
 
+/** the unseen frames of one page, so the rail and the palette read the same record */
+function unseenOn(unseen: Readonly<Record<string, Mark>>, page: string): Record<string, Mark> {
+	const mine: Record<string, Mark> = {};
+	for (const row of FRAMES) {
+		const mark = unseen[row.name];
+		if (row.page === page && mark !== undefined) mine[row.name] = mark;
+	}
+	return mine;
+}
+
 export function SpoolFindScreen({
 	rows,
 	query,
 	homeTarget,
+	unseen,
 }: {
 	rows: FindRows;
 	query?: string | undefined;
 	/** the brand lockup's walk, named by the frame so the graph reads it as a literal */
 	homeTarget?: string | undefined;
+	/** frames nobody has looked at, shown in both the palette and the rail behind it */
+	unseen?: Readonly<Record<string, Mark>> | undefined;
 }) {
 	const [pick, setPick] = useState<FrameRow | null>(null);
 
@@ -80,6 +94,7 @@ export function SpoolFindScreen({
 		active: page === "app",
 		open: page === "app",
 		lit: pick?.page === page,
+		unseen: unseen === undefined ? undefined : unseenOn(unseen, page),
 	}));
 
 	return (
@@ -88,7 +103,7 @@ export function SpoolFindScreen({
 				{FIELD.map((plate) => (
 					<Miniature key={plate.name} plate={plate} />
 				))}
-				<FindPalette rows={rows} query={query} onPick={setPick} />
+				<FindPalette rows={rows} query={query} onPick={setPick} unseen={unseen} />
 			</CanvasChrome>
 		</SpoolShell>
 	);

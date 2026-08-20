@@ -11,8 +11,10 @@ import {
 	splitVariant,
 	type Weight,
 } from "../lib/frame-find";
+import type { Mark } from "../lib/unseen-model";
 import { cn } from "../lib/utils";
 import { FolderIcon } from "./spool-icons";
+import { UnseenMark } from "./spool-unseen-mark";
 
 /**
  * The frame finder: press `/` on the canvas and a palette opens over it, filtering
@@ -78,12 +80,20 @@ export function FindPalette({
 	rows,
 	query: opening = "",
 	onPick,
+	unseen,
 }: {
 	rows: FindRows;
 	/** what is already typed when the frame boots; empty is the just-summoned state */
 	query?: string | undefined;
 	/** the row under the pick, so the canvas can light the page holding it */
 	onPick?: ((row: FrameRow | null) => void) | undefined;
+	/**
+	 * What you have not looked at, by frame name. The palette shows the state and
+	 * never clears it: reading a name in a list is not reading the frame, and Enter
+	 * only takes you to where it is — what happens when you get there is the
+	 * canvas's rule, not this one's.
+	 */
+	unseen?: Readonly<Record<string, Mark>> | undefined;
 }) {
 	const [query, setQuery] = useState(opening);
 	const [at, setAt] = useState(0);
@@ -166,8 +176,16 @@ export function FindPalette({
 						aria-label="Find a frame"
 					/>
 					{/* an order you did not ask for has to say what it is; an order you typed does not */}
-					<span className="shrink-0 font-mono text-2xs text-muted/50 leading-3">
-						{empty ? `${FRAMES.length} frames, newest first` : `${hits.length} of ${FRAMES.length}`}
+					<span className="flex shrink-0 items-center gap-2 font-mono text-2xs leading-3">
+						{unseen === undefined || Object.keys(unseen).length === 0 ? null : (
+							<span className="flex items-center gap-1 text-text/80">
+								<UnseenMark mark="new" className="-mr-1" />
+								{Object.keys(unseen).length} unseen
+							</span>
+						)}
+						<span className="text-muted/50">
+							{empty ? `${FRAMES.length} frames, newest first` : `${hits.length} of ${FRAMES.length}`}
+						</span>
 					</span>
 				</label>
 
@@ -188,6 +206,7 @@ export function FindPalette({
 								<Row
 									key={hit.row.name}
 									hit={hit}
+									mark={unseen === undefined ? undefined : (unseen[hit.row.name] ?? null)}
 									index={index}
 									rows={rows}
 									grid={grid}
@@ -218,6 +237,7 @@ export function FindPalette({
 
 function Row({
 	hit,
+	mark,
 	index,
 	rows,
 	grid,
@@ -229,6 +249,12 @@ function Row({
 	onLand,
 }: {
 	hit: Hit;
+	/**
+	 * `undefined` is a project with no seen-record, which is every shipped take and
+	 * draws no gutter at all; `null` is a record that says you have seen this one,
+	 * and keeps the empty 14px so the column of names does not comb.
+	 */
+	mark: Mark | null | undefined;
 	index: number;
 	rows: FindRows;
 	grid: Grid | null;
@@ -256,6 +282,7 @@ function Row({
 			style={{ height: ROW }}
 		>
 			{picked ? <span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-thread" /> : null}
+			{mark === undefined ? null : <UnseenMark mark={mark} className="-ml-1.5" />}
 			{rows === "dim" ? (
 				<Dim name={hit.row.name} weights={weights} />
 			) : rows === "tail" ? (
