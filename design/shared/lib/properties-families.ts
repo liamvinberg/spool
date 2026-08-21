@@ -394,7 +394,7 @@ export function parseTyped(kind: Kind, typed: string): { value: string; negative
 				if (unit === "s") return { value: String(Math.round(n * 1000)), negative: false };
 				return null;
 			case "px":
-				if (unit === undefined || unit === "px") return { value: String(n), negative: false };
+				if (unit === undefined || unit === "px") return Number.isInteger(n) ? { value: String(n), negative: false } : { value: `[${n}px]`, negative: false };
 				return { value: `[${n}${unit}]`, negative: false };
 		}
 	}
@@ -532,14 +532,43 @@ export interface Colour {
 	from: string;
 }
 
-/** `bg-thread/50` into its parts; null when the token is not a colour on this prefix */
+/** a raw CSS colour the class can carry in brackets: `#ff0044`, `oklch(63% 0.2 25)`, `var(--x)` */
+export function arbitraryColour(text: string): string | null {
+	const paint = text.trim();
+	if (/^#[0-9a-fA-F]{3,8}$/.test(paint)) return paint;
+	if (/^(rgb|rgba|hsl|hsla|oklch|oklab|lab|lch|color|color-mix|var)\(/.test(paint)) return paint;
+	return null;
+}
+
+/** `bg-thread/50` or `bg-[#ff0044]/50` into its parts; null when the token is not a colour on this prefix */
 export function colourOfToken(base: string, prefix: string): { name: string; alpha: number | null; paint: string; from: string } | null {
 	if (!base.startsWith(`${prefix}-`)) return null;
 	const rest = base.slice(prefix.length + 1);
-	const slash = rest.indexOf("/");
+	let slash = -1;
+	let depth = 0;
+	for (let at = 0; at < rest.length; at += 1) {
+		const ch = rest[at];
+		if (ch === "[" || ch === "(") depth += 1;
+		if (ch === "]" || ch === ")") depth -= 1;
+		if (ch === "/" && depth === 0) {
+			slash = at;
+			break;
+		}
+	}
 	const name = slash === -1 ? rest : rest.slice(0, slash);
 	const found = COLOUR_BY_NAME.get(name);
-	if (found === undefined) return null;
+	let paint: string;
+	let from: string;
+	if (found !== undefined) {
+		paint = found.paint;
+		from = found.from;
+	} else {
+		const bracket = /^\[(.+)\]$/.exec(name);
+		const raw = bracket?.[1] === undefined ? null : arbitraryColour(bracket[1].replace(/_/g, " "));
+		if (raw === null) return null;
+		paint = raw;
+		from = "arbitrary";
+	}
 	let alpha: number | null = null;
 	if (slash !== -1) {
 		const raw = rest.slice(slash + 1);
@@ -549,7 +578,7 @@ export function colourOfToken(base: string, prefix: string): { name: string; alp
 		else if (bracket?.[1] !== undefined) alpha = Number(bracket[1]);
 		else return null;
 	}
-	return { name, alpha, paint: found.paint, from: found.from };
+	return { name, alpha, paint, from };
 }
 
 export function paintWith(paint: string, alpha: number | null): string {
@@ -1449,6 +1478,7 @@ export function compiles(token: string): Compiled {
 		if (option !== undefined) return { ok: true, css: css(option) };
 	}
 	if (/^leading-\d+$/.test(base)) return { ok: true, css: `line-height: ${Number(base.slice("leading-".length)) * STEP}px` };
+	if (/^leading-\[.+\]$/.test(base)) return { ok: true, css: `line-height: ${base.slice(9, -1).replace(/_/g, " ")}` };
 	if (/^text-\[.+\]$/.test(base)) return { ok: true, css: `font-size: ${base.slice(6, -1).replace(/_/g, " ")}` };
 	if (/^font-\[.+\]$/.test(base)) return { ok: true, css: `font-family: ${base.slice(6, -1).replace(/_/g, " ")}` };
 	if (/^content-\[.+\]$/.test(base)) return { ok: true, css: `content: ${base.slice(9, -1).replace(/_/g, " ")}` };

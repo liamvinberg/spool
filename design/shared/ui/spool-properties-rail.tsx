@@ -1,6 +1,7 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
 	anatomyOf,
+	arbitraryColour,
 	borderColoursOf,
 	borderWidthsOf,
 	COLOUR_NAMES,
@@ -32,6 +33,7 @@ import {
 	parseTyped,
 	RADII,
 	radiusValue,
+	sameScope,
 	type Scope,
 	scopeKey,
 	scopesOf,
@@ -222,7 +224,16 @@ function Panel({ reading, acts, shape }: { reading: Reading; acts: Acts; shape: 
 	const { element } = reading;
 	const scopes = scopesOf(reading.className);
 	for (const extra of extraScopes) if (!scopes.some((known) => scopeKey(known) === scopeKey(extra))) scopes.push(extra);
-	const live = shape.variants === "bar" ? scope : [];
+	// a scope that is emptied disappears: an added-but-never-filled one stays until it is filled or removed
+	const before = useRef(reading.className);
+	useEffect(() => {
+		const prev = before.current;
+		if (prev === reading.className) return;
+		before.current = reading.className;
+		setExtraScopes((held) => held.filter((extra) => inScope(reading.className, extra) !== "" || inScope(prev, extra) === ""));
+	}, [reading.className]);
+	const known = scope.length === 0 || scopes.some((candidate) => scopeKey(candidate) === scopeKey(scope));
+	const live = shape.variants === "bar" && known ? scope : [];
 	const view: View = {
 		reading,
 		element,
@@ -240,7 +251,18 @@ function Panel({ reading, acts, shape }: { reading: Reading; acts: Acts; shape: 
 		<>
 			<Head reading={reading} acts={acts} />
 			{shape.variants === "bar" && !isFrame ? (
-				<ScopeBar scopes={scopes} scope={scope} ok={literalVerdict(element).ok} onScope={setScope} onAdd={(next) => setExtraScopes((held) => [...held, next])} />
+				<ScopeBar
+					scopes={scopes}
+					scope={live}
+					ok={literalVerdict(element).ok}
+					onScope={setScope}
+					onAdd={(next) => setExtraScopes((held) => [...held, next])}
+					onRemove={(gone) => {
+						acts.setClass(element.id, (className) => split(className).filter((token) => !sameScope(anatomyOf(token).variants, gone)).join(" "));
+						setExtraScopes((held) => held.filter((extra) => scopeKey(extra) !== scopeKey(gone)));
+						setScope([]);
+					}}
+				/>
 			) : null}
 			<div className="min-h-0 flex-1 overflow-y-auto [&>div:first-child]:border-t-0">
 				{isFrame ? <FramePosition view={view} /> : <PositionSection view={view} />}
@@ -299,12 +321,15 @@ function ScopeBar({
 	ok,
 	onScope,
 	onAdd,
+	onRemove,
 }: {
 	scopes: readonly Scope[];
 	scope: Scope;
 	ok: boolean;
 	onScope: (scope: Scope) => void;
 	onAdd: (scope: Scope) => void;
+	/** drop every token under this scope and return to the base */
+	onRemove: (scope: Scope) => void;
 }) {
 	const options: Option[] = VARIANTS.filter((variant) => !scopes.some((known) => scopeKey(known) === `${variant.prefix}:`)).map((variant) => ({
 		token: variant.prefix,
@@ -317,7 +342,20 @@ function ScopeBar({
 			{scopes.map((candidate) => {
 				const on = scopeKey(candidate) === scopeKey(scope);
 				return (
-					<Chip key={scopeKey(candidate)} on={on} ok={ok} label={scopeKey(candidate)} onChange={() => onScope(candidate)} />
+					<span key={scopeKey(candidate)} className="flex shrink-0 items-center">
+						<Chip on={on} ok={ok} label={scopeKey(candidate)} onChange={() => onScope(candidate)} />
+						{on && ok && candidate.length > 0 ? (
+							<button
+								type="button"
+								aria-label={`remove ${scopeKey(candidate)}`}
+								title={`remove every ${scopeKey(candidate)} token`}
+								onClick={() => onRemove(candidate)}
+								className={cn("shrink-0 cursor-pointer rounded-xs px-0.5 text-muted/50 hover:text-text", VALUE)}
+							>
+								×
+							</button>
+						) : null}
+					</span>
 				);
 			})}
 			<span className="w-[60px] shrink-0">
@@ -501,6 +539,14 @@ const COLOUR_OPTIONS: readonly Option[] = COLOUR_NAMES.map((colour) => ({
 	group: colour.from,
 }));
 
+/** the unlink: a raw colour typed into the menu becomes a bracket value, `#ff0044` → `[#ff0044]` */
+function colourTyped(typed: string): Option | null {
+	const paint = arbitraryColour(typed);
+	if (paint === null) return null;
+	const token = `[${typed.trim().replace(/\s+/g, "_")}]`;
+	return { token, name: token, swatch: paint, group: "arbitrary" };
+}
+
 /** the swatch, the name out of the compiled theme, and the alpha after the slash */
 function ColourRow({
 	name,
@@ -542,6 +588,7 @@ function ColourRow({
 				faint={own.token === null}
 				changed={view.fresh(own.token)}
 				filter
+				arbitrary={colourTyped}
 				onPick={(picked) => write(picked, shown.alpha)}
 			/>
 			<AlphaField alpha={shown.alpha} ok={ok && shown.name !== null} faint={own.token === null} onCommit={(alpha) => write(shown.name, alpha)} />
@@ -576,20 +623,29 @@ function AlphaField({ alpha, ok, faint, onCommit }: { alpha: number | null; ok: 
 
 /* ---------- a word row and a theme row ---------- */
 
+/**
+ * The remove is the `unset` option: it drops the token and the fallback reads
+ * again. `clear` names the token that says the CSS initial value; picking it at
+ * the base drops the token too (the fewest tokens), while under a scope it
+ * writes the explicit override (`md:overflow-visible`).
+ */
 function WordRow({ name, word, view, ok, fallback, clear }: { name: string; word: keyof typeof WORDS; view: View; ok: boolean; fallback: string; clear?: string }) {
 	const own = wordOf(view.scoped, word);
 	const inherited = own === null && view.scope.length > 0 ? wordOf(view.base, word) : null;
 	const shown = own ?? inherited;
-	const options: Option[] = WORDS[word].options.map((option) => ({ token: option.token, name: option.token, value: option.says === option.token ? "" : option.says }));
+	const options: Option[] = [
+		{ token: null, name: "unset" },
+		...WORDS[word].options.map((option) => ({ token: option.token, name: option.token, value: option.says === option.token ? "" : option.says })),
+	];
 	return (
 		<Row name={name} ok={ok} changed={view.fresh(own)}>
 			<Menu
-				current={options.find((option) => option.token === shown) ?? { token: null, name: fallback }}
+				current={shown === null ? { token: null, name: fallback } : (options.find((option) => option.token === shown) ?? { token: null, name: fallback })}
 				options={options}
 				ok={ok}
 				faint={own === null}
 				changed={view.fresh(own)}
-				onPick={(token) => view.set((held) => withWord(held, word, token === clear ? null : token))}
+				onPick={(token) => view.set((held) => withWord(held, word, token === clear && view.scope.length === 0 ? null : token))}
 			/>
 		</Row>
 	);
@@ -599,9 +655,40 @@ function themeOptions(options: readonly ThemeOption[]): Option[] {
 	return options.map((option) => ({ token: option.token, name: option.token, value: option.value, group: option.from }));
 }
 
-function ThemeRow({ name, options, view, ok, fallback }: { name: string; options: readonly ThemeOption[]; view: View; ok: boolean; fallback: Option }) {
-	const own = themeOf(view.scoped, options);
-	const inherited = own === null && view.scope.length > 0 ? themeOf(view.base, options) : null;
+/** the unlink half of a theme row: how its arbitrary token reads, and what typed text becomes */
+interface ThemeArbitrary {
+	/** the value a worn arbitrary token says, `text-[15px]` → `15px`; null when the base is not this row's */
+	read: (base: string) => string | null;
+	/** typed text as an option, offered first in the menu */
+	make: (typed: string) => Option | null;
+}
+
+function arbitraryWorn(scoped: string, arbitrary: ThemeArbitrary | undefined): ThemeOption | null {
+	if (arbitrary === undefined) return null;
+	for (const token of split(scoped)) {
+		const base = anatomyOf(token).base;
+		const value = arbitrary.read(base);
+		if (value !== null) return { token: base, value, from: "default" };
+	}
+	return null;
+}
+
+/** withTheme, counting the row's arbitrary token as swappable too */
+function swapTheme(scoped: string, options: readonly ThemeOption[], arbitrary: ThemeArbitrary | undefined, token: string | null): string {
+	const set = new Set(options.map((option) => option.token));
+	const list = split(scoped);
+	const at = list.findIndex((candidate) => {
+		const base = anatomyOf(candidate).base;
+		return set.has(base) || (arbitrary !== undefined && arbitrary.read(base) !== null);
+	});
+	if (at === -1) return token === null ? list.join(" ") : [...list, token].join(" ");
+	if (token === null) return list.filter((_, index) => index !== at).join(" ");
+	return list.map((candidate, index) => (index === at ? token : candidate)).join(" ");
+}
+
+function ThemeRow({ name, options, view, ok, fallback, arbitrary }: { name: string; options: readonly ThemeOption[]; view: View; ok: boolean; fallback: Option; arbitrary?: ThemeArbitrary }) {
+	const own = themeOf(view.scoped, options) ?? arbitraryWorn(view.scoped, arbitrary);
+	const inherited = own === null && view.scope.length > 0 ? (themeOf(view.base, options) ?? arbitraryWorn(view.base, arbitrary)) : null;
 	const shown = own ?? inherited;
 	return (
 		<Row name={name} ok={ok} changed={view.fresh(own?.token ?? null)}>
@@ -612,7 +699,8 @@ function ThemeRow({ name, options, view, ok, fallback }: { name: string; options
 				faint={own === null}
 				changed={view.fresh(own?.token ?? null)}
 				filter={options.length > 8}
-				onPick={(token) => view.set((held) => withTheme(held, options, token))}
+				arbitrary={arbitrary?.make}
+				onPick={(token) => view.set((held) => swapTheme(held, options, arbitrary, token))}
 			/>
 		</Row>
 	);
@@ -751,7 +839,7 @@ function SizeSection({ view }: { view: View }) {
 						name={axis === "w" ? "width" : "height"}
 						family={axis}
 						view={view}
-						ok={verdict.ok && (mode === "fixed" || view.scope.length > 0)}
+						ok={verdict.ok}
 						measured={measured}
 						fallback={`${measured}px`}
 						placeholder={mode === "fill" ? (lengthOf(view.base, axis) === null ? "flex-1" : `${axis}-full`) : "auto"}
@@ -874,7 +962,9 @@ function FoldRows({
 							changed={fresh}
 							onCommit={(typed) => {
 								const text = typed.trim();
-								if (text === "" || text === "0") return put(null);
+								if (text === "") return put(null);
+								// a zero at the base is the fewest tokens: none; under a scope it is the override, `md:p-0`
+								if (text === "0") return put(view.scope.length === 0 ? null : "0");
 								const next = parseTyped("spacing", text);
 								if (next === null || (next.negative && !signed)) return;
 								put(`${next.negative ? "-" : ""}${next.value}`);
@@ -974,7 +1064,7 @@ function LayoutSection({ view }: { view: View }) {
 			) : null}
 			<FoldRows view={view} ok={spacing.ok} names={PADDING_NAMES} read={paddingOf} write={withPadding} freshWhen={/^p[xytrblse]?-/} />
 			<FoldRows view={view} ok={words.ok} names={MARGIN_NAMES} read={marginOf} write={withMargin} signed freshWhen={/^m[xytrblse]?-/} />
-			<WordRow name="overflow" word="overflow" view={view} ok={words.ok} fallback="visible" />
+			<WordRow name="overflow" word="overflow" view={view} ok={words.ok} fallback="visible" clear="overflow-visible" />
 			{scrolls ? <ToggleRow set={SNAP_SET} view={view} ok={words.ok} /> : null}
 		</Section>
 	);
@@ -982,11 +1072,11 @@ function LayoutSection({ view }: { view: View }) {
 
 
 function WordMenu({ word, own, base, view, ok, fallback }: { word: "align" | "justify"; own: string | null; base: string | null; view: View; ok: boolean; fallback: string }) {
-	const options: Option[] = WORDS[word].options.map((option) => ({ token: option.token, name: option.token }));
+	const options: Option[] = [{ token: null, name: "unset" }, ...WORDS[word].options.map((option) => ({ token: option.token, name: option.token }))];
 	const shown = own ?? base;
 	return (
 		<Menu
-			current={options.find((option) => option.token === shown) ?? { token: null, name: fallback }}
+			current={shown === null ? { token: null, name: fallback } : (options.find((option) => option.token === shown) ?? { token: null, name: fallback })}
 			options={options}
 			ok={ok}
 			faint={own === null}
@@ -1007,6 +1097,14 @@ const CORNERS: readonly { name: string; corner: Corner }[] = [
 ];
 
 const RADIUS_OPTIONS: readonly Option[] = RADII.map((radius) => ({ token: radius.suffix, name: radius.suffix === "" ? "rounded" : `rounded-${radius.suffix}`, value: radius.value, group: radius.from }));
+
+/** `rounded-[13px]`: an off-scale radius typed straight in; the token is the suffix */
+function radiusTyped(typed: string): Option | null {
+	const found = /^(\d+(?:\.\d+)?)(px|%)?$/.exec(typed.trim());
+	if (found?.[1] === undefined) return null;
+	const suffix = `[${found[1]}${found[2] ?? "px"}]`;
+	return { token: suffix, name: `rounded-${suffix}`, value: `${found[1]}${found[2] ?? "px"}`, group: "arbitrary" };
+}
 
 function AppearanceSection({ view }: { view: View }) {
 	const { element } = view;
@@ -1037,11 +1135,15 @@ function AppearanceSection({ view }: { view: View }) {
 					ok={verdict.ok}
 					faint={ownSuffix === null}
 					changed={token !== null && view.fresh(token)}
+					filter
+					arbitrary={radiusTyped}
 					onPick={(picked) =>
 						view.set((held) => {
+							// at the base a null drops the tokens; under a scope it writes the explicit `rounded-none`
+							const next = picked === null && view.scope.length > 0 ? "none" : picked;
 							const now = cornersOf(held);
-							if (corner === "all") return withCorners(held, { tl: picked, tr: picked, br: picked, bl: picked });
-							return withCorners(held, { ...now, [corner]: picked });
+							if (corner === "all") return withCorners(held, { tl: next, tr: next, br: next, bl: next });
+							return withCorners(held, { ...now, [corner]: next });
 						})
 					}
 				/>
@@ -1057,16 +1159,14 @@ function AppearanceSection({ view }: { view: View }) {
 				? CORNERS.map((entry, index) => radiusMenu(entry.corner, entry.name, index === 0 ? <Fold open ok={verdict.ok && even} onToggle={() => setCorners(false)} /> : null))
 				: radiusMenu("all", "border-radius", <Fold open={false} ok={verdict.ok} onToggle={() => setCorners(true)} />)}
 			<Row name="box-shadow" ok={verdict.ok} changed={view.fresh(shadow?.token ?? null)}>
-				{shadow === null ? (
-					<span className={cn("min-w-0 flex-1 truncate px-1 text-muted/55", VALUE)}>none</span>
-				) : (
-					<Menu
-						current={{ token: shadow.token, name: shadow.token, value: shadow.value }}
-						options={[{ token: null, name: "shadow-none", value: "none" }, ...themeOptions(SHADOWS)]}
-						ok={verdict.ok}
-						onPick={(token) => view.set((held) => withTheme(held, SHADOWS, token))}
-					/>
-				)}
+				<Menu
+					current={shadow === null ? { token: null, name: "none" } : { token: shadow.token, name: shadow.token, value: shadow.value }}
+					options={[{ token: null, name: "shadow-none", value: "none" }, ...themeOptions(SHADOWS)]}
+					ok={verdict.ok}
+					faint={shadow === null}
+					changed={view.fresh(shadow?.token ?? null)}
+					onPick={(token) => view.set((held) => withTheme(held, SHADOWS, token))}
+				/>
 			</Row>
 			{opened ? (
 				<>
@@ -1123,6 +1223,7 @@ function FillSection({ view, shape }: { view: View; shape: Shape }) {
 					ok={verdict.ok}
 					faint={stop.colour === null}
 					filter
+					arbitrary={colourTyped}
 					onPick={(name) =>
 						write({
 							...gradient,
@@ -1430,6 +1531,30 @@ function StrokeSection({ view }: { view: View }) {
 
 /* ---------- text ---------- */
 
+/** `text-[15px]`: an off-scale size typed straight in, read back off the literal */
+const SIZE_ARBITRARY: ThemeArbitrary = {
+	read: (base) => /^text-\[(\d.*)\]$/.exec(base)?.[1] ?? null,
+	make: (typed) => {
+		const text = typed.trim();
+		if (!/^\d+(?:\.\d+)?(px|rem|em)$/.test(text)) return null;
+		return { token: `text-[${text}]`, name: `text-[${text}]`, value: text, group: "arbitrary" };
+	},
+};
+
+const LEADING_ARBITRARY: ThemeArbitrary = {
+	read: (base) => {
+		const bracket = /^leading-\[(.+)\]$/.exec(base);
+		if (bracket?.[1] !== undefined) return bracket[1];
+		const bare = /^leading-(\d+(?:\.\d+)?)$/.exec(base);
+		return bare?.[1] === undefined ? null : `${Number(bare[1]) * 4}px`;
+	},
+	make: (typed) => {
+		const text = typed.trim();
+		if (!/^\d+(?:\.\d+)?(px|rem|em)?$/.test(text)) return null;
+		return { token: `leading-[${text}]`, name: `leading-[${text}]`, value: text, group: "arbitrary" };
+	},
+};
+
 function TextSection({ view }: { view: View }) {
 	const { element, reading, acts } = view;
 	const verdict = literalVerdict(element);
@@ -1445,9 +1570,9 @@ function TextSection({ view }: { view: View }) {
 				</Row>
 			)}
 			<ThemeRow name="font-family" options={FONTS} view={view} ok={verdict.ok} fallback={{ token: null, name: "inherit", value: "Familjen Grotesk" }} />
-			<ThemeRow name="font-size" options={TEXT_SIZES} view={view} ok={verdict.ok} fallback={{ token: null, name: "inherit", value: "13px" }} />
+			<ThemeRow name="font-size" options={TEXT_SIZES} view={view} ok={verdict.ok} fallback={{ token: null, name: "inherit", value: "13px" }} arbitrary={SIZE_ARBITRARY} />
 			<ThemeRow name="font-weight" options={WEIGHTS} view={view} ok={verdict.ok} fallback={{ token: null, name: "inherit", value: "400" }} />
-			<ThemeRow name="line-height" options={LEADINGS} view={view} ok={verdict.ok} fallback={{ token: null, name: "inherit", value: "" }} />
+			<ThemeRow name="line-height" options={LEADINGS} view={view} ok={verdict.ok} fallback={{ token: null, name: "inherit", value: "" }} arbitrary={LEADING_ARBITRARY} />
 			<ThemeRow name="letter-spacing" options={TRACKINGS} view={view} ok={verdict.ok} fallback={{ token: null, name: "inherit", value: "0em" }} />
 			<Row name="text-align" ok={words.ok} changed={view.fresh(wordOf(view.scoped, "textAlign"))}>
 				<IconField
@@ -1537,9 +1662,21 @@ function SourceSection({ view }: { view: View }) {
 						list.map((token, index) => {
 							const anatomy = anatomyOf(token);
 							const inScopeNow = view.scope.length === 0 || (anatomy.variants.length > 0 && scopeKey(anatomy.variants) === scopeKey(view.scope));
+							const colour = reading.original.has(token) ? (inScopeNow ? "text-muted" : "text-muted/40") : "text-thread";
 							return (
-								<span key={`${token}-${index}`} className={cn(reading.original.has(token) ? (inScopeNow ? "text-muted" : "text-muted/40") : "text-thread")}>
-									{token}
+								<span key={`${token}-${index}`}>
+									{verdict.ok ? (
+										<button
+											type="button"
+											title={`remove ${token}`}
+											onClick={() => acts.setClass(element.id, (className) => split(className).filter((_, at) => at !== index).join(" "))}
+											className={cn("cursor-pointer break-all text-left hover:text-text hover:line-through", colour)}
+										>
+											{token}
+										</button>
+									) : (
+										<span className={colour}>{token}</span>
+									)}
 									{index < list.length - 1 ? " " : ""}
 								</span>
 							);

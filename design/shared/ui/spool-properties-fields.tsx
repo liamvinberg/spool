@@ -189,6 +189,7 @@ export function Menu({
 	changed = false,
 	faint = false,
 	filter = false,
+	arbitrary,
 	onPick,
 	className,
 }: {
@@ -200,6 +201,8 @@ export function Menu({
 	faint?: boolean;
 	/** a long list gets a type-to-find line at the top */
 	filter?: boolean;
+	/** what typed text becomes when no option matches it: an arbitrary-value option, offered first */
+	arbitrary?: ((typed: string) => Option | null) | undefined;
 	onPick: (token: string | null) => void;
 	className?: string;
 }) {
@@ -211,7 +214,9 @@ export function Menu({
 	const listRef = useRef<HTMLDivElement | null>(null);
 	const inputRef = useRef<HTMLInputElement | null>(null);
 
-	const shown = typed === "" ? options : options.filter((option) => option.name.includes(typed) || option.value?.includes(typed) === true);
+	const matched = typed === "" ? options : options.filter((option) => option.name.includes(typed) || option.value?.includes(typed) === true);
+	const extra = filter && typed !== "" && arbitrary !== undefined ? arbitrary(typed) : null;
+	const shown = extra === null || matched.some((option) => option.token === extra.token) ? matched : [extra, ...matched];
 
 	useEffect(() => {
 		if (!open) return;
