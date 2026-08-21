@@ -313,7 +313,7 @@ function ScopeBar({
 		group: variant.group,
 	}));
 	return (
-		<div className="flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-border border-b px-2.5">
+		<div className="flex min-h-8 shrink-0 flex-wrap items-center gap-1 border-border border-b px-2.5 py-1.5">
 			{scopes.map((candidate) => {
 				const on = scopeKey(candidate) === scopeKey(scope);
 				return (
