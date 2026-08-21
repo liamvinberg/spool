@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { stylesheetFor } from "../lib/properties-families";
-import { ELEMENTS, elementOf, pxValue, sizeVerdict, spacingVerdict, textVerdict, valuePx, withToken, wordVerdict } from "../lib/properties-model";
+import { ELEMENTS, elementOf, pxValue, sizeVerdict, spacingVerdict, textVerdict, withToken, wordVerdict } from "../lib/properties-model";
 import { cn } from "../lib/utils";
 import { CanvasChrome, type PageRow } from "./spool-canvas-chrome";
 import { PropertiesCart } from "./spool-properties-cart";
@@ -15,7 +15,10 @@ import { SpoolShell } from "./spool-shell";
  * the stylesheet the mock needs for classes the served one never saw.
  *
  * Click an element to select it; click a crumb, or press Esc, to climb. A
- * writable edge grows a knob; drag it and the class changes under the pointer.
+ * writable edge grows a knob, two writable axes grow the corner; drag one and
+ * the class changes under the pointer. The right and bottom edges are the whole
+ * honest set: a flow element owns no x or y, so a top or left handle could only
+ * write the same width and the box would jump to wherever layout puts it.
  * Spliced tokens read in thread colour on the source line. ⌘Z undoes.
  */
 
@@ -32,11 +35,10 @@ const LABEL_H = 22;
 interface Drag {
 	id: string;
 	key: string;
-	axis: "w" | "h";
-	startPx: number;
-	startAt: number;
-	other: number;
-	live: number;
+	/** an edge drags one axis, the corner both */
+	axis: "w" | "h" | "wh";
+	start: { w: number; h: number; x: number; y: number };
+	live: { w: number; h: number };
 }
 
 type Snapshot = { classes: Record<string, string>; texts: Record<string, string>; frame: Geometry };
@@ -160,40 +162,52 @@ export function PropertiesScreen({ shape = DEFAULT_SHAPE }: { shape?: Shape }) {
 
 	/* ---------- the drag: the class moves under the pointer ---------- */
 
-	const startDrag = (pick: Pick, axis: "w" | "h", event: React.PointerEvent) => {
+	const startDrag = (pick: Pick, axis: "w" | "h" | "wh", event: React.PointerEvent) => {
 		const box = boxes.get(`${pick.id}:${pick.key}`);
 		if (box === undefined) return;
 		event.preventDefault();
 		event.stopPropagation();
 		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-		const startPx = axis === "w" ? box.w : box.h;
 		stateBeforeDrag.current = state;
-		setDrag({ id: pick.id, key: pick.key, axis, startPx, startAt: axis === "w" ? event.clientX : event.clientY, other: axis === "w" ? box.h : box.w, live: startPx });
+		setDrag({
+			id: pick.id,
+			key: pick.key,
+			axis,
+			start: { w: box.w, h: box.h, x: event.clientX, y: event.clientY },
+			live: { w: Math.round(box.w), h: Math.round(box.h) },
+		});
 	};
 
-	const applyDrag = (snapshot: Snapshot, current: Drag, value: string | number): Snapshot => {
+	/** mid-drag the pixels stay absolute; letting go rounds each axis onto the scale */
+	const applyDrag = (snapshot: Snapshot, current: Drag, live: { w: number; h: number }, final: boolean): Snapshot => {
 		if (current.id === "screen") {
-			const px = typeof value === "number" ? value : (valuePx(value) ?? current.live);
-			return { ...snapshot, frame: { ...snapshot.frame, [current.axis]: px } };
+			const frame = { ...snapshot.frame };
+			if (current.axis !== "h") frame.w = live.w;
+			if (current.axis !== "w") frame.h = live.h;
+			return { ...snapshot, frame };
 		}
-		const token = typeof value === "number" ? `[${value}px]` : value;
-		return { ...snapshot, classes: { ...snapshot.classes, [current.id]: withToken(snapshot.classes[current.id] ?? null, current.axis, token) } };
+		let className = snapshot.classes[current.id] ?? null;
+		if (current.axis !== "h") className = withToken(className, "w", final ? pxValue(live.w) : `[${live.w}px]`);
+		if (current.axis !== "w") className = withToken(className, "h", final ? pxValue(live.h) : `[${live.h}px]`);
+		return { ...snapshot, classes: { ...snapshot.classes, [current.id]: className } };
 	};
 
 	const moveDrag = (event: React.PointerEvent) => {
 		if (drag === null) return;
-		const delta = (drag.axis === "w" ? event.clientX : event.clientY) - drag.startAt;
-		const live = Math.max(8, Math.round(drag.startPx + delta));
-		if (live === drag.live) return;
+		const live = {
+			w: drag.axis === "h" ? drag.live.w : Math.max(8, Math.round(drag.start.w + event.clientX - drag.start.x)),
+			h: drag.axis === "w" ? drag.live.h : Math.max(8, Math.round(drag.start.h + event.clientY - drag.start.y)),
+		};
+		if (live.w === drag.live.w && live.h === drag.live.h) return;
 		const next = { ...drag, live };
 		setDrag(next);
-		setState((snapshot) => applyDrag(snapshot, next, live));
+		setState((snapshot) => applyDrag(snapshot, next, live, false));
 	};
 
 	const endDrag = () => {
 		if (drag === null) return;
 		const before = stateBeforeDrag.current;
-		setState((snapshot) => applyDrag(snapshot, drag, drag.id === "screen" ? drag.live : pxValue(drag.live)));
+		setState((snapshot) => applyDrag(snapshot, drag, drag.live, true));
 		if (before !== null) setHistory((stack) => [...stack, before]);
 		stateBeforeDrag.current = null;
 		setDrag(null);
@@ -287,7 +301,7 @@ function Overlay({
 	hover: Pick | null;
 	selection: Pick | null;
 	drag: Drag | null;
-	onKnob: (pick: Pick, axis: "w" | "h", event: React.PointerEvent) => void;
+	onKnob: (pick: Pick, axis: "w" | "h" | "wh", event: React.PointerEvent) => void;
 	onKnobMove: (event: React.PointerEvent) => void;
 	onKnobUp: () => void;
 }) {
@@ -346,15 +360,24 @@ function Overlay({
 							style={{ left: selected.x + selected.w / 2 - 6, top: selected.y + selected.h - 4 + (isFrame ? 3 : 0) }}
 						/>
 					) : null}
+					{wOk && hOk ? (
+						<span
+							onPointerDown={(event) => onKnob(selection, "wh", event)}
+							onPointerMove={onKnobMove}
+							onPointerUp={onKnobUp}
+							className="pointer-events-auto absolute h-3 w-3 cursor-nwse-resize rounded-[1.5px] border-[1.5px] border-thread bg-on-thread"
+							style={{ left: selected.x + selected.w - 4 + (isFrame ? 3 : 0), top: selected.y + selected.h - 4 + (isFrame ? 3 : 0) }}
+						/>
+					) : null}
 					{drag === null ? null : (
 						<span
 							className="absolute whitespace-nowrap rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3"
 							style={{
-								left: drag.axis === "w" ? selected.x + selected.w + 12 : selected.x + selected.w / 2 + 12,
+								left: drag.axis === "w" ? selected.x + selected.w + 12 : drag.axis === "h" ? selected.x + selected.w / 2 + 12 : selected.x + selected.w + 12,
 								top: drag.axis === "w" ? selected.y + selected.h / 2 - 9 : selected.y + selected.h + 10,
 							}}
 						>
-							{drag.axis === "w" ? `${drag.live} × ${Math.round(drag.other)}` : `${Math.round(drag.other)} × ${drag.live}`}
+							{`${drag.live.w} × ${drag.live.h}`}
 						</span>
 					)}
 				</>
