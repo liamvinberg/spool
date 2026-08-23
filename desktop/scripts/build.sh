@@ -34,7 +34,11 @@ VERSION="$VERSION" "$ROOT/scripts/bundle-cli.sh"
 
 BUILDER=(./node_modules/.bin/electron-builder --mac "-c.extraMetadata.version=$VERSION")
 if [ "$SIGN_IDENTITY" != "-" ]; then
-	BUILDER+=("-c.mac.identity=$SIGN_IDENTITY")
+	# electron-builder takes the certificate's name without its type prefix and
+	# picks the Developer ID Application certificate by that name itself; handed
+	# the full identity string it refuses to build. codesign, below, wants the
+	# full string, so SIGN_IDENTITY keeps it and only this argument is trimmed.
+	BUILDER+=("-c.mac.identity=${SIGN_IDENTITY#Developer ID Application: }")
 else
 	# electron-builder has no ad-hoc mode and would otherwise hunt the keychain for
 	# any Developer ID it can find, which on a developer's machine means a local
