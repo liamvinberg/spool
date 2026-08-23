@@ -24,7 +24,12 @@ import type { Flows } from "./flows";
  * and the one a yield has to split. Start-up is deliberately left out — a first
  * read of a just-written temp tree measures the OS pulling two hundred new
  * directories into its cache and V8 warming the parser, neither of which any
- * yield can divide.
+ * yield can divide. History is left out for the same reason: with it on, the
+ * daemon keeps the recursive design/ watcher open, and on Linux that watcher
+ * does its work on this thread — two hundred writes in a burst hold it close to
+ * twenty milliseconds there (measured on the CI runner, 19.8 ms on against
+ * 4.6 ms off; macOS's FSEvents shows no difference). That is the watcher's cost,
+ * not the handler's, and it has its own ticket (#245).
  *
  * Two readings, because they fail differently. The turn count is exact: one turn
  * per frame is the yield itself, and no machine load can take a turn away. The
@@ -110,7 +115,7 @@ export default function Frame() {
 		);
 		writeDesignFile(root, `frames/frame-${at}/parts/row.tsx`, rowTsx(at, 2));
 	}
-	const app = makeApp(spoolDir);
+	const app = makeApp(spoolDir, { history: false });
 	expect((await app.request(`/api/p/${name}/flows`)).status).toBe(200);
 
 	let held = Number.POSITIVE_INFINITY;
