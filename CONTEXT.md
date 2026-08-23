@@ -10,6 +10,8 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Daemon**: The one per-machine local server every spool surface is served from.
 
+**Mac app**: The macOS menu bar app in `macos/`. A daemon supervisor with no window of its own: it bundles Node and the published `spool.page` of its own version, adopts a running daemon or starts the bundled one, and opens the canvas in the default browser. _Avoid_: desktop app, wrapper
+
 **Experiment**: A surface that stands only where `~/.spool/config.json` names it in `experiments`, switched per machine rather than per command because the daemon outlives any one of them. Off is absent rather than hidden: the names ride the boot script the canvas document already carries, so a surface that is off never renders and leaves nothing to press. The daemon carries whatever the file said and judges none of it, so a name nothing answers to does nothing. _Avoid_: feature flag, beta toggle
 
 **Frame**: A folder under `design/frames/<name>/` holding one entry file — `frame.tsx` (html) or `term.tsx` (terminal); the unit prototypes are made of. The entry filename is the kind, and a folder holding both is a discovery error. _Avoid_: screen, artboard, mockup

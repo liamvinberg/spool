@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>Spool</string>
+	<!-- Named without its extension, which is how Info.plist refers to an icon.
+	     The file is generated from the mark by scripts/icon.sh. -->
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>page.spool.mac</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Spool</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<!-- 0.0.0 on purpose. Spool has one version number and changesets owns it,
+	     so this file is never the place it is written: scripts/build.sh stamps
+	     both keys in the copy it puts in the bundle, from the repo's
+	     package.json. A bundle still reading 0.0.0 was not built by that script,
+	     and Check for updates says so rather than comparing a made-up number. -->
+	<key>CFBundleShortVersionString</key>
+	<string>0.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>0.0.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<!-- No Dock icon and no menu bar of its own: this app is the status item and
+	     nothing else. main.swift sets the matching activation policy. -->
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT</string>
+</dict>
+</plist>

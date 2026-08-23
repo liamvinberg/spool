@@ -7,6 +7,7 @@ Spool is a local-first prototyping canvas. Agents author live TSX frames; people
 - Changesets derive versions and changelog entries from `.changeset/` files, never from commit messages. When a change alters published behavior, land a changeset with it per `docs/releases.md`; work confined to `design/`, docs, tests, or internals ships none.
 - Keep a session to one non-research ticket. Use Node 22+ and pnpm. Before handoff, run the relevant tests, `pnpm typecheck`, and `pnpm check`; run `pnpm test` for changes with broader behavioral reach.
 - The spool CLI in this checkout is `pnpm dev <verb>`: the checkout is its own instance (state `~/.spool-dev`, port 7767). Never drive the installed `spool` from here — it is a different instance on a different version.
+- `macos/` is the menu bar app: a Swift daemon supervisor that bundles Node and the published package. Its README covers building and releasing it.
 - `design/` is Spool's dogfood canvas. Run `pnpm dev skill` before working there; its nested `AGENTS.md` governs that folder.
 - Treat working-tree changes confined to `design/` as live canvas work. They do not block landing unrelated work whose paths do not overlap them.
 

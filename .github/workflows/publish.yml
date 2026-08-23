@@ -95,3 +95,126 @@ jobs:
       # trusted publishing needs npm >= 11.5.1; node 22 ships npm 10
       - run: npm install -g npm@11
       - run: npm publish
+
+  # The macOS app (#240). It bundles the spool package of its own version, so it
+  # can only be built once that version is on npm, which is why this job is last
+  # and why it depends on the one above rather than racing it. A failure here
+  # cannot retract anything: npm already has the release and the GitHub release
+  # already exists, and all that is missing is a file attached to it. Rerun it
+  # the same way a refused publish is rerun, with
+  # `gh workflow run publish.yml -f tag=vX.Y.Z` — this job does not need the
+  # publish step to have succeeded on that rerun, only for the version to be on
+  # npm, which by then it is.
+  dmg:
+    needs: [release, publish]
+    if: ${{ !cancelled() && github.repository == 'liamvinberg/spool' && (needs.release.outputs.published == 'true' || github.event_name == 'workflow_dispatch') }}
+    # Pinned rather than macos-latest: this is the only job that signs and
+    # notarizes, and moving Xcode under it unannounced is not worth the surprise
+    # on a release day.
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release.outputs.tag }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - run: corepack enable
+      # One version number: the tag, package.json, the npm artifact inside the
+      # bundle and CFBundleShortVersionString. An installed copy compares itself
+      # against the newest release tag, and that comparison is worth nothing if
+      # the two came from different places.
+      - run: macos/scripts/version.sh "$TAG"
+      # A keychain that exists for this run only. The certificate arrives as a
+      # base64 .p12 and never touches the disk in any other form. The identity is
+      # read back out rather than named in a secret, so there is nothing to keep
+      # in step when the certificate is renewed.
+      - id: identity
+        name: Import the Developer ID certificate
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$CERTIFICATE" ]; then
+            echo "MACOS_CERTIFICATE is not set. See macos/README.md for the wizard that sets all five." >&2
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -base64 24)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -k "$keychain" -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          # Without this, codesign stops for a UI prompt nobody is there to answer.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          # `|| true` so that finding none is answered by the count below rather
+          # than by grep's exit code killing the step without saying anything.
+          identity=$(security find-identity -v -p codesigning "$keychain" | { grep "Developer ID Application" || true; } | sed -n 's/.*"\(.*\)".*/\1/p')
+          if [ "$(printf '%s\n' "$identity" | grep -c .)" != "1" ]; then
+            echo "Expected exactly one Developer ID Application identity in the keychain, found:" >&2
+            security find-identity -v -p codesigning "$keychain" >&2
+            exit 1
+          fi
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+      # The app's own checks: the daemon.json shape, the address rules and the
+      # mark geometry, all offline. Nothing else in this repo compiles Swift, so
+      # this is where a broken app is caught.
+      - run: swift test --package-path macos
+      - name: Build, sign, notarize, staple
+        env:
+          SIGN_IDENTITY: ${{ steps.identity.outputs.identity }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY }}
+        run: |
+          if [ -z "$NOTARY_KEY_P8" ]; then
+            echo "NOTARY_KEY is not set, so this would build a dmg Gatekeeper refuses. See macos/README.md." >&2
+            exit 1
+          fi
+          echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          NOTARY_KEY="$RUNNER_TEMP/notary.p8" OUT="$RUNNER_TEMP/dist" macos/scripts/package.sh
+          rm -f "$RUNNER_TEMP/notary.p8"
+      - name: Attach the dmg to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${TAG#v}"
+          dmg="$RUNNER_TEMP/dist/Spool-$version.dmg"
+          sum=$(shasum -a 256 "$dmg" | cut -d " " -f 1)
+
+          # The same file twice, under two names. The versioned one is what you
+          # keep and check a hash against. The plain one exists so that
+          # releases/latest/download/Spool.dmg is a link that never has to be
+          # edited again: GitHub resolves it to whatever the newest release is,
+          # but only if the file is named the same every time.
+          cp "$dmg" "$RUNNER_TEMP/dist/Spool.dmg"
+
+          gh release upload "$TAG" \
+            "$dmg" \
+            "$RUNNER_TEMP/dist/Spool.dmg" \
+            --clobber
+
+          {
+            echo "### Spool for macOS"
+            echo
+            echo "Apple silicon, macOS 14 or later. Signed and notarized, so it opens without a right-click. Drag it to Applications and find it in the menu bar; it brings its own Node and its own copy of \`spool.page@$version\`, so nothing else has to be installed."
+            echo
+            echo "\`Spool-$version.dmg\` sha256 \`$sum\`"
+            echo
+            echo "\`Spool.dmg\` is the same file under a name that does not move, for anything linking to the newest release."
+          } > "$RUNNER_TEMP/dmg-notes.md"
+          gh release view "$TAG" --json body -q .body > "$RUNNER_TEMP/notes.md"
+          printf '\n' >> "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/dmg-notes.md" >> "$RUNNER_TEMP/notes.md"
+          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
