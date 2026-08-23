@@ -109,7 +109,10 @@ describe("spool cli", { timeout: 30_000 }, () => {
 		const fifo = spawnSync("mkfifo", [frame], { encoding: "utf8" });
 		expect(fifo.status).toBe(0);
 
-		const result = spool(["check", root], makeTempDir(), undefined, {}, 2_000);
+		// a read of a FIFO that is never written blocks forever, so any finite timeout
+		// tells the refusal from the hang; ten seconds is so that a `tsx` cold start
+		// under a saturated suite (see the describe above) is not mistaken for one
+		const result = spool(["check", root], makeTempDir(), undefined, {}, 10_000);
 
 		expect(result.error).toBeUndefined();
 		expect(result.status).toBe(1);
