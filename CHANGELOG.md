@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.0
+
+### Minor Changes
+
+- a13eda3: Running `spool` with no arguments now opens your canvas in the browser, as well as printing its address. It only does that when you run it yourself in a terminal, so an agent or a script that runs `spool` still gets the address and nothing more. Pass `--no-open` when you want the address without the browser.
+- aed42dd: Opening a project no longer shows an empty canvas while it loads. The field draws one cell per frame, so you can see how big the project is before its frames arrive. A fast open still shows nothing at all, because there is nothing to wait for.
+- 50601e6: The daemon now keeps history for your canvas. When `design/` has been quiet for 45 seconds, everything that changed since the last save lands as one commit on the branch you are on, so a layout you liked an hour ago is always recoverable and the checkout is never dirty from canvas work. Frame arrangements count, so a frame you dragged is saved too.
+
+  Saves only ever touch `design/`. Anything you had staged elsewhere is left exactly as you staged it, and spool never pushes. It waits instead of committing while a merge or rebase is in flight, while HEAD is detached, or while another git command holds the index, and it picks the batch up in the next window. A project that is not in a git repository says so once and stays silent after that.
+
+- 095c7b5: The agent rail is now an experiment, and it is off. The canvas opens with the pages rail and your frames, and nothing where the agent used to be. To have it back, add `"experiments": ["agent-panel"]` to `~/.spool/config.json`, beside `updateCheck`, and restart the daemon. The field is a list of names, one per experimental surface, and a name this version of spool does not know is ignored rather than refused, so a config written for a newer spool still boots on an older one.
+- 8bb52b8: History is now switchable, and on for new projects. `spool init` writes `"history": true` into `design/canvas.json` and prints one line saying so; `spool init --no-history` starts a project without it. A project that predates this keeps history off until the key is added, so upgrading spool never changes what your repo does. Set `"history": false` in `~/.spool/config.json` to turn history off on your machine whatever a project asks for. With history off, the daemon never watches or commits `design/` for that project.
+- 15c49e3: Spool now has a Mac app. Download the DMG from the release page, drag it to Applications, and click Open Canvas in the menu bar. It brings its own Node and its own copy of spool, so nothing else has to be installed to get a canvas open.
+
+  It starts the daemon, or adopts the one you already have running, so the CLI keeps working against exactly the same daemon. Quitting the app stops a daemon it started and leaves one it adopted alone. If you use the app you do not also need `spool autostart`.
+
+- 4bcc642: Rows in the pages rail no longer write out the frame's file name. The name gets the whole row, and hovering a frame shows a menu button with the same verbs right-click has always offered. A terminal frame now says so with its icon.
+
+### Patch Changes
+
+- 66597ff: `spool skill` now teaches history, so an agent reading the contract knows the daemon commits `design/` for you and never commits or stages it itself. It names both switches: the project flag in `design/canvas.json` and `"history": false` in `~/.spool/config.json`.
+- 5a4d059: Design saves now name what they saved. A history commit reads `design: 2 new, 3 frames, 1 moved` instead of a bare `design: save`, counted by frame, and a frame that only moved on the canvas says moved rather than changed.
+- 07752c6: Stop a health probe that times out from deleting a live daemon's credential. `statusDaemon` and `stopDaemon` swept `daemon.json` by re-reading it, so state a successor wrote during the one-second probe — the window an upgrade's restart lands in — was deleted as if it were stale, stranding a healthy daemon that no verb could reach and no successor could bind beside. The sweep now clears only the state the probe itself read.
+
+  `spool stop --force` stops a daemon holding the address that no state file accounts for, the way back from an install already in that state — the control token dies with `daemon.json` and cannot be written back by hand. `serve` and the auto-start path now name that daemon and point at the flag instead of asking for a file nobody can restore.
+
+  A daemon reached through a forwarded port — an ssh tunnel to another machine — is no longer reported stopped when it is not: its pid names a process that does not exist here, and `stop --force` says so.
+
 ## 0.8.0
 
 ### Minor Changes
