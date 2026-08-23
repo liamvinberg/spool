@@ -1,0 +1,51 @@
+# Spool.app, and only the .app: scripts/package.sh makes the dmg itself, the same
+# way the Swift app's did, so the notarize-and-staple sequence is one script a
+# person can read top to bottom rather than a hook.
+appId: page.spool.mac
+productName: Spool
+copyright: MIT
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - "!dist/**/*.test.js"
+  - "!dist/smoke.js"
+  - assets/**/*
+  - package.json
+# The published spool package, installed by scripts/bundle-cli.sh. Outside the
+# asar because it is a node_modules tree with native binaries in it, and because
+# the daemon runs it as a plain file path.
+extraResources:
+  - from: build/cli
+    to: cli
+    # Spelled out because electron-builder's default filter drops node_modules,
+    # and node_modules is the whole of what is being copied.
+    filter:
+      - "**/*"
+  - from: shim
+    to: shim
+asar: true
+mac:
+  category: public.app-category.developer-tools
+  icon: assets/icon.icns
+  darkModeSupport: true
+  minimumSystemVersion: "14.0"
+  # Required for notarization, and the reason build/entitlements.mac.plist exists.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  # Apple silicon only, deliberately: npm resolves native addons for the build
+  # architecture, so a universal build means two of everything.
+  target:
+    - target: dir
+      arch: arm64
+  # Notarization is package.sh's, so that the app and the dmg are submitted by
+  # the same code path and the verdict is read rather than inferred from an exit
+  # code.
+  notarize: false
+  gatekeeperAssess: false
+# ELECTRON_RUN_AS_NODE is how the bundled daemon runs, so the fuse that would
+# turn it off is pinned on rather than left to a future default.
+electronFuses:
+  runAsNode: true

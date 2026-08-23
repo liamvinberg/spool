@@ -1,0 +1,23 @@
+{
+	"name": "spool-desktop",
+	"private": true,
+	"version": "0.0.0",
+	"description": "Spool for macOS: an Electron window on the local daemon.",
+	"license": "MIT",
+	"main": "dist/index.js",
+	"scripts": {
+		"build": "rm -rf dist && tsc",
+		"typecheck": "tsc --noEmit",
+		"test": "pnpm build && node --test dist/*.test.js",
+		"smoke": "pnpm build && electron dist/smoke.js",
+		"start": "pnpm build && electron .",
+		"pack": "./scripts/build.sh",
+		"dmg": "./scripts/package.sh"
+	},
+	"devDependencies": {
+		"@types/node": "^22.20.1",
+		"electron": "43.4.1",
+		"electron-builder": "26.15.3",
+		"typescript": "7.0.2"
+	}
+}

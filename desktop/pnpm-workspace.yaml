@@ -1,0 +1,5 @@
+# This folder is its own pnpm root, not a member of the repo's workspace.
+# See README.md: a root `pnpm install` must not pull Electron down.
+allowBuilds:
+  electron: true
+  electron-winstaller: false

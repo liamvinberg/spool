@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The hardened runtime is required for notarization, and neither Chromium
+	     nor Node lives under it unamended. All four are about engines, not about
+	     this app's own code:
+
+	     allow-jit and allow-unsigned-executable-memory: V8 compiles JavaScript to
+	     machine code at runtime and writes it into pages it then executes, which
+	     the hardened runtime forbids by default. That is true of the renderer and
+	     of the bundled daemon alike.
+
+	     allow-dyld-environment-variables: the daemon is started as a child of this
+	     app with ELECTRON_RUN_AS_NODE set, and a hardened process launched with a
+	     modified environment needs this to keep it.
+
+	     disable-library-validation: spool's dependency tree carries native addons
+	     (esbuild, tailwind's oxide, and whatever else npm resolves), and those
+	     .node and .dylib files are signed with this app's certificate at package
+	     time but were never built by it.
+
+	     Nothing here weakens the sandbox, because there is no sandbox: this is a
+	     Developer ID app that starts a local server, not an App Store one. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<key>com.apple.security.cs.allow-dyld-environment-variables</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>
