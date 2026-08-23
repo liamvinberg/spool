@@ -28,11 +28,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="$(cd "$ROOT/.." && pwd)"
-OUT="${OUT:-$ROOT/build/cli}"
+# Named CLI_OUT, not OUT: package.sh is invoked with OUT in its environment
+# (the dist directory), and this script runs beneath it. Sharing the name made
+# the cli stage into the dist directory and `rm -rf` it on the release runner,
+# while every un-exported local run passed.
+CLI_OUT="${CLI_OUT:-$ROOT/build/cli}"
 VERSION="${VERSION:-$("$ROOT/scripts/version.sh")}"
 
 STAMP="spool.page $VERSION"
-if [ -f "$OUT/RUNTIME.txt" ] && grep -qxF "$STAMP" "$OUT/RUNTIME.txt"; then
+if [ -f "$CLI_OUT/RUNTIME.txt" ] && grep -qxF "$STAMP" "$CLI_OUT/RUNTIME.txt"; then
 	echo "cli already staged: $STAMP"
 	exit 0
 fi
@@ -70,13 +74,13 @@ else
 	echo "using $SPEC"
 fi
 
-rm -rf "$OUT"
-mkdir -p "$OUT/spool"
+rm -rf "$CLI_OUT"
+mkdir -p "$CLI_OUT/spool"
 
 # A private package.json first, or npm walks up out of the staging directory and
 # installs into whatever it finds. --omit=dev is npm's default for a dependency,
 # and is spelled out so nobody has to remember that.
-cat > "$OUT/spool/package.json" <<JSON
+cat > "$CLI_OUT/spool/package.json" <<JSON
 {
 	"name": "spool-bundled-cli",
 	"private": true,
@@ -84,9 +88,9 @@ cat > "$OUT/spool/package.json" <<JSON
 }
 JSON
 
-npm install --prefix "$OUT/spool" --omit=dev --no-audit --no-fund --loglevel=error "$SPEC"
+npm install --prefix "$CLI_OUT/spool" --omit=dev --no-audit --no-fund --loglevel=error "$SPEC"
 
-CLI="$OUT/spool/node_modules/spool.page/dist/cli.js"
+CLI="$CLI_OUT/spool/node_modules/spool.page/dist/cli.js"
 if [ ! -f "$CLI" ]; then
 	echo "the install produced no $CLI." >&2
 	exit 1
@@ -104,7 +108,7 @@ fi
 	echo "$STAMP"
 	echo "spool source $SPEC"
 	echo "staged $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-} > "$OUT/RUNTIME.txt"
+} > "$CLI_OUT/RUNTIME.txt"
 
-echo "staged $OUT"
-cat "$OUT/RUNTIME.txt"
+echo "staged $CLI_OUT"
+cat "$CLI_OUT/RUNTIME.txt"
