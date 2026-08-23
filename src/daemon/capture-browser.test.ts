@@ -562,7 +562,15 @@ it("captures through the isolated worker while preserving output and cleanup", {
 		assetSrc: [127, 0, 255, 255],
 		assetCss: [255, 204, 0, 255],
 	});
-	expect(await stopTargetPerformance(authored)).toEqual({ supported: true, longTasks: [], rafGaps: [] });
+	// The isolation claim is that the authored frame's thread never stalls while
+	// the worker captures: no long task, exactly. Frame gaps are read alongside
+	// but not asserted — a saturated CI runner skips animation frames in a page
+	// whose thread was idle the whole time (66 ms and 133 ms gaps against an
+	// empty long-task list, twice in one run), and that is the scheduler, not
+	// the capture.
+	const performance = await stopTargetPerformance(authored);
+	expect(performance.supported).toBe(true);
+	expect(performance.longTasks).toEqual([]);
 	expect(await page.locator(`iframe[src^="${captureOrigin.origin}"]`).count()).toBe(0);
 
 	const unsafe = await directWorkerRequest(
