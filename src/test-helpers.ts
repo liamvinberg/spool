@@ -58,16 +58,20 @@ export function writePageFrame(root: string, page: string, name: string, tsx: st
 
 /** A daemon app on a given ~/.spool dir, closed with the test. */
 export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof createDaemonApp>[0]>) {
+	/** History's one-per-project disabling notice, collected instead of printed. */
+	const historyNotices: string[] = [];
 	const daemon = createDaemonApp({
 		spoolDir,
 		version: "0.0.0-test",
 		controlHost: "localhost",
 		controlToken: "test-control-token",
+		onHistoryNotice: (message) => historyNotices.push(message),
 		...options,
 	});
 	daemon.setSelfOrigin("http://localhost:7766");
 	onTestFinished(() => daemon.close());
 	return {
+		historyNotices,
 		/** the raw door: no capability is added, so a test can assert one is required */
 		fetch: (input: string, init?: RequestInit) =>
 			daemon.app.fetch(new Request(new URL(input, "http://localhost:7766"), init)),

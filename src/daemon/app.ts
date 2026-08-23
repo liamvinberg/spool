@@ -59,6 +59,7 @@ import { createFlowGraph, recordWalk } from "./flows";
 import { listDirectory } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
+import { createHistory, type HistoryClock } from "./history";
 import { locateInDesign } from "./locate";
 import { isLoopbackHost } from "./loopback";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
@@ -161,6 +162,10 @@ export interface DaemonOptions {
 	agentLook?: Look;
 	/** Machine-state filesystem lifecycle boundary. */
 	machineStateWatchAdapter?: MachineStateWatchAdapter;
+	/** History's idle window (#157) — driven by tests instead of by the clock. */
+	historyClock?: HistoryClock;
+	/** Where history writes the one notice a project without git earns. */
+	onHistoryNotice?: (message: string) => void;
 	/** Machine-state observation failures stay visible without escaping a watcher callback. */
 	onMachineStateWatchError?: (error: Error) => void;
 }
@@ -340,6 +345,8 @@ export function createDaemonApp({
 	agentLook,
 	machineStateWatchAdapter,
 	onMachineStateWatchError,
+	historyClock,
+	onHistoryNotice,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
@@ -440,11 +447,32 @@ export function createDaemonApp({
 		controlOrigin,
 	});
 
+	// #157: the daemon keeps design history, one idle-window batch per project.
+	// It reads the change hub rather than opening a watcher of its own, and its
+	// subscription is what holds that watcher open when no browser is looking.
+	const history = createHistory({
+		watch: (root, changed) =>
+			hub.subscribe(root, (event) => {
+				// only what the disk really did: a walk, a cover and a resolve pass
+				// are the daemon publishing on the same channel, and .spool is
+				// nobody's history
+				if (event.kind === "frame" || event.kind === "geometry" || event.kind === "shared") changed();
+			}),
+		...(historyClock === undefined ? {} : { clock: historyClock }),
+		...(onHistoryNotice === undefined ? {} : { notice: onHistoryNotice }),
+	});
+	const registeredRoots = () => readRegistry(spoolDir).projects.map((project) => project.root);
+
 	// the app-level channel: registry and session changes, fanned to every page
 	const appListeners = new Set<(event: AppEvent) => void>();
 	const emitAppEvent = (event: AppEvent) => {
+		// a project that arrived or left changes who keeps history, and an arrival
+		// brings whatever design/ churn the daemon was not up for
+		if (event.kind === "registry") history.keeping(registeredRoots());
 		for (const listener of appListeners) listener(event);
 	};
+	// the catch-up batch: whatever design/ is already dirty is a batch pending
+	history.keeping(registeredRoots());
 	const machineStateWatch = watchMachineState(spoolDir, emitAppEvent, {
 		...(machineStateWatchAdapter === undefined ? {} : { adapter: machineStateWatchAdapter }),
 		onError:
@@ -2406,6 +2434,7 @@ export function createDaemonApp({
 		terms,
 		close: () => {
 			machineStateWatch.stop();
+			history.close();
 			liveTurns.close();
 			agentAsks.clear();
 			void terms.close();
