@@ -30,8 +30,19 @@ import { realDesignDir } from "./design-path";
 /** The trailing quiet a batch waits out before it commits. Fixed in v1 (#78). */
 export const HISTORY_IDLE_MS = 45_000;
 
-/** The one line every save commits under until #159 gives it counts. */
+/** The line a save falls back to when its batch counts nothing nameable. */
 export const HISTORY_MESSAGE = "design: save";
+
+/**
+ * The entry filenames that make a folder a frame; the kind is the filename
+ * (#42), and a folder under `frames/` without one is a page (#231). This is how
+ * a batch's paths are read back into frames: `frames/agent/chat/frame.json` is
+ * a sidecar of the frame `agent/chat` only because `agent/chat` holds an entry.
+ */
+const FRAME_ENTRIES = new Set(["frame.tsx", "term.tsx"]);
+
+/** The one file the hands own (#3). A frame that wrote only this one moved. */
+const GEOMETRY_SIDECAR = "frame.json";
 
 /** Git's empty tree — an unborn branch with nothing in `design/` writes this one. */
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -50,15 +61,119 @@ export function historyEnabled(_root: string): boolean {
 	return true;
 }
 
+/** What git's name-status said happened to one path in a batch. */
+export type HistoryChangeKind = "added" | "changed" | "removed";
+
+/** One path a save touched, spelled relative to the design folder. */
+export interface HistoryChange {
+	path: string;
+	kind: HistoryChangeKind;
+}
+
 /**
- * The message one save commits under.
- *
- * Fixed: #159 widens this to the batch's own one-line summary
- * (`design: 3 frames, 1 moved`), which is why the message is built here rather
- * than written into the commit call.
+ * One batch as the message reads it: what the save touched, and where the tree
+ * it wrote holds frames. The second half is the part paths alone cannot answer
+ * — a page folder and a frame folder look identical until you see the entry
+ * file inside one of them.
  */
-export function historyMessage(): string {
-	return HISTORY_MESSAGE;
+export interface HistoryBatch {
+	changes: readonly HistoryChange[];
+	/** Frame folders in the saved tree, design-relative (`frames/agent/chat`). */
+	frames: ReadonlySet<string>;
+}
+
+/**
+ * The one line a save commits under: `design: <counts>` (#159).
+ *
+ * Counting is by frame rather than by file, because a frame is what the hands
+ * and the agents both think in — writing a frame touches its entry, its
+ * sidecar, and whatever else lives in the folder, and reading "5 files" back
+ * off that tells you nothing. Each clause names one thing that happened:
+ *
+ *     design: 2 new, 3 frames, 1 removed, 4 moved, 2 files
+ *
+ * `frames` is the bare noun because a changed frame is the ordinary case and
+ * the ordinary case earns the plain word; `new`, `removed` and `moved` say what
+ * else happened to one. A frame whose whole batch is its geometry sidecar has
+ * moved, not changed — that is the hands dragging it, and it reads that way in
+ * the log. `files` is everything else under `design/` (`shared/` above all),
+ * counted plainly by file since it has no frame to belong to.
+ */
+export function historyMessage(batch: HistoryBatch): string {
+	// a frame whose entry file went away is in no tree the save wrote, so the
+	// deletion is the only thing left that names its folder
+	const folders = new Set(batch.frames);
+	for (const change of batch.changes) {
+		if (change.kind === "removed" && isFrameEntry(change.path)) folders.add(parentFolder(change.path));
+	}
+
+	interface Tally {
+		/** an entry file arrived: the folder became a frame in this batch */
+		born: boolean;
+		/** an entry file went away */
+		gone: boolean;
+		/** something other than the geometry sidecar changed */
+		content: boolean;
+	}
+	const frames = new Map<string, Tally>();
+	let files = 0;
+	for (const change of batch.changes) {
+		const folder = owningFrame(folders, change.path);
+		if (folder === undefined) {
+			files += 1;
+			continue;
+		}
+		const tally = frames.get(folder) ?? { born: false, gone: false, content: false };
+		const within = change.path.slice(folder.length + 1);
+		if (FRAME_ENTRIES.has(within)) {
+			if (change.kind === "added") tally.born = true;
+			if (change.kind === "removed") tally.gone = true;
+		}
+		if (within !== GEOMETRY_SIDECAR) tally.content = true;
+		frames.set(folder, tally);
+	}
+
+	let added = 0;
+	let changed = 0;
+	let removed = 0;
+	let moved = 0;
+	for (const [folder, tally] of frames) {
+		// a frame that swapped one entry kind for the other is still there
+		if (tally.born) added += 1;
+		else if (tally.gone && !batch.frames.has(folder)) removed += 1;
+		else if (tally.content) changed += 1;
+		else moved += 1;
+	}
+
+	const parts: string[] = [];
+	if (added > 0) parts.push(`${added} new`);
+	if (changed > 0) parts.push(`${changed} ${changed === 1 ? "frame" : "frames"}`);
+	if (removed > 0) parts.push(`${removed} removed`);
+	if (moved > 0) parts.push(`${moved} moved`);
+	if (files > 0) parts.push(`${files} ${files === 1 ? "file" : "files"}`);
+	return parts.length === 0 ? HISTORY_MESSAGE : `design: ${parts.join(", ")}`;
+}
+
+function isFrameEntry(path: string): boolean {
+	return FRAME_ENTRIES.has(path.slice(path.lastIndexOf("/") + 1));
+}
+
+function parentFolder(path: string): string {
+	return path.slice(0, Math.max(path.lastIndexOf("/"), 0));
+}
+
+/**
+ * The frame one path belongs to, or nothing if it belongs to none. The
+ * shallowest frame folder on the path wins, which is the same rule discovery
+ * walks by: the walk stops at the first folder holding an entry, so everything
+ * below it — nested folders included — is that frame's.
+ */
+function owningFrame(folders: ReadonlySet<string>, path: string): string | undefined {
+	for (let cut = path.indexOf("/"); cut !== -1; cut = path.indexOf("/", cut + 1)) {
+		const folder = path.slice(0, cut);
+		if (folders.has(folder)) return folder;
+	}
+	return undefined;
 }
 
 export interface HistoryTimer {
@@ -285,15 +400,17 @@ async function saveDesign(root: string): Promise<Outcome> {
 		if (!written.ok) return { kind: "skipped" };
 		const tree = written.stdout.trim();
 
-		if (parent === undefined) {
-			if (tree === EMPTY_TREE) return { kind: "clean" };
-		} else {
+		let before = EMPTY_TREE;
+		if (parent !== undefined) {
 			const headTree = await git(repo, ["rev-parse", "--verify", `${parent}^{tree}`]);
 			if (!headTree.ok) return { kind: "skipped" };
-			if (headTree.stdout.trim() === tree) return { kind: "clean" };
+			before = headTree.stdout.trim();
 		}
+		if (before === tree) return { kind: "clean" };
 
-		const message = historyMessage();
+		const batch = await readBatch(repo, scope, before, tree);
+		if (batch === undefined) return { kind: "skipped" };
+		const message = historyMessage(batch);
 		// commit-tree runs no hook and takes no editor, and signing is turned off
 		// because a save must never stop at a passphrase prompt
 		const commit = await git(repo, [
@@ -313,6 +430,58 @@ async function saveDesign(root: string): Promise<Outcome> {
 	} finally {
 		rmSync(scratch, { recursive: true, force: true });
 	}
+}
+
+/**
+ * The batch the message reads, taken from the two trees the save is already
+ * built from rather than from anything the watcher remembered. One diff for
+ * what moved, and one listing of the saved tree for where the frames are —
+ * both scoped to `design/`, both answering for exactly the commit about to
+ * land, which is what makes the same batch always read the same way.
+ */
+async function readBatch(
+	repo: string,
+	scope: string,
+	before: string,
+	after: string,
+): Promise<HistoryBatch | undefined> {
+	// --no-renames: a renamed frame is a frame gone and a frame arrived, and
+	// counting it that way needs no guess about how alike two folders are
+	const diff = await git(repo, ["diff-tree", "-r", "-z", "--no-renames", "--name-status", before, after, "--", scope]);
+	if (!diff.ok) return undefined;
+	const listed = await git(repo, ["ls-tree", "-r", "-z", "--name-only", after, "--", scope]);
+	if (!listed.ok) return undefined;
+
+	// -z pairs the fields flat: status, path, status, path
+	const fields = diff.stdout.split("\0").filter((field) => field !== "");
+	const changes: HistoryChange[] = [];
+	for (let at = 0; at + 1 < fields.length; at += 2) {
+		const path = designRelative(scope, fields[at + 1] ?? "");
+		if (path !== undefined) changes.push({ path, kind: changeKind(fields[at] ?? "") });
+	}
+
+	const frames = new Set<string>();
+	for (const entry of listed.stdout.split("\0")) {
+		const path = designRelative(scope, entry);
+		// only under frames/: a file called frame.tsx in shared/ui is a component
+		if (path === undefined || !path.startsWith("frames/")) continue;
+		if (isFrameEntry(path)) frames.add(parentFolder(path));
+	}
+	return { changes, frames };
+}
+
+/** Git's status letter, where everything that is not an arrival or a departure is an edit. */
+function changeKind(status: string): HistoryChangeKind {
+	if (status.startsWith("A")) return "added";
+	if (status.startsWith("D")) return "removed";
+	return "changed";
+}
+
+/** A repository-relative path respelled against the design folder, or nothing if it is outside. */
+function designRelative(scope: string, path: string): string | undefined {
+	if (path === "") return undefined;
+	if (scope === ".") return path;
+	return path.startsWith(`${scope}/`) ? path.slice(scope.length + 1) : undefined;
 }
 
 /** The design folder as one git pathspec, relative to the repository root. */

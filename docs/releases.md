@@ -24,6 +24,8 @@ Write the prose for someone reading the changelog, not for a reviewer: what they
 
 Work with no published effect ships no changeset: the `design/` canvas, docs, tests, CI, refactors, benchmarks.
 
+History commits stay outside all of this. The daemon saves the `design/` canvas by itself, under a fixed `design:` prefix and a one-line count of what it saved, and a save carries no changeset. Nothing in the release path reads a commit message, and the daemon never pushes, so a save never bumps a version and never reaches a changelog.
+
 ## Before 1.0.0
 
 Declare a breaking change as `minor` and open its prose with "Breaking:". `1.0.0` is cut deliberately with a `major` changeset when spool is declared stable, never as a side effect of one change.

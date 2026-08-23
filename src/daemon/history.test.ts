@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initProject } from "../init";
-import { makeApp, makeProject, makeTempDir, until, writeFrame } from "../test-helpers";
+import { makeApp, makeProject, makeTempDir, until, writeFrame, writePageFrame } from "../test-helpers";
 import { HISTORY_IDLE_MS, type HistoryClock, type HistoryTimer } from "./history";
 
 /**
@@ -132,7 +132,7 @@ describe("history saves design/ on an idle window", () => {
 		await heard(clock);
 		await clock.fire();
 
-		expect(log(root)).toEqual(["design: save", "init"]);
+		expect(log(root)).toEqual(["design: 1 new, 1 frame", "init"]);
 		expect(touched(root)).toEqual(["A\tdesign/frames/about/frame.tsx", "M\tdesign/frames/home/frame.tsx"]);
 		expect(status(root)).toEqual([]);
 	});
@@ -181,7 +181,7 @@ describe("history saves design/ on an idle window", () => {
 		await change(clock, () => writeFile(root, "design/frames/home/frame.json", '{"x":120,"y":40,"w":390,"h":844}\n'));
 		await clock.fire();
 
-		expect(log(root)).toEqual(["design: save", "init"]);
+		expect(log(root)).toEqual(["design: 1 moved", "init"]);
 		expect(touched(root)).toEqual(["A\tdesign/frames/home/frame.json"]);
 	});
 
@@ -195,7 +195,7 @@ describe("history saves design/ on an idle window", () => {
 		makeApp(spoolDir, { historyClock: clock.clock });
 		await clock.fire();
 
-		expect(log(root)).toEqual(["design: save", "init"]);
+		expect(log(root)).toEqual(["design: 1 new", "init"]);
 		expect(touched(root)).toEqual(["A\tdesign/frames/offline/frame.tsx"]);
 		expect(status(root)).toEqual([]);
 	});
@@ -209,6 +209,96 @@ describe("history saves design/ on an idle window", () => {
 
 		expect(log(root)).toEqual(["init"]);
 		expect(clock.windows).toEqual([HISTORY_IDLE_MS]);
+	});
+});
+
+describe("the save message counts the batch", () => {
+	it("counts frames added, changed, removed and moved, and files beside them", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = gitProject(spoolDir);
+		writeFrame(root, "beta", "export default () => <main>beta</main>;\n");
+		writeFrame(root, "gamma", "export default () => <main>gamma</main>;\n");
+		git(root, "add", "-A");
+		git(root, "commit", "--quiet", "-m", "more frames");
+		const clock = testClock();
+		makeApp(spoolDir, { historyClock: clock.clock });
+
+		writeFrame(root, "delta", "export default () => <main>delta</main>;\n");
+		rmSync(join(root, "design", "frames", "beta"), { recursive: true, force: true });
+		writeFile(root, "design/frames/gamma/frame.json", '{"x":40,"y":80,"w":390,"h":844}\n');
+		writeFile(root, "design/shared/tokens.css", ":root { --ink: #fff; }\n");
+		await change(clock, () => writeFrame(root, "home", "export default () => <main>home, edited</main>;\n"));
+		await clock.fire();
+
+		expect(log(root)[0]).toBe("design: 1 new, 1 frame, 1 removed, 1 moved, 1 file");
+	});
+
+	it("counts by frame, not by file or by page", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = gitProject(spoolDir);
+		const clock = testClock();
+		makeApp(spoolDir, { historyClock: clock.clock });
+
+		// two frames on one page, one of them carrying a second file
+		writePageFrame(root, "shop", "cart", "export default () => <main>cart</main>;\n");
+		writeFile(root, "design/frames/shop/cart/frame.json", '{"x":0,"y":0,"w":390,"h":844}\n');
+		await change(clock, () =>
+			writePageFrame(root, "shop", "checkout", "export default () => <main>checkout</main>;\n"),
+		);
+		await clock.fire();
+
+		expect(log(root)[0]).toBe("design: 2 new");
+	});
+
+	it("reads a frame that only wrote its sidecar as moved, not changed", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = gitProject(spoolDir);
+		writeFile(root, "design/frames/home/frame.json", '{"x":0,"y":0,"w":390,"h":844}\n');
+		git(root, "add", "-A");
+		git(root, "commit", "--quiet", "-m", "place home");
+		const clock = testClock();
+		makeApp(spoolDir, { historyClock: clock.clock });
+
+		await change(clock, () => writeFile(root, "design/frames/home/frame.json", '{"x":900,"y":80,"w":390,"h":844}\n'));
+		await clock.fire();
+
+		expect(log(root)[0]).toBe("design: 1 moved");
+	});
+
+	it("counts shared/ by file, since nothing there belongs to a frame", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = gitProject(spoolDir);
+		const clock = testClock();
+		makeApp(spoolDir, { historyClock: clock.clock });
+
+		writeFile(root, "design/shared/lib/cart.ts", "export const empty = [];\n");
+		await change(clock, () => writeFile(root, "design/shared/tokens.css", ":root { --ink: #eee; }\n"));
+		await clock.fire();
+
+		expect(log(root)[0]).toBe("design: 2 files");
+	});
+
+	it("says the same thing about the same batch twice", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = gitProject(spoolDir);
+		const clock = testClock();
+		makeApp(spoolDir, { historyClock: clock.clock });
+
+		const batch = (): void => {
+			writeFrame(root, "home", "export default () => <main>home, again</main>;\n");
+			writeFrame(root, "about", "export default () => <main>about</main>;\n");
+		};
+		await change(clock, batch);
+		await clock.fire();
+		const first = log(root)[0];
+
+		// the save undone, then made again out of the same bytes
+		git(root, "reset", "--quiet", "--hard", "HEAD~1");
+		await change(clock, batch);
+		await clock.fire();
+
+		expect(first).toBe("design: 1 new, 1 frame");
+		expect(log(root)[0]).toBe(first);
 	});
 });
 
@@ -251,7 +341,7 @@ describe("the safety gate", () => {
 		release(root);
 		// a skipped batch rides into the next window rather than being forgotten
 		await clock.fire();
-		expect(log(root)).toEqual(["design: save", "init"]);
+		expect(log(root)).toEqual(["design: 1 frame", "init"]);
 		expect(touched(root)).toEqual(["M\tdesign/frames/home/frame.tsx"]);
 	});
 
