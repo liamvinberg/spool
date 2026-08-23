@@ -4,7 +4,14 @@ import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions, nati
 import * as daemon from "./daemon";
 import { log, openLog } from "./log";
 import { bundledCli, bundledShim } from "./runtime";
-import { latestRelease, RELEASES_PAGE, UpdateCheckError } from "./updates";
+import {
+	installUpdate,
+	latestRelease,
+	RELEASES_PAGE,
+	relaunchIntoUpdate,
+	UpdateCheckError,
+	updaterAvailable,
+} from "./updates";
 import { compareVersions, formatVersion, parseVersion } from "./version";
 
 // Spool, as a Mac app: a window on the canvas the daemon already serves.
@@ -304,15 +311,48 @@ async function checkForUpdates(): Promise<void> {
 			return;
 		}
 
+		// The packaged, feed-carrying app updates itself; anything else (a local
+		// build, a release from before the feed existed) is pointed at the page.
+		if (!updaterAvailable()) {
+			const answer = await dialog.showMessageBox({
+				type: "info",
+				message: `Spool ${formatVersion(latest.version)} is available.`,
+				detail: `You have ${formatVersion(installed)}. The release page has the download and the checksum to check it against.\n\nUpdating means replacing Spool in your Applications folder, so quit this copy first.`,
+				buttons: ["Open Release Page", "Later"],
+				defaultId: 0,
+				cancelId: 1,
+			});
+			if (answer.response === 0) void shell.openExternal(latest.page);
+			return;
+		}
+
 		const answer = await dialog.showMessageBox({
 			type: "info",
 			message: `Spool ${formatVersion(latest.version)} is available.`,
-			detail: `You have ${formatVersion(installed)}. The release page has the download and the checksum to check it against.\n\nUpdating means replacing Spool in your Applications folder, so quit this copy first.`,
-			buttons: ["Open Release Page", "Later"],
+			detail: `You have ${formatVersion(installed)}. Update downloads in the background and Spool relaunches into it. A daemon this app started is stopped and started again; one the CLI runs is left alone.`,
+			buttons: ["Update and Relaunch", "Later"],
 			defaultId: 0,
 			cancelId: 1,
 		});
-		if (answer.response === 0) void shell.openExternal(latest.page);
+		if (answer.response !== 0) return;
+
+		try {
+			await installUpdate((state) => log("updates", state));
+		} catch (error) {
+			log("updates", "FAIL", String(error));
+			tell(
+				"The update did not install.",
+				`${String(error)}\n\nThe release page has the download; replacing Spool in Applications by hand still works.`,
+				"warning",
+			);
+			return;
+		}
+		// Squirrel replaces the app on quit and relaunches it. The daemon this
+		// app started is stopped here, on purpose, before the updater owns the
+		// exit: will-quit's own preventDefault path would fight it.
+		shuttingDown = true;
+		await shutdown();
+		relaunchIntoUpdate();
 	} finally {
 		checkingForUpdates = false;
 	}

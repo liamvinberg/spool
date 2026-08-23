@@ -132,8 +132,12 @@ and the GitHub release already exists. Rerun it the way a refused publish is
 rerun, with `gh workflow run publish.yml -f tag=vX.Y.Z`.
 
 Check for Updates asks this repo's `releases/latest` for its tag and compares it.
-It downloads nothing and replaces nothing: the answer is a sentence and a link.
-No Sparkle, no electron-updater, no in-place auto-update.
+On a newer release it updates in place: electron-updater downloads the release's
+zip, checks it against `latest-mac.yml` and the app's own code signature, and
+Squirrel.Mac swaps the bundle when the app relaunches. The feed is the release
+itself — `app-update.yml` inside the bundle names this repo, `latest-mac.yml`
+beside the dmg names the zip — so there is no update server. A checkout build
+has no feed file and falls back to opening the release page.
 
 ## Signing, for a fork
 

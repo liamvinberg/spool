@@ -55,3 +55,51 @@ export async function latestRelease(timeoutMs = 10_000): Promise<Release> {
 	}
 	return { version, page: payload.html_url };
 }
+
+// MARK: - Installing one
+
+/**
+ * The self-update, on top of the check above. electron-updater downloads the
+ * release's zip, checks it against `latest-mac.yml`'s hash and the app's own
+ * code signature, and Squirrel.Mac swaps the bundle on quit. The feed is the
+ * GitHub release itself: `app-update.yml`, baked into the bundle by
+ * electron-builder, names this repo, and `latest-mac.yml` beside the dmg names
+ * the zip. No server of ours is involved.
+ */
+
+export function updaterAvailable(): boolean {
+	// The baked feed file is what separates a packaged release from a checkout
+	// build; without it electron-updater has nowhere to look. Lazily required so
+	// a dev run without node_modules for it still boots.
+	try {
+		const { existsSync } = require("node:fs") as typeof import("node:fs");
+		const { join } = require("node:path") as typeof import("node:path");
+		const { app } = require("electron") as typeof import("electron");
+		return app.isPackaged && existsSync(join(process.resourcesPath, "app-update.yml"));
+	} catch {
+		return false;
+	}
+}
+
+/** Download the newer release, resolving when it is ready to swap in. */
+export async function installUpdate(progress: (state: string) => void): Promise<void> {
+	const { autoUpdater } = (await import("electron-updater")).default ?? (await import("electron-updater"));
+	autoUpdater.autoDownload = false;
+	autoUpdater.autoInstallOnAppQuit = false;
+	autoUpdater.on("download-progress", (p) => progress(`download ${Math.round(p.percent)}%`));
+	const found = await autoUpdater.checkForUpdates();
+	if (found === null) throw new UpdateCheckError("electron-updater found no release to compare against.");
+	progress(`downloading ${found.updateInfo.version}`);
+	await autoUpdater.downloadUpdate();
+	progress("downloaded");
+}
+
+/** Hand the exit to Squirrel: the bundle is swapped and the app comes back. */
+export function relaunchIntoUpdate(): void {
+	// Required lazily for the same reason as above; by the time this runs,
+	// installUpdate has already imported the module.
+	void import("electron-updater").then((mod) => {
+		const updater = (mod.default ?? mod).autoUpdater;
+		updater.quitAndInstall();
+	});
+}

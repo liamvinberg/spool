@@ -26,6 +26,14 @@ extraResources:
   - from: shim
     to: shim
 asar: true
+# Not an upload instruction: publishing is publish.yml's, and build.sh passes
+# --publish never. This block is what electron-builder bakes into the bundle as
+# app-update.yml, which is where electron-updater learns the feed lives, and
+# what makes it write latest-mac.yml beside a zip target.
+publish:
+  provider: github
+  owner: liamvinberg
+  repo: spool
 mac:
   category: public.app-category.developer-tools
   icon: assets/icon.icns
@@ -37,8 +45,14 @@ mac:
   entitlementsInherit: build/entitlements.mac.inherit.plist
   # Apple silicon only, deliberately: npm resolves native addons for the build
   # architecture, so a universal build means two of everything.
+  # zip beside dir: the zip artifact itself is rebuilt from the stapled app by
+  # package.sh, but only an auto-updatable target makes electron-builder bake
+  # app-update.yml into Resources, and it must be there before signing seals
+  # the bundle.
   target:
     - target: dir
+      arch: arm64
+    - target: zip
       arch: arm64
   # Notarization is package.sh's, so that the app and the dmg are submitted by
   # the same code path and the verdict is read rather than inferred from an exit

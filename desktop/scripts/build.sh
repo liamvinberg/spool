@@ -32,7 +32,7 @@ rm -rf dist release
 ./node_modules/.bin/tsc
 VERSION="$VERSION" "$ROOT/scripts/bundle-cli.sh"
 
-BUILDER=(./node_modules/.bin/electron-builder --mac "-c.extraMetadata.version=$VERSION")
+BUILDER=(./node_modules/.bin/electron-builder --mac --publish never "-c.extraMetadata.version=$VERSION")
 if [ "$SIGN_IDENTITY" != "-" ]; then
 	# electron-builder takes the certificate's name without its type prefix and
 	# picks the Developer ID Application certificate by that name itself; handed

@@ -1,5 +1,10 @@
 # This folder is its own pnpm root, not a member of the repo's workspace.
 # See README.md: a root `pnpm install` must not pull Electron down.
+# Hoisted, not pnpm's symlink forest: electron-builder walks a real
+# node_modules tree to pack production dependencies, and the symlinked layout
+# comes back empty ("no node modules returned"), silently shipping an app
+# without its runtime deps.
+nodeLinker: hoisted
 allowBuilds:
   electron: true
   electron-winstaller: false

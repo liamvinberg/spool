@@ -75,6 +75,24 @@ if [ "$NOTARIZING" = true ]; then
 	rm -f "$OUT/Spool.zip"
 fi
 
+# The update feed. electron-updater downloads a zip, not a dmg, and reads
+# latest-mac.yml off the release to find it and check it. Built from the
+# stapled app, so what an update installs is exactly what a download gets.
+ZIP="$OUT/Spool-$VERSION-arm64-mac.zip"
+ditto -c -k --keepParent "$APP" "$ZIP"
+ZIP_SHA512="$(/usr/bin/openssl dgst -sha512 -binary "$ZIP" | /usr/bin/base64)"
+ZIP_SIZE="$(/usr/bin/stat -f %z "$ZIP")"
+cat > "$OUT/latest-mac.yml" <<YAML
+version: $VERSION
+files:
+  - url: Spool-$VERSION-arm64-mac.zip
+    sha512: $ZIP_SHA512
+    size: $ZIP_SIZE
+path: Spool-$VERSION-arm64-mac.zip
+sha512: $ZIP_SHA512
+releaseDate: '$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'
+YAML
+
 # The drag gesture the window is for. hdiutil keeps the link as a link.
 ln -s /Applications "$STAGE/Applications"
 
