@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1
+
+### Patch Changes
+
+- 46ac3cf: The Mac app's 0.10.0 build failed to sign on the release machine, so the DMG never reached that release page. It signs now. Nothing in the npm package changed.
+
 ## 0.10.0
 
 ### Minor Changes
