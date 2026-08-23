@@ -52,3 +52,7 @@ jobs:
       - run: pnpm test
       - run: pnpm check
       - run: pnpm build
+      # The Mac app compiles with the runner's Xcode, which trails a developer's
+      # machine by a toolchain or two, and the dmg job is where that used to be
+      # found out, one release late.
+      - run: swift test --package-path macos

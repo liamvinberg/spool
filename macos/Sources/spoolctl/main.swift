@@ -75,11 +75,16 @@ case "mark":
   // The menu bar glyph, written out so it can be looked at. Template images are
   // drawn in black; the bar is what makes them white.
   let out = arguments.dropFirst().first ?? "./mark.png"
-  let image = await MainActor.run { spoolMarkImage(edge: 512) }
-  guard let tiff = image.tiffRepresentation,
-    let rep = NSBitmapImageRep(data: tiff),
-    let png = rep.representation(using: .png, properties: [:])
-  else {
+  // Drawn and encoded on the main actor in one go: NSImage is not Sendable, so
+  // only the PNG bytes cross back out. Swift 6.0 refuses the image itself as a
+  // MainActor.run result; a newer toolchain lets it through, which is how this
+  // compiled on one machine and not on the release runner.
+  let png: Data? = await MainActor.run {
+    let image = spoolMarkImage(edge: 512)
+    guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return nil }
+    return rep.representation(using: .png, properties: [:])
+  }
+  guard let png else {
     fail("could not encode the mark")
   }
   try png.write(to: URL(fileURLWithPath: out))
