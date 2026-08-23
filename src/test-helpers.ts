@@ -31,7 +31,7 @@ export function makeTempDir(): string {
 
 export function markProject(root: string): void {
 	mkdirSync(join(root, "design"), { recursive: true });
-	writeFileSync(join(root, "design", "canvas.json"), canvasJson);
+	writeFileSync(join(root, "design", "canvas.json"), canvasJson(true));
 }
 
 /** A registered project scaffolded through the real init path. */

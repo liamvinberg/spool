@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initProject } from "../init";
-import { makeApp, makeProject, makeTempDir, until, writeFrame, writePageFrame } from "../test-helpers";
+import { makeApp, makeProject, makeTempDir, until, writeDesignFile, writeFrame, writePageFrame } from "../test-helpers";
 import { HISTORY_IDLE_MS, type HistoryClock, type HistoryTimer } from "./history";
 
 /**
@@ -27,13 +27,13 @@ function writeFile(root: string, rel: string, content: string): void {
 }
 
 /** A registered spool project inside a real repository, with one commit behind it. */
-function gitProject(spoolDir: string): string {
+function gitProject(spoolDir: string, history = true): string {
 	const dir = makeTempDir();
 	git(dir, "init", "--quiet", "--initial-branch=main", ".");
 	git(dir, "config", "user.email", "hands@example.test");
 	git(dir, "config", "user.name", "Hands");
 	git(dir, "config", "commit.gpgsign", "false");
-	const { root } = initProject(dir, spoolDir);
+	const { root } = initProject(dir, spoolDir, { history });
 	writeFrame(root, "home", "export default () => <main>home</main>;\n");
 	writeFile(root, "src/product.ts", "export const one = 1;\n");
 	git(root, "add", "-A");
@@ -360,5 +360,105 @@ describe("the safety gate", () => {
 		// nothing is armed any more, so nothing says it a second time
 		await clock.fire();
 		expect(app.historyNotices).toHaveLength(1);
+	});
+});
+
+describe("the switches", () => {
+	/** Nothing armed is the whole of "this project is not watched": no window, no git. */
+	async function stayedQuiet(clock: Clock, write: () => void): Promise<void> {
+		const before = clock.armings();
+		write();
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(clock.armings()).toBe(before);
+	}
+
+	it("keeps history for a project whose canvas.json asks for it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = gitProject(spoolDir);
+		const clock = testClock();
+		makeApp(spoolDir, { historyClock: clock.clock });
+
+		expect(JSON.parse(readFileSync(join(root, "design", "canvas.json"), "utf8"))).toEqual({
+			format: 1,
+			history: true,
+		});
+		await change(clock, () => writeFrame(root, "home", "export default () => <main>kept</main>;\n"));
+		await clock.fire();
+
+		expect(log(root)).toEqual(["design: 1 frame", "init"]);
+	});
+
+	it("never runs git for a project whose flag says no", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = gitProject(spoolDir, false);
+		const clock = testClock();
+		makeApp(spoolDir, { historyClock: clock.clock });
+
+		await stayedQuiet(clock, () => writeFrame(root, "home", "export default () => <main>unsaved</main>;\n"));
+		await clock.fire();
+
+		expect(log(root)).toEqual(["init"]);
+		// the change is still sitting in the working tree, exactly where it was written
+		expect(status(root)).toEqual([" M design/frames/home/frame.tsx"]);
+	});
+
+	it("leaves a project that predates the flag alone", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = gitProject(spoolDir);
+		// the canvas.json an older spool wrote: a stamp and nothing else
+		writeDesignFile(root, "canvas.json", `${JSON.stringify({ format: 1 })}\n`);
+		git(root, "add", "-A");
+		git(root, "commit", "--quiet", "-m", "as it was");
+		const clock = testClock();
+		makeApp(spoolDir, { historyClock: clock.clock });
+
+		await stayedQuiet(clock, () => writeFrame(root, "home", "export default () => <main>as it was</main>;\n"));
+		await clock.fire();
+
+		expect(log(root)).toEqual(["as it was", "init"]);
+	});
+
+	it("reads a canvas.json it cannot parse as history off, and says nothing about it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = gitProject(spoolDir);
+		writeDesignFile(root, "canvas.json", "{ not json\n");
+		const clock = testClock();
+		const app = makeApp(spoolDir, { historyClock: clock.clock });
+
+		await stayedQuiet(clock, () => writeFrame(root, "home", "export default () => <main>broken</main>;\n"));
+		await clock.fire();
+
+		expect(log(root)).toEqual(["init"]);
+		expect(app.historyNotices).toEqual([]);
+		expect((await app.request("/api/health")).status).toBe(200);
+	});
+
+	it("obeys the per-user refusal over a project that asks for history", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = gitProject(spoolDir);
+		const clock = testClock();
+		makeApp(spoolDir, { historyClock: clock.clock, history: false });
+
+		await stayedQuiet(clock, () => writeFrame(root, "home", "export default () => <main>refused</main>;\n"));
+		await clock.fire();
+
+		expect(log(root)).toEqual(["init"]);
+	});
+
+	it("lets a project go at the next window when its flag is turned off", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const root = gitProject(spoolDir);
+		const clock = testClock();
+		makeApp(spoolDir, { historyClock: clock.clock });
+
+		await change(clock, () => writeFrame(root, "home", "export default () => <main>on</main>;\n"));
+		writeDesignFile(root, "canvas.json", `${JSON.stringify({ format: 1, history: false })}\n`);
+		await clock.fire();
+
+		expect(log(root)).toEqual(["init"]);
+		// the watcher is released with the project, so nothing arms a window again
+		await stayedQuiet(clock, () => writeFrame(root, "about", "export default () => <main>off</main>;\n"));
+		await clock.fire();
+		expect(log(root)).toEqual(["init"]);
 	});
 });

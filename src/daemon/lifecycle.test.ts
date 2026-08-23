@@ -52,6 +52,7 @@ describe("resolveServeConfig", () => {
 			host: "127.0.0.1",
 			port: 7766,
 			updateCheck: true,
+			history: true,
 			experiments: [],
 			notices: [],
 		});
@@ -66,6 +67,7 @@ describe("resolveServeConfig", () => {
 			host,
 			port: 7800,
 			updateCheck: true,
+			history: true,
 			experiments: [],
 			notices: [],
 		});
@@ -78,7 +80,14 @@ describe("resolveServeConfig", () => {
 
 		const config = resolveServeConfig(spoolDir, { SPOOL_PORT: "7801", SPOOL_HOST: "::1" });
 
-		expect(config).toEqual({ host: "::1", port: 7801, updateCheck: true, experiments: [], notices: [] });
+		expect(config).toEqual({
+			host: "::1",
+			port: 7801,
+			updateCheck: true,
+			history: true,
+			experiments: [],
+			notices: [],
+		});
 	});
 
 	it("honors the phone-home opt-out and rejects a non-boolean one (#30)", () => {
@@ -90,6 +99,20 @@ describe("resolveServeConfig", () => {
 
 		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ updateCheck: "never" }));
 		expect(() => resolveServeConfig(spoolDir, {})).toThrow(/updateCheck/);
+	});
+
+	it("honors the per-user history refusal and rejects a non-boolean one (#158)", () => {
+		const spoolDir = makeSpoolDir();
+		mkdirSync(spoolDir, { recursive: true });
+
+		// nobody wrote it, so nobody has refused: the project flag decides
+		expect(resolveServeConfig(spoolDir, {}).history).toBe(true);
+
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ history: false }));
+		expect(resolveServeConfig(spoolDir, {}).history).toBe(false);
+
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ history: "off" }));
+		expect(() => resolveServeConfig(spoolDir, {})).toThrow(/history/);
 	});
 
 	it("reads the experiments the machine switched on, and judges none of them (#238)", () => {

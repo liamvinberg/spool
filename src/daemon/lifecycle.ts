@@ -31,6 +31,8 @@ export interface ServeConfig {
 	port: number;
 	/** #30: false silences the daily registry ask and the update toast */
 	updateCheck: boolean;
+	/** #158: false turns history off on this machine, whatever a project's flag says */
+	history: boolean;
 	/** #238: the experimental surfaces this machine has switched on, by name */
 	experiments: readonly string[];
 	/** what was in the config and could not be honored, for the caller to narrate */
@@ -70,6 +72,7 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 	let host = DEFAULT_HOST;
 	let port = DEFAULT_PORT;
 	let updateCheck = true;
+	let history = true;
 	let experiments: readonly string[] = [];
 	const notices: string[] = [];
 
@@ -119,6 +122,15 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 			}
 			updateCheck = config.updateCheck;
 		}
+		if (config.history !== undefined) {
+			// the refusal switch (#158): it only ever says no, so it is read the same
+			// way updateCheck is and never written back — a project turns history on,
+			// this file is how one person on one machine declines
+			if (typeof config.history !== "boolean") {
+				throw new SpoolError(`config at ${file}: "history" must be true or false`);
+			}
+			history = config.history;
+		}
 		if (config.experiments !== undefined) {
 			// the vocabulary is the UI's, not this file's: a name nothing answers to is
 			// carried across and ignored where it would have been read, so a config
@@ -143,7 +155,7 @@ export function resolveServeConfig(spoolDir: string, env: Record<string, string 
 	// one source that gets refused rather than ignored
 	assertLoopbackHost(host);
 
-	return { host, port, updateCheck, experiments, notices };
+	return { host, port, updateCheck, history, experiments, notices };
 }
 
 export function assertLoopbackHost(host: string): void {

@@ -143,6 +143,12 @@ export interface DaemonOptions {
 	updateCheck?: boolean | undefined;
 	/** #238: the experiment names config.json switched on, handed to the canvas at boot. */
 	experiments?: readonly string[] | undefined;
+	/**
+	 * #158: the per-user history switch off config.json. Absent means on, because
+	 * only `false` is a refusal — the project flag is what turns history on, and
+	 * this is the one way to say no to every project at once.
+	 */
+	history?: boolean | undefined;
 	/** The registry probe — swapped out by seam tests. */
 	fetchLatest?: () => Promise<string | undefined>;
 	/** The toast door's detached `spool upgrade` spawn — swapped out by seam tests. */
@@ -338,6 +344,7 @@ export function createDaemonApp({
 	launchEditor,
 	updateCheck,
 	experiments,
+	history: historyAllowed,
 	fetchLatest,
 	upgrade,
 	termExecutor,
@@ -460,6 +467,7 @@ export function createDaemonApp({
 			}),
 		...(historyClock === undefined ? {} : { clock: historyClock }),
 		...(onHistoryNotice === undefined ? {} : { notice: onHistoryNotice }),
+		...(historyAllowed === undefined ? {} : { enabled: historyAllowed }),
 	});
 	const registeredRoots = () => readRegistry(spoolDir).projects.map((project) => project.root);
 

@@ -4,7 +4,13 @@
  */
 export const FORMAT_VERSION = 1;
 
-export const canvasJson = `${JSON.stringify({ format: FORMAT_VERSION }, null, "\t")}\n`;
+/**
+ * The marker file: the format stamp, and whether this project keeps history
+ * (#158). The flag is written at init rather than left out, so the posture a
+ * project was started under is on disk and in the first commit.
+ */
+export const canvasJson = (history: boolean): string =>
+	`${JSON.stringify({ format: FORMAT_VERSION, history }, null, "\t")}\n`;
 
 const gitignore = ".spool/\n";
 
@@ -72,18 +78,18 @@ export function cn(...inputs: ClassValue[]) {
 `;
 
 /** Files written under design/, keyed by relative path. */
-export const scaffoldFiles: Record<string, string> = {
+export const scaffoldFiles = (history: boolean): Record<string, string> => ({
 	".gitignore": gitignore,
 	"AGENTS.md": agentsMd,
 	"CLAUDE.md": claudeMd,
-	"canvas.json": canvasJson,
+	"canvas.json": canvasJson(history),
 	"shared/tokens.css": tokensCss,
 	"shared/transitions.css": transitionsCss,
 	"shared/fonts.css": fontsCss,
 	"shared/importmap.json": importmapJson,
 	"shared/scenarios/default.json": defaultScenario,
 	"shared/lib/utils.ts": utilsTs,
-};
+});
 
 /** Directories that start empty but are part of the contract's shape. */
 export const scaffoldDirs: string[] = ["frames", "shared/ui", "shared/fixtures", "shared/assets/fonts"];

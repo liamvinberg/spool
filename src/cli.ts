@@ -58,9 +58,18 @@ program
 	.command("init")
 	.description("scaffold design/, register the project, and open its tab")
 	.argument("[path]", "product root", ".")
-	.action((path: string) => {
-		const { root } = initProject(path, spoolDir);
-		process.stdout.write(`initialized spool project at ${root}\n\n${rootConfigPointer}`);
+	.option("--no-history", "start the project without history — spool never commits its design/")
+	.action((path: string, options: { history: boolean }) => {
+		const { root } = initProject(path, spoolDir, { history: options.history });
+		process.stdout.write(`initialized spool project at ${root}\n`);
+		// #78: history is on by default and never silent. One line, no prompt —
+		// init stays something a script can run.
+		process.stdout.write(
+			options.history
+				? `history is on: spool commits design/ for you once the canvas goes quiet — set "history": false in design/canvas.json to turn it off\n`
+				: `history is off: spool never commits design/ for you — set "history": true in design/canvas.json to turn it on\n`,
+		);
+		process.stdout.write(`\n${rootConfigPointer}`);
 	});
 
 program
@@ -297,6 +306,7 @@ program
 					// so it is never offered one — the checkout included
 					updateCheck: config.updateCheck && selfUpgradeable(),
 					experiments: config.experiments,
+					history: config.history,
 				});
 			} catch (error) {
 				if (error instanceof PortBusyError) {

@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
 import {
 	carriedKeys,
@@ -13,7 +11,7 @@ import {
 	ROOT_PAGE,
 } from "../page-path";
 import { FORMAT_VERSION } from "../templates";
-import { realDesignDir, resolveDesignPath } from "./design-path";
+import { canvasFile, readCanvasFile } from "./canvas-file";
 
 /**
  * Manual order, in design/canvas.json (#228).
@@ -54,35 +52,6 @@ export class CanvasFileError extends Error {
 		super("design/canvas.json is not a JSON object — spool will not overwrite it");
 		this.name = "CanvasFileError";
 	}
-}
-
-function canvasFile(root: string): string {
-	const designDir = realDesignDir(root);
-	return resolveDesignPath(designDir, join(designDir, "canvas.json"));
-}
-
-type CanvasFile =
-	| { kind: "read"; fields: Record<string, unknown> }
-	| { kind: "absent" }
-	/** Present, and not an object: the one state a write refuses rather than clobbers. */
-	| { kind: "unreadable" };
-
-function readCanvasFile(file: string): CanvasFile {
-	let raw: string;
-	try {
-		// the boundary was answered before the read: this takes a resolved path
-		raw = readFileSync(file, "utf8");
-	} catch {
-		return { kind: "absent" };
-	}
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch {
-		return { kind: "unreadable" };
-	}
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return { kind: "unreadable" };
-	return { kind: "read", fields: parsed as Record<string, unknown> };
 }
 
 /** The stored order, or nothing stored — a malformed one reads as absent. */

@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
+import { readCanvasFields } from "./canvas-file";
 import { realDesignDir } from "./design-path";
 
 /**
@@ -51,14 +52,23 @@ const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const GIT_TIMEOUT_MS = 15_000;
 
 /**
- * Whether this project keeps history.
+ * Whether this project keeps history: the `history` flag in its canvas.json
+ * (#158).
  *
- * Hardwired on: #158 replaces this with the `canvas.json` project flag and the
- * per-user off switch that beats it, and the seam is here so that lands as one
- * function body rather than a rewrite.
+ * The flag is in the project file rather than in per-machine state because the
+ * choice belongs to the team — it is committed and cloned, so a teammate who
+ * pulls gets the same posture without configuring anything.
+ *
+ * Absent means off, and that is the whole upgrade story: a project that existed
+ * before history did keeps a canvas.json without the key, and installing a
+ * newer spool must never start writing commits into somebody's repository
+ * because they updated a tool. Anything that is not exactly `true` — a missing
+ * file, a broken one, a string, a project whose design/ is gone this instant —
+ * reads the same way, because every one of them is spool being unable to say
+ * yes.
  */
-export function historyEnabled(_root: string): boolean {
-	return true;
+export function historyEnabled(root: string): boolean {
+	return readCanvasFields(root).history === true;
 }
 
 /** What git's name-status said happened to one path in a batch. */
@@ -208,6 +218,14 @@ export interface HistoryDeps {
 	clock?: HistoryClock;
 	/** Where the one notice a disabled project earns is written. */
 	notice?: (message: string) => void;
+	/**
+	 * The per-user switch (#158): `history: false` in ~/.spool/config.json turns
+	 * history off on this machine and beats every project flag. Absent means on,
+	 * because the per-user setting is a refusal — it exists so a contributor is
+	 * never committed on against their will, and it has nothing to say when
+	 * nobody wrote it.
+	 */
+	enabled?: boolean;
 }
 
 export interface History {
@@ -239,6 +257,9 @@ interface Kept {
 
 export function createHistory(deps: HistoryDeps): History {
 	const clock = deps.clock ?? nodeHistoryClock;
+	// the per-user refusal is machine-wide and never revisited: a project cannot
+	// argue with it, so a daemon told no keeps nothing at all
+	const allowed = deps.enabled ?? true;
 	const notice = deps.notice ?? ((message: string) => console.error(`spool: ${message}`));
 	const kept = new Map<string, Kept>();
 	let closed = false;
@@ -256,6 +277,14 @@ export function createHistory(deps: HistoryDeps): History {
 	async function fire(root: string): Promise<void> {
 		const project = kept.get(root);
 		if (closed || project === undefined || project.off) return;
+		// the flag can be edited while the daemon runs, and a project turned off
+		// between windows must not have git run for it: the window that would have
+		// saved it lets it go instead, subscription and all
+		if (!historyEnabled(root)) {
+			drop(project);
+			kept.delete(root);
+			return;
+		}
 		// a save already in flight owns the working tree; wait the window out again
 		if (project.saving) {
 			arm(root);
@@ -290,7 +319,7 @@ export function createHistory(deps: HistoryDeps): History {
 	return {
 		keeping: (roots) => {
 			if (closed) return;
-			const wanted = new Set(roots.filter((root) => historyEnabled(root)));
+			const wanted = new Set(allowed ? roots.filter((root) => historyEnabled(root)) : []);
 			for (const [root, project] of kept) {
 				if (wanted.has(root)) continue;
 				drop(project);
