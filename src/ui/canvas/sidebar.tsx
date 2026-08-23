@@ -20,6 +20,7 @@ import {
 import { cn } from "../cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
+import { DotsIcon } from "../icons";
 import type { HistoryEntry, Moved, OrderList, Way } from "./history";
 import {
 	flatPages,
@@ -1912,26 +1913,36 @@ function TreeRow({
 								className="flex h-full w-full min-w-0 items-center gap-2 pr-3 text-left"
 								style={{ paddingLeft: contentX(row.depth) }}
 							>
-								<FrameIcon className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-thread" : "text-muted")} />
+								{row.terminal ? (
+									<TermIcon className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-thread" : "text-muted")} />
+								) : (
+									<FrameIcon className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-thread" : "text-muted")} />
+								)}
 								<span
 									className={cn(
+										// the name runs to the row's edge; the menu that fades in over
+										// its tail takes the last stretch of it with it
 										"min-w-0 flex-1 truncate font-mono text-xs leading-xs",
+										"group-hover/row:[mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)]",
 										selected || cursored || mark !== undefined ? "text-text" : "text-muted",
 									)}
 								>
 									{row.name}
 								</span>
-								{mark === undefined ? null : <UnseenMark mark={mark} />}
-								<span className="pr-1 font-mono text-2xs text-muted/50 leading-3 opacity-0 transition-opacity group-hover/row:opacity-100">
-									{row.entry}
-								</span>
+								{mark === undefined ? null : (
+									<UnseenMark mark={mark} className="transition-opacity group-hover/row:opacity-0" />
+								)}
 							</button>
 						) : (
 							<div
 								className="flex h-full w-full min-w-0 items-center gap-2 pr-3"
 								style={{ paddingLeft: contentX(row.depth) }}
 							>
-								<FrameIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+								{row.terminal ? (
+									<TermIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+								) : (
+									<FrameIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+								)}
 								<RenameField
 									state={rename.state}
 									size="frame"
@@ -1941,10 +1952,36 @@ function TreeRow({
 								/>
 							</div>
 						)}
+						{rename === null ? (
+							<RowMenuButton label={row.name} onMenu={(event) => onMenu(event, target)} />
+						) : null}
 					</>
 				)}
 			</div>
 		</RowShell>
+	);
+}
+
+/**
+ * The row's menu, reachable without a right click (#229).
+ *
+ * It stands over the tail of the name rather than in the row's flow, so a row
+ * that is not under the pointer gives its whole width to the name — the same
+ * trade home makes on a project card, and the reason the entry file name is no
+ * longer written here. The pointer press is stopped short of the row beneath:
+ * that one starts a drag and picks the row, and this click is neither.
+ */
+function RowMenuButton({ label, onMenu }: { label: string; onMenu: (event: React.MouseEvent) => void }) {
+	return (
+		<button
+			type="button"
+			aria-label={`${label} menu`}
+			onPointerDown={(event) => event.stopPropagation()}
+			onClick={onMenu}
+			className="absolute right-1.5 flex h-5 w-5 items-center justify-center rounded-sm text-muted opacity-0 transition-opacity hover:text-text focus-visible:opacity-100 group-hover/row:opacity-100"
+		>
+			<DotsIcon />
+		</button>
 	);
 }
 
@@ -2114,6 +2151,28 @@ function FrameIcon({ className }: { className?: string }) {
 		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
 			<path d="M3 1.75h5l3 3v7.5H3z" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round" />
 			<path d="M8 1.75v3h3" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round" />
+		</svg>
+	);
+}
+
+/**
+ * A terminal frame's row.
+ *
+ * The kind used to be written out as `term.tsx` at the row's right edge; with
+ * that gone the icon is what says a frame is a terminal, which is where the
+ * canvas says it too.
+ */
+function TermIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
+			<rect x="1.75" y="2.75" width="10.5" height="8.5" rx="1.25" stroke="currentColor" strokeWidth="1.15" />
+			<path
+				d="M4.5 6 6 7.5 4.5 9M7.75 9.25h2"
+				stroke="currentColor"
+				strokeWidth="1.15"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
 		</svg>
 	);
 }

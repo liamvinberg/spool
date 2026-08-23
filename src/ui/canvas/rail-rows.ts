@@ -84,7 +84,8 @@ export interface FrameRow extends RowPlace {
 	readonly name: string;
 	readonly page: string;
 	readonly last: boolean;
-	readonly entry: "frame.tsx" | "term.tsx";
+	/** a terminal frame rather than a document one; the row's icon is what says so */
+	readonly terminal: boolean;
 }
 
 /**
@@ -162,7 +163,7 @@ export function railRows(
 				// only the end of the block when there are none
 				tail: at === frames.length - 1 && held.length === 0,
 				last: at === frames.length - 1,
-				entry: frame.kind === "term" ? "term.tsx" : "frame.tsx",
+				terminal: frame.kind === "term",
 				top,
 				height: FRAME_ROW,
 			});
