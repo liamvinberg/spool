@@ -96,7 +96,7 @@ jobs:
       - run: npm install -g npm@11
       - run: npm publish
 
-  # The macOS app (#240). It bundles the spool package of its own version, so it
+  # The macOS app (#63). It bundles the spool package of its own version, so it
   # can only be built once that version is on npm, which is why this job is last
   # and why it depends on the one above rather than racing it. A failure here
   # cannot retract anything: npm already has the release and the GitHub release
@@ -130,7 +130,7 @@ jobs:
       # bundle and CFBundleShortVersionString. An installed copy compares itself
       # against the newest release tag, and that comparison is worth nothing if
       # the two came from different places.
-      - run: macos/scripts/version.sh "$TAG"
+      - run: desktop/scripts/version.sh "$TAG"
       # A keychain that exists for this run only. The certificate arrives as a
       # base64 .p12 and never touches the disk in any other form. The identity is
       # read back out rather than named in a secret, so there is nothing to keep
@@ -142,7 +142,7 @@ jobs:
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
           if [ -z "$CERTIFICATE" ]; then
-            echo "MACOS_CERTIFICATE is not set. See macos/README.md for the wizard that sets all five." >&2
+            echo "MACOS_CERTIFICATE is not set. See desktop/README.md for the wizard that sets all five." >&2
             exit 1
           fi
           keychain="$RUNNER_TEMP/signing.keychain-db"
@@ -167,10 +167,14 @@ jobs:
             exit 1
           fi
           echo "identity=$identity" >> "$GITHUB_OUTPUT"
-      # The app's own checks: the daemon.json shape, the address rules and the
-      # mark geometry, all offline. Nothing else in this repo compiles Swift, so
-      # this is where a broken app is caught.
-      - run: swift test --package-path macos
+      # The app's own checks: the daemon.json shape, the address rules, the
+      # version comparison, and one real Electron launch that proves the main
+      # process module loads. `desktop/` is its own pnpm root, so it installs
+      # itself rather than riding a root install.
+      - run: pnpm --dir desktop install --frozen-lockfile
+      - run: pnpm --dir desktop typecheck
+      - run: pnpm --dir desktop test
+      - run: pnpm --dir desktop smoke
       - name: Build, sign, notarize, staple
         env:
           SIGN_IDENTITY: ${{ steps.identity.outputs.identity }}
@@ -179,11 +183,11 @@ jobs:
           NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY }}
         run: |
           if [ -z "$NOTARY_KEY_P8" ]; then
-            echo "NOTARY_KEY is not set, so this would build a dmg Gatekeeper refuses. See macos/README.md." >&2
+            echo "NOTARY_KEY is not set, so this would build a dmg Gatekeeper refuses. See desktop/README.md." >&2
             exit 1
           fi
           echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
-          NOTARY_KEY="$RUNNER_TEMP/notary.p8" OUT="$RUNNER_TEMP/dist" macos/scripts/package.sh
+          NOTARY_KEY="$RUNNER_TEMP/notary.p8" OUT="$RUNNER_TEMP/dist" desktop/scripts/package.sh
           rm -f "$RUNNER_TEMP/notary.p8"
       - name: Attach the dmg to the release
         env:
@@ -208,7 +212,7 @@ jobs:
           {
             echo "### Spool for macOS"
             echo
-            echo "Apple silicon, macOS 14 or later. Signed and notarized, so it opens without a right-click. Drag it to Applications and find it in the menu bar; it brings its own Node and its own copy of \`spool.page@$version\`, so nothing else has to be installed."
+            echo "Apple silicon, macOS 14 or later. Signed and notarized, so it opens without a right-click. Drag it to Applications and open it: the canvas is in the window, and there is a menu bar item for when the window is closed. It brings its own copy of \`spool.page@$version\`, so nothing else has to be installed."
             echo
             echo "\`Spool-$version.dmg\` sha256 \`$sum\`"
             echo

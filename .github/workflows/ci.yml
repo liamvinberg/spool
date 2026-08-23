@@ -52,7 +52,12 @@ jobs:
       - run: pnpm test
       - run: pnpm check
       - run: pnpm build
-      # The Mac app compiles with the runner's Xcode, which trails a developer's
-      # machine by a toolchain or two, and the dmg job is where that used to be
-      # found out, one release late.
-      - run: swift test --package-path macos
+      # The Mac app's own checks. `desktop/` is its own pnpm root and is not in
+      # the install above, so it installs itself here. The smoke is the only one
+      # that needs a real Electron: it proves the main process module loads and
+      # that the menus it builds are ones Electron accepts, which is what the dmg
+      # job used to find out one release late.
+      - run: pnpm --dir desktop install --frozen-lockfile
+      - run: pnpm --dir desktop typecheck
+      - run: pnpm --dir desktop test
+      - run: pnpm --dir desktop smoke
