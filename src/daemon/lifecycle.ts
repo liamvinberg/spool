@@ -284,31 +284,76 @@ export async function spoolDaemonAt(host: string, port: number): Promise<DaemonH
 	return fetchHealth(daemonUrl(host, port));
 }
 
-/** The daemon recorded in state, but only if it answers health as itself. */
-async function liveDaemon(spoolDir: string): Promise<{ state: DaemonState; url: string } | undefined> {
+interface LiveDaemon {
+	state: DaemonState;
+	url: string;
+}
+
+type RecordedProbe = { kind: "live"; daemon: LiveDaemon } | { kind: "stale"; state: DaemonState } | { kind: "absent" };
+
+/**
+ * What daemon.json describes, checked against who actually answers — and, on
+ * a miss, the exact state that was read. Carrying that state back is the
+ * point: a sweep that reads the file a second time can pick up a successor's,
+ * written while the health probe was in flight (and fetchHealth gives up
+ * after a second, so a busy daemon reads as dead), and deleting a live
+ * daemon's credential strands it — nothing can talk to it, stop it, or write
+ * the token back, because only that daemon ever knew it.
+ */
+async function probeRecorded(spoolDir: string): Promise<RecordedProbe> {
 	const state = readDaemonState(spoolDir);
-	if (state === undefined) return undefined;
+	if (state === undefined) return { kind: "absent" };
 	const url = daemonUrl(state.host, state.port);
 	const health = await fetchHealth(url);
-	if (health === undefined || health.pid !== state.pid) return undefined;
-	return { state, url };
+	if (health === undefined || health.pid !== state.pid) return { kind: "stale", state };
+	return { kind: "live", daemon: { state, url } };
+}
+
+/** The daemon recorded in state, but only if it answers health as itself. */
+async function liveDaemon(spoolDir: string): Promise<LiveDaemon | undefined> {
+	const probe = await probeRecorded(spoolDir);
+	return probe.kind === "live" ? probe.daemon : undefined;
 }
 
 export type DaemonStatus = { running: true; url: string; pid: number; version: string } | { running: false };
 
 /** Drop a daemon.json whose recorded daemon is no longer the one answering. */
-function sweepStaleState(spoolDir: string): void {
-	const stale = readDaemonState(spoolDir);
-	if (stale !== undefined) clearDaemonState(spoolDir, stale.pid);
+function sweepStaleState(spoolDir: string, probe: RecordedProbe): void {
+	// clearDaemonState re-reads and matches the pid, so a file replaced since
+	// the probe — the successor case — survives
+	if (probe.kind === "stale") clearDaemonState(spoolDir, probe.state.pid);
 }
 
 export async function statusDaemon(spoolDir: string): Promise<DaemonStatus> {
-	const live = await liveDaemon(spoolDir);
-	if (live === undefined) {
-		sweepStaleState(spoolDir);
+	const probe = await probeRecorded(spoolDir);
+	if (probe.kind !== "live") {
+		sweepStaleState(spoolDir, probe);
 		return { running: false };
 	}
-	return { running: true, url: live.url, pid: live.state.pid, version: live.state.version };
+	const { state, url } = probe.daemon;
+	return { running: true, url, pid: state.pid, version: state.version };
+}
+
+/**
+ * A spool daemon holding the address `serve` would bind that no state file
+ * accounts for. Health takes no control token, so it is the only handle left
+ * on such a daemon — and the pid it reports is the whole of what stopping one
+ * takes. The address alone cannot prove the daemon belongs to this ~/.spool,
+ * which is why nothing acts on this without a human asking.
+ */
+export async function unrecordedDaemon(
+	spoolDir: string,
+	env: Record<string, string | undefined> = process.env,
+): Promise<{ pid: number; url: string; version: string } | undefined> {
+	let config: ServeConfig;
+	try {
+		config = resolveServeConfig(spoolDir, env);
+	} catch {
+		return undefined;
+	}
+	const health = await spoolDaemonAt(config.host, config.port);
+	if (health === undefined) return undefined;
+	return { pid: health.pid, url: daemonUrl(config.host, config.port), version: health.version };
 }
 
 export interface EnsureOptions {
@@ -353,6 +398,14 @@ export async function ensureDaemon(spoolDir: string, options: EnsureOptions = {}
 	const live = await poll(options.timeoutMs ?? 10_000, () => liveDaemon(spoolDir));
 	if (live !== undefined)
 		return { url: live.url, pid: live.state.pid, started: true, controlToken: live.state.controlToken };
+	// the successor cannot bind a port a daemon nobody recorded still holds,
+	// and the log only shows it failing to bind — name the squatter instead
+	const orphan = await unrecordedDaemon(spoolDir, { ...process.env, ...options.env });
+	if (orphan !== undefined) {
+		throw new SpoolError(
+			`a spool daemon (v${orphan.version}, pid ${orphan.pid}) already serves ${orphan.url}, but its control credential is unavailable — run \`spool stop --force\` to stop it, then try again`,
+		);
+	}
 	throw new SpoolError(`spool daemon did not come up — see ${logFile}`);
 }
 
@@ -368,20 +421,44 @@ function defaultServeCommand(): string[] {
 	return [process.execPath, ...process.execArgv, selfCliPath(), "serve", "--foreground"];
 }
 
-export type StopResult = { stopped: true; pid: number } | { stopped: false };
+export type StopResult = { stopped: true; pid: number; adopted: boolean } | { stopped: false };
+
+export interface StopOptions {
+	/**
+	 * Also stop a daemon no state file accounts for. Off by default and never
+	 * inferred: the configured address is not proof of ownership, and a test
+	 * or a stray shell pointed at the default port would otherwise take down
+	 * the daemon someone is working in.
+	 */
+	force?: boolean;
+	env?: Record<string, string | undefined>;
+}
 
 /** Stop is goal-state: a daemon that is not running is already stopped. */
-export async function stopDaemon(spoolDir: string): Promise<StopResult> {
-	const live = await liveDaemon(spoolDir);
-	if (live === undefined) {
-		sweepStaleState(spoolDir);
-		return { stopped: false };
-	}
+export async function stopDaemon(spoolDir: string, options: StopOptions = {}): Promise<StopResult> {
+	const probe = await probeRecorded(spoolDir);
+	if (probe.kind === "live") return terminate(spoolDir, probe.daemon.url, probe.daemon.state.pid, false);
 
-	const { pid } = live.state;
+	sweepStaleState(spoolDir, probe);
+	if (options.force !== true) return { stopped: false };
+	const orphan = await unrecordedDaemon(spoolDir, options.env);
+	if (orphan === undefined) return { stopped: false };
+	return terminate(spoolDir, orphan.url, orphan.pid, true);
+}
+
+async function terminate(spoolDir: string, url: string, pid: number, adopted: boolean): Promise<StopResult> {
 	try {
 		process.kill(pid, "SIGTERM");
 	} catch {
+		// a recorded pid that no longer exists is just stale state, but an
+		// adopted one that does not exist here means the answer came from
+		// somewhere else — a forwarded port, an ssh tunnel — and reporting
+		// "not running" about a daemon that is plainly serving is a lie
+		if (adopted) {
+			throw new SpoolError(
+				`${url} is served by pid ${pid}, which is not a process on this machine — a forwarded port (an ssh tunnel?) reaches a daemon elsewhere; stop it where it runs`,
+			);
+		}
 		clearDaemonState(spoolDir, pid);
 		return { stopped: false };
 	}
@@ -389,7 +466,7 @@ export async function stopDaemon(spoolDir: string): Promise<StopResult> {
 	const gone = await poll(5000, async () => (isAlive(pid) ? undefined : true), 50);
 	if (gone === true) {
 		clearDaemonState(spoolDir, pid);
-		return { stopped: true, pid };
+		return { stopped: true, pid, adopted };
 	}
 	throw new SpoolError(`spool daemon (pid ${pid}) did not exit — kill it manually`);
 }

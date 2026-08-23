@@ -312,7 +312,7 @@ program
 					if (sibling !== undefined) {
 						await uiWatcher?.close();
 						throw new SpoolError(
-							`another spool daemon already serves ${daemonUrl(config.host, config.port)}, but its control credential is unavailable — stop it or restore ${join(spoolDir, "daemon.json")}`,
+							`another spool daemon already serves ${daemonUrl(config.host, config.port)}, but its control credential is unavailable — run \`spool stop --force\` to stop it (${join(spoolDir, "daemon.json")} cannot be written back by hand: only that daemon knew its token)`,
 						);
 					}
 				}
@@ -463,10 +463,17 @@ program
 program
 	.command("stop")
 	.description("stop the daemon")
-	.action(async () => {
-		const result = await stopDaemon(spoolDir);
+	.option("--force", "also stop a daemon holding the address that no state file accounts for")
+	.action(async (options: { force?: boolean }) => {
+		const result = await stopDaemon(spoolDir, options.force === true ? { force: true } : {});
+		if (!result.stopped) {
+			process.stdout.write("spool daemon was not running\n");
+			return;
+		}
 		process.stdout.write(
-			result.stopped ? `stopped spool daemon (pid ${result.pid})\n` : "spool daemon was not running\n",
+			result.adopted
+				? `stopped an unrecorded spool daemon (pid ${result.pid}) — nothing had its control credential\n`
+				: `stopped spool daemon (pid ${result.pid})\n`,
 		);
 	});
 

@@ -1,4 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
+import { createServer, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +16,7 @@ import {
 	spoolDaemonAt,
 	statusDaemon,
 	stopDaemon,
+	writeDaemonState,
 } from "./lifecycle";
 import { serveDaemon } from "./server";
 
@@ -275,6 +278,47 @@ describe("statusDaemon", () => {
 		expect(existsSync(join(spoolDir, "daemon.json"))).toBe(false);
 	});
 
+	it("never sweeps state a successor wrote while the health probe was in flight", async () => {
+		const spoolDir = makeSpoolDir();
+		mkdirSync(spoolDir, { recursive: true });
+		// accepts and never answers, so the probe spends its full timeout —
+		// the window an upgrade's restart lands in
+		const held: Socket[] = [];
+		const mute = createServer((socket) => held.push(socket));
+		await new Promise<void>((ready) => mute.listen(0, "127.0.0.1", ready));
+		onTestFinished(() => {
+			// the aborted fetch leaves its socket open, and close() waits on it
+			for (const socket of held.splice(0)) socket.destroy();
+			return new Promise<void>((done) => mute.close(() => done()));
+		});
+		const address = mute.address();
+		if (address === null || typeof address === "string") throw new Error("no port");
+		writeDaemonState(spoolDir, {
+			pid: 99999999,
+			host: "127.0.0.1",
+			port: address.port,
+			version: "0.0.0",
+			startedAt: "2026-01-01T00:00:00Z",
+			controlToken: "doomed-control-token",
+		});
+
+		// the read is done the moment statusDaemon is called; the successor
+		// records itself while the probe hangs on the mute listener
+		const probing = statusDaemon(spoolDir);
+		const successor = {
+			pid: 4242,
+			host: "127.0.0.1",
+			port: 65533,
+			version: "0.0.1",
+			startedAt: "2026-01-02T00:00:00Z",
+			controlToken: "successor-control-token",
+		};
+		writeDaemonState(spoolDir, successor);
+
+		expect(await probing).toEqual({ running: false });
+		expect(readDaemonState(spoolDir)).toEqual(successor);
+	});
+
 	it("reports a live daemon with url, pid and version", async () => {
 		const spoolDir = makeSpoolDir();
 		const daemon = await makeServer(spoolDir);
@@ -318,6 +362,30 @@ describe("stopDaemon", () => {
 		expect(await stopDaemon(spoolDir)).toEqual({ stopped: false });
 		expect(existsSync(join(spoolDir, "daemon.json"))).toBe(false);
 	});
+
+	it("refuses to report a forwarded daemon stopped: its pid is not a process here", async () => {
+		const spoolDir = makeSpoolDir();
+		// what an ssh tunnel to another machine's daemon looks like from here:
+		// healthy, and naming a pid that exists only on the other end
+		const forwarded = createHttpServer((_request, response) => {
+			response.writeHead(200, { "content-type": "application/json" });
+			response.end(
+				JSON.stringify({
+					name: "spool",
+					version: "0.0.0-remote",
+					pid: 99999999,
+					startedAt: "2026-01-01T00:00:00Z",
+				}),
+			);
+		});
+		await new Promise<void>((ready) => forwarded.listen(0, "127.0.0.1", ready));
+		onTestFinished(() => new Promise<void>((done) => forwarded.close(() => done())));
+		const address = forwarded.address();
+		if (address === null || typeof address === "string") throw new Error("no port");
+		const env = { SPOOL_PORT: String(address.port), SPOOL_DIR: spoolDir };
+
+		await expect(stopDaemon(spoolDir, { force: true, env })).rejects.toThrow(/not a process on this machine/);
+	});
 });
 
 describe("daemon lifecycle end to end", () => {
@@ -349,8 +417,45 @@ describe("daemon lifecycle end to end", () => {
 		expect(status.running).toBe(true);
 
 		const stopped = await stopDaemon(spoolDir);
-		expect(stopped).toEqual({ stopped: true, pid: first.pid });
+		expect(stopped).toEqual({ stopped: true, pid: first.pid, adopted: false });
 		expect(await statusDaemon(spoolDir)).toEqual({ running: false });
+	});
+
+	it("stop --force adopts a daemon whose credential state is gone", { timeout: 40_000 }, async () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+		const command = [
+			join(repoRoot, "node_modules", ".bin", "tsx"),
+			join(repoRoot, "src", "cli.ts"),
+			"serve",
+			"--foreground",
+		];
+		const env = { HOME: home, SPOOL_PORT: "0", SPOOL_DIR: "" };
+		const daemon = await ensureDaemon(spoolDir, { command, env, timeoutMs: 30_000 });
+		onTestFinished(() => {
+			try {
+				process.kill(daemon.pid, "SIGKILL");
+			} catch {
+				// already gone
+			}
+		});
+		const port = readDaemonState(spoolDir)?.port;
+		if (port === undefined) throw new Error("the daemon recorded no port");
+		rmSync(join(spoolDir, "daemon.json"));
+		// the address the orphan holds, as the shell that would serve it sees it
+		const forceEnv = { SPOOL_PORT: String(port), SPOOL_DIR: spoolDir };
+
+		// nothing is taken down on an address alone
+		expect(await stopDaemon(spoolDir, { env: forceEnv })).toEqual({ stopped: false });
+		expect(await spoolDaemonAt("127.0.0.1", port)).toBeDefined();
+
+		expect(await stopDaemon(spoolDir, { force: true, env: forceEnv })).toEqual({
+			stopped: true,
+			pid: daemon.pid,
+			adopted: true,
+		});
+		expect(await spoolDaemonAt("127.0.0.1", port)).toBeUndefined();
 	});
 
 	it("stop tears down an open app event stream", { timeout: 40_000 }, async () => {
@@ -378,7 +483,7 @@ describe("daemon lifecycle end to end", () => {
 		const hello = await reader.read();
 		expect(new TextDecoder().decode(hello.value)).toContain("event: hello");
 
-		await expect(stopDaemon(spoolDir)).resolves.toEqual({ stopped: true, pid: daemon.pid });
+		await expect(stopDaemon(spoolDir)).resolves.toEqual({ stopped: true, pid: daemon.pid, adopted: false });
 	});
 });
 
