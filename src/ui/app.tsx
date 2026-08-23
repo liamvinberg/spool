@@ -378,7 +378,12 @@ export function App() {
 						onForgetProject={(project) => stageForget(project)}
 					/>
 				) : (
-					<ProjectCanvas key={focusedTab.root} project={focusedTab.name} onChrome={setChrome} />
+					<ProjectCanvas
+						key={focusedTab.root}
+						project={focusedTab.name}
+						frameCount={byRoot.get(focusedTab.root)?.frameCount ?? 0}
+						onChrome={setChrome}
+					/>
 				)}
 			</main>
 

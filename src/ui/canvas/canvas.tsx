@@ -46,6 +46,7 @@ import { useAgentInstall } from "./agent-preflight";
 import { AgentRail, type FrameJump } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
+import { BootCurtain } from "./boot-screen";
 import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, K_STEP, toWorld, zoomAt } from "./camera";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
@@ -228,9 +229,19 @@ export function ownsFrameMessage(
 
 export function ProjectCanvas({
 	project,
+	frameCount = 0,
 	onChrome,
 }: {
 	project: string;
+	/**
+	 * How many frames the registry scan counted, from the card the shell already
+	 * holds (#244). It is the one true thing about this project available before
+	 * the projection lands, and it is what the boot curtain draws.
+	 *
+	 * Absent means nobody could say, which is what a harness mounting this canvas
+	 * directly is in: the curtain stays down rather than drawing a block of none.
+	 */
+	frameCount?: number | undefined;
 	onChrome: (chrome: CanvasChrome | null) => void;
 }) {
 	const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -3183,6 +3194,10 @@ export function ProjectCanvas({
 				    frames. It says so over the canvas surface rather than in place of the
 				    whole row, because the agent that writes the first frame is asked for
 				    it in the rail beside this notice. */}
+				{/* the wait before the projection lands (#244): the field used to render
+				    nothing at all until the daemon answered, so a slow reply and a project
+				    with no frames in it were the same picture. */}
+				<BootCurtain frameCount={frameCount} ready={loaded} />
 				{projectEmpty && (
 					<div
 						data-canvas-empty=""

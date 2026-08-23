@@ -68,6 +68,14 @@
 	/* the finder: the scrim fades in, the panel settles from just above */
 	--animate-find-in: find-in 140ms ease-out;
 	--animate-find-panel-in: find-panel-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	/* the boot curtain (#244): it is gated at both ends, so the numbers here are
+	 * only half the story — `canvas/boot-grid.ts` carries the gate and the exit,
+	 * and why they are what they are. A cell rests dark and the wave crosses the
+	 * block on a diagonal, slowly: this stands over a wait measured in a fraction
+	 * of a second, and anything faster reads as an alarm. */
+	--animate-boot-in: boot-in 180ms ease-out;
+	--animate-boot-out: boot-out 400ms ease-out forwards;
+	--animate-boot-cell: boot-cell 2600ms cubic-bezier(0.4, 0, 0.2, 1) infinite;
 	/* the agent rail (#192): an entry settles into the log, a word fades in as it
 	 * arrives, and a ring turns slowly enough to read as work rather than an alarm.
 	 * 170ms on the word is where the sourced numbers land — Streamdown defaults to
@@ -348,6 +356,46 @@
 		}
 	}
 
+	@keyframes boot-in {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+
+	@keyframes boot-out {
+		from {
+			opacity: 1;
+		}
+		to {
+			opacity: 0;
+		}
+	}
+
+	/* a cell is lit for the share of its cycle this shape says it is, however the
+	 * delays are spread — so this is the one place the band's width is decided,
+	 * and at 15% it is a couple of rows rather than most of the block. */
+	@keyframes boot-cell {
+		0% {
+			background-color: var(--color-raised);
+			opacity: 0.35;
+		}
+		5% {
+			background-color: color-mix(in srgb, var(--color-thread) 45%, var(--color-raised));
+			opacity: 1;
+		}
+		15% {
+			background-color: var(--color-raised);
+			opacity: 0.35;
+		}
+		100% {
+			background-color: var(--color-raised);
+			opacity: 0.35;
+		}
+	}
+
 	@keyframes unseen-in {
 		from {
 			opacity: 0;
@@ -381,6 +429,18 @@
 	.animate-agent-spin,
 	.animate-agent-wind {
 		animation: none;
+	}
+
+	.animate-boot-in,
+	.animate-boot-cell {
+		animation: none;
+	}
+
+	/* the same trap the leaving words are in: the fade is what takes the curtain
+	 * off the arriving canvas, so a curtain told not to animate would stand at
+	 * full strength over the frames until its timer retired it. */
+	.animate-boot-out {
+		display: none;
 	}
 
 	/* words on their way out are simply out. Not `animation: none` like the rest of them:
