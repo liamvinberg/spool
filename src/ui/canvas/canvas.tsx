@@ -2965,6 +2965,9 @@ export function ProjectCanvas({
 					// pointing at (#194)
 					litPage={finding ? findLit : pointedPage}
 					unseen={unseen}
+					// the same path the dwell clock takes, so a marked-by-hand frame clears
+					// against the same overlay and lands in the same batched write
+					onMarkSeen={markRead}
 				/>
 			</div>
 			<div

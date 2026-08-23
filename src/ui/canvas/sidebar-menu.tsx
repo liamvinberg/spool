@@ -45,6 +45,8 @@ export interface RailMenuActions {
 	readonly openEditor: () => void;
 	readonly trash: () => void;
 	readonly collapseAll: () => void;
+	readonly markSeen: () => void;
+	readonly markAllSeen: () => void;
 }
 
 type Entry =
@@ -73,6 +75,13 @@ export function menuEntries(
 		selection: number;
 		/** whether there is any page this row could move to that it is not in already */
 		movable: boolean;
+		/**
+		 * How many marks this target's mark-as-viewed would clear (seen.ts): the
+		 * unseen among what a frame verb acts on, or the whole project's on the
+		 * empty list. Zero is what greys the item out rather than hiding it — a
+		 * canvas with nothing unseen should still teach that the verb is there.
+		 */
+		unseen: number;
 	},
 ): readonly Entry[] {
 	if (target.kind === "empty") {
@@ -81,6 +90,9 @@ export function menuEntries(
 			{ run: "paste", label: "Paste", keys: hotkeyKey("sidebar.paste"), off: !at.pasteable },
 			{ rule: true },
 			{ run: "collapseAll", label: "Collapse all" },
+			// the escape hatch from reading: an agent writes forty frames while you are
+			// somewhere else and you do not want to visit forty frames to say so
+			{ run: "markAllSeen", label: "Mark all as viewed", off: at.unseen === 0 },
 		];
 	}
 	if (target.kind === "page") {
@@ -109,6 +121,9 @@ export function menuEntries(
 		{ rule: true },
 		{ run: "reveal", label: "Reveal on canvas", off: many },
 		{ run: "openEditor", label: "Open in editor", off: many },
+		// acts on the selection like every frame verb above it, and reads as one
+		// press whether it clears one mark or nine
+		{ run: "markSeen", label: "Mark as viewed", off: at.unseen === 0 },
 		{ rule: true },
 		{ run: "trash", label: "Move to Trash", keys: hotkeyKey("sidebar.trash") },
 	];
@@ -123,6 +138,7 @@ export function RailMenu({
 	pasteable,
 	selection,
 	movable,
+	unseen,
 	actions,
 	onClose,
 }: {
@@ -130,6 +146,7 @@ export function RailMenu({
 	pasteable: boolean;
 	selection: number;
 	movable: boolean;
+	unseen: number;
 	actions: RailMenuActions;
 	onClose: () => void;
 }) {
@@ -141,7 +158,7 @@ export function RailMenu({
 		return () => window.removeEventListener("resize", onClose);
 	}, [onClose]);
 
-	const entries = menuEntries(menu.target, { pasteable, selection, movable });
+	const entries = menuEntries(menu.target, { pasteable, selection, movable, unseen });
 	const height = heightOf(entries);
 	const flipX = menu.x + MENU_WIDTH > window.innerWidth - SCREEN_MARGIN;
 	const flipY = menu.y + height > window.innerHeight - SCREEN_MARGIN;

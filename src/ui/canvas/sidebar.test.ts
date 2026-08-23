@@ -439,13 +439,17 @@ describe("the row menu", () => {
 			"New page with selection",
 			"Reveal on canvas",
 			"Open in editor",
+			"Mark as viewed",
 			"Move to Trash",
 		]);
+		// nothing in this project is unseen, and the verb is greyed rather than gone
+		expect(deadItems()).toContain("Mark as viewed");
 
 		await act(async () => press("Escape"));
 		const list = host.querySelector<HTMLElement>('[aria-label="Pages tree"]');
 		await act(async () => list?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
-		expect(labelsOf()).toEqual(["New page", "Paste", "Collapse all"]);
+		expect(labelsOf()).toEqual(["New page", "Paste", "Collapse all", "Mark all as viewed"]);
+		expect(deadItems()).toContain("Mark all as viewed");
 		expect(labelsOf().some((label) => label?.includes("frame"))).toBe(false);
 	});
 
@@ -492,6 +496,62 @@ describe("the row menu", () => {
 				],
 			},
 		]);
+	});
+
+	/**
+	 * The escape hatch beside reading (seen.ts). Marks clear by being looked at,
+	 * which stays the rule; this is the way to say so about frames you already
+	 * know about without travelling to each one. It acts on the selection like
+	 * every frame verb above it, and it names only what actually wears a mark —
+	 * a frame that is already seen is not news the daemon needs told twice.
+	 */
+	it("marks the chosen frames viewed, and never names one that is already seen", async () => {
+		const onMarkSeen = vi.fn();
+		const { host } = await render({
+			selected: ["home", "checkout"],
+			unseen: new Map([["checkout", "new" as const]]),
+			onMarkSeen,
+		});
+
+		const frameRow = host.querySelector<HTMLElement>('button[aria-label="home frame"]')?.parentElement;
+		await act(async () =>
+			frameRow?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+		);
+		expect(deadItems()).not.toContain("Mark as viewed");
+		await act(async () => itemNamed("Mark as viewed")?.click());
+		// home is in the selection and has no mark: the batch is the one frame that does
+		expect(onMarkSeen).toHaveBeenCalledWith(["checkout"]);
+	});
+
+	it("offers nothing to mark on a selection that is wholly seen", async () => {
+		const { host } = await render({ selected: ["home"], unseen: new Map([["checkout", "changed" as const]]) });
+		const frameRow = host.querySelector<HTMLElement>('button[aria-label="home frame"]')?.parentElement;
+		await act(async () =>
+			frameRow?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+		);
+		expect(deadItems()).toContain("Mark as viewed");
+	});
+
+	/**
+	 * The bulk half: an agent writes into the canvas while nobody is there, and
+	 * the way out is one press rather than one visit per frame. It reaches frames
+	 * inside shut pages too — what it clears is the record, not the rows.
+	 */
+	it("marks the whole project viewed from the list's own empty space", async () => {
+		const onMarkSeen = vi.fn();
+		const { host } = await render({
+			unseen: new Map([
+				["home", "new" as const],
+				["checkout", "changed" as const],
+			]),
+			onMarkSeen,
+		});
+
+		const list = host.querySelector<HTMLElement>('[aria-label="Pages tree"]');
+		await act(async () => list?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+		expect(deadItems()).not.toContain("Mark all as viewed");
+		await act(async () => itemNamed("Mark all as viewed")?.click());
+		expect(onMarkSeen).toHaveBeenCalledWith(["home", "checkout"]);
 	});
 
 	it("reveals and opens the frame it was opened on", async () => {

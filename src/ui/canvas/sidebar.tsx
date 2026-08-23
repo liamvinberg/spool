@@ -236,6 +236,7 @@ export function CanvasSidebar({
 	run,
 	litPage = null,
 	unseen = NOTHING_UNSEEN,
+	onMarkSeen,
 }: {
 	project: string;
 	/** Every named page's path, sorted; the root page is implied and has no row. */
@@ -272,6 +273,15 @@ export function CanvasSidebar({
 	 * by side read as one wrong number.
 	 */
 	unseen?: ReadonlyMap<string, Unseen> | undefined;
+	/**
+	 * These frames have been looked at, said by hand rather than by reading them.
+	 *
+	 * Marks clear by being read (unseen.ts), which is the rule the canvas is built
+	 * on and stays the rule. This is the escape hatch beside it: the frames you
+	 * already know about, cleared without travelling to each one. The canvas owns
+	 * the record and the optimistic overlay, so the rail only names the frames.
+	 */
+	onMarkSeen?: (names: readonly string[]) => void;
 }) {
 	const [width, setWidth] = useRailWidth("pages", PANEL_WIDTH);
 	const [resizing, setResizing] = useState(false);
@@ -1425,6 +1435,20 @@ export function CanvasSidebar({
 			? null
 			: { kind: menu.target.kind, names: menu.target.kind === "page" ? [menu.target.page] : chosenFrames };
 	const menuTargets = menuMove === null ? [] : destinations(menuMove.kind, menuMove.names);
+	/**
+	 * How many marks the open menu's mark-as-viewed would clear.
+	 *
+	 * A frame list clears what its verbs act on, which is the selection; the empty
+	 * list clears the project. The page list has no such item, so it counts none —
+	 * a page row's mark is rolled up from frames one chevron away, and a verb that
+	 * reached them from a shut folder would clear more than the row can show.
+	 */
+	const menuUnseen =
+		menu === null || unseen.size === 0 || menu.target.kind === "page"
+			? 0
+			: menu.target.kind === "empty"
+				? unseen.size
+				: chosenFrames.filter((name) => unseen.has(name)).length;
 
 	return (
 		<aside
@@ -1624,6 +1648,7 @@ export function CanvasSidebar({
 							pasteable={clipboard.length > 0}
 							selection={selected.length}
 							movable={menuMove !== null && menuMove.names.length > 0 && menuTargets.length > 0}
+							unseen={menuUnseen}
 							onClose={() => setMenu(null)}
 							actions={{
 								newPage: () => newPage(menu.target.kind === "page" ? menu.target.page : ROOT_PAGE),
@@ -1650,6 +1675,8 @@ export function CanvasSidebar({
 								},
 								trash,
 								collapseAll,
+								markSeen: () => onMarkSeen?.(chosenFrames.filter((name) => unseen.has(name))),
+								markAllSeen: () => onMarkSeen?.([...unseen.keys()]),
 							}}
 						/>,
 						document.body,
