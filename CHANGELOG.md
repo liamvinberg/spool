@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.2
+
+### Patch Changes
+
+- 38b78d9: The Mac app's DMG build tripped over its own staging directory on the release machine, so 0.10.1 has no download either. Fixed. Nothing in the npm package changed.
+
 ## 0.10.1
 
 ### Patch Changes
