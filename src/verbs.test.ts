@@ -301,6 +301,16 @@ describe("skill", () => {
 		expect(skillText("verbs")).toContain("A terminal never executes for a shot");
 	});
 
+	it("puts design history in the contract, switches included (#160)", () => {
+		const text = skillText();
+		expect(text).toContain("the daemon commits design/ for you");
+		expect(text).toContain("never commit design/ yourself and never stage it");
+		expect(text).toContain("spool never pushes");
+		expect(text).toContain("spool init --no-history");
+		expect(text).toContain('`"history": false`');
+		expect(text).toContain("~/.spool/config.json");
+	});
+
 	it("indexes every topic as its own overview row", () => {
 		for (const topic of ["frames", "terminals", "flows", "scenarios", "mock", "styling", "verbs"]) {
 			expect(skillText()).toMatch(new RegExp(`^  ${topic} {2,}\\S`, "m"));

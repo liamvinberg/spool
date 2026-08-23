@@ -46,6 +46,8 @@ Read verbs (work from any cwd inside a registered project, auto-start the daemon
 
 The daemon: \`spool serve\` / \`spool status\` / \`spool stop\` are the handles; \`spool autostart\` makes it start at login (macOS); \`spool upgrade\` installs the latest release and restarts it. The CLI boots HTML frames in spool's own headless Chrome; it never reads the human's canvas. A terminal shot executes nothing and rasterizes only a persisted source-current grid to SVG.
 
+History: where a project's design/canvas.json says \`"history": true\`, the daemon commits design/ for you — everything that changed lands as one \`design: <counts>\` commit on the checked-out branch once the folder has been quiet for 45 seconds. So never commit design/ yourself and never stage it: the save is built from its own index, your staging area is left exactly as you found it, and spool never pushes. \`spool init\` turns history on and says so (\`spool init --no-history\` starts a project without it); a project older than the flag has no key, which reads as off; \`"history": false\` in ~/.spool/config.json turns it off on that machine whatever a project asks for. A repository mid-merge, mid-rebase, on a detached HEAD, or with its index held waits for the next window.
+
 Topics — \`spool skill <topic>\`:
   frames      the design/ contract: folders, sidecars, shared/, libraries
   terminals   term.tsx: recognized, but static and disabled until OS-sandboxed

@@ -9,7 +9,7 @@ Spool is a local-first prototyping canvas. Agents author live TSX frames; people
 - The spool CLI in this checkout is `pnpm dev <verb>`: the checkout is its own instance (state `~/.spool-dev`, port 7767). Never drive the installed `spool` from here — it is a different instance on a different version.
 - `macos/` is the menu bar app: a Swift daemon supervisor that bundles Node and the published package. Its README covers building and releasing it.
 - `design/` is Spool's dogfood canvas. Run `pnpm dev skill` before working there; its nested `AGENTS.md` governs that folder.
-- Treat working-tree changes confined to `design/` as live canvas work. They do not block landing unrelated work whose paths do not overlap them.
+- `design/` is history's: where a project keeps history the daemon commits canvas work itself, so working-tree changes confined to `design/` are a save waiting on its window and never block landing unrelated work whose paths do not overlap them.
 
 ## Agent skills
 
