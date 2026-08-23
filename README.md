@@ -22,6 +22,7 @@ Node 22+, and the canvas wants Chrome (WebKit renders transformed iframes blurry
 
 ```sh
 cd your-product
+spool             # open your canvas in the browser; --no-open just prints its address
 spool init        # scaffold design/, register the project, and open its tab
 spool open        # or: register an existing project and open its tab
 spool remove      # forget the exact registered root; project files stay untouched

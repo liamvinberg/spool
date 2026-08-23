@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,11 +22,11 @@ function spool(args: string[], home: string, cwd?: string, env: Record<string, s
 	});
 }
 
-function spoolAsync(args: string[], home: string, cwd: string) {
+function spoolAsync(args: string[], home: string, cwd: string, env: Record<string, string> = {}) {
 	return new Promise<{ status: number | null; stdout: string; stderr: string }>((done, fail) => {
 		const child = spawn(tsxBin, [cliPath, ...args], {
 			cwd,
-			env: { ...process.env, HOME: home, SPOOL_DIR: "" },
+			env: { ...process.env, HOME: home, SPOOL_DIR: "", ...env },
 		});
 		let stdout = "";
 		let stderr = "";
@@ -41,6 +41,25 @@ function spoolAsync(args: string[], home: string, cwd: string) {
 		child.on("error", fail);
 		child.on("close", (status) => done({ status, stdout, stderr }));
 	});
+}
+
+/**
+ * A PATH whose platform openers record their arguments instead of opening
+ * anything. The real ones would pop a browser on whoever runs the suite, and a
+ * test that has to be watched to fail is not a test.
+ */
+function fakeOpeners(): { path: string; launched: () => string[] } {
+	const dir = makeTempDir();
+	const record = join(dir, "launched");
+	for (const name of ["open", "xdg-open", "cmd"]) {
+		const bin = join(dir, name);
+		writeFileSync(bin, `#!/bin/sh\necho "$@" >> ${JSON.stringify(record)}\n`);
+		chmodSync(bin, 0o755);
+	}
+	return {
+		path: `${dir}:${process.env.PATH ?? ""}`,
+		launched: () => (existsSync(record) ? readFileSync(record, "utf8").split("\n").filter(Boolean) : []),
+	};
 }
 
 /**
@@ -333,6 +352,53 @@ describe("spool cli", { timeout: 30_000 }, () => {
 		expect(JSON.parse(readFileSync(join(spoolDir, "session.json"), "utf8"))).toMatchObject({
 			open: [realpathSync(repo)],
 		});
+	});
+
+	/**
+	 * A bare `spool` from an agent's shell or a script is exactly what it always
+	 * was: the url printed, nothing opened (#239). Storybook shipped auto-open
+	 * unguarded and is walking it back; the guard is the whole point.
+	 */
+	it("bare spool opens no browser when stdin is not a terminal", async () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const repo = makeTempDir();
+		markProject(repo);
+		const openers = fakeOpeners();
+		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
+		onTestFinished(() => daemon.close());
+
+		const result = await spoolAsync([], home, repo, { PATH: openers.path });
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toBe(`canvas: ${daemon.url}/p/${basename(realpathSync(repo))}\n`);
+		expect(openers.launched()).toEqual([]);
+	});
+
+	it("--no-open is the bare verb with the browser left alone", async () => {
+		const home = makeTempDir();
+		const spoolDir = join(home, ".spool");
+		const repo = makeTempDir();
+		markProject(repo);
+		const openers = fakeOpeners();
+		const daemon = await serveDaemon({ spoolDir, version: "0.0.0-test", host: "127.0.0.1", port: 0 });
+		onTestFinished(() => daemon.close());
+
+		const result = await spoolAsync(["--no-open"], home, repo, { PATH: openers.path });
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toBe(`canvas: ${daemon.url}/p/${basename(realpathSync(repo))}\n`);
+		expect(openers.launched()).toEqual([]);
+		expect(JSON.parse(readFileSync(join(spoolDir, "registry.json"), "utf8")).projects).toMatchObject([
+			{ root: realpathSync(repo) },
+		]);
+	});
+
+	it("names the opt-out in help, where someone can find it", () => {
+		const result = spool(["--help"], makeTempDir());
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain("--no-open");
 	});
 
 	it("bare spool outside a project points at init and scaffolds nothing", async () => {

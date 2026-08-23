@@ -6,6 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { installAutostart, removeAutostart } from "./autostart";
+import { openInBrowser, shouldOpenBrowser } from "./browser";
 import { checkDesign } from "./check";
 import {
 	daemonUrl,
@@ -45,7 +46,13 @@ const rootConfigPointer = `add this line to the repo's root CLAUDE.md or AGENTS.
   design/ is a spool canvas: run \`spool skill\` before working there — it is the complete contract
 `;
 
-const program = new Command("spool").description("the live prototyping canvas").version(pkg.version, "-v, --version");
+/** The bare verb's one opt-out, routed by hand below and declared here to be in `--help`. */
+const NO_OPEN = "--no-open";
+
+const program = new Command("spool")
+	.description("the live prototyping canvas")
+	.version(pkg.version, "-v, --version")
+	.option(NO_OPEN, "print the canvas url without opening a browser");
 
 program
 	.command("init")
@@ -79,13 +86,16 @@ program
  *
  * `open` above stays registration-only and daemon-less by design (#12) — it is a
  * step a script composes. A bare `spool` is a person asking to see the thing, so
- * it is the one entry that ensures a daemon and always prints where the canvas
- * is. It never scaffolds: no project here means the same pointer at `spool init`.
+ * it is the one entry that ensures a daemon, always prints where the canvas is,
+ * and — for a person at a terminal — opens it (#239). It never scaffolds: no
+ * project here means the same pointer at `spool init`.
  */
-async function openCanvas(): Promise<void> {
+async function openCanvas(options: { noOpen: boolean }): Promise<void> {
 	const { root } = openProject(process.cwd(), spoolDir);
 	const { url } = await ensureDaemon(spoolDir);
-	process.stdout.write(`canvas: ${url}/p/${encodeURIComponent(basename(root))}\n`);
+	const canvas = `${url}/p/${encodeURIComponent(basename(root))}`;
+	process.stdout.write(`canvas: ${canvas}\n`);
+	if (shouldOpenBrowser({ noOpen: options.noOpen, stdin: process.stdin })) openInBrowser(canvas);
 }
 
 program
@@ -463,9 +473,11 @@ program
 try {
 	// The default is routed here rather than as a commander action handler,
 	// because one on the root swallows every operand it does not recognize —
-	// `spool frobnicate` has to stay an unknown command, not a canvas.
+	// `spool frobnicate` has to stay an unknown command, not a canvas. Its one
+	// flag rides along by hand for the same reason.
 	const args = process.argv.slice(2);
-	if (args.length === 0) await openCanvas();
+	if (args.length === 0) await openCanvas({ noOpen: false });
+	else if (args.length === 1 && args[0] === NO_OPEN) await openCanvas({ noOpen: true });
 	else await program.parseAsync();
 } catch (error) {
 	if (error instanceof SpoolError) {
