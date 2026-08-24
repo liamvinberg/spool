@@ -88,9 +88,11 @@ interface SpoolHomeScreenProps {
 	canvasTarget?: string | undefined;
 	/** frame the empty project's card opens — the other door out of home */
 	emptyTarget?: string | undefined;
+	/** what the bar's "+" opened, drawn over home: the folder picker and nothing else */
+	overlay?: React.ReactNode | undefined;
 }
 
-export function SpoolHomeScreen({ canvasTarget, emptyTarget }: SpoolHomeScreenProps) {
+export function SpoolHomeScreen({ canvasTarget, emptyTarget, overlay }: SpoolHomeScreenProps) {
 	const [query, setQuery] = useState("");
 	const [openMenu, setOpenMenu] = useState<string | null>(null);
 	const [removed, setRemoved] = useState<readonly string[]>([]);
@@ -237,6 +239,8 @@ export function SpoolHomeScreen({ canvasTarget, emptyTarget }: SpoolHomeScreenPr
 						</motion.div>
 					)}
 				</AnimatePresence>
+
+				{overlay}
 			</div>
 		</SpoolShell>
 	);
