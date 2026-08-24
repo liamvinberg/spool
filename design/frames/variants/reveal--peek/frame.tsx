@@ -1,0 +1,164 @@
+import { AnimatePresence, motion } from "motion/react";
+import { useState } from "react";
+import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable, VARIATIONS, variationAt } from "../../../shared/ui/tvarso-checkout";
+import {
+	FIELD_H,
+	FIELD_SCALE,
+	FIELD_W,
+	FrameLabel,
+	Neighbour,
+	Placed,
+	PlayVerb,
+	Thread,
+	VariantsScreen,
+} from "../../../shared/ui/variants-shell";
+import { useArrows, useCycle } from "../../../shared/lib/variants-cycle";
+import { cn } from "../../../shared/lib/utils";
+
+/**
+ * Looking is free, choosing is deliberate.
+ *
+ * The selected frame grows a strip under it, one notch per variation. Run the
+ * pointer along it and the card follows immediately, with no press and nothing
+ * to put away afterwards; take the pointer off and the card snaps back to the
+ * one that is actually pinned. While you are only looking, the selection ring
+ * goes dashed and the name says so, so a screenshot taken mid-peek can never be
+ * mistaken for the state of the file. A click pins what you are looking at.
+ *
+ * The claim: most of the time you want to remember what the other three look
+ * like, not switch to them. The cost is a gesture with no keyboard equal, and a
+ * strip that is only honest up to about eight notches.
+ */
+export default function RevealPeekFrame() {
+	const pinned = useCycle(VARIATIONS.length);
+	const [peek, setPeek] = useState<number | null>(null);
+	useArrows(pinned);
+	const showing = variationAt(peek ?? pinned.index);
+	const looking = peek !== null && peek !== pinned.index;
+
+	return (
+		<VariantsScreen hint="run the pointer along the strip to look · click a notch to pin it">
+			<Thread from={{ x: 264, y: 356 }} to={{ x: 336, y: 356 }} />
+			<Thread from={{ x: 552, y: 356 }} to={{ x: 624, y: 356 }} dashed />
+
+			<Neighbour x={48} y={170} name="timetable" stacked count={2}>
+				<Scaled scale={FIELD_SCALE}>
+					<TvarsoTimetable />
+				</Scaled>
+			</Neighbour>
+
+			<Placed x={336} y={170} z={2}>
+				<FrameLabel
+					name="checkout"
+					selected
+					stacked
+					right={
+						<>
+							<AnimatePresence initial={false}>
+								{looking ? (
+									<motion.span
+										key="peeking"
+										initial={{ opacity: 0 }}
+										animate={{ opacity: 1 }}
+										exit={{ opacity: 0 }}
+										className="font-mono text-2xs text-muted leading-3"
+									>
+										peeking
+									</motion.span>
+								) : null}
+							</AnimatePresence>
+							<PlayVerb />
+						</>
+					}
+				/>
+				<div className="relative" style={{ width: FIELD_W, height: FIELD_H }}>
+					<div className="absolute inset-0 overflow-hidden rounded-[8px]">
+						<AnimatePresence initial={false}>
+							<motion.div
+								key={showing.id}
+								className="absolute inset-0"
+								initial={{ opacity: 0 }}
+								animate={{ opacity: 1 }}
+								exit={{ opacity: 0 }}
+								transition={{ duration: 0.11, ease: "linear" }}
+							>
+								<Scaled scale={FIELD_SCALE}>
+									<TvarsoCheckout variation={showing.id} />
+								</Scaled>
+							</motion.div>
+						</AnimatePresence>
+					</div>
+					{/* dashed while what you see is not what is pinned */}
+					<div
+						className={cn(
+							"pointer-events-none absolute -inset-[3px] rounded-[11px] border-[1.5px] border-thread",
+							looking && "border-dashed",
+						)}
+					/>
+					{["-left-[7px] -top-[7px]", "-right-[7px] -top-[7px]", "-bottom-[7px] -left-[7px]", "-bottom-[7px] -right-[7px]"].map(
+						(position) => (
+							<span
+								key={position}
+								className={cn(
+									"absolute h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread transition-opacity",
+									position,
+									looking && "opacity-40",
+								)}
+							/>
+						),
+					)}
+				</div>
+
+				{/* the strip: one notch per variation, the pinned one solid */}
+				<div className="mt-3 flex flex-col gap-2" onPointerLeave={() => setPeek(null)}>
+					<div className="flex items-center gap-1">
+						{VARIATIONS.map((variation, index) => {
+							const isPinned = index === pinned.index;
+							const isPeek = index === peek;
+							return (
+								<button
+									key={variation.id}
+									type="button"
+									aria-label={`Pin ${variation.label}`}
+									onPointerEnter={() => setPeek(index)}
+									onFocus={() => setPeek(index)}
+									onClick={() => {
+										pinned.go(index);
+										setPeek(null);
+									}}
+									className="group flex h-4 flex-1 items-center"
+								>
+									<motion.span
+										className={cn(
+											"h-[3px] w-full rounded-full",
+											isPinned ? "bg-thread" : isPeek ? "bg-text" : "bg-border-raised",
+										)}
+										initial={false}
+										animate={{ scaleY: isPeek || isPinned ? 1.6 : 1 }}
+										transition={{ duration: 0.14, ease: [0.23, 1, 0.32, 1] }}
+									/>
+								</button>
+							);
+						})}
+					</div>
+					<div className="relative h-3">
+						<motion.span
+							className="absolute top-0 font-mono text-2xs leading-3"
+							initial={false}
+							animate={{ x: ((peek ?? pinned.index) * FIELD_W) / VARIATIONS.length }}
+							transition={{ type: "spring", stiffness: 520, damping: 40 }}
+						>
+							<span className={cn(looking ? "text-text" : "text-thread")}>{showing.label}</span>
+						</motion.span>
+					</div>
+				</div>
+			</Placed>
+
+			<Neighbour x={624} y={170} name="ticket">
+				<Scaled scale={FIELD_SCALE}>
+					<TvarsoTicket />
+				</Scaled>
+			</Neighbour>
+		</VariantsScreen>
+	);
+}
