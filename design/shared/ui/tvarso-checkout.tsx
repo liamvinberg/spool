@@ -74,16 +74,26 @@ export function indexOf(id: VariationId): number {
 
 /* ── the card ──────────────────────────────────────────────────────────── */
 
-export function TvarsoCheckout({ variation, className }: { variation: VariationId; className?: string | undefined }) {
+export function TvarsoCheckout({
+	variation,
+	className,
+	outletRef,
+	actionRef,
+}: {
+	variation: VariationId;
+	className?: string | undefined;
+	outletRef?: React.Ref<HTMLDivElement> | undefined;
+	actionRef?: React.Ref<HTMLButtonElement> | undefined;
+}) {
 	if (variation === "empty") return <EmptyCard className={className} />;
 	return (
-		<TvarsoShell className={className} action={actionOf(variation)}>
+		<TvarsoShell className={className} action={actionOf(variation)} outletRef={outletRef} actionRef={actionRef}>
 			<TvarsoOutlet variation={variation} />
 		</TvarsoShell>
 	);
 }
 
-function actionOf(variation: VariationId): string {
+export function actionOf(variation: VariationId): string {
 	if (variation === "swish") return "Pay with Swish";
 	if (variation === "invoice") return "Send the invoice";
 	if (variation === "voucher") return "Pay 46 kr";
@@ -102,11 +112,14 @@ export function TvarsoShell({
 	action,
 	className,
 	outletRef,
+	actionRef,
 }: {
 	children: ReactNode;
 	action: string;
 	className?: string | undefined;
-	outletRef?: React.Ref<HTMLDivElement>;
+	outletRef?: React.Ref<HTMLDivElement> | undefined;
+	/** the pay button, which is the second thing a payment variation changes */
+	actionRef?: React.Ref<HTMLButtonElement> | undefined;
 }) {
 	return (
 		<Card className={className}>
@@ -118,6 +131,7 @@ export function TvarsoShell({
 			</div>
 			<div className="mt-auto flex flex-col gap-2.5 px-6 pb-6">
 				<button
+					ref={actionRef}
 					type="button"
 					className="h-11 w-full rounded-[10px] text-[15px] font-medium leading-none"
 					style={{ background: SEA, color: "#FFFFFF" }}
