@@ -39,6 +39,8 @@ export default function TreeSegmentFrame() {
 
 	return (
 		<VariantsScreen
+			name="tree--segment"
+			argues="Open the row and get a control, not a list: the whole set on one 26px strip."
 			hint="the strip carries the whole set · ← → slides it"
 			rail={
 				<RailShell count={2}>

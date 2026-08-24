@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "motion/react";
 import type { ReactNode } from "react";
 import { cn } from "../lib/utils";
 import { FolderIcon } from "./spool-icons";
-import { FrameIcon } from "./variants-shell";
+import { Argues, FrameIcon } from "./variants-shell";
 
 /**
  * A file tree and a code block, for the two lanes whose subject is what an
@@ -201,10 +201,15 @@ export function Rule({ children }: { children: ReactNode }) {
 export function DiskSplit({
 	left,
 	right,
+	name,
+	argues,
 	width = 620,
 }: {
 	left: ReactNode;
 	right: ReactNode;
+	/** the take's own name and the one line it argues, for scanning the page */
+	name?: string | undefined;
+	argues?: string | undefined;
 	width?: number;
 }) {
 	return (
@@ -212,7 +217,10 @@ export function DiskSplit({
 			<div className="flex shrink-0 flex-col border-border border-r" style={{ width }}>
 				{left}
 			</div>
-			<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">{right}</div>
+			<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">
+				{name === undefined ? null : <Argues name={name} argues={argues} />}
+				{right}
+			</div>
 		</div>
 	);
 }

@@ -43,6 +43,8 @@ export default function FilesSiblingsFrame() {
 
 	return (
 		<DiskSplit
+			name="files--siblings"
+			argues="Today's -- names promoted to a relationship. Rename the base and watch it break."
 			left={
 				<>
 					<Disk path="design/frames/booking/">

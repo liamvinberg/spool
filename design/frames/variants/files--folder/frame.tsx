@@ -134,6 +134,8 @@ export default function FilesFolderFrame() {
 
 	return (
 		<DiskSplit
+			name="files--folder"
+			argues="A variations/ folder under the frame, one file per candidate, written while you watch."
 			left={
 				<>
 					<Disk path="design/frames/booking/">

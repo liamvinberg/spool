@@ -63,6 +63,8 @@ export default function FilesManifestFrame() {
 
 	return (
 		<DiskSplit
+			name="files--manifest"
+			argues="One list declares the set, its order and its names, and owns the truth twice."
 			left={
 				<>
 					<Disk path="design/frames/booking/">

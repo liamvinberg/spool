@@ -47,6 +47,8 @@ export default function AxisMatrixFrame() {
 
 	return (
 		<VariantsScreen
+			name="axis--matrix"
+			argues="Declare two axes and the field draws every cell, including the ones nobody wrote."
 			hint="turn a value off in the rail · press a cell to pin it"
 			inspector={
 				<>

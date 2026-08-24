@@ -99,6 +99,8 @@ export default function ShellOutletFrame() {
 	return (
 		<DiskSplit
 			width={600}
+			name="shell--outlet"
+			argues="A shell with a hole in it. Switching candidates moves nothing outside the outline."
 			left={
 				<>
 					<Disk path="design/frames/booking/">

@@ -1,43 +1,52 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable, VARIATIONS, variationAt } from "../../../shared/ui/tvarso-checkout";
+import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "../../../shared/ui/tvarso-checkout";
 import {
 	FIELD_H,
 	FIELD_SCALE,
 	FIELD_W,
 	FrameLabel,
+	KeepVerb,
 	Neighbour,
 	Placed,
 	PlayVerb,
 	Thread,
 	VariantsScreen,
 } from "../../../shared/ui/variants-shell";
-import { useArrows, useCycle } from "../../../shared/lib/variants-cycle";
+import { useKey } from "../../../shared/lib/variants-cycle";
+import { useDecision } from "../../../shared/lib/variants-decision";
 import { cn } from "../../../shared/lib/utils";
 
 /**
- * Looking is free, choosing is deliberate.
+ * Looking is free, deciding is deliberate.
  *
- * The selected frame grows a strip under it, one notch per variation. Run the
+ * The selected frame grows a strip under it, one notch per candidate. Run the
  * pointer along it and the card follows immediately, with no press and nothing
- * to put away afterwards; take the pointer off and the card snaps back to the
- * one that is actually pinned. While you are only looking, the selection ring
- * goes dashed and the name says so, so a screenshot taken mid-peek can never be
- * mistaken for the state of the file. A click pins what you are looking at.
+ * to put away afterwards; take the pointer off and it snaps back to the one the
+ * decision is resting on. While you are only looking, the ring goes dashed and
+ * the row says peeking, so a screenshot taken mid-peek can never be mistaken
+ * for what the file holds. A click rests the decision on what you are looking
+ * at; keep ends it.
  *
- * The claim: most of the time you want to remember what the other three look
- * like, not switch to them. The cost is a gesture with no keyboard equal, and a
- * strip that is only honest up to about eight notches.
+ * The claim: a decision is mostly spent looking, and looking should cost
+ * nothing and commit nothing. The cost is a gesture with no keyboard equal, and
+ * a strip that is only honest up to about eight notches.
  */
 export default function RevealPeekFrame() {
-	const pinned = useCycle(VARIATIONS.length);
+	const decision = useDecision();
 	const [peek, setPeek] = useState<number | null>(null);
-	useArrows(pinned);
-	const showing = variationAt(peek ?? pinned.index);
-	const looking = peek !== null && peek !== pinned.index;
+	useKey("ArrowRight", decision.next);
+	useKey("ArrowLeft", decision.prev);
+	const set = decision.candidates;
+	const open = decision.standing === "open";
+	const resting = Math.max(0, set.findIndex((one) => one.id === decision.showing.id));
+	const showing = set[peek ?? resting] ?? decision.showing;
+	const looking = peek !== null && peek !== resting;
 
 	return (
-		<VariantsScreen hint="run the pointer along the strip to look · click a notch to pin it">
+		<VariantsScreen
+			name="reveal--peek"
+			argues="Looking is free and choosing is deliberate: scrub the strip, press to keep." hint={open ? "run the pointer along the strip to look · click a notch to rest on it · keep ends it" : "decided"}>
 			<Thread from={{ x: 264, y: 356 }} to={{ x: 336, y: 356 }} />
 			<Thread from={{ x: 552, y: 356 }} to={{ x: 624, y: 356 }} dashed />
 
@@ -51,7 +60,8 @@ export default function RevealPeekFrame() {
 				<FrameLabel
 					name="checkout"
 					selected
-					stacked
+					stacked={open}
+					count={open ? set.length : undefined}
 					right={
 						<>
 							<AnimatePresence initial={false}>
@@ -67,7 +77,7 @@ export default function RevealPeekFrame() {
 									</motion.span>
 								) : null}
 							</AnimatePresence>
-							<PlayVerb />
+							{open ? <KeepVerb onKeep={() => decision.keep(showing.id)} /> : <PlayVerb />}
 						</>
 					}
 				/>
@@ -112,18 +122,18 @@ export default function RevealPeekFrame() {
 				{/* the strip: one notch per variation, the pinned one solid */}
 				<div className="mt-3 flex flex-col gap-2" onPointerLeave={() => setPeek(null)}>
 					<div className="flex items-center gap-1">
-						{VARIATIONS.map((variation, index) => {
-							const isPinned = index === pinned.index;
+						{set.map((variation, index) => {
+							const isPinned = index === resting;
 							const isPeek = index === peek;
 							return (
 								<button
 									key={variation.id}
 									type="button"
-									aria-label={`Pin ${variation.label}`}
+									aria-label={`Rest the decision on ${variation.label}`}
 									onPointerEnter={() => setPeek(index)}
 									onFocus={() => setPeek(index)}
 									onClick={() => {
-										pinned.go(index);
+										decision.look(variation.id);
 										setPeek(null);
 									}}
 									className="group flex h-4 flex-1 items-center"
@@ -145,7 +155,7 @@ export default function RevealPeekFrame() {
 						<motion.span
 							className="absolute top-0 font-mono text-2xs leading-3"
 							initial={false}
-							animate={{ x: ((peek ?? pinned.index) * FIELD_W) / VARIATIONS.length }}
+							animate={{ x: ((peek ?? resting) * FIELD_W) / set.length }}
 							transition={{ type: "spring", stiffness: 520, damping: 40 }}
 						>
 							<span className={cn(looking ? "text-text" : "text-thread")}>{showing.label}</span>

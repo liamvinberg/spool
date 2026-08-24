@@ -1,52 +1,62 @@
 import { motion } from "motion/react";
 import { useCallback, useState } from "react";
-import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable, VARIATIONS, variationAt } from "../../../shared/ui/tvarso-checkout";
+import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "../../../shared/ui/tvarso-checkout";
 import {
 	FIELD_H,
 	FIELD_SCALE,
 	FIELD_W,
 	FrameLabel,
+	DiscardVerb,
+	KeepVerb,
 	Neighbour,
 	Placed,
 	PlayVerb,
 	SelectionRing,
 	VariantsScreen,
 } from "../../../shared/ui/variants-shell";
-import { useArrows, useCycle, useKey } from "../../../shared/lib/variants-cycle";
+import { useKey } from "../../../shared/lib/variants-cycle";
+import { useDecision } from "../../../shared/lib/variants-decision";
 import { cn } from "../../../shared/lib/utils";
 
 /**
- * The third dimension, taken literally: the variations are behind the frame,
- * in z, and the canvas is a plane you can lift them out of.
+ * The third dimension, taken literally: the candidates are behind the frame, in
+ * z, and the canvas is a plane you can lift them out of to decide.
  *
- * At rest the stack costs eight pixels of edge — enough that the field says
- * "there is more of this" without a badge or a number. Space lifts the deck off
- * the plane and cascades it toward you under a real perspective, the field
- * dimming behind it because the deck is no longer on the field. Press a card
- * and it comes to the front, the others closing up behind it. Escape drops the
- * deck back into the plane, at whichever variation is now facing you.
+ * At rest the stack costs eight pixels of edge, which is enough for the field
+ * to say there is something unsettled here without a badge or a number. Space
+ * lifts the deck off the plane and cascades it toward you under a real
+ * perspective, the field dimming because the deck is no longer on it. Lifted,
+ * every card carries both verbs: press it to bring it to the front, press the ✕
+ * to discard it and watch the deck close up, press keep and the decision ends
+ * with the deck dropping back as one card.
  *
- * The claim: variations are one frame with depth, not four frames in a row. The
- * cost is that the spread state is a mode, and while it is up the canvas
- * underneath is not usable.
+ * The claim: a decision with four things in it wants depth and one gesture, not
+ * four frames in a row. The cost is that the lifted state is a mode, and while
+ * it is up the canvas underneath is not usable.
  */
 
 const STEP = 96;
 const SPRING = { type: "spring", stiffness: 420, damping: 38, mass: 0.9 } as const;
 
 export default function RevealDeckFrame() {
-	const cycle = useCycle(VARIATIONS.length);
+	const decision = useDecision();
 	const [spread, setSpread] = useState(false);
-	useArrows(cycle);
+	useKey("ArrowRight", decision.next);
+	useKey("ArrowLeft", decision.prev);
 	useKey("Escape", useCallback(() => setSpread(false), []));
 	useKey(
 		" ",
 		useCallback(() => setSpread((open) => !open), []),
 	);
-	const facing = variationAt(cycle.index);
+	const facing = decision.showing;
+	const set = decision.candidates;
+	const open = decision.standing === "open";
+	const index = Math.max(0, set.findIndex((one) => one.id === facing.id));
 
 	return (
-		<VariantsScreen hint="space lifts the deck · ← → cycles · esc drops it back">
+		<VariantsScreen
+			name="reveal--deck"
+			argues="The candidates are behind the frame in z, and space lifts the deck off the plane." hint={open ? "space lifts the deck · ← → looks · ✕ discards · keep ends it" : "decided · reopen from the label"}>
 			<Neighbour x={40} y={170} name="timetable" stacked count={2}>
 				<Scaled scale={FIELD_SCALE}>
 					<TvarsoTimetable />
@@ -74,14 +84,23 @@ export default function RevealDeckFrame() {
 				<FrameLabel
 					name="checkout"
 					selected
-					stacked
+					stacked={open}
+					count={open ? set.length : undefined}
 					right={
-						<>
-							<span className="font-mono text-2xs text-muted leading-3">
-								{cycle.index + 1}/{VARIATIONS.length}
-							</span>
-							<PlayVerb />
-						</>
+						open ? (
+							<KeepVerb onKeep={() => decision.keep(facing.id)} />
+						) : (
+							<>
+								<button
+									type="button"
+									onClick={decision.reopen}
+									className="font-mono text-2xs text-muted leading-3 transition-colors hover:text-text"
+								>
+									{facing.label} · kept
+								</button>
+								<PlayVerb />
+							</>
+						)
 					}
 				/>
 				<motion.div
@@ -90,14 +109,14 @@ export default function RevealDeckFrame() {
 					animate={{ x: spread ? -132 : 0 }}
 					transition={SPRING}
 				>
-					{VARIATIONS.map((variation, index) => {
-						const rank = (index - cycle.index + VARIATIONS.length) % VARIATIONS.length;
+					{set.map((variation, at) => {
+						const rank = (at - index + set.length) % set.length;
 						const front = rank === 0;
 						return (
 							<motion.div
 								key={variation.id}
 								className="absolute top-0 left-0 origin-top-left"
-								style={{ width: FIELD_W, height: FIELD_H, zIndex: VARIATIONS.length - rank }}
+								style={{ width: FIELD_W, height: FIELD_H, zIndex: set.length - rank }}
 								initial={false}
 								animate={
 									spread
@@ -115,7 +134,7 @@ export default function RevealDeckFrame() {
 								<button
 									type="button"
 									aria-label={`Show ${variation.label}`}
-									onClick={() => (spread ? cycle.go(index) : setSpread(true))}
+									onClick={() => (spread ? decision.look(variation.id) : setSpread(true))}
 									className="relative block h-full w-full cursor-pointer overflow-hidden rounded-[8px]"
 								>
 									<Scaled scale={FIELD_SCALE}>
@@ -135,6 +154,18 @@ export default function RevealDeckFrame() {
 										)}
 									/>
 								</button>
+								{/* lifted, every card carries the other verb: taking it out of the
+								    running is one press and the deck closes over it */}
+								{spread && set.length > 1 ? (
+									<motion.span
+										className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-xs bg-bg/80 backdrop-blur"
+										initial={{ opacity: 0 }}
+										animate={{ opacity: 1 }}
+										transition={{ duration: 0.18 }}
+									>
+										<DiscardVerb onDiscard={() => decision.discard(variation.id)} />
+									</motion.span>
+								) : null}
 							</motion.div>
 						);
 					})}
@@ -143,8 +174,8 @@ export default function RevealDeckFrame() {
 					{/* names live under the deck rather than on the cards: cascaded, a card
 					    covers the one behind it and its label with it */}
 					<div className="absolute top-[calc(100%+14px)] left-0 h-4 w-full">
-						{VARIATIONS.map((variation, index) => {
-							const rank = (index - cycle.index + VARIATIONS.length) % VARIATIONS.length;
+						{set.map((variation, at) => {
+							const rank = (at - index + set.length) % set.length;
 							return (
 								<motion.span
 									key={variation.id}
@@ -169,10 +200,24 @@ export default function RevealDeckFrame() {
 				className="pointer-events-none absolute top-[104px] left-1/2 z-30 -translate-x-1/2"
 				initial={false}
 				animate={{ opacity: spread ? 1 : 0, y: spread ? 0 : -6 }}
+				style={{ pointerEvents: spread ? "auto" : "none" }}
 				transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
 			>
-				<span className="rounded-sm bg-raised px-2 py-1 font-mono text-2xs text-muted leading-3">
-					checkout · {VARIATIONS.length} variations · facing {facing.label}
+				<span className="pointer-events-auto flex items-center gap-2 rounded-sm bg-raised px-2 py-1 font-mono text-2xs text-muted leading-3">
+					{open ? (
+						<>
+							checkout · {set.length} candidates · looking at {facing.label}
+							<button
+								type="button"
+								onClick={() => decision.keep(facing.id)}
+								className="text-text transition-colors hover:text-thread"
+							>
+								keep it
+							</button>
+						</>
+					) : (
+						<>checkout · decided · {facing.label}</>
+					)}
 				</span>
 			</motion.div>
 		</VariantsScreen>

@@ -39,6 +39,8 @@ export default function TreeDropdownFrame() {
 
 	return (
 		<VariantsScreen
+			name="tree--dropdown"
+			argues="A frame with a set opens the way a page does, and the candidates are rows under it."
 			hint="press a variation in the rail · ← → does the same thing"
 			rail={
 				<RailShell count={2}>
@@ -165,7 +167,7 @@ function VariationRow({
 					{name}
 				</span>
 			</button>
-			{active ? <span className="shrink-0 font-mono text-2xs text-thread leading-3">on canvas</span> : null}
+			{active ? <span className="shrink-0 font-mono text-2xs text-thread leading-3">showing</span> : null}
 		</div>
 	);
 }

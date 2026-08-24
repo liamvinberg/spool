@@ -45,6 +45,9 @@ export function VariantsScreen({
 	rail,
 	inspector,
 	hint,
+	name,
+	argues,
+	railLabel = "Inspector",
 	zoom = "80%",
 }: {
 	children: ReactNode;
@@ -53,6 +56,10 @@ export function VariantsScreen({
 	inspector?: ReactNode | undefined;
 	/** the mono line at the foot of the field saying which keys are live */
 	hint?: ReactNode | undefined;
+	/** the take's own name and the one line it argues, for scanning the page */
+	name?: string | undefined;
+	argues?: string | undefined;
+	railLabel?: string | undefined;
 	zoom?: string;
 }) {
 	return (
@@ -62,12 +69,13 @@ export function VariantsScreen({
 					{rail ?? <DefaultRail />}
 				</aside>
 				<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">
+					{name === undefined ? null : <Argues name={name} argues={argues} />}
 					{children}
 					<Tools />
 					{hint === undefined ? null : <HintLine>{hint}</HintLine>}
 				</div>
 				<aside
-					aria-label="Inspector"
+					aria-label={railLabel}
 					className="flex shrink-0 flex-col border-border border-l bg-bg"
 					style={{ width: INSPECTOR_W }}
 				>
@@ -270,19 +278,25 @@ export function FrameLabel({
 	width = FIELD_W,
 	right,
 	stacked = false,
+	count,
 }: {
 	name: string;
 	selected?: boolean;
 	paused?: boolean;
 	width?: number;
 	right?: ReactNode | undefined;
-	/** the frame has variations, said before the name so the column reads down */
+	/** the frame holds a set, said before the name so the column reads down */
 	stacked?: boolean;
+	/** how many candidates are still in it, said next to the glyph that means "a set" */
+	count?: number | undefined;
 }) {
 	return (
 		<div className="flex min-w-0 items-center gap-1.5 font-mono text-sm leading-4" style={{ width }}>
 			{paused ? <span className="shrink-0 text-2xs text-muted leading-3">▸</span> : null}
 			{stacked ? <StackIcon className={cn("h-3 w-3 shrink-0", selected ? "text-thread" : "text-muted/70")} /> : null}
+			{count === undefined ? null : (
+				<span className="-ml-0.5 shrink-0 font-mono text-2xs text-muted/60 leading-3">{count}</span>
+			)}
 			<span className={cn("min-w-0 truncate", selected ? "text-thread" : "text-muted")}>{name}</span>
 			{right === undefined ? null : <span className="ml-auto flex shrink-0 items-center gap-1.5">{right}</span>}
 		</div>
@@ -327,6 +341,57 @@ export function HintLine({ children }: { children: ReactNode }) {
 		<span className="pointer-events-none absolute bottom-7 left-6 z-20 font-mono text-2xs text-muted/60 leading-3">
 			{children}
 		</span>
+	);
+}
+
+/**
+ * What this take argues, in one line, in the corner of its own field.
+ *
+ * The page is nineteen frames and the point of it is to be scanned, so every
+ * frame says what it is for without being opened. The name is what the machine
+ * calls it and stays mono; the line beside it is a person talking.
+ */
+export function Argues({ name, argues }: { name: string; argues?: string | undefined }) {
+	return (
+		<div className="pointer-events-none absolute top-4 left-6 z-30 flex items-baseline gap-3">
+			<span className="font-mono text-2xs text-muted/60 leading-3">{name}</span>
+			{argues === undefined ? null : <span className="text-base text-muted leading-base">{argues}</span>}
+		</div>
+	);
+}
+
+/** the act the whole page is about, wherever a take has room for it */
+export function KeepVerb({ label = "keep", onKeep }: { label?: string; onKeep?: (() => void) | undefined }) {
+	return (
+		<button
+			type="button"
+			onClick={onKeep}
+			className="flex shrink-0 items-center gap-1 rounded-xs px-1 font-mono text-2xs text-muted leading-3 transition-colors hover:text-thread"
+		>
+			<svg viewBox="0 0 10 10" className="h-2 w-2" fill="none" aria-hidden="true">
+				<path d="m1.6 5.2 2.2 2.2 4.6-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+			</svg>
+			{label}
+		</button>
+	);
+}
+
+/** and its other half, which is not a delete */
+export function DiscardVerb({ onDiscard, className }: { onDiscard?: (() => void) | undefined; className?: string | undefined }) {
+	return (
+		<button
+			type="button"
+			aria-label="Discard"
+			onClick={onDiscard}
+			className={cn(
+				"flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/50 transition-colors hover:text-text",
+				className,
+			)}
+		>
+			<svg viewBox="0 0 10 10" className="h-2 w-2" fill="none" aria-hidden="true">
+				<path d="m2.4 2.4 5.2 5.2m0-5.2-5.2 5.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+			</svg>
+		</button>
 	);
 }
 

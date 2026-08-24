@@ -43,6 +43,8 @@ export default function TreeFlatFrame() {
 
 	return (
 		<VariantsScreen
+			name="tree--flat"
+			argues="Change nothing but the type: four siblings read as a set once the shared stem steps back."
 			hint="four frames, four rows · ← → walks the siblings"
 			rail={
 				<RailShell count={2}>

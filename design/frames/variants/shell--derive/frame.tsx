@@ -132,6 +132,8 @@ export default function ShellDeriveFrame() {
 	return (
 		<DiskSplit
 			width={600}
+			name="shell--derive"
+			argues="No shell file: the first candidate is the shell, and the others are diffs over it."
 			left={
 				<>
 					<Disk path="design/frames/booking/">

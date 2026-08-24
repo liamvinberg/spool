@@ -65,7 +65,9 @@ export default function AxisTimelineFrame() {
 	};
 
 	return (
-		<VariantsScreen hint="drag along the track · ← → steps a moment at a time">
+		<VariantsScreen
+			name="axis--timeline"
+			argues="The candidates already exist in the history. Scrub back and keep one." hint="drag along the track · ← → steps a moment at a time">
 			<Placed x={130} y={116} z={2}>
 				<FrameLabel
 					name="checkout"

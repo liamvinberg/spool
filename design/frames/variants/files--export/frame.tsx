@@ -66,6 +66,8 @@ export default function FilesExportFrame() {
 
 	return (
 		<DiskSplit
+			name="files--export"
+			argues="Every named export in the entry is a candidate, until a helper accidentally becomes one."
 			left={
 				<>
 					<Disk path="design/frames/booking/">

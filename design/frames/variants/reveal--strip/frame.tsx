@@ -1,32 +1,34 @@
 import { motion } from "motion/react";
-import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable, VARIATIONS, variationAt } from "../../../shared/ui/tvarso-checkout";
+import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "../../../shared/ui/tvarso-checkout";
 import {
 	FIELD_H,
 	FIELD_SCALE,
 	FIELD_W,
 	FrameLabel,
+	KeepVerb,
 	Neighbour,
 	Placed,
 	PlayVerb,
 	SelectionRing,
 	VariantsScreen,
 } from "../../../shared/ui/variants-shell";
-import { useArrows, useCycle } from "../../../shared/lib/variants-cycle";
+import { useKey } from "../../../shared/lib/variants-cycle";
+import { useDecision } from "../../../shared/lib/variants-decision";
 import { cn } from "../../../shared/lib/utils";
 
 /**
- * The frame is a window, and its variations run past it.
+ * The frame is a window, and the candidates run past it.
  *
  * Nothing opens and nothing spreads: the frame's own bounds stay exactly where
  * they are, and the set slides through them. Twenty two pixels of the previous
- * and the next card sit outside the selection ring, dimmed, so the field says
- * there is more of this frame in a direction that is not the field. Drag the
- * card sideways or press ← →, and it slides with the weight of a thing being
- * pushed rather than a thing being toggled.
+ * and the next card sit outside the ring, dimmed, so the field says there is
+ * more of this frame in a direction that is not the field. Drag the card
+ * sideways or press ← →, and it moves with the weight of a thing being pushed
+ * rather than a thing being toggled. Keep stops the pushing for good.
  *
- * The claim: cycling is travel, so it should look like travel. The cost is that
- * the ghosts are only readable while the frame is selected, and a set of ten
- * variations is a long way to push.
+ * The claim: looking through a set is travel, so it should read as travel. The
+ * cost is that the ghosts are only there while the frame is selected, and a set
+ * of ten is a long way to push before you can decide.
  */
 
 const GUTTER = 26;
@@ -34,12 +36,18 @@ const STEP = FIELD_W + GUTTER;
 const SPRING = { type: "spring", stiffness: 300, damping: 34, mass: 0.85 } as const;
 
 export default function RevealStripFrame() {
-	const cycle = useCycle(VARIATIONS.length);
-	useArrows(cycle);
-	const facing = variationAt(cycle.index);
+	const decision = useDecision();
+	useKey("ArrowRight", decision.next);
+	useKey("ArrowLeft", decision.prev);
+	const set = decision.candidates;
+	const open = decision.standing === "open";
+	const facing = decision.showing;
+	const index = Math.max(0, set.findIndex((one) => one.id === facing.id));
 
 	return (
-		<VariantsScreen hint="drag the card sideways, or ← → · the frame never moves">
+		<VariantsScreen
+			name="reveal--strip"
+			argues="The frame is a window and the candidates slide through it, ghosts showing at both edges." hint={open ? "drag the card sideways, or ← → · keep ends the decision" : "decided · the window holds one card"}>
 			<Neighbour x={40} y={170} name="timetable" stacked count={2}>
 				<Scaled scale={FIELD_SCALE}>
 					<TvarsoTimetable />
@@ -55,11 +63,12 @@ export default function RevealStripFrame() {
 				<FrameLabel
 					name="checkout"
 					selected
-					stacked
+					stacked={open}
+					count={open ? set.length : undefined}
 					right={
 						<>
 							<span className="font-mono text-2xs text-muted leading-3">{facing.label}</span>
-							<PlayVerb />
+							{open ? <KeepVerb onKeep={() => decision.keep(facing.id)} /> : <PlayVerb />}
 						</>
 					}
 				/>
@@ -81,20 +90,20 @@ export default function RevealStripFrame() {
 							dragMomentum={false}
 							dragElastic={0.16}
 							onDragEnd={(_event: PointerEvent, info: { offset: { x: number } }) => {
-								if (info.offset.x < -50) cycle.next();
-								else if (info.offset.x > 50) cycle.prev();
+								if (info.offset.x < -50) decision.next();
+								else if (info.offset.x > 50) decision.prev();
 							}}
-							animate={{ x: -cycle.index * STEP }}
+							animate={{ x: -index * STEP }}
 							transition={SPRING}
 						>
-							{VARIATIONS.map((variation, index) => {
-								const facingThis = index === cycle.index;
+							{set.map((variation, at) => {
+								const facingThis = at === index;
 								return (
 									<motion.button
 										key={variation.id}
 										type="button"
 										aria-label={`Show ${variation.label}`}
-										onClick={() => cycle.go(index)}
+										onClick={() => decision.look(variation.id)}
 										className="relative block shrink-0 cursor-grab overflow-hidden rounded-[8px] active:cursor-grabbing"
 										style={{ width: FIELD_W, height: FIELD_H }}
 										initial={false}
@@ -114,24 +123,24 @@ export default function RevealStripFrame() {
 
 				{/* where in the run you are, drawn as the run itself */}
 				<div className="mt-7 flex items-center gap-1.5">
-					{VARIATIONS.map((variation, index) => (
+					{set.map((variation, at) => (
 						<button
 							key={variation.id}
 							type="button"
 							aria-label={`Show ${variation.label}`}
-							onClick={() => cycle.go(index)}
+							onClick={() => decision.look(variation.id)}
 							className="flex h-3 items-center"
 						>
 							<span
 								className={cn(
 									"h-[3px] rounded-full transition-all duration-200",
-									index === cycle.index ? "w-6 bg-thread" : "w-3 bg-border-raised",
+									at === index ? "w-6 bg-thread" : "w-3 bg-border-raised",
 								)}
 							/>
 						</button>
 					))}
 					<span className="ml-1 font-mono text-2xs text-muted/60 leading-3">
-						{cycle.index + 1} of {VARIATIONS.length}
+						{open ? `candidate ${index + 1} of ${set.length}` : "kept"}
 					</span>
 				</div>
 			</Placed>

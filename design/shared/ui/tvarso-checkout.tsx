@@ -42,10 +42,10 @@ export interface Variation {
 }
 
 export const VARIATIONS: readonly Variation[] = [
-	{ id: "card", frame: "checkout", file: "frame.tsx", label: "card", note: "the default: pay now, by card", fills: "outlet" },
-	{ id: "swish", frame: "checkout--swish", file: "swish.tsx", label: "swish", note: "phone number, confirm in the app", fills: "outlet" },
-	{ id: "invoice", frame: "checkout--invoice", file: "invoice.tsx", label: "invoice", note: "companies, 30 day terms", fills: "outlet" },
-	{ id: "empty", frame: "checkout--empty", file: "empty.tsx", label: "empty", note: "nothing booked yet", fills: "card" },
+	{ id: "card", frame: "checkout", file: "frame.tsx", label: "card", note: "pay now, by card", fills: "outlet" },
+	{ id: "swish", frame: "checkout--swish", file: "swish.tsx", label: "swish", note: "confirm in the app", fills: "outlet" },
+	{ id: "invoice", frame: "checkout--invoice", file: "invoice.tsx", label: "invoice", note: "30 day terms", fills: "outlet" },
+	{ id: "empty", frame: "checkout--empty", file: "empty.tsx", label: "empty", note: "nothing in the cart", fills: "card" },
 ];
 
 /**
@@ -59,7 +59,7 @@ export const NEW_VARIATION: Variation = {
 	frame: "checkout--voucher",
 	file: "voucher.tsx",
 	label: "voucher",
-	note: "a gift voucher code, then whatever is left on a card",
+	note: "a voucher code",
 	fills: "outlet",
 };
 

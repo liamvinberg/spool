@@ -78,6 +78,8 @@ export default function ShellPropsFrame() {
 	return (
 		<DiskSplit
 			width={600}
+			name="shell--props"
+			argues="The frame takes props and a candidate is only data, until one of them needs a branch."
 			left={
 				<>
 					<Disk path="design/frames/booking/">

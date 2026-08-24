@@ -39,6 +39,8 @@ export default function TreeChipFrame() {
 
 	return (
 		<VariantsScreen
+			name="tree--chip"
+			argues="One row per frame forever. The candidate on the canvas is a chip at the tail of it."
 			hint="press the chip in the rail · esc shuts the menu"
 			rail={
 				<RailShell count={2}>
@@ -68,7 +70,7 @@ export default function TreeChipFrame() {
 										transition={{ duration: 0.14, ease: [0.23, 1, 0.32, 1] }}
 									>
 										<span className="flex h-6 items-center px-2 font-mono text-2xs text-muted/60 leading-3">
-											variations
+											candidates
 										</span>
 										{VARIATIONS.map((variation, index) => (
 											<button
@@ -94,7 +96,13 @@ export default function TreeChipFrame() {
 											type="button"
 											className="flex h-[26px] items-center rounded-sm px-2 text-left font-mono text-xs text-muted leading-xs hover:bg-surface"
 										>
-											new variation
+											keep {active.label}
+										</button>
+										<button
+											type="button"
+											className="flex h-[26px] items-center rounded-sm px-2 text-left font-mono text-xs text-muted leading-xs hover:bg-surface"
+										>
+											new candidate
 										</button>
 									</motion.div>
 								</>
