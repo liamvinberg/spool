@@ -18,12 +18,14 @@ import { cn } from "../lib/utils";
 export const CARD_W = 360;
 export const CARD_H = 620;
 
-const PAPER = "#FBFBF9";
-const INK = "#14171A";
-const MUTED = "#767D84";
-const LINE = "#E6E7E3";
-const FIELD = "#F2F3F0";
-const SEA = "#0F5D4A";
+/* the palette is exported because a frame that rebuilds a block of this card to
+   animate it has to be drawn in the card's own colours, not in spool's */
+export const PAPER = "#FBFBF9";
+export const INK = "#14171A";
+export const MUTED = "#767D84";
+export const LINE = "#E6E7E3";
+export const FIELD = "#F2F3F0";
+export const SEA = "#0F5D4A";
 
 export type VariationId = "card" | "swish" | "invoice" | "empty" | "voucher";
 
@@ -304,7 +306,7 @@ function SwishFill() {
 	);
 }
 
-function QrBlock() {
+export function QrBlock() {
 	const cells = [
 		1, 1, 1, 0, 1, 0, 1, 1,
 		1, 0, 1, 0, 0, 1, 0, 1,
