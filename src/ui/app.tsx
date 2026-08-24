@@ -72,21 +72,39 @@ export function App() {
 		setOpen(session);
 	}, []);
 
-	// boot: session + registry, then focus what the path names
+	/*
+	 * Boot: the session first, alone, and the registry behind it.
+	 *
+	 * These used to be awaited together, and the registry is the expensive half —
+	 * every card in it is a walk of a project's whole design folder, so the shell
+	 * of a machine with a dozen projects registered waited on hundreds of frames
+	 * being counted before it drew a tab. Nothing on the way to a canvas needs a
+	 * card: a tab falls back to its folder's name and the canvas asks the daemon
+	 * about its own project directly. So the cards arrive when they arrive, and
+	 * Home is the only thing that was ever waiting for them.
+	 *
+	 * The focus is resolved in the same commit as the session for the same
+	 * reason. Landing it an effect later left one render where the session was
+	 * known and the focus was not, and what that renders is Home — every project
+	 * card, every cover in them fetched, for a frame nobody sees.
+	 */
 	useEffect(() => {
 		void (async () => {
-			await refetch();
+			const session = await fetchSession();
+			setOpen(session);
+			setFocused((current) => current ?? pathFocus(session));
 			setBooted(true);
+			setProjects(await fetchProjects());
 		})();
-	}, [refetch]);
+	}, []);
 
+	// a project the path names that the session did not have yet: `spool open` in
+	// a shell lands as a session event, and the tab it opens is the one this page
+	// was asked for
 	useEffect(() => {
 		if (!booted || focused !== null) return;
-		const match = window.location.pathname.match(/^\/p\/([^/]+)$/);
-		if (match?.[1] === undefined) return;
-		const name = decodeURIComponent(match[1]);
-		const root = open.find((r) => basename(r) === name);
-		if (root !== undefined) setFocused(root);
+		const root = pathFocus(open);
+		if (root !== null) setFocused(root);
 	}, [booted, focused, open]);
 
 	const offerUpdate = useCallback((latest: string) => {
@@ -378,12 +396,7 @@ export function App() {
 						onForgetProject={(project) => stageForget(project)}
 					/>
 				) : (
-					<ProjectCanvas
-						key={focusedTab.root}
-						project={focusedTab.name}
-						frameCount={byRoot.get(focusedTab.root)?.frameCount ?? 0}
-						onChrome={setChrome}
-					/>
+					<ProjectCanvas key={focusedTab.root} project={focusedTab.name} onChrome={setChrome} />
 				)}
 			</main>
 
@@ -420,4 +433,12 @@ export function App() {
 
 function basename(path: string): string {
 	return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/** Which open root this page's path names, if the session has it open at all. */
+function pathFocus(open: readonly string[]): string | null {
+	const match = window.location.pathname.match(/^\/p\/([^/]+)$/);
+	if (match?.[1] === undefined) return null;
+	const name = decodeURIComponent(match[1]);
+	return open.find((root) => basename(root) === name) ?? null;
 }

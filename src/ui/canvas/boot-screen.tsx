@@ -1,68 +1,54 @@
-import { useEffect, useReducer, useRef } from "react";
-import { bootGrid, type Curtain, EXIT_MS, GATE_MS, MIN_SHOWN_MS, nextCurtain, WAVE_MS, waveDelay } from "./boot-grid";
+import { useEffect, useReducer, useRef, useState } from "react";
+import { type Curtain, EXIT_MS, GATE_MS, MIN_SHOWN_MS, nextCurtain, pickMotion, type ThreadMotion } from "./boot-clock";
 
 /**
  * What stands on the field between the canvas mounting and the projection
  * landing (#244).
  *
- * Before this the field rendered nothing at all for as long as the daemon
- * took, so a slow answer and a project with no frames in it were the same
- * picture. The curtain says the one true thing available that early — how many
- * frames are down there — as one cell per frame, and says nothing whatever
- * about where they sit, because it does not know.
+ * Before this the field rendered nothing at all for as long as the daemon took,
+ * so a slow answer and a project with no frames in it were the same picture.
+ * What it draws is the mark's thread travelling, and nothing else: the count,
+ * the names and the layout all arrive together with `/frames`, so anything the
+ * curtain claimed about the project would be a claim it could not have checked.
  *
- * It is gated at both ends: `boot-grid.ts` carries the two durations and the
- * reasoning behind them.
+ * It is gated at both ends and its pace is rolled per boot: `boot-clock.ts`
+ * carries the durations, the four hands, and the reasoning behind them.
  */
 
-export function BootCurtain({ frameCount, ready }: { frameCount: number; ready: boolean }) {
+/** the wave the thread runs, at the mark's own hand */
+const THREAD_PATH = "M6 36C86 36 106 12 186 12C266 12 286 60 366 60C394 60 404 46 414 36";
+
+export function BootCurtain({ ready }: { ready: boolean }) {
 	const phase = useCurtain(ready);
-	// a project with nothing in it has nothing to count, and the empty surface
-	// that lands a moment later is the honest picture of it
-	if (frameCount <= 0 || phase === null) return null;
-	const grid = bootGrid(frameCount);
+	// rolled once and held: a motion that changed underneath a running animation
+	// would restart it, which is the one thing a loader must never look like
+	const [motion] = useState<ThreadMotion>(() => pickMotion(Math.random()));
+	if (phase === null) return null;
 	return (
 		<div
 			data-canvas-booting={phase}
-			className={`pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 pb-20 ${
+			data-boot-motion={motion.name}
+			className={`pointer-events-none absolute inset-0 z-10 flex items-center justify-center pb-20 ${
 				phase === "leaving" ? "animate-boot-out" : "animate-boot-in"
 			}`}
 		>
-			<div
-				className="grid"
-				style={{
-					gridTemplateColumns: `repeat(${grid.columns}, ${grid.cellW}px)`,
-					gap: grid.gap,
-					width: grid.columns * grid.cellW + (grid.columns - 1) * grid.gap,
-				}}
-			>
-				{Array.from({ length: frameCount }, (_, index) => (
-					<span
-						// a cell stands for a frame whose name is not known yet, so position is the
-						// only identity it has. The list never reorders and the whole block is
-						// replaced when the count changes.
-						// biome-ignore lint/suspicious/noArrayIndexKey: nothing else identifies a cell
-						key={index}
-						className="animate-boot-cell rounded-[3px] bg-raised"
-						// the wave crosses the block on a diagonal: a row at a time would read as a
-						// list being worked through, which is a claim the curtain cannot make
-						style={{
-							height: grid.cellH,
-							animationDuration: `${WAVE_MS}ms`,
-							animationDelay: `${Math.round(waveDelay(index, grid))}ms`,
-						}}
-					/>
-				))}
-			</div>
-			<div
-				className="flex items-baseline justify-between font-mono text-2xs text-muted/60 leading-3"
-				style={{ width: grid.columns * grid.cellW + (grid.columns - 1) * grid.gap }}
-			>
-				<span>design/frames</span>
-				<span>
-					{frameCount} {frameCount === 1 ? "frame" : "frames"}
-				</span>
-			</div>
+			<svg viewBox="0 0 420 72" className="h-[72px] w-[420px]" fill="none" aria-hidden="true">
+				<path
+					d={THREAD_PATH}
+					className="animate-boot-thread"
+					stroke="var(--color-thread)"
+					strokeWidth={1.5}
+					strokeLinecap="round"
+					// pattern and path are the same length, so a cycle of the offset carries
+					// the thread across once and there is always exactly this much of it on
+					// the wave. A dash as long as the whole path would read better standing
+					// still and worse in motion: it empties the field twice a cycle, and a
+					// loader that is up for a third of a second can land on the empty half.
+					pathLength={1}
+					strokeDasharray="0.4 0.6"
+					style={{ animationDuration: `${motion.durationMs}ms`, animationTimingFunction: motion.easing }}
+				/>
+			</svg>
 		</div>
 	);
 }
@@ -90,7 +76,7 @@ function useCurtain(ready: boolean): Exclude<Curtain, "waiting" | "gone"> | null
 
 	// A curtain that has only just arrived does not turn round and leave: measured
 	// against the dev daemon, a cold boot crossed the gate about four milliseconds
-	// before the projection landed, and what that drew was a block fading out of a
+	// before the projection landed, and what that drew was a thread fading out of a
 	// fade-in. Below the gate nothing is drawn at all; above it, what is drawn is
 	// worth the glance.
 	useEffect(() => {

@@ -69,13 +69,15 @@
 	--animate-find-in: find-in 140ms ease-out;
 	--animate-find-panel-in: find-panel-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
 	/* the boot curtain (#244): it is gated at both ends, so the numbers here are
-	 * only half the story — `canvas/boot-grid.ts` carries the gate and the exit,
-	 * and why they are what they are. A cell rests dark and the wave crosses the
-	 * block on a diagonal, slowly: this stands over a wait measured in a fraction
-	 * of a second, and anything faster reads as an alarm. */
+	 * only half the story — `canvas/boot-clock.ts` carries the gate and the exit,
+	 * and why they are what they are. The thread travels slowly: this stands over
+	 * a wait measured in a fraction of a second, and anything faster reads as an
+	 * alarm. */
 	--animate-boot-in: boot-in 180ms ease-out;
 	--animate-boot-out: boot-out 400ms ease-out forwards;
-	--animate-boot-cell: boot-cell 2600ms cubic-bezier(0.4, 0, 0.2, 1) infinite;
+	/* duration and curve are set per boot from boot-clock.ts, so the token names
+	 * the shape and nothing else */
+	--animate-boot-thread: boot-thread 1900ms linear infinite;
 	/* the agent rail (#192): an entry settles into the log, a word fades in as it
 	 * arrives, and a ring turns slowly enough to read as work rather than an alarm.
 	 * 170ms on the word is where the sourced numbers land — Streamdown defaults to
@@ -374,25 +376,15 @@
 		}
 	}
 
-	/* a cell is lit for the share of its cycle this shape says it is, however the
-	 * delays are spread — so this is the one place the band's width is decided,
-	 * and at 15% it is a couple of rows rather than most of the block. */
-	@keyframes boot-cell {
-		0% {
-			background-color: var(--color-raised);
-			opacity: 0.35;
+	/* one cycle carries the pattern exactly its own length, so the thread arrives
+	 * back where it started and the loop never shows a seam. Which curve it runs
+	 * is the boot's to choose. */
+	@keyframes boot-thread {
+		from {
+			stroke-dashoffset: 0;
 		}
-		5% {
-			background-color: color-mix(in srgb, var(--color-thread) 45%, var(--color-raised));
-			opacity: 1;
-		}
-		15% {
-			background-color: var(--color-raised);
-			opacity: 0.35;
-		}
-		100% {
-			background-color: var(--color-raised);
-			opacity: 0.35;
+		to {
+			stroke-dashoffset: -1;
 		}
 	}
 
@@ -431,9 +423,15 @@
 		animation: none;
 	}
 
-	.animate-boot-in,
-	.animate-boot-cell {
+	.animate-boot-in {
 		animation: none;
+	}
+
+	/* a still thread is the whole thread rather than the travelling piece of it:
+	 * a segment frozen mid-wave reads as a mark that failed to finish drawing. */
+	.animate-boot-thread {
+		animation: none;
+		stroke-dasharray: none;
 	}
 
 	/* the same trap the leaving words are in: the fade is what takes the curtain

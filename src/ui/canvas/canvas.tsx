@@ -229,19 +229,9 @@ export function ownsFrameMessage(
 
 export function ProjectCanvas({
 	project,
-	frameCount = 0,
 	onChrome,
 }: {
 	project: string;
-	/**
-	 * How many frames the registry scan counted, from the card the shell already
-	 * holds (#244). It is the one true thing about this project available before
-	 * the projection lands, and it is what the boot curtain draws.
-	 *
-	 * Absent means nobody could say, which is what a harness mounting this canvas
-	 * directly is in: the curtain stays down rather than drawing a block of none.
-	 */
-	frameCount?: number | undefined;
 	onChrome: (chrome: CanvasChrome | null) => void;
 }) {
 	const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -3200,7 +3190,7 @@ export function ProjectCanvas({
 				{/* the wait before the projection lands (#244): the field used to render
 				    nothing at all until the daemon answered, so a slow reply and a project
 				    with no frames in it were the same picture. */}
-				<BootCurtain frameCount={frameCount} ready={loaded} />
+				<BootCurtain ready={loaded} />
 				{projectEmpty && (
 					<div
 						data-canvas-empty=""
