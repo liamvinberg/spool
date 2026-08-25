@@ -1170,7 +1170,7 @@ function rowOf(host: HTMLElement, label: string): HTMLElement | null | undefined
 
 /** What was recorded, as the rail's own runner takes it — and an assertion in itself. */
 function railEntry(entry: HistoryEntry | undefined): RailEntry {
-	if (entry === undefined || entry.kind === "geometry" || entry.kind === "mint") {
+	if (entry === undefined || entry.kind === "geometry" || entry.kind === "mint" || entry.kind === "patch") {
 		throw new Error(`not an entry this rail runs: ${entry?.kind ?? "nothing recorded"}`);
 	}
 	return entry;

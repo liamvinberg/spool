@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Geometry } from "../api";
 import {
+	amend,
 	drop,
 	emptyHistory,
 	entryOf,
@@ -420,5 +421,49 @@ describe("entries about a nested page", () => {
 		};
 		const alive = at({}, ["application", "application/chat"]);
 		expect(takeRedo({ undo: [], redo: [restructured] }, alive)).toBeUndefined();
+	});
+});
+
+describe("patch entries", () => {
+	const span = (text: string, fingerprint: string) => ({
+		path: "design/frames/cart/frame.tsx",
+		start: 10,
+		end: 13,
+		text,
+		fingerprint,
+	});
+	const patch = (text: string, fingerprint: string): HistoryEntry => ({
+		kind: "patch",
+		frame: "cart",
+		patch: span(text, fingerprint),
+	});
+
+	it("serves the patch to run, whichever stack it sits on", () => {
+		const history = record(emptyHistory(), patch("p-4", "one"));
+		const undone = takeUndo(history, alive("cart"));
+		expect(undone?.entry).toEqual(patch("p-4", "one"));
+		expect(undone?.history.redo).toEqual([patch("p-4", "one")]);
+	});
+
+	it("carries the inverse the write answered with, so a redo is not stale", () => {
+		const history = record(emptyHistory(), patch("p-4", "one"));
+		const undone = takeUndo(history, alive("cart")) as Taken;
+		// the file has a new fingerprint now, and the entry says so
+		const amended = amend(undone.history, "undo", patch("p-6", "two"));
+		expect(takeRedo(amended, alive("cart"))?.entry).toEqual(patch("p-6", "two"));
+	});
+
+	it("skips a frame that is gone rather than writing into it", () => {
+		const history = record(
+			record(emptyHistory(), geometry({ menu: { before: rect(0), after: rect(10) } })),
+			patch("p-4", "one"),
+		);
+		expect(takeUndo(history, alive("menu"))?.entry.kind).toBe("geometry");
+	});
+
+	it("comes off the stack when the daemon refuses it", () => {
+		const history = record(emptyHistory(), patch("p-4", "one"));
+		const undone = takeUndo(history, alive("cart")) as Taken;
+		expect(drop(undone.history, "undo")).toEqual({ undo: [], redo: [] });
 	});
 });

@@ -4,6 +4,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { parse } from "@babel/parser";
 import type { Node } from "@babel/types";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
+import { walkNodes } from "./jsx-walk";
 import { lookupFrame } from "./projection";
 
 /**
@@ -302,7 +303,7 @@ function parseSource(source: string, path: string): ParsedSource {
 	} catch {
 		return out;
 	}
-	walk(program, [], (node, ancestors) => {
+	walkNodes(program, [], (node, ancestors) => {
 		// static import/export-from and dynamic import(): every way a file names
 		// another file, type-only imports included — they carry no walk of their
 		// own but the graph is cheaper to keep whole than to prune
@@ -463,20 +464,4 @@ function branchRead(...arms: TargetRead[]): TargetRead {
 /** A node's position in the stamp convention: 1-based line, 1-based column. */
 function stampOf(node: Node): { line: number; col: number } {
 	return { line: node.loc?.start.line ?? 0, col: (node.loc?.start.column ?? 0) + 1 };
-}
-
-/** Depth-first walk over babel nodes, ancestors outermost-first. */
-function walk(node: Node, ancestors: Node[], visit: (node: Node, ancestors: Node[]) => void): void {
-	visit(node, ancestors);
-	ancestors.push(node);
-	for (const key of Object.keys(node)) {
-		if (key === "loc" || key === "leadingComments" || key === "trailingComments" || key === "innerComments") continue;
-		const value = (node as unknown as Record<string, unknown>)[key];
-		for (const child of Array.isArray(value) ? value : [value]) {
-			if (typeof child === "object" && child !== null && typeof (child as Node).type === "string") {
-				walk(child as Node, ancestors, visit);
-			}
-		}
-	}
-	ancestors.pop();
 }

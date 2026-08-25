@@ -2,12 +2,14 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:
 import { basename, join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { makeApp, makeProject, makeTempDir, SseTimeout, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
+import { fingerprintOf } from "./hand-write";
 
 /**
- * The canvas's hands over the API (#23), under the one law: the canvas never
- * writes frame source. Selection is daemon memory served as #6's payload;
- * geometry writes touch frame.json alone; delete rides the OS Trash seam;
- * open-in-editor jumps to path:line and never leaves design/.
+ * The canvas's hands over the API (#23, #253). Selection is daemon memory
+ * served as #6's payload; geometry writes touch frame.json alone; delete rides
+ * the OS Trash seam; open-in-editor jumps to path:line and never leaves
+ * design/. Frame source is written only through the write lane below: a typed
+ * op, gated against a fresh parse, spliced into the exact characters it named.
  */
 
 const frameTsx = `export default function Frame() {
@@ -419,5 +421,427 @@ describe("the editor API", () => {
 		).toBe(404);
 		expect((await app.request(`/api/p/${name}/editor`, jsonPost({ path: "design/x.ts", line: 0 }))).status).toBe(400);
 		expect(launchEditor).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * The write lane (#253). Every assertion here is external: what came back over
+ * the API, and what the bytes on disk say afterwards.
+ */
+
+const cartTsx = `const ITEMS = ["latte", "bun"];
+
+export default function Frame() {
+	return (
+		<main className="flex flex-col gap-2 p-4">
+			<h1 className="text-lg">Cart</h1>
+			<button className="rounded-md px-3 py-2" onClick={() => pay()}>
+				Pay now
+			</button>
+			<p className={busy ? "opacity-50" : "opacity-100"}>state</p>
+			<ul>
+				{ITEMS.map((item) => (
+					<li key={item} className="px-2">{item}</li>
+				))}
+			</ul>
+		</main>
+	);
+}
+`;
+
+/** The stamp the compiler mints for the element a snippet opens. */
+function stampFor(source: string, snippet: string): string {
+	const at = source.indexOf(snippet);
+	const before = source.slice(0, at);
+	return `frames/cart/frame.tsx:${before.split("\n").length}:${at - (before.lastIndexOf("\n") + 1) + 1}`;
+}
+
+function frameSource(root: string): string {
+	return readFileSync(join(root, "design", "frames", "cart", "frame.tsx"), "utf8");
+}
+
+interface PatchAnswer {
+	ok: boolean;
+	path?: string;
+	fingerprint?: string;
+	mapped?: boolean;
+	uncaught?: true;
+	undo?: { path: string; start: number; end: number; text: string; fingerprint: string };
+	refusal?: { code: string; says: string; expression?: string };
+}
+
+async function gate(app: ReturnType<typeof makeApp>, name: string, ops: unknown): Promise<PatchAnswer> {
+	const res = await app.request(`/api/p/${name}/patch/gate`, jsonPost({ frame: "cart", ops }));
+	expect(res.status).toBe(200);
+	return (await res.json()) as PatchAnswer;
+}
+
+describe("the write lane", () => {
+	it("splices one token and leaves every other byte of the file alone", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+
+		const asked = await gate(app, name, [
+			{ kind: "set-class", source: stampFor(cartTsx, "<main"), token: "p-6", scope: "" },
+		]);
+		expect(asked).toMatchObject({ ok: true, path: "design/frames/cart/frame.tsx", mapped: false });
+
+		const res = await app.request(
+			`/api/p/${name}/patch`,
+			jsonPost({
+				frame: "cart",
+				fingerprint: asked.fingerprint,
+				ops: [{ kind: "set-class", source: stampFor(cartTsx, "<main"), token: "p-6", scope: "" }],
+			}),
+		);
+		expect(res.status).toBe(200);
+		const answer = (await res.json()) as PatchAnswer;
+
+		const written = frameSource(root);
+		expect(written).toContain('<main className="flex flex-col gap-2 p-6">');
+		expect(written.replace("gap-2 p-6", "gap-2 p-4")).toBe(cartTsx);
+		expect(answer.fingerprint).not.toBe(asked.fingerprint);
+		expect(answer.undo).toMatchObject({ path: "design/frames/cart/frame.tsx", text: "4" });
+	});
+
+	it("writes two tokens as one patch, and one undo puts both back", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+		const source = stampFor(cartTsx, "<button");
+		const asked = await gate(app, name, [{ kind: "set-class", source, token: "w-56", scope: "" }]);
+
+		const answer = (await (
+			await app.request(
+				`/api/p/${name}/patch`,
+				jsonPost({
+					frame: "cart",
+					fingerprint: asked.fingerprint,
+					ops: [
+						{ kind: "set-class", source, token: "w-56", scope: "" },
+						{ kind: "set-class", source, token: "h-12", scope: "" },
+					],
+				}),
+			)
+		).json()) as PatchAnswer;
+		expect(frameSource(root)).toContain('className="rounded-md px-3 py-2 w-56 h-12"');
+
+		const put = await app.request(`/api/p/${name}/patch/revert`, jsonPost(answer.undo));
+		expect(put.status).toBe(200);
+		expect(frameSource(root)).toBe(cartTsx);
+		// and the revert hands back its own inverse, so a redo is the same call
+		const redo = ((await put.json()) as PatchAnswer).undo;
+		await app.request(`/api/p/${name}/patch/revert`, jsonPost(redo));
+		expect(frameSource(root)).toContain("w-56 h-12");
+	});
+
+	it("refuses a typed no and writes nothing", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+		const ops = [{ kind: "set-class", source: stampFor(cartTsx, "<p className={busy"), token: "p-2", scope: "" }];
+
+		expect(await gate(app, name, ops)).toEqual({
+			ok: false,
+			refusal: {
+				code: "computed-class",
+				says: "className is an expression",
+				expression: '{busy ? "opacity-50" : "opacity-100"}',
+			},
+		});
+
+		const asked = await gate(app, name, [
+			{ kind: "set-class", source: stampFor(cartTsx, "<main"), token: "p-6", scope: "" },
+		]);
+		const res = await app.request(
+			`/api/p/${name}/patch`,
+			jsonPost({ frame: "cart", fingerprint: asked.fingerprint, ops }),
+		);
+		expect(res.status).toBe(409);
+		expect(((await res.json()) as PatchAnswer).refusal?.code).toBe("computed-class");
+		expect(frameSource(root)).toBe(cartTsx);
+	});
+
+	it("refuses when the file moved under the read the op was formed against", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+		const ops = [{ kind: "set-class", source: stampFor(cartTsx, "<main"), token: "p-6", scope: "" }];
+
+		const res = await app.request(
+			`/api/p/${name}/patch`,
+			jsonPost({ frame: "cart", fingerprint: "not-the-file", ops }),
+		);
+
+		expect(res.status).toBe(409);
+		expect(((await res.json()) as PatchAnswer).refusal).toEqual({
+			code: "stale-file",
+			says: "the file changed underneath",
+		});
+		expect(frameSource(root)).toBe(cartTsx);
+	});
+
+	it("edits a repeated row and says so, and refuses its words", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+		const source = stampFor(cartTsx, "<li");
+
+		const asked = await gate(app, name, [{ kind: "set-class", source, token: "px-4", scope: "" }]);
+		expect(asked.mapped).toBe(true);
+
+		await app.request(
+			`/api/p/${name}/patch`,
+			jsonPost({
+				frame: "cart",
+				fingerprint: asked.fingerprint,
+				ops: [{ kind: "set-class", source, token: "px-4", scope: "" }],
+			}),
+		);
+		expect(frameSource(root)).toContain('<li key={item} className="px-4">');
+
+		expect(await gate(app, name, [{ kind: "set-text", source, text: "espresso" }])).toEqual({
+			ok: false,
+			refusal: { code: "mapped-text", says: "the words are data, not design" },
+		});
+	});
+
+	it("refuses an element a shared file defines, and counts the frames rendering it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(
+			root,
+			"shared/ui/card.tsx",
+			'export function Card() {\n\treturn <div className="p-2">card</div>;\n}\n',
+		);
+		writeFrame(root, "cart", 'import { Card } from "../../shared/ui/card";\n\nexport default () => <Card />;\n');
+		const app = makeApp(spoolDir);
+
+		// the count is the blast radius the sentence is about, so the lane builds
+		// the link graph to say it rather than going quiet
+		const asked = await gate(app, name, [
+			{ kind: "set-class", source: "shared/ui/card.tsx:2:9", token: "p-4", scope: "" },
+		]);
+		expect(asked).toEqual({
+			ok: false,
+			refusal: { code: "shared-definition", says: "defined in shared/ui/card.tsx:2, rendered by 1 frame" },
+		});
+	});
+
+	it("deletes an element's lines, and undo brings them back", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+		const asked = await gate(app, name, [{ kind: "delete", source: stampFor(cartTsx, "<h1") }]);
+
+		const answer = (await (
+			await app.request(
+				`/api/p/${name}/patch`,
+				jsonPost({
+					frame: "cart",
+					fingerprint: asked.fingerprint,
+					ops: [{ kind: "delete", source: stampFor(cartTsx, "<h1") }],
+				}),
+			)
+		).json()) as PatchAnswer;
+		expect(frameSource(root)).not.toContain("<h1");
+
+		await app.request(`/api/p/${name}/patch/revert`, jsonPost(answer.undo));
+		expect(frameSource(root)).toBe(cartTsx);
+	});
+
+	it("refuses a revert that is not putting frame source back", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+		const canvas = readFileSync(join(root, "design", "canvas.json"), "utf8");
+
+		// app-owned files are spool's, whatever a patch says it is putting back
+		for (const path of ["design/canvas.json", "design/.spool/state.json", "design/shared/ui/card.tsx"]) {
+			const res = await app.request(
+				`/api/p/${name}/patch/revert`,
+				jsonPost({ path, start: 0, end: 1, text: "x", fingerprint: fingerprintOf(canvas) }),
+			);
+			expect(res.status).toBe(400);
+		}
+		expect(readFileSync(join(root, "design", "canvas.json"), "utf8")).toBe(canvas);
+	});
+
+	it("refuses a revert whose file moved, and one that leaves design/", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+
+		const stale = await app.request(
+			`/api/p/${name}/patch/revert`,
+			jsonPost({ path: "design/frames/cart/frame.tsx", start: 0, end: 5, text: "const", fingerprint: "moved" }),
+		);
+		expect(stale.status).toBe(409);
+		expect(frameSource(root)).toBe(cartTsx);
+
+		const outside = await app.request(
+			`/api/p/${name}/patch/revert`,
+			jsonPost({ path: "design/../package.json", start: 0, end: 1, text: "x", fingerprint: "any" }),
+		);
+		expect(outside.status).toBe(400);
+	});
+
+	it("reloads the document the way every other edit does — through the watcher", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const events = sseReader(await app.request(`/api/p/${name}/events`, { signal: controller.signal }));
+		expect((await events.next()).event).toBe("hello");
+		await events.drain(400);
+
+		const asked = await gate(app, name, [{ kind: "set-text", source: stampFor(cartTsx, "<h1"), text: "Basket" }]);
+		await app.request(
+			`/api/p/${name}/patch`,
+			jsonPost({
+				frame: "cart",
+				fingerprint: asked.fingerprint,
+				ops: [{ kind: "set-text", source: stampFor(cartTsx, "<h1"), text: "Basket" }],
+			}),
+		);
+
+		expect(frameSource(root)).toContain(">Basket</h1>");
+		expect(await events.next(2000)).toEqual({ event: "change", data: { kind: "frame", frame: "cart" } });
+	});
+
+	it("tells a project with nothing catching hand edits, once and never again", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "canvas.json", '{ "format": 1, "history": false }\n');
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+		const source = stampFor(cartTsx, "<main");
+
+		const first = await gate(app, name, [{ kind: "set-class", source, token: "p-6", scope: "" }]);
+		const one = (await (
+			await app.request(
+				`/api/p/${name}/patch`,
+				jsonPost({
+					frame: "cart",
+					fingerprint: first.fingerprint,
+					ops: [{ kind: "set-class", source, token: "p-6", scope: "" }],
+				}),
+			)
+		).json()) as PatchAnswer;
+		expect(one.uncaught).toBe(true);
+
+		const two = (await (
+			await app.request(
+				`/api/p/${name}/patch`,
+				jsonPost({
+					frame: "cart",
+					fingerprint: one.fingerprint,
+					ops: [{ kind: "set-class", source, token: "p-8", scope: "" }],
+				}),
+			)
+		).json()) as PatchAnswer;
+		expect(two.uncaught).toBeUndefined();
+	});
+
+	it("says nothing to a project that keeps history", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(root, "canvas.json", '{ "format": 1, "history": true }\n');
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+		const source = stampFor(cartTsx, "<main");
+		const asked = await gate(app, name, [{ kind: "set-class", source, token: "p-6", scope: "" }]);
+
+		const answer = (await (
+			await app.request(
+				`/api/p/${name}/patch`,
+				jsonPost({
+					frame: "cart",
+					fingerprint: asked.fingerprint,
+					ops: [{ kind: "set-class", source, token: "p-6", scope: "" }],
+				}),
+			)
+		).json()) as PatchAnswer;
+		expect(answer.uncaught).toBeUndefined();
+	});
+
+	it("refuses to write className as one string, and lets a base token be cleared under a breakpoint", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx.replace("gap-2 p-4", "gap-2 p-4 md:p-8"));
+		const app = makeApp(spoolDir);
+		const source = stampFor(cartTsx, "<main");
+
+		// className is a list with a fold behind it, never one string to overwrite
+		expect(await gate(app, name, [{ kind: "set-attribute", source, name: "className", value: "p-4" }])).toEqual({
+			ok: false,
+			refusal: { code: "class-attribute", says: "className is written one token at a time" },
+		});
+
+		// and taking the base token away beats nothing, so the breakpoint override
+		// is no reason to refuse it
+		const asked = await gate(app, name, [{ kind: "set-class", source, token: "p-4", scope: "", remove: true }]);
+		expect(asked.ok).toBe(true);
+		await app.request(
+			`/api/p/${name}/patch`,
+			jsonPost({
+				frame: "cart",
+				fingerprint: asked.fingerprint,
+				ops: [{ kind: "set-class", source, token: "p-4", scope: "", remove: true }],
+			}),
+		);
+		expect(frameSource(root)).toContain('<main className="flex flex-col gap-2 md:p-8">');
+	});
+
+	it("refuses malformed ops, unknown frames and a stamp escaping the frame", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+		const source = stampFor(cartTsx, "<main");
+
+		expect((await app.request(`/api/p/${name}/patch`, jsonPost(null))).status).toBe(400);
+		expect((await app.request(`/api/p/${name}/patch/gate`, jsonPost({ frame: "cart", ops: [] }))).status).toBe(400);
+		expect(
+			(await app.request(`/api/p/${name}/patch/gate`, jsonPost({ frame: "cart", ops: [{ kind: "burn", source }] })))
+				.status,
+		).toBe(400);
+		expect(
+			(
+				await app.request(
+					`/api/p/${name}/patch/gate`,
+					jsonPost({ frame: "cart", ops: [{ kind: "set-class", source, token: "p 4", scope: "" }] }),
+				)
+			).status,
+		).toBe(400);
+		expect(
+			(
+				await app.request(
+					`/api/p/${name}/patch/gate`,
+					jsonPost({ frame: "ghost", ops: [{ kind: "delete", source }] }),
+				)
+			).status,
+		).toBe(404);
+		// a patch with no fingerprint is a write that never agreed to a file
+		expect(
+			(
+				await app.request(
+					`/api/p/${name}/patch`,
+					jsonPost({ frame: "cart", ops: [{ kind: "set-class", source, token: "p-6", scope: "" }] }),
+				)
+			).status,
+		).toBe(400);
+		expect(frameSource(root)).toBe(cartTsx);
 	});
 });

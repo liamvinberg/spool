@@ -1,5 +1,5 @@
 import { pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
-import type { Geometry } from "../api";
+import type { Geometry, HeldPatch } from "../api";
 
 /**
  * One undo stack for the hands (#23, #230).
@@ -79,6 +79,12 @@ export interface OrderList {
 /** One undoable thing the hands did. */
 export type HistoryEntry =
 	| { readonly kind: "geometry"; readonly rects: Rects }
+	// a span patch on one frame's source (#253), which is every hand edit to
+	// what a frame draws. The patch is the one to run next, in whichever
+	// direction this entry currently sits: running it answers with its own
+	// inverse, and the entry is amended with what came back, because a file
+	// that has just changed has a new fingerprint and the old one would refuse
+	| { readonly kind: "patch"; readonly frame: string; readonly patch: HeldPatch }
 	| { readonly kind: "rename"; readonly of: "frame" | "page"; readonly from: string; readonly to: string }
 	| {
 			readonly kind: "move";
@@ -179,6 +185,20 @@ export function rectsOf(rects: Rects, way: Way): Record<string, Geometry> {
 	return Object.fromEntries(
 		Object.entries(rects).map(([name, rect]) => [name, way === "undo" ? rect.before : rect.after]),
 	);
+}
+
+/**
+ * The entry a run came back with instead of the one that was served.
+ *
+ * A patch's inverse is only known once it has run, so the future it leaves is
+ * stated by the daemon's answer rather than by the entry that was taken. It
+ * replaces the top of the stack the run just pushed onto, and nothing else
+ * moves.
+ */
+export function amend(history: History, way: Way, entry: HistoryEntry): History {
+	return way === "undo"
+		? { undo: history.undo, redo: [...history.redo.slice(0, -1), entry] }
+		: { undo: [...history.undo.slice(0, -1), entry], redo: history.redo };
 }
 
 /**
@@ -301,6 +321,10 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 			const pages = livePaged(entry.pages, entry.to, alive, way);
 			return pages.length === 0 ? undefined : { ...entry, pages };
 		}
+		case "patch":
+			// the daemon's fingerprint is the real check and it happens on the wire;
+			// what the projection can say is whether the frame is still there to edit
+			return alive.frames.has(entry.frame) ? entry : undefined;
 		case "reorder":
 			return entry;
 		case "gather": {

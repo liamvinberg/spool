@@ -11,6 +11,7 @@ import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 import trash from "trash";
 import { z } from "zod";
+import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachment } from "../attachment";
 import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_FAVICON_SVG } from "../brand";
 import type { Cover } from "../cover";
@@ -60,6 +61,9 @@ import { createFlowGraph, recordWalk } from "./flows";
 import { listDirectory, searchDirectories } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
+import { patchSite, revertTarget, STALE_FILE } from "./hand-lane";
+import { uncaughtNotice } from "./hand-notice";
+import { applySpan, fingerprintOf, parseHandOps, spanBetween } from "./hand-write";
 import { createHistory, type HistoryClock } from "./history";
 import { locateInDesign } from "./locate";
 import { isLoopbackHost } from "./loopback";
@@ -455,6 +459,40 @@ export function createDaemonApp({
 			launchEditorDefault(target, (fileName, message) =>
 				console.error(`spool: could not open an editor on ${fileName}${message === null ? "" : ` — ${message}`}`),
 			));
+
+	/**
+	 * What the write lane needs of the project: who renders a shared file, which
+	 * is the blast radius a refusal names. The graph is built rather than
+	 * guessed at, because it is only asked for on the refusal path.
+	 */
+	const framesUsingIn = (root: string) => ({
+		framesUsing: async (path: string) => {
+			await flowGraph.flows(root).catch(() => undefined);
+			return flowGraph.framesUsing(root, path);
+		},
+	});
+
+	const askBody = validator("json", (value, c) => {
+		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+		const ops = parseHandOps(body.ops);
+		if (typeof body.frame !== "string" || !isSafeName(body.frame) || ops === undefined) {
+			return c.text('a patch is { "frame", "ops": [ { "kind", "source", ... } ] }', 400);
+		}
+		return { frame: body.frame, ops };
+	});
+
+	/** A write carries the fingerprint of the file the ask was answered against. */
+	const patchBody = validator("json", (value, c) => {
+		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+		const ops = parseHandOps(body.ops);
+		if (typeof body.frame !== "string" || !isSafeName(body.frame) || ops === undefined) {
+			return c.text('a patch is { "frame", "fingerprint", "ops": [ { "kind", "source", ... } ] }', 400);
+		}
+		if (typeof body.fingerprint !== "string" || body.fingerprint === "") {
+			return c.text("a patch carries the fingerprint it was formed against", 400);
+		}
+		return { frame: body.frame, ops, fingerprint: body.fingerprint };
+	});
 
 	const frameAuthority = (root: string) => ({
 		projectCapability: projectCapability(root),
@@ -1706,6 +1744,88 @@ export function createDaemonApp({
 					hub.publish(project.root, { kind: "geometry", frame: name });
 				}
 				return c.body(null, 204);
+			},
+		)
+		/*
+		 * The write lane (#253). Hands write frame source only as span patches:
+		 * one typed op, parsed fresh and gated, the exact characters replaced,
+		 * every other byte left alone. A refusal is the answer rather than an
+		 * error — the gesture does not apply, nothing is forwarded to an agent,
+		 * and the surface says why. The watcher announces the write like any
+		 * other edit, so the document reloads down the one path it always has.
+		 */
+		.post("/api/p/:project/patch/gate", askBody, async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { frame, ops } = c.req.valid("json");
+			const site = await patchSite(project.root, frame, ops, framesUsingIn(project.root));
+			if (site.kind === "error") return c.text(site.message, site.status);
+			// an ask that comes back no is a question answered, not a failure
+			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal });
+			return c.json({ ok: true, path: site.path, fingerprint: site.fingerprint, mapped: site.mapped });
+		})
+		.post("/api/p/:project/patch", patchBody, async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { frame, ops, fingerprint } = c.req.valid("json");
+			const site = await patchSite(project.root, frame, ops, framesUsingIn(project.root), fingerprint);
+			if (site.kind === "error") return c.text(site.message, site.status);
+			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
+			// an op that says what the file already says writes nothing: a rewrite
+			// with the same bytes is a reload nobody asked for
+			const undo = spanBetween(site.source, site.text);
+			if (site.text !== site.source) writeAtomic(site.file, site.text);
+			const after = fingerprintOf(site.text);
+			return c.json({
+				ok: true,
+				path: site.path,
+				fingerprint: after,
+				mapped: site.mapped,
+				undo: { path: site.path, ...undo, fingerprint: after },
+				// the one project with nothing catching a hand edit hears so once
+				...(site.text !== site.source && uncaughtNotice(project.root) ? { uncaught: true } : {}),
+			});
+		})
+		.post(
+			"/api/p/:project/patch/revert",
+			validator("json", (value, c) => {
+				const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+				const { path, start, end, text, fingerprint } = body;
+				const spans = typeof start === "number" && typeof end === "number" && Number.isInteger(start);
+				if (typeof path !== "string" || !spans || typeof text !== "string" || typeof fingerprint !== "string") {
+					return c.text('a revert is { "path", "start", "end", "text", "fingerprint" }', 400);
+				}
+				if (!Number.isInteger(end) || start < 0 || end < start) return c.text("not a span", 400);
+				return { path, start, end, text, fingerprint };
+			}),
+			(c) => {
+				// undo and the rollback after a measurement are the same act: put the
+				// characters back, and refuse rather than clobber if they moved
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const { path, start, end, text, fingerprint } = c.req.valid("json");
+				const target = revertTarget(project.root, path);
+				if ("message" in target) return c.text(target.message, target.status);
+				const { file } = target;
+				let source: string;
+				try {
+					source = readFileSync(file, "utf8");
+				} catch {
+					return c.text(`no ${path} to put back`, 404);
+				}
+				if (fingerprintOf(source) !== fingerprint) return c.json({ ok: false, refusal: STALE_FILE }, 409);
+				if (end > source.length) return c.text("not a span in this file", 400);
+				const replaced = source.slice(start, end);
+				const next = applySpan(source, { start, end, text });
+				if (next !== source) writeAtomic(file, next);
+				const after = fingerprintOf(next);
+				return c.json({
+					ok: true,
+					path,
+					fingerprint: after,
+					// its own inverse comes back, so a redo is the same call again
+					undo: { path, start, end: start + text.length, text: replaced, fingerprint: after },
+				});
 			},
 		)
 		/*

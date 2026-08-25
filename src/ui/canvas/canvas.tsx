@@ -33,6 +33,7 @@ import {
 	putGeometry,
 	putSelection,
 	resolveFlows,
+	revertPatch,
 	subscribeSse,
 } from "../api";
 import { experimentOn } from "../experiments";
@@ -77,6 +78,7 @@ import {
 import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
 import {
+	amend,
 	drop,
 	emptyHistory,
 	entryOf,
@@ -1381,6 +1383,22 @@ export function ProjectCanvas({
 				else undoTrash();
 				return;
 			}
+			// a hand edit to frame source is the lane's own to run (#253): the patch
+			// goes back over the wire, the daemon re-checks the fingerprint, and what
+			// comes back is the inverse this entry carries from here on. A refusal
+			// means the file moved since — the entry is not a future anybody has
+			if (entry.kind === "patch") {
+				const ran = history.current;
+				void revertPatch(project, entry.patch).then((next) => {
+					// a press that landed after this one owns the stacks now
+					if (history.current !== ran) return;
+					history.current =
+						next === undefined
+							? drop(history.current, way)
+							: amend(history.current, way, { ...entry, patch: next });
+				});
+				return;
+			}
 			// a gather is a page the rail made and the frames it gathered into it, and
 			// the order the two halves go in is the whole reason it is one entry: going
 			// back, the frames leave before the page is staged, or they would ride into
@@ -1399,7 +1417,7 @@ export function ProjectCanvas({
 				void refetchFrames();
 			});
 		},
-		[applyRects, flushNudge, liveness, refetchFrames, stageEntry, undoTrash],
+		[applyRects, flushNudge, liveness, project, refetchFrames, stageEntry, undoTrash],
 	);
 
 	// leaving the page (or the tab) mid-toast: the staged move still happens

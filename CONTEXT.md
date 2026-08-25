@@ -62,7 +62,15 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Run**: The frames a spacing is measured within — everything whose perpendicular extent overlaps the dragged selection's, by any amount, ordered along the axis. Derived per drag and per axis and never declared, so a frame belongs to as many runs as it overlaps and a tall frame joins every horizontal run it spans, which is what lets the rule carry no threshold to argue about. _Avoid_: row, column, group, cluster
 
-**Hands**: The human at the canvas. Hands own geometry and arrangement; agents own frame source. _Avoid_: user, designer
+**Hands**: The human at the canvas. Hands own geometry and arrangement, and adjust frame source through the **write lane** and no other way; agents author it. _Avoid_: user, designer
+
+**Write lane**: The one path from a gesture to frame source: pick an element, form a typed **op**, gate it, splice the characters it named, reload. Four ops and no more — an element's text, an element removed, one class token, one string attribute — and nothing else in spool writes what a frame draws. Hands change values; structure stays the agent's. _Avoid_: editor, mutation, patch API
+
+**Gate**: The answer to whether one op can be made honestly, given by parsing the file fresh and never by consulting a mirror of it. Yes, or a **refusal**: a named reason a surface can show on a greyed control before the gesture starts — the className is an expression, an inline style pins it, spread props with no literal, the element is defined in a shared file and rendered by N frames, a variant a base class cannot honestly beat, a stamp that hits nothing. A refusal means the gesture does not apply and nothing else happens; nothing is forwarded to an agent as a fallback. _Avoid_: validation, check, guard
+
+**Span patch**: What a hand edit is on disk: a run of characters replaced, and every other byte of the file left as it was, including the author's indentation and the other attributes on the same element. A patch carries the patch that puts it back, so undo, redo and the rollback after a measurement disagrees are all the same call. _Avoid_: diff, edit, mutation
+
+**Fingerprint**: The hash of the file the canvas read, carried by every op and re-checked at the moment of writing. A mismatch refuses and re-picks rather than landing somewhere wrong, which is what lets an agent and a human work in one file at the same time. _Avoid_: version, etag, revision
 
 ### Flows
 

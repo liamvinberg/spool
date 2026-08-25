@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { initProject } from "../init";
@@ -220,6 +220,26 @@ describe("daemon authority matrix", () => {
 
 		expect((await control(path)).status).toBe(200);
 		expect((await request(CONTROL_HOST, "/api/health")).status).toBe(200);
+	});
+
+	it("keeps the write lane behind the control door, out of reach of a frame document", async () => {
+		const { project, request, control, render } = makeSecurityHarness();
+		const path = `/api/p/${encodeURIComponent(project.name)}/patch`;
+		const body = JSON.stringify({
+			frame: "home",
+			fingerprint: "whatever",
+			ops: [{ kind: "set-class", source: "frames/home/frame.tsx:1:40", token: "p-4", scope: "" }],
+		});
+		const init = { method: "POST", headers: { "content-type": "application/json" }, body };
+
+		// the one route that writes frame source: a document that renders a frame
+		// shares neither origin nor token with the canvas, and cannot reach it
+		expect((await request(CONTROL_HOST, path, init)).status).toBe(401);
+		expect((await render(path, init)).status).toBe(404);
+		// with the token it is a lane like any other, and the stale fingerprint is
+		// what stops this one rather than the door
+		expect((await control(path, init)).status).toBe(409);
+		expect(readFileSync(join(project.root, "design", "frames", "home", "frame.tsx"), "utf8")).toContain("<main>safe");
 	});
 
 	it("lets a cover's own address be its credential, on the control host alone", async () => {

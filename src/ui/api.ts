@@ -12,6 +12,7 @@ import type { FrameCopy } from "../daemon/explorer";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
+import type { HandOp, HeldPatch, PatchRefusal } from "../daemon/hand-write";
 import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
@@ -41,7 +42,10 @@ export type {
 	FsListing,
 	FsSearch,
 	Geometry,
+	HandOp,
+	HeldPatch,
 	LocatedRange,
+	PatchRefusal,
 	ProjectCard,
 	ProjectedFrame,
 	Projection,
@@ -256,6 +260,74 @@ export async function putGeometry(project: string, frames: Record<string, Geomet
 		return (await client.api.p[":project"].geometry.$put({ param: { project }, json: { frames } })).ok;
 	} catch {
 		return false;
+	}
+}
+
+/**
+ * The write lane (#253): the canvas's one way into frame source.
+ *
+ * Three calls, one shape. `gatePatch` asks before a gesture starts, so a
+ * control greys with the reason rather than dying mid-drag. `applyPatch`
+ * writes, carrying the fingerprint of the file the ask was answered against,
+ * and hands back the patch that puts it right again. `revertPatch` runs that
+ * patch, which is both undo and the rollback after a measurement disagrees,
+ * and answers with its own inverse so a redo is the same call.
+ *
+ * Undefined is a door that never answered — a write that was accepted and
+ * could not land has to say so, unlike a refusal, which is quiet.
+ */
+export type PatchAsked =
+	| { ok: true; path: string; fingerprint: string; mapped: boolean }
+	| { ok: false; refusal: PatchRefusal };
+
+export type PatchWritten =
+	| { ok: true; path: string; fingerprint: string; mapped: boolean; undo: HeldPatch; uncaught?: true }
+	| { ok: false; refusal: PatchRefusal };
+
+export async function gatePatch(
+	project: string,
+	frame: string,
+	ops: readonly HandOp[],
+): Promise<PatchAsked | undefined> {
+	try {
+		const res = await client.api.p[":project"].patch.gate.$post({
+			param: { project },
+			json: { frame, ops: [...ops] },
+		});
+		if (!res.ok) return undefined;
+		return (await res.json()) as PatchAsked;
+	} catch {
+		return undefined;
+	}
+}
+
+export async function applyPatch(
+	project: string,
+	frame: string,
+	fingerprint: string,
+	ops: readonly HandOp[],
+): Promise<PatchWritten | undefined> {
+	try {
+		const res = await client.api.p[":project"].patch.$post({
+			param: { project },
+			json: { frame, fingerprint, ops: [...ops] },
+		});
+		// a refusal comes back as one; anything else is a write that could not land
+		if (!res.ok && res.status !== 409) return undefined;
+		return (await res.json()) as PatchWritten;
+	} catch {
+		return undefined;
+	}
+}
+
+/** The patch run, and its own inverse; nothing when the file moved underneath. */
+export async function revertPatch(project: string, patch: HeldPatch): Promise<HeldPatch | undefined> {
+	try {
+		const res = await client.api.p[":project"].patch.revert.$post({ param: { project }, json: patch });
+		if (!res.ok) return undefined;
+		return ((await res.json()) as { undo: HeldPatch }).undo;
+	} catch {
+		return undefined;
 	}
 }
 
