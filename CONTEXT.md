@@ -58,6 +58,10 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Order**: The manual arrangement of pages and of the frames within a page, a canvas-wide durable in `canvas.json` beside the format stamp, committed and cloned rather than kept per machine. It is advisory over the projection — a stored name can be stale and an arrival can be missing from it, so the client merges the two — and it never touches geometry: reordering rows moves nothing on the canvas, and arranging frames on the canvas changes no row. _Avoid_: sort, index, position
 
+**Snap**: The correction a drag applies to land a frame on something meaningful: the moved selection's bounding box onto other frames' edges and centres, or its gaps onto the spacing a **Run** already keeps. Every candidate on an axis competes in one pool and the smallest correction wins, so no kind of alignment silently outranks another, and the marks are read off the corrected geometry rather than off the winner — an alignment draws a **guide**, a hairline across the viewport; a matched spacing draws a **span**, a ticked bar inside every gap of the run carrying that value. Holding the platform modifier through the drag suppresses all of it. Resize snaps to edges and centres only: spacing is a fact about where a frame sits, not about how big it is. _Avoid_: magnetism, sticky
+
+**Run**: The frames a spacing is measured within — everything whose perpendicular extent overlaps the dragged selection's, by any amount, ordered along the axis. Derived per drag and per axis and never declared, so a frame belongs to as many runs as it overlaps and a tall frame joins every horizontal run it spans, which is what lets the rule carry no threshold to argue about. _Avoid_: row, column, group, cluster
+
 **Hands**: The human at the canvas. Hands own geometry and arrangement; agents own frame source. _Avoid_: user, designer
 
 ### Flows

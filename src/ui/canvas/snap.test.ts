@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { snapEdge, snapMovedBox } from "./snap";
+import { runOf, snapEdge, snapMovedBox } from "./snap";
 
 /**
  * Snap math for the hands (#23): drag-move pulls the selection's bounding box
- * onto other frames' edges and centers, resize pulls the dragged edge alone.
- * The closest alignment corrects the gesture; every alignment the corrected
- * geometry lands on becomes a guide line — an equal-size match shows both
- * edge lines and drops the redundant center, the Figma pattern.
+ * onto other frames' edges and centers and its gaps onto the spacing its run
+ * already keeps (#241), resize pulls the dragged edge alone. The closest
+ * candidate on an axis corrects the gesture; the marks are read off the
+ * corrected geometry — an alignment draws a guide line, an equal-size match
+ * showing both edge lines and dropping the redundant center, and a matched
+ * spacing draws a span in every gap of the run carrying that value.
  */
 
 const box = (x: number, y: number, w: number, h: number) => ({ x, y, w, h });
@@ -72,7 +74,7 @@ describe("snapMovedBox", () => {
 
 	it("leaves the box alone beyond the threshold", () => {
 		const result = snapMovedBox(box(120, 500, 100, 100), [box(100, 0, 100, 100)], 8);
-		expect(result).toEqual({ dx: 0, dy: 0, v: [], h: [] });
+		expect(result).toEqual({ dx: 0, dy: 0, v: [], h: [], spans: [] });
 	});
 
 	it("never snaps an edge to a center or a center to an edge", () => {
@@ -105,5 +107,128 @@ describe("snapEdge", () => {
 	it("collapses statics sharing the stop into one guide", () => {
 		const result = snapEdge(98, [box(100, 0, 50, 50), box(100, 300, 80, 60)], "x", 8);
 		expect(result).toEqual({ value: 100, guides: [100] });
+	});
+});
+
+describe("runOf", () => {
+	it("takes one pixel of perpendicular overlap as membership", () => {
+		const run = runOf(box(300, 99, 100, 100), [box(0, 0, 100, 100)], "x");
+		expect(run).toHaveLength(1);
+	});
+
+	it("drops a frame that only touches the perpendicular extent", () => {
+		expect(runOf(box(300, 100, 100, 100), [box(0, 0, 100, 100)], "x")).toEqual([]);
+	});
+
+	it("orders the run along the axis", () => {
+		const run = runOf(box(300, 0, 100, 100), [box(150, 0, 100, 100), box(0, 0, 100, 100)], "x");
+		expect(run.map((b) => b.x)).toEqual([0, 150]);
+	});
+});
+
+describe("snapMovedBox — equal gaps", () => {
+	const row = [box(0, 0, 100, 100), box(150, 0, 100, 100)];
+
+	it("appends a frame onto the gutter the row already keeps", () => {
+		const result = snapMovedBox(box(296, 10, 100, 100), row, 8);
+		expect(result.dx).toBe(4);
+		expect(result.dy).toBe(0);
+	});
+
+	it("draws a span in every gap carrying the matched value", () => {
+		const result = snapMovedBox(box(296, 10, 100, 100), row, 8);
+		expect(result.spans).toEqual([
+			{ axis: "x", from: 100, to: 150, at: 50 },
+			{ axis: "x", from: 250, to: 300, at: 55 },
+		]);
+	});
+
+	it("centers a frame dropped between two run members", () => {
+		const result = snapMovedBox(box(198, 0, 100, 100), [box(0, 0, 100, 100), box(400, 0, 100, 100)], 8);
+		expect(result.dx).toBe(2);
+		expect(result.spans).toEqual([
+			{ axis: "x", from: 100, to: 200, at: 50 },
+			{ axis: "x", from: 300, to: 400, at: 50 },
+		]);
+	});
+
+	it("keeps a one-pixel overlap in the run", () => {
+		const result = snapMovedBox(box(296, 99, 100, 100), row, 8);
+		expect(result.dx).toBe(4);
+	});
+
+	it("gives no gap candidates to a frame with no perpendicular overlap", () => {
+		const result = snapMovedBox(box(296, 100, 100, 100), row, 8);
+		expect(result.dx).toBe(0);
+		expect(result.spans).toEqual([]);
+	});
+
+	it("never takes a gap from outside the dragged box's own run", () => {
+		// the top row keeps 50, the bottom row 80 — 50 would be in reach, and is not offered
+		const statics = [...row, box(0, 500, 100, 100), box(180, 500, 100, 100)];
+		const result = snapMovedBox(box(334, 500, 100, 100), statics, 8);
+		expect(result.dx).toBe(0);
+		expect(result.spans).toEqual([]);
+	});
+
+	it("lets the smaller correction win between an alignment and a gap", () => {
+		const result = snapMovedBox(box(296, 0, 100, 100), [...row, box(298, 300, 60, 60)], 8);
+		expect(result.dx).toBe(2);
+		expect(result.v).toEqual([298]);
+		expect(result.spans).toEqual([]);
+	});
+
+	it("gives an exact tie to alignment", () => {
+		const result = snapMovedBox(box(297, 0, 100, 100), [...row, box(294, 300, 60, 60)], 8);
+		expect(result.dx).toBe(-3);
+		expect(result.v).toEqual([294]);
+		expect(result.spans).toEqual([]);
+	});
+
+	it("draws the guide and the spans together when the correction satisfies both", () => {
+		const result = snapMovedBox(box(296, 3, 100, 100), row, 8);
+		expect(result.dx).toBe(4);
+		expect(result.dy).toBe(-3);
+		expect(result.h).toEqual([0, 100]);
+		expect(result.spans).toEqual([
+			{ axis: "x", from: 100, to: 150, at: 50 },
+			{ axis: "x", from: 250, to: 300, at: 50 },
+		]);
+	});
+
+	it("mirrors the whole behavior on the y axis", () => {
+		const column = [box(0, 0, 100, 100), box(0, 150, 100, 100)];
+		const result = snapMovedBox(box(10, 296, 100, 100), column, 8);
+		expect(result.dy).toBe(4);
+		expect(result.dx).toBe(0);
+		expect(result.spans).toEqual([
+			{ axis: "y", from: 100, to: 150, at: 50 },
+			{ axis: "y", from: 250, to: 300, at: 55 },
+		]);
+	});
+
+	it("suppresses every correction and every mark under the platform modifier", () => {
+		const result = snapMovedBox(box(296, 3, 100, 100), row, 8, { suppressed: true });
+		expect(result).toEqual({ dx: 0, dy: 0, v: [], h: [], spans: [] });
+	});
+
+	it("draws no span when the gap the box lands on is the run's only one", () => {
+		const result = snapMovedBox(box(150, 0, 100, 100), [box(0, 0, 100, 100)], 8);
+		expect(result.spans).toEqual([]);
+	});
+});
+
+describe("snapMovedBox — a run whose members miss each other", () => {
+	// a tall frame joins both, so their gutter is a spacing it can reach for,
+	// but the gutter itself has no shared band a bar could lie in
+	const staggered = [box(0, 0, 100, 100), box(150, 200, 100, 100)];
+
+	it("still offers a gutter kept by two frames that do not overlap each other", () => {
+		expect(snapMovedBox(box(296, 0, 100, 320), staggered, 8).dx).toBe(4);
+	});
+
+	it("marks only the gap a bar can honestly sit in", () => {
+		const result = snapMovedBox(box(296, 0, 100, 320), staggered, 8);
+		expect(result.spans).toEqual([{ axis: "x", from: 250, to: 300, at: 250 }]);
 	});
 });

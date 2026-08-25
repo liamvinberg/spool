@@ -95,11 +95,10 @@ import {
 	type ElementPreview,
 	editorTarget,
 	type FrameHover,
-	type Guides,
 	HANDLE_CURSORS,
 	type Handle,
 	isHandle,
-	NO_GUIDES,
+	NO_MARKS,
 	type PickedSelection,
 	SelectionOverlay,
 } from "./overlays";
@@ -117,7 +116,7 @@ import {
 	walkRejectionReason,
 } from "./protocol";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
-import { snapEdge, snapMovedBox } from "./snap";
+import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
 import { TrashToast } from "./trash-toast";
 import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
@@ -266,7 +265,7 @@ export function ProjectCanvas({
 	const [spaceDown, setSpaceDown] = useState(false);
 	const [panning, setPanning] = useState(false);
 	const [resizeCursor, setResizeCursor] = useState<string | null>(null);
-	const [guides, setGuides] = useState<Guides>(NO_GUIDES);
+	const [marks, setMarks] = useState<SnapMarks>(NO_MARKS);
 	const [marquee, setMarquee] = useState<Box | null>(null);
 	const [menu, setMenu] = useState<CanvasContextMenu | null>(null);
 	const [exportDialog, setExportDialog] = useState<readonly string[] | null>(null);
@@ -2183,7 +2182,7 @@ export function ProjectCanvas({
 	const cancelGesture = useCallback(() => {
 		const active = gesture.current;
 		gesture.current = { kind: "idle" };
-		setGuides(NO_GUIDES);
+		setMarks(NO_MARKS);
 		setMarquee(null);
 		setResizeCursor(null);
 		setPanning(false);
@@ -2414,10 +2413,14 @@ export function ProjectCanvas({
 			}
 			if (movingBoxes.length === 0) return;
 			const statics = framesRef.current.filter((f) => !active.origins.has(f.name));
-			const snap = snapMovedBox(boundsOf(movingBoxes), statics, SNAP_THRESHOLD_PX / cam.k);
+			// the modifier is read off the move itself rather than off the key event:
+			// the gesture keeps no modifier state, and mid-drag the wait is a frame
+			const snap = snapMovedBox(boundsOf(movingBoxes), statics, SNAP_THRESHOLD_PX / cam.k, {
+				suppressed: accelPressed(event),
+			});
 			const dx = rawX + snap.dx;
 			const dy = rawY + snap.dy;
-			setGuides({ v: snap.v, h: snap.h });
+			setMarks({ v: snap.v, h: snap.h, spans: snap.spans });
 			setFrames((current) =>
 				current.map((frame) => {
 					const origin = active.origins.get(frame.name);
@@ -2507,7 +2510,8 @@ export function ProjectCanvas({
 				w = snapped.w;
 				h = snapped.h;
 			}
-			setGuides({ v: vGuides, h: hGuides });
+			// spacing is a fact about where a frame sits, not about how big it is
+			setMarks({ v: vGuides, h: hGuides, spans: [] });
 			const box = { x, y, w, h };
 			setFrames((current) => current.map((frame) => (frame.name === active.frame ? { ...frame, ...box } : frame)));
 		}
@@ -2517,7 +2521,7 @@ export function ProjectCanvas({
 		const active = gesture.current;
 		gesture.current = { kind: "idle" };
 		setPanning(false);
-		setGuides(NO_GUIDES);
+		setMarks(NO_MARKS);
 		setMarquee(null);
 		setResizeCursor(null);
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
@@ -3123,7 +3127,7 @@ export function ProjectCanvas({
 							 */
 							lit={lit}
 							preview={effectiveTool === "select" ? preview : null}
-							guides={guides}
+							marks={marks}
 							marquee={marquee}
 							shellRadius={shellRadius}
 						/>

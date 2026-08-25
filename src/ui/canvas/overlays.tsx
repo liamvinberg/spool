@@ -4,6 +4,7 @@ import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
 import { frameSourcePath } from "./pages";
 import { type PickedHit, parseStampRef, pickKey } from "./protocol";
+import type { SnapMarks } from "./snap";
 
 /**
  * Screen-space selection furniture (#23), drawn over the transformed field so
@@ -33,12 +34,10 @@ export interface FrameHover {
 	visible: boolean;
 }
 
-export interface Guides {
-	v: number[];
-	h: number[];
-}
+export const NO_MARKS: SnapMarks = { v: [], h: [], spans: [] };
 
-export const NO_GUIDES: Guides = { v: [], h: [] };
+/** Half the tick length at a span's ends, in screen pixels. */
+const SPAN_TICK_PX = 3;
 
 export type Handle = "nw" | "ne" | "sw" | "se" | "n" | "e" | "s" | "w";
 
@@ -71,7 +70,7 @@ export function SelectionOverlay({
 	picked,
 	lit = null,
 	preview,
-	guides,
+	marks,
 	marquee,
 	shellRadius,
 }: {
@@ -92,7 +91,7 @@ export function SelectionOverlay({
 	 */
 	lit?: string | null;
 	preview: ElementPreview | null;
-	guides: Guides;
+	marks: SnapMarks;
 	/** Normalized screen-space rect while a marquee drag is live. */
 	marquee: Box | null;
 	shellRadius: number;
@@ -126,13 +125,39 @@ export function SelectionOverlay({
 
 	return (
 		<div className="pointer-events-none absolute inset-0">
-			{/* snap guides: alignment is meaning, so they carry the thread */}
-			{guides.v.map((x) => (
+			{/* snap marks: alignment and spacing are meaning, so they carry the thread */}
+			{marks.v.map((x) => (
 				<div key={`v${x}`} className="absolute inset-y-0 w-px bg-thread" style={{ left: x * k + camera.x }} />
 			))}
-			{guides.h.map((y) => (
+			{marks.h.map((y) => (
 				<div key={`h${y}`} className="absolute inset-x-0 h-px bg-thread" style={{ top: y * k + camera.y }} />
 			))}
+			{marks.spans.map((span) => {
+				// a bar the exact length of the gap, ticked at both ends, laid across
+				// the middle of the two frames' shared overlap — no fill, no number
+				const flat = span.axis === "x";
+				const from = span.from * k + (flat ? camera.x : camera.y);
+				const length = (span.to - span.from) * k;
+				const at = span.at * k + (flat ? camera.y : camera.x) - SPAN_TICK_PX;
+				const girth = SPAN_TICK_PX * 2;
+				return (
+					<div
+						key={`${span.axis}${span.from}-${span.to}-${span.at}`}
+						data-snap-span={span.axis}
+						className={`absolute border-thread ${flat ? "border-r border-l" : "border-t border-b"}`}
+						style={
+							flat
+								? { left: from, top: at, width: length, height: girth }
+								: { left: at, top: from, width: girth, height: length }
+						}
+					>
+						<div
+							className={`absolute bg-thread ${flat ? "inset-x-0 h-px" : "inset-y-0 w-px"}`}
+							style={flat ? { top: SPAN_TICK_PX } : { left: SPAN_TICK_PX }}
+						/>
+					</div>
+				);
+			})}
 
 			{hoveredFrame !== undefined &&
 				(() => {
