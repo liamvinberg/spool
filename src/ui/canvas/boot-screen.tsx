@@ -1,5 +1,6 @@
-import { useEffect, useReducer, useRef, useState } from "react";
-import { type Curtain, EXIT_MS, GATE_MS, MIN_SHOWN_MS, nextCurtain, pickMotion, type ThreadMotion } from "./boot-clock";
+import { useEffect, useReducer, useRef } from "react";
+import { RibbonMark } from "../icons";
+import { type Curtain, EXIT_MS, GATE_MS, MIN_SHOWN_MS, nextCurtain } from "./boot-clock";
 
 /**
  * What stands on the field between the canvas mounting and the projection
@@ -7,48 +8,31 @@ import { type Curtain, EXIT_MS, GATE_MS, MIN_SHOWN_MS, nextCurtain, pickMotion, 
  *
  * Before this the field rendered nothing at all for as long as the daemon took,
  * so a slow answer and a project with no frames in it were the same picture.
- * What it draws is the mark's thread travelling, and nothing else: the count,
+ * What it draws is the mark winding on and off, and nothing else: the count,
  * the names and the layout all arrive together with `/frames`, so anything the
  * curtain claimed about the project would be a claim it could not have checked.
  *
- * It is gated at both ends and its pace is rolled per boot: `boot-clock.ts`
- * carries the durations, the four hands, and the reasoning behind them.
+ * The mark is the loader rather than a shape invented for the waiting. It is
+ * gated at both ends: `boot-clock.ts` carries the durations and why they are
+ * what they are.
  */
-
-/** the wave the thread runs, at the mark's own hand */
-const THREAD_PATH = "M6 36C86 36 106 12 186 12C266 12 286 60 366 60C394 60 404 46 414 36";
 
 export function BootCurtain({ ready }: { ready: boolean }) {
 	const phase = useCurtain(ready);
-	// rolled once and held: a motion that changed underneath a running animation
-	// would restart it, which is the one thing a loader must never look like
-	const [motion] = useState<ThreadMotion>(() => pickMotion(Math.random()));
 	if (phase === null) return null;
 	return (
 		<div
 			data-canvas-booting={phase}
-			data-boot-motion={motion.name}
 			className={`pointer-events-none absolute inset-0 z-10 flex items-center justify-center pb-20 ${
 				phase === "leaving" ? "animate-boot-out" : "animate-boot-in"
 			}`}
 		>
-			<svg viewBox="0 0 420 72" className="h-[72px] w-[420px]" fill="none" aria-hidden="true">
-				<path
-					d={THREAD_PATH}
-					className="animate-boot-thread"
-					stroke="var(--color-thread)"
-					strokeWidth={1.5}
-					strokeLinecap="round"
-					// pattern and path are the same length, so a cycle of the offset carries
-					// the thread across once and there is always exactly this much of it on
-					// the wave. A dash as long as the whole path would read better standing
-					// still and worse in motion: it empties the field twice a cycle, and a
-					// loader that is up for a third of a second can land on the empty half.
-					pathLength={1}
-					strokeDasharray="0.4 0.6"
-					style={{ animationDuration: `${motion.durationMs}ms`, animationTimingFunction: motion.easing }}
-				/>
-			</svg>
+			<div className="relative h-[68px] w-[54px]">
+				{/* the ribbon at a fraction of its weight: the thread is laid into a mark
+				    that is already standing there, rather than drawn out of nothing */}
+				<RibbonMark className="absolute inset-0 h-full w-full opacity-[0.14]" />
+				<RibbonMark className="animate-boot-wind absolute inset-0 h-full w-full" />
+			</div>
 		</div>
 	);
 }
@@ -76,7 +60,7 @@ function useCurtain(ready: boolean): Exclude<Curtain, "waiting" | "gone"> | null
 
 	// A curtain that has only just arrived does not turn round and leave: measured
 	// against the dev daemon, a cold boot crossed the gate about four milliseconds
-	// before the projection landed, and what that drew was a thread fading out of a
+	// before the projection landed, and what that drew was a mark fading out of a
 	// fade-in. Below the gate nothing is drawn at all; above it, what is drawn is
 	// worth the glance.
 	useEffect(() => {

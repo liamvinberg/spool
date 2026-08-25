@@ -70,14 +70,16 @@
 	--animate-find-panel-in: find-panel-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
 	/* the boot curtain (#244): it is gated at both ends, so the numbers here are
 	 * only half the story — `canvas/boot-clock.ts` carries the gate and the exit,
-	 * and why they are what they are. The thread travels slowly: this stands over
-	 * a wait measured in a fraction of a second, and anything faster reads as an
+	 * and why they are what they are. The mark winds slowly: this stands over a
+	 * wait measured in a fraction of a second, and anything faster reads as an
 	 * alarm. */
 	--animate-boot-in: boot-in 180ms ease-out;
 	--animate-boot-out: boot-out 400ms ease-out forwards;
-	/* duration and curve are set per boot from boot-clock.ts, so the token names
-	 * the shape and nothing else */
-	--animate-boot-thread: boot-thread 1900ms linear infinite;
+	/* on in 1.5s and off in the same again, so a full turn is three seconds. It
+	 * alternates rather than looping, which is what keeps the winding seamless:
+	 * a loop would have to cut from full back to empty, and eased at both ends
+	 * means the mark is never moving at the moment it changes direction. */
+	--animate-boot-wind: boot-wind 1500ms ease-in-out infinite alternate;
 	/* the agent rail (#192): an entry settles into the log, a word fades in as it
 	 * arrives, and a ring turns slowly enough to read as work rather than an alarm.
 	 * 170ms on the word is where the sourced numbers land — Streamdown defaults to
@@ -376,15 +378,14 @@
 		}
 	}
 
-	/* one cycle carries the pattern exactly its own length, so the thread arrives
-	 * back where it started and the loop never shows a seam. Which curve it runs
-	 * is the boot's to choose. */
-	@keyframes boot-thread {
+	/* the thread laid into the mark from the bottom band up, the way a spool
+	 * fills, and drawn back off the same way */
+	@keyframes boot-wind {
 		from {
-			stroke-dashoffset: 0;
+			clip-path: inset(100% 0 0 0);
 		}
 		to {
-			stroke-dashoffset: -1;
+			clip-path: inset(0 0 0 0);
 		}
 	}
 
@@ -427,11 +428,11 @@
 		animation: none;
 	}
 
-	/* a still thread is the whole thread rather than the travelling piece of it:
-	 * a segment frozen mid-wave reads as a mark that failed to finish drawing. */
-	.animate-boot-thread {
+	/* a still mark is the whole mark: frozen part-wound it reads as a logo that
+	 * failed to finish drawing rather than as a thing that is waiting. */
+	.animate-boot-wind {
 		animation: none;
-		stroke-dasharray: none;
+		clip-path: none;
 	}
 
 	/* the same trap the leaving words are in: the fade is what takes the curtain
