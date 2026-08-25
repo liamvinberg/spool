@@ -199,13 +199,15 @@ describe("canvas keyboard navigation", () => {
 		const departed = cameraTransform(host);
 		const postMessage = vi.spyOn(source as Window, "postMessage");
 
+		// entering left the camera where it was, so origin still sits at the
+		// origin of the screen — pick inside the box it actually occupies
 		await act(async () => {
 			canvas?.dispatchEvent(
 				new PointerEvent("pointerdown", {
 					bubbles: true,
 					button: 0,
-					clientX: 400,
-					clientY: 400,
+					clientX: 60,
+					clientY: 60,
 					pointerId: 1,
 					ctrlKey: true,
 				}),

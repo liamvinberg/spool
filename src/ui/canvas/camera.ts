@@ -78,6 +78,29 @@ export function centerOn(camera: Camera, box: Box, vw: number, vh: number): Came
 	};
 }
 
+/**
+ * The camera that makes a frame live without ever taking you further away.
+ *
+ * Entering is a mode change, not a navigation: it says "this frame is live now",
+ * and the fit it used to force said something else as well — "and here is the
+ * whole of it". On a long frame you had zoomed into to read, that second half
+ * threw the page away to show you a thumbnail of it. So the zoom only ever
+ * climbs. Below a fit, entering fits, exactly as it always did; at or past one,
+ * the camera does not move at all — you double-clicked what was already under
+ * your cursor, and it is already where you are looking.
+ *
+ * The threshold is the fit itself, not a constant anyone has to tune, so the
+ * move shrinks to nothing as you approach it rather than snapping: no cliff and
+ * nothing invisible. Panning is left for the one case where the target really
+ * is elsewhere — ⏎ on a frame you have since scrolled away from — and then it
+ * pans the way an arrival does, zoom kept.
+ */
+export function entryCamera(camera: Camera, box: Box, vw: number, vh: number): Camera {
+	const fit = fitCamera(box, vw, vh);
+	if (camera.k < fit.k) return fit;
+	return intersects(box, visibleWorldRect(camera, vw, vh, 0)) ? camera : centerOn(camera, box, vw, vh);
+}
+
 /** Frames visible to a camera, padded by margin fractions of the viewport. */
 export function visibleWorldRect(camera: Camera, vw: number, vh: number, marginFraction: number): Box {
 	return {

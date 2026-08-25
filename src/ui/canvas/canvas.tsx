@@ -47,7 +47,18 @@ import { AgentRail, type FrameJump } from "./agent-rail";
 import { useAgentThreads } from "./agent-stream";
 import { arrange } from "./arrange";
 import { BootCurtain } from "./boot-screen";
-import { type Box, boundsOf, centerOn, clamp, fitCamera, intersects, K_STEP, toWorld, zoomAt } from "./camera";
+import {
+	type Box,
+	boundsOf,
+	centerOn,
+	clamp,
+	entryCamera,
+	fitCamera,
+	intersects,
+	K_STEP,
+	toWorld,
+	zoomAt,
+} from "./camera";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
 import { CollisionNotice } from "./collision-notice";
@@ -1009,14 +1020,17 @@ export function ProjectCanvas({
 			// the entered frame owns the keyboard from the first moment; a frame
 			// booting right now gets it at its loaded report instead
 			iframes.current.get(target)?.focus();
-			// Going inside always brings the frame to you. A zoom threshold here
-			// only ever surprises: the same double-click lands you in a neighbour
-			// at one zoom and leaves the camera behind at another, and no rule
-			// you cannot see is worth that. The sidebar's flight already works
-			// this way.
+			// Going inside brings the frame to you only when it is not already
+			// here: entering never takes you further away (`entryCamera`). The
+			// sidebar's flight still fits, because that one is a navigation and
+			// says so.
 			const viewport = viewportRef.current;
-			if (viewport === null) return;
-			animateCamera(fitCamera(frame, viewport.clientWidth, viewport.clientHeight));
+			const cam = cameraRef.current;
+			if (viewport === null || cam === null) return;
+			const next = entryCamera(cam, frame, viewport.clientWidth, viewport.clientHeight);
+			// standing still is not a flight: a 220ms animation to where you
+			// already are would fight a wheel that arrives inside it
+			if (next.x !== cam.x || next.y !== cam.y || next.k !== cam.k) animateCamera(next);
 		},
 		[animateCamera],
 	);
