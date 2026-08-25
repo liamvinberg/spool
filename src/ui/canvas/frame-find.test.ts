@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectedFrame } from "../api";
-import { ageOf, charWeights, findFrames, newestFirst } from "./frame-find";
+import { ageOf, findFrames, newestFirst } from "./frame-find";
 
 const frame = (name: string, born?: number): ProjectedFrame => ({
 	name,
@@ -66,12 +66,6 @@ describe("newestFirst", () => {
 	it("sorts by born, name as the stable fallback", () => {
 		const rows = newestFirst([frame("b"), frame("a"), frame("c", 5)]);
 		expect(rows.map((row) => row.name)).toEqual(["c", "a", "b"]);
-	});
-});
-
-describe("charWeights", () => {
-	it("cuts the name into run-up, hits, and the plain rest", () => {
-		expect(charWeights("ab-cd", [3])).toEqual(["runup", "runup", "runup", "hit", "plain"]);
 	});
 });
 

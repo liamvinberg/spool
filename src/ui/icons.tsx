@@ -109,6 +109,20 @@ export function SearchIcon({ className }: { className?: string }) {
 	);
 }
 
+/** A folder, wherever spool names one: a page in the rail, a directory in the picker. */
+export function FolderIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M1.75 3.5h3.5l1.25 1.5h5.75v5.5H1.75z"
+				stroke="currentColor"
+				strokeWidth="1.15"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
 interface CanvasToolIconProps {
 	className?: string;
 }

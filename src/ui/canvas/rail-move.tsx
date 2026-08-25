@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../cn";
+import { FolderIcon } from "../icons";
 import { pagePathLabel } from "./pages";
-import { FolderIcon } from "./sidebar";
 
 /**
  * Where to move something, found by typing.

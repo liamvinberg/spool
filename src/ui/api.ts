@@ -10,7 +10,7 @@ import type { AppType } from "../daemon/app";
 import type { CanvasOrder } from "../daemon/canvas-order";
 import type { FrameCopy } from "../daemon/explorer";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
-import type { FsListing } from "../daemon/fs-list";
+import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
 import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
@@ -37,7 +37,9 @@ export type {
 	FlowUnreadable,
 	FrameCollision,
 	FrameCopy,
+	FsHit,
 	FsListing,
+	FsSearch,
 	Geometry,
 	LocatedRange,
 	ProjectCard,
@@ -139,6 +141,13 @@ export async function browseDirectory(path?: string): Promise<FsListing | undefi
 	const res = await client.api.fs.list.$get({ query: path === undefined ? {} : { path } });
 	if (!res.ok) return undefined;
 	return (await res.json()) as FsListing;
+}
+
+/** Every folder under home the query answers to, ranked (#251) — the daemon walks, the picker draws. */
+export async function searchDirectories(query: string): Promise<FsSearch | undefined> {
+	const res = await client.api.fs.search.$get({ query: { q: query } });
+	if (!res.ok) return undefined;
+	return (await res.json()) as FsSearch;
 }
 
 export type OpenOutcome =

@@ -177,6 +177,23 @@ describe("project filesystem sinks", () => {
 		await expectBoundary(await app.request(`/api/p/${name}/thumbs/dash`), ".spool/term/dash.screen", root);
 	});
 
+	it("does not search out of home through a symlink pointing above it", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const home = makeTempDir();
+		const outside = makeTempDir();
+		mkdirSync(join(outside, `${SENTINEL}-folder`), { recursive: true });
+		mkdirSync(join(home, "personal"), { recursive: true });
+		symlinkSync(outside, join(home, "personal", "escape"), "dir");
+		const app = makeApp(spoolDir, { home });
+
+		const response = await app.request(`/api/fs/search?q=${SENTINEL}`);
+		expect(response.status).toBe(200);
+		const body = await response.text();
+		expect(body).not.toContain(SENTINEL);
+		expect(body).not.toContain(outside);
+		expect(JSON.parse(body)).toMatchObject({ hits: [] });
+	});
+
 	it("does not move an escaped frame-directory symlink to Trash", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);

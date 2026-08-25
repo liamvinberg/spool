@@ -417,6 +417,7 @@ export function App() {
 			{picking && (
 				<div className="absolute inset-0">
 					<FolderPicker
+						projects={projects}
 						onOpened={(project) => {
 							setPicking(false);
 							openTab(project);

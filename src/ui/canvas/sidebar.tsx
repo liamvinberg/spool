@@ -20,7 +20,7 @@ import {
 import { cn } from "../cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
-import { DotsIcon } from "../icons";
+import { DotsIcon, FolderIcon } from "../icons";
 import type { HistoryEntry, Moved, OrderList, Way } from "./history";
 import {
 	flatPages,
@@ -2208,19 +2208,6 @@ function TermIcon({ className }: { className?: string }) {
 				stroke="currentColor"
 				strokeWidth="1.15"
 				strokeLinecap="round"
-				strokeLinejoin="round"
-			/>
-		</svg>
-	);
-}
-
-export function FolderIcon({ className }: { className?: string }) {
-	return (
-		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
-			<path
-				d="M1.75 3.5h3.5l1.25 1.5h5.75v5.5H1.75z"
-				stroke="currentColor"
-				strokeWidth="1.15"
 				strokeLinejoin="round"
 			/>
 		</svg>

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { basename, isAbsolute, join, normalize, sep } from "node:path";
 import type { Duplex } from "node:stream";
 import type { Context } from "hono";
@@ -56,7 +57,7 @@ import {
 	renamePage,
 } from "./explorer";
 import { createFlowGraph, recordWalk } from "./flows";
-import { listDirectory } from "./fs-list";
+import { listDirectory, searchDirectories } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
 import { createHistory, type HistoryClock } from "./history";
@@ -170,6 +171,11 @@ export interface DaemonOptions {
 	machineStateWatchAdapter?: MachineStateWatchAdapter;
 	/** History's idle window (#157) — driven by tests instead of by the clock. */
 	historyClock?: HistoryClock;
+	/**
+	 * The home the picker's search walks (#251) — swapped by seam tests, so a walk
+	 * reads a fixture home rather than whatever is on the machine running them.
+	 */
+	home?: string | undefined;
 	/** Where history writes the one notice a project without git earns. */
 	onHistoryNotice?: (message: string) => void;
 	/** Machine-state observation failures stay visible without escaping a watcher callback. */
@@ -354,6 +360,7 @@ export function createDaemonApp({
 	onMachineStateWatchError,
 	historyClock,
 	onHistoryNotice,
+	home,
 }: DaemonOptions) {
 	const controlToken = providedControlToken ?? createCapability();
 	const controlHostname = normalizeHostname(controlHost ?? "localhost");
@@ -875,6 +882,10 @@ export function createDaemonApp({
 			const listing = listDirectory(c.req.query("path"));
 			if (listing === undefined) return c.json({ error: "no such directory" }, 404);
 			return c.json(listing);
+		})
+		.get("/api/fs/search", async (c) => {
+			// one bounded, cached walk of home: the browse is what an empty query still shows
+			return c.json(await searchDirectories(c.req.query("q") ?? "", { home: home ?? homedir(), spoolDir }));
 		})
 		.post("/api/projects/open", validator("json", requestedPath), (c) => {
 			try {

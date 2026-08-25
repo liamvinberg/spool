@@ -860,6 +860,32 @@ describe("the folder picker", () => {
 		expect(home.path).toBe((await import("node:os")).homedir());
 	});
 
+	it("searches the whole tree under home, ranked, and browses on an empty query", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const home = makeTempDir();
+		mkdirSync(join(home, "personal", "projects", "gym-brute"), { recursive: true });
+		mkdirSync(join(home, "session-archive", "2025", "gymlog"), { recursive: true });
+		const { initProject } = await import("../init");
+		initProject(join(home, "personal", "projects", "gym-brute"), spoolDir);
+		const app = makeApp(spoolDir, { home });
+
+		const res = await app.request("/api/fs/search?q=gym");
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			total: number;
+			answered: number;
+			hits: { name: string; isProject: boolean; matched: number[] }[];
+		};
+		expect(body.hits.map((hit) => hit.name)).toEqual(["gym-brute", "gymlog"]);
+		expect(body.hits[0]).toMatchObject({ isProject: true, matched: [0, 1, 2] });
+		expect(body.answered).toBe(2);
+		expect(body.total).toBeGreaterThanOrEqual(5);
+
+		// nothing typed is the browse, and the browse is the other endpoint
+		const empty = (await (await app.request("/api/fs/search?q=%20")).json()) as { hits: unknown[] };
+		expect(empty.hits).toEqual([]);
+	});
+
 	it("opens by walk-up through the app door, registering the found root", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);

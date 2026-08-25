@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Unseen } from "../../daemon/seen";
+import { charWeights, runsIn, type Weight } from "../../name-match";
 import type { ProjectedFrame } from "../api";
 import { cn } from "../cn";
-import { ageOf, charWeights, findFrames, newestFirst, runsIn, type Weight } from "./frame-find";
+import { FolderIcon } from "../icons";
+import { ageOf, findFrames, newestFirst } from "./frame-find";
 import { pageLabel, pageOf } from "./pages";
-import { FolderIcon } from "./sidebar";
 import { UnseenMark } from "./unseen-mark";
 
 /**
