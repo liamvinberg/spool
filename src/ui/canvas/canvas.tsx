@@ -18,11 +18,14 @@ import type {
 	SelectionPut,
 } from "../api";
 import {
+	applyPatch,
 	beaconTrash,
 	fetchCanvasState,
 	fetchCover,
 	fetchFlows,
 	fetchProjection,
+	gatePatch,
+	type HandOp,
 	openInEditor,
 	postCaptureFailure,
 	postSeen,
@@ -62,7 +65,7 @@ import {
 } from "./camera";
 import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
-import { CollisionNotice } from "./collision-notice";
+import { CollisionNotice, NoticeStrip } from "./collision-notice";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { type ExportNotice, ExportToast } from "./export-toast";
@@ -77,6 +80,8 @@ import {
 } from "./frame-export";
 import { FrameLabel } from "./frame-label";
 import { FrameShell } from "./frame-shell";
+import { deleteGesture, GONE, type HandEdit, type Refusal, type ShownRefusal, secondClick, stampOf } from "./hand-edit";
+import { HandNotice, type HandSaid } from "./hand-notice";
 import {
 	amend,
 	drop,
@@ -109,6 +114,8 @@ import {
 import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
 import {
 	clipboardCopyAllowed,
+	editMessage,
+	endEditMessage,
 	type KinStep,
 	kinMessage,
 	type PickedHit,
@@ -187,6 +194,8 @@ const TRASH_UNDO_MS = 5000;
 const HOVER_PICK_MS = 80;
 /** how far each fresh copy steps off the frame it was made from (#229) */
 const COPY_CASCADE_PX = 24;
+/** how long a hand edit's outgoing document may stand before the still returns */
+const HOLD_PAINT_MS = 3000;
 
 /**
  * One entry on the trash toast (#23, #229).
@@ -293,8 +302,19 @@ export function ProjectCanvas({
 	// comes back whole if the toast is undone (#229)
 	const [hiddenPages, setHiddenPages] = useState<ReadonlySet<string>>(new Set<string>());
 	const [docNonces, setDocNonces] = useState<Record<string, number>>({});
+	const docNoncesRef = useRef(docNonces);
+	docNoncesRef.current = docNonces;
+	// the document each frame keeps on screen while its replacement boots
+	// (#253's no blink): only a reload the canvas caused ever gets one
+	const [heldPaint, setHeldPaint] = useState<Record<string, number>>({});
 	// frames whose current boot is a walk arrival (#28): quiet cover, no veil
 	const [walkArrivals, setWalkArrivals] = useState<ReadonlySet<string>>(new Set<string>());
+	// the write lane's two canvas gestures (#255): the edit open on an
+	// element's own words, the reason the last one was refused, and the two
+	// things a hand edit says out loud
+	const [editing, setEditing] = useState<HandEdit | null>(null);
+	const [refused, setRefused] = useState<ShownRefusal | null>(null);
+	const [said, setSaid] = useState<HandSaid | null>(null);
 	// pages (#39): the named pages on disk, the one the canvas shows, and the
 	// names discovery refuses to resolve
 	const [pages, setPages] = useState<string[]>([]);
@@ -434,6 +454,23 @@ export function ProjectCanvas({
 	const hoverPoint = useRef<{ frame: string; world: Point } | null>(null);
 	// the redraw, reached from the key layer that outlives every render
 	const refreshRings = useRef<() => void>(() => {});
+	// the in-place edit (#255), mirrored for the handlers that outlive a render
+	const editingRef = useRef<HandEdit | null>(null);
+	// the descent is declared before the edit is, and has to be able to call
+	// off an ask the second click of the same double-click had just made
+	const endEditRef = useRef<(commit: boolean) => void>(() => {});
+	// the press that landed on the element already held, and where in it: the
+	// second click, once the pointer has come up without having dragged
+	const pressOnHeld = useRef<{ pick: PickedSelection; local: Point } | null>(null);
+	// the deadline on an edit the frame is being asked to end, and the write
+	// one gesture already has in flight — a held ⌫ repeats, and the second
+	// press would form its op against a fingerprint the first one just spent
+	const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	const writing = useRef(false);
+	// frames whose next reload the canvas caused, so the outgoing document is
+	// held rather than blinking through its own still (#253's no blink)
+	const holdNext = useRef(new Set<string>());
+	const holdTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 	// the range anchor: shift over the page tree's frame rows
 	const frameAnchor = useRef<string | null>(null);
 	const nudgeDirty = useRef(new Set<string>());
@@ -546,14 +583,51 @@ export function ProjectCanvas({
 	const sweepLifecycle = lifecycle.sweep;
 	const noteCameraMoving = lifecycle.noteCameraMoving;
 
-	const reloadFrameDocument = useCallback((frame: string) => {
-		setDocNonces((current) => ({ ...current, [frame]: (current[frame] ?? 0) + 1 }));
-		setWalkArrivals((current) => withoutFrame(current, frame));
-		setPicked((current) => current.filter((pick) => pick.frame !== frame));
-		if (pickedChain.current?.frame === frame) pickedChain.current = null;
-		setPreview((current) => (current?.click?.frame === frame || current?.under?.frame === frame ? null : current));
-		lifecycleRef.current.markStale(frame);
+	/** The held document lets go: the one behind it has loaded, or given up. */
+	const releaseHold = useCallback((frame: string) => {
+		clearTimeout(holdTimers.current.get(frame));
+		holdTimers.current.delete(frame);
+		setHeldPaint((current) => {
+			if (current[frame] === undefined) return current;
+			const next = { ...current };
+			delete next[frame];
+			return next;
+		});
 	}, []);
+
+	const reloadFrameDocument = useCallback(
+		(frame: string) => {
+			// a reload the canvas caused holds its outgoing document on screen
+			// until the new one reports loaded (#253's no blink); the timer is the
+			// bound, because a document that never loads must not leave a dead one
+			// standing in front of it
+			const was = docNoncesRef.current[frame] ?? 0;
+			// the mirror moves now rather than at the next render, so a second
+			// reload in the same tick holds the document it actually replaced
+			docNoncesRef.current = { ...docNoncesRef.current, [frame]: was + 1 };
+			if (holdNext.current.delete(frame)) {
+				setHeldPaint((current) => ({ ...current, [frame]: was }));
+				clearTimeout(holdTimers.current.get(frame));
+				holdTimers.current.set(
+					frame,
+					setTimeout(() => releaseHold(frame), HOLD_PAINT_MS),
+				);
+			}
+			setDocNonces((current) => ({ ...current, [frame]: was + 1 }));
+			// the document an edit was open in is going: the shim's half of it goes
+			// with it, so the canvas must not keep holding this frame's pointer
+			if (editingRef.current?.frame === frame) {
+				editingRef.current = null;
+				setEditing(null);
+			}
+			setWalkArrivals((current) => withoutFrame(current, frame));
+			setPicked((current) => current.filter((pick) => pick.frame !== frame));
+			if (pickedChain.current?.frame === frame) pickedChain.current = null;
+			setPreview((current) => (current?.click?.frame === frame || current?.under?.frame === frame ? null : current));
+			lifecycleRef.current.markStale(frame);
+		},
+		[releaseHold],
+	);
 
 	/**
 	 * A frame that changed size is a frame whose picture is wrong.
@@ -1399,6 +1473,8 @@ export function ProjectCanvas({
 			// means the file moved since — the entry is not a future anybody has
 			if (entry.kind === "patch") {
 				const ran = history.current;
+				// an undo reloads the frame it wrote, and that reload is ours (#253)
+				holdNext.current.add(entry.frame);
 				void revertPatch(project, entry.patch).then((next) => {
 					// a press that landed after this one owns the stacks now
 					if (history.current !== ran) return;
@@ -1587,7 +1663,12 @@ export function ProjectCanvas({
 			cancelPicks();
 			beginPick(frame, local, (chain) => {
 				const target = oneDown(chain, scope);
-				if (target === undefined) return; // frame background: no rung under it
+				// no rung under this one, so the two clicks meant the words: the
+				// second of them has already asked the gate, and leaving that ask
+				// alone is what lets one gesture descend a branch and edit a leaf
+				// (#254, #255). Frame background answers nothing either way.
+				if (target === undefined) return;
+				endEditRef.current(false);
 				applyPick(frame, chain, target);
 			});
 		},
@@ -1674,6 +1755,211 @@ export function ProjectCanvas({
 		}
 		return false;
 	}, [scopeIn]);
+
+	// --- the write lane's two gestures (#255) -----------------------------------
+
+	/**
+	 * The edit, in both places that read it.
+	 *
+	 * The state drives the render — the frame owns its own pointer while an
+	 * edit is open — and the ref is what the pointer and key handlers read,
+	 * which is a paint earlier than the render would give them.
+	 */
+	const setEdit = useCallback((next: HandEdit | null) => {
+		editingRef.current = next;
+		setEditing(next);
+	}, []);
+
+	/** Why the gesture just tried does not apply, on the element it was about. */
+	const showRefusal = useCallback((frame: string, selector: string, refusal: Refusal) => {
+		setRefused({ frame, selector, refusal });
+	}, []);
+
+	/**
+	 * End an open edit from out here, which is what a press anywhere on the
+	 * field means. The frame answers with `edited` either way, and that answer
+	 * is what writes — this only says which way it ended.
+	 */
+	const endEdit = useCallback(
+		(commit: boolean) => {
+			const held = editingRef.current;
+			if (held === null) return;
+			iframes.current.get(held.frame)?.contentWindow?.postMessage(endEditMessage(commit), "*");
+			// an edit the frame has not opened yet has nothing to answer with, so it
+			// is closed here rather than left holding the frame's pointer
+			if (held.phase === "asking") {
+				setEdit(null);
+				return;
+			}
+			// and one the frame never answers for is let go anyway: an edit that
+			// outlives the document it was open in would hold that frame's pointer
+			// for the rest of the session
+			clearTimeout(closeTimer.current);
+			closeTimer.current = setTimeout(() => {
+				if (editingRef.current?.id === held.id) setEdit(null);
+			}, PICK_REPLY_MS);
+		},
+		[setEdit],
+	);
+	endEditRef.current = endEdit;
+
+	/**
+	 * The text gesture (#255): a second click on an element's own words opens
+	 * an edit on the element itself.
+	 *
+	 * The gate is asked first and its no is the whole of what happens — the
+	 * element stays what it was and the reason sits under it. Its yes carries
+	 * the fingerprint of the file it answered against, which is what the write
+	 * at the end of the edit is checked with.
+	 */
+	const beginTextEdit = useCallback(
+		(pick: PickedSelection, local: Point) => {
+			const stamp = stampOf(pick);
+			if (typeof stamp !== "string") {
+				showRefusal(pick.frame, pick.selector, stamp);
+				return;
+			}
+			const id = ++pickSeq.current;
+			const asking: HandEdit = {
+				frame: pick.frame,
+				selector: pick.selector,
+				source: stamp,
+				id,
+				fingerprint: "",
+				phase: "asking",
+				start: "",
+			};
+			setEdit(asking);
+			setRefused(null);
+			void gatePatch(project, pick.frame, [{ kind: "set-text", source: stamp, text: "" }]).then((asked) => {
+				if (editingRef.current?.id !== id) return; // the gesture moved on
+				if (asked === undefined || !asked.ok) {
+					setEdit(null);
+					// an element with no words is not a text target at all, so a
+					// second click on one simply means nothing — the two refusals
+					// worth showing are the ones about words the file has but will
+					// not hand over: an expression, and a mapped row's data
+					if (asked !== undefined && asked.refusal.code !== "no-text") {
+						showRefusal(pick.frame, pick.selector, asked.refusal);
+					}
+					return;
+				}
+				setEdit({ ...asking, fingerprint: asked.fingerprint });
+				iframes.current
+					.get(pick.frame)
+					?.contentWindow?.postMessage(editMessage(pick.selector, local.x, local.y, id), "*");
+				// typing has to land in the frame, which only happens once the
+				// document it is drawn in holds the focus
+				iframes.current.get(pick.frame)?.focus();
+			});
+		},
+		[project, setEdit, showRefusal],
+	);
+
+	/**
+	 * One patch, from the gesture that formed it to the stack it joins.
+	 *
+	 * Everything both gestures share is here: the write, the undo entry it
+	 * leaves, the hold on the reload it causes, and the two things a write says
+	 * out loud. The gate's own no is quiet and lands on the element; a write
+	 * that was accepted and could not land is not, because nothing else would
+	 * say so.
+	 */
+	const writePatch = useCallback(
+		(frame: string, fingerprint: string, ops: readonly HandOp[]) => {
+			void applyPatch(project, frame, fingerprint, ops).then((written) => {
+				writing.current = false;
+				if (written === undefined) {
+					setSaid({ kind: "failed", frame });
+					return;
+				}
+				// the gate had already said yes, so a no here is the file moving
+				// underneath a gesture that was accepted — a failure rather than a
+				// quiet answer, and the one kind of refusal that has to interrupt
+				if (!written.ok) {
+					setSaid({ kind: "failed", frame, says: written.refusal.says });
+					return;
+				}
+				recordEntry({ kind: "patch", frame, patch: written.undo });
+				holdNext.current.add(frame);
+				if (written.uncaught === true) setSaid({ kind: "uncaught" });
+			});
+		},
+		[project, recordEntry],
+	);
+
+	/**
+	 * The delete gesture (#255): ⌫ on a held element takes its lines.
+	 *
+	 * Silent, like every other patch — ⌘Z brings it back and no toast is owed
+	 * either way. Every held rung goes in one patch, so however many were
+	 * picked it is one press to put them back.
+	 */
+	const deleteElements = useCallback((): boolean => {
+		const held = pickedRef.current[0];
+		const gesture = deleteGesture(pickedRef.current);
+		if (gesture === undefined || held === undefined) return false;
+		// a held ⌫ repeats: the second press would be gated against the file the
+		// first one is in the middle of rewriting, and would land nowhere
+		if (writing.current) return true;
+		if (!("ops" in gesture)) {
+			showRefusal(held.frame, held.selector, gesture);
+			return true;
+		}
+		setRefused(null);
+		writing.current = true;
+		void gatePatch(project, gesture.frame, gesture.ops).then((asked) => {
+			if (asked === undefined) {
+				writing.current = false;
+				setSaid({ kind: "failed", frame: gesture.frame });
+				return;
+			}
+			if (!asked.ok) {
+				writing.current = false;
+				showRefusal(gesture.on.frame, gesture.on.selector, asked.refusal);
+				return;
+			}
+			writePatch(gesture.frame, asked.fingerprint, gesture.ops);
+		});
+		return true;
+	}, [project, showRefusal, writePatch]);
+
+	/**
+	 * The frame reporting how an edit ended.
+	 *
+	 * An edit that ends on the words it began with writes nothing: the lane
+	 * would answer that the file already says this, and asking it is a round
+	 * trip nobody needs. Esc is the same, one intent earlier.
+	 */
+	const finishEdit = useCallback(
+		(held: HandEdit, commit: boolean, text: string) => {
+			setEdit(null);
+			viewportRef.current?.focus();
+			if (!commit || text === held.start) return;
+			writePatch(held.frame, held.fingerprint, [{ kind: "set-text", source: held.source, text }]);
+		},
+		[setEdit, writePatch],
+	);
+
+	// A refusal is about the element it was refused on, so it goes when the
+	// selection moves rather than sitting over whatever comes next. The keys
+	// rather than the array: a click at the scope re-picks the same element and
+	// hands back a fresh list, and that is the selection standing still.
+	const pickedKeys = picked.map((pick) => pickKey(pick.frame, pick.selector)).join("\n");
+	// biome-ignore lint/correctness/useExhaustiveDependencies(pickedKeys): the selection moving is the whole trigger
+	useEffect(() => {
+		setRefused(null);
+	}, [pickedKeys]);
+
+	// nothing holds a document, or an edit, past the window it was drawn in
+	useEffect(() => {
+		const timers = holdTimers.current;
+		return () => {
+			for (const timer of timers.values()) clearTimeout(timer);
+			timers.clear();
+			clearTimeout(closeTimer.current);
+		};
+	}, []);
 
 	/**
 	 * Shift-click's toggle (#37): the at-depth target in or out of the picked
@@ -2029,6 +2315,9 @@ export function ProjectCanvas({
 				}
 				case "loaded":
 					lifecycleRef.current.noteLoaded(message.frame);
+					// the document a hand edit was waiting on: the one held in front
+					// of it has done its job and lets go (#253's no blink)
+					releaseHold(message.frame);
 					// a completed boot retires its walk cover — later reboots are honest
 					setWalkArrivals((current) => withoutFrame(current, message.frame));
 					// the keyboard follows the walk: an entered frame owns it (#28)
@@ -2067,6 +2356,27 @@ export function ProjectCanvas({
 					const waiter = pickWaiters.current.get(message.id);
 					pickWaiters.current.delete(message.id);
 					waiter?.(message.chain);
+					return;
+				}
+				// the in-place edit (#255): the frame says it has opened, and later
+				// says how it ended. A reply carrying another ask is a dead edit —
+				// its element has moved on, and writing what it says would land on
+				// whatever took its place.
+				case "edit-open": {
+					const held = editingRef.current;
+					if (held === null || held.id !== message.id) return;
+					if (!message.ok) {
+						setEdit(null);
+						showRefusal(held.frame, held.selector, GONE);
+						return;
+					}
+					setEdit({ ...held, phase: "open", start: message.text });
+					return;
+				}
+				case "edited": {
+					const held = editingRef.current;
+					if (held === null || held.id !== message.id) return;
+					finishEdit(held, message.commit, message.text);
 					return;
 				}
 				case "site-boxes": {
@@ -2184,7 +2494,19 @@ export function ProjectCanvas({
 		};
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
-	}, [project, walkTo, stopAnimation, zoomAtPoint, viewportCenter, requestSiteBoxes, strike]);
+	}, [
+		project,
+		walkTo,
+		stopAnimation,
+		zoomAtPoint,
+		viewportCenter,
+		requestSiteBoxes,
+		strike,
+		releaseHold,
+		setEdit,
+		showRefusal,
+		finishEdit,
+	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
 	useEffect(() => {
@@ -2395,6 +2717,18 @@ export function ProjectCanvas({
 		cancelPicks(); // a new press voids earlier picks; its own start a fresh generation
 		flushNudge(); // a pending nudge settles before a new gesture captures origins
 		const p = localPoint(event);
+		pressOnHeld.current = null;
+		// a press out on the field is the click-away that commits an open edit
+		// (#255). While the gate is still answering the frame does not own its
+		// pointer yet, so a press over it is the second half of the very
+		// double-click that opened the edit and belongs to nobody out here.
+		const openEdit = editingRef.current;
+		if (openEdit !== null) {
+			const over = frameAtWorld(toWorld(p, cam)) === openEdit.frame;
+			if (over && openEdit.phase === "asking") return;
+			endEdit(true);
+			if (over) return;
+		}
 		const panningIntent = event.button === 1 || (event.button === 0 && toolRef.current === "hand");
 		viewportRef.current?.setPointerCapture(event.pointerId);
 
@@ -2496,7 +2830,14 @@ export function ProjectCanvas({
 			const scoped = anchor !== undefined && anchor.frame === hit;
 			if (scoped) {
 				const local = frameLocalAt(hit, world);
-				if (local !== null) scopedSelectAt(hit, local);
+				// a press on the element that was already held is the second click
+				// the text gesture is (#255) — noted here and acted on at pointer-up,
+				// because until then it may yet turn out to be a drag of the frame
+				if (local !== null) {
+					const again = secondClick(pickedRef.current, hit, local);
+					pressOnHeld.current = again === undefined ? null : { pick: again, local };
+					scopedSelectAt(hit, local);
+				}
 			}
 			const names = selectedRef.current.includes(hit) ? [...selectedRef.current] : [hit];
 			if (!scoped) {
@@ -2692,6 +3033,10 @@ export function ProjectCanvas({
 		setResizeCursor(null);
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
+		// the press never became a drag, so the second click meant the words (#255)
+		const again = pressOnHeld.current;
+		pressOnHeld.current = null;
+		if (active.kind === "pending" && again !== null) beginTextEdit(again.pick, again.local);
 	};
 
 	/**
@@ -2957,7 +3302,16 @@ export function ProjectCanvas({
 				for (const name of verbTarget()) reloadFrameDocument(name);
 			},
 			"canvas.export": () => openExport(verbTarget(), null),
+			// ⌫ takes whatever is held. An element is a handle now (#255), so with
+			// a rung open it takes that element's lines — silent, like every other
+			// patch, and ⌘Z brings it back. With no rung open it is the frame's own
+			// trash, unchanged.
 			"canvas.trash": (event) => {
+				if (enteredRef.current !== null) return;
+				if (deleteElements()) {
+					event?.preventDefault();
+					return;
+				}
 				const targets = verbTarget();
 				if (targets.length === 0) return;
 				event?.preventDefault(); // ⌫ must never walk the browser back
@@ -3018,6 +3372,11 @@ export function ProjectCanvas({
 			"canvas.escape": () => {
 				cancelPicks();
 				setPreview(null);
+				// an edit still waiting on the gate has no frame to press Esc in yet
+				if (editingRef.current !== null) {
+					endEdit(false);
+					return;
+				}
 				if (!gestureStill()) cancelGesture();
 				else if (menuOpenRef.current) setMenu(null);
 				else if (enteredRef.current !== null) exitEntered(true);
@@ -3110,6 +3469,8 @@ export function ProjectCanvas({
 		descendKey,
 		climbRung,
 		walkSibling,
+		deleteElements,
+		endEdit,
 	]);
 
 	// --- chrome (top bar) -------------------------------------------------------
@@ -3224,9 +3585,23 @@ export function ProjectCanvas({
 											ready={lifecycle.ready.has(frame.name)}
 											settled={lifecycle.settled.has(frame.name)}
 											entered={isEntered}
-											interactive={isEntered && !accelDown}
+											// an open in-place edit gives the frame its pointer back, so
+											// the caret lands where the click did and the words can be
+											// typed into the element itself (#255). Only once it is open:
+											// while the gate is still answering, the very double-click
+											// that asked may yet turn out to be a descent, and the canvas
+											// has to be the one that hears its second half.
+											// ⌘ borrows an entered frame's pointer to reach an element
+											// under it; an open edit is already inside one, and taking
+											// its pointer back mid-word would drop the caret
+											interactive={
+												editing?.frame === frame.name && editing.phase === "open"
+													? true
+													: isEntered && !accelDown
+											}
 											terminal={frame.kind === "term"}
 											docNonce={docNonces[frame.name] ?? 0}
+											holdNonce={heldPaint[frame.name] ?? null}
 											cover={frame.cover}
 											terminalCover={frame.terminalCover}
 											walkArrival={walkArrivals.has(frame.name)}
@@ -3316,6 +3691,7 @@ export function ProjectCanvas({
 							 */
 							lit={lit}
 							preview={effectiveTool === "select" ? preview : null}
+							refused={refused}
 							marks={marks}
 							marquee={marquee}
 							shellRadius={shellRadius}
@@ -3385,7 +3761,12 @@ export function ProjectCanvas({
 
 				{exportNotice !== null ? <ExportToast notice={exportNotice} /> : null}
 
-				{collisions.length > 0 && <CollisionNotice collisions={collisions} />}
+				{(collisions.length > 0 || said !== null) && (
+					<NoticeStrip>
+						{collisions.length > 0 && <CollisionNotice collisions={collisions} />}
+						{said !== null && <HandNotice said={said} onDismiss={() => setSaid(null)} />}
+					</NoticeStrip>
+				)}
 
 				{pendingTrash !== null && (
 					<TrashToast frames={pendingTrash.frames} page={pendingTrash.page} onUndo={undoTrash} />

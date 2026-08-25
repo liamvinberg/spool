@@ -60,9 +60,20 @@ export function coverPlan(input: {
 	covered: boolean;
 	/** Whether this boot is a walk arrival — quiet, however it ends up covered. */
 	walk: boolean;
+	/**
+	 * Whether the document this frame's last paint came from is still on
+	 * screen while its replacement boots behind it (#253's no blink).
+	 *
+	 * A hand edit reloads the frame it just wrote, and a still is the wrong
+	 * thing to reach for there: the picture on file is of the words before the
+	 * edit, so covering with it would flash the old frame back. Holding the
+	 * outgoing document is both truer and quieter, and while it holds there is
+	 * nothing for a cover to stand in for.
+	 */
+	holding?: boolean;
 	terminalCover?: TerminalCoverState | undefined;
 }): CoverPlan {
-	const { state, ready, settled, entered, covered, walk, terminalCover } = input;
+	const { state, ready, settled, entered, covered, walk, holding = false, terminalCover } = input;
 	if (terminalCover?.kind === "stale" || terminalCover?.kind === "never-run") {
 		return {
 			cover: true,
@@ -74,12 +85,12 @@ export function coverPlan(input: {
 	return {
 		// A live frame is what the canvas is showing, whether it is entered or
 		// Select currently owns the pointer above it.
-		cover: (state !== "live" && !entered) || !ready || (!entered && !settled),
+		cover: !holding && ((state !== "live" && !entered) || !ready || (!entered && !settled)),
 		image: covered ? "cover" : "placeholder",
 		// Going inside is the whole of "a boot somebody asked for". A borrowed
 		// frame boots out of sight, and badging those is how one arrival becomes
 		// seconds of badges rolling across the screen.
-		badge: entered && !ready && !walk,
+		badge: !holding && entered && !ready && !walk,
 	};
 }
 
@@ -92,6 +103,7 @@ export const FrameShell = memo(function FrameShell({
 	entered,
 	interactive,
 	docNonce,
+	holdNonce,
 	cover,
 	terminal,
 	terminalCover,
@@ -112,6 +124,18 @@ export const FrameShell = memo(function FrameShell({
 	terminal: boolean;
 	/** Bumped by SSE source changes — a new nonce reloads the document. */
 	docNonce: number;
+	/**
+	 * The document to keep on screen while the current one boots (#253's no
+	 * blink), or null for every ordinary reload.
+	 *
+	 * A hand edit reloads the very frame it wrote, and a reload is a remount:
+	 * the iframe goes white, the still comes back, and the frame the words were
+	 * just typed into blinks its old self at you. So a self-caused reload keeps
+	 * the outgoing document mounted, on top and inert, until the incoming one
+	 * reports loaded — its last paint held, exactly as it was, then swapped.
+	 * The canvas owns the timing, because it is the one that hears the report.
+	 */
+	holdNonce: number | null;
 	/** The frame's immutable cover image, absent when it has none to show. */
 	cover: Cover | undefined;
 	/** Terminal-only current/stale/never-run cover truth from the projection. */
@@ -145,6 +169,8 @@ export const FrameShell = memo(function FrameShell({
 	// The marker needs no latch of its own: it only silences the badge, which is
 	// already gone by the time the cover fades. If a broken boot or mid-walk edit
 	// retires the marker while the frame stays covered, the honest cover returns.
+	// the document still on screen while this one boots, when there is one
+	const held = holdNonce !== null && holdNonce !== docNonce ? holdNonce : null;
 	const plan = coverPlan({
 		state,
 		ready,
@@ -152,6 +178,7 @@ export const FrameShell = memo(function FrameShell({
 		entered,
 		covered: cover !== undefined,
 		walk: walkArrival,
+		holding: held !== null,
 		terminalCover,
 	});
 	const [veil, setVeil] = useState(plan.cover);
@@ -175,6 +202,23 @@ export const FrameShell = memo(function FrameShell({
 						visibility: state === "live" || entered ? "visible" : "hidden",
 					}}
 				>
+					{held !== null && (
+						// keyed by its own nonce so React matches it to the node already
+						// on screen rather than mounting a second document of it, and
+						// left without a ref so the frame's boot state belongs to the
+						// one booting behind it
+						<iframe
+							key={held}
+							title={`${name} (held)`}
+							aria-hidden="true"
+							tabIndex={-1}
+							allow="clipboard-write"
+							sandbox="allow-scripts"
+							src={frameDocumentUrl(project, name, held)}
+							className="absolute inset-0 block h-full w-full border-0 bg-white"
+							style={{ pointerEvents: "none", zIndex: 1 }}
+						/>
+					)}
 					<iframe
 						ref={refCb}
 						key={docNonce}

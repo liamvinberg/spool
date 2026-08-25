@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { captureMessage, clipboardCopyAllowed, parseFrameMessage, walkRejectionReason } from "./protocol";
+import {
+	captureMessage,
+	clipboardCopyAllowed,
+	editMessage,
+	endEditMessage,
+	parseFrameMessage,
+	walkRejectionReason,
+} from "./protocol";
 
 describe("trusted capture source protocol", () => {
 	const id = "0123456789abcdef0123456789abcdef";
@@ -170,6 +177,25 @@ describe("frame modifier protocol", () => {
 		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Meta" })).toBeUndefined();
 		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Shift", held: true })).toBeUndefined();
 		expect(parseFrameMessage({ spool: "modifier", frame: "host", modifier: "Meta", held: "true" })).toBeUndefined();
+	});
+});
+
+describe("in-place edit protocol (#255)", () => {
+	it("accepts the frame's two answers and rejects a shapeless one", () => {
+		const opened = { spool: "edit-open", frame: "cart", id: 4, ok: true, text: "Pay now" };
+		const ended = { spool: "edited", frame: "cart", id: 4, commit: true, text: "Pay later" };
+
+		expect(parseFrameMessage(opened)).toEqual(opened);
+		expect(parseFrameMessage(ended)).toEqual(ended);
+		// an answer with no ask behind it could end an edit that is not this one
+		expect(parseFrameMessage({ spool: "edit-open", frame: "cart", ok: true, text: "" })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "edited", frame: "cart", id: 4, text: "x" })).toBeUndefined();
+		expect(parseFrameMessage({ spool: "edited", frame: "cart", id: 4, commit: true })).toBeUndefined();
+	});
+
+	it("names the element and the point the caret goes to", () => {
+		expect(editMessage("div > h1", 12, 8, 5)).toEqual({ spool: "edit", selector: "div > h1", x: 12, y: 8, id: 5 });
+		expect(endEditMessage(true)).toEqual({ spool: "edit-end", commit: true });
 	});
 });
 

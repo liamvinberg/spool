@@ -143,6 +143,8 @@ export type FrameMessage =
 	| FramePanMessage
 	| FrameZoomMessage
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
+	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
+	| { spool: "edited"; frame: string; id: number; commit: boolean; text: string }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
 	| { spool: "external"; frame: string; href: string }
 	| { spool: "go"; frame: string; target: string; session?: SessionRecord; id?: number }
@@ -188,6 +190,14 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				: undefined;
 		case "picked":
 			return Array.isArray(m.chain) && typeof m.id === "number" ? (m as unknown as FrameMessage) : undefined;
+		case "edit-open":
+			return typeof m.id === "number" && typeof m.ok === "boolean" && typeof m.text === "string"
+				? (m as unknown as FrameMessage)
+				: undefined;
+		case "edited":
+			return typeof m.id === "number" && typeof m.commit === "boolean" && typeof m.text === "string"
+				? (m as unknown as FrameMessage)
+				: undefined;
 		case "site-boxes":
 			return typeof m.boxes === "object" && m.boxes !== null && typeof m.id === "number"
 				? (m as unknown as FrameMessage)
@@ -333,5 +343,15 @@ export const pickMessage = (x: number, y: number, id: number) => ({ spool: "pick
 export type KinStep = "child" | "next" | "previous";
 export const kinMessage = (selector: string, step: KinStep, id: number) =>
 	({ spool: "kin", selector, step, id }) as const;
+/**
+ * The in-place text edit (#255): the element's own words become the field,
+ * with the caret where the click landed. The frame answers `edit-open` at
+ * once — a selector nothing answers to is `ok: false` — and `edited` when
+ * Enter, Esc or a click away has ended it. `endEditMessage` is the canvas's
+ * own way to end one, which is what a click out on the field means.
+ */
+export const editMessage = (selector: string, x: number, y: number, id: number) =>
+	({ spool: "edit", selector, x, y, id }) as const;
+export const endEditMessage = (commit: boolean) => ({ spool: "edit-end", commit }) as const;
 export const sessionReply = (record: SessionRecord | null) => ({ spool: "session", record }) as const;
 export const sitesMessage = (sites: SiteAnchor[], id: number) => ({ spool: "sites", sites, id }) as const;

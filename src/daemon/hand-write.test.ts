@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applySpan, fingerprintOf, type HandOp, planOps, spanBetween } from "./hand-write";
+import { readJsxText } from "./jsx-text";
 
 /**
  * The lane itself (#253), over text: what each op splices, what the gate
@@ -271,5 +272,61 @@ describe("the patch a gesture stores", () => {
 	it("hashes the bytes it was taken of", () => {
 		expect(fingerprintOf(FRAME)).toBe(fingerprintOf(FRAME));
 		expect(fingerprintOf(FRAME)).not.toBe(fingerprintOf(`${FRAME}\n`));
+	});
+});
+
+/**
+ * The edit in place, end to end (#255).
+ *
+ * A hand types words into the element itself and what the frame draws next has
+ * to be exactly those words, whatever is in them. The escaping rule is #253's
+ * and settled; what is proved here is the trip a gesture actually makes —
+ * through the file, out of the file, and back again on undo.
+ */
+describe("the round trip an edit makes", () => {
+	const typed = [
+		"Pay now",
+		"Tom & Jerry",
+		"{total} items",
+		"a < b and b > c",
+		'she said "hi" and it\'s fine',
+		"&amp; stays literal",
+		"  padded  ",
+		"emoji 🧵",
+	];
+
+	/**
+	 * The words between the button's tags, as the frame draws them. A written
+	 * `>` is an entity, so the last one before the closing tag opens it — which
+	 * is the only reading that survives an arrow function in an attribute.
+	 */
+	function drawn(source: string): string {
+		const closing = source.indexOf("</button>");
+		return readJsxText(source.slice(source.lastIndexOf(">", closing) + 1, closing));
+	}
+
+	it.each(typed)("puts %j into the file and reads it back out of the frame", (text) => {
+		const source = stamp(FRAME, "<button");
+		const after = written([{ kind: "set-text", source, text }]);
+		expect(drawn(after)).toBe(text);
+		// and the file is the file everywhere the words are not, down to the
+		// author's indentation on the lines either side of them
+		const span = spanBetween(FRAME, after);
+		expect(FRAME.slice(0, span.start)).toBe(after.slice(0, span.start));
+		expect(after.slice(span.end)).toBe(FRAME.slice(FRAME.length - (after.length - span.end)));
+	});
+
+	it("puts the words back byte for byte when the edit is undone", () => {
+		const source = stamp(FRAME, "<button");
+		const after = written([{ kind: "set-text", source, text: '{a} & "b"' }]);
+		expect(after).not.toBe(FRAME);
+		expect(applySpan(after, spanBetween(FRAME, after))).toBe(FRAME);
+	});
+
+	it("takes an element's lines and puts them back byte for byte", () => {
+		const source = stamp(FRAME, "<img");
+		const after = written([{ kind: "delete", source }]);
+		expect(after).not.toContain("<img");
+		expect(applySpan(after, spanBetween(FRAME, after))).toBe(FRAME);
 	});
 });

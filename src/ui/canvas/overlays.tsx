@@ -2,6 +2,7 @@ import { cellsForPx } from "../../term/cells";
 import type { Camera, ProjectedFrame } from "../api";
 import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
+import type { ShownRefusal } from "./hand-edit";
 import { frameSourcePath } from "./pages";
 import { type PickedHit, parseStampRef, pickKey } from "./protocol";
 import type { SnapMarks } from "./snap";
@@ -82,6 +83,7 @@ export function SelectionOverlay({
 	picked,
 	lit = null,
 	preview,
+	refused = null,
 	marks,
 	marquee,
 	shellRadius,
@@ -103,6 +105,15 @@ export function SelectionOverlay({
 	 */
 	lit?: string | null;
 	preview: HoverRungs | null;
+	/**
+	 * Why the gesture just tried on this element does not apply (#255).
+	 *
+	 * A refusal is quiet — the element stays what it was and nothing is sent
+	 * anywhere — but it is never silent, so the reason sits under the outline
+	 * in the same plain language every other canvas notice uses, and leaves
+	 * when the selection does.
+	 */
+	refused?: ShownRefusal | null;
 	marks: SnapMarks;
 	/** Normalized screen-space rect while a marquee drag is live. */
 	marquee: Box | null;
@@ -299,6 +310,25 @@ export function SelectionOverlay({
 					const box = elementBox(deeperShown.frame, deeperShown.rect);
 					if (box === undefined) return null;
 					return <ElementOutline box={box} radius={deeperShown.radius * k} faded dashed />;
+				})()}
+
+			{refused !== null &&
+				(() => {
+					const pick = picked.find((held) => held.frame === refused.frame && held.selector === refused.selector);
+					const box = pick === undefined ? undefined : elementBox(pick.frame, pick.rect);
+					if (box === undefined) return null;
+					return (
+						<div
+							data-hand-refusal={refused.refusal.code}
+							className="absolute max-w-[280px] truncate rounded-md border border-border-raised bg-raised px-2 py-1 font-mono text-2xs text-muted leading-3"
+							style={{ left: box.x - 2, top: box.y + box.h + 8 }}
+						>
+							{refused.refusal.says}
+							{refused.refusal.expression !== undefined && (
+								<span className="text-thread"> {refused.refusal.expression}</span>
+							)}
+						</div>
+					);
 				})()}
 
 			{marquee !== null && (

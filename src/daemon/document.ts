@@ -375,7 +375,11 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * Figma-style (double-click descends, Esc ascends) without ever handing the
  * frame the pointer; {spool:"kin", selector, step} answers the same shape for
  * that element's first child or either sibling, which is the keyboard's half
- * of the same ladder (#254); {spool:"sites"} answers with the frame-local boxes of
+ * of the same ladder (#254); {spool:"edit", selector, x, y} makes that element's
+ * own words editable in place and answers {spool:"edit-open"}, then
+ * {spool:"edited"} once Enter, Esc or a click away has ended it, and
+ * {spool:"edit-end", commit} ends one from the canvas side (#255);
+ * {spool:"sites"} answers with the frame-local boxes of
  * navigation-site elements (#34) so arrows grow out of what causes them.
  * Entered frames also hand canvas-zoom gestures back across
  * the iframe boundary; ordinary wheel input stays inside the frame so its own
@@ -994,6 +998,118 @@ const canvasShimJs = `(() => {
 		return chainOf(kin);
 	}
 
+	/**
+	 * The in-place text edit (#255): the element itself becomes the field.
+	 *
+	 * A hand edits the words where they are drawn rather than in a box
+	 * somewhere else, so the element is made editable, focused, and given the
+	 * caret at the point that was clicked. Enter and a click away commit; Esc
+	 * puts back what was there.
+	 *
+	 * While an edit is open the shim swallows the keys and the presses before
+	 * frame code sees them. That is not the chrome bending the frame: the
+	 * keystrokes are the edit's, and a prototype that binds a bare letter to a
+	 * drawer would otherwise open one on every word typed into it. The default
+	 * actions are untouched, which is what puts the characters in and moves the
+	 * caret. Nothing else about the document changes, and the attribute comes
+	 * off the moment the edit ends.
+	 */
+	var editing = null;
+
+	function beginEdit(selector, x, y, id) {
+		endEdit(false);
+		const frame = (window.__SPOOL__ || {}).frame;
+		const el = elementFor(selector);
+		if (!el) {
+			parent.postMessage({ spool: "edit-open", frame, id, ok: false, text: "" }, "*");
+			return;
+		}
+		editing = { el, id, text: el.textContent || "" };
+		el.setAttribute("contenteditable", "plaintext-only");
+		el.setAttribute("spellcheck", "false");
+		try { el.focus({ preventScroll: true }); } catch { try { el.focus(); } catch {} }
+		try { caretAt(el, x, y); } catch {}
+		parent.postMessage({ spool: "edit-open", frame, id, ok: true, text: editing.text }, "*");
+	}
+
+	function endEdit(commit) {
+		if (!editing) return;
+		const held = editing;
+		editing = null;
+		const el = held.el;
+		const text = el.textContent || "";
+		el.removeAttribute("contenteditable");
+		el.removeAttribute("spellcheck");
+		try { el.blur(); } catch {}
+		// Esc restores; a commit leaves the typed words standing, because the
+		// reload that carries them into the file is a moment away and flashing
+		// the old ones back is exactly the blink the write lane avoids
+		if (!commit) el.textContent = held.text;
+		parent.postMessage({
+			spool: "edited",
+			frame: (window.__SPOOL__ || {}).frame,
+			id: held.id,
+			commit: commit === true,
+			text,
+		}, "*");
+	}
+
+	// the caret where the click was, and the whole of the words when the
+	// browser cannot resolve a point inside them
+	function caretAt(el, x, y) {
+		const selection = getSelection();
+		if (!selection) return;
+		let range = null;
+		if (typeof x === "number" && typeof y === "number") {
+			if (document.caretRangeFromPoint) {
+				range = document.caretRangeFromPoint(x, y);
+			} else if (document.caretPositionFromPoint) {
+				const at = document.caretPositionFromPoint(x, y);
+				if (at) {
+					range = document.createRange();
+					range.setStart(at.offsetNode, at.offset);
+					range.collapse(true);
+				}
+			}
+		}
+		if (!range || !el.contains(range.startContainer)) {
+			range = document.createRange();
+			range.selectNodeContents(el);
+		}
+		selection.removeAllRanges();
+		selection.addRange(range);
+	}
+
+	// A press inside the words places the caret and goes no further; a press
+	// anywhere else is the click-away that commits, and the frame never sees it.
+	var swallowWhileEditing = (event) => {
+		if (!editing) return;
+		if (editing.el.contains(event.target)) {
+			event.stopPropagation();
+			return;
+		}
+		event.stopPropagation();
+		event.preventDefault();
+		if (event.type === "pointerdown") endEdit(true);
+	};
+	for (const kind of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "dblclick"]) {
+		addEventListener(kind, swallowWhileEditing, true);
+	}
+
+	// focus leaving the words, or the whole frame, is a click-away by another
+	// name. The element's own focus() blurs whatever held it first, which is
+	// why only these two targets count.
+	addEventListener("blur", (event) => {
+		if (editing && (event.target === editing.el || event.target === window)) endEdit(true);
+	}, true);
+
+	// the release half of every key the edit took. stopPropagation rather than
+	// stopImmediatePropagation, so the modifier relay below — a listener on this
+	// same window — still tells the canvas when the accel key came back up.
+	addEventListener("keyup", (event) => {
+		if (editing) event.stopPropagation();
+	}, true);
+
 	// where each anchor's element sits, over the one set of data-spool-source
 	// stamps. Two forms of anchor, one message and one answer shape:
 	//
@@ -1140,6 +1256,22 @@ const canvasShimJs = `(() => {
 			parent.postMessage({ spool: "picked", frame, id: m.id, chain }, "*");
 			return;
 		}
+		if (m.spool === "edit" || m.spool === "edit-end") {
+			// the two verbs that change the document rather than read it, so they
+			// are held to the same door the capture is: this frame's own canvas
+			const config = window.__SPOOL__ || {};
+			if (event.source !== parent || event.origin !== config.controlOrigin) return;
+			if (m.spool === "edit-end") {
+				endEdit(m.commit === true);
+				return;
+			}
+			try {
+				beginEdit(m.selector, m.x, m.y, m.id);
+			} catch {
+				parent.postMessage({ spool: "edit-open", frame: config.frame, id: m.id, ok: false, text: "" }, "*");
+			}
+			return;
+		}
 		if (m.spool === "sites") {
 			const frame = (window.__SPOOL__ || {}).frame;
 			let boxes = {};
@@ -1221,6 +1353,29 @@ const canvasShimJs = `(() => {
 	addEventListener("keydown", (event) => {
 		if (window.parent === window) return;
 		const frame = (window.__SPOOL__ || {}).frame;
+		// an open in-place edit owns the keyboard (#255): Enter commits, Esc
+		// puts back, and every other key is the edit's rather than the
+		// prototype's — the default action still types the character
+		if (editing) {
+			if (event.key === "Enter" || event.key === "Escape") {
+				event.preventDefault();
+				event.stopImmediatePropagation();
+				endEdit(event.key === "Enter");
+				return;
+			}
+			// A space is the element's own key before it is the text's: a button
+			// takes it as a press and eats it, so words typed into one would come
+			// out run together. The character is put in by hand instead, which is
+			// the same thing the browser would have done with it.
+			if (event.key === " " && !event.metaKey && !event.ctrlKey && !event.altKey) {
+				event.preventDefault();
+				event.stopImmediatePropagation();
+				try { document.execCommand("insertText", false, " "); } catch {}
+				return;
+			}
+			event.stopPropagation();
+			return;
+		}
 		// which key is the accel modifier is the canvas's rule, not the frame's:
 		// report the key that moved and let the canvas decide it counts
 		if (event.key === "Meta" || event.key === "Control") {
