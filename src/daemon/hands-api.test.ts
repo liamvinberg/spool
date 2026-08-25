@@ -845,3 +845,132 @@ describe("the write lane", () => {
 		expect(frameSource(root)).toBe(cartTsx);
 	});
 });
+
+/**
+ * The rail's read (#256). The properties rail draws an ancestry before
+ * anything is touched: the crumbs need the names the author wrote, the scope
+ * bar needs the variant chains the literal carries, and the source line needs
+ * the literal. All three come off the same fresh parse the write lane runs.
+ */
+describe("the rungs read", () => {
+	interface RungAnswer {
+		source: string;
+		name?: string;
+		className: string;
+		path?: string;
+		line?: number;
+		mapped?: true;
+		refusal?: { code: string; says: string; expression?: string };
+	}
+
+	async function rungs(
+		app: ReturnType<typeof makeApp>,
+		name: string,
+		sources: readonly string[],
+		frame = "cart",
+	): Promise<RungAnswer[]> {
+		const res = await app.request(`/api/p/${name}/rungs`, jsonPost({ frame, sources }));
+		expect(res.status).toBe(200);
+		return ((await res.json()) as { rungs: RungAnswer[] }).rungs;
+	}
+
+	it("reads a whole ancestry in rung order: the authored name, the literal, and where it is written", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+
+		expect(await rungs(app, name, [stampFor(cartTsx, "<main"), stampFor(cartTsx, "<button")])).toEqual([
+			{
+				source: stampFor(cartTsx, "<main"),
+				name: "main",
+				className: "flex flex-col gap-2 p-4",
+				path: "design/frames/cart/frame.tsx",
+				line: 5,
+			},
+			{
+				source: stampFor(cartTsx, "<button"),
+				name: "button",
+				className: "rounded-md px-3 py-2",
+				path: "design/frames/cart/frame.tsx",
+				line: 7,
+			},
+		]);
+	});
+
+	it("carries the refusal a write would have given rather than going quiet", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+
+		const [computed, mapped] = await rungs(app, name, [
+			stampFor(cartTsx, "<p className={busy"),
+			stampFor(cartTsx, "<li"),
+		]);
+		expect(computed?.refusal).toEqual({
+			code: "computed-class",
+			says: "className is an expression",
+			expression: '{busy ? "opacity-50" : "opacity-100"}',
+		});
+		expect(computed?.className).toBe("");
+		expect(mapped).toMatchObject({ className: "px-2", mapped: true });
+	});
+
+	it("reads an element a shared file defines, and says how far an edit would reach", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeDesignFile(
+			root,
+			"shared/ui/card.tsx",
+			'export function Card() {\n\treturn <div className="p-2">card</div>;\n}\n',
+		);
+		writeFrame(root, "cart", 'import { Card } from "../../shared/ui/card";\n\nexport default () => <Card />;\n');
+		const app = makeApp(spoolDir);
+
+		// the crumbs still have to name it, so the rung reads whole and adjusts nowhere
+		expect(await rungs(app, name, ["shared/ui/card.tsx:2:9"])).toEqual([
+			{
+				source: "shared/ui/card.tsx:2:9",
+				name: "div",
+				className: "p-2",
+				path: "design/shared/ui/card.tsx",
+				line: 2,
+				refusal: { code: "shared-definition", says: "defined in shared/ui/card.tsx:2, rendered by 1 frame" },
+			},
+		]);
+	});
+
+	it("answers a stamp that hits nothing with the stale-stamp refusal, not an error", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+
+		expect(await rungs(app, name, ["frames/cart/frame.tsx:2:1"])).toEqual([
+			{
+				source: "frames/cart/frame.tsx:2:1",
+				className: "",
+				path: "design/frames/cart/frame.tsx",
+				line: 2,
+				refusal: { code: "stale-stamp", says: "the stamp hits nothing" },
+			},
+		]);
+	});
+
+	it("turns away a malformed read and an unknown frame", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+		const source = stampFor(cartTsx, "<main");
+
+		expect((await app.request(`/api/p/${name}/rungs`, jsonPost({ frame: "cart", sources: [] }))).status).toBe(400);
+		expect((await app.request(`/api/p/${name}/rungs`, jsonPost({ frame: "cart", sources: ["nope"] }))).status).toBe(
+			400,
+		);
+		expect((await app.request(`/api/p/${name}/rungs`, jsonPost({ frame: "ghost", sources: [source] }))).status).toBe(
+			404,
+		);
+	});
+});

@@ -411,6 +411,15 @@ function mount({ still = false }: { still?: boolean } = {}) {
 				);
 			});
 			await until(() => host.querySelector('[data-frame-label="home"]') !== null);
+			// the right column holds one rail and properties have it by default
+			// (#256), so a file about the agent opens the agent: its own 44px strip
+			// is the switch, and pressing it is what every test here starts from
+			const expand = host.querySelector<HTMLElement>('[aria-label="Expand agent"]');
+			if (expand !== null) {
+				await act(async () => {
+					expand.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+				});
+			}
 		},
 	};
 }

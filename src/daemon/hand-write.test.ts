@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applySpan, fingerprintOf, type HandOp, planOps, spanBetween } from "./hand-write";
+import { applySpan, fingerprintOf, type HandOp, planOps, readElements, spanBetween } from "./hand-write";
 import { readJsxText } from "./jsx-text";
 
 /**
@@ -328,5 +328,57 @@ describe("the round trip an edit makes", () => {
 		const after = written([{ kind: "delete", source }]);
 		expect(after).not.toContain("<img");
 		expect(applySpan(after, spanBetween(FRAME, after))).toBe(FRAME);
+	});
+});
+
+/**
+ * The read half (#256): what the properties rail draws before anything is
+ * touched.
+ *
+ * It is the same parse the write runs, asked a different question, and that is
+ * the whole point of it — a crumb says the name the author wrote, the source
+ * line says the literal a splice would land in, and a row greys for exactly
+ * the reason a write would have refused rather than for one of its own.
+ */
+describe("readElements", () => {
+	/** The reads for a snippet's element, in the order they were asked for. */
+	function read(...snippets: readonly string[]) {
+		const at = snippets.map((snippet) => {
+			const [, line, column] = stamp(FRAME, snippet).split(":");
+			return { line: Number(line), column: Number(column) };
+		});
+		return readElements(FRAME, at);
+	}
+
+	it("names an element the way its author wrote it, tag or component", () => {
+		expect(read("<main", "<Card").map((one) => one?.name)).toEqual(["main", "Card"]);
+	});
+
+	it("hands back the literal className, and an empty one where there is none", () => {
+		expect(read("<main")[0]?.className).toBe("flex flex-col gap-2 p-4");
+		expect(read("<div {...rest}")[0]?.className).toBe("");
+	});
+
+	it("refuses a computed className with the expression the file says instead", () => {
+		const [one] = read("<p className={busy");
+		expect(one?.refusal?.code).toBe("computed-class");
+		expect(one?.refusal?.expression).toBe('{busy ? "opacity-50" : "opacity-100"}');
+		expect(one?.className).toBe("");
+	});
+
+	it("refuses an inline style and spread props with no literal, as the write does", () => {
+		expect(read("<p style=")[0]?.refusal?.code).toBe("inline-style");
+		expect(read("<Card")[0]?.refusal).toBeUndefined();
+		expect(read("<div {...rest}")[0]?.refusal?.code).toBe("spread-props");
+	});
+
+	it("says when the literal is one row of many", () => {
+		expect(read("<li")[0]?.mapped).toBe(true);
+		expect(read("<main")[0]?.mapped).toBe(false);
+	});
+
+	it("answers with nothing where the stamp hits nothing", () => {
+		expect(readElements(FRAME, [{ line: 2, column: 1 }])).toEqual([undefined]);
+		expect(readElements("const x = (", [{ line: 1, column: 1 }])).toEqual([undefined]);
 	});
 });

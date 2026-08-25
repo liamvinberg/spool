@@ -25,7 +25,7 @@ import {
 	shownBy,
 } from "./agent-transcript";
 import { ageOf } from "./frame-find";
-import { COLLAPSED_BELOW, MAX_WIDTH, STRIP_WIDTH, settledWidth, useRailWidth } from "./rail-width";
+import { COLLAPSED_BELOW, MAX_WIDTH, STRIP_WIDTH, settledWidth } from "./rail-width";
 import { ChevronIcon, PanelCaret } from "./sidebar";
 
 /**
@@ -67,8 +67,12 @@ import { ChevronIcon, PanelCaret } from "./sidebar";
  * 420 because the transcript is a column of prose rather than a list of names.
  * Nothing below may assume it: the range is the constraint every later footer and
  * strip decision is measured against.
+ *
+ * It is what the strip opens to rather than what the rail starts at. The column
+ * belongs to the properties rail now (#256) and the agent is reached by pressing
+ * this one's strip, so where the rail stands is the canvas's to hold.
  */
-const RAIL_WIDTH = 420;
+export const AGENT_WIDTH = 420;
 
 /** clear of the top fade, so an anchored first line is not dimmed by it */
 const TOP_INSET = 10;
@@ -168,6 +172,8 @@ interface Holding {
 }
 
 export function AgentRail({
+	width,
+	onWidth,
 	entries,
 	plan,
 	phase,
@@ -190,6 +196,15 @@ export function AgentRail({
 	onStop,
 	onAnswer,
 }: {
+	/**
+	 * Where the rail stands, held by the canvas (#256).
+	 *
+	 * The right column holds one rail at a time and the strip is the switch
+	 * between them, so which of the two is standing is one fact rather than two
+	 * — and it is the canvas that knows it.
+	 */
+	width: number;
+	onWidth: (next: number) => void;
 	entries: readonly AgentEntry[];
 	/** the plan, off the log and onto the shelf; absent until the turn writes one */
 	plan: AgentPlan | null;
@@ -234,7 +249,6 @@ export function AgentRail({
 	/** what the person said to a waiting request, on its own way back up (#145) */
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
-	const [width, setWidth] = useRailWidth("agent", RAIL_WIDTH);
 	/** how many sends this rail has watched go out, which is the log's cue to follow again */
 	const [spoke, setSpoke] = useState(0);
 	/**
@@ -323,7 +337,7 @@ export function AgentRail({
 		target.releasePointerCapture(pointerId);
 		drag.current = null;
 		setDragging(false);
-		setWidth(settledWidth(current.latestWidth));
+		onWidth(settledWidth(current.latestWidth));
 	}
 
 	return (
@@ -350,7 +364,7 @@ export function AgentRail({
 					<button
 						type="button"
 						aria-label="Expand agent"
-						onClick={() => setWidth(RAIL_WIDTH)}
+						onClick={() => onWidth(AGENT_WIDTH)}
 						className="flex h-11 w-11 items-center justify-center text-muted/70 hover:text-text"
 					>
 						<AgentIcon />
@@ -368,7 +382,7 @@ export function AgentRail({
 					<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
 						<InstallWall install={install} />
 						{/* the wall has no nameplate to ride, so here alone the caret floats */}
-						<CollapseCaret onCollapse={() => setWidth(STRIP_WIDTH)} className="absolute top-2 right-2 z-10" />
+						<CollapseCaret onCollapse={() => onWidth(STRIP_WIDTH)} className="absolute top-2 right-2 z-10" />
 					</div>
 					<DeadComposer />
 				</div>
@@ -385,7 +399,7 @@ export function AgentRail({
 					<div className="flex min-w-0 flex-1 flex-col">
 						{/* the nameplate leads the shelf, because it says which thread everything
 						    under it belongs to */}
-						<Nameplate threads={threads} onCollapse={() => setWidth(STRIP_WIDTH)} />
+						<Nameplate threads={threads} onCollapse={() => onWidth(STRIP_WIDTH)} />
 						{/* the standing half of being signed out, on the shelf the plan would take —
 						    and they never want it at once, because a plan belongs to a turn that is
 						    running and this exists precisely because none can (#201) */}
@@ -443,8 +457,8 @@ export function AgentRail({
 					// dispatch, or the same press would nudge the selection
 					if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 					event.stopPropagation();
-					if (event.key === "ArrowLeft") setWidth(RAIL_WIDTH);
-					if (event.key === "ArrowRight") setWidth(STRIP_WIDTH);
+					if (event.key === "ArrowLeft") onWidth(AGENT_WIDTH);
+					if (event.key === "ArrowRight") onWidth(STRIP_WIDTH);
 				}}
 				onPointerDown={(event) => {
 					if (event.button !== 0) return;
@@ -465,7 +479,7 @@ export function AgentRail({
 						Math.max(STRIP_WIDTH, current.startWidth + current.startX - event.clientX),
 					);
 					current.latestWidth = next;
-					setWidth(next);
+					onWidth(next);
 				}}
 				onPointerUp={(event) => finishDrag(event.currentTarget, event.pointerId)}
 				onPointerCancel={(event) => finishDrag(event.currentTarget, event.pointerId)}

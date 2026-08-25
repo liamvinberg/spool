@@ -97,9 +97,14 @@ const TEXT_CAP = 4096;
 /**
  * The ops off the wire, or nothing. Strict: an op the daemon cannot read is a
  * 400 rather than a guess, because every one of them writes to a file.
+ *
+ * The cap is a bound on one gesture rather than a budget: a corner drag is two
+ * ops and dropping a whole scope is one op per token under it (#256), which is
+ * as many as an element has. Thirty-two is the same ceiling the rail's read
+ * takes, and every one of them folds into a single patch on one literal.
  */
 export function parseHandOps(value: unknown): HandOp[] | undefined {
-	if (!Array.isArray(value) || value.length === 0 || value.length > 8) return undefined;
+	if (!Array.isArray(value) || value.length === 0 || value.length > 32) return undefined;
 	const ops: HandOp[] = [];
 	for (const raw of value) {
 		if (typeof raw !== "object" || raw === null) return undefined;
@@ -130,6 +135,16 @@ export function parseHandOps(value: unknown): HandOp[] | undefined {
 		return undefined;
 	}
 	return ops;
+}
+
+/**
+ * The stamps a read asks about, or nothing. Strict for the same reason the ops
+ * are: every one of them names a place in a file the daemon is about to open.
+ */
+export function parseStamps(value: unknown): string[] | undefined {
+	if (!Array.isArray(value) || value.length === 0 || value.length > 32) return undefined;
+	if (!value.every((source): source is string => typeof source === "string" && STAMP.test(source))) return undefined;
+	return [...value];
 }
 
 export function fingerprintOf(source: string): string {
@@ -221,6 +236,51 @@ export function planOps(source: string, ops: readonly HandOp[]): Planned {
 /** The stamp names a position the file no longer has anything at. */
 export const STALE_STAMP: PatchRefusal = { code: "stale-stamp", says: "the stamp hits nothing" };
 
+/**
+ * What the file says about one element, for a surface that has to draw it
+ * before anybody touches it (#256).
+ *
+ * The properties rail reads rather than writes: the crumbs want the name the
+ * author wrote, the scope bar wants the variant chains the literal carries,
+ * and the source line wants the literal itself. All three are facts about the
+ * file, so they are parsed out of it the same way an op is — fresh, never from
+ * a mirror — and a literal no hand may write comes back as the refusal a write
+ * would have given rather than as an absence.
+ */
+export interface ElementRead {
+	/** what the source calls it: `CartRow` for a component, `li` for a tag */
+	name: string;
+	/** the literal className, empty when the element carries none */
+	className: string;
+	/** why no hand may write that literal, when none may */
+	refusal?: PatchRefusal;
+	/** the element sits inside a `map`: one literal, every rendered row */
+	mapped: boolean;
+}
+
+/** One read per position asked about, in order; nothing where the stamp hits nothing. */
+export function readElements(
+	source: string,
+	at: readonly { line: number; column: number }[],
+): (ElementRead | undefined)[] {
+	let program: Node;
+	try {
+		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
+	} catch {
+		return at.map(() => undefined);
+	}
+	return at.map(({ line, column }) => {
+		const element = elementAt(program, line, column);
+		if (element === undefined) return undefined;
+		const name = rawOf(source, element.node.openingElement.name);
+		const literal = literalOf(source, element);
+		if ("refusal" in literal) {
+			return { name, className: "", refusal: literal.refusal, mapped: element.mapped };
+		}
+		return { name, className: literal.className, mapped: element.mapped };
+	});
+}
+
 type OnePlan = { patch: SpanPatch } | { refusal: PatchRefusal };
 
 function planOne(source: string, element: Element, op: HandOp): OnePlan {
@@ -238,7 +298,19 @@ function planOne(source: string, element: Element, op: HandOp): OnePlan {
 
 /* ---------- the ops ---------- */
 
-function planClass(source: string, element: Element, edits: readonly ClassEdit[]): OnePlan {
+/**
+ * The className the file holds for this element, or the reason it holds none
+ * that a hand may touch.
+ *
+ * Both the write and the rail's read come through here, which is what keeps
+ * them from drifting: the rail greys a row for exactly the reason the write
+ * would have refused, and the literal it prints on the source line is the one
+ * a splice would land in.
+ */
+function literalOf(
+	source: string,
+	element: Element,
+): { slot: Slot | undefined; className: string } | { refusal: PatchRefusal } {
 	if (attributeNamed(element, "style") !== undefined) {
 		return { refusal: { code: "inline-style", says: "inline style pins it" } };
 	}
@@ -251,7 +323,14 @@ function planClass(source: string, element: Element, edits: readonly ClassEdit[]
 	if (held === undefined && element.spread) {
 		return { refusal: { code: "spread-props", says: "spread props with no literal" } };
 	}
-	let className = slot?.kind === "literal" ? slot.value : "";
+	return { slot, className: slot?.kind === "literal" ? slot.value : "" };
+}
+
+function planClass(source: string, element: Element, edits: readonly ClassEdit[]): OnePlan {
+	const literal = literalOf(source, element);
+	if ("refusal" in literal) return literal;
+	const { slot } = literal;
+	let className = literal.className;
 	for (const edit of edits) {
 		const conflict = screenConflict(className === "" ? null : className, edit);
 		if (conflict !== undefined) {

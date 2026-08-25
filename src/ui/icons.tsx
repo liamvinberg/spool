@@ -88,6 +88,29 @@ export function AgentIcon() {
 	);
 }
 
+/**
+ * The properties rail's strip (#256).
+ *
+ * Two knobs on two rails: what the column is for is adjusting values, and the
+ * glyph says that rather than naming a kind of thing. It stands at ninety
+ * degrees to `AgentIcon`, which is the other thing the column can hold, so the
+ * two strips are told apart at a glance rather than read.
+ */
+export function PropertiesIcon() {
+	return (
+		<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+			<path
+				d="M5.5 2.4v3.1M5.5 9.1v4.5M10.5 2.4v6.3M10.5 12.3v1.3"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+			/>
+			<circle cx="5.5" cy="7.3" r="1.5" fill="currentColor" />
+			<circle cx="10.5" cy="10.5" r="1.5" fill="currentColor" />
+		</svg>
+	);
+}
+
 /** The per-card menu on home. */
 export function DotsIcon() {
 	return (

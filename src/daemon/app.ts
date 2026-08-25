@@ -61,9 +61,9 @@ import { createFlowGraph, recordWalk } from "./flows";
 import { listDirectory, searchDirectories } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
-import { patchSite, revertTarget, STALE_FILE } from "./hand-lane";
+import { patchSite, readRungs, revertTarget, STALE_FILE } from "./hand-lane";
 import { uncaughtNotice } from "./hand-notice";
-import { applySpan, fingerprintOf, parseHandOps, spanBetween } from "./hand-write";
+import { applySpan, fingerprintOf, parseHandOps, parseStamps, spanBetween } from "./hand-write";
 import { createHistory, type HistoryClock } from "./history";
 import { locateInDesign } from "./locate";
 import { isLoopbackHost } from "./loopback";
@@ -479,6 +479,16 @@ export function createDaemonApp({
 			return c.text('a patch is { "frame", "ops": [ { "kind", "source", ... } ] }', 400);
 		}
 		return { frame: body.frame, ops };
+	});
+
+	/** The rail's read (#256): one frame, and the ancestry's stamps in rung order. */
+	const rungsBody = validator("json", (value, c) => {
+		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+		const sources = parseStamps(body.sources);
+		if (typeof body.frame !== "string" || !isSafeName(body.frame) || sources === undefined) {
+			return c.text('a read is { "frame", "sources": [ "frames/…/frame.tsx:12:4" ] }', 400);
+		}
+		return { frame: body.frame, sources };
 	});
 
 	/** A write carries the fingerprint of the file the ask was answered against. */
@@ -1763,6 +1773,21 @@ export function createDaemonApp({
 			// an ask that comes back no is a question answered, not a failure
 			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal });
 			return c.json({ ok: true, path: site.path, fingerprint: site.fingerprint, mapped: site.mapped });
+		})
+		/*
+		 * The read half (#256). The properties rail draws an element before
+		 * anybody touches it, so it asks the same file the write lane parses:
+		 * the name the author wrote, the literal className, and the refusal a
+		 * write would have given. Nothing here writes, and a refusal is part of
+		 * the answer rather than an error.
+		 */
+		.post("/api/p/:project/rungs", rungsBody, async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { frame, sources } = c.req.valid("json");
+			const read = await readRungs(project.root, frame, sources, framesUsingIn(project.root));
+			if (read.kind === "error") return c.text(read.message, read.status);
+			return c.json({ rungs: read.rungs });
 		})
 		.post("/api/p/:project/patch", patchBody, async (c) => {
 			const project = resolveProject(c, c.req.param("project"));

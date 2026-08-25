@@ -24,6 +24,16 @@ export const SNAP_BELOW = 144;
 /** at or under this the rail draws as the strip: it is shut, whatever the number says */
 export const COLLAPSED_BELOW = 72;
 
+/**
+ * The properties rail's panel width (#256).
+ *
+ * 300 is what `inspector.tsx` shipped before the agent took the column, and it
+ * is what the column can afford beside the agent's strip: two open rails do not
+ * fit, so the number is chosen against the field it leaves rather than against
+ * the rows it holds.
+ */
+export const PROPERTIES_WIDTH = 300;
+
 /** where a rail lands when the hand lets go of it */
 export const settledWidth = (latest: number): number =>
 	latest < SNAP_BELOW ? STRIP_WIDTH : Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, latest));

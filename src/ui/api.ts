@@ -12,6 +12,7 @@ import type { FrameCopy } from "../daemon/explorer";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
+import type { RungRead } from "../daemon/hand-lane";
 import type { HandOp, HeldPatch, PatchRefusal } from "../daemon/hand-write";
 import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
@@ -49,6 +50,7 @@ export type {
 	ProjectCard,
 	ProjectedFrame,
 	Projection,
+	RungRead,
 	SelectionEntry,
 	SelectionPut,
 	ServedThread,
@@ -315,6 +317,32 @@ export async function applyPatch(
 		// a refusal comes back as one; anything else is a write that could not land
 		if (!res.ok && res.status !== 409) return undefined;
 		return (await res.json()) as PatchWritten;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * What the file says about an ancestry (#256): the read the properties rail
+ * draws from, before anything is touched.
+ *
+ * It is the write lane's own parse, asked a different question — so the name on
+ * a crumb is the name the author wrote, the literal on the source line is the
+ * one a splice would land in, and a row greys for exactly the reason a write
+ * would have refused. Nothing comes back for a frame the daemon has lost.
+ */
+export async function readRungs(
+	project: string,
+	frame: string,
+	sources: readonly string[],
+): Promise<RungRead[] | undefined> {
+	try {
+		const res = await client.api.p[":project"].rungs.$post({
+			param: { project },
+			json: { frame, sources: [...sources] },
+		});
+		if (!res.ok) return undefined;
+		return ((await res.json()) as { rungs: RungRead[] }).rungs;
 	} catch {
 		return undefined;
 	}

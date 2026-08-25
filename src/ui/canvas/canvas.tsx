@@ -112,6 +112,7 @@ import {
 	SelectionOverlay,
 } from "./overlays";
 import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
+import { type Held, PropertiesRail } from "./properties-rail";
 import {
 	clipboardCopyAllowed,
 	editMessage,
@@ -128,6 +129,7 @@ import {
 	sitesMessage,
 	walkRejectionReason,
 } from "./protocol";
+import { COLLAPSED_BELOW, STRIP_WIDTH, useRailWidth } from "./rail-width";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
@@ -301,6 +303,15 @@ export function ProjectCanvas({
 	// a page staged for the Trash leaves the rail with everything inside it, and
 	// comes back whole if the toast is undone (#229)
 	const [hiddenPages, setHiddenPages] = useState<ReadonlySet<string>>(new Set<string>());
+	/**
+	 * Where the agent rail stands, and so which rail the right column is showing
+	 * (#256).
+	 *
+	 * It starts as the strip: properties are what the column shows by default,
+	 * and the agent is reached by pressing its edge. A width somebody dragged
+	 * outlives the reload, as every rail's does.
+	 */
+	const [agentWidth, setAgentWidth] = useRailWidth("agent", STRIP_WIDTH);
 	const [docNonces, setDocNonces] = useState<Record<string, number>>({});
 	const docNoncesRef = useRef(docNonces);
 	docNoncesRef.current = docNonces;
@@ -446,6 +457,19 @@ export function ProjectCanvas({
 	const pickGen = useRef(0);
 	// the ancestry behind the current element selection — Esc ascends it
 	const pickedChain = useRef<{ frame: string; chain: PickedHit[] } | null>(null);
+	/**
+	 * The same ancestry, drawn rather than read.
+	 *
+	 * Every gesture reads the chain synchronously, inside handlers that outlive
+	 * the render they were made in, so the ref stays the authority. The rail's
+	 * crumbs are the one reader that has to re-render when it moves (#256), and
+	 * a mirror is cheaper than teaching a dozen handlers to await a state write.
+	 */
+	const [chainDrawn, setChainDrawn] = useState<{ frame: string; chain: PickedHit[] } | null>(null);
+	const holdChain = useCallback((next: { frame: string; chain: PickedHit[] } | null) => {
+		pickedChain.current = next;
+		setChainDrawn(next);
+	}, []);
 	// hover picks ride pointer-move (#37): throttled, one in flight at a time
 	const hoverLast = useRef(0);
 	const hoverBusy = useRef(false);
@@ -622,11 +646,11 @@ export function ProjectCanvas({
 			}
 			setWalkArrivals((current) => withoutFrame(current, frame));
 			setPicked((current) => current.filter((pick) => pick.frame !== frame));
-			if (pickedChain.current?.frame === frame) pickedChain.current = null;
+			if (pickedChain.current?.frame === frame) holdChain(null);
 			setPreview((current) => (current?.click?.frame === frame || current?.under?.frame === frame ? null : current));
 			lifecycleRef.current.markStale(frame);
 		},
-		[releaseHold],
+		[holdChain, releaseHold],
 	);
 
 	/**
@@ -1299,6 +1323,28 @@ export function ProjectCanvas({
 	);
 
 	/**
+	 * The frame's geometry, typed into the rail (#256).
+	 *
+	 * `frame.json` and never source: the frame and its root element are the same
+	 * rectangle and different things to adjust, and this is the half the canvas
+	 * has always owned. It writes the same sidecar a drag does and records the
+	 * same entry, so one field is one ⌘Z on the one stack.
+	 */
+	const setFrameGeometry = useCallback(
+		(name: string, patch: Partial<Geometry>) => {
+			const was = framesRef.current.find((frame) => frame.name === name);
+			if (was === undefined) return;
+			const before = { x: Math.round(was.x), y: Math.round(was.y), w: Math.round(was.w), h: Math.round(was.h) };
+			const after = { ...before, ...patch };
+			const entry = entryOf({ [name]: before }, { [name]: after });
+			if (entry === undefined) return;
+			history.current = record(history.current, entry);
+			applyRects({ [name]: after });
+		},
+		[applyRects],
+	);
+
+	/**
 	 * Fresh copies from the rail (#229), given somewhere to be.
 	 *
 	 * A duplicate copies the geometry sidecar verbatim (#228), so a copy that
@@ -1327,11 +1373,11 @@ export function ProjectCanvas({
 			const landed = copies.map((copy) => copy.to);
 			if (landed.length === 0) return;
 			setPicked([]);
-			pickedChain.current = null;
+			holdChain(null);
 			setSelected(landed);
 			frameAnchor.current = landed[0] ?? null;
 		},
-		[project],
+		[holdChain, project],
 	);
 
 	/** What a history entry is checked against: the disk as the canvas has it now. */
@@ -1529,11 +1575,11 @@ export function ProjectCanvas({
 
 	const clearCanvasSelection = useCallback(() => {
 		cancelPicks();
-		pickedChain.current = null;
+		holdChain(null);
 		setSelected([]);
 		setPicked([]);
 		setPreview(null);
-	}, [cancelPicks]);
+	}, [cancelPicks, holdChain]);
 
 	/**
 	 * Ask a frame for an element ancestry and route the answer. The apply
@@ -1574,12 +1620,15 @@ export function ProjectCanvas({
 		[askChain],
 	);
 
-	const applyPick = useCallback((frame: string, chain: PickedHit[], hit: PickedHit | undefined) => {
-		if (hit === undefined) return; // frame background: the frame stays the selection
-		pickedChain.current = { frame, chain };
-		setSelected([]);
-		setPicked([{ frame, ...hit }]);
-	}, []);
+	const applyPick = useCallback(
+		(frame: string, chain: PickedHit[], hit: PickedHit | undefined) => {
+			if (hit === undefined) return; // frame background: the frame stays the selection
+			holdChain({ frame, chain });
+			setSelected([]);
+			setPicked([{ frame, ...hit }]);
+		},
+		[holdChain],
+	);
 
 	/** The anchor of the element scope: the most recent pick, whose chain is held. */
 	const pickAnchor = useCallback((): PickedSelection | undefined => {
@@ -1625,7 +1674,7 @@ export function ProjectCanvas({
 	const scopedSelectAt = useCallback(
 		(frame: string, local: Point) => {
 			const pop = () => {
-				pickedChain.current = null;
+				holdChain(null);
 				setPicked([]);
 				setSelected([frame]);
 			};
@@ -1643,7 +1692,7 @@ export function ProjectCanvas({
 				pop,
 			);
 		},
-		[beginPick, applyPick, scopeIn],
+		[beginPick, applyPick, holdChain, scopeIn],
 	);
 
 	/**
@@ -1708,7 +1757,7 @@ export function ProjectCanvas({
 		const frame = held?.frame ?? (selectedRef.current.length === 1 ? selectedRef.current[0] : undefined);
 		if (enteredRef.current !== null || frame === undefined) return;
 		walkKin(frame, held?.selector ?? "", "child");
-	}, [walkKin, onlyHeldRung]);
+	}, [onlyHeldRung, walkKin]);
 
 	/** Tab and ⇧Tab: the next or previous sibling of the held element. */
 	const walkSibling = useCallback(
@@ -1732,7 +1781,7 @@ export function ProjectCanvas({
 		if (held.length > 1) {
 			// a multi-selection has no one ancestry: drop to its frames
 			const frames = [...new Set(held.map((pick) => pick.frame))];
-			pickedChain.current = null;
+			holdChain(null);
 			setPicked([]);
 			setSelected(frames);
 			return true;
@@ -1743,7 +1792,7 @@ export function ProjectCanvas({
 			const parent = oneUp(scopeIn(only.frame));
 			if (parent !== undefined) setPicked([{ frame: only.frame, ...parent }]);
 			else {
-				pickedChain.current = null;
+				holdChain(null);
 				setPicked([]);
 				setSelected([only.frame]);
 			}
@@ -1754,7 +1803,28 @@ export function ProjectCanvas({
 			return true;
 		}
 		return false;
-	}, [scopeIn]);
+	}, [holdChain, scopeIn]);
+
+	/**
+	 * A crumb press (#256): the rung it names, straight away.
+	 *
+	 * The ancestry is the one already held, so this is a move along it rather
+	 * than a fresh pick — no round trip, and the frame at its root is the same
+	 * clear-to-the-frame that climbing off the root element does.
+	 */
+	const takeRung = useCallback(
+		(frame: string, hit: PickedHit | null) => {
+			if (hit === null) {
+				holdChain(null);
+				setPicked([]);
+				setSelected([frame]);
+				return;
+			}
+			setSelected([]);
+			setPicked([{ frame, ...hit }]);
+		},
+		[holdChain],
+	);
 
 	// --- the write lane's two gestures (#255) -----------------------------------
 
@@ -1925,6 +1995,36 @@ export function ProjectCanvas({
 	}, [project, showRefusal, writePatch]);
 
 	/**
+	 * The rail's own write (#256), which is the delete gesture's path with a
+	 * different surface asking.
+	 *
+	 * Gated first, so a refusal lands on the element it is about rather than in
+	 * a field, and written as one patch so however many tokens a press moved it
+	 * is one ⌘Z to put them back.
+	 */
+	const writeOps = useCallback(
+		(frame: string, selector: string, ops: readonly HandOp[]) => {
+			if (ops.length === 0 || writing.current) return;
+			setRefused(null);
+			writing.current = true;
+			void gatePatch(project, frame, ops).then((asked) => {
+				if (asked === undefined) {
+					writing.current = false;
+					setSaid({ kind: "failed", frame });
+					return;
+				}
+				if (!asked.ok) {
+					writing.current = false;
+					showRefusal(frame, selector, asked.refusal);
+					return;
+				}
+				writePatch(frame, asked.fingerprint, ops);
+			});
+		},
+		[project, showRefusal, writePatch],
+	);
+
+	/**
 	 * The frame reporting how an edit ended.
 	 *
 	 * An edit that ends on the words it began with writes nothing: the lane
@@ -1976,13 +2076,13 @@ export function ProjectCanvas({
 				if (held.length < current.length) {
 					setPicked(held);
 				} else {
-					pickedChain.current = { frame, chain };
+					holdChain({ frame, chain });
 					setPicked([...current, { frame, ...target }]);
 				}
 				setSelected([]);
 			});
 		},
-		[beginPick, scopeIn],
+		[beginPick, holdChain, scopeIn],
 	);
 
 	/** The tree grammar on frame rows: shift ranges, ⌘ toggles, click replaces. */
@@ -1997,7 +2097,7 @@ export function ProjectCanvas({
 		}
 		setTool("select");
 		setPicked([]);
-		pickedChain.current = null;
+		holdChain(null);
 		// the range is the rail's to work out: the projection this reads is sorted by
 		// name and the rows are in whatever order somebody arranged them into
 		const range = modifiers.shift && frameAnchor.current !== null ? (span?.(frameAnchor.current) ?? []) : [];
@@ -2029,7 +2129,7 @@ export function ProjectCanvas({
 		if (range.length === 0) return;
 		setTool("select");
 		setPicked([]);
-		pickedChain.current = null;
+		holdChain(null);
 		setSelected([...range]);
 	};
 
@@ -2241,7 +2341,7 @@ export function ProjectCanvas({
 							});
 							setWalkArrivals((current) => (current.size === 0 ? current : new Set<string>()));
 							setPicked([]);
-							pickedChain.current = null;
+							holdChain(null);
 						} else {
 							for (const frame of staled) reloadFrameDocument(frame);
 						}
@@ -2267,7 +2367,7 @@ export function ProjectCanvas({
 			},
 			{ onReconnect: resync },
 		);
-	}, [project, refetchFrames, refetchFlows, noteCover, reloadFrameDocument, resync]);
+	}, [holdChain, noteCover, project, refetchFlows, refetchFrames, reloadFrameDocument, resync]);
 
 	/**
 	 * The tab is being looked at again. A hidden one is throttled down to almost
@@ -3146,7 +3246,7 @@ export function ProjectCanvas({
 			recordDeparture();
 			if (pageOf(frame) !== activePageRef.current) switchToPage(pageOf(frame), arrivalAt(frame));
 			setPicked([]);
-			pickedChain.current = null;
+			holdChain(null);
 			setSelected([frame.name]);
 			frameAnchor.current = frame.name;
 			const viewport = viewportRef.current;
@@ -3155,7 +3255,7 @@ export function ProjectCanvas({
 				animateCamera(centerOn(cam, frame, viewport.clientWidth, viewport.clientHeight));
 			}
 		},
-		[recordDeparture, switchToPage, arrivalAt, animateCamera],
+		[recordDeparture, switchToPage, arrivalAt, animateCamera, holdChain],
 	);
 
 	/**
@@ -3484,7 +3584,7 @@ export function ProjectCanvas({
 			hasThreads,
 		});
 		return () => onChrome(null);
-	}, [zoomPct, onChrome, arrowsOn, toggleArrows, hasThreads]);
+	}, [arrowsOn, hasThreads, onChrome, toggleArrows, zoomPct]);
 
 	// --- render -------------------------------------------------------------------
 
@@ -3494,6 +3594,31 @@ export function ProjectCanvas({
 	// rail where this machine has switched it on.
 	const projectEmpty = loaded && frames.length === 0 && pages.length === 0;
 	const agentPanel = experimentOn("agent-panel");
+	/**
+	 * Which rail the right column is standing in (#256).
+	 *
+	 * One at a time, and the agent's own width is the whole of the answer: the
+	 * two strips are each other's switch, so there is one number rather than a
+	 * second piece of state that could disagree with it. With the experiment
+	 * off the strip is never drawn and the column is simply the properties rail.
+	 */
+	const agentOpen = agentPanel && agentWidth > COLLAPSED_BELOW;
+	/** what the rail is looking at: one rung, one frame, or how many of either */
+	const railHeld = ((): Held | null => {
+		if (picked.length > 1) return { kind: "elements", count: picked.length };
+		const rung = picked[0];
+		if (rung !== undefined) {
+			const chain = chainDrawn?.frame === rung.frame ? chainDrawn.chain : [rung];
+			return { kind: "element", frame: rung.frame, chain, selector: rung.selector };
+		}
+		if (selected.length > 1) return { kind: "frames", count: selected.length };
+		const name = selected[0];
+		const only = name === undefined ? undefined : frames.find((frame) => frame.name === name);
+		return only === undefined
+			? null
+			: { kind: "frame", name: only.name, geometry: { x: only.x, y: only.y, w: only.w, h: only.h } };
+	})();
+	const railFrame = railHeld?.kind === "element" ? railHeld.frame : railHeld?.kind === "frame" ? railHeld.name : null;
 	const k = camera?.k ?? 1;
 	const shellRadius = Math.min(12 / k, 24);
 	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");
@@ -3807,12 +3932,24 @@ export function ProjectCanvas({
 					/>
 				) : null}
 			</div>
-			{/* the agent rail is experimental, and stands only when config.json names it
-			    (#238). Off is absent rather than hidden: no strip, no expand control and
+			{/* the right column, holding one thing (#256). Properties by default; the
+			    agent rail is experimental and stands only when config.json names it
+			    (#238), and then as a 44px strip beside this one until it is pressed.
+			    Off is absent rather than hidden: no strip, no expand control and
 			    nothing in the document for a press or a key to find. */}
-			{agentPanel ? (
-				<div className="relative z-20 flex shrink-0">
+			<div className="relative z-20 flex shrink-0">
+				<PropertiesRail
+					project={project}
+					held={railHeld}
+					revision={railFrame === null ? 0 : (docNonces[railFrame] ?? 0)}
+					shut={agentOpen}
+					onOpen={() => setAgentWidth(STRIP_WIDTH)}
+					acts={{ onRung: takeRung, onGeometry: setFrameGeometry, onWrite: writeOps }}
+				/>
+				{agentPanel ? (
 					<AgentRail
+						width={agentWidth}
+						onWidth={setAgentWidth}
 						entries={turn.entries}
 						plan={turn.plan}
 						phase={turn.phase}
@@ -3842,8 +3979,8 @@ export function ProjectCanvas({
 						onStop={turn.stop}
 						onAnswer={turn.answer}
 					/>
-				</div>
-			) : null}
+				) : null}
+			</div>
 			{exportDialog !== null && exportFrames.length > 0 ? (
 				<ExportDialog
 					exporting={exporting}
