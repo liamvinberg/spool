@@ -373,7 +373,9 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  * point — top-level element down to the deepest, each with its selector,
  * geometry, and nearest data-spool-source stamp (#23) — the canvas walks it
  * Figma-style (double-click descends, Esc ascends) without ever handing the
- * frame the pointer; {spool:"sites"} answers with the frame-local boxes of
+ * frame the pointer; {spool:"kin", selector, step} answers the same shape for
+ * that element's first child or either sibling, which is the keyboard's half
+ * of the same ladder (#254); {spool:"sites"} answers with the frame-local boxes of
  * navigation-site elements (#34) so arrows grow out of what causes them.
  * Entered frames also hand canvas-zoom gestures back across
  * the iframe boundary; ordinary wheel input stays inside the frame so its own
@@ -961,6 +963,37 @@ const canvasShimJs = `(() => {
 		return chainOf(el);
 	}
 
+	// A selector back to its element. cssPath stops at the boot root and takes a
+	// shortcut through any id it passes, so the match is confirmed by rebuilding
+	// the path rather than trusted: one query can answer for a different element.
+	function elementFor(selector) {
+		if (!selector) return null;
+		let found = null;
+		try {
+			const all = document.querySelectorAll(selector);
+			for (let i = 0; i < all.length; i++) {
+				if (cssPath(all[i]) === selector) { found = all[i]; break; }
+			}
+		} catch {}
+		return found;
+	}
+
+	// the ancestry of one element's kin (#254): the keyboard's rung, named by
+	// kinship because there is no pointer to name it by position
+	function kinChain(selector, step) {
+		const from = selector ? elementFor(selector) : (document.getElementById("root") || document.body);
+		if (!from) return [];
+		const kin = step === "child"
+			? from.firstElementChild
+			: step === "next"
+				? from.nextElementSibling
+				: step === "previous"
+					? from.previousElementSibling
+					: null;
+		if (!kin || kin === document.documentElement || kin === document.body || kin.id === "root") return [];
+		return chainOf(kin);
+	}
+
 	// where each anchor's element sits, over the one set of data-spool-source
 	// stamps. Two forms of anchor, one message and one answer shape:
 	//
@@ -1097,6 +1130,13 @@ const canvasShimJs = `(() => {
 			const frame = (window.__SPOOL__ || {}).frame;
 			let chain = [];
 			try { chain = pickChain(m.x, m.y); } catch {}
+			parent.postMessage({ spool: "picked", frame, id: m.id, chain }, "*");
+			return;
+		}
+		if (m.spool === "kin") {
+			const frame = (window.__SPOOL__ || {}).frame;
+			let chain = [];
+			try { chain = kinChain(m.selector, m.step); } catch {}
 			parent.postMessage({ spool: "picked", frame, id: m.id, chain }, "*");
 			return;
 		}

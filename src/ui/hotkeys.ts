@@ -90,7 +90,7 @@ export const HOTKEYS = [
 		group: "Frames",
 		label: "Enter the selected frame",
 		keys: ["enter"],
-		gesture: "double-click",
+		gesture: "double-click the label",
 		repeats: false,
 	},
 	{
@@ -106,7 +106,7 @@ export const HOTKEYS = [
 		scope: "canvas",
 		group: "Frames",
 		label: "Play the flow from here",
-		keys: ["p", "shift+enter"],
+		keys: ["p"],
 		repeats: false,
 	},
 	{ id: "canvas.reload", scope: "canvas", group: "Frames", label: "Reload the selected frames", keys: ["r"] },
@@ -157,8 +157,35 @@ export const HOTKEYS = [
 		id: "canvas.select-element",
 		scope: "canvas",
 		group: "Selection",
-		label: "Select the element under the cursor",
+		label: "Select the deepest element under the cursor",
 		gesture: () => `${accelBare()} click`,
+	},
+	// The selection ladder (#254): an element is a handle now, so descending is
+	// the common act. Enter keeps entering the frame, which is why the descent
+	// takes the accel chord Figma left free and the climb takes ⇧⏎.
+	{
+		id: "canvas.descend",
+		scope: "canvas",
+		group: "Selection",
+		label: "Go down one rung, into the element",
+		keys: ["accel+enter"],
+		gesture: "double-click",
+		repeats: false,
+	},
+	{
+		id: "canvas.ascend",
+		scope: "canvas",
+		group: "Selection",
+		label: "Go up one rung",
+		keys: ["shift+enter"],
+		repeats: false,
+	},
+	{
+		id: "canvas.sibling",
+		scope: "canvas",
+		group: "Selection",
+		label: "Select the next element, or the one before",
+		keys: ["tab", "shift+tab"],
 	},
 	{ id: "canvas.accel-hold", scope: "canvas", group: "Selection", label: "", keys: ["accel"], listed: false },
 	{

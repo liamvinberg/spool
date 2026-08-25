@@ -320,5 +320,18 @@ export const arriveMessage = (settleMs: number) => ({ spool: "arrive", settleMs 
 export const captureMessage = (id: string, targetWidth: number, settleMs: number) =>
 	({ spool: "capture", id, targetWidth, settleMs }) as const;
 export const pickMessage = (x: number, y: number, id: number) => ({ spool: "pick", x, y, id }) as const;
+/**
+ * The keyboard half of the selection ladder (#254): the pointer names a rung
+ * by where it is, and ⌘⏎ and Tab have to name one by kinship instead. An empty
+ * selector stands for the boot root, so `child` off nothing is the frame's own
+ * root element — the rung a descent from the frame lands on.
+ *
+ * The answer is a `picked` reply and nothing new: the ancestry of the kin, so
+ * the canvas learns the target and the chain it now holds in one message, and
+ * an empty chain is a rung that does not exist.
+ */
+export type KinStep = "child" | "next" | "previous";
+export const kinMessage = (selector: string, step: KinStep, id: number) =>
+	({ spool: "kin", selector, step, id }) as const;
 export const sessionReply = (record: SessionRecord | null) => ({ spool: "session", record }) as const;
 export const sitesMessage = (sites: SiteAnchor[], id: number) => ({ spool: "sites", sites, id }) as const;

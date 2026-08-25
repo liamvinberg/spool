@@ -137,9 +137,11 @@ describe("canvas context menu", () => {
 	});
 
 	it("leaves an entered frame alone: its keys belong to the prototype", async () => {
-		const { host, canvas } = await renderCanvas();
+		const { host } = await renderCanvas();
 		await act(async () =>
-			canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 40, clientY: 40 })),
+			host
+				.querySelector<HTMLElement>('[data-frame-label="home"]')
+				?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 40, clientY: 40 })),
 		);
 		for (const key of ["Delete", "Backspace", "r", "e", "p"]) {
 			await act(async () => {

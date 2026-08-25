@@ -95,7 +95,10 @@ describe("canvas keyboard navigation", () => {
 					pointerId: 1,
 				}),
 			);
-			canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
+			// the label, not the body: a body double-click descends a rung (#254)
+			host
+				.querySelector<HTMLElement>('[data-frame-label="origin"]')
+				?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
 		});
 		expect(labelText(host, "origin")).toContain("live · esc exits");
 		const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="origin"]');
@@ -191,7 +194,10 @@ describe("canvas keyboard navigation", () => {
 		const canvas = host.querySelector<HTMLElement>('[role="application"]');
 
 		await act(async () => {
-			canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
+			// the label, not the body: a body double-click descends a rung (#254)
+			host
+				.querySelector<HTMLElement>('[data-frame-label="origin"]')
+				?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
 		});
 		expect(labelText(host, "origin")).toContain("live · esc exits");
 		await until(() => host.querySelector('iframe[title="origin"]') !== null);
@@ -347,10 +353,12 @@ describe("canvas keyboard navigation", () => {
 			root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} }));
 		});
 		await until(() => host.querySelector('[data-frame-label="origin"]') !== null);
-		const canvas = host.querySelector<HTMLElement>('[role="application"]');
 
 		await act(async () => {
-			canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
+			// the label, not the body: a body double-click descends a rung (#254)
+			host
+				.querySelector<HTMLElement>('[data-frame-label="origin"]')
+				?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
 		});
 		expect(labelText(host, "origin")).toContain("live · esc exits");
 		await until(() => host.querySelector('iframe[title="origin"]') !== null);

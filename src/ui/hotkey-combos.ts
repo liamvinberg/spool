@@ -46,6 +46,7 @@ const NAMED_KEYS = new Set([
 	"space",
 	"escape",
 	"enter",
+	"tab",
 	"backspace",
 	"delete",
 	"f2",
@@ -82,6 +83,7 @@ export function parseCombo(combo: string): ParsedCombo {
 const KEY_OF: Record<string, string> = {
 	escape: "Escape",
 	enter: "Enter",
+	tab: "Tab",
 	backspace: "Backspace",
 	delete: "Delete",
 	f2: "F2",
@@ -126,6 +128,7 @@ const FACE_OF: Record<string, string> = {
 	space: "space",
 	escape: "esc",
 	enter: "↵",
+	tab: "⇥",
 	backspace: "⌫",
 	delete: "⌫",
 	f2: "F2",

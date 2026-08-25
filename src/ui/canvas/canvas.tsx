@@ -92,6 +92,7 @@ import {
 	type Way,
 } from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
+import { atRung, type LadderScope, oneDown, oneUp } from "./ladder";
 import { useFrameLifecycle } from "./lifecycle";
 import {
 	type ElementPreview,
@@ -99,6 +100,7 @@ import {
 	type FrameHover,
 	HANDLE_CURSORS,
 	type Handle,
+	type HoverRungs,
 	isHandle,
 	NO_MARKS,
 	type PickedSelection,
@@ -107,6 +109,8 @@ import {
 import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
 import {
 	clipboardCopyAllowed,
+	type KinStep,
+	kinMessage,
 	type PickedHit,
 	parseFrameMessage,
 	pickKey,
@@ -260,8 +264,9 @@ export function ProjectCanvas({
 	const [picked, setPicked] = useState<PickedSelection[]>([]);
 	const [entered, setEntered] = useState<string | null>(null);
 	const [hovered, setHovered] = useState<FrameHover | null>(null);
-	// the hover preview (#37): the element a click would target, outlined live
-	const [preview, setPreview] = useState<ElementPreview | null>(null);
+	// the hover preview (#37, #254): the rung a click would take, and the rung
+	// a double-click would descend to under it
+	const [preview, setPreview] = useState<HoverRungs | null>(null);
 	const [externalLink, setExternalLink] = useState<{ frame: string; href: string } | null>(null);
 	const [accelDown, setAccelDown] = useState(false);
 	const [spaceDown, setSpaceDown] = useState(false);
@@ -424,6 +429,11 @@ export function ProjectCanvas({
 	// hover picks ride pointer-move (#37): throttled, one in flight at a time
 	const hoverLast = useRef(0);
 	const hoverBusy = useRef(false);
+	// where the rings were last drawn, so pressing or releasing ⌘ redraws them
+	// under a pointer that has not moved (#254)
+	const hoverPoint = useRef<{ frame: string; world: Point } | null>(null);
+	// the redraw, reached from the key layer that outlives every render
+	const refreshRings = useRef<() => void>(() => {});
 	// the range anchor: shift over the page tree's frame rows
 	const frameAnchor = useRef<string | null>(null);
 	const nudgeDirty = useRef(new Set<string>());
@@ -541,7 +551,7 @@ export function ProjectCanvas({
 		setWalkArrivals((current) => withoutFrame(current, frame));
 		setPicked((current) => current.filter((pick) => pick.frame !== frame));
 		if (pickedChain.current?.frame === frame) pickedChain.current = null;
-		setPreview((current) => (current?.frame === frame ? null : current));
+		setPreview((current) => (current?.click?.frame === frame || current?.under?.frame === frame ? null : current));
 		lifecycleRef.current.markStale(frame);
 	}, []);
 
@@ -1450,13 +1460,18 @@ export function ProjectCanvas({
 	}, [cancelPicks]);
 
 	/**
-	 * Ask the frame for the element ancestry at a frame-local point. The apply
-	 * callback runs only while this pick's generation is current — a silent or
+	 * Ask a frame for an element ancestry and route the answer. The apply
+	 * callback runs only while this ask's generation is current — a silent or
 	 * booting document never applies; onSilence answers for it when a caller
 	 * cannot afford dead air.
 	 */
-	const beginPick = useCallback(
-		(frame: string, local: Point, apply: (chain: PickedHit[]) => void, onSilence?: () => void) => {
+	const askChain = useCallback(
+		(
+			frame: string,
+			request: (id: number) => unknown,
+			apply: (chain: PickedHit[]) => void,
+			onSilence?: () => void,
+		) => {
 			const target = iframes.current.get(frame)?.contentWindow;
 			if (target == null) {
 				onSilence?.();
@@ -1467,12 +1482,20 @@ export function ProjectCanvas({
 			pickWaiters.current.set(id, (chain) => {
 				if (pickGen.current === gen) apply(chain);
 			});
-			target.postMessage(pickMessage(local.x, local.y, id), "*");
+			target.postMessage(request(id), "*");
 			setTimeout(() => {
 				if (pickWaiters.current.delete(id) && pickGen.current === gen) onSilence?.();
 			}, PICK_REPLY_MS);
 		},
 		[],
+	);
+
+	/** The ancestry at a frame-local point: what every pointer verb asks for. */
+	const beginPick = useCallback(
+		(frame: string, local: Point, apply: (chain: PickedHit[]) => void, onSilence?: () => void) => {
+			askChain(frame, (id) => pickMessage(local.x, local.y, id), apply, onSilence);
+		},
+		[askChain],
 	);
 
 	const applyPick = useCallback((frame: string, chain: PickedHit[], hit: PickedHit | undefined) => {
@@ -1488,25 +1511,24 @@ export function ProjectCanvas({
 	}, []);
 
 	/**
-	 * Figma's scope memory as a walk: the element at the anchor's depth under a
-	 * fresh chain — a sibling inside the shared ancestry, the divergence point
-	 * outside it, the top-level element when no scope holds.
+	 * The one rung the keyboard can walk from. A ladder has one rung at a time,
+	 * so a multi-selection has nowhere to step and answers nothing.
 	 */
-	const atDepthIn = useCallback(
-		(frame: string, chain: PickedHit[]): PickedHit | undefined => {
-			if (chain.length === 0) return undefined;
+	const onlyHeldRung = useCallback((): PickedSelection | undefined => {
+		return pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
+	}, []);
+
+	/**
+	 * The rung this frame holds, as the ladder wants it: the ancestry the last
+	 * pick was found in and which element of it is held. Null when the scope is
+	 * another frame's, which is a frame with no rung open.
+	 */
+	const scopeIn = useCallback(
+		(frame: string): LadderScope | null => {
 			const anchor = pickAnchor();
 			const held = pickedChain.current;
-			const prior = anchor !== undefined && anchor.frame === frame && held?.frame === frame ? held.chain : null;
-			const depth = prior === null ? -1 : prior.findIndex((h) => h.selector === anchor?.selector);
-			if (prior === null || depth < 0) return chain[0];
-			// walk the shared ancestry: a full match lands at the scope's
-			// depth (a sibling), a partial one at the divergence point
-			let shared = 0;
-			while (shared < depth && shared < chain.length && prior[shared]?.selector === chain[shared]?.selector) {
-				shared++;
-			}
-			return chain[Math.min(shared, chain.length - 1)];
+			if (anchor === undefined || anchor.frame !== frame || held === null || held.frame !== frame) return null;
+			return { chain: held.chain, selector: anchor.selector };
 		},
 		[pickAnchor],
 	);
@@ -1535,7 +1557,7 @@ export function ProjectCanvas({
 				frame,
 				local,
 				(chain) => {
-					const target = atDepthIn(frame, chain);
+					const target = atRung(chain, scopeIn(frame));
 					if (target === undefined) {
 						pop();
 						return;
@@ -1545,8 +1567,113 @@ export function ProjectCanvas({
 				pop,
 			);
 		},
-		[beginPick, applyPick, atDepthIn],
+		[beginPick, applyPick, scopeIn],
 	);
+
+	/**
+	 * The descent (#254): one rung down the ancestry under the pointer, which
+	 * is what a double-click on the frame body means now.
+	 *
+	 * The scope is read here and the second click's own pick is voided, so the
+	 * descent starts from whichever rung has settled rather than racing that
+	 * reply. A click at the scope is idempotent while the pointer has not moved
+	 * — which inside a double-click it has not — so the two answers agree, and
+	 * a scope that has not landed yet only means the descent starts a rung
+	 * higher rather than somewhere wrong.
+	 */
+	const descendAt = useCallback(
+		(frame: string, local: Point) => {
+			const scope = scopeIn(frame);
+			cancelPicks();
+			beginPick(frame, local, (chain) => {
+				const target = oneDown(chain, scope);
+				if (target === undefined) return; // frame background: no rung under it
+				applyPick(frame, chain, target);
+			});
+		},
+		[beginPick, applyPick, cancelPicks, scopeIn],
+	);
+
+	/**
+	 * The keyboard's own rung (#254): kinship instead of position. An empty
+	 * selector is the boot root, so a `child` step off the frame itself lands
+	 * on its root element. A rung that does not exist answers with no chain and
+	 * the selection stays where it was.
+	 */
+	const walkKin = useCallback(
+		(frame: string, selector: string, step: KinStep) => {
+			cancelPicks();
+			askChain(
+				frame,
+				(id) => kinMessage(selector, step, id),
+				(chain) => {
+					const target = chain[chain.length - 1];
+					if (target === undefined) return;
+					applyPick(frame, chain, target);
+				},
+			);
+		},
+		[askChain, applyPick, cancelPicks],
+	);
+
+	/**
+	 * ⌘⏎, and the rung a descent from the frame itself lands on: the first
+	 * child of what is held, or the frame's root element when the frame is.
+	 * Figma's descent key takes every child at once; a selection that is a
+	 * handle wants one, and Tab walks the row from there.
+	 */
+	const descendKey = useCallback(() => {
+		const held = onlyHeldRung();
+		const frame = held?.frame ?? (selectedRef.current.length === 1 ? selectedRef.current[0] : undefined);
+		if (enteredRef.current !== null || frame === undefined) return;
+		walkKin(frame, held?.selector ?? "", "child");
+	}, [walkKin, onlyHeldRung]);
+
+	/** Tab and ⇧Tab: the next or previous sibling of the held element. */
+	const walkSibling = useCallback(
+		(step: "next" | "previous"): boolean => {
+			const held = onlyHeldRung();
+			if (enteredRef.current !== null || held === undefined) return false;
+			walkKin(held.frame, held.selector, step);
+			return true;
+		},
+		[walkKin, onlyHeldRung],
+	);
+
+	/**
+	 * One rung up, which ⇧⏎ takes on its own and Esc reaches once it has left
+	 * whatever it was inside: element → parent → … → frame → nothing. False
+	 * when there was no rung to climb, which is what lets Esc carry on down its
+	 * own list of meanings.
+	 */
+	const climbRung = useCallback((): boolean => {
+		const held = pickedRef.current;
+		if (held.length > 1) {
+			// a multi-selection has no one ancestry: drop to its frames
+			const frames = [...new Set(held.map((pick) => pick.frame))];
+			pickedChain.current = null;
+			setPicked([]);
+			setSelected(frames);
+			return true;
+		}
+		const only = held[0];
+		if (only !== undefined) {
+			// ascend the ancestry (Figma): element → parent → … → frame → clear
+			const parent = oneUp(scopeIn(only.frame));
+			if (parent !== undefined) setPicked([{ frame: only.frame, ...parent }]);
+			else {
+				pickedChain.current = null;
+				setPicked([]);
+				setSelected([only.frame]);
+			}
+			return true;
+		}
+		if (selectedRef.current.length > 0) {
+			setSelected([]);
+			return true;
+		}
+		return false;
+	}, [scopeIn]);
 
 	/**
 	 * Shift-click's toggle (#37): the at-depth target in or out of the picked
@@ -1556,7 +1683,7 @@ export function ProjectCanvas({
 	const togglePickAt = useCallback(
 		(frame: string, local: Point, deepest: boolean) => {
 			beginPick(frame, local, (chain) => {
-				const target = deepest ? chain[chain.length - 1] : atDepthIn(frame, chain);
+				const target = deepest ? chain[chain.length - 1] : atRung(chain, scopeIn(frame));
 				if (target === undefined) return; // frame background: nothing to toggle
 				const current = pickedRef.current;
 				const held = current.filter((pick) => !(pick.frame === frame && pick.selector === target.selector));
@@ -1569,7 +1696,7 @@ export function ProjectCanvas({
 				setSelected([]);
 			});
 		},
-		[beginPick, atDepthIn],
+		[beginPick, scopeIn],
 	);
 
 	/** The tree grammar on frame rows: shift ranges, ⌘ toggles, click replaces. */
@@ -2159,20 +2286,26 @@ export function ProjectCanvas({
 	};
 
 	/**
-	 * The hover previews (#37), on throttled pointer-move: holding ⌘ outlines
-	 * the would-be deepest target under the cursor; inside an element scope,
-	 * plain hover outlines the at-depth target in the scope's own frame.
+	 * The hover rings (#37, #254), on throttled pointer-move. With elements as
+	 * the working object the ring is on whenever the pointer is over a readable
+	 * frame, not only under ⌘ or an open scope — and it draws two: the rung a
+	 * click takes, and the rung a double-click would descend to under it. ⌘
+	 * lands deepest in one go, so it has no rung under it to draw.
+	 *
+	 * A field of live documents each drawing rings is a busier surface than the
+	 * one that ships, so only the frame under the pointer ever draws.
 	 */
 	const hoverPickAt = (frame: string | null, world: Point, deepest: boolean) => {
-		const scopeFrame = pickedRef.current[pickedRef.current.length - 1]?.frame;
-		if (frame === null || !(deepest || frame === scopeFrame)) {
+		if (frame === null) {
+			hoverPoint.current = null;
 			setPreview(null);
 			return;
 		}
-		const now = performance.now();
-		if (hoverBusy.current || now - hoverLast.current < HOVER_PICK_MS) return;
 		const local = frameLocalAt(frame, world);
 		if (local === null) return;
+		hoverPoint.current = { frame, world };
+		const now = performance.now();
+		if (hoverBusy.current || now - hoverLast.current < HOVER_PICK_MS) return;
 		hoverLast.current = now;
 		hoverBusy.current = true;
 		beginPick(
@@ -2182,19 +2315,34 @@ export function ProjectCanvas({
 				hoverBusy.current = false;
 				if (gesture.current.kind !== "idle" || toolRef.current !== "select") return;
 				// a deep hover is ⌘'s: let go while the frame was answering and
-				// the answer is stale, so it must not redraw the preview
-				if (deepest && !accelDownRef.current) return;
-				const target = deepest ? chain[chain.length - 1] : atDepthIn(frame, chain);
-				setPreview(
-					target === undefined
-						? null
-						: { frame, selector: target.selector, rect: target.rect, radius: target.radius },
-				);
+				// the answer is stale, so it must not redraw the rings
+				if (deepest !== accelDownRef.current) return;
+				const scope = scopeIn(frame);
+				// with no rung open a click takes the frame, whose own hover ring
+				// already says so; the dashed ring is then the rung a descent starts on
+				const target = deepest ? chain[chain.length - 1] : scope === null ? undefined : atRung(chain, scope);
+				const under = deepest ? undefined : oneDown(chain, scope);
+				const ring = (hit: PickedHit | undefined): ElementPreview | null =>
+					hit === undefined ? null : { frame, selector: hit.selector, rect: hit.rect, radius: hit.radius };
+				const click = ring(target);
+				const beneath = under?.selector === target?.selector ? null : ring(under);
+				setPreview(click === null && beneath === null ? null : { click, under: beneath });
 			},
 			() => {
 				hoverBusy.current = false;
 			},
 		);
+	};
+
+	/** Redraw the rings where the pointer already rests — ⌘ changes what they mean. */
+	refreshRings.current = () => {
+		const at = hoverPoint.current;
+		if (at === null || toolRef.current !== "select" || gesture.current.kind !== "idle") {
+			setPreview(null);
+			return;
+		}
+		hoverLast.current = 0;
+		hoverPickAt(at.frame, at.world, accelDownRef.current);
 	};
 
 	const cancelGesture = useCallback(() => {
@@ -2547,20 +2695,30 @@ export function ProjectCanvas({
 	};
 
 	/**
-	 * Double-click is how you go inside a frame — the gesture every nested
-	 * object in software already answers to. Structural descent does not need
-	 * it: ⌘-click lands on the deepest element in one go and Escape climbs
-	 * back down, which is the same round trip in fewer gestures.
+	 * Double-click descends one rung (#254) — the gesture every nested object
+	 * in software already answers to, spent on the act you do all day now that
+	 * an element is a handle rather than a reference.
+	 *
+	 * Going inside keeps a double-click of its own on the frame's label: there
+	 * is no rung under a label, so a double-click there can only mean the frame
+	 * itself. Enter goes inside from the keyboard, as it always has.
 	 */
 	const onDoubleClick = (event: React.MouseEvent) => {
 		if (exportDialogRef.current !== null) return;
 		if (toolRef.current !== "select") return;
 		const cam = cameraRef.current;
 		if (cam === null) return;
-		const hit = datasetHit(event.target, "frame-label") ?? frameAtWorld(toWorld(localPoint(event), cam));
+		const label = datasetHit(event.target, "frame-label");
+		const world = toWorld(localPoint(event), cam);
+		const hit = label ?? frameAtWorld(world);
 		if (hit === null || hit === enteredRef.current) return;
 		cancelGesture();
-		enterFrame(hit);
+		if (label !== null) {
+			enterFrame(hit);
+			return;
+		}
+		const local = frameLocalAt(hit, world);
+		if (local !== null) descendAt(hit, local);
 	};
 
 	const onContextMenu = (event: React.MouseEvent) => {
@@ -2628,8 +2786,9 @@ export function ProjectCanvas({
 	const litOut =
 		effectiveTool !== "select"
 			? null
-			: preview !== null && picked.some((pick) => pick.frame === preview.frame && pick.selector === preview.selector)
-				? pickKey(preview.frame, preview.selector)
+			: preview?.click != null &&
+					picked.some((pick) => pick.frame === preview.click?.frame && pick.selector === preview.click?.selector)
+				? pickKey(preview.click.frame, preview.click.selector)
 				: hovered !== null && (selected.includes(hovered.frame) || entered === hovered.frame)
 					? hovered.frame
 					: null;
@@ -2715,7 +2874,15 @@ export function ProjectCanvas({
 		// every canvas entry in the register answers here, or the map fails to
 		// compile — the handlers gate on state, the register never does
 		const handlers = {
-			"canvas.accel-hold": () => setAccelDown(true),
+			// Held keys repeat, and only the first press changes what a ring means.
+			// The ref is mirrored from state at render, which is a paint away; the
+			// redraw below reads it now, so this press writes both.
+			"canvas.accel-hold": () => {
+				if (accelDownRef.current) return;
+				setAccelDown(true);
+				accelDownRef.current = true;
+				refreshRings.current();
+			},
 			"canvas.space-hold": (event) => {
 				if (event === undefined) return;
 				if (!event.repeat) setSpaceDown(true);
@@ -2821,13 +2988,32 @@ export function ProjectCanvas({
 					animateCamera(centerOn(cam, target, viewport.clientWidth, viewport.clientHeight));
 				}
 			},
-			// ⏎ goes inside; ⇧⏎ is Play's chord, the heavier verb on the modifier
+			// ⏎ goes inside, from the frame or from a rung within it; the ladder's
+			// own descent is ⌘⏎, and the climb ⇧⏎ (#254)
 			"canvas.enter": (event) => {
-				if (enteredRef.current !== null || selectedRef.current.length !== 1) return;
-				const [target] = selectedRef.current;
-				if (target === undefined) return;
+				const targets = verbTarget();
+				const [only] = targets;
+				if (targets.length !== 1 || only === undefined) return;
 				event?.preventDefault();
-				enterFrame(target);
+				enterFrame(only);
+			},
+			"canvas.descend": (event) => {
+				if (enteredRef.current !== null) return;
+				event?.preventDefault();
+				setPreview(null);
+				descendKey();
+			},
+			"canvas.ascend": (event) => {
+				if (enteredRef.current !== null) return;
+				event?.preventDefault();
+				cancelPicks();
+				setPreview(null);
+				climbRung();
+			},
+			// Tab is the browser's focus key until a rung is held: claiming it
+			// only where the ladder can answer leaves the chrome reachable
+			"canvas.sibling": (event) => {
+				if (walkSibling(event?.shiftKey === true ? "previous" : "next")) event?.preventDefault();
 			},
 			"canvas.escape": () => {
 				cancelPicks();
@@ -2835,29 +3021,9 @@ export function ProjectCanvas({
 				if (!gestureStill()) cancelGesture();
 				else if (menuOpenRef.current) setMenu(null);
 				else if (enteredRef.current !== null) exitEntered(true);
-				else if (pickedRef.current.length > 1) {
-					// a multi-selection has no one ancestry: drop to its frames
-					const frames = [...new Set(pickedRef.current.map((pick) => pick.frame))];
-					pickedChain.current = null;
-					setPicked([]);
-					setSelected(frames);
-				} else if (pickedRef.current[0] !== undefined) {
-					// ascend the ancestry (Figma): element → parent → … → frame → clear
-					const picked = pickedRef.current[0];
-					const held = pickedChain.current;
-					const depth =
-						held !== null && held.frame === picked.frame
-							? held.chain.findIndex((h) => h.selector === picked.selector)
-							: -1;
-					const parent = depth > 0 ? held?.chain[depth - 1] : undefined;
-					if (parent !== undefined) setPicked([{ frame: picked.frame, ...parent }]);
-					else {
-						setPicked([]);
-						setSelected([picked.frame]);
-					}
-				} else if (selectedRef.current.length > 0) {
-					setSelected([]);
-				} else if (turnRef.current.phase === "playing") {
+				// Esc leaves first, then climbs the same rungs ⇧⏎ climbs
+				else if (climbRung()) return;
+				else if (turnRef.current.phase === "playing") {
 					/*
 					 * The bottom rung, and the only one this ticket adds (#165).
 					 *
@@ -2897,10 +3063,12 @@ export function ProjectCanvas({
 		const detachCanvas = attachHotkeyLayer({ scope: "canvas", handlers });
 		const onKeyUp = (event: KeyboardEvent) => {
 			if (event.code === "Space") setSpaceDown(false);
-			// releasing accel outside an element scope ends the deep-hover preview
+			// releasing accel turns the deep ring back into the ladder's two, under
+			// a pointer that has not moved since (#254)
 			if (event.key === accelKeyName()) {
 				setAccelDown(false);
-				setPreview(null);
+				accelDownRef.current = false;
+				refreshRings.current();
 			}
 		};
 		const clearModifiers = () => {
@@ -2939,6 +3107,9 @@ export function ProjectCanvas({
 		playFrame,
 		jumpBack,
 		jumpForward,
+		descendKey,
+		climbRung,
+		walkSibling,
 	]);
 
 	// --- chrome (top bar) -------------------------------------------------------

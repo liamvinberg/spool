@@ -502,7 +502,10 @@ async function enterHome(host: HTMLElement, x = 40, y = 40) {
 				new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId }),
 			);
 		}
-		field.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: x, clientY: y }));
+		// the label, not the body: a double-click on the body descends a rung (#254)
+		host
+			.querySelector<HTMLElement>('[data-frame-label="home"]')
+			?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: x, clientY: y }));
 	});
 }
 

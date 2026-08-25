@@ -511,7 +511,11 @@ function selectionPuts(): { frames?: string[] }[] {
 		.map(([, init]) => JSON.parse(String(init?.body)) as { frames?: string[] });
 }
 
-/** The way inside: a double-click on the frame, presses and all. */
+/**
+ * The way inside: a double-click on the frame's label, presses and all. The
+ * body's double-click descends a rung now (#254); the label is the frame's own
+ * handle, and going inside is what a double-click there means.
+ */
 async function enterHome(canvas: HTMLElement, x = 40, y = 40): Promise<void> {
 	await act(async () => {
 		for (const pointerId of [91, 92]) {
@@ -522,8 +526,15 @@ async function enterHome(canvas: HTMLElement, x = 40, y = 40): Promise<void> {
 				new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId }),
 			);
 		}
-		canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: x, clientY: y }));
+		labelOf(canvas, "home").dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: x, clientY: y }));
 	});
+}
+
+/** The frame's label out on the field — where a double-click means the frame. */
+function labelOf(canvas: HTMLElement, name: string): HTMLElement {
+	const label = canvas.ownerDocument.querySelector<HTMLElement>(`[data-frame-label="${name}"]`);
+	if (label === null) throw new Error(`no label for ${name}`);
+	return label;
 }
 
 async function renderCanvas(): Promise<{ host: HTMLDivElement; canvas: HTMLElement }> {

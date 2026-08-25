@@ -75,9 +75,10 @@ describe("walk arrival", () => {
 		// A borrowed frame is that case — it has a document and it has booted.
 		await until(() => host.querySelector('iframe[title="right"]') !== null);
 
-		const canvas = host.querySelector<HTMLElement>('[role="application"]');
 		await act(async () => {
-			canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
+			host
+				.querySelector<HTMLElement>('[data-frame-label="origin"]')
+				?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 50, clientY: 50 }));
 		});
 		expect(host.querySelector('[data-frame-label="origin"]')?.textContent).toContain("live · esc exits");
 

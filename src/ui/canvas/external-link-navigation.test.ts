@@ -46,7 +46,9 @@ describe("external links from an entered frame", () => {
 					pointerId: 1,
 				}),
 			);
-			canvas?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 600, clientY: 380 }));
+			host
+				.querySelector<HTMLElement>('[data-frame-label="origin"]')
+				?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 600, clientY: 380 }));
 		});
 		expect(labelText(host)).toContain("live · esc exits");
 		const iframe = host.querySelector<HTMLIFrameElement>('iframe[title="origin"]');

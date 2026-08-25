@@ -28,6 +28,18 @@ export interface ElementPreview {
 	radius: number;
 }
 
+/**
+ * The two rungs a hover draws (#254). The one a click takes is solid; the one
+ * under it is dashed, and that second ring is what makes a descent a step you
+ * can see rather than a guess. There is no second ring at the leaf, or where a
+ * click already lands where a descent would — and no first one with no rung
+ * open, because there a click takes the frame and the frame draws its own.
+ */
+export interface HoverRungs {
+	click: ElementPreview | null;
+	under: ElementPreview | null;
+}
+
 /** The frame under the pointer. Hidden hovers linger only to fade their ring. */
 export interface FrameHover {
 	frame: string;
@@ -90,7 +102,7 @@ export function SelectionOverlay({
 	 * one string in the rail and only their boxes tell them apart.
 	 */
 	lit?: string | null;
-	preview: ElementPreview | null;
+	preview: HoverRungs | null;
 	marks: SnapMarks;
 	/** Normalized screen-space rect while a marquee drag is live. */
 	marquee: Box | null;
@@ -118,10 +130,12 @@ export function SelectionOverlay({
 			: undefined;
 	const single =
 		editable && selected.length === 1 && entered === null ? frames.find((f) => f.name === selected[0]) : undefined;
-	const previewShown =
-		preview !== null && !picked.some((pick) => pick.frame === preview.frame && pick.selector === preview.selector)
-			? preview
+	const unpicked = (rung: ElementPreview | null): ElementPreview | null =>
+		rung !== null && !picked.some((pick) => pick.frame === rung.frame && pick.selector === rung.selector)
+			? rung
 			: null;
+	const previewShown = preview === null ? null : unpicked(preview.click);
+	const deeperShown = preview === null ? null : unpicked(preview.under);
 
 	return (
 		<div className="pointer-events-none absolute inset-0">
@@ -280,6 +294,13 @@ export function SelectionOverlay({
 					return <ElementOutline box={box} radius={previewShown.radius * k} faded />;
 				})()}
 
+			{deeperShown !== null &&
+				(() => {
+					const box = elementBox(deeperShown.frame, deeperShown.rect);
+					if (box === undefined) return null;
+					return <ElementOutline box={box} radius={deeperShown.radius * k} faded dashed />;
+				})()}
+
 			{marquee !== null && (
 				<div
 					className="absolute border border-thread bg-thread/10"
@@ -296,11 +317,26 @@ export function SelectionOverlay({
  * `lit` is the cursor sitting on this element's chip in the composer, which fills the
  * box rather than thickening its edge: the stroke is the system page's law, and a
  * fill is the lightest thing that says *this one* among five identical outlines.
+ *
+ * `dashed` is the rung under the one a click takes (#254), drawn fainter still:
+ * a solid second ring would read as a second target rather than as the step after.
  */
-function ElementOutline({ box, radius, faded, lit }: { box: Box; radius: number; faded?: boolean; lit?: boolean }) {
+function ElementOutline({
+	box,
+	radius,
+	faded,
+	dashed,
+	lit,
+}: {
+	box: Box;
+	radius: number;
+	faded?: boolean;
+	dashed?: boolean;
+	lit?: boolean;
+}) {
 	return (
 		<div
-			className={`absolute border border-thread ${faded === true ? "opacity-50" : ""} ${lit === true ? "bg-thread/10" : ""}`}
+			className={`absolute border border-thread ${dashed === true ? "border-dashed opacity-30" : faded === true ? "opacity-50" : ""} ${lit === true ? "bg-thread/10" : ""}`}
 			style={{
 				left: box.x - 2,
 				top: box.y - 2,
