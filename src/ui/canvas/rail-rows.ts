@@ -75,7 +75,16 @@ export interface PageRow extends RowPlace {
 	readonly kind: "page";
 	readonly page: string;
 	readonly open: boolean;
-	/** frames on this page's own canvas — the count the row has always shown */
+	/**
+	 * Every frame under this page, its own pages' included.
+	 *
+	 * A page holding four pages and no frames of its own was reading 0, which is
+	 * the one thing it is not: the number is what is one chevron away, and what is
+	 * one chevron away is everything below. The row only wears it while it is shut
+	 * — the same law the unseen mark keeps, and for the same reason. Once the tree
+	 * under it is drawn, the rows below are the count, and a total beside them is
+	 * a second number for the same thing.
+	 */
 	readonly count: number;
 }
 
@@ -183,8 +192,12 @@ export function railRows(
 		});
 		top += PAGE_ROW;
 	}
+	/** A page's frames and every frame under its own pages. */
+	function within(page: string): number {
+		const held = pages.get(page) ?? [];
+		return (framesByPage.get(page) ?? []).length + held.reduce((total, child) => total + within(child), 0);
+	}
 	function block(page: string, index: number, siblings: number, tail: boolean): void {
-		const frames = framesByPage.get(page) ?? [];
 		const open = expanded.has(page);
 		rows.push({
 			kind: "page",
@@ -195,7 +208,7 @@ export function railRows(
 			siblings,
 			tail,
 			open,
-			count: frames.length,
+			count: within(page),
 			top,
 			height: PAGE_ROW,
 		});

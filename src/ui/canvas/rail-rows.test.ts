@@ -66,6 +66,26 @@ describe("the visible list", () => {
 		expect(rows.some((row) => row.kind === "frame" && row.name === "cart")).toBe(false);
 	});
 
+	/**
+	 * The number on a page row answers "what is one chevron away", and a page of
+	 * pages was answering 0 — the one number it could not be.
+	 */
+	it("counts every frame under a page, its own pages' included", () => {
+		const nested = railRows(
+			new Map<string, readonly string[]>([
+				[ROOT_PAGE, ["design-system"]],
+				["design-system", ["design-system/colour", "design-system/type"]],
+			]),
+			new Map<string, readonly RailFrame[]>([
+				["design-system/colour", [html("swatches"), html("ramps")]],
+				["design-system/type", [html("scale")]],
+			]),
+			new Set(),
+		);
+		const row = nested.find((each) => each.kind === "page" && each.page === "design-system");
+		expect(row?.kind === "page" && row.count).toBe(3);
+	});
+
 	it("marks the last frame of a page, which is where the spine stops", () => {
 		const last = rows.find((row) => row.kind === "frame" && row.name === "shell");
 		expect(last?.kind === "frame" && last.last).toBe(true);

@@ -454,6 +454,20 @@ describe("the row menu", () => {
 	});
 
 	/**
+	 * A right-click is a gesture you have to know about. The dots are the same
+	 * menu, said out loud, and every row that has one has to wear them — a frame
+	 * row always did, and a page row is the row with the most verbs on it.
+	 */
+	it("opens a page's menu from the dots the row wears", async () => {
+		const { host } = await render();
+
+		const dots = host.querySelector<HTMLButtonElement>('button[aria-label="shop menu"]');
+		expect(dots).not.toBeNull();
+		await act(async () => dots?.click());
+		expect(labelsOf()).toEqual(["New page", "Rename", "Duplicate", "Move to page…", "Paste", "Move to Trash"]);
+	});
+
+	/**
 	 * The same move a drag runs, with the destination typed instead of travelled
 	 * to. What it must never offer is a page inside the one being moved, or the
 	 * page the row is already in: both are refusals the daemon would answer a

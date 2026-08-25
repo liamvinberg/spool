@@ -1885,20 +1885,32 @@ function TreeRow({
 									aria-current={active ? "page" : undefined}
 									onClick={onActivate}
 									onDoubleClick={onRename}
-									className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
+									className="flex h-full min-w-0 flex-1 items-center gap-2 pr-3 text-left"
 								>
 									<FolderIcon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-thread" : "text-muted")} />
 									<span
 										className={cn(
 											"min-w-0 flex-1 truncate font-mono text-sm leading-sm",
+											// as on a frame row: the menu fades in over the tail of the
+											// name, and takes that last stretch of it with it
+											"group-hover/row:[mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)]",
 											active || cursored ? "text-text" : "text-muted",
 										)}
 									>
 										{label}
 									</span>
 								</button>
-								{mark === undefined ? null : <UnseenMark mark={mark} className="mr-0.5" />}
-								<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3">{row.count}</span>
+								{mark === undefined ? null : (
+									<UnseenMark mark={mark} className="mr-0.5 transition-opacity group-hover/row:opacity-0" />
+								)}
+								{/* the count is what is one chevron away, so an open page has none:
+								    the rows under it are the count, and a total beside them reads
+								    as a second, wrong number */}
+								{row.open ? null : (
+									<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3 transition-opacity group-hover/row:opacity-0">
+										{row.count}
+									</span>
+								)}
 							</>
 						) : (
 							<div className="flex h-full min-w-0 flex-1 items-center gap-2 pr-1">
@@ -1979,11 +1991,9 @@ function TreeRow({
 								/>
 							</div>
 						)}
-						{rename === null ? (
-							<RowMenuButton label={row.name} onMenu={(event) => onMenu(event, target)} />
-						) : null}
 					</>
 				)}
+				{rename === null ? <RowMenuButton label={label} onMenu={(event) => onMenu(event, target)} /> : null}
 			</div>
 		</RowShell>
 	);
