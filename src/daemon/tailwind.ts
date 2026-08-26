@@ -19,7 +19,7 @@ function isWithin(base: string, target: string): boolean {
 	return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
 }
 
-const rootCss = `@import "tailwindcss";
+export const ROOT_CSS = `@import "tailwindcss";
 @import "./tokens.css";
 `;
 
@@ -29,15 +29,26 @@ export interface FrameCss {
 	stylesheets: string[];
 }
 
+/** What a compile of this project's stylesheets needs, and what it read. */
+export interface DesignStylesheets {
+	base: string;
+	loadStylesheet: (id: string, base: string) => Promise<{ path: string; base: string; content: string }>;
+	loadModule: () => Promise<never>;
+	/** Project stylesheets read so far; filled as the compile resolves imports. */
+	stylesheets: Set<string>;
+}
+
 /**
- * Compile the finished stylesheet for one frame document: theme + preflight +
- * the utilities its source closure actually uses. A fresh compiler per call
- * keeps the output a pure function of the read stylesheets and the given
- * files — Tailwind's build() accumulates candidates across calls, which would
- * bleed one frame's utilities into the next document.
+ * The one way into a project's stylesheets, shared by the frame compile and
+ * the theme read (#257).
+ *
+ * It is where the pin lives: "tailwindcss" resolves into spool's own install
+ * and nowhere else, a relative import resolves inside design/ or is refused,
+ * and anything else is not an import this daemon serves. Both callers want the
+ * same rules and the same list of what was read, so there is one of it.
  */
-export async function buildFrameCss(designDir: string, files: string[]): Promise<FrameCss> {
-	const projectStylesheets = new Set<string>();
+export function designStylesheets(designDir: string): DesignStylesheets {
+	const stylesheets = new Set<string>();
 
 	async function loadStylesheet(id: string, base: string): Promise<{ path: string; base: string; content: string }> {
 		let file: string;
@@ -62,7 +73,7 @@ export async function buildFrameCss(designDir: string, files: string[]): Promise
 			}
 		} else {
 			file = resolveDesignPath(designDir, file, id);
-			projectStylesheets.add(file);
+			stylesheets.add(file);
 		}
 		return { path: file, base: dirname(file), content: readFileSync(file, "utf8") };
 	}
@@ -71,7 +82,23 @@ export async function buildFrameCss(designDir: string, files: string[]): Promise
 		throw new Error("@plugin and @config are not supported in tokens.css");
 	}
 
-	const compiler = await compile(rootCss, { base: join(designDir, "shared"), loadStylesheet, loadModule });
+	return { base: join(designDir, "shared"), loadStylesheet, loadModule, stylesheets };
+}
+
+/**
+ * Compile the finished stylesheet for one frame document: theme + preflight +
+ * the utilities its source closure actually uses. A fresh compiler per call
+ * keeps the output a pure function of the read stylesheets and the given
+ * files — Tailwind's build() accumulates candidates across calls, which would
+ * bleed one frame's utilities into the next document.
+ */
+export async function buildFrameCss(designDir: string, files: string[]): Promise<FrameCss> {
+	const sheets = designStylesheets(designDir);
+	const compiler = await compile(ROOT_CSS, {
+		base: sheets.base,
+		loadStylesheet: sheets.loadStylesheet,
+		loadModule: sheets.loadModule,
+	});
 	const scanner = new Scanner({ sources: [] });
 	const sources = files.flatMap((file) => {
 		let content: string;
@@ -83,5 +110,5 @@ export async function buildFrameCss(designDir: string, files: string[]): Promise
 		}
 		return [{ content, extension: extname(file).slice(1) }];
 	});
-	return { css: compiler.build(scanner.scanFiles(sources)), stylesheets: [...projectStylesheets] };
+	return { css: compiler.build(scanner.scanFiles(sources)), stylesheets: [...sheets.stylesheets] };
 }

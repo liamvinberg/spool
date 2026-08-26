@@ -1,4 +1,5 @@
 import { anatomyOf, composeToken, splitClass } from "../../daemon/class-write";
+import type { CompiledTheme } from "../api";
 
 /**
  * The scope the rail edits under (#256), read off an element's literal.
@@ -26,11 +27,11 @@ export interface Variant {
 }
 
 /**
- * The variants a scope may be opened on.
+ * The variants a scope may be opened on before the theme is read.
  *
- * Tailwind's own defaults, which is the honest list until the compiled theme
- * reaches the canvas — a project that renamed its breakpoints is #257's to
- * answer, and until then the bar offers what every project has.
+ * Tailwind's own defaults, which is what every project has until its own
+ * breakpoints arrive; `variantsOf` is what the bar actually offers once they
+ * do (#257).
  */
 export const VARIANTS: readonly Variant[] = [
 	{ prefix: "hover", group: "state", when: ":hover" },
@@ -44,6 +45,31 @@ export const VARIANTS: readonly Variant[] = [
 	{ prefix: "xl", group: "screen", when: "width >= 80rem" },
 	{ prefix: "dark", group: "theme", when: "prefers-color-scheme: dark" },
 ];
+
+/** The states and the theme variant, which no project renames. */
+const CONSTANT: readonly Variant[] = VARIANTS.filter((variant) => variant.group !== "screen");
+
+/**
+ * The variants this project has, its own breakpoints included.
+ *
+ * A project that renamed `md` to `app` has no `md:`, and a bar that offered one
+ * would be offering a scope whose tokens the compiler drops on the floor. The
+ * screens come from the compiled theme for exactly that reason; the states and
+ * `dark:` are Tailwind's own and the same everywhere.
+ */
+export function variantsOf(theme: CompiledTheme | null): readonly Variant[] {
+	if (theme === null) return VARIANTS;
+	const screens = theme.screen.map(
+		(token): Variant => ({
+			prefix: token.name,
+			group: "screen",
+			when: `width >= ${token.value}`,
+		}),
+	);
+	const states = CONSTANT.filter((variant) => variant.group === "state");
+	const themes = CONSTANT.filter((variant) => variant.group === "theme");
+	return [...states, ...screens, ...themes];
+}
 
 /** A variant chain; the empty one is the base. */
 export type Scope = readonly string[];

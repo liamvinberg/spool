@@ -35,6 +35,26 @@ export interface ClassEdit {
 	remove?: boolean;
 }
 
+/**
+ * The names this project's theme gives each family of named tokens (#257).
+ *
+ * Without it the lane has to fall back to Tailwind's own defaults, and a
+ * project whose type scale is its own would have `text-md` read as a colour —
+ * writing a size would then take the element's colour away. The names come
+ * from the compiled theme, which is the only thing that knows them.
+ */
+export interface ClassTheme {
+	colour: ReadonlySet<string>;
+	text: ReadonlySet<string>;
+	weight: ReadonlySet<string>;
+	font: ReadonlySet<string>;
+	leading: ReadonlySet<string>;
+	tracking: ReadonlySet<string>;
+	shadow: ReadonlySet<string>;
+	ease: ReadonlySet<string>;
+	radius: ReadonlySet<string>;
+}
+
 export interface Anatomy {
 	variants: readonly string[];
 	negative: boolean;
@@ -86,25 +106,25 @@ const SCREENS = new Set(["sm", "md", "lg", "xl", "2xl", "app"]);
  * is one. A base `w-56` under a live `md:w-96` is a class the frame would not
  * show, so the lane refuses rather than writing a lie into the file (#262).
  */
-export function screenConflict(className: string | null, edit: ClassEdit): string | undefined {
+export function screenConflict(className: string | null, edit: ClassEdit, theme?: ClassTheme): string | undefined {
 	// taking a base token away beats nothing: what the breakpoint says still
 	// stands afterwards, which is the whole reason the write refuses
 	if (edit.remove === true || parseScope(edit.scope)?.length !== 0) return undefined;
-	const family = familyOf(anatomyOf(edit.token).base);
+	const family = familyOf(anatomyOf(edit.token).base, theme);
 	if (family === undefined) return undefined;
 	return splitClass(className).find((token) => {
 		const anatomy = anatomyOf(token);
 		if (!anatomy.variants.some((variant) => SCREENS.has(variant))) return false;
-		return familyOf(anatomy.base) === family;
+		return familyOf(anatomy.base, theme) === family;
 	});
 }
 
 /** The literal this edit leaves behind. */
-export function writeClass(className: string | null, edit: ClassEdit): string {
+export function writeClass(className: string | null, edit: ClassEdit, theme?: ClassTheme): string {
 	const scope = parseScope(edit.scope) ?? [];
 	return respace(
 		className,
-		withScope(className, scope, (scoped) => applyToken(scoped, edit, scope.length === 0)),
+		withScope(className, scope, (scoped) => applyToken(scoped, edit, scope.length === 0, theme)),
 	);
 }
 
@@ -162,25 +182,25 @@ function withScope(className: string | null, scope: readonly string[], change: (
 	return out.join(" ");
 }
 
-function applyToken(scoped: string, edit: ClassEdit, base: boolean): string {
+function applyToken(scoped: string, edit: ClassEdit, base: boolean, theme?: ClassTheme): string {
 	const anatomy = anatomyOf(edit.token);
 	const value = anatomy.negative ? `-${tailOf(anatomy.base)}` : tailOf(anatomy.base);
-	const fold = foldOf(anatomy.base);
+	const fold = foldOf(anatomy.base, theme);
 	if (fold !== undefined) {
 		const group = FOLDS[fold.group];
-		const sides = { ...group.read(scoped) };
+		const sides = { ...group.read(scoped, theme) };
 		// a default at the base is the absence of the token, which is what the
 		// frame's author would have written; under a scope it is a real override
 		const written = edit.remove === true || (base && value === group.zero) ? null : (fold.value ?? group.bare);
 		for (const key of fold.keys) sides[key] = written;
-		return writeFold(group, scoped, sides, weighs(scoped, group, anatomy.important));
+		return writeFold(group, scoped, sides, weighs(scoped, group, anatomy.important, theme), theme);
 	}
-	const family = familyOf(anatomy.base);
+	const family = familyOf(anatomy.base, theme);
 	if (edit.remove === true) {
 		return splitClass(scoped)
 			.filter((token) => {
 				const held = anatomyOf(token);
-				return family === undefined ? held.base !== anatomy.base : familyOf(held.base) !== family;
+				return family === undefined ? held.base !== anatomy.base : familyOf(held.base, theme) !== family;
 			})
 			.join(" ");
 	}
@@ -189,7 +209,7 @@ function applyToken(scoped: string, edit: ClassEdit, base: boolean): string {
 		if (held.base === anatomy.base) return false;
 		// `size-8` is two axes in one token: writing either half splits it first
 		if ((family === "w" || family === "h") && splitsSize(held.base)) return false;
-		return family === undefined || familyOf(held.base) !== family;
+		return family === undefined || familyOf(held.base, theme) !== family;
 	});
 	const split = family === "w" || family === "h" ? sizeSplit(scoped, family) : [];
 	return [...kept, ...split, composeToken({ ...anatomy, variants: [] })].join(" ");
@@ -201,10 +221,10 @@ function applyToken(scoped: string, edit: ClassEdit, base: boolean): string {
  * group with mixed weight loses it, because there is one spelling to write and
  * the majority is a guess.
  */
-function weighs(scoped: string, group: Fold, incoming: boolean): boolean {
+function weighs(scoped: string, group: Fold, incoming: boolean, theme?: ClassTheme): boolean {
 	const held = splitClass(scoped)
 		.map(anatomyOf)
-		.filter((anatomy) => group.owns(anatomy.base));
+		.filter((anatomy) => group.owns(anatomy.base, theme));
 	return incoming || (held.length > 0 && held.every((anatomy) => anatomy.important));
 }
 
@@ -230,7 +250,7 @@ function tailOf(base: string): string {
 
 /* ---------- the folds: sides, corners and edges that collapse ---------- */
 
-type FoldGroup = "padding" | "margin" | "gap" | "radius" | "border";
+type FoldGroup = "padding" | "margin" | "gap" | "radius" | "border" | "inset";
 
 interface Fold {
 	/** what the value is when nothing sets it, so the base can drop the token */
@@ -238,8 +258,8 @@ interface Fold {
 	/** the value a token with no value of its own means: `border`, `rounded` */
 	bare: string;
 	/** whether a token is one of this fold's own, and so rewritten by it */
-	owns(base: string): boolean;
-	read(scoped: string): Record<string, string | null>;
+	owns(base: string, theme?: ClassTheme): boolean;
+	read(scoped: string, theme?: ClassTheme): Record<string, string | null>;
 	/** the keys this fold writes, and the pairs they may collapse into */
 	shape: FoldShape;
 	/** how one key's value is spelled, and how the logical spelling is spotted */
@@ -254,8 +274,14 @@ interface Fold {
  * this family's, read whether the literal spells its sides logically, and
  * write the fewest tokens that say the values.
  */
-function writeFold(fold: Fold, scoped: string, values: Record<string, string | null>, important: boolean): string {
-	const kept = splitClass(scoped).filter((token) => !fold.owns(anatomyOf(token).base));
+function writeFold(
+	fold: Fold,
+	scoped: string,
+	values: Record<string, string | null>,
+	important: boolean,
+	theme?: ClassTheme,
+): string {
+	const kept = splitClass(scoped).filter((token) => !fold.owns(anatomyOf(token).base, theme));
 	const logical = splitClass(scoped).some((token) => fold.logical.probe.test(anatomyOf(token).base));
 	const said =
 		fold.drops === undefined
@@ -296,7 +322,10 @@ const RADIUS_KEYS: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** Which fold a token belongs to, which keys it sets, and to what. */
-function foldOf(base: string): { group: FoldGroup; keys: readonly string[]; value: string | null } | undefined {
+function foldOf(
+	base: string,
+	theme?: ClassTheme,
+): { group: FoldGroup; keys: readonly string[]; value: string | null } | undefined {
 	const spacing = /^(p|m)([xytrbl]|s|e)?-(.+)$/.exec(base);
 	if (spacing !== null && lengthOf(base) !== null) {
 		const keys = SPACING_KEYS[spacing[2] ?? ""];
@@ -306,7 +335,7 @@ function foldOf(base: string): { group: FoldGroup; keys: readonly string[]; valu
 	}
 	const gap = /^gap(?:-([xy]))?-(.+)$/.exec(base);
 	if (gap !== null) return { group: "gap", keys: gap[1] === undefined ? ["x", "y"] : [gap[1]], value: gap[2] ?? null };
-	if (isRadius(base)) {
+	if (isRadius(base, theme)) {
 		const parts = radiusParts(base);
 		const keys = RADIUS_KEYS[parts.side];
 		if (keys !== undefined) return { group: "radius", keys, value: parts.value };
@@ -315,6 +344,11 @@ function foldOf(base: string): { group: FoldGroup; keys: readonly string[]; valu
 	if (border !== undefined) {
 		const keys = SPACING_KEYS[border.side];
 		if (keys !== undefined) return { group: "border", keys, value: border.width };
+	}
+	const inset = insetParts(base);
+	if (inset !== undefined && lengthOf(base) !== null) {
+		const keys = SPACING_KEYS[inset.side];
+		if (keys !== undefined) return { group: "inset", keys, value: inset.value };
 	}
 	return undefined;
 }
@@ -408,6 +442,65 @@ function oddOneOut(
 const LOGICAL_SIDES: Readonly<Record<string, string>> = { r: "e", l: "s" };
 const LOGICAL_CORNERS: Readonly<Record<string, string>> = { tl: "ss", tr: "se", br: "ee", bl: "es" };
 
+/**
+ * `inset`, its two axes, the four sides and the logical `start`/`end`.
+ *
+ * Its families do not share a prefix the way padding's do — the sides are
+ * `top`, `right`, `bottom`, `left` — so the spelling is a table rather than a
+ * letter, and reading `inset-x-4` as the two sides it sets is what stops a
+ * `left-0` from stacking beside it (#257).
+ */
+const INSET_SIDES: Readonly<Record<string, string>> = { t: "top", r: "right", b: "bottom", l: "left" };
+const INSET_LOGICAL: Readonly<Record<string, string>> = { r: "end", l: "start" };
+const INSET_FAMILIES: Readonly<Record<string, string>> = {
+	inset: "",
+	"inset-x": "x",
+	"inset-y": "y",
+	top: "t",
+	right: "r",
+	bottom: "b",
+	left: "l",
+	start: "l",
+	end: "r",
+};
+
+/** Which family spells one key of the fold: `inset`, `inset-x`, `top`, `start`. */
+function insetFamily(side: string): string {
+	if (side === "") return "inset";
+	if (side === "x" || side === "y") return `inset-${side}`;
+	// a logical key arrives already swapped: `l` became `start`, `r` became `end`
+	return INSET_SIDES[side] ?? side;
+}
+
+function insetParts(base: string): { side: string; value: string } | undefined {
+	const length = lengthOf(base);
+	if (length === null) return undefined;
+	const side = INSET_FAMILIES[length.family];
+	return side === undefined ? undefined : { side, value: length.value };
+}
+
+function insetFold(): Fold {
+	return {
+		zero: "0",
+		bare: "0",
+		owns: (base) => insetParts(base) !== undefined,
+		read: (scoped) => {
+			const all = lengthTokenOf(scoped, "inset");
+			const x = lengthTokenOf(scoped, "inset-x") ?? all;
+			const y = lengthTokenOf(scoped, "inset-y") ?? all;
+			return {
+				t: lengthTokenOf(scoped, "top") ?? y,
+				r: lengthTokenOf(scoped, "right") ?? lengthTokenOf(scoped, "end") ?? x,
+				b: lengthTokenOf(scoped, "bottom") ?? y,
+				l: lengthTokenOf(scoped, "left") ?? lengthTokenOf(scoped, "start") ?? x,
+			};
+		},
+		shape: SIDE_SHAPE,
+		spell: (side, value) => signedToken(insetFamily(side), value),
+		logical: { probe: /^(start|end)-/, sides: INSET_LOGICAL },
+	};
+}
+
 const FOLDS: Readonly<Record<FoldGroup, Fold>> = {
 	padding: spacingFold("p"),
 	margin: spacingFold("m"),
@@ -427,11 +520,11 @@ const FOLDS: Readonly<Record<FoldGroup, Fold>> = {
 		zero: "none",
 		bare: "",
 		owns: isRadius,
-		read: (scoped) => {
+		read: (scoped, theme) => {
 			const corners: Record<string, string | null> = { tl: null, tr: null, br: null, bl: null };
 			for (const token of splitClass(scoped)) {
 				const base = anatomyOf(token).base;
-				if (!isRadius(base)) continue;
+				if (!isRadius(base, theme)) continue;
 				const parts = radiusParts(base);
 				for (const corner of RADIUS_KEYS[parts.side] ?? []) corners[corner] = parts.value;
 			}
@@ -442,6 +535,7 @@ const FOLDS: Readonly<Record<FoldGroup, Fold>> = {
 			value === null ? null : `rounded${side === "" ? "" : `-${side}`}${value === "" ? "" : `-${value}`}`,
 		logical: { probe: /^rounded-(s|e|ss|se|ee|es)(-|$)/, sides: LOGICAL_CORNERS },
 	},
+	inset: insetFold(),
 	border: {
 		zero: "0",
 		bare: "",
@@ -505,11 +599,11 @@ function lengthTokenOf(scoped: string, family: string): string | null {
 	return null;
 }
 
-function isRadius(base: string): boolean {
+function isRadius(base: string, theme?: ClassTheme): boolean {
 	if (base === "rounded") return true;
 	if (!base.startsWith("rounded-")) return false;
 	const { side, value } = radiusParts(base);
-	return RADIUS_KEYS[side] !== undefined && (value === "" || radiusValueOk(value));
+	return RADIUS_KEYS[side] !== undefined && (value === "" || radiusValueOk(value, theme));
 }
 
 function radiusParts(base: string): { side: string; value: string } {
@@ -523,8 +617,16 @@ function radiusParts(base: string): { side: string; value: string } {
 
 const RADIUS_VALUES = new Set(["none", "xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl", "full"]);
 
-function radiusValueOk(value: string): boolean {
-	return RADIUS_VALUES.has(value) || /^\[.+\]$/.test(value) || /^\(--.+\)$/.test(value);
+/** The two radii that are keywords rather than theme values. */
+const RADIUS_WORDS = new Set(["none", "full"]);
+
+function radiusValueOk(value: string, theme?: ClassTheme): boolean {
+	if (/^\[.+\]$/.test(value) || /^\(--.+\)$/.test(value)) return true;
+	// `none` and `full` are the utility's own words rather than theme values, so
+	// they are radii in every project; the rest is the theme's naming where there
+	// is one and Tailwind's where there is not
+	if (RADIUS_WORDS.has(value)) return true;
+	return theme === undefined ? RADIUS_VALUES.has(value) : theme.radius.has(value);
 }
 
 function borderParts(base: string): { side: string; width: string } | undefined {
@@ -577,8 +679,15 @@ const LENGTHS = new Set([
 	"scale-x",
 	"scale-y",
 	"rotate",
+	"rotate-x",
+	"rotate-y",
+	"skew",
 	"skew-x",
 	"skew-y",
+	"brightness",
+	"contrast",
+	"saturate",
+	"hue-rotate",
 	"duration",
 	"delay",
 	"ring",
@@ -629,6 +738,21 @@ const LENGTH_WORDS = new Set([
 	"lvw",
 	"none",
 	"initial",
+	// the container scale, which is what `max-w-lg` and `min-w-xs` are named off
+	"3xs",
+	"2xs",
+	"xs",
+	"sm",
+	"md",
+	"lg",
+	"xl",
+	"2xl",
+	"3xl",
+	"4xl",
+	"5xl",
+	"6xl",
+	"7xl",
+	"prose",
 ]);
 
 /** Which numeric family a token belongs to, and its value; null when it is not one. */
@@ -711,54 +835,103 @@ const WORDS: readonly (readonly string[])[] = [
 
 const WORD_FAMILY = new Map(WORDS.flatMap((set, index) => set.map((token) => [token, `word:${index}`] as const)));
 
-/** Named-value families: the value is a name from the theme rather than a number. */
-const NAMED: readonly { prefix: string; values?: ReadonlySet<string>; key: string }[] = [
+/**
+ * Named-value families: the value is a name from the theme rather than a number.
+ *
+ * `values` is Tailwind's own naming, which is the honest fallback when no theme
+ * has been read; `list` is where the project's names live, and it wins whenever
+ * one is given. That is the whole of the difference between `text-md` as this
+ * project's size and `text-md` as a colour nobody has.
+ */
+const NAMED: readonly { prefix: string; list?: keyof ClassTheme; values?: ReadonlySet<string>; key: string }[] = [
 	{
 		prefix: "text",
+		list: "text",
 		values: new Set(["xs", "sm", "base", "lg", "xl", "2xl", "3xl", "4xl", "5xl", "6xl", "7xl", "8xl", "9xl"]),
 		key: "text:size",
 	},
 	{
 		prefix: "font",
+		list: "weight",
 		values: new Set(["thin", "extralight", "light", "normal", "medium", "semibold", "bold", "extrabold", "black"]),
 		key: "font:weight",
 	},
-	{ prefix: "font", key: "font:family" },
-	{ prefix: "leading", key: "leading" },
-	{ prefix: "tracking", key: "tracking" },
-	{ prefix: "shadow", key: "shadow" },
-	{ prefix: "bg", key: "bg:color" },
-	{ prefix: "text", key: "text:color" },
-	{ prefix: "border", key: "border:color" },
-	{ prefix: "ring", key: "ring:color" },
-	{ prefix: "outline", key: "outline:color" },
-	{ prefix: "fill", key: "fill" },
-	{ prefix: "stroke", key: "stroke:color" },
-	{ prefix: "from", key: "from" },
-	{ prefix: "via", key: "via" },
-	{ prefix: "to", key: "to" },
+	{ prefix: "font", list: "font", key: "font:family" },
+	{ prefix: "leading", list: "leading", key: "leading" },
+	{ prefix: "tracking", list: "tracking", key: "tracking" },
+	{ prefix: "shadow", list: "shadow", key: "shadow" },
+	{ prefix: "bg", list: "colour", key: "bg:color" },
+	{ prefix: "text", list: "colour", key: "text:color" },
+	{ prefix: "border", list: "colour", key: "border:color" },
+	{ prefix: "border-t", list: "colour", key: "border-t:color" },
+	{ prefix: "border-r", list: "colour", key: "border-r:color" },
+	{ prefix: "border-b", list: "colour", key: "border-b:color" },
+	{ prefix: "border-l", list: "colour", key: "border-l:color" },
+	{ prefix: "border-x", list: "colour", key: "border-x:color" },
+	{ prefix: "border-y", list: "colour", key: "border-y:color" },
+	{ prefix: "border-s", list: "colour", key: "border-s:color" },
+	{ prefix: "border-e", list: "colour", key: "border-e:color" },
+	{ prefix: "divide", list: "colour", key: "divide:color" },
+	{ prefix: "placeholder", list: "colour", key: "placeholder:color" },
+	{ prefix: "caret", list: "colour", key: "caret:color" },
+	{ prefix: "accent", list: "colour", key: "accent:color" },
+	{ prefix: "decoration", list: "colour", key: "decoration:color" },
+	{ prefix: "shadow", list: "colour", key: "shadow:color" },
+	{ prefix: "ring", list: "colour", key: "ring:color" },
+	{ prefix: "outline", list: "colour", key: "outline:color" },
+	{ prefix: "fill", list: "colour", key: "fill" },
+	{ prefix: "stroke", list: "colour", key: "stroke:color" },
+	{ prefix: "from", list: "colour", key: "from" },
+	{ prefix: "via", list: "colour", key: "via" },
+	{ prefix: "to", list: "colour", key: "to" },
 	{ prefix: "cursor", key: "cursor" },
 	{ prefix: "aspect", key: "aspect" },
-	{ prefix: "ease", key: "ease" },
+	{ prefix: "ease", list: "ease", key: "ease" },
 ];
 
 /**
- * What this token sets, as a key two tokens share when one replaces the other.
- * Undefined means the lane has no family for it: it is written as it stands and
- * removed by its own spelling, never by a guess about what it displaces.
+ * Longest prefix first, so `border-t-thread` is the top edge's colour rather
+ * than the whole border's, whether or not a theme is there to tell them apart.
  */
-export function familyOf(base: string): string | undefined {
+const NAMED_BY_PREFIX = [...NAMED].sort((a, b) => b.prefix.length - a.prefix.length);
+
+/** The three colour words that are never theme values, and so are on every list. */
+const COLOUR_WORDS = new Set(["transparent", "current", "inherit"]);
+
+/**
+ * Whether a name belongs to a family, read against the project's own theme.
+ *
+ * A theme's list is exact for what it names, and open in the two places
+ * Tailwind is: a bracketed value is whatever was typed, and a bare number is
+ * the scale — `leading-4` is a line height however this project spells its
+ * named ones.
+ */
+function namesIt(
+	family: { list?: keyof ClassTheme; values?: ReadonlySet<string> },
+	name: string,
+	theme?: ClassTheme,
+): boolean {
+	if (/^\[.+\]$/.test(name) || /^\(--.+\)$/.test(name)) return true;
+	if (theme === undefined || family.list === undefined) {
+		return family.values === undefined || family.values.has(name);
+	}
+	if (theme[family.list].has(name)) return true;
+	if (family.list === "colour") return COLOUR_WORDS.has(name);
+	return /^\d+(?:\.\d+)?$/.test(name);
+}
+
+export function familyOf(base: string, theme?: ClassTheme): string | undefined {
 	const word = WORD_FAMILY.get(base);
 	if (word !== undefined) return word;
 	const length = lengthOf(base);
 	if (length !== null) return length.family;
-	if (isRadius(base)) return "radius";
+	if (isRadius(base, theme)) return "radius";
 	if (borderParts(base) !== undefined) return "border:width";
-	for (const family of NAMED) {
+	for (const family of NAMED_BY_PREFIX) {
 		if (!base.startsWith(`${family.prefix}-`)) continue;
 		const value = base.slice(family.prefix.length + 1);
 		const name = value.split("/")[0] ?? value;
-		if (family.values !== undefined && !family.values.has(name)) continue;
+		if (!namesIt(family, name, theme)) continue;
 		return family.key;
 	}
 	return undefined;

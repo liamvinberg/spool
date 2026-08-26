@@ -138,6 +138,21 @@ it("carries the base and every scope the literal has, and edits under the one pr
 	expect(dimmedTokens(host)).toEqual(["rounded-md", "px-3"]);
 });
 
+it("offers this project's own breakpoints to open a scope on, not Tailwind's", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	await descendTo(canvas, frame, 3);
+	await until(() => chips(host).length === 2);
+
+	await press("+", {}, host.querySelector<HTMLElement>('[aria-label="Open a scope"]'));
+	const offered = [...(rail(host)?.querySelectorAll("button") ?? [])].map((button) => button.textContent ?? "");
+
+	// the compiled theme renamed the breakpoints, so `md:` is a scope this
+	// project does not have and `app:` is the one it does
+	expect(offered.some((says) => says.startsWith("app:"))).toBe(true);
+	expect(offered.some((says) => says.startsWith("md:"))).toBe(false);
+	expect(offered.some((says) => says.startsWith("focus:"))).toBe(true);
+});
+
 it("greys the scope bar on a literal no hand may write, rather than hiding it", async () => {
 	const { host, canvas, frame } = await readyCanvas({ refused: true });
 	await descendTo(canvas, frame, 3);
@@ -429,6 +444,21 @@ async function heldFrames(): Promise<string[] | undefined> {
 	return (await served()).frames;
 }
 
+/** kaffe's compiled theme: one breakpoint of its own, and none of Tailwind's. */
+const THEME = {
+	colour: [{ name: "thread", value: "#F5391A", from: "project" }],
+	text: [],
+	weight: [],
+	font: [],
+	leading: [],
+	tracking: [],
+	radius: [],
+	shadow: [],
+	ease: [],
+	screen: [{ name: "app", value: "1280px", from: "project" }],
+	step: 4,
+};
+
 function stubCanvasApis(refused = false): void {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	vi.stubGlobal("open", vi.fn());
@@ -456,6 +486,9 @@ function stubCanvasApis(refused = false): void {
 			}
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });
+			}
+			if (url.pathname.endsWith("/theme")) {
+				return Response.json({ theme: THEME });
 			}
 			if (url.pathname.endsWith("/rungs")) {
 				return Response.json({ rungs: refused ? RUNGS.map(asExpression) : RUNGS });

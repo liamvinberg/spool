@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { splitClass } from "../../daemon/class-write";
-import type { Geometry, HandOp, RungRead } from "../api";
-import { readRungs } from "../api";
+import type { CompiledTheme, Geometry, HandOp, RungRead } from "../api";
+import { fetchTheme, readRungs } from "../api";
 import { cn } from "../cn";
 import { PropertiesIcon } from "../icons";
 import {
@@ -16,7 +16,7 @@ import {
 	type TokenState,
 	tokenState,
 	tokensUnder,
-	VARIANTS,
+	variantsOf,
 } from "./properties-scope";
 import type { PickedHit } from "./protocol";
 import {
@@ -41,8 +41,10 @@ import { PanelCaret } from "./sidebar";
  * — 300 plus 420 leaves 472px of field at 1440.
  *
  * This is the shell: the crumbs, the scope bar, the empty states and the
- * source line. The rows between them, and the seven primitives they need, are
- * #257 and #258.
+ * source line. What every row reads and writes is the property model (#257),
+ * which is also where the compiled theme reaches the canvas — the scope bar's
+ * breakpoints are this project's own because of it. The rows between them, and
+ * the seven primitives they need, are #258.
  *
  * Everything it draws about an element is read off the file rather than off
  * the document, through the same fresh parse the write lane runs. That is what
@@ -214,6 +216,30 @@ function useRungs(project: string, held: Held | null, revision: number): RungRea
 	return rungs;
 }
 
+/**
+ * The compiled theme, which is what every menu in the rail offers (#257).
+ *
+ * It is read per project and again whenever the held frame's document reloads:
+ * tokens.css is one of that document's own inputs, so a theme edit is a reload,
+ * and the daemon answers a re-read off its own cache when nothing changed.
+ * Nothing until the read lands, which is a rail with no menus rather than one
+ * offering Tailwind's defaults over a project that renamed them.
+ */
+function useTheme(project: string, revision: number): CompiledTheme | null {
+	const [theme, setTheme] = useState<CompiledTheme | null>(null);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is not read in here, it is the trigger — a document that reloaded may have reloaded because tokens.css changed
+	useEffect(() => {
+		let live = true;
+		void fetchTheme(project).then((read) => {
+			if (live && read !== undefined) setTheme(read);
+		});
+		return () => {
+			live = false;
+		};
+	}, [project, revision]);
+	return theme;
+}
+
 /* ---------- the rail itself ---------- */
 
 function Body({
@@ -230,6 +256,7 @@ function Body({
 	onCollapse: () => void;
 }) {
 	const rungs = useRungs(project, held, revision);
+	const theme = useTheme(project, revision);
 	const [scope, setScope] = useState<Scope>(BASE);
 	/** a scope opened by the `+` and not yet written to: it stands until it is filled or left */
 	const [opened, setOpened] = useState<Scope[]>([]);
@@ -274,6 +301,7 @@ function Body({
 			{element === null ? null : (
 				<ScopeBar
 					scopes={scopes}
+					variants={variantsOf(theme)}
 					scope={live}
 					ok={read?.refusal === undefined}
 					onScope={setScope}
@@ -437,6 +465,7 @@ function CollapseCaret({ onCollapse }: { onCollapse: () => void }) {
  */
 function ScopeBar({
 	scopes,
+	variants,
 	scope,
 	ok,
 	onScope,
@@ -444,6 +473,8 @@ function ScopeBar({
 	onRemove,
 }: {
 	scopes: readonly Scope[];
+	/** what this project's own theme has, which is where its breakpoints come from */
+	variants: readonly { prefix: string; when: string }[];
 	scope: Scope;
 	ok: boolean;
 	onScope: (scope: Scope) => void;
@@ -451,7 +482,7 @@ function ScopeBar({
 	onRemove: (scope: Scope) => void;
 }) {
 	const [opening, setOpening] = useState(false);
-	const free = VARIANTS.filter((variant) => !scopes.some((known) => sameScope(known, [variant.prefix])));
+	const free = variants.filter((variant) => !scopes.some((known) => sameScope(known, [variant.prefix])));
 	return (
 		<div className="relative flex min-h-8 shrink-0 flex-wrap items-center gap-1 border-border border-b px-2.5 py-1.5">
 			{scopes.map((candidate) => {

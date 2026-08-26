@@ -108,6 +108,7 @@ import { createShotTaker } from "./shots";
 import type { TermExecutor } from "./term-exec";
 import { termFontDataCss, termFontFile } from "./term-fonts";
 import { createTermSessions } from "./term-sessions";
+import { compileClasses, readTheme } from "./theme";
 import {
 	createThumbHealer,
 	isCoverHash,
@@ -489,6 +490,22 @@ export function createDaemonApp({
 			return c.text('a read is { "frame", "sources": [ "frames/…/frame.tsx:12:4" ] }', 400);
 		}
 		return { frame: body.frame, sources };
+	});
+
+	/**
+	 * The rail's free class field (#257): candidates put to the compiler.
+	 *
+	 * A handful at a time — the field asks about what a person is typing and
+	 * about the seeds it offers beside it, and a list longer than that is not a
+	 * question about one field any more.
+	 */
+	const classesBody = validator("json", (value, c) => {
+		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+		const tokens = body.tokens;
+		if (!Array.isArray(tokens) || tokens.length > 64 || tokens.some((token) => typeof token !== "string")) {
+			return c.text('a compile is { "tokens": ["mt-4", "md:hidden"] }, at most 64', 400);
+		}
+		return { tokens: tokens as string[] };
 	});
 
 	/** A write carries the fingerprint of the file the ask was answered against. */
@@ -1788,6 +1805,38 @@ export function createDaemonApp({
 			const read = await readRungs(project.root, frame, sources, framesUsingIn(project.root));
 			if (read.kind === "error") return c.text(read.message, read.status);
 			return c.json({ rungs: read.rungs });
+		})
+		/*
+		 * The compiled theme (#257). Every properties menu reads it, because a
+		 * menu that offers Tailwind's defaults while the project's tokens.css
+		 * says otherwise is lying about the project. It is the same stylesheets
+		 * a frame is compiled against, read through the same pinned Tailwind.
+		 */
+		.get("/api/p/:project/theme", async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			try {
+				return c.json({ theme: await readTheme(project.root) });
+			} catch (error) {
+				// a tokens.css that will not compile is the project's answer, and
+				// the rail draws its rows without menus rather than not at all
+				return c.text(error instanceof Error ? error.message : "the theme did not compile", 422);
+			}
+		})
+		/*
+		 * The compiler as the gate on the free class field (#257). A token lands
+		 * only when Tailwind has a utility for it, and what it compiles to is
+		 * shown beside it; one that does not carries the reason.
+		 */
+		.post("/api/p/:project/theme/classes", classesBody, async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { tokens } = c.req.valid("json");
+			try {
+				return c.json({ compiled: await compileClasses(project.root, tokens) });
+			} catch (error) {
+				return c.text(error instanceof Error ? error.message : "the theme did not compile", 422);
+			}
 		})
 		.post("/api/p/:project/patch", patchBody, async (c) => {
 			const project = resolveProject(c, c.req.param("project"));

@@ -18,6 +18,7 @@ import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
+import type { CompiledClass, CompiledTheme, ThemeToken } from "../daemon/theme";
 
 declare global {
 	interface Window {
@@ -32,6 +33,8 @@ export type {
 	Camera,
 	CanvasOrder,
 	CanvasState,
+	CompiledClass,
+	CompiledTheme,
 	Cover,
 	EdgeSite,
 	FlowEdge,
@@ -54,6 +57,7 @@ export type {
 	SelectionEntry,
 	SelectionPut,
 	ServedThread,
+	ThemeToken,
 	ThreadPut,
 };
 
@@ -343,6 +347,38 @@ export async function readRungs(
 		});
 		if (!res.ok) return undefined;
 		return ((await res.json()) as { rungs: RungRead[] }).rungs;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The theme the frames are compiled against (#257), which is what every
+ * properties menu offers.
+ *
+ * Nothing comes back for a project whose tokens.css will not compile, and the
+ * rail draws its rows without menus rather than not at all: a broken stylesheet
+ * is the project's own answer, not a reason for the surface to disappear.
+ */
+export async function fetchTheme(project: string): Promise<CompiledTheme | undefined> {
+	try {
+		const res = await client.api.p[":project"].theme.$get({ param: { project } });
+		if (!res.ok) return undefined;
+		return ((await res.json()) as { theme: CompiledTheme }).theme;
+	} catch {
+		return undefined;
+	}
+}
+
+/** What the compiler says about typed classes: the CSS each lands, or why none does. */
+export async function compileClasses(project: string, tokens: readonly string[]): Promise<CompiledClass[] | undefined> {
+	try {
+		const res = await client.api.p[":project"].theme.classes.$post({
+			param: { project },
+			json: { tokens: [...tokens] },
+		});
+		if (!res.ok) return undefined;
+		return ((await res.json()) as { compiled: CompiledClass[] }).compiled;
 	} catch {
 		return undefined;
 	}

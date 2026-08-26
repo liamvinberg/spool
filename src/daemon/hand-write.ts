@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { parse } from "@babel/parser";
 import type { JSXAttribute, JSXElement, JSXSpreadAttribute, Node } from "@babel/types";
-import { type ClassEdit, screenConflict, writeClass } from "./class-write";
+import { type ClassEdit, type ClassTheme, screenConflict, writeClass } from "./class-write";
 import { isLayoutOnly, textCore, writeJsxText } from "./jsx-text";
 import { walkNodes } from "./jsx-walk";
 
@@ -184,7 +184,7 @@ export function spanBetween(before: string, after: string): SpanPatch {
  * write of that literal, which is how a corner drag writes width and height
  * as one patch.
  */
-export function planOps(source: string, ops: readonly HandOp[]): Planned {
+export function planOps(source: string, ops: readonly HandOp[], theme?: ClassTheme): Planned {
 	let program: Node;
 	try {
 		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
@@ -216,7 +216,7 @@ export function planOps(source: string, ops: readonly HandOp[]): Planned {
 	}
 
 	for (const { element, edits } of classEdits.values()) {
-		const planned = planClass(source, element, edits);
+		const planned = planClass(source, element, edits, theme);
 		if ("refusal" in planned) return { ok: false, refusal: planned.refusal };
 		patches.push(planned.patch);
 	}
@@ -326,17 +326,17 @@ function literalOf(
 	return { slot, className: slot?.kind === "literal" ? slot.value : "" };
 }
 
-function planClass(source: string, element: Element, edits: readonly ClassEdit[]): OnePlan {
+function planClass(source: string, element: Element, edits: readonly ClassEdit[], theme?: ClassTheme): OnePlan {
 	const literal = literalOf(source, element);
 	if ("refusal" in literal) return literal;
 	const { slot } = literal;
 	let className = literal.className;
 	for (const edit of edits) {
-		const conflict = screenConflict(className === "" ? null : className, edit);
+		const conflict = screenConflict(className === "" ? null : className, edit, theme);
 		if (conflict !== undefined) {
 			return { refusal: { code: "variant-conflict", says: "variant-prefixed conflict", expression: conflict } };
 		}
-		className = writeClass(className === "" ? null : className, edit);
+		className = writeClass(className === "" ? null : className, edit, theme);
 	}
 	return { patch: fill(element, "className", className, slot) };
 }

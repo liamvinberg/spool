@@ -12,6 +12,7 @@ import {
 } from "./hand-write";
 import { frameFolder, lookupFrame } from "./projection";
 import { parseStamp } from "./selection";
+import { classThemeFor } from "./theme";
 
 /**
  * Where a patch lands (#253), which is the half of the write lane that knows
@@ -97,7 +98,9 @@ export async function patchSite(
 	if (fingerprint !== undefined && fingerprint !== current) {
 		return { kind: "refusal", refusal: STALE_FILE };
 	}
-	const planned = planOps(source, ops);
+	// the project's own theme, so a named token is read as the family this
+	// project gives it rather than as the family Tailwind's defaults would (#257)
+	const planned = planOps(source, ops, await classThemeFor(root));
 	if (!planned.ok) return { kind: "refusal", refusal: planned.refusal };
 	return {
 		kind: "ok",
