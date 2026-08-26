@@ -61,7 +61,8 @@ import { createFlowGraph, recordWalk } from "./flows";
 import { listDirectory, searchDirectories } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
-import { patchSite, readRungs, revertTarget, STALE_FILE } from "./hand-lane";
+import { ASSET_REQUEST_CAP, base64Length, listAssets } from "./hand-asset";
+import { type AssetPut, assetSite, patchSite, readRungs, revertTarget, STALE_FILE } from "./hand-lane";
 import { uncaughtNotice } from "./hand-notice";
 import { applySpan, fingerprintOf, parseHandOps, parseStamps, spanBetween } from "./hand-write";
 import { createHistory, type HistoryClock } from "./history";
@@ -519,6 +520,47 @@ export function createDaemonApp({
 			return c.text("a patch carries the fingerprint it was formed against", 400);
 		}
 		return { frame: body.frame, ops, fingerprint: body.fingerprint };
+	});
+
+	/**
+	 * The asset swap (#260): one `<img>`, and the picture it is to draw.
+	 *
+	 * Either a file a hand just dropped — its name and its bytes, because a
+	 * browser never reveals a dropped file's path — or one the project already
+	 * holds, named the way the canvas spells every path. Exactly one of the two:
+	 * a body carrying both is a client that has not decided.
+	 */
+	const assetBody = validator("json", (value, c) => {
+		const body = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+		const { frame, source, fingerprint, file, asset } = body;
+		const says = 'a swap is { "frame", "source", "fingerprint", and one of "file" or "asset" }';
+		if (typeof frame !== "string" || !isSafeName(frame) || typeof source !== "string") return c.text(says, 400);
+		if (parseStamps([source]) === undefined) return c.text(says, 400);
+		if (typeof fingerprint !== "string" || fingerprint === "") {
+			return c.text("a swap carries the fingerprint it was formed against", 400);
+		}
+		const swap: {
+			frame: string;
+			source: string;
+			fingerprint: string;
+			asset: string | undefined;
+			file: { name: string; data: string } | undefined;
+		} = { frame, source, fingerprint, asset: undefined, file: undefined };
+		if (typeof asset === "string" && file === undefined) {
+			if (asset.length === 0 || asset.length > 512) return c.text(says, 400);
+			swap.asset = asset;
+			return swap;
+		}
+		if (typeof file !== "object" || file === null || asset !== undefined) return c.text(says, 400);
+		const { name, data } = file as Record<string, unknown>;
+		if (typeof name !== "string" || typeof data !== "string") return c.text(says, 400);
+		if (data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data))
+			return c.text("not a file spool can read", 400);
+		// the budget is the real ceiling and the lane says so in the project's own
+		// words; this is only a bound on what one request may carry at all
+		if (data.length > base64Length(ASSET_REQUEST_CAP)) return c.text("not a file spool can read", 400);
+		swap.file = { name, data };
+		return swap;
 	});
 
 	const frameAuthority = (root: string) => ({
@@ -1860,6 +1902,61 @@ export function createDaemonApp({
 				...(site.text !== site.source && uncaughtNotice(project.root) ? { uncaught: true } : {}),
 			});
 		})
+		.post("/api/p/:project/asset", assetBody, async (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const { frame, source, fingerprint, file, asset } = c.req.valid("json");
+			const put: AssetPut =
+				file === undefined
+					? { kind: "held", path: asset ?? "" }
+					: { kind: "new", name: file.name, bytes: Buffer.from(file.data, "base64") };
+			const site = await assetSite(project.root, frame, source, put, framesUsingIn(project.root), fingerprint);
+			if (site.kind === "error") return c.text(site.message, site.status);
+			if (site.kind === "refusal") return c.json({ ok: false, refusal: site.refusal }, 409);
+			// the bytes land first: a document that reloads between the two writes
+			// must never find an import of a file that is not there yet
+			if (site.asset.bytes !== undefined) writeAtomic(site.asset.file, site.asset.bytes);
+			const undo = spanBetween(site.source, site.text);
+			if (site.text !== site.source) writeAtomic(site.file, site.text);
+			const after = fingerprintOf(site.text);
+			return c.json({
+				ok: true,
+				path: site.path,
+				asset: `design/${site.asset.path}`,
+				fingerprint: after,
+				mapped: site.mapped,
+				undo: { path: site.path, ...undo, fingerprint: after },
+				...(site.text !== site.source && uncaughtNotice(project.root) ? { uncaught: true } : {}),
+			});
+		})
+		/*
+		 * The imports the swap may choose from: what sits beside this frame, and
+		 * what `shared/assets/` holds. A menu rather than an index — the point of
+		 * choose-an-import is that a `src` is never typed.
+		 */
+		.get(
+			"/api/p/:project/assets",
+			validator("query", (value, c) => {
+				const frame = (value as { frame?: unknown }).frame;
+				if (typeof frame !== "string" || !isSafeName(frame)) {
+					return c.text("an asset listing is for one frame", 400);
+				}
+				return { frame };
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const { frame } = c.req.valid("query");
+				const found = lookupFrame(project.root, frame);
+				if (found.kind !== "found") return c.text(`no frame "${frame}"`, 404);
+				try {
+					return c.json({ assets: listAssets(project.root, found.dir) });
+				} catch (error) {
+					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
+					throw error;
+				}
+			},
+		)
 		.post(
 			"/api/p/:project/patch/revert",
 			validator("json", (value, c) => {

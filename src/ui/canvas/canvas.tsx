@@ -24,6 +24,7 @@ import {
 	fetchCover,
 	fetchFlows,
 	fetchProjection,
+	fileAsAsset,
 	gatePatch,
 	type HandOp,
 	openInEditor,
@@ -35,9 +36,11 @@ import {
 	putCover,
 	putGeometry,
 	putSelection,
+	readRungs,
 	resolveFlows,
 	revertPatch,
 	subscribeSse,
+	swapAsset,
 } from "../api";
 import { experimentOn } from "../experiments";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
@@ -137,6 +140,7 @@ import { type Held, PropertiesRail } from "./properties-rail";
 import { STEP } from "./properties-theme";
 import {
 	clipboardCopyAllowed,
+	dropTargetMessage,
 	editMessage,
 	endEditMessage,
 	type KinStep,
@@ -2117,6 +2121,77 @@ export function ProjectCanvas({
 	);
 
 	/**
+	 * The drop half of the asset swap (#260): the frame is armed, never open.
+	 *
+	 * A file dragged onto an image lands inside that frame's own document, so
+	 * the shim is the only thing that can catch it — and it catches nothing
+	 * until the canvas names one element, because the parity law says a frame
+	 * with a drop zone of its own must behave exactly as its bare document
+	 * does. One selected image is the whole of the arming, and it is taken back
+	 * the moment the selection moves.
+	 */
+	const armedDrop = useRef<string | null>(null);
+	useEffect(() => {
+		const only = picked.length === 1 ? picked[0] : undefined;
+		const target = only !== undefined && only.tag === "img" && !only.generated ? only : undefined;
+		const was = armedDrop.current;
+		if (was !== null && was !== target?.frame) {
+			iframes.current.get(was)?.contentWindow?.postMessage(dropTargetMessage(null), "*");
+		}
+		armedDrop.current = target?.frame ?? null;
+		if (target === undefined) return;
+		iframes.current.get(target.frame)?.contentWindow?.postMessage(dropTargetMessage(target.selector), "*");
+	}, [picked]);
+
+	/**
+	 * The asset swap (#260), which is the rail's write with a file in front of it.
+	 *
+	 * Not gated first, unlike every other hand edit: the picture and the splice
+	 * land in one call, so a gate would be asking about a file the swap is about
+	 * to rewrite anyway. The fingerprint the rail read the element out of is
+	 * what stands in its place, which is the same promise — the write is
+	 * measured against the file the surface actually drew.
+	 *
+	 * The undo it records is the source half. The picture stays in the folder,
+	 * because a file spool put in somebody's repo is theirs to keep or delete;
+	 * an undo that took it away again would be spool deleting a file nobody
+	 * asked it to.
+	 */
+	const swapPicture = useCallback(
+		(
+			frame: string,
+			selector: string,
+			at: { source: string; fingerprint: string },
+			put: { file: File } | { asset: string },
+		) => {
+			if (writing.current) return;
+			setRefused(null);
+			writing.current = true;
+			repick.current = { frame, selector };
+			const bytes = "file" in put ? fileAsAsset(put.file).then((file) => ({ file })) : Promise.resolve(put);
+			void bytes
+				.then((body) => swapAsset(project, frame, at.source, at.fingerprint, body))
+				.then((written) => {
+					writing.current = false;
+					if (written === undefined) {
+						repick.current = null;
+						setSaid({ kind: "failed", frame });
+						return;
+					}
+					if (!written.ok) {
+						repick.current = null;
+						showRefusal(frame, selector, written.refusal);
+						return;
+					}
+					recordEntry({ kind: "patch", frame, patch: written.undo });
+					holdNext.current.add(frame);
+					if (written.uncaught === true) setSaid({ kind: "uncaught" });
+				});
+		},
+		[project, recordEntry, showRefusal],
+	);
+
+	/**
 	 * The measurement's own answer (#259): the size did not take, so put it back.
 	 *
 	 * The patch the write just recorded is run in reverse and taken off the
@@ -2568,6 +2643,24 @@ export function ProjectCanvas({
 					fulfillClipboardCopy(message, (result) => source.postMessage(result, "*"));
 					return;
 				}
+				case "dropped": {
+					// the swap is measured against the file the surface read, like every
+					// other op, so the stamp's own rung is asked for before anything is
+					// written — a drop is the one gesture that arrives with no read
+					// behind it
+					const pick = pickedRef.current.find(
+						(candidate) => candidate.frame === message.frame && candidate.selector === message.selector,
+					);
+					const stamp = pick === undefined ? undefined : stampOf(pick);
+					if (pick === undefined || typeof stamp !== "string") return;
+					const file = message.file;
+					void readRungs(project, message.frame, [stamp]).then((rungs) => {
+						const fingerprint = rungs?.[0]?.fingerprint;
+						if (fingerprint === undefined) return;
+						swapPicture(message.frame, pick.selector, { source: stamp, fingerprint }, { file });
+					});
+					return;
+				}
 				case "loaded": {
 					lifecycleRef.current.noteLoaded(message.frame);
 					// the document a hand edit was waiting on: the one held in front
@@ -2790,6 +2883,7 @@ export function ProjectCanvas({
 		askChain,
 		applyPick,
 		rollBackResize,
+		swapPicture,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
@@ -4310,7 +4404,7 @@ export function ProjectCanvas({
 					shut={agentOpen}
 					onOpen={() => setAgentWidth(STRIP_WIDTH)}
 					preview={elementDrag === null ? null : { tokens: elementDrag.tokens, box: elementDrag.box }}
-					acts={{ onRung: takeRung, onGeometry: setFrameGeometry, onWrite: writeOps }}
+					acts={{ onRung: takeRung, onGeometry: setFrameGeometry, onWrite: writeOps, onSwap: swapPicture }}
 				/>
 				{agentPanel ? (
 					<AgentRail

@@ -12,8 +12,9 @@ import type { FrameCopy } from "../daemon/explorer";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
 import type { Geometry } from "../daemon/geometry";
+import type { ProjectAsset } from "../daemon/hand-asset";
 import type { RungRead } from "../daemon/hand-lane";
-import type { HandOp, HeldPatch, PatchRefusal } from "../daemon/hand-write";
+import type { AttributeRead, HandOp, HeldPatch, PatchRefusal } from "../daemon/hand-write";
 import type { LocatedRange } from "../daemon/locate";
 import type { Camera, CanvasState } from "../daemon/project-state";
 import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
@@ -30,6 +31,7 @@ declare global {
 
 export type {
 	AgentEvent,
+	AttributeRead,
 	Camera,
 	CanvasOrder,
 	CanvasState,
@@ -50,6 +52,7 @@ export type {
 	HeldPatch,
 	LocatedRange,
 	PatchRefusal,
+	ProjectAsset,
 	ProjectCard,
 	ProjectedFrame,
 	Projection,
@@ -289,6 +292,69 @@ export type PatchAsked =
 export type PatchWritten =
 	| { ok: true; path: string; fingerprint: string; mapped: boolean; undo: HeldPatch; uncaught?: true }
 	| { ok: false; refusal: PatchRefusal };
+
+/**
+ * The asset swap (#260): the picture, and what came back from putting it in.
+ *
+ * Its answer is a patch's, with the file it wrote named — an image in a frame
+ * is an import, so the swap is bytes on disk and a splice in the source, and
+ * the undo it hands back is the source half, which is the half a hand made.
+ */
+export type AssetSwapped =
+	| { ok: true; path: string; asset: string; fingerprint: string; mapped: boolean; undo: HeldPatch; uncaught?: true }
+	| { ok: false; refusal: PatchRefusal };
+
+/** A picture a hand dropped or chose, as bytes, because a browser never reveals its path. */
+export interface AssetFile {
+	name: string;
+	/** base64, which is how it rides to the daemon */
+	data: string;
+}
+
+/**
+ * A file the hands dropped or chose, as the bytes that ride to the daemon.
+ *
+ * Base64 because a browser never reveals a dropped file's path, so the bytes
+ * are the only thing there is to send. Chunked: `String.fromCharCode` takes
+ * its bytes as arguments and a photograph is hundreds of thousands of them,
+ * which is a stack overflow rather than a slow call.
+ */
+export async function fileAsAsset(file: File): Promise<AssetFile> {
+	const bytes = new Uint8Array(await file.arrayBuffer());
+	let binary = "";
+	for (let at = 0; at < bytes.length; at += 8192) binary += String.fromCharCode(...bytes.subarray(at, at + 8192));
+	return { name: file.name, data: btoa(binary) };
+}
+
+export async function swapAsset(
+	project: string,
+	frame: string,
+	source: string,
+	fingerprint: string,
+	put: { file: AssetFile; asset?: undefined } | { asset: string; file?: undefined },
+): Promise<AssetSwapped | undefined> {
+	try {
+		const res = await client.api.p[":project"].asset.$post({
+			param: { project },
+			json: { frame, source, fingerprint, file: put.file, asset: put.asset },
+		});
+		if (!res.ok && res.status !== 409) return undefined;
+		return (await res.json()) as AssetSwapped;
+	} catch {
+		return undefined;
+	}
+}
+
+/** The imports one frame may choose from: what is beside it, and what is shared. */
+export async function listAssets(project: string, frame: string): Promise<ProjectAsset[] | undefined> {
+	try {
+		const res = await client.api.p[":project"].assets.$get({ param: { project }, query: { frame } });
+		if (!res.ok) return undefined;
+		return ((await res.json()) as { assets: ProjectAsset[] }).assets;
+	} catch {
+		return undefined;
+	}
+}
 
 export async function gatePatch(
 	project: string,

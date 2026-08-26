@@ -36,6 +36,9 @@ const ancestry = (...selectors: readonly string[]): PickedHit[] =>
 /** screen › footer › pay, the ancestry under the pointer in every test here. */
 const CHAIN = ancestry("screen", "footer", "pay");
 
+/** the same ancestry with an image at its foot, which is what a swap is offered on */
+const IMG_CHAIN = CHAIN.map((hit, at) => (at === 2 ? { ...hit, tag: "img" } : hit));
+
 /** the same rung with a className no hand may write, which is what a refusal reads off */
 const asExpression = (rung: (typeof RUNGS)[number]) => ({
 	...rung,
@@ -304,6 +307,74 @@ it("removes a token from the source line, which is the only way back out for a `
 	]);
 });
 
+/*
+ * The string fields (#260). Same mechanics and same gate as the text edit out
+ * on the canvas: one typed op, spliced into the characters between the quotes.
+ */
+
+it("draws a field for every string the element carries and writes one back", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	payAttributes = [{ name: "title", value: "pay now" }];
+	await descendTo(canvas, frame, 3);
+	await until(() => attributeRow(host, "title") !== null);
+
+	expect(fieldFor(host, "title")?.value).toBe("pay now");
+	await typeInto(fieldFor(host, "title"), "pay later");
+	expect(await gatedOps()).toEqual([
+		{ kind: "set-attribute", source: "frames/home/frame.tsx:12:3", name: "title", value: "pay later" },
+	]);
+});
+
+it("shows a walk target and refuses to write it, because the arrow lives in flows", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	payAttributes = [{ name: "data-go", value: "receipt" }];
+	await descendTo(canvas, frame, 3);
+	await until(() => attributeRow(host, "data-go") !== null);
+
+	expect(attributeRow(host, "data-go")?.textContent).toContain("receipt");
+	expect(attributeRow(host, "data-go")?.textContent).toContain("walk target, edit in flows");
+	expect(fieldFor(host, "data-go")).toBeNull();
+});
+
+it("names the expression where a value is not written literally", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	payAttributes = [{ name: "title", expression: "{item.name}" }];
+	await descendTo(canvas, frame, 3);
+	await until(() => attributeRow(host, "title") !== null);
+
+	expect(attributeRow(host, "title")?.textContent).toContain("{item.name}");
+	expect(attributeRow(host, "title")?.textContent).toContain("title is an expression");
+	expect(fieldFor(host, "title")).toBeNull();
+});
+
+it("offers an image the project's own pictures, and swaps to the one picked", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	payAttributes = [{ name: "src", asset: "./old.png" }];
+	await clickAt(canvas, 40, 40);
+	for (let rung = 0; rung < 3; rung++) {
+		await doubleClickAt(canvas, 40, 40);
+		await frame.answer(IMG_CHAIN);
+	}
+	await until(() => attributeRow(host, "src") !== null);
+
+	// the src is a menu rather than a box: an image is an import, so it is
+	// chosen and never typed
+	expect(attributeRow(host, "src")?.querySelector("[data-text-value]")).toBeNull();
+	const menu = attributeRow(host, "src")?.querySelector<HTMLButtonElement>("button");
+	expect(menu?.textContent).toContain("old.png");
+	await press("click", {}, menu ?? null);
+	const option = host.querySelector<HTMLElement>('[data-menu-option="logo.svg"]');
+	expect(option).not.toBeNull();
+	await press("click", {}, option);
+
+	expect(await lastSwap()).toMatchObject({
+		frame: "home",
+		source: "frames/home/frame.tsx:12:3",
+		fingerprint: "f",
+		asset: "shared/assets/logo.svg",
+	});
+});
+
 // --- the harness -------------------------------------------------------------
 
 const rail = (host: HTMLElement) => host.querySelector<HTMLElement>('[aria-label="Properties"]');
@@ -416,6 +487,19 @@ async function gates(): Promise<number> {
 	await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
 	const calls = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL, RequestInit?][] } }).mock.calls;
 	return calls.filter(([input]) => String(input).endsWith("/patch/gate")).length;
+}
+
+/** the body of the last asset swap the canvas sent (#260) */
+async function lastSwap(): Promise<Record<string, unknown> | undefined> {
+	await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+	const calls = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL, RequestInit?][] } }).mock.calls;
+	const last = calls.filter(([input]) => String(input).endsWith("/asset")).at(-1);
+	return last === undefined ? undefined : (JSON.parse(String(last[1]?.body)) as Record<string, unknown>);
+}
+
+/** one row of the attributes section, whichever control it holds */
+function attributeRow(host: HTMLElement, name: string): HTMLElement | null {
+	return rail(host)?.querySelector<HTMLElement>(`[data-properties-row="${name}"]`) ?? null;
 }
 
 /** the ops the last gate was asked about */
@@ -622,10 +706,13 @@ const COMPILED = [
 
 /** what the file says the held rung wears, which a write in a test moves */
 let payLiteral = "";
+/** the attributes the file writes on the held rung (#260) */
+let payAttributes: { name: string; value?: string; expression?: string; asset?: string }[] = [];
 
 function stubCanvasApis(refused = false): void {
 	events = null;
 	payLiteral = RUNGS[2]?.className ?? "";
+	payAttributes = [];
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	vi.stubGlobal("open", vi.fn());
 	const setAttribute = HTMLIFrameElement.prototype.setAttribute;
@@ -669,8 +756,31 @@ function stubCanvasApis(refused = false): void {
 			if (url.pathname.endsWith("/rungs")) {
 				// the held rung reads whatever the file is now saying, so a write and
 				// the re-read that follows it can both be driven from a test
-				const held = RUNGS.map((rung, at) => (at === 2 ? { ...rung, className: payLiteral } : rung));
+				const held = RUNGS.map((rung, at) =>
+					at === 2
+						? { ...rung, className: payLiteral, attributes: payAttributes, fingerprint: "f" }
+						: { ...rung, fingerprint: "f" },
+				);
 				return Response.json({ rungs: refused ? held.map(asExpression) : held });
+			}
+			// the imports a swap may choose from (#260), and the swap itself
+			if (url.pathname.endsWith("/assets")) {
+				return Response.json({
+					assets: [
+						{ path: "frames/home/hero.png", bytes: 2048 },
+						{ path: "shared/assets/logo.svg", bytes: 512 },
+					],
+				});
+			}
+			if (url.pathname.endsWith("/asset")) {
+				return Response.json({
+					ok: true,
+					path: "design/frames/home/frame.tsx",
+					asset: "design/shared/assets/logo.svg",
+					fingerprint: "g",
+					mapped: false,
+					undo: { path: "design/frames/home/frame.tsx", start: 0, end: 0, text: "", fingerprint: "g" },
+				});
 			}
 			if (url.pathname.endsWith("/patch/gate")) {
 				return Response.json({ ok: true, path: "design/frames/home/frame.tsx", fingerprint: "f", mapped: false });

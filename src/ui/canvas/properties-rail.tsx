@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
-import type { CompiledTheme, Geometry, HandOp, RungRead } from "../api";
-import { fetchTheme, readRungs } from "../api";
+import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
+import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
 import { PropertiesIcon } from "../icons";
+import { type AttributeField, fieldsFor } from "./properties-attributes";
 import { useCompiler } from "./properties-compile";
-import { FAINT, LABEL, NumField, Row, Section, VALUE } from "./properties-fields";
+import { FAINT, LABEL, Menu, NumField, type Option, Row, Section, TextField, VALUE } from "./properties-fields";
 import type { RowEdit, RowElement } from "./properties-rows";
 import {
 	BASE,
@@ -95,6 +96,19 @@ export interface PropertiesActs {
 	onGeometry: (name: string, patch: Partial<Geometry>) => void;
 	/** the write lane: gated, spliced, and recorded on the canvas's one undo stack */
 	onWrite: (frame: string, selector: string, ops: readonly HandOp[]) => void;
+	/**
+	 * The asset swap (#260): the one hand edit that writes a file.
+	 *
+	 * It carries the fingerprint the rail read the element out of rather than
+	 * being gated first, because the picture and the splice land together — a
+	 * gate would answer about a file the swap is about to rewrite anyway.
+	 */
+	onSwap: (
+		frame: string,
+		selector: string,
+		at: { source: string; fingerprint: string },
+		put: { file: File } | { asset: string },
+	) => void;
 }
 
 export function PropertiesRail({
@@ -353,6 +367,9 @@ function Body({
 		...(read?.mapped === true ? { mapped: true } : {}),
 	};
 	const rect = element === null ? undefined : element.chain[rung]?.rect;
+	// the imports the swap may choose from, asked for only where a rung has a
+	// picture on it at all
+	const assets = useAssets(project, element?.frame ?? null, rowElement.tag === "img", revision);
 	const view: View = {
 		scope: live,
 		scoped: scopedClass(literal, live),
@@ -416,6 +433,24 @@ function Body({
 				    about the next one, and a re-pick after this rail's own write is the
 				    same rung, so an edit does not close what you opened */}
 				{element === null || read === undefined ? null : <PropertySections key={identity} view={view} />}
+				{element === null || read === undefined ? null : (
+					<Attributes
+						key={`${identity} attributes`}
+						read={read}
+						tag={rowElement.tag}
+						assets={assets}
+						onWrite={(name, value) => write([{ kind: "set-attribute", source: read.source, name, value }])}
+						onSwap={(put) => {
+							if (read.fingerprint === undefined) return;
+							acts.onSwap(
+								element.frame,
+								element.selector,
+								{ source: read.source, fingerprint: read.fingerprint },
+								put,
+							);
+						}}
+					/>
+				)}
 				{element === null ? null : (
 					<SourceLine
 						read={read}
@@ -722,6 +757,147 @@ function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geome
 					))}
 				</Section>
 			))}
+		</>
+	);
+}
+
+/* ---------- the string fields (#260) ---------- */
+
+/**
+ * The imports this frame may choose from, read once per frame.
+ *
+ * Asked for only where a rung actually has a picture on it, because most
+ * elements do not and a menu nobody opens should cost no round trip. Re-read
+ * on a reload, since a swap of its own puts a new file in the folder the menu
+ * lists.
+ */
+function useAssets(project: string, frame: string | null, wanted: boolean, revision: number): ProjectAsset[] {
+	const [assets, setAssets] = useState<ProjectAsset[]>([]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is not read in here, it is the trigger — a swap of its own puts a new file in the folder this lists
+	useEffect(() => {
+		if (frame === null || !wanted) {
+			setAssets([]);
+			return;
+		}
+		let live = true;
+		void listAssets(project, frame).then((read) => {
+			if (live) setAssets(read ?? []);
+		});
+		return () => {
+			live = false;
+		};
+	}, [project, frame, wanted, revision]);
+	return assets;
+}
+
+/** The one option that is not a picture: the OS file dialog, as a row in the menu. */
+const CHOOSE = "\u0000choose";
+
+/**
+ * The attributes section: `alt`, `href`, `placeholder`, `title` and their kin.
+ *
+ * Same mechanics and same gate as the text edit out on the canvas — one typed
+ * op, spliced into the characters between the quotes — so a value that is not
+ * written literally greys with the expression named rather than disappearing.
+ *
+ * `src` on an image is the exception and the reason this section is not just a
+ * column of text boxes: an image in a frame is an import and never a URL, so
+ * the field is a menu of the project's own pictures and a file dialog, and a
+ * drop out on the canvas lands in the same place.
+ */
+function Attributes({
+	read,
+	tag,
+	assets,
+	onWrite,
+	onSwap,
+}: {
+	read: RungRead;
+	tag: string;
+	assets: readonly ProjectAsset[];
+	onWrite: (name: string, value: string) => void;
+	onSwap: (put: { file: File } | { asset: string }) => void;
+}) {
+	const fields = fieldsFor(tag, read.attributes ?? [], read.refusal);
+	if (fields.length === 0) return null;
+	return (
+		<Section name="attributes" {...(read.mapped === true ? { reason: "all rows" } : {})}>
+			{fields.map((field) => (
+				<Row key={field.name} name={field.name} ok={field.reason === undefined}>
+					{field.asset === true ? (
+						<AssetField field={field} assets={assets} onSwap={onSwap} />
+					) : (
+						<TextField
+							value={field.expression ?? field.value}
+							ok={field.reason === undefined}
+							placeholder="none"
+							onCommit={(typed) => onWrite(field.name, typed)}
+						/>
+					)}
+					{field.reason === undefined ? null : (
+						<span className={cn("ml-auto min-w-0 shrink truncate pl-1", FAINT)}>{field.reason}</span>
+					)}
+				</Row>
+			))}
+		</Section>
+	);
+}
+
+/** The picture, chosen — never typed, because the op has to write an import. */
+function AssetField({
+	field,
+	assets,
+	onSwap,
+}: {
+	field: AttributeField;
+	assets: readonly ProjectAsset[];
+	onSwap: (put: { file: File } | { asset: string }) => void;
+}) {
+	const picker = useRef<HTMLInputElement | null>(null);
+	const held = field.specifier ?? "";
+	const options: Option[] = [
+		{ token: CHOOSE, name: "choose a file…" },
+		...assets.map((asset) => ({
+			token: asset.path,
+			name: asset.path.split("/").at(-1) ?? asset.path,
+			value: `${Math.ceil(asset.bytes / 1024)} KB`,
+			group: asset.path.startsWith("shared/") ? "shared" : "beside the frame",
+		})),
+	];
+	return (
+		<>
+			<Menu
+				current={{
+					token: held === "" ? null : held,
+					name: held === "" ? "none" : (held.split("/").at(-1) ?? held),
+				}}
+				options={options}
+				ok={field.reason === undefined}
+				label="image"
+				filter={assets.length > 8}
+				onPick={(token) => {
+					if (token === null) return;
+					if (token === CHOOSE) {
+						picker.current?.click();
+						return;
+					}
+					onSwap({ asset: token });
+				}}
+			/>
+			{/* the OS dialog, which is the other half of choose-an-import: a browser
+			    never reveals a dropped or chosen file's path, so the bytes are what
+			    travels and the daemon decides where they land */}
+			<input
+				ref={picker}
+				type="file"
+				accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+				className="hidden"
+				onChange={(event) => {
+					const file = event.target.files?.[0];
+					event.target.value = "";
+					if (file !== undefined) onSwap({ file });
+				}}
+			/>
 		</>
 	);
 }

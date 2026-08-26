@@ -146,9 +146,36 @@ export type FrameMessage =
 	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
 	| { spool: "edited"; frame: string; id: number; commit: boolean; text: string }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
+	| FrameDroppedMessage
 	| { spool: "external"; frame: string; href: string }
 	| { spool: "go"; frame: string; target: string; session?: SessionRecord; id?: number }
 	| { spool: "back"; frame: string; target: string; session?: SessionRecord; id?: number };
+
+/**
+ * A file dropped on the element the canvas armed (#260).
+ *
+ * The drop lands inside the frame's own document, so this relay is the only
+ * way the canvas ever hears about it. The `File` rides as itself rather than
+ * as bytes: it is structured-cloneable, and the daemon wants a name and a body
+ * either way.
+ */
+export interface FrameDroppedMessage {
+	spool: "dropped";
+	frame: string;
+	selector: string;
+	file: File;
+}
+
+/**
+ * What the canvas arms a frame with: the one element a drop on it means
+ * something for, or nothing.
+ *
+ * Nothing is the resting state, and it is the parity law rather than caution.
+ * A frame whose own prototype takes a drop has to behave exactly as its bare
+ * document does, so the shim intercepts nothing until the canvas names an
+ * element — which it does only for a single selected image.
+ */
+export const dropTargetMessage = (selector: string | null) => ({ spool: "drop-target", selector }) as const;
 
 export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 	if (typeof data !== "object" || data === null) return undefined;
@@ -196,6 +223,10 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				: undefined;
 		case "edited":
 			return typeof m.id === "number" && typeof m.commit === "boolean" && typeof m.text === "string"
+				? (m as unknown as FrameMessage)
+				: undefined;
+		case "dropped":
+			return typeof m.selector === "string" && m.selector !== "" && m.file instanceof File
 				? (m as unknown as FrameMessage)
 				: undefined;
 		case "site-boxes":

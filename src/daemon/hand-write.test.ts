@@ -382,3 +382,158 @@ describe("readElements", () => {
 		expect(readElements("const x = (", [{ line: 1, column: 1 }])).toEqual([undefined]);
 	});
 });
+
+/**
+ * The asset swap (#260): the one op that writes an import, because an image in
+ * a frame is an import and never a URL.
+ */
+describe("set-asset", () => {
+	it("writes the import, points src at it, and leaves every other character alone", () => {
+		const text = written([
+			{ kind: "set-asset", source: stamp(FRAME, "<img"), specifier: "./hero.png", hint: "hero" },
+		]);
+		expect(text).toContain('import hero from "./hero.png";');
+		expect(text).toContain('<img src={hero} alt="a" />');
+		expect(text.split("\n")[0]).toBe('import { Card } from "../../shared/ui/card";');
+	});
+
+	it("writes the import into a file that has none", () => {
+		const source = `export default function Frame() {\n\treturn <img src="/a.png" />;\n}\n`;
+		const text = written(
+			[{ kind: "set-asset", source: stamp(source, "<img"), specifier: "./hero.png", hint: "hero" }],
+			source,
+		);
+		expect(text).toBe(
+			`import hero from "./hero.png";\nexport default function Frame() {\n\treturn <img src={hero} />;\n}\n`,
+		);
+	});
+
+	it("reuses the import the file already has for that file", () => {
+		const source = `import hero from "./hero.png";\nconst x = <img src="/a.png" />;\nvoid hero;\n`;
+		const text = written(
+			[{ kind: "set-asset", source: stamp(source, "<img"), specifier: "./hero.png", hint: "hero" }],
+			source,
+		);
+		expect(text).toBe(`import hero from "./hero.png";\nconst x = <img src={hero} />;\nvoid hero;\n`);
+	});
+
+	it("mints a name nothing in the file already says", () => {
+		const source = `const hero = 1;\nconst x = <img src="/a.png" />;\nvoid hero;\n`;
+		const text = written(
+			[{ kind: "set-asset", source: stamp(source, "<img"), specifier: "./hero.png", hint: "hero" }],
+			source,
+		);
+		expect(text).toContain('import hero2 from "./hero.png";');
+		expect(text).toContain("<img src={hero2} />");
+	});
+
+	it("takes the orphaned import with it, because a dead image still weighs on the document", () => {
+		const source = `import old from "./old.png";\nconst x = <img src={old} />;\n`;
+		const text = written(
+			[{ kind: "set-asset", source: stamp(source, "<img"), specifier: "./new.png", hint: "next" }],
+			source,
+		);
+		expect(text).toBe(`import next from "./new.png";\nconst x = <img src={next} />;\n`);
+	});
+
+	it("leaves an import a second element still reads", () => {
+		const source = `import old from "./old.png";\nconst x = <img src={old} />;\nconst y = <img src={old} />;\n`;
+		const text = written(
+			[{ kind: "set-asset", source: stamp(source, "<img"), specifier: "./new.png", hint: "next" }],
+			source,
+		);
+		expect(text).toContain('import old from "./old.png";');
+		expect(text).toContain("const y = <img src={old} />;");
+	});
+
+	it("writes a src the element does not carry yet", () => {
+		const source = `const x = <img alt="a" />;\n`;
+		const text = written(
+			[{ kind: "set-asset", source: stamp(source, "<img"), specifier: "./hero.png", hint: "hero" }],
+			source,
+		);
+		expect(text).toContain('<img src={hero} alt="a" />');
+	});
+
+	it("refuses a computed src and names it", () => {
+		const source = `const x = <img src={item.photo} />;\n`;
+		expect(
+			refusal([{ kind: "set-asset", source: stamp(source, "<img"), specifier: "./hero.png", hint: "hero" }], source),
+		).toEqual({ code: "expression-attribute", says: "src is an expression", expression: "{item.photo}" });
+	});
+
+	it("refuses anything that is not an image element", () => {
+		expect(
+			refusal([{ kind: "set-asset", source: stamp(FRAME, "<h1"), specifier: "./hero.png", hint: "hero" }]),
+		).toEqual({ code: "not-an-image", says: "an import points at an image, and h1 is not one" });
+	});
+
+	it("refuses spread props with no src of their own", () => {
+		const source = `const x = <img {...rest} />;\n`;
+		expect(
+			refusal([{ kind: "set-asset", source: stamp(source, "<img"), specifier: "./hero.png", hint: "hero" }], source)
+				.code,
+		).toBe("spread-props");
+	});
+
+	it("is one span between the file before and after, so it is one press of undo", () => {
+		const source = `import old from "./old.png";\nconst x = <img src={old} />;\n`;
+		const text = written(
+			[{ kind: "set-asset", source: stamp(source, "<img"), specifier: "./new.png", hint: "next" }],
+			source,
+		);
+		expect(applySpan(text, spanBetween(source, text))).toBe(source);
+	});
+});
+
+/** The read half the rail's source section draws from (#260). */
+describe("the attributes a rung reads", () => {
+	function readOne(source: string, snippet: string) {
+		const [, line, column] = stamp(source, snippet).split(":");
+		const read = readElements(source, [{ line: Number(line), column: Number(column) }])[0];
+		if (read === undefined) throw new Error("no read");
+		return read;
+	}
+
+	it("reads a string attribute as the characters between its quotes", () => {
+		expect(readOne(FRAME, "<img").attributes).toEqual([
+			{ name: "src", value: "/a.png" },
+			{ name: "alt", value: "a" },
+		]);
+	});
+
+	it("names what the file says instead where the value is no literal", () => {
+		expect(readOne(FRAME, "<button").attributes).toEqual([{ name: "onClick", expression: "{() => pay()}" }]);
+	});
+
+	it("leaves className and style out: each has a surface of its own", () => {
+		expect(readOne(FRAME, "<p style").attributes).toEqual([]);
+	});
+
+	it("reads a bare attribute as a place for a value", () => {
+		const source = `const x = <input disabled placeholder="name" />;\n`;
+		expect(readOne(source, "<input").attributes).toEqual([
+			{ name: "disabled", value: "" },
+			{ name: "placeholder", value: "name" },
+		]);
+	});
+});
+
+describe("the name a swap's import is minted with", () => {
+	it("never takes a word the language has, because that import would not parse", () => {
+		const source = `const x = <img src="/a.png" />;\n`;
+		const text = written(
+			[{ kind: "set-asset", source: stamp(source, "<img"), specifier: "./default.png", hint: "default" }],
+			source,
+		);
+		expect(text).toContain('import default2 from "./default.png";');
+		expect(text).toContain("<img src={default2} />");
+	});
+
+	it("refuses a src bound to something that is not an image import", () => {
+		const source = `const photo = "x";\nconst y = <img src={photo} />;\n`;
+		expect(
+			refusal([{ kind: "set-asset", source: stamp(source, "<img"), specifier: "./hero.png", hint: "hero" }], source),
+		).toEqual({ code: "expression-attribute", says: "src is an expression", expression: "{photo}" });
+	});
+});

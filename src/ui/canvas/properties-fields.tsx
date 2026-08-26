@@ -212,6 +212,69 @@ export function NumField({
 	);
 }
 
+/* ---------- a string the file holds ---------- */
+
+/**
+ * One string attribute, edited where it is written (#260).
+ *
+ * The same shape as the number box next to it and none of its arithmetic: an
+ * `alt` has no scale to step through and no unit to read out. A refused field
+ * keeps its value and loses its box, because a control that vanishes reads as
+ * a bug and a greyed one teaches you the shape of your own code.
+ */
+export function TextField({
+	value,
+	ok,
+	placeholder,
+	onCommit,
+	className,
+}: {
+	value: string;
+	ok: boolean;
+	placeholder?: string | undefined;
+	onCommit: (typed: string) => void;
+	className?: string;
+}) {
+	const [draft, setDraft] = useState<string | null>(null);
+	if (!ok) {
+		return (
+			<span className={cn("flex min-w-0 flex-1 items-center px-1", className)}>
+				<span data-text-value="" className={cn("min-w-0 flex-1 truncate text-muted/40", VALUE)}>
+					{value === "" ? (placeholder ?? "") : value}
+				</span>
+			</span>
+		);
+	}
+	return (
+		<label className={cn("flex min-w-0 flex-1 items-center px-1", BOX, className)}>
+			<input
+				data-text-value=""
+				value={draft ?? value}
+				placeholder={placeholder}
+				spellCheck={false}
+				onChange={(event) => setDraft(event.target.value)}
+				onBlur={() => {
+					if (draft !== null && draft !== value) onCommit(draft);
+					setDraft(null);
+				}}
+				onKeyDown={(event) => {
+					event.stopPropagation();
+					if (event.key === "Enter") {
+						if (draft !== null && draft !== value) onCommit(draft);
+						setDraft(null);
+						event.currentTarget.blur();
+					}
+					if (event.key === "Escape") {
+						setDraft(null);
+						event.currentTarget.blur();
+					}
+				}}
+				className={cn("min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted/40", VALUE)}
+			/>
+		</label>
+	);
+}
+
 /* ---------- where a popup lands, and when it goes away ---------- */
 
 /**

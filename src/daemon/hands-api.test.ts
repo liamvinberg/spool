@@ -861,9 +861,31 @@ describe("the rungs read", () => {
 		line?: number;
 		mapped?: true;
 		refusal?: { code: string; says: string; expression?: string };
+		attributes?: { name: string; value?: string; expression?: string; asset?: string }[];
+		fingerprint?: string;
 	}
 
+	/**
+	 * The read with the file's own hash taken off.
+	 *
+	 * Every rung carries it — a gesture formed from what the rail drew is
+	 * measured against the file the rail read (#260) — and it is a hash of the
+	 * whole file rather than a fact about the rung, so it is asserted once
+	 * below and left out of the readings.
+	 */
 	async function rungs(
+		app: ReturnType<typeof makeApp>,
+		name: string,
+		sources: readonly string[],
+		frame = "cart",
+	): Promise<RungAnswer[]> {
+		return (await readRungs(app, name, sources, frame)).map(({ fingerprint, ...rung }) => {
+			expect(fingerprint === undefined || fingerprint.length === 64).toBe(true);
+			return rung;
+		});
+	}
+
+	async function readRungs(
 		app: ReturnType<typeof makeApp>,
 		name: string,
 		sources: readonly string[],
@@ -873,6 +895,35 @@ describe("the rungs read", () => {
 		expect(res.status).toBe(200);
 		return ((await res.json()) as { rungs: RungAnswer[] }).rungs;
 	}
+
+	it("carries the hash of the file it read, which is what a gesture is measured against", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "cart", cartTsx);
+		const app = makeApp(spoolDir);
+
+		const [read] = await readRungs(app, name, [stampFor(cartTsx, "<main")]);
+		expect(read?.fingerprint).toBe(fingerprintOf(cartTsx));
+	});
+
+	it("reads the string attributes the tag carries, and names the ones that are not literals", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		const frame = `import hero from "./hero.png";\nexport default function Frame() {\n\treturn (\n\t\t<main>\n\t\t\t<img src={hero} alt="a latte" />\n\t\t\t<button data-go="checkout" onClick={() => pay()}>Pay</button>\n\t\t</main>\n\t);\n}\n`;
+		writeFrame(root, "cart", frame);
+		const app = makeApp(spoolDir);
+
+		const [image, button] = await rungs(app, name, [stampFor(frame, "<img"), stampFor(frame, "<button")]);
+		// a src bound to an image import is the picture it draws, not an expression
+		expect(image?.attributes).toEqual([
+			{ name: "src", asset: "./hero.png" },
+			{ name: "alt", value: "a latte" },
+		]);
+		expect(button?.attributes).toEqual([
+			{ name: "data-go", value: "checkout" },
+			{ name: "onClick", expression: "{() => pay()}" },
+		]);
+	});
 
 	it("reads a whole ancestry in rung order: the authored name, the literal, and where it is written", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
@@ -894,6 +945,7 @@ describe("the rungs read", () => {
 				className: "rounded-md px-3 py-2",
 				path: "design/frames/cart/frame.tsx",
 				line: 7,
+				attributes: [{ name: "onClick", expression: "{() => pay()}" }],
 			},
 		]);
 	});

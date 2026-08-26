@@ -24,7 +24,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Geometry sidecar**: The `frame.json` beside a frame's source, holding its place and size on the canvas. Both hands write it, along one seam: an agent states the size, spool states the position, and only a hand that means to move something writes a coordinate. So a size with no position is a whole sidecar rather than a broken one — spool completes it with a place beside that page's frames, which is the placement no agent can guess and therefore the overlap no agent can cause. A placement already on disk is never overwritten, and bytes that do not parse are a write in flight and are left exactly alone. _Avoid_: layout file
 
-**Asset**: A project file whose bytes ride inside the served document instead of being fetched: an image or text file a frame imports, or a font `shared/fonts.css` names by a relative `url()`. There is no asset route and no asset URL, and the import is what puts the file in a frame's closure. _Avoid_: static file, public folder
+**Asset**: A project file whose bytes ride inside the served document instead of being fetched: an image or text file a frame imports, or a font `shared/fonts.css` names by a relative `url()`. There is no asset route and no asset URL, and the import is what puts the file in a frame's closure. Which is why swapping the picture on an `<img>` by hand writes a file: the bytes land beside the frame, the import is written, and `src` is pointed at its identifier (#260). _Avoid_: static file, public folder
 
 ### Canvas
 
@@ -122,7 +122,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Chip**: One entry of the selection in the composer, riding out with the message without being asked for. The strip takes one line of the composer and never two: either every chip fits or it is a count that opens into a droppable list, and there is no third shape. A chip's dismiss control deselects on the canvas, because two picks of one list row are one string in the rail and two boxes out there. The frame the hands stepped into is an ordinary chip with the control taken off, at full strength. _Avoid_: pill, tag, token
 
-**Attachment**: A reference image riding with a prompt as base64 over the stdin the turn already opens. Look-only: nothing is written, so the app-owned folder gains no inbox, no lifetime and no deleter, and the agent's own transcript is the durable copy. A browser never reveals a dropped file's path, which is why adding an asset stays a deliberate import into `design/shared/assets/`. It arrives by paste or drop, and its receipt is the picture under the words in the transcript. _Avoid_: upload, file
+**Attachment**: A reference image riding with a prompt as base64 over the stdin the turn already opens. Look-only: nothing is written, so the app-owned folder gains no inbox, no lifetime and no deleter, and the agent's own transcript is the durable copy. A browser never reveals a dropped file's path, which is why an attachment travels as bytes and never as a location — the same reason an asset swap sends the bytes and lets the daemon decide where they land. It arrives by paste or drop, and its receipt is the picture under the words in the transcript. _Avoid_: upload, file
 
 **Shot**: A headless, scenario-seeded screenshot of one frame in spool's own browser, never taken from the canvas.
 

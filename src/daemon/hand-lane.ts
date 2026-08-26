@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
+import { assetChosen, assetDestination, assetName, identifierHint, overBudget, specifierFrom } from "./hand-asset";
 import {
+	type AttributeRead,
 	type ElementRead,
 	fingerprintOf,
 	type HandOp,
@@ -82,6 +84,11 @@ export async function patchSite(
 		if (file !== undefined && file !== stamp.file) {
 			return { kind: "error", status: 400, message: "one gesture writes one file" };
 		}
+		if (op.kind === "set-asset" && !reachesAsset(root, stamp.file, op.specifier)) {
+			// a specifier is a path, and every path a hand names is checked against
+			// design/'s own boundary before anything is written through it
+			return { kind: "error", status: 400, message: "an import reaches a project asset" };
+		}
 		file = stamp.file;
 		rel = stamp.rel;
 	}
@@ -115,6 +122,127 @@ export async function patchSite(
 
 export const STALE_FILE: PatchRefusal = { code: "stale-file", says: "the file changed underneath" };
 
+/** Whether an import written into this file lands on something still inside design/. */
+function reachesAsset(root: string, file: string, specifier: string): boolean {
+	try {
+		const designDir = realDesignDir(root);
+		resolveDesignPath(designDir, resolve(dirname(file), specifier));
+		return true;
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) return false;
+		throw error;
+	}
+}
+
+/**
+ * The picture an asset swap points at: bytes a hand just dropped, or a file
+ * the project already holds (#260).
+ */
+export type AssetPut = { kind: "new"; name: string; bytes: Buffer } | { kind: "held"; path: string };
+
+export type AssetSite =
+	| {
+			kind: "ok";
+			file: string;
+			path: string;
+			source: string;
+			text: string;
+			mapped: boolean;
+			fingerprint: string;
+			/** the picture, and whether its bytes still have to be put on disk */
+			asset: { file: string; path: string; write: boolean; bytes: Buffer | undefined };
+	  }
+	| { kind: "refusal"; refusal: PatchRefusal }
+	| { kind: "error"; status: 400 | 404; message: string };
+
+/**
+ * The asset swap, from the picture to the characters (#260).
+ *
+ * Everything the write lane cannot know: where the file goes, what the import
+ * may be called, and whether one document can carry it. What comes back is the
+ * file as the swap would leave it and the bytes still owed to disk, so the
+ * caller writes the picture first and the source second — a document that
+ * reloads between them must never find an import of a file that is not there
+ * yet.
+ */
+export async function assetSite(
+	root: string,
+	frame: string,
+	stampedAt: string,
+	put: AssetPut,
+	deps: LaneDeps,
+	fingerprint?: string,
+): Promise<AssetSite> {
+	const found = lookupFrame(root, frame);
+	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
+	const folder = `${frameFolder(frame, found.page)}/`;
+	let stamp: ReturnType<typeof parseStamp>;
+	try {
+		stamp = parseStamp(root, stampedAt);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) return { kind: "error", status: 400, message: error.message };
+		throw error;
+	}
+	if (stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
+	if (!stamp.rel.startsWith(folder)) {
+		return { kind: "refusal", refusal: await definedElsewhere(deps, stamp.rel, stamp.line) };
+	}
+	let source: string;
+	try {
+		source = readFileSync(stamp.file, "utf8");
+	} catch {
+		return { kind: "refusal", refusal: STALE_STAMP };
+	}
+	const current = fingerprintOf(source);
+	if (fingerprint !== undefined && fingerprint !== current) return { kind: "refusal", refusal: STALE_FILE };
+
+	const asset = resolveAsset(root, found.dir, put);
+	if ("refusal" in asset) return { kind: "refusal", refusal: asset.refusal };
+	if ("message" in asset) return { kind: "error", status: asset.status, message: asset.message };
+	const specifier = specifierFrom(stamp.file, asset.file);
+	const planned = planOps(source, [
+		{ kind: "set-asset", source: stampedAt, specifier, hint: identifierHint(asset.name) },
+	]);
+	if (!planned.ok) return { kind: "refusal", refusal: planned.refusal };
+	return {
+		kind: "ok",
+		file: stamp.file,
+		path: `design/${stamp.rel}`,
+		source,
+		text: planned.text,
+		mapped: planned.mapped,
+		fingerprint: current,
+		asset: { file: asset.file, path: asset.path, write: asset.write, bytes: asset.bytes },
+	};
+}
+
+type ResolvedAsset =
+	| { file: string; path: string; name: string; write: boolean; bytes: Buffer | undefined }
+	| { refusal: PatchRefusal }
+	| { status: 400 | 404; message: string };
+
+function resolveAsset(root: string, frameDir: string, put: AssetPut): ResolvedAsset {
+	try {
+		if (put.kind === "held") {
+			const chosen = assetChosen(root, put.path);
+			if (chosen === undefined) return { status: 404, message: `no image at design/${put.path}` };
+			const over = overBudget(chosen.bytes);
+			if (over !== undefined) return { refusal: over };
+			const name = put.path.split("/").at(-1) ?? put.path;
+			return { file: chosen.file, path: put.path, name, write: false, bytes: undefined };
+		}
+		const name = assetName(put.name);
+		if (name === undefined) return { status: 400, message: `"${put.name}" is not an image spool writes` };
+		const over = overBudget(put.bytes.length);
+		if (over !== undefined) return { refusal: over };
+		const where = assetDestination(root, frameDir, name, put.bytes);
+		return { ...where, name, bytes: where.write ? put.bytes : undefined };
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) return { status: 400, message: error.message };
+		throw error;
+	}
+}
+
 /**
  * One rung as the file has it (#256): what the author called it, the literal
  * it carries, and why no hand may write that literal when none may.
@@ -139,6 +267,17 @@ export interface RungRead {
 	refusal?: PatchRefusal;
 	/** the element sits inside a `map`: one literal, every rendered row */
 	mapped?: true;
+	/** every other attribute the tag carries, as the file writes it (#260) */
+	attributes?: AttributeRead[];
+	/**
+	 * The hash of the file this rung was read out of.
+	 *
+	 * A gesture that forms its op from what a row shows carries this, so the
+	 * write is measured against the file the rail actually drew — the same
+	 * promise every other op keeps, made from the read rather than from a
+	 * second round trip (#260).
+	 */
+	fingerprint?: string;
 }
 
 export type RungsRead = { kind: "ok"; rungs: RungRead[] } | { kind: "error"; status: 400 | 404; message: string };
@@ -164,7 +303,10 @@ export async function readRungs(
 	});
 	// one parse per file rather than one per rung: an ancestry is nearly always
 	// the same file over and over
-	const byFile = new Map<string, { at: { line: number; column: number }[]; reads: (ElementRead | undefined)[] }>();
+	const byFile = new Map<
+		string,
+		{ at: { line: number; column: number }[]; reads: (ElementRead | undefined)[]; fingerprint?: string }
+	>();
 	for (const stamp of stamps) {
 		if (stamp === undefined) continue;
 		const held = byFile.get(stamp.file) ?? { at: [], reads: [] };
@@ -180,6 +322,7 @@ export async function readRungs(
 			continue;
 		}
 		held.reads = readElements(source, held.at);
+		held.fingerprint = fingerprintOf(source);
 	}
 	const taken = new Map<string, number>();
 	const rungs: RungRead[] = [];
@@ -191,7 +334,8 @@ export async function readRungs(
 		}
 		const at = taken.get(stamp.file) ?? 0;
 		taken.set(stamp.file, at + 1);
-		const read = byFile.get(stamp.file)?.reads[at];
+		const held = byFile.get(stamp.file);
+		const read = held?.reads[at];
 		if (read === undefined) {
 			rungs.push({ source, className: "", path: `design/${stamp.rel}`, line: stamp.line, refusal: STALE_STAMP });
 			continue;
@@ -207,6 +351,8 @@ export async function readRungs(
 			line: stamp.line,
 			...(refusal === undefined ? {} : { refusal }),
 			...(read.mapped ? { mapped: true as const } : {}),
+			...(read.attributes.length === 0 ? {} : { attributes: read.attributes }),
+			...(held?.fingerprint === undefined ? {} : { fingerprint: held.fingerprint }),
 		});
 	}
 	return { kind: "ok", rungs };

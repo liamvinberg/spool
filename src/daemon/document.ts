@@ -1112,6 +1112,42 @@ const canvasShimJs = `(() => {
 		if (editing) event.stopPropagation();
 	}, true);
 
+	// The asset swap's drop half (#260). A file dragged onto an image lands
+	// inside the frame's own document, so the canvas never sees it — this is
+	// the only place it can be caught.
+	//
+	// It is armed rather than always on, and that is the parity law rather than
+	// caution: a frame with a drop zone of its own must behave exactly as its
+	// bare document does. Nothing is intercepted until the canvas names one
+	// selected element, so in the player, and on every element that is not the
+	// one selected, a drop is the frame's own.
+	var dropTarget = null;
+	function droppedOn(target) {
+		if (!dropTarget) return null;
+		let el = null;
+		try { el = document.querySelector(dropTarget); } catch {}
+		return el && target instanceof Node && el.contains(target) ? el : null;
+	}
+	function draggingFile(data) {
+		return Array.prototype.some.call((data && data.items) || [], (item) => item.kind === "file");
+	}
+	addEventListener("dragover", (event) => {
+		if (!droppedOn(event.target) || !draggingFile(event.dataTransfer)) return;
+		event.preventDefault();
+		if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+	}, true);
+	addEventListener("drop", (event) => {
+		if (!droppedOn(event.target)) return;
+		const file = ((event.dataTransfer || {}).files || [])[0];
+		if (!file) return;
+		event.preventDefault();
+		event.stopPropagation();
+		parent.postMessage(
+			{ spool: "dropped", frame: (window.__SPOOL__ || {}).frame, selector: dropTarget, file },
+			"*"
+		);
+	}, true);
+
 	// where each anchor's element sits, over the one set of data-spool-source
 	// stamps. Two forms of anchor, one message and one answer shape:
 	//
@@ -1272,6 +1308,13 @@ const canvasShimJs = `(() => {
 			} catch {
 				parent.postMessage({ spool: "edit-open", frame: config.frame, id: m.id, ok: false, text: "" }, "*");
 			}
+			return;
+		}
+		if (m.spool === "drop-target") {
+			// only this frame's own canvas arms it, the same door the edit verbs use
+			const config = window.__SPOOL__ || {};
+			if (event.source !== parent || event.origin !== config.controlOrigin) return;
+			dropTarget = typeof m.selector === "string" && m.selector !== "" ? m.selector : null;
 			return;
 		}
 		if (m.spool === "sites") {

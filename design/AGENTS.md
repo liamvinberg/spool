@@ -5,7 +5,7 @@ This folder is a [spool](https://spool.page) project: live TSX frames on an infi
 Run `pnpm dev skill` before working here — this repo's checkout CLI, never the installed `spool`. It is the complete contract: if it isn't in there, spool doesn't do it. Topics: `pnpm dev skill frames|flows|scenarios|mock|styling|verbs`.
 
 - A frame is born by writing `frames/<page>/<name>/frame.tsx` default-exporting one React component — no registration, no `spool new`. Variants are `--`-named siblings (`checkout--empty/`).
-- The one law: never write app-owned files — `canvas.json` and `.spool/` are spool's. Hands write frame source only as span patches, gated, with the same undo surface geometry already has: a value may change under you, the shape of the file will not.
+- The one law: never write app-owned files — `canvas.json` and `.spool/` are spool's. Hands write frame source only as span patches, gated, with the same undo surface geometry already has: a value may change under you, the shape of the file will not. The one exception writes a file too — a picture swapped onto an `<img>` lands beside the frame and gains its import, because an image is an import and never a URL.
 - Commit completed design work atomically before handoff.
 - This file is orientation, not a ledger. A decision's story lives in its ticket and a component's behavior in its file; keep the table below to pointers, and never append session summaries here.
 

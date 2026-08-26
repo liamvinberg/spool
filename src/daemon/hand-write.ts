@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { parse } from "@babel/parser";
-import type { JSXAttribute, JSXElement, JSXSpreadAttribute, Node } from "@babel/types";
+import type { ImportDeclaration, JSXAttribute, JSXElement, JSXSpreadAttribute, Node } from "@babel/types";
+import { ASSET_FILTER } from "./assets";
 import { type ClassEdit, type ClassTheme, screenConflict, writeClass } from "./class-write";
 import { isLayoutOnly, textCore, writeJsxText } from "./jsx-text";
 import { walkNodes } from "./jsx-walk";
@@ -30,7 +31,8 @@ export type HandOp =
 	| { kind: "set-text"; source: string; text: string }
 	| { kind: "delete"; source: string }
 	| { kind: "set-class"; source: string; token: string; scope: string; remove?: boolean }
-	| { kind: "set-attribute"; source: string; name: string; value: string };
+	| { kind: "set-attribute"; source: string; name: string; value: string }
+	| { kind: "set-asset"; source: string; specifier: string; hint: string };
 
 export type RefusalCode =
 	| "computed-class"
@@ -44,6 +46,8 @@ export type RefusalCode =
 	| "not-a-child"
 	| "expression-attribute"
 	| "class-attribute"
+	| "not-an-image"
+	| "image-budget"
 	| "unparsable"
 	| "overlapping-ops"
 	// the two the caller answers, because only it can: the element is defined
@@ -93,6 +97,12 @@ const SCOPE = /^([a-z0-9][a-z0-9-]*:)*$/;
 const ATTRIBUTE = /^[A-Za-z_][A-Za-z0-9_.:-]*$/;
 const STAMP = /^[^\s:]+:\d+:\d+$/;
 const TEXT_CAP = 4096;
+/** A relative import of a project asset, which is the only thing a `src` may be pointed at. */
+const SPECIFIER = /^\.{1,2}\/[^"'\\\s]*\.(?:gif|jpe?g|png|svg|webp)$/i;
+/** The stem a fresh import's identifier is minted from. */
+const HINT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+/** Whether an import the swap displaced was an image's, and so weighs on the document. */
+const ASSET_SPECIFIER = ASSET_FILTER;
 
 /**
  * The ops off the wire, or nothing. Strict: an op the daemon cannot read is a
@@ -124,6 +134,13 @@ export function parseHandOps(value: unknown): HandOp[] | undefined {
 			if (typeof scope !== "string" || !SCOPE.test(scope)) return undefined;
 			if (remove !== undefined && typeof remove !== "boolean") return undefined;
 			ops.push({ kind, source, token, scope, ...(remove === true ? { remove: true } : {}) });
+			continue;
+		}
+		if (kind === "set-asset") {
+			const { specifier, hint } = raw as Record<string, unknown>;
+			if (typeof specifier !== "string" || specifier.length > 512 || !SPECIFIER.test(specifier)) return undefined;
+			if (typeof hint !== "string" || hint.length > 64 || !HINT.test(hint)) return undefined;
+			ops.push({ kind, source, specifier, hint });
 			continue;
 		}
 		if (kind === "set-attribute") {
@@ -210,15 +227,15 @@ export function planOps(source: string, ops: readonly HandOp[], theme?: ClassThe
 			classEdits.set(element.node, { element, edits: [op] });
 			continue;
 		}
-		const planned = planOne(source, element, op);
+		const planned = planOne(source, program, element, op);
 		if ("refusal" in planned) return { ok: false, refusal: planned.refusal };
-		patches.push(planned.patch);
+		patches.push(...planned.patches);
 	}
 
 	for (const { element, edits } of classEdits.values()) {
 		const planned = planClass(source, element, edits, theme);
 		if ("refusal" in planned) return { ok: false, refusal: planned.refusal };
-		patches.push(planned.patch);
+		patches.push(...planned.patches);
 	}
 
 	const ordered = [...patches].sort((a, b) => a.start - b.start);
@@ -256,6 +273,72 @@ export interface ElementRead {
 	refusal?: PatchRefusal;
 	/** the element sits inside a `map`: one literal, every rendered row */
 	mapped: boolean;
+	/** every other attribute the tag carries, as the file writes it (#260) */
+	attributes: AttributeRead[];
+}
+
+/**
+ * One attribute as the file has it (#260).
+ *
+ * The rail's source section turns string attributes into fields, so it needs
+ * the same answer the write lane would give: the characters between the quotes
+ * where they are typed literally, and what the file says instead where they
+ * are not. A name with neither is a bare attribute — `<input disabled />` —
+ * which has a place for a value rather than a value.
+ */
+export interface AttributeRead {
+	name: string;
+	/** the string it holds, when it holds one literally */
+	value?: string;
+	/** what the file says instead, when the value is no literal a hand may write */
+	expression?: string;
+	/**
+	 * The image this attribute imports, when it is one.
+	 *
+	 * `src={hero}` is an expression to every other reader and a picture to
+	 * this one: the identifier is bound to an image import in the same file,
+	 * which is exactly what a swap writes and exactly what it may replace. The
+	 * specifier is what the rail shows, because that is the file the frame
+	 * draws.
+	 */
+	asset?: string;
+}
+
+/** The two the rail has surfaces of their own for, so neither is a string field. */
+const NOT_A_FIELD: ReadonlySet<string> = new Set(["className", "style"]);
+/** How many attributes one element reports, and how much of an expression is named. */
+const ATTRIBUTE_CAP = 32;
+const EXPRESSION_CAP = 240;
+
+function attributesOf(source: string, element: Element, assets: ReadonlyMap<string, string>): AttributeRead[] {
+	const reads: AttributeRead[] = [];
+	for (const attribute of element.attributes) {
+		if (reads.length >= ATTRIBUTE_CAP) break;
+		if (attribute.type !== "JSXAttribute") continue;
+		const name = attribute.name.type === "JSXIdentifier" ? attribute.name.name : undefined;
+		if (name === undefined || NOT_A_FIELD.has(name)) continue;
+		const slot = slotOf(source, attribute);
+		if (slot?.kind === "literal") {
+			reads.push({ name, value: slot.value });
+			continue;
+		}
+		if (slot?.kind === "bare") {
+			reads.push({ name, value: "" });
+			continue;
+		}
+		const held = attribute.value;
+		const identifier =
+			held?.type === "JSXExpressionContainer" && held.expression.type === "Identifier"
+				? assets.get(held.expression.name)
+				: undefined;
+		if (identifier !== undefined) {
+			reads.push({ name, asset: identifier });
+			continue;
+		}
+		const said = held == null ? "" : source.slice(nodeStart(held), nodeEnd(held));
+		reads.push({ name, expression: said.slice(0, EXPRESSION_CAP) });
+	}
+	return reads;
 }
 
 /** One read per position asked about, in order; nothing where the stamp hits nothing. */
@@ -269,21 +352,37 @@ export function readElements(
 	} catch {
 		return at.map(() => undefined);
 	}
+	// the file's own image imports, so a `src={hero}` reads as the picture it is
+	// rather than as an expression nobody may touch
+	const assets = new Map(
+		importsIn(program)
+			.filter((held) => held.local !== undefined && ASSET_SPECIFIER.test(held.specifier))
+			.map((held) => [held.local ?? "", held.specifier]),
+	);
 	return at.map(({ line, column }) => {
 		const element = elementAt(program, line, column);
 		if (element === undefined) return undefined;
 		const name = rawOf(source, element.node.openingElement.name);
+		const attributes = attributesOf(source, element, assets);
 		const literal = literalOf(source, element);
 		if ("refusal" in literal) {
-			return { name, className: "", refusal: literal.refusal, mapped: element.mapped };
+			return { name, className: "", refusal: literal.refusal, mapped: element.mapped, attributes };
 		}
-		return { name, className: literal.className, mapped: element.mapped };
+		return { name, className: literal.className, mapped: element.mapped, attributes };
 	});
 }
 
-type OnePlan = { patch: SpanPatch } | { refusal: PatchRefusal };
+/**
+ * One op's characters, or the reason it has none.
+ *
+ * Several patches rather than one, because an asset swap is three edits that
+ * are one act: the import it writes, the `src` it points, and the import the
+ * swap orphaned. They still land as one undo step — the stack holds the span
+ * between the file before and after, not the ops that made it.
+ */
+type OnePlan = { patches: SpanPatch[] } | { refusal: PatchRefusal };
 
-function planOne(source: string, element: Element, op: HandOp): OnePlan {
+function planOne(source: string, program: Node, element: Element, op: HandOp): OnePlan {
 	switch (op.kind) {
 		case "set-text":
 			return planText(source, element, op.text);
@@ -291,6 +390,8 @@ function planOne(source: string, element: Element, op: HandOp): OnePlan {
 			return planDelete(source, element);
 		case "set-attribute":
 			return planAttribute(source, element, op.name, op.value);
+		case "set-asset":
+			return planAsset(source, program, element, op.specifier, op.hint);
 		case "set-class":
 			return planClass(source, element, [op]);
 	}
@@ -338,7 +439,7 @@ function planClass(source: string, element: Element, edits: readonly ClassEdit[]
 		}
 		className = writeClass(className === "" ? null : className, edit, theme);
 	}
-	return { patch: fill(element, "className", className, slot) };
+	return { patches: [fill(element, "className", className, slot)] };
 }
 
 function planText(source: string, element: Element, text: string): OnePlan {
@@ -359,15 +460,15 @@ function planText(source: string, element: Element, text: string): OnePlan {
 		return { refusal: { code: "no-text", says: "no text of its own", expression: says } };
 	}
 	const own = children[0];
-	if (own !== undefined) return { patch: coreOf(source, own, text) };
+	if (own !== undefined) return { patches: [coreOf(source, own, text)] };
 	// nothing but layout between the tags: the words go where they would have
 	// been written, inside whatever indentation is already there
 	const layout = element.children.find((child) => child.type === "JSXText");
-	if (layout !== undefined) return { patch: coreOf(source, layout, text) };
+	if (layout !== undefined) return { patches: [coreOf(source, layout, text)] };
 	// a self-closing element has no inside to write into, and giving it one
 	// would be authoring rather than adjusting
 	if (element.selfClosing) return { refusal: { code: "no-text", says: "no text of its own" } };
-	return { patch: { start: element.openEnd, end: element.openEnd, text: writeJsxText(text) } };
+	return { patches: [{ start: element.openEnd, end: element.openEnd, text: writeJsxText(text) }] };
 }
 
 function coreOf(source: string, child: Node, text: string): SpanPatch {
@@ -393,7 +494,7 @@ function planDelete(source: string, element: Element): OnePlan {
 			end = nodeEnd(element.node);
 		}
 	}
-	return { patch: { start, end, text: "" } };
+	return { patches: [{ start, end, text: "" }] };
 }
 
 function planAttribute(source: string, element: Element, name: string, value: string): OnePlan {
@@ -412,7 +513,210 @@ function planAttribute(source: string, element: Element, name: string, value: st
 	if (held === undefined && element.spread) {
 		return { refusal: { code: "spread-props", says: "spread props with no literal" } };
 	}
-	return { patch: fill(element, name, value, slot) };
+	return { patches: [fill(element, name, value, slot)] };
+}
+
+/**
+ * The asset swap (#260): the one op that writes an import.
+ *
+ * An image in a frame is an import and never a URL — that is the asset rule,
+ * and it is why pointing a `src` somewhere new cannot be a string splice. So
+ * the op is three edits that are one act: the import the file did not have,
+ * the `src` pointed at its identifier, and the import the swap left with no
+ * reader. They fold into one span between the file before and after, so it is
+ * still one press of undo.
+ *
+ * The bytes are the caller's business. This is only the characters.
+ */
+function planAsset(source: string, program: Node, element: Element, specifier: string, hint: string): OnePlan {
+	if (element.tag !== "img") {
+		return { refusal: { code: "not-an-image", says: `an import points at an image, and ${element.tag} is not one` } };
+	}
+	const held = attributeNamed(element, "src");
+	const imports = importsIn(program);
+	const named = held === undefined ? undefined : boundName(held);
+	/*
+	 * What the `src` says now, and whether a swap may honestly replace it.
+	 *
+	 * A string, an absent attribute and an identifier this file imports an
+	 * image under are all things a picture can be put in the place of. Any
+	 * other identifier is a value from somewhere else — a prop, a piece of
+	 * state, a row of data — and pointing it at an import would be rewriting
+	 * what the frame is rather than which picture it draws.
+	 */
+	const was =
+		typeof named === "string" && imports.some((one) => one.local === named && ASSET_SPECIFIER.test(one.specifier))
+			? named
+			: named === null
+				? null
+				: undefined;
+	if (held !== undefined && was === undefined) {
+		const says = held.value == null ? "" : source.slice(nodeStart(held.value), nodeEnd(held.value));
+		return { refusal: { code: "expression-attribute", says: "src is an expression", expression: says } };
+	}
+	if (held === undefined && element.spread) {
+		return { refusal: { code: "spread-props", says: "spread props with no literal" } };
+	}
+	const standing = imports.find((one) => one.specifier === specifier);
+	const name = standing?.local ?? freeName(program, hint);
+	/*
+	 * The image the swap replaced, when nothing else in the file reads it.
+	 *
+	 * Its import is dead weight and dead weight is not free here: the compiler
+	 * bakes every image import into the document as base64 and charges it
+	 * against the same 512 KB budget, so an unswept one would make the next
+	 * swap refuse for a picture nobody can see. Two mentions is what a file
+	 * that imports it and draws it once has — the binding, and the `src` this
+	 * op is about to point somewhere else.
+	 */
+	const orphan =
+		typeof was !== "string" || was === standing?.local
+			? undefined
+			: imports.find((one) => one.local === was && reads(program, was) === 2);
+	const patches: SpanPatch[] = [point(element, held, name)];
+	if (standing !== undefined) {
+		if (orphan !== undefined) patches.push(dropLine(source, orphan.start, orphan.end));
+	} else if (orphan !== undefined) {
+		// the fresh import takes the dead one's place, so the file keeps the
+		// shape its author gave it rather than growing a line and losing another
+		patches.push({ start: orphan.start, end: importEnd(source, orphan.end), text: importLine(name, specifier) });
+	} else {
+		patches.push(writeImport(source, imports, name, specifier));
+	}
+	return { patches };
+}
+
+/** The identifier a `src` reads, or nothing when it is not one a swap may replace. */
+function boundName(attribute: JSXAttribute): string | null | undefined {
+	const value = attribute.value;
+	// `<img src />` and `src="/a.png"` both have somewhere for an import to go
+	if (value == null || value.type === "StringLiteral") return null;
+	if (value.type !== "JSXExpressionContainer") return undefined;
+	const held = value.expression;
+	if (held.type === "StringLiteral") return null;
+	return held.type === "Identifier" ? held.name : undefined;
+}
+
+interface ImportRead {
+	specifier: string;
+	/** the default import's local name, when the declaration has one */
+	local: string | undefined;
+	start: number;
+	end: number;
+}
+
+function importsIn(program: Node): ImportRead[] {
+	const body = program.type === "Program" ? program.body : [];
+	return body
+		.filter((node): node is ImportDeclaration => node.type === "ImportDeclaration")
+		.map((node) => ({
+			specifier: node.source.value,
+			local: node.specifiers.find((one) => one.type === "ImportDefaultSpecifier")?.local.name,
+			start: nodeStart(node),
+			end: nodeEnd(node),
+		}));
+}
+
+/** Every mention of a name in the file, the import's own binding included. */
+function reads(program: Node, name: string): number {
+	let seen = 0;
+	walkNodes(program, [], (node) => {
+		if (node.type === "Identifier" && node.name === name) seen += 1;
+	});
+	return seen;
+}
+
+/** What an import cannot be called, however the file it came from is spelled. */
+const RESERVED: ReadonlySet<string> = new Set([
+	"await",
+	"break",
+	"case",
+	"catch",
+	"class",
+	"const",
+	"continue",
+	"debugger",
+	"default",
+	"delete",
+	"do",
+	"else",
+	"enum",
+	"export",
+	"extends",
+	"false",
+	"finally",
+	"for",
+	"function",
+	"if",
+	"import",
+	"in",
+	"instanceof",
+	"new",
+	"null",
+	"return",
+	"super",
+	"switch",
+	"this",
+	"throw",
+	"true",
+	"try",
+	"typeof",
+	"var",
+	"void",
+	"while",
+	"with",
+	"yield",
+]);
+
+/**
+ * A name nothing in the file already says, and nothing the language has taken.
+ *
+ * Every mention counts, not only the bindings: a swap that shadowed a local
+ * would compile and draw the wrong picture, and one that reads oddly is a
+ * smaller cost than one that is wrong. A file called `default.png` is the
+ * other half of it — `import default from` does not parse at all.
+ */
+function freeName(program: Node, hint: string): string {
+	if (!RESERVED.has(hint) && reads(program, hint) === 0) return hint;
+	for (let at = 2; at < 1000; at += 1) {
+		const tried = `${hint}${at}`;
+		if (reads(program, tried) === 0) return tried;
+	}
+	return `${hint}${Date.now()}`;
+}
+
+const importLine = (name: string, specifier: string): string => `import ${name} from ${JSON.stringify(specifier)};`;
+
+/** Past the semicolon, which babel may or may not have taken with the declaration. */
+function importEnd(source: string, end: number): number {
+	return source[end] === ";" ? end + 1 : end;
+}
+
+/** The import goes under the ones already there, or at the top of a file with none. */
+function writeImport(source: string, imports: readonly ImportRead[], name: string, specifier: string): SpanPatch {
+	const line = importLine(name, specifier);
+	const last = imports.at(-1);
+	if (last === undefined) return { start: 0, end: 0, text: `${line}\n` };
+	const at = importEnd(source, last.end);
+	return { start: at, end: at, text: `\n${line}` };
+}
+
+/** The `src`, pointed at the identifier — in braces, because an import is a value. */
+function point(element: Element, held: JSXAttribute | undefined, name: string): SpanPatch {
+	if (held === undefined) return { start: element.nameEnd, end: element.nameEnd, text: ` src={${name}}` };
+	if (held.value == null) return { start: nodeEnd(held), end: nodeEnd(held), text: `={${name}}` };
+	return { start: nodeStart(held.value), end: nodeEnd(held.value), text: `{${name}}` };
+}
+
+/** A whole line taken out, indentation and line break included. */
+function dropLine(source: string, from: number, to: number): SpanPatch {
+	let start = from;
+	let end = importEnd(source, to);
+	while (start > 0 && (source[start - 1] === " " || source[start - 1] === "\t")) start -= 1;
+	while (end < source.length && (source[end] === " " || source[end] === "\t")) end += 1;
+	if (source[end] === "\n") end += 1;
+	else if (start > 0 && source[start - 1] === "\n") start -= 1;
+	return { start, end, text: "" };
 }
 
 /**
@@ -456,6 +760,8 @@ function escapeAttribute(value: string): string {
 
 interface Element {
 	node: JSXElement;
+	/** the opening tag as the file spells it: `img`, `CartRow` */
+	tag: string;
 	attributes: readonly (JSXAttribute | JSXSpreadAttribute)[];
 	children: readonly JSXElement["children"][number][];
 	parent: Node | undefined;
@@ -492,6 +798,7 @@ function elementAt(program: Node, line: number, column: number): Element | undef
 		const opening = node.openingElement;
 		found = {
 			node,
+			tag: nameOf(opening.name),
 			attributes: opening.attributes,
 			children: node.children,
 			parent: ancestors[ancestors.length - 1],
@@ -510,6 +817,13 @@ function isMapCall(node: Node): boolean {
 	if (node.type !== "CallExpression" || node.callee.type !== "MemberExpression") return false;
 	const property = node.callee.property;
 	return property.type === "Identifier" && property.name === "map";
+}
+
+/** A tag name as one string, member expressions and namespaces flattened. */
+function nameOf(name: JSXElement["openingElement"]["name"]): string {
+	if (name.type === "JSXIdentifier") return name.name;
+	if (name.type === "JSXNamespacedName") return `${name.namespace.name}:${name.name.name}`;
+	return `${nameOf(name.object)}.${name.property.name}`;
 }
 
 function attributeNamed(element: Element, name: string): JSXAttribute | undefined {
