@@ -244,6 +244,27 @@ it("keeps the rung it is editing when its own write reloads the frame", async ()
 	expect(await heldElements()).toEqual(["pay"]);
 });
 
+it("reads a token the hands wrote in thread colour, and the author's own quietly", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	await descendTo(canvas, frame, 3);
+	await until(() => crumbs(host).length === 4);
+
+	expect(splicedTokens(host)).toEqual([]);
+
+	await typeInto(fieldFor(host, "opacity"), "60");
+	payLiteral = `${RUNGS[2]?.className ?? ""} opacity-60`;
+	await changed("home");
+	await frame.loaded();
+	await frame.answer(CHAIN);
+	await until(() => splicedTokens(host).length > 0);
+
+	// what you changed reads in thread colour and what the file was written with
+	// does not, which is how you tell your own work from the agent's
+	expect(splicedTokens(host)).toEqual(["opacity-60"]);
+	expect(rowLabel(host, "opacity")?.className).toContain("text-thread");
+	expect(rowLabel(host, "border-radius")?.className).not.toContain("text-thread");
+});
+
 it("gates the `+` on the compiler, and lands what it accepts under the live scope", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await descendTo(canvas, frame, 3);
@@ -254,6 +275,16 @@ it("gates the `+` on the compiler, and lands what it accepts under the live scop
 	// what the compiler refuses stays grey with its own reason, never hidden
 	expect(candidate(host, "foo-bar")?.textContent).toContain("no utility foo-bar");
 	expect(candidate(host, "foo-bar")?.disabled).toBe(true);
+
+	// a candidate the compiler has not answered for reads as pending and cannot be
+	// pressed: nothing downstream would catch it, because the write lane splices
+	// text and never asks the compiler
+	await typeField(host.querySelector<HTMLInputElement>('input[placeholder="any class"]'), "shrink-0");
+	expect(candidate(host, "shrink-0")?.textContent).toContain("…");
+	expect(candidate(host, "shrink-0")?.disabled).toBe(true);
+	const before = await gates();
+	await press("click", {}, candidate(host, "shrink-0"));
+	expect(await gates()).toBe(before);
 
 	await typeField(host.querySelector<HTMLInputElement>('input[placeholder="any class"]'), "md:hidden");
 	await press("click", {}, candidate(host, "md:hidden"));
@@ -286,6 +317,17 @@ function crumbs(host: HTMLElement): string[] {
 /** the scope chips, in order */
 function chips(host: HTMLElement): string[] {
 	return [...(rail(host)?.querySelectorAll("[data-scope-chip]") ?? [])].map((chip) => chip.textContent ?? "");
+}
+
+/** the tokens on the source line drawn as the hands' own rather than the file's */
+function splicedTokens(host: HTMLElement): string[] {
+	const line = rail(host)?.querySelector("[data-properties-source]");
+	return [...(line?.querySelectorAll(".text-thread") ?? [])].map((token) => (token.textContent ?? "").trim());
+}
+
+/** the CSS name at the left of one row */
+function rowLabel(host: HTMLElement, row: string): HTMLElement | null {
+	return rail(host)?.querySelector<HTMLElement>(`[data-properties-row="${row}"] > span`) ?? null;
 }
 
 /** the tokens on the source line drawn as out of the live scope */
@@ -367,6 +409,13 @@ async function geometryPut(): Promise<Record<string, unknown> | undefined> {
 	return last === undefined
 		? undefined
 		: (JSON.parse(String(last[1]?.body)) as { frames: Record<string, unknown> }).frames;
+}
+
+/** how many times the write lane has been asked anything */
+async function gates(): Promise<number> {
+	await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+	const calls = (globalThis.fetch as unknown as { mock: { calls: [RequestInfo | URL, RequestInit?][] } }).mock.calls;
+	return calls.filter(([input]) => String(input).endsWith("/patch/gate")).length;
 }
 
 /** the ops the last gate was asked about */
@@ -571,8 +620,12 @@ const COMPILED = [
 	{ ok: false, token: "foo-bar", reason: "no utility foo-bar" },
 ];
 
+/** what the file says the held rung wears, which a write in a test moves */
+let payLiteral = "";
+
 function stubCanvasApis(refused = false): void {
 	events = null;
+	payLiteral = RUNGS[2]?.className ?? "";
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	vi.stubGlobal("open", vi.fn());
 	const setAttribute = HTMLIFrameElement.prototype.setAttribute;
@@ -614,7 +667,10 @@ function stubCanvasApis(refused = false): void {
 				return Response.json({ compiled: COMPILED });
 			}
 			if (url.pathname.endsWith("/rungs")) {
-				return Response.json({ rungs: refused ? RUNGS.map(asExpression) : RUNGS });
+				// the held rung reads whatever the file is now saying, so a write and
+				// the re-read that follows it can both be driven from a test
+				const held = RUNGS.map((rung, at) => (at === 2 ? { ...rung, className: payLiteral } : rung));
+				return Response.json({ rungs: refused ? held.map(asExpression) : held });
 			}
 			if (url.pathname.endsWith("/patch/gate")) {
 				return Response.json({ ok: true, path: "design/frames/home/frame.tsx", fingerprint: "f", mapped: false });

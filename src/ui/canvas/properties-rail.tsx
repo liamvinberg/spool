@@ -328,7 +328,19 @@ function Body({
 		element: rowElement,
 		box: { w: rect?.w ?? 0, h: rect?.h ?? 0 },
 		compiler,
-		fresh: (token) => knownOriginal && token !== null && !original.has(`${scopeKey(live)}${token}`),
+		/**
+		 * A token the hands put there rather than the file's author.
+		 *
+		 * It has to be one the literal actually carries: a row's reading may name a
+		 * token the element does not wear verbatim — `border-x-2` read as the right
+		 * edge answers `border-r-2` — and calling that a splice would paint the
+		 * author's own work in thread colour.
+		 */
+		fresh: (token) =>
+			knownOriginal &&
+			token !== null &&
+			splitClass(scopedClass(literal, live)).includes(token) &&
+			!original.has(`${scopeKey(live)}${token}`),
 		put,
 	};
 
@@ -367,7 +379,10 @@ function Body({
 				{held?.kind === "frames" ? <Empty says={`${held.count} frames`} /> : null}
 				{held?.kind === "elements" ? <Empty says={`${held.count} elements`} /> : null}
 				{held?.kind === "frame" ? <FrameGeometry name={held.name} geometry={held.geometry} acts={acts} /> : null}
-				{element === null || read === undefined ? null : <PropertySections view={view} />}
+				{/* keyed on the rung: a fold left open on one element is not an opinion
+				    about the next one, and a re-pick after this rail's own write is the
+				    same rung, so an edit does not close what you opened */}
+				{element === null || read === undefined ? null : <PropertySections key={identity} view={view} />}
 				{element === null ? null : (
 					<SourceLine
 						read={read}
@@ -385,19 +400,19 @@ function Body({
 								},
 							])
 						}
-						onAdd={(token) =>
+						onAdd={(token) => {
+							// a class typed with its own chain lands under that chain; one
+							// without lands under whichever the bar has open
+							const chain = anatomyOf(token).variants;
 							write([
 								{
 									kind: "set-class",
 									source: read?.source ?? "",
 									token: bareToken(token),
-									scope:
-										anatomyOf(token).variants.length > 0
-											? scopeKey(anatomyOf(token).variants)
-											: scopeKey(live),
+									scope: chain.length > 0 ? scopeKey(chain) : scopeKey(live),
 								},
-							])
-						}
+							]);
+						}}
 					/>
 				)}
 			</div>

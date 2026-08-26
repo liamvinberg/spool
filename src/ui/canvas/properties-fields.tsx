@@ -1,6 +1,7 @@
 import {
 	type ReactNode,
 	type PointerEvent as ReactPointerEvent,
+	useCallback,
 	useEffect,
 	useLayoutEffect,
 	useRef,
@@ -37,20 +38,17 @@ export const BOX =
 export function Section({
 	name,
 	reason,
-	aside,
 	children,
 }: {
 	name: string;
 	/** why this section's rows refuse, said once rather than on every row */
 	reason?: string | undefined;
-	aside?: ReactNode;
 	children: ReactNode;
 }) {
 	return (
 		<div className="border-border-raised border-t">
 			<div className="flex h-6 items-center gap-2 px-2.5">
 				<span className={cn("shrink-0 text-muted/70", LABEL)}>{name}</span>
-				{aside}
 				{reason === undefined ? null : <span className={cn("ml-auto min-w-0 truncate", FAINT)}>{reason}</span>}
 			</div>
 			{children}
@@ -214,6 +212,49 @@ export function NumField({
 	);
 }
 
+/* ---------- where a popup lands, and when it goes away ---------- */
+
+/**
+ * A panel that hangs off a control, placed in the viewport rather than in its
+ * row.
+ *
+ * Fixed because the rail scrolls and its rows sit inside `overflow-y-auto`: a
+ * menu positioned in the row would be clipped by it. It opens upwards when it
+ * would run off the bottom, because the row it belongs to has to stay in view
+ * beside it.
+ */
+function popoverAt(rect: DOMRect, width: number, height: number): { left: number; top: number; width: number } {
+	const below = rect.bottom + 4;
+	const flip = below + height > innerHeight - 8;
+	return {
+		left: Math.max(8, Math.min(rect.left, innerWidth - width - 8)),
+		top: flip ? Math.max(8, rect.top - 4 - height) : below,
+		width,
+	};
+}
+
+/** A press anywhere outside the panel or the control that opened it closes it. */
+function useCloseOnPressAway(
+	open: boolean,
+	close: () => void,
+	...inside: readonly React.RefObject<HTMLElement | null>[]
+): void {
+	// the refs are the same list every render at one call site, so the effect
+	// turns on `open` alone rather than on an array rebuilt each time
+	const held = useRef(inside);
+	held.current = inside;
+	useEffect(() => {
+		if (!open) return;
+		const away = (event: Event) => {
+			const target = event.target as Node | null;
+			if (target !== null && held.current.some((ref) => ref.current?.contains(target) === true)) return;
+			close();
+		};
+		document.addEventListener("pointerdown", away, true);
+		return () => document.removeEventListener("pointerdown", away, true);
+	}, [open, close]);
+}
+
 /* ---------- the menu: words and named tokens, picked by name ---------- */
 
 export interface Option {
@@ -229,6 +270,10 @@ export interface Option {
 }
 
 const MENU_H = 296;
+
+/** the `+` field's own panel, a fixed size because its list is a filter */
+const ADD_W = 268;
+const ADD_H = 280;
 
 /**
  * P2's other half, and every named token's control.
@@ -272,6 +317,7 @@ export function Menu({
 	const buttonRef = useRef<HTMLButtonElement | null>(null);
 	const listRef = useRef<HTMLDivElement | null>(null);
 	const inputRef = useRef<HTMLInputElement | null>(null);
+	const shut = useCallback(() => setOpen(false), []);
 
 	const matched =
 		typed === ""
@@ -291,21 +337,7 @@ export function Menu({
 		listRef.current?.querySelector<HTMLElement>(`[data-index="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
 	}, [open, cursor]);
 
-	useEffect(() => {
-		if (!open) return;
-		const away = (event: Event) => {
-			const target = event.target as Node | null;
-			if (
-				target !== null &&
-				(listRef.current?.contains(target) === true || buttonRef.current?.contains(target) === true)
-			) {
-				return;
-			}
-			setOpen(false);
-		};
-		document.addEventListener("pointerdown", away, true);
-		return () => document.removeEventListener("pointerdown", away, true);
-	}, [open]);
+	useCloseOnPressAway(open, shut, listRef, buttonRef);
 
 	if (!ok) {
 		return (
@@ -324,17 +356,7 @@ export function Menu({
 	const show = () => {
 		const rect = buttonRef.current?.getBoundingClientRect();
 		if (rect === undefined) return;
-		const width = Math.max(rect.width, 236);
-		const height = Math.min(options.length * 24 + (filter ? 34 : 8), MENU_H);
-		const below = rect.bottom + 4;
-		// a menu that would run off the bottom opens upwards rather than being
-		// scrolled to: the row it belongs to has to stay in view beside it
-		const flip = below + height > innerHeight - 8;
-		setAt({
-			left: Math.max(8, Math.min(rect.left, innerWidth - width - 8)),
-			top: flip ? Math.max(8, rect.top - 4 - height) : below,
-			width,
-		});
+		setAt(popoverAt(rect, Math.max(rect.width, 236), Math.min(options.length * 24 + (filter ? 34 : 8), MENU_H)));
 		setTyped("");
 		setCursor(
 			Math.max(
@@ -698,8 +720,6 @@ export type ClassVerdict = { ok: true; css: string } | { ok: false; reason: stri
 
 export interface Candidate {
 	token: string;
-	/** what it is about, shown faint until the compiler has an answer */
-	says?: string;
 }
 
 /**
@@ -711,9 +731,10 @@ export interface Candidate {
  * and `mt-3.5!` all get in: nothing here has an opinion about which classes
  * exist, so nothing here can be out of date with the project's own theme.
  *
- * A candidate whose verdict has not come back yet is offered and pressable: the
- * gate is asked again on the way in, and a class that turns out not to compile
- * is refused by the write lane rather than by this list.
+ * A candidate the compiler has not answered for yet reads as pending and cannot
+ * be pressed. Nothing downstream would catch it: the write lane splices text and
+ * never asks the compiler, so letting a press through before the verdict lands
+ * is how `foo-bar` gets into a file.
  */
 export function AddField({
 	candidates,
@@ -741,6 +762,7 @@ export function AddField({
 	const buttonRef = useRef<HTMLButtonElement | null>(null);
 	const listRef = useRef<HTMLDivElement | null>(null);
 	const inputRef = useRef<HTMLInputElement | null>(null);
+	const shut = useCallback(() => setOpen(false), []);
 
 	const matches = candidates
 		.filter((candidate) => !taken.has(candidate.token) && candidate.token.includes(typed))
@@ -762,37 +784,14 @@ export function AddField({
 		if (!open) return;
 		const rect = buttonRef.current?.getBoundingClientRect();
 		if (rect === undefined) return;
-		const width = 268;
-		const height = 280;
-		const below = rect.bottom + 4;
-		const flip = below + height > innerHeight - 8;
-		setAt({
-			left: Math.max(8, Math.min(rect.left, innerWidth - width - 8)),
-			top: flip ? Math.max(8, rect.top - 4 - height) : below,
-			width,
-		});
+		setAt(popoverAt(rect, ADD_W, ADD_H));
 		inputRef.current?.focus();
 	}, [open]);
 
-	useEffect(() => {
-		if (!open) return;
-		const away = (event: Event) => {
-			const target = event.target as Node | null;
-			if (
-				target !== null &&
-				(listRef.current?.contains(target) === true || buttonRef.current?.contains(target) === true)
-			) {
-				return;
-			}
-			setOpen(false);
-		};
-		document.addEventListener("pointerdown", away, true);
-		return () => document.removeEventListener("pointerdown", away, true);
-	}, [open]);
+	useCloseOnPressAway(open, shut, listRef, buttonRef);
 
 	const pick = (candidate: Candidate | undefined) => {
-		if (candidate === undefined) return;
-		if (verdictOf(candidate.token)?.ok === false) return;
+		if (candidate === undefined || verdictOf(candidate.token)?.ok !== true) return;
 		onAdd(candidate.token);
 		setTyped("");
 		setCursor(0);
@@ -823,8 +822,8 @@ export function AddField({
 			{open ? (
 				<div
 					ref={listRef}
-					style={{ left: at.left, top: at.top, width: at.width }}
-					className="fixed z-50 flex max-h-[280px] flex-col overflow-hidden rounded-sm border border-border-raised bg-raised"
+					style={{ left: at.left, top: at.top, width: at.width, maxHeight: ADD_H }}
+					className="fixed z-50 flex flex-col overflow-hidden rounded-sm border border-border-raised bg-raised"
 				>
 					<div className="flex h-[30px] shrink-0 items-center gap-1.5 border-border-raised border-b px-2">
 						<span className="text-muted/50 text-sm leading-none">+</span>
@@ -859,25 +858,25 @@ export function AddField({
 					<div className="min-h-0 flex-1 overflow-y-auto py-1">
 						{list.map((candidate, position) => {
 							const verdict = verdictOf(candidate.token);
-							const refused = verdict?.ok === false ? verdict.reason : null;
+							const lands = verdict?.ok === true;
 							return (
 								<button
 									key={candidate.token}
 									type="button"
 									data-class-candidate={candidate.token}
-									disabled={refused !== null}
+									disabled={!lands}
 									onPointerEnter={() => setCursor(position)}
 									onClick={() => pick(candidate)}
 									className={cn(
 										"flex h-6 w-full items-center gap-2 px-2 text-left",
 										VALUE,
-										refused === null ? "cursor-pointer text-text" : "cursor-default text-muted/45",
-										position === index && refused === null && "bg-surface",
+										lands ? "cursor-pointer text-text" : "cursor-default text-muted/45",
+										position === index && lands && "bg-surface",
 									)}
 								>
 									<span className="shrink-0">{candidate.token}</span>
 									<span className={cn("ml-auto min-w-0 truncate pl-2", FAINT)}>
-										{refused ?? (verdict?.ok === true ? verdict.css : (candidate.says ?? ""))}
+										{verdict === undefined ? "…" : verdict.ok ? verdict.css : verdict.reason}
 									</span>
 								</button>
 							);

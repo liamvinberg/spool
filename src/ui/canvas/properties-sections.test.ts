@@ -103,7 +103,7 @@ it("folds padding in three steps, and reads the logical spellings as sides", asy
 	expect(shows(logical, "padding-left")).toBe("4");
 });
 
-it("opens one padding row into the axes and then the sides", async () => {
+it("opens one padding row into the axes and then the sides, and wraps back", async () => {
 	const rail = await mount("p-4");
 
 	await press(rail, caretIn(rail, "padding"));
@@ -111,6 +111,23 @@ it("opens one padding row into the axes and then the sides", async () => {
 
 	await press(rail, caretIn(rail, "padding-inline"));
 	expect(rowNames(rail, "padding")).toEqual(["padding-top", "padding-right", "padding-bottom", "padding-left"]);
+
+	await press(rail, caretIn(rail, "padding-top"));
+	expect(rowNames(rail, "padding")).toEqual(["padding"]);
+});
+
+it("opens a fold already on its axes, and never closes over sides that disagree", async () => {
+	const axes = await mount("px-4 py-2");
+	await press(axes, caretIn(axes, "padding-inline"));
+	expect(rowNames(axes, "padding")).toEqual(["padding-top", "padding-right", "padding-bottom", "padding-left"]);
+
+	// back to the fewest rows the sides allow, which here is the two axes
+	await press(axes, caretIn(axes, "padding-top"));
+	expect(rowNames(axes, "padding")).toEqual(["padding-inline", "padding-block"]);
+
+	// four sides that all differ have nowhere to fold, so there is no caret
+	const sides = await mount("pt-1 pr-2 pb-3 pl-4");
+	expect(caretIn(sides, "padding-top")).toBeNull();
 });
 
 it("folds the radius to four corners and the border to four edges", async () => {

@@ -12,6 +12,7 @@ import {
 	describe,
 	FILTER_SET,
 	type Gradient,
+	type GradientShape,
 	gapOf,
 	gradientCss,
 	gradientOf,
@@ -23,13 +24,14 @@ import {
 	parseTyped,
 	SIZE_MODES,
 	type Side,
-	type SizeMode,
+	type Stop,
 	sidesOf,
 	sizeModeOf,
 	stepLength,
 	themeOf,
 	toggledOf,
 	WORDS,
+	type Word,
 	wordOf,
 } from "./properties-families";
 import {
@@ -50,12 +52,14 @@ import {
 } from "./properties-fields";
 import {
 	type At,
+	displayOf,
 	editsFor,
 	type Row as ModelRow,
 	optionsFor,
 	type RowEdit,
 	type RowElement,
 	type RowValue,
+	type Rule,
 	readRow,
 	rowFor,
 	rowsIn,
@@ -115,6 +119,20 @@ function modelRow(property: string): ModelRow {
 	return row;
 }
 
+/**
+ * The same lookup, with the rule narrowed to the kind the control expects.
+ *
+ * A control is written against one kind of rule and the section that draws it
+ * names its property as a string; this is where the two meet. A mismatch is a
+ * programming error rather than a state the rail can be in, so it throws where
+ * the section is wrong rather than drawing an empty field where the user is.
+ */
+function ruleRow<K extends Rule["kind"]>(property: string, kind: K): ModelRow & { rule: Extract<Rule, { kind: K }> } {
+	const row = modelRow(property);
+	if (row.rule.kind !== kind) throw new Error(`"${property}" is not a ${kind} row`);
+	return row as ModelRow & { rule: Extract<Rule, { kind: K }> };
+}
+
 /** Whether this row may be written here, and the reason it may not. */
 function okOf(view: View, row: ModelRow): boolean {
 	return verdictFor(row, view.element, view.scoped).ok;
@@ -153,6 +171,20 @@ function worn<T>(view: View, read: (scoped: string) => T, empty: (value: T) => b
 	if (!empty(own) || view.scope.length === 0) return { own, shown: own, faint: empty(own) };
 	const base = read(view.base);
 	return { own, shown: base, faint: true };
+}
+
+/** The same reading, where only the value matters and not whose it is. */
+function through<T>(view: View, read: (scoped: string) => T, empty: (value: T) => boolean): T {
+	return worn(view, read, empty).shown;
+}
+
+/** The token a word family wears here, or the base's where this scope sets none. */
+function wordThrough(view: View, word: Word): string | null {
+	return through(
+		view,
+		(scoped) => wordOf(scoped, word),
+		(token) => token === null,
+	);
 }
 
 /* ---------- P6: a length ---------- */
@@ -200,8 +232,7 @@ function LengthRow({
 	read?: ((scoped: string) => string | null) | undefined;
 	aside?: ReactNode;
 }) {
-	const row = modelRow(property);
-	if (row.rule.kind !== "length") throw new Error(`"${property}" is not a length`);
+	const row = ruleRow(property, "length");
 	const family = row.rule.family;
 	const kind: Kind = LENGTHS[family] ?? "spacing";
 	const step = stepOf(view.theme);
@@ -261,8 +292,7 @@ function BorderWidthRow({
 	name?: string;
 	fold?: ReactNode;
 }) {
-	const row = modelRow(property);
-	if (row.rule.kind !== "border-width") throw new Error(`"${property}" is not a border width`);
+	const row = ruleRow(property, "border-width");
 	const edge = row.rule.edge;
 	const ok = okOf(view, row);
 	const step = stepOf(view.theme);
@@ -354,8 +384,7 @@ function ColourRow({
 	onWrite?: ((name: string | null, alpha: number | null) => void) | undefined;
 	fold?: ReactNode;
 }) {
-	const row = modelRow(property);
-	if (row.rule.kind !== "colour") throw new Error(`"${property}" is not a colour`);
+	const row = ruleRow(property, "colour");
 	const prefix = row.rule.prefix;
 	const ok = okOf(view, row);
 	const reader = read ?? ((scoped: string) => colourOf(scoped, prefix, view.theme));
@@ -438,8 +467,7 @@ function AlphaField({
 const UNSET: Option = { token: null, name: "unset" };
 
 function WordRow({ view, property, name }: { view: View; property: string; name?: string }) {
-	const row = modelRow(property);
-	if (row.rule.kind !== "word") throw new Error(`"${property}" is not a word`);
+	const row = ruleRow(property, "word");
 	const word = row.rule.word;
 	const ok = okOf(view, row);
 	const held = worn<string | null>(
@@ -584,8 +612,7 @@ function ToggleRow({
 	property: string;
 	menuGroup?: readonly string[] | undefined;
 }) {
-	const row = modelRow(property);
-	if (row.rule.kind !== "toggles") throw new Error(`"${property}" is not a toggle set`);
+	const row = ruleRow(property, "toggles");
 	const set = row.rule.set;
 	const ok = okOf(view, row);
 	const on = toggledOf(view.scoped, set);
@@ -678,12 +705,11 @@ function Folded({
 	const level = Math.min(max, Math.max(want, natural));
 	const rows = fold.levels[level] ?? [];
 	const ok = fold.levels[0]?.[0] === undefined ? false : okOf(view, modelRow(fold.levels[0][0].property));
+	// the caret steps one level further open and wraps back to the fewest rows the
+	// sides allow: a fold cannot close over sides that disagree, so a group that is
+	// already as open as it has to be has no caret at all
 	const caret = (
-		<Fold
-			open={level > 0}
-			ok={ok && (level === 0 || natural === 0)}
-			onToggle={() => setWant(level >= max ? 0 : level + 1)}
-		/>
+		<Fold open={level > 0} ok={ok && max > natural} onToggle={() => setWant(level >= max ? natural : level + 1)} />
 	);
 	return (
 		<>
@@ -764,12 +790,20 @@ function cornersAsSides(scoped: string, theme: CompiledTheme | null): Sides {
 
 /* ---------- P3: the gradient, as rows ---------- */
 
-const SHAPES: readonly Option[] = [
+const SHAPES: readonly (Option & { shape?: GradientShape })[] = [
 	{ token: null, name: "none" },
-	{ token: "linear", name: "bg-linear-*" },
-	{ token: "radial", name: "bg-radial" },
-	{ token: "conic", name: "bg-conic" },
+	{ token: "linear", name: "bg-linear-*", shape: "linear" },
+	{ token: "radial", name: "bg-radial", shape: "radial" },
+	{ token: "conic", name: "bg-conic", shape: "conic" },
 ];
+
+/** Where the browser puts a stop nobody positioned, which is what the box hints. */
+const SPACED: readonly number[] = [0, 50, 100];
+
+/** One stop changed, the other two left as they were. */
+function withStop(gradient: Gradient, index: number, change: (stop: Stop) => Stop): Gradient {
+	return { ...gradient, stops: gradient.stops.map((stop, at) => (at === index ? change(stop) : stop)) };
+}
 
 const DIRECTION_OPTIONS: readonly Option[] = DIRECTIONS.map((direction) => ({
 	token: direction.value,
@@ -789,7 +823,11 @@ function GradientRows({ view }: { view: View }) {
 	const row = modelRow("background-image");
 	const ok = okOf(view, row);
 	const own = gradientOf(view.scoped, view.theme);
-	const gradient = own ?? (view.scope.length > 0 ? gradientOf(view.base, view.theme) : null);
+	const gradient = through(
+		view,
+		(scoped) => gradientOf(scoped, view.theme),
+		(held) => held === null,
+	);
 	const changed = view.fresh(own?.token ?? null);
 	const write = (next: Gradient | null) => view.put(editsFor(row, { kind: "gradient", gradient: next }, atOf(view)));
 	const current =
@@ -805,10 +843,11 @@ function GradientRows({ view }: { view: View }) {
 					changed={changed}
 					label="background-image"
 					onPick={(picked) => {
-						if (picked === null) return write(null);
+						const shape = SHAPES.find((option) => option.token === picked)?.shape;
+						if (shape === undefined) return write(null);
 						write({
-							shape: picked as Gradient["shape"],
-							direction: picked === "linear" ? (gradient?.direction ?? "to-r") : null,
+							shape,
+							direction: shape === "linear" ? (gradient?.direction ?? "to-r") : null,
 							stops: gradient?.stops ?? [
 								{ at: "from", colour: null, position: null },
 								{ at: "via", colour: null, position: null },
@@ -928,37 +967,22 @@ function GradientRows({ view }: { view: View }) {
 									faint={stop.position === null}
 									onCommit={(typed) => {
 										const percent = Number.parseFloat(typed);
-										write({
-											...gradient,
-											stops: gradient.stops.map((candidate, at) =>
-												at === index
-													? {
-															...candidate,
-															position: Number.isNaN(percent)
-																? null
-																: `${Math.max(0, Math.min(100, percent))}%`,
-														}
-													: candidate,
-											),
-										});
+										write(
+											withStop(gradient, index, (held) => ({
+												...held,
+												position: Number.isNaN(percent) ? null : `${Math.max(0, Math.min(100, percent))}%`,
+											})),
+										);
 									}}
 									onStep={(units) => {
 										const now =
-											stop.position === null
-												? index === 0
-													? 0
-													: index === 1
-														? 50
-														: 100
-												: Number.parseFloat(stop.position);
-										write({
-											...gradient,
-											stops: gradient.stops.map((candidate, at) =>
-												at === index
-													? { ...candidate, position: `${Math.max(0, Math.min(100, now + units * 5))}%` }
-													: candidate,
-											),
-										});
+											stop.position === null ? (SPACED[index] ?? 0) : Number.parseFloat(stop.position);
+										write(
+											withStop(gradient, index, (held) => ({
+												...held,
+												position: `${Math.max(0, Math.min(100, now + units * 5))}%`,
+											})),
+										);
 									}}
 								/>
 							</span>
@@ -1033,7 +1057,7 @@ const INSET_SIDES: readonly { side: Side; property: string }[] = [
 ];
 
 function PositionSection({ view }: { view: View }) {
-	const position = wordOf(view.scoped, "position") ?? (view.scope.length > 0 ? wordOf(view.base, "position") : null);
+	const position = wordThrough(view, "position");
 	const placed = position !== null && PLACED.has(position);
 	const drawn = new Set(["position", "z-index", ...(placed ? INSET_SIDES.map((entry) => entry.property) : [])]);
 	return (
@@ -1068,6 +1092,8 @@ function SizeSection({ view }: { view: View }) {
 				const measured = Math.round(axis === "w" ? view.box.w : view.box.h);
 				const own = lengthOf(view.scoped, axis);
 				const mode = sizeModeOf(view.scoped, axis);
+				// hug is the absence of a token, so this axis takes the base's mode only
+				// where nothing under the scope sets a length at all
 				const shownMode = own === null && view.scope.length > 0 ? sizeModeOf(view.base, axis) : mode;
 				const options: Option[] = SIZE_MODES.map((entry) => ({ token: entry.mode, name: entry.says }));
 				return (
@@ -1088,15 +1114,10 @@ function SizeSection({ view }: { view: View }) {
 									ok={okOf(view, modeRow)}
 									faint={own === null && mode === "hug"}
 									label={`${property} mode`}
-									onPick={(token) =>
-										view.put(
-											editsFor(
-												modeRow,
-												{ kind: "mode", mode: (token ?? "hug") as SizeMode, measured },
-												atOf(view),
-											),
-										)
-									}
+									onPick={(token) => {
+										const mode = SIZE_MODES.find((entry) => entry.mode === token)?.mode ?? "hug";
+										view.put(editsFor(modeRow, { kind: "mode", mode, measured }, atOf(view)));
+									}}
 								/>
 							</span>
 						}
@@ -1125,7 +1146,7 @@ function LayoutSection({ view }: { view: View }) {
 	const flex = display !== null && FLEX_DISPLAYS.has(display);
 	const grid = display === "grid";
 	const column = (own.direction ?? base.direction) === "flex-col";
-	const overflow = wordOf(view.scoped, "overflow") ?? (view.scope.length > 0 ? wordOf(view.base, "overflow") : null);
+	const overflow = wordThrough(view, "overflow");
 	const scrolls = overflow !== null && SCROLLS.has(overflow);
 	const directionRow = modelRow("flex-direction");
 	const wrapRow = modelRow("flex-wrap");
@@ -1197,8 +1218,8 @@ function LayoutSection({ view }: { view: View }) {
 							}
 						/>
 						<span className="flex min-w-0 flex-1 flex-col gap-1">
-							<PlaceMenu view={view} row={alignRow} own={own.align} base={base.align} />
-							<PlaceMenu view={view} row={justifyRow} own={own.justify} base={base.justify} />
+							<PlaceMenu view={view} property="align-items" own={own.align} base={base.align} />
+							<PlaceMenu view={view} property="justify-content" own={own.justify} base={base.justify} />
 						</span>
 					</Row>
 				</>
@@ -1261,8 +1282,18 @@ function LayoutSection({ view }: { view: View }) {
 	);
 }
 
-function PlaceMenu({ view, row, own, base }: { view: View; row: ModelRow; own: string | null; base: string | null }) {
-	if (row.rule.kind !== "word") return null;
+function PlaceMenu({
+	view,
+	property,
+	own,
+	base,
+}: {
+	view: View;
+	property: "align-items" | "justify-content";
+	own: string | null;
+	base: string | null;
+}) {
+	const row = ruleRow(property, "word");
 	const options: Option[] = [
 		UNSET,
 		...optionsFor(row, view.theme).map((option) => ({ token: option.token, name: option.token })),
@@ -1442,7 +1473,7 @@ function StrokeSection({ view }: { view: View }) {
 
 function TextSection({ view }: { view: View }) {
 	const alignRow = modelRow("text-align");
-	const align = wordOf(view.scoped, "text-align") ?? (view.scope.length > 0 ? wordOf(view.base, "text-align") : null);
+	const align = wordThrough(view, "text-align");
 	const drawn = new Set([
 		"font-family",
 		"font-size",
@@ -1497,30 +1528,54 @@ export function PropertySections({ view }: { view: View }) {
 /* ---------- P5: the `+ class`, at the foot ---------- */
 
 /**
- * What the `+` offers before anything is typed.
+ * What the `+` offers before anything is typed, which is the design frame's own
+ * list.
  *
- * A short list of the classes a rail has no row for, which is the point of the
- * field: `flex-1` has a row, `[mask-type:luminance]` never will. Nothing here
- * is a catalogue of what compiles — the compiler answers that for every one of
- * them, including whatever is typed over them.
+ * A starting point rather than a catalogue: nothing here decides what compiles,
+ * and whatever is typed over it goes to the compiler the same way. It is why
+ * `[mask-type:luminance]` and `mt-3.5!` are in it — the classes no row will ever
+ * have are the whole point of the field.
  */
 const SEEDS: readonly string[] = [
+	"flex-1",
 	"shrink-0",
 	"grow",
+	"truncate",
+	"uppercase",
+	"italic",
+	"underline",
 	"select-none",
 	"pointer-events-none",
 	"cursor-pointer",
 	"sr-only",
+	"min-h-0",
+	"max-w-full",
+	"size-full",
 	"aspect-square",
+	"ml-auto",
+	"mt-auto",
+	"self-center",
+	"order-first",
+	"whitespace-nowrap",
+	"leading-none",
+	"tracking-wide",
 	"antialiased",
 	"transition",
 	"transition-colors",
 	"animate-pulse",
 	"outline-none",
+	"ring-2",
+	"shadow-sm",
 	"backdrop-blur-sm",
 	"[mask-type:luminance]",
+	"[--row-h:44px]",
 	"content-['']",
+	"mt-3.5!",
+	"hover:opacity-80",
 ];
+
+/** What an inline element has no box for, so the field does not offer it one. */
+const NOT_INLINE = /^(flex-1|min-h-0|size-full|aspect-square|self-center|order-first)$/;
 
 export function AddClassRow({
 	view,
@@ -1532,9 +1587,10 @@ export function AddClassRow({
 	taken: ReadonlySet<string>;
 	onAdd: (token: string) => void;
 }) {
+	const inline = displayOf(view.element, view.scoped) === "inline";
 	return (
 		<AddField
-			candidates={SEEDS.map((token) => ({ token }))}
+			candidates={SEEDS.filter((token) => !(inline && NOT_INLINE.test(token))).map((token) => ({ token }))}
 			taken={taken}
 			ok={view.element.refusal === undefined}
 			verdictOf={view.compiler.verdictOf}
