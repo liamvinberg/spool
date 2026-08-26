@@ -1000,6 +1000,125 @@ const canvasShimJs = `(() => {
 		return chainOf(kin);
 	}
 
+	// --- the measurement overlay (#261) ------------------------------------
+	//
+	// Only the document knows what the pixels between two elements are made of,
+	// and it is the worst place to work out what they add up to. So this reads
+	// and says nothing more: the two boxes, their margins, the parent's gap and
+	// what one spacing step is worth here. ui/canvas/measure-spacing.ts does
+	// the arithmetic and the attribution, where a test can reach it.
+
+	function pxOf(value) {
+		const n = parseFloat(value);
+		return Number.isFinite(n) ? n : 0;
+	}
+
+	// the arbitrary-length reader, which the canvas has one of too: the shim is
+	// injected source and can import nothing, so the two are the same three
+	// lines on either side of that boundary
+	function lengthOf(text, root) {
+		const found = /^(-?(?:[0-9]+(?:\\.[0-9]+)?|\\.[0-9]+))(px|rem)$/.exec(String(text || "").trim());
+		if (!found) return null;
+		return found[2] === "rem" ? parseFloat(found[1]) * root : parseFloat(found[1]);
+	}
+
+	function measuredBox(el) {
+		const style = getComputedStyle(el);
+		const rect = el.getBoundingClientRect();
+		return {
+			selector: cssPath(el),
+			tag: el.tagName.toLowerCase(),
+			className: el.getAttribute("class") || "",
+			rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
+			radius: parseFloat(style.borderTopLeftRadius) || 0,
+			margins: {
+				top: pxOf(style.marginTop),
+				right: pxOf(style.marginRight),
+				bottom: pxOf(style.marginBottom),
+				left: pxOf(style.marginLeft),
+			},
+			rtl: style.direction === "rtl",
+			display: style.display,
+			loose: style.position === "absolute" || style.position === "fixed" || style.cssFloat !== "none",
+		};
+	}
+
+	// The pointer usually rests on a word inside the card rather than on the
+	// card, so the second element is the one the point resolves *up* to: the
+	// nearest ancestor of it that is the held element's own neighbour.
+	//
+	// Neighbour, not any sibling: a distance breaks into one gap and two facing
+	// margins, and that is only the truth for a pair with nothing between them.
+	// Across a skipped row the same sum would name one gap for a distance made
+	// of two and a whole box, which is an attribution that misleads rather than
+	// teaches. So a point anywhere else answers with nothing.
+	function facing(anchor, x, y) {
+		const at = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
+		if (!at || at === document.documentElement || at === document.body || at.id === "root") return null;
+		const before = anchor.previousElementSibling;
+		const after = anchor.nextElementSibling;
+		let walk = at;
+		while (walk && walk.nodeType === 1 && walk !== document.body && walk.id !== "root") {
+			if (walk === before || walk === after) return walk;
+			walk = walk.parentElement;
+		}
+		return null;
+	}
+
+	function spacingReading(selector, x, y) {
+		const anchor = elementFor(selector);
+		if (!anchor) return null;
+		const other = facing(anchor, x, y);
+		if (!other) return null;
+		const held = measuredBox(anchor);
+		const found = measuredBox(other);
+		// the axis is whichever one actually separates them; a pair that overlaps
+		// on both has no distance to draw, and a diagonal pair takes the wider
+		const dx = Math.max(held.rect.x - (found.rect.x + found.rect.w), found.rect.x - (held.rect.x + held.rect.w));
+		const dy = Math.max(held.rect.y - (found.rect.y + found.rect.h), found.rect.y - (held.rect.y + held.rect.h));
+		if (dx < -0.5 && dy < -0.5) return null;
+		const axis = dx < -0.5 ? "y" : dy < -0.5 ? "x" : dx >= dy ? "x" : "y";
+		const flat = axis === "x";
+		const near = (box) => (flat ? box.rect.x : box.rect.y);
+		const first = near(held) <= near(found) ? held : found;
+		const second = first === held ? found : held;
+		const across = (box) => (flat ? box.rect.y : box.rect.x);
+		const girth = (box) => (flat ? box.rect.h : box.rect.w);
+		const lo = Math.max(across(first), across(second));
+		const hi = Math.min(across(first) + girth(first), across(second) + girth(second));
+		const at = lo <= hi
+			? (lo + hi) / 2
+			: (across(first) + girth(first) / 2 + across(second) + girth(second) / 2) / 2;
+		// the pair are neighbours, so the parent is theirs and is the only
+		// element a gap between them can have been written on
+		const shared = anchor.parentElement;
+		if (!shared || shared.nodeType !== 1) return null;
+		const shape = getComputedStyle(shared);
+		const parentRead = {
+			selector: cssPath(shared),
+			tag: shared.tagName.toLowerCase(),
+			className: shared.getAttribute("class") || "",
+			display: shape.display,
+			gapX: pxOf(shape.columnGap),
+			gapY: pxOf(shape.rowGap),
+		};
+		// the spacing step is the project's, never assumed: a theme that moves
+		// --spacing would otherwise have every token named against the wrong scale
+		const root = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+		const step = lengthOf(getComputedStyle(anchor).getPropertyValue("--spacing"), root);
+		return {
+			axis,
+			from: flat ? first.rect.x + first.rect.w : first.rect.y + first.rect.h,
+			to: flat ? second.rect.x : second.rect.y,
+			at,
+			first,
+			second,
+			parent: parentRead,
+			step: step === null ? 4 : step,
+			root,
+		};
+	}
+
 	/**
 	 * The in-place text edit (#255): the element itself becomes the field.
 	 *
@@ -1292,6 +1411,13 @@ const canvasShimJs = `(() => {
 			let chain = [];
 			try { chain = kinChain(m.selector, m.step); } catch {}
 			parent.postMessage({ spool: "picked", frame, id: m.id, chain }, "*");
+			return;
+		}
+		if (m.spool === "measure") {
+			const frame = (window.__SPOOL__ || {}).frame;
+			let reading = null;
+			try { reading = spacingReading(m.selector, m.x, m.y); } catch {}
+			parent.postMessage({ spool: "measured", frame, id: m.id, reading }, "*");
 			return;
 		}
 		if (m.spool === "edit" || m.spool === "edit-end") {

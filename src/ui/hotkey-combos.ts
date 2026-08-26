@@ -38,7 +38,7 @@ export interface ParsedCombo {
 	ctrl: boolean;
 	shift: boolean;
 	alt: boolean;
-	/** normalized key token; `null` for a bare `accel` hold combo */
+	/** normalized key token; `null` for a bare modifier-hold combo */
 	key: string | null;
 }
 
@@ -73,7 +73,10 @@ export function parseCombo(combo: string): ParsedCombo {
 			parsed.key = token;
 		} else throw new Error(`combo "${combo}" holds an unknown token "${token}"`);
 	}
-	if (parsed.key === null && !(parsed.accel && !parsed.ctrl && !parsed.shift && !parsed.alt)) {
+	// a hold combo is one bare modifier and nothing else: the key going down is
+	// the whole gesture, which is how ⌘ arms the deep ring and ⌥ the measure
+	const held = [parsed.accel, parsed.ctrl, parsed.shift, parsed.alt].filter(Boolean).length;
+	if (parsed.key === null && !((parsed.accel || parsed.alt) && held === 1)) {
 		throw new Error(`combo "${combo}" names no key`);
 	}
 	return parsed;
@@ -102,9 +105,9 @@ const KEY_OF: Record<string, string> = {
 const SHIFT_AGNOSTIC = new Set(["slash", "question", "plus", "minus", "equals"]);
 
 export function matchesCombo(event: ComboEvent, combo: ParsedCombo, platform = currentPlatform()): boolean {
-	// a bare accel combo is the platform's own modifier key going down; the
+	// a bare hold combo is that modifier's own key going down; for accel the
 	// other platform's modifier stays an ordinary, unclaimed key here
-	if (combo.key === null) return event.key === accelKeyName(platform);
+	if (combo.key === null) return event.key === (combo.alt ? "Alt" : accelKeyName(platform));
 	// hold-to-pan borrows the Hand under any modifier, as it always has
 	if (combo.key === "space") return event.code === "Space";
 	if (combo.alt !== event.altKey) return false;

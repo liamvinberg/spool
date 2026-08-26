@@ -164,6 +164,25 @@ it("draws the rung a click takes and the rung under it, dashed", async () => {
 	expect(host.querySelectorAll(".border-dashed")).toHaveLength(1);
 });
 
+it("draws again after a press voided the hover ask that was in flight", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+
+	// a move, then a press before the frame has answered it: the press voids
+	// every outstanding pick, so that hover's answer never arrives. The rings
+	// have to survive it — an ask that is dropped must not latch them off.
+	await act(async () => {
+		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 1 }));
+	});
+	await clickAt(canvas, 40, 40);
+
+	await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+	await act(async () => {
+		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 41, clientY: 41, pointerId: 1 }));
+	});
+	await frame.answer(CHAIN);
+	expect(host.querySelectorAll(".border-dashed")).toHaveLength(1);
+});
+
 // --- the harness -------------------------------------------------------------
 
 interface FramePlayer {

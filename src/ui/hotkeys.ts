@@ -197,6 +197,16 @@ export const HOTKEYS = [
 		gesture: "click it again",
 	},
 	{ id: "canvas.accel-hold", scope: "canvas", group: "Selection", label: "", keys: ["accel"], listed: false },
+	// the measurement overlay (#261): ⌥ is held, the pointer names a sibling,
+	// and the canvas draws what the distance between them is made of
+	{
+		id: "canvas.measure",
+		scope: "canvas",
+		group: "Selection",
+		label: "Measure the distance to a sibling",
+		keys: ["alt"],
+		gesture: "point at one",
+	},
 	{
 		id: "canvas.nudge",
 		scope: "canvas",

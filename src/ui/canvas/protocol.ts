@@ -143,6 +143,7 @@ export type FrameMessage =
 	| FramePanMessage
 	| FrameZoomMessage
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
+	| { spool: "measured"; frame: string; id: number; reading: SpacingReading | null }
 	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
 	| { spool: "edited"; frame: string; id: number; commit: boolean; text: string }
 	| { spool: "site-boxes"; frame: string; id: number; boxes: SiteBoxes }
@@ -217,6 +218,10 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				: undefined;
 		case "picked":
 			return Array.isArray(m.chain) && typeof m.id === "number" ? (m as unknown as FrameMessage) : undefined;
+		case "measured":
+			return typeof m.id === "number" && (m.reading === null || isSpacingReading(m.reading))
+				? (m as unknown as FrameMessage)
+				: undefined;
 		case "edit-open":
 			return typeof m.id === "number" && typeof m.ok === "boolean" && typeof m.text === "string"
 				? (m as unknown as FrameMessage)
@@ -327,6 +332,52 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * A spacing reading, checked the way every other reply is: the shape the
+ * decomposition indexes into, and finite numbers where it does arithmetic.
+ */
+function isSpacingReading(value: unknown): value is SpacingReading {
+	if (!isRecord(value)) return false;
+	return (
+		(value.axis === "x" || value.axis === "y") &&
+		finite(value.from) &&
+		finite(value.to) &&
+		finite(value.at) &&
+		finite(value.step) &&
+		finite(value.root) &&
+		isMeasuredBox(value.first) &&
+		isMeasuredBox(value.second) &&
+		isMeasuredParent(value.parent)
+	);
+}
+
+function isMeasuredBox(value: unknown): value is MeasuredBox {
+	if (!isRecord(value) || !isRecord(value.rect) || !isRecord(value.margins)) return false;
+	return (
+		typeof value.selector === "string" &&
+		typeof value.tag === "string" &&
+		typeof value.className === "string" &&
+		typeof value.display === "string" &&
+		typeof value.rtl === "boolean" &&
+		typeof value.loose === "boolean" &&
+		finite(value.radius) &&
+		["x", "y", "w", "h"].every((key) => finite((value.rect as Record<string, unknown>)[key])) &&
+		["top", "right", "bottom", "left"].every((key) => finite((value.margins as Record<string, unknown>)[key]))
+	);
+}
+
+function isMeasuredParent(value: unknown): value is MeasuredParent {
+	return (
+		isRecord(value) &&
+		typeof value.selector === "string" &&
+		typeof value.tag === "string" &&
+		typeof value.className === "string" &&
+		typeof value.display === "string" &&
+		finite(value.gapX) &&
+		finite(value.gapY)
+	);
+}
+
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
 	const own = Object.keys(value);
 	return own.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
@@ -378,6 +429,84 @@ export const pickMessage = (x: number, y: number, id: number) => ({ spool: "pick
 export type KinStep = "child" | "next" | "previous" | "self";
 export const kinMessage = (selector: string, step: KinStep, id: number) =>
 	({ spool: "kin", selector, step, id }) as const;
+
+/**
+ * One element in a spacing reading (#261): what it is, where it is, and the
+ * class literal it carries.
+ *
+ * The class comes off the live document rather than out of the file, because
+ * the overlay names what *produced* the pixels — a token the compiler never
+ * saw is not the one to go and edit, and a token the file writes but a variant
+ * beats is not either.
+ */
+export interface MeasuredBox {
+	selector: string;
+	tag: string;
+	/** the live class attribute, empty when the element carries none */
+	className: string;
+	rect: Box;
+	radius: number;
+	margins: { top: number; right: number; bottom: number; left: number };
+	/** ltr or rtl, which is what `ms-` and `me-` resolve through */
+	rtl: boolean;
+	/** the computed display, which decides whether its block margins collapse */
+	display: string;
+	/** out of flow, so its block margins never collapse with a sibling's */
+	loose: boolean;
+}
+
+/** The parent two neighbours share: the only element that can own their gap. */
+export interface MeasuredParent {
+	selector: string;
+	tag: string;
+	className: string;
+	/** the computed display, which decides whether a gap applies at all */
+	display: string;
+	gapX: number;
+	gapY: number;
+}
+
+/**
+ * The raw facts behind a distance (#261), read off computed styles and handed
+ * out undecomposed.
+ *
+ * The frame is the only place the boxes, the margins and the resolved
+ * `--spacing` can be read, and it is the worst place to work out what they add
+ * up to — so it reads and says nothing more. `measure-spacing.ts` does the
+ * arithmetic and the attribution, where a test can reach it.
+ */
+export interface SpacingReading {
+	axis: "x" | "y";
+	/** frame-local: the facing edge of the box drawn first along the axis */
+	from: number;
+	/** the facing edge of the second, so `to - from` is the distance */
+	to: number;
+	/** the cross-axis line the bar is drawn on, frame-local */
+	at: number;
+	/** the two boxes in the order they are drawn along the axis */
+	first: MeasuredBox;
+	second: MeasuredBox;
+	/** the parent both share — a reading is only ever taken between neighbours */
+	parent: MeasuredParent;
+	/** what one spacing step is worth here — `var(--spacing)` resolved */
+	step: number;
+	/** the root font size, for a token spelled in rem */
+	root: number;
+}
+
+/**
+ * The measurement overlay's ask (#261): the held element, and the point the
+ * pointer is at under ⌥.
+ *
+ * The frame resolves the second element itself rather than being told one,
+ * because the pointer usually rests on a word inside the card rather than on
+ * the card — so the shim climbs from the point to whichever ancestor is the
+ * held element's own neighbour, and answers for that. A point anywhere else
+ * answers with no reading, because a distance only decomposes honestly with
+ * nothing standing between its two ends.
+ */
+export const measureMessage = (selector: string, x: number, y: number, id: number) =>
+	({ spool: "measure", selector, x, y, id }) as const;
 /**
  * The in-place text edit (#255): the element's own words become the field,
  * with the caret where the click landed. The frame answers `edit-open` at

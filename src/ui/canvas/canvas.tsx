@@ -121,6 +121,7 @@ import {
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import { atRung, type LadderScope, oneDown, oneUp } from "./ladder";
 import { useFrameLifecycle } from "./lifecycle";
+import { decompose, measuredTarget } from "./measure-spacing";
 import {
 	type ElementHandles,
 	type ElementPreview,
@@ -147,12 +148,14 @@ import {
 	endEditMessage,
 	type KinStep,
 	kinMessage,
+	measureMessage,
 	type PickedHit,
 	parseFrameMessage,
 	pickKey,
 	pickMessage,
 	type SessionRecord,
 	type SiteAnchor,
+	type SpacingReading,
 	sessionReply,
 	sitesMessage,
 	walkRejectionReason,
@@ -472,6 +475,10 @@ export function ProjectCanvas({
 	enteredRef.current = entered;
 	const accelDownRef = useRef(accelDown);
 	accelDownRef.current = accelDown;
+	// ⌥ is a hover modifier and nothing else: it draws the measurement and
+	// changes no selection, so it never needs a render of its own — the reading
+	// it asks for is what redraws (#261)
+	const optionDownRef = useRef(false);
 	/** The last screen point a relayed middle-button drag reported (#8). */
 	const framePan = useRef<Point | null>(null);
 	// ⌘ no longer borrows Select — Select is the base, and ⌘ is its element
@@ -500,6 +507,8 @@ export function ProjectCanvas({
 	const departedFrameDocuments = useRef(new Set<string>());
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
+	/** the measurement overlay's own replies (#261), on the same id sequence */
+	const measureWaiters = useRef(new Map<number, (reading: SpacingReading | null) => void>());
 	const pickSeq = useRef(0);
 	// picks apply only while their generation is current: a superseding intent
 	// (a fresh press, a drag, Esc) bumps it and voids them — while a click and
@@ -1664,6 +1673,10 @@ export function ProjectCanvas({
 
 	const cancelPicks = useCallback(() => {
 		pickGen.current++;
+		// the hover's own ask is one of the ones just voided, and its reply is
+		// what would have cleared this. Left standing it latches the rings — and
+		// the measurement (#261) — off for the rest of the session.
+		hoverBusy.current = false;
 	}, []);
 
 	const clearCanvasSelection = useCallback(() => {
@@ -1675,16 +1688,23 @@ export function ProjectCanvas({
 	}, [cancelPicks, holdChain]);
 
 	/**
-	 * Ask a frame for an element ancestry and route the answer. The apply
-	 * callback runs only while this ask's generation is current — a silent or
-	 * booting document never applies; onSilence answers for it when a caller
-	 * cannot afford dead air.
+	 * Ask a frame one question and route the one answer.
+	 *
+	 * Every verb the canvas asks a frame shares this: an id off one sequence, a
+	 * generation captured at the ask, and a deadline for a document that never
+	 * speaks. What differs is only which waiter map the reply lands in, because
+	 * the answers are different shapes and one map for both would mean a cast.
+	 *
+	 * The apply callback runs only while this ask's generation is current — a
+	 * superseded ask never applies; onSilence answers for a document that stays
+	 * quiet, when a caller cannot afford dead air.
 	 */
-	const askChain = useCallback(
-		(
+	const askFrame = useCallback(
+		<T,>(
 			frame: string,
+			waiters: Map<number, (value: T) => void>,
 			request: (id: number) => unknown,
-			apply: (chain: PickedHit[]) => void,
+			apply: (value: T) => void,
 			onSilence?: () => void,
 		) => {
 			const target = iframes.current.get(frame)?.contentWindow;
@@ -1694,15 +1714,28 @@ export function ProjectCanvas({
 			}
 			const id = ++pickSeq.current;
 			const gen = pickGen.current;
-			pickWaiters.current.set(id, (chain) => {
-				if (pickGen.current === gen) apply(chain);
+			waiters.set(id, (value) => {
+				if (pickGen.current === gen) apply(value);
 			});
 			target.postMessage(request(id), "*");
 			setTimeout(() => {
-				if (pickWaiters.current.delete(id) && pickGen.current === gen) onSilence?.();
+				if (waiters.delete(id) && pickGen.current === gen) onSilence?.();
 			}, PICK_REPLY_MS);
 		},
 		[],
+	);
+
+	/** The element ancestry: the answer every pointer and keyboard verb wants. */
+	const askChain = useCallback(
+		(
+			frame: string,
+			request: (id: number) => unknown,
+			apply: (chain: PickedHit[]) => void,
+			onSilence?: () => void,
+		) => {
+			askFrame(frame, pickWaiters.current, request, apply, onSilence);
+		},
+		[askFrame],
 	);
 
 	/** The ancestry at a frame-local point: what every pointer verb asks for. */
@@ -1711,6 +1744,25 @@ export function ProjectCanvas({
 			askChain(frame, (id) => pickMessage(local.x, local.y, id), apply, onSilence);
 		},
 		[askChain],
+	);
+
+	/**
+	 * The measurement overlay's ask (#261): the held element, and where the
+	 * pointer is. The frame resolves the second element and reads the raw
+	 * facts; a point that names nothing to measure answers with no reading, and
+	 * so does a document that says nothing at all.
+	 */
+	const askMeasure = useCallback(
+		(frame: string, selector: string, local: Point, apply: (reading: SpacingReading | null) => void) => {
+			askFrame(
+				frame,
+				measureWaiters.current,
+				(id) => measureMessage(selector, local.x, local.y, id),
+				apply,
+				() => apply(null),
+			);
+		},
+		[askFrame],
 	);
 
 	const applyPick = useCallback(
@@ -2741,6 +2793,12 @@ export function ProjectCanvas({
 					waiter?.(message.chain);
 					return;
 				}
+				case "measured": {
+					const waiter = measureWaiters.current.get(message.id);
+					measureWaiters.current.delete(message.id);
+					waiter?.(message.reading);
+					return;
+				}
 				// the in-place edit (#255): the frame says it has opened, and later
 				// says how it ended. A reply carrying another ask is a dead edit —
 				// its element has moved on, and writing what it says would land on
@@ -3046,7 +3104,7 @@ export function ProjectCanvas({
 	 * A field of live documents each drawing rings is a busier surface than the
 	 * one that ships, so only the frame under the pointer ever draws.
 	 */
-	const hoverPickAt = (frame: string | null, world: Point, deepest: boolean) => {
+	const hoverPickAt = (frame: string | null, world: Point, deepest: boolean, measuring = false) => {
 		if (frame === null) {
 			hoverPoint.current = null;
 			setPreview(null);
@@ -3059,6 +3117,27 @@ export function ProjectCanvas({
 		if (hoverBusy.current || now - hoverLast.current < HOVER_PICK_MS) return;
 		hoverLast.current = now;
 		hoverBusy.current = true;
+		// ⌥ over a sibling measures instead of previewing a rung (#261). One
+		// rung is held or there is no distance to draw: a measure is from
+		// somewhere to somewhere, and a multi-selection has no somewhere.
+		const held = measuring ? onlyHeldRung() : undefined;
+		if (held !== undefined && held.frame === frame) {
+			askMeasure(frame, held.selector, local, (reading) => {
+				hoverBusy.current = false;
+				if (gesture.current.kind !== "idle" || toolRef.current !== "select" || !optionDownRef.current) return;
+				if (reading === null) {
+					setPreview(null);
+					return;
+				}
+				const other = measuredTarget(reading, held.selector);
+				setPreview({
+					click: { frame, selector: other.selector, rect: other.rect, radius: other.radius },
+					under: null,
+					spacing: { frame, ...decompose(reading) },
+				});
+			});
+			return;
+		}
 		beginPick(
 			frame,
 			local,
@@ -3093,7 +3172,7 @@ export function ProjectCanvas({
 			return;
 		}
 		hoverLast.current = 0;
-		hoverPickAt(at.frame, at.world, accelDownRef.current);
+		hoverPickAt(at.frame, at.world, accelDownRef.current, optionDownRef.current);
 	};
 
 	const cancelGesture = useCallback(() => {
@@ -3361,7 +3440,11 @@ export function ProjectCanvas({
 			// pointer is nobody's tool: it is what keeps a live frame awake (#172),
 			// and a pointer resting on a frame is resting on it in the Hand too.
 			if (toolRef.current !== "select") return;
-			hoverPickAt(label === null ? frame : null, world, accelPressed(event));
+			// ⌥ is read off the move rather than off the key event, exactly as ⌘
+			// is: the ref is what a reply is checked against, and the modifier
+			// the pointer reports is the one that was down when the ask went out
+			optionDownRef.current = event.altKey;
+			hoverPickAt(label === null ? frame : null, world, accelPressed(event), event.altKey);
 			return;
 		}
 
@@ -3766,6 +3849,13 @@ export function ProjectCanvas({
 				accelDownRef.current = true;
 				refreshRings.current();
 			},
+			// ⌥ down redraws where the pointer already rests, which is what turns
+			// a resting hover into a measurement without moving the mouse (#261)
+			"canvas.measure": () => {
+				if (optionDownRef.current) return;
+				optionDownRef.current = true;
+				refreshRings.current();
+			},
 			"canvas.space-hold": (event) => {
 				if (event === undefined) return;
 				if (!event.repeat) setSpaceDown(true);
@@ -3967,10 +4057,19 @@ export function ProjectCanvas({
 				accelDownRef.current = false;
 				refreshRings.current();
 			}
+			// letting ⌥ go puts the rungs back where the measurement was. The
+			// overlay goes at once rather than when the fresh ancestry lands: a
+			// distance is only true while the modifier that asked for it is held.
+			if (event.key === "Alt") {
+				optionDownRef.current = false;
+				setPreview(null);
+				refreshRings.current();
+			}
 		};
 		const clearModifiers = () => {
 			setAccelDown(false);
 			setSpaceDown(false);
+			optionDownRef.current = false;
 			setPreview(null);
 		};
 		window.addEventListener("keyup", onKeyUp);

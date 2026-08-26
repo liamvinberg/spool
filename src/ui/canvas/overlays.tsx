@@ -4,6 +4,7 @@ import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
 import type { ShownRefusal } from "./hand-edit";
 import type { LiveHandles, Sign } from "./hand-resize";
+import type { Spacing, SpacingPart } from "./measure-spacing";
 import { frameSourcePath } from "./pages";
 import { type PickedHit, parseStampRef, pickKey } from "./protocol";
 import type { SnapMarks } from "./snap";
@@ -40,6 +41,20 @@ export interface ElementPreview {
 export interface HoverRungs {
 	click: ElementPreview | null;
 	under: ElementPreview | null;
+	/**
+	 * The distance from the held element to `click`, decomposed (#261).
+	 *
+	 * It rides the hover rather than sitting beside it because its life is the
+	 * hover's exactly: the pointer moving, the selection changing, a gesture
+	 * starting and ⌥ coming back up all end it, and every one of those already
+	 * clears the rungs.
+	 */
+	spacing?: MeasuredSpacing;
+}
+
+/** A decomposed distance, and the frame whose pixels it is in. */
+export interface MeasuredSpacing extends Spacing {
+	frame: string;
 }
 
 /** The frame under the pointer. Hidden hovers linger only to fade their ring. */
@@ -196,32 +211,16 @@ export function SelectionOverlay({
 			{marks.h.map((y) => (
 				<div key={`h${y}`} className="absolute inset-x-0 h-px bg-thread" style={{ top: y * k + camera.y }} />
 			))}
-			{marks.spans.map((span) => {
-				// a bar the exact length of the gap, ticked at both ends, laid across
-				// the middle of the two frames' shared overlap — no fill, no number
-				const flat = span.axis === "x";
-				const from = span.from * k + (flat ? camera.x : camera.y);
-				const length = (span.to - span.from) * k;
-				const at = span.at * k + (flat ? camera.y : camera.x) - SPAN_TICK_PX;
-				const girth = SPAN_TICK_PX * 2;
-				return (
-					<div
-						key={`${span.axis}${span.from}-${span.to}-${span.at}`}
-						data-snap-span={span.axis}
-						className={`absolute border-thread ${flat ? "border-r border-l" : "border-t border-b"}`}
-						style={
-							flat
-								? { left: from, top: at, width: length, height: girth }
-								: { left: at, top: from, width: girth, height: length }
-						}
-					>
-						<div
-							className={`absolute bg-thread ${flat ? "inset-x-0 h-px" : "inset-y-0 w-px"}`}
-							style={flat ? { top: SPAN_TICK_PX } : { left: SPAN_TICK_PX }}
-						/>
-					</div>
-				);
-			})}
+			{marks.spans.map((span) => (
+				<SpanBar
+					key={`${span.axis}${span.from}-${span.to}-${span.at}`}
+					mark="data-snap-span"
+					axis={span.axis}
+					from={span.from * k + (span.axis === "x" ? camera.x : camera.y)}
+					length={(span.to - span.from) * k}
+					at={span.at * k + (span.axis === "x" ? camera.y : camera.x)}
+				/>
+			))}
 
 			{hoveredFrame !== undefined &&
 				(() => {
@@ -366,6 +365,25 @@ export function SelectionOverlay({
 					return <ElementOutline box={box} radius={deeperShown.radius * k} faded dashed />;
 				})()}
 
+			{preview?.spacing === undefined
+				? null
+				: (() => {
+						const spacing = preview.spacing;
+						const frame = frames.find((f) => f.name === spacing.frame);
+						if (frame === undefined) return null;
+						const flat = spacing.axis === "x";
+						const along = (v: number) => v * k + (flat ? camera.x + frame.x * k : camera.y + frame.y * k);
+						const across = (v: number) => v * k + (flat ? camera.y + frame.y * k : camera.x + frame.x * k);
+						return (
+							<MeasureOverlay
+								spacing={spacing}
+								from={along(spacing.from)}
+								length={spacing.distance * k}
+								at={across(spacing.at)}
+							/>
+						);
+					})()}
+
 			{/* floating chrome hides for the length of a drag and comes back
 			    anchored to wherever the element ended up (#259) */}
 			{refused !== null &&
@@ -496,6 +514,130 @@ function ElementHandleSet({ ring, handles }: { ring: Box; handles: ElementHandle
 			)}
 		</>
 	);
+}
+
+/**
+ * The measurement overlay (#261): the distance, and what it is made of.
+ *
+ * The bar is the canvas's own spacing mark — a span the exact length of the
+ * distance, ticked at both ends — because a spacing measure between two frames
+ * and one between two elements are the same thing at two depths, and a second
+ * vocabulary for the second depth would read as a second kind of fact.
+ *
+ * The number rides the bar as the readout every other live measure wears, and
+ * the parts sit under it: pixels, the class that produced them, the element it
+ * is written on. A part with no class shows its pixels and says so rather than
+ * naming something that did not cause it, and a collapsed margin shows with no
+ * pixels at all — the class is in the file, and editing it would move nothing.
+ */
+function MeasureOverlay({
+	spacing,
+	from,
+	length,
+	at,
+}: {
+	spacing: Spacing;
+	/** screen-space: the start of the bar along its axis, its length, and its line */
+	from: number;
+	length: number;
+	at: number;
+}) {
+	const flat = spacing.axis === "x";
+	// two boxes that touch measure zero, and subpixel layout can put the facing
+	// edges a hair past each other: the bar is never shorter than nothing
+	const bar = Math.max(length, 0);
+	const mid = from + bar / 2;
+	return (
+		<>
+			<SpanBar mark="data-measure-span" axis={spacing.axis} from={from} length={bar} at={at} />
+			<div
+				data-measure=""
+				className="absolute flex flex-col items-start gap-1"
+				style={
+					flat
+						? { left: mid, top: at + 10, transform: "translateX(-50%)" }
+						: { left: at + 12, top: mid, transform: "translateY(-50%)" }
+				}
+			>
+				<span className="rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3">
+					{round(spacing.distance)}
+				</span>
+				<div className="flex flex-col gap-0.5 rounded-md border border-border-raised bg-raised px-2 py-1 font-mono text-2xs leading-4">
+					{spacing.parts.map((part, index) => (
+						<MeasurePart key={`${part.kind}-${part.token ?? index}`} part={part} />
+					))}
+				</div>
+			</div>
+		</>
+	);
+}
+
+/**
+ * The canvas's spacing mark: a bar the exact length of the distance, ticked at
+ * both ends, no fill and no number of its own. A gap between two frames and a
+ * gap between two elements are the same fact at two depths, so they are drawn
+ * the same way and only the attribute says which surface asked for it.
+ */
+function SpanBar({
+	mark,
+	axis,
+	from,
+	length,
+	at,
+}: {
+	mark: "data-snap-span" | "data-measure-span";
+	axis: "x" | "y";
+	/** screen-space: where the bar starts along its axis, how long, and its line */
+	from: number;
+	length: number;
+	at: number;
+}) {
+	const flat = axis === "x";
+	const girth = SPAN_TICK_PX * 2;
+	const line = at - SPAN_TICK_PX;
+	return (
+		<div
+			{...{ [mark]: axis }}
+			className={`absolute border-thread ${flat ? "border-r border-l" : "border-t border-b"}`}
+			style={
+				flat
+					? { left: from, top: line, width: length, height: girth }
+					: { left: line, top: from, width: girth, height: length }
+			}
+		>
+			<div
+				className={`absolute bg-thread ${flat ? "inset-x-0 h-px" : "inset-y-0 w-px"}`}
+				style={flat ? { top: SPAN_TICK_PX } : { left: SPAN_TICK_PX }}
+			/>
+		</div>
+	);
+}
+
+function MeasurePart({ part }: { part: SpacingPart }) {
+	const dimmed = part.collapsed === true;
+	return (
+		<div data-measure-part={part.kind} className="flex items-baseline gap-2 whitespace-nowrap">
+			<span className={`w-9 shrink-0 text-right ${dimmed ? "text-muted/50" : "text-text"}`}>
+				{dimmed ? "—" : round(part.px)}
+			</span>
+			<span className={dimmed ? "text-muted/50" : part.token === undefined ? "text-muted" : "text-thread"}>
+				{part.token ?? (part.kind === "residual" ? "residual" : "no class")}
+			</span>
+			{part.owner === undefined ? null : (
+				<span className="text-muted">
+					on {part.owner.parent === true ? "parent " : ""}
+					{part.owner.tag}
+				</span>
+			)}
+			{dimmed ? <span className="text-muted/50">collapsed</span> : null}
+		</div>
+	);
+}
+
+/** Pixels the way every readout on this canvas says them: whole, unless they are not. */
+function round(px: number): string {
+	const whole = Math.round(px * 10) / 10;
+	return `${Number.isInteger(whole) ? whole : whole.toFixed(1)}px`;
 }
 
 /**
