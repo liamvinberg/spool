@@ -150,8 +150,8 @@ interface CanvasToolIconProps {
 	className?: string;
 }
 
-/** Interact: the pointer that enters a live frame. */
-export function CursorIcon({ className }: CanvasToolIconProps) {
+/** Select: the plain pointer, which takes whole frames. */
+export function SelectIcon({ className }: CanvasToolIconProps) {
 	return (
 		<svg viewBox="0 0 24 24" className={className} aria-hidden="true">
 			<path
@@ -162,8 +162,8 @@ export function CursorIcon({ className }: CanvasToolIconProps) {
 	);
 }
 
-/** Select: a pointer choosing an element inside a frame. */
-export function SelectIcon({ className }: CanvasToolIconProps) {
+/** Edit: a pointer choosing an element inside a frame. */
+export function EditIcon({ className }: CanvasToolIconProps) {
 	return (
 		<svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
 			<path

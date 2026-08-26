@@ -180,6 +180,27 @@ it("treats Command as Select's element modifier, never as a tool of its own", as
 	expect(host.querySelector('button[aria-label="select"]')?.getAttribute("aria-pressed")).toBe("true");
 });
 
+it("takes the Edit tool on E and hands the pointer back to Select on V", async () => {
+	const { host } = await renderCanvas();
+	const pressed = (label: string): string | null | undefined =>
+		host.querySelector(`button[aria-label="${label}"]`)?.getAttribute("aria-pressed");
+
+	expect(pressed("select")).toBe("true");
+	expect(pressed("edit")).toBe("false");
+
+	await act(async () => {
+		window.dispatchEvent(new KeyboardEvent("keydown", { key: "e", bubbles: true }));
+	});
+	expect(pressed("edit")).toBe("true");
+	expect(pressed("select")).toBe("false");
+
+	await act(async () => {
+		window.dispatchEvent(new KeyboardEvent("keydown", { key: "v", bubbles: true }));
+	});
+	expect(pressed("select")).toBe("true");
+	expect(pressed("edit")).toBe("false");
+});
+
 it("keeps toolbar gestures out of the canvas beneath it", async () => {
 	const { host, canvas } = await renderCanvas();
 	await act(async () => {

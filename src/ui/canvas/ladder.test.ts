@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { atRung, type LadderScope, oneUp, rungOf } from "./ladder";
+import { atRung, type LadderScope, oneDown, oneUp, rungOf } from "./ladder";
 import type { PickedHit } from "./protocol";
 
 /**
@@ -58,6 +58,34 @@ describe("atRung", () => {
 
 	it("has nothing to take on the frame background", () => {
 		expect(atRung([], scope(PAY, "pay"))).toBeUndefined();
+	});
+});
+
+describe("oneDown", () => {
+	it("starts at the root element with no scope held", () => {
+		expect(oneDown(PAY, null)?.selector).toBe("screen");
+	});
+
+	it("walks one rung at a time down the pointer's own ancestry", () => {
+		expect(oneDown(PAY, scope(PAY, "screen"))?.selector).toBe("footer");
+		expect(oneDown(PAY, scope(PAY, "footer"))?.selector).toBe("pay");
+		expect(oneDown(PAY, scope(PAY, "pay"))?.selector).toBe("label");
+	});
+
+	it("stops at the leaf rather than running off the end", () => {
+		expect(oneDown(PAY, scope(PAY, "label"))?.selector).toBe("label");
+	});
+
+	it("restarts at the root element when the scope is held on another branch", () => {
+		expect(oneDown(TITLE, scope(PAY, "pay"))?.selector).toBe("screen");
+	});
+
+	it("keeps descending while the held rung is still on this ancestry", () => {
+		expect(oneDown(TOTAL, scope(PAY, "footer"))?.selector).toBe("total");
+	});
+
+	it("has nothing to take on the frame background", () => {
+		expect(oneDown([], null)).toBeUndefined();
 	});
 });
 

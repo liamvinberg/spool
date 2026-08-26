@@ -123,7 +123,16 @@ describe("multi-frame canvas export", () => {
 		});
 		await until(() => heldB.parentElement?.style.visibility === "hidden");
 
-		await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "e" })));
+		// export lost its key to the Edit tool, so the frame's own menu opens it
+		await act(async () => {
+			canvas.dispatchEvent(
+				new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }),
+			);
+		});
+		const exportItem = [...host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((candidate) =>
+			candidate.querySelector("span")?.textContent?.startsWith("Export"),
+		);
+		await act(async () => exportItem?.click());
 		await until(() => host.querySelector('[role="dialog"]') !== null);
 		const exportButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
 			(button) => button.textContent === "Export",

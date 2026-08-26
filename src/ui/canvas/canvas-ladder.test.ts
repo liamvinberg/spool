@@ -8,10 +8,12 @@ import { ProjectCanvas } from "./canvas";
 import type { PickedHit } from "./protocol";
 
 /**
- * The selection ladder out on the canvas (#254): ⌘-click lands on the deepest
- * rung, ⌘⏎ and Tab reach every rung with no pointer, ⇧⏎ climbs, and hover
- * draws the rung a click takes. Double-click belongs to going inside the
- * frame, so no pointer gesture walks the ladder a rung at a time.
+ * The selection ladder out on the canvas (#254). The pointer walks it in the
+ * Edit tool, where a click takes the rung the scope is open on and a
+ * double-click steps down one; ⌘-click lands on the deepest rung from either
+ * tool, and ⌘⏎, Tab and ⇧⏎ reach every rung with no pointer at all. In Select
+ * a double-click goes inside the frame instead, which is the whole reason the
+ * two tools are two.
  *
  * The frame answers every one of these, so each test plays the frame: it reads
  * the ask off the posted message and replies with an ancestry of its own.
@@ -61,6 +63,64 @@ it("goes inside on a double-click, on the frame's body as much as on its label",
 			?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 40, clientY: 40 }));
 	});
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("live · esc exits");
+});
+
+it("takes an element on a plain click in Edit, and descends one rung per double-click", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	await press("e");
+
+	// with no scope open the click lands on the frame's root element, which is
+	// rung one: in Edit the pointer never takes the frame itself
+	await clickAt(canvas, 40, 40);
+	await frame.answer(CHAIN);
+	expect(await heldElements()).toEqual(["screen"]);
+
+	await doubleClickAt(canvas, 40, 40);
+	await frame.answer(CHAIN);
+	expect(await heldElements()).toEqual(["footer"]);
+
+	await doubleClickAt(canvas, 40, 40);
+	await frame.answer(CHAIN);
+	expect(await heldElements()).toEqual(["pay"]);
+
+	// the leaf: the ladder ends rather than running off the end of the ancestry
+	await doubleClickAt(canvas, 40, 40);
+	await frame.answer(CHAIN);
+	expect(await heldElements()).toEqual(["pay"]);
+
+	// and none of those double-clicks went inside, which is Select's meaning
+	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
+});
+
+it("draws the rung under the pointer's own, dashed, only where Edit descends to it", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+
+	await act(async () => {
+		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 1 }));
+	});
+	await frame.answer(CHAIN);
+	// Select: a click takes the frame, which draws its own ring, and no gesture
+	// of Select's descends, so there is nothing beneath to promise
+	expect(host.querySelectorAll(".opacity-50")).toHaveLength(0);
+	expect(host.querySelectorAll(".border-dashed")).toHaveLength(0);
+
+	await press("e");
+	await clickAt(canvas, 40, 40);
+	await frame.answer(CHAIN);
+	expect(await heldElements()).toEqual(["screen"]);
+
+	// hover picks are throttled, so let the window pass before asking again
+	await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+	await act(async () => {
+		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 41, clientY: 41, pointerId: 1 }));
+	});
+	await frame.answer(CHAIN);
+
+	// the rung a click takes is the one already held, which wears the ring
+	// rather than a preview of itself — so what is left is the dashed rung
+	// beneath, which is where this pointer's double-click goes next
+	expect(host.querySelectorAll(".opacity-50")).toHaveLength(0);
+	expect(host.querySelectorAll(".border-dashed")).toHaveLength(1);
 });
 
 it("lands on the deepest rung on ⌘-click, which is the pointer's whole ladder", async () => {

@@ -110,7 +110,15 @@ export const HOTKEYS = [
 		repeats: false,
 	},
 	{ id: "canvas.reload", scope: "canvas", group: "Frames", label: "Reload the selected frames", keys: ["r"] },
-	{ id: "canvas.export", scope: "canvas", group: "Frames", label: "Export the selection as PNG", keys: ["e"] },
+	// Export gave up `e` to the Edit tool: it is an occasional act, and the
+	// frame's own menu has carried it all along.
+	{
+		id: "canvas.export",
+		scope: "canvas",
+		group: "Frames",
+		label: "Export the selection as PNG",
+		gesture: "right-click a frame",
+	},
 	{
 		id: "canvas.trash",
 		scope: "canvas",
@@ -283,6 +291,7 @@ export const HOTKEYS = [
 
 	// --- Tools ----------------------------------------------------------------
 	{ id: "canvas.tool-select", scope: "canvas", group: "Tools", label: "Select tool", keys: ["v"] },
+	{ id: "canvas.tool-edit", scope: "canvas", group: "Tools", label: "Edit tool", keys: ["e"] },
 	{
 		id: "canvas.tool-hand",
 		scope: "canvas",

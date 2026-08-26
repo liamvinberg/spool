@@ -120,11 +120,12 @@ import {
 	withdraw,
 } from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
-import { atRung, type LadderScope, oneUp } from "./ladder";
+import { atRung, type LadderScope, oneDown, oneUp } from "./ladder";
 import { useFrameLifecycle } from "./lifecycle";
 import { decompose, measuredTarget } from "./measure-spacing";
 import {
 	type ElementHandles,
+	type ElementPreview,
 	editorTarget,
 	type FrameHover,
 	HANDLE_CURSORS,
@@ -493,16 +494,20 @@ export function ProjectCanvas({
 	const effectiveTool = transientTool ?? tool;
 	const toolRef = useRef(effectiveTool);
 	toolRef.current = effectiveTool;
+	// Select and Edit both point, and everything a pointer draws — rings,
+	// previews, element handles — belongs to the pair of them. Only the Hand
+	// draws nothing, because the only thing it takes is the canvas itself.
+	const pointerTool = effectiveTool !== "hand";
 	const hideFrameHover = useCallback(() => {
 		setHovered((current) =>
 			current === null || !current.visible ? current : { frame: current.frame, visible: false },
 		);
 	}, []);
 	useEffect(() => {
-		if (effectiveTool === "select") return;
+		if (pointerTool) return;
 		setPreview(null);
 		hideFrameHover();
-	}, [effectiveTool, hideFrameHover]);
+	}, [pointerTool, hideFrameHover]);
 	const selectedRef = useRef(selected);
 	selectedRef.current = selected;
 	const pickedRef = useRef(picked);
@@ -629,14 +634,14 @@ export function ProjectCanvas({
 	);
 
 	const selectedFrame = selected[selected.length - 1];
-	// Select owns every frame represented by its element picks. Without picks,
-	// the selected frame and entered-frame modifier keep their existing intent.
+	// A pointing tool owns every frame represented by its element picks. Without
+	// picks, the selected frame and entered-frame modifier keep their intent.
 	const selectionTargets = useMemo(() => {
 		if (picked.length > 0) return new Set(picked.map((pick) => pick.frame));
-		if (effectiveTool !== "select") return new Set<string>();
+		if (!pointerTool) return new Set<string>();
 		const fallback = selectedFrame ?? (accelDown ? entered : null);
 		return fallback === null ? new Set<string>() : new Set([fallback]);
-	}, [effectiveTool, picked, selectedFrame, accelDown, entered]);
+	}, [pointerTool, picked, selectedFrame, accelDown, entered]);
 	// the walks this page can take that no arrow can reach: the ones that land
 	// on another page (#151). Derived at rest — the layer is never gated on a
 	// selection, because the gap it fills is the frames you did not pick.
@@ -755,7 +760,7 @@ export function ProjectCanvas({
 				setPicked((current) => current.filter((pick) => pick.frame !== frame));
 				if (pickedChain.current?.frame === frame) holdChain(null);
 			}
-			setPreview((current) => (current?.click?.frame === frame ? null : current));
+			setPreview((current) => (current?.click?.frame === frame || current?.under?.frame === frame ? null : current));
 			lifecycleRef.current.markStale(frame);
 		},
 		[holdChain, releaseHold],
@@ -1844,6 +1849,35 @@ export function ProjectCanvas({
 			);
 		},
 		[beginPick, applyPick, holdChain, scopeIn],
+	);
+
+	/**
+	 * The descent (#254): one rung down the ancestry under the pointer, which
+	 * is what a double-click means in Edit.
+	 *
+	 * The scope is read here and the second click's own pick is voided, so the
+	 * descent starts from whichever rung has settled rather than racing that
+	 * reply. A click at the scope is idempotent while the pointer has not moved
+	 * — which inside a double-click it has not — so the two answers agree, and
+	 * a scope that has not landed yet only means the descent starts a rung
+	 * higher rather than somewhere wrong.
+	 */
+	const descendAt = useCallback(
+		(frame: string, local: Point) => {
+			const scope = scopeIn(frame);
+			cancelPicks();
+			beginPick(frame, local, (chain) => {
+				const target = oneDown(chain, scope);
+				// no rung under this one, so the two clicks meant the words: the
+				// second of them has already asked the gate, and leaving that ask
+				// alone is what lets one gesture descend a branch and edit a leaf
+				// (#254, #255). Frame background answers nothing either way.
+				if (target === undefined) return;
+				endEditRef.current(false);
+				applyPick(frame, chain, target);
+			});
+		},
+		[beginPick, applyPick, cancelPicks, scopeIn],
 	);
 
 	/**
@@ -3072,11 +3106,12 @@ export function ProjectCanvas({
 	};
 
 	/**
-	 * The hover ring (#37, #254), on throttled pointer-move. With elements as
+	 * The hover rings (#37, #254), on throttled pointer-move. With elements as
 	 * the working object the ring is on whenever the pointer is over a readable
-	 * frame, not only under ⌘ or an open scope. It draws the rung a click takes
-	 * and nothing beneath it: no pointer gesture descends a rung any more, so a
-	 * second ring would draw a step nothing takes.
+	 * frame, not only under ⌘ or an open scope. Edit draws two — the rung a
+	 * click takes, and dashed under it the rung its double-click descends to.
+	 * Select draws that second one never, because it has no gesture that takes
+	 * it, and the first only where a scope is already open.
 	 *
 	 * A field of live documents each drawing rings is a busier surface than the
 	 * one that ships, so only the frame under the pointer ever draws.
@@ -3101,7 +3136,7 @@ export function ProjectCanvas({
 		if (held !== undefined && held.frame === frame) {
 			askMeasure(frame, held.selector, local, (reading) => {
 				hoverBusy.current = false;
-				if (gesture.current.kind !== "idle" || toolRef.current !== "select" || !optionDownRef.current) return;
+				if (gesture.current.kind !== "idle" || toolRef.current === "hand" || !optionDownRef.current) return;
 				if (reading === null) {
 					setPreview(null);
 					return;
@@ -3119,19 +3154,27 @@ export function ProjectCanvas({
 			local,
 			(chain) => {
 				hoverBusy.current = false;
-				if (gesture.current.kind !== "idle" || toolRef.current !== "select") return;
+				if (gesture.current.kind !== "idle" || toolRef.current === "hand") return;
 				// a deep hover is ⌘'s: let go while the frame was answering and
 				// the answer is stale, so it must not redraw the rings
 				if (deepest !== accelDownRef.current) return;
 				const scope = scopeIn(frame);
-				// with no rung open a click takes the frame, whose own hover ring
-				// already says so
-				const target = deepest ? chain[chain.length - 1] : scope === null ? undefined : atRung(chain, scope);
-				const click =
-					target === undefined
-						? null
-						: { frame, selector: target.selector, rect: target.rect, radius: target.radius };
-				setPreview(click === null ? null : { click });
+				const editing = toolRef.current === "edit";
+				// In Select with no rung open a click takes the frame, whose own ring
+				// already says so. Edit always points at an element, so it always
+				// draws one — and the rung under it dashed, because that is where
+				// its double-click descends to.
+				const target = deepest
+					? chain[chain.length - 1]
+					: editing || scope !== null
+						? atRung(chain, scope)
+						: undefined;
+				const under = deepest || !editing ? undefined : oneDown(chain, scope);
+				const ring = (hit: PickedHit | undefined): ElementPreview | null =>
+					hit === undefined ? null : { frame, selector: hit.selector, rect: hit.rect, radius: hit.radius };
+				const click = ring(target);
+				const beneath = under?.selector === target?.selector ? null : ring(under);
+				setPreview(click === null && beneath === null ? null : { click, under: beneath });
 			},
 			() => {
 				hoverBusy.current = false;
@@ -3142,7 +3185,7 @@ export function ProjectCanvas({
 	/** Redraw the rings where the pointer already rests — ⌘ changes what they mean. */
 	refreshRings.current = () => {
 		const at = hoverPoint.current;
-		if (at === null || toolRef.current !== "select" || gesture.current.kind !== "idle") {
+		if (at === null || toolRef.current === "hand" || gesture.current.kind !== "idle") {
 			setPreview(null);
 			return;
 		}
@@ -3383,7 +3426,7 @@ export function ProjectCanvas({
 
 		// inside an element scope, shift toggles membership (#37): the at-depth
 		// target under the cursor, or with accel the deepest
-		if (toolRef.current === "select" && event.shiftKey && pickedRef.current.length > 0 && label === null) {
+		if (toolRef.current !== "hand" && event.shiftKey && pickedRef.current.length > 0 && label === null) {
 			const local = frameLocalAt(hit, world);
 			if (local !== null) togglePickAt(hit, local, accelPressed(event));
 			return;
@@ -3396,23 +3439,25 @@ export function ProjectCanvas({
 			return;
 		}
 
-		// accel-click in Select deep-selects the element under the cursor (Figma).
-		// The modifier is exclusive, never a union: on the Mac ctrl-click is the
+		// accel-click deep-selects the element under the cursor (Figma): in Select
+		// it is the borrow of Edit, in Edit the leap past every rung between. The
+		// modifier is exclusive, never a union: on the Mac ctrl-click is the
 		// context menu's, so accepting either would fire both.
-		if (toolRef.current === "select" && accelPressed(event) && label === null) {
+		if (toolRef.current !== "hand" && accelPressed(event) && label === null) {
 			const local = frameLocalAt(hit, world);
 			if (local !== null) deepSelectAt(hit, local);
 			return;
 		}
 
-		// A bare click takes the frame and nothing inside it: elements are ⌘'s.
-		// The one exception is an element scope already open on this frame —
-		// there, plain clicks keep moving the selection at that depth (#37).
-		// Either can promote to a frame move once the pointer crosses the
-		// drag threshold.
+		// In Select a bare click takes the frame and nothing inside it: elements
+		// are ⌘'s. The one exception is an element scope already open on this
+		// frame — there, plain clicks keep moving the selection at that depth
+		// (#37). In Edit every click is that click, landing on the frame's root
+		// element until a descent opens a deeper scope. Either can promote to a
+		// frame move once the pointer crosses the drag threshold.
 		const anchor = pickedRef.current[pickedRef.current.length - 1];
-		if (toolRef.current === "select" && label === null) {
-			const scoped = anchor !== undefined && anchor.frame === hit;
+		if (toolRef.current !== "hand" && label === null) {
+			const scoped = toolRef.current === "edit" || (anchor !== undefined && anchor.frame === hit);
 			if (scoped) {
 				const local = frameLocalAt(hit, world);
 				// a press on the element that was already held is the second click
@@ -3466,11 +3511,11 @@ export function ProjectCanvas({
 						? current
 						: { frame, visible: true },
 			);
-			// The ring and the element preview are Select's, and every reader of
-			// `hovered` out here gates on the tool for that. The frame under the
+			// The rings and the element preview belong to the pointing tools, and
+			// every reader of `hovered` out here gates on that. The frame under the
 			// pointer is nobody's tool: it is what keeps a live frame awake (#172),
 			// and a pointer resting on a frame is resting on it in the Hand too.
-			if (toolRef.current !== "select") return;
+			if (toolRef.current === "hand") return;
 			// ⌥ is read off the move rather than off the key event, exactly as ⌘
 			// is: the ref is what a reply is checked against, and the modifier
 			// the pointer reports is the one that was down when the ask went out
@@ -3697,25 +3742,31 @@ export function ProjectCanvas({
 	};
 
 	/**
-	 * Double-click goes inside the frame under the pointer. #254 spent it on
-	 * the ladder's descent, on the reading that an element being a handle made
-	 * descending the act you do all day; use says otherwise, so the gesture
-	 * goes back to the act that is actually constant.
+	 * Double-click, which each pointing tool spends on its own subject: Select
+	 * goes inside the frame, Edit steps one rung down the ladder.
 	 *
-	 * The descent keeps every binding it had but this one: ⌘-click lands on the
-	 * deepest rung in a single go, and ⌘⏎, ⇧⏎ and Tab walk the ladder a rung at
-	 * a time. The label's double-click now means what the body's means, and ⏎
-	 * goes inside from the keyboard, as it always has.
+	 * Keeping them apart is what lets both be the plain gesture. Running a
+	 * frame is the constant act on this canvas and takes no modifier for it;
+	 * descending is constant too, but only once you have said you are editing,
+	 * which is what picking up the tool says. The frame's label has no rung
+	 * under it either way, so a double-click there always goes inside.
 	 */
 	const onDoubleClick = (event: React.MouseEvent) => {
 		if (exportDialogRef.current !== null) return;
-		if (toolRef.current !== "select") return;
+		if (toolRef.current === "hand") return;
 		const cam = cameraRef.current;
 		if (cam === null) return;
-		const hit = datasetHit(event.target, "frame-label") ?? frameAtWorld(toWorld(localPoint(event), cam));
+		const label = datasetHit(event.target, "frame-label");
+		const world = toWorld(localPoint(event), cam);
+		const hit = label ?? frameAtWorld(world);
 		if (hit === null || hit === enteredRef.current) return;
 		cancelGesture();
-		enterFrame(hit);
+		if (label !== null || toolRef.current === "select") {
+			enterFrame(hit);
+			return;
+		}
+		const local = frameLocalAt(hit, world);
+		if (local !== null) descendAt(hit, local);
 	};
 
 	const onContextMenu = (event: React.MouseEvent) => {
@@ -3780,15 +3831,14 @@ export function ProjectCanvas({
 	 * nothing in the composer, because a chip that lit for a frame nobody picked would
 	 * be claiming it was in the prompt.
 	 */
-	const litOut =
-		effectiveTool !== "select"
-			? null
-			: preview?.click != null &&
-					picked.some((pick) => pick.frame === preview.click?.frame && pick.selector === preview.click?.selector)
-				? pickKey(preview.click.frame, preview.click.selector)
-				: hovered !== null && (selected.includes(hovered.frame) || entered === hovered.frame)
-					? hovered.frame
-					: null;
+	const litOut = !pointerTool
+		? null
+		: preview?.click != null &&
+				picked.some((pick) => pick.frame === preview.click?.frame && pick.selector === preview.click?.selector)
+			? pickKey(preview.click.frame, preview.click.selector)
+			: hovered !== null && (selected.includes(hovered.frame) || entered === hovered.frame)
+				? hovered.frame
+				: null;
 
 	/** Land on a frame by name: switch page if needed, select it, centre the camera. */
 	const landOnFrame = useCallback(
@@ -3947,6 +3997,7 @@ export function ProjectCanvas({
 			// the threads toggle (#34): persisted per project
 			"canvas.threads": () => toggleArrows(),
 			"canvas.tool-select": () => setTool("select"),
+			"canvas.tool-edit": () => setTool("edit"),
 			"canvas.tool-hand": () => setTool("hand"),
 			// the menu's verbs (#7) on bare keys, each acting on the selection;
 			// Play wants one frame to open on, whether P or ⇧⏎ asked
@@ -3960,7 +4011,6 @@ export function ProjectCanvas({
 			"canvas.reload": () => {
 				for (const name of verbTarget()) reloadFrameDocument(name);
 			},
-			"canvas.export": () => openExport(verbTarget(), null),
 			// ⌫ takes whatever is held. An element is a handle now (#255), so with
 			// a rung open it takes that element's lines — silent, like every other
 			// patch, and ⌘Z brings it back. With no rung open it is the frame's own
@@ -4125,7 +4175,6 @@ export function ProjectCanvas({
 		walk,
 		arrangeFrames,
 		reloadFrameDocument,
-		openExport,
 		stageTrash,
 		cancelGesture,
 		cancelPicks,
@@ -4206,7 +4255,7 @@ export function ProjectCanvas({
 	/** the drag in flight on the rung the ring is drawn on, and nothing else */
 	const ringDrag = elementDrag !== null && elementDrag.selector === ringPick?.selector ? elementDrag : null;
 	const elementHandles: ElementHandles | null =
-		ringPick === undefined || effectiveTool !== "select" || entered !== null
+		ringPick === undefined || !pointerTool || entered !== null
 			? null
 			: {
 					frame: ringPick.frame,
@@ -4348,8 +4397,7 @@ export function ProjectCanvas({
 							const state = lifecycle.states[frame.name] ?? "picture";
 							const isEntered = entered === frame.name;
 							const isSelected = selected.includes(frame.name);
-							const isHovered =
-								effectiveTool === "select" && hovered?.visible === true && hovered.frame === frame.name;
+							const isHovered = pointerTool && hovered?.visible === true && hovered.frame === frame.name;
 							const paused = frame.kind === "term" && state === "held";
 							return (
 								<div
@@ -4412,7 +4460,7 @@ export function ProjectCanvas({
 							 * say which one a row means.
 							 */
 							lit={lit}
-							preview={effectiveTool === "select" ? preview : null}
+							preview={pointerTool ? preview : null}
 							refused={refused}
 							handles={elementHandles}
 							marks={marks}

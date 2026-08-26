@@ -104,7 +104,6 @@ export function ContextMenu({
 					label={
 						exportAction.selectionCount === 1 ? "Export as PNG" : `Export ${exportAction.selectionCount} frames…`
 					}
-					keys={hotkeyKey("canvas.export")}
 					onClick={exportAction.onSelect}
 				/>
 			) : null}

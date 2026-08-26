@@ -1,8 +1,8 @@
 import { cn } from "../cn";
 import { hotkeyChips, hotkeyEntry, hotkeyKey } from "../hotkeys";
-import { HandIcon, SelectIcon } from "../icons";
+import { EditIcon, HandIcon, SelectIcon } from "../icons";
 
-export type CanvasTool = "select" | "hand";
+export type CanvasTool = "select" | "edit" | "hand";
 
 interface ToolMeta {
 	id: CanvasTool;
@@ -12,12 +12,16 @@ interface ToolMeta {
 	Icon: (props: { className?: string }) => React.ReactNode;
 }
 
-// Select is the only pointer tool: a click takes the frame, a double-click
-// goes inside it, and ⌘ takes the deepest element in a single go. ⌘ is
-// therefore a modifier inside Select, not a way to borrow it. The ladder's
-// rung-at-a-time descent is the keyboard's (#254).
+// Two pointer tools, by what they take. Select takes frames: a click selects
+// one, a double-click goes inside it, and ⌘ borrows Edit for as long as it is
+// held. Edit takes the elements inside them, on Figma's ladder: a click takes
+// the rung the scope is open on, a double-click steps down one (#254).
+//
+// Each tool is also a transient of the other: ⌘ borrows Edit inside Select,
+// Space borrows Hand anywhere.
 const TOOLS: readonly ToolMeta[] = [
 	{ id: "select", label: "select", key: hotkeyKey("canvas.tool-select"), hold: null, Icon: SelectIcon },
+	{ id: "edit", label: "edit", key: hotkeyKey("canvas.tool-edit"), hold: null, Icon: EditIcon },
 	{
 		id: "hand",
 		label: "hand",

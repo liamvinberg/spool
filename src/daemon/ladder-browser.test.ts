@@ -238,7 +238,24 @@ it("walks the ladder from the keyboard and goes inside on a double-click, out on
 	await page.keyboard.up(accel);
 	await expect.poll(held).toBe("div > ul > li:nth-of-type(2)");
 
-	// and a double-click on the body goes inside the frame, which the label says
+	// in Edit the pointer walks the ladder itself: a click takes the rung the
+	// scope is open on, a double-click steps down to the next
+	await page.keyboard.press("e");
+	// the label takes the frame and closes the scope the ⌘-click left open, so
+	// this walk starts from the top of the ladder rather than the bottom
+	await page.locator('[data-frame-label="cart"]').click();
+	await expect.poll(held).toBe("frame");
+	await page.mouse.click(at.x, at.y);
+	await expect.poll(held).toBe("div");
+	await page.mouse.dblclick(at.x, at.y);
+	await expect.poll(held).toBe("div > ul");
+	await page.mouse.dblclick(at.x, at.y);
+	await expect.poll(held).toBe("div > ul > li:nth-of-type(2)");
+	// and none of that went inside, which is the other tool's meaning
+	expect(await page.locator('[data-frame-label="cart"]').innerText()).not.toContain("esc exits");
+
+	// back in Select, a double-click on the body goes inside, which the label says
+	await page.keyboard.press("v");
 	await page.mouse.dblclick(at.x, at.y);
 	await expect.poll(() => page.locator('[data-frame-label="cart"]').innerText()).toContain("esc exits");
 });
