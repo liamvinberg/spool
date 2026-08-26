@@ -49,20 +49,6 @@ it("drags an element wider, and puts back a width layout would not take", { time
 	await expect.poll(() => page.locator('iframe[title="cart"]').count(), { timeout: 60_000 }).toBe(1);
 	await expect.poll(() => page.frameLocator('iframe[title="cart"]').locator("p").count()).toBe(1);
 
-	const middleOf = async (tag: string): Promise<{ x: number; y: number }> => {
-		const box = { x: 0, y: 0, width: 0, height: 0 };
-		await expect
-			.poll(
-				async () => {
-					const drawn = await page.frameLocator('iframe[title="cart"]').locator(tag).boundingBox();
-					Object.assign(box, drawn ?? {});
-					return drawn === null ? 0 : Math.min(drawn.width, drawn.height);
-				},
-				{ timeout: 20_000 },
-			)
-			.toBeGreaterThan(0);
-		return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-	};
 	const held = async (): Promise<string> => {
 		const res = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/selection`, {
 			headers: { "X-Spool-Control": project.controlToken },
@@ -71,14 +57,18 @@ it("drags an element wider, and puts back a width layout would not take", { time
 		const [only] = body.selection ?? [];
 		return only === undefined ? "nothing" : (only.selector ?? only.kind);
 	};
-	const descendTo = async (tag: string, rungs: readonly string[]): Promise<void> => {
-		const at = await middleOf(tag);
+	/**
+	 * Down the ladder to a rung, by kinship (#254): ⌘⏎ takes the first child,
+	 * Tab the next sibling. The pointer no longer descends, so a walk that
+	 * wants the second child asks for the first and steps sideways.
+	 */
+	const descendTo = async (walk: readonly { step: "child" | "next"; rung: string }[]): Promise<void> => {
 		// the label, rather than the body: inside an open scope a body click keeps
 		// moving the pick at that depth, and this walk starts from the frame
 		await page.locator('[data-frame-label="cart"]').click();
 		await expect.poll(held, { timeout: 20_000 }).toBe("frame");
-		for (const rung of rungs) {
-			await page.mouse.dblclick(at.x, at.y);
+		for (const { step, rung } of walk) {
+			await page.keyboard.press(step === "child" ? "ControlOrMeta+Enter" : "Tab");
 			await expect.poll(held, { timeout: 20_000 }).toBe(rung);
 		}
 	};
@@ -100,7 +90,10 @@ it("drags an element wider, and puts back a width layout would not take", { time
 
 	// the width the drag meant, in the file: 160 + 64 is a whole step, so it is
 	// the bare class the frame's author would have written
-	await descendTo("p", ["div", "div > p"]);
+	await descendTo([
+		{ step: "child", rung: "div" },
+		{ step: "child", rung: "div > p" },
+	]);
 	await dragCorner(64, 0);
 	await expect.poll(() => readFileSync(file, "utf8"), { timeout: 30_000 }).toContain("w-56");
 	// everything else about the literal is untouched, and the height the corner
@@ -121,7 +114,12 @@ it("drags an element wider, and puts back a width layout would not take", { time
 	// the half static analysis cannot promise: the span is a flex item, so the
 	// class compiles, lands, and the box does not follow it
 	const before = readFileSync(file, "utf8");
-	await descendTo("span", ["div", "div > div", "div > div > span"]);
+	await descendTo([
+		{ step: "child", rung: "div" },
+		{ step: "child", rung: "div > p" },
+		{ step: "next", rung: "div > div" },
+		{ step: "child", rung: "div > div > span" },
+	]);
 	await dragCorner(80, 0);
 	await expect.poll(() => page.locator('[data-hand-notice="clamped"]').count(), { timeout: 30_000 }).toBe(1);
 	await expect.poll(() => readFileSync(file, "utf8"), { timeout: 30_000 }).toBe(before);

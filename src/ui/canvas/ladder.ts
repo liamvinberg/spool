@@ -26,14 +26,6 @@ export function rungOf(scope: LadderScope | null): number {
 	return scope === null ? -1 : scope.chain.findIndex((hit) => hit.selector === scope.selector);
 }
 
-/** True while the fresh ancestry runs through the held rung. */
-function sharesRung(chain: readonly PickedHit[], scope: LadderScope, rung: number): boolean {
-	for (let i = 0; i <= rung; i++) {
-		if (scope.chain[i]?.selector !== chain[i]?.selector) return false;
-	}
-	return true;
-}
-
 /**
  * Figma's scope memory, and what a plain click takes: the element at the held
  * rung under a fresh ancestry — a sibling inside the shared ancestry, the
@@ -48,18 +40,6 @@ export function atRung(chain: readonly PickedHit[], scope: LadderScope | null): 
 		shared++;
 	}
 	return chain[Math.min(shared, chain.length - 1)];
-}
-
-/**
- * One rung down this ancestry, which is what a double-click takes. A scope
- * held on another branch is not a rung on this one, so the descent restarts
- * at the root element rather than jumping sideways at depth.
- */
-export function oneDown(chain: readonly PickedHit[], scope: LadderScope | null): PickedHit | undefined {
-	if (chain.length === 0) return undefined;
-	const rung = rungOf(scope);
-	if (scope === null || rung < 0 || !sharesRung(chain, scope, rung)) return chain[0];
-	return chain[Math.min(rung + 1, chain.length - 1)];
 }
 
 /** One rung up: the parent of the held element, or nothing at the root element. */

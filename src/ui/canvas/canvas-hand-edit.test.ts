@@ -202,13 +202,11 @@ interface FramePlayer {
 	boot: () => Promise<void>;
 }
 
-/** Descend to the words, which is the rung both gestures act on. */
+/** Hold the words, which is the rung both gestures act on. */
 async function holdTheWords(canvas: HTMLElement, frame: FramePlayer): Promise<void> {
 	await clickAt(canvas, 20, 20);
-	for (const _ of [0, 1]) {
-		await doubleClickAt(canvas, 20, 20);
-		await frame.answer(CHAIN);
-	}
+	await deepClickAt(canvas, 20, 20);
+	await frame.answer(CHAIN.slice(0, 2));
 	await settle();
 }
 
@@ -317,11 +315,15 @@ async function clickAt(canvas: HTMLElement, x: number, y: number, pointerId = 1)
 	});
 }
 
-async function doubleClickAt(canvas: HTMLElement, x: number, y: number): Promise<void> {
-	await clickAt(canvas, x, y, 91);
-	await clickAt(canvas, x, y, 92);
+/** ⌘-click: the deepest rung of whatever ancestry the frame answers with. */
+async function deepClickAt(canvas: HTMLElement, x: number, y: number): Promise<void> {
 	await act(async () => {
-		canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: x, clientY: y }));
+		canvas.dispatchEvent(
+			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 1, ...ACCEL }),
+		);
+		canvas.dispatchEvent(
+			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 1 }),
+		);
 	});
 }
 

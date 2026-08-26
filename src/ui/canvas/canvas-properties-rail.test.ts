@@ -3,6 +3,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { accelKeyName } from "../../runtime/platform-keys";
 import { ProjectCanvas } from "./canvas";
 import type { PickedHit } from "./protocol";
 
@@ -15,6 +16,8 @@ import type { PickedHit } from "./protocol";
  * each empty state reads. The rows between them are #257's and #258's, and the
  * scope vocabulary itself is `properties-scope.test.ts`'s.
  */
+
+const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
 const frames = [
 	{ name: "home", x: 0, y: 0, w: 640, h: 480, kind: "html" },
@@ -392,10 +395,8 @@ it("offers an image the project's own pictures, and swaps to the one picked", as
 	const { host, canvas, frame } = await readyCanvas();
 	payAttributes = [{ name: "src", asset: "./old.png" }];
 	await clickAt(canvas, 40, 40);
-	for (let rung = 0; rung < 3; rung++) {
-		await doubleClickAt(canvas, 40, 40);
-		await frame.answer(IMG_CHAIN);
-	}
+	await deepClickAt(canvas, 40, 40);
+	await frame.answer(IMG_CHAIN);
 	await until(() => attributeRow(host, "src") !== null);
 
 	// the src is a menu rather than a box: an image is an import, so it is
@@ -586,7 +587,7 @@ interface FramePlayer {
 	loaded: () => Promise<void>;
 }
 
-/** Down `depth` rungs of an ancestry, which is `depth` double-clicks. */
+/** Hold the rung `depth` down an ancestry: ⌘-click lands on the deepest one. */
 async function descendTo(
 	canvas: HTMLElement,
 	frame: FramePlayer,
@@ -594,10 +595,8 @@ async function descendTo(
 	chain: readonly PickedHit[] = CHAIN,
 ): Promise<void> {
 	await clickAt(canvas, 40, 40);
-	for (let rung = 0; rung < depth; rung++) {
-		await doubleClickAt(canvas, 40, 40);
-		await frame.answer(chain);
-	}
+	await deepClickAt(canvas, 40, 40);
+	await frame.answer(chain.slice(0, depth));
 }
 
 async function readyCanvas({
@@ -710,11 +709,15 @@ async function clickAt(canvas: HTMLElement, x: number, y: number, pointerId = 1)
 	});
 }
 
-async function doubleClickAt(canvas: HTMLElement, x: number, y: number): Promise<void> {
-	await clickAt(canvas, x, y, 91);
-	await clickAt(canvas, x, y, 92);
+/** ⌘-click: the deepest rung of whatever ancestry the frame answers with. */
+async function deepClickAt(canvas: HTMLElement, x: number, y: number): Promise<void> {
 	await act(async () => {
-		canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: x, clientY: y }));
+		canvas.dispatchEvent(
+			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 1, ...ACCEL }),
+		);
+		canvas.dispatchEvent(
+			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 1 }),
+		);
 	});
 }
 

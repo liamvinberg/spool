@@ -8,9 +8,10 @@ import { ProjectCanvas } from "./canvas";
 import type { PickedHit } from "./protocol";
 
 /**
- * The selection ladder out on the canvas (#254): a double-click descends one
- * rung, ⌘⏎ and Tab reach the same rungs with no pointer, ⇧⏎ climbs, and hover
- * draws the rung a click takes with the rung under it dashed behind.
+ * The selection ladder out on the canvas (#254): ⌘-click lands on the deepest
+ * rung, ⌘⏎ and Tab reach every rung with no pointer, ⇧⏎ climbs, and hover
+ * draws the rung a click takes. Double-click belongs to going inside the
+ * frame, so no pointer gesture walks the ladder a rung at a time.
  *
  * The frame answers every one of these, so each test plays the frame: it reads
  * the ask off the posted message and replies with an ancestry of its own.
@@ -39,36 +40,35 @@ const CHAIN = ancestry("screen", "footer", "pay");
 /** screen › header › title, which leaves that one a rung below the root. */
 const HEADER = ancestry("screen", "header", "title");
 
-it("descends one rung on each double-click, and the frame's label still goes inside", async () => {
-	const { host, canvas, frame } = await readyCanvas();
+it("goes inside on a double-click, on the frame's body as much as on its label", async () => {
+	const { host, canvas } = await readyCanvas();
 
 	await clickAt(canvas, 40, 40);
 	expect(await heldElements()).toBeUndefined(); // a bare click takes the frame
-
-	await doubleClickAt(canvas, 40, 40);
-	await frame.answer(CHAIN);
-	expect(await heldElements()).toEqual(["screen"]);
-
-	await doubleClickAt(canvas, 40, 40);
-	await frame.answer(CHAIN);
-	expect(await heldElements()).toEqual(["footer"]);
-
-	await doubleClickAt(canvas, 40, 40);
-	await frame.answer(CHAIN);
-	expect(await heldElements()).toEqual(["pay"]);
-
-	// the leaf: the ladder ends rather than running off the end of the ancestry
-	await doubleClickAt(canvas, 40, 40);
-	await frame.answer(CHAIN);
-	expect(await heldElements()).toEqual(["pay"]);
-
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
+
+	await doubleClickAt(canvas, 40, 40);
+	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("live · esc exits");
+	// going inside is not a descent: no rung is taken on the way in
+	expect(await heldElements()).toBeUndefined();
+
+	await press("Escape", ACCEL);
+	expect(host.querySelector('[data-frame-label="home"]')?.textContent).not.toContain("esc exits");
+
 	await act(async () => {
 		host
 			.querySelector<HTMLElement>('[data-frame-label="home"]')
 			?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 40, clientY: 40 }));
 	});
 	expect(host.querySelector('[data-frame-label="home"]')?.textContent).toContain("live · esc exits");
+});
+
+it("lands on the deepest rung on ⌘-click, which is the pointer's whole ladder", async () => {
+	const { canvas, frame } = await readyCanvas();
+
+	await deepClickAt(canvas, 40, 40);
+	await frame.answer(CHAIN);
+	expect(await heldElements()).toEqual(["pay"]);
 });
 
 it("takes the frame's root element on ⌘⏎, then the first child of what is held", async () => {
@@ -114,10 +114,10 @@ it("leaves Tab to the browser while no rung is held", async () => {
 it("climbs a rung on ⇧⏎, and stops playing no flow on the way", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await clickAt(canvas, 40, 40);
-	await doubleClickAt(canvas, 40, 40);
-	await frame.answer(CHAIN);
-	await doubleClickAt(canvas, 40, 40);
-	await frame.answer(CHAIN);
+	await press("Enter", ACCEL);
+	await frame.answer(CHAIN.slice(0, 1));
+	await press("Enter", ACCEL);
+	await frame.answer(CHAIN.slice(0, 2));
 	expect(await heldElements()).toEqual(["footer"]);
 
 	await press("Enter", { shiftKey: true });
@@ -133,7 +133,7 @@ it("climbs a rung on ⇧⏎, and stops playing no flow on the way", async () => 
 	expect(host.ownerDocument.defaultView?.open).not.toHaveBeenCalled();
 });
 
-it("draws the rung a click takes and the rung under it, dashed", async () => {
+it("draws the rung a click takes, and nothing at all with no rung open", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 
 	await act(async () => {
@@ -141,18 +141,16 @@ it("draws the rung a click takes and the rung under it, dashed", async () => {
 	});
 	await frame.answer(CHAIN);
 
-	// with no rung open a click takes the frame, which draws its own ring, so
-	// the only element ring is the dashed rung a descent would land on
+	// with no rung open a click takes the frame, which draws its own ring, and
+	// there is no rung beneath to promise: no pointer gesture descends one
 	expect(host.querySelectorAll(".opacity-50")).toHaveLength(0);
-	expect(host.querySelectorAll(".border-dashed")).toHaveLength(1);
 
-	// descend to the footer, then point at a branch that leaves it: a click
-	// takes the divergence point, and the rung under that is where a descent
-	// down this ancestry would start over
-	for (const _ of [0, 1]) {
-		await doubleClickAt(canvas, 40, 40);
-		await frame.answer(CHAIN);
-	}
+	// hold the footer, then point at a branch that leaves it: a click takes the
+	// divergence point, and that is the one ring the hover draws
+	await press("Enter", ACCEL);
+	await frame.answer(CHAIN.slice(0, 1));
+	await press("Enter", ACCEL);
+	await frame.answer(CHAIN.slice(0, 2));
 	// hover picks are throttled, so let the window pass before asking again
 	await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
 	await act(async () => {
@@ -161,15 +159,22 @@ it("draws the rung a click takes and the rung under it, dashed", async () => {
 	await frame.answer(HEADER);
 
 	expect(host.querySelectorAll(".opacity-50")).toHaveLength(1);
-	expect(host.querySelectorAll(".border-dashed")).toHaveLength(1);
 });
 
 it("draws again after a press voided the hover ask that was in flight", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 
+	// a rung has to be held for a hover to draw one at all
+	await clickAt(canvas, 40, 40);
+	await press("Enter", ACCEL);
+	await frame.answer(CHAIN.slice(0, 1));
+	await press("Enter", ACCEL);
+	await frame.answer(CHAIN.slice(0, 2));
+
 	// a move, then a press before the frame has answered it: the press voids
-	// every outstanding pick, so that hover's answer never arrives. The rings
-	// have to survive it — an ask that is dropped must not latch them off.
+	// every outstanding pick, so that hover's answer never arrives. The ring
+	// has to survive it — an ask that is dropped must not latch it off.
+	await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
 	await act(async () => {
 		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 40, pointerId: 1 }));
 	});
@@ -179,8 +184,8 @@ it("draws again after a press voided the hover ask that was in flight", async ()
 	await act(async () => {
 		canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 41, clientY: 41, pointerId: 1 }));
 	});
-	await frame.answer(CHAIN);
-	expect(host.querySelectorAll(".border-dashed")).toHaveLength(1);
+	await frame.answer(HEADER);
+	expect(host.querySelectorAll(".opacity-50")).toHaveLength(1);
 });
 
 // --- the harness -------------------------------------------------------------
@@ -276,6 +281,18 @@ async function clickAt(canvas: HTMLElement, x: number, y: number, pointerId = 1)
 		);
 		canvas.dispatchEvent(
 			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId }),
+		);
+	});
+}
+
+/** ⌘-click: the deepest rung of whatever ancestry the frame answers with. */
+async function deepClickAt(canvas: HTMLElement, x: number, y: number): Promise<void> {
+	await act(async () => {
+		canvas.dispatchEvent(
+			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 1, ...ACCEL }),
+		);
+		canvas.dispatchEvent(
+			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 1 }),
 		);
 	});
 }

@@ -3,6 +3,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { accelKeyName } from "../../runtime/platform-keys";
 import { ProjectCanvas } from "./canvas";
 import type { PickedHit } from "./protocol";
 
@@ -15,6 +16,8 @@ import type { PickedHit } from "./protocol";
  * the ring is one the lane will take. Nothing is written until the pointer
  * comes up, and what it writes is one patch and one press of undo.
  */
+
+const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
 const frames = [{ name: "home", x: 0, y: 0, w: 640, h: 480, kind: "html" }];
 
@@ -223,13 +226,11 @@ interface FramePlayer {
 	boot: () => Promise<void>;
 }
 
-/** Descend to the element the ring is drawn on, and let its read land. */
+/** Hold the element the ring is drawn on, and let its read land. */
 async function holdTheElement(canvas: HTMLElement, frame: FramePlayer): Promise<void> {
 	await clickAt(canvas, 20, 20);
-	for (const _ of [0, 1]) {
-		await doubleClickAt(canvas, 20, 20);
-		await frame.answer(CHAIN);
-	}
+	await deepClickAt(canvas, 20, 20);
+	await frame.answer(CHAIN.slice(0, 2));
 	await settle();
 }
 
@@ -351,11 +352,15 @@ async function clickAt(canvas: HTMLElement, x: number, y: number, pointerId = 1)
 	});
 }
 
-async function doubleClickAt(canvas: HTMLElement, x: number, y: number): Promise<void> {
-	await clickAt(canvas, x, y, 91);
-	await clickAt(canvas, x, y, 92);
+/** ⌘-click: the deepest rung of whatever ancestry the frame answers with. */
+async function deepClickAt(canvas: HTMLElement, x: number, y: number): Promise<void> {
 	await act(async () => {
-		canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: x, clientY: y }));
+		canvas.dispatchEvent(
+			new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 1, ...ACCEL }),
+		);
+		canvas.dispatchEvent(
+			new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 1 }),
+		);
 	});
 }
 

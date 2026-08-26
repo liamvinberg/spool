@@ -171,7 +171,9 @@ const CART = `export default function Frame() {
 }
 `;
 
-it("descends a rung per double-click, out on a real canvas", { timeout: 180_000 }, async () => {
+it("walks the ladder from the keyboard and goes inside on a double-click, out on a real canvas", {
+	timeout: 180_000,
+}, async () => {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());
 	const uiDir = join(makeTempDir(), "ui");
@@ -212,13 +214,31 @@ it("descends a rung per double-click, out on a real canvas", { timeout: 180_000 
 	await expect.poll(held).toBe("frame");
 	expect(await page.locator('[data-frame-label="cart"] .text-thread').count()).toBe(1);
 
-	// and now down the ladder, a rung per double-click: root element, list, row
-	for (const rung of ["div", "div > ul", "div > ul > li:nth-of-type(2)"]) {
-		await page.mouse.dblclick(at.x, at.y);
+	// and now down the ladder by kinship: ⌘⏎ takes the first child, Tab the
+	// next sibling — root element, heading, the list beside it, its first row
+	for (const { key, rung } of [
+		{ key: "ControlOrMeta+Enter", rung: "div" },
+		{ key: "ControlOrMeta+Enter", rung: "div > h1" },
+		{ key: "Tab", rung: "div > ul" },
+		{ key: "ControlOrMeta+Enter", rung: "div > ul > li:nth-of-type(1)" },
+		{ key: "Tab", rung: "div > ul > li:nth-of-type(2)" },
+	]) {
+		await page.keyboard.press(key);
 		await expect.poll(held).toBe(rung);
 	}
 
-	// the leaf: the ladder ends rather than running off the end of the document
-	await page.mouse.dblclick(at.x, at.y);
+	// ⇧⏎ climbs back out of the row and into the list that holds it
+	await page.keyboard.press("Shift+Enter");
+	await expect.poll(held).toBe("div > ul");
+
+	// ⌘-click is the pointer's whole ladder: the deepest rung, in one go
+	const accel = process.platform === "darwin" ? "Meta" : "Control";
+	await page.keyboard.down(accel);
+	await page.mouse.click(at.x, at.y);
+	await page.keyboard.up(accel);
 	await expect.poll(held).toBe("div > ul > li:nth-of-type(2)");
+
+	// and a double-click on the body goes inside the frame, which the label says
+	await page.mouse.dblclick(at.x, at.y);
+	await expect.poll(() => page.locator('[data-frame-label="cart"]').innerText()).toContain("esc exits");
 });

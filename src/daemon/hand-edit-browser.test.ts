@@ -222,13 +222,20 @@ it("types into the element and writes the file, then takes an element's lines", 
 		const [only] = body.selection ?? [];
 		return only === undefined ? "nothing" : (only.selector ?? only.kind);
 	};
-	/** Down the ladder to the element the pointer is over, by name. */
-	const descendTo = async (tag: string, rungs: readonly string[]): Promise<{ x: number; y: number }> => {
+	/**
+	 * Down the ladder to a rung, by kinship (#254): ⌘⏎ takes the first child,
+	 * Tab the next sibling. The pointer no longer descends, so a walk that
+	 * wants the second child asks for the first and steps sideways.
+	 */
+	const descendTo = async (
+		tag: string,
+		walk: readonly { step: "child" | "next"; rung: string }[],
+	): Promise<{ x: number; y: number }> => {
 		const at = await middleOf(tag);
 		await page.mouse.click(at.x, at.y);
 		await expect.poll(held, { timeout: 20_000 }).toBe("frame");
-		for (const rung of rungs) {
-			await page.mouse.dblclick(at.x, at.y);
+		for (const { step, rung } of walk) {
+			await page.keyboard.press(step === "child" ? "ControlOrMeta+Enter" : "Tab");
 			await expect.poll(held, { timeout: 20_000 }).toBe(rung);
 		}
 		return at;
@@ -239,7 +246,10 @@ it("types into the element and writes the file, then takes an element's lines", 
 	};
 
 	// the words: down to the heading, then a second click on it opens the edit
-	const heading = await descendTo("h1", ["div", "div > h1"]);
+	const heading = await descendTo("h1", [
+		{ step: "child", rung: "div" },
+		{ step: "child", rung: "div > h1" },
+	]);
 	await page.mouse.click(heading.x, heading.y);
 	await expect
 		.poll(() => page.frameLocator('iframe[title="cart"]').locator("h1[contenteditable]").count(), {
@@ -259,7 +269,11 @@ it("types into the element and writes the file, then takes an element's lines", 
 		.toBe("basket");
 
 	// the lines: down to the paragraph, then ⌫ takes it out of the file
-	await descendTo("p", ["div", "div > p"]);
+	await descendTo("p", [
+		{ step: "child", rung: "div" },
+		{ step: "child", rung: "div > h1" },
+		{ step: "next", rung: "div > p" },
+	]);
 	await page.keyboard.press("Backspace");
 	await expect.poll(() => readFileSync(file, "utf8"), { timeout: 20_000 }).not.toContain("<p");
 	expect(readFileSync(file, "utf8")).toBe(

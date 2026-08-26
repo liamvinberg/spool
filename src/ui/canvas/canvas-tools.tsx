@@ -13,9 +13,9 @@ interface ToolMeta {
 }
 
 // Select is the only pointer tool: a click takes the frame, a double-click
-// steps one rung into the element under the pointer (#254), ⌘ takes the
-// deepest one in a single go. ⌘ is therefore a modifier inside Select, not a
-// way to borrow it. Going inside is the label's double-click, and ⏎.
+// goes inside it, and ⌘ takes the deepest element in a single go. ⌘ is
+// therefore a modifier inside Select, not a way to borrow it. The ladder's
+// rung-at-a-time descent is the keyboard's (#254).
 const TOOLS: readonly ToolMeta[] = [
 	{ id: "select", label: "select", key: hotkeyKey("canvas.tool-select"), hold: null, Icon: SelectIcon },
 	{

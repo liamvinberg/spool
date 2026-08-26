@@ -90,7 +90,7 @@ export const HOTKEYS = [
 		group: "Frames",
 		label: "Enter the selected frame",
 		keys: ["enter"],
-		gesture: "double-click the label",
+		gesture: "double-click",
 		repeats: false,
 	},
 	{
@@ -160,16 +160,16 @@ export const HOTKEYS = [
 		label: "Select the deepest element under the cursor",
 		gesture: () => `${accelBare()} click`,
 	},
-	// The selection ladder (#254): an element is a handle now, so descending is
-	// the common act. Enter keeps entering the frame, which is why the descent
-	// takes the accel chord Figma left free and the climb takes ⇧⏎.
+	// The selection ladder (#254): Enter and its double-click both belong to
+	// going inside the frame, which is the constant act, so the ladder is
+	// walked from the keyboard — the accel chord Figma left free, and ⇧⏎ back
+	// up. ⌘-click is the pointer's way in, and it lands deepest in one go.
 	{
 		id: "canvas.descend",
 		scope: "canvas",
 		group: "Selection",
 		label: "Go down one rung, into the element",
 		keys: ["accel+enter"],
-		gesture: "double-click",
 		repeats: false,
 	},
 	{
