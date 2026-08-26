@@ -2,7 +2,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeApp, makeProject, makeTempDir, writeFrame } from "../test-helpers";
-import { base64Length, identifierHint, listAssets, overBudget, specifierFrom } from "./hand-asset";
+import {
+	base64Length,
+	identifierHint,
+	imageSpend,
+	inlinedSize,
+	listAssets,
+	overBudget,
+	specifierFrom,
+} from "./hand-asset";
 import { fingerprintOf } from "./hand-write";
 
 /**
@@ -142,6 +150,52 @@ describe("the asset swap", () => {
 		expect(readFrame(root)).toBe(FRAME);
 	});
 
+	it("refuses a picture the rest of the document leaves no room for", async () => {
+		const frame = `import other from "./other.png";\nexport default function Frame() {\n\treturn (\n\t\t<div>\n\t\t\t<img src={other} alt="other" />\n\t\t\t<img src="/hero.png" alt="hero" />\n\t\t</div>\n\t);\n}\n`;
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "hero", frame);
+		put(root, "frames/hero/other.png", Buffer.alloc(300 * 1024, 1));
+		const app = makeApp(spoolDir);
+		const source = stamp(frame, '<img src="/hero.png"', "frames/hero/frame.tsx");
+
+		const res = await app.request(
+			`/api/p/${name}/asset`,
+			jsonPost({
+				frame: "hero",
+				source,
+				fingerprint: fingerprintOf(frame),
+				file: { name: "second.png", data: Buffer.alloc(300 * 1024, 2).toString("base64") },
+			}),
+		);
+		expect(res.status).toBe(409);
+		expect(((await res.json()) as { refusal: { code: string } }).refusal.code).toBe("image-budget");
+		expect(existsSync(join(root, "design/frames/hero/second.png"))).toBe(false);
+	});
+
+	it("counts the picture it replaced as gone, so a swap of like for like fits", async () => {
+		const frame = `import old from "./old.png";\nexport default function Frame() {\n\treturn <img src={old} alt="hero" />;\n}\n`;
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		writeFrame(root, "hero", frame);
+		put(root, "frames/hero/old.png", Buffer.alloc(300 * 1024, 1));
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(
+			`/api/p/${name}/asset`,
+			jsonPost({
+				frame: "hero",
+				source: stamp(frame, "<img", "frames/hero/frame.tsx"),
+				fingerprint: fingerprintOf(frame),
+				file: { name: "fresh.png", data: Buffer.alloc(300 * 1024, 2).toString("base64") },
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(readFrame(root)).toBe(
+			`import fresh from "./fresh.png";\nexport default function Frame() {\n\treturn <img src={fresh} alt="hero" />;\n}\n`,
+		);
+	});
+
 	it("refuses a computed src and names it", async () => {
 		const frame = `export default function Frame({ photo }) {\n\treturn <img src={photo} />;\n}\n`;
 		const { root, name, app, source } = project(frame);
@@ -241,8 +295,23 @@ describe("the imports a swap may choose from", () => {
 describe("what the swap works out before it writes", () => {
 	it("weighs a file as the characters the compiler will write for it", () => {
 		expect(base64Length(3)).toBe(4);
-		expect(overBudget(1024)).toBeUndefined();
-		expect(overBudget(512 * 1024)?.code).toBe("image-budget");
+		// the `data:` head rides in front of the base64, so a file at the ceiling
+		// is already over it
+		expect(inlinedSize(3 * 1024)).toBe(4 * 1024 + "data:image/svg+xml;base64,".length);
+		expect(overBudget(inlinedSize(1024))).toBeUndefined();
+		expect(overBudget(inlinedSize(512 * 1024))?.code).toBe("image-budget");
+	});
+
+	it("weighs every picture the file would carry, not only the one arriving", () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root } = makeProject(spoolDir);
+		writeFrame(root, "hero", FRAME);
+		put(root, "frames/hero/one.png", Buffer.alloc(300 * 1024, 1));
+		put(root, "frames/hero/two.png", Buffer.alloc(300 * 1024, 2));
+		const file = join(root, "design/frames/hero/frame.tsx");
+		const spend = imageSpend(join(root, "design"), file, ["./one.png", "./two.png"], new Map());
+		expect(overBudget(spend)?.code).toBe("image-budget");
+		expect(overBudget(imageSpend(join(root, "design"), file, ["./one.png"], new Map()))).toBeUndefined();
 	});
 
 	it("mints an identifier an author would have typed", () => {

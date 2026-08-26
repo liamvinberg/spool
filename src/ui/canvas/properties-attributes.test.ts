@@ -50,6 +50,16 @@ describe("the fields an element offers", () => {
 		});
 	});
 
+	it("names an expression the map has no place for rather than hiding it", () => {
+		const fields = fieldsFor("div", [{ name: "role", expression: "{kind}" }]);
+		expect(fields.find((field) => field.name === "role")).toEqual({
+			name: "role",
+			value: "",
+			expression: "{kind}",
+			reason: "role is an expression",
+		});
+	});
+
 	it("shows a walk target and never offers to write it", () => {
 		const fields = fieldsFor("button", [{ name: "data-go", value: "checkout" }]);
 		expect(fields.find((field) => field.name === "data-go")).toEqual({
@@ -62,6 +72,17 @@ describe("the fields an element offers", () => {
 	it("marks an image's src a picture, because it is chosen rather than typed", () => {
 		expect(fieldsFor("img", [])[0]).toEqual({ name: "src", value: "", asset: true });
 		expect(fieldsFor("iframe", [])[0]?.asset).toBeUndefined();
+	});
+});
+
+describe("an import off an image", () => {
+	it("reads and never writes, because a string there would be a URL", () => {
+		expect(fieldsFor("iframe", [{ name: "src", asset: "./hero.png" }])[0]).toEqual({
+			name: "src",
+			value: "./hero.png",
+			specifier: "./hero.png",
+			reason: "src is an import",
+		});
 	});
 });
 

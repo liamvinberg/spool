@@ -1,12 +1,22 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
-import { assetChosen, assetDestination, assetName, identifierHint, overBudget, specifierFrom } from "./hand-asset";
+import {
+	assetChosen,
+	assetDestination,
+	assetName,
+	identifierHint,
+	imageSpend,
+	overBudget,
+	specifierFrom,
+} from "./hand-asset";
 import {
 	type AttributeRead,
+	assetOp,
 	type ElementRead,
 	fingerprintOf,
 	type HandOp,
+	imageImports,
 	type PatchRefusal,
 	planOps,
 	readElements,
@@ -175,16 +185,71 @@ export async function assetSite(
 ): Promise<AssetSite> {
 	const found = lookupFrame(root, frame);
 	if (found.kind !== "found") return { kind: "error", status: 404, message: `no frame "${frame}" to edit` };
-	const folder = `${frameFolder(frame, found.page)}/`;
+	const site = await oneSite(root, frameFolder(frame, found.page), stampedAt, deps, fingerprint);
+	if (site.kind !== "ok") return site;
+
+	const asset = resolveAsset(root, found.dir, put);
+	if ("refusal" in asset) return { kind: "refusal", refusal: asset.refusal };
+	if ("message" in asset) return { kind: "error", status: asset.status, message: asset.message };
+	const specifier = specifierFrom(site.file, asset.file);
+	const op = assetOp(stampedAt, specifier, identifierHint(asset.name));
+	if (op === undefined) return { kind: "error", status: 400, message: `design/${asset.path} is no import to write` };
+	const planned = planOps(site.source, [op]);
+	if (!planned.ok) return { kind: "refusal", refusal: planned.refusal };
+	/*
+	 * The budget is the document's, so it is asked of the file the swap would
+	 * leave rather than of the picture alone: the image being replaced is gone
+	 * from that reading, and an import the swap orphaned went with it.
+	 */
+	const designDir = realDesignDir(root);
+	const weighed = new Map(asset.bytes === undefined ? [] : [[asset.file, asset.bytes.length]]);
+	const over = overBudget(imageSpend(designDir, site.file, imageImports(planned.text), weighed));
+	if (over !== undefined) return { kind: "refusal", refusal: over };
+	return {
+		kind: "ok",
+		file: site.file,
+		path: site.path,
+		source: site.source,
+		text: planned.text,
+		mapped: planned.mapped,
+		fingerprint: site.fingerprint,
+		asset: { file: asset.file, path: asset.path, write: asset.write, bytes: asset.bytes },
+	};
+}
+
+type OneSite =
+	| { kind: "ok"; file: string; path: string; source: string; fingerprint: string }
+	| { kind: "refusal"; refusal: PatchRefusal }
+	| { kind: "error"; status: 400 | 404; message: string };
+
+/**
+ * One stamp resolved to the file behind it: the lane's scope, and its promise.
+ *
+ * Every hand edit passes the same three questions before anything is planned —
+ * does the stamp still point somewhere, is that somewhere this frame's own to
+ * write, and is the file still the one the surface read. This is those three,
+ * once.
+ */
+async function oneSite(
+	root: string,
+	folder: string,
+	stampedAt: string,
+	deps: LaneDeps,
+	fingerprint: string | undefined,
+): Promise<OneSite> {
 	let stamp: ReturnType<typeof parseStamp>;
 	try {
 		stamp = parseStamp(root, stampedAt);
 	} catch (error) {
+		// a stamp that resolves out of design/ through a symlink is the
+		// boundary's answer, not a 500
 		if (error instanceof DesignBoundaryError) return { kind: "error", status: 400, message: error.message };
 		throw error;
 	}
 	if (stamp === undefined) return { kind: "refusal", refusal: STALE_STAMP };
-	if (!stamp.rel.startsWith(folder)) {
+	if (!stamp.rel.startsWith(`${folder}/`)) {
+		// v1 scopes writes to the frame's own file: a stamp anywhere else is a
+		// definition site, and editing one instance would edit them all
 		return { kind: "refusal", refusal: await definedElsewhere(deps, stamp.rel, stamp.line) };
 	}
 	let source: string;
@@ -194,26 +259,10 @@ export async function assetSite(
 		return { kind: "refusal", refusal: STALE_STAMP };
 	}
 	const current = fingerprintOf(source);
+	// the fingerprint is what makes an agent and a hand safe in the same file: a
+	// mismatch refuses and re-picks rather than landing somewhere wrong
 	if (fingerprint !== undefined && fingerprint !== current) return { kind: "refusal", refusal: STALE_FILE };
-
-	const asset = resolveAsset(root, found.dir, put);
-	if ("refusal" in asset) return { kind: "refusal", refusal: asset.refusal };
-	if ("message" in asset) return { kind: "error", status: asset.status, message: asset.message };
-	const specifier = specifierFrom(stamp.file, asset.file);
-	const planned = planOps(source, [
-		{ kind: "set-asset", source: stampedAt, specifier, hint: identifierHint(asset.name) },
-	]);
-	if (!planned.ok) return { kind: "refusal", refusal: planned.refusal };
-	return {
-		kind: "ok",
-		file: stamp.file,
-		path: `design/${stamp.rel}`,
-		source,
-		text: planned.text,
-		mapped: planned.mapped,
-		fingerprint: current,
-		asset: { file: asset.file, path: asset.path, write: asset.write, bytes: asset.bytes },
-	};
+	return { kind: "ok", file: stamp.file, path: `design/${stamp.rel}`, source, fingerprint: current };
 }
 
 type ResolvedAsset =
@@ -226,15 +275,11 @@ function resolveAsset(root: string, frameDir: string, put: AssetPut): ResolvedAs
 		if (put.kind === "held") {
 			const chosen = assetChosen(root, put.path);
 			if (chosen === undefined) return { status: 404, message: `no image at design/${put.path}` };
-			const over = overBudget(chosen.bytes);
-			if (over !== undefined) return { refusal: over };
 			const name = put.path.split("/").at(-1) ?? put.path;
 			return { file: chosen.file, path: put.path, name, write: false, bytes: undefined };
 		}
 		const name = assetName(put.name);
 		if (name === undefined) return { status: 400, message: `"${put.name}" is not an image spool writes` };
-		const over = overBudget(put.bytes.length);
-		if (over !== undefined) return { refusal: over };
 		const where = assetDestination(root, frameDir, name, put.bytes);
 		return { ...where, name, bytes: where.write ? put.bytes : undefined };
 	} catch (error) {

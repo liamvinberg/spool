@@ -1,3 +1,5 @@
+import { ASSET_MEDIA_TYPES } from "../../daemon/assets";
+import { WALK_TARGET } from "../../daemon/hand-write";
 import type { AttributeRead, PatchRefusal } from "../api";
 
 /**
@@ -48,9 +50,24 @@ const BY_TAG: Readonly<Record<string, readonly string[]>> = {
 	video: ["src", "poster"],
 };
 
-/** The one attribute the rail shows and never writes, and the sentence that says so. */
-export const WALK_TARGET = "data-go";
+/**
+ * The elements a picture can be swapped on, which is `<img>` and nothing else.
+ *
+ * Said once because four surfaces ask it: the write lane gating the op, this
+ * map deciding which field is a menu, the canvas deciding which selection arms
+ * a drop, and the rail deciding whether to read the project's pictures at all.
+ * A second tag would otherwise be four edits in four files.
+ */
+export function swappable(tag: string): boolean {
+	return tag === "img";
+}
+
+/** What the OS file dialog offers, which is the one asset table read as media types. */
+export const IMAGE_ACCEPT = [...new Set(Object.values(ASSET_MEDIA_TYPES))].sort().join(",");
+
+/** The sentence a walk target carries, which is the lane's own refusal for it. */
 export const WALK_REASON = "walk target, edit in flows";
+export { WALK_TARGET };
 
 /**
  * The refusals that reach a string field.
@@ -67,6 +84,16 @@ const BLOCKS: ReadonlySet<string> = new Set(["shared-definition", "stale-stamp",
 export function blocksFields(refusal: PatchRefusal | undefined): string | undefined {
 	return refusal !== undefined && BLOCKS.has(refusal.code) ? refusal.says : undefined;
 }
+
+/**
+ * A handler, which is no string field however it is written.
+ *
+ * Everything else the element carries draws, expression and all — a value in
+ * the file with nowhere to see it named is the absence this work removes. An
+ * `onClick` is different in kind: it is never a string, so a row saying so on
+ * every button would be a wall of refusals nobody learns anything from.
+ */
+const HANDLER = /^on[A-Z]/;
 
 /** One row of the rail's source section. */
 export interface AttributeField {
@@ -100,8 +127,7 @@ export function fieldsFor(
 	const mapped = BY_TAG[tag] ?? [];
 	const known = [...mapped, ...EVERY];
 	const extra = attributes
-		.filter((attribute) => !known.includes(attribute.name))
-		.filter((attribute) => attribute.name === WALK_TARGET || attribute.value !== undefined)
+		.filter((attribute) => !known.includes(attribute.name) && !HANDLER.test(attribute.name))
 		.map((attribute) => attribute.name)
 		.sort((a, b) => a.localeCompare(b));
 	return [...known, ...extra].map((name) => field(name, tag, held.get(name), blocked));
@@ -113,7 +139,7 @@ function field(
 	read: AttributeRead | undefined,
 	blocked: string | undefined,
 ): AttributeField {
-	const asset = name === "src" && tag === "img" ? { asset: true as const } : {};
+	const asset = name === "src" && swappable(tag) ? { asset: true as const } : {};
 	if (name === WALK_TARGET) {
 		return {
 			name,
@@ -124,11 +150,14 @@ function field(
 	}
 	if (read?.asset !== undefined) {
 		// an identifier bound to an image import is the picture, not an expression
+		// — and off an image there is nowhere to swap it, so it reads and never
+		// writes: typing over it would put a URL where the asset rule wants an import
+		const reason = blocked ?? (asset.asset === true ? undefined : `${name} is an import`);
 		return {
 			name,
 			value: read.asset,
 			specifier: read.asset,
-			...(blocked === undefined ? {} : { reason: blocked }),
+			...(reason === undefined ? {} : { reason }),
 			...asset,
 		};
 	}

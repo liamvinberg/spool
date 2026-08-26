@@ -46,6 +46,7 @@ export type RefusalCode =
 	| "not-a-child"
 	| "expression-attribute"
 	| "class-attribute"
+	| "walk-target"
 	| "not-an-image"
 	| "image-budget"
 	| "unparsable"
@@ -91,18 +92,23 @@ export interface HeldPatch extends SpanPatch {
 	fingerprint: string;
 }
 
+/** The one attribute this lane never writes: its value is a walk target (#260). */
+export const WALK_TARGET = "data-go";
+
 /** A token is one word; a scope is a chain of variant prefixes or nothing. */
 const TOKEN = /^-?[A-Za-z0-9][^\s]*$/;
 const SCOPE = /^([a-z0-9][a-z0-9-]*:)*$/;
 const ATTRIBUTE = /^[A-Za-z_][A-Za-z0-9_.:-]*$/;
 const STAMP = /^[^\s:]+:\d+:\d+$/;
 const TEXT_CAP = 4096;
-/** A relative import of a project asset, which is the only thing a `src` may be pointed at. */
-const SPECIFIER = /^\.{1,2}\/[^"'\\\s]*\.(?:gif|jpe?g|png|svg|webp)$/i;
+/**
+ * A relative import of a project asset, which is the only thing a `src` may be
+ * pointed at. Composed from the one asset list rather than spelled again: a
+ * kind added there and not here is a picture the swap would refuse to write.
+ */
+const SPECIFIER = new RegExp(`^\\.{1,2}/[^"'\\\\\\s]*${ASSET_FILTER.source}`, "i");
 /** The stem a fresh import's identifier is minted from. */
 const HINT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-/** Whether an import the swap displaced was an image's, and so weighs on the document. */
-const ASSET_SPECIFIER = ASSET_FILTER;
 
 /**
  * The ops off the wire, or nothing. Strict: an op the daemon cannot read is a
@@ -114,6 +120,9 @@ const ASSET_SPECIFIER = ASSET_FILTER;
  * takes, and every one of them folds into a single patch on one literal.
  */
 export function parseHandOps(value: unknown): HandOp[] | undefined {
+	// `set-asset` is deliberately not among them: it is formed by the lane's own
+	// asset door, which is the only place that knows where the picture is, what
+	// it weighs and whether the document can carry it (#260)
 	if (!Array.isArray(value) || value.length === 0 || value.length > 32) return undefined;
 	const ops: HandOp[] = [];
 	for (const raw of value) {
@@ -136,13 +145,6 @@ export function parseHandOps(value: unknown): HandOp[] | undefined {
 			ops.push({ kind, source, token, scope, ...(remove === true ? { remove: true } : {}) });
 			continue;
 		}
-		if (kind === "set-asset") {
-			const { specifier, hint } = raw as Record<string, unknown>;
-			if (typeof specifier !== "string" || specifier.length > 512 || !SPECIFIER.test(specifier)) return undefined;
-			if (typeof hint !== "string" || hint.length > 64 || !HINT.test(hint)) return undefined;
-			ops.push({ kind, source, specifier, hint });
-			continue;
-		}
 		if (kind === "set-attribute") {
 			if (typeof name !== "string" || !ATTRIBUTE.test(name)) return undefined;
 			if (typeof attribute !== "string" || attribute.length > TEXT_CAP) return undefined;
@@ -162,6 +164,33 @@ export function parseStamps(value: unknown): string[] | undefined {
 	if (!Array.isArray(value) || value.length === 0 || value.length > 32) return undefined;
 	if (!value.every((source): source is string => typeof source === "string" && STAMP.test(source))) return undefined;
 	return [...value];
+}
+
+/**
+ * The one op no client may send: the asset swap, formed by the lane itself.
+ *
+ * It carries a path rather than a value, and the answers a path needs — where
+ * the picture is, what it weighs, whether one document can carry it — are the
+ * asset door's. So the door mints it and this is where its shape is checked,
+ * which keeps the check in the same file as the splice that trusts it.
+ */
+export function assetOp(source: string, specifier: string, hint: string): HandOp | undefined {
+	if (specifier.length > 512 || !SPECIFIER.test(specifier)) return undefined;
+	if (hint.length > 64 || !HINT.test(hint)) return undefined;
+	return { kind: "set-asset", source, specifier, hint };
+}
+
+/** The image files this source imports, as the specifiers it spells them with. */
+export function imageImports(source: string): string[] {
+	let program: Node;
+	try {
+		program = parse(source, { sourceType: "module", plugins: ["jsx", "typescript"] }).program as Node;
+	} catch {
+		return [];
+	}
+	return importsIn(program)
+		.map((held) => held.specifier)
+		.filter((specifier) => ASSET_FILTER.test(specifier));
 }
 
 export function fingerprintOf(source: string): string {
@@ -356,7 +385,7 @@ export function readElements(
 	// rather than as an expression nobody may touch
 	const assets = new Map(
 		importsIn(program)
-			.filter((held) => held.local !== undefined && ASSET_SPECIFIER.test(held.specifier))
+			.filter((held) => held.local !== undefined && ASSET_FILTER.test(held.specifier))
 			.map((held) => [held.local ?? "", held.specifier]),
 	);
 	return at.map(({ line, column }) => {
@@ -504,6 +533,11 @@ function planAttribute(source: string, element: Element, name: string, value: st
 	if (name === "className") {
 		return { refusal: { code: "class-attribute", says: "className is written one token at a time" } };
 	}
+	// a walk target is an arrow on the flows surface rather than a string on an
+	// element, so it is read wherever elements are read and written only there
+	if (name === WALK_TARGET) {
+		return { refusal: { code: "walk-target", says: "walk target, edit in flows" } };
+	}
 	const held = attributeNamed(element, name);
 	const slot = held === undefined ? undefined : slotOf(source, held);
 	if (held !== undefined && slot === undefined) {
@@ -545,7 +579,7 @@ function planAsset(source: string, program: Node, element: Element, specifier: s
 	 * what the frame is rather than which picture it draws.
 	 */
 	const was =
-		typeof named === "string" && imports.some((one) => one.local === named && ASSET_SPECIFIER.test(one.specifier))
+		typeof named === "string" && imports.some((one) => one.local === named && ASSET_FILTER.test(one.specifier))
 			? named
 			: named === null
 				? null

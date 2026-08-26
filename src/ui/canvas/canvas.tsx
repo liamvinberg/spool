@@ -13,6 +13,7 @@ import type {
 	FrameCollision,
 	FrameCopy,
 	Geometry,
+	HeldPatch,
 	ProjectedFrame,
 	SelectionEntry,
 	SelectionPut,
@@ -136,6 +137,7 @@ import {
 	signsOf,
 } from "./overlays";
 import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
+import { swappable } from "./properties-attributes";
 import { type Held, PropertiesRail } from "./properties-rail";
 import { STEP } from "./properties-theme";
 import {
@@ -2026,29 +2028,49 @@ export function ProjectCanvas({
 	 * that was accepted and could not land is not, because nothing else would
 	 * say so.
 	 */
+	/**
+	 * What a write that has landed leaves behind, whichever gesture made it.
+	 *
+	 * The undo entry, the hold on the reload it causes, and the one line a
+	 * project with nothing catching hand edits hears once. `refused` is how the
+	 * two doors differ: a gated write's no means the file moved underneath a
+	 * gesture that was already accepted, which has to interrupt, while the asset
+	 * door is not gated first and its no is the ordinary quiet refusal.
+	 */
+	const settleWrite = useCallback(
+		(
+			frame: string,
+			written: { ok: true; undo: HeldPatch; uncaught?: true } | { ok: false; refusal: Refusal } | undefined,
+			refused: (refusal: Refusal) => void,
+		) => {
+			writing.current = false;
+			if (written === undefined) {
+				repick.current = null;
+				setSaid({ kind: "failed", frame });
+				return;
+			}
+			if (!written.ok) {
+				repick.current = null;
+				refused(written.refusal);
+				return;
+			}
+			recordEntry({ kind: "patch", frame, patch: written.undo });
+			holdNext.current.add(frame);
+			if (written.uncaught === true) setSaid({ kind: "uncaught" });
+		},
+		[recordEntry],
+	);
+
 	const writePatch = useCallback(
 		(frame: string, fingerprint: string, ops: readonly HandOp[]) => {
 			void applyPatch(project, frame, fingerprint, ops).then((written) => {
-				writing.current = false;
-				if (written === undefined) {
-					repick.current = null;
-					setSaid({ kind: "failed", frame });
-					return;
-				}
 				// the gate had already said yes, so a no here is the file moving
 				// underneath a gesture that was accepted — a failure rather than a
 				// quiet answer, and the one kind of refusal that has to interrupt
-				if (!written.ok) {
-					repick.current = null;
-					setSaid({ kind: "failed", frame, says: written.refusal.says });
-					return;
-				}
-				recordEntry({ kind: "patch", frame, patch: written.undo });
-				holdNext.current.add(frame);
-				if (written.uncaught === true) setSaid({ kind: "uncaught" });
+				settleWrite(frame, written, (refusal) => setSaid({ kind: "failed", frame, says: refusal.says }));
 			});
 		},
-		[project, recordEntry],
+		[project, settleWrite],
 	);
 
 	/**
@@ -2133,7 +2155,7 @@ export function ProjectCanvas({
 	const armedDrop = useRef<string | null>(null);
 	useEffect(() => {
 		const only = picked.length === 1 ? picked[0] : undefined;
-		const target = only !== undefined && only.tag === "img" && !only.generated ? only : undefined;
+		const target = only !== undefined && swappable(only.tag) && !only.generated ? only : undefined;
 		const was = armedDrop.current;
 		if (was !== null && was !== target?.frame) {
 			iframes.current.get(was)?.contentWindow?.postMessage(dropTargetMessage(null), "*");
@@ -2171,24 +2193,11 @@ export function ProjectCanvas({
 			const bytes = "file" in put ? fileAsAsset(put.file).then((file) => ({ file })) : Promise.resolve(put);
 			void bytes
 				.then((body) => swapAsset(project, frame, at.source, at.fingerprint, body))
-				.then((written) => {
-					writing.current = false;
-					if (written === undefined) {
-						repick.current = null;
-						setSaid({ kind: "failed", frame });
-						return;
-					}
-					if (!written.ok) {
-						repick.current = null;
-						showRefusal(frame, selector, written.refusal);
-						return;
-					}
-					recordEntry({ kind: "patch", frame, patch: written.undo });
-					holdNext.current.add(frame);
-					if (written.uncaught === true) setSaid({ kind: "uncaught" });
-				});
+				// nothing gated this one, so its no is the ordinary quiet refusal:
+				// it lands on the element it is about rather than interrupting
+				.then((written) => settleWrite(frame, written, (refusal) => showRefusal(frame, selector, refusal)));
 		},
-		[project, recordEntry, showRefusal],
+		[project, settleWrite, showRefusal],
 	);
 
 	/**

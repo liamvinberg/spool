@@ -4,7 +4,7 @@ import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "..
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
 import { PropertiesIcon } from "../icons";
-import { type AttributeField, fieldsFor } from "./properties-attributes";
+import { type AttributeField, fieldsFor, IMAGE_ACCEPT, swappable } from "./properties-attributes";
 import { useCompiler } from "./properties-compile";
 import { FAINT, LABEL, Menu, NumField, type Option, Row, Section, TextField, VALUE } from "./properties-fields";
 import type { RowEdit, RowElement } from "./properties-rows";
@@ -369,7 +369,7 @@ function Body({
 	const rect = element === null ? undefined : element.chain[rung]?.rect;
 	// the imports the swap may choose from, asked for only where a rung has a
 	// picture on it at all
-	const assets = useAssets(project, element?.frame ?? null, rowElement.tag === "img", revision);
+	const assets = useAssets(project, element?.frame ?? null, swappable(rowElement.tag), revision);
 	const view: View = {
 		scope: live,
 		scoped: scopedClass(literal, live),
@@ -890,7 +890,7 @@ function AssetField({
 			<input
 				ref={picker}
 				type="file"
-				accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+				accept={IMAGE_ACCEPT}
 				className="hidden"
 				onChange={(event) => {
 					const file = event.target.files?.[0];

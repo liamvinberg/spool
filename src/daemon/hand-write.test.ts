@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { applySpan, fingerprintOf, type HandOp, planOps, readElements, spanBetween } from "./hand-write";
+import {
+	applySpan,
+	assetOp,
+	fingerprintOf,
+	type HandOp,
+	parseHandOps,
+	planOps,
+	readElements,
+	spanBetween,
+} from "./hand-write";
 import { readJsxText } from "./jsx-text";
 
 /**
@@ -215,10 +224,35 @@ describe("set-attribute", () => {
 		});
 	});
 
+	it("refuses a walk target, because the arrow it draws is edited in flows", () => {
+		const source = `const x = <button data-go="checkout">Pay</button>;\n`;
+		expect(
+			refusal([{ kind: "set-attribute", source: stamp(source, "<button"), name: "data-go", value: "cart" }], source),
+		).toEqual({ code: "walk-target", says: "walk target, edit in flows" });
+	});
+
 	it("refuses style, which pins whatever a class would say", () => {
 		expect(
 			refusal([{ kind: "set-attribute", source: stamp(FRAME, "<h1"), name: "style", value: "color:red" }]).code,
 		).toBe("inline-style");
+	});
+});
+
+describe("the ops off the wire", () => {
+	it("never takes an asset swap, which only the lane's own door may form", () => {
+		const source = stamp(FRAME, "<img");
+		expect(parseHandOps([{ kind: "set-asset", source, specifier: "./hero.png", hint: "hero" }])).toBeUndefined();
+		// the door's own op is checked the same way, and refuses a specifier that
+		// is not a relative import of an image
+		expect(assetOp(source, "./hero.png", "hero")).toEqual({
+			kind: "set-asset",
+			source,
+			specifier: "./hero.png",
+			hint: "hero",
+		});
+		expect(assetOp(source, "/hero.png", "hero")).toBeUndefined();
+		expect(assetOp(source, "./clip.mp4", "clip")).toBeUndefined();
+		expect(assetOp(source, "./hero.png", "2bad")).toBeUndefined();
 	});
 });
 
