@@ -149,3 +149,15 @@ export function tokenState(token: string, scope: Scope, original: ReadonlySet<st
 	if (!original.has(token)) return "spliced";
 	return scope.length === 0 || underScope(token, scope) ? "in-scope" : "out-of-scope";
 }
+
+/**
+ * The literal under one scope, with the prefixes taken off.
+ *
+ * This is what every row reads and what a write starts from: `hover:bg-thread`
+ * under `hover:` is `bg-thread`, and the property model never has to know that
+ * a variant was involved. The base is the tokens that carry no chain at all,
+ * which is the same thing the write lane means by it.
+ */
+export function scopedClass(className: string, scope: Scope): string {
+	return tokensUnder(className, scope).map(bareToken).join(" ");
+}

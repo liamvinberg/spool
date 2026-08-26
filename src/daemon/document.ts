@@ -987,13 +987,15 @@ const canvasShimJs = `(() => {
 	function kinChain(selector, step) {
 		const from = selector ? elementFor(selector) : (document.getElementById("root") || document.body);
 		if (!from) return [];
-		const kin = step === "child"
-			? from.firstElementChild
-			: step === "next"
-				? from.nextElementSibling
-				: step === "previous"
-					? from.previousElementSibling
-					: null;
+		const kin = step === "self"
+			? from
+			: step === "child"
+				? from.firstElementChild
+				: step === "next"
+					? from.nextElementSibling
+					: step === "previous"
+						? from.previousElementSibling
+						: null;
 		if (!kin || kin === document.documentElement || kin === document.body || kin.id === "root") return [];
 		return chainOf(kin);
 	}

@@ -213,6 +213,66 @@ it("hands the column over to the agent's strip, and takes it back from its own",
 	expect(host.querySelector<HTMLElement>('[aria-label="Agent"]')?.style.width).toBe("44px");
 });
 
+it("writes a row's change to the lane as one op under the live scope", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	await descendTo(canvas, frame, 3);
+	await until(() => chips(host).length === 2);
+	await pressChip(host, "hover:");
+
+	await typeInto(fieldFor(host, "opacity"), "60");
+	expect(await gatedOps()).toEqual([
+		{ kind: "set-class", source: "frames/home/frame.tsx:12:3", token: "opacity-60", scope: "hover:" },
+	]);
+});
+
+it("keeps the rung it is editing when its own write reloads the frame", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	await descendTo(canvas, frame, 3);
+	await until(() => crumbs(host).length === 4);
+
+	await typeInto(fieldFor(host, "opacity"), "60");
+	await changed("home");
+	await frame.loaded();
+
+	// the reload would have dropped the pick, which would empty the surface the
+	// edit was made from between one keystroke and the next (#258)
+	expect(crumbs(host)).toEqual(["home", "main", "footer", "PayButton"]);
+	// and the fresh document is asked for the same element, so the geometry the
+	// overlay draws is the one the new render produced
+	expect(frame.asked()).toMatchObject({ spool: "kin", selector: "pay", step: "self" });
+	await frame.answer(CHAIN);
+	expect(await heldElements()).toEqual(["pay"]);
+});
+
+it("gates the `+` on the compiler, and lands what it accepts under the live scope", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	await descendTo(canvas, frame, 3);
+	await until(() => chips(host).length === 2);
+
+	await press("click", {}, host.querySelector<HTMLElement>('[aria-label="Add a class"]'));
+	await typeField(host.querySelector<HTMLInputElement>('input[placeholder="any class"]'), "foo-bar");
+	// what the compiler refuses stays grey with its own reason, never hidden
+	expect(candidate(host, "foo-bar")?.textContent).toContain("no utility foo-bar");
+	expect(candidate(host, "foo-bar")?.disabled).toBe(true);
+
+	await typeField(host.querySelector<HTMLInputElement>('input[placeholder="any class"]'), "md:hidden");
+	await press("click", {}, candidate(host, "md:hidden"));
+	expect(await gatedOps()).toEqual([
+		{ kind: "set-class", source: "frames/home/frame.tsx:12:3", token: "hidden", scope: "md:" },
+	]);
+});
+
+it("removes a token from the source line, which is the only way back out for a `+`", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	await descendTo(canvas, frame, 3);
+	await until(() => crumbs(host).length === 4);
+
+	await press("click", {}, sourceToken(host, "hover:bg-thread"));
+	expect(await gatedOps()).toEqual([
+		{ kind: "set-class", source: "frames/home/frame.tsx:12:3", token: "bg-thread", scope: "hover:", remove: true },
+	]);
+});
+
 // --- the harness -------------------------------------------------------------
 
 const rail = (host: HTMLElement) => host.querySelector<HTMLElement>('[aria-label="Properties"]');
@@ -225,7 +285,7 @@ function crumbs(host: HTMLElement): string[] {
 
 /** the scope chips, in order */
 function chips(host: HTMLElement): string[] {
-	return [...(rail(host)?.querySelectorAll("[aria-pressed]") ?? [])].map((chip) => chip.textContent ?? "");
+	return [...(rail(host)?.querySelectorAll("[data-scope-chip]") ?? [])].map((chip) => chip.textContent ?? "");
 }
 
 /** the tokens on the source line drawn as out of the live scope */
@@ -235,10 +295,7 @@ function dimmedTokens(host: HTMLElement): string[] {
 }
 
 function fieldFor(host: HTMLElement, name: string): HTMLInputElement | null {
-	for (const row of rail(host)?.querySelectorAll(".grid") ?? []) {
-		if (row.querySelector("span")?.textContent === name) return row.querySelector("input");
-	}
-	return null;
+	return rail(host)?.querySelector<HTMLInputElement>(`[data-properties-row="${name}"] input`) ?? null;
 }
 
 async function pressCrumb(host: HTMLElement, name: string): Promise<void> {
@@ -248,8 +305,32 @@ async function pressCrumb(host: HTMLElement, name: string): Promise<void> {
 }
 
 async function pressChip(host: HTMLElement, name: string): Promise<void> {
-	const found = [...(rail(host)?.querySelectorAll("[aria-pressed]") ?? [])].find((chip) => chip.textContent === name);
+	const found = [...(rail(host)?.querySelectorAll("[data-scope-chip]") ?? [])].find(
+		(chip) => chip.textContent === name,
+	);
 	await press("click", {}, (found as HTMLElement | undefined) ?? null);
+}
+
+/** one candidate in the `+` field's list */
+function candidate(host: HTMLElement, token: string): HTMLButtonElement | null {
+	return host.querySelector<HTMLButtonElement>(`[data-class-candidate="${token}"]`);
+}
+
+/** one token on the source line, which is a press that takes it off */
+function sourceToken(host: HTMLElement, token: string): HTMLElement | null {
+	const line = rail(host)?.querySelector("[data-properties-source]");
+	return [...(line?.querySelectorAll<HTMLElement>("button") ?? [])].find((held) => held.textContent === token) ?? null;
+}
+
+/** typing without committing, which is what a find line and the `+` take */
+async function typeField(field: HTMLInputElement | null, text: string): Promise<void> {
+	if (field === null) throw new Error("no field");
+	const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+	await act(async () => {
+		setter?.call(field, text);
+		field.dispatchEvent(new Event("input", { bubbles: true }));
+	});
+	await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
 }
 
 async function typeInto(field: HTMLInputElement | null, text: string): Promise<void> {
@@ -298,6 +379,10 @@ async function gatedOps(): Promise<unknown> {
 
 interface FramePlayer {
 	answer: (chain: readonly PickedHit[]) => Promise<void>;
+	/** what the canvas last asked this frame for */
+	asked: () => Record<string, unknown> | undefined;
+	/** the fresh document reporting for duty after a reload */
+	loaded: () => Promise<void>;
 }
 
 /** Down `depth` rungs of the ancestry, which is `depth` double-clicks. */
@@ -373,6 +458,15 @@ async function readyCanvas({
 		host,
 		canvas,
 		frame: {
+			asked: () => asks().at(-1),
+			loaded: async () => {
+				await act(async () => {
+					window.dispatchEvent(
+						new MessageEvent("message", { data: { spool: "loaded", frame: "home" }, source: live() }),
+					);
+				});
+				await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+			},
 			answer: async (chain) => {
 				const ask = asks().at(-1);
 				expect(ask).toBeDefined();
@@ -388,6 +482,15 @@ async function readyCanvas({
 			},
 		},
 	};
+}
+
+/** The daemon saying a frame's source changed, which is what reloads its document. */
+async function changed(frame: string): Promise<void> {
+	const line = `event: change\ndata: ${JSON.stringify({ kind: "frame", frame })}\n\n`;
+	await act(async () => {
+		events?.enqueue(new TextEncoder().encode(line));
+	});
+	await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
 }
 
 async function clickAt(canvas: HTMLElement, x: number, y: number, pointerId = 1): Promise<void> {
@@ -459,7 +562,17 @@ const THEME = {
 	step: 4,
 };
 
+/** the daemon's event stream, held open so a test can push a change down it */
+let events: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+/** the compiler's verdicts on whatever the `+` puts to it here */
+const COMPILED = [
+	{ ok: true, token: "md:hidden", css: "@media (width >= 48rem) { display: none }" },
+	{ ok: false, token: "foo-bar", reason: "no utility foo-bar" },
+];
+
 function stubCanvasApis(refused = false): void {
+	events = null;
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	vi.stubGlobal("open", vi.fn());
 	const setAttribute = HTMLIFrameElement.prototype.setAttribute;
@@ -476,9 +589,14 @@ function stubCanvasApis(refused = false): void {
 			const raw = input instanceof Request ? input.url : String(input);
 			const url = new URL(raw, window.location.href);
 			if (url.pathname.endsWith("/events")) {
-				return new Response(new ReadableStream({ start() {} }), {
-					headers: { "content-type": "text/event-stream" },
-				});
+				return new Response(
+					new ReadableStream({
+						start(controller) {
+							events = controller;
+						},
+					}),
+					{ headers: { "content-type": "text/event-stream" } },
+				);
 			}
 			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
 			if (url.pathname.endsWith("/frames")) {
@@ -489,6 +607,11 @@ function stubCanvasApis(refused = false): void {
 			}
 			if (url.pathname.endsWith("/theme")) {
 				return Response.json({ theme: THEME });
+			}
+			// the compiler as the gate on the `+` (#258's P5): the daemon's own
+			// answer, so what the field offers is what this project compiles
+			if (url.pathname.endsWith("/theme/classes")) {
+				return Response.json({ compiled: COMPILED });
 			}
 			if (url.pathname.endsWith("/rungs")) {
 				return Response.json({ rungs: refused ? RUNGS.map(asExpression) : RUNGS });

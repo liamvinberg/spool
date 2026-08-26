@@ -619,6 +619,18 @@ export function ProjectCanvas({
 		});
 	}, []);
 
+	/**
+	 * The rung a write has to put back (#258).
+	 *
+	 * A patch reloads the frame's document, and a reload drops every pick in it
+	 * — which was tolerable while the only hand gestures were one-shot, and is
+	 * not once the rail's rows make editing continuous: changing a padding must
+	 * not empty the surface you changed it from. The selector survives the
+	 * reload because a class edit moves no element, so the new document is asked
+	 * for the same one and the rail draws it again.
+	 */
+	const repick = useRef<{ frame: string; selector: string } | null>(null);
+
 	const reloadFrameDocument = useCallback(
 		(frame: string) => {
 			// a reload the canvas caused holds its outgoing document on screen
@@ -645,8 +657,14 @@ export function ProjectCanvas({
 				setEditing(null);
 			}
 			setWalkArrivals((current) => withoutFrame(current, frame));
-			setPicked((current) => current.filter((pick) => pick.frame !== frame));
-			if (pickedChain.current?.frame === frame) holdChain(null);
+			// a reload the rail's own write caused keeps its rung: the selector is
+			// still the same element, and dropping it would empty the surface the
+			// edit was made from between one keystroke and the next (#258)
+			const holding = repick.current?.frame === frame;
+			if (!holding) {
+				setPicked((current) => current.filter((pick) => pick.frame !== frame));
+				if (pickedChain.current?.frame === frame) holdChain(null);
+			}
 			setPreview((current) => (current?.click?.frame === frame || current?.under?.frame === frame ? null : current));
 			lifecycleRef.current.markStale(frame);
 		},
@@ -1940,6 +1958,7 @@ export function ProjectCanvas({
 			void applyPatch(project, frame, fingerprint, ops).then((written) => {
 				writing.current = false;
 				if (written === undefined) {
+					repick.current = null;
 					setSaid({ kind: "failed", frame });
 					return;
 				}
@@ -1947,6 +1966,7 @@ export function ProjectCanvas({
 				// underneath a gesture that was accepted — a failure rather than a
 				// quiet answer, and the one kind of refusal that has to interrupt
 				if (!written.ok) {
+					repick.current = null;
 					setSaid({ kind: "failed", frame, says: written.refusal.says });
 					return;
 				}
@@ -2007,14 +2027,17 @@ export function ProjectCanvas({
 			if (ops.length === 0 || writing.current) return;
 			setRefused(null);
 			writing.current = true;
+			repick.current = { frame, selector };
 			void gatePatch(project, frame, ops).then((asked) => {
 				if (asked === undefined) {
 					writing.current = false;
+					repick.current = null;
 					setSaid({ kind: "failed", frame });
 					return;
 				}
 				if (!asked.ok) {
 					writing.current = false;
+					repick.current = null;
 					showRefusal(frame, selector, asked.refusal);
 					return;
 				}
@@ -2413,7 +2436,7 @@ export function ProjectCanvas({
 					fulfillClipboardCopy(message, (result) => source.postMessage(result, "*"));
 					return;
 				}
-				case "loaded":
+				case "loaded": {
 					lifecycleRef.current.noteLoaded(message.frame);
 					// the document a hand edit was waiting on: the one held in front
 					// of it has done its job and lets go (#253's no blink)
@@ -2424,7 +2447,23 @@ export function ProjectCanvas({
 					if (enteredRef.current === message.frame) iframes.current.get(message.frame)?.focus();
 					// a fresh document renders fresh elements: re-anchor its arrows (#34)
 					requestSiteBoxes(message.frame);
+					// the rung the rail was editing, asked for again in the document its
+					// own write made: same selector, fresh geometry and a fresh ancestry
+					const again = repick.current;
+					if (again !== null && again.frame === message.frame) {
+						repick.current = null;
+						askChain(
+							message.frame,
+							(id) => kinMessage(again.selector, "self", id),
+							(chain) => {
+								const target = chain[chain.length - 1];
+								if (target === undefined || target.selector !== again.selector) return;
+								applyPick(message.frame, chain, target);
+							},
+						);
+					}
 					return;
+				}
 				case "arrived":
 					// the frame finished arriving (#177): a promoted frame's cover has
 					// been waiting for this rather than for loaded
@@ -2606,6 +2645,8 @@ export function ProjectCanvas({
 		setEdit,
 		showRefusal,
 		finishEdit,
+		askChain,
+		applyPick,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel

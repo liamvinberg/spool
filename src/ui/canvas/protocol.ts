@@ -336,11 +336,15 @@ export const pickMessage = (x: number, y: number, id: number) => ({ spool: "pick
  * selector stands for the boot root, so `child` off nothing is the frame's own
  * root element — the rung a descent from the frame lands on.
  *
+ * `self` is the element itself, which is how a selection survives its own edit
+ * (#258): the rail's write reloads the document out from under the pick, and
+ * the same selector asked for again is the rung the fields were just in.
+ *
  * The answer is a `picked` reply and nothing new: the ancestry of the kin, so
  * the canvas learns the target and the chain it now holds in one message, and
  * an empty chain is a rung that does not exist.
  */
-export type KinStep = "child" | "next" | "previous";
+export type KinStep = "child" | "next" | "previous" | "self";
 export const kinMessage = (selector: string, step: KinStep, id: number) =>
 	({ spool: "kin", selector, step, id }) as const;
 /**

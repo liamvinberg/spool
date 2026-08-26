@@ -18,15 +18,12 @@ import {
 	FILTER_SET,
 	FONTS,
 	type Gradient,
-	gradientCss,
 	gradientOf,
 	inScope,
 	type Kind,
 	LEADINGS,
 	LENGTHS,
-	type Length,
 	lengthOf,
-	lengthOfToken,
 	lengthPx,
 	marginOf,
 	NUMERIC_SET,
@@ -114,11 +111,10 @@ import {
  * Every write goes through the scope at the top (P1): the base by default, or
  * one variant chain (`hover:`, `md:`, `dark:`), under which a row reads the
  * variant's own token, or the base's value faint when the variant sets none,
- * and writes the prefixed token. `shape.variants === "rows"` is the other
- * reading: no switcher, each scope is its own section of rows at the foot.
+ * and writes the prefixed token.
  *
- * Colour rows take an alpha (P2), the fill takes a gradient (P3, as rows or as
- * a bar), font-variant-numeric, filter and scroll-snap are toggle sets (P4),
+ * Colour rows take an alpha (P2), the fill takes a gradient as three stop rows
+ * (P3), font-variant-numeric, filter and scroll-snap are toggle sets (P4),
  * the `+` is gated by the compiler (P5), every number box takes a sign, a
  * fraction and a unit (P6), radius folds to corners and border to edges (P7).
  */
@@ -164,15 +160,6 @@ export interface Acts {
 	canUndo: boolean;
 }
 
-export interface Shape {
-	/** P1: a scope switcher at the top, or each scope as rows at the foot */
-	variants: "bar" | "rows";
-	/** P3: three stop rows, or a bar with stops on it */
-	gradient: "rows" | "bar";
-}
-
-export const DEFAULT_SHAPE: Shape = { variants: "bar", gradient: "rows" };
-
 /** what every section is handed: the element under one scope, and how to write under it */
 interface View {
 	reading: Reading;
@@ -204,7 +191,7 @@ function sectionReason(element: SourceElement, verdict: Verdict): string | undef
 
 /* ---------- the rail ---------- */
 
-export function Rail({ reading, acts, shape = DEFAULT_SHAPE }: { reading: Reading | null; acts: Acts; shape?: Shape }) {
+export function Rail({ reading, acts }: { reading: Reading | null; acts: Acts }) {
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-bg">
 			{reading === null ? (
@@ -212,13 +199,13 @@ export function Rail({ reading, acts, shape = DEFAULT_SHAPE }: { reading: Readin
 					<span className={cn("text-muted/50", VALUE)}>no selection</span>
 				</div>
 			) : (
-				<Panel key={reading.element.id} reading={reading} acts={acts} shape={shape} />
+				<Panel key={reading.element.id} reading={reading} acts={acts} />
 			)}
 		</div>
 	);
 }
 
-function Panel({ reading, acts, shape }: { reading: Reading; acts: Acts; shape: Shape }) {
+function Panel({ reading, acts }: { reading: Reading; acts: Acts }) {
 	const [scope, setScope] = useState<Scope>([]);
 	const [extraScopes, setExtraScopes] = useState<Scope[]>([]);
 	const { element } = reading;
@@ -233,7 +220,7 @@ function Panel({ reading, acts, shape }: { reading: Reading; acts: Acts; shape: 
 		setExtraScopes((held) => held.filter((extra) => inScope(reading.className, extra) !== "" || inScope(prev, extra) === ""));
 	}, [reading.className]);
 	const known = scope.length === 0 || scopes.some((candidate) => scopeKey(candidate) === scopeKey(scope));
-	const live = shape.variants === "bar" && known ? scope : [];
+	const live = known ? scope : [];
 	const view: View = {
 		reading,
 		element,
@@ -250,7 +237,7 @@ function Panel({ reading, acts, shape }: { reading: Reading; acts: Acts; shape: 
 	return (
 		<>
 			<Head reading={reading} acts={acts} />
-			{shape.variants === "bar" && !isFrame ? (
+			{isFrame ? null : (
 				<ScopeBar
 					scopes={scopes}
 					scope={live}
@@ -263,16 +250,15 @@ function Panel({ reading, acts, shape }: { reading: Reading; acts: Acts; shape: 
 						setScope([]);
 					}}
 				/>
-			) : null}
+			)}
 			<div className="min-h-0 flex-1 overflow-y-auto [&>div:first-child]:border-t-0">
 				{isFrame ? <FramePosition view={view} /> : <PositionSection view={view} />}
 				{isFrame ? <FrameSize view={view} /> : <SizeSection view={view} />}
 				<LayoutSection view={view} />
 				<AppearanceSection view={view} />
-				<FillSection view={view} shape={shape} />
+				<FillSection view={view} />
 				<StrokeSection view={view} />
 				{hasText ? <TextSection view={view} /> : null}
-				{shape.variants === "rows" && !isFrame ? <ScopeSections reading={reading} acts={acts} extra={extraScopes} onAdd={(next) => setExtraScopes((held) => [...held, next])} /> : null}
 				<SourceSection view={view} />
 			</div>
 		</>
@@ -373,91 +359,6 @@ function ScopeBar({
 				/>
 			</span>
 		</div>
-	);
-}
-
-/** the other reading: every scope the literal carries, as its own rows at the foot */
-function ScopeSections({ reading, acts, extra, onAdd }: { reading: Reading; acts: Acts; extra: readonly Scope[]; onAdd: (scope: Scope) => void }) {
-	const scopes = scopesOf(reading.className).slice(1);
-	for (const candidate of extra) if (!scopes.some((known) => scopeKey(known) === scopeKey(candidate))) scopes.push(candidate);
-	const verdict = literalVerdict(reading.element);
-	const options: Option[] = VARIANTS.filter((variant) => !scopes.some((known) => scopeKey(known) === `${variant.prefix}:`)).map((variant) => ({
-		token: variant.prefix,
-		name: `${variant.prefix}:`,
-		value: variant.when.replace("@media ", ""),
-		group: variant.group,
-	}));
-	return (
-		<>
-			{scopes.map((scope) => (
-				<ScopeRows key={scopeKey(scope)} reading={reading} acts={acts} scope={scope} />
-			))}
-			<div className="flex h-7 items-center border-border-raised border-t px-2.5">
-				<span className="w-[88px]">
-					<Menu current={{ token: null, name: "+ variant" }} options={options} ok={verdict.ok} faint onPick={(prefix) => (prefix === null ? undefined : onAdd([prefix]))} className="h-5" />
-				</span>
-			</div>
-		</>
-	);
-}
-
-function ScopeRows({ reading, acts, scope }: { reading: Reading; acts: Acts; scope: Scope }) {
-	const scoped = inScope(reading.className, scope);
-	const verdict = literalVerdict(reading.element);
-	const view: View = {
-		reading,
-		element: reading.element,
-		scope,
-		scoped,
-		base: inScope(reading.className, []),
-		set: (change) => acts.setClass(reading.element.id, (className) => withScope(className, scope, change)),
-		fresh: (token) => token !== null && !reading.original.has(`${scopeKey(scope)}${token}`),
-		acts,
-	};
-	const when = VARIANTS.find((variant) => variant.prefix === scope[0])?.when.replace("@media ", "") ?? "";
-	return (
-		<Section name={scopeKey(scope)} reason={when}>
-			{split(scoped).map((token) => (
-				<ScopedRow key={token} token={token} view={view} ok={verdict.ok} />
-			))}
-			<div className="flex h-7 items-center px-1.5">
-				<AddField
-					candidates={candidatesFor(reading.element).map((candidate) => ({ ...candidate }))}
-					taken={new Set(split(scoped))}
-					ok={verdict.ok}
-					onAdd={(token) => view.set((held) => `${held} ${token}`.trim())}
-				/>
-			</div>
-		</Section>
-	);
-}
-
-/** one token under a scope, drawn with the primitive its family takes */
-function ScopedRow({ token, view, ok }: { token: string; view: View; ok: boolean }) {
-	const compiled = compiles(token);
-	const property = compiled.ok ? compiled.css.split(":")[0] ?? token : token;
-	const length = lengthOfToken(anatomyOf(token).base);
-	if (length !== null) {
-		return <LengthRow name={property} family={length.family} view={view} ok={ok} />;
-	}
-	for (const prefix of ["bg", "text", "border"] as const) {
-		const colour = colourOf(token, prefix, { paint: "", from: "" });
-		if (colour.token !== null) return <ColourRow name={property} prefix={prefix} view={view} ok={ok} absent={{ name: "none", paint: "", from: "" }} />;
-	}
-	return (
-		<Row name={property} ok={ok} changed={view.fresh(token)}>
-			<span className={cn("min-w-0 flex-1 truncate px-1", VALUE, ok ? "text-text" : "text-muted/40")}>{token}</span>
-			{ok ? (
-				<button
-					type="button"
-					aria-label={`remove ${token}`}
-					onClick={() => view.set((held) => split(held).filter((candidate) => candidate !== token).join(" "))}
-					className={cn("shrink-0 cursor-pointer rounded-xs px-1 text-muted/50 hover:text-text", VALUE)}
-				>
-					×
-				</button>
-			) : null}
-		</Row>
 	);
 }
 
@@ -1201,12 +1102,11 @@ const SHAPES: readonly Option[] = [
 
 const DIRECTION_OPTIONS: readonly Option[] = DIRECTIONS.map((direction) => ({ token: direction.value, name: direction.value, value: direction.says }));
 
-function FillSection({ view, shape }: { view: View; shape: Shape }) {
+function FillSection({ view }: { view: View }) {
 	const { element } = view;
 	const verdict = literalVerdict(element);
 	const gradient = gradientOf(view.scoped) ?? (view.scope.length > 0 ? gradientOf(view.base) : null);
 	const ownGradient = gradientOf(view.scoped);
-	const [stopAt, setStopAt] = useState<0 | 1 | 2>(0);
 	const write = (next: Gradient | null) => view.set((held) => withGradient(held, next));
 	const fresh = split(view.scoped).some((token) => /^(bg-(linear|gradient|radial|conic)|from-|via-|to-)/.test(token) && view.fresh(token));
 
@@ -1330,91 +1230,12 @@ function FillSection({ view, shape }: { view: View; shape: Shape }) {
 							</span>
 						</Row>
 					) : null}
-					{shape.gradient === "bar" ? (
-						<>
-							<GradientBar gradient={gradient} at={stopAt} ok={verdict.ok} onPick={setStopAt} onMove={(index, position) => write({ ...gradient, stops: gradient.stops.map((candidate, i) => (i === index ? { ...candidate, position } : candidate)) })} />
-							{stopRow(stopAt, true)}
-						</>
-					) : (
-						<>
-							{stopRow(0, true)}
-							{stopRow(1, true)}
-							{stopRow(2, true)}
-						</>
-					)}
+					{stopRow(0, true)}
+					{stopRow(1, true)}
+					{stopRow(2, true)}
 				</>
 			)}
 		</Section>
-	);
-}
-
-/** P3 the other way: the gradient drawn, stops on it, drag one along, click one to edit it below */
-function GradientBar({
-	gradient,
-	at,
-	ok,
-	onPick,
-	onMove,
-}: {
-	gradient: Gradient;
-	at: 0 | 1 | 2;
-	ok: boolean;
-	onPick: (index: 0 | 1 | 2) => void;
-	onMove: (index: 0 | 1 | 2, position: string) => void;
-}) {
-	const fallback = [0, 50, 100] as const;
-	const positionOf = (index: 0 | 1 | 2) => {
-		const stop = gradient.stops[index];
-		return stop?.position === null || stop?.position === undefined ? fallback[index] : Number.parseFloat(stop.position);
-	};
-	const preview = gradientCss({ ...gradient, shape: "linear", direction: "to-r" });
-	return (
-		<div className="flex h-9 items-center gap-2 border-border/80 border-b px-2.5">
-			<span className={cn("w-[92px] shrink-0 truncate text-muted", LABEL)}>stops</span>
-			<div
-				className="relative h-5 min-w-0 flex-1 rounded-xs border border-border-raised"
-				style={{ background: preview }}
-				onPointerDown={(event) => {
-					if (!ok) return;
-					const rect = event.currentTarget.getBoundingClientRect();
-					const bar = event.currentTarget;
-					const move = (moving: PointerEvent) => {
-						const pct = Math.max(0, Math.min(100, Math.round(((moving.clientX - rect.left) / rect.width) * 100)));
-						onMove(at, `${pct}%`);
-					};
-					const up = () => {
-						bar.removeEventListener("pointermove", move);
-						bar.removeEventListener("pointerup", up);
-					};
-					bar.setPointerCapture(event.pointerId);
-					bar.addEventListener("pointermove", move);
-					bar.addEventListener("pointerup", up);
-				}}
-			>
-				{([0, 1, 2] as const).map((index) => {
-					const stop = gradient.stops[index];
-					if (stop === undefined) return null;
-					const on = index === at;
-					return (
-						<button
-							key={stop.at}
-							type="button"
-							disabled={!ok}
-							title={stop.at}
-							onPointerDown={(event) => {
-								event.stopPropagation();
-								onPick(index);
-							}}
-							className={cn(
-								"-translate-x-1/2 absolute top-1/2 h-4 w-4 -translate-y-1/2 cursor-pointer rounded-full border-[1.5px] bg-bg",
-								on ? "border-thread" : stop.colour === null ? "border-border-raised border-dashed" : "border-text/70",
-							)}
-							style={{ left: `${positionOf(index)}%`, background: stop.colour?.paint ?? "transparent" }}
-						/>
-					);
-				})}
-			</div>
-		</div>
 	);
 }
 

@@ -458,6 +458,21 @@ describe("the canvas shim", () => {
 		});
 	});
 
+	it("answers a self kin with the element's own ancestry, for a rung that outlives a reload", async () => {
+		const shim = await servedShim();
+		runShim(shim);
+		document.body.innerHTML = `<div id="root"><main data-spool-source="frames/host/frame.tsx:3:3">
+			<button class="pay" data-spool-source="frames/host/frame.tsx:4:4">Pay now</button>
+		</main></div>`;
+
+		const picked = nextPicked();
+		window.postMessage({ spool: "kin", selector: "main > button", step: "self", id: 9 }, "*");
+
+		const reply = (await picked) as { id: number; chain: Array<Record<string, unknown>> };
+		expect(reply.id).toBe(9);
+		expect(reply.chain.map((rung) => rung.selector)).toEqual(["main", "main > button"]);
+	});
+
 	it("answers an empty chain for the frame background and missing hits", async () => {
 		const shim = await servedShim();
 		runShim(shim);

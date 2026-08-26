@@ -1,14 +1,18 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
-import { splitClass } from "../../daemon/class-write";
+import { useEffect, useRef, useState } from "react";
+import { anatomyOf, splitClass } from "../../daemon/class-write";
 import type { CompiledTheme, Geometry, HandOp, RungRead } from "../api";
 import { fetchTheme, readRungs } from "../api";
 import { cn } from "../cn";
 import { PropertiesIcon } from "../icons";
+import { useCompiler } from "./properties-compile";
+import { FAINT, LABEL, NumField, Row, Section, VALUE } from "./properties-fields";
+import type { RowEdit, RowElement } from "./properties-rows";
 import {
 	BASE,
 	bareToken,
 	type Scope,
 	sameScope,
+	scopedClass,
 	scopeKey,
 	scopeLabel,
 	scopesOf,
@@ -18,6 +22,7 @@ import {
 	tokensUnder,
 	variantsOf,
 } from "./properties-scope";
+import { AddClassRow, PropertySections, type View } from "./properties-sections";
 import type { PickedHit } from "./protocol";
 import {
 	COLLAPSED_BELOW,
@@ -52,13 +57,6 @@ import { PanelCaret } from "./sidebar";
  * a splice would land in, and a refusal read as the reason a write would have
  * given rather than as an absence.
  */
-
-/** the row's own type scale, which is the design's: a label, a value, an aside */
-const LABEL = "font-mono text-2xs leading-3";
-const VALUE = "font-mono text-sm leading-4";
-const FAINT = "font-mono text-2xs text-muted/50 leading-3";
-const BOX =
-	"rounded-xs border border-transparent hover:border-border hover:bg-surface focus-within:border-border-raised focus-within:bg-surface";
 
 /** the smallest a frame may be dragged or typed to, which is the canvas's own floor */
 const FRAME_FLOOR = 80;
@@ -257,6 +255,7 @@ function Body({
 }) {
 	const rungs = useRungs(project, held, revision);
 	const theme = useTheme(project, revision);
+	const compiler = useCompiler(project, revision);
 	const [scope, setScope] = useState<Scope>(BASE);
 	/** a scope opened by the `+` and not yet written to: it stands until it is filled or left */
 	const [opened, setOpened] = useState<Scope[]>([]);
@@ -288,12 +287,50 @@ function Body({
 	if (read !== undefined && written.current.identity !== identity) {
 		written.current = { identity, tokens: new Set(splitClass(literal)) };
 	}
-	const original = written.current.identity === identity ? written.current.tokens : new Set<string>();
+	/** true once the file's own literal is known, which is what a splice is measured against */
+	const knownOriginal = written.current.identity === identity;
+	const original = knownOriginal ? written.current.tokens : new Set<string>();
 
 	const carried = scopesOf(literal);
 	const scopes = [...carried];
 	for (const extra of opened) if (!scopes.some((known) => sameScope(known, extra))) scopes.push(extra);
 	const live = scopes.some((known) => sameScope(known, scope)) ? scope : BASE;
+
+	const write = (ops: readonly HandOp[]) => {
+		if (element === null || ops.length === 0) return;
+		acts.onWrite(element.frame, element.selector, ops);
+	};
+	/** one row's edits as one patch, under whichever scope the bar is lit on */
+	const put = (edits: readonly RowEdit[]) =>
+		write(
+			edits.map(
+				(edit): HandOp => ({
+					kind: "set-class",
+					source: read?.source ?? "",
+					token: edit.token,
+					scope: scopeKey(live),
+					...(edit.remove === true ? { remove: true } : {}),
+				}),
+			),
+		);
+	const rowElement: RowElement = {
+		tag: element === null ? "div" : (element.chain[rung]?.tag ?? "div"),
+		className: literal,
+		...(read?.refusal === undefined ? {} : { refusal: read.refusal }),
+		...(read?.mapped === true ? { mapped: true } : {}),
+	};
+	const rect = element === null ? undefined : element.chain[rung]?.rect;
+	const view: View = {
+		scope: live,
+		scoped: scopedClass(literal, live),
+		base: scopedClass(literal, BASE),
+		theme,
+		element: rowElement,
+		box: { w: rect?.w ?? 0, h: rect?.h ?? 0 },
+		compiler,
+		fresh: (token) => knownOriginal && token !== null && !original.has(`${scopeKey(live)}${token}`),
+		put,
+	};
 
 	return (
 		<>
@@ -330,7 +367,39 @@ function Body({
 				{held?.kind === "frames" ? <Empty says={`${held.count} frames`} /> : null}
 				{held?.kind === "elements" ? <Empty says={`${held.count} elements`} /> : null}
 				{held?.kind === "frame" ? <FrameGeometry name={held.name} geometry={held.geometry} acts={acts} /> : null}
-				{element === null ? null : <SourceLine read={read} scope={live} original={original} />}
+				{element === null || read === undefined ? null : <PropertySections view={view} />}
+				{element === null ? null : (
+					<SourceLine
+						read={read}
+						scope={live}
+						original={original}
+						view={view}
+						onRemove={(token) =>
+							write([
+								{
+									kind: "set-class",
+									source: read?.source ?? "",
+									token: bareToken(token),
+									scope: scopeKey(anatomyOf(token).variants),
+									remove: true,
+								},
+							])
+						}
+						onAdd={(token) =>
+							write([
+								{
+									kind: "set-class",
+									source: read?.source ?? "",
+									token: bareToken(token),
+									scope:
+										anatomyOf(token).variants.length > 0
+											? scopeKey(anatomyOf(token).variants)
+											: scopeKey(live),
+								},
+							])
+						}
+					/>
+				)}
 			</div>
 		</>
 	);
@@ -492,6 +561,7 @@ function ScopeBar({
 					<span key={scopeLabel(candidate)} className="flex shrink-0 items-center">
 						<button
 							type="button"
+							data-scope-chip=""
 							aria-pressed={on}
 							{...(when === undefined ? {} : { title: when })}
 							onClick={() => onScope(candidate)}
@@ -593,6 +663,7 @@ function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geome
 							<NumField
 								value={String(Math.round(geometry[axis.key]))}
 								readout="px"
+								ok
 								onCommit={(typed) => {
 									const next = Number.parseInt(typed, 10);
 									if (!Number.isNaN(next)) write(axis.key, next);
@@ -646,15 +717,23 @@ function SourceLine({
 	read,
 	scope,
 	original,
+	view,
+	onRemove,
+	onAdd,
 }: {
 	read: RungRead | undefined;
 	scope: Scope;
 	/** the tokens the file was written with; anything else is the hands' own */
 	original: ReadonlySet<string>;
+	view: View;
+	/** a press on a token: take its family away under the scope it is written in */
+	onRemove: (token: string) => void;
+	onAdd: (token: string) => void;
 }) {
 	if (read === undefined) return null;
 	const tokens = tokensWritten(read.className);
 	const where = read.line === undefined ? read.path : `${read.path}:${read.line}`;
+	const ok = read.refusal === undefined;
 	return (
 		<Section name="className" {...(read.mapped === true ? { reason: "one row of many" } : {})}>
 			<div className="flex flex-col gap-1.5 px-2.5 py-2">
@@ -664,134 +743,38 @@ function SourceLine({
 					) : tokens.length === 0 ? (
 						<span className="text-muted/50">null</span>
 					) : (
-						tokens.map(({ token, at }, index) => (
-							<span key={at} className={INK[tokenState(token, scope, original)]}>
-								{index > 0 ? " " : ""}
-								{token}
-							</span>
-						))
+						tokens.map(({ token, at }, index) => {
+							const ink = INK[tokenState(token, scope, original)];
+							return (
+								<span key={at}>
+									{index > 0 ? " " : ""}
+									{/* the only way back out for a `+`-added class with no row of
+									    its own (#258's P5), so it is a press rather than a span */}
+									{ok ? (
+										<button
+											type="button"
+											title={`remove ${token}`}
+											onClick={() => onRemove(token)}
+											className={cn(
+												"cursor-pointer break-all text-left hover:text-text hover:line-through",
+												ink,
+											)}
+										>
+											{token}
+										</button>
+									) : (
+										<span className={ink}>{token}</span>
+									)}
+								</span>
+							);
+						})
 					)}
 				</p>
-				{where === undefined ? null : <span className={cn("min-w-0 truncate", FAINT)}>{where}</span>}
+				<div className="flex items-center gap-2">
+					<AddClassRow view={view} taken={new Set(tokens.map((held) => held.token))} onAdd={onAdd} />
+					{where === undefined ? null : <span className={cn("min-w-0 truncate", FAINT)}>{where}</span>}
+				</div>
 			</div>
 		</Section>
-	);
-}
-
-/* ---------- the row, the section and the one field the shell needs ---------- */
-
-function Section({ name, reason, children }: { name: string; reason?: string; children: ReactNode }) {
-	return (
-		<div className="border-border-raised border-t">
-			<div className="flex h-6 items-center gap-2 px-2.5">
-				<span className={cn("shrink-0 text-muted/70", LABEL)}>{name}</span>
-				{reason === undefined ? null : <span className={cn("ml-auto min-w-0 truncate", FAINT)}>{reason}</span>}
-			</div>
-			{children}
-		</div>
-	);
-}
-
-/** the CSS name on the left, one control on the right, a hairline under each */
-function Row({
-	name,
-	onScrub,
-	children,
-}: {
-	name: string;
-	/** a numeric row: dragging the label steps the value by the units crossed */
-	onScrub?: (units: number) => void;
-	children: ReactNode;
-}) {
-	const scrub = useRef<{ from: number; sent: number } | null>(null);
-	return (
-		<div className="grid h-7 grid-cols-[92px_1fr] items-center gap-2 border-border/80 border-b px-2.5">
-			<span
-				onPointerDown={(event) => {
-					if (onScrub === undefined) return;
-					event.preventDefault();
-					event.currentTarget.setPointerCapture(event.pointerId);
-					scrub.current = { from: event.clientX, sent: 0 };
-				}}
-				onPointerMove={(event) => {
-					const held = scrub.current;
-					if (held === null || onScrub === undefined) return;
-					const units = Math.round((event.clientX - held.from) / 4);
-					if (units === held.sent) return;
-					onScrub(units - held.sent);
-					held.sent = units;
-				}}
-				onPointerUp={(event) => {
-					if (scrub.current === null) return;
-					event.currentTarget.releasePointerCapture(event.pointerId);
-					scrub.current = null;
-				}}
-				onPointerCancel={() => {
-					scrub.current = null;
-				}}
-				className={cn(
-					"select-none truncate text-muted",
-					LABEL,
-					onScrub === undefined ? "" : "cursor-ew-resize hover:text-text",
-				)}
-			>
-				{name}
-			</span>
-			<div className="flex min-w-0 items-center gap-1">{children}</div>
-		</div>
-	);
-}
-
-/**
- * A number, chrome-less until the pointer is on it.
- *
- * Arrows step one unit and shift steps ten, which is the same gesture the
- * label's scrub makes with the pointer. The draft is the field's own until it
- * is committed, so a half-typed number is never written.
- */
-function NumField({
-	value,
-	readout,
-	onCommit,
-	onStep,
-}: {
-	value: string;
-	readout?: string;
-	onCommit: (typed: string) => void;
-	onStep?: (units: number) => void;
-}) {
-	const [draft, setDraft] = useState<string | null>(null);
-	return (
-		<label className={cn("flex min-w-0 flex-1 items-center gap-1 px-1", BOX)}>
-			<input
-				value={draft ?? value}
-				spellCheck={false}
-				onChange={(event) => setDraft(event.target.value)}
-				onFocus={(event) => event.target.select()}
-				onBlur={() => {
-					if (draft !== null && draft !== value) onCommit(draft);
-					setDraft(null);
-				}}
-				onKeyDown={(event) => {
-					event.stopPropagation();
-					if (event.key === "Enter") {
-						if (draft !== null && draft !== value) onCommit(draft);
-						setDraft(null);
-						event.currentTarget.blur();
-					}
-					if (event.key === "Escape") {
-						setDraft(null);
-						event.currentTarget.blur();
-					}
-					if ((event.key === "ArrowUp" || event.key === "ArrowDown") && onStep !== undefined) {
-						event.preventDefault();
-						setDraft(null);
-						onStep((event.key === "ArrowUp" ? 1 : -1) * (event.shiftKey ? 10 : 1));
-					}
-				}}
-				className={cn("min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted/40", VALUE)}
-			/>
-			{readout === undefined ? null : <span className={cn("shrink-0", FAINT)}>{readout}</span>}
-		</label>
 	);
 }

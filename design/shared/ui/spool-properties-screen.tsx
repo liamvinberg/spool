@@ -4,7 +4,7 @@ import { ELEMENTS, elementOf, pxValue, sizeVerdict, spacingVerdict, textVerdict,
 import { cn } from "../lib/utils";
 import { CanvasChrome, type PageRow } from "./spool-canvas-chrome";
 import { PropertiesCart } from "./spool-properties-cart";
-import { type Acts, DEFAULT_SHAPE, type Geometry, type Pick, Rail, type Reading, type Rect, type Shape } from "./spool-properties-rail";
+import { type Acts, type Geometry, type Pick, Rail, type Reading, type Rect } from "./spool-properties-rail";
 import { SpoolShell } from "./spool-shell";
 
 /**
@@ -78,7 +78,7 @@ const ORIGINAL = new Map(ELEMENTS.map((element) => [element.id, new Set((element
 /** where the field draws the frame: its own x/y are canvas space, the field shows them offset */
 const FIELD_ORIGIN = { x: 1452, y: -16 } as const;
 
-export function PropertiesScreen({ shape = DEFAULT_SHAPE }: { shape?: Shape }) {
+export function PropertiesScreen() {
 	const [state, setState] = useState<Snapshot>(INITIAL);
 	const [history, setHistory] = useState<readonly Snapshot[]>([]);
 	const [selection, setSelection] = useState<Pick | null>({ id: "pay", key: "pay" });
@@ -320,7 +320,7 @@ export function PropertiesScreen({ shape = DEFAULT_SHAPE }: { shape?: Shape }) {
 	return (
 		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="100%">
 			<style>{stylesheet}</style>
-			<CanvasChrome pages={PAGES} selected={FRAME} tool="select" railLabel="properties" railWidth={RAIL_W} rail={<Rail reading={reading} acts={acts} shape={shape} />}>
+			<CanvasChrome pages={PAGES} selected={FRAME} tool="select" railLabel="properties" railWidth={RAIL_W} rail={<Rail reading={reading} acts={acts} />}>
 				<div ref={fieldRef} className="absolute inset-0">
 					<Still left={36} top={190} name="menu" />
 					<Still left={664} top={150} name="receipt" />
