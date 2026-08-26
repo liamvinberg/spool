@@ -1,12 +1,25 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
 import { PropertiesIcon } from "../icons";
+import { MenuItem } from "./context-menu";
 import { type AttributeField, fieldsFor, IMAGE_ACCEPT, swappable } from "./properties-attributes";
 import { useCompiler } from "./properties-compile";
-import { FAINT, LABEL, Menu, NumField, type Option, Row, Section, TextField, VALUE } from "./properties-fields";
+import {
+	FAINT,
+	LABEL,
+	Menu,
+	NumField,
+	type Option,
+	popoverAt,
+	Row,
+	Section,
+	TextField,
+	useCloseOnPressAway,
+	VALUE,
+} from "./properties-fields";
 import type { RowEdit, RowElement } from "./properties-rows";
 import {
 	BASE,
@@ -523,32 +536,30 @@ function Head({
 	const walked = element === null || rung < 0 ? [] : element.chain.slice(0, rung + 1);
 	const frame = element?.frame ?? (held?.kind === "frame" ? held.name : null);
 	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
+	const steps: Step[] =
+		frame === null
+			? []
+			: [
+					{ key: `frame:${frame}`, name: frame, onPress: () => acts.onRung(frame, null) },
+					...(element === null
+						? []
+						: walked.map((hit, index) => ({
+								key: hit.selector,
+								name: rungs?.[index]?.name ?? hit.tag,
+								onPress: () => acts.onRung(element.frame, hit),
+							}))),
+				];
 	return (
 		<div className="shrink-0 border-border border-b">
-			<div className="flex h-9 items-center gap-2 px-2.5">
-				<span data-properties-crumbs="" className={cn("flex min-w-0 flex-1 items-center gap-1", VALUE)}>
-					{frame === null ? (
+			{/* the ruler under the trail is placed against this row, not against the page */}
+			<div className="relative flex h-9 items-center gap-2 px-2.5">
+				{steps.length === 0 ? (
+					<span data-properties-crumbs="" className={cn("flex min-w-0 flex-1 items-center gap-1", VALUE)}>
 						<span className={cn("text-muted/50", VALUE)}>properties</span>
-					) : (
-						<Crumb
-							name={frame}
-							last={walked.length === 0}
-							squeezes={walked.length > 0}
-							onPress={() => acts.onRung(frame, null)}
-						/>
-					)}
-					{element === null
-						? null
-						: walked.map((hit, index) => (
-								<Crumb
-									key={hit.selector}
-									name={rungs?.[index]?.name ?? hit.tag}
-									last={index === walked.length - 1}
-									squeezes={index < walked.length - 1}
-									onPress={() => acts.onRung(element.frame, hit)}
-								/>
-							))}
-				</span>
+					</span>
+				) : (
+					<Trail steps={steps} />
+				)}
 				{element === null ? null : <span className={cn("shrink-0", FAINT)}>{element.chain[rung]?.tag ?? ""}</span>}
 				<CollapseCaret onCollapse={onCollapse} />
 			</div>
@@ -561,6 +572,159 @@ function Head({
 	);
 }
 
+/** one crumb's worth of the trail: a name, and the rung a press on it climbs to */
+interface Step {
+	key: string;
+	name: string;
+	onPress: () => void;
+}
+
+/** the canvas menu's box, which the `…` opens a short one of */
+const MENU_WIDTH = 200;
+const MENU_ROW = 30;
+const MENU_PAD = 8;
+
+/**
+ * The trail, showing the rungs nearest the one held and eliding the rest.
+ *
+ * A chain eight deep does not fit a 300px column, and the rule that let every
+ * ancestor squeeze spent the width on `spoo… / d. / m… / d.` — a row that
+ * names nothing and that nobody can press on purpose. So the frame at the root
+ * and as many of the nearest rungs as fit read whole, and what is left over
+ * collapses into a `…` that opens on the rungs it stands for. A trail should
+ * always say something true about where you are, even when it cannot say all
+ * of it.
+ *
+ * How many fit is measured rather than counted out, because the rail's width
+ * is the reader's to drag (`rail-width.ts`). The ruler is the whole trail drawn
+ * where nothing can see it: measuring the crumbs on screen would only ever say
+ * how much of what is already shown fits, never whether one more would.
+ */
+function Trail({ steps }: { steps: readonly Step[] }) {
+	const row = useRef<HTMLSpanElement | null>(null);
+	const ruler = useRef<HTMLSpanElement | null>(null);
+	const opener = useRef<HTMLButtonElement | null>(null);
+	const list = useRef<HTMLDivElement | null>(null);
+	const [near, setNear] = useState(steps.length - 1);
+	const [menu, setMenu] = useState<{ chain: string; left: number; top: number } | null>(null);
+	const shut = useCallback(() => setMenu(null), []);
+
+	useLayoutEffect(() => {
+		const box = row.current;
+		const rule = ruler.current;
+		if (box !== null && rule !== null) setNear(fitting(box.getBoundingClientRect().width, rule));
+	});
+
+	// the menu carries the trail it was opened on: a climb from anywhere else
+	// would otherwise leave it standing, listing rungs nobody is under any more
+	const chain = steps.map((step) => step.key).join(">");
+	const at = menu?.chain === chain ? menu : null;
+	useCloseOnPressAway(at !== null, shut, list, opener);
+
+	const kept = Math.max(0, Math.min(near, steps.length - 1));
+	const root = steps[0];
+	const skipped = steps.slice(1, steps.length - kept);
+	const nearest = steps.slice(steps.length - kept);
+
+	const show = () => {
+		const rect = opener.current?.getBoundingClientRect();
+		if (rect === undefined) return;
+		setMenu({ chain, ...popoverAt(rect, MENU_WIDTH, skipped.length * MENU_ROW + MENU_PAD) });
+	};
+
+	return (
+		<>
+			<span
+				ref={row}
+				data-properties-crumbs=""
+				className={cn("flex min-w-0 flex-1 items-center gap-1 overflow-hidden", VALUE)}
+			>
+				{root === undefined ? null : (
+					<Crumb name={root.name} last={steps.length === 1} squeezes={steps.length > 1} onPress={root.onPress} />
+				)}
+				{skipped.length === 0 ? null : (
+					<Elision ref={opener} open={at !== null} onToggle={() => (at === null ? show() : shut())} />
+				)}
+				{nearest.map((step, index) => (
+					<Crumb
+						key={step.key}
+						name={step.name}
+						last={index === nearest.length - 1}
+						squeezes={false}
+						onPress={step.onPress}
+					/>
+				))}
+			</span>
+			{/* clipped to nothing rather than merely faded, so a long trail cannot
+			    push the tag and the caret off the row while it is being measured */}
+			<span aria-hidden="true" inert className="absolute top-0 left-0 h-0 w-0 overflow-hidden">
+				<span ref={ruler} data-crumb-ruler="" className={cn("flex w-max items-center gap-1", VALUE)}>
+					{root === undefined ? null : <Crumb name={root.name} last={false} squeezes={false} onPress={() => {}} />}
+					<Elision open={false} onToggle={() => {}} />
+					{steps.slice(1).map((step, index) => (
+						<Crumb
+							key={step.key}
+							name={step.name}
+							last={index === steps.length - 2}
+							squeezes={false}
+							onPress={() => {}}
+						/>
+					))}
+				</span>
+			</span>
+			{at === null ? null : (
+				<div
+					ref={list}
+					role="menu"
+					aria-label="Skipped rungs"
+					style={{ left: at.left, top: at.top }}
+					className="fixed z-50 flex w-[200px] animate-menu-in flex-col rounded-md border border-border-raised bg-raised p-unit"
+					onPointerDown={(event) => event.stopPropagation()}
+				>
+					{skipped.map((step) => (
+						<MenuItem
+							key={step.key}
+							label={step.name}
+							onClick={() => {
+								shut();
+								step.onPress();
+							}}
+						/>
+					))}
+				</div>
+			)}
+		</>
+	);
+}
+
+/**
+ * How many of the nearest rungs the row has room to draw whole.
+ *
+ * Read off the ruler, whose children are the whole trail with the `…` second,
+ * so the gap the row sets between crumbs is measured here too rather than
+ * restated as a number. The held rung is drawn whatever the answer: a trail
+ * that names nothing is worse than one that runs past its edge.
+ */
+function fitting(available: number, ruler: HTMLElement): number {
+	const boxes = [...ruler.children].map((child) => child.getBoundingClientRect());
+	const root = boxes[0];
+	const elision = boxes[1];
+	if (root === undefined || elision === undefined) return 0;
+	const gap = elision.left - root.right;
+	const rungs = boxes.slice(2);
+	const whole = rungs.reduce((width, box) => width + gap + box.width, root.width);
+	if (whole <= available) return rungs.length;
+	let width = root.width + gap + elision.width;
+	for (let kept = 1; kept <= rungs.length; kept++) {
+		width += gap + (rungs[rungs.length - kept]?.width ?? 0);
+		if (width > available) return Math.max(1, kept - 1);
+	}
+	return rungs.length;
+}
+
+/** the face a crumb wears, worn by the `…` too so the ruler measures what will draw */
+const FACE = "cursor-pointer truncate rounded-xs px-0.5 focus:outline-none focus-visible:bg-surface";
+
 function Crumb({
 	name,
 	last,
@@ -569,7 +733,10 @@ function Crumb({
 }: {
 	name: string;
 	last: boolean;
-	/** an ancestor gives its width up first, so the rung that is held always reads */
+	/**
+	 * The frame gives its width up first, and only once the elided trail has
+	 * itself run out of room: everything the trail still draws reads whole.
+	 */
 	squeezes: boolean;
 	onPress: () => void;
 }) {
@@ -578,14 +745,37 @@ function Crumb({
 			<button
 				type="button"
 				onClick={onPress}
-				className={cn(
-					"cursor-pointer truncate rounded-xs px-0.5 focus:outline-none focus-visible:bg-surface",
-					last ? "text-thread" : "text-muted hover:text-text",
-				)}
+				className={cn(FACE, last ? "text-thread" : "text-muted hover:text-text")}
 			>
 				{name}
 			</button>
 			{last ? null : <span className="shrink-0 text-muted/30">/</span>}
+		</span>
+	);
+}
+
+/**
+ * The `…` the middle of the trail collapses into.
+ *
+ * It is a crumb like the others, so a press on it is the affordance the row
+ * already teaches; what it opens is the canvas's own menu (`context-menu.tsx`)
+ * rather than a list this surface invented, one item per rung it stands for,
+ * outermost first.
+ */
+function Elision({ ref, open, onToggle }: { ref?: React.Ref<HTMLButtonElement>; open: boolean; onToggle: () => void }) {
+	return (
+		<span className="flex shrink-0 items-center gap-1">
+			<button
+				ref={ref}
+				type="button"
+				aria-label="Skipped rungs"
+				aria-expanded={open}
+				onClick={onToggle}
+				className={cn(FACE, "text-muted hover:text-text", open && "bg-surface text-text")}
+			>
+				…
+			</button>
+			<span className="shrink-0 text-muted/30">/</span>
 		</span>
 	);
 }
