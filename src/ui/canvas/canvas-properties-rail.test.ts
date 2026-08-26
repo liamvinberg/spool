@@ -36,6 +36,9 @@ const ancestry = (...selectors: readonly string[]): PickedHit[] =>
 /** screen › footer › pay, the ancestry under the pointer in every test here. */
 const CHAIN = ancestry("screen", "footer", "pay");
 
+/** eight rungs, which is deeper than any rail can draw whole (#263) */
+const DEEP = ancestry("main", "header", "nav", "list", "item", "row", "label", "pay");
+
 /** the same ancestry with an image at its foot, which is what a swap is offered on */
 const IMG_CHAIN = CHAIN.map((hit, at) => (at === 2 ? { ...hit, tag: "img" } : hit));
 
@@ -69,6 +72,15 @@ const RUNGS = [
 		line: 12,
 	},
 ];
+
+/** what the file holds for `DEEP`, one stamp per rung of it */
+const DEEP_RUNGS = ["main", "header", "nav", "list", "item", "row", "label", "PayButton"].map((name, depth) => ({
+	source: `frames/home/frame.tsx:${10 + depth}:3`,
+	name,
+	className: "flex",
+	path: "design/frames/home/frame.tsx",
+	line: 10 + depth,
+}));
 
 it("says select an element with nothing held, and how many with several", async () => {
 	const { host, canvas } = await readyCanvas();
@@ -122,6 +134,35 @@ it("climbs when a crumb is pressed, and takes the frame from the one at the root
 	await pressCrumb(host, "home");
 	expect(await heldFrames()).toEqual(["home"]);
 	expect(fieldFor(host, "x")).not.toBeNull();
+});
+
+it("elides the middle of a trail too deep for the rail, and the … reaches what it hides", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	filed = DEEP_RUNGS;
+	layCrumbs(240);
+	await descendTo(canvas, frame, 8, DEEP);
+	await until(() => crumbs(host).length === 3);
+
+	// the frame, the rung held, and one `…` for the rest: what will not fit is
+	// dropped whole rather than every crumb squeezing down to two letters
+	expect(crumbs(host)).toEqual(["home", "…", "PayButton"]);
+
+	await press("click", {}, host.querySelector<HTMLElement>('button[aria-label="Skipped rungs"]'));
+	expect(skippedRungs(host)).toEqual(["main", "header", "nav", "list", "item", "row", "label"]);
+
+	// a rung the trail could not draw is still a rung a press climbs to
+	await press("click", {}, menuItem(host, "nav"));
+	expect(await heldElements()).toEqual(["nav"]);
+});
+
+it("reads the same trail whole once the rail is wide enough for it", async () => {
+	const { host, canvas, frame } = await readyCanvas();
+	filed = DEEP_RUNGS;
+	layCrumbs(2000);
+	await descendTo(canvas, frame, 8, DEEP);
+
+	await until(() => crumbs(host).length === 9);
+	expect(crumbs(host)).toEqual(["home", "main", "header", "nav", "list", "item", "row", "label", "PayButton"]);
 });
 
 it("carries the base and every scope the literal has, and edits under the one pressed", async () => {
@@ -385,6 +426,33 @@ function crumbs(host: HTMLElement): string[] {
 	return [...(line?.querySelectorAll("button") ?? [])].map((button) => button.textContent ?? "");
 }
 
+/** the rungs the `…` stands for, as its menu lists them */
+function skippedRungs(host: HTMLElement): string[] {
+	return [...host.querySelectorAll('[role="menu"][aria-label="Skipped rungs"] [role="menuitem"]')].map(
+		(item) => item.textContent ?? "",
+	);
+}
+
+function menuItem(host: HTMLElement, label: string): HTMLElement | null {
+	return (
+		[...host.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent === label) ?? null
+	);
+}
+
+/** every crumb 60 wide and 4 apart in a row `wide` across, which happy-dom lays out for nobody */
+const CRUMB_WIDTH = 60;
+const CRUMB_GAP = 4;
+
+function layCrumbs(wide: number): void {
+	const measured = Element.prototype.getBoundingClientRect;
+	vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+		if (this.hasAttribute("data-properties-crumbs")) return new DOMRect(0, 0, wide, 18);
+		const ruler = this.parentElement;
+		if (ruler?.hasAttribute("data-crumb-ruler") !== true) return measured.call(this);
+		return new DOMRect([...ruler.children].indexOf(this) * (CRUMB_WIDTH + CRUMB_GAP), 0, CRUMB_WIDTH, 18);
+	});
+}
+
 /** the scope chips, in order */
 function chips(host: HTMLElement): string[] {
 	return [...(rail(host)?.querySelectorAll("[data-scope-chip]") ?? [])].map((chip) => chip.textContent ?? "");
@@ -518,12 +586,17 @@ interface FramePlayer {
 	loaded: () => Promise<void>;
 }
 
-/** Down `depth` rungs of the ancestry, which is `depth` double-clicks. */
-async function descendTo(canvas: HTMLElement, frame: FramePlayer, depth: number): Promise<void> {
+/** Down `depth` rungs of an ancestry, which is `depth` double-clicks. */
+async function descendTo(
+	canvas: HTMLElement,
+	frame: FramePlayer,
+	depth: number,
+	chain: readonly PickedHit[] = CHAIN,
+): Promise<void> {
 	await clickAt(canvas, 40, 40);
 	for (let rung = 0; rung < depth; rung++) {
 		await doubleClickAt(canvas, 40, 40);
-		await frame.answer(CHAIN);
+		await frame.answer(chain);
 	}
 }
 
@@ -704,6 +777,8 @@ const COMPILED = [
 	{ ok: false, token: "foo-bar", reason: "no utility foo-bar" },
 ];
 
+/** which ancestry the file is answering about, which a trail too deep to draw swaps */
+let filed: typeof RUNGS = RUNGS;
 /** what the file says the held rung wears, which a write in a test moves */
 let payLiteral = "";
 /** the attributes the file writes on the held rung (#260) */
@@ -711,6 +786,7 @@ let payAttributes: { name: string; value?: string; expression?: string; asset?: 
 
 function stubCanvasApis(refused = false): void {
 	events = null;
+	filed = RUNGS;
 	payLiteral = RUNGS[2]?.className ?? "";
 	payAttributes = [];
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -756,8 +832,8 @@ function stubCanvasApis(refused = false): void {
 			if (url.pathname.endsWith("/rungs")) {
 				// the held rung reads whatever the file is now saying, so a write and
 				// the re-read that follows it can both be driven from a test
-				const held = RUNGS.map((rung, at) =>
-					at === 2
+				const held = filed.map((rung, at) =>
+					at === filed.length - 1
 						? { ...rung, className: payLiteral, attributes: payAttributes, fingerprint: "f" }
 						: { ...rung, fingerprint: "f" },
 				);

@@ -286,7 +286,7 @@ export function TextField({
  * would run off the bottom, because the row it belongs to has to stay in view
  * beside it.
  */
-function popoverAt(rect: DOMRect, width: number, height: number): { left: number; top: number; width: number } {
+export function popoverAt(rect: DOMRect, width: number, height: number): { left: number; top: number; width: number } {
 	const below = rect.bottom + 4;
 	const flip = below + height > innerHeight - 8;
 	return {
@@ -297,7 +297,7 @@ function popoverAt(rect: DOMRect, width: number, height: number): { left: number
 }
 
 /** A press anywhere outside the panel or the control that opened it closes it. */
-function useCloseOnPressAway(
+export function useCloseOnPressAway(
 	open: boolean,
 	close: () => void,
 	...inside: readonly React.RefObject<HTMLElement | null>[]
