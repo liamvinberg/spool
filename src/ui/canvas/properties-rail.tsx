@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { anatomyOf, splitClass } from "../../daemon/class-write";
+import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
 import type { CompiledTheme, Geometry, HandOp, RungRead } from "../api";
 import { fetchTheme, readRungs } from "../api";
 import { cn } from "../cn";
@@ -74,6 +74,20 @@ export type Held =
 	| { kind: "element"; frame: string; chain: readonly PickedHit[]; selector: string }
 	| { kind: "elements"; count: number };
 
+/**
+ * A gesture in flight on the canvas, as the rail reads it (#259).
+ *
+ * A resize writes nothing until it is let go, so the fields would sit still
+ * through the whole drag if they read only the file. These are the tokens the
+ * drag is making and the box it is making them in: every row reads the literal
+ * it will land, so the size fields tick and the source line shows what is
+ * about to be written.
+ */
+export interface RailPreview {
+	tokens: readonly string[];
+	box: { w: number; h: number };
+}
+
 export interface PropertiesActs {
 	/** a crumb press: one rung of the ancestry, or the frame at the root of it */
 	onRung: (frame: string, hit: PickedHit | null) => void;
@@ -88,12 +102,15 @@ export function PropertiesRail({
 	held,
 	acts,
 	revision,
+	preview = null,
 	shut,
 	onOpen,
 }: {
 	project: string;
 	held: Held | null;
 	acts: PropertiesActs;
+	/** the canvas gesture in flight, which the fields tick in until it lands */
+	preview?: RailPreview | null;
 	/** bumps when the held frame's document reloads, so the read follows the file */
 	revision: number;
 	/** the agent has the column: the rail stands as its strip until it is pressed */
@@ -146,6 +163,7 @@ export function PropertiesRail({
 						held={held}
 						acts={acts}
 						revision={revision}
+						preview={preview}
 						onCollapse={() => setWidth(STRIP_WIDTH)}
 					/>
 				</div>
@@ -245,12 +263,14 @@ function Body({
 	held,
 	acts,
 	revision,
+	preview,
 	onCollapse,
 }: {
 	project: string;
 	held: Held | null;
 	acts: PropertiesActs;
 	revision: number;
+	preview: RailPreview | null;
 	onCollapse: () => void;
 }) {
 	const rungs = useRungs(project, held, revision);
@@ -263,7 +283,20 @@ function Body({
 	const element = held?.kind === "element" ? held : null;
 	const rung = rungOf(held);
 	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
-	const literal = read?.className ?? "";
+	const filed = read?.className ?? "";
+	/**
+	 * The literal the rail reads: the file's, with a drag in flight folded in.
+	 *
+	 * A resize writes nothing until it is let go (#259), so a rail reading only
+	 * the file would sit still through the whole gesture. Folding the drag's own
+	 * tokens through the same write-back the lane runs makes every row read what
+	 * is about to be written — the size fields tick, and the source line shows
+	 * the token that will land rather than the one that is there.
+	 */
+	const literal =
+		preview === null
+			? filed
+			: preview.tokens.reduce((held, token) => writeClass(held === "" ? null : held, { token, scope: "" }), filed);
 	const identity = element === null ? "" : `${element.frame} ${element.selector}`;
 
 	// the scope is the element's, not the rail's: a fresh rung starts at the base
@@ -285,7 +318,7 @@ function Body({
 	 */
 	const written = useRef<{ identity: string; tokens: ReadonlySet<string> }>({ identity: "", tokens: new Set() });
 	if (read !== undefined && written.current.identity !== identity) {
-		written.current = { identity, tokens: new Set(splitClass(literal)) };
+		written.current = { identity, tokens: new Set(splitClass(filed)) };
 	}
 	/** true once the file's own literal is known, which is what a splice is measured against */
 	const knownOriginal = written.current.identity === identity;
@@ -326,7 +359,7 @@ function Body({
 		base: scopedClass(literal, BASE),
 		theme,
 		element: rowElement,
-		box: { w: rect?.w ?? 0, h: rect?.h ?? 0 },
+		box: preview === null ? { w: rect?.w ?? 0, h: rect?.h ?? 0 } : preview.box,
 		compiler,
 		/**
 		 * A token the hands put there rather than the file's author.

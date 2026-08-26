@@ -3,6 +3,7 @@ import type { Camera, ProjectedFrame } from "../api";
 import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
 import type { ShownRefusal } from "./hand-edit";
+import type { LiveHandles, Sign } from "./hand-resize";
 import { frameSourcePath } from "./pages";
 import { type PickedHit, parseStampRef, pickKey } from "./protocol";
 import type { SnapMarks } from "./snap";
@@ -58,6 +59,38 @@ export function isHandle(value: string): value is Handle {
 	return value in HANDLE_CURSORS;
 }
 
+/** The signs a handle drags each axis by: -1 the top or left, 1 the bottom or right. */
+export function signsOf(handle: Handle): { sx: Sign; sy: Sign } {
+	return {
+		sx: handle.includes("w") ? -1 : handle.includes("e") ? 1 : 0,
+		sy: handle.includes("n") ? -1 : handle.includes("s") ? 1 : 0,
+	};
+}
+
+/**
+ * The element ring's own handles (#259), which are the frame ring's set with
+ * the rotate zones Figma puts diagonally outside each corner.
+ *
+ * `rect` is the box the ring draws in frame-local pixels — the dragged one
+ * while a drag is live, so the ring follows the pointer while the file stays
+ * as it is until the gesture ends. `says` is the readout that rides beside it.
+ */
+export interface ElementHandles {
+	frame: string;
+	selector: string;
+	rect: { x: number; y: number; w: number; h: number };
+	live: LiveHandles;
+	says: string | null;
+	/** the readout sits above the ring for a turn and below it for a size */
+	turning: boolean;
+}
+
+/** Figma's own rotate cursor, drawn rather than fetched: nothing loads over CSP. */
+const ROTATE_SVG =
+	"<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18'><path d='M13.5 4.5a6 6 0 1 0 0 9' fill='none' stroke='black' stroke-width='4'/><path d='M13.5 4.5a6 6 0 1 0 0 9' fill='none' stroke='white' stroke-width='2'/><path d='M13.5 1.2 17 4.6l-3.5 3.3z' fill='white' stroke='black' stroke-width='1'/><path d='M13.5 16.8 17 13.4l-3.5-3.3z' fill='white' stroke='black' stroke-width='1'/></svg>";
+
+export const ROTATE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(ROTATE_SVG)}") 9 9, grab`;
+
 export const HANDLE_CURSORS: Record<Handle, string> = {
 	nw: "nwse-resize",
 	se: "nwse-resize",
@@ -84,6 +117,7 @@ export function SelectionOverlay({
 	lit = null,
 	preview,
 	refused = null,
+	handles = null,
 	marks,
 	marquee,
 	shellRadius,
@@ -114,6 +148,11 @@ export function SelectionOverlay({
 	 * when the selection does.
 	 */
 	refused?: ShownRefusal | null;
+	/**
+	 * The held element's own ring furniture (#259) — nothing where no handle
+	 * is live, because a handle no write would take must not be there to grab.
+	 */
+	handles?: ElementHandles | null;
 	marks: SnapMarks;
 	/** Normalized screen-space rect while a marquee drag is live. */
 	marquee: Box | null;
@@ -285,7 +324,13 @@ export function SelectionOverlay({
 				})()}
 
 			{picked.map((pick) => {
-				const box = elementBox(pick.frame, pick.rect);
+				// the ring follows the pointer while a drag is live: the file is
+				// written once, when it is let go
+				const held =
+					handles !== null && handles.frame === pick.frame && handles.selector === pick.selector
+						? handles.rect
+						: pick.rect;
+				const box = elementBox(pick.frame, held);
 				if (box === undefined) return null;
 				const key = pickKey(pick.frame, pick.selector);
 				return (
@@ -297,6 +342,15 @@ export function SelectionOverlay({
 					/>
 				);
 			})}
+
+			{handles !== null &&
+				(() => {
+					const box = elementBox(handles.frame, handles.rect);
+					if (box === undefined) return null;
+					// the ring the outline draws: 2px out, which is where a handle sits
+					const ring = { x: box.x - 2, y: box.y - 2, w: box.w + 4, h: box.h + 4 };
+					return <ElementHandleSet ring={ring} handles={handles} />;
+				})()}
 
 			{previewShown !== null &&
 				(() => {
@@ -312,7 +366,10 @@ export function SelectionOverlay({
 					return <ElementOutline box={box} radius={deeperShown.radius * k} faded dashed />;
 				})()}
 
+			{/* floating chrome hides for the length of a drag and comes back
+			    anchored to wherever the element ended up (#259) */}
 			{refused !== null &&
+				(handles === null || handles.says === null) &&
 				(() => {
 					const pick = picked.find((held) => held.frame === refused.frame && held.selector === refused.selector);
 					const box = pick === undefined ? undefined : elementBox(pick.frame, pick.rect);
@@ -338,6 +395,108 @@ export function SelectionOverlay({
 				/>
 			)}
 		</div>
+	);
+}
+
+/**
+ * Figma's handle set on the element ring (#259): a cube on each corner, bare
+ * grab strips along the edges, and a rotate zone diagonally outside each
+ * corner. The readout rides beside it while a drag is live.
+ *
+ * A handle is drawn only for an axis the file leaves live, so a corner on an
+ * element whose height a breakpoint pins drags width alone and there is no
+ * dead drag anywhere on the ring. The cube is the frame ring's own — one
+ * canvas, one knob — and the two rings sit side by side often enough that a
+ * second size would read as a second kind of object.
+ */
+function ElementHandleSet({ ring, handles }: { ring: Box; handles: ElementHandles }) {
+	const { live } = handles;
+	if (!live.w && !live.h && !live.rotate) return null;
+	const at = (sx: -1 | 1, sy: -1 | 1) => ({
+		x: sx === -1 ? ring.x : ring.x + ring.w,
+		y: sy === -1 ? ring.y : ring.y + ring.h,
+	});
+	return (
+		<>
+			{live.rotate
+				? CORNERS.map((name) => {
+						const sx = name.includes("w") ? -1 : 1;
+						const sy = name.includes("n") ? -1 : 1;
+						const spot = at(sx, sy);
+						return (
+							<div
+								key={`rotate-${name}`}
+								data-element-rotate={name}
+								className="pointer-events-auto absolute h-5 w-5"
+								style={{
+									left: spot.x + (sx === -1 ? -22 : 2),
+									top: spot.y + (sy === -1 ? -22 : 2),
+									cursor: ROTATE_CURSOR,
+								}}
+							/>
+						);
+					})
+				: null}
+			{live.w
+				? ([-1, 1] as const).map((sx) => (
+						<div
+							key={`edge-x-${sx}`}
+							data-element-handle={sx === -1 ? "w" : "e"}
+							className="pointer-events-auto absolute w-[6px]"
+							style={{
+								left: at(sx, -1).x - 3,
+								top: ring.y + 8,
+								height: Math.max(ring.h - 16, 0),
+								cursor: HANDLE_CURSORS.e,
+							}}
+						/>
+					))
+				: null}
+			{live.h
+				? ([-1, 1] as const).map((sy) => (
+						<div
+							key={`edge-y-${sy}`}
+							data-element-handle={sy === -1 ? "n" : "s"}
+							className="pointer-events-auto absolute h-[6px]"
+							style={{
+								top: at(-1, sy).y - 3,
+								left: ring.x + 8,
+								width: Math.max(ring.w - 16, 0),
+								cursor: HANDLE_CURSORS.n,
+							}}
+						/>
+					))
+				: null}
+			{live.w || live.h
+				? CORNERS.map((name) => {
+						const sx = name.includes("w") ? -1 : 1;
+						const sy = name.includes("n") ? -1 : 1;
+						const spot = at(sx, sy);
+						return (
+							<div
+								key={`corner-${name}`}
+								data-element-handle={name}
+								className="pointer-events-auto absolute flex h-4 w-4 items-center justify-center"
+								style={{ left: spot.x - 8, top: spot.y - 8, cursor: HANDLE_CURSORS[name] }}
+							>
+								<div className="h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread" />
+							</div>
+						);
+					})
+				: null}
+			{handles.says === null ? null : (
+				<div
+					data-element-readout=""
+					className="absolute whitespace-nowrap rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3"
+					style={{
+						left: ring.x + ring.w + 12,
+						top: handles.turning ? ring.y - 20 : ring.y + ring.h + 10,
+					}}
+				>
+					{handles.says}
+				</div>
+			)}
+		</>
 	);
 }
 

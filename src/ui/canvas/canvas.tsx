@@ -83,6 +83,21 @@ import { FrameShell } from "./frame-shell";
 import { deleteGesture, GONE, type HandEdit, type Refusal, type ShownRefusal, secondClick, stampOf } from "./hand-edit";
 import { HandNotice, type HandSaid } from "./hand-notice";
 import {
+	draggedAngle,
+	draggedSize,
+	type LiveHandles,
+	landed,
+	NO_HANDLES,
+	previewTokens,
+	rotateOps,
+	rotateTokens,
+	type Sign,
+	type Size,
+	sizeOps,
+	sizeTokens,
+	useRing,
+} from "./hand-resize";
+import {
 	amend,
 	drop,
 	emptyHistory,
@@ -95,11 +110,13 @@ import {
 	takeRedo,
 	takeUndo,
 	type Way,
+	withdraw,
 } from "./history";
 import { emptyJumps, type JumpEntry, recordJump, takeBack, takeForward } from "./jumps";
 import { atRung, type LadderScope, oneDown, oneUp } from "./ladder";
 import { useFrameLifecycle } from "./lifecycle";
 import {
+	type ElementHandles,
 	type ElementPreview,
 	editorTarget,
 	type FrameHover,
@@ -109,10 +126,13 @@ import {
 	isHandle,
 	NO_MARKS,
 	type PickedSelection,
+	ROTATE_CURSOR,
 	SelectionOverlay,
+	signsOf,
 } from "./overlays";
 import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
 import { type Held, PropertiesRail } from "./properties-rail";
+import { STEP } from "./properties-theme";
 import {
 	clipboardCopyAllowed,
 	editMessage,
@@ -182,7 +202,12 @@ type Gesture =
 	| { kind: "pending"; names: string[]; origins: Map<string, Point>; start: Point }
 	| { kind: "move"; names: string[]; origins: Map<string, Point>; start: Point }
 	| { kind: "marquee"; start: Point; base: readonly string[] }
-	| { kind: "resize"; frame: string; handle: Handle; anchor: Point; origin: Box };
+	| { kind: "resize"; frame: string; handle: Handle; anchor: Point; origin: Box }
+	// the element ring's own two drags (#259), which write classes rather than
+	// geometry: the file is left alone until the pointer comes up, so one
+	// gesture is one patch and one press of undo
+	| { kind: "element-size"; pick: PickedSelection; sx: Sign; sy: Sign; start: Size; from: Point; live: Size }
+	| { kind: "element-turn"; pick: PickedSelection; centre: Point; from: number; base: number; live: number };
 
 const SETTLE_PERSIST_MS = 600;
 const LIFECYCLE_CAMERA_SETTLE_MS = 100;
@@ -326,6 +351,23 @@ export function ProjectCanvas({
 	const [editing, setEditing] = useState<HandEdit | null>(null);
 	const [refused, setRefused] = useState<ShownRefusal | null>(null);
 	const [said, setSaid] = useState<HandSaid | null>(null);
+	/**
+	 * The element drag in flight (#259), as the ring draws it.
+	 *
+	 * The gesture itself lives in the ref every other drag does; this is the
+	 * half that has to re-render — the box the ring follows the pointer with,
+	 * the readout that rides beside it, and the tokens the rail's own fields
+	 * tick in. Nothing here is written until the pointer comes up.
+	 */
+	const [elementDrag, setElementDrag] = useState<{
+		frame: string;
+		selector: string;
+		rect: { x: number; y: number; w: number; h: number };
+		says: string;
+		turning: boolean;
+		tokens: readonly string[];
+		box: Size;
+	} | null>(null);
 	// pages (#39): the named pages on disk, the one the canvas shows, and the
 	// names discovery refuses to resolve
 	const [pages, setPages] = useState<string[]>([]);
@@ -620,6 +662,19 @@ export function ProjectCanvas({
 	}, []);
 
 	/**
+	 * What the held rung's own file leaves live (#259), as the press reads it.
+	 *
+	 * Filled from the ring's read further down and mirrored here, because the
+	 * handlers are written before it and a grab has to answer off the file
+	 * rather than off a render.
+	 */
+	const ringRef = useRef<{ live: LiveHandles; step: number; rotation: number }>({
+		live: NO_HANDLES,
+		step: STEP,
+		rotation: 0,
+	});
+
+	/**
 	 * The rung a write has to put back (#258).
 	 *
 	 * A patch reloads the frame's document, and a reload drops every pick in it
@@ -630,6 +685,18 @@ export function ProjectCanvas({
 	 * for the same one and the rail draws it again.
 	 */
 	const repick = useRef<{ frame: string; selector: string } | null>(null);
+
+	/**
+	 * The size a resize wrote, waiting on the document that comes back (#259).
+	 *
+	 * Static analysis cannot promise two things, so the gate is not the last
+	 * word: utilities land in `@layer utilities`, where an unlayered rule in a
+	 * project's `tokens.css` beats the written class silently, and layout can
+	 * ignore or clamp what a class states. So the drag applies, the reloaded
+	 * document is measured through the re-pick it already asks for, and a size
+	 * that did not take is put back and said out loud.
+	 */
+	const measuring = useRef<{ frame: string; selector: string; intent: Size; sx: Sign; sy: Sign } | null>(null);
 
 	const reloadFrameDocument = useCallback(
 		(frame: string) => {
@@ -2048,6 +2115,70 @@ export function ProjectCanvas({
 	);
 
 	/**
+	 * The measurement's own answer (#259): the size did not take, so put it back.
+	 *
+	 * The patch the write just recorded is run in reverse and taken off the
+	 * stack, because a gesture that did not land is not a future anybody has to
+	 * undo. Failures are not quiet — nothing else would say that a drag you
+	 * watched happen is not what the file now says.
+	 */
+	const rollBackResize = useCallback(
+		(frame: string, selector: string) => {
+			const entry = history.current.undo.at(-1);
+			if (entry === undefined || entry.kind !== "patch" || entry.frame !== frame) return;
+			history.current = withdraw(history.current);
+			repick.current = { frame, selector };
+			setSaid({ kind: "clamped", frame });
+			void revertPatch(project, entry.patch).then((next) => {
+				if (next === undefined) {
+					repick.current = null;
+					setSaid({ kind: "failed", frame });
+					return;
+				}
+				holdNext.current.add(frame);
+			});
+		},
+		[project],
+	);
+
+	/**
+	 * The resize gesture's write (#259), which is the rail's with a measurement
+	 * behind it.
+	 *
+	 * One patch however many tokens the drag moved — a corner writes width and
+	 * height and undoes once — and the size it meant is remembered until the
+	 * document it reloaded reports its own box.
+	 */
+	const writeResize = useCallback(
+		(pick: PickedSelection, ops: readonly HandOp[], intent: Size | null, sx: Sign, sy: Sign) => {
+			if (ops.length === 0 || writing.current) return;
+			setRefused(null);
+			writing.current = true;
+			measuring.current = null;
+			repick.current = { frame: pick.frame, selector: pick.selector };
+			void gatePatch(project, pick.frame, ops).then((asked) => {
+				if (asked === undefined) {
+					writing.current = false;
+					repick.current = null;
+					setSaid({ kind: "failed", frame: pick.frame });
+					return;
+				}
+				if (!asked.ok) {
+					writing.current = false;
+					repick.current = null;
+					showRefusal(pick.frame, pick.selector, asked.refusal);
+					return;
+				}
+				if (intent !== null) {
+					measuring.current = { frame: pick.frame, selector: pick.selector, intent, sx, sy };
+				}
+				writePatch(pick.frame, asked.fingerprint, ops);
+			});
+		},
+		[project, showRefusal, writePatch],
+	);
+
+	/**
 	 * The frame reporting how an edit ended.
 	 *
 	 * An edit that ends on the words it began with writes nothing: the lane
@@ -2459,6 +2590,16 @@ export function ProjectCanvas({
 								const target = chain[chain.length - 1];
 								if (target === undefined || target.selector !== again.selector) return;
 								applyPick(message.frame, chain, target);
+								// measure after apply (#259): the document is back, so the
+								// size the drag wrote is now a box that can be read
+								const wanted = measuring.current;
+								measuring.current = null;
+								if (wanted === null || wanted.frame !== message.frame || wanted.selector !== again.selector) {
+									return;
+								}
+								if (!landed(wanted.intent, wanted.sx, wanted.sy, target.rect)) {
+									rollBackResize(wanted.frame, wanted.selector);
+								}
 							},
 						);
 					}
@@ -2647,6 +2788,7 @@ export function ProjectCanvas({
 		finishEdit,
 		askChain,
 		applyPick,
+		rollBackResize,
 	]);
 
 	// wheel: pan; ctrl/cmd-wheel (and pinch): zoom at the cursor — bake-off feel
@@ -2742,6 +2884,60 @@ export function ProjectCanvas({
 		return target.closest<HTMLElement>(`[data-${attribute}]`)?.dataset[camelize(attribute)] ?? null;
 	};
 
+	/** A picked element's box in the viewport's own pixels, which is where a drag happens. */
+	const elementScreenBox = (pick: PickedSelection): Box | null => {
+		const cam = cameraRef.current;
+		const frame = framesRef.current.find((f) => f.name === pick.frame);
+		if (cam === null || frame === undefined) return null;
+		return {
+			x: (frame.x + pick.rect.x) * cam.k + cam.x,
+			y: (frame.y + pick.rect.y) * cam.k + cam.y,
+			w: pick.rect.w * cam.k,
+			h: pick.rect.h * cam.k,
+		};
+	};
+
+	/**
+	 * What the ring draws while an element drag is live (#259).
+	 *
+	 * The far edge stays where the grab found it and the dragged one follows
+	 * the pointer, which is what a hand means by dragging an edge. Where the
+	 * element lands afterwards is layout's — it owns an element's position, so
+	 * nothing here is pinned and the box arrives wherever the flow puts it.
+	 */
+	const showElementDrag = (active: Gesture): void => {
+		if (active.kind === "element-size") {
+			const { pick, sx, sy, live } = active;
+			setElementDrag({
+				frame: pick.frame,
+				selector: pick.selector,
+				rect: {
+					x: pick.rect.x + (sx === -1 ? pick.rect.w - live.w : 0),
+					y: pick.rect.y + (sy === -1 ? pick.rect.h - live.h : 0),
+					w: live.w,
+					h: live.h,
+				},
+				says: `${live.w} × ${live.h}`,
+				turning: false,
+				tokens: previewTokens(live, sx, sy),
+				box: live,
+			});
+			return;
+		}
+		if (active.kind === "element-turn") {
+			const { pick, live } = active;
+			setElementDrag({
+				frame: pick.frame,
+				selector: pick.selector,
+				rect: pick.rect,
+				says: `${live}°`,
+				turning: true,
+				tokens: rotateTokens(live),
+				box: { w: pick.rect.w, h: pick.rect.h },
+			});
+		}
+	};
+
 	/** A world point in a frame's own coordinates — what every pick verb takes. */
 	const frameLocalAt = (name: string, world: Point): Point | null => {
 		const frame = framesRef.current.find((f) => f.name === name);
@@ -2814,6 +3010,7 @@ export function ProjectCanvas({
 		setMarks(NO_MARKS);
 		setMarquee(null);
 		setResizeCursor(null);
+		setElementDrag(null);
 		setPanning(false);
 		if (active.kind === "move") {
 			setFrames((current) =>
@@ -2890,6 +3087,51 @@ export function ProjectCanvas({
 		}
 
 		if (event.button !== 0) return;
+
+		// the element ring's handles first of all: they overhang the element and
+		// sit over whatever the frame would otherwise have taken the press for
+		const held = pickedRef.current.length === 1 ? pickedRef.current[0] : undefined;
+		if (held !== undefined) {
+			const turn = datasetHit(event.target, "element-rotate");
+			const grab = datasetHit(event.target, "element-handle");
+			if (turn !== null) {
+				const box = elementScreenBox(held);
+				if (box !== null) {
+					gesture.current = {
+						kind: "element-turn",
+						pick: held,
+						centre: { x: box.x + box.w / 2, y: box.y + box.h / 2 },
+						from: Math.atan2(p.y - (box.y + box.h / 2), p.x - (box.x + box.w / 2)),
+						base: ringRef.current.rotation,
+						live: ringRef.current.rotation,
+					};
+					setResizeCursor(ROTATE_CURSOR);
+					showElementDrag(gesture.current);
+					return;
+				}
+			}
+			if (grab !== null && isHandle(grab)) {
+				// a handle only moves the axes the file leaves live, so a corner on
+				// an element a breakpoint pins the height of drags width alone
+				const { sx, sy } = signsOf(grab);
+				const live = ringRef.current.live;
+				const gone = { sx: live.w ? sx : 0, sy: live.h ? sy : 0 } as const;
+				if (gone.sx !== 0 || gone.sy !== 0) {
+					gesture.current = {
+						kind: "element-size",
+						pick: held,
+						sx: gone.sx,
+						sy: gone.sy,
+						start: { w: held.rect.w, h: held.rect.h },
+						from: p,
+						live: { w: Math.round(held.rect.w), h: Math.round(held.rect.h) },
+					};
+					setResizeCursor(HANDLE_CURSORS[grab]);
+					showElementDrag(gesture.current);
+					return;
+				}
+			}
+		}
 
 		// resize handles first: they overhang the frame and own the pointer
 		const handleHit = datasetHit(event.target, "handle");
@@ -3039,6 +3281,33 @@ export function ProjectCanvas({
 			return;
 		}
 
+		// the element ring's drags: nothing is written until the pointer is up,
+		// so what moves here is the ring, the readout and the rail's fields
+		if (active.kind === "element-size") {
+			const live = draggedSize(
+				active.start,
+				active.sx,
+				active.sy,
+				(p.x - active.from.x) / cam.k,
+				(p.y - active.from.y) / cam.k,
+			);
+			if (live.w === active.live.w && live.h === active.live.h) return;
+			const next: Gesture = { ...active, live };
+			gesture.current = next;
+			showElementDrag(next);
+			return;
+		}
+
+		if (active.kind === "element-turn") {
+			const now = Math.atan2(p.y - active.centre.y, p.x - active.centre.x);
+			const live = draggedAngle(active.base, active.from, now, event.shiftKey);
+			if (live === active.live) return;
+			const next: Gesture = { ...active, live };
+			gesture.current = next;
+			showElementDrag(next);
+			return;
+		}
+
 		if (active.kind === "pending") {
 			if (Math.hypot(p.x - active.start.x, p.y - active.start.y) < DRAG_THRESHOLD_PX) return;
 			// a drag is an arrange (#7): it moves frames, so element scope ends
@@ -3165,6 +3434,39 @@ export function ProjectCanvas({
 		}
 	};
 
+	/**
+	 * The size a drag settled on, written as one patch (#259).
+	 *
+	 * A drag that ended where it began writes nothing: the file already says
+	 * this and asking the lane about it is a round trip nobody needs. What is
+	 * written is the size the pointer stopped at, folded onto the scale where
+	 * it sits on a whole step and kept as pixels where it does not.
+	 */
+	const commitElementSize = (active: Extract<Gesture, { kind: "element-size" }>) => {
+		const { pick, sx, sy, live, start } = active;
+		if (live.w === Math.round(start.w) && live.h === Math.round(start.h)) return;
+		const stamp = stampOf(pick);
+		if (typeof stamp !== "string") {
+			showRefusal(pick.frame, pick.selector, stamp);
+			return;
+		}
+		writeResize(pick, sizeOps(stamp, sizeTokens(live, sx, sy, ringRef.current.step)), live, sx, sy);
+	};
+
+	/** The angle a turn settled on. A turn back to rest takes the token away. */
+	const commitElementTurn = (active: Extract<Gesture, { kind: "element-turn" }>) => {
+		const { pick, live, base } = active;
+		if (live === base) return;
+		const stamp = stampOf(pick);
+		if (typeof stamp !== "string") {
+			showRefusal(pick.frame, pick.selector, stamp);
+			return;
+		}
+		// a turn changes no layout box, so there is nothing for the measurement
+		// to compare: the ring is drawn around what the document reports either way
+		writeResize(pick, rotateOps(stamp, live), null, 0, 0);
+	};
+
 	const onPointerUp = () => {
 		const active = gesture.current;
 		gesture.current = { kind: "idle" };
@@ -3172,8 +3474,11 @@ export function ProjectCanvas({
 		setMarks(NO_MARKS);
 		setMarquee(null);
 		setResizeCursor(null);
+		setElementDrag(null);
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
+		if (active.kind === "element-size") commitElementSize(active);
+		if (active.kind === "element-turn") commitElementTurn(active);
 		// the press never became a drag, so the second click meant the words (#255)
 		const again = pressOnHeld.current;
 		pressOnHeld.current = null;
@@ -3660,6 +3965,34 @@ export function ProjectCanvas({
 			: { kind: "frame", name: only.name, geometry: { x: only.x, y: only.y, w: only.w, h: only.h } };
 	})();
 	const railFrame = railHeld?.kind === "element" ? railHeld.frame : railHeld?.kind === "frame" ? railHeld.name : null;
+	/**
+	 * The element ring's own read (#259): which of its handles the file leaves
+	 * live, the step a whole class is measured in, and the turn it already
+	 * wears. An element with no stamp of its own has no handle at all — the
+	 * lane has nothing to write against, so there is nothing to grab.
+	 */
+	const ringPick = picked.length === 1 ? picked[0] : undefined;
+	const ringSource = ringPick === undefined || ringPick.generated ? null : (ringPick.source ?? null);
+	const ring = useRing(
+		project,
+		ringPick === undefined || ringSource === null || ringSource === ""
+			? null
+			: { frame: ringPick.frame, source: ringSource },
+		ringPick === undefined ? 0 : (docNonces[ringPick.frame] ?? 0),
+	);
+	ringRef.current = ring;
+	const dragging = elementDrag !== null && elementDrag.selector === ringPick?.selector;
+	const elementHandles: ElementHandles | null =
+		ringPick === undefined || effectiveTool !== "select" || entered !== null
+			? null
+			: {
+					frame: ringPick.frame,
+					selector: ringPick.selector,
+					rect: dragging && elementDrag !== null ? elementDrag.rect : ringPick.rect,
+					live: ring.live,
+					says: dragging && elementDrag !== null ? elementDrag.says : null,
+					turning: dragging && elementDrag !== null ? elementDrag.turning : false,
+				};
 	const k = camera?.k ?? 1;
 	const shellRadius = Math.min(12 / k, 24);
 	const cursor = resizeCursor ?? (panning ? "grabbing" : effectiveTool === "hand" ? "grab" : "default");
@@ -3858,6 +4191,7 @@ export function ProjectCanvas({
 							lit={lit}
 							preview={effectiveTool === "select" ? preview : null}
 							refused={refused}
+							handles={elementHandles}
 							marks={marks}
 							marquee={marquee}
 							shellRadius={shellRadius}
@@ -3985,6 +4319,7 @@ export function ProjectCanvas({
 					revision={railFrame === null ? 0 : (docNonces[railFrame] ?? 0)}
 					shut={agentOpen}
 					onOpen={() => setAgentWidth(STRIP_WIDTH)}
+					preview={elementDrag === null ? null : { tokens: elementDrag.tokens, box: elementDrag.box }}
 					acts={{ onRung: takeRung, onGeometry: setFrameGeometry, onWrite: writeOps }}
 				/>
 				{agentPanel ? (

@@ -214,6 +214,19 @@ export function drop(history: History, way: Way): History {
 }
 
 /**
+ * The entry a gesture wrote and then put back itself (#259).
+ *
+ * A resize is measured after it applies, and a size the layout would not take
+ * is reverted on the spot. What it leaves behind is a file that never changed,
+ * so the entry it pushed is not a step anybody should be able to undo — it is
+ * withdrawn rather than dropped, which is the same slice for a different
+ * reason and reads as one at the call site.
+ */
+export function withdraw(history: History): History {
+	return { undo: history.undo.slice(0, -1), redo: history.redo };
+}
+
+/**
  * A name nothing answers to (#228, #231).
  *
  * A frame's name has to be free of every frame and of every page's name, at
