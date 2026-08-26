@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { Cover } from "../../cover";
 import type { Unseen } from "../../daemon/seen";
 import { pageWithin, ROOT_PAGE } from "../../page-path";
@@ -219,6 +220,13 @@ type Gesture =
 	// gesture is one patch and one press of undo
 	| { kind: "element-size"; pick: PickedSelection; sx: Sign; sy: Sign; start: Size; from: Point; live: Size }
 	| { kind: "element-turn"; pick: PickedSelection; centre: Point; from: number; base: number; live: number };
+
+/** One size a resize drag worked out, and the guides that belong to it. */
+interface ResizePaint {
+	frame: string;
+	box: Box;
+	marks: SnapMarks;
+}
 
 const SETTLE_PERSIST_MS = 600;
 const LIFECYCLE_CAMERA_SETTLE_MS = 100;
@@ -3175,9 +3183,65 @@ export function ProjectCanvas({
 		hoverPickAt(at.frame, at.world, accelDownRef.current, optionDownRef.current);
 	};
 
+	/**
+	 * A resize hands its size to the display, not to the pointer (#264).
+	 *
+	 * A frame's box is the viewport of the live document inside it, so every
+	 * size that reaches React relayouts that whole document. A trackpad reports
+	 * well above display rate, and the layouts queue up between two painted
+	 * frames until the edge visibly trails the finger. Only the last size in a
+	 * frame is ever seen, so only the last one is applied: the drag's own maths
+	 * still run on every event, and the guides ride in the same write as the box
+	 * rather than a frame behind it, because a line must never mark an edge the
+	 * frame has already left.
+	 *
+	 * A move is left alone on purpose. It writes x and y, nothing inside the
+	 * document relayouts, and a frame of waiting would buy nothing.
+	 */
+	const resizeFrame = useRef(0);
+	const resizeNext = useRef<ResizePaint | null>(null);
+
+	const applyResize = (paint: ResizePaint) => {
+		setMarks(paint.marks);
+		setFrames((current) => current.map((frame) => (frame.name === paint.frame ? { ...frame, ...paint.box } : frame)));
+	};
+
+	const paintResize = (paint: ResizePaint) => {
+		resizeNext.current = paint;
+		if (resizeFrame.current !== 0) return;
+		resizeFrame.current = requestAnimationFrame(() => {
+			resizeFrame.current = 0;
+			const pending = resizeNext.current;
+			resizeNext.current = null;
+			if (pending !== null) applyResize(pending);
+		});
+	};
+
+	/** Forget a size nobody will see — a drag that escaped must not paint after it. */
+	const dropResize = useCallback(() => {
+		cancelAnimationFrame(resizeFrame.current);
+		resizeFrame.current = 0;
+		resizeNext.current = null;
+	}, []);
+
+	/**
+	 * Put the size the pointer let go of on the screen before anything reads it.
+	 *
+	 * The commit writes what the frames say, and a size still waiting on its
+	 * animation frame says nothing yet — a release can land in the same batch of
+	 * input as the move before it. Rendering it here is what makes the drag end
+	 * where the pointer ended rather than a frame short of it.
+	 */
+	const settleResize = () => {
+		const pending = resizeNext.current;
+		dropResize();
+		if (pending !== null) flushSync(() => applyResize(pending));
+	};
+
 	const cancelGesture = useCallback(() => {
 		const active = gesture.current;
 		gesture.current = { kind: "idle" };
+		dropResize();
 		setMarks(NO_MARKS);
 		setMarquee(null);
 		setResizeCursor(null);
@@ -3195,7 +3259,7 @@ export function ProjectCanvas({
 				current.map((frame) => (frame.name === active.frame ? { ...frame, ...active.origin } : frame)),
 			);
 		}
-	}, []);
+	}, [dropResize]);
 
 	const originsOf = (names: readonly string[]): Map<string, Point> => {
 		const origins = new Map<string, Point>();
@@ -3602,10 +3666,12 @@ export function ProjectCanvas({
 				w = snapped.w;
 				h = snapped.h;
 			}
-			// spacing is a fact about where a frame sits, not about how big it is
-			setMarks({ v: vGuides, h: hGuides, spans: [] });
-			const box = { x, y, w, h };
-			setFrames((current) => current.map((frame) => (frame.name === active.frame ? { ...frame, ...box } : frame)));
+			paintResize({
+				frame: active.frame,
+				box: { x, y, w, h },
+				// spacing is a fact about where a frame sits, not about how big it is
+				marks: { v: vGuides, h: hGuides, spans: [] },
+			});
 		}
 	};
 
@@ -3644,6 +3710,9 @@ export function ProjectCanvas({
 
 	const onPointerUp = () => {
 		const active = gesture.current;
+		// settled while the drag still counts as in flight, so the footprint the
+		// release leaves is taken once, off the size that was let go of
+		if (active.kind === "resize") settleResize();
 		gesture.current = { kind: "idle" };
 		setPanning(false);
 		setMarks(NO_MARKS);
