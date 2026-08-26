@@ -25,7 +25,7 @@ import {
 	shownBy,
 } from "./agent-transcript";
 import { ageOf } from "./frame-find";
-import { COLLAPSED_BELOW, MAX_WIDTH, STRIP_WIDTH, settledWidth } from "./rail-width";
+import { COLLAPSED_BELOW, GRIP_CLASS, GRIP_HAIR, STRIP_WIDTH, useRailDrag } from "./rail-width";
 import { ChevronIcon, PanelCaret } from "./sidebar";
 
 /**
@@ -327,18 +327,8 @@ export function AgentRail({
 	const waited = outstanding === undefined ? 0 : Math.max(0, elapsed - outstanding.at);
 	/** what the panel has left once the column has taken its 34, which two things measure */
 	const panel = width - SPINE_W;
-	const [dragging, setDragging] = useState(false);
-	const drag = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
+	const { dragging, grip } = useRailDrag(width, onWidth, AGENT_WIDTH);
 	const collapsed = width <= COLLAPSED_BELOW;
-
-	function finishDrag(target: HTMLElement, pointerId: number) {
-		const current = drag.current;
-		if (current === null || current.pointerId !== pointerId) return;
-		target.releasePointerCapture(pointerId);
-		drag.current = null;
-		setDragging(false);
-		onWidth(settledWidth(current.latestWidth));
-	}
 
 	return (
 		<aside
@@ -449,43 +439,8 @@ export function AgentRail({
 				</div>
 			)}
 
-			<button
-				type="button"
-				aria-label="Resize agent"
-				onKeyDown={(event) => {
-					// a focused grip answers its arrows itself; stop them short of the hotkey
-					// dispatch, or the same press would nudge the selection
-					if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-					event.stopPropagation();
-					if (event.key === "ArrowLeft") onWidth(AGENT_WIDTH);
-					if (event.key === "ArrowRight") onWidth(STRIP_WIDTH);
-				}}
-				onPointerDown={(event) => {
-					if (event.button !== 0) return;
-					event.currentTarget.setPointerCapture(event.pointerId);
-					drag.current = {
-						pointerId: event.pointerId,
-						startWidth: width,
-						startX: event.clientX,
-						latestWidth: width,
-					};
-					setDragging(true);
-				}}
-				onPointerMove={(event) => {
-					const current = drag.current;
-					if (current === null || current.pointerId !== event.pointerId) return;
-					const next = Math.min(
-						MAX_WIDTH,
-						Math.max(STRIP_WIDTH, current.startWidth + current.startX - event.clientX),
-					);
-					current.latestWidth = next;
-					onWidth(next);
-				}}
-				onPointerUp={(event) => finishDrag(event.currentTarget, event.pointerId)}
-				onPointerCancel={(event) => finishDrag(event.currentTarget, event.pointerId)}
-				className="group -left-1.5 absolute top-0 z-30 h-full w-3 cursor-col-resize touch-none outline-none"
-			>
-				<span className="absolute top-0 right-[5px] bottom-0 w-px bg-transparent group-hover:bg-thread group-focus-visible:bg-thread" />
+			<button type="button" aria-label="Resize agent" {...grip} className={GRIP_CLASS}>
+				<span className={GRIP_HAIR} />
 			</button>
 		</aside>
 	);

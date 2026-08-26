@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { splitClass } from "../../daemon/class-write";
 import type { Geometry, HandOp, RungRead } from "../api";
 import { readRungs } from "../api";
 import { cn } from "../cn";
@@ -12,12 +13,22 @@ import {
 	scopeLabel,
 	scopesOf,
 	scopeWhen,
+	type TokenState,
+	tokenState,
 	tokensUnder,
-	underScope,
 	VARIANTS,
 } from "./properties-scope";
 import type { PickedHit } from "./protocol";
-import { COLLAPSED_BELOW, MAX_WIDTH, PROPERTIES_WIDTH, STRIP_WIDTH, settledWidth, useRailWidth } from "./rail-width";
+import {
+	COLLAPSED_BELOW,
+	GRIP_CLASS,
+	GRIP_HAIR,
+	PROPERTIES_WIDTH,
+	STRIP_WIDTH,
+	useRailDrag,
+	useRailWidth,
+} from "./rail-width";
+import { PanelCaret } from "./sidebar";
 
 /**
  * The properties rail (#256): the right column, back, and holding one thing.
@@ -90,18 +101,8 @@ export function PropertiesRail({
 	onOpen: () => void;
 }) {
 	const [width, setWidth] = useRailWidth("properties", PROPERTIES_WIDTH);
-	const [dragging, setDragging] = useState(false);
-	const drag = useRef<{ pointerId: number; startX: number; startWidth: number; latestWidth: number } | null>(null);
+	const { dragging, grip } = useRailDrag(width, setWidth, PROPERTIES_WIDTH);
 	const collapsed = shut || width <= COLLAPSED_BELOW;
-
-	function finishDrag(target: HTMLElement, pointerId: number) {
-		const current = drag.current;
-		if (current === null || current.pointerId !== pointerId) return;
-		target.releasePointerCapture(pointerId);
-		drag.current = null;
-		setDragging(false);
-		setWidth(settledWidth(current.latestWidth));
-	}
 
 	return (
 		<aside
@@ -140,7 +141,7 @@ export function PropertiesRail({
 				</div>
 			) : (
 				<div className="flex h-full min-w-[200px] flex-col">
-					<Panel
+					<Body
 						project={project}
 						held={held}
 						acts={acts}
@@ -150,54 +151,28 @@ export function PropertiesRail({
 				</div>
 			)}
 
-			<button
-				type="button"
-				aria-label="Resize properties"
-				onKeyDown={(event) => {
-					// a focused grip answers its own arrows; stop them short of the
-					// hotkey dispatch, or the same press would nudge the selection
-					if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-					event.stopPropagation();
-					if (event.key === "ArrowLeft") setWidth(PROPERTIES_WIDTH);
-					if (event.key === "ArrowRight") setWidth(STRIP_WIDTH);
-				}}
-				onPointerDown={(event) => {
-					if (event.button !== 0 || collapsed) return;
-					event.currentTarget.setPointerCapture(event.pointerId);
-					drag.current = {
-						pointerId: event.pointerId,
-						startWidth: width,
-						startX: event.clientX,
-						latestWidth: width,
-					};
-					setDragging(true);
-				}}
-				onPointerMove={(event) => {
-					const current = drag.current;
-					if (current === null || current.pointerId !== event.pointerId) return;
-					const next = Math.min(
-						MAX_WIDTH,
-						Math.max(STRIP_WIDTH, current.startWidth + current.startX - event.clientX),
-					);
-					current.latestWidth = next;
-					setWidth(next);
-				}}
-				onPointerUp={(event) => finishDrag(event.currentTarget, event.pointerId)}
-				onPointerCancel={(event) => finishDrag(event.currentTarget, event.pointerId)}
-				className="group -left-1.5 absolute top-0 z-30 h-full w-3 cursor-col-resize touch-none outline-none"
-			>
-				<span className="absolute top-0 right-[5px] bottom-0 w-px bg-transparent group-hover:bg-thread group-focus-visible:bg-thread" />
-			</button>
+			{/* the grip is not offered while the agent has the column: a drag then would
+			    resize a rail nobody can see (#256) */}
+			{shut ? null : (
+				<button type="button" aria-label="Resize properties" {...grip} className={GRIP_CLASS}>
+					<span className={GRIP_HAIR} />
+				</button>
+			)}
 		</aside>
 	);
 }
 
 /* ---------- what the file says about the ancestry ---------- */
 
+/** Which rung of the ancestry is held, or -1 when the chain no longer carries it. */
+function rungOf(held: Held | null): number {
+	return held?.kind === "element" ? held.chain.findIndex((hit) => hit.selector === held.selector) : -1;
+}
+
 /** The rungs' stamps, in rung order, down to and including the one held. */
 function stampsOf(held: Held | null): { frame: string; sources: string[] } | null {
 	if (held?.kind !== "element") return null;
-	const rung = held.chain.findIndex((hit) => hit.selector === held.selector);
+	const rung = rungOf(held);
 	if (rung < 0) return null;
 	const sources = held.chain.slice(0, rung + 1).map((hit) => hit.source ?? "");
 	return sources.every((source) => source !== "") ? { frame: held.frame, sources } : null;
@@ -239,9 +214,9 @@ function useRungs(project: string, held: Held | null, revision: number): RungRea
 	return rungs;
 }
 
-/* ---------- the panel ---------- */
+/* ---------- the rail itself ---------- */
 
-function Panel({
+function Body({
 	project,
 	held,
 	acts,
@@ -260,7 +235,7 @@ function Panel({
 	const [opened, setOpened] = useState<Scope[]>([]);
 
 	const element = held?.kind === "element" ? held : null;
-	const rung = element === null ? -1 : element.chain.findIndex((hit) => hit.selector === element.selector);
+	const rung = rungOf(held);
 	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
 	const literal = read?.className ?? "";
 	const identity = element === null ? "" : `${element.frame} ${element.selector}`;
@@ -272,6 +247,21 @@ function Panel({
 		if (scope.length > 0) setScope(BASE);
 		if (opened.length > 0) setOpened([]);
 	}
+
+	/**
+	 * The literal this rung was holding when it was picked.
+	 *
+	 * A token that is not in it is one the hands put there, and the source line
+	 * reads it in thread colour — which is how you tell what you changed from
+	 * what the agent wrote. It is taken from the first read of a rung and held
+	 * until another rung is picked, because a write of your own re-reads the
+	 * file and the answer must not become "everything is original again".
+	 */
+	const written = useRef<{ identity: string; tokens: ReadonlySet<string> }>({ identity: "", tokens: new Set() });
+	if (read !== undefined && written.current.identity !== identity) {
+		written.current = { identity, tokens: new Set(splitClass(literal)) };
+	}
+	const original = written.current.identity === identity ? written.current.tokens : new Set<string>();
 
 	const carried = scopesOf(literal);
 	const scopes = [...carried];
@@ -312,7 +302,7 @@ function Panel({
 				{held?.kind === "frames" ? <Empty says={`${held.count} frames`} /> : null}
 				{held?.kind === "elements" ? <Empty says={`${held.count} elements`} /> : null}
 				{held?.kind === "frame" ? <FrameGeometry name={held.name} geometry={held.geometry} acts={acts} /> : null}
-				{element === null ? null : <SourceLine read={read} scope={live} />}
+				{element === null ? null : <SourceLine read={read} scope={live} original={original} />}
 			</div>
 		</>
 	);
@@ -349,7 +339,7 @@ function Head({
 	onCollapse: () => void;
 }) {
 	const element = held?.kind === "element" ? held : null;
-	const rung = element === null ? -1 : element.chain.findIndex((hit) => hit.selector === element.selector);
+	const rung = rungOf(held);
 	const walked = element === null || rung < 0 ? [] : element.chain.slice(0, rung + 1);
 	const frame = element?.frame ?? (held?.kind === "frame" ? held.name : null);
 	const read = rungs === null || rung < 0 ? undefined : rungs[rung];
@@ -367,15 +357,17 @@ function Head({
 							onPress={() => acts.onRung(frame, null)}
 						/>
 					)}
-					{walked.map((hit, index) => (
-						<Crumb
-							key={hit.selector}
-							name={rungs?.[index]?.name ?? hit.tag}
-							last={index === walked.length - 1}
-							squeezes={index < walked.length - 1}
-							onPress={() => acts.onRung(element?.frame ?? "", hit)}
-						/>
-					))}
+					{element === null
+						? null
+						: walked.map((hit, index) => (
+								<Crumb
+									key={hit.selector}
+									name={rungs?.[index]?.name ?? hit.tag}
+									last={index === walked.length - 1}
+									squeezes={index < walked.length - 1}
+									onPress={() => acts.onRung(element.frame, hit)}
+								/>
+							))}
 				</span>
 				{element === null ? null : <span className={cn("shrink-0", FAINT)}>{element.chain[rung]?.tag ?? ""}</span>}
 				<CollapseCaret onCollapse={onCollapse} />
@@ -424,11 +416,9 @@ function CollapseCaret({ onCollapse }: { onCollapse: () => void }) {
 			type="button"
 			aria-label="Collapse properties"
 			onClick={onCollapse}
-			className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-xs text-muted/50 hover:bg-surface hover:text-text"
+			className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-xs text-muted/50 transition-colors hover:text-text"
 		>
-			<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-				<path d="M6.5 4.5 10 8l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-			</svg>
+			<PanelCaret dir="right" className="h-3.5 w-2.5" />
 		</button>
 	);
 }
@@ -475,11 +465,13 @@ function ScopeBar({
 							{...(when === undefined ? {} : { title: when })}
 							onClick={() => onScope(candidate)}
 							className={cn(
-								"h-5 shrink-0 cursor-pointer rounded-xs border px-1.5 focus:outline-none focus-visible:bg-raised",
+								"h-5 shrink-0 rounded-xs border px-1.5 focus:outline-none focus-visible:bg-raised",
 								LABEL,
-								on
-									? "border-border-raised bg-raised text-text"
-									: "border-transparent text-muted/60 hover:border-border hover:text-text",
+								ok ? "cursor-pointer" : "cursor-default",
+								on ? "border-border-raised bg-raised text-text" : "border-transparent text-muted/60",
+								ok && !on && "hover:border-border hover:text-text",
+								!ok && "text-muted/35",
+								!ok && on && "bg-surface",
 							)}
 						>
 							{scopeLabel(candidate)}
@@ -498,13 +490,21 @@ function ScopeBar({
 					</span>
 				);
 			})}
-			{free.length === 0 || !ok ? null : (
+			{/* a refused literal keeps its `+` and loses its box: a control that
+			    vanishes reads as a bug, and a greyed one teaches you the shape of
+			    your own code (#256) */}
+			{free.length === 0 ? null : (
 				<button
 					type="button"
 					aria-label="Open a scope"
 					aria-expanded={opening}
+					disabled={!ok}
 					onClick={() => setOpening((open) => !open)}
-					className={cn("h-5 shrink-0 cursor-pointer rounded-xs px-1.5 text-muted/50 hover:text-text", LABEL)}
+					className={cn(
+						"h-5 shrink-0 rounded-xs px-1.5",
+						LABEL,
+						ok ? "cursor-pointer text-muted/50 hover:text-text" : "cursor-default text-muted/25",
+					)}
 				>
 					+
 				</button>
@@ -586,6 +586,13 @@ function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geome
  * the hands may not write says so instead of showing a literal nobody can
  * touch: the expression is the whole of the answer there.
  */
+/** the ink each reading takes: the thread for what the hands wrote, quiet for the rest */
+const INK: Readonly<Record<TokenState, string>> = {
+	spliced: "text-thread",
+	"in-scope": "text-muted",
+	"out-of-scope": "text-muted/40",
+};
+
 /**
  * The literal's words, each with something to be known by.
  *
@@ -604,7 +611,16 @@ function tokensWritten(className: string): { token: string; at: string }[] {
 		});
 }
 
-function SourceLine({ read, scope }: { read: RungRead | undefined; scope: Scope }) {
+function SourceLine({
+	read,
+	scope,
+	original,
+}: {
+	read: RungRead | undefined;
+	scope: Scope;
+	/** the tokens the file was written with; anything else is the hands' own */
+	original: ReadonlySet<string>;
+}) {
 	if (read === undefined) return null;
 	const tokens = tokensWritten(read.className);
 	const where = read.line === undefined ? read.path : `${read.path}:${read.line}`;
@@ -618,7 +634,7 @@ function SourceLine({ read, scope }: { read: RungRead | undefined; scope: Scope 
 						<span className="text-muted/50">null</span>
 					) : (
 						tokens.map(({ token, at }, index) => (
-							<span key={at} className={underScope(token, scope) ? "text-muted" : "text-muted/40"}>
+							<span key={at} className={INK[tokenState(token, scope, original)]}>
 								{index > 0 ? " " : ""}
 								{token}
 							</span>

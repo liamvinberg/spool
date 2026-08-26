@@ -1,3 +1,5 @@
+import type { KeyboardEvent, PointerEvent } from "react";
+import { useRef, useState } from "react";
 import { useRemembered } from "../remembered";
 
 /**
@@ -62,3 +64,79 @@ export const isRailWidth = (value: unknown): value is number =>
 export function useRailWidth(key: string, panel: number): [number, (next: number) => void] {
 	return useRemembered(`rail.${key}.width`, panel, isRailWidth);
 }
+
+/**
+ * The grip on a rail's inner edge, as behaviour rather than as markup (#256).
+ *
+ * Both rails carry the same one: a 12px column with pointer capture on it,
+ * arrows that snap to either end, a drag clamped to the range, and a release
+ * that settles where the vocabulary says. Only the label and the width it opens
+ * to differ, so what is shared is handed back as props and each rail draws its
+ * own button around them.
+ *
+ * `dragging` is out here too, because it is what a rail suppresses its width
+ * transition on: a transition during a drag is the rail lagging the hand.
+ */
+export function useRailDrag(
+	width: number,
+	onWidth: (next: number) => void,
+	panel: number,
+): { dragging: boolean; grip: RailGrip } {
+	const [dragging, setDragging] = useState(false);
+	const held = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
+
+	const finish = (target: HTMLElement, pointerId: number) => {
+		const current = held.current;
+		if (current === null || current.pointerId !== pointerId) return;
+		target.releasePointerCapture(pointerId);
+		held.current = null;
+		setDragging(false);
+		onWidth(settledWidth(current.latestWidth));
+	};
+
+	return {
+		dragging,
+		grip: {
+			onKeyDown: (event) => {
+				// a focused grip answers its own arrows; stop them short of the
+				// hotkey dispatch, or the same press would nudge the selection
+				if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+				event.stopPropagation();
+				if (event.key === "ArrowLeft") onWidth(panel);
+				if (event.key === "ArrowRight") onWidth(STRIP_WIDTH);
+			},
+			onPointerDown: (event) => {
+				if (event.button !== 0) return;
+				event.currentTarget.setPointerCapture(event.pointerId);
+				held.current = { pointerId: event.pointerId, startWidth: width, startX: event.clientX, latestWidth: width };
+				setDragging(true);
+			},
+			onPointerMove: (event) => {
+				const current = held.current;
+				if (current === null || current.pointerId !== event.pointerId) return;
+				const next = Math.min(
+					MAX_WIDTH,
+					Math.max(STRIP_WIDTH, current.startWidth + current.startX - event.clientX),
+				);
+				current.latestWidth = next;
+				onWidth(next);
+			},
+			onPointerUp: (event) => finish(event.currentTarget, event.pointerId),
+			onPointerCancel: (event) => finish(event.currentTarget, event.pointerId),
+		},
+	};
+}
+
+/** What the grip's own button spreads onto itself; the label and the class are the rail's. */
+export interface RailGrip {
+	onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
+	onPointerDown: (event: PointerEvent<HTMLElement>) => void;
+	onPointerMove: (event: PointerEvent<HTMLElement>) => void;
+	onPointerUp: (event: PointerEvent<HTMLElement>) => void;
+	onPointerCancel: (event: PointerEvent<HTMLElement>) => void;
+}
+
+/** the hairline that lights under the pointer, which both rails draw the same way */
+export const GRIP_CLASS = "group -left-1.5 absolute top-0 z-30 h-full w-3 cursor-col-resize touch-none outline-none";
+export const GRIP_HAIR =
+	"absolute top-0 right-[5px] bottom-0 w-px bg-transparent group-hover:bg-thread group-focus-visible:bg-thread";

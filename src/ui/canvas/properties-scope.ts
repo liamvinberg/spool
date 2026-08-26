@@ -107,3 +107,19 @@ export function tokensUnder(className: string, scope: Scope): string[] {
 export function bareToken(token: string): string {
 	return composeToken({ ...anatomyOf(token), variants: [] });
 }
+
+/**
+ * How one token of the literal reads, which is three things at once.
+ *
+ * `spliced` is a token the hands put there rather than the file's author, and it
+ * outranks everything else: what you changed has to be visible before anything
+ * else about the line. The other two are the lens the scope bar is — the base is
+ * every token's scope for this purpose, because at the base nothing is out of
+ * view and so nothing should read as if it were.
+ */
+export type TokenState = "spliced" | "in-scope" | "out-of-scope";
+
+export function tokenState(token: string, scope: Scope, original: ReadonlySet<string>): TokenState {
+	if (!original.has(token)) return "spliced";
+	return scope.length === 0 || underScope(token, scope) ? "in-scope" : "out-of-scope";
+}

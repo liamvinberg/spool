@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { bareToken, scopeKey, scopeLabel, scopesOf, scopeWhen, tokensUnder, underScope } from "./properties-scope";
+import {
+	bareToken,
+	scopeKey,
+	scopeLabel,
+	scopesOf,
+	scopeWhen,
+	tokenState,
+	tokensUnder,
+	underScope,
+} from "./properties-scope";
 
 /**
  * The scope bar's own vocabulary (#256): which scopes a literal carries, what
@@ -67,5 +76,26 @@ describe("the spellings", () => {
 		expect(scopeWhen(["hover"])).toBe(":hover");
 		expect(scopeWhen(["md", "dark"])).toBe("width >= 48rem and prefers-color-scheme: dark");
 		expect(scopeWhen(["print"])).toBeUndefined();
+	});
+});
+
+describe("how a token of the literal reads", () => {
+	const written = new Set(["flex", "p-4", "hover:bg-thread"]);
+
+	it("puts what the hands wrote first, wherever it sits", () => {
+		expect(tokenState("p-6", [], written)).toBe("spliced");
+		expect(tokenState("hover:p-6", ["hover"], written)).toBe("spliced");
+		// and a spliced token stays visible from a scope it is not under
+		expect(tokenState("hover:p-6", [], written)).toBe("spliced");
+	});
+
+	it("dims nothing at the base, because nothing there is out of view", () => {
+		expect(tokenState("flex", [], written)).toBe("in-scope");
+		expect(tokenState("hover:bg-thread", [], written)).toBe("in-scope");
+	});
+
+	it("dims what the live scope does not carry", () => {
+		expect(tokenState("hover:bg-thread", ["hover"], written)).toBe("in-scope");
+		expect(tokenState("flex", ["hover"], written)).toBe("out-of-scope");
 	});
 });

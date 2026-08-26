@@ -36,6 +36,12 @@ const ancestry = (...selectors: readonly string[]): PickedHit[] =>
 /** screen › footer › pay, the ancestry under the pointer in every test here. */
 const CHAIN = ancestry("screen", "footer", "pay");
 
+/** the same rung with a className no hand may write, which is what a refusal reads off */
+const asExpression = (rung: (typeof RUNGS)[number]) => ({
+	...rung,
+	refusal: { code: "computed-class", says: "className is an expression", expression: "{busy ? a : b}" },
+});
+
 /** what the daemon says the file holds for that ancestry */
 const RUNGS = [
 	{
@@ -121,12 +127,27 @@ it("carries the base and every scope the literal has, and edits under the one pr
 	await until(() => chips(host).length === 2);
 
 	expect(chips(host)).toEqual(["base", "hover:"]);
-	// the source line is the whole literal, and what is out of scope reads dim
+	// the base is every token's scope: at the base nothing is out of view, so
+	// the whole literal reads at one strength
 	expect(rail(host)?.textContent).toContain("hover:bg-thread");
-	expect(dimmedTokens(host)).toEqual(["hover:bg-thread", "hover:text-on-thread"]);
+	expect(dimmedTokens(host)).toEqual([]);
 
+	// under a variant the rest of the literal dims, which is what makes the bar
+	// a lens over one literal rather than a filter that hides the others
 	await pressChip(host, "hover:");
 	expect(dimmedTokens(host)).toEqual(["rounded-md", "px-3"]);
+});
+
+it("greys the scope bar on a literal no hand may write, rather than hiding it", async () => {
+	const { host, canvas, frame } = await readyCanvas({ refused: true });
+	await descendTo(canvas, frame, 3);
+	await until(() => chips(host).length === 2);
+
+	// a missing control reads as a bug; a greyed one teaches you the shape of
+	// your own code, so both the chips and the `+` stay and lose their box
+	expect(rail(host)?.textContent).toContain("className is an expression");
+	expect(host.querySelector<HTMLButtonElement>('[aria-label="Open a scope"]')?.disabled).toBe(true);
+	expect(host.querySelector('[aria-label="remove hover:"]')).toBeNull();
 });
 
 it("drops every token under a scope in one write, and falls back to the base", async () => {
@@ -273,12 +294,18 @@ async function descendTo(canvas: HTMLElement, frame: FramePlayer, depth: number)
 	}
 }
 
-async function readyCanvas({ agentPanel = false }: { agentPanel?: boolean } = {}): Promise<{
+async function readyCanvas({
+	agentPanel = false,
+	refused = false,
+}: {
+	agentPanel?: boolean;
+	refused?: boolean;
+} = {}): Promise<{
 	host: HTMLDivElement;
 	canvas: HTMLElement;
 	frame: FramePlayer;
 }> {
-	stubCanvasApis();
+	stubCanvasApis(refused);
 	Object.assign(window, { __SPOOL_EXPERIMENTS__: agentPanel ? ["agent-panel"] : [] });
 	window.localStorage?.clear();
 	const host = document.createElement("div");
@@ -402,7 +429,7 @@ async function heldFrames(): Promise<string[] | undefined> {
 	return (await served()).frames;
 }
 
-function stubCanvasApis(): void {
+function stubCanvasApis(refused = false): void {
 	vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 	vi.stubGlobal("open", vi.fn());
 	const setAttribute = HTMLIFrameElement.prototype.setAttribute;
@@ -430,7 +457,9 @@ function stubCanvasApis(): void {
 			if (url.pathname.endsWith("/flows")) {
 				return Response.json({ frames: ["home"], links: [], edges: [], unreadable: [] });
 			}
-			if (url.pathname.endsWith("/rungs")) return Response.json({ rungs: RUNGS });
+			if (url.pathname.endsWith("/rungs")) {
+				return Response.json({ rungs: refused ? RUNGS.map(asExpression) : RUNGS });
+			}
 			if (url.pathname.endsWith("/patch/gate")) {
 				return Response.json({ ok: true, path: "design/frames/home/frame.tsx", fingerprint: "f", mapped: false });
 			}
