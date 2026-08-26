@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RungRead } from "../api";
 import {
 	draggedAngle,
+	draggedRect,
 	draggedSize,
 	handlesFor,
 	landed,
@@ -53,6 +54,12 @@ describe("which handles are live", () => {
 		expect(handlesFor(rung("lg:h-24"))).toEqual({ w: true, h: false, rotate: true });
 	});
 
+	it("takes both size handles off where one token pins both axes", () => {
+		// `md:size-8` is a width and a height in one token, so neither a base
+		// width nor a base height can honestly beat it
+		expect(handlesFor(rung("md:size-8"))).toEqual({ w: false, h: false, rotate: true });
+	});
+
 	it("takes the size handles off an element already turned, and keeps the rotate zones", () => {
 		// the box the canvas has is the one around a turned element rather than
 		// the one it is, so a drag would write a width nobody asked for
@@ -81,6 +88,22 @@ describe("the numbers a drag makes", () => {
 	it("grows to the left off a west grab, and never shrinks past the floor", () => {
 		expect(draggedSize({ w: 200, h: 120 }, -1, 0, -47, 0)).toEqual({ w: 247, h: 120 });
 		expect(draggedSize({ w: 200, h: 120 }, 1, 1, -400, -400)).toEqual({ w: 8, h: 8 });
+	});
+
+	it("rounds the axis nobody touched, because the box it started from is measured", () => {
+		// a `getBoundingClientRect` comes fractional, and a readout saying
+		// `220.53125 × 48` is one nobody can act on
+		expect(draggedSize({ w: 220.53125, h: 48 }, 0, 1, 0, 12)).toEqual({ w: 221, h: 60 });
+	});
+
+	it("keeps the corner layout gave the element: a ring pins nothing", () => {
+		// anchoring the far edge would promise a position the write cannot keep
+		expect(draggedRect({ x: 10, y: 20, w: 200, h: 120 }, { w: 247, h: 84 })).toEqual({
+			x: 10,
+			y: 20,
+			w: 247,
+			h: 84,
+		});
 	});
 
 	it("turns in whole degrees, snapping to 15 while shift is held", () => {
@@ -128,12 +151,12 @@ describe("measure after apply", () => {
 	it("asks only about the axes the drag wrote", () => {
 		// the other one was never written, so whatever layout does with it is
 		// layout's own business rather than a mismatch
-		expect(landed({ w: 240, h: 100 }, 1, 0, { w: 240, h: 733 })).toBe(true);
-		expect(landed({ w: 240, h: 100 }, 1, 0, { w: 180, h: 100 })).toBe(false);
+		expect(landed({ intent: { w: 240, h: 100 }, sx: 1, sy: 0 }, { w: 240, h: 733 })).toBe(true);
+		expect(landed({ intent: { w: 240, h: 100 }, sx: 1, sy: 0 }, { w: 180, h: 100 })).toBe(false);
 	});
 
 	it("takes sub-pixel slack, and nothing a clamp would leave", () => {
-		expect(landed({ w: 240, h: 100 }, 1, 1, { w: 240.5, h: 99.5 })).toBe(true);
-		expect(landed({ w: 240, h: 100 }, 1, 1, { w: 240, h: 64 })).toBe(false);
+		expect(landed({ intent: { w: 240, h: 100 }, sx: 1, sy: 1 }, { w: 240.5, h: 99.5 })).toBe(true);
+		expect(landed({ intent: { w: 240, h: 100 }, sx: 1, sy: 1 }, { w: 240, h: 64 })).toBe(false);
 	});
 });

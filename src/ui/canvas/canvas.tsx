@@ -84,9 +84,11 @@ import { deleteGesture, GONE, type HandEdit, type Refusal, type ShownRefusal, se
 import { HandNotice, type HandSaid } from "./hand-notice";
 import {
 	draggedAngle,
+	draggedRect,
 	draggedSize,
 	type LiveHandles,
 	landed,
+	type Measure,
 	NO_HANDLES,
 	previewTokens,
 	rotateOps,
@@ -696,7 +698,7 @@ export function ProjectCanvas({
 	 * document is measured through the re-pick it already asks for, and a size
 	 * that did not take is put back and said out loud.
 	 */
-	const measuring = useRef<{ frame: string; selector: string; intent: Size; sx: Sign; sy: Sign } | null>(null);
+	const measuring = useRef<{ frame: string; selector: string; claim: Measure } | null>(null);
 
 	const reloadFrameDocument = useCallback(
 		(frame: string) => {
@@ -2142,15 +2144,16 @@ export function ProjectCanvas({
 	);
 
 	/**
-	 * The resize gesture's write (#259), which is the rail's with a measurement
+	 * A ring gesture's write (#259), which is the rail's with a measurement
 	 * behind it.
 	 *
 	 * One patch however many tokens the drag moved — a corner writes width and
-	 * height and undoes once — and the size it meant is remembered until the
-	 * document it reloaded reports its own box.
+	 * height and undoes once — and the claim it made is remembered until the
+	 * document it reloaded reports its own box. A turn makes no such claim and
+	 * passes none.
 	 */
-	const writeResize = useCallback(
-		(pick: PickedSelection, ops: readonly HandOp[], intent: Size | null, sx: Sign, sy: Sign) => {
+	const writeRing = useCallback(
+		(pick: PickedSelection, ops: readonly HandOp[], claim: Measure | null) => {
 			if (ops.length === 0 || writing.current) return;
 			setRefused(null);
 			writing.current = true;
@@ -2169,9 +2172,7 @@ export function ProjectCanvas({
 					showRefusal(pick.frame, pick.selector, asked.refusal);
 					return;
 				}
-				if (intent !== null) {
-					measuring.current = { frame: pick.frame, selector: pick.selector, intent, sx, sy };
-				}
+				if (claim !== null) measuring.current = { frame: pick.frame, selector: pick.selector, claim };
 				writePatch(pick.frame, asked.fingerprint, ops);
 			});
 		},
@@ -2597,7 +2598,7 @@ export function ProjectCanvas({
 								if (wanted === null || wanted.frame !== message.frame || wanted.selector !== again.selector) {
 									return;
 								}
-								if (!landed(wanted.intent, wanted.sx, wanted.sy, target.rect)) {
+								if (!landed(wanted.claim, target.rect)) {
 									rollBackResize(wanted.frame, wanted.selector);
 								}
 							},
@@ -2897,26 +2898,14 @@ export function ProjectCanvas({
 		};
 	};
 
-	/**
-	 * What the ring draws while an element drag is live (#259).
-	 *
-	 * The far edge stays where the grab found it and the dragged one follows
-	 * the pointer, which is what a hand means by dragging an edge. Where the
-	 * element lands afterwards is layout's — it owns an element's position, so
-	 * nothing here is pinned and the box arrives wherever the flow puts it.
-	 */
+	/** What the ring draws while an element drag is live (#259). */
 	const showElementDrag = (active: Gesture): void => {
 		if (active.kind === "element-size") {
 			const { pick, sx, sy, live } = active;
 			setElementDrag({
 				frame: pick.frame,
 				selector: pick.selector,
-				rect: {
-					x: pick.rect.x + (sx === -1 ? pick.rect.w - live.w : 0),
-					y: pick.rect.y + (sy === -1 ? pick.rect.h - live.h : 0),
-					w: live.w,
-					h: live.h,
-				},
+				rect: draggedRect(pick.rect, live),
 				says: `${live.w} × ${live.h}`,
 				turning: false,
 				tokens: previewTokens(live, sx, sy),
@@ -3113,15 +3102,15 @@ export function ProjectCanvas({
 			if (grab !== null && isHandle(grab)) {
 				// a handle only moves the axes the file leaves live, so a corner on
 				// an element a breakpoint pins the height of drags width alone
-				const { sx, sy } = signsOf(grab);
+				const grabbed = signsOf(grab);
 				const live = ringRef.current.live;
-				const gone = { sx: live.w ? sx : 0, sy: live.h ? sy : 0 } as const;
-				if (gone.sx !== 0 || gone.sy !== 0) {
+				const moves = { sx: live.w ? grabbed.sx : 0, sy: live.h ? grabbed.sy : 0 } as const;
+				if (moves.sx !== 0 || moves.sy !== 0) {
 					gesture.current = {
 						kind: "element-size",
 						pick: held,
-						sx: gone.sx,
-						sy: gone.sy,
+						sx: moves.sx,
+						sy: moves.sy,
 						start: { w: held.rect.w, h: held.rect.h },
 						from: p,
 						live: { w: Math.round(held.rect.w), h: Math.round(held.rect.h) },
@@ -3450,7 +3439,7 @@ export function ProjectCanvas({
 			showRefusal(pick.frame, pick.selector, stamp);
 			return;
 		}
-		writeResize(pick, sizeOps(stamp, sizeTokens(live, sx, sy, ringRef.current.step)), live, sx, sy);
+		writeRing(pick, sizeOps(stamp, sizeTokens(live, sx, sy, ringRef.current.step)), { intent: live, sx, sy });
 	};
 
 	/** The angle a turn settled on. A turn back to rest takes the token away. */
@@ -3464,7 +3453,7 @@ export function ProjectCanvas({
 		}
 		// a turn changes no layout box, so there is nothing for the measurement
 		// to compare: the ring is drawn around what the document reports either way
-		writeResize(pick, rotateOps(stamp, live), null, 0, 0);
+		writeRing(pick, rotateOps(stamp, live), null);
 	};
 
 	const onPointerUp = () => {
@@ -3981,17 +3970,18 @@ export function ProjectCanvas({
 		ringPick === undefined ? 0 : (docNonces[ringPick.frame] ?? 0),
 	);
 	ringRef.current = ring;
-	const dragging = elementDrag !== null && elementDrag.selector === ringPick?.selector;
+	/** the drag in flight on the rung the ring is drawn on, and nothing else */
+	const ringDrag = elementDrag !== null && elementDrag.selector === ringPick?.selector ? elementDrag : null;
 	const elementHandles: ElementHandles | null =
 		ringPick === undefined || effectiveTool !== "select" || entered !== null
 			? null
 			: {
 					frame: ringPick.frame,
 					selector: ringPick.selector,
-					rect: dragging && elementDrag !== null ? elementDrag.rect : ringPick.rect,
+					rect: ringDrag?.rect ?? ringPick.rect,
 					live: ring.live,
-					says: dragging && elementDrag !== null ? elementDrag.says : null,
-					turning: dragging && elementDrag !== null ? elementDrag.turning : false,
+					says: ringDrag?.says ?? null,
+					turning: ringDrag?.turning ?? false,
 				};
 	const k = camera?.k ?? 1;
 	const shellRadius = Math.min(12 / k, 24);

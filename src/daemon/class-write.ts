@@ -115,8 +115,23 @@ export function screenConflict(className: string | null, edit: ClassEdit, theme?
 	return splitClass(className).find((token) => {
 		const anatomy = anatomyOf(token);
 		if (!anatomy.variants.some((variant) => SCREENS.has(variant))) return false;
-		return familyOf(anatomy.base, theme) === family;
+		return covers(familyOf(anatomy.base, theme), family);
 	});
+}
+
+/**
+ * Whether a token of one family sets what a token of another does.
+ *
+ * Usually the same family and nothing else. `size-8` is the exception: it is
+ * two axes in one token, so a `md:size-8` beats a base width and a base height
+ * alike, and a base `size-8` is beaten by either — which the fold already
+ * knows, since writing one axis splits it.
+ */
+function covers(held: string | undefined, writing: string): boolean {
+	if (held === undefined) return false;
+	if (held === writing) return true;
+	const axes = new Set(["w", "h", "size"]);
+	return axes.has(held) && axes.has(writing) && (held === "size" || writing === "size");
 }
 
 /** The literal this edit leaves behind. */

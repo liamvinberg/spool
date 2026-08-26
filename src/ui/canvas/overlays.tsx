@@ -412,7 +412,7 @@ export function SelectionOverlay({
 function ElementHandleSet({ ring, handles }: { ring: Box; handles: ElementHandles }) {
 	const { live } = handles;
 	if (!live.w && !live.h && !live.rotate) return null;
-	const at = (sx: -1 | 1, sy: -1 | 1) => ({
+	const at = (sx: Sign, sy: Sign) => ({
 		x: sx === -1 ? ring.x : ring.x + ring.w,
 		y: sy === -1 ? ring.y : ring.y + ring.h,
 	});
@@ -420,8 +420,7 @@ function ElementHandleSet({ ring, handles }: { ring: Box; handles: ElementHandle
 		<>
 			{live.rotate
 				? CORNERS.map((name) => {
-						const sx = name.includes("w") ? -1 : 1;
-						const sy = name.includes("n") ? -1 : 1;
+						const { sx, sy } = signsOf(name);
 						const spot = at(sx, sy);
 						return (
 							<div
@@ -469,8 +468,7 @@ function ElementHandleSet({ ring, handles }: { ring: Box; handles: ElementHandle
 				: null}
 			{live.w || live.h
 				? CORNERS.map((name) => {
-						const sx = name.includes("w") ? -1 : 1;
-						const sy = name.includes("n") ? -1 : 1;
+						const { sx, sy } = signsOf(name);
 						const spot = at(sx, sy);
 						return (
 							<div

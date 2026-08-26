@@ -45,6 +45,19 @@ export interface Size {
 }
 
 /**
+ * The claim a size drag makes, which is what the box that comes back is read
+ * against: the size it wrote, and which axes it wrote at all.
+ *
+ * One thing rather than three, because the three are never apart — a turn
+ * makes no claim of this kind and simply has none.
+ */
+export interface Measure {
+	intent: Size;
+	sx: Sign;
+	sy: Sign;
+}
+
+/**
  * Which handles the file leaves live on this rung.
  *
  * The rung's own refusal is the whole answer for all three — a computed
@@ -61,6 +74,9 @@ export interface Size {
 export function handlesFor(read: RungRead | undefined): LiveHandles {
 	if (read === undefined || read.name === undefined || read.refusal !== undefined) return NO_HANDLES;
 	const literal = read.className === "" ? null : read.className;
+	// asked of the lane's own rule rather than re-derived here: a token of the
+	// family stands in for the write, so the ring greys for exactly the reason
+	// the write would have refused
 	const free = (token: string): boolean => screenConflict(literal, { token, scope: "" }) === undefined;
 	const turned = rotationOf(read.className) !== 0;
 	return { w: !turned && free("w-1"), h: !turned && free("h-1"), rotate: free("rotate-1") };
@@ -74,12 +90,36 @@ export function rotationOf(className: string): number {
 	return deg === null ? 0 : worn.negative ? -deg : deg;
 }
 
-/** The box a size drag is at, in the document's pixels. */
+/**
+ * The box a size drag is at, in the document's own pixels.
+ *
+ * Whole pixels on both axes, dragged or not: the box the drag started from is
+ * a `getBoundingClientRect` and comes fractional, and a readout that says
+ * `220.53125 × 48` is one nobody can act on. Rounding the axis nobody touched
+ * is also what lets a drag back to where it began be recognised as one.
+ */
 export function draggedSize(start: Size, sx: Sign, sy: Sign, dx: number, dy: number): Size {
+	const held = { w: Math.round(start.w), h: Math.round(start.h) };
 	return {
-		w: sx === 0 ? start.w : Math.max(MIN_ELEMENT_PX, Math.round(start.w + sx * dx)),
-		h: sy === 0 ? start.h : Math.max(MIN_ELEMENT_PX, Math.round(start.h + sy * dy)),
+		w: sx === 0 ? held.w : Math.max(MIN_ELEMENT_PX, Math.round(start.w + sx * dx)),
+		h: sy === 0 ? held.h : Math.max(MIN_ELEMENT_PX, Math.round(start.h + sy * dy)),
 	};
+}
+
+/**
+ * The box the ring draws mid-drag, in the element's own frame-local pixels.
+ *
+ * It keeps the corner layout gave it and changes only its size, including on a
+ * north or west grab. Anchoring the far edge would read better under the
+ * pointer and would be a promise the write cannot keep: an element owns no x
+ * or y, so what lands is this size wherever the flow puts it. The ring shows
+ * that rather than a position it would then jump out of.
+ */
+export function draggedRect(
+	rect: { x: number; y: number; w: number; h: number },
+	live: Size,
+): { x: number; y: number; w: number; h: number } {
+	return { x: rect.x, y: rect.y, w: live.w, h: live.h };
 }
 
 /**
@@ -154,9 +194,9 @@ export function rotateOps(source: string, deg: number): HandOp[] {
  * about: the other one was never written and whatever it does is the layout's
  * own business.
  */
-export function landed(intent: Size, sx: Sign, sy: Sign, measured: Size): boolean {
-	if (sx !== 0 && Math.abs(measured.w - intent.w) > SIZE_SLACK_PX) return false;
-	if (sy !== 0 && Math.abs(measured.h - intent.h) > SIZE_SLACK_PX) return false;
+export function landed(claim: Measure, measured: Size): boolean {
+	if (claim.sx !== 0 && Math.abs(measured.w - claim.intent.w) > SIZE_SLACK_PX) return false;
+	if (claim.sy !== 0 && Math.abs(measured.h - claim.intent.h) > SIZE_SLACK_PX) return false;
 	return true;
 }
 
@@ -179,10 +219,10 @@ export function useRing(
 	const asked = held === null ? "" : `${revision}\n${held.frame}\n${held.source}`;
 	useEffect(() => {
 		const [, frame, source] = asked.split("\n");
-		if (frame === undefined || source === undefined) {
-			setRead(undefined);
-			return;
-		}
+		// the previous rung's answer is not this one's: a ring wearing it would
+		// offer a handle this element may not have, which is the dead drag
+		setRead(undefined);
+		if (frame === undefined || source === undefined) return;
 		let live = true;
 		void readRungs(project, frame, [source]).then((rungs) => {
 			if (live) setRead(rungs?.[0]);

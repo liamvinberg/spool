@@ -8,6 +8,6 @@ The size lands as the class the frame's author would have written. A whole step 
 
 A handle is only drawn where the file will honestly carry the change, so there is no drag that turns out to do nothing. An expression for a className, an inline style, spread props with no literal, an element a shared file defines, a width a breakpoint already pins: each of those leaves that handle off the ring, and the properties rail says why.
 
-Two things no reading of the source can promise, so the size is measured after it is written: a rule outside Tailwind's layer can beat the class, and layout can ignore it. Where the box does not follow what was written, the edit is put back and the canvas says so.
+The size is measured once it is written, because a class does not always decide it: a rule outside Tailwind's layer can beat it, and layout can ignore it. Where the box does not follow what was written, the edit is put back and the canvas says so.
 
 While you drag, the readout rides beside the ring and the matching field in the properties rail ticks with it. Nothing reaches the file until you let go.

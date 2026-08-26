@@ -158,6 +158,12 @@ describe("what a base token cannot honestly beat", () => {
 		expect(screenConflict("w-56 md:w-96", { token: "h-8", scope: "" })).toBeUndefined();
 		expect(screenConflict("w-56 hover:w-96", { token: "w-72", scope: "" })).toBeUndefined();
 		expect(screenConflict("w-56 md:w-96", { token: "w-72", scope: "md:" })).toBeUndefined();
+		// `size-8` is two axes in one token, so it beats a base width and a base
+		// height alike, and either of them is beaten by it (#259)
+		expect(screenConflict("md:size-8", { token: "w-72", scope: "" })).toBe("md:size-8");
+		expect(screenConflict("md:size-8", { token: "h-8", scope: "" })).toBe("md:size-8");
+		expect(screenConflict("md:w-96", { token: "size-8", scope: "" })).toBe("md:w-96");
+		expect(screenConflict("md:p-4", { token: "w-72", scope: "" })).toBeUndefined();
 	});
 });
 
