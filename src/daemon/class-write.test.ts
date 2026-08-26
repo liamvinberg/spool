@@ -122,6 +122,15 @@ describe("families that swap rather than stack", () => {
 		expect(write("flex size-8", "w-12")).toBe("flex h-8 w-12");
 	});
 
+	it("displaces an arbitrary property that pins the same axis (#259)", () => {
+		// two rules in one layer with the older spelling winning is a lie the
+		// file would keep telling; `[width:240px]` is a width, so a width beats it
+		expect(write("flex [width:240px] p-4", "w-56")).toBe("flex p-4 w-56");
+		expect(write("[height:12rem]", "h-24")).toBe("h-24");
+		// and an arbitrary property on the other axis is nobody's business
+		expect(write("[height:12rem]", "w-56")).toBe("[height:12rem] w-56");
+	});
+
 	it("appends a token it has no family for rather than guessing what it displaces", () => {
 		expect(write("flex antialiased", "backdrop-blur-sm")).toBe("flex antialiased backdrop-blur-sm");
 		expect(write("flex antialiased backdrop-blur-sm", "backdrop-blur-sm", "", true)).toBe("flex antialiased");

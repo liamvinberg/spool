@@ -920,9 +920,27 @@ function namesIt(
 	return /^\d+(?:\.\d+)?$/.test(name);
 }
 
+/**
+ * The axes an arbitrary property can pin (#259).
+ *
+ * `[width:240px]` is a width however it is spelled, so a `w-56` written beside
+ * it would leave two rules in the same layer with the older spelling winning.
+ * It belongs to the family it sets, and a write displaces it like any other
+ * token of that family. Only the two axes a drag reaches are here; anything
+ * wider is the property model's to widen.
+ */
+const ARBITRARY_AXIS: Readonly<Record<string, string>> = { width: "w", height: "h" };
+
+function arbitraryAxis(base: string): string | undefined {
+	const property = /^\[([a-z-]+):[^\]]+\]$/.exec(base)?.[1];
+	return property === undefined ? undefined : ARBITRARY_AXIS[property];
+}
+
 export function familyOf(base: string, theme?: ClassTheme): string | undefined {
 	const word = WORD_FAMILY.get(base);
 	if (word !== undefined) return word;
+	const pinned = arbitraryAxis(base);
+	if (pinned !== undefined) return pinned;
 	const length = lengthOf(base);
 	if (length !== null) return length.family;
 	if (isRadius(base, theme)) return "radius";
