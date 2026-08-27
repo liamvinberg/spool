@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { writeAtomic } from "../atomic-write";
+import { FORMAT_VERSION } from "../templates";
 import { realDesignDir, resolveDesignPath } from "./design-path";
 
 /**
@@ -44,6 +46,34 @@ export function readCanvasFile(file: string): CanvasFile {
 	}
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return { kind: "unreadable" };
 	return { kind: "read", fields: parsed as Record<string, unknown> };
+}
+
+/** A canvas.json spool will not overwrite, because it cannot read what it would lose. */
+export class CanvasFileError extends Error {
+	constructor() {
+		super("design/canvas.json is not a JSON object — spool will not overwrite it");
+		this.name = "CanvasFileError";
+	}
+}
+
+/**
+ * Store one key of the file, carrying every other key through untouched.
+ *
+ * Every durable in canvas.json owns exactly one key and none of them is any
+ * other's to know about, so a write must never be how one of them loses
+ * another. That law is here rather than restated per durable: there is one
+ * read-modify-write of this file and every writer goes through it. A value of
+ * `undefined` takes the key back out — nothing stored and a key saying nothing
+ * are the same fact about a canvas.
+ */
+export function writeCanvasField(file: string, key: string, value: unknown): void {
+	const held = readCanvasFile(file);
+	if (held.kind === "unreadable") throw new CanvasFileError();
+	// a project whose marker vanished gets it back stamped, never a bare durable
+	const fields: Record<string, unknown> = held.kind === "read" ? { ...held.fields } : { format: FORMAT_VERSION };
+	if (value === undefined) delete fields[key];
+	else fields[key] = value;
+	writeAtomic(file, `${JSON.stringify(fields, null, "\t")}\n`);
 }
 
 /**

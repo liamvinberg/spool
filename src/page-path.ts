@@ -60,6 +60,26 @@ export function pageWithin(ancestor: string, page: string): boolean {
 }
 
 /**
+ * The page a frame sits on, spelled the way a page path is.
+ *
+ * A projected frame leaves the field out on the root page, because the root
+ * page has no folder to name; every reader that groups frames by page has to
+ * put it back, and this is the one place that says how.
+ */
+export function pageSlot(frame: { page?: string }): string {
+	return frame.page ?? ROOT_PAGE;
+}
+
+/**
+ * Whether a page's subtree holds a slot: the page itself, or anything under it
+ * at any depth. What "the frames under this page" means, said once — the daemon
+ * places a page object by it and the canvas draws one by it.
+ */
+export function pageHolds(page: string, slot: string): boolean {
+	return slot === page || pageWithin(page, slot);
+}
+
+/**
  * How deep a page's row is drawn, which is one less than its segments because
  * the root page has no row: `shop` stands at the margin and `shop/sale` one
  * step in under it. The one thing about the root page the rail knows.

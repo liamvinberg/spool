@@ -2,8 +2,10 @@ import { type Dirent, lstatSync, readdirSync } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Cover } from "../cover";
-import { isSafeName, pageName, pageUnder, ROOT_PAGE } from "../page-path";
+import { composePage, medianFrameArea, pageBox, type Rect, type Size } from "../page-box";
+import { isSafeName, pageHolds, pageName, pageParent, pageSlot, pageUnder, ROOT_PAGE } from "../page-path";
 import { DEFAULT_COLS, DEFAULT_ROWS, pxForCells } from "../term/cells";
+import { type CanvasPlaces, type Place, readPlaces, writePlaces } from "./canvas-places";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { type Footprint, readSidecar, writePlacement } from "./geometry";
 import { type Unseen, unseenNow } from "./seen";
@@ -85,6 +87,16 @@ export interface Projection {
 	root: string;
 	/** Every named page's path, sorted, empty ones included; the root page is implied. */
 	pages: string[];
+	/**
+	 * Where each page stands on the field holding it (#265), keyed by page path.
+	 *
+	 * A sibling of `pages` rather than a change to it: too much code reads that
+	 * list of paths, and a page's place is an arrangement rather than part of
+	 * its identity. Every page has one by the time this is answered — a page
+	 * without a stored place is given one here, the way a frame without a
+	 * sidecar is.
+	 */
+	places: Record<string, Place>;
 	frames: ProjectedFrame[];
 	collisions: FrameCollision[];
 }
@@ -371,13 +383,84 @@ export function describeCollision(name: string, paths: string[]): string {
 	return `two frames named "${name}" — ${paths.join(" and ")} — frame names are identity and must be unique across the project`;
 }
 
+/** One frame as the placement reads it: where it sits, and which page's field it is on. */
+type FieldFrame = Rect & { page?: string };
+
+/**
+ * Where the next thing on a field goes: beside what is already there, on that
+ * field's top line, never on top of anything.
+ *
+ * One rule, two callers. A frame born without a sidecar and a page with no
+ * place are the same problem — something has arrived on a field that never said
+ * where it stands — so they are answered the same way, and the field each of
+ * them is measured against holds both kinds of thing.
+ */
+function besideField(field: readonly Rect[]): { x: number; y: number } {
+	if (field.length === 0) return { x: GUTTER, y: GUTTER };
+	return {
+		x: Math.max(...field.map((each) => each.x + each.w)) + GUTTER,
+		y: Math.min(...field.map((each) => each.y)),
+	};
+}
+
+/** The box a page's object occupies on the field holding it (#265, `page-box.ts`). */
+export function pageObjectBox(page: string, frames: readonly FieldFrame[]): Size {
+	const under = frames.filter((frame) => pageHolds(page, pageSlot(frame)));
+	const beside = frames.filter((frame) => pageSlot(frame) === pageParent(page));
+	return pageBox(composePage(under), medianFrameArea(beside), under.length);
+}
+
+/** Every page standing on one page's field, as rects, in page order. */
+function pageObjectsOn(parent: string, pages: readonly string[], frames: readonly FieldFrame[], places: CanvasPlaces) {
+	return pages
+		.filter((page) => pageParent(page) === parent && places[page] !== undefined)
+		.map((page) => ({ page, at: places[page] as Place, box: pageObjectBox(page, frames) }));
+}
+
+/**
+ * Every page's place: the stored ones kept, the missing ones completed.
+ *
+ * A page with no place is given one exactly the way a frame with no sidecar is,
+ * because a page is a thing on that field and the two of them are arranged among
+ * each other. So the field a page is placed against holds both: the frames on
+ * the parent page, and the pages already standing there.
+ *
+ * A stored place is left alone whatever it says, including one naming a page
+ * that has since gone. Order is deterministic so two daemons reading the same
+ * disk fill in the same coordinates.
+ */
+export function placePages(
+	pages: readonly string[],
+	frames: readonly FieldFrame[],
+	stored: CanvasPlaces,
+): { places: CanvasPlaces; filled: boolean } {
+	const places: CanvasPlaces = { ...stored };
+	const sorted = [...pages].sort((a, b) => a.localeCompare(b));
+	const parents = [...new Set(sorted.map(pageParent))].sort((a, b) => a.localeCompare(b));
+	let filled = false;
+	for (const parent of parents) {
+		const field: Rect[] = frames
+			.filter((frame) => pageSlot(frame) === parent)
+			.map(({ x, y, w, h }) => ({ x, y, w, h }));
+		for (const { at, box } of pageObjectsOn(parent, sorted, frames, places)) field.push({ ...at, ...box });
+		for (const page of sorted.filter((each) => pageParent(each) === parent && places[each] === undefined)) {
+			const box = pageObjectBox(page, frames);
+			const at = besideField(field);
+			places[page] = at;
+			field.push({ ...at, ...box });
+			filled = true;
+		}
+	}
+	return { places, filled };
+}
+
 /**
  * Every frame, placed. `seen` decorates each one with whether it has been
  * looked at since it last moved (seen.ts) — the canvas asks, the CLI does not.
  */
 export function listProjectFrames(root: string, options: { seen?: boolean } = {}): Projection {
 	const discovery = discover(root);
-	if (discovery === undefined) return { root, pages: [], frames: [], collisions: [] };
+	if (discovery === undefined) return { root, pages: [], places: {}, frames: [], collisions: [] };
 
 	// one sweep of the cover store answers every frame from immutable image names,
 	// so this costs a readdir per frame folder and opens no image
@@ -396,13 +479,19 @@ export function listProjectFrames(root: string, options: { seen?: boolean } = {}
 		}
 	}
 
+	const stored = readStoredPlaces(root);
+
 	// a new frame lands beside its own page's field, on its top line, never on
-	// top of it — and never beside another page's (#39)
+	// top of it — and never beside another page's (#39). The pages standing on
+	// that field are part of it (#265): a page is a thing on the canvas, so a
+	// frame may no more be born on top of one than on top of another frame
 	for (const { frame, footprint } of unplaced) {
-		const field = placed.filter((candidate) => candidate.page === frame.page);
-		const cursor = field.length === 0 ? GUTTER : Math.max(...field.map((f) => f.x + f.w)) + GUTTER;
-		const baseline = field.length === 0 ? GUTTER : Math.min(...field.map((f) => f.y));
-		const geometry = { x: cursor, y: baseline, ...footprint };
+		const slot = frame.page ?? ROOT_PAGE;
+		const field: Rect[] = placed.filter((candidate) => candidate.page === frame.page);
+		for (const { at, box } of pageObjectsOn(slot, discovery.pages, placed, stored)) {
+			field.push({ ...at, ...box });
+		}
+		const geometry = { ...besideField(field), ...footprint };
 		try {
 			const persisted = writePlacement(join(frame.dir, "frame.json"), geometry, discovery.designDir);
 			if (persisted !== undefined) {
@@ -424,7 +513,28 @@ export function listProjectFrames(root: string, options: { seen?: boolean } = {}
 			if (mark !== undefined) frame.unseen = mark;
 		}
 	}
-	return { root, pages: discovery.pages, frames: placed, collisions: discovery.collisions };
+	// a page with no place gets one and keeps it: the arrangement is committed,
+	// so it has to be the same coordinate on the next machine that pulls it
+	const { places, filled } = placePages(discovery.pages, placed, stored);
+	if (filled) {
+		try {
+			writePlaces(root, places);
+		} catch (error) {
+			if (error instanceof DesignBoundaryError) throw error;
+			// read-only checkout, or a canvas.json spool will not overwrite: the
+			// placement stays deterministic within this daemon run either way
+		}
+	}
+	return { root, pages: discovery.pages, places, frames: placed, collisions: discovery.collisions };
+}
+
+function readStoredPlaces(root: string): CanvasPlaces {
+	try {
+		return readPlaces(root);
+	} catch (error) {
+		if (error instanceof DesignBoundaryError) throw error;
+		return {};
+	}
 }
 
 function projected(

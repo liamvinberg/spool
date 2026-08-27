@@ -8,6 +8,7 @@ import type { AgentLogin } from "../daemon/agent-preflight";
 import type { ServedThread, ThreadPut } from "../daemon/agent-threads";
 import type { AppType } from "../daemon/app";
 import type { CanvasOrder } from "../daemon/canvas-order";
+import type { CanvasPlaces, Place } from "../daemon/canvas-places";
 import type { FrameCopy } from "../daemon/explorer";
 import type { EdgeSite, FlowEdge, Flows, FlowUnreadable } from "../daemon/flows";
 import type { FsHit, FsListing, FsSearch } from "../daemon/fs-list";
@@ -34,6 +35,7 @@ export type {
 	AttributeRead,
 	Camera,
 	CanvasOrder,
+	CanvasPlaces,
 	CanvasState,
 	CompiledClass,
 	CompiledTheme,
@@ -52,6 +54,7 @@ export type {
 	HeldPatch,
 	LocatedRange,
 	PatchRefusal,
+	Place,
 	ProjectAsset,
 	ProjectCard,
 	ProjectedFrame,
@@ -604,6 +607,23 @@ function storedAsOrder(value: unknown): CanvasOrder {
 
 export function putOrder(project: string, order: CanvasOrder): void {
 	void client.api.p[":project"].order.$put({ param: { project }, json: order }).catch(() => {});
+}
+
+/**
+ * Where every page stands (#265), as the field just left them.
+ *
+ * The whole arrangement rather than the one page that moved, because that is
+ * what the durable holds and the canvas already has all of it: the projection
+ * arrives with a place for every page, so there is never a key this side would
+ * be dropping by writing the map it is holding.
+ */
+export async function putPlaces(project: string, places: CanvasPlaces): Promise<boolean> {
+	try {
+		const res = await client.api.p[":project"].places.$put({ param: { project }, json: places });
+		return res.ok;
+	} catch {
+		return false;
+	}
 }
 
 /** The page is going away — keepalive preserves the control credential a beacon cannot carry. */

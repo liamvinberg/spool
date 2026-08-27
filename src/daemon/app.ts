@@ -31,7 +31,9 @@ import { agentInstalled, askAgentLogin, type Look } from "./agent-preflight";
 import { agentPromptContent } from "./agent-spawn";
 import { closeThread, isThreadId, parseThreadPut, putThread, serveThreads, sessionExists } from "./agent-threads";
 import { startAgentTurn } from "./agent-turn";
-import { CanvasFileError, parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
+import { CanvasFileError } from "./canvas-file";
+import { parseOrder, readOrder, storedOrder, writeOrder } from "./canvas-order";
+import { parsePlaces, writePlaces } from "./canvas-places";
 import { createFrameCompiler } from "./compile";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import {
@@ -1213,6 +1215,32 @@ export function createDaemonApp({
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				const written = answeringDiskRefusals(c, () => writeOrder(project.root, c.req.valid("json")));
+				if ("response" in written) return written.response;
+				return c.body(null, 204);
+			},
+		)
+		/**
+		 * Where each page stands on the field holding it (#265).
+		 *
+		 * The second thing about this canvas a hand arranged, and it goes in the
+		 * same committed file for the same reason. There is no GET beside this
+		 * one: a page's place arrives on the projection, already completed for
+		 * every page that had none, so a second read would only be able to say
+		 * less.
+		 */
+		.put(
+			"/api/p/:project/places",
+			validator("json", (value, c) => {
+				const places = parsePlaces(value);
+				if (places === undefined) {
+					return c.text('places must be { "<page>": { "x": number, "y": number } }', 400);
+				}
+				return places;
+			}),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const written = answeringDiskRefusals(c, () => writePlaces(project.root, c.req.valid("json")));
 				if ("response" in written) return written.response;
 				return c.body(null, 204);
 			},

@@ -15,6 +15,7 @@ import type {
 	FrameCopy,
 	Geometry,
 	HeldPatch,
+	Place,
 	ProjectedFrame,
 	SelectionEntry,
 	SelectionPut,
@@ -37,6 +38,7 @@ import {
 	putCanvasState,
 	putCover,
 	putGeometry,
+	putPlaces,
 	putSelection,
 	readRungs,
 	resolveFlows,
@@ -111,6 +113,8 @@ import {
 	entryOf,
 	type HistoryEntry,
 	type Liveness,
+	placeEntryOf,
+	placesOf,
 	record,
 	rectsOf,
 	type Staging,
@@ -138,6 +142,8 @@ import {
 	SelectionOverlay,
 	signsOf,
 } from "./overlays";
+import { PageObjectLabel, PageObjectView } from "./page-object";
+import { pageIsBare, pageObjectAt, pageObjectsOn } from "./page-objects";
 import { camerasFromState, frameSourcePath, pageOf, resolveActivePage, stateCameraSlots, switchPage } from "./pages";
 import { swappable } from "./properties-attributes";
 import { type Held, PropertiesRail } from "./properties-rail";
@@ -213,6 +219,10 @@ type Gesture =
 	// click, movement promotes to a move
 	| { kind: "pending"; names: string[]; origins: Map<string, Point>; start: Point }
 	| { kind: "move"; names: string[]; origins: Map<string, Point>; start: Point }
+	// a page object's own press and drag (#265). One page rather than a set: a
+	// page is picked on its own, and nothing moves with it but itself
+	| { kind: "page-pending"; page: string; origin: Point; start: Point }
+	| { kind: "page-move"; page: string; origin: Point; start: Point }
 	| { kind: "marquee"; start: Point; base: readonly string[] }
 	| { kind: "resize"; frame: string; handle: Handle; anchor: Point; origin: Box }
 	// the element ring's own two drags (#259), which write classes rather than
@@ -391,6 +401,23 @@ export function ProjectCanvas({
 	const [pages, setPages] = useState<string[]>([]);
 	const [activePage, setActivePage] = useState<string>(ROOT_PAGE);
 	const [collisions, setCollisions] = useState<FrameCollision[]>([]);
+	/**
+	 * Where each page stands on the field holding it (#265).
+	 *
+	 * The whole project's, not this page's: an object is drawn on its parent's
+	 * field, so switching page changes which of these are on screen and none of
+	 * what they say. The projection arrives with one for every page.
+	 */
+	const [places, setPlaces] = useState<Readonly<Record<string, Place>>>({});
+	/**
+	 * The page object the hand is holding, if any.
+	 *
+	 * A page is selected on its own: picking one clears the frame selection and
+	 * the selection never holds both. One page rather than a list — multi-select
+	 * across pages and frames is not in this.
+	 */
+	const [selectedPage, setSelectedPage] = useState<string | null>(null);
+	const [hoveredPage, setHoveredPage] = useState<string | null>(null);
 
 	// the active page is the canvas: only its frames mount — and frames staged
 	// for the Trash vanish instantly; the disk move waits on the toast
@@ -400,6 +427,24 @@ export function ProjectCanvas({
 	);
 	const navigatorFrames = useMemo(() => frames.filter((frame) => !hidden.has(frame.name)), [frames, hidden]);
 	const navigatorPages = useMemo(() => pages.filter((page) => !hiddenPages.has(page)), [pages, hiddenPages]);
+	/**
+	 * The pages standing on the field, composed from the projection (#265).
+	 *
+	 * Nothing is fetched and nothing is baked: every frame under a page is
+	 * already in hand with its geometry and its cover, so the picture is a read
+	 * of what this side holds and a frame edited two pages down redraws the
+	 * object above it as soon as the projection lands.
+	 */
+	const pageObjects = useMemo(
+		() => pageObjectsOn(activePage, navigatorPages, navigatorFrames, places),
+		[activePage, navigatorPages, navigatorFrames, places],
+	);
+	const pageObjectsRef = useRef(pageObjects);
+	pageObjectsRef.current = pageObjects;
+	const placesRef = useRef(places);
+	placesRef.current = places;
+	const selectedPageRef = useRef(selectedPage);
+	selectedPageRef.current = selectedPage;
 	// the agent rail's one turn (#192). It owns the stream and nothing else here has
 	// to know about it: a frame the turn writes lands as an ordinary `change` event,
 	// so the canvas repaints while the transcript is still arriving.
@@ -502,6 +547,7 @@ export function ProjectCanvas({
 		setHovered((current) =>
 			current === null || !current.visible ? current : { frame: current.frame, visible: false },
 		);
+		setHoveredPage(null);
 	}, []);
 	useEffect(() => {
 		if (pointerTool) return;
@@ -906,6 +952,10 @@ export function ProjectCanvas({
 		if (projection === undefined) return;
 		setFrames(projection.frames);
 		setPages(projection.pages);
+		// lenient on the way in, like every other read of a durable: a projection
+		// with nothing to say about places leaves the field with no pages on it
+		// rather than with nothing on it
+		setPlaces(projection.places ?? {});
 		setCollisions(projection.collisions);
 		setLoaded(true);
 	}, [project]);
@@ -1387,6 +1437,27 @@ export function ProjectCanvas({
 		[project, refetchFrames],
 	);
 
+	/**
+	 * A page's place, written to the durable the whole project shares (#265).
+	 *
+	 * The whole map goes over the wire because that is what the key holds and
+	 * this side has all of it: the projection completes a place for every page,
+	 * so writing what is in hand can never be how one gets dropped. A write that
+	 * never landed reads the projection back rather than leaving the field lying
+	 * about where a page stands, exactly as a geometry write does.
+	 */
+	const applyPlaces = useCallback(
+		(moved: Readonly<Record<string, Place>>) => {
+			const next = { ...placesRef.current, ...moved };
+			placesRef.current = next;
+			setPlaces(next);
+			void putPlaces(project, next).then((ok) => {
+				if (!ok) void refetchFrames();
+			});
+		},
+		[project, refetchFrames],
+	);
+
 	const flushNudge = useCallback(() => {
 		clearTimeout(nudgeTimer.current);
 		nudgeTimer.current = undefined;
@@ -1621,6 +1692,10 @@ export function ProjectCanvas({
 				applyRects(rectsOf(entry.rects, way));
 				return;
 			}
+			if (entry.kind === "place") {
+				applyPlaces(placesOf(entry.places, way));
+				return;
+			}
 			if (entry.kind === "mint") {
 				if (way === "undo") stageEntry(entry.staged);
 				else undoTrash();
@@ -1662,7 +1737,7 @@ export function ProjectCanvas({
 				void refetchFrames();
 			});
 		},
-		[applyRects, flushNudge, liveness, project, refetchFrames, stageEntry, undoTrash],
+		[applyPlaces, applyRects, flushNudge, liveness, project, refetchFrames, stageEntry, undoTrash],
 	);
 
 	// leaving the page (or the tab) mid-toast: the staged move still happens
@@ -1695,6 +1770,7 @@ export function ProjectCanvas({
 		holdChain(null);
 		setSelected([]);
 		setPicked([]);
+		setSelectedPage(null);
 		setPreview(null);
 	}, [cancelPicks, holdChain]);
 
@@ -3406,6 +3482,19 @@ export function ProjectCanvas({
 		const hit = label ?? frameAtWorld(world);
 
 		if (hit === null) {
+			// a page standing on this field (#265). Frames own their own pixels, so
+			// this is asked where none of them answered; a page is picked on its
+			// own, and taking one puts the frame selection down
+			const page = datasetHit(event.target, "page-object") ?? pageObjectAt(pageObjectsRef.current, world)?.page;
+			if (page !== undefined && page !== null && toolRef.current !== "hand") {
+				setSelected([]);
+				setPicked([]);
+				setSelectedPage(page);
+				const at = placesRef.current[page];
+				if (at !== undefined) gesture.current = { kind: "page-pending", page, origin: at, start: p };
+				return;
+			}
+			setSelectedPage(null);
 			if (toolRef.current === "hand") {
 				setSelected([]);
 				setPicked([]);
@@ -3421,6 +3510,8 @@ export function ProjectCanvas({
 			return;
 		}
 
+		// the selection never holds a page and a frame at once
+		setSelectedPage(null);
 		// the other way a mark clears: pressing a frame is going to it
 		markRead([hit]);
 
@@ -3511,6 +3602,9 @@ export function ProjectCanvas({
 						? current
 						: { frame, visible: true },
 			);
+			// a page lights the way a frame does, and only where no frame answered
+			const overPage = frame === null ? (pageObjectAt(pageObjectsRef.current, world)?.page ?? null) : null;
+			setHoveredPage((current) => (current === overPage ? current : overPage));
 			// The rings and the element preview belong to the pointing tools, and
 			// every reader of `hovered` out here gates on that. The frame under the
 			// pointer is nobody's tool: it is what keeps a live frame awake (#172),
@@ -3594,6 +3688,28 @@ export function ProjectCanvas({
 					const origin = active.origins.get(frame.name);
 					return origin === undefined ? frame : { ...frame, x: origin.x + dx, y: origin.y + dy };
 				}),
+			);
+			return;
+		}
+
+		if (active.kind === "page-pending") {
+			if (Math.hypot(p.x - active.start.x, p.y - active.start.y) < DRAG_THRESHOLD_PX) return;
+			gesture.current = { ...active, kind: "page-move" };
+			onPointerMove(event);
+			return;
+		}
+
+		// a page moves alone and snaps to nothing: it is not a frame, and the
+		// guides are the frames' own arrangement
+		if (active.kind === "page-move") {
+			const at = {
+				x: Math.round(active.origin.x + (p.x - active.start.x) / cam.k),
+				y: Math.round(active.origin.y + (p.y - active.start.y) / cam.k),
+			};
+			setPlaces((current) =>
+				current[active.page]?.x === at.x && current[active.page]?.y === at.y
+					? current
+					: { ...current, [active.page]: at },
 			);
 			return;
 		}
@@ -3720,6 +3836,22 @@ export function ProjectCanvas({
 		writeRing(pick, rotateOps(stamp, live), null);
 	};
 
+	/**
+	 * Where a page drag left it: one gesture, one entry on the one stack (#265).
+	 *
+	 * The field has been drawing the page at its new place all through the drag,
+	 * so this is only what makes it durable and undoable — the same shape a
+	 * frame move's commit has, against the durable a page's place lives in.
+	 */
+	const commitPlace = (page: string, origin: Place) => {
+		const at = placesRef.current[page];
+		if (at === undefined) return;
+		const entry = placeEntryOf({ [page]: origin }, { [page]: at });
+		if (entry === undefined) return;
+		history.current = record(history.current, entry);
+		applyPlaces({ [page]: at });
+	};
+
 	const onPointerUp = () => {
 		const active = gesture.current;
 		// settled while the drag still counts as in flight, so the footprint the
@@ -3732,6 +3864,7 @@ export function ProjectCanvas({
 		setResizeCursor(null);
 		setElementDrag(null);
 		if (active.kind === "move") commitGeometry(active.names, moveBefore(active.origins));
+		if (active.kind === "page-move") commitPlace(active.page, active.origin);
 		if (active.kind === "resize") commitGeometry([active.frame], { [active.frame]: active.origin });
 		if (active.kind === "element-size") commitElementSize(active);
 		if (active.kind === "element-turn") commitElementTurn(active);
@@ -3759,7 +3892,19 @@ export function ProjectCanvas({
 		const label = datasetHit(event.target, "frame-label");
 		const world = toWorld(localPoint(event), cam);
 		const hit = label ?? frameAtWorld(world);
-		if (hit === null || hit === enteredRef.current) return;
+		if (hit === null) {
+			// double-click goes inside a page the same way it goes inside a frame
+			// (#265). The camera does not fly: a page is its own coordinate space,
+			// and pretending otherwise would be a lie about what just happened
+			const page = pageObjectAt(pageObjectsRef.current, world);
+			if (page !== null) {
+				cancelGesture();
+				setSelectedPage(null);
+				activatePageFromTree(page.page);
+			}
+			return;
+		}
+		if (hit === enteredRef.current) return;
 		cancelGesture();
 		if (label !== null || toolRef.current === "select") {
 			enterFrame(hit);
@@ -4210,6 +4355,16 @@ export function ProjectCanvas({
 	// The pages tree stands regardless, over its root page, and so does the agent
 	// rail where this machine has switched it on.
 	const projectEmpty = loaded && frames.length === 0 && pages.length === 0;
+	/**
+	 * A page holding neither frames nor pages (#265).
+	 *
+	 * The project-wide notice stays exactly as it is; this is the same fact
+	 * scoped to one page, and it exists because a page of pages and a page nobody
+	 * has written into used to wear the same picture, which was nothing at all.
+	 * Page objects answered the first of those, and this answers the second.
+	 */
+	const pageEmpty =
+		loaded && !projectEmpty && activePage !== ROOT_PAGE && pageIsBare(activePage, navigatorPages, navigatorFrames);
 	const agentPanel = experimentOn("agent-panel");
 	/**
 	 * Which rail the right column is standing in (#256).
@@ -4222,6 +4377,9 @@ export function ProjectCanvas({
 	const agentOpen = agentPanel && agentWidth > COLLAPSED_BELOW;
 	/** what the rail is looking at: one rung, one frame, or how many of either */
 	const railHeld = ((): Held | null => {
+		// a page is held on its own, and the selection never holds both (#265)
+		const page = pageObjects.find((object) => object.page === selectedPage);
+		if (page !== undefined) return { kind: "page", page: page.page, name: page.name, count: page.count };
 		if (picked.length > 1) return { kind: "elements", count: picked.length };
 		const rung = picked[0];
 		if (rung !== undefined) {
@@ -4332,6 +4490,20 @@ export function ProjectCanvas({
 					>
 						{/* the threads live under the frames: the map, never a hit target */}
 						{arrowsOn && <FlowArrows frames={visibleFrames} edges={edges} siteBoxes={siteBoxes} k={k} />}
+						{/* the pages standing on this field (#265). Under the frames,
+						    because a frame is a live document and a page is a picture of
+						    some: the press that reaches a page is the press no frame
+						    answered. */}
+						{pageObjects.map((object) => (
+							<PageObjectView
+								key={object.page}
+								project={project}
+								object={object}
+								k={k}
+								selected={selectedPage === object.page}
+								hovered={pointerTool && hoveredPage === object.page}
+							/>
+						))}
 						{visibleFrames.map((frame) => {
 							const state = lifecycle.states[frame.name] ?? "picture";
 							const isEntered = entered === frame.name;
@@ -4425,6 +4597,15 @@ export function ProjectCanvas({
 								</div>
 							);
 						})}
+						{pageObjects.map((object) => (
+							<PageObjectLabel
+								key={`${object.page}:label`}
+								object={object}
+								k={k}
+								selected={selectedPage === object.page}
+								hovered={pointerTool && hoveredPage === object.page}
+							/>
+						))}
 						{/* the tags ride over the frames, because pressing one travels —
 						    the leaders under them are the map and take no pointer */}
 						{arrowsOn && <WalkLayer walks={walks} frames={visibleFrames} k={k} onOpen={landOnFrame} />}
@@ -4561,6 +4742,20 @@ export function ProjectCanvas({
 							An agent births a frame by writing frames/&lt;name&gt;/frame.tsx
 						</p>
 						<p className="font-mono text-muted text-xs leading-xs">spool skill · spool url</p>
+					</div>
+				)}
+				{/* one page nobody has written into (#265), which is a different fact
+				    from an untouched project and now says so. A page of pages draws its
+				    pages and never lands here. */}
+				{pageEmpty && (
+					<div
+						data-page-empty={activePage}
+						className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 pb-20"
+					>
+						<p className="font-mono text-muted text-sm leading-sm">no frames yet</p>
+						<p className="font-mono text-muted/60 text-xs leading-xs">
+							an agent writes frames/{activePage}/&lt;name&gt;/frame.tsx
+						</p>
 					</div>
 				)}
 				{/* nothing to arrange, nothing to walk: the tools arrive with the first frame */}

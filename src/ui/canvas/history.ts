@@ -1,5 +1,5 @@
 import { pageName, pageUnder, pageWithin, ROOT_PAGE } from "../../page-path";
-import type { Geometry, HeldPatch } from "../api";
+import type { Geometry, HeldPatch, Place } from "../api";
 
 /**
  * One undo stack for the hands (#23, #230).
@@ -76,9 +76,22 @@ export interface OrderList {
 	readonly after: readonly string[];
 }
 
+/**
+ * One gesture's places, per page: where each stood, and where it ended up.
+ *
+ * Its own shape rather than a `Rects` with the size left out, because a page
+ * object has no size to put back — the box is derived from what is inside it,
+ * so the only thing a drag can change is where it stands (#265).
+ */
+export type Places = Record<string, { before: Place; after: Place }>;
+
 /** One undoable thing the hands did. */
 export type HistoryEntry =
 	| { readonly kind: "geometry"; readonly rects: Rects }
+	// a page dragged on the field holding it (#265). It sits on this stack beside
+	// the frame moves it happens among, because one press has to walk all of it
+	// — a hand that moved a frame and then a page undoes them in that order
+	| { readonly kind: "place"; readonly places: Places }
 	// a span patch on one frame's source (#253), which is every hand edit to
 	// what a frame draws. The patch is the one to run next, in whichever
 	// direction this entry currently sits: running it answers with its own
@@ -167,6 +180,26 @@ export function entryOf(before: Record<string, Geometry>, after: Record<string, 
 		if (!same(from, to)) rects[name] = { before: from, after: to };
 	}
 	return Object.keys(rects).length === 0 ? undefined : { kind: "geometry", rects };
+}
+
+/** One page drag's worth of change, rounded like the durable's write. */
+export function placeEntryOf(before: Record<string, Place>, after: Record<string, Place>): HistoryEntry | undefined {
+	const places: Places = {};
+	for (const [page, raw] of Object.entries(before)) {
+		const landed = after[page];
+		if (landed === undefined) continue;
+		const from = { x: Math.round(raw.x), y: Math.round(raw.y) };
+		const to = { x: Math.round(landed.x), y: Math.round(landed.y) };
+		if (from.x !== to.x || from.y !== to.y) places[page] = { before: from, after: to };
+	}
+	return Object.keys(places).length === 0 ? undefined : { kind: "place", places };
+}
+
+/** The places one entry writes, run this way. */
+export function placesOf(places: Places, way: Way): Record<string, Place> {
+	return Object.fromEntries(
+		Object.entries(places).map(([page, place]) => [page, way === "undo" ? place.before : place.after]),
+	);
 }
 
 /** A fresh edit: pushed, capped, and any redo future is voided. */
@@ -320,6 +353,13 @@ function narrow(entry: HistoryEntry, alive: Liveness, way: Way): HistoryEntry | 
 		case "geometry": {
 			const rects = liveRects(entry.rects, alive);
 			return Object.keys(rects).length === 0 ? undefined : { kind: "geometry", rects };
+		}
+		case "place": {
+			// a page that went away has nowhere to be put back; the rest of the
+			// gesture still runs, exactly as a rect entry has always skipped a
+			// deleted frame
+			const places = Object.fromEntries(Object.entries(entry.places).filter(([page]) => alive.pages.has(page)));
+			return Object.keys(places).length === 0 ? undefined : { kind: "place", places };
 		}
 		case "rename": {
 			const from = way === "undo" ? entry.to : entry.from;

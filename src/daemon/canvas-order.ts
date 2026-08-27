@@ -1,4 +1,3 @@
-import { writeAtomic } from "../atomic-write";
 import {
 	carriedKeys,
 	carriedPage,
@@ -10,8 +9,7 @@ import {
 	pageWithin,
 	ROOT_PAGE,
 } from "../page-path";
-import { FORMAT_VERSION } from "../templates";
-import { canvasFile, readCanvasFile } from "./canvas-file";
+import { canvasFile, readCanvasFile, writeCanvasField } from "./canvas-file";
 
 /**
  * Manual order, in design/canvas.json (#228).
@@ -20,8 +18,8 @@ import { canvasFile, readCanvasFile } from "./canvas-file";
  * arrangement somebody made by hand is the canvas, not this machine's cache of
  * it: canvas.json is committed and cloned, .spool/ is per-machine ephemera. So
  * this owns exactly one key of that file and carries every other key through
- * untouched — a project that grows a second durable is not this module's to
- * know about, and a write must never be how it loses one.
+ * untouched — the second durable arrived with the page objects (#265) and took
+ * exactly this shape.
  *
  * Order is advisory. A name in it can be stale, can name a frame that moved
  * page, and can be missing a frame born a second ago; the client merges it
@@ -46,14 +44,6 @@ export interface CanvasOrder {
 	frames?: Record<string, string[]>;
 }
 
-/** A canvas.json spool will not overwrite, because it cannot read what it would lose. */
-export class CanvasFileError extends Error {
-	constructor() {
-		super("design/canvas.json is not a JSON object — spool will not overwrite it");
-		this.name = "CanvasFileError";
-	}
-}
-
 /** The stored order, or nothing stored — a malformed one reads as absent. */
 export function readOrder(root: string): CanvasOrder {
 	const file = readCanvasFile(canvasFile(root));
@@ -66,14 +56,7 @@ export function readOrder(root: string): CanvasOrder {
  * an order naming nothing are the same fact about this canvas.
  */
 export function writeOrder(root: string, order: CanvasOrder): void {
-	const file = canvasFile(root);
-	const held = readCanvasFile(file);
-	if (held.kind === "unreadable") throw new CanvasFileError();
-	// a project whose marker vanished gets it back stamped, never a bare order
-	const fields: Record<string, unknown> = held.kind === "read" ? { ...held.fields } : { format: FORMAT_VERSION };
-	if (isEmpty(order)) delete fields.order;
-	else fields.order = storedOrder(order);
-	writeAtomic(file, `${JSON.stringify(fields, null, "\t")}\n`);
+	writeCanvasField(canvasFile(root), "order", isEmpty(order) ? undefined : storedOrder(order));
 }
 
 /**

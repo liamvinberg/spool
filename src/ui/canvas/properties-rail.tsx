@@ -85,6 +85,10 @@ const FRAME_FLOOR = 80;
 export type Held =
 	| { kind: "frame"; name: string; geometry: Geometry }
 	| { kind: "frames"; count: number }
+	// a page standing on the field (#265). It has nothing editable: a page's name
+	// is its folder, its place is the drag, and its size is derived from what is
+	// inside it — so what the rail can say is what it is and how much is in it
+	| { kind: "page"; page: string; name: string; count: number }
 	| { kind: "element"; frame: string; chain: readonly PickedHit[]; selector: string }
 	| { kind: "elements"; count: number };
 
@@ -442,6 +446,7 @@ function Body({
 				{held?.kind === "frames" ? <Empty says={`${held.count} frames`} /> : null}
 				{held?.kind === "elements" ? <Empty says={`${held.count} elements`} /> : null}
 				{held?.kind === "frame" ? <FrameGeometry name={held.name} geometry={held.geometry} acts={acts} /> : null}
+				{held?.kind === "page" ? <PageFacts held={held} /> : null}
 				{/* keyed on the rung: a fold left open on one element is not an opinion
 				    about the next one, and a re-pick after this rail's own write is the
 				    same rung, so an edit does not close what you opened */}
@@ -948,6 +953,32 @@ function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geome
 				</Section>
 			))}
 		</>
+	);
+}
+
+/**
+ * What the rail can say about a page (#265): what it is called, where it lives,
+ * and how much is under it.
+ *
+ * Nothing is editable, and that is the point rather than an omission. A page's
+ * name is its folder and the rail renames it; its place is the drag itself; its
+ * size is derived from the frames inside it, so a field for it would be a scale
+ * control on a picture and would mean nothing about the project.
+ */
+function PageFacts({ held }: { held: Extract<Held, { kind: "page" }> }) {
+	const rows: readonly [string, string][] = [
+		["name", held.name],
+		["path", `frames/${held.page}`],
+		["frames", String(held.count)],
+	];
+	return (
+		<Section name="page" reason="design/frames">
+			{rows.map(([name, value]) => (
+				<Row key={name} name={name}>
+					<span className={cn("min-w-0 truncate", VALUE)}>{value}</span>
+				</Row>
+			))}
+		</Section>
 	);
 }
 
