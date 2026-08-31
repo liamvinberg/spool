@@ -115,6 +115,35 @@ it("shows a frame's own x, y, w and h in raw pixels, and writes one back", async
 	expect(await geometryPut()).toEqual({ home: { x: 0, y: 0, w: 640, h: 480 } });
 });
 
+it("scrubs a frame's w against the screen alone, and writes once at release", async () => {
+	const { host, canvas } = await readyCanvas();
+	await clickAt(canvas, 40, 40);
+
+	const label = rowLabel(host, "w");
+	if (label === null) throw new Error("the w row kept no label");
+	await act(async () => {
+		label.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 100, pointerId: 7 }));
+	});
+	for (const x of [110, 120, 130, 140]) {
+		await act(async () => {
+			label.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: x, pointerId: 7 }));
+		});
+	}
+	// mid-scrub the field ticks and the frame follows, but nothing is written:
+	// a write per tick echoes back through the stream and stomps newer state
+	expect(fieldFor(host, "w")?.value).toBe("680");
+	expect(await geometryPut()).toBeUndefined();
+
+	await act(async () => {
+		label.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 7 }));
+	});
+	expect(await geometryPut()).toEqual({ home: { x: 0, y: 0, w: 680, h: 480 } });
+
+	// the whole scrub is one press of undo, like the drag it stands in for
+	await press("z", { metaKey: true, ctrlKey: true });
+	expect(await geometryPut()).toEqual({ home: { x: 0, y: 0, w: 640, h: 480 } });
+});
+
 it("crumbs the frame and every rung above the one held, by the names the file gave them", async () => {
 	const { host, canvas, frame } = await readyCanvas();
 	await descendTo(canvas, frame, 3);

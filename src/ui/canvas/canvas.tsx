@@ -1529,6 +1529,24 @@ export function ProjectCanvas({
 	);
 
 	/**
+	 * The rail's scrub, mid-gesture (#256): the screen alone.
+	 *
+	 * A scrub used to write per tick, and every write came back around — the
+	 * daemon's own echo refetched the projection under the drag and stomped
+	 * newer state, which read as jitter. So a tick lands like a corner drag's
+	 * move: local frames only, and the file waits for the pointer to lift.
+	 */
+	const previewFrameGeometry = useCallback((name: string, patch: Partial<Geometry>) => {
+		setFrames((current) => current.map((frame) => (frame.name === name ? { ...frame, ...patch } : frame)));
+	}, []);
+
+	/** The scrub let go: one sidecar write and one undo slot for the whole drag. */
+	const commitFrameGeometry = useCallback(
+		(name: string, before: Geometry) => commitGeometry([name], { [name]: before }),
+		[commitGeometry],
+	);
+
+	/**
 	 * Fresh copies from the rail (#229), given somewhere to be.
 	 *
 	 * A duplicate copies the geometry sidecar verbatim (#228), so a copy that
@@ -4786,7 +4804,14 @@ export function ProjectCanvas({
 					shut={agentOpen}
 					onOpen={() => setAgentWidth(STRIP_WIDTH)}
 					preview={elementDrag === null ? null : { tokens: elementDrag.tokens, box: elementDrag.box }}
-					acts={{ onRung: takeRung, onGeometry: setFrameGeometry, onWrite: writeOps, onSwap: swapPicture }}
+					acts={{
+						onRung: takeRung,
+						onGeometry: setFrameGeometry,
+						onGeometryPreview: previewFrameGeometry,
+						onGeometryCommit: commitFrameGeometry,
+						onWrite: writeOps,
+						onSwap: swapPicture,
+					}}
 				/>
 				{agentPanel ? (
 					<AgentRail

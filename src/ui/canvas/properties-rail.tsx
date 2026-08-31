@@ -111,6 +111,10 @@ export interface PropertiesActs {
 	onRung: (frame: string, hit: PickedHit | null) => void;
 	/** the frame's own geometry, which is `frame.json` and never source */
 	onGeometry: (name: string, patch: Partial<Geometry>) => void;
+	/** a scrub tick: the screen follows, the file waits for the pointer to lift */
+	onGeometryPreview: (name: string, patch: Partial<Geometry>) => void;
+	/** the scrub let go: one write and one undo slot for the whole gesture */
+	onGeometryCommit: (name: string, before: Geometry) => void;
 	/** the write lane: gated, spliced, and recorded on the canvas's one undo stack */
 	onWrite: (frame: string, selector: string, ops: readonly HandOp[]) => void;
 	/**
@@ -923,10 +927,26 @@ const AXES = [
 ] as const;
 
 function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geometry; acts: PropertiesActs }) {
+	// what the scrub started from: a whole drag is one write and one undo slot,
+	// exactly as a corner drag is, so the file waits for the pointer to lift
+	const scrubbed = useRef<Geometry | null>(null);
+	const floor = (key: "x" | "y" | "w" | "h", value: number) =>
+		key === "w" || key === "h" ? Math.max(FRAME_FLOOR, value) : value;
 	const write = (key: "x" | "y" | "w" | "h", value: number) => {
-		const floored = key === "w" || key === "h" ? Math.max(FRAME_FLOOR, value) : value;
+		const floored = floor(key, value);
 		if (floored === geometry[key]) return;
 		acts.onGeometry(name, { [key]: floored });
+	};
+	const scrub = (key: "x" | "y" | "w" | "h", value: number) => {
+		scrubbed.current ??= { ...geometry };
+		const floored = floor(key, value);
+		if (floored === geometry[key]) return;
+		acts.onGeometryPreview(name, { [key]: floored });
+	};
+	const settle = () => {
+		const before = scrubbed.current;
+		scrubbed.current = null;
+		if (before !== null) acts.onGeometryCommit(name, before);
 	};
 	return (
 		<>
@@ -936,7 +956,8 @@ function FrameGeometry({ name, geometry, acts }: { name: string; geometry: Geome
 						<Row
 							key={axis.key}
 							name={axis.key}
-							onScrub={(units) => write(axis.key, geometry[axis.key] + units * 4)}
+							onScrub={(units) => scrub(axis.key, geometry[axis.key] + units * 4)}
+							onScrubEnd={settle}
 						>
 							<NumField
 								value={String(Math.round(geometry[axis.key]))}

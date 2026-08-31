@@ -63,6 +63,7 @@ export function Row({
 	tall = false,
 	changed = false,
 	onScrub,
+	onScrubEnd,
 	children,
 }: {
 	name: string;
@@ -73,6 +74,8 @@ export function Row({
 	changed?: boolean;
 	/** a numeric row: dragging the label steps the value by the units crossed */
 	onScrub?: ((units: number) => void) | undefined;
+	/** the pointer let go: whatever the scrub was making is done being made */
+	onScrubEnd?: (() => void) | undefined;
 	children: ReactNode;
 }) {
 	const scrub = useRef<{ from: number; sent: number } | null>(null);
@@ -94,6 +97,7 @@ export function Row({
 		if (scrub.current === null) return;
 		event.currentTarget.releasePointerCapture(event.pointerId);
 		scrub.current = null;
+		onScrubEnd?.();
 	};
 	const long = name.length > 14;
 	return (
