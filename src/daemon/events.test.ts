@@ -1,26 +1,24 @@
-import { mkdirSync, mkdtempSync, rmSync, type watch, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { ChangeEvent } from "./events";
+import type { watchTree } from "./watch-tree";
 
 /**
  * The watcher's own lifetime (#22), and what it makes of a path it is handed.
  *
- * Whether the OS really delivers a path is `app.test.ts`'s business, against a
- * real folder and a real stream. Here the disk is the test: `fs.watch` is a
- * mock, so a path arrives exactly when the test says so and the two things a
- * real folder cannot show — when the handle is opened and let go, and what one
- * named path means — are both plain.
+ * Whether the OS really delivers a path is `watch-tree.test.ts`'s business,
+ * against a real folder, and `app.test.ts`'s against a real stream. Here the
+ * disk is the test: the tree watch is a mock, so a path arrives exactly when
+ * the test says so and the two things a real folder cannot show — when the
+ * handle is opened and let go, and what one named path means — are both plain.
  */
 
-const fs = vi.hoisted(() => ({ watch: vi.fn() }));
-const watcher = vi.hoisted(() => ({ close: vi.fn(), on: vi.fn() }));
+const tree = vi.hoisted(() => ({ watchTree: vi.fn() }));
+const watcher = vi.hoisted(() => ({ close: vi.fn() }));
 
-vi.mock(import("node:fs"), async (importOriginal) => ({
-	...(await importOriginal()),
-	watch: fs.watch as unknown as typeof watch,
-}));
+vi.mock(import("./watch-tree"), () => ({ watchTree: tree.watchTree as unknown as typeof watchTree }));
 vi.mock(import("./design-path"), async (importOriginal) => ({
 	...(await importOriginal()),
 	realDesignDir: (root: string) => `${root}/design`,
@@ -28,17 +26,17 @@ vi.mock(import("./design-path"), async (importOriginal) => ({
 
 const { createChangeHub } = await import("./events");
 
-/** The recursive callback the hub handed fs.watch, so a test can be the disk. */
-let onChange: ((type: string, filename: string) => void) | undefined;
+/** The callback the hub handed the tree watch, so a test can be the disk. */
+let onChange: ((filename: string | null) => void) | undefined;
 
-fs.watch.mockImplementation((_dir: string, _options: unknown, listener: typeof onChange) => {
+tree.watchTree.mockImplementation((_dir: string, listener: typeof onChange) => {
 	onChange = listener;
 	return watcher;
 });
 
 afterEach(() => {
 	vi.useRealTimers();
-	fs.watch.mockClear();
+	tree.watchTree.mockClear();
 	watcher.close.mockClear();
 	onChange = undefined;
 });
@@ -64,7 +62,7 @@ describe("what a changed path means", () => {
 		const hub = createChangeHub();
 		const seen: ChangeEvent[] = [];
 		hub.subscribe(root, (event) => seen.push(event));
-		for (const path of paths) onChange?.("change", path);
+		for (const path of paths) onChange?.(path);
 		await vi.advanceTimersByTimeAsync(100);
 		hub.close();
 		return seen;
@@ -145,7 +143,7 @@ describe("how long a watcher outlives its last subscriber", () => {
 		vi.useFakeTimers();
 		const hub = createChangeHub();
 		const unsubscribe = hub.subscribe("/project", () => {});
-		expect(fs.watch).toHaveBeenCalledTimes(1);
+		expect(tree.watchTree).toHaveBeenCalledTimes(1);
 
 		// the browser's connection dropped: it is gone for its backoff, and the
 		// disk is not watching itself in the meantime
@@ -155,11 +153,11 @@ describe("how long a watcher outlives its last subscriber", () => {
 
 		const seen: ChangeEvent[] = [];
 		hub.subscribe("/project", (event) => seen.push(event));
-		expect(fs.watch).toHaveBeenCalledTimes(1);
+		expect(tree.watchTree).toHaveBeenCalledTimes(1);
 
 		// no fresh watcher means no fresh arming window: the first edit after the
 		// return is announced rather than dropped into it
-		onChange?.("change", "shared/tokens.css");
+		onChange?.("shared/tokens.css");
 		await vi.advanceTimersByTimeAsync(100);
 		expect(seen).toEqual([{ kind: "shared" }]);
 
@@ -179,7 +177,7 @@ describe("how long a watcher outlives its last subscriber", () => {
 
 		// and the next subscriber is watching a folder again, not a closed handle
 		hub.subscribe("/project", () => {});
-		expect(fs.watch).toHaveBeenCalledTimes(2);
+		expect(tree.watchTree).toHaveBeenCalledTimes(2);
 		hub.close();
 	});
 

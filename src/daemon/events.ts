@@ -1,8 +1,8 @@
-import { watch } from "node:fs";
 import { join, sep } from "node:path";
 import type { Cover } from "../cover";
 import { realDesignDir } from "./design-path";
 import { isPageFolder } from "./projection";
+import { type TreeWatch, watchTree } from "./watch-tree";
 
 /**
  * Something outside a frame folder moved. `frames` names the frames whose source
@@ -119,37 +119,40 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 		let timer: NodeJS.Timeout | undefined;
 		const entry: RootWatch = { listeners, linger: undefined, stop: () => clear() };
 
-		let watcher: ReturnType<typeof watch> | undefined;
+		let watcher: TreeWatch | undefined;
 		try {
 			const designDir = realDesignDir(root);
-			watcher = watch(designDir, { recursive: true }, (_type, filename) => {
-				const event = classify(designDir, filename, (path) => deps.framesUsing(root, path));
-				if (event === undefined) return;
-				if (event.kind === "frame") pending.set(`frame ${event.frame}`, event);
-				// a move and an edit to the same frame are two facts about it, so a
-				// sidecar keeps its own slot rather than collapsing into the source one
-				else if (event.kind === "geometry") pending.set(`geometry ${event.frame}`, event);
-				else pending.set("shared", mergeShared(pending.get("shared"), event));
-				timer ??= setTimeout(() => {
-					timer = undefined;
-					const batch = [...pending.values()];
-					pending.clear();
-					for (const change of batch) {
-						for (const emit of listeners) emit(change);
-					}
-				}, DEBOUNCE_MS);
-			});
+			watcher = watchTree(
+				designDir,
+				(filename) => {
+					const event = classify(designDir, filename, (path) => deps.framesUsing(root, path));
+					if (event === undefined) return;
+					if (event.kind === "frame") pending.set(`frame ${event.frame}`, event);
+					// a move and an edit to the same frame are two facts about it, so a
+					// sidecar keeps its own slot rather than collapsing into the source one
+					else if (event.kind === "geometry") pending.set(`geometry ${event.frame}`, event);
+					else pending.set("shared", mergeShared(pending.get("shared"), event));
+					timer ??= setTimeout(() => {
+						timer = undefined;
+						const batch = [...pending.values()];
+						pending.clear();
+						for (const change of batch) {
+							for (const emit of listeners) emit(change);
+						}
+					}, DEBOUNCE_MS);
+				},
+				// an unhandled watch error would kill the daemon; drop the watcher
+				// and let the next subscriber start a fresh one
+				() => {
+					clear();
+					if (roots.get(root) === entry) roots.delete(root);
+				},
+			);
 		} catch {
 			// design/ vanished after registration: push degrades to silence — the
 			// pull side (compile-on-request) stays the truth, so never crash for this
 			return entry;
 		}
-		// an unhandled "error" event would kill the daemon; drop the watcher and
-		// let the next subscriber start a fresh one
-		watcher.on("error", () => {
-			clear();
-			if (roots.get(root) === entry) roots.delete(root);
-		});
 
 		function clear(): void {
 			watcher?.close();
