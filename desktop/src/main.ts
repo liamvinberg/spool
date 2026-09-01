@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions, nativeImage, shell, Tray } from "electron";
 import * as daemon from "./daemon";
 import { log, openLog } from "./log";
+import { userPath } from "./path";
 import { bundledCli, bundledShim } from "./runtime";
 import {
 	installUpdate,
@@ -160,12 +161,19 @@ async function startBundled(): Promise<{ url: string; pid: number; version: stri
 		fallback("Spool could not start", "This copy has no daemon in it. Download it again from the releases page.");
 		return undefined;
 	}
+	// The daemon spawns the agent the person already installed and shells out to
+	// the toolchain they already have, and a GUI launch hands this process a PATH
+	// that has neither on it. Asked here rather than at boot: an adopted daemon was
+	// started from a terminal and already has the answer.
+	const path = userPath();
+	log("path", path === undefined ? "as launched" : "from the login shell");
 	try {
 		const status = await daemon.start({
 			execPath: process.execPath,
 			nodeArgs: ["-r", bundledShim(process.resourcesPath)],
 			cli,
 			directory: DIRECTORY,
+			...(path === undefined ? {} : { env: { ...process.env, PATH: path } }),
 		});
 		if (!status.running) return undefined;
 		startedPid = status.pid;
