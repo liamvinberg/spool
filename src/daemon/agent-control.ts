@@ -114,6 +114,12 @@ const argumentsOf = (input: unknown): Record<string, unknown> =>
 		? { ...(input as Record<string, unknown>) }
 		: {};
 
+/** what the agent is told when a question went unanswered */
+const DISMISSED = "The user dismissed the question without answering it. Stop and wait for them.";
+
+/** and when the call itself was refused */
+const DENIED = "The user denied this. Stop what you are doing and wait for them.";
+
 /**
  * The answer, in the shape the binary reads it in.
  *
@@ -123,9 +129,12 @@ const argumentsOf = (input: unknown): Record<string, unknown> =>
  * and how permanently; an always is `user_temporary` like an allow, because it is
  * temporary — it dies with the thread.
  *
- * A deny carries an empty message on purpose. The field is required, and anything in
- * it is quoted to the agent as what the person said; empty is the wordless refusal
- * that lands it on the binary's own instruction to stop and wait.
+ * A deny carries spool's own sentence rather than the person's. The field is required
+ * and it must not be empty — an empty one reaches the API as a `tool_result` flagged
+ * as an error with nothing in it, which the API rejects outright and which poisons
+ * every later message in the session, because the block is replayed with each of
+ * them. So the words are spool's, they say only what happened, and they carry the
+ * instruction the binary supplies for itself when there is nothing to quote.
  */
 export function answerPayload(asking: AgentAsking, reply: AgentReply): Record<string, unknown> {
 	switch (reply.kind) {
@@ -140,7 +149,13 @@ export function answerPayload(asking: AgentAsking, reply: AgentReply): Record<st
 				...(asking.suggestions.length === 0 ? {} : { updatedPermissions: asking.suggestions.map(forThisThread) }),
 			};
 		case "deny":
-			return { behavior: "deny", message: "", decisionClassification: "user_reject" };
+			// a dismiss and a deny are one wire and two acts, and the agent is told which:
+			// a question was refused rather than answered, a call was refused rather than run
+			return {
+				behavior: "deny",
+				message: asking.interaction ? DISMISSED : DENIED,
+				decisionClassification: "user_reject",
+			};
 		case "said":
 			return {
 				behavior: "allow",

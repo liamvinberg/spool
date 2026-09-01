@@ -1672,6 +1672,12 @@ function Wait({ entry, elapsed }: { entry: Extract<AgentEntry, { kind: "wait" }>
  * them, because prose is a first-class answer the tool tests before the picked ones
  * and rewards with the stronger instruction to follow what the person actually said.
  *
+ * A call carries one to four questions and they are asked one at a time, the way the
+ * binary's own prompt asks them. A pick settles its question into the shape the rail
+ * gives the person's words and reveals the next; the last pick sends the whole set,
+ * because a call with two questions is two decisions and answering with one of them
+ * would tell the agent the other was declined by somebody who never saw it.
+ *
  * An approval is the same block with different words in it. It leads with the agent's
  * own written description of what it is about to do — the row above already says what
  * the call is — and its three answers are spool's own, in the mono register spool uses
@@ -1691,35 +1697,57 @@ function Ask({
 	const answer = (reply: AgentReply) => {
 		if (request !== null) onAnswer(request, reply);
 	};
+	// held against the request rather than reset by it: the block outlives no ask, but
+	// a key reused by a second thread's ask would otherwise arrive part-answered
+	const [given, setGiven] = useState<{ request: string | null; picks: Record<string, string> }>({
+		request,
+		picks: {},
+	});
+	const picks = given.request === request ? given.picks : {};
+	const live = entry.questions.findIndex((one) => picks[one.question] === undefined);
+	const pick = (question: string, label: string) => {
+		const next = { ...picks, [question]: label };
+		if (entry.questions.every((one) => next[one.question] !== undefined)) answer({ kind: "picked", picks: next });
+		else setGiven({ request, picks: next });
+	};
 	return (
 		<div data-agent-ask={entry.state} className="flex flex-col gap-3">
 			{/* the sentences, drawn where the agent's sentences are drawn. A question still
 			    arriving shows a caret, because it is typing itself in the way every tool
 			    call's subject does */}
 			{entry.question ? (
-				entry.questions.map((question) => (
-					<div key={question.question} className="flex flex-col gap-1.5">
-						<p className="text-base text-text/90 leading-base">{question.question}</p>
-						{open ? (
-							<div className="flex flex-col gap-1.5">
-								{question.options.map((option) => (
-									<button
-										key={option.label}
-										type="button"
-										data-agent-option={option.label}
-										onClick={() => answer({ kind: "picked", picks: { [question.question]: option.label } })}
-										className="flex flex-col gap-1 rounded-md border border-border-raised bg-surface px-3 py-2.5 text-left transition-colors duration-150 hover:border-muted/45"
-									>
-										<span className="text-base text-text leading-base">{option.label}</span>
-										{option.description === "" ? null : (
-											<span className="text-2xs text-muted/70 leading-4">{option.description}</span>
-										)}
-									</button>
-								))}
-							</div>
-						) : null}
-					</div>
-				))
+				entry.questions.map((question, index) => {
+					const chosen = picks[question.question];
+					// nothing below the one being asked: a question nobody has reached is a
+					// decision nobody is making, and drawing it is the block asking twice
+					if (open && chosen === undefined && index !== live) return null;
+					return (
+						<div key={question.question} className="flex flex-col gap-1.5">
+							<p className="text-base text-text/90 leading-base">{question.question}</p>
+							{/* a settled pick keeps its sentence and lands in the person's own shape,
+							    which is where the whole answer lands once the last one is in */}
+							{open && chosen !== undefined ? <Answered words={chosen} /> : null}
+							{open && chosen === undefined ? (
+								<div className="flex flex-col gap-1.5">
+									{question.options.map((option) => (
+										<button
+											key={option.label}
+											type="button"
+											data-agent-option={option.label}
+											onClick={() => pick(question.question, option.label)}
+											className="flex flex-col gap-1 rounded-md border border-border-raised bg-surface px-3 py-2.5 text-left transition-colors duration-150 hover:border-muted/45"
+										>
+											<span className="text-base text-text leading-base">{option.label}</span>
+											{option.description === "" ? null : (
+												<span className="text-2xs text-muted/70 leading-4">{option.description}</span>
+											)}
+										</button>
+									))}
+								</div>
+							) : null}
+						</div>
+					);
+				})
 			) : entry.asked === null ? null : (
 				// nothing where the agent wrote nothing: the row above already named the call,
 				// and a block that repeated it would be the rail saying one thing twice

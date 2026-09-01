@@ -219,19 +219,35 @@ describe("answering", () => {
 		expect(filesUnder(turn.spoolDir)).toEqual(settings);
 	});
 
-	it("sends a bare deny, with no words in it", async () => {
+	it("sends a deny in spool's own words, never an empty message", async () => {
 		const turn = await parked();
 
 		await answer(turn.name, turn.app, { request: turn.asking.request, reply: { kind: "deny" } });
 
-		// the message field is required and empty is the wordless refusal: anything in
-		// it would be quoted to the agent as something the person said
+		// never empty: an empty message reaches the API as an error `tool_result` with no
+		// content, which it rejects — and the block is replayed with every later message,
+		// so one of them ends the session rather than the call
 		expect(repliedBy(turn.agent.spawned[0])[0]?.response).toEqual({
 			behavior: "deny",
-			message: "",
+			message: "The user denied this. Stop what you are doing and wait for them.",
 			decisionClassification: "user_reject",
 		});
 		expect((await turn.events.next()).data).toMatchObject({ kind: "answered", answer: "deny", words: null });
+	});
+
+	it("tells the agent a question was dismissed rather than a call denied", async () => {
+		const turn = await parked(10);
+		expect(turn.asking.kind === "asking" && turn.asking.interaction).toBe(true);
+
+		await answer(turn.name, turn.app, { request: turn.asking.request, reply: { kind: "deny" } });
+
+		// one wire and two acts, and the words are the difference: nobody refused the call,
+		// somebody refused to answer
+		expect(repliedBy(turn.agent.spawned[0])[0]?.response).toEqual({
+			behavior: "deny",
+			message: "The user dismissed the question without answering it. Stop and wait for them.",
+			decisionClassification: "user_reject",
+		});
 	});
 
 	it("answers the agent's own question in the person's words and with its options", async () => {

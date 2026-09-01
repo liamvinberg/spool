@@ -2200,6 +2200,63 @@ describe("a question in the log", () => {
 		});
 	});
 
+	it("asks a two-question call one at a time and sends both answers together", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "shoot the receipt");
+
+		const SECOND = "What should it be named?";
+		const NAMES = [
+			{ label: "receipt", description: "The name it already has on the canvas." },
+			{ label: "receipt-fixed", description: "A second frame beside it, so both renders stay comparable." },
+		];
+		const questions = [
+			{ question: QUESTION, header: "Shot fix", options: OPTIONS },
+			{ question: SECOND, header: "Name", options: NAMES },
+		];
+		canvas.turn.push({ kind: "called", id: "q1", tool: "AskUserQuestion", input: { questions }, parent: null });
+		canvas.turn.push({
+			kind: "asking",
+			request: "req-q",
+			call: "q1",
+			tool: "AskUserQuestion",
+			display: "AskUserQuestion",
+			input: { questions },
+			description: null,
+			interaction: true,
+			suggestions: [],
+			parent: null,
+		});
+		await until(() => options(canvas.host).length === 2);
+
+		// the second question's options are not on screen: one decision at a time, the
+		// way the binary's own prompt asks them
+		expect(options(canvas.host)).toEqual(OPTIONS.map((option) => option.label));
+		expect(canvas.host.querySelector("[data-agent-ask]")?.textContent).not.toContain(SECOND);
+
+		const first = canvas.host.querySelector<HTMLButtonElement>('[data-agent-option="Ship it unverified"]');
+		await act(async () => first?.click());
+
+		// answering one of two is not an answer, so nothing went up the wire and the
+		// second question is what the block is asking now
+		expect(canvas.turn.answers).toEqual([]);
+		await until(() => options(canvas.host).length === 2);
+		expect(options(canvas.host)).toEqual(NAMES.map((option) => option.label));
+		const block = canvas.host.querySelector<HTMLElement>("[data-agent-ask]");
+		// the settled one keeps its sentence and its answer
+		expect(block?.textContent).toContain(QUESTION);
+		expect(block?.textContent).toContain("Ship it unverified");
+		expect(block?.textContent).toContain(SECOND);
+
+		const second = canvas.host.querySelector<HTMLButtonElement>('[data-agent-option="receipt-fixed"]');
+		await act(async () => second?.click());
+
+		expect(canvas.turn.answers.at(-1)).toEqual({
+			request: "req-q",
+			reply: { kind: "picked", picks: { [QUESTION]: "Ship it unverified", [SECOND]: "receipt-fixed" } },
+		});
+	});
+
 	it("keeps the composer live beside it, and prose sent there answers", async () => {
 		const canvas = mount();
 		await canvas.render();
