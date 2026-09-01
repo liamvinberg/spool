@@ -6,13 +6,14 @@ import { log, openLog } from "./log";
 import { bundledCli, bundledShim } from "./runtime";
 import {
 	installUpdate,
+	lastUpdaterError,
 	latestRelease,
 	RELEASES_PAGE,
 	relaunchIntoUpdate,
 	UpdateCheckError,
 	updaterAvailable,
 } from "./updates";
-import { compareVersions, formatVersion, parseVersion } from "./version";
+import { compareVersions, formatVersion, parseVersion, type Version } from "./version";
 
 // Spool, as a Mac app: a window on the canvas the daemon already serves.
 //
@@ -41,6 +42,8 @@ let startedPid: number | undefined;
 /** The daemon this window is pointed at, for telling its popups from the web. */
 let daemonPort: number | undefined;
 let checkingForUpdates = false;
+/** The download in flight, if one is, for the menu bar and the Dock. */
+let downloading: { version: string; percent: number } | undefined;
 let shuttingDown = false;
 
 export function version(): string {
@@ -262,7 +265,9 @@ export function buildTrayMenu(): Menu {
 		// Disabled on purpose: it is a label, not a thing to click. Which version
 		// is running is the first question every bug report answers.
 		{ label: `Spool ${version()}`, enabled: false },
-		{ label: "Check for Updates…", click: () => void checkForUpdates() },
+		downloading === undefined
+			? { label: "Check for Updates…", click: () => void checkForUpdates() }
+			: { label: `Downloading ${downloading.version}… ${downloading.percent}%`, enabled: false },
 		{ type: "separator" },
 		{ label: "Quit Spool", accelerator: "Command+Q", click: () => app.quit() },
 	]);
@@ -335,27 +340,97 @@ async function checkForUpdates(): Promise<void> {
 			cancelId: 1,
 		});
 		if (answer.response !== 0) return;
-
-		try {
-			await installUpdate((state) => log("updates", state));
-		} catch (error) {
-			log("updates", "FAIL", String(error));
-			tell(
-				"The update did not install.",
-				`${String(error)}\n\nThe release page has the download; replacing Spool in Applications by hand still works.`,
-				"warning",
-			);
-			return;
-		}
-		// Squirrel replaces the app on quit and relaunches it. The daemon this
-		// app started is stopped here, on purpose, before the updater owns the
-		// exit: will-quit's own preventDefault path would fight it.
-		shuttingDown = true;
-		await shutdown();
-		relaunchIntoUpdate();
+		await downloadAndRelaunch(latest.version, latest.page);
 	} finally {
 		checkingForUpdates = false;
 	}
+}
+
+/**
+ * The download, and the exit that swaps the bundle.
+ *
+ * Nothing here blocks the window, so the progress has to be somewhere a person
+ * can see it without a panel in the way: the Dock icon fills, and the menu bar
+ * item counts. A hundred megabytes with no sign of movement is the same as a
+ * button that did nothing, and that is what this used to be.
+ */
+async function downloadAndRelaunch(target: Version, page: string): Promise<void> {
+	downloading = { version: formatVersion(target), percent: 0 };
+	showProgress();
+	try {
+		await installUpdate(
+			(line) => log("updates", line),
+			(percent) => {
+				if (downloading === undefined) return;
+				downloading.percent = percent;
+				showProgress();
+			},
+		);
+	} catch (error) {
+		const detail = error instanceof UpdateCheckError ? error.message : String(error);
+		log("updates", "FAIL", detail);
+		clearProgress();
+		tell(
+			"The update did not install.",
+			`${detail}\n\nThe release page has the download; replacing Spool in Applications by hand still works.`,
+			"warning",
+		);
+		void shell.openExternal(page);
+		return;
+	}
+	clearProgress();
+
+	// Squirrel replaces the app on quit and relaunches it. The daemon this app
+	// started is stopped here, on purpose, before the updater owns the exit:
+	// will-quit's own preventDefault path would fight it.
+	shuttingDown = true;
+	await shutdown();
+	log("updates", "relaunching");
+	fallback("Updating Spool", `Spool ${formatVersion(target)} is being swapped in, and the app reopens by itself.`);
+
+	// Squirrel's own step is silent when it refuses — an unwritable Applications
+	// folder, a bundle whose signature does not match this one's — and what a
+	// person sees then is a window that stopped. So the exit is raced against a
+	// clock, and a Spool still running after it is one that has to say so and
+	// put its daemon back.
+	const deadline = setTimeout(() => {
+		shuttingDown = false;
+		const detail = lastUpdaterError();
+		log("updates", "FAIL", "no relaunch", detail ?? "no reason given");
+		tell(
+			"Spool could not swap itself out.",
+			`${detail ?? "The updater staged the new version but macOS did not install it."}\n\nThis usually means Spool is not in Applications, or the copy running was not the one installed there. The release page has the download.`,
+			"warning",
+		);
+		void shell.openExternal(page);
+		void openCanvas();
+	}, RELAUNCH_DEADLINE_MS);
+
+	try {
+		relaunchIntoUpdate();
+	} catch (error) {
+		clearTimeout(deadline);
+		shuttingDown = false;
+		log("updates", "FAIL", String(error));
+		tell("The update did not install.", String(error), "warning");
+		void openCanvas();
+	}
+}
+
+/** Long enough for Squirrel to unpack and verify a bundle on a slow disk. */
+const RELAUNCH_DEADLINE_MS = 90_000;
+
+function showProgress(): void {
+	if (downloading === undefined) return;
+	window?.setProgressBar(downloading.percent / 100);
+	tray?.setContextMenu(buildTrayMenu());
+}
+
+function clearProgress(): void {
+	downloading = undefined;
+	// -1 is how a Dock progress bar is taken away again.
+	window?.setProgressBar(-1);
+	tray?.setContextMenu(buildTrayMenu());
 }
 
 /**

@@ -133,11 +133,20 @@ rerun, with `gh workflow run publish.yml -f tag=vX.Y.Z`.
 
 Check for Updates asks this repo's `releases/latest` for its tag and compares it.
 On a newer release it updates in place: electron-updater downloads the release's
-zip, checks it against `latest-mac.yml` and the app's own code signature, and
-Squirrel.Mac swaps the bundle when the app relaunches. The feed is the release
-itself — `app-update.yml` inside the bundle names this repo, `latest-mac.yml`
-beside the dmg names the zip — so there is no update server. A checkout build
-has no feed file and falls back to opening the release page.
+zip, checks it against `latest-mac.yml`, and hands it to Squirrel.Mac, which
+verifies the new bundle's signature against the running one's and swaps it on
+quit. The feed is the release itself — `app-update.yml` inside the bundle names
+this repo, `latest-mac.yml` beside the dmg names the zip — so there is no update
+server. A checkout build has no feed file and falls back to opening the release
+page.
+
+Two things about that path cost a release to find out, and `src/updates.ts` says
+both at length. Squirrel cannot be handed a file, so electron-updater downloads
+the zip and then serves it to Squirrel over loopback; `autoInstallOnAppQuit` is
+what makes Squirrel ask for it, and with it off the download completes having
+installed nothing. And every failure arrives as an `error` event, which on an
+emitter with no listener throws out of the main process. `src/updates.test.ts`
+pins both, against a stand-in for electron-updater.
 
 ## Signing, for a fork
 
