@@ -127,6 +127,35 @@ describe("offline design checking", () => {
 		]);
 	});
 
+	it("resolves a design-relative shared/ import from any depth (#273)", () => {
+		const root = makeTempDir();
+		markProject(root);
+		writeDesignFile(root, "shared/lib/utils.ts", "export function cn(value: string): string {\n\treturn value;\n}\n");
+		writeDesignFile(
+			root,
+			"frames/shop/cart/frame.tsx",
+			'import { cn } from "shared/lib/utils";\nexport default function Cart() {\n\treturn <p>{cn("cart")}</p>;\n}\n',
+		);
+
+		expect(messages(root)).toEqual([]);
+	});
+
+	it("still reports a shared/ import that resolves to nothing, and type errors through one that does", () => {
+		const root = makeTempDir();
+		markProject(root);
+		writeDesignFile(root, "shared/lib/utils.ts", "export function cn(value: string): string {\n\treturn value;\n}\n");
+		writeDesignFile(
+			root,
+			"frames/cart/frame.tsx",
+			'import { gone } from "shared/lib/nope";\nimport { cn } from "shared/lib/utils";\nexport default function Cart() {\n\treturn <p>{cn(gone) + cn(1)}</p>;\n}\n',
+		);
+
+		const result = messages(root);
+		expect(result.some((line) => line.includes("TS2307") && line.includes("shared/lib/nope"))).toBe(true);
+		// the resolved shared file's own types hold: cn(1) is a real mistake
+		expect(result.some((line) => line.includes("TS2345"))).toBe(true);
+	});
+
 	it("supports explicit TypeScript and JSON imports while excluding CSS and JavaScript semantics", () => {
 		const root = makeTempDir();
 		markProject(root);

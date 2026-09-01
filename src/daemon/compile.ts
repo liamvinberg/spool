@@ -176,7 +176,11 @@ export async function buildDesignEntry(options: {
 		write: false,
 		outdir: VIRTUAL_OUTDIR,
 		absWorkingDir: designDir,
-		plugins: [spoolBoundaryPlugin(designDir), spoolAssetPlugin(designDir, label, imageBudget)],
+		plugins: [
+			sharedImportPlugin(designDir),
+			spoolBoundaryPlugin(designDir),
+			spoolAssetPlugin(designDir, label, imageBudget),
+		],
 		logLevel: "silent",
 	});
 
@@ -287,6 +291,27 @@ createRoot(document.getElementById("root")).render(
 	createElement(Fragment, null, createElement(Frame), createElement(Ready)),
 );
 `;
+}
+
+/**
+ * shared/ by its design-relative name (#273): `import { cn } from
+ * "shared/lib/utils"` resolves against design/ from any importer at any depth,
+ * so moving a frame's folder never breaks the import. This plugin runs first
+ * and claims only the `shared/` prefix — before `packages: "external"` would
+ * hand the bare specifier to the import map, where no URL answers it. The
+ * re-entrant resolve keeps every other rule: the boundary plugin still loads
+ * the file, an asset still inlines, and a url() token still gets the asset
+ * plugin's refusal in spool's words.
+ */
+function sharedImportPlugin(designDir: string): Plugin {
+	return {
+		name: "spool-shared",
+		setup(build) {
+			build.onResolve({ filter: /^shared\// }, (args) =>
+				build.resolve(`./${args.path}`, { resolveDir: designDir, kind: args.kind, importer: args.importer }),
+			);
+		},
+	};
 }
 
 /**

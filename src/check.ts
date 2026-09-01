@@ -750,7 +750,7 @@ function moduleBoundaryMessage(designDir: string, file: string, specifier: strin
 	if (isAbsoluteLocalSpecifier(specifier)) return "Absolute local imports are outside design/";
 	if (hasInvalidPathCharacter(specifier)) return undefined;
 	if (!isRelativeLocalSpecifier(specifier)) return undefined;
-	const target = resolveAuthoredLocalPath(dirname(file), specifier);
+	const target = resolveAuthoredLocalPath(designDir, dirname(file), specifier);
 	const selection = selectLocalCandidate(designDir, target, extname(target), isDirectoryOnlySpecifier(specifier));
 	if (selection.failure !== undefined) return selection.failure;
 	return selection.boundary ? "Relative imports outside design/" : undefined;
@@ -765,7 +765,7 @@ function referenceDirectiveBoundaryMessage(
 	const boundaryMessage = `Reference ${directive.kind}${directive.kind === "path" ? "s" : ""} outside design/`;
 	if (isAbsoluteLocalSpecifier(authoredPath) || hasInvalidPathCharacter(authoredPath)) return boundaryMessage;
 	if (directive.kind !== "path" && !isRelativeLocalSpecifier(authoredPath)) return undefined;
-	const target = resolveAuthoredLocalPath(dirname(file), authoredPath);
+	const target = resolveAuthoredLocalPath(designDir, dirname(file), authoredPath);
 	if (!isWithin(designDir, target)) return boundaryMessage;
 	if (directive.kind === "types") {
 		const selection = selectTypeReferenceCandidate(designDir, target);
@@ -1290,7 +1290,7 @@ function resolveLocalJsxUses(
 
 function resolveLocalSource(designDir: string, base: string, specifier: string): string | undefined {
 	if (hasInvalidPathCharacter(specifier)) return undefined;
-	const target = resolveAuthoredLocalPath(base, specifier);
+	const target = resolveAuthoredLocalPath(designDir, base, specifier);
 	const extension = extname(target);
 	if (extension === ".css") return undefined;
 	const selection = selectLocalCandidate(designDir, target, extension, isDirectoryOnlySpecifier(specifier));
@@ -1299,7 +1299,7 @@ function resolveLocalSource(designDir: string, base: string, specifier: string):
 
 function resolveLocalClosureSource(designDir: string, base: string, specifier: string): string | undefined {
 	if (hasInvalidPathCharacter(specifier)) return undefined;
-	const target = resolveAuthoredLocalPath(base, specifier);
+	const target = resolveAuthoredLocalPath(designDir, base, specifier);
 	const extension = extname(target);
 	if (extension === ".css") return undefined;
 	const selection = selectLocalCandidate(designDir, target, extension, isDirectoryOnlySpecifier(specifier));
@@ -1309,7 +1309,7 @@ function resolveLocalClosureSource(designDir: string, base: string, specifier: s
 }
 
 function resolveLocalCssDeclaration(designDir: string, base: string, specifier: string): string | undefined {
-	const target = resolveAuthoredLocalPath(base, specifier);
+	const target = resolveAuthoredLocalPath(designDir, base, specifier);
 	if (!isWithin(designDir, target) || isDesignPackagePath(designDir, target)) return undefined;
 	const css = selectLocalCandidate(designDir, target, extname(target), isDirectoryOnlySpecifier(specifier)).selected;
 	if (css === undefined || !css.endsWith(".css")) return undefined;
@@ -1421,7 +1421,7 @@ function isDirectoryOnlySpecifier(specifier: string): boolean {
 
 function resolveReferenceSource(designDir: string, base: string, reference: ReferenceDirectiveUse): string | undefined {
 	if (hasInvalidPathCharacter(reference.value)) return undefined;
-	const target = resolveAuthoredLocalPath(base, reference.value);
+	const target = resolveAuthoredLocalPath(designDir, base, reference.value);
 	if (!isWithin(designDir, target) || isDesignPackagePath(designDir, target)) return undefined;
 	if (reference.kind === "types") {
 		return selectTypeReferenceCandidate(designDir, target).selected;
@@ -1507,11 +1507,22 @@ function isAbsoluteLocalSpecifier(specifier: string): boolean {
 
 function isRelativeLocalSpecifier(specifier: string): boolean {
 	const normalized = localPathSpecifier(specifier).replaceAll("\\", "/");
-	return normalized === "." || normalized === ".." || normalized.startsWith("./") || normalized.startsWith("../");
+	return (
+		normalized === "." ||
+		normalized === ".." ||
+		normalized.startsWith("./") ||
+		normalized.startsWith("../") ||
+		// shared/ by its design-relative name (#273): local to design/, never a package
+		normalized.startsWith("shared/")
+	);
 }
 
-function resolveAuthoredLocalPath(base: string, specifier: string): string {
-	return resolve(base, localPathSpecifier(specifier).replaceAll("\\", sep).replaceAll("/", sep));
+function resolveAuthoredLocalPath(designDir: string, base: string, specifier: string): string {
+	const path = localPathSpecifier(specifier).replaceAll("\\", sep).replaceAll("/", sep);
+	// a shared/ specifier counts from design/, not from its importer (#273) — the
+	// same rule the compile's resolve plugin applies
+	const from = localPathSpecifier(specifier).replaceAll("\\", "/").startsWith("shared/") ? designDir : base;
+	return resolve(from, path);
 }
 
 function localPathSpecifier(specifier: string): string {
@@ -1547,7 +1558,7 @@ function inspectLocalAssets(
 		for (const use of inspection.moduleUses) {
 			if (!isRelativeLocalSpecifier(use.specifier) || hasInvalidPathCharacter(use.specifier)) continue;
 			if (boundaryUses.some((boundary) => boundary.start === use.start && boundary.end === use.end)) continue;
-			const target = resolveAuthoredLocalPath(dirname(file), use.specifier);
+			const target = resolveAuthoredLocalPath(designDir, dirname(file), use.specifier);
 			if (!isWithin(designDir, target) || isDesignPackagePath(designDir, target)) continue;
 			const explicitAsset =
 				/\.(?:(?:c|m)?js|jsx|css)$/.test(localPathSpecifier(use.specifier)) ||

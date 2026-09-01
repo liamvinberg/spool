@@ -18,6 +18,7 @@ import {
 	writePlaces,
 } from "./canvas-places";
 import { realDesignDir, resolveDesignPath } from "./design-path";
+import { reaimEscapingImports } from "./import-aim";
 import { pageMovedInState, pagesDroppedFromState, readCanvasState, writeCanvasState } from "./project-state";
 import { claimedNames, describeCollision, describeMissingFrame, frameKind, lookupFrame } from "./projection";
 import { coverDir, termScreenFile } from "./thumbs";
@@ -26,10 +27,14 @@ import { coverDir, termScreenFile } from "./thumbs";
  * The explorer's file operations (#228): what the rail's verbs do on disk, at
  * whatever depth the page holding them sits (#231).
  *
- * Every one of them moves or copies a folder, and none of them writes frame
- * source — the law that the canvas never authors a frame stands untouched, and
- * `data-go` literals are deliberately left alone, because the flow map is
- * derived and reports a target it can no longer find.
+ * Every one of them moves or copies a folder, and none of them authors frame
+ * source — the law that the canvas never writes what a frame draws stands
+ * untouched. The one exception a move carries is bookkeeping, not authoring: a
+ * `../` import whose target stayed put while the folder's depth changed is
+ * re-aimed (#273, `import-aim.ts`), because leaving it is leaving the frame
+ * broken by a gesture that promised to only rearrange. `data-go` literals are
+ * deliberately left alone, because the flow map is derived and reports a
+ * target it can no longer find.
  *
  * Three rules run through all of it. A bare frame name is identity across the
  * whole project, so a name that lands anywhere must miss every name claimed
@@ -207,6 +212,8 @@ export function movePages(root: string, pages: readonly string[], parent: string
 	}
 	for (const move of moves) {
 		renameSync(move.dir, move.target);
+		// every frame the page carries changed depth with it (#273)
+		reaimEscapingImports(designDir, move.dir, move.target);
 		carryPage(root, move.from, move.to);
 	}
 	return { kind: "moved" };
@@ -230,8 +237,14 @@ export function moveFrames(root: string, frames: readonly string[], page: string
 		moves.push({ from: resolveDesignPath(designDir, found.dir), to: target });
 	}
 	// name is identity, so the folder is the whole move: geometry, stills, the
-	// terminal screen, the frame's URL and every flow into it are untouched
-	for (const move of moves) renameSync(move.from, move.to);
+	// terminal screen, the frame's URL and every flow into it are untouched.
+	// The one thing inside it a move does touch is a `../` import (#273): its
+	// target stayed put while the folder's depth changed, so the import is
+	// re-aimed rather than the frame left broken
+	for (const move of moves) {
+		renameSync(move.from, move.to);
+		reaimEscapingImports(designDir, move.from, move.to);
+	}
 	return { kind: "moved" };
 }
 
@@ -271,7 +284,11 @@ export function duplicateFrames(
 		});
 	}
 	// the whole folder, sidecar included: a copy lands where its original sits
-	for (const step of plan) cpSync(step.move.from, step.move.to, { recursive: true });
+	for (const step of plan) {
+		cpSync(step.move.from, step.move.to, { recursive: true });
+		// a copy asked onto another page may land at another depth (#273)
+		reaimEscapingImports(designDir, step.move.from, step.move.to);
+	}
 	return { kind: "duplicated", copies: plan.map((step) => step.copy) };
 }
 

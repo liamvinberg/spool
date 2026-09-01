@@ -14,7 +14,9 @@ import {
 /**
  * The explorer's file operations and its order store (#228).
  *
- * Every verb here moves or copies a folder and never frame source. The two
+ * Every verb here moves or copies a folder and never authors frame source —
+ * the one write inside a moved folder is the re-aim of `../` imports whose
+ * targets stayed put (#273, `import-aim.test.ts` holds its rules). The two
  * things these hold the daemon to are the ones a folder move can quietly break:
  * a bare frame name is identity across the whole project, so a landing name
  * that is claimed anywhere is refused rather than guessed at; and the stores
@@ -242,6 +244,25 @@ describe("moving frames between pages", () => {
 			{ name: "detail", page: "shop" },
 			{ name: "home", page: "shop" },
 		]);
+	});
+
+	it("re-aims a ../ import at shared/ as the folder changes depth (#273)", async () => {
+		const { spoolDir, root, name } = explorerProject();
+		writeFrame(
+			root,
+			"dashboard",
+			'import { cn } from "../../shared/lib/utils";\nexport default () => <p className={cn("x")} />;\n',
+		);
+		writePageFrame(root, "shop", "checkout", label("checkout"));
+		const app = makeApp(spoolDir);
+
+		const res = await app.request(`/api/p/${name}/frames/move`, jsonPost({ frames: ["dashboard"], page: "shop" }));
+
+		expect(res.status).toBe(204);
+		const moved = readFileSync(designFile(root, "frames", "shop", "dashboard", "frame.tsx"), "utf8");
+		// the healed form counts no folders, so no later move can break it again
+		expect(moved).toContain('from "shared/lib/utils"');
+		expect(moved).not.toContain("../");
 	});
 
 	it("takes a frame already on the page as arrived", async () => {

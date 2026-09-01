@@ -49,3 +49,33 @@ describe("the compiled closure", () => {
 		expect(sourceFiles).toEqual([join(designDir, "frames", "cart", "frame.tsx")]);
 	});
 });
+
+/**
+ * The design-relative shared/ form (#273): `import ... from "shared/lib/utils"`
+ * resolves against design/ from any importer at any depth, so a folder move
+ * never breaks the import. The prefix must be claimed before
+ * `packages: "external"` sends it to the import map, where nothing answers it.
+ */
+describe("design-relative shared/ imports", () => {
+	it("resolves shared/ against design/ from inside a page", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root } = makeProject(spoolDir);
+		writeDesignFile(
+			root,
+			join("frames", "shop", "cart", "frame.tsx"),
+			'import { cn } from "shared/lib/utils";\nexport default () => cn("cart");\n',
+		);
+		const designDir = realDesignDir(root);
+
+		const { sourceFiles } = await buildDesignEntry({
+			designDir,
+			resolveDir: join(designDir, "frames", "shop", "cart"),
+			sourcefile: "<spool-boot>",
+			contents: 'import Frame from "./frame.tsx";\nexport { Frame };\n',
+			label: 'frame "cart"',
+		});
+
+		// the scaffold's own cn(), reached without a single ../
+		expect(sourceFiles).toContain(join(designDir, "shared", "lib", "utils.ts"));
+	});
+});
