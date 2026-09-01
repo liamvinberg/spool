@@ -8,6 +8,10 @@
 
 ### Patch Changes
 
+- 1371203: The Mac app said "no claude on this machine" on machines that have claude. macOS starts an app you launch from the Dock with a short PATH: the system directories and nothing your shell profile ever set. Everything you install for yourself lives somewhere else, so the daemon inside the app looked for the agent, could not see it, and put up a wall. Pressing "check again" gave the same answer forever, and the same gap hid the rest of your tools from the agent once it did run.
+
+  The app now asks your login shell for its PATH before it starts the daemon, the same way opening a terminal would, and starts the daemon with that. Nothing changes when you run `spool` yourself, which always had the right PATH. If your shell cannot answer, the app starts the daemon exactly as it did before.
+
 - 71a5409: On Linux, a frame stopped updating the canvas after its first edit. The daemon watches `design/` for changes, and Linux has no recursive watch of its own — Node emulates one by watching every individual file. An inotify watch belongs to a file's inode rather than to its name, and every write spool makes replaces the inode behind the name, so the first edit to a frame threw away the watch that reported it. Nothing after that was ever announced: an agent's work, a hand edit put back, a file changed in your editor.
 
   The daemon now watches folders rather than files where the OS does not walk the tree itself. A folder outlives the names inside it, so a frame keeps reporting for as long as its folder is there. macOS and Windows are unchanged, and use the recursive watch the OS provides.
