@@ -1,5 +1,131 @@
 # Changelog
 
+## 0.12.0
+
+### Minor Changes
+
+- 5402879: A page now stands on the field that holds it. Open a project whose frames all live on pages and the canvas used to be blank while the rail beside it read full, because a page had nowhere to be. Each page is drawn as its own canvas: every frame under it, at its own geometry, with the cover it already has. A page of pages and a page nobody has written into stop wearing the same picture.
+
+  Its size says how much is in it and its shape is its own within a band. A page of one frame draws one frame big. A page of forty-five draws about two and a half times wider. A page long enough to read as a hairline is folded into bands and stacked, which keeps every frame and the reading order.
+
+  Click one to select it and the properties rail names it, its folder and its count. Drag it and the place is written to `design/canvas.json` beside the rail's order, so an arrangement made on one machine arrives on the next after a pull, and one press of undo takes it back. Double-click goes inside, the same gesture that goes inside a frame. Nothing about a page resizes or rotates: its size is derived from what is inside it.
+
+  A page holding neither frames nor pages now says so on the field, scoped to itself, instead of showing the blank a project with nothing in it shows.
+
+- b9e8a87: The properties rail now edits an element's string attributes. Pick something and the rail lists what HTML gives it: `alt` on an image, `href` on a link, `placeholder` on an input, `title` on anything, with the value the file holds. Type a new one and it is spliced into the file. A value written as an expression greys with the expression shown, and a `data-go` shows its walk target read-only, because that arrow is edited in flows.
+
+  Images can be swapped by hand. Drop a picture onto a selected image, or pick one from the rail, and spool writes the file beside the frame, writes the import, and points `src` at it. There is no URL to type, because an image in a frame is an import. A picture too big for the document's 512 KB image budget is refused with its size, and a `src` the file computes is refused with the expression named.
+
+- 0620dff: The canvas no longer waits on the project registry before it draws. Opening a project used to block on a scan of every registered project's design folder, which grows with every project you add and is paid on every open. Now only the session gates the canvas, and the registry lands behind it.
+
+  The loader over the remaining wait is the mark winding on and off. A fast open still shows nothing at all, because there is nothing to wait for.
+
+- 7f17d1c: Breaking: double-clicking a frame goes inside it again. Since the direct-manipulation release a double-click on a frame's body stepped one rung down into the element under the pointer, and going inside was the label's double-click or Return. Running a frame is the thing you do all day on this canvas, so it takes the gesture back.
+
+  Reaching an element is unchanged everywhere else: the platform modifier and a click still land on the deepest element in one go, ⌘Return steps down a rung at a time, Tab and Shift-Tab walk the row, and Shift-Return and Escape climb. What is gone is the rung-at-a-time descent by pointer — the ladder is the keyboard's now.
+
+  Hovering a frame draws one ring, the rung a click would take. The dashed ring beneath it went with the gesture it was drawn for: a second ring that promises a step nothing takes is noise.
+
+- f6e8a09: Breaking: Backspace and Delete used to always move the selected frames to the Trash. With an element selected they now delete that element instead, writing the change into the frame's source. With no element selected they move frames to the Trash exactly as before.
+
+  Two gestures on a selected element. Click it again and its words become editable where they are drawn, on the element itself rather than in a field somewhere else: Return commits, clicking away commits, Escape puts back what was there. Backspace or Delete removes the element's lines. Both write straight into the frame's file, both are silent, and one press of undo takes either back.
+
+  Neither one applies where the file will not honestly carry it, and the reason is shown under the element instead: words that are an expression, words inside a mapped row (they are data, not design), an element that is not a whole child of its parent, and anything a shared component defines.
+
+  A frame reloads after an edit it caused, and now holds its last paint until the new document has drawn, so the frame you just typed into no longer blinks. A project that keeps no history is told once, quietly, that nothing is catching hand edits.
+
+- f896373: Dragging a frame now snaps its gaps, not just its edges. Move a frame to the end of an evenly spaced row and it lands on the gutter the row already keeps. Drop one between two frames and it settles where both gaps are the same. Every gap holding the matched spacing gets a small ticked bar, so you can see which ones are equal.
+
+  Hold the platform modifier through a drag and nothing snaps at all, edges or gaps. The frame goes exactly where you put it.
+
+- 9fcf6d8: Hands can now change frame source, one small edit at a time. The canvas sends a typed edit, such as a class token, a string, an element's text, or an element removed, and spool parses the file fresh, checks the edit can be made honestly, and replaces exactly those characters. The rest of the file comes back unchanged, so a hand edit reads as an ordinary working tree change.
+
+  An edit that cannot be made honestly is refused with its reason rather than half applied: a computed class, an inline style, an element a shared file defines, words that come from data. An edit formed against a file that has changed since is refused too, so an agent and a person can work in the same file at the same time. Every edit stores the edit that puts it back, on the undo stack the canvas already keeps for moving frames.
+
+- 10b611f: Hold ⌥ with an element selected and point at the neighbour beside it: the canvas draws the distance between them, and says what the distance is made of. The number breaks into the parent's gap, the two facing margins and whatever is left over, and each part is named with the class that produced it and the element that class is written on — `gap-4 on parent ul`, `mr-2 on li`, a `space-y-6` on the section even though the child is what carries the margin.
+
+  A distance a stylesheet produced shows its pixels and says no class, rather than naming one that did not cause it. A margin that block flow collapsed away is listed with no pixels at all, because editing it would move nothing. Anything the classes do not account for is called residual. Only a neighbour measures: across a skipped element the same three parts would name one gap for a distance made of two and a whole box.
+
+  It is read-only. Changing a distance is a field in the properties rail, and this is how you find out which field.
+
+- 1c6744e: The right column now has one strip on its edge listing what can stand in it. Properties and the agent used to be two rails that took turns, so whichever one you were not looking at was the button, and that button moved. Now the strip stays where it is, the lit glyph is what the panel shows, and pressing it again shuts the column. Each surface keeps its own width, and a column you left shut comes back shut.
+
+  The agent is still off unless `experiments` in `~/.spool/config.json` names `agent-panel`. With it off the column is the properties rail on its own, the way it was. With it on, the glyph tells you when a turn is running and marks it when one lands while you were looking at something else.
+
+- 984478f: The `+` picker searches every folder under your home instead of making you click down to it. Type part of a name and the folder answers wherever it is, ranked, with spool projects first and the folder you meant almost always at the top. Nothing typed is the browse it always was.
+
+  The path moves out of the header to make room for the field, and becomes a breadcrumb whose every segment is a press, so climbing back to `~` is one click rather than four. A jump row under the list offers home and the folders your projects already live in. The keyboard is enough on its own: `↑↓` moves, `↵` opens a project or goes into a folder, `→` always goes in, `⌫` at an empty query goes up, `esc` clears a query and closes an empty one.
+
+  Double-clicking a folder no longer navigates twice.
+
+- ff19a74: An element you have selected can now be resized by dragging it. The ring wears the full handle set: a cube on each corner, bare grab strips along the edges, and a rotate zone just outside each corner. A corner writes width and height together, and one press of undo takes both back. Rotating writes a turn in whole degrees, with shift snapping to 15°.
+
+  The size lands as the class the frame's author would have written. A whole step on the project's own spacing scale becomes `w-56`; anything else stays absolute, `w-[347px]`, because the drag meant pixels.
+
+  A handle is only drawn where the file will honestly carry the change, so there is no drag that turns out to do nothing. An expression for a className, an inline style, spread props with no literal, an element a shared file defines, a width a breakpoint already pins: each of those leaves that handle off the ring, and the properties rail says why.
+
+  The size is measured once it is written, because a class does not always decide it: a rule outside Tailwind's layer can beat it, and layout can ignore it. Where the box does not follow what was written, the edit is put back and the canvas says so.
+
+  While you drag, the readout rides beside the ring and the matching field in the properties rail ticks with it. Nothing reaches the file until you let go.
+
+- aae9bbc: A third canvas tool, Edit, on `E`. Select's subject is the frame: a click takes one to arrange it, a double-click goes inside it. Edit's subject is what is inside a frame, on Figma's ladder: a click takes the rung the scope is open on, starting at the frame's root element, and a double-click steps down to the next one. The platform modifier still leaps straight to the deepest element from either tool, and the keyboard ladder is unchanged.
+
+  Splitting the two is what lets both plain double-clicks exist. Running a frame is the constant act on this canvas and pays no modifier for it; descending is constant too, but only once picking up the tool has said you are editing.
+
+  Each tool is the other's transient. Holding Space borrows the Hand anywhere, as before; holding the platform modifier in Select borrows Edit for exactly as long as it is held. Edit draws no frame hover ring, because the frame is not what it takes, and its hover draws the rung under the pointer's own dashed beneath it, which is where its double-click goes next.
+
+  Export gave up `E`. It was an occasional act with a shortcut, and the frame's own right-click menu has carried it all along.
+
+- 64b2cd5: The canvas has a right rail again, and it shows what you are pointing at. Select a frame and it gives you the frame's own x, y, width and height in pixels, which you can type into. Step into an element and it gives you a trail of names from the frame down to the element you have, each one a press away, so climbing back out is one click. Under the trail it lists the variants the element's classes carry, `hover:` and `md:` and the rest, and you pick which one you are looking at. At the foot it prints the element's class list exactly as the file spells it, and dims whatever sits outside the variant you picked.
+
+  Adding a variant is the `+` beside the list. Removing one is the `×` on the one you have open, which takes every class under it in a single step you can undo.
+
+  If the agent panel is switched on for your machine, it now starts as a 44 pixel strip on the far edge and the properties rail has the column. Press the strip to bring the agent back, press the properties strip to go the other way. Only one of them stands at a time. Nothing changes if you never switched the agent panel on: the column is simply the properties rail.
+
+- 4271638: Spool now reads your project's own theme, and the canvas asks it rather than assuming Tailwind's defaults. It compiles your `tokens.css` the same way it compiles your frames, so it knows your colours, your type scale, your radii and your breakpoints by the names you gave them. The first place you see it is the properties rail: the scopes it offers you to edit under are your breakpoints, not the ones you renamed away.
+
+  The same reading fixed a real bug in editing. If your type scale has a name Tailwind does not use, like `text-md`, writing a size to an element used to take the element's colour away, because the class looked like a colour to spool. It does not any more: a size is a size and a colour is a colour, by your theme's own naming. Editing a colour on a border edge, a caret, a shadow or a divider now replaces what was there instead of stacking a second class beside it, and `top`, `right`, `bottom` and `left` collapse into `inset` the way padding always has.
+
+- 04bde3e: The properties rail has its rows now, so you can change what you are pointing at instead of only reading it. Position, size, layout, appearance, fill, stroke and text, each with the CSS name on the left and one control on the right. Every field holds the Tailwind class and says what it means beside it: the box reads `4` and the grey half reads `16px`.
+
+  Numbers take a sign, a fraction and a unit. Type `-4` for a negative margin, `50%` for a half width, `347px` for an exact one, `12deg` for a turn. Drag the row's label to scrub it, or use the arrows: one step each, ten with shift held.
+
+  Padding, margin and gap start as one box and open into two and then four with the caret beside them. The radius opens into four corners and the border into four edges. Whatever you write comes back as the fewest classes that say it, and if you wrote `ps-4` rather than `pl-4` it stays that way.
+
+  Colours have a swatch, a name and an alpha. The name menu is your project's own colours first and Tailwind's underneath, with a line to type into, and you can type a raw colour like `#ff0044` straight into the same menu. Gradients are three rows, `from`, `via` and `to`, each with its own colour, alpha and position, under a menu for the shape and the direction. `none` takes the whole gradient off at once.
+
+  `font-variant-numeric`, `filter` and `scroll-snap-type` are rows of chips you press on and off, and turning one on turns its opposite off.
+
+  At the foot there is `+ class` for anything with no row of its own. Type a class and spool's own compiler says whether it lands: what compiles shows you the CSS it produces, what does not stays grey with the reason, like `no utility foo-bar`. `[mask-type:luminance]`, `md:hidden` and `mt-3.5!` all go in. Press any class on the line below to take it off again.
+
+  Editing no longer loses the element you are editing. A change used to reload the frame and drop your selection, so the rail emptied under your hands; it keeps the element and picks it up again in the fresh document.
+
+- 9d4cfed: Breaking: Play used to answer both P and Shift-Return. Shift-Return now steps back out of an element, so Play keeps P alone.
+
+  Selection is a ladder now. Double-click a frame's body to step into the element under the pointer, and again to go deeper. Hold the platform modifier and click to land on the innermost element in one go. Tab walks to the next element beside the one you have, Shift-Tab to the one before. The platform modifier with Return steps in without the pointer, Shift-Return steps back out, and Escape does what it always did: leave the frame you are inside, then climb.
+
+  Hover now draws two rings on the frame under the pointer: the element a click would take, and under it, dashed, the one a double-click would step into. So a step is something you see before you take it.
+
+  Going inside a frame moves to its label. Double-click the label, or press Return with the frame selected, and the frame runs as before. A click on the frame body still takes the frame, and dragging it still moves it.
+
+### Patch Changes
+
+- 7963c7a: Scrubbing a frame's x, y, w or h in the properties rail no longer jitters. A scrub used to write the sidecar on every 4px tick, and every write came back around: the daemon's change stream echoed it, the canvas refetched the projection under the drag, and stale geometry stomped the newer state on screen. A scrub now moves the screen alone while the pointer is down and writes once when it lifts — the same shape a corner drag has always had — so the whole gesture is one write, one echo after release, and one press of undo.
+- a0d1ab0: The crumbs at the top of the properties rail no longer squeeze every name down to a letter or two. Select something eight elements deep and the trail used to read `spoo… / d. / m… / d. / d. / button`, which named nothing and gave you nothing safe to press. Now the frame, the element you are on and as many of its nearest ancestors as fit all read in full, and the ones that do not fit collapse into a single `…`. Press it and you get the list of the elements it stands for, each one a press away.
+
+  How many crumbs fit is measured against the rail as it actually is, so dragging the rail wider shows more of the trail and dragging it narrower shows less.
+
+- 250b57a: Going inside a frame no longer takes you further away. Zoom in on a long page to read it, double-click to make it live, and the camera stays exactly where you left it instead of pulling back to fit the whole frame on screen. Entering from a wider view still fits, as it always did.
+
+  ⏎ on a frame you have since scrolled away from pans to it at the zoom you are already at, the way arriving on a walk does.
+
+- 10b611f: The hover rings inside a frame come back. A move followed quickly by a press voided the move's own question to the frame, and the answer that never arrived was the thing that armed the next question — so from the first click of a session the canvas stopped drawing the rung under your pointer and the dashed rung below it.
+- 8561775: Hovering a page row in the sidebar now shows the same three dots a frame row has, and they open the same menu a right-click does.
+
+  A page's number now counts every frame under it, its own pages' included. A page holding four pages and no frames of its own was reading 0. The number is only there while the page is shut: once its rows are drawn, they are the count.
+
+- 3ab462c: Dragging a frame's resize handle is smooth again. The canvas used to resize the frame once for every pointer event, and a trackpad reports faster than the screen redraws, so the live page inside the frame was laid out over and over between two drawn frames and the edge trailed behind your finger. The canvas now takes one size per redraw, the one the pointer is at, and the drag still ends exactly where you let go.
+
 ## 0.11.0
 
 ### Minor Changes
