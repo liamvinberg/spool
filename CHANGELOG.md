@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.0
+
+### Minor Changes
+
+- dd9ae65: The agent is one of the two glyphs in the canvas's right column for everyone. 0.12.0 shipped that column with the agent still behind the `agent-panel` name in `experiments`, and that name is no longer read: a column with an index has somewhere to put the agent, so it is a surface spool has rather than one a machine switches on. Leaving the old name in `~/.spool/config.json` changes nothing and breaks nothing.
+
+### Patch Changes
+
+- 71a5409: On Linux, a frame stopped updating the canvas after its first edit. The daemon watches `design/` for changes, and Linux has no recursive watch of its own — Node emulates one by watching every individual file. An inotify watch belongs to a file's inode rather than to its name, and every write spool makes replaces the inode behind the name, so the first edit to a frame threw away the watch that reported it. Nothing after that was ever announced: an agent's work, a hand edit put back, a file changed in your editor.
+
+  The daemon now watches folders rather than files where the OS does not walk the tree itself. A folder outlives the names inside it, so a frame keeps reporting for as long as its folder is there. macOS and Windows are unchanged, and use the recursive watch the OS provides.
+
+- 448cfc3: Update and Relaunch in the Mac app now installs the update. It downloaded the new version and then relaunched into the old one, because the download never reached the part of macOS that swaps the bundle. While it downloads, the Dock icon fills and the menu bar item counts the percent, so a 160 MB download no longer looks like a button that did nothing. If the swap does not happen, Spool says so, opens the release page, and puts its daemon back rather than sitting on a stopped window.
+
 ## 0.12.0
 
 ### Minor Changes
