@@ -1,7 +1,7 @@
 import { DockScreen } from "../../../shared/ui/spool-dock-screen";
 
 /**
- * stack — one strip on the edge, the surfaces listed down it.
+ * stack — one strip on the edge, the surfaces listed down it. The take that won.
  *
  * The 44px strip stops belonging to a rail and becomes the column's index: it
  * is always there, always in the same place, and the glyphs in it are what the
@@ -17,14 +17,41 @@ import { DockScreen } from "../../../shared/ui/spool-dock-screen";
  * left the rail when the agent took it, and the component library page (#189)
  * is a surface with nowhere to stand today.
  *
- * Select an element, then press ⏎ to run a turn: the agent glyph carries the
- * running mark, and a dot once the turn lands unread.
+ * **The motion.** Three things move and they are all the column's, never a
+ * rail's insides:
+ *
+ *   the edge, 300ms on `cubic-bezier(0.23,1,0.32,1)`, which is the curve and
+ *   the duration both shipped rails already wear for width (`sidebar.tsx`
+ *   calls it the house curve). Opening, shutting and swapping are one gesture,
+ *   so they are one number.
+ *
+ *   the cross, 120ms and no more. Both surfaces stand in the panel at the width
+ *   they will settle at and the column clips them, so the arriving rail never
+ *   re-lays: the alternative is watching the properties rows squash through
+ *   120px on their way in, which is a whole surface reflowing to say a button
+ *   was pressed. Faster than the edge on purpose — the content is done before
+ *   the column stops, so the movement reads as the edge travelling rather than
+ *   as a card being dealt.
+ *
+ *   the marks. A glyph takes colour in 140ms and gives 10% under the press, the
+ *   shipped rails' own numbers; the unread dot grows in from 0.4 over 200ms,
+ *   which is the canvas's own unseen mark (`--animate-unseen-in`). It arrives
+ *   and then holds still: a finished turn wants noticing on the next glance,
+ *   not dealing with now, so nothing pulses.
+ *
+ * Every transition is off under `prefers-reduced-motion`. The two siblings are
+ * the same take with the motion changed: `--fixed` never moves the edge,
+ * `--cut` has none of this at all.
+ *
+ * Press the glyphs. Press ⏎ to run a turn with the agent shut and watch the
+ * mark arrive on the glyph.
  */
 export default function DockStackFrame() {
 	return (
 		<DockScreen
 			take="stack"
-			argues="One strip, two glyphs. The column's index sits still while what it shows changes."
+			motion="eased"
+			argues="The edge travels for 300ms and nothing inside the rails moves at all."
 		/>
 	);
 }

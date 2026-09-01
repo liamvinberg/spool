@@ -1,3 +1,4 @@
+import { motion, useReducedMotion } from "motion/react";
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { stylesheetFor } from "../lib/properties-families";
 import { ELEMENTS, elementOf } from "../lib/properties-model";
@@ -25,6 +26,10 @@ import { SpoolShell } from "./spool-shell";
  * properties panel is 300, the agent panel is 420, and a shut surface still has
  * to be able to say that something happened in it.
  *
+ * `--stack` won, so the motion is drawn where the winner is: `DockMotion` is
+ * the second flag, and what moves is the column's edge and the opacity of what
+ * stands in it. Nothing inside either rail ever re-lays.
+ *
  * The field is the properties surface's own document — kaffe's cart, live, with
  * the rail from `spool-properties-rail.tsx` reading and writing it — so
  * selecting an element fills the properties side for real. The agent side is a
@@ -35,6 +40,18 @@ import { SpoolShell } from "./spool-shell";
  */
 
 export type DockTake = "beside" | "stack" | "split" | "over" | "swap";
+
+/**
+ * How the `stack` column moves, which is the second question the take asks
+ * (#267 is where the agent is switched on; this is what happens when it is).
+ *
+ *   eased  the house curve: the column's edge travels 300ms, the surfaces cross
+ *          at 120ms, and neither rail re-lays while it happens
+ *   fixed  both surfaces are laid out at 420, so pressing a glyph never moves
+ *          the edge and the only motion is the cross
+ *   cut    nothing transitions, which is where the other two are read from
+ */
+export type DockMotion = "eased" | "fixed" | "cut";
 
 const PAGES: readonly PageRow[] = [
 	{ name: "app", frames: ["menu", "cart", "receipt"], active: true, open: true },
@@ -110,7 +127,15 @@ const ORIGINAL = new Map(
 /** where the cart stands in the field, which is a coordinate rather than a camera */
 const STAGE = { left: 340, top: 84 } as const;
 
-export function DockScreen({ take, argues }: { take: DockTake; argues?: string | undefined }) {
+export function DockScreen({
+	take,
+	argues,
+	motion: character = "eased",
+}: {
+	take: DockTake;
+	argues?: string | undefined;
+	motion?: DockMotion | undefined;
+}) {
 	const [state, setState] = useState<Snapshot>(INITIAL);
 	const [history, setHistory] = useState<readonly Snapshot[]>([]);
 	const [selection, setSelection] = useState<Pick | null>({ id: "pay", key: "pay" });
@@ -299,6 +324,7 @@ export function DockScreen({ take, argues }: { take: DockTake; argues?: string |
 		take === "over" ? null : (
 			<Dock
 				take={take}
+				motion={character}
 				properties={properties}
 				agent={agent}
 				life={agentLife}
@@ -390,6 +416,7 @@ interface Life {
 
 function Dock({
 	take,
+	motion: character,
 	properties,
 	agent,
 	life,
@@ -398,6 +425,7 @@ function Dock({
 	working,
 }: {
 	take: Exclude<DockTake, "over">;
+	motion: DockMotion;
 	properties: ReactNode;
 	agent: ReactNode;
 	life: Life;
@@ -406,7 +434,8 @@ function Dock({
 	working: boolean;
 }) {
 	if (take === "beside") return <Beside properties={properties} agent={agent} life={life} onRead={onRead} />;
-	if (take === "stack") return <Stack properties={properties} agent={agent} life={life} onRead={onRead} />;
+	if (take === "stack")
+		return <Stack properties={properties} agent={agent} life={life} onRead={onRead} motion={character} />;
 	if (take === "split") return <Split properties={properties} agent={agent} life={life} />;
 	return <Swap properties={properties} agent={agent} attention={attention} working={working} />;
 }
@@ -480,24 +509,70 @@ function Stack({
 	agent,
 	life,
 	onRead,
+	motion: character,
 }: {
 	properties: ReactNode;
 	agent: ReactNode;
 	life: Life;
 	onRead: () => void;
+	motion: DockMotion;
 }) {
 	const [open, setOpen] = useState<Surface | null>("properties");
+	const eased = character !== "cut";
+	/**
+	 * How wide each surface is laid out.
+	 *
+	 * `fixed` gives both of them the agent's 420 so the edge never moves, which
+	 * is the whole of that take. Everywhere else a surface keeps its own width
+	 * and the column's edge travels the 120 between them.
+	 */
+	const width = (surface: Surface) =>
+		character === "fixed" ? AGENT_W : surface === "agent" ? AGENT_W : PROPERTIES_W;
+	const panel = open === null ? 0 : width(open);
+
 	return (
 		<div className="flex h-full shrink-0">
-			{open === null ? null : (
-				<Panel width={open === "agent" ? AGENT_W : PROPERTIES_W} label={open}>
-					{open === "agent" ? agent : properties}
-				</Panel>
-			)}
+			{/*
+			 * One panel, and both surfaces standing in it at their own width.
+			 *
+			 * The naive swap re-lays the arriving rail while the column is still
+			 * moving: the properties rows squash through 120px of width on their way
+			 * in, which is a whole surface reflowing to say "you pressed a button".
+			 * So each surface is absolutely placed against the strip at the width it
+			 * will settle at, the column clips them, and what actually animates is
+			 * the edge and the opacity. Nothing inside either rail moves at all.
+			 */}
+			<div
+				className={cn(
+					"relative h-full shrink-0 overflow-hidden",
+					eased && "transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
+				)}
+				style={{ width: panel }}
+			>
+				{(["properties", "agent"] as const).map((surface) => {
+					const up = open === surface;
+					return (
+						<aside
+							key={surface}
+							aria-label={surface}
+							aria-hidden={!up}
+							className={cn(
+								"absolute inset-y-0 right-0 flex flex-col border-border border-l bg-bg",
+								eased && "transition-opacity duration-[120ms] ease-out motion-reduce:transition-none",
+								up ? "opacity-100" : "pointer-events-none opacity-0",
+							)}
+							style={{ width: width(surface) }}
+						>
+							{surface === "agent" ? agent : properties}
+						</aside>
+					);
+				})}
+			</div>
 			<Strip>
 				<StripButton
 					label="properties"
 					lit={open === "properties"}
+					eased={eased}
 					onPress={() => setOpen((held) => (held === "properties" ? null : "properties"))}
 				>
 					<PropertiesIcon className="h-4 w-4" />
@@ -505,6 +580,7 @@ function Stack({
 				<StripButton
 					label="agent"
 					lit={open === "agent"}
+					eased={eased}
 					life={life}
 					onPress={() => {
 						setOpen((held) => (held === "agent" ? null : "agent"));
@@ -749,12 +825,14 @@ function StripButton({
 	label,
 	lit,
 	life,
+	eased = true,
 	onPress,
 	children,
 }: {
 	label: string;
 	lit: boolean;
 	life?: Life | undefined;
+	eased?: boolean | undefined;
 	onPress: () => void;
 	children: ReactNode;
 }) {
@@ -765,6 +843,10 @@ function StripButton({
 			onClick={onPress}
 			className={cn(
 				"relative flex h-8 w-8 items-center justify-center rounded-sm",
+				// the shipped rails' own press feel: colour in 140ms on the house
+				// curve, and the glyph gives under the finger
+				eased &&
+					"transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-90 motion-reduce:transition-none",
 				lit ? "bg-surface text-text" : "text-muted/70 hover:text-text",
 			)}
 		>
@@ -772,15 +854,31 @@ function StripButton({
 			{life === undefined || lit ? null : life.working ? (
 				<StateMark state="running" className="-right-0.5 absolute top-0.5" />
 			) : life.unread ? (
-				<Dot className="-right-0.5 absolute top-1" />
+				<Dot className="-right-0.5 absolute top-1" eased={eased} />
 			) : null}
 		</button>
 	);
 }
 
-/** a turn that landed in a surface nobody was looking at */
-function Dot({ className }: { className?: string | undefined }) {
-	return <span className={cn("h-1.5 w-1.5 rounded-full bg-thread", className)} />;
+/**
+ * A turn that landed in a surface nobody was looking at.
+ *
+ * It arrives the way the canvas's own unseen mark does (`--animate-unseen-in`,
+ * 200ms from 0.4): the point of the dot is that you notice it on the next
+ * glance rather than at the instant it appears, so it grows into place and does
+ * nothing after that. Nothing pulses. A mark that keeps moving is asking to be
+ * dealt with now, and a finished turn is not an alarm.
+ */
+function Dot({ className, eased = true }: { className?: string | undefined; eased?: boolean | undefined }) {
+	const still = useReducedMotion() === true;
+	return (
+		<motion.span
+			className={cn("h-1.5 w-1.5 rounded-full bg-thread", className)}
+			initial={eased && !still ? { opacity: 0, scale: 0.4 } : false}
+			animate={{ opacity: 1, scale: 1 }}
+			transition={{ duration: 0.2, ease: [0.22, 0.61, 0.36, 1] }}
+		/>
+	);
 }
 
 function SectionHead({ icon, name, mark }: { icon: ReactNode; name: string; mark?: ReactNode }) {
