@@ -3,7 +3,6 @@ import { anatomyOf, splitClass, writeClass } from "../../daemon/class-write";
 import type { CompiledTheme, Geometry, HandOp, ProjectAsset, RungRead } from "../api";
 import { fetchTheme, listAssets, readRungs } from "../api";
 import { cn } from "../cn";
-import { PropertiesIcon } from "../icons";
 import { MenuItem } from "./context-menu";
 import { type AttributeField, fieldsFor, IMAGE_ACCEPT, swappable } from "./properties-attributes";
 import { useCompiler } from "./properties-compile";
@@ -38,15 +37,6 @@ import {
 } from "./properties-scope";
 import { AddClassRow, PropertySections, type View } from "./properties-sections";
 import type { PickedHit } from "./protocol";
-import {
-	COLLAPSED_BELOW,
-	GRIP_CLASS,
-	GRIP_HAIR,
-	PROPERTIES_WIDTH,
-	STRIP_WIDTH,
-	useRailDrag,
-	useRailWidth,
-} from "./rail-width";
 import { PanelCaret } from "./sidebar";
 
 /**
@@ -54,10 +44,11 @@ import { PanelCaret } from "./sidebar";
  *
  * The canvas lost its inspector — `agent-rail.tsx` still says "elements died
  * with the inspector" — and direct manipulation wants that column again, so
- * properties are what the column shows and the agent is reached, when its
- * experiment is on at all, by pressing its 44px strip. Never a tab row: the
- * agent rail killed its own on purpose, and two rails side by side do not fit
- * — 300 plus 420 leaves 472px of field at 1440.
+ * properties are what the column shows by default. Never a tab row: the agent
+ * rail killed its own on purpose, and two rails side by side do not fit — 300
+ * plus 420 leaves 472px of field at 1440. Where this surface stands, how wide
+ * it is and how it is reached are all `dock.tsx`'s; what arrives here is a
+ * width and one act, which is that the head's caret shuts the column.
  *
  * This is the shell: the crumbs, the scope bar, the empty states and the
  * source line. What every row reads and writes is the property model (#257),
@@ -138,8 +129,8 @@ export function PropertiesRail({
 	acts,
 	revision,
 	preview = null,
-	shut,
-	onOpen,
+	width,
+	onCollapse,
 }: {
 	project: string;
 	held: Held | null;
@@ -148,70 +139,27 @@ export function PropertiesRail({
 	preview?: RailPreview | null;
 	/** bumps when the held frame's document reloads, so the read follows the file */
 	revision: number;
-	/** the agent has the column: the rail stands as its strip until it is pressed */
-	shut: boolean;
-	onOpen: () => void;
+	/** what the dock has given this surface, which is its own remembered width */
+	width: number;
+	/** the caret in the head: it shuts the column rather than this rail (`dock.tsx`) */
+	onCollapse: () => void;
 }) {
-	const [width, setWidth] = useRailWidth("properties", PROPERTIES_WIDTH);
-	const { dragging, grip } = useRailDrag(width, setWidth, PROPERTIES_WIDTH);
-	const collapsed = shut || width <= COLLAPSED_BELOW;
-
 	return (
-		<aside
+		<section
 			aria-label="Properties"
 			data-properties-rail=""
-			style={{ width: collapsed ? STRIP_WIDTH : width }}
-			className={cn(
-				"relative z-20 h-full shrink-0 overflow-hidden border-border border-l bg-bg",
-				dragging
-					? ""
-					: "transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
-			)}
-			onPointerDown={(event) => event.stopPropagation()}
-			onPointerMove={(event) => event.stopPropagation()}
-			onDoubleClick={(event) => event.stopPropagation()}
-			onContextMenu={(event) => {
-				event.preventDefault();
-				event.stopPropagation();
-			}}
+			style={{ width }}
+			className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
 		>
-			{collapsed ? (
-				<div className="flex h-full w-11 flex-col items-center">
-					<button
-						type="button"
-						aria-label="Expand properties"
-						onClick={() => {
-							// the strip is the switch: pressing it takes the column back
-							// from the agent, and opens the rail if a drag had shut it
-							onOpen();
-							if (width <= COLLAPSED_BELOW) setWidth(PROPERTIES_WIDTH);
-						}}
-						className="flex h-11 w-11 items-center justify-center text-muted/70 hover:text-text"
-					>
-						<PropertiesIcon />
-					</button>
-				</div>
-			) : (
-				<div className="flex h-full min-w-[200px] flex-col">
-					<Body
-						project={project}
-						held={held}
-						acts={acts}
-						revision={revision}
-						preview={preview}
-						onCollapse={() => setWidth(STRIP_WIDTH)}
-					/>
-				</div>
-			)}
-
-			{/* the grip is not offered while the agent has the column: a drag then would
-			    resize a rail nobody can see (#256) */}
-			{shut ? null : (
-				<button type="button" aria-label="Resize properties" {...grip} className={GRIP_CLASS}>
-					<span className={GRIP_HAIR} />
-				</button>
-			)}
-		</aside>
+			<Body
+				project={project}
+				held={held}
+				acts={acts}
+				revision={revision}
+				preview={preview}
+				onCollapse={onCollapse}
+			/>
+		</section>
 	);
 }
 

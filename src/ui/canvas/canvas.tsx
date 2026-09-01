@@ -74,6 +74,7 @@ import { type CanvasTool, CanvasTools } from "./canvas-tools";
 import type { CoverRaster } from "./capture-broker";
 import { CollisionNotice, NoticeStrip } from "./collision-notice";
 import { ContextMenu, contextMenuSize } from "./context-menu";
+import { Dock } from "./dock";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
 import { type ExportNotice, ExportToast } from "./export-toast";
 import { FindPalette } from "./find-palette";
@@ -167,7 +168,6 @@ import {
 	sitesMessage,
 	walkRejectionReason,
 } from "./protocol";
-import { COLLAPSED_BELOW, STRIP_WIDTH, useRailWidth } from "./rail-width";
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
@@ -364,7 +364,6 @@ export function ProjectCanvas({
 	 * and the agent is reached by pressing its edge. A width somebody dragged
 	 * outlives the reload, as every rail's does.
 	 */
-	const [agentWidth, setAgentWidth] = useRailWidth("agent", STRIP_WIDTH);
 	const [docNonces, setDocNonces] = useState<Record<string, number>>({});
 	const docNoncesRef = useRef(docNonces);
 	docNoncesRef.current = docNonces;
@@ -4392,7 +4391,6 @@ export function ProjectCanvas({
 	 * second piece of state that could disagree with it. With the experiment
 	 * off the strip is never drawn and the column is simply the properties rail.
 	 */
-	const agentOpen = agentPanel && agentWidth > COLLAPSED_BELOW;
 	/** what the rail is looking at: one rung, one frame, or how many of either */
 	const railHeld = ((): Held | null => {
 		// a page is held on its own, and the selection never holds both (#265)
@@ -4791,32 +4789,36 @@ export function ProjectCanvas({
 					/>
 				) : null}
 			</div>
-			{/* the right column, holding one thing (#256). Properties by default; the
-			    agent rail is experimental and stands only when config.json names it
-			    (#238), and then as a 44px strip beside this one until it is pressed.
-			    Off is absent rather than hidden: no strip, no expand control and
-			    nothing in the document for a press or a key to find. */}
-			<div className="relative z-20 flex shrink-0">
-				<PropertiesRail
-					project={project}
-					held={railHeld}
-					revision={railFrame === null ? 0 : (docNonces[railFrame] ?? 0)}
-					shut={agentOpen}
-					onOpen={() => setAgentWidth(STRIP_WIDTH)}
-					preview={elementDrag === null ? null : { tokens: elementDrag.tokens, box: elementDrag.box }}
-					acts={{
-						onRung: takeRung,
-						onGeometry: setFrameGeometry,
-						onGeometryPreview: previewFrameGeometry,
-						onGeometryCommit: commitFrameGeometry,
-						onWrite: writeOps,
-						onSwap: swapPicture,
-					}}
-				/>
-				{agentPanel ? (
+			{/* the right column, and the index of what can stand in it (`dock.tsx`).
+			    Properties by default; the agent is experimental and is a surface here
+			    only where config.json names it (#238), which is also why the strip
+			    carries one glyph or two. Off is absent rather than hidden: no glyph,
+			    no panel, and nothing in the document for a press or a key to find. */}
+			<Dock
+				agentOn={agentPanel}
+				agentWorking={turn.phase === "playing"}
+				properties={(width, shut) => (
+					<PropertiesRail
+						project={project}
+						held={railHeld}
+						revision={railFrame === null ? 0 : (docNonces[railFrame] ?? 0)}
+						width={width}
+						onCollapse={shut}
+						preview={elementDrag === null ? null : { tokens: elementDrag.tokens, box: elementDrag.box }}
+						acts={{
+							onRung: takeRung,
+							onGeometry: setFrameGeometry,
+							onGeometryPreview: previewFrameGeometry,
+							onGeometryCommit: commitFrameGeometry,
+							onWrite: writeOps,
+							onSwap: swapPicture,
+						}}
+					/>
+				)}
+				agent={(width, shut) => (
 					<AgentRail
-						width={agentWidth}
-						onWidth={setAgentWidth}
+						width={width}
+						onCollapse={shut}
 						entries={turn.entries}
 						plan={turn.plan}
 						phase={turn.phase}
@@ -4846,8 +4848,8 @@ export function ProjectCanvas({
 						onStop={turn.stop}
 						onAnswer={turn.answer}
 					/>
-				) : null}
-			</div>
+				)}
+			/>
 			{exportDialog !== null && exportFrames.length > 0 ? (
 				<ExportDialog
 					exporting={exporting}

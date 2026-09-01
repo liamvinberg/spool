@@ -14,6 +14,9 @@ import { useRemembered } from "../remembered";
  * The two positions a settled rail can be in are the strip and the panel. There is nothing
  * between `STRIP_WIDTH` and `MIN_WIDTH`, and that gap is the point: a rail is either a
  * column you read or an edge you press, and the drag picks whichever the hand was nearer.
+ * On the right the strip stopped being a rail's own shut state and became the column's
+ * index (`dock.tsx`), so there the far end of the range is the column shutting rather than
+ * a width — which is what `onSettle` is for.
  */
 
 /** shut: an edge with the one control that opens it */
@@ -30,9 +33,9 @@ export const COLLAPSED_BELOW = 72;
  * The properties rail's panel width (#256).
  *
  * 300 is what `inspector.tsx` shipped before the agent took the column, and it
- * is what the column can afford beside the agent's strip: two open rails do not
- * fit, so the number is chosen against the field it leaves rather than against
- * the rows it holds.
+ * is what the column can afford beside the strip: two open surfaces do not fit,
+ * so the number is chosen against the field it leaves rather than against the
+ * rows it holds.
  */
 export const PROPERTIES_WIDTH = 300;
 
@@ -81,6 +84,15 @@ export function useRailDrag(
 	width: number,
 	onWidth: (next: number) => void,
 	panel: number,
+	/**
+	 * Where the hand let go, when the release is a different act from the move.
+	 *
+	 * A rail that owns its own width wants neither: every value the drag produces
+	 * is its width, settled or not. The dock does want it (`dock.tsx`), because
+	 * the far end of the range is not a width there — it is the column being shut
+	 * — and a mid-drag 44 is a hand passing through rather than a hand deciding.
+	 */
+	onSettle: (next: number) => void = onWidth,
 ): { dragging: boolean; grip: RailGrip } {
 	const [dragging, setDragging] = useState(false);
 	const held = useRef<{ pointerId: number; startWidth: number; startX: number; latestWidth: number } | null>(null);
@@ -91,7 +103,7 @@ export function useRailDrag(
 		target.releasePointerCapture(pointerId);
 		held.current = null;
 		setDragging(false);
-		onWidth(settledWidth(current.latestWidth));
+		onSettle(settledWidth(current.latestWidth));
 	};
 
 	return {
@@ -102,8 +114,8 @@ export function useRailDrag(
 				// hotkey dispatch, or the same press would nudge the selection
 				if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 				event.stopPropagation();
-				if (event.key === "ArrowLeft") onWidth(panel);
-				if (event.key === "ArrowRight") onWidth(STRIP_WIDTH);
+				if (event.key === "ArrowLeft") onSettle(panel);
+				if (event.key === "ArrowRight") onSettle(STRIP_WIDTH);
 			},
 			onPointerDown: (event) => {
 				if (event.button !== 0) return;

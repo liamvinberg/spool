@@ -4,7 +4,7 @@ import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentLimit } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
-import { AgentIcon, CloseIcon, PlusIcon } from "../icons";
+import { CloseIcon, PlusIcon } from "../icons";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
 import { limitReadout } from "./agent-limit";
 import { closedText } from "./agent-markers";
@@ -25,7 +25,6 @@ import {
 	shownBy,
 } from "./agent-transcript";
 import { ageOf } from "./frame-find";
-import { COLLAPSED_BELOW, GRIP_CLASS, GRIP_HAIR, STRIP_WIDTH, useRailDrag } from "./rail-width";
 import { ChevronIcon, PanelCaret } from "./sidebar";
 
 /**
@@ -68,9 +67,10 @@ import { ChevronIcon, PanelCaret } from "./sidebar";
  * Nothing below may assume it: the range is the constraint every later footer and
  * strip decision is measured against.
  *
- * It is what the strip opens to rather than what the rail starts at. The column
- * belongs to the properties rail now (#256) and the agent is reached by pressing
- * this one's strip, so where the rail stands is the canvas's to hold.
+ * It is what the dock opens this surface to rather than what the rail starts at:
+ * the column holds one surface at a time and its strip is the index of what can
+ * stand there (#256, `dock.tsx`), so where the rail stands is not the rail's to
+ * hold.
  */
 export const AGENT_WIDTH = 420;
 
@@ -173,7 +173,7 @@ interface Holding {
 
 export function AgentRail({
 	width,
-	onWidth,
+	onCollapse,
 	entries,
 	plan,
 	phase,
@@ -197,14 +197,16 @@ export function AgentRail({
 	onAnswer,
 }: {
 	/**
-	 * Where the rail stands, held by the canvas (#256).
+	 * How wide the dock is drawing this surface (#256, `dock.tsx`).
 	 *
-	 * The right column holds one rail at a time and the strip is the switch
-	 * between them, so which of the two is standing is one fact rather than two
-	 * — and it is the canvas that knows it.
+	 * The column holds one surface at a time and the strip is the index of what
+	 * can stand in it, so where the rail stands is one fact the dock holds rather
+	 * than two the rails argue about. The number still matters here: the threads
+	 * take 34 of it and the composer measures what is left.
 	 */
 	width: number;
-	onWidth: (next: number) => void;
+	/** the carets inside the rail: they shut the column, which is the dock's state */
+	onCollapse: () => void;
 	entries: readonly AgentEntry[];
 	/** the plan, off the log and onto the shelf; absent until the turn writes one */
 	plan: AgentPlan | null;
@@ -327,40 +329,14 @@ export function AgentRail({
 	const waited = outstanding === undefined ? 0 : Math.max(0, elapsed - outstanding.at);
 	/** what the panel has left once the column has taken its 34, which two things measure */
 	const panel = width - SPINE_W;
-	const { dragging, grip } = useRailDrag(width, onWidth, AGENT_WIDTH);
-	const collapsed = width <= COLLAPSED_BELOW;
-
 	return (
-		<aside
+		<section
 			aria-label="Agent"
 			data-agent-rail=""
 			style={{ width }}
-			className={cn(
-				"relative z-20 h-full shrink-0 overflow-hidden border-border border-l bg-bg",
-				dragging
-					? ""
-					: "transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
-			)}
-			onPointerDown={(event) => event.stopPropagation()}
-			onPointerMove={(event) => event.stopPropagation()}
-			onDoubleClick={(event) => event.stopPropagation()}
-			onContextMenu={(event) => {
-				event.preventDefault();
-				event.stopPropagation();
-			}}
+			className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
 		>
-			{collapsed ? (
-				<div className="flex h-full w-11 flex-col items-center">
-					<button
-						type="button"
-						aria-label="Expand agent"
-						onClick={() => onWidth(AGENT_WIDTH)}
-						className="flex h-11 w-11 items-center justify-center text-muted/70 hover:text-text"
-					>
-						<AgentIcon />
-					</button>
-				</div>
-			) : install.missing ? (
+			{install.missing ? (
 				/*
 				 * There is nothing to spawn, and spool knew it before anybody typed (#201).
 				 *
@@ -372,7 +348,7 @@ export function AgentRail({
 					<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
 						<InstallWall install={install} />
 						{/* the wall has no nameplate to ride, so here alone the caret floats */}
-						<CollapseCaret onCollapse={() => onWidth(STRIP_WIDTH)} className="absolute top-2 right-2 z-10" />
+						<CollapseCaret onCollapse={onCollapse} className="absolute top-2 right-2 z-10" />
 					</div>
 					<DeadComposer />
 				</div>
@@ -389,7 +365,7 @@ export function AgentRail({
 					<div className="flex min-w-0 flex-1 flex-col">
 						{/* the nameplate leads the shelf, because it says which thread everything
 						    under it belongs to */}
-						<Nameplate threads={threads} onCollapse={() => onWidth(STRIP_WIDTH)} />
+						<Nameplate threads={threads} onCollapse={onCollapse} />
 						{/* the standing half of being signed out, on the shelf the plan would take —
 						    and they never want it at once, because a plan belongs to a turn that is
 						    running and this exists precisely because none can (#201) */}
@@ -438,11 +414,7 @@ export function AgentRail({
 					<Spine threads={threads} room={panel} />
 				</div>
 			)}
-
-			<button type="button" aria-label="Resize agent" {...grip} className={GRIP_CLASS}>
-				<span className={GRIP_HAIR} />
-			</button>
-		</aside>
+		</section>
 	);
 }
 

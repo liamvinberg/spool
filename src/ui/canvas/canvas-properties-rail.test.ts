@@ -266,27 +266,34 @@ it("is the whole column while the agent experiment is off", async () => {
 	const { host } = await readyCanvas();
 
 	expect(rail(host)?.style.width).toBe("300px");
-	// off is absent rather than hidden: there is no strip to press and nothing
-	// in the document for a key to find
+	// off is absent rather than hidden: no glyph in the index, nothing to press,
+	// and with one surface there is no index to draw at all
 	expect(host.querySelector('[aria-label="Expand agent"]')).toBeNull();
 	expect(host.querySelector('[aria-label="Agent"]')).toBeNull();
+	expect(host.querySelector("[data-dock-strip]")).toBeNull();
 });
 
-it("hands the column over to the agent's strip, and takes it back from its own", async () => {
+it("swaps the panel from the one strip, and shuts the column from the lit glyph", async () => {
 	const { host } = await readyCanvas({ agentPanel: true });
 
-	// the agent's own 44px strip is the switch, and never a tab row
+	// two surfaces, so the strip is the column's index and stands whatever is up
 	expect(rail(host)?.style.width).toBe("300px");
-	expect(host.querySelector<HTMLElement>('[aria-label="Agent"]')?.style.width).toBe("44px");
+	expect(host.querySelector("[data-dock-strip]")).not.toBeNull();
+	expect(host.querySelector('[aria-label="Agent"]')).toBeNull();
 
 	await press("click", {}, host.querySelector<HTMLElement>('[aria-label="Expand agent"]'));
-	// one column, one rail: properties leave for a strip of their own
-	expect(rail(host)?.style.width).toBe("44px");
+	// one panel, one surface: properties leave the column rather than shrinking to a strip of their own
 	expect(host.querySelector<HTMLElement>('[aria-label="Agent"]')?.style.width).toBe("420px");
+	await until(() => rail(host) === null);
 
 	await press("click", {}, host.querySelector<HTMLElement>('[aria-label="Expand properties"]'));
 	expect(rail(host)?.style.width).toBe("300px");
-	expect(host.querySelector<HTMLElement>('[aria-label="Agent"]')?.style.width).toBe("44px");
+
+	// the lit glyph is the shut: the panel goes and the index stays where it was
+	await press("click", {}, host.querySelector<HTMLElement>('[aria-label="Shut properties"]'));
+	await until(() => rail(host) === null);
+	expect(host.querySelector<HTMLElement>("[data-dock-panel]")?.style.width).toBe("0px");
+	expect(host.querySelector("[data-dock-strip]")).not.toBeNull();
 });
 
 it("writes a row's change to the lane as one op under the live scope", async () => {

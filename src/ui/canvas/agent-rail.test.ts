@@ -607,7 +607,7 @@ describe("the rail", () => {
 	});
 
 	/** nothing may assume 420: the range is what every later strip is measured against */
-	it("holds the drag between the 200 floor and the 480 ceiling, and snaps to its strip", async () => {
+	it("holds the drag between the 200 floor and the 480 ceiling, and snaps the column shut", async () => {
 		const canvas = mount();
 		await canvas.render();
 		const grip = canvas.host.querySelector<HTMLElement>('[aria-label="Resize agent"]');
@@ -632,10 +632,10 @@ describe("the rail", () => {
 		// pulled far past the ceiling
 		await drag(200);
 		expect(rail(canvas.host)?.style.width).toBe("480px");
-		// pushed under the snap point: the rail leaves for its 44px strip rather than
-		// standing at an unreadable width
+		// pushed under the snap point: the column shuts rather than standing at an
+		// unreadable width, and what is left is the index it is opened from again
 		await drag(1400);
-		expect(rail(canvas.host)?.style.width).toBe("44px");
+		expect(canvas.host.querySelector<HTMLElement>("[data-dock-panel]")?.style.width).toBe("0px");
 		expect(canvas.host.querySelector('[aria-label="Expand agent"]')).not.toBeNull();
 	});
 });

@@ -79,12 +79,19 @@ describe("canvas boot", () => {
 		expect(host.querySelector('[aria-label="Agent"]')).toBeNull();
 	});
 
-	it("stands the agent rail where the experiment names it (#238)", async () => {
+	it("lists the agent in the dock where the experiment names it (#238)", async () => {
 		switchOn("agent-panel");
 		stubEmptyProject();
 		const host = mountCanvas();
 		await flush();
 
+		// on is a glyph in the column's index rather than a rail standing: the
+		// panel holds one surface and properties have it until something is pressed
+		const glyph = host.querySelector<HTMLElement>('[aria-label="Expand agent"]');
+		expect(glyph).not.toBeNull();
+		expect(host.querySelector("[data-agent-rail]")).toBeNull();
+
+		await act(async () => glyph?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 		expect(host.querySelector("[data-agent-rail]")).not.toBeNull();
 	});
 });
