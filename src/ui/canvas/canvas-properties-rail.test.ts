@@ -262,21 +262,10 @@ it("drops every token under a scope in one write, and falls back to the base", a
 	expect(chips(host).filter((chip) => chip === "hover:")).toHaveLength(1);
 });
 
-it("is the whole column while the agent experiment is off", async () => {
+it("swaps the panel from the one strip, and shuts the column from the lit glyph", async () => {
 	const { host } = await readyCanvas();
 
-	expect(rail(host)?.style.width).toBe("300px");
-	// off is absent rather than hidden: no glyph in the index, nothing to press,
-	// and with one surface there is no index to draw at all
-	expect(host.querySelector('[aria-label="Expand agent"]')).toBeNull();
-	expect(host.querySelector('[aria-label="Agent"]')).toBeNull();
-	expect(host.querySelector("[data-dock-strip]")).toBeNull();
-});
-
-it("swaps the panel from the one strip, and shuts the column from the lit glyph", async () => {
-	const { host } = await readyCanvas({ agentPanel: true });
-
-	// two surfaces, so the strip is the column's index and stands whatever is up
+	// the strip is the column's index and stands whatever is up
 	expect(rail(host)?.style.width).toBe("300px");
 	expect(host.querySelector("[data-dock-strip]")).not.toBeNull();
 	expect(host.querySelector('[aria-label="Agent"]')).toBeNull();
@@ -635,19 +624,12 @@ async function descendTo(
 	await frame.answer(chain.slice(0, depth));
 }
 
-async function readyCanvas({
-	agentPanel = false,
-	refused = false,
-}: {
-	agentPanel?: boolean;
-	refused?: boolean;
-} = {}): Promise<{
+async function readyCanvas({ refused = false }: { refused?: boolean } = {}): Promise<{
 	host: HTMLDivElement;
 	canvas: HTMLElement;
 	frame: FramePlayer;
 }> {
 	stubCanvasApis(refused);
-	Object.assign(window, { __SPOOL_EXPERIMENTS__: agentPanel ? ["agent-panel"] : [] });
 	window.localStorage?.clear();
 	const host = document.createElement("div");
 	document.body.append(host);

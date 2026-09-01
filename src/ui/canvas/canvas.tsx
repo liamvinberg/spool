@@ -46,7 +46,6 @@ import {
 	subscribeSse,
 	swapAsset,
 } from "../api";
-import { experimentOn } from "../experiments";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { RibbonMark } from "../icons";
@@ -4382,7 +4381,6 @@ export function ProjectCanvas({
 	 */
 	const pageEmpty =
 		loaded && !projectEmpty && activePage !== ROOT_PAGE && pageIsBare(activePage, navigatorPages, navigatorFrames);
-	const agentPanel = experimentOn("agent-panel");
 	/**
 	 * Which rail the right column is standing in (#256).
 	 *
@@ -4790,12 +4788,9 @@ export function ProjectCanvas({
 				) : null}
 			</div>
 			{/* the right column, and the index of what can stand in it (`dock.tsx`).
-			    Properties by default; the agent is experimental and is a surface here
-			    only where config.json names it (#238), which is also why the strip
-			    carries one glyph or two. Off is absent rather than hidden: no glyph,
-			    no panel, and nothing in the document for a press or a key to find. */}
+			    Properties by default, the agent one glyph below, one of them in the
+			    panel at a time. */}
 			<Dock
-				agentOn={agentPanel}
 				agentWorking={turn.phase === "playing"}
 				properties={(width, shut) => (
 					<PropertiesRail

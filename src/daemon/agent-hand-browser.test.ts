@@ -110,13 +110,10 @@ it("marks the block a write changed, on the frame showing it", { timeout: 180_00
 	// the fixture agent is the agent this machine has, so the `which` behind the wall has
 	// to say so too: left to the runner's own PATH the rail draws the install wall, whose
 	// composer is dead, and nothing below can be typed into (#201)
-	// and the rail is behind the agent-panel experiment (#238), so this daemon is one
-	// whose config.json switched it on
 	const project = await serveProject({
 		uiDir,
 		agentExecutor: executor,
 		agentLook: () => true,
-		experiments: ["agent-panel"],
 	});
 	root = project.root;
 	writeFrame(project.root, "home", BEFORE);
@@ -141,8 +138,8 @@ it("marks the block a write changed, on the frame showing it", { timeout: 180_00
 	// the frame is live before anybody types: the design it is about to change is on screen
 	await expect.poll(says, { timeout: 30_000 }).toBe("open until six");
 
-	const expand = page.getByRole("button", { name: "Expand agent" });
-	if ((await expand.count()) > 0) await expand.click();
+	// properties have the panel until the agent's glyph in the strip is pressed
+	await page.locator('[data-dock-glyph="agent"]').click();
 	const field = page.locator("[data-agent-rail] textarea");
 	await field.fill(PROMPT);
 	await field.press("Enter");

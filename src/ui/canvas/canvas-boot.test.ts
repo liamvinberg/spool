@@ -68,28 +68,17 @@ describe("canvas boot", () => {
 		expect(host.querySelector('[aria-label="canvas tools"]')).toBeNull();
 	});
 
-	it("leaves no agent rail behind unless the machine switched it on (#238)", async () => {
+	it("lists both surfaces in the column, and stands neither until one is pressed", async () => {
 		stubEmptyProject();
 		const host = mountCanvas();
 		await flush();
 
-		// off is absent rather than hidden: no rail, and no strip to expand one from
-		expect(host.querySelector("[data-agent-rail]")).toBeNull();
-		expect(host.querySelector('[aria-label="Expand agent"]')).toBeNull();
-		expect(host.querySelector('[aria-label="Agent"]')).toBeNull();
-	});
-
-	it("lists the agent in the dock where the experiment names it (#238)", async () => {
-		switchOn("agent-panel");
-		stubEmptyProject();
-		const host = mountCanvas();
-		await flush();
-
-		// on is a glyph in the column's index rather than a rail standing: the
-		// panel holds one surface and properties have it until something is pressed
-		const glyph = host.querySelector<HTMLElement>('[aria-label="Expand agent"]');
+		// the strip is the index: the agent is a glyph in it rather than a rail
+		// standing, and properties have the panel until something is pressed
+		const glyph = host.querySelector<HTMLElement>('[data-dock-glyph="agent"]');
 		expect(glyph).not.toBeNull();
 		expect(host.querySelector("[data-agent-rail]")).toBeNull();
+		expect(host.querySelector("[data-properties-rail]")).not.toBeNull();
 
 		await act(async () => glyph?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 		expect(host.querySelector("[data-agent-rail]")).not.toBeNull();
@@ -106,14 +95,6 @@ function stubEmptyProject(): void {
 			return Response.json({ frames: [], links: [], edges: [], unreadable: [] });
 		}
 		return undefined;
-	});
-}
-
-/** The experiments this machine's config named, as the boot script would have left them. */
-function switchOn(...names: string[]): void {
-	Object.assign(window, { __SPOOL_EXPERIMENTS__: names });
-	onTestFinished(() => {
-		delete window.__SPOOL_EXPERIMENTS__;
 	});
 }
 

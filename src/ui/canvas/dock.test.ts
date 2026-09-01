@@ -9,8 +9,8 @@ import { Dock } from "./dock";
  * The column's index, on its own.
  *
  * What the surfaces are is not this file's business — `canvas-properties-rail.test.ts`
- * walks the real ones over a real canvas. This is the dock's own three claims: how many
- * glyphs there are to press, what pressing one does to the panel, and what a shut surface
+ * walks the real ones over a real canvas. This is the dock's own three claims: what
+ * pressing a glyph does to the panel, that the lit one shuts it, and what a shut surface
  * says when a turn lands in it.
  */
 
@@ -22,22 +22,8 @@ const glyph = (host: HTMLElement, name: string) => host.querySelector<HTMLElemen
 const panel = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-dock-panel]");
 const strip = (host: HTMLElement) => host.querySelector("[data-dock-strip]");
 
-it("draws no index for one surface, and one the moment the column is shut", async () => {
-	const { host } = mount({ agentOn: false });
-
-	// one surface is not a list: the strip is that surface's own shut state, which
-	// is the column spool shipped before the agent was ever a surface here
-	expect(strip(host)).toBeNull();
-	expect(glyph(host, "agent")).toBeNull();
-	expect(panel(host)?.style.width).toBe("300px");
-
-	await press(host.querySelector<HTMLElement>('[data-rail="properties"] button'));
-	expect(panel(host)?.style.width).toBe("0px");
-	expect(strip(host)).not.toBeNull();
-});
-
 it("swaps the panel between two surfaces, each at its own width", async () => {
-	const { host } = mount({ agentOn: true });
+	const { host } = mount({});
 
 	expect(strip(host)).not.toBeNull();
 	expect(panel(host)?.style.width).toBe("300px");
@@ -55,13 +41,13 @@ it("swaps the panel between two surfaces, each at its own width", async () => {
 });
 
 it("marks the shut agent while a turn runs, and again once it has landed unread", async () => {
-	const { host, render } = mount({ agentOn: true });
+	const { host, render } = mount({});
 
-	await render({ agentOn: true, agentWorking: true });
+	await render({ agentWorking: true });
 	expect(glyph(host, "agent")?.querySelector("svg[class*=agent-spin]")).not.toBeNull();
 
 	// it landed in a surface nobody was looking at, so the glyph keeps the fact
-	await render({ agentOn: true, agentWorking: false });
+	await render({ agentWorking: false });
 	expect(glyph(host, "agent")?.querySelector("span[class*=unseen-in]")).not.toBeNull();
 
 	// opening it is the only thing that answers the dot
@@ -70,11 +56,11 @@ it("marks the shut agent while a turn runs, and again once it has landed unread"
 });
 
 it("says nothing about a turn the agent surface was open for", async () => {
-	const { host, render } = mount({ agentOn: true });
+	const { host, render } = mount({});
 	await press(glyph(host, "agent"));
 
-	await render({ agentOn: true, agentWorking: true });
-	await render({ agentOn: true, agentWorking: false });
+	await render({ agentWorking: true });
+	await render({ agentWorking: false });
 
 	await press(glyph(host, "agent"));
 	expect(glyph(host, "agent")?.querySelector("span[class*=unseen-in]")).toBeNull();
@@ -90,9 +76,9 @@ function surface(name: string) {
 		);
 }
 
-function mount(props: { agentOn: boolean; agentWorking?: boolean }): {
+function mount(props: { agentWorking?: boolean }): {
 	host: HTMLDivElement;
-	render: (next: { agentOn: boolean; agentWorking?: boolean }) => Promise<void>;
+	render: (next: { agentWorking?: boolean }) => Promise<void>;
 } {
 	const host = document.createElement("div");
 	document.body.append(host);
@@ -101,11 +87,10 @@ function mount(props: { agentOn: boolean; agentWorking?: boolean }): {
 		act(() => root.unmount());
 		host.remove();
 	});
-	const render = async (next: { agentOn: boolean; agentWorking?: boolean }) => {
+	const render = async (next: { agentWorking?: boolean }) => {
 		await act(async () => {
 			root.render(
 				createElement(Dock, {
-					agentOn: next.agentOn,
 					agentWorking: next.agentWorking ?? false,
 					properties: surface("properties"),
 					agent: surface("agent"),
@@ -116,7 +101,6 @@ function mount(props: { agentOn: boolean; agentWorking?: boolean }): {
 	act(() => {
 		root.render(
 			createElement(Dock, {
-				agentOn: props.agentOn,
 				agentWorking: props.agentWorking ?? false,
 				properties: surface("properties"),
 				agent: surface("agent"),

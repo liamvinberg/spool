@@ -4,12 +4,12 @@ import { DockScreen } from "../../../shared/ui/spool-dock-screen";
  * beside — the shipped shape, and the baseline the other four are a diff
  * against.
  *
- * With `agent-panel` off (#238) the column is one 300px properties rail and
- * nothing else. Switch it on and a second rail stands beside it, shut, as a
- * 44px strip: pressing the strip opens that rail and collapses the other, so
- * the column is 344 with properties up and 464 with the agent up. Two open
- * rails were never on the table — `properties-rail.tsx` says why, 300 plus 420
- * leaves 472px of field at 1440.
+ * With `agent-panel` off (#238) the column was one 300px properties rail and
+ * nothing else. Switched on, a second rail stood beside it, shut, as a 44px
+ * strip: pressing the strip opened that rail and collapsed the other, so the
+ * column was 344 with properties up and 464 with the agent up. Two open rails
+ * were never on the table — `properties-rail.tsx` says why, 300 plus 420 leaves
+ * 472px of field at 1440.
  *
  * What it gets wrong once the agent is a surface the product ships rather than
  * a flag one machine switched on: the shut one is a rail pretending to be a

@@ -28,10 +28,6 @@ import { type CanvasChrome, ProjectCanvas } from "./canvas";
  * `agent-said.test.ts`'s.
  */
 
-// the rail stands only where the machine switched the experiment on (#238), so
-// this whole file is a canvas that did
-Object.assign(window, { __SPOOL_EXPERIMENTS__: ["agent-panel"] });
-
 /**
  * A browser that has never been dragged, before every test.
  *
@@ -411,9 +407,9 @@ function mount({ still = false }: { still?: boolean } = {}) {
 				);
 			});
 			await until(() => host.querySelector('[data-frame-label="home"]') !== null);
-			// the right column holds one rail and properties have it by default
-			// (#256), so a file about the agent opens the agent: its own 44px strip
-			// is the switch, and pressing it is what every test here starts from
+			// the column holds one surface and properties have it by default (#256),
+			// so a file about the agent opens the agent: its glyph in the strip is
+			// the switch, and pressing it is what every test here starts from
 			const expand = host.querySelector<HTMLElement>('[aria-label="Expand agent"]');
 			if (expand !== null) {
 				await act(async () => {

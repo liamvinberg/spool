@@ -31,10 +31,11 @@ import {
  * column is 344, 464, or 44 — and a third surface later costs a glyph rather
  * than another rail.
  *
- * With one surface there is no index to draw, so the strip stands only where
- * the column is shut. That is #238 kept whole: an experiment that is off leaves
- * nothing behind, including a glyph, and a machine with no agent on it sees the
- * column it has always had.
+ * Both surfaces stand in the index. The agent was behind the `agent-panel`
+ * experiment (#238) while it was one of two rails taking turns; a column with an
+ * index has somewhere to put it, so it is a surface the product has rather than
+ * a flag one machine switched on. Which surfaces a person may turn off is the
+ * settings ticket's (#267), and it will be a setting rather than a config file.
  *
  * **The motion is the column's, never a rail's.** The edge travels 300ms on the
  * house curve, which is the number both rails already wore for width. The
@@ -63,13 +64,10 @@ type DockHeld = DockSurface | "shut";
 const isHeld = (value: unknown): value is DockHeld => value === "shut" || value === "properties" || value === "agent";
 
 export function Dock({
-	agentOn,
 	properties,
 	agent,
 	agentWorking,
 }: {
-	/** whether the agent is a surface on this machine at all (#238) */
-	agentOn: boolean;
 	/**
 	 * Each surface, drawn at the width it will settle at and handed the one act
 	 * it has over the column: its own carets shut the column rather than
@@ -90,9 +88,7 @@ export function Dock({
 	const [leaving, setLeaving] = useState<DockSurface | null>(null);
 	/** what the column was showing at the last render, which is what a change is against */
 	const held = useRef(open);
-
-	// the agent is not a surface here, so nothing may be left standing on it
-	const shown = open === "agent" && !agentOn ? null : open;
+	const shown = open;
 
 	useEffect(() => {
 		if (held.current === shown) return;
@@ -154,10 +150,7 @@ export function Dock({
 		if (shown === "agent") setUnread(false);
 	}, [shown]);
 
-	const surfaces: DockSurface[] = agentOn ? ["properties", "agent"] : ["properties"];
-	// one surface has no index to draw: the strip is then that surface's own shut
-	// state, which is the column spool has always had
-	const strip = surfaces.length > 1 || shown === null;
+	const surfaces: readonly DockSurface[] = ["properties", "agent"];
 
 	const shut = () => setOpen(null);
 	const press = (surface: DockSurface) => () => {
@@ -214,28 +207,24 @@ export function Dock({
 					<span className={GRIP_HAIR} />
 				</button>
 			)}
-			{strip ? (
-				<div
-					data-dock-strip=""
-					className="flex h-full shrink-0 flex-col items-center gap-1 border-border border-l bg-bg pt-1.5"
-					style={{ width: STRIP_WIDTH }}
+			<div
+				data-dock-strip=""
+				className="flex h-full shrink-0 flex-col items-center gap-1 border-border border-l bg-bg pt-1.5"
+				style={{ width: STRIP_WIDTH }}
+			>
+				<Glyph label="properties" lit={shown === "properties"} onPress={press("properties")}>
+					<PropertiesIcon />
+				</Glyph>
+				<Glyph
+					label="agent"
+					lit={shown === "agent"}
+					working={agentWorking}
+					unread={unread}
+					onPress={press("agent")}
 				>
-					<Glyph label="properties" lit={shown === "properties"} onPress={press("properties")}>
-						<PropertiesIcon />
-					</Glyph>
-					{agentOn ? (
-						<Glyph
-							label="agent"
-							lit={shown === "agent"}
-							working={agentWorking}
-							unread={unread}
-							onPress={press("agent")}
-						>
-							<AgentIcon />
-						</Glyph>
-					) : null}
-				</div>
-			) : null}
+					<AgentIcon />
+				</Glyph>
+			</div>
 		</aside>
 	);
 }

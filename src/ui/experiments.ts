@@ -15,7 +15,11 @@ declare global {
  *
  * The daemon carries whatever the file said and never judges it, so the
  * vocabulary lives here. A name nothing on this side asks about does nothing —
- * a config written for a newer spool is not an error on an older one.
+ * a config written for a newer spool is not an error on an older one, and
+ * neither is one written for an older spool naming a flag that has since
+ * graduated. `agent-panel` is that: the agent is a surface the canvas has now
+ * (#268), nothing asks about the name any more, and a machine still carrying it
+ * in config.json boots exactly as it did.
  */
 export type Experiment = "agent-panel";
 

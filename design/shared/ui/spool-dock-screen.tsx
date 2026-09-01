@@ -13,15 +13,16 @@ import { SpoolShell } from "./spool-shell";
 /**
  * The right column with two surfaces in it.
  *
- * Today the column holds one thing. `properties-rail.tsx` took it back for
- * direct manipulation (#256) and the agent rail, which is gated behind the
- * `agent-panel` experiment (#238), stands beside it as a 44px strip you press:
- * pressing one shuts the other, because 300 and 420 side by side leave 472px of
- * field at 1440. That is `--beside`, and it is the shipped shape drawn here as
- * the baseline every other take is a diff against.
+ * When these were drawn the column held one thing. `properties-rail.tsx` took it
+ * back for direct manipulation (#256) and the agent rail, gated behind the
+ * `agent-panel` experiment (#238), stood beside it as a 44px strip you press:
+ * pressing one shut the other, because 300 and 420 side by side leave 472px of
+ * field at 1440. That is `--beside`, the shape that shipped, drawn here as the
+ * baseline every other take is a diff against.
  *
  * The question the other four ask is what the column looks like once the agent
  * is a surface the product ships rather than a flag one machine switched on.
+ * `--stack` answered it and is built (#268), and the flag is gone with it.
  * The whole vocabulary is here rather than in each take: the strip is 44, the
  * properties panel is 300, the agent panel is 420, and a shut surface still has
  * to be able to say that something happened in it.
