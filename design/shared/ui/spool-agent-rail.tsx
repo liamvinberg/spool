@@ -105,6 +105,13 @@ export function StateMark({ state, className }: { state: ToolState | "error"; cl
 
 export interface AgentRailProps {
 	density: "narrow" | "wide";
+	/**
+	 * What stands above the session strip. The tab row is what this rail was
+	 * drawn with, and it is what the rail lost: #144 took the tabs away and
+	 * `properties-rail.tsx` shipped without them. `null` is that rail, and a node
+	 * is a proposal's own header.
+	 */
+	head?: React.ReactNode | undefined;
 	events: readonly AgentEvent[];
 	context?: AgentContext | undefined;
 	/** the token count the session is carrying right now */
@@ -113,11 +120,11 @@ export interface AgentRailProps {
 	working?: boolean | undefined;
 }
 
-export function AgentRail({ density, events, context, usage, working = false }: AgentRailProps) {
+export function AgentRail({ density, events, context, usage, working = false, head }: AgentRailProps) {
 	const wide = density === "wide";
 	return (
 		<>
-			<RailTabs tabs={["elements", "connections", "agent"]} active="agent" />
+			{head === undefined ? <RailTabs tabs={["elements", "connections", "agent"]} active="agent" /> : head}
 			<SessionStrip usage={usage} working={working} wide={wide} />
 			{/* bottom-anchored, and nothing shrinks: a long turn clips at the top the
 			    way a scrolled transcript does, and the live end stays whole */}

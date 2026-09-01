@@ -300,3 +300,23 @@ export function PanelCaret({ dir, className }: IconProps & { dir: "left" | "righ
 		</svg>
 	);
 }
+
+/**
+ * properties — two knobs on two rails, the glyph the shipped strip already
+ * wears (`src/ui/icons.tsx`). It says what the column is for, adjusting values,
+ * rather than naming a kind of thing.
+ */
+export function PropertiesIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M5.5 2.4v3.1M5.5 9.1v4.5M10.5 2.4v6.3M10.5 12.3v1.3"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+			/>
+			<circle cx="5.5" cy="7.3" r="1.5" fill="currentColor" />
+			<circle cx="10.5" cy="10.5" r="1.5" fill="currentColor" />
+		</svg>
+	);
+}
