@@ -65,38 +65,98 @@ export type AgentEvent =
  * rather than blinking, and both hold still under reduced motion so a frame
  * shot at any moment shows the same state. */
 
-const ARC_SPIN = { duration: 1.15, repeat: Number.POSITIVE_INFINITY, ease: "linear" as const };
 const BREATHE = { duration: 1.5, repeat: Number.POSITIVE_INFINITY, ease: "easeInOut" as const };
 
 /* ---------- state marks ----------
  * The mark column is the whole state language: motion says running, colour says
  * something needs you. Nothing else earns the thread. */
 
-export function StateMark({ state, className }: { state: ToolState | "error"; className?: string }) {
-	const still = useReducedMotion() === true;
-	if (state === "running") {
-		return (
-			<motion.svg
-				viewBox="0 0 12 12"
-				className={cn("h-3 w-3 shrink-0 text-text/70", className)}
-				fill="none"
-				aria-hidden="true"
-				animate={still ? undefined : { rotate: 360 }}
-				transition={still ? undefined : ARC_SPIN}
-			>
-				<circle cx="6" cy="6" r="4.25" stroke="currentColor" strokeWidth="1.4" strokeOpacity="0.22" />
-				<path d="M6 1.75A4.25 4.25 0 0 1 10.25 6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-			</motion.svg>
-		);
-	}
+/**
+ * A row's ending, in one element.
+ *
+ * `pending` is the ring with the arc taken off it and nothing turning, so a list
+ * at rest has no motion in it at all. The stroke has to be mounted before it
+ * draws — a dash offset only animates on an element that was already there — so
+ * a row that is still running holds the check's geometry at zero length, and
+ * whichever ending arrives replaces the path in place and lets it draw.
+ *
+ * `src/ui/canvas/agent-rail.tsx` names five states; the three this rail's cells
+ * speak are the same marks under the older names.
+ */
+
+export type RowState = "pending" | "running" | "done" | "failed" | "stopped";
+
+const CHECK = "m3.4 7.2 2.4 2.4 4.8-5.2";
+
+const STROKES: Record<RowState, readonly [string, string | null]> = {
+	pending: [CHECK, null],
+	running: [CHECK, null],
+	done: [CHECK, null],
+	failed: ["M4.2 4.2l5.6 5.6", "M9.8 4.2l-5.6 5.6"],
+	stopped: ["M4.4 7h5.2", null],
+};
+
+/** the cells' own names for three of those five */
+const AS_ROW: Record<ToolState | "error", RowState> = {
+	activity: "pending",
+	running: "running",
+	completed: "done",
+	error: "failed",
+};
+
+export function StateMark({ state, className }: { state: ToolState | "error" | RowState; className?: string }) {
+	const row: RowState = state in AS_ROW ? AS_ROW[state as ToolState | "error"] : (state as RowState);
+	const turning = row === "running";
+	const ringed = turning || row === "pending";
+	const settled = !ringed;
+	const [first, second] = STROKES[row];
+	const strokes: { key: string; d: string; drawn: boolean; delay: number }[] = [
+		{ key: "one", d: first, drawn: settled, delay: 75 },
+		{ key: "two", d: second ?? first, drawn: settled && second !== null, delay: 135 },
+	];
 	return (
-		<span className={cn("flex h-3 w-3 shrink-0 items-center justify-center", className)}>
+		<span className={cn("relative flex h-3.5 w-3.5 shrink-0", className)}>
 			<span
 				className={cn(
-					"h-1 w-1 rounded-full",
-					state === "error" ? "bg-thread" : state === "completed" ? "bg-muted" : "border border-muted/50",
+					"absolute inset-0 transition-[opacity,transform] duration-200 ease-in motion-reduce:transition-none",
+					ringed ? "opacity-100" : "scale-[0.62] opacity-0",
 				)}
-			/>
+			>
+				<svg
+					viewBox="0 0 14 14"
+					className={cn(turning ? "text-text/60" : "text-text/35", "h-full w-full", turning && "animate-agent-spin")}
+					fill="none"
+					aria-hidden="true"
+				>
+					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.26" />
+					{turning ? (
+						<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+					) : null}
+				</svg>
+			</span>
+			<svg viewBox="0 0 14 14" className="absolute inset-0 h-full w-full text-muted" fill="none" aria-hidden="true">
+				{strokes.map((stroke) => (
+					// `pathLength` normalises the stroke to 1 unit, so the dash offset draws it
+					// without anything having to measure the geometry first
+					<path
+						key={stroke.key}
+						d={stroke.d}
+						stroke="currentColor"
+						strokeWidth="1.5"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						pathLength={1}
+						className="transition-[stroke-dashoffset,opacity] duration-300 ease-out motion-reduce:transition-none"
+						style={{
+							strokeDasharray: 1,
+							strokeDashoffset: stroke.drawn ? 0 : 1,
+							opacity: stroke.drawn ? 1 : 0,
+							// the second stroke of a cross follows the first rather than racing it
+							transitionDelay: `${stroke.delay}ms`,
+						}}
+					/>
+				))}
+			</svg>
 		</span>
 	);
 }
