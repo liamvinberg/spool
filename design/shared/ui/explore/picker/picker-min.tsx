@@ -141,8 +141,8 @@ export function PickerField({ seed }: { seed?: Seed | undefined }) {
 
 	return (
 		<PickerStage width={520} top={162}>
-			<label className="flex h-[52px] shrink-0 items-center gap-2 px-4">
-				<SearchIcon className="h-3 w-3 shrink-0 text-muted/45" />
+			<label className="flex h-[52px] shrink-0 items-center px-4">
+				<SearchIcon className="mr-2 h-3 w-3 shrink-0 text-muted/45" />
 				{picker.searching ? null : <PathPrefix picker={picker} />}
 				<input
 					ref={picker.inputRef}

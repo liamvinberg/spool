@@ -37,8 +37,8 @@ export function NewProjectPlus({ seed }: { seed?: NewSeed | undefined }) {
 
 	return (
 		<PickerStage width={520} top={162}>
-			<div className="flex h-[52px] shrink-0 items-center gap-2 px-4">
-				<SearchIcon className="h-3 w-3 shrink-0 text-muted/45" />
+			<div className="flex h-[52px] shrink-0 items-center px-4">
+				<SearchIcon className="mr-2 h-3 w-3 shrink-0 text-muted/45" />
 				{picker.searching ? null : <PathPrefix picker={picker} />}
 				<input
 					ref={picker.inputRef}
@@ -55,7 +55,7 @@ export function NewProjectPlus({ seed }: { seed?: NewSeed | undefined }) {
 					onClick={np.begin}
 					title="new project ⌘N"
 					aria-label="New project"
-					className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-100 hover:bg-raised hover:text-text"
+					className="ml-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-100 hover:bg-raised hover:text-text"
 				>
 					<PlusIcon className="h-2.5 w-2.5" />
 				</button>

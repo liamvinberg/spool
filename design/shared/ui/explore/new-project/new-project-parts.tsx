@@ -136,8 +136,8 @@ export function OfferRow({
  */
 export function NamingField({ np }: { np: NewProject }) {
 	return (
-		<label className="flex h-[52px] shrink-0 items-center gap-2 px-4">
-			<FolderIcon className="h-3 w-3 shrink-0 text-thread" />
+		<label className="flex h-[52px] shrink-0 items-center px-4">
+			<FolderIcon className="mr-2 h-3 w-3 shrink-0 text-thread" />
 			<PathPrefix picker={np.picker} />
 			<input
 				ref={np.nameRef}
