@@ -4,50 +4,76 @@ import { extname, join, posix, relative, resolve, sep } from "node:path";
 /**
  * Escaping imports re-aimed when a folder moves (#273).
  *
- * A `../` import counts the folders between its file and its target, and a
+ * A `../` specifier counts the folders between its file and its target, and a
  * move changes the count: a frame dragged into a page compiled a moment ago
  * and now fails on every `../../shared/...` line it carries. The explorer's
  * verbs move folders, so the explorer is where the count is put right — after
- * the rename, each source file in the moved folder has every relative
- * specifier that reaches *out* of the folder re-aimed at the target that
- * stayed put. A target inside shared/ is spelled as its design-relative name
- * (`shared/lib/utils`), the form the compile resolves from any depth, so a
- * healed import never needs healing again; anything else gets its relative
- * path recomputed from where the file stands now.
+ * the rename, every file in the moved folder has each specifier that reaches
+ * *out* of the folder re-aimed at the target that stayed put. A target inside
+ * shared/ is spelled as its design-relative name (`shared/lib/utils`), the form
+ * the compile resolves from any depth, so a healed import never needs healing
+ * again; anything else gets its relative path recomputed from where the file
+ * stands now.
  *
- * What is left alone: specifiers that stay inside the moved folder (they moved
- * with it), strings that merely look like paths (only a specifier whose target
- * exists on disk is rewritten), paths that escape design/ (the compile refuses
- * those in its own words), and a target that is itself mid-move in the same
- * request — a frame reaching into another frame's folder is outside the
- * contract, and its old path answering nothing is the signal to not guess.
+ * Only import positions are read: `import`/`export ... from`, bare
+ * `import "…"` and `import("…")`. A `../` in a comment, a JSX attribute or a
+ * string the frame shows is the author's text and is never touched — the
+ * canvas rearranges, it does not write.
+ *
+ * What else is left alone: specifiers that stay inside the moved folder (they
+ * moved with it), paths that answer to no file on disk (nothing to aim at),
+ * paths that escape design/ (the compile refuses those in its own words), and
+ * a target that is itself mid-move in the same request — a frame reaching into
+ * another frame's folder is outside the contract, and its old path answering
+ * nothing is the signal to not guess.
  */
 export function reaimEscapingImports(designDir: string, fromDir: string, toDir: string): void {
 	const fromRel = designRelative(designDir, fromDir);
 	const toRel = designRelative(designDir, toDir);
 	if (fromRel === toRel) return;
-	for (const file of sourceFilesUnder(toDir)) {
+	for (const file of filesUnder(toDir)) {
+		const syntax = SYNTAX[extname(file)];
+		if (syntax === undefined) continue;
 		const inner = designRelative(toDir, file);
 		const oldDir = posix.dirname(posix.join(fromRel, inner));
 		const newDir = posix.dirname(posix.join(toRel, inner));
 		const source = readFileSync(file, "utf8");
-		const rewritten = source.replace(SPECIFIER, (whole, quote: string, spec: string) => {
-			const target = posix.normalize(posix.join(oldDir, spec));
-			if (target.startsWith("../")) return whole;
-			if (target === fromRel || target.startsWith(`${fromRel}/`)) return whole;
-			if (!resolvable(designDir, target)) return whole;
-			const spelled = target.startsWith("shared/") ? target : relativeSpec(newDir, target);
-			return `${quote}${spelled}${quote}`;
+		const rewritten = source.replace(syntax, (whole, lead: string, quote: string, spec: string) => {
+			const spelled = reaim(designDir, fromRel, oldDir, newDir, spec);
+			return spelled === undefined ? whole : `${lead}${quote}${spelled}${quote}`;
 		});
 		if (rewritten !== source) writeFileSync(file, rewritten);
 	}
 }
 
-/** A quoted string starting with `../` — the only shape a move can break. */
-const SPECIFIER = /(["'])((?:\.\.\/)+[^"'\n]*)\1/g;
+/**
+ * The new spelling of one `../` specifier, or undefined where it is left as
+ * written. `oldDir`/`newDir` are the file's folder before and after the move,
+ * design-relative, so the target is found from where the file was and spelled
+ * from where it is.
+ */
+function reaim(designDir: string, fromRel: string, oldDir: string, newDir: string, spec: string): string | undefined {
+	const target = posix.normalize(posix.join(oldDir, spec));
+	if (target.startsWith("../")) return undefined;
+	if (target === fromRel || target.startsWith(`${fromRel}/`)) return undefined;
+	if (!resolvable(designDir, target)) return undefined;
+	return target.startsWith("shared/") ? target : relativeSpec(newDir, target);
+}
 
-/** The files a specifier can live in; stylesheets and sidecars hold none. */
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs"]);
+/**
+ * Where a specifier sits, as (lead, quote, spec) so the rewrite re-emits
+ * exactly the surrounding characters it matched.
+ */
+const SCRIPT_SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])((?:\.\.\/)+[^"'\n]*)\2/g;
+
+/** The files a specifier can live in; sidecars and images hold none. */
+const SYNTAX: Record<string, RegExp> = {
+	".ts": SCRIPT_SPECIFIER,
+	".tsx": SCRIPT_SPECIFIER,
+	".js": SCRIPT_SPECIFIER,
+	".jsx": SCRIPT_SPECIFIER,
+	".mjs": SCRIPT_SPECIFIER,
+};
 
 /** How esbuild would finish an extensionless specifier, plus the file as named. */
 const RESOLVED_AS = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".css", ".json"];
@@ -71,10 +97,10 @@ function isFile(path: string): boolean {
 	return statSync(path, { throwIfNoEntry: false })?.isFile() === true;
 }
 
-function sourceFilesUnder(dir: string): string[] {
+function filesUnder(dir: string): string[] {
 	try {
 		return readdirSync(dir, { recursive: true, withFileTypes: true })
-			.filter((entry) => entry.isFile() && SOURCE_EXTENSIONS.has(extname(entry.name)))
+			.filter((entry) => entry.isFile())
 			.map((entry) => join(entry.parentPath, entry.name));
 	} catch {
 		return [];

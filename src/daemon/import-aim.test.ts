@@ -80,15 +80,29 @@ describe("re-aiming escaping imports on a move", () => {
 		expect(read(to, "frame.tsx")).toContain('import "../../notes.css"');
 	});
 
-	it("leaves a string that only looks like a path, and one that escapes design/", () => {
+	it("leaves an import that answers to no file, and one that escapes design/", () => {
 		const { root, designDir } = project();
 		const source =
-			'const up = "../not/a/file";\nconst out = "../../../etc/passwd";\nexport default () => up + out;\n';
+			'import up from "../not/a/file";\nimport out from "../../../etc/passwd";\nexport default () => up + out;\n';
 		writeDesignFile(root, join("frames", "dashboard", "frame.tsx"), source);
 		mkdirSync(join(designDir, "frames", "site"), { recursive: true });
 
 		const { to } = moveFolder(designDir, join("frames", "dashboard"), join("frames", "site", "dashboard"));
 
 		expect(read(to, "frame.tsx")).toBe(source);
+	});
+
+	it("reads only import positions: a ../ the frame shows or comments on is the author's text", () => {
+		const { root, designDir } = project();
+		const source =
+			'// the helper lives at "../../shared/lib/utils"\n' +
+			'import { cn } from "../../shared/lib/utils";\n' +
+			'export default () => <a title="../../shared/lib/utils">{cn("../../shared/lib/utils")}</a>;\n';
+		writeDesignFile(root, join("frames", "dashboard", "frame.tsx"), source);
+		mkdirSync(join(designDir, "frames", "site"), { recursive: true });
+
+		const { to } = moveFolder(designDir, join("frames", "dashboard"), join("frames", "site", "dashboard"));
+
+		expect(read(to, "frame.tsx")).toBe(source.replace('from "../../shared/lib/utils"', 'from "shared/lib/utils"'));
 	});
 });
