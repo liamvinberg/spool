@@ -461,6 +461,54 @@
 		"system": {
 			"x": 31070,
 			"y": 80
+		},
+		"explore/new-project": {
+			"x": 15762,
+			"y": 80
+		},
+		"explore/new-project/new-project-query": {
+			"x": 80,
+			"y": 80
+		},
+		"explore/new-project/new-project-row": {
+			"x": 1600,
+			"y": 80
+		},
+		"explore/new-project/new-project-row--created": {
+			"x": 3120,
+			"y": 80
+		},
+		"explore/new-project/new-project-row--naming": {
+			"x": 4640,
+			"y": 80
+		},
+		"explore/new-project/new-project-footer": {
+			"x": 6160,
+			"y": 80
+		},
+		"explore/new-project/new-project-footer--ask": {
+			"x": 7680,
+			"y": 80
+		},
+		"explore/new-project/new-project-footer--created": {
+			"x": 9200,
+			"y": 80
+		},
+		"explore/new-project/new-project-query--created": {
+			"x": 10720,
+			"y": 80
+		},
+		"explore/new-project/new-project-query--zero": {
+			"x": 12240,
+			"y": 80
+		},
+		"explore/new-project/new-project-home": {
+			"x": 13760,
+			"y": 80
+		},
+		"explore/new-project/new-project-home--dialog": {
+			"x": 15280,
+			"y": 80
 		}
 	}
 }

@@ -90,9 +90,11 @@ interface SpoolHomeScreenProps {
 	emptyTarget?: string | undefined;
 	/** what the bar's "+" opened, drawn over home: the folder picker and nothing else */
 	overlay?: React.ReactNode | undefined;
+	/** home with nothing registered yet, the node being whatever door the take adds under the copy */
+	empty?: React.ReactNode | undefined;
 }
 
-export function SpoolHomeScreen({ canvasTarget, emptyTarget, overlay }: SpoolHomeScreenProps) {
+export function SpoolHomeScreen({ canvasTarget, emptyTarget, overlay, empty }: SpoolHomeScreenProps) {
 	const [query, setQuery] = useState("");
 	const [openMenu, setOpenMenu] = useState<string | null>(null);
 	const [removed, setRemoved] = useState<readonly string[]>([]);
@@ -137,12 +139,13 @@ export function SpoolHomeScreen({ canvasTarget, emptyTarget, overlay }: SpoolHom
 	}
 
 	return (
-		<SpoolShell canvasControls={false} tabs={["spool", "notaker"]}>
+		// nothing registered means nothing open: an empty home cannot be wearing tabs
+		<SpoolShell canvasControls={false} tabs={empty === undefined ? ["spool", "notaker"] : []}>
 			<div className="relative h-full overflow-hidden bg-bg">
 				<div className="flex h-full flex-col gap-6 overflow-y-auto px-16 py-12">
 					<div className="flex w-full shrink-0 items-center justify-between">
 						<h1 className="font-semibold text-lg tracking-tight leading-lg">Projects</h1>
-						<div className="flex items-center gap-3.5">
+						<div className={cn("flex items-center gap-3.5", empty !== undefined && "hidden")}>
 							<label className="flex h-7 w-[224px] items-center gap-2 rounded-md border border-border bg-surface px-2.5 transition-colors focus-within:border-border-raised">
 								<SearchIcon className="h-3 w-3 shrink-0 text-muted" />
 								<input
@@ -172,7 +175,15 @@ export function SpoolHomeScreen({ canvasTarget, emptyTarget, overlay }: SpoolHom
 						</div>
 					</div>
 
-					{visible.length === 0 ? (
+					{empty !== undefined ? (
+						<div className="flex flex-col items-start gap-3 py-12">
+							<p className="font-medium text-base text-text leading-base">No projects yet.</p>
+							<p className="font-mono text-muted text-sm leading-xs">
+								Run `spool init` in a product root, or press + above to pick a folder.
+							</p>
+							{empty}
+						</div>
+					) : visible.length === 0 ? (
 						<div className="flex flex-col gap-2 py-16">
 							<p className="font-medium text-base text-text leading-base">Nothing matches “{query}”</p>
 							<p className="font-mono text-muted text-sm leading-xs">
