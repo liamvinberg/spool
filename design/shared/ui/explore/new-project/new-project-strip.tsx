@@ -63,7 +63,7 @@ export function NewProjectStrip({ seed }: { seed?: NewSeed | undefined }) {
 						onEnter={() => picker.enter(index)}
 					/>
 				))}
-				{np.initing ? <InitLine path={picker.path} /> : null}
+				{np.initing ? <InitLine /> : null}
 			</ListBox>
 
 			<button

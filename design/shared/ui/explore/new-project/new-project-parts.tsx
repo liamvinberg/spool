@@ -177,14 +177,14 @@ export function NameLine({ np }: { np: NewProject }) {
  * standing `initialize design/ here` row in every browse was an answer to a
  * question nobody had asked yet.
  */
-export function InitLine({ path }: { path: string }) {
+export function InitLine() {
 	return (
 		<div
 			style={{ height: ROW }}
 			className="flex w-full items-center gap-2.5 px-4 font-mono text-2xs leading-3"
 		>
 			<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
-			<span className="min-w-0 truncate text-muted/55">{`${shortPath(path)} is not a spool project`}</span>
+			<span className="shrink-0 text-muted/55">not a spool project</span>
 			<span className="text-muted/25">·</span>
 			<span className="shrink-0 text-muted">↵ initializes design/ here</span>
 			<span className="text-muted/25">·</span>
