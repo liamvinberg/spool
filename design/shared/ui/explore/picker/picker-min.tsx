@@ -156,7 +156,7 @@ export function PickerField({ seed }: { seed?: Seed | undefined }) {
 				/>
 			</label>
 
-			<ListBox picker={picker} min={0} max={442}>
+			<ListBox picker={picker} min={0} max={476}>
 				{picker.rows.length === 0 && picker.searching ? <Empty picker={picker} /> : null}
 				{picker.rows.map((row, index) => (
 					<MinRow
