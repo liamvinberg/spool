@@ -296,11 +296,16 @@ export function PickerList({ seed }: { seed?: Seed | undefined }) {
 				<div className="flex h-5 items-center gap-2.5 px-4 font-mono text-md leading-md">
 					<span className="shrink-0 text-thread">{">"}</span>
 					{picker.query === "" ? (
-						<span className="text-muted/35">search every folder under ~</span>
+						<>
+							<span className="-mr-1 h-3.5 w-[1.5px] shrink-0 bg-thread" />
+							<span className="text-muted/35">search every folder under ~</span>
+						</>
 					) : (
-						<span className="min-w-0 truncate text-text">{picker.query}</span>
+						<>
+							<span className="min-w-0 truncate text-text">{picker.query}</span>
+							<span className="-ml-1 h-3.5 w-[1.5px] shrink-0 bg-thread" />
+						</>
 					)}
-					<span className="-ml-1 h-3.5 w-[1.5px] shrink-0 bg-thread" />
 				</div>
 				<div className="flex h-5 min-w-0 items-center px-4 pt-0.5">
 					{parts.map((part, index) => {
