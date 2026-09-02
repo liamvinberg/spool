@@ -2,7 +2,15 @@ import type { ComponentType, ReactNode } from "react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLinkDialog } from "./external-link-dialog";
 import { accelChord, accelLabel } from "./platform-keys";
-import { useEdgeBar, useViewport } from "./player-page";
+import {
+	DESK_BAR_PX,
+	DESK_RESTORED_MS,
+	type DeskWindow,
+	deskBarLayout,
+	deskWindow,
+	useEdgeBar,
+	useViewport,
+} from "./player-page";
 
 /**
  * The played page (#227). Play opens a browser tab, so the frame stops being a
@@ -66,12 +74,20 @@ export function Player({
 	const terminal = controller.terminal(frame);
 	const Screen = frames[frame];
 	const [picking, setPicking] = useState(false);
+	// Which shell this document is in, asked once: a window the app made and
+	// handed a bridge draws the bar it was sized for, and everything else is the
+	// tab #227 designed. It cannot change under a live document, so it is read at
+	// mount and never again.
+	const [desk] = useState(deskWindow);
 	// the external-link dialog is modal: it owns the moment, chrome and all
 	const blocked = externalHref !== null;
-	const { revealed, point } = useEdgeBar(!coarsePointer && !blocked, picking);
+	const { revealed, point } = useEdgeBar(desk === null && !coarsePointer && !blocked, picking);
+	// A bar that went away takes its open switcher with it. The app's bar never
+	// goes away, so this is the tab's rule and says so, rather than relying on a
+	// dependency that happens never to change in the other shell.
 	useEffect(() => {
-		if (!revealed) setPicking(false);
-	}, [revealed]);
+		if (desk === null && !revealed) setPicking(false);
+	}, [desk, revealed]);
 
 	// Where the pointer is, forwarded out of an embedded frame: only this document
 	// knows what the numbers mean, and a frame that has lost the pointer reports
@@ -97,7 +113,9 @@ export function Player({
 	// Spool's own gesture lives behind accel, never on a plain key: a live frame
 	// keeps every ordinary key, its own esc for modals included. ⌘W is the exit
 	// this tab already has; this is the same exit for the hand already on esc.
-	const { close } = controller;
+	// A tab closes itself; a window the app owns is the app's to close, and asking
+	// it is the only exit that also forgets nothing it should have kept.
+	const close = desk === null ? controller.close : desk.close;
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
 			if (accelChord(event) === undefined) return;
@@ -110,7 +128,10 @@ export function Player({
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: summoning is ambient, not an affordance — the page is the page, never a control
-		<div className="spool-page" onMouseMove={(event) => point(event.clientY, "page")}>
+		<div
+			className={desk === null ? "spool-page" : "spool-page is-desk"}
+			onMouseMove={(event) => point(event.clientY, "page")}
+		>
 			<div
 				className={terminal ? "spool-screen is-terminal" : "spool-screen"}
 				// The one number spool imposes: the authored width as a cap, and the
@@ -132,18 +153,31 @@ export function Player({
 				/>
 			)}
 			{/* touch is the immersive context (#60): the prototype is the page, no chrome at all */}
-			{!coarsePointer && (
-				<EdgeBar
+			{desk !== null ? (
+				<DeskBar
+					desk={desk}
 					project={project}
 					frame={frame}
 					frames={controller.frames()}
-					revealed={revealed}
+					viewport={viewport}
 					picking={picking}
 					onPicking={setPicking}
 					onWalk={controller.walk}
-					onClose={close}
-					{...(canvasHref === undefined ? {} : { canvasHref })}
 				/>
+			) : (
+				!coarsePointer && (
+					<EdgeBar
+						project={project}
+						frame={frame}
+						frames={controller.frames()}
+						revealed={revealed}
+						picking={picking}
+						onPicking={setPicking}
+						onWalk={controller.walk}
+						onClose={close}
+						{...(canvasHref === undefined ? {} : { canvasHref })}
+					/>
+				)
 			)}
 		</div>
 	);
@@ -262,74 +296,18 @@ function EdgeBar({
 					)}
 					{/* the picker hangs off the switcher rather than off the bar, so it
 					    lines up under the name on whichever surface is drawing this */}
-					<span className="spool-bar-switcher">
-						<button
-							type="button"
-							id="spool-switcher"
-							className="spool-bar-frame"
-							aria-expanded={picking}
-							aria-controls="spool-frames"
-							onClick={() => onPicking(!picking)}
-						>
-							<span className="spool-bar-project">{project} /</span>
-							<span className="spool-bar-name">{frame}</span>
-							<svg
-								viewBox="0 0 10 10"
-								width="10"
-								height="10"
-								className={picking ? "spool-bar-chevron is-open" : "spool-bar-chevron"}
-								aria-hidden="true"
-							>
-								<path
-									d="m2 4 3 3 3-3"
-									fill="none"
-									stroke="currentColor"
-									strokeWidth="1.4"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-								/>
-							</svg>
-						</button>
-						<span
-							id="spool-frames"
-							className={picking ? "spool-picker is-open" : "spool-picker"}
-							inert={!picking}
-						>
-							<span className="spool-picker-list">
-								{frames.map((name) => (
-									<button
-										type="button"
-										key={name}
-										className={name === frame ? "spool-picker-row is-here" : "spool-picker-row"}
-										onClick={() => {
-											onPicking(false);
-											if (name !== frame) onWalk(name);
-										}}
-									>
-										<span className="spool-dash" />
-										{name}
-									</button>
-								))}
-							</span>
-							<span className="spool-picker-foot">
-								{frames.length} {frames.length === 1 ? "frame" : "frames"}
-							</span>
-						</span>
-					</span>
+					<FrameSwitcher
+						project={project}
+						frame={frame}
+						frames={frames}
+						picking={picking}
+						onPicking={onPicking}
+						onWalk={onWalk}
+					/>
 					<span className="spool-bar-end">
 						<span className="spool-bar-hint">{exitHint} exits</span>
 						<span className="spool-bar-rule" />
-						<button
-							type="button"
-							id="spool-close"
-							className="spool-bar-close"
-							aria-label="Close the tab"
-							onClick={onClose}
-						>
-							<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
-								<path d="M2 2 8 8M8 2 2 8" fill="none" stroke="currentColor" strokeWidth="1.5" />
-							</svg>
-						</button>
+						<CloseButton label="Close the tab" onClose={onClose} />
 					</span>
 				</div>
 				{/* the scrim a video player draws under its controls: the page is not cut
@@ -337,6 +315,199 @@ function EdgeBar({
 				<div className="spool-edge-scrim" aria-hidden />
 			</div>
 		</>
+	);
+}
+
+/**
+ * The name of the screen, and the way to another one. Written once because two
+ * surfaces draw it: the tab's summoned edge bar, and the bar the Mac app's
+ * window wears. The picker hangs off this rather than off either bar, so it
+ * lines up under the name on both.
+ */
+function FrameSwitcher({
+	project,
+	frame,
+	frames,
+	picking,
+	onPicking,
+	onWalk,
+}: {
+	/** Dropped when the bar is too narrow to carry it; the name never is. */
+	project?: string | undefined;
+	frame: string;
+	frames: string[];
+	picking: boolean;
+	onPicking: (picking: boolean) => void;
+	onWalk: (frame: string) => void;
+}) {
+	return (
+		<span className="spool-bar-switcher">
+			<button
+				type="button"
+				id="spool-switcher"
+				className="spool-bar-frame"
+				aria-expanded={picking}
+				aria-controls="spool-frames"
+				onClick={() => onPicking(!picking)}
+			>
+				{project !== undefined && <span className="spool-bar-project">{project} /</span>}
+				<span className="spool-bar-name">{frame}</span>
+				<svg
+					viewBox="0 0 10 10"
+					width="10"
+					height="10"
+					className={picking ? "spool-bar-chevron is-open" : "spool-bar-chevron"}
+					aria-hidden="true"
+				>
+					<path
+						d="m2 4 3 3 3-3"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="1.4"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					/>
+				</svg>
+			</button>
+			<span id="spool-frames" className={picking ? "spool-picker is-open" : "spool-picker"} inert={!picking}>
+				<span className="spool-picker-list">
+					{frames.map((name) => (
+						<button
+							type="button"
+							key={name}
+							className={name === frame ? "spool-picker-row is-here" : "spool-picker-row"}
+							onClick={() => {
+								onPicking(false);
+								if (name !== frame) onWalk(name);
+							}}
+						>
+							<span className="spool-dash" />
+							{name}
+						</button>
+					))}
+				</span>
+				<span className="spool-picker-foot">
+					{frames.length} {frames.length === 1 ? "frame" : "frames"}
+				</span>
+			</span>
+		</span>
+	);
+}
+
+function CloseButton({ label, onClose }: { label: string; onClose: () => void }) {
+	return (
+		<button type="button" id="spool-close" className="spool-bar-close" aria-label={label} onClick={onClose}>
+			<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+				<path d="M2 2 8 8M8 2 2 8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+			</svg>
+		</button>
+	);
+}
+
+/**
+ * The bar the Mac app's play window wears (#275).
+ *
+ * The window has no title bar — `titleBarStyle: "hiddenInset"`, the traffic
+ * lights inset into this strip — so these 30px are spent, always, and in
+ * exchange nothing has to be summoned: the frame's name is readable, the
+ * switcher is one press away, and the window says how big it is.
+ *
+ * It carries what only a window can say beside what the edge bar already said.
+ * Back to the canvas raises the window that is still standing behind this one
+ * rather than navigating this document; the size readout is the window's own,
+ * live, because a window someone is dragging the corner of is a question about
+ * numbers; and a restore says so once, with the door back beside it, because a
+ * person who does not remember moving this window last week needs to know why
+ * it is not the width the frame was authored at.
+ *
+ * Below {@link DESK_BAR_WIDE_PX} it drops the project prefix, the word on the
+ * canvas button and the size readout. A phone frame's window is 390 wide and
+ * the frame's name is the only thing in there worth its space.
+ */
+function DeskBar({
+	desk,
+	project,
+	frame,
+	frames,
+	viewport,
+	picking,
+	onPicking,
+	onWalk,
+}: {
+	desk: DeskWindow;
+	project: string;
+	frame: string;
+	frames: string[];
+	viewport: { vw: number; vh: number };
+	picking: boolean;
+	onPicking: (picking: boolean) => void;
+	onWalk: (frame: string) => void;
+}) {
+	const layout = deskBarLayout(viewport.vw);
+	// Said once and then gone, the way a toast is; pressing reset ends it early
+	// because the thing it was announcing has just been undone.
+	const [restored, setRestored] = useState(desk.restored);
+	useEffect(() => {
+		if (!restored) return;
+		const timer = window.setTimeout(() => setRestored(false), DESK_RESTORED_MS);
+		return () => window.clearTimeout(timer);
+	}, [restored]);
+	return (
+		<div className="spool-desk" style={{ height: DESK_BAR_PX }}>
+			<button
+				type="button"
+				className="spool-bar-back spool-desk-canvas"
+				aria-label="Back to the canvas"
+				onClick={desk.canvas}
+			>
+				<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+					<path
+						d="m10 3.5-4.5 4.5 4.5 4.5"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="1.6"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					/>
+				</svg>
+				{layout.canvasLabel && "canvas"}
+			</button>
+			<span className="spool-bar-rule" />
+			<FrameSwitcher
+				frame={frame}
+				frames={frames}
+				picking={picking}
+				onPicking={onPicking}
+				onWalk={onWalk}
+				{...(layout.project ? { project } : {})}
+			/>
+			<span className="spool-bar-end">
+				{restored && (
+					<span className="spool-desk-restored">
+						<span className="spool-dash is-lit" />
+						restored
+						<button
+							type="button"
+							className="spool-desk-reset"
+							onClick={() => {
+								setRestored(false);
+								desk.reset();
+							}}
+						>
+							reset
+						</button>
+						<span className="spool-bar-rule" />
+					</span>
+				)}
+				{layout.size && (
+					<span className="spool-bar-hint">
+						{viewport.vw} × {viewport.vh}
+					</span>
+				)}
+				<span className="spool-bar-rule" />
+				<CloseButton label="Close the window" onClose={desk.close} />
+			</span>
+		</div>
 	);
 }
 

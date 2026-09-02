@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { Player, type PlayerController } from "./player-chrome";
+import { DESK_BAR_PX, deskWindow } from "./player-page";
 
 /**
  * The player shell: the trusted half of a played session. It holds the
@@ -293,18 +294,28 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	};
 
 	/**
+	 * What the app's window spends on chrome the tab does not (#275). The tab's
+	 * bar is summoned and floats over the page, so it costs the frame nothing;
+	 * the play window's bar is permanent and stands above it, so the frame's box
+	 * is that much shorter than the window. Read once, because a document cannot
+	 * change which shell it is in.
+	 */
+	const chromeInset = deskWindow() === null ? 0 : DESK_BAR_PX;
+
+	/**
 	 * The box the page really gives a frame (#227): the authored width as a cap
-	 * and the real viewport below it, over the whole height of the window. The
-	 * frame is never scaled, so this is both what the iframe is sized to and what
-	 * the runtime inside it will measure — which is why every w/h that crosses
-	 * the port is in this space and not the authored one.
+	 * and the real viewport below it, over the whole height of the window less
+	 * whatever chrome stands above it. The frame is never scaled, so this is both
+	 * what the iframe is sized to and what the runtime inside it will measure —
+	 * which is why every w/h that crosses the port is in this space and not the
+	 * authored one, and why being 30px out here wedges the reveal shut.
 	 *
 	 * A terminal is a character grid rather than a document, so it keeps the
 	 * height it was authored at instead of growing into the window.
 	 */
 	const playedBox = (name: string, geometry: FrameGeometry): FrameGeometry => ({
 		w: Math.min(window.innerWidth, geometry.w),
-		h: config.terminals.includes(name) ? geometry.h : window.innerHeight,
+		h: config.terminals.includes(name) ? geometry.h : Math.max(window.innerHeight - chromeInset, 1),
 	});
 	const playedList = (frames: { name: string; w: number; h: number }[]) =>
 		frames.map((frame) => (isGeometry(frame) ? { name: frame.name, ...playedBox(frame.name, frame) } : frame));

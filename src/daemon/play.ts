@@ -507,4 +507,58 @@ body { margin: 0; background: #0e0e0e; }
 .spool-dash { flex: none; width: 8px; height: 2px; background: transparent; }
 .spool-picker-row.is-here .spool-dash { background: #f5391a; }
 .spool-picker-foot { display: block; padding: 8px 14px; border-top: 1px solid #262626; color: #8e8c88; font-size: 10px; }
+/* the Mac app's play window (#275): the app made this window, sized it from the
+   frame's own two numbers and left the title bar off, so these 30px are the bar
+   spool draws in its place — the traffic lights inset into it. Permanent rather
+   than summoned, which is the trade: 30px of page for a name that is always
+   readable and a switcher that never has to be found */
+.spool-page.is-desk { box-sizing: border-box; padding-top: 30px; }
+.spool-page.is-desk .spool-screen { min-height: calc(100vh - 30px); }
+.spool-desk {
+	position: fixed;
+	inset: 0 0 auto;
+	z-index: 10;
+	/* its hairline is inside its 30px, so the page's inset and the bar agree */
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	/* the first 76px are the OS's: three lights, inset by trafficLightPosition */
+	padding: 0 16px 0 76px;
+	background: #282828;
+	border-bottom: 1px solid #363636;
+	color: #f0efed;
+	font: 400 12px/1 "Fragment Mono", ui-monospace, monospace;
+	-webkit-font-smoothing: antialiased;
+	font-synthesis: none;
+	/* this bar is the window's title bar, so a hand on it moves the window */
+	-webkit-app-region: drag;
+}
+.spool-desk button, .spool-desk .spool-picker { -webkit-app-region: no-drag; }
+/* full height, so the picker opens flush under the bar rather than under a button */
+.spool-desk .spool-bar-switcher { align-self: stretch; align-items: center; }
+.spool-desk-canvas {
+	flex: none;
+	gap: 4px;
+	padding: 4px 6px;
+	background: none;
+	border: 0;
+	font: inherit;
+	cursor: pointer;
+}
+.spool-desk-canvas:hover { background: #1c1c1c; color: #f0efed; }
+.spool-desk-restored { display: flex; align-items: center; gap: 8px; color: #8e8c88; font-size: 10px; }
+.spool-dash.is-lit { background: #f5391a; }
+.spool-desk-reset {
+	margin: 0;
+	padding: 0;
+	background: none;
+	border: 0;
+	color: #8e8c88;
+	font: inherit;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	cursor: pointer;
+}
+.spool-desk-reset:hover { color: #f0efed; }
 `;
