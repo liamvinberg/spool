@@ -13,11 +13,11 @@ import {
 	type Selection,
 	siblingOf,
 	type Target,
-} from "../lib/select-ladder";
-import { cn } from "../lib/utils";
-import { CanvasChrome, type PageRow } from "./spool-canvas-chrome";
-import { CartDocument } from "./spool-cart-document";
-import { SpoolShell } from "./spool-shell";
+} from "shared/lib/select-ladder";
+import { cn } from "shared/lib/utils";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { CartDocument } from "shared/ui/spool-cart-document";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * One canvas, four ladders. The field, the rails and the tool bar are the

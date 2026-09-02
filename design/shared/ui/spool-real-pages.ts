@@ -1,15 +1,15 @@
-import agentCover from "../assets/pages/agent.jpg";
-import appCover from "../assets/pages/app.jpg";
-import bootingCover from "../assets/pages/booting.jpg";
-import componentsCover from "../assets/pages/components.jpg";
-import directingCover from "../assets/pages/directing.jpg";
-import explorerCover from "../assets/pages/explorer.jpg";
-import manipulateCover from "../assets/pages/manipulate.jpg";
-import pickerCover from "../assets/pages/picker.jpg";
-import playInlineCover from "../assets/pages/play-inline.jpg";
-import playTabCover from "../assets/pages/play-tab.jpg";
-import siteCover from "../assets/pages/site.jpg";
-import variantsCover from "../assets/pages/variants.jpg";
+import agentCover from "shared/assets/pages/agent.jpg";
+import appCover from "shared/assets/pages/app.jpg";
+import bootingCover from "shared/assets/pages/booting.jpg";
+import componentsCover from "shared/assets/pages/components.jpg";
+import directingCover from "shared/assets/pages/directing.jpg";
+import explorerCover from "shared/assets/pages/explorer.jpg";
+import manipulateCover from "shared/assets/pages/manipulate.jpg";
+import pickerCover from "shared/assets/pages/picker.jpg";
+import playInlineCover from "shared/assets/pages/play-inline.jpg";
+import playTabCover from "shared/assets/pages/play-tab.jpg";
+import siteCover from "shared/assets/pages/site.jpg";
+import variantsCover from "shared/assets/pages/variants.jpg";
 
 /**
  * Spool's own design folder, as it stands: twelve pages, 142 frames, and not one
@@ -80,18 +80,18 @@ export function fitCover(page: RealPage, maxW: number, maxH: number): { w: numbe
 
 /* ── the folded set ──────────────────────────────────────────────────── */
 
-import agentTidy from "../assets/tidy/agent.jpg";
-import appTidy from "../assets/tidy/app.jpg";
-import bootingTidy from "../assets/tidy/booting.jpg";
-import componentsTidy from "../assets/tidy/components.jpg";
-import directingTidy from "../assets/tidy/directing.jpg";
-import explorerTidy from "../assets/tidy/explorer.jpg";
-import manipulateTidy from "../assets/tidy/manipulate.jpg";
-import pickerTidy from "../assets/tidy/picker.jpg";
-import playInlineTidy from "../assets/tidy/play-inline.jpg";
-import playTabTidy from "../assets/tidy/play-tab.jpg";
-import siteTidy from "../assets/tidy/site.jpg";
-import variantsTidy from "../assets/tidy/variants.jpg";
+import agentTidy from "shared/assets/tidy/agent.jpg";
+import appTidy from "shared/assets/tidy/app.jpg";
+import bootingTidy from "shared/assets/tidy/booting.jpg";
+import componentsTidy from "shared/assets/tidy/components.jpg";
+import directingTidy from "shared/assets/tidy/directing.jpg";
+import explorerTidy from "shared/assets/tidy/explorer.jpg";
+import manipulateTidy from "shared/assets/tidy/manipulate.jpg";
+import pickerTidy from "shared/assets/tidy/picker.jpg";
+import playInlineTidy from "shared/assets/tidy/play-inline.jpg";
+import playTabTidy from "shared/assets/tidy/play-tab.jpg";
+import siteTidy from "shared/assets/tidy/site.jpg";
+import variantsTidy from "shared/assets/tidy/variants.jpg";
 
 /**
  * The same twelve pages with a very long one folded into bands.

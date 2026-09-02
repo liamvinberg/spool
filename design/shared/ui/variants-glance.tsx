@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
-import { CARD_H, CARD_W, TvarsoCheckout, actionOf, type Variation, type VariationId } from "./tvarso-checkout";
-import { cn } from "../lib/utils";
+import { CARD_H, CARD_W, TvarsoCheckout, actionOf, type Variation, type VariationId } from "shared/ui/tvarso-checkout";
+import { cn } from "shared/lib/utils";
 
 /**
  * The glance kit: what the second wave of this page is all about.

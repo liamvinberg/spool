@@ -1,4 +1,4 @@
-import { VariantsPropertiesScreen } from "../../../shared/ui/variants-properties";
+import { VariantsPropertiesScreen } from "shared/ui/variants-properties";
 
 /**
  * The same rail after the decision, which is the state a variation feature

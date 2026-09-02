@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useState } from "react";
-import { cn } from "../../../shared/lib/utils";
-import { SpoolMark } from "../../../shared/ui/spool-mark";
+import { cn } from "shared/lib/utils";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 /**
  * The product imagery for site-clean--stage.

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Cue, PlayEntry } from "./turn-play";
+import type { Cue, PlayEntry } from "shared/lib/turn-play";
 
 /**
  * The usage window, and who decides which one you are looking at.

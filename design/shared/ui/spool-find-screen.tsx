@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { FRAMES, type FrameRow, pageCounts } from "../lib/frame-find";
-import { cn } from "../lib/utils";
-import { CanvasChrome, type PageRow } from "./spool-canvas-chrome";
-import { type FindRows, FindPalette } from "./spool-find-palette";
-import type { Mark } from "./spool-unseen-mark";
-import { SpoolShell } from "./spool-shell";
+import { FRAMES, type FrameRow, pageCounts } from "shared/lib/frame-find";
+import { cn } from "shared/lib/utils";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { type FindRows, FindPalette } from "shared/ui/spool-find-palette";
+import type { Mark } from "shared/ui/spool-unseen-mark";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * `spool-canvas` again, with one thing changed: the project open in it is spool's

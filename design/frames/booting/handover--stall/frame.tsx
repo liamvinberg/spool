@@ -1,5 +1,5 @@
-import { BootShell } from "../../../shared/ui/spool-boot-screen";
-import { StallHandover, StallRail } from "../../../shared/ui/spool-boot-handover";
+import { BootShell } from "shared/ui/spool-boot-screen";
+import { StallHandover, StallRail } from "shared/ui/spool-boot-handover";
 
 export default function HandoverStallFrame() {
 	return (

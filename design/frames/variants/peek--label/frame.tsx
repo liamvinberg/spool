@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { Scaled, TvarsoTicket, TvarsoTimetable, type VariationId } from "../../../shared/ui/tvarso-checkout";
-import { GlanceCard } from "../../../shared/ui/variants-glance";
-import { FIELD_SCALE, KeepVerb, Neighbour, Placed, SelectionRing, StackIcon, VariantsScreen } from "../../../shared/ui/variants-shell";
-import { useKey } from "../../../shared/lib/variants-cycle";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { cn } from "../../../shared/lib/utils";
+import { Scaled, TvarsoTicket, TvarsoTimetable, type VariationId } from "shared/ui/tvarso-checkout";
+import { GlanceCard } from "shared/ui/variants-glance";
+import { FIELD_SCALE, KeepVerb, Neighbour, Placed, SelectionRing, StackIcon, VariantsScreen } from "shared/ui/variants-shell";
+import { useKey } from "shared/lib/variants-cycle";
+import { useDecision } from "shared/lib/variants-decision";
+import { cn } from "shared/lib/utils";
 
 /**
  * The whole feature is forty pixels of the row the frame already has.

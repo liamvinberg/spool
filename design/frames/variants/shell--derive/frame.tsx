@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useLayoutEffect, useRef, useState } from "react";
-import { TvarsoCheckout, TvarsoOutlet, TvarsoShell, type VariationId } from "../../../shared/ui/tvarso-checkout";
-import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "../../../shared/ui/variants-code";
-import { cn } from "../../../shared/lib/utils";
+import { TvarsoCheckout, TvarsoOutlet, TvarsoShell, type VariationId } from "shared/ui/tvarso-checkout";
+import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "shared/ui/variants-code";
+import { cn } from "shared/lib/utils";
 
 /**
  * No shell file at all: the first variation is the shell, and the others are

@@ -1,4 +1,4 @@
-import type { PageRow } from "../../../shared/ui/spool-canvas-chrome";
+import type { PageRow } from "shared/ui/spool-canvas-chrome";
 import {
 	type AmbientFrame,
 	AmbientWindow,

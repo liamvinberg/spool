@@ -1,6 +1,6 @@
 import { type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { compiles } from "../lib/properties-families";
-import { cn } from "../lib/utils";
+import { compiles } from "shared/lib/properties-families";
+import { cn } from "shared/lib/utils";
 
 /**
  * The rail's primitives, one per kind of property, merged from the three takes

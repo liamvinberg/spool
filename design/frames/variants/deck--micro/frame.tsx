@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import { useState } from "react";
-import { CARD_H, CARD_W, Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable, type VariationId } from "../../../shared/ui/tvarso-checkout";
+import { CARD_H, CARD_W, Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable, type VariationId } from "shared/ui/tvarso-checkout";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -10,10 +10,10 @@ import {
 	PlayVerb,
 	SelectionRing,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useKey } from "../../../shared/lib/variants-cycle";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useKey } from "shared/lib/variants-cycle";
+import { useDecision } from "shared/lib/variants-decision";
+import { cn } from "shared/lib/utils";
 
 /**
  * The deck without the ceremony: the whole set lives in fourteen pixels of

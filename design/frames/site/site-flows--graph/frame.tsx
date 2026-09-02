@@ -1,8 +1,8 @@
 import { motion, useReducedMotion } from "motion/react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { cn } from "../../../shared/lib/utils";
-import { CoffeeScreen } from "../../../shared/ui/coffee-screens";
-import { backArrowClass, backChipClass, SiteSection, STAGE_H, STAGE_W } from "../../../shared/ui/site-section";
+import { cn } from "shared/lib/utils";
+import { CoffeeScreen } from "shared/ui/coffee-screens";
+import { backArrowClass, backChipClass, SiteSection, STAGE_H, STAGE_W } from "shared/ui/site-section";
 
 /**
  * site-flows--graph: the "flows" section of spool.page (site page). One 1440x900

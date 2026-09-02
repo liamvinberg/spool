@@ -9,8 +9,8 @@ import {
 	TvarsoTicket,
 	TvarsoTimetable,
 	type VariationId,
-} from "../../../shared/ui/tvarso-checkout";
-import { PeekRing } from "../../../shared/ui/variants-feel";
+} from "shared/ui/tvarso-checkout";
+import { PeekRing } from "shared/ui/variants-feel";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -19,10 +19,10 @@ import {
 	Placed,
 	PlayVerb,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { EASE } from "../../../shared/lib/variants-feel";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useDecision } from "shared/lib/variants-decision";
+import { EASE } from "shared/lib/variants-feel";
+import { cn } from "shared/lib/utils";
 import { type Box, MorphAction, MorphPayment, type Payment } from "./morph";
 
 /**

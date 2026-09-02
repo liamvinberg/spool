@@ -1,5 +1,5 @@
-import { cn } from "../lib/utils";
-import { CheckIcon } from "./spool-icons";
+import { cn } from "shared/lib/utils";
+import { CheckIcon } from "shared/ui/spool-icons";
 
 export type CoffeeScreenName = "menu" | "cart" | "receipt";
 export type CoffeeScreenScale = "canvas" | "design" | "full";

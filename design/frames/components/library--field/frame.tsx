@@ -1,6 +1,6 @@
-import { cn } from "../../../shared/lib/utils";
-import { CanvasChrome, type PageRow } from "../../../shared/ui/spool-canvas-chrome";
-import { INK, LINE, MUTED, PAPER } from "../../../shared/ui/tvarso-checkout";
+import { cn } from "shared/lib/utils";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { INK, LINE, MUTED, PAPER } from "shared/ui/tvarso-checkout";
 import {
 	ICONS,
 	type LibPart,
@@ -11,8 +11,8 @@ import {
 	TVARSO_PARTS,
 	TVARSO_TOKENS,
 	Well,
-} from "../../../shared/ui/tvarso-library";
-import { SpoolShell } from "../../../shared/ui/spool-shell";
+} from "shared/ui/tvarso-library";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * Shape C read as a field: the same claim, on a canvas instead of a page

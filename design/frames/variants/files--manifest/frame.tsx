@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import { Scaled, TvarsoCheckout, VARIATIONS, type VariationId } from "../../../shared/ui/tvarso-checkout";
-import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "../../../shared/ui/variants-code";
-import { FIELD_H, FIELD_SCALE, FIELD_W, StackIcon } from "../../../shared/ui/variants-shell";
-import { cn } from "../../../shared/lib/utils";
+import { Scaled, TvarsoCheckout, VARIATIONS, type VariationId } from "shared/ui/tvarso-checkout";
+import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "shared/ui/variants-code";
+import { FIELD_H, FIELD_SCALE, FIELD_W, StackIcon } from "shared/ui/variants-shell";
+import { cn } from "shared/lib/utils";
 
 /**
  * One file says what the set is, in what order, under what names.

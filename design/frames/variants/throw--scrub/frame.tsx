@@ -1,7 +1,7 @@
 import { animate, motion, useMotionValue, useTransform } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { CARD_H, CARD_W, Scaled, TvarsoTicket, TvarsoTimetable } from "../../../shared/ui/tvarso-checkout";
-import { PeekRing, StillCard } from "../../../shared/ui/variants-feel";
+import { CARD_H, CARD_W, Scaled, TvarsoTicket, TvarsoTimetable } from "shared/ui/tvarso-checkout";
+import { PeekRing, StillCard } from "shared/ui/variants-feel";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -10,10 +10,10 @@ import {
 	Placed,
 	PlayVerb,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { SETTLE, nearest, project } from "../../../shared/lib/variants-feel";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useDecision } from "shared/lib/variants-decision";
+import { SETTLE, nearest, project } from "shared/lib/variants-feel";
+import { cn } from "shared/lib/utils";
 
 /**
  * The set is a strip of film and the frame is the gate.

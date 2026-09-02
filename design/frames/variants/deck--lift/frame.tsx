@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import { useCallback, useState } from "react";
-import { CARD_H, CARD_W, Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "../../../shared/ui/tvarso-checkout";
+import { CARD_H, CARD_W, Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "shared/ui/tvarso-checkout";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -10,10 +10,10 @@ import {
 	PlayVerb,
 	SelectionRing,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useKey } from "../../../shared/lib/variants-cycle";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useKey } from "shared/lib/variants-cycle";
+import { useDecision } from "shared/lib/variants-decision";
+import { cn } from "shared/lib/utils";
 
 /**
  * The lift, with the ceremony taken out of it.

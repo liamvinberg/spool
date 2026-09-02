@@ -1,11 +1,11 @@
-import { CAPTURED, useModel } from "../../../shared/lib/agent-model";
-import { railEntries, useCapture, useTurnScript } from "../../../shared/lib/claude-turn";
-import { useTicker, useTurn } from "../../../shared/lib/turn-play";
-import { CanvasChrome, type PageRow } from "../../../shared/ui/spool-canvas-chrome";
-import { ModelMenu } from "../../../shared/ui/spool-model-control";
-import { PlayField } from "../../../shared/ui/spool-play-field";
-import { PlayRail } from "../../../shared/ui/spool-play-rail";
-import { SpoolShell } from "../../../shared/ui/spool-shell";
+import { CAPTURED, useModel } from "shared/lib/agent-model";
+import { railEntries, useCapture, useTurnScript } from "shared/lib/claude-turn";
+import { useTicker, useTurn } from "shared/lib/turn-play";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { ModelMenu } from "shared/ui/spool-model-control";
+import { PlayField } from "shared/ui/spool-play-field";
+import { PlayRail } from "shared/ui/spool-play-rail";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * agent-play--model-menu — the same line, made a button.

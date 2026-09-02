@@ -1,4 +1,4 @@
-import type { Pointed } from "./agent-selection";
+import type { Pointed } from "shared/lib/agent-selection";
 
 /**
  * The specimens the plural frames point at (#116).

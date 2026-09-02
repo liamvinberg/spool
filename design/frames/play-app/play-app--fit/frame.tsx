@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
-import { cn } from "../../../shared/lib/utils";
-import { CoffeeScreen } from "../../../shared/ui/coffee-screens";
+import { cn } from "shared/lib/utils";
+import { CoffeeScreen } from "shared/ui/coffee-screens";
 import {
 	AppWindow,
 	CANVAS_RECT,
@@ -11,9 +11,9 @@ import {
 	DESK_W,
 	MENU_H,
 	PlayerSlimBar,
-} from "../../../shared/ui/spool-desk";
-import { SpoolCanvasScreen } from "../../../shared/ui/spool-canvas-screen";
-import { TidemarkLanding } from "../../../shared/ui/tidemark-landing";
+} from "shared/ui/spool-desk";
+import { SpoolCanvasScreen } from "shared/ui/spool-canvas-screen";
+import { TidemarkLanding } from "shared/ui/tidemark-landing";
 
 /**
  * play-app--fit: the window opens at the frame's own width and the screen's

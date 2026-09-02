@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { lengthOf, lengthPx, stylesheetFor, withLength } from "../lib/properties-families";
-import { ELEMENTS, elementOf, pxValue, sizeVerdict, spacingVerdict, textVerdict, withToken, wordVerdict } from "../lib/properties-model";
-import { cn } from "../lib/utils";
-import { CanvasChrome, type PageRow } from "./spool-canvas-chrome";
-import { PropertiesCart } from "./spool-properties-cart";
-import { type Acts, type Geometry, type Pick, Rail, type Reading, type Rect } from "./spool-properties-rail";
-import { SpoolShell } from "./spool-shell";
+import { lengthOf, lengthPx, stylesheetFor, withLength } from "shared/lib/properties-families";
+import { ELEMENTS, elementOf, pxValue, sizeVerdict, spacingVerdict, textVerdict, withToken, wordVerdict } from "shared/lib/properties-model";
+import { cn } from "shared/lib/utils";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { PropertiesCart } from "shared/ui/spool-properties-cart";
+import { type Acts, type Geometry, type Pick, Rail, type Reading, type Rect } from "shared/ui/spool-properties-rail";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * The properties surface on the canvas, decided (spool-cloud#16) and merged

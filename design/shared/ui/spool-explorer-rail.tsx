@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ExplorerModel } from "../lib/explorer-model";
+import type { ExplorerModel } from "shared/lib/explorer-model";
 import {
 	type DropSlot,
 	INDENT,
@@ -17,9 +17,9 @@ import {
 	nodeAt,
 	pageCount,
 	slotAllowed,
-} from "../lib/explorer-tree";
-import { cn } from "../lib/utils";
-import { ChevronIcon, FolderIcon, PanelCaret, PlusIcon } from "./spool-icons";
+} from "shared/lib/explorer-tree";
+import { cn } from "shared/lib/utils";
+import { ChevronIcon, FolderIcon, PanelCaret, PlusIcon } from "shared/ui/spool-icons";
 
 /**
  * The pages rail as a file explorer.

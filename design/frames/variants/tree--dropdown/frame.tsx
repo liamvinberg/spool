@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import { VARIATIONS, variationAt } from "../../../shared/ui/tvarso-checkout";
+import { VARIATIONS, variationAt } from "shared/ui/tvarso-checkout";
 import {
 	FRAME_ROW,
 	FrameIcon,
@@ -13,10 +13,10 @@ import {
 	VariationField,
 	contentX,
 	guideX,
-} from "../../../shared/ui/variants-shell";
-import { useArrows, useCycle } from "../../../shared/lib/variants-cycle";
-import { ChevronIcon } from "../../../shared/ui/spool-icons";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useArrows, useCycle } from "shared/lib/variants-cycle";
+import { ChevronIcon } from "shared/ui/spool-icons";
+import { cn } from "shared/lib/utils";
 
 /**
  * The rail is the switch: a frame with variations opens like a page does.

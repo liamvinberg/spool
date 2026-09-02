@@ -1,4 +1,4 @@
-import { ExplorerScreen } from "../../../shared/ui/spool-explorer-screen";
+import { ExplorerScreen } from "shared/ui/spool-explorer-screen";
 
 /**
  * The page is a lens on everything under it.

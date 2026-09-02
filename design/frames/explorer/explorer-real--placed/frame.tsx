@@ -1,4 +1,4 @@
-import { PageObjectsScreen } from "../../../shared/ui/spool-page-objects";
+import { PageObjectsScreen } from "shared/ui/spool-page-objects";
 
 /**
  * Spool's own design folder at its root, with every page an object a hand placed.

@@ -1,12 +1,12 @@
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { type Decision, type Standing, useDecision } from "../lib/variants-decision";
-import { cn } from "../lib/utils";
-import { Scaled, TvarsoCheckout, TvarsoOutlet, TvarsoShell, type Variation } from "./tvarso-checkout";
-import { CanvasChrome, type PageRow } from "./spool-canvas-chrome";
-import { BOX, FAINT, LABEL, Row, Section, VALUE } from "./spool-properties-fields";
-import { SpoolShell } from "./spool-shell";
-import { Argues } from "./variants-shell";
+import { type Decision, type Standing, useDecision } from "shared/lib/variants-decision";
+import { cn } from "shared/lib/utils";
+import { Scaled, TvarsoCheckout, TvarsoOutlet, TvarsoShell, type Variation } from "shared/ui/tvarso-checkout";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { BOX, FAINT, LABEL, Row, Section, VALUE } from "shared/ui/spool-properties-fields";
+import { SpoolShell } from "shared/ui/spool-shell";
+import { Argues } from "shared/ui/variants-shell";
 
 /**
  * The variation set inside the rail spool is actually going to have.

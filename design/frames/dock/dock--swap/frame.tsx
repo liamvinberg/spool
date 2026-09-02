@@ -1,4 +1,4 @@
-import { DockScreen } from "../../../shared/ui/spool-dock-screen";
+import { DockScreen } from "shared/ui/spool-dock-screen";
 
 /**
  * swap — the column shows whatever you last acted on.

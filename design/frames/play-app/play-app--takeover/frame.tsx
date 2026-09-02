@@ -1,9 +1,9 @@
 import { motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
-import { cn } from "../../../shared/lib/utils";
-import { AppWindow, CANVAS_RECT, CanvasButton, Desk, DeskCaption, DeskControl, EdgeBar } from "../../../shared/ui/spool-desk";
-import { SpoolCanvasScreen } from "../../../shared/ui/spool-canvas-screen";
-import { TidemarkLanding } from "../../../shared/ui/tidemark-landing";
+import { cn } from "shared/lib/utils";
+import { AppWindow, CANVAS_RECT, CanvasButton, Desk, DeskCaption, DeskControl, EdgeBar } from "shared/ui/spool-desk";
+import { SpoolCanvasScreen } from "shared/ui/spool-canvas-screen";
+import { TidemarkLanding } from "shared/ui/tidemark-landing";
 
 /**
  * play-app--takeover: one window, and play is a state it is in.

@@ -1,4 +1,4 @@
-import { SharedScreen } from "../../../shared/ui/spool-shared-screen";
+import { SharedScreen } from "shared/ui/spool-shared-screen";
 
 /**
  * The mark is a second line, not a second colour: the thread ring keeps its

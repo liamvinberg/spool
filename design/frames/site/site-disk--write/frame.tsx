@@ -1,8 +1,8 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { cn } from "../../../shared/lib/utils";
-import { CoffeeScreen, type CoffeeScreenName } from "../../../shared/ui/coffee-screens";
-import { backArrowClass, backChipClass, STAGE_H, STAGE_W, SiteSection, colorJson } from "../../../shared/ui/site-section";
+import { cn } from "shared/lib/utils";
+import { CoffeeScreen, type CoffeeScreenName } from "shared/ui/coffee-screens";
+import { backArrowClass, backChipClass, STAGE_H, STAGE_W, SiteSection, colorJson } from "shared/ui/site-section";
 
 /**
  * site-disk--write: the "your disk" section of spool.page (site page), rebuilt on

@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
-import { CAPTURED_NOW, type RateLimitInfo, limitReadout } from "../lib/agent-limit";
+import { CAPTURED_NOW, type RateLimitInfo, limitReadout } from "shared/lib/agent-limit";
 import {
 	type ClaudeModel,
 	EFFORT_SAYS,
@@ -10,9 +10,9 @@ import {
 	engineLabel,
 	modelOf,
 	readout,
-} from "../lib/agent-model";
-import { cn } from "../lib/utils";
-import { ChevronIcon } from "./spool-icons";
+} from "shared/lib/agent-model";
+import { cn } from "shared/lib/utils";
+import { ChevronIcon } from "shared/ui/spool-icons";
 
 /**
  * Three answers to one question, drawn so they can be compared instead of

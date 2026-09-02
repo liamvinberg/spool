@@ -1,4 +1,4 @@
-import { SpoolMark } from "../../../shared/ui/spool-mark";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 /**
  * site-type--ledger. The landing typeset as a printed manual.

@@ -1,8 +1,8 @@
 import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring, useTransform, type MotionValue } from "motion/react";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { ui } from "spool";
-import { cn } from "../../../shared/lib/utils";
-import { SpoolMark } from "../../../shared/ui/spool-mark";
+import { cn } from "shared/lib/utils";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 /**
  * site-hub--tutorial. The revealed pose of site-hub only: no hero, no scroll

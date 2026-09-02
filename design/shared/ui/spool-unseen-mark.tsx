@@ -1,4 +1,4 @@
-import { cn } from "../lib/utils";
+import { cn } from "shared/lib/utils";
 
 /**
  * A frame nobody has looked at, in the smallest thing that can say it.

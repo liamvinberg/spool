@@ -1,6 +1,6 @@
-import { cn } from "../lib/utils";
-import { BackIcon, CloseIcon, HintIcon, MotionIcon, PlayIcon, PlusIcon, RestartIcon, ThreadIcon } from "./spool-icons";
-import { SpoolMark } from "./spool-mark";
+import { cn } from "shared/lib/utils";
+import { BackIcon, CloseIcon, HintIcon, MotionIcon, PlayIcon, PlusIcon, RestartIcon, ThreadIcon } from "shared/ui/spool-icons";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 const colors = [
 	["bg", "0E0E0E"],

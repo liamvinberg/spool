@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useState } from "react";
-import { VARIATIONS, variationAt } from "../../../shared/ui/tvarso-checkout";
+import { VARIATIONS, variationAt } from "shared/ui/tvarso-checkout";
 import {
 	FRAME_ROW,
 	FrameIcon,
@@ -12,10 +12,10 @@ import {
 	VariationField,
 	contentX,
 	guideX,
-} from "../../../shared/ui/variants-shell";
-import { useArrows, useCycle, useKey } from "../../../shared/lib/variants-cycle";
-import { ChevronIcon } from "../../../shared/ui/spool-icons";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useArrows, useCycle, useKey } from "shared/lib/variants-cycle";
+import { ChevronIcon } from "shared/ui/spool-icons";
+import { cn } from "shared/lib/utils";
 
 /**
  * A variation is a property of the frame, not a child of it.

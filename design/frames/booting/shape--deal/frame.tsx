@@ -1,5 +1,5 @@
-import { DealBoot, DealRail } from "../../../shared/ui/spool-boot-shape";
-import { BootShell } from "../../../shared/ui/spool-boot-screen";
+import { DealBoot, DealRail } from "shared/ui/spool-boot-shape";
+import { BootShell } from "shared/ui/spool-boot-screen";
 
 export default function ShapeDealFrame() {
 	return (

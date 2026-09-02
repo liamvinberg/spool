@@ -1,10 +1,10 @@
 import { motion } from "motion/react";
-import { Scaled, TvarsoCheckout } from "../../../shared/ui/tvarso-checkout";
-import { RailTabs } from "../../../shared/ui/spool-canvas-chrome";
-import { KeepVerb, PlayVerb, VariantsScreen, VariationField } from "../../../shared/ui/variants-shell";
-import { useKey } from "../../../shared/lib/variants-cycle";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { cn } from "../../../shared/lib/utils";
+import { Scaled, TvarsoCheckout } from "shared/ui/tvarso-checkout";
+import { RailTabs } from "shared/ui/spool-canvas-chrome";
+import { KeepVerb, PlayVerb, VariantsScreen, VariationField } from "shared/ui/variants-shell";
+import { useKey } from "shared/lib/variants-cycle";
+import { useDecision } from "shared/lib/variants-decision";
+import { cn } from "shared/lib/utils";
 
 /**
  * The decision belongs to the inspector, because the inspector is already the

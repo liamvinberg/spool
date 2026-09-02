@@ -10,11 +10,11 @@ import {
 	reachOf,
 	type TakeName,
 	TAKES,
-} from "../lib/shared-reach";
-import { cn } from "../lib/utils";
-import { CanvasChrome, type PageRow } from "./spool-canvas-chrome";
-import { AgentPlate, DocFor } from "./spool-shared-doc";
-import { SpoolShell } from "./spool-shell";
+} from "shared/lib/shared-reach";
+import { cn } from "shared/lib/utils";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { AgentPlate, DocFor } from "shared/ui/spool-shared-doc";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * Five readings of one question (spool-cloud#30): how spool says the element

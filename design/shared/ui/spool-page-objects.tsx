@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { cn } from "../lib/utils";
-import { CanvasChrome } from "./spool-canvas-chrome";
-import { FolderIcon } from "./spool-icons";
-import { type RealPage, REAL_PAGES, TIDY_PAGES, fitCover } from "./spool-real-pages";
-import { SpoolShell } from "./spool-shell";
+import { cn } from "shared/lib/utils";
+import { CanvasChrome } from "shared/ui/spool-canvas-chrome";
+import { FolderIcon } from "shared/ui/spool-icons";
+import { type RealPage, REAL_PAGES, TIDY_PAGES, fitCover } from "shared/ui/spool-real-pages";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * A page drawn as an object on the canvas, over spool's own design folder.

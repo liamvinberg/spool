@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState } from "react";
-import { cn } from "../lib/utils";
-import { ChevronIcon, FolderIcon } from "./spool-icons";
-import { SpoolMark } from "./spool-mark";
+import { cn } from "shared/lib/utils";
+import { ChevronIcon, FolderIcon } from "shared/ui/spool-icons";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 /**
  * The other half of a loading state: the moment it ends, and the moments it

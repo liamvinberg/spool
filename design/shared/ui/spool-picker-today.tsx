@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useState } from "react";
-import { childrenOf, HOME, parentOf, shortPath } from "../lib/picker-disk";
-import { BackIcon } from "./spool-icons";
+import { childrenOf, HOME, parentOf, shortPath } from "shared/lib/picker-disk";
+import { BackIcon } from "shared/ui/spool-icons";
 
 /**
  * The picker as it ships, on the same mock disk as every take beside it. Read

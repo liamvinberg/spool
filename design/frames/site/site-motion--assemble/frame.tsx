@@ -1,7 +1,7 @@
 import { type MotionValue, motion, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { cn } from "../../../shared/lib/utils";
-import { SpoolMark } from "../../../shared/ui/spool-mark";
+import { cn } from "shared/lib/utils";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 /**
  * site-motion--assemble. spool.page argued through one motion character: the

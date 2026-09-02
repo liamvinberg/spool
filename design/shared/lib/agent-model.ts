@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { PlayEntry } from "./turn-play";
+import type { PlayEntry } from "shared/lib/turn-play";
 
 /**
  * What a model picker picks from, and who knows it.

@@ -1,7 +1,7 @@
 import { type PanInfo, motion, useReducedMotion } from "motion/react";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import { cn } from "../../../shared/lib/utils";
-import { SpoolMark } from "../../../shared/ui/spool-mark";
+import { cn } from "shared/lib/utils";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 /**
  * site-desk--dmg. The Mac app argued download-first: the page is the install.

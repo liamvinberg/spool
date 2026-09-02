@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
-import { CARD_H, CARD_W, Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "../../../shared/ui/tvarso-checkout";
-import { GlanceCard } from "../../../shared/ui/variants-glance";
+import { CARD_H, CARD_W, Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "shared/ui/tvarso-checkout";
+import { GlanceCard } from "shared/ui/variants-glance";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -11,9 +11,9 @@ import {
 	PlayVerb,
 	SelectionRing,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useDecision } from "shared/lib/variants-decision";
+import { cn } from "shared/lib/utils";
 
 /**
  * Spread while you hold, and it puts itself away.

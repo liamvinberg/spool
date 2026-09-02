@@ -1,5 +1,5 @@
-import { cn } from "../lib/utils";
-import { SearchIcon } from "./spool-icons";
+import { cn } from "shared/lib/utils";
+import { SearchIcon } from "shared/ui/spool-icons";
 import {
 	Field,
 	Hints,
@@ -13,7 +13,7 @@ import {
 	UpButton,
 	usePicker,
 	Where,
-} from "./spool-picker-parts";
+} from "shared/ui/spool-picker-parts";
 
 /**
  * Take five: the smallest change that still reaches the whole disk.

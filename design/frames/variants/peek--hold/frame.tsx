@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState } from "react";
-import { Scaled, TvarsoTicket, TvarsoTimetable, type VariationId } from "../../../shared/ui/tvarso-checkout";
-import { GlanceCard, regionsBetween, saysRegions } from "../../../shared/ui/variants-glance";
+import { Scaled, TvarsoTicket, TvarsoTimetable, type VariationId } from "shared/ui/tvarso-checkout";
+import { GlanceCard, regionsBetween, saysRegions } from "shared/ui/variants-glance";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -11,9 +11,9 @@ import {
 	PlayVerb,
 	SelectionRing,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useDecision } from "shared/lib/variants-decision";
+import { cn } from "shared/lib/utils";
 
 /**
  * Nothing on screen until you ask, and asking is a key you are already holding.

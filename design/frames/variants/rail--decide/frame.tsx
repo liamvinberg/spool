@@ -1,4 +1,4 @@
-import { VariantsPropertiesScreen } from "../../../shared/ui/variants-properties";
+import { VariantsPropertiesScreen } from "shared/ui/variants-properties";
 
 /**
  * The decision, in the rail spool is going to have.

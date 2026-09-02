@@ -18,8 +18,8 @@ import {
 	useState,
 } from "react";
 import { ui } from "spool";
-import { cn } from "../../../shared/lib/utils";
-import { SpoolMark } from "../../../shared/ui/spool-mark";
+import { cn } from "shared/lib/utils";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 /**
  * site-hub--composed. The spool.page landing, whole: the page and the canvas it

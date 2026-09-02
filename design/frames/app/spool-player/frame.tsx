@@ -1,7 +1,7 @@
 import { Fragment, useState } from "react";
-import { cn } from "../../../shared/lib/utils";
-import type { CoffeeScreenName } from "../../../shared/ui/coffee-screens";
-import { BackIcon, CloseIcon, InspectorIcon, RestartIcon } from "../../../shared/ui/spool-icons";
+import { cn } from "shared/lib/utils";
+import type { CoffeeScreenName } from "shared/ui/coffee-screens";
+import { BackIcon, CloseIcon, InspectorIcon, RestartIcon } from "shared/ui/spool-icons";
 import {
 	edgeLabel,
 	PHONE_W,
@@ -13,7 +13,7 @@ import {
 	useWake,
 	useWalk,
 	type Walk,
-} from "../../../shared/ui/spool-player-stage";
+} from "shared/ui/spool-player-stage";
 
 /**
  * The player (#60), shipped: slate plus the session as an instrument rail,

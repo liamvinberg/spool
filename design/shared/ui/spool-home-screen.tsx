@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { cn } from "../lib/utils";
-import { CloseIcon, DotsIcon, SearchIcon } from "./spool-icons";
-import { SpoolShell } from "./spool-shell";
+import { cn } from "shared/lib/utils";
+import { CloseIcon, DotsIcon, SearchIcon } from "shared/ui/spool-icons";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * Home (#13): the project registry with per-card management — a corner menu

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Scaled, TvarsoTicket, TvarsoTimetable, type VariationId } from "../../../shared/ui/tvarso-checkout";
-import { GlanceCard, NotchName, PeekReadout } from "../../../shared/ui/variants-glance";
+import { Scaled, TvarsoTicket, TvarsoTimetable, type VariationId } from "shared/ui/tvarso-checkout";
+import { GlanceCard, NotchName, PeekReadout } from "shared/ui/variants-glance";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -10,9 +10,9 @@ import {
 	PlayVerb,
 	SelectionRing,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useKey } from "../../../shared/lib/variants-cycle";
-import { useDecision } from "../../../shared/lib/variants-decision";
+} from "shared/ui/variants-shell";
+import { useKey } from "shared/lib/variants-cycle";
+import { useDecision } from "shared/lib/variants-decision";
 
 /**
  * Hovering a name is the cheapest look there is.

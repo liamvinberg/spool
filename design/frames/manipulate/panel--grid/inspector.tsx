@@ -24,8 +24,8 @@ import {
 	WORDS,
 	wordOf,
 	wordVerdict,
-} from "../../../shared/lib/properties-model";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/lib/properties-model";
+import { cn } from "shared/lib/utils";
 import {
 	type Choice,
 	chosen,

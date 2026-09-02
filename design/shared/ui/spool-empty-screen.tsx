@@ -1,6 +1,6 @@
-import { CanvasChrome } from "./spool-canvas-chrome";
-import { SpoolMark } from "./spool-mark";
-import { SpoolShell } from "./spool-shell";
+import { CanvasChrome } from "shared/ui/spool-canvas-chrome";
+import { SpoolMark } from "shared/ui/spool-mark";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * A registered project with nothing in it yet. The chrome is the same chrome —

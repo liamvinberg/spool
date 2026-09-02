@@ -56,7 +56,7 @@ import {
 	withScope,
 	withTheme,
 	withToggle,
-} from "../lib/properties-families";
+} from "shared/lib/properties-families";
 import {
 	chainOf,
 	FILE,
@@ -78,8 +78,8 @@ import {
 	WORDS,
 	wordOf,
 	wordVerdict,
-} from "../lib/properties-model";
-import { cn } from "../lib/utils";
+} from "shared/lib/properties-model";
+import { cn } from "shared/lib/utils";
 import {
 	AddField,
 	ArrowIcon,
@@ -99,7 +99,7 @@ import {
 	SwatchChip,
 	TextField,
 	VALUE,
-} from "./spool-properties-fields";
+} from "shared/ui/spool-properties-fields";
 
 /**
  * The properties rail, merged (spool-cloud#20): the grid take's two-column

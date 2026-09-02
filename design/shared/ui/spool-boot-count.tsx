@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { cn } from "../lib/utils";
+import { cn } from "shared/lib/utils";
 
 /**
  * Four takes on the one honest question the boot can answer: can the wait

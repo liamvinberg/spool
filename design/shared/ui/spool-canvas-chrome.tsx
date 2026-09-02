@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
-import type { Life } from "../lib/agent-threads";
-import { cn } from "../lib/utils";
-import { ChevronIcon, FolderIcon, HandIcon, PanelCaret, SelectIcon } from "./spool-icons";
-import { ThreadMark } from "./spool-thread-mark";
-import { type Mark, UnseenMark } from "./spool-unseen-mark";
+import type { Life } from "shared/lib/agent-threads";
+import { cn } from "shared/lib/utils";
+import { ChevronIcon, FolderIcon, HandIcon, PanelCaret, SelectIcon } from "shared/ui/spool-icons";
+import { ThreadMark } from "shared/ui/spool-thread-mark";
+import { type Mark, UnseenMark } from "shared/ui/spool-unseen-mark";
 
 /**
  * The canvas chrome: the Pages rail on the left, the viewport between, the

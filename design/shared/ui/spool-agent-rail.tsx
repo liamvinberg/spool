@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
-import { cn } from "../lib/utils";
-import { RailTabs } from "./spool-canvas-chrome";
-import { CloseIcon } from "./spool-icons";
+import { cn } from "shared/lib/utils";
+import { RailTabs } from "shared/ui/spool-canvas-chrome";
+import { CloseIcon } from "shared/ui/spool-icons";
 
 /**
  * The agent rail: spool talking to the human's own Claude Code, spawned as a

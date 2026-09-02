@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { cn } from "../lib/utils";
-import { CanvasChrome, type PageRow } from "./spool-canvas-chrome";
-import { CoffeeScreen, type CoffeeScreenName } from "./coffee-screens";
-import { SpoolShell } from "./spool-shell";
-import { type Mark, UnseenMark } from "./spool-unseen-mark";
+import { cn } from "shared/lib/utils";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { CoffeeScreen, type CoffeeScreenName } from "shared/ui/coffee-screens";
+import { SpoolShell } from "shared/ui/spool-shell";
+import { type Mark, UnseenMark } from "shared/ui/spool-unseen-mark";
 
 /**
  * The canvas: the app's main surface. Pages rail, the frames on their field

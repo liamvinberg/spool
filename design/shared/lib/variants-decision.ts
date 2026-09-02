@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { VARIATIONS, type Variation, type VariationId } from "../ui/tvarso-checkout";
+import { VARIATIONS, type Variation, type VariationId } from "shared/ui/tvarso-checkout";
 
 /**
  * A variation set is an open decision, and this is the decision.

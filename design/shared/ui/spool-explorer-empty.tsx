@@ -1,7 +1,7 @@
-import type { StagePage } from "../lib/explorer-tree";
-import { cn } from "../lib/utils";
-import { FolderIcon } from "./spool-icons";
-import { FrameCover, STILL_H, STILL_W } from "./spool-explorer-wire";
+import type { StagePage } from "shared/lib/explorer-tree";
+import { cn } from "shared/lib/utils";
+import { FolderIcon } from "shared/ui/spool-icons";
+import { FrameCover, STILL_H, STILL_W } from "shared/ui/spool-explorer-wire";
 
 /**
  * What the field says when the page you are standing on has no frames on it.

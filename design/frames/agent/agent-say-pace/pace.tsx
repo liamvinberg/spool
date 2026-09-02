@@ -1,6 +1,6 @@
 import { useReducedMotion } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Said, closedText } from "../../../shared/ui/spool-say";
+import { Said, closedText } from "shared/ui/spool-say";
 
 /**
  * When a character is allowed on screen, which is a separate question from what it does

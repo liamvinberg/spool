@@ -1,6 +1,6 @@
-import { cn } from "../lib/utils";
-import { CloseIcon, PlusIcon, ThreadIcon } from "./spool-icons";
-import { SpoolMark } from "./spool-mark";
+import { cn } from "shared/lib/utils";
+import { CloseIcon, PlusIcon, ThreadIcon } from "shared/ui/spool-icons";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 /**
  * The app shell: one 44px bar over everything — brand lockup as the home door,

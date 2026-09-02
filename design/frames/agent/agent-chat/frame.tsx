@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { contextLine } from "../../../shared/lib/agent-selection";
-import { CAPTURED, useModel } from "../../../shared/lib/agent-model";
-import { QUEUE_SEED, useQueue } from "../../../shared/lib/agent-queue";
-import { useLimit } from "../../../shared/lib/agent-limit";
-import { LIVE_ASK, useAutoAsk } from "../../../shared/lib/agent-threads";
+import { contextLine } from "shared/lib/agent-selection";
+import { CAPTURED, useModel } from "shared/lib/agent-model";
+import { QUEUE_SEED, useQueue } from "shared/lib/agent-queue";
+import { useLimit } from "shared/lib/agent-limit";
+import { LIVE_ASK, useAutoAsk } from "shared/lib/agent-threads";
 import {
 	type Collapse,
 	type Slice,
@@ -12,15 +12,15 @@ import {
 	useCapture,
 	useFanoutScript,
 	useTurnScript,
-} from "../../../shared/lib/claude-turn";
-import { enteredFrame } from "../../../shared/lib/pointed-fixtures";
-import { type ShotRef, useTicker, useTurn } from "../../../shared/lib/turn-play";
-import { CanvasChrome, type PageRow } from "../../../shared/ui/spool-canvas-chrome";
-import { ModelMenu } from "../../../shared/ui/spool-model-control";
-import { type BaseFrame, FrameThumb, type Outline, PlayField } from "../../../shared/ui/spool-play-field";
-import { COMPOSER_W, PlayRail } from "../../../shared/ui/spool-play-rail";
-import { SpoolShell } from "../../../shared/ui/spool-shell";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/lib/claude-turn";
+import { enteredFrame } from "shared/lib/pointed-fixtures";
+import { type ShotRef, useTicker, useTurn } from "shared/lib/turn-play";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { ModelMenu } from "shared/ui/spool-model-control";
+import { type BaseFrame, FrameThumb, type Outline, PlayField } from "shared/ui/spool-play-field";
+import { COMPOSER_W, PlayRail } from "shared/ui/spool-play-rail";
+import { SpoolShell } from "shared/ui/spool-shell";
+import { cn } from "shared/lib/utils";
 
 /**
  * agent-chat — the rail as decided, and the only frame that draws all of it (#180).

@@ -1,6 +1,6 @@
 import type { ComponentType, CSSProperties, ReactNode } from "react";
-import { cn } from "../lib/utils";
-import { FIELD, INK, LINE, MUTED, PAPER, SEA } from "./tvarso-checkout";
+import { cn } from "shared/lib/utils";
+import { FIELD, INK, LINE, MUTED, PAPER, SEA } from "shared/ui/tvarso-checkout";
 
 /**
  * Tvärsö's design system, read the way shape C reads a library

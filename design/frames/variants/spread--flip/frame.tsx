@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { type VariationId, VARIATIONS } from "../../../shared/ui/tvarso-checkout";
-import { GlanceCard, regionsBetween, saysRegions } from "../../../shared/ui/variants-glance";
-import { FIELD_SCALE, FrameLabel, KeepVerb, Placed, SelectionRing, VariantsScreen } from "../../../shared/ui/variants-shell";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { cn } from "../../../shared/lib/utils";
+import { type VariationId, VARIATIONS } from "shared/ui/tvarso-checkout";
+import { GlanceCard, regionsBetween, saysRegions } from "shared/ui/variants-glance";
+import { FIELD_SCALE, FrameLabel, KeepVerb, Placed, SelectionRing, VariantsScreen } from "shared/ui/variants-shell";
+import { useDecision } from "shared/lib/variants-decision";
+import { cn } from "shared/lib/utils";
 
 /**
  * Two candidates in the same pixels, and your own eye does the diff.

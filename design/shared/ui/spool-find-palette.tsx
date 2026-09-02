@@ -10,10 +10,10 @@ import {
 	segmentsOf,
 	splitVariant,
 	type Weight,
-} from "../lib/frame-find";
-import { cn } from "../lib/utils";
-import { FolderIcon } from "./spool-icons";
-import { type Mark, UnseenMark } from "./spool-unseen-mark";
+} from "shared/lib/frame-find";
+import { cn } from "shared/lib/utils";
+import { FolderIcon } from "shared/ui/spool-icons";
+import { type Mark, UnseenMark } from "shared/ui/spool-unseen-mark";
 
 /**
  * The frame finder: press `/` on the canvas and a palette opens over it, filtering

@@ -1,4 +1,4 @@
-import { SharedScreen } from "../../../shared/ui/spool-shared-screen";
+import { SharedScreen } from "shared/ui/spool-shared-screen";
 
 /**
  * Figma's answer, drawn so it can be judged rather than argued: shared gets its

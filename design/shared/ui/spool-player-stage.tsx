@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { cn } from "../lib/utils";
-import { CoffeeScreen, type CoffeeScreenName } from "./coffee-screens";
+import { cn } from "shared/lib/utils";
+import { CoffeeScreen, type CoffeeScreenName } from "shared/ui/coffee-screens";
 
 /**
  * The play surface the app's player frame performs in: a 1440×900 mock —

@@ -1,4 +1,4 @@
-import { DockScreen } from "../../../shared/ui/spool-dock-screen";
+import { DockScreen } from "shared/ui/spool-dock-screen";
 
 /**
  * stack, one width — the edge never moves.

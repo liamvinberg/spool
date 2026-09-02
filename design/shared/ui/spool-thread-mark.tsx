@@ -1,6 +1,6 @@
 import { motion, useReducedMotion } from "motion/react";
-import type { Life } from "../lib/agent-threads";
-import { cn } from "../lib/utils";
+import type { Life } from "shared/lib/agent-threads";
+import { cn } from "shared/lib/utils";
 
 /**
  * What a thread is doing, in the smallest thing that can say it.

@@ -1,8 +1,8 @@
 import { motion } from "motion/react";
 import { useState } from "react";
-import { Scaled, TvarsoCheckout, VARIATIONS } from "../../../shared/ui/tvarso-checkout";
-import { Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "../../../shared/ui/variants-code";
-import { cn } from "../../../shared/lib/utils";
+import { Scaled, TvarsoCheckout, VARIATIONS } from "shared/ui/tvarso-checkout";
+import { Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "shared/ui/variants-code";
+import { cn } from "shared/lib/utils";
 
 /**
  * Today's convention, promoted to a relationship.

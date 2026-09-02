@@ -1,8 +1,8 @@
 import { type ReactNode, useEffect, useRef } from "react";
-import type { Thread } from "../lib/agent-threads";
-import { cn } from "../lib/utils";
-import { PlusIcon } from "./spool-icons";
-import { ThreadMark } from "./spool-thread-mark";
+import type { Thread } from "shared/lib/agent-threads";
+import { cn } from "shared/lib/utils";
+import { PlusIcon } from "shared/ui/spool-icons";
+import { ThreadMark } from "shared/ui/spool-thread-mark";
 
 /**
  * Every thread, always on screen, in a rail that does not have room for them.

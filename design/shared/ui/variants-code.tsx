@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import type { ReactNode } from "react";
-import { cn } from "../lib/utils";
-import { FolderIcon } from "./spool-icons";
-import { Argues, FrameIcon } from "./variants-shell";
+import { cn } from "shared/lib/utils";
+import { FolderIcon } from "shared/ui/spool-icons";
+import { Argues, FrameIcon } from "shared/ui/variants-shell";
 
 /**
  * A file tree and a code block, for the two lanes whose subject is what an

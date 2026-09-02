@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { type Variation, type VariationId, VARIATIONS } from "../../../shared/ui/tvarso-checkout";
-import { GlanceCard, regionsBetween, saysRegions } from "../../../shared/ui/variants-glance";
-import { FIELD_SCALE, VariantsScreen } from "../../../shared/ui/variants-shell";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { cn } from "../../../shared/lib/utils";
+import { type Variation, type VariationId, VARIATIONS } from "shared/ui/tvarso-checkout";
+import { GlanceCard, regionsBetween, saysRegions } from "shared/ui/variants-glance";
+import { FIELD_SCALE, VariantsScreen } from "shared/ui/variants-shell";
+import { useDecision } from "shared/lib/variants-decision";
+import { cn } from "shared/lib/utils";
 
 /**
  * Two of them, at the same size, at the same moment.

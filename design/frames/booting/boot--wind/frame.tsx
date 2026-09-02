@@ -1,4 +1,4 @@
-import { BootShell, WindBoot } from "../../../shared/ui/spool-boot-screen";
+import { BootShell, WindBoot } from "shared/ui/spool-boot-screen";
 
 export default function BootWindFrame() {
 	return (

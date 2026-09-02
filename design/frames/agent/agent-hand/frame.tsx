@@ -1,8 +1,8 @@
-import { railEntries, type Script, type ToolRow, useCapture, useTurnScript } from "../../../shared/lib/claude-turn";
-import { type ShotRef, type Turn, useTicker, useTurn } from "../../../shared/lib/turn-play";
-import { CanvasChrome, type PageRow } from "../../../shared/ui/spool-canvas-chrome";
-import { PlayRail } from "../../../shared/ui/spool-play-rail";
-import { SpoolShell } from "../../../shared/ui/spool-shell";
+import { railEntries, type Script, type ToolRow, useCapture, useTurnScript } from "shared/lib/claude-turn";
+import { type ShotRef, type Turn, useTicker, useTurn } from "shared/lib/turn-play";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { PlayRail } from "shared/ui/spool-play-rail";
+import { SpoolShell } from "shared/ui/spool-shell";
 import { Ghosted, useGhost } from "./ghost";
 import { KaffePhone, KaffeWide, phoneLayout, wideLayout, WRITES } from "./kaffe-page";
 import { HandField } from "./field";

@@ -7,10 +7,10 @@ import {
 	VARIATIONS,
 	type Variation,
 	type VariationId,
-} from "../../../shared/ui/tvarso-checkout";
-import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "../../../shared/ui/variants-code";
-import { FIELD_H, FIELD_SCALE, FIELD_W, StackIcon } from "../../../shared/ui/variants-shell";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/tvarso-checkout";
+import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "shared/ui/variants-code";
+import { FIELD_H, FIELD_SCALE, FIELD_W, StackIcon } from "shared/ui/variants-shell";
+import { cn } from "shared/lib/utils";
 
 /**
  * A folder of files under the frame, and every file in it is a variation.

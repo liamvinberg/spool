@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
-import { cn } from "../lib/utils";
-import type { PlayEntry } from "../lib/turn-play";
-import { CartEmptyRestrained } from "./coffee-empty-takes";
-import { CoffeeScreen, type CoffeeScreenName } from "./coffee-screens";
-import { CanvasChrome, type PageRow, type Target } from "./spool-canvas-chrome";
-import { PlayRail } from "./spool-play-rail";
-import { SpoolShell } from "./spool-shell";
+import { cn } from "shared/lib/utils";
+import type { PlayEntry } from "shared/lib/turn-play";
+import { CartEmptyRestrained } from "shared/ui/coffee-empty-takes";
+import { CoffeeScreen, type CoffeeScreenName } from "shared/ui/coffee-screens";
+import { CanvasChrome, type PageRow, type Target } from "shared/ui/spool-canvas-chrome";
+import { PlayRail } from "shared/ui/spool-play-rail";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * What survives of connections once the agent owns the rail (#146).

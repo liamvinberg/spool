@@ -5,7 +5,7 @@
  * box on the surface. A refused control keeps its place and loses its box.
  */
 import { type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { cn } from "../../../shared/lib/utils";
+import { cn } from "shared/lib/utils";
 import type { Choice } from "./tokens";
 
 export const MUTE = "font-mono text-2xs text-muted/60 leading-3";

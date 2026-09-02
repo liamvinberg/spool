@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PlayEntry, Turn, TurnPhase } from "./turn-play";
+import type { PlayEntry, Turn, TurnPhase } from "shared/lib/turn-play";
 
 /**
  * More than one conversation, and most of them somewhere you are not looking.

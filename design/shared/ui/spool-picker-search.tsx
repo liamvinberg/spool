@@ -1,4 +1,4 @@
-import { cn } from "../lib/utils";
+import { cn } from "shared/lib/utils";
 import {
 	Crumbs,
 	Field,
@@ -14,7 +14,7 @@ import {
 	UpButton,
 	usePicker,
 	Where,
-} from "./spool-picker-parts";
+} from "shared/ui/spool-picker-parts";
 
 /**
  * Take one: the field is the header.

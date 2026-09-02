@@ -1,5 +1,5 @@
-import { cn } from "../lib/utils";
-import type { SourceElement } from "../lib/properties-model";
+import { cn } from "shared/lib/utils";
+import type { SourceElement } from "shared/lib/properties-model";
 
 /**
  * kaffe's cart, rendered straight out of the properties model: every element

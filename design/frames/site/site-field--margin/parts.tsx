@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { cn } from "../../../shared/lib/utils";
-import { SpoolMark } from "../../../shared/ui/spool-mark";
+import { cn } from "shared/lib/utils";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 /**
  * site-field--margin, the neighbours. Each of these is one small frame standing

@@ -6,7 +6,7 @@ import {
 	PROBE_IN,
 	PortLink,
 	SiteLocalShell,
-} from "../../../shared/ui/site-local-shell";
+} from "shared/ui/site-local-shell";
 
 /**
  * local.spool.page, the browser is blocking the check: the blocked state of the

@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
-import { DOCS } from "../lib/agent-preflight";
-import { cn } from "../lib/utils";
-import { RailTabs } from "./spool-canvas-chrome";
+import { DOCS } from "shared/lib/agent-preflight";
+import { cn } from "shared/lib/utils";
+import { RailTabs } from "shared/ui/spool-canvas-chrome";
 
 /**
  * The rail with no agent behind it.

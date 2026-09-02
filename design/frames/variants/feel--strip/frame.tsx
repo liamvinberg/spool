@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useCallback, useState } from "react";
-import { Scaled, TvarsoTicket, TvarsoTimetable, type VariationId } from "../../../shared/ui/tvarso-checkout";
-import { PeekRing, SwapCard } from "../../../shared/ui/variants-feel";
+import { Scaled, TvarsoTicket, TvarsoTimetable, type VariationId } from "shared/ui/tvarso-checkout";
+import { PeekRing, SwapCard } from "shared/ui/variants-feel";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -10,11 +10,11 @@ import {
 	Placed,
 	PlayVerb,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useKey } from "../../../shared/lib/variants-cycle";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { PILL } from "../../../shared/lib/variants-feel";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useKey } from "shared/lib/variants-cycle";
+import { useDecision } from "shared/lib/variants-decision";
+import { PILL } from "shared/lib/variants-feel";
+import { cn } from "shared/lib/utils";
 
 /**
  * peek--strip again, with every millisecond of it argued.

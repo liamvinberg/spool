@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useState } from "react";
-import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "../../../shared/ui/tvarso-checkout";
+import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "shared/ui/tvarso-checkout";
 import {
 	DiscardVerb,
 	FIELD_H,
@@ -11,10 +11,10 @@ import {
 	SelectionRing,
 	StackIcon,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useKey } from "../../../shared/lib/variants-cycle";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useKey } from "shared/lib/variants-cycle";
+import { useDecision } from "shared/lib/variants-decision";
+import { cn } from "shared/lib/utils";
 
 /**
  * Put the candidates on the field, decide, and take them off it again.

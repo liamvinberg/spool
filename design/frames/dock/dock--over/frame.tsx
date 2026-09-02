@@ -1,4 +1,4 @@
-import { DockScreen } from "../../../shared/ui/spool-dock-screen";
+import { DockScreen } from "shared/ui/spool-dock-screen";
 
 /**
  * over — the agent leaves the column and stands on the field.

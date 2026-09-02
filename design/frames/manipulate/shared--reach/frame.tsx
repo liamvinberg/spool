@@ -1,4 +1,4 @@
-import { SharedScreen } from "../../../shared/ui/spool-shared-screen";
+import { SharedScreen } from "shared/ui/spool-shared-screen";
 
 /**
  * The mark is the blast radius, drawn where it lands: point at a shared element

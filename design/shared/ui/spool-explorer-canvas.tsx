@@ -1,7 +1,7 @@
-import type { FrameNode, StagePage } from "../lib/explorer-tree";
-import { cn } from "../lib/utils";
-import { PageStill, SaidEmpty, StageLine, ThroughField } from "./spool-explorer-empty";
-import { Still } from "./spool-explorer-wire";
+import type { FrameNode, StagePage } from "shared/lib/explorer-tree";
+import { cn } from "shared/lib/utils";
+import { PageStill, SaidEmpty, StageLine, ThroughField } from "shared/ui/spool-explorer-empty";
+import { Still } from "shared/ui/spool-explorer-wire";
 
 /**
  * The field behind the explorer: the active page's frames, drawn small.

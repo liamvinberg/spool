@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
-import { cn } from "../lib/utils";
-import { CoffeeScreen, type CoffeeScreenName } from "./coffee-screens";
+import { cn } from "shared/lib/utils";
+import { CoffeeScreen, type CoffeeScreenName } from "shared/ui/coffee-screens";
 
 /**
  * What can honestly stand in for the field before its shape is known.

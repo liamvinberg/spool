@@ -1,4 +1,4 @@
-import { DockScreen } from "../../../shared/ui/spool-dock-screen";
+import { DockScreen } from "shared/ui/spool-dock-screen";
 
 /**
  * stack — one strip on the edge, the surfaces listed down it. The take that won.

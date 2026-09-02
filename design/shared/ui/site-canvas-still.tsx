@@ -1,7 +1,7 @@
 import { animate, type MotionValue, motion, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import { useEffect, useState } from "react";
-import { cn } from "../lib/utils";
-import { SpoolMark } from "./spool-mark";
+import { cn } from "shared/lib/utils";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 /**
  * The revealed canvas, as a phone can have it.

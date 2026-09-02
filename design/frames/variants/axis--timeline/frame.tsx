@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useRef, useState } from "react";
-import { Scaled, TvarsoCheckout, type VariationId } from "../../../shared/ui/tvarso-checkout";
+import { Scaled, TvarsoCheckout, type VariationId } from "shared/ui/tvarso-checkout";
 import {
 	FIELD_H,
 	FIELD_SCALE,
@@ -11,9 +11,9 @@ import {
 	SelectionRing,
 	StackIcon,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useArrows, useCycle } from "../../../shared/lib/variants-cycle";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useArrows, useCycle } from "shared/lib/variants-cycle";
+import { cn } from "shared/lib/utils";
 
 /**
  * The other reading of the third dimension: the variations already exist, and

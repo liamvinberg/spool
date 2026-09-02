@@ -1,13 +1,13 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
-import { type EnteredChip, type Pointed, type Strip, stripOf } from "../lib/agent-selection";
-import { liveThread } from "../lib/agent-threads";
-import { cn } from "../lib/utils";
-import type { Connector, Plan, PlayEntry, Queued, Question, RowState, ShotRef, TurnPhase } from "../lib/turn-play";
-import { ChevronIcon, CloseIcon } from "./spool-icons";
-import { Lightbox } from "./spool-lightbox";
-import { type Arrival, Caret, Said, closedText } from "./spool-say";
-import { ThreadStrip } from "./spool-thread-strip";
+import { type EnteredChip, type Pointed, type Strip, stripOf } from "shared/lib/agent-selection";
+import { liveThread } from "shared/lib/agent-threads";
+import { cn } from "shared/lib/utils";
+import type { Connector, Plan, PlayEntry, Queued, Question, RowState, ShotRef, TurnPhase } from "shared/lib/turn-play";
+import { ChevronIcon, CloseIcon } from "shared/ui/spool-icons";
+import { Lightbox } from "shared/ui/spool-lightbox";
+import { type Arrival, Caret, Said, closedText } from "shared/ui/spool-say";
+import { ThreadStrip } from "shared/ui/spool-thread-strip";
 
 /**
  * The agent rail, reduced to what a turn actually is.

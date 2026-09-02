@@ -1,4 +1,4 @@
-import { type Dir, DISK } from "./picker-disk";
+import { type Dir, DISK } from "shared/lib/picker-disk";
 
 /**
  * Finding a folder anywhere under home by typing part of its name.

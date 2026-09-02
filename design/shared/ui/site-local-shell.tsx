@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { cn } from "../lib/utils";
-import { SpoolMark } from "./spool-mark";
+import { cn } from "shared/lib/utils";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 /**
  * The chrome every local.spool.page state wears, plus the primitives its frames

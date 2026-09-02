@@ -1,11 +1,11 @@
-import { QUEUE_SEED, useQueue } from "../../../shared/lib/agent-queue";
-import { LIVE_ASK, useAutoAsk } from "../../../shared/lib/agent-threads";
-import { railEntries, useCapture, useTurnScript } from "../../../shared/lib/claude-turn";
-import { useTicker, useTurn } from "../../../shared/lib/turn-play";
-import { CanvasChrome, type PageRow } from "../../../shared/ui/spool-canvas-chrome";
-import { PlayField } from "../../../shared/ui/spool-play-field";
-import { PlayRail } from "../../../shared/ui/spool-play-rail";
-import { SpoolShell } from "../../../shared/ui/spool-shell";
+import { QUEUE_SEED, useQueue } from "shared/lib/agent-queue";
+import { LIVE_ASK, useAutoAsk } from "shared/lib/agent-threads";
+import { railEntries, useCapture, useTurnScript } from "shared/lib/claude-turn";
+import { useTicker, useTurn } from "shared/lib/turn-play";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { PlayField } from "shared/ui/spool-play-field";
+import { PlayRail } from "shared/ui/spool-play-rail";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * agent-play--queue-back — taking one back into a box that is not empty (#176).

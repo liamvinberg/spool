@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { CAPTURED_NOW, type RateLimitInfo, limitLever, limitReadout, limitSentence } from "../lib/agent-limit";
-import { cn } from "../lib/utils";
+import { CAPTURED_NOW, type RateLimitInfo, limitLever, limitReadout, limitSentence } from "shared/lib/agent-limit";
+import { cn } from "shared/lib/utils";
 
 /**
  * Two homes for one fact, drawn so they can be compared instead of argued about.

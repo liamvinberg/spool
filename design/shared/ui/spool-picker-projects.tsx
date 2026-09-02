@@ -1,6 +1,6 @@
-import { shortPath } from "../lib/picker-disk";
-import { cn } from "../lib/utils";
-import { FolderIcon } from "./spool-icons";
+import { shortPath } from "shared/lib/picker-disk";
+import { cn } from "shared/lib/utils";
+import { FolderIcon } from "shared/ui/spool-icons";
 import {
 	Field,
 	Hints,
@@ -14,7 +14,7 @@ import {
 	UpButton,
 	usePicker,
 	type Row,
-} from "./spool-picker-parts";
+} from "shared/ui/spool-picker-parts";
 
 /**
  * Take four: the answer is a project, so a project is what a row looks like.

@@ -1,8 +1,8 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { cn } from "../../../shared/lib/utils";
-import { CursorIcon, HandIcon, SelectIcon } from "../../../shared/ui/spool-icons";
-import { SpoolShell } from "../../../shared/ui/spool-shell";
+import { cn } from "shared/lib/utils";
+import { CursorIcon, HandIcon, SelectIcon } from "shared/ui/spool-icons";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * directing — the annotate tool, synthesized. Annotate is the fourth canvas tool

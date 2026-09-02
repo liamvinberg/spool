@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { railEntries, useCapture, useTurnScript } from "../../../shared/lib/claude-turn";
-import { useTicker, useTurn } from "../../../shared/lib/turn-play";
-import { CanvasChrome, type PageRow } from "../../../shared/ui/spool-canvas-chrome";
-import { KaffeHome } from "../../../shared/ui/kaffe-home";
-import { type BaseFrame, PlayField } from "../../../shared/ui/spool-play-field";
-import { PlayRail } from "../../../shared/ui/spool-play-rail";
-import { SpoolShell } from "../../../shared/ui/spool-shell";
+import { railEntries, useCapture, useTurnScript } from "shared/lib/claude-turn";
+import { useTicker, useTurn } from "shared/lib/turn-play";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { KaffeHome } from "shared/ui/kaffe-home";
+import { type BaseFrame, PlayField } from "shared/ui/spool-play-field";
+import { PlayRail } from "shared/ui/spool-play-rail";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * agent-play--jump-name — the recommendation. The name is the place; the rest of

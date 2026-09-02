@@ -1,14 +1,14 @@
 import { motion, useReducedMotion } from "motion/react";
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { stylesheetFor } from "../lib/properties-families";
-import { ELEMENTS, elementOf } from "../lib/properties-model";
-import { cn } from "../lib/utils";
-import { type AgentContext, type AgentEvent, AgentRail, StateMark } from "./spool-agent-rail";
-import { type PageRow } from "./spool-canvas-chrome";
-import { AgentIcon, ChevronIcon, FolderIcon, HandIcon, PanelCaret, PropertiesIcon, SelectIcon } from "./spool-icons";
-import { PropertiesCart } from "./spool-properties-cart";
-import { type Acts, type Geometry, type Pick, Rail, type Reading, type Rect } from "./spool-properties-rail";
-import { SpoolShell } from "./spool-shell";
+import { stylesheetFor } from "shared/lib/properties-families";
+import { ELEMENTS, elementOf } from "shared/lib/properties-model";
+import { cn } from "shared/lib/utils";
+import { type AgentContext, type AgentEvent, AgentRail, StateMark } from "shared/ui/spool-agent-rail";
+import { type PageRow } from "shared/ui/spool-canvas-chrome";
+import { AgentIcon, ChevronIcon, FolderIcon, HandIcon, PanelCaret, PropertiesIcon, SelectIcon } from "shared/ui/spool-icons";
+import { PropertiesCart } from "shared/ui/spool-properties-cart";
+import { type Acts, type Geometry, type Pick, Rail, type Reading, type Rect } from "shared/ui/spool-properties-rail";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * The right column with two surfaces in it.

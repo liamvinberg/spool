@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { cn } from "../lib/utils";
+import { cn } from "shared/lib/utils";
 
 /**
  * The document the ladder climbs: kaffe's cart, four elements deep, with every

@@ -1,4 +1,4 @@
-import { SharedScreen } from "../../../shared/ui/spool-shared-screen";
+import { SharedScreen } from "shared/ui/spool-shared-screen";
 
 /**
  * Quiet until it matters. Nothing marks a shared element while you point at it,

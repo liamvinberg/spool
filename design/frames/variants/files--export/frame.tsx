@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import { CARD_H, CARD_W, Scaled, TvarsoCheckout, TvarsoOutlet, VARIATIONS } from "../../../shared/ui/tvarso-checkout";
-import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "../../../shared/ui/variants-code";
-import { FIELD_H, FIELD_SCALE, FIELD_W, StackIcon } from "../../../shared/ui/variants-shell";
-import { cn } from "../../../shared/lib/utils";
+import { CARD_H, CARD_W, Scaled, TvarsoCheckout, TvarsoOutlet, VARIATIONS } from "shared/ui/tvarso-checkout";
+import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "shared/ui/variants-code";
+import { FIELD_H, FIELD_SCALE, FIELD_W, StackIcon } from "shared/ui/variants-shell";
+import { cn } from "shared/lib/utils";
 
 /**
  * No new file, no new folder: the module already has room.

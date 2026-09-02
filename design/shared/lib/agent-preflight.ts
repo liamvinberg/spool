@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { PlayEntry } from "./turn-play";
+import type { PlayEntry } from "shared/lib/turn-play";
 
 /**
  * The agent that isn't there, and which half of that is Spool's to know.

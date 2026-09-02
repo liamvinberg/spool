@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
-import { WARNED, CAPTURED_NOW } from "../lib/agent-limit";
-import { CAPTURED } from "../lib/agent-model";
-import { ELSEWHERE } from "../lib/agent-threads";
-import { cn } from "../lib/utils";
-import { CoffeeScreen } from "./coffee-screens";
-import { RailTabs } from "./spool-canvas-chrome";
-import { SpoolEmptyScreen } from "./spool-empty-screen";
+import { WARNED, CAPTURED_NOW } from "shared/lib/agent-limit";
+import { CAPTURED } from "shared/lib/agent-model";
+import { ELSEWHERE } from "shared/lib/agent-threads";
+import { cn } from "shared/lib/utils";
+import { CoffeeScreen } from "shared/ui/coffee-screens";
+import { RailTabs } from "shared/ui/spool-canvas-chrome";
+import { SpoolEmptyScreen } from "shared/ui/spool-empty-screen";
 import {
 	AgentIcon,
 	BackIcon,
@@ -26,18 +26,18 @@ import {
 	SearchIcon,
 	SelectIcon,
 	ThreadIcon,
-} from "./spool-icons";
-import { KaffeHome } from "./kaffe-home";
-import { LimitLine } from "./spool-limit";
-import { SpoolMark } from "./spool-mark";
-import { ModelLine } from "./spool-model-control";
-import { StateMark } from "./spool-play-rail";
-import { PillButton } from "./spool-player-stage";
-import { Caret } from "./spool-say";
-import { SpoolShell } from "./spool-shell";
-import { ThreadMark } from "./spool-thread-mark";
-import { ThreadStrip } from "./spool-thread-strip";
-import { BrokenGlyph, OffPageGlyph } from "./spool-walk-marks";
+} from "shared/ui/spool-icons";
+import { KaffeHome } from "shared/ui/kaffe-home";
+import { LimitLine } from "shared/ui/spool-limit";
+import { SpoolMark } from "shared/ui/spool-mark";
+import { ModelLine } from "shared/ui/spool-model-control";
+import { StateMark } from "shared/ui/spool-play-rail";
+import { PillButton } from "shared/ui/spool-player-stage";
+import { Caret } from "shared/ui/spool-say";
+import { SpoolShell } from "shared/ui/spool-shell";
+import { ThreadMark } from "shared/ui/spool-thread-mark";
+import { ThreadStrip } from "shared/ui/spool-thread-strip";
+import { BrokenGlyph, OffPageGlyph } from "shared/ui/spool-walk-marks";
 
 /**
  * What the components page is made of, so three takes on it can argue about

@@ -8,8 +8,8 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { cn } from "../../../shared/lib/utils";
-import { backArrowClass, backChipClass, SiteSection } from "../../../shared/ui/site-section";
+import { cn } from "shared/lib/utils";
+import { backArrowClass, backChipClass, SiteSection } from "shared/ui/site-section";
 
 /**
  * site-frames--depth: the "frames" section of spool.page. The claim the hub tile

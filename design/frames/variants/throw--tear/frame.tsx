@@ -7,8 +7,8 @@ import {
 	TvarsoTicket,
 	TvarsoTimetable,
 	type Variation,
-} from "../../../shared/ui/tvarso-checkout";
-import { PeekRing, StillCard } from "../../../shared/ui/variants-feel";
+} from "shared/ui/tvarso-checkout";
+import { PeekRing, StillCard } from "shared/ui/variants-feel";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -17,9 +17,9 @@ import {
 	Placed,
 	PlayVerb,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { EASE, SETTLE } from "../../../shared/lib/variants-feel";
+} from "shared/ui/variants-shell";
+import { useDecision } from "shared/lib/variants-decision";
+import { EASE, SETTLE } from "shared/lib/variants-feel";
 
 /**
  * Discarding is a physical act: you tear the top one off the pad.

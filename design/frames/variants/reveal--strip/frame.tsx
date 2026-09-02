@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "../../../shared/ui/tvarso-checkout";
+import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "shared/ui/tvarso-checkout";
 import {
 	FIELD_H,
 	FIELD_SCALE,
@@ -11,10 +11,10 @@ import {
 	PlayVerb,
 	SelectionRing,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useKey } from "../../../shared/lib/variants-cycle";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useKey } from "shared/lib/variants-cycle";
+import { useDecision } from "shared/lib/variants-decision";
+import { cn } from "shared/lib/utils";
 
 /**
  * The frame is a window, and the candidates run past it.

@@ -1,4 +1,4 @@
-import { SharedScreen } from "../../../shared/ui/spool-shared-screen";
+import { SharedScreen } from "shared/ui/spool-shared-screen";
 
 /**
  * The smallest diff: the canvas says nothing at all.

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PlayEntry, Queued, TurnPhase } from "./turn-play";
+import type { PlayEntry, Queued, TurnPhase } from "shared/lib/turn-play";
 
 /**
  * The queue's own state, so the placement frames differ by one word (#176).

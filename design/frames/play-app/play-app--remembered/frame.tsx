@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
-import { cn } from "../../../shared/lib/utils";
+import { cn } from "shared/lib/utils";
 import {
 	AppWindow,
 	CANVAS_RECT,
@@ -11,9 +11,9 @@ import {
 	MENU_H,
 	PlayerSlimBar,
 	type WindowRect,
-} from "../../../shared/ui/spool-desk";
-import { SpoolCanvasScreen } from "../../../shared/ui/spool-canvas-screen";
-import { TidemarkLanding } from "../../../shared/ui/tidemark-landing";
+} from "shared/ui/spool-desk";
+import { SpoolCanvasScreen } from "shared/ui/spool-canvas-screen";
+import { TidemarkLanding } from "shared/ui/tidemark-landing";
 
 /**
  * play-app--remembered: it opens where you left it.

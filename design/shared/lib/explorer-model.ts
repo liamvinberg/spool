@@ -25,7 +25,7 @@ import {
 	stagePages,
 	uniqueName,
 	uniquePageName,
-} from "./explorer-tree";
+} from "shared/lib/explorer-tree";
 
 /**
  * Everything the explorer rail knows, as one hook.

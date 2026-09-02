@@ -1,4 +1,4 @@
-import { cn } from "../../../shared/lib/utils";
+import { cn } from "shared/lib/utils";
 
 /**
  * kaffe's home page at two widths, and the one write list both of them answer.

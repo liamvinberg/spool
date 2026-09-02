@@ -7,7 +7,7 @@ import {
 	PortLink,
 	ProbeDrop,
 	SiteLocalShell,
-} from "../../../shared/ui/site-local-shell";
+} from "shared/ui/site-local-shell";
 
 /**
  * local.spool.page, nothing running: the settled direction, "the plate".

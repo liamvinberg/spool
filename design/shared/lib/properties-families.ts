@@ -20,8 +20,8 @@
  * how the mock cart re-lays on classes the served stylesheet never saw.
  */
 
-import { COLORS, pxValue, STEP, valuePx } from "./properties-model";
-import { PALETTE, PALETTE_SINGLES } from "./properties-palette";
+import { COLORS, pxValue, STEP, valuePx } from "shared/lib/properties-model";
+import { PALETTE, PALETTE_SINGLES } from "shared/lib/properties-palette";
 
 /* ---------- anatomy: `md:hover:-mt-2!` is four things ---------- */
 

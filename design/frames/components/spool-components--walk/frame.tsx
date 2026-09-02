@@ -8,9 +8,9 @@ import {
 	useTransform,
 } from "motion/react";
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ELSEWHERE } from "../../../shared/lib/agent-threads";
-import { cn } from "../../../shared/lib/utils";
-import { CanvasChrome, type PageRow } from "../../../shared/ui/spool-canvas-chrome";
+import { ELSEWHERE } from "shared/lib/agent-threads";
+import { cn } from "shared/lib/utils";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
 import {
 	BARE,
 	ComponentFace,
@@ -21,9 +21,9 @@ import {
 	PARTS,
 	Specimen,
 	demosOf,
-} from "../../../shared/ui/spool-components";
-import { SpoolShell } from "../../../shared/ui/spool-shell";
-import { ThreadStrip } from "../../../shared/ui/spool-thread-strip";
+} from "shared/ui/spool-components";
+import { SpoolShell } from "shared/ui/spool-shell";
+import { ThreadStrip } from "shared/ui/spool-thread-strip";
 
 /**
  * The contact sheet with the camera put back (#189).

@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { cn } from "../lib/utils";
-import { HandIcon, PanelCaret, SelectIcon } from "./spool-icons";
-import { SpoolMark } from "./spool-mark";
-import { SpoolShell } from "./spool-shell";
+import { cn } from "shared/lib/utils";
+import { HandIcon, PanelCaret, SelectIcon } from "shared/ui/spool-icons";
+import { SpoolMark } from "shared/ui/spool-mark";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * The gap between the canvas mounting and the project answering. Today the

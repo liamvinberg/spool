@@ -1,10 +1,10 @@
-import { useExplorer } from "../lib/explorer-model";
-import { cn } from "../lib/utils";
-import { RailTabs } from "./spool-canvas-chrome";
-import { ExplorerCanvas, type EmptyTake } from "./spool-explorer-canvas";
-import { ExplorerRail } from "./spool-explorer-rail";
-import { HandIcon, SelectIcon } from "./spool-icons";
-import { SpoolShell } from "./spool-shell";
+import { useExplorer } from "shared/lib/explorer-model";
+import { cn } from "shared/lib/utils";
+import { RailTabs } from "shared/ui/spool-canvas-chrome";
+import { ExplorerCanvas, type EmptyTake } from "shared/ui/spool-explorer-canvas";
+import { ExplorerRail } from "shared/ui/spool-explorer-rail";
+import { HandIcon, SelectIcon } from "shared/ui/spool-icons";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * The canvas, composed exactly as it ships — shell, left rail, field, inspector,

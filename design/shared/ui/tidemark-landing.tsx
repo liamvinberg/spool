@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { cn } from "../lib/utils";
+import { cn } from "shared/lib/utils";
 
 /**
  * Tidemark's marketing page: the thing being played on the `play-tab` page.

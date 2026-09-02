@@ -1,6 +1,6 @@
-import { shortPath } from "../lib/picker-disk";
-import { cn } from "../lib/utils";
-import { FolderIcon } from "./spool-icons";
+import { shortPath } from "shared/lib/picker-disk";
+import { cn } from "shared/lib/utils";
+import { FolderIcon } from "shared/ui/spool-icons";
 import {
 	Field,
 	Hints,
@@ -14,7 +14,7 @@ import {
 	Readout,
 	usePicker,
 	type Row,
-} from "./spool-picker-parts";
+} from "shared/ui/spool-picker-parts";
 
 /**
  * Take two: it is a palette, not a dialog.

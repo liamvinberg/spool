@@ -1,8 +1,8 @@
 import { motion, useReducedMotion } from "motion/react";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import { cn } from "../../../shared/lib/utils";
-import { SpoolMark } from "../../../shared/ui/spool-mark";
-import { REAL_FRAME_TOTAL, TIDY_PAGES } from "../../../shared/ui/spool-real-pages";
+import { cn } from "shared/lib/utils";
+import { SpoolMark } from "shared/ui/spool-mark";
+import { REAL_FRAME_TOTAL, TIDY_PAGES } from "shared/ui/spool-real-pages";
 
 /**
  * site-desk--disk. The Mac app argued from the disk it opens.

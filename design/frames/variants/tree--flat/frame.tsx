@@ -1,4 +1,4 @@
-import { Scaled, TvarsoCheckout, VARIATIONS } from "../../../shared/ui/tvarso-checkout";
+import { Scaled, TvarsoCheckout, VARIATIONS } from "shared/ui/tvarso-checkout";
 import {
 	FRAME_ROW,
 	FrameIcon,
@@ -11,9 +11,9 @@ import {
 	VariantsScreen,
 	contentX,
 	guideX,
-} from "../../../shared/ui/variants-shell";
-import { useArrows, useCycle } from "../../../shared/lib/variants-cycle";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useArrows, useCycle } from "shared/lib/variants-cycle";
+import { cn } from "shared/lib/utils";
 
 /**
  * What if the answer is typography.

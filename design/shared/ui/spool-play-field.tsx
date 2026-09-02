@@ -1,8 +1,8 @@
 import { motion, useReducedMotion } from "motion/react";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { cn } from "../lib/utils";
-import { CartEmptyExpressive, CartEmptyReorder, CartEmptyRestrained } from "./coffee-empty-takes";
-import { CoffeeScreen, type CoffeeScreenName } from "./coffee-screens";
+import { cn } from "shared/lib/utils";
+import { CartEmptyExpressive, CartEmptyReorder, CartEmptyRestrained } from "shared/ui/coffee-empty-takes";
+import { CoffeeScreen, type CoffeeScreenName } from "shared/ui/coffee-screens";
 
 /**
  * The canvas under the playable frames: one camera, the project's own frames on

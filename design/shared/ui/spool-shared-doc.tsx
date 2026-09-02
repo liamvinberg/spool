@@ -1,5 +1,5 @@
-import { CLASSES } from "../lib/shared-reach";
-import { cn } from "../lib/utils";
+import { CLASSES } from "shared/lib/shared-reach";
+import { cn } from "shared/lib/utils";
 
 /**
  * kaffe, in three frames, out of one set of classes.

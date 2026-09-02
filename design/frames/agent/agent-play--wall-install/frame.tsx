@@ -1,8 +1,8 @@
-import { useLook } from "../../../shared/lib/agent-preflight";
-import { InstallWall } from "../../../shared/ui/spool-agent-wall";
-import { CanvasChrome, type PageRow } from "../../../shared/ui/spool-canvas-chrome";
-import { PlayField } from "../../../shared/ui/spool-play-field";
-import { SpoolShell } from "../../../shared/ui/spool-shell";
+import { useLook } from "shared/lib/agent-preflight";
+import { InstallWall } from "shared/ui/spool-agent-wall";
+import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { PlayField } from "shared/ui/spool-play-field";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * agent-play--wall-install — the first-run wall, and the only state on this page

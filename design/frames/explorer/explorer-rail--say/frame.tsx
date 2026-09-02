@@ -1,4 +1,4 @@
-import { ExplorerScreen } from "../../../shared/ui/spool-explorer-screen";
+import { ExplorerScreen } from "shared/ui/spool-explorer-screen";
 
 /**
  * The field prints what is true about the page and stops.

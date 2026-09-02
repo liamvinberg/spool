@@ -1,9 +1,9 @@
 import { motion } from "motion/react";
 import { useState } from "react";
-import { Scaled, TvarsoCheckout, type VariationId } from "../../../shared/ui/tvarso-checkout";
-import { RailTabs } from "../../../shared/ui/spool-canvas-chrome";
-import { StackIcon, VariantsScreen } from "../../../shared/ui/variants-shell";
-import { cn } from "../../../shared/lib/utils";
+import { Scaled, TvarsoCheckout, type VariationId } from "shared/ui/tvarso-checkout";
+import { RailTabs } from "shared/ui/spool-canvas-chrome";
+import { StackIcon, VariantsScreen } from "shared/ui/variants-shell";
+import { cn } from "shared/lib/utils";
 
 /**
  * The set is not a list somebody wrote. It is what two axes make between them.

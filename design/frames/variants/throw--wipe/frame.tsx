@@ -7,9 +7,9 @@ import {
 	TvarsoTicket,
 	TvarsoTimetable,
 	type VariationId,
-} from "../../../shared/ui/tvarso-checkout";
-import { Crossfade, PeekRing, StillCard } from "../../../shared/ui/variants-feel";
-import { regionsBetween, saysRegions } from "../../../shared/ui/variants-glance";
+} from "shared/ui/tvarso-checkout";
+import { Crossfade, PeekRing, StillCard } from "shared/ui/variants-feel";
+import { regionsBetween, saysRegions } from "shared/ui/variants-glance";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -17,10 +17,10 @@ import {
 	Neighbour,
 	PlayVerb,
 	VariantsScreen,
-} from "../../../shared/ui/variants-shell";
-import { useDecision } from "../../../shared/lib/variants-decision";
-import { MARK } from "../../../shared/lib/variants-feel";
-import { cn } from "../../../shared/lib/utils";
+} from "shared/ui/variants-shell";
+import { useDecision } from "shared/lib/variants-decision";
+import { MARK } from "shared/lib/variants-feel";
+import { cn } from "shared/lib/utils";
 
 /**
  * One frame, two candidates, and a seam you push around with the pointer.

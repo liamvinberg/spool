@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { drawnBy } from "./say-pace";
+import { drawnBy } from "shared/lib/say-pace";
 import {
 	type AskOption,
 	type Connector,
@@ -13,7 +13,7 @@ import {
 	type RowState,
 	type ShotRef,
 	type Turn,
-} from "./turn-play";
+} from "shared/lib/turn-play";
 
 /**
  * Replaying a real Claude Code session.

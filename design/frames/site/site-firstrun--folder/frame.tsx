@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
 import { type CSSProperties, type ReactNode, useRef, useState } from "react";
-import { cn } from "../../../shared/lib/utils";
-import { SpoolMark } from "../../../shared/ui/spool-mark";
+import { cn } from "shared/lib/utils";
+import { SpoolMark } from "shared/ui/spool-mark";
 
 /**
  * site-firstrun--folder. The spool.page landing as one folder, twice.

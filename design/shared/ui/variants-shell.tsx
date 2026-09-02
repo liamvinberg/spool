@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from "motion/react";
 import type { ReactNode } from "react";
-import { cn } from "../lib/utils";
-import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable, type VariationId } from "./tvarso-checkout";
-import { ChevronIcon, FolderIcon, HandIcon, PanelCaret, SelectIcon } from "./spool-icons";
-import { SpoolShell } from "./spool-shell";
+import { cn } from "shared/lib/utils";
+import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable, type VariationId } from "shared/ui/tvarso-checkout";
+import { ChevronIcon, FolderIcon, HandIcon, PanelCaret, SelectIcon } from "shared/ui/spool-icons";
+import { SpoolShell } from "shared/ui/spool-shell";
 
 /**
  * The chrome every frame on the `variants` page is drawn inside.

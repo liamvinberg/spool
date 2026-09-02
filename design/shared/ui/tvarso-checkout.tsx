@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { cn } from "../lib/utils";
+import { cn } from "shared/lib/utils";
 
 /**
  * Tvärsö, the demo product every frame on the `variants` page is a variation of.

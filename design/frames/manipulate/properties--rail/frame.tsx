@@ -1,4 +1,4 @@
-import { PropertiesScreen } from "../../../shared/ui/spool-properties-screen";
+import { PropertiesScreen } from "shared/ui/spool-properties-screen";
 
 /**
  * The properties surface, decided (spool-cloud#16) and merged (spool-cloud#20):

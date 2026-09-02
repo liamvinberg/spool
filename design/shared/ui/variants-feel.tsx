@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode, useState } from "react";
-import { cn } from "../lib/utils";
-import { EASE, MARK, SWAP_IN } from "../lib/variants-feel";
-import { CARD_H, CARD_W, TvarsoCheckout, type VariationId } from "./tvarso-checkout";
+import { cn } from "shared/lib/utils";
+import { EASE, MARK, SWAP_IN } from "shared/lib/variants-feel";
+import { CARD_H, CARD_W, TvarsoCheckout, type VariationId } from "shared/ui/tvarso-checkout";
 
 /**
  * The two pieces of feel every take on the third wave shares.

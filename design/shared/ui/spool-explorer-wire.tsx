@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
-import type { FrameNode } from "../lib/explorer-tree";
-import { cn } from "../lib/utils";
+import type { FrameNode } from "shared/lib/explorer-tree";
+import { cn } from "shared/lib/utils";
 
 /**
  * What a frame looks like on the explorer's field, and the wireframes inside it.

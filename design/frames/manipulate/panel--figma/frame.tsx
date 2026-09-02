@@ -28,9 +28,9 @@ import {
 	WORDS,
 	wordOf,
 	wordVerdict,
-} from "../../../shared/lib/properties-model";
-import { cn } from "../../../shared/lib/utils";
-import { ITEMS, PropertiesCart } from "../../../shared/ui/spool-properties-cart";
+} from "shared/lib/properties-model";
+import { cn } from "shared/lib/utils";
+import { ITEMS, PropertiesCart } from "shared/ui/spool-properties-cart";
 import {
 	AlignGrid,
 	AxisIcon,

@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import { TvarsoCheckout, TvarsoOutlet, TvarsoShell, VARIATIONS, type VariationId } from "../../../shared/ui/tvarso-checkout";
-import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "../../../shared/ui/variants-code";
-import { cn } from "../../../shared/lib/utils";
+import { TvarsoCheckout, TvarsoOutlet, TvarsoShell, VARIATIONS, type VariationId } from "shared/ui/tvarso-checkout";
+import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "shared/ui/variants-code";
+import { cn } from "shared/lib/utils";
 
 /**
  * No outlet, no second file, no new idea: the frame takes props, and a

@@ -1,9 +1,9 @@
 import { motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type Dir, childrenOf, HOME, jumpTargets, parentOf, shortPath, whereIs } from "../lib/picker-disk";
-import { DISK_SIZE, type Hit, runsIn, searchDisk, type Weight } from "../lib/picker-find";
-import { cn } from "../lib/utils";
-import { BackIcon, CheckIcon, CloseIcon, FolderIcon, SearchIcon } from "./spool-icons";
+import { type Dir, childrenOf, HOME, jumpTargets, parentOf, shortPath, whereIs } from "shared/lib/picker-disk";
+import { DISK_SIZE, type Hit, runsIn, searchDisk, type Weight } from "shared/lib/picker-find";
+import { cn } from "shared/lib/utils";
+import { BackIcon, CheckIcon, CloseIcon, FolderIcon, SearchIcon } from "shared/ui/spool-icons";
 
 /**
  * What every take of the folder picker shares: the disk, the keyboard, and how
