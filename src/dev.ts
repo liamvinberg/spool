@@ -2,6 +2,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readDaemonState, resolveSpoolDir } from "./daemon/lifecycle";
+import { appArgs, electronInstalled, openCheckoutApp, opensCheckoutApp } from "./dev-app";
 import { mirrorCaptures } from "./dev-captures";
 import { watchesCheckoutUi, watchUiBuild } from "./dev-ui";
 import { registerCheckoutUiWatcher } from "./dev-ui-hook";
@@ -23,8 +25,35 @@ if (process.argv[2] === "skill") {
 	);
 }
 
+// `app` is `serve --foreground` with the checkout's Mac app opened on it once
+// the daemon answers, so the verb the CLI sees is the one the UI watcher arms on
+const desktopDir = join(repoRoot, "desktop");
+const app = opensCheckoutApp(process.argv.slice(2));
+if (app) {
+	if (!electronInstalled(desktopDir)) {
+		process.stderr.write("spool dev app: the Mac app is not installed — run `pnpm --dir desktop install` first\n");
+		process.exit(1);
+	}
+	process.argv.splice(2, process.argv.length, ...appArgs(process.argv.slice(2)));
+}
+
 if (watchesCheckoutUi(process.argv.slice(2))) {
 	registerCheckoutUiWatcher(() => watchUiBuild({ configFile: join(repoRoot, "vite.config.ts") }));
 }
 
 await import("./cli");
+
+// the CLI has returned: listening, stood down for a sibling, or refused with an
+// exit code — only the first two leave a daemon to open the window on
+if (app && process.exitCode === undefined) {
+	const spoolDir = resolveSpoolDir(process.env);
+	const window = await openCheckoutApp({ desktopDir, spoolDir });
+	const stopWindow = () => window.kill("SIGTERM");
+	process.once("SIGINT", stopWindow);
+	process.once("SIGTERM", stopWindow);
+	window.once("exit", () => {
+		// quitting the app ends the session: a daemon this process is serving goes
+		// with it, and an adopted sibling is left the way the app leaves one
+		if (readDaemonState(spoolDir)?.pid === process.pid) process.kill(process.pid, "SIGTERM");
+	});
+}

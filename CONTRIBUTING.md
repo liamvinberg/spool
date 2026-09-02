@@ -46,6 +46,15 @@ pnpm dev open <path>  # register a project and open its tab
 
 The canvas wants Chrome. WebKit renders transformed iframes blurry, which is a browser limitation rather than something spool can work around.
 
+The Mac app is the same canvas in an Electron window, and `desktop/` keeps its own install so the root never downloads Electron:
+
+```sh
+pnpm --dir desktop install   # once
+pnpm dev app                 # the daemon in the foreground, with the checkout's window on it
+```
+
+It shows up as "Spool Dev" with a blue icon, beside any installed Spool. `desktop/README.md` has the rest.
+
 ### Before you open a pull request
 
 ```sh

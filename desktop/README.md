@@ -117,6 +117,23 @@ pnpm smoke                    one real Electron launch: the main module loads, t
 pnpm start                    run the app straight out of this folder, unpackaged
 ```
 
+`pnpm start` has no bundled spool in it — `process.resourcesPath` points into
+Electron's own bundle — so it adopts a daemon or shows the holding page. The
+checkout's own daemon is the one it should adopt, and the repo root has the verb
+that does both in order:
+
+```
+pnpm --dir desktop install    # once: Electron lives in this folder's lockfile
+pnpm dev app                  # repo root
+```
+
+That is `pnpm dev serve --foreground` with the window opened on it once the
+daemon answers: the checkout's state (`~/.spool-dev`), the checkout's port
+(7767), the live UI rebuild, and one Ctrl+C for both. Quitting the app stops the
+daemon it was opened on; a daemon another terminal was already serving is
+adopted and left running. `pnpm start` here is still the window alone, for when
+the daemon is already up.
+
 The bundle is around 413MB and the compressed dmg around 168MB. Most of that is
 Chromium; the rest is the spool package with the dependency tree npm resolves for
 it. Nothing is pruned: the point is that the app runs the same `spool.page` npm
