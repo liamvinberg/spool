@@ -42,6 +42,8 @@ import { browseRows, crumbsOf, shortPath } from "./picker-model";
  */
 
 const ROW = 34;
+/** how tall the list may get before it scrolls */
+const LIST_MAX = 476;
 
 const TONE: Record<Weight, string> = {
 	runup: "text-muted/45",
@@ -312,7 +314,7 @@ export function FolderPicker({
 				)}
 
 				<div className="relative">
-					<div ref={listRef} className="max-h-[476px] overflow-y-auto py-1.5">
+					<div ref={listRef} className="overflow-y-auto py-1.5" style={{ maxHeight: LIST_MAX }}>
 						{naming ? (
 							<div style={{ height: ROW }} className="relative flex w-full items-center gap-3 bg-raised px-4">
 								<span className="absolute top-1 bottom-1 left-0 w-[2px] rounded-full bg-thread" />
@@ -380,7 +382,10 @@ export function FolderPicker({
 							</>
 						)}
 					</div>
-					<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface via-surface/80 to-transparent" />
+					{/* the cut at the bottom of a list that scrolls: a row sliced in half reads as a fault, a fade reads as more list. A list that fits has nothing to fade. */}
+					{!naming && flat.length * ROW > LIST_MAX ? (
+						<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface via-surface/80 to-transparent" />
+					) : null}
 				</div>
 			</dialog>
 		</div>
