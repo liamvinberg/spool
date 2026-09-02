@@ -30,7 +30,6 @@ import {
 	fileAsAsset,
 	gatePatch,
 	type HandOp,
-	openInEditor,
 	postCaptureFailure,
 	postSeen,
 	postTrash,
@@ -75,7 +74,6 @@ import { CollisionNotice, NoticeStrip } from "./collision-notice";
 import { ContextMenu, contextMenuSize } from "./context-menu";
 import { Dock } from "./dock";
 import { ExportDialog, type ExportFormat } from "./export-dialog";
-import { type ExportNotice, ExportToast } from "./export-toast";
 import { FindPalette } from "./find-palette";
 import { anchorKeyOf, FlowArrows, type SiteBoxesByFrame } from "./flow-arrows";
 import {
@@ -130,7 +128,6 @@ import { decompose, measuredTarget } from "./measure-spacing";
 import {
 	type ElementHandles,
 	type ElementPreview,
-	editorTarget,
 	type FrameHover,
 	HANDLE_CURSORS,
 	type Handle,
@@ -141,6 +138,7 @@ import {
 	ROTATE_CURSOR,
 	SelectionOverlay,
 	signsOf,
+	sourcePathOf,
 } from "./overlays";
 import { PageObjectLabel, PageObjectView } from "./page-object";
 import { pageIsBare, pageObjectAt, pageObjectsOn } from "./page-objects";
@@ -170,6 +168,7 @@ import {
 import { CanvasSidebar, type FrameSpan, type RunEntry, type SelectModifiers } from "./sidebar";
 import { type SnapMarks, snapEdge, snapMovedBox } from "./snap";
 import { nextSpatialFrame, type SpatialDirection } from "./spatial-navigation";
+import { type Notice, Toast } from "./toast";
 import { TrashToast } from "./trash-toast";
 import { ATTENTION_MS, advanceDwell, looked, TICK_MS } from "./unseen";
 import { WalkLayer, walksOf } from "./walk-layer";
@@ -342,7 +341,7 @@ export function ProjectCanvas({
 	const [exportReturnMenu, setExportReturnMenu] = useState<CanvasContextMenu | null>(null);
 	const [exporting, setExporting] = useState(false);
 	const [exportError, setExportError] = useState<string | undefined>(undefined);
-	const [exportNotice, setExportNotice] = useState<ExportNotice | null>(null);
+	const [notice, setNotice] = useState<Notice | null>(null);
 	const exportDialogRef = useRef(exportDialog);
 	exportDialogRef.current = exportDialog;
 	// the frame finder (/): a palette over the viewport, and the page its pick lights
@@ -879,7 +878,7 @@ export function ProjectCanvas({
 			if (first === undefined) return;
 			setExporting(true);
 			setExportError(undefined);
-			if (ordered.length === 1) setExportNotice({ kind: "progress", message: `Exporting ${first.name}…` });
+			if (ordered.length === 1) setNotice({ kind: "progress", message: `Exporting ${first.name}…` });
 			try {
 				const captured: CapturedFrame[] = [];
 				for (const frame of ordered) captured.push(await capturePng(frame));
@@ -892,7 +891,7 @@ export function ProjectCanvas({
 
 				setExportDialog(null);
 				setExportReturnMenu(null);
-				setExportNotice({
+				setNotice({
 					kind: "success",
 					message:
 						format === "pdf"
@@ -903,7 +902,7 @@ export function ProjectCanvas({
 				});
 			} catch (error) {
 				const message = error instanceof Error ? error.message : "Export failed. Try again.";
-				if (ordered.length === 1) setExportNotice({ kind: "error", message });
+				if (ordered.length === 1) setNotice({ kind: "error", message });
 				else setExportError(message);
 			} finally {
 				setExporting(false);
@@ -940,10 +939,10 @@ export function ProjectCanvas({
 	}, [exportReturnMenu]);
 
 	useEffect(() => {
-		if (exportNotice === null || exportNotice.kind === "progress") return;
-		const timeout = setTimeout(() => setExportNotice(null), 3500);
+		if (notice === null || notice.kind === "progress") return;
+		const timeout = setTimeout(() => setNotice(null), 3500);
 		return () => clearTimeout(timeout);
-	}, [exportNotice]);
+	}, [notice]);
 
 	const refetchFrames = useCallback(async () => {
 		const projection = await fetchProjection(project);
@@ -3960,12 +3959,20 @@ export function ProjectCanvas({
 		setMenu({ x, y, frame: hit, selection: elementSelection ? "element" : "frames" });
 	};
 
-	const openEditorFor = useCallback(
-		(target: { path: string; line?: number }) => {
-			openInEditor(project, target.path, target.line);
-		},
-		[project],
-	);
+	/**
+	 * The frame's source file, handed out rather than opened (#23).
+	 *
+	 * Spool has no business choosing somebody's editor, and the path is what
+	 * every next step actually wants — an agent told which file to change, a
+	 * terminal, an editor's own open-by-path. It is the design-relative path
+	 * because that is the name the repo and the frame stamps already use.
+	 */
+	const copySourcePath = useCallback((path: string) => {
+		void navigator.clipboard
+			?.writeText(path)
+			.then(() => setNotice({ kind: "success", message: `Copied ${path}` }))
+			.catch(() => setNotice({ kind: "error", message: "Could not copy the path" }));
+	}, []);
 
 	/** The page a named frame sits on — the root page when it is unknown. */
 	const framePageOf = (name: string): string => {
@@ -4457,7 +4464,7 @@ export function ProjectCanvas({
 					onTrashFrames={stageTrash}
 					onTrashPage={(page, names) => stageEntry({ frames: names, page })}
 					onRevealFrame={landOnFrame}
-					onOpenEditor={(name) => openEditorFor({ path: frameSourcePath(name, framePageOf(name)) })}
+					onCopyPath={(name) => copySourcePath(frameSourcePath(name, framePageOf(name)))}
 					onCopiesLanded={cascadeCopies}
 					onRefresh={() => void refetchFrames()}
 					onRecord={recordEntry}
@@ -4703,12 +4710,12 @@ export function ProjectCanvas({
 							setMenu(null);
 							playFrame(frame);
 						}}
-						onOpenEditor={() => {
+						onCopyPath={() => {
 							const pick = pickedRef.current.find((candidate) => candidate.frame === menu.frame);
-							openEditorFor(
+							copySourcePath(
 								pick !== undefined
-									? editorTarget(pick, framePageOf(pick.frame))
-									: { path: frameSourcePath(menu.frame, framePageOf(menu.frame)) },
+									? sourcePathOf(pick, framePageOf(pick.frame))
+									: frameSourcePath(menu.frame, framePageOf(menu.frame)),
 							);
 							setMenu(null);
 						}}
@@ -4725,7 +4732,7 @@ export function ProjectCanvas({
 					/>
 				)}
 
-				{exportNotice !== null ? <ExportToast notice={exportNotice} /> : null}
+				{notice !== null ? <Toast notice={notice} /> : null}
 
 				{(collisions.length > 0 || said !== null) && (
 					<NoticeStrip>

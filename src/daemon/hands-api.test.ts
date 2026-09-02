@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { makeApp, makeProject, makeTempDir, SseTimeout, sseReader, writeDesignFile, writeFrame } from "../test-helpers";
@@ -7,8 +7,7 @@ import { fingerprintOf } from "./hand-write";
 /**
  * The canvas's hands over the API (#23, #253). Selection is daemon memory
  * served as #6's payload; geometry writes touch frame.json alone; delete rides
- * the OS Trash seam; open-in-editor jumps to path:line and never leaves
- * design/. Frame source is written only through the write lane below: a typed
+ * the OS Trash seam. Frame source is written only through the write lane below: a typed
  * op, gated against a fresh parse, spliced into the exact characters it named.
  */
 
@@ -330,11 +329,10 @@ describe("the geometry API", () => {
 	it("answers 400, never 500, to a null JSON body on every hands route", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = makeProject(spoolDir);
-		const app = makeApp(spoolDir, { moveToTrash: async () => {}, launchEditor: () => {} });
+		const app = makeApp(spoolDir, { moveToTrash: async () => {} });
 
 		expect((await app.request(`/api/p/${name}/geometry`, jsonPut(null))).status).toBe(400);
 		expect((await app.request(`/api/p/${name}/trash`, jsonPost(null))).status).toBe(400);
-		expect((await app.request(`/api/p/${name}/editor`, jsonPost(null))).status).toBe(400);
 		expect((await app.request(`/api/p/${name}/selection`, jsonPut(null))).status).toBe(400);
 	});
 });
@@ -381,46 +379,6 @@ describe("the trash API", () => {
 		expect((await app.request(`/api/p/${name}/trash`, jsonPost({ frames: ["checkout", "ghost"] }))).status).toBe(404);
 		expect(moveToTrash).not.toHaveBeenCalled();
 		expect(existsSync(join(root, "design", "frames", "checkout", "frame.tsx"))).toBe(true);
-	});
-});
-
-describe("the editor API", () => {
-	it("launches the editor on path:line inside design/", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeFrame(root, "checkout", frameTsx);
-		const launchEditor = vi.fn();
-		const app = makeApp(spoolDir, { launchEditor });
-
-		const res = await app.request(
-			`/api/p/${name}/editor`,
-			jsonPost({ path: "design/frames/checkout/frame.tsx", line: 4 }),
-		);
-
-		expect(res.status).toBe(204);
-		expect(launchEditor).toHaveBeenCalledWith(`${join(root, "design", "frames", "checkout", "frame.tsx")}:4`);
-
-		await app.request(`/api/p/${name}/editor`, jsonPost({ path: "design/frames/checkout/frame.tsx" }));
-		expect(launchEditor).toHaveBeenLastCalledWith(join(root, "design", "frames", "checkout", "frame.tsx"));
-	});
-
-	it("refuses paths outside design/ and files that do not exist", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeFrame(root, "checkout", frameTsx);
-		mkdirSync(join(root, "src"), { recursive: true });
-		writeDesignFile(root, "../src/app.ts", "export {};\n");
-		const launchEditor = vi.fn();
-		const app = makeApp(spoolDir, { launchEditor });
-
-		expect((await app.request(`/api/p/${name}/editor`, jsonPost({ path: "src/app.ts" }))).status).toBe(400);
-		expect((await app.request(`/api/p/${name}/editor`, jsonPost({ path: "design/../src/app.ts" }))).status).toBe(400);
-		expect((await app.request(`/api/p/${name}/editor`, jsonPost({ path: "/etc/hosts" }))).status).toBe(400);
-		expect(
-			(await app.request(`/api/p/${name}/editor`, jsonPost({ path: "design/frames/ghost/frame.tsx" }))).status,
-		).toBe(404);
-		expect((await app.request(`/api/p/${name}/editor`, jsonPost({ path: "design/x.ts", line: 0 }))).status).toBe(400);
-		expect(launchEditor).not.toHaveBeenCalled();
 	});
 });
 

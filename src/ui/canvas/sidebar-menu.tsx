@@ -42,7 +42,7 @@ export interface RailMenuActions {
 	readonly copy: () => void;
 	readonly paste: () => void;
 	readonly reveal: () => void;
-	readonly openEditor: () => void;
+	readonly copyPath: () => void;
 	readonly trash: () => void;
 	readonly collapseAll: () => void;
 	readonly markSeen: () => void;
@@ -120,7 +120,7 @@ export function menuEntries(
 		{ run: "newPageWith", label: "New page with selection", off: at.selection === 0 },
 		{ rule: true },
 		{ run: "reveal", label: "Reveal on canvas", off: many },
-		{ run: "openEditor", label: "Open in editor", off: many },
+		{ run: "copyPath", label: "Copy path", off: many },
 		// acts on the selection like every frame verb above it, and reads as one
 		// press whether it clears one mark or nine
 		{ run: "markSeen", label: "Mark as viewed", off: at.unseen === 0 },

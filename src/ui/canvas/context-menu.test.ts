@@ -6,7 +6,7 @@ import { ContextMenu } from "./context-menu";
 const callbacks = {
 	tidyLabel: "Tidy page",
 	onTidy: () => {},
-	onOpenEditor: () => {},
+	onCopyPath: () => {},
 	onPlay: () => {},
 	onReload: () => {},
 	onTrash: () => {},

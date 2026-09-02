@@ -1,14 +1,15 @@
 /**
  * The right-click menu (#23), the second door to decided actions only (#7),
- * Play from here / Open in editor / Reload / Tidy / adaptive export / Move to
+ * Play from here / Copy path / Reload / Tidy / adaptive export / Move to
  * Trash. Export exists only for a frame selection: one frame downloads
  * immediately; a multi-selection opens the format choice. Tidy is always here —
  * it lays out the field, so it answers to no one frame.
  * Play is the player's door (#13/#24); the player owns cinema in its own tab.
  *
  * Every item that has a bare key wears it, so the menu teaches the shortcut
- * that replaces it. Opening the source is the one verb without one: it leaves
- * the canvas for an editor, which is not something the hands do by reflex.
+ * that replaces it. Copying the source path is the one verb without one: it
+ * hands the file to something outside spool, which is not a reflex the hands
+ * need a key for.
  */
 
 import { hotkeyKey } from "../hotkeys";
@@ -73,7 +74,7 @@ export function ContextMenu({
 	tidyLabel,
 	onTidy,
 	onPlay,
-	onOpenEditor,
+	onCopyPath,
 	onReload,
 	onTrash,
 }: {
@@ -82,7 +83,7 @@ export function ContextMenu({
 	tidyLabel: string;
 	onTidy: () => void;
 	onPlay: () => void;
-	onOpenEditor: () => void;
+	onCopyPath: () => void;
 	onReload: () => void;
 	onTrash: () => void;
 }) {
@@ -95,7 +96,7 @@ export function ContextMenu({
 			onContextMenu={(event) => event.preventDefault()}
 		>
 			<MenuItem label="Play from here" keys={hotkeyKey("canvas.play")} onClick={onPlay} />
-			<MenuItem label="Open in editor" onClick={onOpenEditor} />
+			<MenuItem label="Copy path" onClick={onCopyPath} />
 			<MenuItem label="Reload frame" keys={hotkeyKey("canvas.reload")} onClick={onReload} />
 			<MenuRule />
 			<MenuItem label={tidyLabel} keys={hotkeyKey("canvas.tidy")} onClick={onTidy} />

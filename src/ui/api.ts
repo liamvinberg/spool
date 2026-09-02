@@ -636,13 +636,6 @@ export function beaconTrash(project: string, frames: string[], pages: string[] =
 	});
 }
 
-export function openInEditor(project: string, path: string, line?: number): void {
-	void client.api.p[":project"].editor.$post({
-		param: { project },
-		json: line === undefined ? { path } : { path, line },
-	});
-}
-
 /**
  * Where one write landed, asked of the side that owns the file (#214).
  *

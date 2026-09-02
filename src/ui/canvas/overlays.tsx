@@ -678,10 +678,14 @@ function ElementOutline({
 	);
 }
 
-/** The editor target off the selection (#7: path:line from the payload). The
- * stampless fallback needs the frame's page — the folder moved with it (#39). */
-export function editorTarget(picked: PickedSelection, page: string): { path: string; line?: number } {
+/**
+ * The source file behind the selection (#7: the path out of the stamp payload).
+ * A picked element is often not the frame's own file — it is the shared
+ * component the frame renders — which is the whole reason the stamp is read
+ * rather than assumed. The stampless fallback needs the frame's page: the
+ * folder moved with it (#39).
+ */
+export function sourcePathOf(picked: PickedSelection, page: string): string {
 	const stamp = parseStampRef(picked.source);
-	if (stamp === undefined) return { path: frameSourcePath(picked.frame, page) };
-	return { path: `design/${stamp.rel}`, line: stamp.line };
+	return stamp === undefined ? frameSourcePath(picked.frame, page) : `design/${stamp.rel}`;
 }

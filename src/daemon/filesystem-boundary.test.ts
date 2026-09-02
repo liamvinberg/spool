@@ -96,26 +96,6 @@ describe("project filesystem sinks", () => {
 		});
 	});
 
-	it("refuses an escaped editor read without launching the editor", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		const outside = join(root, "outside.tsx");
-		writeFileSync(outside, `<button>${SENTINEL}</button>\n`);
-		const link = join(root, "design", "shared", "escape.tsx");
-		mkdirSync(join(root, "design", "shared"), { recursive: true });
-		symlinkSync(outside, link);
-		const launchEditor = vi.fn();
-		const app = makeApp(spoolDir, { launchEditor });
-
-		const editor = await app.request(
-			`/api/p/${name}/editor`,
-			json("POST", { path: "design/shared/escape.tsx", line: 1 }),
-		);
-		expect(editor.status).toBe(400);
-		expect(await editor.text()).toContain("design boundary");
-		expect(launchEditor).not.toHaveBeenCalled();
-	});
-
 	it("does not derive flow sites from source symlinks leaving design", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);

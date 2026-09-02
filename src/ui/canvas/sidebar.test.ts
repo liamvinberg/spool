@@ -438,7 +438,7 @@ describe("the row menu", () => {
 			"Move to page…",
 			"New page with selection",
 			"Reveal on canvas",
-			"Open in editor",
+			"Copy path",
 			"Mark as viewed",
 			"Move to Trash",
 		]);
@@ -568,10 +568,10 @@ describe("the row menu", () => {
 		expect(onMarkSeen).toHaveBeenCalledWith(["home", "checkout"]);
 	});
 
-	it("reveals and opens the frame it was opened on", async () => {
+	it("reveals and copies the path of the frame it was opened on", async () => {
 		const onRevealFrame = vi.fn();
-		const onOpenEditor = vi.fn();
-		const { host } = await render({ onRevealFrame, onOpenEditor });
+		const onCopyPath = vi.fn();
+		const { host } = await render({ onRevealFrame, onCopyPath });
 		const frameRow = host.querySelector<HTMLElement>('button[aria-label="home frame"]')?.parentElement;
 		await act(async () =>
 			frameRow?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
@@ -582,8 +582,8 @@ describe("the row menu", () => {
 		await act(async () =>
 			frameRow?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
 		);
-		await act(async () => itemNamed("Open in editor")?.click());
-		expect(onOpenEditor).toHaveBeenCalledWith("home");
+		await act(async () => itemNamed("Copy path")?.click());
+		expect(onCopyPath).toHaveBeenCalledWith("home");
 	});
 });
 
@@ -1245,7 +1245,7 @@ async function render(overrides: Partial<React.ComponentProps<typeof CanvasSideb
 		onTrashFrames: vi.fn(),
 		onTrashPage: vi.fn(),
 		onRevealFrame: vi.fn(),
-		onOpenEditor: vi.fn(),
+		onCopyPath: vi.fn(),
 		onCopiesLanded: vi.fn(),
 		onRefresh: vi.fn(),
 		...overrides,

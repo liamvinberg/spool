@@ -1,9 +1,16 @@
-export interface ExportNotice {
+/**
+ * The canvas's one line of confirmation: what just happened, said once and
+ * gone. It is a status rather than a dialog because nothing here needs
+ * answering — an export that landed, a path on the clipboard, a capture that
+ * threw.
+ */
+
+export interface Notice {
 	kind: "progress" | "success" | "error";
 	message: string;
 }
 
-export function ExportToast({ notice }: { notice: ExportNotice }) {
+export function Toast({ notice }: { notice: Notice }) {
 	return (
 		<div
 			role={notice.kind === "error" ? "alert" : "status"}

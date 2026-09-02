@@ -229,7 +229,7 @@ export function CanvasSidebar({
 	onTrashFrames,
 	onTrashPage,
 	onRevealFrame,
-	onOpenEditor,
+	onCopyPath,
 	onCopiesLanded,
 	onRefresh,
 	onRecord,
@@ -255,7 +255,7 @@ export function CanvasSidebar({
 	/** A page and everything inside it, as one entry on the trash toast. */
 	onTrashPage: (page: string, frames: string[]) => void;
 	onRevealFrame: (name: string) => void;
-	onOpenEditor: (name: string) => void;
+	onCopyPath: (name: string) => void;
 	/** Fresh copies exist: the canvas cascades them off their originals and selects them. */
 	onCopiesLanded: (copies: readonly FrameCopy[]) => void;
 	/** A folder operation landed; the projection is behind until it is read again. */
@@ -1670,8 +1670,8 @@ export function CanvasSidebar({
 								reveal: () => {
 									if (menu.target.kind === "frame") onRevealFrame(menu.target.name);
 								},
-								openEditor: () => {
-									if (menu.target.kind === "frame") onOpenEditor(menu.target.name);
+								copyPath: () => {
+									if (menu.target.kind === "frame") onCopyPath(menu.target.name);
 								},
 								trash,
 								collapseAll,

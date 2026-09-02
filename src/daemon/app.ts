@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
-import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, normalize, sep } from "node:path";
+import { basename, join, sep } from "node:path";
 import type { Duplex } from "node:stream";
 import type { Context } from "hono";
 import { Hono } from "hono";
@@ -146,8 +145,6 @@ export interface DaemonOptions {
 	development?: boolean | undefined;
 	/** The OS Trash (#7: spool never manages it) — swapped out by seam tests. */
 	moveToTrash?: (paths: string[]) => Promise<void>;
-	/** Editor launch for path:line jumps — swapped out by seam tests. */
-	launchEditor?: (target: string) => void;
 	/** #30 phone-home: on only when `spool serve` resolves it on from config. */
 	updateCheck?: boolean | undefined;
 	/** #238: the experiment names config.json switched on, handed to the canvas at boot. */
@@ -265,11 +262,6 @@ const renameBody = validator("json", (value: unknown, c: Context) => {
 	return { from, to };
 });
 
-type LaunchEditor = (file: string, onError?: (fileName: string, message: string | null) => void) => void;
-
-/** launch-editor is CJS `export =` — createRequire keeps the types honest. */
-const launchEditorDefault = createRequire(import.meta.url)("launch-editor") as LaunchEditor;
-
 /**
  * How often a long-lived stream says something while nothing is happening.
  *
@@ -355,7 +347,6 @@ export function createDaemonApp({
 	uiDir,
 	development,
 	moveToTrash,
-	launchEditor,
 	updateCheck,
 	experiments,
 	history: historyAllowed,
@@ -457,12 +448,6 @@ export function createDaemonApp({
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
 	const trashImpl = moveToTrash ?? (async (paths: string[]) => void (await trash(paths)));
-	const editorImpl =
-		launchEditor ??
-		((target: string) =>
-			launchEditorDefault(target, (fileName, message) =>
-				console.error(`spool: could not open an editor on ${fileName}${message === null ? "" : ` — ${message}`}`),
-			));
 
 	/**
 	 * What the write lane needs of the project: who renders a shared file, which
@@ -2222,43 +2207,6 @@ export function createDaemonApp({
 						// folders that have already gone had never moved at all
 					}
 				}
-				return c.body(null, 204);
-			},
-		)
-		.post(
-			"/api/p/:project/editor",
-			validator("json", (value, c) => {
-				if (typeof value !== "object" || value === null) {
-					return c.text('editor must be { "path": "design/…", "line"?: n }', 400);
-				}
-				const { path, line } = value as { path?: unknown; line?: unknown };
-				if (typeof path !== "string" || path === "") {
-					return c.text('editor must be { "path": "design/…", "line"?: n }', 400);
-				}
-				if (line !== undefined && (typeof line !== "number" || !Number.isInteger(line) || line < 1)) {
-					return c.text("line must be a positive integer", 400);
-				}
-				return line === undefined ? { path } : { path, line };
-			}),
-			(c) => {
-				const project = resolveProject(c, c.req.param("project"));
-				if ("response" in project) return project.response;
-				const { path, line } = c.req.valid("json");
-				const rel = normalize(path.replaceAll("\\", "/"));
-				// only design/ files are spool's to open, and never through ..
-				if (isAbsolute(rel) || rel.split(sep)[0] !== "design") {
-					return c.text(`not a design/ path: "${path}"`, 400);
-				}
-				let target: string;
-				try {
-					const designDir = realDesignDir(project.root);
-					target = resolveDesignPath(designDir, join(designDir, ...rel.split(sep).slice(1)), path);
-				} catch (error) {
-					if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-					throw error;
-				}
-				if (!existsSync(target)) return c.text(`no file at "${path}"`, 404);
-				editorImpl(line === undefined ? target : `${target}:${line}`);
 				return c.body(null, 204);
 			},
 		)
