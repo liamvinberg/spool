@@ -1,7 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import { CursorIcon, HandIcon, SelectIcon } from "shared/ui/spool/icons";
+import { CursorIcon, EditIcon, HandIcon } from "shared/ui/spool/icons";
 import { SpoolShell } from "shared/ui/spool/shell";
 
 /**
@@ -1249,7 +1249,7 @@ function Rolling({ value, reduced }: { value: number; reduced: boolean }) {
 
 const TOOLS = [
 	{ id: "interact" as const, label: "interact", key: null, hold: null, Icon: CursorIcon },
-	{ id: "select" as const, label: "select", key: "V", hold: "hold ⌘", Icon: SelectIcon },
+	{ id: "select" as const, label: "select", key: "V", hold: "hold ⌘", Icon: EditIcon },
 	{ id: "hand" as const, label: "hand", key: "H", hold: "hold space", Icon: HandIcon },
 ];
 

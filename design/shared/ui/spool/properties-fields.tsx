@@ -1,4 +1,12 @@
-import { type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+	type PointerEvent as ReactPointerEvent,
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { compiles } from "shared/lib/spool/properties-families";
 import { cn } from "shared/lib/utils";
 
@@ -28,15 +36,19 @@ export function Row({
 	tall = false,
 	changed = false,
 	onScrub,
+	onScrubEnd,
 	children,
 }: {
 	name: string;
 	ok?: boolean;
+	/** a control taller than one line: the label sits at the top of it */
 	tall?: boolean;
 	/** the label reads in thread colour when the value under it is not the file's */
 	changed?: boolean;
 	/** a numeric row: dragging the label steps the value by the units crossed */
 	onScrub?: ((units: number) => void) | undefined;
+	/** the pointer let go: whatever the scrub was making is done being made */
+	onScrubEnd?: (() => void) | undefined;
 	children: ReactNode;
 }) {
 	const scrub = useRef<{ from: number; sent: number } | null>(null);
@@ -58,10 +70,11 @@ export function Row({
 		if (scrub.current === null) return;
 		event.currentTarget.releasePointerCapture(event.pointerId);
 		scrub.current = null;
+		onScrubEnd?.();
 	};
 	const long = name.length > 14;
 	return (
-		<div className={cn("grid grid-cols-[92px_1fr] items-center gap-2 border-border/80 border-b px-2.5", tall ? "py-1.5" : long ? "min-h-7 py-1" : "h-7")}>
+		<div data-properties-row={name} className={cn("grid grid-cols-[92px_1fr] items-center gap-2 border-border/80 border-b px-2.5", tall ? "py-1.5" : long ? "min-h-7 py-1" : "h-7")}>
 			<span
 				onPointerDown={down}
 				onPointerMove={move}
@@ -93,6 +106,40 @@ export function Section({ name, reason, aside, children }: { name: string; reaso
 			{children}
 		</div>
 	);
+}
+
+/**
+ * Where a popover stands: under its control, flipped above it when it would
+ * fall off the bottom, and never off either side.
+ */
+export function popoverAt(rect: DOMRect, width: number, height: number): { left: number; top: number; width: number } {
+	const below = rect.bottom + 4;
+	const flip = below + height > innerHeight - 8;
+	return {
+		left: Math.max(8, Math.min(rect.left, innerWidth - width - 8)),
+		top: flip ? Math.max(8, rect.top - 4 - height) : below,
+		width,
+	};
+}
+
+/** A press anywhere outside the elements named here shuts the thing that is open. */
+export function useCloseOnPressAway(
+	open: boolean,
+	close: () => void,
+	...inside: readonly React.RefObject<HTMLElement | null>[]
+): void {
+	const held = useRef(inside);
+	held.current = inside;
+	useEffect(() => {
+		if (!open) return;
+		const away = (event: Event) => {
+			const target = event.target as Node | null;
+			if (target !== null && held.current.some((ref) => ref.current?.contains(target) === true)) return;
+			close();
+		};
+		document.addEventListener("pointerdown", away, true);
+		return () => document.removeEventListener("pointerdown", away, true);
+	}, [open, close]);
 }
 
 /* ---------- a number: the token, its readout faint beside it ---------- */
@@ -190,6 +237,7 @@ export function Menu({
 	faint = false,
 	filter = false,
 	arbitrary,
+	label,
 	onPick,
 	className,
 }: {
@@ -203,6 +251,8 @@ export function Menu({
 	filter?: boolean;
 	/** what typed text becomes when no option matches it: an arbitrary-value option, offered first */
 	arbitrary?: ((typed: string) => Option | null) | undefined;
+	/** what the control is called, where the row's own label is not enough */
+	label?: string;
 	onPick: (token: string | null) => void;
 	className?: string;
 }) {
@@ -213,6 +263,7 @@ export function Menu({
 	const buttonRef = useRef<HTMLButtonElement | null>(null);
 	const listRef = useRef<HTMLDivElement | null>(null);
 	const inputRef = useRef<HTMLInputElement | null>(null);
+	const shut = useCallback(() => setOpen(false), []);
 
 	const matched = typed === "" ? options : options.filter((option) => option.name.includes(typed) || option.value?.includes(typed) === true);
 	const extra = filter && typed !== "" && arbitrary !== undefined ? arbitrary(typed) : null;
@@ -228,22 +279,13 @@ export function Menu({
 		listRef.current?.querySelector<HTMLElement>(`[data-index="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
 	}, [open, cursor]);
 
-	useEffect(() => {
-		if (!open) return;
-		const away = (event: Event) => {
-			const target = event.target as Node | null;
-			if (target !== null && (listRef.current?.contains(target) === true || buttonRef.current?.contains(target) === true)) return;
-			setOpen(false);
-		};
-		document.addEventListener("pointerdown", away, true);
-		return () => document.removeEventListener("pointerdown", away, true);
-	}, [open]);
+	useCloseOnPressAway(open, shut, listRef, buttonRef);
 
 	if (!ok) {
 		return (
 			<span className={cn("flex min-w-0 flex-1 items-center gap-1.5 px-1", className)}>
 				{current.swatch === undefined ? null : <SwatchChip color={current.swatch} />}
-				<span className={cn("min-w-0 flex-1 truncate text-muted/40", VALUE)}>{current.name}</span>
+				<span data-menu-value="" className={cn("min-w-0 flex-1 truncate text-muted/40", VALUE)}>{current.name}</span>
 				{current.value === undefined || current.value === "" ? null : <span className={cn("shrink-0", FAINT)}>{current.value}</span>}
 			</span>
 		);
@@ -252,15 +294,7 @@ export function Menu({
 	const show = () => {
 		const rect = buttonRef.current?.getBoundingClientRect();
 		if (rect === undefined) return;
-		const width = Math.max(rect.width, 236);
-		const height = Math.min(options.length * 24 + (filter ? 34 : 8), MENU_H);
-		const below = rect.bottom + 4;
-		const flip = below + height > innerHeight - 8;
-		setAt({
-			left: Math.max(8, Math.min(rect.left, innerWidth - width - 8)),
-			top: flip ? Math.max(8, rect.top - 4 - height) : below,
-			width,
-		});
+		setAt(popoverAt(rect, Math.max(rect.width, 236), Math.min(options.length * 24 + (filter ? 34 : 8), MENU_H)));
 		setTyped("");
 		setCursor(Math.max(0, options.findIndex((option) => option.token === current.token)));
 		setOpen(true);
@@ -300,6 +334,8 @@ export function Menu({
 			<button
 				ref={buttonRef}
 				type="button"
+				{...(label === undefined ? {} : { "aria-label": label })}
+				aria-expanded={open}
 				onClick={() => (open ? setOpen(false) : show())}
 				onKeyDown={(event) => {
 					event.stopPropagation();
@@ -316,7 +352,7 @@ export function Menu({
 				)}
 			>
 				{current.swatch === undefined ? null : <SwatchChip color={current.swatch} />}
-				<span className={cn("min-w-0 truncate", VALUE, changed ? "text-thread" : faint ? "text-muted/55" : "text-text")}>{current.name}</span>
+				<span data-menu-value="" className={cn("min-w-0 truncate", VALUE, changed ? "text-thread" : faint ? "text-muted/55" : "text-text")}>{current.name}</span>
 				{current.value === undefined || current.value === "" ? null : <span className={cn("ml-auto min-w-0 truncate pl-1", FAINT)}>{current.value}</span>}
 			</button>
 			{open ? (
@@ -349,9 +385,9 @@ export function Menu({
 							const worn = option.token === current.token;
 							const divider = option.group !== undefined && (index === 0 || shown[index - 1]?.group !== option.group);
 							return (
-								<div key={`${option.name}-${index}`}>
+								<div key={`${option.name}-${option.token ?? ""}`}>
 									{divider ? (
-										<div className={cn("flex h-5 items-center px-2 text-muted/45", index === 0 ? "" : "mt-1 border-border-raised border-t pt-1", LABEL)}>{option.group}</div>
+										<div data-menu-divider="" className={cn("flex h-5 items-center px-2 text-muted/45", index === 0 ? "" : "mt-1 border-border-raised border-t pt-1", LABEL)}>{option.group}</div>
 									) : null}
 									<button
 										type="button"
@@ -359,6 +395,7 @@ export function Menu({
 										aria-selected={worn}
 										tabIndex={-1}
 										data-index={index}
+										data-menu-option={option.name}
 										onPointerEnter={() => setCursor(index)}
 										onClick={() => commit(index)}
 										className={cn("flex h-6 w-full cursor-pointer items-center gap-1.5 px-2 text-left", index === cursor && "bg-surface")}
@@ -382,6 +419,7 @@ export function SwatchChip({ color, className }: { color: string; className?: st
 	const empty = color === "" || color === "transparent";
 	return (
 		<span
+			data-swatch={color}
 			className={cn("relative h-3 w-3 shrink-0 overflow-hidden rounded-[2px] border border-border-raised", className)}
 			style={empty ? undefined : { background: color }}
 		>
@@ -434,16 +472,29 @@ export function IconField({
 
 /* ---------- a yes or no, and several of them at once ---------- */
 
-export function Chip({ on, label, ok, title, onChange }: { on: boolean; label: string; ok: boolean; title?: string; onChange: (on: boolean) => void }) {
+export function Chip({
+	on,
+	label,
+	ok,
+	title,
+	onChange,
+}: {
+	on: boolean;
+	label: string;
+	ok: boolean;
+	title?: string | undefined;
+	onChange: (on: boolean) => void;
+}) {
 	return (
 		<button
 			type="button"
 			aria-pressed={on}
-			title={title}
+			{...(title === undefined ? {} : { title })}
 			disabled={!ok}
 			onClick={() => onChange(!on)}
 			className={cn(
-				"h-5 shrink-0 rounded-xs border px-1.5 font-mono text-2xs leading-3 focus:outline-none focus-visible:bg-raised",
+				"h-5 shrink-0 rounded-xs border px-1.5 focus:outline-none focus-visible:bg-raised",
+				LABEL,
 				ok ? "cursor-pointer" : "cursor-default",
 				on ? "border-border-raised bg-raised text-text" : "border-transparent text-muted/60",
 				ok && !on && "hover:border-border hover:text-text",
@@ -479,6 +530,8 @@ export function Fold({ open, ok, onToggle }: { open: boolean; ok: boolean; onTog
 
 /* ---------- nine dots for items-* and justify-* at once ---------- */
 
+const THREE = ["start", "center", "end"] as const;
+
 export function PlaceField({
 	align,
 	justify,
@@ -492,7 +545,6 @@ export function PlaceField({
 	ok: boolean;
 	onPick: (align: string, justify: string) => void;
 }) {
-	const THREE = ["start", "center", "end"] as const;
 	const alignSays = align === null ? "stretch" : align.slice("items-".length);
 	const justifySays = justify === null ? "start" : justify.slice("justify-".length);
 	const spread = !THREE.includes(justifySays as (typeof THREE)[number]);
@@ -538,13 +590,46 @@ export function PlaceField({
 
 /* ---------- a line of text ---------- */
 
-export function TextField({ value, ok, changed = false, onCommit }: { value: string; ok: boolean; changed?: boolean; onCommit: (text: string) => void }) {
+/**
+ * One string attribute, edited where it is written.
+ *
+ * The same shape as the number box next to it and none of its arithmetic: an
+ * `alt` has no scale to step through and no unit to read out. A refused field
+ * keeps its value and loses its box, because a control that vanishes reads as
+ * a bug and a greyed one teaches you the shape of your own code.
+ */
+export function TextField({
+	value,
+	ok,
+	changed = false,
+	placeholder,
+	onCommit,
+	className,
+}: {
+	value: string;
+	ok: boolean;
+	/** the label reads in thread colour when the value under it is not the file's */
+	changed?: boolean;
+	placeholder?: string | undefined;
+	onCommit: (typed: string) => void;
+	className?: string;
+}) {
 	const [draft, setDraft] = useState<string | null>(null);
-	if (!ok) return <span className={cn("min-w-0 flex-1 truncate px-1 text-muted/40", VALUE)}>{value}</span>;
+	if (!ok) {
+		return (
+			<span className={cn("flex min-w-0 flex-1 items-center px-1", className)}>
+				<span data-text-value="" className={cn("min-w-0 flex-1 truncate text-muted/40", VALUE)}>
+					{value === "" ? (placeholder ?? "") : value}
+				</span>
+			</span>
+		);
+	}
 	return (
-		<label className={cn("flex min-w-0 flex-1 items-center px-1", BOX)}>
+		<label className={cn("flex min-w-0 flex-1 items-center px-1", BOX, className)}>
 			<input
+				data-text-value=""
 				value={draft ?? value}
+				placeholder={placeholder}
 				spellCheck={false}
 				onChange={(event) => setDraft(event.target.value)}
 				onBlur={() => {
@@ -563,13 +648,23 @@ export function TextField({ value, ok, changed = false, onCommit }: { value: str
 						event.currentTarget.blur();
 					}
 				}}
-				className={cn("min-w-0 flex-1 bg-transparent font-sans text-base leading-4 outline-none", changed ? "text-thread" : "text-text")}
+				className={cn(
+					"min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted/40",
+					VALUE,
+					changed ? "text-thread" : "text-text",
+				)}
 			/>
 		</label>
 	);
 }
 
 /* ---------- the `+`: any class, gated by the compiler ---------- */
+
+/** what the compiler says about one token: the CSS it lands, or why it does not */
+export type ClassVerdict = { ok: true; css: string } | { ok: false; reason: string };
+
+const ADD_W = 268;
+const ADD_H = 280;
 
 export interface Candidate {
 	token: string;
@@ -606,8 +701,11 @@ export function AddField({
 	const buttonRef = useRef<HTMLButtonElement | null>(null);
 	const listRef = useRef<HTMLDivElement | null>(null);
 	const inputRef = useRef<HTMLInputElement | null>(null);
+	const shut = useCallback(() => setOpen(false), []);
 
-	const matches = candidates.filter((candidate) => !taken.has(candidate.token) && candidate.token.includes(typed)).slice(0, 40);
+	const matches = candidates
+		.filter((candidate) => !taken.has(candidate.token) && candidate.token.includes(typed))
+		.slice(0, 40);
 	const exact = matches.some((candidate) => candidate.token === typed);
 	const compiled = typed === "" ? null : compiles(typed);
 	const list: (Candidate & { compiled: ReturnType<typeof compiles> })[] = [
@@ -620,24 +718,11 @@ export function AddField({
 		if (!open) return;
 		const rect = buttonRef.current?.getBoundingClientRect();
 		if (rect === undefined) return;
-		const width = 268;
-		const height = 280;
-		const below = rect.bottom + 4;
-		const flip = below + height > innerHeight - 8;
-		setAt({ left: Math.max(8, Math.min(rect.left, innerWidth - width - 8)), top: flip ? Math.max(8, rect.top - 4 - height) : below, width });
+		setAt(popoverAt(rect, ADD_W, ADD_H));
 		inputRef.current?.focus();
 	}, [open]);
 
-	useEffect(() => {
-		if (!open) return;
-		const away = (event: Event) => {
-			const target = event.target as Node | null;
-			if (target !== null && (listRef.current?.contains(target) === true || buttonRef.current?.contains(target) === true)) return;
-			setOpen(false);
-		};
-		document.addEventListener("pointerdown", away, true);
-		return () => document.removeEventListener("pointerdown", away, true);
-	}, [open]);
+	useCloseOnPressAway(open, shut, listRef, buttonRef);
 
 	const pick = (candidate: (typeof list)[number] | undefined) => {
 		if (candidate === undefined || !candidate.compiled.ok) return;
@@ -651,11 +736,16 @@ export function AddField({
 			<button
 				ref={buttonRef}
 				type="button"
+				aria-label="Add a class"
+				aria-expanded={open}
 				disabled={!ok}
 				onClick={() => setOpen((held) => !held)}
 				className={cn(
-					"flex h-6 items-center gap-1.5 rounded-xs px-1.5 font-mono text-sm leading-4 focus:outline-none",
-					ok ? "cursor-pointer text-muted hover:bg-surface hover:text-text focus-visible:bg-surface" : "cursor-default text-muted/35",
+					"flex h-6 items-center gap-1.5 rounded-xs px-1.5 focus:outline-none",
+					VALUE,
+					ok
+						? "cursor-pointer text-muted hover:bg-surface hover:text-text focus-visible:bg-surface"
+						: "cursor-default text-muted/35",
 					open && "bg-surface text-text",
 					className,
 				)}
@@ -666,8 +756,8 @@ export function AddField({
 			{open ? (
 				<div
 					ref={listRef}
-					style={{ left: at.left, top: at.top, width: at.width }}
-					className="fixed z-50 flex max-h-[280px] flex-col overflow-hidden rounded-sm border border-border-raised bg-raised"
+					style={{ left: at.left, top: at.top, width: at.width, maxHeight: ADD_H }}
+					className="fixed z-50 flex flex-col overflow-hidden rounded-sm border border-border-raised bg-raised"
 				>
 					<div className="flex h-[30px] shrink-0 items-center gap-1.5 border-border-raised border-b px-2">
 						<span className="text-muted/50 text-sm leading-none">+</span>
@@ -701,8 +791,9 @@ export function AddField({
 							const refused = candidate.compiled.ok ? null : candidate.compiled.reason;
 							return (
 								<button
-									key={`${candidate.token}-${position}`}
+									key={candidate.token}
 									type="button"
+									data-class-candidate={candidate.token}
 									disabled={refused !== null}
 									onPointerEnter={() => setCursor(position)}
 									onClick={() => pick(candidate)}

@@ -204,20 +204,13 @@ export function CursorIcon({ className }: IconProps) {
 	);
 }
 
-/** select — the inspect glyph: a cursor picking an element inside a framed region. */
+/** select — the plain pointer, which takes whole frames (`src/ui/icons.tsx`). */
 export function SelectIcon({ className }: IconProps) {
 	return (
-		<svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+		<svg viewBox="0 0 24 24" className={className} aria-hidden="true">
 			<path
-				d="M12.03 12.68a.5.5 0 0 1 .65-.65l9 3.5a.5.5 0 0 1-.03.95l-3.45 1.06a1 1 0 0 0-.66.66l-1.06 3.45a.5.5 0 0 1-.95.03z"
+				d="M4.04 4.69a.5.5 0 0 1 .65-.65l16 6.5a.5.5 0 0 1-.06.95l-6.13 1.58a2 2 0 0 0-1.43 1.43l-1.58 6.13a.5.5 0 0 1-.95.06z"
 				fill="currentColor"
-			/>
-			<path
-				d="M5 3a2 2 0 0 0-2 2M19 3a2 2 0 0 1 2 2M5 21a2 2 0 0 1-2-2M9 3h1M9 21h2M14 3h1M3 9v1M21 9v2M3 14v1"
-				stroke="currentColor"
-				strokeWidth="1.9"
-				strokeLinecap="round"
-				strokeLinejoin="round"
 			/>
 		</svg>
 	);
@@ -344,6 +337,54 @@ export function EditIcon({ className }: IconProps) {
 				d="M5 3a2 2 0 0 0-2 2M19 3a2 2 0 0 1 2 2M5 21a2 2 0 0 1-2-2M9 3h1M9 21h2M14 3h1M3 9v1M21 9v2M3 14v1"
 				stroke="currentColor"
 				strokeWidth="1.9"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
+/**
+ * A frame's row in the pages rail (`src/ui/canvas/sidebar.tsx`): a document
+ * with its corner turned.
+ */
+export function FrameIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
+			<path d="M3 1.75h5l3 3v7.5H3z" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round" />
+			<path d="M8 1.75v3h3" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round" />
+		</svg>
+	);
+}
+
+/**
+ * A terminal frame's row. The kind used to be written out as `term.tsx` at the
+ * row's right edge; with that gone the icon is what says a frame is a terminal,
+ * which is where the canvas says it too.
+ */
+export function TermIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
+			<rect x="1.75" y="2.75" width="10.5" height="8.5" rx="1.25" stroke="currentColor" strokeWidth="1.15" />
+			<path
+				d="M4.5 6 6 7.5 4.5 9M7.75 9.25h2"
+				stroke="currentColor"
+				strokeWidth="1.15"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
+
+/** Two chevrons closing on the line between them: the whole tree folding shut. */
+export function FoldIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 10 10" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M1.75 1.5 5 4.25 8.25 1.5M1.75 8.5 5 5.75 8.25 8.5"
+				stroke="currentColor"
+				strokeWidth="1.3"
 				strokeLinecap="round"
 				strokeLinejoin="round"
 			/>
