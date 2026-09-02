@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-import { SPOOL_MARK_PATH } from "../../src/brand.ts";
+import { SPOOL_DEVELOPMENT_THREAD, SPOOL_MARK_PATH, SPOOL_THREAD } from "../../src/brand.ts";
 
 /**
  * Draws the app icon and the menu bar mark from the identity export, and hands
@@ -22,9 +22,8 @@ import { SPOOL_MARK_PATH } from "../../src/brand.ts";
 const here = dirname(fileURLToPath(import.meta.url));
 const assets = join(here, "..", "assets");
 
-/** The canvas's own tokens, from src/ui/ui.css. If either moves there, move it here. */
+/** The canvas's ground, from src/ui/ui.css. If it moves there, move it here. */
 const GROUND = "#0e0e0e";
-const THREAD = "#f5391a";
 
 /** The identity's viewBox, and the box the ribbon is fitted into inside it. */
 const VIEW_BOX = "250 182 524 660";
@@ -54,13 +53,13 @@ const ICONSET: readonly (readonly [string, number])[] = [
 	["icon_512x512@2x", 1024],
 ];
 
-function appIcon(pixels: number): string {
+function appIcon(pixels: number, thread: string): string {
 	const side = PLATE_SIDE * MARK_SHARE;
 	const offset = 512 - side / 2;
 	return `<svg xmlns="http://www.w3.org/2000/svg" width="${pixels}" height="${pixels}" viewBox="0 0 1024 1024">
 	<rect x="${PLATE_INSET}" y="${PLATE_INSET}" width="${PLATE_SIDE}" height="${PLATE_SIDE}" rx="${PLATE_RADIUS}" ry="${PLATE_RADIUS}" fill="${GROUND}"/>
 	<svg x="${offset}" y="${offset}" width="${side}" height="${side}" viewBox="${VIEW_BOX}" preserveAspectRatio="xMidYMid meet">
-		<path d="${SPOOL_MARK_PATH}" fill="${THREAD}" fill-rule="evenodd"/>
+		<path d="${SPOOL_MARK_PATH}" fill="${thread}" fill-rule="evenodd"/>
 	</svg>
 </svg>`;
 }
@@ -69,10 +68,14 @@ function appIcon(pixels: number): string {
  * The menu bar glyph, black on nothing. A template image, so macOS tints it for
  * the appearance it is in: a status item that keeps its own colour is the mark of
  * an app that does not belong in the bar.
+ *
+ * The development lane is the one exception, and it takes the cost knowingly: it
+ * is drawn in the development blue and used untinted, because two identical marks
+ * in one menu bar is a status item nobody can aim at.
  */
-function trayMark(pixels: number): string {
+function trayMark(pixels: number, fill = "#000000"): string {
 	return `<svg xmlns="http://www.w3.org/2000/svg" width="${pixels}" height="${pixels}" viewBox="${VIEW_BOX}" preserveAspectRatio="xMidYMid meet">
-	<path d="${SPOOL_MARK_PATH}" fill="#000000" fill-rule="evenodd"/>
+	<path d="${SPOOL_MARK_PATH}" fill="${fill}" fill-rule="evenodd"/>
 </svg>`;
 }
 
@@ -92,10 +95,16 @@ async function main(): Promise<void> {
 		};
 
 		for (const [name, pixels] of ICONSET) {
-			await shoot(appIcon(pixels), pixels, join(iconset, `${name}.png`));
+			await shoot(appIcon(pixels, SPOOL_THREAD), pixels, join(iconset, `${name}.png`));
 		}
 		await shoot(trayMark(16), 16, join(assets, "markTemplate.png"));
 		await shoot(trayMark(32), 32, join(assets, "markTemplate@2x.png"));
+
+		// The lane's set. Not an iconset: the bundle has one icon and this one is
+		// handed to the Dock at runtime, so a single large raster is all it needs.
+		await shoot(appIcon(1024, SPOOL_DEVELOPMENT_THREAD), 1024, join(assets, "iconDev.png"));
+		await shoot(trayMark(16, SPOOL_DEVELOPMENT_THREAD), 16, join(assets, "markDev.png"));
+		await shoot(trayMark(32, SPOOL_DEVELOPMENT_THREAD), 32, join(assets, "markDev@2x.png"));
 	} finally {
 		await browser.close();
 	}

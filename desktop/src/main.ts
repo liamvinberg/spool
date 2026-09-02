@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	app,
@@ -57,6 +57,21 @@ import { compareVersions, formatVersion, parseVersion, type Version } from "./ve
 
 const DIRECTORY = daemon.stateDirectory();
 
+/**
+ * What this copy calls itself.
+ *
+ * A lane is a checkout's app running beside the installed one, and two windows
+ * wearing one name and one mark is a Dock nobody can aim at. So the lane says so:
+ * "Spool Dev" in the Dock, the menu bar and the About panel, and the development
+ * blue on the icon and the status item. The test is SPOOL_DIR, the same one
+ * src/cli.ts uses to decide the daemon is a development daemon, so the app and
+ * the canvas it shows agree about which of the two this is.
+ *
+ * Unset SPOOL_DIR is the released app, unchanged.
+ */
+const LANE = (process.env.SPOOL_DIR ?? "") !== "";
+const NAME = LANE ? "Spool Dev" : "Spool";
+
 /** Held only so the tray item is not collected out from under the menu bar. */
 let tray: Tray | undefined;
 let window: BrowserWindow | undefined;
@@ -105,7 +120,7 @@ function createWindow(): BrowserWindow {
 		height: 900,
 		minWidth: 720,
 		minHeight: 480,
-		title: "Spool",
+		title: NAME,
 		backgroundColor: "#0e0e0e",
 		webPreferences: { spellcheck: false },
 	});
@@ -494,18 +509,45 @@ export function trayImage(): Electron.NativeImage {
 	// Read and added by hand rather than by path: nativeImage resolves @2x off
 	// the filesystem, and inside an asar there is no filesystem to resolve on.
 	const image = nativeImage.createEmpty();
-	for (const [scaleFactor, file] of [
-		[1, "markTemplate.png"],
-		[2, "markTemplate@2x.png"],
-	] as const) {
+	const marks = LANE
+		? ([
+				[1, "markDev.png"],
+				[2, "markDev@2x.png"],
+			] as const)
+		: ([
+				[1, "markTemplate.png"],
+				[2, "markTemplate@2x.png"],
+			] as const);
+	for (const [scaleFactor, file] of marks) {
 		try {
 			image.addRepresentation({ scaleFactor, buffer: readFileSync(join(__dirname, "..", "assets", file)) });
 		} catch {
 			// a missing representation is a smaller mark, not a missing app
 		}
 	}
-	image.setTemplateImage(true);
+	// A status item that keeps its own colour does not belong in the bar, which is
+	// exactly the point for the lane: it is the one that should not blend in.
+	image.setTemplateImage(!LANE);
 	return image;
+}
+
+/**
+ * The lane's Dock icon, handed over at runtime.
+ *
+ * The bundle carries one icon and signing seals it, so a lane cannot have its own
+ * in Contents/Resources. The Dock takes one from a running app, which is also the
+ * only icon an unpackaged `pnpm start` has any way of showing — without this it
+ * wears Electron's.
+ */
+function installDockIcon(): void {
+	if (!LANE || app.dock === undefined) return;
+	const icon = nativeImage.createFromPath(join(__dirname, "..", "assets", "iconDev.png"));
+	if (icon.isEmpty()) {
+		log("dock", "FAIL no lane icon");
+		return;
+	}
+	app.dock.setIcon(icon);
+	log("dock", "OK", "the lane mark");
 }
 
 export function buildTrayMenu(): Menu {
@@ -514,19 +556,19 @@ export function buildTrayMenu(): Menu {
 		{ type: "separator" },
 		// Disabled on purpose: it is a label, not a thing to click. Which version
 		// is running is the first question every bug report answers.
-		{ label: `Spool ${version()}`, enabled: false },
+		{ label: `${NAME} ${version()}`, enabled: false },
 		downloading === undefined
 			? { label: "Check for Updates…", click: () => void checkForUpdates() }
 			: { label: `Downloading ${downloading.version}… ${downloading.percent}%`, enabled: false },
 		{ type: "separator" },
-		{ label: "Quit Spool", accelerator: "Command+Q", click: () => app.quit() },
+		{ label: `Quit ${NAME}`, accelerator: "Command+Q", click: () => app.quit() },
 	]);
 }
 
 function installTray(): void {
 	const image = trayImage();
 	tray = new Tray(image);
-	tray.setToolTip("Spool");
+	tray.setToolTip(NAME);
 	tray.setContextMenu(buildTrayMenu());
 	log("tray", image.isEmpty() ? "FAIL no mark" : "OK");
 }
@@ -715,6 +757,15 @@ export async function shutdown(): Promise<void> {
 }
 
 export function boot(): void {
+	// First, because the lock the next line asks for lives in this directory, and
+	// a lane that shares it with the installed app can never hold one of its own.
+	const userData = daemon.userDataDirectory(app.getPath("userData"));
+	mkdirSync(userData, { recursive: true });
+	app.setPath("userData", userData);
+	// After the path, never before: the default userData directory is named after
+	// the app, so renaming first would move the daily app's out from under it.
+	app.setName(NAME);
+
 	// One app, one daemon. A second launch is somebody asking for the window they
 	// already have.
 	if (!app.requestSingleInstanceLock()) {
@@ -725,7 +776,7 @@ export function boot(): void {
 
 	openLog(DIRECTORY);
 	installPlayChannels();
-	app.setAboutPanelOptions({ applicationName: "Spool", applicationVersion: version(), credits: "MIT" });
+	app.setAboutPanelOptions({ applicationName: NAME, applicationVersion: version(), credits: "MIT" });
 
 	app.on("window-all-closed", () => {
 		// Deliberately nothing. Closing the window leaves the app in the menu bar
@@ -744,6 +795,7 @@ export function boot(): void {
 	void app.whenReady().then(() => {
 		log("boot", `pid=${process.pid}`, `v${version()}`, DIRECTORY);
 		Menu.setApplicationMenu(buildAppMenu());
+		installDockIcon();
 		installTray();
 		return openCanvas();
 	});

@@ -1008,6 +1008,19 @@ describe("serving the canvas page", () => {
 		expect(await favicon.text()).toContain('fill="#3b82f6"');
 	});
 
+	it("paints the ribbon mark blue for the development daemon, and only that one", async () => {
+		const uiDir = makeUi();
+
+		const development = await (
+			await makeApp(join(makeTempDir(), ".spool-dev"), { uiDir, development: true }).request("/")
+		).text();
+		const daily = await (await makeApp(join(makeTempDir(), ".spool"), { uiDir }).request("/")).text();
+
+		expect(development).toContain("--color-mark:#3b82f6");
+		expect(development).not.toContain("--color-thread");
+		expect(daily).not.toContain("--color-mark");
+	});
+
 	it("says what is wrong when the UI build is absent", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const app = makeApp(spoolDir); // no uiDir at all

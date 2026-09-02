@@ -5,7 +5,18 @@ import type { AddressInfo } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { alive, connectHost, daemonUrl, health, readState, start, stateDirectory, status, stop } from "./daemon";
+import {
+	alive,
+	connectHost,
+	daemonUrl,
+	health,
+	readState,
+	start,
+	stateDirectory,
+	status,
+	stop,
+	userDataDirectory,
+} from "./daemon";
 
 function temporary(): string {
 	return mkdtempSync(join(tmpdir(), "spool-desktop-"));
@@ -16,6 +27,14 @@ test("the state directory is ~/.spool unless SPOOL_DIR says otherwise", () => {
 	assert.equal(stateDirectory({ SPOOL_DIR: "" }), join(homedir(), ".spool"));
 	assert.equal(stateDirectory({ SPOOL_DIR: "/tmp/lane" }), "/tmp/lane");
 	assert.equal(stateDirectory({ SPOOL_DIR: "~/.spool-lane" }), join(homedir(), ".spool-lane"));
+});
+
+test("a lane keeps its app state, and its instance lock, inside the lane", () => {
+	const daily = "/Library/Application Support/spool-desktop";
+	assert.equal(userDataDirectory(daily, {}), daily);
+	assert.equal(userDataDirectory(daily, { SPOOL_DIR: "" }), daily);
+	assert.equal(userDataDirectory(daily, { SPOOL_DIR: "/tmp/lane" }), join("/tmp/lane", "app"));
+	assert.equal(userDataDirectory(daily, { SPOOL_DIR: "~/.spool-lane" }), join(homedir(), ".spool-lane", "app"));
 });
 
 test("corrupt, absent and half-written state all read as absent", () => {

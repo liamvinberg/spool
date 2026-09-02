@@ -78,6 +78,12 @@ lets a checkout's app and the daily one stay out of each other's way:
 SPOOL_DIR=~/.spool-lane SPOOL_PORT=7778 release/mac-arm64/Spool.app/Contents/MacOS/Spool
 ```
 
+A lane gets Electron's `userData` inside `SPOOL_DIR` rather than the one named
+after the app. That directory holds the single-instance lock, so sharing it meant
+a lane asked for the lock the installed app was holding, was refused as a second
+launch of it, and raised that app's canvas instead of opening its own. With no
+`SPOOL_DIR` set the path is where every release has put it.
+
 ## Why this folder is not in the repo's pnpm workspace
 
 `desktop/` carries its own `pnpm-workspace.yaml`, which makes it its own pnpm

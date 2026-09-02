@@ -66,6 +66,27 @@ export function stateDirectory(env: NodeJS.ProcessEnv = process.env): string {
 	return isAbsolute(override) ? override : resolve(override);
 }
 
+/**
+ * Where Electron keeps this app's own state: window bounds, caches, and the
+ * single-instance lock.
+ *
+ * Electron names that directory after the app, so every copy of Spool on a
+ * machine points at the same one. Right for the daily app and wrong for a lane,
+ * because the lock is in there: a checkout's window asks for the lock the
+ * installed app is already holding, is refused as a second launch of it, and
+ * raises that app's canvas instead of opening its own.
+ *
+ * A lane is already spelled out in SPOOL_DIR, so its app state goes inside the
+ * directory that is the lane, which is also what makes deleting that directory
+ * delete all of it. Unset SPOOL_DIR keeps the path every release has used, so the
+ * daily app keeps the window bounds and update cache it has.
+ */
+export function userDataDirectory(fallback: string, env: NodeJS.ProcessEnv = process.env): string {
+	const override = env.SPOOL_DIR;
+	if (override === undefined || override === "") return fallback;
+	return join(stateDirectory(env), "app");
+}
+
 /** Machine-written ephemera: corrupt or unreadable state reads as absent. */
 export function readState(directory: string): DaemonState | undefined {
 	let raw: string;

@@ -8,7 +8,7 @@ import { SPOOL_MARK_PATH } from "../brand";
 export function RibbonMark({ className }: { className?: string }) {
 	return (
 		<svg viewBox="250 182 524 660" className={className} aria-hidden="true">
-			<path d={SPOOL_MARK_PATH} fillRule="evenodd" fill="var(--color-thread)" />
+			<path d={SPOOL_MARK_PATH} fillRule="evenodd" fill="var(--color-mark)" />
 		</svg>
 	);
 }

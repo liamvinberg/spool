@@ -12,7 +12,7 @@ import trash from "trash";
 import { z } from "zod";
 import { writeAtomic } from "../atomic-write";
 import { type Attachment, MAX_ATTACHMENT_BYTES, parseAttachment } from "../attachment";
-import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_FAVICON_SVG } from "../brand";
+import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_SVG } from "../brand";
 import type { Cover } from "../cover";
 import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
@@ -2539,8 +2539,16 @@ export function createDaemonApp({
 		// that is off has to be absent from the first paint, and a fetch the page
 		// waits for would show it first and take it away after
 		const boot = `<script>window.__SPOOL_CONTROL__ = ${escapeJsonScript(controlToken)}; window.__SPOOL_RENDER_ORIGIN__ = ${escapeJsonScript(renderOrigin)}; window.__SPOOL_CAPTURE_ORIGIN__ = ${escapeJsonScript(captureOrigin)}; window.__SPOOL_EXPERIMENTS__ = ${escapeJsonScript([...(experiments ?? [])])};</script>`;
+		// A development daemon's canvas wears the blue on its ribbon mark, the way
+		// its favicon and the lane app's icon already do, so a checkout window and
+		// the daily one are not two of the same picture. The mark alone: the thread
+		// stays the accent everywhere else. One token, injected ahead of first paint
+		// rather than a class the page has to be told to put on. The player is left
+		// alone: its chrome frames somebody's design, not this canvas.
+		const mark = development === true ? `<style>:root{--color-mark:${SPOOL_DEVELOPMENT_THREAD}}</style>` : "";
+		const head = `${mark}${boot}`;
 		const html = index.body.toString("utf8");
-		return c.body(html.includes("</head>") ? html.replace("</head>", `${boot}\n</head>`) : `${boot}\n${html}`);
+		return c.body(html.includes("</head>") ? html.replace("</head>", `${head}\n</head>`) : `${head}\n${html}`);
 	}
 
 	function protectControlDocument(c: Context): void {
