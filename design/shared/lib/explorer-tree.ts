@@ -103,6 +103,28 @@ export function pageCount(tree: PageNode): number {
 	return everyNode(tree).filter(isPage).length;
 }
 
+/** A page as the field beside the rail sees one of its own pages. */
+export interface StagePage {
+	readonly id: string;
+	readonly name: string;
+	/** its own frames in order — the covers anything drawing it as a stack reads */
+	readonly frames: readonly FrameNode[];
+	/** its own pages */
+	readonly pages: number;
+	/** every frame under it, its own pages' included */
+	readonly count: number;
+}
+
+export function stagePages(page: PageNode): readonly StagePage[] {
+	return page.children.filter(isPage).map((sub) => ({
+		id: sub.id,
+		name: sub.name,
+		frames: sub.children.filter((node): node is FrameNode => !isPage(node)),
+		pages: sub.children.filter(isPage).length,
+		count: frameCount(sub),
+	}));
+}
+
 export function frameNames(tree: PageNode): Set<string> {
 	return new Set(everyNode(tree).flatMap((node) => (isPage(node) ? [] : [node.name])));
 }
@@ -366,6 +388,9 @@ export function seedTree(): PageNode {
 				frame("pointer", "pointer"),
 			]),
 			page("site", "site", [frame("docs-index", "docs-index"), frame("changelog", "changelog")]),
+			// a page nobody has written into yet: the other empty, and the one no
+			// treatment can answer by pointing at what is inside
+			page("scratch", "scratch", []),
 		],
 	};
 }

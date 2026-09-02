@@ -1,7 +1,7 @@
 import { useExplorer } from "../lib/explorer-model";
 import { cn } from "../lib/utils";
 import { RailTabs } from "./spool-canvas-chrome";
-import { ExplorerCanvas } from "./spool-explorer-canvas";
+import { ExplorerCanvas, type EmptyTake } from "./spool-explorer-canvas";
 import { ExplorerRail } from "./spool-explorer-rail";
 import { HandIcon, SelectIcon } from "./spool-icons";
 import { SpoolShell } from "./spool-shell";
@@ -13,12 +13,28 @@ import { SpoolShell } from "./spool-shell";
  *
  * Everything else is copied so the change reads as a diff against the product
  * rather than as a component demo.
+ *
+ * `take` and `unfoldHollow` are the empty-page frames' one variable each: what
+ * the field does, and whether the rail does anything, on a page holding no
+ * frames. Left alone the screen is the proposal as it stood.
  */
 
 const INSPECTOR_W = 300;
 
-export function ExplorerScreen() {
-	const model = useExplorer();
+export function ExplorerScreen({
+	take = "bare",
+	start,
+	unfoldHollow = false,
+	argues,
+}: {
+	take?: EmptyTake;
+	/** the page the canvas opens on — the empty-page frames open on a page of pages */
+	start?: string | undefined;
+	unfoldHollow?: boolean;
+	/** the one line this frame argues, in the corner of the field */
+	argues?: string | undefined;
+} = {}) {
+	const model = useExplorer({ start, unfoldHollow });
 	const frame = model.selectedFrame;
 
 	return (
@@ -30,9 +46,20 @@ export function ExplorerScreen() {
 						label={model.stage.label}
 						path={model.stage.path}
 						frames={model.stage.frames}
+						pages={model.stage.pages}
 						selected={model.selection}
 						revealed={model.revealed}
+						take={take}
+						onEnterPage={(id) => {
+							model.activate(id);
+							model.reveal(id);
+						}}
 					/>
+					{argues === undefined ? null : (
+						<p className="pointer-events-none absolute right-6 bottom-6 max-w-[46ch] text-right text-base text-muted leading-base">
+							{argues}
+						</p>
+					)}
 					<CanvasTools />
 				</div>
 				<aside

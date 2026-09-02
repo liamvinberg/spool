@@ -22,6 +22,7 @@ import {
 	renameNode,
 	seedExpanded,
 	seedTree,
+	stagePages,
 	uniqueName,
 	uniquePageName,
 } from "./explorer-tree";
@@ -60,11 +61,24 @@ interface Snapshot {
 
 const TOAST_MS = 6000;
 
-export function useExplorer() {
+export interface ExplorerOptions {
+	/** the page the canvas opens on; the root page when nothing says otherwise */
+	readonly start?: string | undefined;
+	/**
+	 * Going into a page that holds no frames of its own unfolds it in the rail.
+	 *
+	 * The proposal one of the empty-page takes is arguing. Shipped spool keeps
+	 * picking and folding apart on purpose — the chevron discloses, the name
+	 * selects — so this is an exception written where the exception would live.
+	 */
+	readonly unfoldHollow?: boolean;
+}
+
+export function useExplorer(options: ExplorerOptions = {}) {
 	const [tree, setTree] = useState<PageNode>(seedTree);
 	const [expanded, setExpanded] = useState<ReadonlySet<string>>(seedExpanded);
 	const [selection, setSelection] = useState<readonly string[]>([]);
-	const [activePageId, setActivePageId] = useState<string>(ROOT_ID);
+	const [activePageId, setActivePageId] = useState<string>(options.start ?? ROOT_ID);
 	const [clipboard, setClipboard] = useState<readonly FrameNode[]>([]);
 	const [renaming, setRenaming] = useState<RenameState | null>(null);
 	const [toast, setToast] = useState<ToastState | null>(null);
@@ -138,7 +152,19 @@ export function useExplorer() {
 
 	/* ── selecting ─────────────────────────────────────────────────── */
 
-	const activate = useCallback((pageId: string) => setActivePageId(pageId), []);
+	const activate = useCallback(
+		(pageId: string) => {
+			setActivePageId(pageId);
+			if (options.unfoldHollow !== true) return;
+			// only where the canvas has nothing to show: a page with frames on it
+			// still folds and unfolds by its chevron alone
+			const page = pageAt(tree, pageId);
+			if (page === null) return;
+			const hollow = page.children.length > 0 && page.children.every(isPage);
+			if (hollow) setExpanded((was) => new Set([...was, pageId]));
+		},
+		[tree, options.unfoldHollow],
+	);
 
 	const select = useCallback(
 		(id: string, modifiers: SelectModifiers = { shift: false, toggle: false }) => {
@@ -352,6 +378,7 @@ export function useExplorer() {
 			label: page === null ? "root" : page.name,
 			path: page === null ? "" : pagePath(tree, page.id),
 			frames: page === null ? [] : page.children.filter((node): node is FrameNode => !isPage(node)),
+			pages: page === null ? [] : stagePages(page),
 		};
 	}, [tree, activePageId]);
 

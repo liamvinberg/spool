@@ -10,6 +10,7 @@ import {
 	betweenSlots,
 	canLandIn,
 	contentX,
+	frameCount,
 	guideX,
 	isPage,
 	listHeight,
@@ -719,11 +720,14 @@ function TreeRow({
 								</span>
 							)}
 						</div>
-						{/* the shipped column: frames on this page's own canvas, so the number
-						    the rail shows and the number the field shows are the same one */}
-						<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3">
-							{node.children.filter((child) => !isPage(child)).length}
-						</span>
+						{/* the shipped column (`rail-rows.ts`): the count is what is one
+						    chevron away, which is everything below, and an open page has
+						    none — the rows under it are the count. A page of pages read 0
+						    here for as long as it counted only its own, which is the one
+						    number it is not. */}
+						{open ? null : (
+							<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3">{frameCount(node)}</span>
+						)}
 					</>
 				) : (
 					<>
