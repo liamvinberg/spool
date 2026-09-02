@@ -3,7 +3,7 @@ import { shortPath } from "shared/lib/spool/picker-disk";
 import { cn } from "shared/lib/utils";
 import { FolderIcon } from "shared/ui/spool/icons";
 import { type Picker, usePicker } from "shared/ui/spool/picker-parts";
-import { PathPrefix, ROW, type Seed, useAt } from "shared/ui/explore/picker/picker-min";
+import { PathPrefix, ROW, type Seed, useAt } from "shared/ui/spool/picker-field";
 
 /**
  * Making the folder from inside spool ([#242](https://github.com/liamvinberg/spool/issues/242)).

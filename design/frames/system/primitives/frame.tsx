@@ -432,7 +432,9 @@ export default function Primitives() {
 					<Gap name="model-control.tsx" says="needs the model list" />
 					<Gap name="thread-strip.tsx" says="needs threads" />
 					<Gap name="picker-parts.tsx" says="needs a disk" />
-					<Gap name="picker-search.tsx" says="needs a disk" />
+					<Gap name="picker-field.tsx" says="needs a disk" />
+					<Gap name="picker-new.tsx" says="needs a disk" />
+					<Gap name="picker-plus.tsx" says="needs a disk" />
 					<Gap name="lightbox.tsx" says="needs a shot" />
 					<Gap name="shell.tsx" says="the bar, whole" />
 					<Gap name="real-pages.ts" says="data, not a component" />

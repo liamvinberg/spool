@@ -1,13 +1,13 @@
 import { PlusIcon, SearchIcon } from "shared/ui/spool/icons";
 import { ListBox, PickerStage } from "shared/ui/spool/picker-parts";
-import { Empty, MinRow, PathPrefix } from "shared/ui/explore/picker/picker-min";
+import { Empty, MinRow, PathPrefix } from "shared/ui/spool/picker-field";
 import {
 	InitLine,
 	NameLine,
 	NamingField,
 	type NewSeed,
 	useNewProject,
-} from "shared/ui/explore/new-project/new-project-parts";
+} from "shared/ui/spool/picker-new";
 
 /**
  * A "+" at the end of the field.
