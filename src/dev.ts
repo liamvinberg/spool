@@ -2,7 +2,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readDaemonState, resolveSpoolDir } from "./daemon/lifecycle";
+import { configuredPort, readDaemonState, resolveSpoolDir } from "./daemon/lifecycle";
 import { appArgs, electronInstalled, openCheckoutApp, opensCheckoutApp } from "./dev-app";
 import { mirrorCaptures } from "./dev-captures";
 import { watchesCheckoutUi, watchUiBuild } from "./dev-ui";
@@ -13,7 +13,15 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 // the dogfood split lives here so every checkout entry — pnpm dev, a shim on
 // PATH — is isolated from the installed spool by default; explicit env wins
 process.env.SPOOL_DIR ??= join(homedir(), ".spool-dev");
-process.env.SPOOL_PORT ??= "7767";
+// 7767 is the checkout's port everywhere it has not been said otherwise, but it
+// is a default and not a decree: SPOOL_PORT is how a caller overrides
+// config.json, so setting it here would have this file quietly outrank the one
+// place a machine gets to say where its own daemon lives. One machine that
+// cares: a daemon reached over a forwarded port has to bind the port the
+// browser names, or every write arrives with an Origin it refuses.
+if (process.env.SPOOL_PORT === undefined && configuredPort(resolveSpoolDir(process.env)) === undefined) {
+	process.env.SPOOL_PORT = "7767";
+}
 
 // the canvas plays the captures out of its own fixtures, and they are tracked
 // outside it, so every checkout entry refreshes the mirror before serving

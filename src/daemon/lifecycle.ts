@@ -52,6 +52,27 @@ export function resolveSpoolDir(env: Record<string, string | undefined>): string
 }
 
 /**
+ * Whether this machine's config.json names a port, asked before the env
+ * defaults are laid down.
+ *
+ * The checkout entry wants to default a port without overriding one a person
+ * set, and SPOOL_PORT is an override rather than a default — so it has to know
+ * whether the file speaks first. Deliberately silent about a malformed file:
+ * resolveServeConfig reads the same key a moment later and is the one that
+ * refuses, so this never turns a bad config into two different errors.
+ */
+export function configuredPort(spoolDir: string): number | undefined {
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(join(spoolDir, "config.json"), "utf8"));
+		if (typeof parsed !== "object" || parsed === null) return undefined;
+		const { port } = parsed as { port?: unknown };
+		return typeof port === "number" && Number.isInteger(port) ? port : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
  * localhost:7766 unless the owner explicitly says otherwise: config.json
  * {host, port} in ~/.spool, SPOOL_HOST/SPOOL_PORT on top for the
  * develop-from-checkout-on-its-own-port case.

@@ -8,6 +8,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { SpoolError } from "../errors";
 import { makeTempDir } from "../test-helpers";
 import {
+	configuredPort,
 	ensureDaemon,
 	readDaemonState,
 	renderOrigin,
@@ -43,6 +44,29 @@ describe("resolveSpoolDir", () => {
 
 	it("treats an empty SPOOL_DIR as unset", () => {
 		expect(resolveSpoolDir({ SPOOL_DIR: "" })).toBe(join(homedir(), ".spool"));
+	});
+});
+
+describe("configuredPort", () => {
+	// the checkout entry defaults a port and must not shout down the one place a
+	// machine says where its own daemon lives — a forwarded port has to be bound,
+	// not merely reached, or every write arrives with an Origin the daemon refuses
+	it("reports the port this machine's config.json names", () => {
+		const spoolDir = makeSpoolDir();
+		mkdirSync(spoolDir, { recursive: true });
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ port: 7769 }));
+		expect(configuredPort(spoolDir)).toBe(7769);
+	});
+
+	it("says nothing for no file, no port, or a file it cannot read", () => {
+		const spoolDir = makeSpoolDir();
+		expect(configuredPort(spoolDir)).toBeUndefined();
+		mkdirSync(spoolDir, { recursive: true });
+		writeFileSync(join(spoolDir, "config.json"), JSON.stringify({ history: false }));
+		expect(configuredPort(spoolDir)).toBeUndefined();
+		// resolveServeConfig is the one that refuses a corrupt file; this stays quiet
+		writeFileSync(join(spoolDir, "config.json"), "{ not json");
+		expect(configuredPort(spoolDir)).toBeUndefined();
 	});
 });
 
