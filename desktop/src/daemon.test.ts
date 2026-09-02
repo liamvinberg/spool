@@ -47,6 +47,7 @@ test("corrupt, absent and half-written state all read as absent", () => {
 			port: 7766,
 			version: "0.9.1",
 			startedAt: "now",
+			controlToken: "secret",
 		});
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
@@ -109,6 +110,7 @@ test("a state file whose pid the daemon does not confirm is not running", async 
 			url: `http://127.0.0.1:${port}`,
 			pid: 4242,
 			version: "0.9.1",
+			controlToken: "secret",
 		});
 	} finally {
 		server.close();

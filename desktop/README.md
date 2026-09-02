@@ -43,6 +43,34 @@ One rule, and it is the CLI's rule seen from the other side:
   checked again at quit, so a daemon `spool upgrade` restarted in the meantime is
   left alone rather than killed by a stranger.
 
+## The play window
+
+Play from the canvas opens a second window, and this app makes it rather than
+letting Chromium open a popup at a size nobody chose. The window is the frame's
+own: the authored width, and the authored height or the screen's, whichever is
+smaller, snapped to the right edge of the display the canvas window is on so the
+canvas stays readable beside it. A 390x844 phone frame gets a 390x844 window and
+is not stretched into a device nobody has.
+
+`titleBarStyle: "hiddenInset"` means there is no OS title bar. The 30px bar in
+its place is drawn by the played page, not by this process, and the traffic
+lights are placed into it. The page learns which shell it is in from
+`src/play-preload.ts`, which is the whole mechanism: a browser tab has no such
+bridge and so keeps the edge bar it has always had, unchanged. The bridge hands
+the bar the three things a page cannot do for itself — raise the canvas, put the
+window back on the authored size, close — and nothing else.
+
+A window a hand has moved or resized is a preference, so the rect is stored in
+`play-windows.json` in the state directory, keyed per project and per authored
+width. Play the same frame again and the window comes back where it was, and the
+bar says `restored` once with a `reset` beside it. A rect that matches where the
+frame would have opened anyway is not stored, and a rect on a display that has
+since been unplugged is ignored.
+
+Geometry comes from `/api/p/:project/frames`, which is behind the control token,
+so this is the one place the app reads the token out of `daemon.json`. It is
+never logged and never leaves the process except as that request's header.
+
 `SPOOL_DIR` and `SPOOL_PORT` are read the way the CLI reads them, which is what
 lets a checkout's app and the daily one stay out of each other's way:
 

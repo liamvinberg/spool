@@ -1,9 +1,31 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions, nativeImage, shell, Tray } from "electron";
+import {
+	app,
+	BrowserWindow,
+	dialog,
+	ipcMain,
+	Menu,
+	type MenuItemConstructorOptions,
+	nativeImage,
+	screen,
+	shell,
+	Tray,
+} from "electron";
 import * as daemon from "./daemon";
 import { log, openLog } from "./log";
 import { userPath } from "./path";
+import {
+	BAR_PX,
+	fitRect,
+	readRect,
+	rectIsReachable,
+	rectKey,
+	sameRect,
+	type WindowRect,
+	type WorkArea,
+	writeRect,
+} from "./play-window";
 import { bundledCli, bundledShim } from "./runtime";
 import {
 	installUpdate,
@@ -42,6 +64,8 @@ let window: BrowserWindow | undefined;
 let startedPid: number | undefined;
 /** The daemon this window is pointed at, for telling its popups from the web. */
 let daemonPort: number | undefined;
+/** Its credential, held for the one control request this app makes: play geometry. */
+let daemonControlToken: string | undefined;
 let checkingForUpdates = false;
 /** The download in flight, if one is, for the menu bar and the Dock. */
 let downloading: { version: string; percent: number } | undefined;
@@ -86,13 +110,35 @@ function createWindow(): BrowserWindow {
 		webPreferences: { spellcheck: false },
 	});
 
-	// A popup the daemon opened is part of spool and gets a window; anything else
-	// is the web and belongs in the browser the person already has their tabs in.
-	// Loopback and the same port rather than the same origin, because the daemon
-	// serves frames and captures from two more hostnames on the one listener.
+	guard(created);
+	created.on("closed", () => {
+		if (created === window) window = undefined;
+	});
+
+	return created;
+}
+
+/**
+ * What a spool window is allowed to open, and where everything else goes.
+ *
+ * A popup the daemon opened is part of spool; anything else is the web and
+ * belongs in the browser the person already has their tabs in. Loopback and the
+ * same port rather than the same origin, because the daemon serves frames and
+ * captures from two more hostnames on the one listener.
+ *
+ * Play is the one popup this app does not let Chromium open for itself (#275).
+ * Left to the default, Electron picks a size nobody chose and puts an OS title
+ * bar with a URL in it above a prototype, so the app makes that window instead.
+ */
+function guard(created: BrowserWindow): void {
 	created.webContents.setWindowOpenHandler(({ url }) => {
-		if (isDaemonUrl(url)) return { action: "allow" };
-		void shell.openExternal(url);
+		if (!isDaemonUrl(url)) {
+			void shell.openExternal(url);
+			return { action: "deny" };
+		}
+		const play = playRequest(url);
+		if (play === undefined) return { action: "allow" };
+		void openPlayWindow(url, play);
 		return { action: "deny" };
 	});
 	created.webContents.on("will-navigate", (event, url) => {
@@ -100,11 +146,6 @@ function createWindow(): BrowserWindow {
 		event.preventDefault();
 		void shell.openExternal(url);
 	});
-	created.on("closed", () => {
-		if (created === window) window = undefined;
-	});
-
-	return created;
 }
 
 function isDaemonUrl(candidate: string): boolean {
@@ -130,18 +171,33 @@ export async function openCanvas(): Promise<void> {
 
 	const current = await daemon.status(DIRECTORY);
 	if (current.running) {
-		point(showing, current.url, current.pid, current.pid === startedPid ? "reused" : "adopted", current.version);
+		point(
+			showing,
+			current.url,
+			current.pid,
+			current.pid === startedPid ? "reused" : "adopted",
+			current.version,
+			current.controlToken,
+		);
 		return;
 	}
 
 	void showing.loadURL(holdingPage("Starting Spool", "The canvas opens as soon as the daemon answers."));
 	const started = await startBundled();
 	if (started === undefined) return;
-	point(showing, started.url, started.pid, "started", started.version);
+	point(showing, started.url, started.pid, "started", started.version, started.controlToken);
 }
 
-function point(showing: BrowserWindow, url: string, pid: number, verdict: string, daemonVersion: string): void {
+function point(
+	showing: BrowserWindow,
+	url: string,
+	pid: number,
+	verdict: string,
+	daemonVersion: string,
+	controlToken: string,
+): void {
 	daemonPort = Number(new URL(url).port);
+	daemonControlToken = controlToken;
 	log("daemon", verdict, `pid=${pid}`, `v${daemonVersion}`, url);
 	// Reopening from the Dock should give back the canvas as it was left, not
 	// reload it out from under whatever was on screen.
@@ -149,7 +205,9 @@ function point(showing: BrowserWindow, url: string, pid: number, verdict: string
 	void showing.loadURL(url);
 }
 
-async function startBundled(): Promise<{ url: string; pid: number; version: string } | undefined> {
+async function startBundled(): Promise<
+	{ url: string; pid: number; version: string; controlToken: string } | undefined
+> {
 	const cli = bundledCli(process.resourcesPath);
 	if (cli === undefined) {
 		log("daemon", "FAIL", "no bundled spool");
@@ -177,7 +235,12 @@ async function startBundled(): Promise<{ url: string; pid: number; version: stri
 		});
 		if (!status.running) return undefined;
 		startedPid = status.pid;
-		return { url: status.url, pid: status.pid, version: status.version };
+		return {
+			url: status.url,
+			pid: status.pid,
+			version: status.version,
+			controlToken: status.controlToken,
+		};
 	} catch (error) {
 		const detail = (error as Error).message;
 		log("daemon", "FAIL", detail);
@@ -189,6 +252,185 @@ async function startBundled(): Promise<{ url: string; pid: number; version: stri
 
 function fallback(heading: string, detail: string): void {
 	void window?.loadURL(holdingPage(heading, detail));
+}
+
+// MARK: - The play window
+
+/**
+ * Play, as a window this app made (#275).
+ *
+ * The canvas opens `/play/<project>?frame=<name>`. In a browser that is a tab
+ * and #227 designed every part of it. Here it was a second BrowserWindow at
+ * whatever size Electron felt like, wearing an OS title bar with a URL in it —
+ * three decisions nobody made. So the popup is refused and the window is built:
+ *
+ *   - sized from the frame's own two numbers, which only the daemon knows;
+ *   - no title bar, `hiddenInset`, the lights inset into the 30px bar the page
+ *     draws in its place;
+ *   - and the rect a hand puts it at outlives the window, per project and per
+ *     authored width.
+ *
+ * The bar is the page's, not this process's: the preload hands it the three
+ * things a page cannot do for itself, and the page having that bridge is also
+ * how it knows to draw a bar at all. A tab has no bridge and so keeps its edge
+ * bar exactly.
+ */
+interface PlayRequest {
+	project: string;
+	frame?: string;
+}
+
+/** `/play/<project>` on this daemon, and nothing else, is a window this app owns. */
+function playRequest(candidate: string): PlayRequest | undefined {
+	let url: URL;
+	try {
+		url = new URL(candidate);
+	} catch {
+		return undefined;
+	}
+	const encoded = /^\/play\/([^/]+)$/.exec(url.pathname)?.[1];
+	if (encoded === undefined) return undefined;
+	let project: string;
+	try {
+		project = decodeURIComponent(encoded);
+	} catch {
+		return undefined;
+	}
+	const frame = url.searchParams.get("frame");
+	return frame === null ? { project } : { project, frame };
+}
+
+/** What each play window remembers by, and what it opened as. */
+interface PlayedWindow {
+	key: string;
+	authored: { w: number; h: number };
+	/** Whether it opened on a remembered rect, which its bar says once. */
+	restored: boolean;
+}
+
+const played = new Map<number, PlayedWindow>();
+
+/**
+ * The size to fall back on when the daemon will not say. A refusal here is not
+ * worth refusing to play over: a window at a plausible size is recoverable by
+ * hand, and the hand's rect is then remembered like any other.
+ */
+const UNKNOWN_AUTHORED = { w: 1440, h: 900 };
+
+async function openPlayWindow(url: string, request: PlayRequest): Promise<void> {
+	const authored =
+		daemonControlToken === undefined
+			? undefined
+			: await daemon.frameGeometry(new URL(url).origin, daemonControlToken, request.project, request.frame);
+	if (authored === undefined) log("play", "no geometry", request.project, request.frame ?? "(first)");
+	const size = authored ?? UNKNOWN_AUTHORED;
+
+	const key = rectKey(request.project, size.w);
+	const stored = readRect(DIRECTORY, key);
+	// A rect stored on a display that has since been unplugged is a window
+	// nobody can see, so it is not a preference any more.
+	const restored = stored !== undefined && rectIsReachable(stored, workAreas());
+	const rect = restored && stored !== undefined ? stored : fitRect(size, canvasArea());
+
+	const window_ = new BrowserWindow({
+		x: rect.x,
+		y: rect.y,
+		width: rect.w,
+		height: rect.h,
+		minWidth: 240,
+		minHeight: 200,
+		title: request.frame ?? request.project,
+		backgroundColor: "#0e0e0e",
+		// The bar is spool's, so the title bar is not the OS's. The lights are
+		// still the OS's and are placed to sit centred in a 30px strip.
+		titleBarStyle: "hiddenInset",
+		trafficLightPosition: { x: 12, y: Math.round((BAR_PX - 12) / 2) },
+		webPreferences: {
+			spellcheck: false,
+			preload: join(__dirname, "play-preload.js"),
+		},
+	});
+	const id = window_.webContents.id;
+	played.set(id, { key, authored: size, restored });
+	guard(window_);
+
+	const remember = () => {
+		if (window_.isDestroyed() || window_.isFullScreen() || window_.isMinimized()) return;
+		const state = played.get(id);
+		if (state === undefined) return;
+		const now = boundsOf(window_);
+		// A window standing exactly where this frame would have put it says
+		// nothing, so nothing is stored. That is also what makes reset safe: the
+		// move events its own setBounds fires arrive at the fit rect and forget.
+		writeRect(DIRECTORY, state.key, sameRect(now, fitRect(state.authored, areaOf(window_))) ? undefined : now);
+	};
+	// A drag reports continuously and only where it comes to rest is a preference.
+	let settling: NodeJS.Timeout | undefined;
+	const settle = () => {
+		if (settling !== undefined) clearTimeout(settling);
+		settling = setTimeout(remember, SETTLE_MS);
+	};
+	window_.on("move", settle);
+	window_.on("resize", settle);
+	window_.on("close", () => {
+		if (settling !== undefined) clearTimeout(settling);
+		remember();
+	});
+	window_.on("closed", () => played.delete(id));
+
+	log("play", request.project, request.frame ?? "(first)", `${rect.w}x${rect.h}`, restored ? "restored" : "authored");
+	void window_.loadURL(url);
+}
+
+/** Long enough to be the end of a drag rather than a frame of one. */
+const SETTLE_MS = 400;
+
+function boundsOf(window_: BrowserWindow): WindowRect {
+	const { x, y, width, height } = window_.getBounds();
+	return { x, y, w: width, h: height };
+}
+
+function workAreas(): WorkArea[] {
+	return screen.getAllDisplays().map((display) => display.workArea);
+}
+
+/** The screen the canvas is on: a played window opens beside its own canvas. */
+function canvasArea(): WorkArea {
+	if (window === undefined || window.isDestroyed()) return screen.getPrimaryDisplay().workArea;
+	return screen.getDisplayMatching(window.getBounds()).workArea;
+}
+
+function areaOf(window_: BrowserWindow): WorkArea {
+	return screen.getDisplayMatching(window_.getBounds()).workArea;
+}
+
+/**
+ * What the bar can ask for. Every one of them is refused unless the asking
+ * window is one this app made for play, so a played frame that somehow reached
+ * these channels moves nothing.
+ */
+function installPlayChannels(): void {
+	ipcMain.on("spool:play-window-restored", (event) => {
+		event.returnValue = played.get(event.sender.id)?.restored === true;
+	});
+	ipcMain.on("spool:play-window-reset", (event) => {
+		const window_ = BrowserWindow.fromWebContents(event.sender);
+		const state = played.get(event.sender.id);
+		if (window_ === null || state === undefined) return;
+		state.restored = false;
+		writeRect(DIRECTORY, state.key, undefined);
+		const fit = fitRect(state.authored, areaOf(window_));
+		window_.setBounds({ x: fit.x, y: fit.y, width: fit.w, height: fit.h });
+	});
+	ipcMain.on("spool:play-window-canvas", (event) => {
+		if (!played.has(event.sender.id)) return;
+		void openCanvas();
+		BrowserWindow.fromWebContents(event.sender)?.close();
+	});
+	ipcMain.on("spool:play-window-close", (event) => {
+		if (!played.has(event.sender.id)) return;
+		BrowserWindow.fromWebContents(event.sender)?.close();
+	});
 }
 
 // MARK: - Menus
@@ -482,6 +724,7 @@ export function boot(): void {
 	app.on("second-instance", () => void openCanvas());
 
 	openLog(DIRECTORY);
+	installPlayChannels();
 	app.setAboutPanelOptions({ applicationName: "Spool", applicationVersion: version(), credits: "MIT" });
 
 	app.on("window-all-closed", () => {

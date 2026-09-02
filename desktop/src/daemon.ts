@@ -18,10 +18,12 @@ import { isAbsolute, join, resolve } from "node:path";
 //   - First supervisor wins. A daemon that is already up is adopted whoever
 //     started it; the bundled one starts only when nothing answers.
 //
-// The control token in daemon.json is a credential. It is not read, not logged
-// and not passed anywhere: this app has no reason to make a control request. Its
-// presence is checked, because a state file without one was not written by a
-// daemon that finished starting.
+// The control token in daemon.json is a credential, and it is read for exactly
+// one thing: play opens a window sized from the frame's authored geometry, and
+// the only place that geometry lives is /api/p/:project/frames, which is behind
+// the token (#275). It is never logged and never leaves this process except as
+// that request's header. Its presence is also still checked, because a state
+// file without one was not written by a daemon that finished starting.
 //
 // One thing the CLI does that this does not: sweep. `statusDaemon` deletes a
 // daemon.json whose daemon no longer answers, and getting that right is delicate
@@ -36,6 +38,8 @@ export interface DaemonState {
 	port: number;
 	version: string;
 	startedAt: string;
+	/** The credential every /api/ request carries. Never logged. */
+	controlToken: string;
 }
 
 export interface DaemonHealth {
@@ -44,7 +48,9 @@ export interface DaemonHealth {
 	startedAt: string;
 }
 
-export type DaemonStatus = { running: true; url: string; pid: number; version: string } | { running: false };
+export type DaemonStatus =
+	| { running: true; url: string; pid: number; version: string; controlToken: string }
+	| { running: false };
 
 /**
  * `~/.spool` unless SPOOL_DIR says otherwise, which is how a checkout rides its
@@ -93,6 +99,7 @@ export function readState(directory: string): DaemonState | undefined {
 		port: state.port,
 		version: state.version,
 		startedAt: state.startedAt,
+		controlToken: state.controlToken,
 	};
 }
 
@@ -106,6 +113,64 @@ export function connectHost(host: string): string {
 export function daemonUrl(host: string, port: number): string {
 	const dialable = connectHost(host);
 	return dialable.includes(":") ? `http://[${dialable}]:${port}` : `http://${dialable}:${port}`;
+}
+
+/**
+ * The header every /api/ request carries, mirrored from src/daemon/security.ts
+ * for the same reason the liveness rules are: one protocol, written twice
+ * because these two programs do not share a module.
+ */
+const CONTROL_HEADER = "x-spool-control";
+
+/**
+ * What a frame was authored at, which is the size a window playing it opens at
+ * (#275). The projection is the only place those two numbers live, and it is
+ * behind the control token.
+ *
+ * A named frame the projection does not have, a daemon that refuses, a daemon
+ * too old to answer: all of them mean the same thing here, which is that this
+ * app does not know, and the caller falls back to a size rather than failing to
+ * open a window. The frame is picked the way the play door picks it, minus the
+ * rung this side cannot see: the named frame, else the first.
+ */
+export async function frameGeometry(
+	url: string,
+	controlToken: string,
+	project: string,
+	frame: string | undefined,
+	timeoutMs = 2000,
+): Promise<{ w: number; h: number } | undefined> {
+	let body: unknown;
+	try {
+		const response = await fetch(`${url}/api/p/${encodeURIComponent(project)}/frames`, {
+			headers: { [CONTROL_HEADER]: controlToken },
+			signal: AbortSignal.timeout(timeoutMs),
+		});
+		if (!response.ok) return undefined;
+		body = await response.json();
+	} catch {
+		return undefined;
+	}
+	if (typeof body !== "object" || body === null) return undefined;
+	const listed = (body as { frames?: unknown }).frames;
+	if (!Array.isArray(listed)) return undefined;
+	const frames = listed.filter(isGeometry);
+	const chosen = frame === undefined ? frames[0] : frames.find((entry) => entry.name === frame);
+	return chosen === undefined ? undefined : { w: chosen.w, h: chosen.h };
+}
+
+function isGeometry(value: unknown): value is { name: string; w: number; h: number } {
+	if (typeof value !== "object" || value === null) return false;
+	const frame = value as Record<string, unknown>;
+	return (
+		typeof frame.name === "string" &&
+		typeof frame.w === "number" &&
+		Number.isInteger(frame.w) &&
+		frame.w > 0 &&
+		typeof frame.h === "number" &&
+		Number.isInteger(frame.h) &&
+		frame.h > 0
+	);
 }
 
 /** What the daemon at this URL says it is, asked without a control token. */
@@ -134,7 +199,7 @@ export async function status(directory: string): Promise<DaemonStatus> {
 	const url = daemonUrl(state.host, state.port);
 	const live = await health(url);
 	if (live === undefined || live.pid !== state.pid) return { running: false };
-	return { running: true, url, pid: state.pid, version: live.version };
+	return { running: true, url, pid: state.pid, version: live.version, controlToken: state.controlToken };
 }
 
 export interface StartOptions {
