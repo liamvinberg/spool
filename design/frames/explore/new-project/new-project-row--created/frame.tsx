@@ -1,21 +1,7 @@
-// Landed in the folder the breadcrumb names, and the proof is the list: the
-// folder is now a row like any other, wearing the chip a project wears.
-import { NewProjectRow } from "shared/ui/explore/new-project/new-project-row";
-import { SpoolHomeScreen } from "shared/ui/spool/home-screen";
+// The folder is made, design/ is scaffolded, the tab is open on it: what the
+// picker was ever for, without Finder in the middle.
+import { SpoolEmptyScreen } from "shared/ui/spool/empty-screen";
 
 export default function NewProjectRowCreatedFrame() {
-	return (
-		<SpoolHomeScreen
-			overlay={
-				<NewProjectRow
-					start={{
-						path: "/Users/liamvinberg/personal/experiments",
-						mode: "made",
-						name: "tvarso",
-						made: "/Users/liamvinberg/personal/experiments",
-					}}
-				/>
-			}
-		/>
-	);
+	return <SpoolEmptyScreen project="tvarso" homeTarget="new-project-row" />;
 }

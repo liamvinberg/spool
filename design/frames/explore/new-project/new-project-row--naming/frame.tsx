@@ -1,5 +1,5 @@
-// Lands in the folder the breadcrumb names, and the header says so while you
-// type: the field that searched becomes the field that names.
+// The prefix does not move while you name, because it is still the location,
+// and the list collapses to the one line the folder is about to be.
 import { NewProjectRow } from "shared/ui/explore/new-project/new-project-row";
 import { SpoolHomeScreen } from "shared/ui/spool/home-screen";
 
@@ -8,7 +8,7 @@ export default function NewProjectRowNamingFrame() {
 		<SpoolHomeScreen
 			overlay={
 				<NewProjectRow
-					start={{ path: "/Users/liamvinberg/personal/experiments", mode: "naming", name: "tvarso" }}
+					seed={{ path: "/Users/liamvinberg/personal/projects", naming: true, name: "tvarso" }}
 				/>
 			}
 		/>

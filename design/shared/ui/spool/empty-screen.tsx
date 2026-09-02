@@ -10,11 +10,13 @@ import { SpoolShell } from "shared/ui/spool/shell";
 
 interface SpoolEmptyScreenProps {
 	homeTarget?: string | undefined;
+	/** the folder this canvas belongs to: the tab wears its name */
+	project?: string | undefined;
 }
 
-export function SpoolEmptyScreen({ homeTarget }: SpoolEmptyScreenProps) {
+export function SpoolEmptyScreen({ homeTarget, project = "spool-cloud" }: SpoolEmptyScreenProps) {
 	return (
-		<SpoolShell activeTab="spool-cloud" tabs={["spool-cloud"]} homeTarget={homeTarget} zoom="100%">
+		<SpoolShell activeTab={project} tabs={[project]} homeTarget={homeTarget} zoom="100%">
 			<CanvasChrome pages={[{ name: "frames", frames: [], active: true, open: true }]}>
 				<div className="flex h-full flex-col items-center justify-center pb-20">
 					<div className="flex flex-col items-center gap-3">

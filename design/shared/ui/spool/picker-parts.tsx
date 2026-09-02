@@ -271,20 +271,12 @@ export function Field({
 }
 
 /** what the list is showing, in the register the machine prints */
-export function Readout({
-	picker,
-	count,
-	className,
-}: {
-	picker: Picker;
-	/** what the take is actually drawing, when that is not the picker's own list */
-	count?: number | undefined;
-	className?: string;
-}) {
-	const shown = count ?? picker.rows.length;
+export function Readout({ picker, className }: { picker: Picker; className?: string }) {
 	return (
 		<span className={cn("shrink-0 font-mono text-2xs text-muted/55 leading-3", className)}>
-			{picker.searching ? `${shown} of ${picker.total} folders under ~` : `${shown} ${shown === 1 ? "folder" : "folders"}`}
+			{picker.searching
+				? `${picker.rows.length} of ${picker.total} folders under ~`
+				: `${picker.rows.length} ${picker.rows.length === 1 ? "folder" : "folders"}`}
 		</span>
 	);
 }
@@ -370,7 +362,7 @@ export function LandedLine({ landed }: { landed: Landing }) {
 
 export function Hints({ hints, className }: { hints: readonly string[]; className?: string }) {
 	return (
-		<div className={cn("flex items-center gap-5 whitespace-nowrap font-mono text-2xs text-muted/70 leading-3", className)}>
+		<div className={cn("flex items-center gap-5 font-mono text-2xs text-muted/70 leading-3", className)}>
 			{hints.map((hint) => (
 				<span key={hint}>{hint}</span>
 			))}
