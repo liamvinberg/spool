@@ -1,44 +1,558 @@
 /*
- * spool tokens — distilled verbatim from the Paper identity "Röda tråden Natt".
- * Names and values exact; the set is already Tailwind-v4-namespace shaped, so it
- * lives under @theme and the utilities fall out (--color-surface -> bg-surface,
- * --color-thread -> text-thread/bg-thread, --font-mono -> font-mono, ...).
- * Dark-first, near-black chrome; exactly one accent, the cadmium-red thread.
+ * spool tokens: src/ui/ui.css's @theme, verbatim, so a frame wears the shipped
+ * chrome's colours, type scale, radii and motion and every utility falls out
+ * (--color-surface -> bg-surface, --animate-unseen-in -> animate-unseen-in).
+ * The only edit is the sans family name, which fonts.css loads from Google
+ * rather than from the package. When ui.css changes, this file changes with it.
  */
 @theme {
-  --color-bg: #0E0E0E;
-  --color-canvas: #161616;
-  --color-surface: #1C1C1C;
-  --color-raised: #282828;
-  --color-border: #262626;
-  --color-border-raised: #363636;
-  --color-text: #F0EFED;
-  --color-muted: #8E8C88;
-  --color-thread: #F5391A;
-  --color-on-thread: #FFFFFF;
-  --font-sans: Familjen Grotesk;
-  --font-mono: Fragment Mono;
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-base: 13px;
-  --text-md: 14px;
-  --text-lg: 18px;
-  --text-2xs: 10px;
-  --font-weight-regular: 400;
-  --font-weight-medium: 500;
-  --font-weight-semibold: 600;
-  --tracking-tight: -0.01em;
-  --tracking-normal: 0em;
-  --leading-xs: 16px;
-  --leading-sm: 18px;
-  --leading-base: 20px;
-  --leading-md: 22px;
-  --leading-lg: 26px;
-  --breakpoint-app: 1280px;
-  --container-artboard: 1360px;
-  --spacing-unit: 4px;
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+	--color-*: initial;
+	--color-bg: #0e0e0e;
+	--color-canvas: #161616;
+	--color-surface: #1c1c1c;
+	--color-raised: #282828;
+	--color-border: #262626;
+	--color-border-raised: #363636;
+	--color-text: #f0efed;
+	--color-muted: #8e8c88;
+	--color-thread: #f5391a;
+	--color-on-thread: #ffffff;
+
+	--font-sans: "Familjen Grotesk", system-ui, sans-serif;
+	--font-mono: "Fragment Mono", ui-monospace, SFMono-Regular, monospace;
+
+	--text-2xs: 10px;
+	--text-xs: 11px;
+	--text-sm: 12px;
+	--text-base: 13px;
+	--text-md: 14px;
+	--text-lg: 18px;
+
+	--font-weight-regular: 400;
+	--font-weight-medium: 500;
+	--font-weight-semibold: 600;
+
+	--tracking-tight: -0.01em;
+	--tracking-normal: 0em;
+
+	--leading-xs: 16px;
+	--leading-sm: 18px;
+	--leading-base: 20px;
+	--leading-md: 22px;
+	--leading-lg: 26px;
+
+	--breakpoint-app: 1280px;
+	--container-artboard: 1360px;
+
+	--spacing-unit: 4px;
+
+	--radius-xs: 4px;
+	--radius-sm: 6px;
+	--radius-md: 8px;
+	--radius-lg: 12px;
+
+	/* menus and toasts arrive; the drain shows an undo window closing */
+	--animate-menu-in: menu-in 140ms cubic-bezier(0.32, 0.72, 0, 1);
+	--animate-toast-in: toast-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+	--animate-toast-drain: toast-drain linear forwards;
+	--animate-toast-sweep: toast-sweep 1200ms cubic-bezier(0.65, 0, 0.35, 1) infinite;
+	/* a mark for a frame nobody has looked at, arriving without announcing itself */
+	--animate-unseen-in: unseen-in 200ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	/* the finder: the scrim fades in, the panel settles from just above */
+	--animate-find-in: find-in 140ms ease-out;
+	--animate-find-panel-in: find-panel-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	/* the boot curtain (#244): it is gated at both ends, so the numbers here are
+	 * only half the story — `canvas/boot-clock.ts` carries the gate and the exit,
+	 * and why they are what they are. The mark winds slowly: this stands over a
+	 * wait measured in a fraction of a second, and anything faster reads as an
+	 * alarm. */
+	--animate-boot-in: boot-in 180ms ease-out;
+	--animate-boot-out: boot-out 400ms ease-out forwards;
+	/* on in 1.5s and off in the same again, so a full turn is three seconds. It
+	 * alternates rather than looping, which is what keeps the winding seamless:
+	 * a loop would have to cut from full back to empty, and eased at both ends
+	 * means the mark is never moving at the moment it changes direction. */
+	--animate-boot-wind: boot-wind 1500ms ease-in-out infinite alternate;
+	/* the agent rail (#192): an entry settles into the log, a word fades in as it
+	 * arrives, and a ring turns slowly enough to read as work rather than an alarm.
+	 * 170ms on the word is where the sourced numbers land — Streamdown defaults to
+	 * 150 and recommends more only for faster streams; anything entering stays under
+	 * 300 and eases out, because accelerating at the start reads as responsive. At
+	 * 260 four words are mid-fade at once against two at 170. */
+	--animate-agent-entry: agent-entry 280ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	--animate-agent-word: agent-word 170ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	/* a delegate's live step (#194). One duration for all three of them, and it is the
+	 * word's: the line opens, the line closes, and the words that are being replaced go
+	 * out over exactly the span the ones replacing them come in on. A crossfade is two
+	 * halves of one gesture and they have to be the same length or the line flickers; the
+	 * box closing early or late against the words is the same fault one axis over. */
+	--animate-agent-step: agent-step 170ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	--animate-agent-leave: agent-leave 170ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+	--animate-agent-spin: agent-spin 1.15s linear infinite;
+	/* the stroke on the composer's top border: the thread is laid out of the left edge,
+	 * carries at its full length, and is taken up into the right edge as the head waits
+	 * there for the tail. It is the whole of what says the agent is alive, and it spends
+	 * no transcript pixels — it rides the hairline that is already there.
+	 *
+	 * `translateX` is the tail and `scaleX` about a left origin is the length, which is
+	 * one composited matrix for two ends moving on their own schedules. Both are
+	 * percentages of the composer's own width, so the track is whatever the rail has been
+	 * dragged to.
+	 *
+	 * Linear, because the easing is in the keyframe values rather than in the timing
+	 * function: each end has its own smoothstep over its own part of the cycle, and one
+	 * shared curve cannot express two. The stops sample that arithmetic every 5% of the
+	 * cycle, which is within 1.2px of it at the shipped width.
+	 *
+	 * It cannot be read as a progress bar: the length peaks at 0.41 of the track and then
+	 * falls for the whole second half, so no state of it is full and nothing about it
+	 * accumulates. And the length is 0 at both ends of the cycle, so the loop starts over
+	 * on screen with nothing drawn. */
+	--animate-agent-wind: agent-wind 1600ms linear infinite;
+	/* the model menu (#199) opens upward off an 18px line, so it arrives from below
+	 * rather than above: `menu-in` is the same gesture the other way up, and a panel
+	 * that dropped down from a trigger at the bottom of the rail would be travelling
+	 * away from where it came from */
+	--animate-agent-menu-in: agent-menu-in 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
+
+	/* the agent's hand on a frame (#214). Nothing here fades in: every one of these is
+	 * drawn on from where it means something, and the timings are the canonical frame's
+	 * — `design/frames/agent/agent-hand` — rather than this file's taste.
+	 *
+	 * The thread winds off the node. `pathLength: 1` normalizes the dash to the run, so
+	 * one rule winds a full-height thread and a 76px one at the same pace, and the same
+	 * property run the other way is how it lets go. */
+	--animate-hand-wind: hand-wind 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	/* the node arrives at its own size rather than growing into place */
+	--animate-hand-node: hand-node 200ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	/* one envelope, and both ends of it came from the capture rather than from taste:
+	 * 140 opening, 320 held, 400 leaving. The floor is 180, because `frame-shell.tsx`
+	 * fades a rebooted frame's cover out over exactly that and a mark shorter than the
+	 * seam is a flash of nothing; the ceiling is 1,166, the smallest sum of two
+	 * consecutive write gaps in the capture, which is what keeps a third plate off one
+	 * frame. It opens from the block's own centre, so the mark has an origin and the
+	 * origin is the change. */
+	--animate-hand-plate: hand-plate 860ms forwards;
+	/* the ledger, at 6s: a mark must outlive the run that made it (longest 4.84s) and two
+	 * runs must stay apart (shortest gap 6.14s), which leaves a window 1.3s wide. Ink
+	 * carries the age and width carries it again, and it thins toward the frame so what
+	 * recedes is the part furthest from the thing it is about. The decay is linear after
+	 * the hold, because the one thing a ledger has to keep legible is the order of a run
+	 * and an eased one makes two marks a second apart look the same age. */
+	--animate-hand-lane: hand-lane 6000ms linear forwards;
+
+	@keyframes hand-wind {
+		from {
+			stroke-dashoffset: 1;
+		}
+	}
+
+	@keyframes hand-node {
+		from {
+			opacity: 0;
+			transform: scale(0.4);
+		}
+	}
+
+	@keyframes hand-plate {
+		/* out fast, hold flat, in slow: the segments carry their own easing, because one
+		 * curve over the whole 860ms would make the opening lazy and the draining abrupt */
+		0% {
+			opacity: 0;
+			transform: scaleY(0.34);
+			animation-timing-function: ease-out;
+		}
+		16.3% {
+			opacity: 0.15;
+			transform: scaleY(1);
+			animation-timing-function: linear;
+		}
+		53.5% {
+			opacity: 0.15;
+			transform: scaleY(1);
+			animation-timing-function: ease-in;
+		}
+		100% {
+			opacity: 0;
+			transform: scaleY(1);
+		}
+	}
+
+	@keyframes hand-lane {
+		0% {
+			opacity: 0;
+			width: 3px;
+			transform: translateX(0);
+			animation-timing-function: ease-out;
+		}
+		1.3% {
+			opacity: 0.9;
+			width: 3px;
+			transform: translateX(0);
+		}
+		11.7% {
+			opacity: 0.9;
+			width: 3px;
+			transform: translateX(0);
+		}
+		100% {
+			opacity: 0;
+			width: 1px;
+			/* the edge against the frame stays put and the far one comes in, so what
+			 * recedes is the part furthest from the thing the mark is about */
+			transform: translateX(2px);
+		}
+	}
+
+	/* the dwell a spring-loaded folder asks for, drawn as it fills. The fallback is
+	 * `SPRING_MS` in `canvas/sidebar.tsx`, which sets `--spring-ms` on the arc */
+	--animate-spring-load: spring-load var(--spring-ms, 450ms) linear forwards;
+
+	@keyframes spring-load {
+		from {
+			stroke-dashoffset: 50.3;
+		}
+	}
+
+	@keyframes agent-entry {
+		from {
+			opacity: 0;
+			transform: translateY(6px);
+		}
+	}
+
+	@keyframes agent-word {
+		from {
+			opacity: 0;
+		}
+	}
+
+	/* the line arriving under the row that launched it, out of no height at all: the same
+	 * close its transition draws, run the other way, so nothing below it jumps */
+	@keyframes agent-step {
+		from {
+			grid-template-rows: 0fr;
+			opacity: 0;
+		}
+	}
+
+	@keyframes agent-leave {
+		to {
+			opacity: 0;
+		}
+	}
+
+	@keyframes agent-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	@keyframes agent-wind {
+		0% {
+			transform: translateX(0%) scaleX(0);
+		}
+		5% {
+			transform: translateX(0%) scaleX(0.0118);
+		}
+		10% {
+			transform: translateX(0%) scaleX(0.0451);
+		}
+		15% {
+			transform: translateX(0%) scaleX(0.0967);
+		}
+		20% {
+			transform: translateX(0%) scaleX(0.1635);
+		}
+		25% {
+			transform: translateX(0.432%) scaleX(0.238);
+		}
+		30% {
+			transform: translateX(2.94%) scaleX(0.3006);
+		}
+		35% {
+			transform: translateX(7.407%) scaleX(0.3493);
+		}
+		40% {
+			transform: translateX(13.518%) scaleX(0.384);
+		}
+		45% {
+			transform: translateX(20.957%) scaleX(0.4049);
+		}
+		50% {
+			transform: translateX(29.407%) scaleX(0.4119);
+		}
+		55% {
+			transform: translateX(38.553%) scaleX(0.4049);
+		}
+		60% {
+			transform: translateX(48.077%) scaleX(0.384);
+		}
+		65% {
+			transform: translateX(57.665%) scaleX(0.3493);
+		}
+		70% {
+			transform: translateX(67%) scaleX(0.3006);
+		}
+		75% {
+			transform: translateX(75.767%) scaleX(0.238);
+		}
+		80% {
+			transform: translateX(83.648%) scaleX(0.1635);
+		}
+		85% {
+			transform: translateX(90.328%) scaleX(0.0967);
+		}
+		90% {
+			transform: translateX(95.49%) scaleX(0.0451);
+		}
+		95% {
+			transform: translateX(98.82%) scaleX(0.0118);
+		}
+		100% {
+			transform: translateX(100%) scaleX(0);
+		}
+	}
+
+	@keyframes agent-menu-in {
+		from {
+			opacity: 0;
+			transform: translateY(4px);
+		}
+	}
+
+	@keyframes menu-in {
+		from {
+			opacity: 0;
+			transform: translateY(-4px) scale(0.97);
+		}
+	}
+
+	@keyframes toast-in {
+		from {
+			opacity: 0;
+			transform: translate(-50%, 12px);
+		}
+	}
+
+	@keyframes toast-drain {
+		from {
+			transform: scaleX(1);
+		}
+		to {
+			transform: scaleX(0);
+		}
+	}
+
+	@keyframes toast-sweep {
+		from {
+			transform: translateX(-100%);
+		}
+		to {
+			transform: translateX(300%);
+		}
+	}
+
+	@keyframes boot-in {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+
+	@keyframes boot-out {
+		from {
+			opacity: 1;
+		}
+		to {
+			opacity: 0;
+		}
+	}
+
+	/* the thread laid into the mark from the bottom band up, the way a spool
+	 * fills, and drawn back off the same way */
+	@keyframes boot-wind {
+		from {
+			clip-path: inset(100% 0 0 0);
+		}
+		to {
+			clip-path: inset(0 0 0 0);
+		}
+	}
+
+	@keyframes unseen-in {
+		from {
+			opacity: 0;
+			transform: scale(0.4);
+		}
+	}
+
+	@keyframes find-in {
+		from {
+			opacity: 0;
+		}
+	}
+
+	@keyframes find-panel-in {
+		from {
+			opacity: 0;
+			transform: translateY(-8px);
+		}
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.animate-menu-in,
+	.animate-toast-in,
+	.animate-find-in,
+	.animate-find-panel-in,
+	.animate-agent-entry,
+	.animate-agent-word,
+	.animate-agent-step,
+	.animate-agent-menu-in,
+	.animate-agent-spin,
+	.animate-agent-wind {
+		animation: none;
+	}
+
+	.animate-boot-in {
+		animation: none;
+	}
+
+	/* a still mark is the whole mark: frozen part-wound it reads as a logo that
+	 * failed to finish drawing rather than as a thing that is waiting. */
+	.animate-boot-wind {
+		animation: none;
+		clip-path: none;
+	}
+
+	/* the same trap the leaving words are in: the fade is what takes the curtain
+	 * off the arriving canvas, so a curtain told not to animate would stand at
+	 * full strength over the frames until its timer retired it. */
+	.animate-boot-out {
+		display: none;
+	}
+
+	/* words on their way out are simply out. Not `animation: none` like the rest of them:
+	 * what carries the fade away is the animation itself, so a step told not to animate
+	 * would sit there at full strength over the words that replaced it — and nothing ends
+	 * the animation that would have taken it down, because it never ran. */
+	.animate-agent-leave {
+		display: none;
+	}
+
+	/* the stroke is the whole indicator, so stillness cannot mean absence: it is held a
+	 * third of the way along its own cycle, which is the same picture everybody else sees
+	 * with nothing moving in it. 143px of stroke at the shipped 420 rail. */
+	.animate-agent-wind {
+		transform: translateX(6.372%) scaleX(0.3406);
+	}
+
+	/* same reasoning as the stroke above: the hairline is the only thing saying the
+	 * update is still running, so it is held mid-sweep rather than sent off the edge —
+	 * centred, which is the same picture everybody else sees with nothing moving in it. */
+	.animate-toast-sweep {
+		animation: none;
+		transform: translateX(100%);
+	}
+
+	/* the agent's hand (#214). The presence simply stands there: a thread told not to
+	 * wind on is a thread that is already on, which is the picture the gesture was
+	 * heading for. */
+	.animate-hand-wind,
+	.animate-hand-node {
+		animation: none;
+	}
+
+	[data-hand-thread],
+	[data-hand-corner],
+	[data-hand-node] {
+		transition: none;
+	}
+
+	/* a located mark cannot take `animation: none`, because what carries it away is the
+	 * animation: the plate would sit at full ink over the design for the rest of the
+	 * session. It keeps its life and loses its gesture — struck at once, held, gone. */
+	.animate-hand-plate {
+		animation: hand-plate-still 860ms steps(1, end) forwards;
+	}
+
+	.animate-hand-lane {
+		animation: hand-lane-still 6000ms steps(1, end) forwards;
+	}
+
+	@keyframes hand-plate-still {
+		0% {
+			opacity: 0.15;
+		}
+		53.5% {
+			opacity: 0.15;
+		}
+		100% {
+			opacity: 0;
+		}
+	}
+
+	@keyframes hand-lane-still {
+		0% {
+			opacity: 0.9;
+		}
+		11.7% {
+			opacity: 0.9;
+		}
+		100% {
+			opacity: 0;
+		}
+	}
+}
+
+/* the agent's hand, in motion (#214). The durations are the component's, because they
+ * are chosen by what moved — tension arrives over 90ms and slack comes back over 320 —
+ * and the rest of the rule is here so that stillness can take it away. */
+[data-hand-thread] {
+	transition:
+		d var(--hand-pace, 220ms) cubic-bezier(0.22, 0.61, 0.36, 1),
+		stroke-dashoffset 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+[data-hand-corner] {
+	transition: stroke-dashoffset var(--hand-pace, 200ms) cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+[data-hand-node] {
+	transition:
+		opacity 240ms cubic-bezier(0.22, 0.61, 0.36, 1),
+		transform 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.pages-scrollbar::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+.pages-scrollbar::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.pages-scrollbar::-webkit-scrollbar-thumb {
+	background: var(--color-border-raised);
+	border-radius: 999px;
+	border: 3px solid transparent;
+	background-clip: content-box;
+}
+
+.pages-scrollbar::-webkit-scrollbar-thumb:hover {
+	background: var(--color-muted);
+	background-clip: content-box;
+}
+
+/* Firefox has no thumb selector, and Chrome honours `scrollbar-width` over
+   `::-webkit-scrollbar` when both are set — so this stays behind the guard */
+@supports not selector(::-webkit-scrollbar) {
+	.pages-scrollbar {
+		scrollbar-color: var(--color-border-raised) transparent;
+		scrollbar-width: thin;
+	}
 }

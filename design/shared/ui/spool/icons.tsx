@@ -320,3 +320,33 @@ export function PropertiesIcon({ className }: IconProps) {
 		</svg>
 	);
 }
+
+/** Edge: the play tab's bar, one dot at each end of the line it peels in on. */
+export function EdgeIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" aria-hidden="true">
+			<circle cx="4.2" cy="4.6" r="1.9" stroke="currentColor" strokeWidth="1.5" />
+			<circle cx="11.8" cy="11.4" r="1.9" stroke="currentColor" strokeWidth="1.5" />
+			<path d="M5.7 6.1 10.3 9.9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+		</svg>
+	);
+}
+
+/** Edit: the hand tool that writes a frame's source (#253). */
+export function EditIcon({ className }: IconProps) {
+	return (
+		<svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+			<path
+				d="M12.03 12.68a.5.5 0 0 1 .65-.65l9 3.5a.5.5 0 0 1-.03.95l-3.45 1.06a1 1 0 0 0-.66.66l-1.06 3.45a.5.5 0 0 1-.95.03z"
+				fill="currentColor"
+			/>
+			<path
+				d="M5 3a2 2 0 0 0-2 2M19 3a2 2 0 0 1 2 2M5 21a2 2 0 0 1-2-2M9 3h1M9 21h2M14 3h1M3 9v1M21 9v2M3 14v1"
+				stroke="currentColor"
+				strokeWidth="1.9"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	);
+}
