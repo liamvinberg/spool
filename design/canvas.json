@@ -264,6 +264,198 @@
 		"play-app/play-app--window": {
 			"x": 7680,
 			"y": 80
+		},
+		"explore": {
+			"x": 26669,
+			"y": 80
+		},
+		"explore/agent": {
+			"x": 80,
+			"y": 80
+		},
+		"explore/booting": {
+			"x": 3835,
+			"y": 80
+		},
+		"explore/components": {
+			"x": 5811,
+			"y": 80
+		},
+		"explore/directing": {
+			"x": 7349,
+			"y": 80
+		},
+		"explore/explorer": {
+			"x": 8869,
+			"y": 80
+		},
+		"explore/manipulate": {
+			"x": 10457,
+			"y": 80
+		},
+		"explore/play-app": {
+			"x": 11877,
+			"y": 80
+		},
+		"explore/variants": {
+			"x": 13360,
+			"y": 80
+		},
+		"explore/booting/ambient": {
+			"x": 80,
+			"y": 80
+		},
+		"explore/booting/boot": {
+			"x": 1428,
+			"y": 80
+		},
+		"explore/booting/count": {
+			"x": 2776,
+			"y": 80
+		},
+		"explore/booting/handover": {
+			"x": 4124,
+			"y": 80
+		},
+		"explore/booting/shape": {
+			"x": 5472,
+			"y": 80
+		},
+		"explore/components/library": {
+			"x": 1600,
+			"y": 80
+		},
+		"explore/explorer/empty": {
+			"x": 80,
+			"y": 80
+		},
+		"explore/explorer/real": {
+			"x": 1500,
+			"y": 80
+		},
+		"explore/manipulate/shared": {
+			"x": 80,
+			"y": 80
+		},
+		"explore/variants/axis": {
+			"x": 80,
+			"y": 80
+		},
+		"explore/variants/deck": {
+			"x": 1309,
+			"y": 80
+		},
+		"explore/variants/feel": {
+			"x": 2569,
+			"y": 80
+		},
+		"explore/variants/files": {
+			"x": 4089,
+			"y": 80
+		},
+		"explore/variants/mix": {
+			"x": 5437,
+			"y": 80
+		},
+		"explore/variants/peek": {
+			"x": 6666,
+			"y": 80
+		},
+		"explore/variants/rail": {
+			"x": 8086,
+			"y": 80
+		},
+		"explore/variants/reveal": {
+			"x": 9261,
+			"y": 80
+		},
+		"explore/variants/shell": {
+			"x": 10744,
+			"y": 80
+		},
+		"explore/variants/spread": {
+			"x": 12004,
+			"y": 80
+		},
+		"explore/variants/throw": {
+			"x": 13352,
+			"y": 80
+		},
+		"explore/variants/tree": {
+			"x": 14985,
+			"y": 80
+		},
+		"site/brutal": {
+			"x": 80,
+			"y": 80
+		},
+		"site/card": {
+			"x": 1340,
+			"y": 80
+		},
+		"site/clean": {
+			"x": 2991,
+			"y": 80
+		},
+		"site/desk": {
+			"x": 4251,
+			"y": 80
+		},
+		"site/disk": {
+			"x": 5511,
+			"y": 80
+		},
+		"site/field": {
+			"x": 7031,
+			"y": 80
+		},
+		"site/film": {
+			"x": 8291,
+			"y": 80
+		},
+		"site/firstrun": {
+			"x": 9551,
+			"y": 80
+		},
+		"site/flows": {
+			"x": 10811,
+			"y": 80
+		},
+		"site/frames": {
+			"x": 12331,
+			"y": 80
+		},
+		"site/hub": {
+			"x": 13851,
+			"y": 80
+		},
+		"site/letter": {
+			"x": 15080,
+			"y": 80
+		},
+		"site/local": {
+			"x": 16340,
+			"y": 80
+		},
+		"site/mobile": {
+			"x": 17688,
+			"y": 80
+		},
+		"site/motion": {
+			"x": 18664,
+			"y": 80
+		},
+		"site/object": {
+			"x": 19924,
+			"y": 80
+		},
+		"site/terminal": {
+			"x": 21184,
+			"y": 80
+		},
+		"site/type": {
+			"x": 22444,
+			"y": 80
 		}
 	}
 }

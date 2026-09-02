@@ -1,202 +1,146 @@
-import { Fragment, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import type { CoffeeScreenName } from "shared/ui/demo/coffee-screens";
-import { BackIcon, CloseIcon, InspectorIcon, RestartIcon } from "shared/ui/spool/icons";
-import {
-	edgeLabel,
-	PHONE_W,
-	phoneTop,
-	PillButton,
-	PlayerStage,
-	STAGE_W,
-	TickFrame,
-	useWake,
-	useWalk,
-	type Walk,
-} from "shared/ui/spool/player-stage";
+import { PlayedTab } from "shared/ui/spool/browser-tab";
+import { TidemarkLanding } from "shared/ui/demo/tidemark-landing";
 
 /**
- * The player (#60), shipped: slate plus the session as an instrument rail,
- * closed by default. Controls group by meaning: walk verbs (back, restart)
- * ride the name slate top-left; top-right holds only the rail summon and the
- * exit. There is no fullscreen mode — sleep is the resting state, and the
- * instrument sleeps whenever the hand stops, unless the rail is open (reading
- * is stillness). The walk is a tape that is always running: scrub it by
- * clicking a hop, export it from the rail's footer.
+ * The player (#234): a played frame is a real browser tab, and spool's only chrome
+ * is a bar that lives off screen and peels in at the top edge.
  *
- * Back and restart drive the mock walk inside the stage. Close leaves the
- * player for the canvas it was opened from, which is what the real close does
- * once the popped window is gone.
+ * Borrowed from the one control surface everybody already knows how to dismiss:
+ * a video player. At rest there is nothing, so the page is bare.
+ * Rest the cursor in the top 12px and a 40px bar comes down;
+ * move back into the page and it goes away. That buys room for controls a corner
+ * pill cannot hold — back to the canvas, and a switcher that walks to another
+ * frame without a round trip through the canvas tab.
+ *
+ * The reveal is a dwell, the way a hidden macOS menu bar works: the cursor has
+ * to rest against the page's top edge for 300ms before the bar comes down.
+ * Passing through on the way to the browser chrome never triggers it, and the
+ * page's own nav sits below the strip, so using it never does either. Here the
+ * page's top edge is the line under the mocked url bar; in the real thing it is
+ * the literal top of the viewport. A 40px wide nub stays at the edge while the
+ * bar is away, because a control with no resting trace is a control most people
+ * never find.
+ *
+ * The frame switcher is the reason this shape earns its cost. Closed by default,
+ * because that is how it will be seen nine times in ten.
  */
 
-const RAIL_W = 320;
+const FRAMES = ["home", "landing", "pricing", "docs", "changelog", "sign-up"];
 
 export default function SpoolPlayerFrame() {
-	const walk = useWalk();
-	const [motion, setMotion] = useState(true);
-	const [open, setOpen] = useState(false);
-	const { awake, wake } = useWake(!open);
-	const hidden = !open && !awake;
-	const stageW = open ? STAGE_W - RAIL_W : STAGE_W;
-	const phoneLeft = Math.round((stageW - PHONE_W) / 2);
+	const [revealed, setRevealed] = useState(false);
+	const [picking, setPicking] = useState(false);
+	const stripRef = useRef<HTMLDivElement>(null);
+	const dwell = useRef<number>(undefined);
+
+	// hiding is still instant — only the reveal earns a dwell
+	useEffect(() => {
+		const onMove = (event: PointerEvent) => {
+			const top = stripRef.current?.getBoundingClientRect().top ?? 0;
+			if (event.clientY - top > 140 && !picking) setRevealed(false);
+		};
+		window.addEventListener("pointermove", onMove);
+		return () => window.removeEventListener("pointermove", onMove);
+	}, [picking]);
 
 	return (
-		<PlayerStage walk={walk} phoneLeft={phoneLeft} cursorHidden={hidden} onMouseMove={wake}>
-			<div className={cn("transition-opacity duration-300", hidden && "pointer-events-none opacity-0")}>
-				<TickFrame left={phoneLeft - 7} top={phoneTop() - 7} />
-				<div className="absolute left-6 top-5 flex items-center gap-2.5">
-					<div className="flex items-center gap-1">
-						<PillButton label="Back" disabled={walk.stack.length === 0} onClick={walk.back}>
-							<BackIcon className="h-4 w-4" />
-						</PillButton>
-						<PillButton label="Restart" onClick={walk.restart}>
-							<RestartIcon className="h-4 w-4" />
-						</PillButton>
-					</div>
-					<div className="flex flex-col gap-1">
-						<span className="text-2xs leading-none text-muted">kaffe</span>
-						<span className="flex items-center gap-2 text-sm leading-none">
-							<span className="h-[2px] w-2 bg-thread" />
-							{walk.screen}
-						</span>
-					</div>
-				</div>
-				<div
-					className="absolute top-5 flex items-center gap-1 transition-[right] duration-300"
-					style={{ right: open ? RAIL_W + 24 : 24 }}
-				>
-					<PillButton
-						label={open ? "Close inspector" : "Inspector"}
-						className={cn(open && "text-text")}
-						onClick={() => setOpen((o) => !o)}
-					>
-						<InspectorIcon className="h-4 w-4" />
-					</PillButton>
-					<PillButton label="Close" go="spool-canvas">
-						<CloseIcon className="h-4 w-4" />
-					</PillButton>
-				</div>
-				<span className="absolute bottom-5 left-6 text-2xs leading-none text-muted">390 × 780 · 100%</span>
-			</div>
+		<PlayedTab title="landing · tidemark" url="127.0.0.1:7766/play/tidemark?frame=landing">
+			<TidemarkLanding />
+
+			<div
+				ref={stripRef}
+				className="absolute inset-x-0 top-0 z-20 h-2"
+				onPointerEnter={() => {
+					dwell.current = window.setTimeout(() => setRevealed(true), 300);
+				}}
+				onPointerLeave={() => window.clearTimeout(dwell.current)}
+			/>
+
+			<span
+				className={cn(
+					"pointer-events-none absolute top-0 left-1/2 h-[3px] w-10 -translate-x-1/2 rounded-b-full bg-border-raised transition-opacity duration-200",
+					revealed ? "opacity-0" : "opacity-70",
+				)}
+			/>
+
 			<div
 				className={cn(
-					"absolute inset-y-0 right-0 flex flex-col overflow-hidden border-l border-border bg-canvas transition-[translate,opacity] duration-300",
-					!open && "pointer-events-none translate-x-full opacity-0",
+					"absolute inset-x-0 top-0 transition-[translate,opacity] duration-200 ease-out",
+					revealed ? "translate-y-0 opacity-100" : "pointer-events-none -translate-y-full opacity-0",
 				)}
-				style={{ width: RAIL_W }}
 			>
-				<WalkSection walk={walk} />
-				<StateSection walk={walk} />
-				<MockSection />
-				<footer className="mt-auto flex flex-col gap-1.5 border-t border-border px-5 py-4">
+				<div className="relative z-10 flex h-10 items-center gap-3 border-border-raised border-b bg-raised px-4">
 					<button
 						type="button"
-						onClick={() => setMotion((m) => !m)}
-						className="-mx-1.5 -my-0.5 flex cursor-pointer items-center justify-between rounded-xs px-1.5 py-0.5 text-sm leading-sm transition-colors hover:bg-surface"
+						data-go="spool-canvas"
+						aria-label="Back to the canvas"
+						className="flex cursor-pointer items-center gap-1.5 rounded-xs py-1 pr-2 pl-1 font-mono text-muted text-2xs leading-none transition-colors hover:text-text"
 					>
-						<span className="text-muted">motion</span>
-						<span>{motion ? "on" : "off"}</span>
+						<svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+							<path d="m10 3.5-4.5 4.5 4.5 4.5" />
+						</svg>
+						canvas
 					</button>
-					<div className="flex items-center justify-between px-0 text-sm leading-sm">
-						<span className="text-muted">export</span>
-						<span className="flex items-center gap-2">
-							<button type="button" className="cursor-pointer transition-colors hover:text-thread">
-								video
+					<span className="h-3.5 w-px bg-border-raised" />
+					<button
+						type="button"
+						onClick={() => setPicking((p) => !p)}
+						className="-mx-1.5 flex cursor-pointer items-center gap-2 rounded-xs px-1.5 py-1 font-mono text-sm text-text leading-none transition-colors hover:bg-surface"
+					>
+						<span className="text-muted">tidemark /</span>
+						landing
+						<svg viewBox="0 0 10 10" className={cn("h-2.5 w-2.5 text-muted transition-transform", picking && "rotate-180")} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+							<path d="m2 4 3 3 3-3" />
+						</svg>
+					</button>
+					<span className="ml-auto flex items-center gap-3">
+						<span className="font-mono text-2xs text-muted leading-none">cmd w exits</span>
+						<span className="h-3.5 w-px bg-border-raised" />
+						<button
+							type="button"
+							aria-label="Close the tab"
+							className="flex h-5 w-5 cursor-pointer items-center justify-center rounded-xs text-muted transition-colors hover:bg-surface hover:text-text"
+						>
+							<svg viewBox="0 0 10 10" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+								<path d="M2 2 8 8M8 2 2 8" />
+							</svg>
+						</button>
+					</span>
+				</div>
+
+				{/* the scrim a video player draws under its controls: the page is not
+				    cut in half by the bar's edge, it fades under it */}
+				<div className="pointer-events-none absolute inset-x-0 top-10 h-14 bg-gradient-to-b from-bg to-transparent" />
+
+				<div
+					className={cn(
+						"relative z-10 ml-[104px] w-[212px] overflow-hidden rounded-b-lg border-border-raised border-r border-b border-l bg-canvas transition-[opacity,translate] duration-150",
+						picking ? "opacity-100" : "pointer-events-none -translate-y-1 opacity-0",
+					)}
+				>
+					<div className="flex flex-col p-1.5">
+						{FRAMES.map((name) => (
+							<button
+								key={name}
+								type="button"
+								onClick={() => setPicking(false)}
+								className={cn(
+									"flex cursor-pointer items-center gap-2 rounded-xs px-2 py-1.5 text-left font-mono text-sm leading-none transition-colors hover:bg-surface",
+									name === "landing" ? "text-text" : "text-muted hover:text-text",
+								)}
+							>
+								<span className={cn("h-[2px] w-2", name === "landing" ? "bg-thread" : "bg-transparent")} />
+								{name}
 							</button>
-							<span className="text-muted">·</span>
-							<button type="button" className="cursor-pointer transition-colors hover:text-thread">
-								link
-							</button>
-						</span>
+						))}
 					</div>
-				</footer>
-			</div>
-		</PlayerStage>
-	);
-}
-
-function WalkSection({ walk }: { walk: Walk }) {
-	const rows: CoffeeScreenName[] = [...walk.stack, walk.screen];
-	const duration = `0:${String((rows.length - 1) * 4).padStart(2, "0")}`;
-	return (
-		<section className="flex flex-col gap-2.5 px-5 py-4">
-			<div className="flex items-center justify-between">
-				<h2 className="text-2xs leading-none text-muted">walk</h2>
-				<span className="text-2xs leading-none text-muted">{duration}</span>
-			</div>
-			<ol className="flex flex-col gap-1.5">
-				{rows.map((name, i) => {
-					const current = i === rows.length - 1;
-					const next = rows[i + 1];
-					return (
-						// biome-ignore lint/suspicious/noArrayIndexKey: the same screen can sit at two hops — position is a tape entry's identity
-						<Fragment key={`${i}:${name}`}>
-							<li>
-								<button
-									type="button"
-									disabled={current}
-									onClick={() => walk.rewind(i)}
-									className={cn(
-										"-mx-1.5 -my-0.5 flex w-[calc(100%+12px)] items-center gap-2 rounded-xs px-1.5 py-0.5 text-sm leading-sm",
-										current ? "text-text" : "cursor-pointer text-muted transition-colors hover:bg-surface hover:text-text",
-									)}
-								>
-									{current && <span className="h-[2px] w-2 bg-thread" />}
-									{name}
-									<span className="ml-auto text-2xs text-muted">0:{String(i * 4).padStart(2, "0")}</span>
-								</button>
-							</li>
-							{next !== undefined && (
-								<li className="pl-3 text-2xs leading-none text-muted">· {edgeLabel(name, next)}</li>
-							)}
-						</Fragment>
-					);
-				})}
-			</ol>
-		</section>
-	);
-}
-
-function StateSection({ walk }: { walk: Walk }) {
-	const rows: Array<{ key: string; value: string; changed?: boolean }> = [
-		{ key: "screen", value: `"${walk.screen}"`, changed: walk.stack.length > 0 },
-		{ key: "cart.items", value: "2" },
-		{ key: "cart.total", value: '"90 kr"' },
-		{ key: "scenario", value: '"default"' },
-	];
-	return (
-		<section className="flex flex-col gap-2.5 border-t border-border px-5 py-4">
-			<h2 className="text-2xs leading-none text-muted">state</h2>
-			<dl className="flex flex-col gap-1.5">
-				{rows.map((row) => (
-					<div key={row.key} className="flex items-center gap-2 text-sm leading-sm">
-						{row.changed === true && <span className="h-[2px] w-2 bg-thread" />}
-						<dt className="text-muted">{row.key}</dt>
-						<dd className="ml-auto">{row.value}</dd>
+					<div className="border-border border-t px-3.5 py-2 font-mono text-2xs text-muted leading-none">
+						6 frames · cmd k
 					</div>
-				))}
-			</dl>
-		</section>
-	);
-}
-
-function MockSection() {
-	const rows = [
-		{ method: "GET", path: "/api/menu", meta: "200 · 8 ms" },
-		{ method: "POST", path: "/api/cart", meta: "200 · 14 ms" },
-	];
-	return (
-		<section className="flex flex-col gap-2.5 border-t border-border px-5 py-4">
-			<h2 className="text-2xs leading-none text-muted">mock</h2>
-			<ul className="flex flex-col gap-1.5">
-				{rows.map((row) => (
-					<li key={`${row.method}:${row.path}`} className="flex items-center gap-2 text-sm leading-sm">
-						<span className="w-9 text-muted">{row.method}</span>
-						<span>{row.path}</span>
-						<span className="ml-auto text-2xs text-muted">{row.meta}</span>
-					</li>
-				))}
-			</ul>
-		</section>
+				</div>
+			</div>
+		</PlayedTab>
 	);
 }

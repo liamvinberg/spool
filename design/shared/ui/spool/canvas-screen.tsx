@@ -8,7 +8,7 @@ import { type Mark, UnseenMark } from "shared/ui/spool/unseen-mark";
 /**
  * The canvas: the app's main surface. Pages rail, the frames on their field
  * with the threads under them, the tool bar floating at the bottom, and the
- * inspector reading whatever is selected.
+ * dock on the right with the properties rail standing in it.
  *
  * Two specimens, because two are all the canvas really has: `rest` is the
  * working state, `menu` is the right-click menu and the undo toast it leaves
@@ -44,7 +44,6 @@ export function SpoolCanvasScreen({ variant, homeTarget, playTarget }: SpoolCanv
 			<CanvasChrome
 				pages={PAGES}
 				selected="cart"
-				inspector={variant === "menu" ? "connections" : "elements"}
 				tool="select"
 			>
 				<CanvasStage variant={variant} playTarget={playTarget} />

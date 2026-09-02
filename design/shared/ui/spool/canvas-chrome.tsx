@@ -1,22 +1,29 @@
+import { motion, useReducedMotion } from "motion/react";
 import type { ReactNode } from "react";
 import type { Life } from "shared/lib/spool/agent-threads";
 import { cn } from "shared/lib/utils";
-import { ChevronIcon, FolderIcon, HandIcon, PanelCaret, SelectIcon } from "shared/ui/spool/icons";
+import { AgentIcon, ChevronIcon, FolderIcon, HandIcon, PanelCaret, PropertiesIcon, SelectIcon } from "shared/ui/spool/icons";
+import { NumField, Row, Section, VALUE } from "shared/ui/spool/properties-fields";
 import { ThreadMark } from "shared/ui/spool/thread-mark";
 import { type Mark, UnseenMark } from "shared/ui/spool/unseen-mark";
 
 /**
- * The canvas chrome: the Pages rail on the left, the viewport between, the
- * Inspector rail on the right, and the tool bar floating over the bottom of
- * the viewport. Both rails collapse to a 44px strip; the widths here are the
- * shipped ones (248 pages, 300 inspector).
+ * The canvas chrome as it ships: the pages rail on the left, the viewport
+ * between, and the dock on the right (#268) — a 44px strip that is the
+ * column's index, and one panel standing beside it at its own width: 300 for
+ * properties, 420 for the agent. The strip never moves; pressing the lit glyph
+ * shuts the column to the strip alone.
  *
  * The viewport is a slot — whatever frames the specimen wants to show go in as
- * children, positioned against it.
+ * children, positioned against it. The panel is a slot too: a proposal hands in
+ * its own rail and says which glyph it stands behind; nothing handed in draws
+ * the properties rail with the selected frame and no element held, which is
+ * what the column shows by default.
  */
 
 const PAGES_W = 248;
-const INSPECTOR_W = 300;
+const STRIP_W = 44;
+const PROPERTIES_W = 300;
 
 export interface PageRow {
 	name: string;
@@ -53,30 +60,37 @@ export interface PageRow {
 export function CanvasChrome({
 	pages,
 	selected,
-	inspector = "elements",
 	tool = "select",
 	rail,
-	railWidth = INSPECTOR_W,
-	railLabel = "Inspector",
+	railWidth = PROPERTIES_W,
+	railLabel = "properties",
+	life,
 	targets,
 	children,
 }: {
 	pages: readonly PageRow[];
 	/** the selected frame, as both rails show it; nothing selected is a real state */
 	selected?: string | undefined;
-	inspector?: "elements" | "connections" | undefined;
 	/** `none` draws no tool bar at all, for a surface with nothing to point at (#189) */
 	tool?: "select" | "hand" | "none" | undefined;
-	/** an exploration's own right rail, taking the inspector's place — proposals only */
+	/**
+	 * What stands in the dock's panel. Absent draws the shipped properties rail;
+	 * `null` shuts the column to the strip. A proposal's rail is drawn at
+	 * `railWidth` behind the glyph `railLabel` names.
+	 */
 	rail?: ReactNode | undefined;
-	/** the right rail's width; the shipped inspector is 300, and 0 draws no rail at all */
+	/** the panel's width; properties is 300, the agent is 420, and 0 shuts the column */
 	railWidth?: number | undefined;
-	/** what the rail slot announces itself as; a proposal rail is not the inspector */
+	/** which glyph the panel stands behind: `agent` lights the agent, anything else lights properties */
 	railLabel?: string | undefined;
+	/** what the agent glyph says while the agent surface is shut */
+	life?: Life | undefined;
 	/** where the selected frame's walks land, drawn in the tree rather than in a rail (#144) */
 	targets?: readonly Target[] | undefined;
 	children?: ReactNode;
 }) {
+	const shut = rail === null || railWidth === 0;
+	const lit: DockSurface | null = shut ? null : railLabel.toLowerCase() === "agent" ? "agent" : "properties";
 	return (
 		<div className="flex h-full w-full overflow-hidden bg-bg">
 			<PagesRail pages={pages} selected={selected} targets={targets} />
@@ -84,17 +98,9 @@ export function CanvasChrome({
 				{children}
 				<CanvasTools tool={tool} />
 			</div>
-			{rail === undefined ? (
-				<InspectorRail mode={inspector} selected={selected} />
-			) : railWidth === 0 ? null : (
-				<aside
-					aria-label={railLabel}
-					className="flex shrink-0 flex-col border-border border-l bg-bg"
-					style={{ width: railWidth }}
-				>
-					{rail}
-				</aside>
-			)}
+			<Dock lit={lit} width={shut ? 0 : rail === undefined ? PROPERTIES_W : railWidth} life={life}>
+				{rail === undefined ? <FrameHeld name={selected} /> : rail}
+			</Dock>
 		</div>
 	);
 }
@@ -330,88 +336,148 @@ export function RailTabs({ tabs, active }: { tabs: readonly string[]; active: st
 	);
 }
 
-function InspectorRail({ mode, selected }: { mode: "elements" | "connections"; selected?: string | undefined }) {
+type DockSurface = "properties" | "agent";
+
+const AXES = [
+	{ key: "x", of: "position" },
+	{ key: "y", of: "position" },
+	{ key: "w", of: "size" },
+	{ key: "h", of: "size" },
+] as const;
+
+const FRAME_GEOMETRY = { x: 325, y: 170, w: 390, h: 844 } as const;
+
+/**
+ * The properties rail (#256) as the column shows it by default: the selected
+ * frame in the crumbs, and its geometry, which is what frame.json owns. Nothing
+ * selected says so and stops.
+ */
+function FrameHeld({ name }: { name?: string | undefined }) {
 	return (
-		<aside
-			aria-label="Inspector"
-			className="flex shrink-0 flex-col border-border border-l bg-bg"
-			style={{ width: INSPECTOR_W }}
-		>
-			<RailTabs tabs={["elements", "connections"]} active={mode} />
-			{selected === undefined ? (
-				<p className="px-4 pt-3 font-mono text-2xs text-muted/55 leading-4">select a frame to inspect it</p>
-			) : mode === "elements" ? (
-				<ElementsTab frame={selected} />
+		<div className="flex h-full min-h-0 flex-col bg-bg">
+			<div className="flex h-9 shrink-0 items-center border-border border-b px-2.5">
+				<span className={cn(name === undefined ? "text-muted/50" : "text-text", VALUE)}>
+					{name ?? "no selection"}
+				</span>
+			</div>
+			{name === undefined ? (
+				<div className="flex h-9 items-center px-2.5">
+					<span className={cn("text-muted/50", VALUE)}>select a frame</span>
+				</div>
 			) : (
-				<ConnectionsTab frame={selected} />
+				<div className="min-h-0 flex-1 overflow-y-auto [&>div:first-child]:border-t-0">
+					{(["position", "size"] as const).map((section) => (
+						<Section key={section} name={section} reason="frame.json">
+							{AXES.filter((axis) => axis.of === section).map((axis) => (
+								<Row key={axis.key} name={axis.key}>
+									<NumField value={String(FRAME_GEOMETRY[axis.key])} readout="px" ok onCommit={() => {}} />
+								</Row>
+							))}
+						</Section>
+					))}
+				</div>
 			)}
+		</div>
+	);
+}
+
+/**
+ * The right column (#268): one panel and the strip that indexes it.
+ *
+ * The panel's edge is the only thing that moves, 300ms on the house curve, and
+ * whatever stands in it is laid out at the width it will settle at and clipped,
+ * so a rail never re-lays on its way in. The strip is 44 and always there.
+ */
+function Dock({
+	lit,
+	width,
+	life,
+	children,
+}: {
+	lit: DockSurface | null;
+	width: number;
+	life?: Life | undefined;
+	children: ReactNode;
+}) {
+	return (
+		<aside aria-label="Dock" className="relative z-20 flex h-full shrink-0">
+			<div
+				className="relative h-full shrink-0 overflow-hidden transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none"
+				style={{ width }}
+			>
+				{lit === null ? null : (
+					<div
+						aria-label={lit}
+						className="absolute inset-y-0 right-0 flex flex-col border-border border-l bg-bg"
+						style={{ width }}
+					>
+						{children}
+					</div>
+				)}
+			</div>
+			<div
+				className="flex h-full shrink-0 flex-col items-center gap-1 border-border border-l bg-bg pt-1.5"
+				style={{ width: STRIP_W }}
+			>
+				<Glyph label="properties" lit={lit === "properties"}>
+					<PropertiesIcon className="h-4 w-4" />
+				</Glyph>
+				<Glyph label="agent" lit={lit === "agent"} life={life}>
+					<AgentIcon className="h-4 w-4" />
+				</Glyph>
+			</div>
 		</aside>
 	);
 }
 
-function Identity({ frame }: { frame: string }) {
+/**
+ * One surface, as the index draws it: colour in 140ms on the house curve, the
+ * glyph gives under the finger. A shut agent with something to say says it
+ * here — a turning ring while a turn runs, one dot after it lands unread. The
+ * dot grows in and then holds still; nothing pulses.
+ */
+function Glyph({
+	label,
+	lit,
+	life,
+	children,
+}: {
+	label: DockSurface;
+	lit: boolean;
+	life?: Life | undefined;
+	children: ReactNode;
+}) {
+	const still = useReducedMotion() === true;
 	return (
-		<div className="flex flex-col gap-1 border-border border-b px-4 py-3">
-			<span className="truncate font-mono text-sm text-text leading-sm">{frame}</span>
-			<span className="truncate font-mono text-2xs text-muted/60 leading-3">frames/app/{frame}/frame.tsx</span>
-		</div>
-	);
-}
-
-const ELEMENTS: readonly { name: string; depth: number }[] = [
-	{ name: "screen", depth: 0 },
-	{ name: "header", depth: 1 },
-	{ name: "menu-list", depth: 1 },
-	{ name: "menu-item", depth: 2 },
-	{ name: "checkout-bar", depth: 1 },
-];
-
-function ElementsTab({ frame }: { frame: string }) {
-	return (
-		<div className="flex min-h-0 flex-1 flex-col">
-			<Identity frame={frame} />
-			<div className="flex items-center justify-between px-4 pt-1 pb-1">
-				<span className="font-mono text-2xs text-muted leading-3">elements</span>
-				<span className="font-mono text-2xs text-muted/45 leading-3">{ELEMENTS.length}</span>
-			</div>
-			<div className="min-h-0 flex-1 overflow-hidden pb-3">
-				{ELEMENTS.map((row) => (
-					<div key={row.name} className="flex h-7 items-center">
-						<span
-							className="truncate font-mono text-sm text-muted leading-sm"
-							style={{ paddingLeft: 16 + row.depth * 14 }}
-						>
-							{row.name}
-						</span>
-					</div>
-				))}
-			</div>
-		</div>
-	);
-}
-
-const CONNECTIONS: readonly { target: string; via: string }[] = [
-	{ target: "cart", via: "till kassan" },
-	{ target: "receipt", via: "betala" },
-];
-
-function ConnectionsTab({ frame }: { frame: string }) {
-	return (
-		<div className="flex min-h-0 flex-1 flex-col">
-			<Identity frame={frame} />
-			<div className="flex items-center justify-between px-4 pt-1 pb-1">
-				<span className="font-mono text-2xs text-muted leading-3">connections</span>
-				<span className="font-mono text-2xs text-muted/45 leading-3">{CONNECTIONS.length}</span>
-			</div>
-			<div className="min-h-0 flex-1 overflow-hidden pb-3">
-				{CONNECTIONS.map((row) => (
-					<div key={row.target} className="flex h-7 items-center gap-2 px-4">
-						<span className="h-[2px] w-2 shrink-0 bg-thread" />
-						<span className="truncate font-mono text-sm text-text leading-sm">{row.target}</span>
-						<span className="ml-auto truncate font-mono text-2xs text-muted/60 leading-3">{row.via}</span>
-					</div>
-				))}
-			</div>
-		</div>
+		<button
+			type="button"
+			aria-label={`${lit ? "Shut" : "Expand"} ${label}`}
+			aria-pressed={lit}
+			className={cn(
+				"relative flex h-8 w-8 items-center justify-center rounded-sm transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-90 motion-reduce:transition-none",
+				lit ? "bg-raised text-text" : "text-muted/70 hover:text-text",
+			)}
+		>
+			{children}
+			{lit || life === undefined ? null : life === "running" || life === "streaming" ? (
+				<svg
+					viewBox="0 0 14 14"
+					aria-hidden="true"
+					fill="none"
+					className="-right-1 absolute top-0 h-3 w-3 animate-spin text-text/60"
+				>
+					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.6" strokeOpacity="0.26" />
+					<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+				</svg>
+			) : life === "unread" ? (
+				<motion.span
+					aria-hidden="true"
+					className="-right-0.5 absolute top-0.5 h-1.5 w-1.5 rounded-full bg-thread"
+					initial={still ? false : { opacity: 0, scale: 0.4 }}
+					animate={{ opacity: 1, scale: 1 }}
+					transition={{ duration: 0.2, ease: [0.22, 0.61, 0.36, 1] }}
+				/>
+			) : null}
+		</button>
 	);
 }
