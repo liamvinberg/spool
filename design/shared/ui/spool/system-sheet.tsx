@@ -72,7 +72,7 @@ export function Spec({
 			>
 				{children}
 			</div>
-			<div className="flex items-baseline gap-2">
+			<div className="flex flex-col gap-1">
 				<span className={NAME}>{name}</span>
 				{says === undefined ? null : <span className={cn("min-w-0", MONO)}>{says}</span>}
 			</div>
@@ -96,7 +96,7 @@ export function Gap({ name, says }: { name: string; says: string }) {
 			<div className="flex min-h-[52px] items-center rounded-md border border-border border-dashed px-4 py-4">
 				<span className="font-mono text-2xs text-muted/40 leading-3">no specimen</span>
 			</div>
-			<div className="flex items-baseline gap-2">
+			<div className="flex flex-col gap-1">
 				<span className={cn(NAME, "text-muted/60")}>{name}</span>
 				<span className={cn("min-w-0", MONO, "text-muted/50")}>{says}</span>
 			</div>
