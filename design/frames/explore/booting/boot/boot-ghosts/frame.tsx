@@ -1,4 +1,4 @@
-import { BootShell, GhostsBoot, GhostsRail } from "shared/ui/spool-boot-screen";
+import { BootShell, GhostsBoot, GhostsRail } from "shared/ui/explore/booting/boot-screen";
 
 export default function BootGhostsFrame() {
 	return (

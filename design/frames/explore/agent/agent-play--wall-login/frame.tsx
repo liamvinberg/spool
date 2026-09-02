@@ -1,11 +1,11 @@
-import { useLogin } from "shared/lib/agent-preflight";
-import { railEntries, useCapture, useTurnScript } from "shared/lib/claude-turn";
-import { useTicker, useTurn } from "shared/lib/turn-play";
-import { LoginStrip } from "shared/ui/spool-agent-wall";
-import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
-import { PlayField } from "shared/ui/spool-play-field";
-import { PlayRail } from "shared/ui/spool-play-rail";
-import { SpoolShell } from "shared/ui/spool-shell";
+import { useLogin } from "shared/lib/explore/agent/agent-preflight";
+import { railEntries, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { useTicker, useTurn } from "shared/lib/spool/turn-play";
+import { LoginStrip } from "shared/ui/explore/agent/agent-wall";
+import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
+import { PlayField } from "shared/ui/explore/agent/play-field";
+import { PlayRail } from "shared/ui/spool/play-rail";
+import { SpoolShell } from "shared/ui/spool/shell";
 
 /**
  * agent-play--wall-login — signed out, found out the only honest way.

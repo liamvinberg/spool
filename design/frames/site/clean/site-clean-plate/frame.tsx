@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import { SpoolMark } from "shared/ui/spool-mark";
+import { SpoolMark } from "shared/ui/spool/mark";
 import {
 	ArrowUpRight,
 	CanvasPlate,

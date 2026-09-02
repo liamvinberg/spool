@@ -1,7 +1,7 @@
 import { AnimatePresence, type MotionValue, animate, motion, useMotionValue, useTransform } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "shared/lib/utils";
-import { SpoolMark } from "shared/ui/spool-mark";
+import { SpoolMark } from "shared/ui/spool/mark";
 import {
 	ArrowUpRight,
 	CommandLine,

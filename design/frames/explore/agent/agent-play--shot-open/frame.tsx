@@ -1,10 +1,10 @@
-import { railEntries, useCapture, useFanoutScript } from "shared/lib/claude-turn";
-import type { ShotRef } from "shared/lib/turn-play";
-import { useTicker, useTurn } from "shared/lib/turn-play";
-import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
-import { type BaseFrame, FrameThumb, PlayField } from "shared/ui/spool-play-field";
-import { PlayRail } from "shared/ui/spool-play-rail";
-import { SpoolShell } from "shared/ui/spool-shell";
+import { railEntries, useCapture, useFanoutScript } from "shared/lib/explore/agent/claude-turn";
+import type { ShotRef } from "shared/lib/spool/turn-play";
+import { useTicker, useTurn } from "shared/lib/spool/turn-play";
+import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
+import { type BaseFrame, FrameThumb, PlayField } from "shared/ui/explore/agent/play-field";
+import { PlayRail } from "shared/ui/spool/play-rail";
+import { SpoolShell } from "shared/ui/spool/shell";
 
 /**
  * agent-play--shot-open — the picture behind the disclosure, and a real one.

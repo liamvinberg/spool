@@ -1,4 +1,4 @@
-import { ExplorerScreen } from "shared/ui/spool-explorer-screen";
+import { ExplorerScreen } from "shared/ui/explore/explorer/explorer-screen";
 
 /**
  * A page stands on the field as a stack of the frames it holds.

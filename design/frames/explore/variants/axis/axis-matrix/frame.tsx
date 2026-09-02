@@ -1,8 +1,8 @@
 import { motion } from "motion/react";
 import { useState } from "react";
-import { Scaled, TvarsoCheckout, type VariationId } from "shared/ui/tvarso-checkout";
-import { RailTabs } from "shared/ui/spool-canvas-chrome";
-import { StackIcon, VariantsScreen } from "shared/ui/variants-shell";
+import { Scaled, TvarsoCheckout, type VariationId } from "shared/ui/demo/tvarso-checkout";
+import { RailTabs } from "shared/ui/spool/canvas-chrome";
+import { StackIcon, VariantsScreen } from "shared/ui/explore/variants/variants-shell";
 import { cn } from "shared/lib/utils";
 
 /**

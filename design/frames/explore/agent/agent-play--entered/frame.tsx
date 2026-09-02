@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { contextLine } from "shared/lib/agent-selection";
-import { railEntries, useCapture, useTurnScript } from "shared/lib/claude-turn";
-import { enteredFrame } from "shared/lib/pointed-fixtures";
-import { useTicker, useTurn } from "shared/lib/turn-play";
-import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
-import { type Outline, PlayField } from "shared/ui/spool-play-field";
-import { COMPOSER_W, PlayRail } from "shared/ui/spool-play-rail";
-import { SpoolShell } from "shared/ui/spool-shell";
+import { contextLine } from "shared/lib/spool/agent-selection";
+import { railEntries, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { enteredFrame } from "shared/lib/explore/agent/pointed-fixtures";
+import { useTicker, useTurn } from "shared/lib/spool/turn-play";
+import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
+import { type Outline, PlayField } from "shared/ui/explore/agent/play-field";
+import { COMPOSER_W, PlayRail } from "shared/ui/spool/play-rail";
+import { SpoolShell } from "shared/ui/spool/shell";
 
 /**
  * agent-play--entered — the recommendation. The same chip, minus the ✕.

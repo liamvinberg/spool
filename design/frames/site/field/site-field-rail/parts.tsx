@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import { SpoolMark } from "shared/ui/spool-mark";
+import { SpoolMark } from "shared/ui/spool/mark";
 
 /**
  * site-field--rail, the eight documents the rail is a table of contents for.

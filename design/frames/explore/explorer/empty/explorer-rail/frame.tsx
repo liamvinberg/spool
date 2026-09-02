@@ -1,4 +1,4 @@
-import { ExplorerScreen } from "shared/ui/spool-explorer-screen";
+import { ExplorerScreen } from "shared/ui/explore/explorer/explorer-screen";
 
 export default function ExplorerRailFrame() {
 	return <ExplorerScreen />;

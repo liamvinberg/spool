@@ -1,5 +1,5 @@
-import { CountBoot } from "shared/ui/spool-boot-shape";
-import { BootShell } from "shared/ui/spool-boot-screen";
+import { CountBoot } from "shared/ui/explore/booting/boot-shape";
+import { BootShell } from "shared/ui/explore/booting/boot-screen";
 
 export default function ShapeCountFrame() {
 	return (

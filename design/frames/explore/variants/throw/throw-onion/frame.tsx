@@ -1,8 +1,8 @@
 import { motion } from "motion/react";
 import { useState } from "react";
-import { Scaled, TvarsoTicket, TvarsoTimetable, type VariationId } from "shared/ui/tvarso-checkout";
-import { PeekRing, StillCard } from "shared/ui/variants-feel";
-import { regionsBetween, saysRegions } from "shared/ui/variants-glance";
+import { Scaled, TvarsoTicket, TvarsoTimetable, type VariationId } from "shared/ui/demo/tvarso-checkout";
+import { PeekRing, StillCard } from "shared/ui/explore/variants/variants-feel";
+import { regionsBetween, saysRegions } from "shared/ui/explore/variants/variants-glance";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -11,9 +11,9 @@ import {
 	Placed,
 	PlayVerb,
 	VariantsScreen,
-} from "shared/ui/variants-shell";
-import { useDecision } from "shared/lib/variants-decision";
-import { EASE } from "shared/lib/variants-feel";
+} from "shared/ui/explore/variants/variants-shell";
+import { useDecision } from "shared/lib/explore/variants/variants-decision";
+import { EASE } from "shared/lib/explore/variants/variants-feel";
 import { cn } from "shared/lib/utils";
 
 /**

@@ -1,4 +1,4 @@
-import { DockScreen } from "shared/ui/spool-dock-screen";
+import { DockScreen } from "shared/ui/spool/dock-screen";
 
 /**
  * beside — the shipped shape, and the baseline the other four are a diff

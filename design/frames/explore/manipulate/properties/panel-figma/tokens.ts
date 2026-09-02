@@ -6,7 +6,7 @@
  * names and values verbatim. A named token is picked from this set and lands on
  * the literal the same way a number or a word does: one token swapped in place.
  */
-import { COLORS, pxValue, STEP, tokens, valuePx } from "shared/lib/properties-model";
+import { COLORS, pxValue, STEP, tokens, valuePx } from "shared/lib/spool/properties-model";
 
 export interface Choice {
 	token: string;

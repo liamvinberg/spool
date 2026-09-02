@@ -7,9 +7,9 @@ import {
 	TvarsoTicket,
 	TvarsoTimetable,
 	type VariationId,
-} from "shared/ui/tvarso-checkout";
-import { Crossfade, PeekRing, StillCard } from "shared/ui/variants-feel";
-import { regionsBetween, saysRegions } from "shared/ui/variants-glance";
+} from "shared/ui/demo/tvarso-checkout";
+import { Crossfade, PeekRing, StillCard } from "shared/ui/explore/variants/variants-feel";
+import { regionsBetween, saysRegions } from "shared/ui/explore/variants/variants-glance";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -17,9 +17,9 @@ import {
 	Neighbour,
 	PlayVerb,
 	VariantsScreen,
-} from "shared/ui/variants-shell";
-import { useDecision } from "shared/lib/variants-decision";
-import { MARK } from "shared/lib/variants-feel";
+} from "shared/ui/explore/variants/variants-shell";
+import { useDecision } from "shared/lib/explore/variants/variants-decision";
+import { MARK } from "shared/lib/explore/variants/variants-feel";
 import { cn } from "shared/lib/utils";
 
 /**

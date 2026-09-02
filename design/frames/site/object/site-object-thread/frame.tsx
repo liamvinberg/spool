@@ -1,7 +1,7 @@
 import { motion, useMotionValueEvent, useScroll, useTransform } from "motion/react";
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import { SpoolMark } from "shared/ui/spool-mark";
+import { SpoolMark } from "shared/ui/spool/mark";
 
 /**
  * site-object--thread. One length of thread, paid out from a spool at the top of

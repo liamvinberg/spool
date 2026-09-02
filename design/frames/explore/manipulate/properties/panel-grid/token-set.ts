@@ -9,7 +9,7 @@
  * same single-token splice a number or a word is.
  */
 
-import { COLORS, tokens } from "shared/lib/properties-model";
+import { COLORS, tokens } from "shared/lib/spool/properties-model";
 
 export interface Choice {
 	/** the class the element wears for this property, or null when it wears none */

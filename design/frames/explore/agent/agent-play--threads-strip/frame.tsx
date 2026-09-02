@@ -1,11 +1,11 @@
-import { LIVE_ASK, useAutoAsk, useDeck } from "shared/lib/agent-threads";
-import { railEntries, useCapture, useTurnScript } from "shared/lib/claude-turn";
-import { useTicker, useTurn } from "shared/lib/turn-play";
-import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
-import { PlayField } from "shared/ui/spool-play-field";
-import { PlayRail } from "shared/ui/spool-play-rail";
-import { SpoolShell } from "shared/ui/spool-shell";
-import { ThreadStrip } from "shared/ui/spool-thread-strip";
+import { LIVE_ASK, useAutoAsk, useDeck } from "shared/lib/spool/agent-threads";
+import { railEntries, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { useTicker, useTurn } from "shared/lib/spool/turn-play";
+import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
+import { PlayField } from "shared/ui/explore/agent/play-field";
+import { PlayRail } from "shared/ui/spool/play-rail";
+import { SpoolShell } from "shared/ui/spool/shell";
+import { ThreadStrip } from "shared/ui/spool/thread-strip";
 
 /**
  * agent-play--threads-strip — every conversation on screen at once, and the room

@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useLayoutEffect, useRef, useState } from "react";
-import { TvarsoCheckout, TvarsoOutlet, TvarsoShell, VARIATIONS, type VariationId } from "shared/ui/tvarso-checkout";
-import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "shared/ui/variants-code";
+import { TvarsoCheckout, TvarsoOutlet, TvarsoShell, VARIATIONS, type VariationId } from "shared/ui/demo/tvarso-checkout";
+import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "shared/ui/explore/variants/variants-code";
 import { cn } from "shared/lib/utils";
 
 /**

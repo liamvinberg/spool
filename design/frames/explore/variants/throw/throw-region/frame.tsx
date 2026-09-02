@@ -8,9 +8,9 @@ import {
 	TvarsoTicket,
 	TvarsoTimetable,
 	type VariationId,
-} from "shared/ui/tvarso-checkout";
-import { Crossfade, PeekRing } from "shared/ui/variants-feel";
-import { regionsBetween } from "shared/ui/variants-glance";
+} from "shared/ui/demo/tvarso-checkout";
+import { Crossfade, PeekRing } from "shared/ui/explore/variants/variants-feel";
+import { regionsBetween } from "shared/ui/explore/variants/variants-glance";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -19,10 +19,10 @@ import {
 	Placed,
 	PlayVerb,
 	VariantsScreen,
-} from "shared/ui/variants-shell";
-import { useKey } from "shared/lib/variants-cycle";
-import { useDecision } from "shared/lib/variants-decision";
-import { MARK } from "shared/lib/variants-feel";
+} from "shared/ui/explore/variants/variants-shell";
+import { useKey } from "shared/lib/explore/variants/variants-cycle";
+import { useDecision } from "shared/lib/explore/variants/variants-decision";
+import { MARK } from "shared/lib/explore/variants/variants-feel";
 
 /**
  * Touch the difference itself.

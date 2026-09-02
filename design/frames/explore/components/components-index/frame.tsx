@@ -1,4 +1,4 @@
-import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
+import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import {
 	BARE,
 	ComponentFace,
@@ -9,8 +9,8 @@ import {
 	Specimen,
 	demosOf,
 	fitScale,
-} from "shared/ui/spool-components";
-import { SpoolShell } from "shared/ui/spool-shell";
+} from "shared/ui/explore/components/components";
+import { SpoolShell } from "shared/ui/spool/shell";
 
 /**
  * An exploration of the components page as a document read top to bottom (#189).

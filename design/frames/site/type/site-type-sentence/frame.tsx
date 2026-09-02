@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import { SpoolMark } from "shared/ui/spool-mark";
+import { SpoolMark } from "shared/ui/spool/mark";
 
 /**
  * site-type--sentence. The landing as one continuous paragraph.

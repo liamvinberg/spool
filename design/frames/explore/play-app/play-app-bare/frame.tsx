@@ -1,8 +1,8 @@
 import { motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
-import { AppWindow, CANVAS_RECT, CanvasButton, Desk, DeskCaption, DeskControl, EdgeBar } from "shared/ui/spool-desk";
-import { SpoolCanvasScreen } from "shared/ui/spool-canvas-screen";
-import { TidemarkLanding } from "shared/ui/tidemark-landing";
+import { AppWindow, CANVAS_RECT, CanvasButton, Desk, DeskCaption, DeskControl, EdgeBar } from "shared/ui/explore/play-app/desk";
+import { SpoolCanvasScreen } from "shared/ui/spool/canvas-screen";
+import { TidemarkLanding } from "shared/ui/demo/tidemark-landing";
 
 /**
  * play-app--bare: a second window with no bar at all.

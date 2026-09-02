@@ -1,5 +1,5 @@
-import { SiteCardShell } from "shared/ui/site-card-shell";
-import { SpoolMark } from "shared/ui/spool-mark";
+import { SiteCardShell } from "shared/ui/site/site-card-shell";
+import { SpoolMark } from "shared/ui/spool/mark";
 import { PaceRun, PaceSummary } from "./screens";
 
 /**

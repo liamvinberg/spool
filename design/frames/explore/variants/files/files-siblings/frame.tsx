@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useState } from "react";
-import { Scaled, TvarsoCheckout, VARIATIONS } from "shared/ui/tvarso-checkout";
-import { Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "shared/ui/variants-code";
+import { Scaled, TvarsoCheckout, VARIATIONS } from "shared/ui/demo/tvarso-checkout";
+import { Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "shared/ui/explore/variants/variants-code";
 import { cn } from "shared/lib/utils";
 
 /**

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { type CaptureEvent, useCapture } from "shared/lib/claude-turn";
+import { type CaptureEvent, useCapture } from "shared/lib/explore/agent/claude-turn";
 import { BEAT_MS, type Beat, type Pace, PaceTake, schedule } from "./pace";
 
 /**

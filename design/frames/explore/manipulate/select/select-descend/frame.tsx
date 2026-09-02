@@ -1,4 +1,4 @@
-import { SelectScreen } from "shared/ui/spool-select-screen";
+import { SelectScreen } from "shared/ui/explore/manipulate/select-screen";
 
 /** Figma's ladder taken whole: double-click descends, and Enter runs the frame. */
 export default function SelectDescendFrame() {

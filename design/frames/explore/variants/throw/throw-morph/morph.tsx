@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import type { ReactNode } from "react";
-import { FIELD, INK, MUTED, QrBlock, SEA, actionOf } from "shared/ui/tvarso-checkout";
+import { FIELD, INK, MUTED, QrBlock, SEA, actionOf } from "shared/ui/demo/tvarso-checkout";
 import { cn } from "shared/lib/utils";
 
 /**

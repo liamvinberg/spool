@@ -7,9 +7,9 @@ import {
 	DeskCaption,
 	DeskControl,
 	PlayerSlimBar,
-} from "shared/ui/spool-desk";
-import { SpoolCanvasScreen } from "shared/ui/spool-canvas-screen";
-import { TidemarkLanding } from "shared/ui/tidemark-landing";
+} from "shared/ui/explore/play-app/desk";
+import { SpoolCanvasScreen } from "shared/ui/spool/canvas-screen";
+import { TidemarkLanding } from "shared/ui/demo/tidemark-landing";
 
 /**
  * play-app--window: play opens a second window, and spool draws its bar.

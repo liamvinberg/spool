@@ -1,5 +1,5 @@
-import { BootShell } from "shared/ui/spool-boot-screen";
-import { CoversBoot } from "shared/ui/spool-boot-count";
+import { BootShell } from "shared/ui/explore/booting/boot-screen";
+import { CoversBoot } from "shared/ui/explore/booting/boot-count";
 import canvasCover from "./spool-canvas.png";
 import homeCover from "./spool-home.png";
 import playerCover from "./spool-player.png";

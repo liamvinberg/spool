@@ -10,7 +10,7 @@
  * catalog the `+` offers.
  */
 
-import { COLORS, type Numeric, numericOf, valueOf, valuePx, type Word, WORDS } from "shared/lib/properties-model";
+import { COLORS, type Numeric, numericOf, valueOf, valuePx, type Word, WORDS } from "shared/lib/spool/properties-model";
 
 export type Group = "layout" | "sizing" | "spacing" | "typography" | "background" | "border" | "effects";
 

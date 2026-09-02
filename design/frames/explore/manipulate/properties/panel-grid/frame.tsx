@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { chainOf, ELEMENTS, elementOf, tokens } from "shared/lib/properties-model";
+import { chainOf, ELEMENTS, elementOf, tokens } from "shared/lib/spool/properties-model";
 import { cn } from "shared/lib/utils";
-import { PropertiesCart } from "shared/ui/spool-properties-cart";
+import { PropertiesCart } from "shared/ui/demo/kaffe-properties-cart";
 import { type Acts, type Geometry, Inspector, type Pick, type Reading, type Rect } from "./inspector";
 
 /**

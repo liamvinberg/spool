@@ -1,5 +1,5 @@
-import { BootShell } from "shared/ui/spool-boot-screen";
-import { NoneHandover, NoneRail, useNonePhase } from "shared/ui/spool-boot-handover";
+import { BootShell } from "shared/ui/explore/booting/boot-screen";
+import { NoneHandover, NoneRail, useNonePhase } from "shared/ui/explore/booting/boot-handover";
 
 export default function HandoverNoneFrame() {
 	const landed = useNonePhase();

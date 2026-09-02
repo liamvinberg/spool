@@ -1,9 +1,9 @@
 import { motion } from "motion/react";
-import { Scaled, TvarsoCheckout } from "shared/ui/tvarso-checkout";
-import { RailTabs } from "shared/ui/spool-canvas-chrome";
-import { KeepVerb, PlayVerb, VariantsScreen, VariationField } from "shared/ui/variants-shell";
-import { useKey } from "shared/lib/variants-cycle";
-import { useDecision } from "shared/lib/variants-decision";
+import { Scaled, TvarsoCheckout } from "shared/ui/demo/tvarso-checkout";
+import { RailTabs } from "shared/ui/spool/canvas-chrome";
+import { KeepVerb, PlayVerb, VariantsScreen, VariationField } from "shared/ui/explore/variants/variants-shell";
+import { useKey } from "shared/lib/explore/variants/variants-cycle";
+import { useDecision } from "shared/lib/explore/variants/variants-decision";
 import { cn } from "shared/lib/utils";
 
 /**

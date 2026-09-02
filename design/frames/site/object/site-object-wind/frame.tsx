@@ -1,7 +1,7 @@
 import { type PanInfo, animate, motion, useMotionValue, useMotionValueEvent, useTransform } from "motion/react";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import { SpoolMark } from "shared/ui/spool-mark";
+import { SpoolMark } from "shared/ui/spool/mark";
 
 /**
  * site-object--wind. The page as the machine the product is named after: a spool

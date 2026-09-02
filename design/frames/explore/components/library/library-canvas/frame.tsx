@@ -1,8 +1,8 @@
 import { animate, type MotionStyle, motion, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
-import { INK, LINE, MUTED, PAPER } from "shared/ui/tvarso-checkout";
+import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
+import { INK, LINE, MUTED, PAPER } from "shared/ui/demo/tvarso-checkout";
 import {
 	ICONS,
 	type LibPart,
@@ -12,8 +12,8 @@ import {
 	TVARSO_PAGES,
 	TVARSO_TOKENS,
 	Well,
-} from "shared/ui/tvarso-library";
-import { SpoolShell } from "shared/ui/spool-shell";
+} from "shared/ui/demo/tvarso-library";
+import { SpoolShell } from "shared/ui/spool/shell";
 
 /**
  * The library as a canvas you actually work, rather than a picture of one

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import { SiteCanvasStill } from "shared/ui/site-canvas-still";
-import { SpoolMark } from "shared/ui/spool-mark";
+import { SiteCanvasStill } from "shared/ui/site/site-canvas-still";
+import { SpoolMark } from "shared/ui/spool/mark";
 
 /**
  * site-mobile--real. site-mobile's layout, with the still answering the question

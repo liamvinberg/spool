@@ -8,7 +8,7 @@ import {
 	TvarsoTimetable,
 	VARIATIONS,
 	variationAt,
-} from "shared/ui/tvarso-checkout";
+} from "shared/ui/demo/tvarso-checkout";
 import {
 	FIELD_H,
 	FIELD_SCALE,
@@ -21,9 +21,9 @@ import {
 	SelectionRing,
 	Thread,
 	VariantsScreen,
-} from "shared/ui/variants-shell";
-import { useKey } from "shared/lib/variants-cycle";
-import { useDecision } from "shared/lib/variants-decision";
+} from "shared/ui/explore/variants/variants-shell";
+import { useKey } from "shared/lib/explore/variants/variants-cycle";
+import { useDecision } from "shared/lib/explore/variants/variants-decision";
 
 /**
  * The smallest diff that could possibly work: the label row already there,

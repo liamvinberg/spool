@@ -5,7 +5,7 @@ import {
 	PORT_URL,
 	PROBE_IN,
 	SiteLocalShell,
-} from "shared/ui/site-local-shell";
+} from "shared/ui/site/site-local-shell";
 
 /**
  * local.spool.page, Spool answered: the found state of the plate direction.

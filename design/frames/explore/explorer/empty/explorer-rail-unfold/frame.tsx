@@ -1,4 +1,4 @@
-import { ExplorerScreen } from "shared/ui/spool-explorer-screen";
+import { ExplorerScreen } from "shared/ui/explore/explorer/explorer-screen";
 
 /**
  * The rail answers and the field is left alone.

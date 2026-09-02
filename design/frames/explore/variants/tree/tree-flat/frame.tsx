@@ -1,4 +1,4 @@
-import { Scaled, TvarsoCheckout, VARIATIONS } from "shared/ui/tvarso-checkout";
+import { Scaled, TvarsoCheckout, VARIATIONS } from "shared/ui/demo/tvarso-checkout";
 import {
 	FRAME_ROW,
 	FrameIcon,
@@ -11,8 +11,8 @@ import {
 	VariantsScreen,
 	contentX,
 	guideX,
-} from "shared/ui/variants-shell";
-import { useArrows, useCycle } from "shared/lib/variants-cycle";
+} from "shared/ui/explore/variants/variants-shell";
+import { useArrows, useCycle } from "shared/lib/explore/variants/variants-cycle";
 import { cn } from "shared/lib/utils";
 
 /**

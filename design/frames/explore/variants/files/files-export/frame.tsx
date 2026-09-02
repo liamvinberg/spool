@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import { CARD_H, CARD_W, Scaled, TvarsoCheckout, TvarsoOutlet, VARIATIONS } from "shared/ui/tvarso-checkout";
-import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "shared/ui/variants-code";
-import { FIELD_H, FIELD_SCALE, FIELD_W, StackIcon } from "shared/ui/variants-shell";
+import { CARD_H, CARD_W, Scaled, TvarsoCheckout, TvarsoOutlet, VARIATIONS } from "shared/ui/demo/tvarso-checkout";
+import { Code, Disk, DiskRow, type DiskNode, DiskSplit, Rule } from "shared/ui/explore/variants/variants-code";
+import { FIELD_H, FIELD_SCALE, FIELD_W, StackIcon } from "shared/ui/explore/variants/variants-shell";
 import { cn } from "shared/lib/utils";
 
 /**

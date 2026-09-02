@@ -1,8 +1,8 @@
 import { motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
-import { AppWindow, CANVAS_RECT, Desk, DeskCaption, DeskControl, PlayerSlimBar } from "shared/ui/spool-desk";
-import { SpoolCanvasScreen } from "shared/ui/spool-canvas-screen";
-import { TidemarkLanding } from "shared/ui/tidemark-landing";
+import { AppWindow, CANVAS_RECT, Desk, DeskCaption, DeskControl, PlayerSlimBar } from "shared/ui/explore/play-app/desk";
+import { SpoolCanvasScreen } from "shared/ui/spool/canvas-screen";
+import { TidemarkLanding } from "shared/ui/demo/tidemark-landing";
 
 /**
  * play-app--sheet: the page lifts over the canvas, inside the one window.

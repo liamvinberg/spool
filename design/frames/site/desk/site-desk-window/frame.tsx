@@ -1,7 +1,7 @@
 import { motion, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import { SpoolMark } from "shared/ui/spool-mark";
+import { SpoolMark } from "shared/ui/spool/mark";
 
 /**
  * site-desk--window. The Mac app argued by putting the reader on the desktop it

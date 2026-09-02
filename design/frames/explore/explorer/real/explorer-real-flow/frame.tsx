@@ -1,4 +1,4 @@
-import { PageObjectsScreen } from "shared/ui/spool-page-objects";
+import { PageObjectsScreen } from "shared/ui/explore/explorer/page-objects";
 
 /**
  * The same twelve pages, with the field owning where they sit.

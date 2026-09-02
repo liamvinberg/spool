@@ -1,4 +1,4 @@
-import { BootShell, ThreadBoot } from "shared/ui/spool-boot-screen";
+import { BootShell, ThreadBoot } from "shared/ui/explore/booting/boot-screen";
 
 export default function BootThreadFrame() {
 	return (

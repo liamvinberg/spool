@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { type VariationId, VARIATIONS } from "shared/ui/tvarso-checkout";
-import { GlanceCard, regionsBetween, saysRegions } from "shared/ui/variants-glance";
-import { FIELD_SCALE, FrameLabel, KeepVerb, Placed, SelectionRing, VariantsScreen } from "shared/ui/variants-shell";
-import { useDecision } from "shared/lib/variants-decision";
+import { type VariationId, VARIATIONS } from "shared/ui/demo/tvarso-checkout";
+import { GlanceCard, regionsBetween, saysRegions } from "shared/ui/explore/variants/variants-glance";
+import { FIELD_SCALE, FrameLabel, KeepVerb, Placed, SelectionRing, VariantsScreen } from "shared/ui/explore/variants/variants-shell";
+import { useDecision } from "shared/lib/explore/variants/variants-decision";
 import { cn } from "shared/lib/utils";
 
 /**

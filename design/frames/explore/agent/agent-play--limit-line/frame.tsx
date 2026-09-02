@@ -1,13 +1,13 @@
-import { CAPTURED, useModel } from "shared/lib/agent-model";
-import { useLimit } from "shared/lib/agent-limit";
-import { railEntries, useCapture, useTurnScript } from "shared/lib/claude-turn";
-import { useTicker, useTurn } from "shared/lib/turn-play";
-import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
-import { LimitLine } from "shared/ui/spool-limit";
-import { ModelMenu } from "shared/ui/spool-model-control";
-import { PlayField } from "shared/ui/spool-play-field";
-import { PlayRail } from "shared/ui/spool-play-rail";
-import { SpoolShell } from "shared/ui/spool-shell";
+import { CAPTURED, useModel } from "shared/lib/spool/agent-model";
+import { useLimit } from "shared/lib/spool/agent-limit";
+import { railEntries, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { useTicker, useTurn } from "shared/lib/spool/turn-play";
+import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
+import { LimitLine } from "shared/ui/spool/limit";
+import { ModelMenu } from "shared/ui/spool/model-control";
+import { PlayField } from "shared/ui/explore/agent/play-field";
+import { PlayRail } from "shared/ui/spool/play-rail";
+import { SpoolShell } from "shared/ui/spool/shell";
 
 /**
  * agent-play--limit-line — the window sits beside the model, and nowhere else.

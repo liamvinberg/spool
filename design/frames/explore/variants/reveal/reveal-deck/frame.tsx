@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import { useCallback, useState } from "react";
-import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "shared/ui/tvarso-checkout";
+import { Scaled, TvarsoCheckout, TvarsoTicket, TvarsoTimetable } from "shared/ui/demo/tvarso-checkout";
 import {
 	FIELD_H,
 	FIELD_SCALE,
@@ -13,9 +13,9 @@ import {
 	PlayVerb,
 	SelectionRing,
 	VariantsScreen,
-} from "shared/ui/variants-shell";
-import { useKey } from "shared/lib/variants-cycle";
-import { useDecision } from "shared/lib/variants-decision";
+} from "shared/ui/explore/variants/variants-shell";
+import { useKey } from "shared/lib/explore/variants/variants-cycle";
+import { useDecision } from "shared/lib/explore/variants/variants-decision";
 import { cn } from "shared/lib/utils";
 
 /**

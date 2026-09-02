@@ -6,7 +6,7 @@ import {
 	PROBE_IN,
 	ProbeDrop,
 	SiteLocalShell,
-} from "shared/ui/site-local-shell";
+} from "shared/ui/site/site-local-shell";
 
 /**
  * local.spool.page, something answered on 7766 and it is not Spool: the occupied

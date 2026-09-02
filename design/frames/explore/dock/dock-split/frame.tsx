@@ -1,4 +1,4 @@
-import { DockScreen } from "shared/ui/spool-dock-screen";
+import { DockScreen } from "shared/ui/spool/dock-screen";
 
 /**
  * split — one column, both surfaces, a grip between them.

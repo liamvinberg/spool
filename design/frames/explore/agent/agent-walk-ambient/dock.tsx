@@ -1,13 +1,13 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
-import type { PlayEntry } from "shared/lib/turn-play";
+import type { PlayEntry } from "shared/lib/spool/turn-play";
 import { cn } from "shared/lib/utils";
-import { CartEmptyRestrained } from "shared/ui/coffee-empty-takes";
-import { CoffeeScreen, type CoffeeScreenName } from "shared/ui/coffee-screens";
-import { CanvasChrome, type PageRow, type Target } from "shared/ui/spool-canvas-chrome";
-import { ConnectionsIcon } from "shared/ui/spool-icons";
-import { PlayRail } from "shared/ui/spool-play-rail";
-import { SpoolShell } from "shared/ui/spool-shell";
+import { CartEmptyRestrained } from "shared/ui/demo/coffee-empty-takes";
+import { CoffeeScreen, type CoffeeScreenName } from "shared/ui/demo/coffee-screens";
+import { CanvasChrome, type PageRow, type Target } from "shared/ui/spool/canvas-chrome";
+import { ConnectionsIcon } from "shared/ui/spool/icons";
+import { PlayRail } from "shared/ui/spool/play-rail";
+import { SpoolShell } from "shared/ui/spool/shell";
 
 /**
  * agent-walk-ambient — the flow map draws everything it knows, always (#146).

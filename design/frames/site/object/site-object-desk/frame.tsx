@@ -1,7 +1,7 @@
 import { motion, useMotionValue, useMotionValueEvent } from "motion/react";
 import { type CSSProperties, type ReactNode, memo, useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
-import { SpoolMark } from "shared/ui/spool-mark";
+import { SpoolMark } from "shared/ui/spool/mark";
 
 /**
  * site-object--desk. The landing as a desk, and every claim on it as an object

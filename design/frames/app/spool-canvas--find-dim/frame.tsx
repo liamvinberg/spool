@@ -1,4 +1,4 @@
-import { SpoolFindScreen } from "shared/ui/spool-find-screen";
+import { SpoolFindScreen } from "shared/ui/spool/find-screen";
 
 /**
  * spool-canvas--find-dim: the recommendation. The name never moves, only its

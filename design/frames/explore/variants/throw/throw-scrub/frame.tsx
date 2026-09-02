@@ -1,7 +1,7 @@
 import { animate, motion, useMotionValue, useTransform } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { CARD_H, CARD_W, Scaled, TvarsoTicket, TvarsoTimetable } from "shared/ui/tvarso-checkout";
-import { PeekRing, StillCard } from "shared/ui/variants-feel";
+import { CARD_H, CARD_W, Scaled, TvarsoTicket, TvarsoTimetable } from "shared/ui/demo/tvarso-checkout";
+import { PeekRing, StillCard } from "shared/ui/explore/variants/variants-feel";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -10,9 +10,9 @@ import {
 	Placed,
 	PlayVerb,
 	VariantsScreen,
-} from "shared/ui/variants-shell";
-import { useDecision } from "shared/lib/variants-decision";
-import { SETTLE, nearest, project } from "shared/lib/variants-feel";
+} from "shared/ui/explore/variants/variants-shell";
+import { useDecision } from "shared/lib/explore/variants/variants-decision";
+import { SETTLE, nearest, project } from "shared/lib/explore/variants/variants-feel";
 import { cn } from "shared/lib/utils";
 
 /**

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Scaled, TvarsoTicket, TvarsoTimetable, type VariationId } from "shared/ui/tvarso-checkout";
-import { GlanceCard, NotchCover, regionsBetween, saysRegions } from "shared/ui/variants-glance";
+import { Scaled, TvarsoTicket, TvarsoTimetable, type VariationId } from "shared/ui/demo/tvarso-checkout";
+import { GlanceCard, NotchCover, regionsBetween, saysRegions } from "shared/ui/explore/variants/variants-glance";
 import {
 	FIELD_SCALE,
 	FrameLabel,
@@ -10,9 +10,9 @@ import {
 	PlayVerb,
 	SelectionRing,
 	VariantsScreen,
-} from "shared/ui/variants-shell";
-import { useKey } from "shared/lib/variants-cycle";
-import { useDecision } from "shared/lib/variants-decision";
+} from "shared/ui/explore/variants/variants-shell";
+import { useKey } from "shared/lib/explore/variants/variants-cycle";
+import { useDecision } from "shared/lib/explore/variants/variants-decision";
 import { cn } from "shared/lib/utils";
 
 /**

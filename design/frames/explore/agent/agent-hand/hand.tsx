@@ -1,7 +1,7 @@
 import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import { useEffect } from "react";
-import type { Script, ToolRow } from "shared/lib/claude-turn";
-import type { Turn } from "shared/lib/turn-play";
+import type { Script, ToolRow } from "shared/lib/explore/agent/claude-turn";
+import type { Turn } from "shared/lib/spool/turn-play";
 import { type FrameSlot, SCALE, SLOTS } from "./field";
 import { type BlockId, type Box, LANDS, UNSTAMPED } from "./kaffe-page";
 

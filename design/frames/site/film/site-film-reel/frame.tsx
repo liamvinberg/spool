@@ -1,7 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
 import { cn } from "shared/lib/utils";
-import { SpoolMark } from "shared/ui/spool-mark";
+import { SpoolMark } from "shared/ui/spool/mark";
 import { MOMENTS, REC_H, REC_W, RUN_CLOCK, RUN_SECONDS, RecStill, ThumbScreen, momentAt } from "./moments";
 
 /**

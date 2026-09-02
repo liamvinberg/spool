@@ -1,5 +1,5 @@
-import { SlackBoot } from "shared/ui/spool-boot-ambient";
-import { BootShell } from "shared/ui/spool-boot-screen";
+import { SlackBoot } from "shared/ui/explore/booting/boot-ambient";
+import { BootShell } from "shared/ui/explore/booting/boot-screen";
 
 export default function AmbientSlackFrame() {
 	return (

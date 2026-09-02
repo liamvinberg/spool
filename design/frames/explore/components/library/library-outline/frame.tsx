@@ -1,6 +1,6 @@
 import { cn } from "shared/lib/utils";
-import { CanvasChrome, type PageRow } from "shared/ui/spool-canvas-chrome";
-import { INK, LINE, MUTED, PAPER } from "shared/ui/tvarso-checkout";
+import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
+import { INK, LINE, MUTED, PAPER } from "shared/ui/demo/tvarso-checkout";
 import {
 	Chip,
 	ICONS,
@@ -16,8 +16,8 @@ import {
 	type Token,
 	type TokenGroup,
 	isSolo,
-} from "shared/ui/tvarso-library";
-import { SpoolShell } from "shared/ui/spool-shell";
+} from "shared/ui/demo/tvarso-library";
+import { SpoolShell } from "shared/ui/spool/shell";
 
 /**
  * Shape C read as a page: **the component is the unit and the file is the

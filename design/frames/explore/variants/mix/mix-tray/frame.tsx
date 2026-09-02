@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import { CARD_H, CARD_W, TvarsoCheckout, type VariationId } from "shared/ui/tvarso-checkout";
-import { GlanceCard, regionsBetween, saysRegions } from "shared/ui/variants-glance";
-import { FIELD_SCALE, SelectionRing, StackIcon, VariantsScreen } from "shared/ui/variants-shell";
-import { useDecision } from "shared/lib/variants-decision";
+import { CARD_H, CARD_W, TvarsoCheckout, type VariationId } from "shared/ui/demo/tvarso-checkout";
+import { GlanceCard, regionsBetween, saysRegions } from "shared/ui/explore/variants/variants-glance";
+import { FIELD_SCALE, SelectionRing, StackIcon, VariantsScreen } from "shared/ui/explore/variants/variants-shell";
+import { useDecision } from "shared/lib/explore/variants/variants-decision";
 import { cn } from "shared/lib/utils";
 
 /**
