@@ -10,7 +10,7 @@ Spool is a local-first prototyping canvas. Agents author live TSX frames; people
 - `desktop/` is the Mac app: an Electron window on the daemon that bundles the published package. Its README covers building and releasing it.
 - `design/` is Spool's dogfood canvas. Run `pnpm dev skill` before working there; its nested `AGENTS.md` governs that folder.
 - `design/` is history's: where a project keeps history the daemon commits canvas work itself, so working-tree changes confined to `design/` are a save waiting on its window and never block landing unrelated work whose paths do not overlap them.
-- Always atomic commits throughout changes
+- Commit atomically as you go, one change per commit. Message: `area: what changed` in lowercase plain words, no body (`daemon: create a project from a folder name`). The `design: <counts>` commits are the daemon's own canvas saves, not a style to copy.
 
 ## Agent skills
 
