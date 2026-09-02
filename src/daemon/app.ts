@@ -2724,6 +2724,19 @@ export function createDaemonApp({
 		},
 		/** The /term upgrade path — wired by serveDaemon onto the raw server. */
 		handleUpgrade,
+		/**
+		 * The checkout's UI watcher finished a rebuild (#30's blind spot).
+		 *
+		 * An upgrade replaces the daemon, so every open page loses its capability
+		 * and reloads itself onto the new bundle. A rebuild replaces only the
+		 * bundle: the daemon lives, the capability stays good, and the page keeps
+		 * its streams while the JS it is running has been superseded and the
+		 * hashed chunks beside it no longer exist on disk. Nothing about that is
+		 * visible from the page, which is why it has to be told.
+		 */
+		announceUiBuild: () => {
+			emitAppEvent({ kind: "ui" });
+		},
 		/** Terminal sessions, exposed for the player's static grids and seam tests. */
 		terms,
 		close: () => {

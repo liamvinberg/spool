@@ -35,6 +35,8 @@ export interface RunningDaemon {
 	port: number;
 	/** Trusted callers only; persisted in daemon lifecycle state for the CLI. */
 	controlToken: string;
+	/** Tell every open page the checkout rebuilt the bundle under it. */
+	announceUiBuild(): void;
 	close(): Promise<void>;
 }
 
@@ -93,6 +95,7 @@ export function serveDaemon({
 				host: info.address,
 				port: info.port,
 				controlToken: daemon.controlToken,
+				announceUiBuild: daemon.announceUiBuild,
 				close: () =>
 					new Promise<void>((done) => {
 						daemon.close();

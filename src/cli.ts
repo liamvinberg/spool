@@ -329,6 +329,8 @@ program
 				await uiWatcher?.close();
 				throw error;
 			}
+			// the watcher had nowhere to say this until the daemon existed
+			uiWatcher?.onRebuild(() => daemon.announceUiBuild());
 			process.stdout.write(`spool daemon listening at ${daemon.url} (pid ${process.pid})\n`);
 			const door = doorAddressFor(daemon.url);
 			if (door !== undefined) process.stdout.write(`${door} opens it from any browser\n`);

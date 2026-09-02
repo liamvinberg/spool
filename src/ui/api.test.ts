@@ -314,6 +314,22 @@ describe("trusted UI API client", () => {
 		dispose();
 	});
 
+	// a rebuild leaves the daemon and this page's capability alone, so nothing
+	// above catches it: the bundle moved to new hashes and the old ones are gone
+	it("goes and gets served again when the checkout rebuilds the bundle under it", async () => {
+		const reload = vi.fn();
+		vi.spyOn(window, "location", "get").mockReturnValue({ ...window.location, reload } as unknown as Location);
+		const { reloadForNewBundle } = await loadApi();
+
+		reloadForNewBundle();
+		expect(reload).toHaveBeenCalledTimes(1);
+
+		// unlike the credential, a rebuild is not spent: the watcher runs all day
+		// and every build strands the page again
+		reloadForNewBundle();
+		expect(reload).toHaveBeenCalledTimes(2);
+	});
+
 	it("keeps waiting on a daemon that is merely down, rather than reloading onto nothing", async () => {
 		vi.useFakeTimers();
 		vi.spyOn(Math, "random").mockReturnValue(0);

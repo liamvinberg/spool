@@ -794,6 +794,24 @@ function reloadForNewDaemon(): void {
 }
 
 /**
+ * The same dead end from the other direction: the checkout's watcher rebuilt
+ * the UI while this page was running the last one.
+ *
+ * A restart is loud — the capability dies with the process and the 401 above
+ * catches it. A rebuild is silent. The daemon is the same daemon, the streams
+ * stay open and the canvas keeps drawing, but the bundle on disk has moved to
+ * new content hashes and the old ones are gone, so anything this page reaches
+ * for later is not there. It looks alive and does nothing, which is the one
+ * failure a person cannot diagnose from the screen.
+ *
+ * Unguarded on purpose, unlike the credential: a rebuild can happen all day,
+ * and every one of them is a page that has to go and get served again.
+ */
+export function reloadForNewBundle(): void {
+	uiWindow?.location.reload();
+}
+
+/**
  * Which daemon is answering, asked without a capability.
  *
  * Health is the one route that takes no credential, which is exactly what makes

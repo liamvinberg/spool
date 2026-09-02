@@ -9,6 +9,7 @@ import {
 	postUpgrade,
 	putSession,
 	putSessionOrder,
+	reloadForNewBundle,
 	subscribeSse,
 } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
@@ -129,6 +130,9 @@ export function App() {
 				},
 				app: (data) => {
 					const event = data as { kind?: unknown; latest?: unknown };
+					// the checkout rebuilt the bundle this page is running: the same
+					// dead end an upgrade reaches, without the 401 that rescues it
+					if (event.kind === "ui") return reloadForNewBundle();
 					if (event.kind === "update" && typeof event.latest === "string") offerUpdate(event.latest);
 					void refetch();
 				},

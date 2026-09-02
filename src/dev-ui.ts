@@ -1,8 +1,10 @@
 import { build, type InlineConfig } from "vite";
 import type { UiBuildWatcher } from "./dev-ui-hook";
 
-interface ViteWatcher extends UiBuildWatcher {
+/** Vite's own handle: what it gives back, not what the daemon is handed. */
+interface ViteWatcher {
 	on(event: "event", listener: (event: { code: string; error?: unknown }) => void): void;
+	close(): Promise<void>;
 }
 
 /** Only the foreground child owns the checkout's UI watcher. */
@@ -18,6 +20,11 @@ export async function watchUiBuild(config: InlineConfig): Promise<UiBuildWatcher
 	});
 	const watcher = result as ViteWatcher;
 	if (typeof watcher.on !== "function") throw new Error("Vite did not start a UI watcher");
+	const listeners = new Set<() => void>();
+	const built: UiBuildWatcher = {
+		onRebuild: (listener) => void listeners.add(listener),
+		close: () => watcher.close(),
+	};
 	return new Promise<UiBuildWatcher>((resolve, reject) => {
 		let settled = false;
 		const fail = async (error: unknown) => {
@@ -32,8 +39,12 @@ export async function watchUiBuild(config: InlineConfig): Promise<UiBuildWatcher
 		watcher.on("event", (event) => {
 			if (event.code === "END" && !settled) {
 				settled = true;
-				resolve(watcher);
+				resolve(built);
+				return;
 			}
+			// a rebuild lands new content-hashed filenames beside the ones every
+			// open page is running, and takes the old ones away
+			if (event.code === "END") for (const listener of [...listeners]) listener();
 			if (event.code === "ERROR") void fail(event.error ?? new Error("Vite failed to build the UI"));
 		});
 	});

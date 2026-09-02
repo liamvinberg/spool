@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { watchesCheckoutUi, watchUiBuild } from "./dev-ui";
 import type { UiBuildWatcher } from "./dev-ui-hook";
 import { makeTempDir } from "./test-helpers";
@@ -30,8 +30,15 @@ describe("checkout UI watch", () => {
 
 		expect(bundleText(outDir)).toContain("first bundle");
 
+		// the daemon comes up serving the first bundle, so it is nobody's news;
+		// every one after it strands the pages already running the old hashes
+		const rebuilt = vi.fn();
+		watcher.onRebuild(rebuilt);
+		expect(rebuilt).not.toHaveBeenCalled();
+
 		writeFileSync(source, 'document.body.textContent = "second bundle";');
 		await until(() => bundleText(outDir).includes("second bundle"));
+		await until(() => rebuilt.mock.calls.length > 0);
 	});
 
 	it("starts only for the foreground serve child", () => {
