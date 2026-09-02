@@ -16,7 +16,7 @@ import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_
 import type { Cover } from "../cover";
 import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
-import { initProject } from "../init";
+import { createProject, initProject } from "../init";
 import { openProject } from "../open";
 import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
@@ -738,6 +738,15 @@ export function createDaemonApp({
 		return { path };
 	}
 
+	/** Body of the picker's create: { path, name } — the folder to make it in, and what to call it. */
+	function requestedNewProject(value: unknown, c: Context): { path: string; name: string } | Response {
+		const { path, name } = value as { path?: unknown; name?: unknown };
+		if (typeof path !== "string" || path === "" || typeof name !== "string" || name === "") {
+			return c.json({ error: 'expected { "path": "/abs/dir", "name": "folder" }' }, 400);
+		}
+		return { path, name };
+	}
+
 	type HostClass = "control" | "alias" | "render" | "capture" | "unexpected";
 
 	function hostClass(url: string): HostClass {
@@ -994,6 +1003,17 @@ export function createDaemonApp({
 		.post("/api/projects/init", validator("json", requestedPath), (c) => {
 			try {
 				const { root } = initProject(c.req.valid("json").path, spoolDir);
+				return c.json({ root, name: basename(root) });
+			} catch (error) {
+				if (!(error instanceof SpoolError)) throw error;
+				return c.json({ error: error.message }, 409);
+			}
+		})
+		.post("/api/projects/create", validator("json", requestedNewProject), (c) => {
+			try {
+				const { path, name } = c.req.valid("json");
+				// the "+" (#242): mkdir, then the same scaffold init runs
+				const { root } = createProject(path, name, spoolDir);
 				return c.json({ root, name: basename(root) });
 			} catch (error) {
 				if (!(error instanceof SpoolError)) throw error;

@@ -184,6 +184,13 @@ export async function initProjectAt(path: string): Promise<OpenOutcome> {
 	return { kind: "error", message: await errorText(res) };
 }
 
+/** The "+" (#242): make `name` inside `path` and scaffold it, one round trip. */
+export async function createProjectAt(path: string, name: string): Promise<OpenOutcome> {
+	const res = await client.api.projects.create.$post({ json: { path, name } });
+	if (res.ok) return { kind: "opened", ...((await res.json()) as { root: string; name: string }) };
+	return { kind: "error", message: await errorText(res) };
+}
+
 export type UpgradeStart = { ok: true } | { ok: false; error: string };
 
 /** The toast door (#30): ask the daemon to spawn the upgrader and stand back. */

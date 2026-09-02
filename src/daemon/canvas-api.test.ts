@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
@@ -933,6 +933,31 @@ describe("the folder picker", () => {
 			body: JSON.stringify({ path: bare }),
 		});
 		expect(twice.status).toBe(409);
+	});
+
+	it("creates a folder and scaffolds it through the one code path, and refuses a name that is a path", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const parent = makeTempDir();
+		const app = makeApp(spoolDir);
+		const post = (body: unknown) =>
+			app.request("/api/projects/create", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+			});
+
+		const made = await post({ path: parent, name: "tvarso" });
+		expect(made.status).toBe(200);
+		expect(await made.json()).toEqual({ root: join(realpathSync(parent), "tvarso"), name: "tvarso" });
+		expect(existsSync(join(parent, "tvarso", "design", "canvas.json"))).toBe(true);
+
+		// the folder is there now, and the picker's next Enter must not silently reuse it
+		expect((await post({ path: parent, name: "tvarso" })).status).toBe(409);
+		// a name is one segment: the picker is where you choose where
+		expect((await post({ path: parent, name: "a/b" })).status).toBe(409);
+		expect((await post({ path: parent, name: ".." })).status).toBe(409);
+		expect(existsSync(join(parent, "a"))).toBe(false);
+		expect((await post({ path: parent })).status).toBe(400);
 	});
 });
 
