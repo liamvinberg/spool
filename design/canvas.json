@@ -1,3 +1,269 @@
 {
-	"format": 1
+	"format": 1,
+	"places": {
+		"agent": {
+			"x": 80,
+			"y": 80
+		},
+		"app": {
+			"x": 3608,
+			"y": 80
+		},
+		"booting": {
+			"x": 5805,
+			"y": 80
+		},
+		"components": {
+			"x": 8273,
+			"y": 80
+		},
+		"directing": {
+			"x": 10289,
+			"y": 80
+		},
+		"explorer": {
+			"x": 11809,
+			"y": 80
+		},
+		"manipulate": {
+			"x": 14055,
+			"y": 80
+		},
+		"picker": {
+			"x": 17190,
+			"y": 80
+		},
+		"play-inline": {
+			"x": 20014,
+			"y": 80
+		},
+		"play-tab": {
+			"x": 21868,
+			"y": 80
+		},
+		"site": {
+			"x": 24280,
+			"y": 80
+		},
+		"variants": {
+			"x": 27001,
+			"y": 80
+		},
+		"app/spool-components--index": {
+			"x": 5000,
+			"y": -174
+		},
+		"app/spool-components--sheet": {
+			"x": 6520,
+			"y": -174
+		},
+		"app/spool-components--slots": {
+			"x": 8040,
+			"y": -174
+		},
+		"app/spool-components--walk": {
+			"x": 9560,
+			"y": -174
+		},
+		"manipulate/shared--reach": {
+			"x": 16160,
+			"y": 80
+		},
+		"manipulate/shared--ring": {
+			"x": 17680,
+			"y": 80
+		},
+		"manipulate/shared--source": {
+			"x": 19200,
+			"y": 80
+		},
+		"manipulate/shared--tint": {
+			"x": 20720,
+			"y": 80
+		},
+		"manipulate/shared--wake": {
+			"x": 22240,
+			"y": 80
+		},
+		"dock": {
+			"x": 29828,
+			"y": 80
+		},
+		"dock/dock--beside": {
+			"x": 80,
+			"y": 80
+		},
+		"dock/dock--over": {
+			"x": 1600,
+			"y": 80
+		},
+		"dock/dock--split": {
+			"x": 3120,
+			"y": 80
+		},
+		"dock/dock--stack": {
+			"x": 4640,
+			"y": 80
+		},
+		"dock/dock--swap": {
+			"x": 6160,
+			"y": 80
+		},
+		"site/site-desk--disk": {
+			"x": 6547,
+			"y": 997
+		},
+		"site/site-desk--dmg": {
+			"x": 8067,
+			"y": 997
+		},
+		"site/site-desk--window": {
+			"x": 9587,
+			"y": 997
+		},
+		"site/site-brutal--manual": {
+			"x": 11107,
+			"y": 997
+		},
+		"site/site-brutal--session": {
+			"x": 12627,
+			"y": 997
+		},
+		"site/site-brutal--sheet": {
+			"x": 14147,
+			"y": 997
+		},
+		"site/site-type--ledger": {
+			"x": 15667,
+			"y": 997
+		},
+		"site/site-type--sentence": {
+			"x": 17187,
+			"y": 997
+		},
+		"site/site-type--wall": {
+			"x": 18707,
+			"y": 997
+		},
+		"site/site-terminal--doors": {
+			"x": 20227,
+			"y": 997
+		},
+		"site/site-terminal--drag": {
+			"x": 21747,
+			"y": 997
+		},
+		"site/site-terminal--minute": {
+			"x": 23267,
+			"y": 997
+		},
+		"site/site-letter--colophon": {
+			"x": 24787,
+			"y": 997
+		},
+		"site/site-letter--hand": {
+			"x": 26307,
+			"y": 997
+		},
+		"site/site-letter--log": {
+			"x": 27827,
+			"y": 997
+		},
+		"site/site-object--desk": {
+			"x": 33907,
+			"y": 997
+		},
+		"site/site-object--thread": {
+			"x": 35427,
+			"y": 997
+		},
+		"site/site-object--wind": {
+			"x": 36947,
+			"y": 997
+		},
+		"site/site-field--camera": {
+			"x": 41507,
+			"y": 997
+		},
+		"site/site-field--margin": {
+			"x": 43027,
+			"y": 997
+		},
+		"site/site-field--rail": {
+			"x": 44547,
+			"y": 997
+		},
+		"site/site-motion--wake": {
+			"x": 47587,
+			"y": 997
+		},
+		"site/site-motion--assemble": {
+			"x": 49107,
+			"y": 997
+		},
+		"site/site-motion--glide": {
+			"x": 50627,
+			"y": 997
+		},
+		"site/site-firstrun--reel": {
+			"x": 52147,
+			"y": 997
+		},
+		"site/site-film--reel": {
+			"x": 56707,
+			"y": 997
+		},
+		"site/site-film--chapters": {
+			"x": 65827,
+			"y": 997
+		},
+		"site/site-film--scrub": {
+			"x": 67347,
+			"y": 997
+		},
+		"site/site-firstrun--inside": {
+			"x": 82547,
+			"y": 997
+		},
+		"site/site-firstrun--folder": {
+			"x": 93187,
+			"y": 997
+		},
+		"site/site-clean--ledger": {
+			"x": 108387,
+			"y": 997
+		},
+		"site/site-clean--stage": {
+			"x": 109907,
+			"y": 997
+		},
+		"play-app": {
+			"x": 32003,
+			"y": 80
+		},
+		"play-app/play-app--bare": {
+			"x": 80,
+			"y": 80
+		},
+		"play-app/play-app--fit": {
+			"x": 1600,
+			"y": 80
+		},
+		"play-app/play-app--remembered": {
+			"x": 3120,
+			"y": 80
+		},
+		"play-app/play-app--sheet": {
+			"x": 4640,
+			"y": 80
+		},
+		"play-app/play-app--takeover": {
+			"x": 6160,
+			"y": 80
+		},
+		"play-app/play-app--window": {
+			"x": 7680,
+			"y": 80
+		}
+	}
 }
