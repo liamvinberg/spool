@@ -509,6 +509,46 @@
 		"explore/new-project/new-project-home--dialog": {
 			"x": 15280,
 			"y": 80
+		},
+		"explore/picker": {
+			"x": 17845,
+			"y": 80
+		},
+		"explore/picker/picker-field": {
+			"x": 80,
+			"y": 80
+		},
+		"explore/picker/picker-field--search": {
+			"x": 1600,
+			"y": 80
+		},
+		"explore/picker/picker-lean": {
+			"x": 3120,
+			"y": 80
+		},
+		"explore/picker/picker-lean--browse": {
+			"x": 4640,
+			"y": 80
+		},
+		"explore/picker/picker-lean--search": {
+			"x": 6160,
+			"y": 80
+		},
+		"explore/picker/picker-field--browse": {
+			"x": 9200,
+			"y": 80
+		},
+		"explore/picker/picker-list": {
+			"x": 10720,
+			"y": 80
+		},
+		"explore/picker/picker-list--browse": {
+			"x": 12240,
+			"y": 80
+		},
+		"explore/picker/picker-list--search": {
+			"x": 13760,
+			"y": 80
 		}
 	}
 }
