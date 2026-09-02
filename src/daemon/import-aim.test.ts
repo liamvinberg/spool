@@ -105,4 +105,35 @@ describe("re-aiming escaping imports on a move", () => {
 
 		expect(read(to, "frame.tsx")).toBe(source.replace('from "../../shared/lib/utils"', 'from "shared/lib/utils"'));
 	});
+
+	it("heals a stylesheet's @import and url() the same way", () => {
+		const { root, designDir } = project();
+		writeDesignFile(root, join("shared", "tokens.css"), ":root {}\n");
+		writeDesignFile(root, join("shared", "assets", "grain.png"), "png");
+		writeDesignFile(root, join("frames", "paper.css"), "p {}\n");
+		writeDesignFile(
+			root,
+			join("frames", "dashboard", "frame.css"),
+			'@import "../../shared/tokens.css";\n' +
+				"@import url('../paper.css');\n" +
+				"body { background: url(../../shared/assets/grain.png); }\n",
+		);
+		writeDesignFile(root, join("frames", "dashboard", "local.svg"), "<svg/>");
+		writeDesignFile(
+			root,
+			join("frames", "dashboard", "styles", "hero.css"),
+			'.hero { mask: url("../local.svg"); }\n',
+		);
+		mkdirSync(join(designDir, "frames", "site"), { recursive: true });
+
+		const { to } = moveFolder(designDir, join("frames", "dashboard"), join("frames", "site", "dashboard"));
+
+		expect(read(to, "frame.css")).toBe(
+			'@import "shared/tokens.css";\n' +
+				"@import url('../../paper.css');\n" +
+				"body { background: url(shared/assets/grain.png); }\n",
+		);
+		// reaches up, but lands inside the folder that moved: left as written
+		expect(read(to, join("styles", "hero.css"))).toBe('.hero { mask: url("../local.svg"); }\n');
+	});
 });

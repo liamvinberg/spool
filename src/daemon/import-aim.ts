@@ -15,10 +15,11 @@ import { extname, join, posix, relative, resolve, sep } from "node:path";
  * again; anything else gets its relative path recomputed from where the file
  * stands now.
  *
- * Only import positions are read: `import`/`export ... from`, bare
- * `import "…"` and `import("…")`. A `../` in a comment, a JSX attribute or a
- * string the frame shows is the author's text and is never touched — the
- * canvas rearranges, it does not write.
+ * Two languages carry specifiers the compile follows, and each is read in its
+ * own positions only: a script's `import`/`export ... from`, bare `import "…"`
+ * and `import("…")`; a stylesheet's `@import` and `url()`. A `../` in a
+ * comment, a JSX attribute or a string the frame shows is the author's text
+ * and is never touched — the canvas rearranges, it does not write.
  *
  * What else is left alone: specifiers that stay inside the moved folder (they
  * moved with it), paths that answer to no file on disk (nothing to aim at),
@@ -61,10 +62,11 @@ function reaim(designDir: string, fromRel: string, oldDir: string, newDir: strin
 }
 
 /**
- * Where a specifier sits, as (lead, quote, spec) so the rewrite re-emits
- * exactly the surrounding characters it matched.
+ * Where a specifier sits in each language, as (lead, quote, spec) so the
+ * rewrite re-emits exactly the surrounding characters it matched.
  */
 const SCRIPT_SPECIFIER = /(\bfrom\s*|\bimport\s*\(?\s*)(["'])((?:\.\.\/)+[^"'\n]*)\2/g;
+const STYLE_SPECIFIER = /(@import\s*|url\(\s*)(["']?)((?:\.\.\/)+[^"')\s]*)\2/g;
 
 /** The files a specifier can live in; sidecars and images hold none. */
 const SYNTAX: Record<string, RegExp> = {
@@ -73,6 +75,7 @@ const SYNTAX: Record<string, RegExp> = {
 	".js": SCRIPT_SPECIFIER,
 	".jsx": SCRIPT_SPECIFIER,
 	".mjs": SCRIPT_SPECIFIER,
+	".css": STYLE_SPECIFIER,
 };
 
 /** How esbuild would finish an extensionless specifier, plus the file as named. */
