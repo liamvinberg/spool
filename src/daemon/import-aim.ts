@@ -26,12 +26,13 @@ import { extname, join, posix, relative, resolve, sep } from "node:path";
  * paths that escape design/ (the compile refuses those in its own words), and
  * a target that is itself mid-move in the same request — a frame reaching into
  * another frame's folder is outside the contract, and its old path answering
- * nothing is the signal to not guess.
+ * nothing is the signal to not guess. A rename or a copy beside the original
+ * keeps every count, so it is skipped whole and a copy stays byte-identical.
  */
 export function reaimEscapingImports(designDir: string, fromDir: string, toDir: string): void {
 	const fromRel = designRelative(designDir, fromDir);
 	const toRel = designRelative(designDir, toDir);
-	if (fromRel === toRel) return;
+	if (posix.dirname(fromRel) === posix.dirname(toRel)) return;
 	for (const file of filesUnder(toDir)) {
 		const syntax = SYNTAX[extname(file)];
 		if (syntax === undefined) continue;

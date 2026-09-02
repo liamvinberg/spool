@@ -136,4 +136,14 @@ describe("re-aiming escaping imports on a move", () => {
 		// reaches up, but lands inside the folder that moved: left as written
 		expect(read(to, join("styles", "hero.css"))).toBe('.hero { mask: url("../local.svg"); }\n');
 	});
+
+	it("skips a copy or rename beside the original, so a copy is byte-identical", () => {
+		const { root, designDir } = project();
+		const source = 'import { cn } from "../../shared/lib/utils";\nexport default () => cn();\n';
+		writeDesignFile(root, join("frames", "dashboard", "frame.tsx"), source);
+
+		const { to } = moveFolder(designDir, join("frames", "dashboard"), join("frames", "dashboard-copy"));
+
+		expect(read(to, "frame.tsx")).toBe(source);
+	});
 });
