@@ -1,6 +1,7 @@
 import { cn } from "shared/lib/utils";
-import { CloseIcon, PlusIcon, ThreadIcon } from "shared/ui/spool/icons";
+import { ThreadIcon } from "shared/ui/spool/icons";
 import { SpoolMark } from "shared/ui/spool/mark";
+import { TabStrip } from "shared/ui/spool/tab-strip";
 
 /**
  * The app shell: one 44px bar over everything — brand lockup as the home door,
@@ -45,39 +46,10 @@ export function SpoolShell({
 						<SpoolMark className="h-[18px] w-3.5 text-thread" />
 						<span className="font-semibold text-md tracking-tight leading-sm">spool</span>
 					</button>
-					<nav className="flex items-center gap-unit" aria-label="Projects">
-						{tabs.map((tab) => {
-							const active = tab === activeTab;
-							return (
-								<div
-									key={tab}
-									className={cn(
-										"group flex h-[26px] items-center rounded-md",
-										active && "border border-border-raised bg-raised",
-									)}
-								>
-									<span
-										className={cn(
-											"h-full pl-3 pr-1 text-base leading-[24px]",
-											active ? "font-medium text-text" : "text-muted",
-										)}
-									>
-										{tab}
-									</span>
-									<span className="flex h-full w-5 items-center justify-center pr-1 text-muted opacity-0 group-hover:opacity-100">
-										<CloseIcon className="h-2.5 w-2.5" />
-									</span>
-								</div>
-							);
-						})}
-						<button
-							type="button"
-							className="flex h-[26px] w-[26px] items-center justify-center rounded-sm text-muted hover:bg-surface"
-							aria-label="Open a project folder"
-						>
-							<PlusIcon className="h-2.5 w-2.5" />
-						</button>
-					</nav>
+					<TabStrip
+						tabs={tabs.map((tab) => ({ root: tab, name: tab }))}
+						focused={activeTab ?? null}
+					/>
 				</div>
 
 				{canvasControls || headerAccessory !== undefined ? (

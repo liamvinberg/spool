@@ -1,4 +1,3 @@
-import { motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	charWeights,
@@ -125,23 +124,21 @@ export function FindPalette({
 	const grid = useMemo(() => (rows === "split" ? columnsFor(hits.slice(0, 40)) : null), [rows, hits]);
 	const empty = query.trim().length === 0;
 
+	// the scrim and the panel wear the shipped animations rather than a library's
+	// copy of them: `animate-find-in` and `animate-find-panel-in` are what
+	// `src/ui/canvas/find-palette.tsx` puts on these two elements
 	return (
-		<motion.div
-			initial={{ opacity: 0 }}
-			animate={{ opacity: 1 }}
-			transition={{ duration: 0.14, ease: "easeOut" }}
-			className="absolute inset-0 z-30 flex justify-center bg-bg/48 px-8 pt-[104px] backdrop-blur-[2px]"
-		>
-			<motion.div
-				initial={{ y: -8 }}
-				animate={{ y: 0 }}
-				transition={{ duration: 0.18, ease: [0.22, 0.61, 0.36, 1] }}
+		<div className="absolute inset-0 z-30 flex animate-find-in justify-center bg-bg/48 px-8 pt-[104px] backdrop-blur-[2px]">
+			<div
+				role="dialog"
+				aria-modal="true"
+				aria-label="Find a frame"
 				// a caret that never leaves: clicking the panel is never clicking away from the field
 				onMouseDown={(event) => {
 					if (event.target !== inputRef.current) event.preventDefault();
 					inputRef.current?.focus();
 				}}
-				className="flex h-fit w-[560px] flex-col overflow-hidden rounded-lg border border-border-raised bg-surface"
+				className="flex h-fit w-[560px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-border-raised bg-surface"
 			>
 				<label className="flex h-12 shrink-0 items-center gap-3 border-border border-b px-4">
 					{/* the summon key, left as the prompt: the field says which key opened it */}
@@ -229,8 +226,8 @@ export function FindPalette({
 					<span>{"↵ lands there"}</span>
 					<span>esc closes</span>
 				</div>
-			</motion.div>
-		</motion.div>
+			</div>
+		</div>
 	);
 }
 
