@@ -1,29 +1,28 @@
-import { SearchIcon } from "shared/ui/spool/icons";
+import { PlusIcon, SearchIcon } from "shared/ui/spool/icons";
 import { ListBox, PickerStage } from "shared/ui/spool/picker-parts";
-import { Empty, MinRow, PathPrefix } from "shared/ui/explore/picker/picker-min";
+import { Empty, MinRow, PathPrefix, ROW } from "shared/ui/explore/picker/picker-min";
 import {
+	InitLine,
 	NameLine,
 	NamingField,
 	type NewSeed,
-	OfferRow,
 	useNewProject,
 } from "shared/ui/explore/new-project/new-project-parts";
 
 /**
- * Shape one: one more row.
+ * The door as a strip under the list.
  *
- * The list is where you answer which folder, and a folder that does not exist
- * yet is one more answer to that, so `new project…` is the last row of a browse
- * and it is quieter than the folders above it. Enter turns the field into the
- * name field: the prefix does not move, because it is still the location, and
- * the list collapses to the single line the folder is about to be. Nothing is
- * added to the dialog, and while you are naming there is less of it than there
- * was.
+ * A button inside the field competes with the field; a strip along the bottom
+ * of the panel does not compete with anything, and it has room to say what it
+ * is and what key does it without shrinking either. It is also always in the
+ * same place, which a last row of a scrolling list never is.
+ *
+ * What it costs is a band. The picker got down to a field and a list, and this
+ * gives one of the five back.
  */
-export function NewProjectRow({ seed }: { seed?: NewSeed | undefined }) {
+export function NewProjectStrip({ seed }: { seed?: NewSeed | undefined }) {
 	const np = useNewProject(seed);
 	const { picker } = np;
-	const here = picker.rows.some((row) => row.dir.path === picker.path && row.dir.isProject);
 
 	if (np.naming) {
 		return (
@@ -51,7 +50,7 @@ export function NewProjectRow({ seed }: { seed?: NewSeed | undefined }) {
 				/>
 			</label>
 
-			<ListBox picker={picker} min={0} max={476}>
+			<ListBox picker={picker} min={0} max={442}>
 				{picker.rows.length === 0 ? <Empty picker={picker} /> : null}
 				{picker.rows.map((row, index) => (
 					<MinRow
@@ -64,13 +63,20 @@ export function NewProjectRow({ seed }: { seed?: NewSeed | undefined }) {
 						onEnter={() => picker.enter(index)}
 					/>
 				))}
-				{picker.searching || here ? null : (
-					<OfferRow label="initialize design/ here" picked={false} onPress={picker.openHere} />
-				)}
-				{picker.searching ? null : (
-					<OfferRow label="new project…" hint="↵ names it" picked={false} onPress={np.begin} />
-				)}
+				{np.initing ? <InitLine path={picker.path} /> : null}
 			</ListBox>
+
+			<button
+				type="button"
+				onClick={np.begin}
+				style={{ height: ROW }}
+				className="flex w-full shrink-0 items-center gap-3 border-border border-t px-4 text-left text-muted transition-colors duration-100 hover:bg-raised hover:text-text"
+			>
+				<PlusIcon className="h-2.5 w-2.5 shrink-0" />
+				<span className="text-base leading-base">new project</span>
+				<span className="flex-1" />
+				<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">⌘N</span>
+			</button>
 		</PickerStage>
 	);
 }

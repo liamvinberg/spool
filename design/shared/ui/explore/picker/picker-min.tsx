@@ -72,7 +72,7 @@ export function MinRow({
 			onClick={onEnter}
 			style={{ height: ROW }}
 			className={cn(
-				"relative flex w-full items-center gap-3 px-4 text-left transition-colors duration-100",
+				"relative flex w-full items-center gap-3 px-4 text-left transition-colors duration-100 hover:bg-raised",
 				picked && "bg-raised",
 			)}
 		>
@@ -174,7 +174,7 @@ export function PickerField({ seed }: { seed?: Seed | undefined }) {
 						type="button"
 						onClick={picker.openHere}
 						style={{ height: ROW }}
-						className="flex w-full items-center gap-3 px-4 text-left"
+						className="flex w-full items-center gap-3 px-4 text-left transition-colors duration-100 hover:bg-raised"
 					>
 						<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
 						<span className="truncate text-base text-muted leading-base">initialize design/ here</span>

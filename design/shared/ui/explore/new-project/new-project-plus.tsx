@@ -1,29 +1,30 @@
-import { SearchIcon } from "shared/ui/spool/icons";
+import { PlusIcon, SearchIcon } from "shared/ui/spool/icons";
 import { ListBox, PickerStage } from "shared/ui/spool/picker-parts";
 import { Empty, MinRow, PathPrefix } from "shared/ui/explore/picker/picker-min";
 import {
+	InitLine,
 	NameLine,
 	NamingField,
 	type NewSeed,
-	OfferRow,
 	useNewProject,
 } from "shared/ui/explore/new-project/new-project-parts";
 
 /**
- * Shape one: one more row.
+ * A "+" at the end of the field.
  *
- * The list is where you answer which folder, and a folder that does not exist
- * yet is one more answer to that, so `new project…` is the last row of a browse
- * and it is quieter than the folders above it. Enter turns the field into the
- * name field: the prefix does not move, because it is still the location, and
- * the list collapses to the single line the folder is about to be. Nothing is
- * added to the dialog, and while you are naming there is less of it than there
- * was.
+ * Finder has put New Folder in the same place for twenty years, so the button
+ * is a thing people already know how to find rather than a row they have to
+ * read. It is quiet until the cursor is on it, it costs the field nothing it
+ * was using, and it never asks you to type a word that does not exist yet:
+ * press it and the field becomes a name field with the folder you are standing
+ * in still printed in front of the caret.
+ *
+ * The offer to initialize a plain folder is gone from the browse. It appears
+ * where it always did, once Enter has actually landed on one.
  */
-export function NewProjectRow({ seed }: { seed?: NewSeed | undefined }) {
+export function NewProjectPlus({ seed }: { seed?: NewSeed | undefined }) {
 	const np = useNewProject(seed);
 	const { picker } = np;
-	const here = picker.rows.some((row) => row.dir.path === picker.path && row.dir.isProject);
 
 	if (np.naming) {
 		return (
@@ -36,7 +37,7 @@ export function NewProjectRow({ seed }: { seed?: NewSeed | undefined }) {
 
 	return (
 		<PickerStage width={520} top={162}>
-			<label className="flex h-[52px] shrink-0 items-center gap-2 px-4">
+			<div className="flex h-[52px] shrink-0 items-center gap-2 px-4">
 				<SearchIcon className="h-3 w-3 shrink-0 text-muted/45" />
 				{picker.searching ? null : <PathPrefix picker={picker} />}
 				<input
@@ -49,7 +50,16 @@ export function NewProjectRow({ seed }: { seed?: NewSeed | undefined }) {
 					onKeyDown={picker.onKeyDown}
 					className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none"
 				/>
-			</label>
+				<button
+					type="button"
+					onClick={np.begin}
+					title="new project ⌘N"
+					aria-label="New project"
+					className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-100 hover:bg-raised hover:text-text"
+				>
+					<PlusIcon className="h-2.5 w-2.5" />
+				</button>
+			</div>
 
 			<ListBox picker={picker} min={0} max={476}>
 				{picker.rows.length === 0 ? <Empty picker={picker} /> : null}
@@ -64,12 +74,7 @@ export function NewProjectRow({ seed }: { seed?: NewSeed | undefined }) {
 						onEnter={() => picker.enter(index)}
 					/>
 				))}
-				{picker.searching || here ? null : (
-					<OfferRow label="initialize design/ here" picked={false} onPress={picker.openHere} />
-				)}
-				{picker.searching ? null : (
-					<OfferRow label="new project…" hint="↵ names it" picked={false} onPress={np.begin} />
-				)}
+				{np.initing ? <InitLine path={picker.path} /> : null}
 			</ListBox>
 		</PickerStage>
 	);

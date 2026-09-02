@@ -3,7 +3,7 @@ import { shortPath } from "shared/lib/spool/picker-disk";
 import { cn } from "shared/lib/utils";
 import { FolderIcon } from "shared/ui/spool/icons";
 import { type Picker, usePicker } from "shared/ui/spool/picker-parts";
-import { ROW, type Seed, useAt } from "shared/ui/explore/picker/picker-min";
+import { PathPrefix, ROW, type Seed, useAt } from "shared/ui/explore/picker/picker-min";
 
 /**
  * Making the folder from inside spool ([#242](https://github.com/liamvinberg/spool/issues/242)).
@@ -25,6 +25,8 @@ import { ROW, type Seed, useAt } from "shared/ui/explore/picker/picker-min";
 export interface NewProject {
 	readonly picker: Picker;
 	readonly naming: boolean;
+	/** Enter landed on a plain folder: the offer to scaffold it is standing */
+	readonly initing: boolean;
 	readonly name: string;
 	readonly nameRef: React.RefObject<HTMLInputElement | null>;
 	readonly begin: () => void;
@@ -35,6 +37,8 @@ export interface NewProject {
 export interface NewSeed extends Seed {
 	readonly naming?: boolean;
 	readonly name?: string;
+	/** the frame opens on the answer Enter gets from a folder spool does not know */
+	readonly init?: boolean;
 }
 
 export function useNewProject(seed: NewSeed = {}): NewProject {
@@ -58,6 +62,7 @@ export function useNewProject(seed: NewSeed = {}): NewProject {
 	return {
 		picker,
 		naming,
+		initing: (seed.init ?? false) || picker.landed?.kind === "init",
 		name,
 		nameRef,
 		begin: () => setNaming(true),
@@ -106,7 +111,7 @@ export function OfferRow({
 			onClick={onPress}
 			style={{ height: ROW }}
 			className={cn(
-				"relative flex w-full items-center gap-3 px-4 text-left transition-colors duration-100",
+				"relative flex w-full items-center gap-3 px-4 text-left transition-colors duration-100 hover:bg-raised",
 				picked && "bg-raised",
 			)}
 		>
@@ -118,5 +123,72 @@ export function OfferRow({
 				<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">{hint}</span>
 			)}
 		</button>
+	);
+}
+
+/**
+ * The field while a project is being named.
+ *
+ * The prefix does not move, because it is still the location: the only thing
+ * that changed is which word the caret is putting after it. The glyph goes
+ * thread-coloured, which is the whole announcement that the field means
+ * something else now.
+ */
+export function NamingField({ np }: { np: NewProject }) {
+	return (
+		<label className="flex h-[52px] shrink-0 items-center gap-2 px-4">
+			<FolderIcon className="h-3 w-3 shrink-0 text-thread" />
+			<PathPrefix picker={np.picker} />
+			<input
+				ref={np.nameRef}
+				value={np.name}
+				spellCheck={false}
+				autoComplete="off"
+				placeholder="name"
+				aria-label="Project name"
+				onChange={(event) => np.setName(event.target.value)}
+				onKeyDown={np.onNameKeyDown}
+				className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none placeholder:text-muted/35"
+			/>
+		</label>
+	);
+}
+
+/** the list, collapsed to the one line the folder is about to be */
+export function NameLine({ np }: { np: NewProject }) {
+	return (
+		<div className="py-1.5">
+			<div style={{ height: ROW }} className="relative flex w-full items-center gap-3 bg-raised px-4">
+				<span className="absolute top-1 bottom-1 left-0 w-[2px] rounded-full bg-thread" />
+				<FolderIcon className="h-3 w-3 shrink-0 text-thread/70" />
+				<Target parent={np.picker.path} name={np.name} />
+				<span className="flex-1" />
+				<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">↵ creates</span>
+			</div>
+		</div>
+	);
+}
+
+/**
+ * What the picker says when Enter lands on a folder it does not recognise.
+ *
+ * The shipped dialog says this in its footer. There is no footer here, so it is
+ * one line in the list area, and it is the only place the offer appears: a
+ * standing `initialize design/ here` row in every browse was an answer to a
+ * question nobody had asked yet.
+ */
+export function InitLine({ path }: { path: string }) {
+	return (
+		<div
+			style={{ height: ROW }}
+			className="flex w-full items-center gap-2.5 px-4 font-mono text-2xs leading-3"
+		>
+			<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
+			<span className="min-w-0 truncate text-muted/55">{`${shortPath(path)} is not a spool project`}</span>
+			<span className="text-muted/25">·</span>
+			<span className="shrink-0 text-muted">↵ initializes design/ here</span>
+			<span className="text-muted/25">·</span>
+			<span className="shrink-0 text-muted/55">esc goes back</span>
+		</div>
 	);
 }
