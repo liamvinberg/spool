@@ -427,6 +427,9 @@ export function PickerStage({
  * costs nothing when the list is short, where it lies over the panel's own
  * colour and is invisible.
  */
+/** a row's height, the one number the fade rule needs */
+const ROW = 34;
+
 export function ListBox({
 	picker,
 	min,
@@ -447,7 +450,9 @@ export function ListBox({
 			>
 				{children}
 			</div>
-			<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface via-surface/80 to-transparent" />
+			{picker.rows.length * ROW > max ? (
+				<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface via-surface/80 to-transparent" />
+			) : null}
 		</div>
 	);
 }
