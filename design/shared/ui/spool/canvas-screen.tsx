@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { cn } from "shared/lib/utils";
-import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { CoffeeScreen, type CoffeeScreenName } from "shared/ui/demo/coffee-screens";
+import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
+import { ContextMenu } from "shared/ui/spool/context-menu";
 import { SpoolShell } from "shared/ui/spool/shell";
+import { TrashToast } from "shared/ui/spool/trash-toast";
 import { type Mark, UnseenMark } from "shared/ui/spool/unseen-mark";
 
 /**
@@ -60,33 +62,13 @@ function CanvasStage({ variant, playTarget }: { variant: CanvasSpecimen; playTar
 				<ThreadSvg variant={variant} />
 				<CanvasFrame left={40} top={130} screen="menu" paused />
 				<CanvasFrame left={340} top={100} screen="receipt" paused />
-				<div className="absolute top-[250px] left-[630px] flex w-[220px] flex-col rounded-md border border-border-raised bg-raised p-unit">
-					<MenuItem go={playTarget} keys="P">
-						Play from here
-					</MenuItem>
-					<MenuItem>Open in editor</MenuItem>
-					<MenuItem keys="R">Reload frame</MenuItem>
-					<MenuDivider />
-					<MenuItem keys="⇧A">Tidy page</MenuItem>
-					<MenuItem>Export as PNG</MenuItem>
-					<MenuDivider />
-					<MenuItem keys="⌫" onClick={() => setToastVisible(true)}>
-						Move to Trash
-					</MenuItem>
-				</div>
-				{toastVisible ? (
-					<div className="absolute bottom-24 left-1/2 flex -translate-x-1/2 items-center gap-4 rounded-md border border-border-raised bg-raised px-3.5 py-2.5">
-						<span className="text-base leading-base">Moved cart to Trash</span>
-						<button
-							type="button"
-							onClick={() => setToastVisible(false)}
-							className="cursor-pointer font-medium text-base text-thread leading-base"
-						>
-							Undo
-						</button>
-						<span className="font-mono text-muted text-xs leading-xs">⌘Z</span>
-					</div>
-				) : null}
+				<ContextMenu
+					at={{ x: 630, y: 250 }}
+					playTarget={playTarget}
+					exportAction={{ selectionCount: 1 }}
+					onTrash={() => setToastVisible(true)}
+				/>
+				{toastVisible ? <TrashToast frames={["cart"]} onUndo={() => setToastVisible(false)} /> : null}
 			</>
 		);
 	}
@@ -98,36 +80,6 @@ function CanvasStage({ variant, playTarget }: { variant: CanvasSpecimen; playTar
 			<CanvasFrame left={625} top={110} screen="receipt" paused />
 		</>
 	);
-}
-
-function MenuItem({
-	children,
-	keys,
-	go,
-	onClick,
-}: {
-	children: React.ReactNode;
-	keys?: string;
-	go?: string | undefined;
-	onClick?: () => void;
-}) {
-	return (
-		<button
-			type="button"
-			data-go={go}
-			onClick={onClick}
-			className="flex h-[30px] items-center rounded-sm px-3 text-left text-base leading-[14px] hover:bg-surface"
-		>
-			{children}
-			{keys === undefined ? null : (
-				<span className="ml-auto font-mono text-2xs text-muted leading-3">{keys}</span>
-			)}
-		</button>
-	);
-}
-
-function MenuDivider() {
-	return <div className="mx-auto my-unit h-px w-[196px] bg-border-raised" />;
 }
 
 function CanvasFrame({

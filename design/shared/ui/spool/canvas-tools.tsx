@@ -27,25 +27,13 @@ const TOOLS: readonly ToolMeta[] = [
 	{ id: "hand", label: "hand", key: "H", hold: "hold space", Icon: HandIcon },
 ];
 
-export function CanvasTools({
-	tool,
-	onTool,
-	live = true,
-}: {
-	tool: CanvasTool;
-	onTool?: ((tool: CanvasTool) => void) | undefined;
-	/** a still specimen keeps the bar and drops the hover, so a shot reads as one state */
-	live?: boolean;
-}) {
+export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool?: ((tool: CanvasTool) => void) | undefined }) {
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-6 z-20 flex justify-center">
 			<div
 				role="toolbar"
 				aria-label="canvas tools"
-				className={cn(
-					"flex items-center gap-0.5 rounded-lg border border-border-raised bg-bg/90 p-1 backdrop-blur",
-					live && "pointer-events-auto",
-				)}
+				className="pointer-events-auto flex items-center gap-0.5 rounded-lg border border-border-raised bg-bg/90 p-1 backdrop-blur"
 				onPointerDown={(event) => event.stopPropagation()}
 				onPointerMove={(event) => event.stopPropagation()}
 				onDoubleClick={(event) => event.stopPropagation()}

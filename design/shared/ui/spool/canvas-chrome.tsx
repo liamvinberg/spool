@@ -1,8 +1,8 @@
-import { motion, useReducedMotion } from "motion/react";
 import type { ReactNode } from "react";
 import type { Life } from "shared/lib/spool/agent-threads";
 import { cn } from "shared/lib/utils";
-import { AgentIcon, ChevronIcon, FolderIcon, HandIcon, PanelCaret, PropertiesIcon, SelectIcon } from "shared/ui/spool/icons";
+import { type CanvasTool, CanvasTools } from "shared/ui/spool/canvas-tools";
+import { AgentIcon, ChevronIcon, FolderIcon, FrameIcon, PanelCaret, PropertiesIcon } from "shared/ui/spool/icons";
 import { NumField, Row, Section, VALUE } from "shared/ui/spool/properties-fields";
 import { ThreadMark } from "shared/ui/spool/thread-mark";
 import { type Mark, UnseenMark } from "shared/ui/spool/unseen-mark";
@@ -72,7 +72,7 @@ export function CanvasChrome({
 	/** the selected frame, as both rails show it; nothing selected is a real state */
 	selected?: string | undefined;
 	/** `none` draws no tool bar at all, for a surface with nothing to point at (#189) */
-	tool?: "select" | "hand" | "none" | undefined;
+	tool?: CanvasTool | "none" | undefined;
 	/**
 	 * What stands in the dock's panel. Absent draws the shipped properties rail;
 	 * `null` shuts the column to the strip. A proposal's rail is drawn at
@@ -96,7 +96,7 @@ export function CanvasChrome({
 			<PagesRail pages={pages} selected={selected} targets={targets} />
 			<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">
 				{children}
-				<CanvasTools tool={tool} />
+				{tool === "none" ? null : <CanvasTools tool={tool} />}
 			</div>
 			<Dock lit={lit} width={shut ? 0 : rail === undefined ? PROPERTIES_W : railWidth} life={life}>
 				{rail === undefined ? <FrameHeld name={selected} /> : rail}
@@ -221,17 +221,23 @@ function PageBlock({
 								className={cn("relative flex h-7 items-center", frame === selected && "bg-surface")}
 							>
 								<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
-								<span
-									className={cn(
-										"min-w-0 truncate pl-[34px] font-mono text-sm leading-sm",
-										frame === selected || page.unseen?.[frame] !== undefined
-											? "text-text"
-											: target === undefined
-												? "text-muted"
-												: "text-text/85",
-									)}
-								>
-									{frame}
+								{/* contentX(1) in `rail-rows.ts`: one indent step of 10, off the 24 margin */}
+								<span className="flex min-w-0 flex-1 items-center gap-2 pl-[34px]">
+									<FrameIcon
+										className={cn("h-3.5 w-3.5 shrink-0", frame === selected ? "text-thread" : "text-muted")}
+									/>
+									<span
+										className={cn(
+											"min-w-0 flex-1 truncate font-mono text-xs leading-xs",
+											frame === selected || page.unseen?.[frame] !== undefined
+												? "text-text"
+												: target === undefined
+													? "text-muted"
+													: "text-text/85",
+										)}
+									>
+										{frame}
+									</span>
 								</span>
 									<FrameMark mark={page.unseen?.[frame]} className="ml-auto" />
 								{target === undefined ? null : (
@@ -274,37 +280,6 @@ function WalkTick({ className }: { className?: string | undefined }) {
 			<path d="M0.5 4h6" stroke="currentColor" strokeWidth="1.5" />
 			<path d="m9.5 4-3-1.8v3.6Z" fill="currentColor" />
 		</svg>
-	);
-}
-
-const TOOLS = [
-	{ id: "select", label: "select", key: "V", Icon: SelectIcon },
-	{ id: "hand", label: "hand", key: "H", Icon: HandIcon },
-] as const;
-
-function CanvasTools({ tool }: { tool: "select" | "hand" | "none" }) {
-	if (tool === "none") return null;
-	return (
-		<div className="pointer-events-none absolute inset-x-0 bottom-6 z-20 flex justify-center">
-			<div
-				role="toolbar"
-				aria-label="canvas tools"
-				className="flex items-center gap-0.5 rounded-lg border border-border-raised bg-bg/90 p-1 backdrop-blur"
-			>
-				{TOOLS.map((meta) => (
-					<span
-						key={meta.id}
-						aria-label={meta.label}
-						className={cn(
-							"flex h-9 w-9 items-center justify-center rounded-md",
-							tool === meta.id ? "bg-raised text-text" : "text-muted",
-						)}
-					>
-						<meta.Icon className="h-[18px] w-[18px]" />
-					</span>
-				))}
-			</div>
-		</div>
 	);
 }
 
@@ -400,8 +375,9 @@ function Dock({
 	children: ReactNode;
 }) {
 	return (
-		<aside aria-label="Dock" className="relative z-20 flex h-full shrink-0">
+		<aside aria-label="Dock" data-dock="" className="relative z-20 flex h-full shrink-0">
 			<div
+				data-dock-panel=""
 				className="relative h-full shrink-0 overflow-hidden transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none"
 				style={{ width }}
 			>
@@ -416,6 +392,7 @@ function Dock({
 				)}
 			</div>
 			<div
+				data-dock-strip=""
 				className="flex h-full shrink-0 flex-col items-center gap-1 border-border border-l bg-bg pt-1.5"
 				style={{ width: STRIP_W }}
 			>
@@ -447,10 +424,12 @@ function Glyph({
 	life?: Life | undefined;
 	children: ReactNode;
 }) {
-	const still = useReducedMotion() === true;
 	return (
 		<button
 			type="button"
+			// a project may hold a page called `agent`, and the pages rail labels its
+			// row's chevron "Expand agent" too, so the glyph carries a hook of its own
+			data-dock-glyph={label}
 			aria-label={`${lit ? "Shut" : "Expand"} ${label}`}
 			aria-pressed={lit}
 			className={cn(
@@ -464,18 +443,15 @@ function Glyph({
 					viewBox="0 0 14 14"
 					aria-hidden="true"
 					fill="none"
-					className="-right-1 absolute top-0 h-3 w-3 animate-spin text-text/60"
+					className="-right-1 absolute top-0 h-3 w-3 animate-agent-spin text-text/60"
 				>
 					<circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.6" strokeOpacity="0.26" />
 					<path d="M7 2.4A4.6 4.6 0 0 1 11.6 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
 				</svg>
 			) : life === "unread" ? (
-				<motion.span
+				<span
 					aria-hidden="true"
-					className="-right-0.5 absolute top-0.5 h-1.5 w-1.5 rounded-full bg-thread"
-					initial={still ? false : { opacity: 0, scale: 0.4 }}
-					animate={{ opacity: 1, scale: 1 }}
-					transition={{ duration: 0.2, ease: [0.22, 0.61, 0.36, 1] }}
+					className="-right-0.5 absolute top-0.5 h-1.5 w-1.5 animate-unseen-in rounded-full bg-thread"
 				/>
 			) : null}
 		</button>
