@@ -88,45 +88,6 @@ export function Target({ parent, name }: { parent: string; name: string }) {
 }
 
 /**
- * The offer, drawn as a row.
- *
- * Same height, same glyph, same gaps as a folder that is actually there, one
- * shade quieter. The list is where you answer "which folder", and a folder that
- * does not exist yet is one more answer to that.
- */
-export function OfferRow({
-	label,
-	hint,
-	picked,
-	onPress,
-}: {
-	label: React.ReactNode;
-	hint?: string | undefined;
-	picked: boolean;
-	onPress: () => void;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onPress}
-			style={{ height: ROW }}
-			className={cn(
-				"relative flex w-full items-center gap-3 px-4 text-left transition-colors duration-100 hover:bg-raised",
-				picked && "bg-raised",
-			)}
-		>
-			{picked ? <span className="absolute top-1 bottom-1 left-0 w-[2px] rounded-full bg-thread" /> : null}
-			<FolderIcon className={cn("h-3 w-3 shrink-0", picked ? "text-thread/70" : "text-muted/30")} />
-			<span className="min-w-0 shrink truncate text-base text-muted leading-base">{label}</span>
-			<span className="flex-1" />
-			{hint === undefined ? null : (
-				<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">{hint}</span>
-			)}
-		</button>
-	);
-}
-
-/**
  * The field while a project is being named.
  *
  * The prefix does not move, because it is still the location: the only thing
