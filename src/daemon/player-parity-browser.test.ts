@@ -16,38 +16,12 @@ interface Probe {
 }
 
 /**
- * Summon the edge bar. It is away while a prototype is being used and comes
- * back only when the cursor rests against the top edge of the window (#227), so
- * every press on one of its controls has to ask for it first, exactly as a hand
- * would.
+ * Wait for the bar. It is worn rather than summoned (#227): it is there as soon
+ * as the page is, so every press on one of its controls only has to wait for
+ * the page.
  */
 async function summonEdgeBar(page: Page): Promise<void> {
-	const size = page.viewportSize();
-	if (size === null) return;
-	/*
-	 * The strip the bar answers is over the frame, and mouse events inside an iframe
-	 * never reach the document around it — so this ask only counts once the frame's
-	 * own runtime is listening and forwarding it as `player-wake` (#227). An ask that
-	 * lands while the frame is still booting is dropped, and one move followed by a
-	 * wait then sat out its whole timeout waiting for a report nobody was going to send.
-	 *
-	 * So it keeps asking until the chrome answers, rather than trusting one to land.
-	 */
-	const edge = page.locator(".spool-edge");
-	await expect
-		.poll(
-			async () => {
-				// Away and back, because a move to where the pointer already is is
-				// not a move — and because the reveal is a dwell, which every fresh
-				// report starts over.
-				await page.mouse.move(size.width / 2, size.height / 2);
-				await page.mouse.move(size.width / 2, 2);
-				await page.waitForTimeout(400);
-				return (await edge.getAttribute("class")) ?? "";
-			},
-			{ timeout: 30_000 },
-		)
-		.toContain("is-open");
+	await expect.poll(() => page.locator(".spool-top:not(.is-away)").count(), { timeout: 30_000 }).toBe(1);
 }
 
 /** Ask for the bar, open the switcher, and walk to a screen — a controller command a hand can send. */
@@ -525,14 +499,14 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 	);
 	const live = player.frames().find((frame) => frame !== player.mainFrame()) as Frame;
 	// The played page is the authored width capped against the window and the
-	// window's own height (#227), so the bare document it is measured against
-	// has to be that box — the law is that one viewport renders one way, not
-	// that every surface hands a frame the same viewport.
-	await bare.setViewportSize({ width: 390, height: 900 });
+	// window's own height less the bar (#227), so the bare document it is
+	// measured against has to be that box — the law is that one viewport renders
+	// one way, not that every surface hands a frame the same viewport.
+	await bare.setViewportSize({ width: 390, height: 870 });
 	await bareFrame.locator("#probe").waitFor();
 	const barePlayedProbe = await read(bareFrame);
 	const playerProbe = await read(live);
-	expect(playerProbe.viewport).toEqual({ width: 390, height: 900 });
+	expect(playerProbe.viewport).toEqual({ width: 390, height: 870 });
 	expect(playerProbe).toEqual(barePlayedProbe);
 	expect(canvasProbe).toEqual(bareProbe);
 	const initialTrace = await player.evaluate(
@@ -589,8 +563,8 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 		{ timeout: 5_000 },
 	);
 	const crossProbe = await read(live);
-	expect(crossProbe.viewport).toEqual({ width: 720, height: 900 });
-	expect(await playerFrame.locator("#first-viewport").innerText()).toBe("720×900");
+	expect(crossProbe.viewport).toEqual({ width: 720, height: 870 });
+	expect(await playerFrame.locator("#first-viewport").innerText()).toBe("720×870");
 	expect(crossProbe.rect).toEqual({ width: 200, height: 100, x: bareProbe.rect.x, y: bareProbe.rect.y });
 	expect(
 		await live.evaluate(() => (window as unknown as { __spoolTransitions: () => number }).__spoolTransitions()),
@@ -614,8 +588,8 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 	});
 	expect(liveGeometry.status).toBe(204);
 	await geometryRefresh;
-	await live.waitForFunction(() => innerWidth === 600 && innerHeight === 900, undefined, { timeout: 5_000 });
-	expect((await read(live)).viewport).toEqual({ width: 600, height: 900 });
+	await live.waitForFunction(() => innerWidth === 600 && innerHeight === 870, undefined, { timeout: 5_000 });
+	expect((await read(live)).viewport).toEqual({ width: 600, height: 870 });
 
 	// Stale generation, stale frame, wrong dimensions, malformed nested state,
 	// and a forged WindowProxy are all inert.
@@ -691,7 +665,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 				requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
 			}),
 	);
-	expect((await read(live)).viewport).toEqual({ width: 600, height: 900 });
+	expect((await read(live)).viewport).toEqual({ width: 600, height: 870 });
 	expect(await player.locator(".spool-bar-name").textContent()).toBe("cross");
 	expect(await player.locator('[role="dialog"]').count()).toBe(0);
 });
@@ -724,7 +698,7 @@ it("plays a frame whose name is inherited by ordinary objects", { timeout: 60_00
 		await inner.locator("#constructor-frame").evaluate(() => ({ width: innerWidth, height: innerHeight })),
 	).toEqual({
 		width: 390,
-		height: 900,
+		height: 870,
 	});
 });
 
@@ -1110,7 +1084,7 @@ export default function Start() {
 	await inner.locator("#target").waitFor();
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 900,
+		height: 870,
 	});
 	await expect.poll(targetVerified).toBe(true);
 });
@@ -1291,7 +1265,7 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 	);
 	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 600,
-		height: 900,
+		height: 870,
 	});
 	const visibleSizes = await page.evaluate(
 		() => (window as unknown as { __spoolVisibleSizes: string[] }).__spoolVisibleSizes,
@@ -1304,7 +1278,7 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 	await inner.locator("#target").waitFor();
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 600,
-		height: 900,
+		height: 870,
 	});
 });
 
@@ -1338,7 +1312,7 @@ it("reveals the last valid geometry while live geometry transport retries", { ti
 	);
 	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 390,
-		height: 900,
+		height: 870,
 	});
 	await expect.poll(() => geometryRequests, { timeout: 5_000 }).toBeGreaterThanOrEqual(2);
 });
@@ -1367,7 +1341,7 @@ it("reveals the preflight geometry while the first live geometry request hangs",
 	);
 	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 390,
-		height: 900,
+		height: 870,
 	});
 });
 
@@ -1462,7 +1436,7 @@ export default function Start() {
 	);
 	expect(await inner.locator("#start").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 640,
-		height: 900,
+		height: 870,
 	});
 });
 
@@ -1548,11 +1522,11 @@ it("finishes an in-flight cut at the latest live geometry", { timeout: 60_000 },
 		undefined,
 		{ timeout: 5_000 },
 	);
-	expect(await inner.locator("#target-viewport").innerText()).toBe("600×900");
+	expect(await inner.locator("#target-viewport").innerText()).toBe("600×870");
 	expect(await inner.locator("#target-viewport").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual(
 		{
 			width: 600,
-			height: 900,
+			height: 870,
 		},
 	);
 
@@ -1615,7 +1589,7 @@ export default function Target() {
 	expect(await inner.locator("#attempts").innerText()).toBe("1");
 	expect(await inner.locator("#after").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 900,
+		height: 870,
 	});
 });
 
@@ -1738,10 +1712,10 @@ it("ignores an older geometry response released during a cut", { timeout: 60_000
 		undefined,
 		{ timeout: 5_000 },
 	);
-	expect(await inner.locator("#target-viewport").innerText()).toBe("600×900");
+	expect(await inner.locator("#target-viewport").innerText()).toBe("600×870");
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 600,
-		height: 900,
+		height: 870,
 	});
 });
 
@@ -1809,7 +1783,7 @@ it("classifies old-same new-cross walks from the shell's latest geometry", { tim
 	);
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 900,
+		height: 870,
 	});
 
 	await page.evaluate(() => {
@@ -1888,7 +1862,7 @@ it("classifies old-cross new-same walks from the shell's latest geometry", { tim
 	);
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 390,
-		height: 900,
+		height: 870,
 	});
 
 	await page.evaluate(() => {
@@ -2004,10 +1978,10 @@ it("reclassifies a queued transition when newer geometry arrives before runtime 
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×900");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×870");
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 900,
+		height: 870,
 	});
 });
 
@@ -2064,7 +2038,7 @@ it("mounts a target at newer geometry while its stale transition is held", { tim
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×900");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×870");
 
 	await page.evaluate(() => {
 		(
@@ -2074,7 +2048,7 @@ it("mounts a target at newer geometry while its stale transition is held", { tim
 		).__spoolTransitionGate.release();
 	});
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×900");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×870");
 });
 
 it("reclassifies newer geometry while a transition commit is held", { timeout: 60_000 }, async () => {
@@ -2143,7 +2117,7 @@ it("reclassifies newer geometry while a transition commit is held", { timeout: 6
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×900");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×870");
 
 	await page.evaluate(() => {
 		(
@@ -2154,7 +2128,7 @@ it("reclassifies newer geometry while a transition commit is held", { timeout: 6
 	});
 	await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 	expect(await page.locator(".spool-bar-name").innerText()).toBe("target");
-	expect(await inner.locator("#first-viewport").innerText()).toBe("720×900");
+	expect(await inner.locator("#first-viewport").innerText()).toBe("720×870");
 });
 
 it("settles newer geometry before revealing a transition whose apply is held", { timeout: 60_000 }, async () => {
@@ -2231,10 +2205,10 @@ it("settles newer geometry before revealing a transition whose apply is held", {
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#viewport").innerText()).toBe("720×900");
+	expect(await inner.locator("#viewport").innerText()).toBe("720×870");
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 900,
+		height: 870,
 	});
 });
 
@@ -2348,7 +2322,7 @@ it("reveals a settling transition on geometry newer than the one it armed on", {
 			document.querySelector<HTMLIFrameElement>("#spool-player")?.style.opacity === "1" &&
 			document.querySelector(".spool-bar-name")?.textContent === "target",
 	);
-	expect(await inner.locator("#viewport").innerText()).toBe("640×900");
+	expect(await inner.locator("#viewport").innerText()).toBe("640×870");
 });
 
 it("runs a queued walk after a pending transition settles", { timeout: 60_000 }, async () => {
@@ -2933,7 +2907,7 @@ it("cuts when the source viewport no longer matches same-size shell geometry", {
 	);
 	expect(await inner.locator("#target").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 900,
+		height: 870,
 	});
 });
 
@@ -2970,7 +2944,7 @@ export default function Start() {
 	await inner.locator("#next").waitFor();
 	expect(await inner.locator("#next").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 390,
-		height: 900,
+		height: 870,
 	});
 });
 
@@ -3044,10 +3018,10 @@ export default function Start() {
 		{ timeout: 5_000 },
 	);
 	await inner.locator("#next").waitFor();
-	expect(await inner.locator("#next-viewport").innerText()).toBe("720×900");
+	expect(await inner.locator("#next-viewport").innerText()).toBe("720×870");
 	expect(await inner.locator("#next").evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({
 		width: 720,
-		height: 900,
+		height: 870,
 	});
 });
 
@@ -3347,9 +3321,6 @@ it("keeps a ready player visible after a late authored exception", { timeout: 60
 			),
 		)
 		.toBe(1);
-	// the bar is still up from the switcher, and it sits over the top of the page
-	await page.mouse.move(640, 500);
-	await expect.poll(() => page.locator(".spool-edge.is-open").count()).toBe(0);
 	await inner.locator("#away").click();
 	await page.waitForTimeout(250);
 
@@ -3511,12 +3482,6 @@ export default function Next() {
 	await inner.locator("#count").filter({ hasText: "2" }).waitFor();
 	expect(await page.locator(".spool-bar-name").textContent()).toBe("menu");
 
-	// working inside the prototype keeps the chrome away, wherever the movement
-	// happens to be — including inside the frame's own document, which reports
-	// its pointer over the wire (#227)
-	await inner.locator("body").hover({ position: { x: 200, y: 300 } });
-	await page.waitForTimeout(500);
-	expect(await page.locator(".spool-edge.is-open").count()).toBe(0);
 	await summonEdgeBar(page);
 
 	await page.locator("#spool-close").click();
@@ -3555,9 +3520,6 @@ it("keeps terminal poster and chrome behavior through the control shell", { time
 	expect(viewport).toEqual({ width: 720, height: 480 });
 	expect(await page.locator("#spool-player").evaluate((host) => getComputedStyle(host).opacity)).toBe("1");
 
-	// nothing inside a terminal's own document reports a pointer, so the bar is
-	// summoned from the page background the centred grid leaves above it
-	expect(await page.locator(".spool-edge.is-open").count()).toBe(0);
 	await summonEdgeBar(page);
 	expect(await page.locator(".spool-bar-name").textContent()).toBe("dash");
 });

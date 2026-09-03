@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { fulfillClipboardCopy, rejectClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { Player, type PlayerController } from "./player-chrome";
-import { DESK_BAR_PX, deskWindow } from "./player-page";
+import { DESK_BAR_PX, deskWindow, readBarHidden } from "./player-page";
 
 /**
  * The player shell: the trusted half of a played session. It holds the
@@ -46,13 +46,6 @@ export interface PlayerShellHost {
 	/** A walk the session really took, for the flow graph's verified marks. */
 	walked(from: string, to: string): void;
 	/**
-	 * Where the pointer is inside the player, in window space — the iframe sits
-	 * at the top of the page unscaled, so those are the same coordinates. Null
-	 * means it left the document altogether, which is what stops a pass through
-	 * the top edge from summoning the edge bar.
-	 */
-	point(y: number | null): void;
-	/**
 	 * Earn a fresh handoff after a spent one (#88) — reported so the shell knows
 	 * whether the repair was taken or the failure is the reader's to see.
 	 */
@@ -81,6 +74,12 @@ export interface PlayerShell {
 	geometryApplied(revision: number, frames: { name: string; w: number; h: number }[]): void;
 	/** Replay the last geometry the shell was given, at a fresh revision. */
 	geometryReplay(): void;
+	/**
+	 * How much of the window the bar stands in front of. The tab's bar can be
+	 * put away and worn again, and the frame's box is the window less the bar,
+	 * so each change is a geometry change: re-derived and replayed like a resize.
+	 */
+	inset(px: number): void;
 	destroy(): void;
 }
 
@@ -294,13 +293,13 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	};
 
 	/**
-	 * What the app's window spends on chrome the tab does not (#275). The tab's
-	 * bar is summoned and floats over the page, so it costs the frame nothing;
-	 * the play window's bar is permanent and stands above it, so the frame's box
-	 * is that much shorter than the window. Read once, because a document cannot
-	 * change which shell it is in.
+	 * What the bar spends of the window (#275, #227). Worn, it stands above the
+	 * page and the frame's box is that much shorter than the window; put away in
+	 * a tab, it costs the frame nothing, and a peek floats over the page rather
+	 * than insetting it. The first value is read here so the first played box is
+	 * right before the chrome has mounted to say so; the chrome keeps it current.
 	 */
-	const chromeInset = deskWindow() === null ? 0 : DESK_BAR_PX;
+	let chromeInset = deskWindow() !== null || !readBarHidden() ? DESK_BAR_PX : 0;
 
 	/**
 	 * The box the page really gives a frame (#227): the authored width as a cap
@@ -452,6 +451,11 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		const revision = geometryRevision + 1;
 		geometryPending(revision);
 		geometryApplied(revision, authoredGeometry);
+	};
+	const inset = (px: number) => {
+		if (px === chromeInset) return;
+		chromeInset = px;
+		geometryReplay();
 	};
 
 	const onWindowMessage = (event: MessageEvent) => {
@@ -908,13 +912,6 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 			return;
 		}
 
-		// Where the pointer is inside the frame, or that it has gone. A negative
-		// y is how "gone" crosses a protocol that only carries numbers.
-		if (message.spool === "player-wake" && hasOnly(message, ["spool", "y"]) && typeof message.y === "number") {
-			host.point(message.y < 0 ? null : message.y);
-			return;
-		}
-
 		// The one chord the inner runtime keeps for Spool (#227). Everything else
 		// in there belongs to the prototype and is never forwarded.
 		if (message.spool === "player-key" && hasOnly(message, ["spool", "key"]) && message.key === "leave") {
@@ -931,6 +928,7 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		geometryPending,
 		geometryApplied,
 		geometryReplay,
+		inset,
 		destroy: () => {
 			disarmBootstrapDeadline();
 			for (const undo of teardown.splice(0)) undo();
@@ -987,7 +985,6 @@ export function bootPlayerShell(config: ShellConfig): void {
 			}, 150);
 		},
 		walked: (from, to) => window.dispatchEvent(new CustomEvent("spool-player-walked", { detail: { from, to } })),
-		point: (y) => window.dispatchEvent(new CustomEvent("spool-player-wake", { detail: { y } })),
 		repair: reloadForHandoff,
 		refreshGeometry: () => window.dispatchEvent(new Event("spool-player-geometry-request")),
 	});
@@ -1048,6 +1045,7 @@ export function bootPlayerShell(config: ShellConfig): void {
 			host: createElement(Host),
 			// This document is the control origin, so the canvas is one link away.
 			canvasHref: `/p/${encodeURIComponent(config.project)}`,
+			onInset: shell.inset,
 		}),
 	);
 }

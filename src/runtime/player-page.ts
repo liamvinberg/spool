@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * What both of the player's pages do the same way (#227): measure the window,
- * and summon the edge bar.
+ * and wear, put away and peek the bar.
  *
  * There are two pages because there are two documents — the control-origin tab
  * draws one around a render-origin iframe, and the bare render-origin document
@@ -10,21 +10,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * they must not differ on is behaviour, so the behaviour lives here and only
  * the markup is written twice.
  */
-
-/** How long the cursor has to rest against the top edge before the bar peels in. */
-export const DWELL_MS = 300;
-
-/** The strip along the top of the viewport that asks for the bar. */
-export const EDGE_PX = 8;
-
-/**
- * How far down the pointer has to come before a revealed bar goes away — the
- * bar's own height plus room to be reaching for it rather than leaving it.
- */
-export const KEEP_PX = 140;
-
-/** Which document saw the pointer: the page around the frame, or the frame itself. */
-export type PointerSource = "page" | "frame";
 
 export interface Viewport {
 	vw: number;
@@ -42,70 +27,69 @@ export function useViewport(): Viewport {
 }
 
 /**
- * The edge bar's summons (#227), borrowed from the hidden macOS menu bar.
+ * The tab's bar can be put away (#227). It is worn by default, the way the
+ * app's window wears its own, and the eye on it takes it off for a reader who
+ * wants the prototype and nothing else. Put away, a nub at the top edge is its
+ * trace: resting the cursor there peeks the bar back in, and pressing the nub
+ * puts it back on.
  *
- * At rest there is nothing over the page, which is the whole point of playing
- * in a tab: the prototype is the document. Resting the cursor against the top
- * edge for {@link DWELL_MS} peels the bar in; moving back down into the page
- * takes it away again at once.
- *
- * The dwell is what keeps the bar out of the way of the page's own nav. Every
- * report inside the strip restarts the timer, so only *resting* against the
- * edge finishes it — sliding along the top of the page never does. And passing
- * through on the way to the browser's own chrome ends with the pointer leaving
- * the document, which is what a null report means and what cancels the dwell.
- *
- * `y` is in window space, which is why what happens inside an embedded frame
- * has to be forwarded before it gets here.
+ * The choice is remembered per browser rather than per tab, because it is a
+ * preference and not a moment: someone who took the bar off wants it off next
+ * time too.
  */
-export function useEdgeBar(
-	armed: boolean,
-	held: boolean,
-): { revealed: boolean; point: (y: number | null, source: PointerSource) => void } {
-	const [revealed, setRevealed] = useState(false);
+export const BAR_HIDDEN_KEY = "spool:player-bar-hidden";
+
+/** How long the cursor has to rest against the top edge before the put-away bar peeks in. */
+export const PEEK_DWELL_MS = 150;
+
+export function readBarHidden(): boolean {
+	try {
+		return window.localStorage.getItem(BAR_HIDDEN_KEY) === "1";
+	} catch {
+		return false;
+	}
+}
+
+export function writeBarHidden(hidden: boolean): void {
+	try {
+		if (hidden) window.localStorage.setItem(BAR_HIDDEN_KEY, "1");
+		else window.localStorage.removeItem(BAR_HIDDEN_KEY);
+	} catch {
+		// a browser that refuses storage still gets the bar, just not the memory of it
+	}
+}
+
+/**
+ * The peek (#227): hover the strip the put-away bar left behind and the bar
+ * comes back over the page for as long as the hand stays on it. A dwell keeps a
+ * pass through the edge on the way to the browser's own chrome from flashing
+ * it. The strip is a real element and the bar is inside it, so the browser's
+ * own hover is the whole mechanism: nothing has to be forwarded out of the
+ * frame, and leaving the bar is what takes it away.
+ */
+export function usePeek(armed: boolean): {
+	peeked: boolean;
+	enter: () => void;
+	leave: () => void;
+} {
+	const [peeked, setPeeked] = useState(false);
 	const dwell = useRef(0);
-	const heldRef = useRef(held);
-	heldRef.current = held;
-	const revealedRef = useRef(revealed);
-	revealedRef.current = revealed;
-	/**
-	 * Which surface last said where the pointer is. A frame reports that it lost
-	 * the pointer whenever the pointer leaves *it*, which on a capped page is
-	 * every time the hand moves out onto the background beside the column — so
-	 * that report only means "gone from the window" while the frame is also the
-	 * one that last saw it. Whichever of the two arrives last is right.
-	 */
-	const from = useRef<PointerSource>("page");
 	useEffect(() => () => window.clearTimeout(dwell.current), []);
 	useEffect(() => {
 		if (armed) return;
 		window.clearTimeout(dwell.current);
-		setRevealed(false);
+		setPeeked(false);
 	}, [armed]);
-	const point = useCallback(
-		(y: number | null, source: PointerSource) => {
-			if (!armed) return;
-			if (y === null) {
-				if (source === "frame" && from.current !== "frame") return;
-				window.clearTimeout(dwell.current);
-				return;
-			}
-			from.current = source;
-			if (y <= EDGE_PX) {
-				// Resting is the ask, so every fresh report starts the wait over.
-				window.clearTimeout(dwell.current);
-				dwell.current = window.setTimeout(() => setRevealed(true), DWELL_MS);
-				return;
-			}
-			window.clearTimeout(dwell.current);
-			// An open switcher is a held conversation and outlives the pointer, and
-			// a bar the hand is still reaching for is not one it has left.
-			if (heldRef.current || y <= KEEP_PX) return;
-			if (revealedRef.current) setRevealed(false);
-		},
-		[armed],
-	);
-	return { revealed, point };
+	const enter = useCallback(() => {
+		if (!armed) return;
+		window.clearTimeout(dwell.current);
+		dwell.current = window.setTimeout(() => setPeeked(true), PEEK_DWELL_MS);
+	}, [armed]);
+	const leave = useCallback(() => {
+		window.clearTimeout(dwell.current);
+		setPeeked(false);
+	}, []);
+	return { peeked, enter, leave };
 }
 
 /**
@@ -163,7 +147,7 @@ export function deskWindow(): DeskWindow | null {
 }
 
 /** What a bar this wide carries. The frame's name is never one of the answers. */
-export function deskBarLayout(width: number): { project: boolean; size: boolean; canvasLabel: boolean } {
+export function barLayout(width: number): { project: boolean; size: boolean; canvasLabel: boolean } {
 	const wide = width >= DESK_BAR_WIDE_PX;
 	return { project: wide, size: wide, canvasLabel: wide };
 }

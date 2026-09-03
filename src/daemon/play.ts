@@ -348,8 +348,7 @@ body { margin: 0; background: #0e0e0e; }
 .spool-page > .spool-external-backdrop { position: fixed; }
 /* a terminal is a character grid, not a document: it keeps the box it was
    authored at rather than growing into the window, and sits centred on the
-   page's background — which is also what leaves the top edge reachable, since a
-   terminal's own document swallows every pointer report the bar is summoned by */
+   page's background */
 .spool-screen.is-terminal {
 	min-height: 0;
 	align-self: center;
@@ -369,61 +368,53 @@ body { margin: 0; background: #0e0e0e; }
 .spool-player-error strong { display: block; margin-bottom: 16px; color: #f5391a; font-weight: 400; }
 .spool-player-error pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .spool-player-escape { display: inline-block; margin-top: 16px; color: #f0efed; text-decoration: underline; text-underline-offset: 3px; }
-/* the edge bar (#227): away by default, peeled in by a dwell against the top
-   edge. The nub is the resting trace — a control with none is a control most
-   people never find */
-.spool-nub {
-	position: fixed;
-	top: 0;
-	left: 50%;
-	z-index: 10;
-	width: 40px;
-	height: 3px;
-	margin-left: -20px;
-	border-radius: 0 0 999px 999px;
-	background: #363636;
-	opacity: 0.7;
-	pointer-events: none;
-	transition: opacity 200ms ease;
-}
-.spool-nub.is-hidden { opacity: 0; }
-.spool-edge {
+/* the bar along the top (#275, #227): 30px, worn by both shells. In the app it
+   is the window's title bar with the traffic lights inset into it; in a tab it
+   is the same strip, and the eye on it puts it away. Permanent rather than
+   summoned, which is the trade: 30px of page for a name that is always
+   readable and a switcher that never has to be found */
+.spool-page.has-bar { box-sizing: border-box; padding-top: 30px; }
+.spool-page.has-bar .spool-screen:not(.is-terminal) { min-height: calc(100vh - 30px); }
+.spool-top {
 	position: fixed;
 	inset: 0 0 auto;
 	z-index: 10;
-	translate: 0 -100%;
-	opacity: 0;
-	pointer-events: none;
-	transition: translate 200ms ease-out, opacity 200ms ease-out;
+	/* its hairline is inside its 30px, so the page's inset and the bar agree */
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 0 12px 0 16px;
+	background: #282828;
+	border-bottom: 1px solid #363636;
 	color: #f0efed;
 	font: 400 12px/1 "Fragment Mono", ui-monospace, monospace;
 	-webkit-font-smoothing: antialiased;
 	font-synthesis: none;
 }
-.spool-edge.is-open { translate: 0 0; opacity: 1; pointer-events: auto; }
-.spool-bar {
-	position: relative;
-	z-index: 1;
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	height: 40px;
-	padding: 0 16px;
-	background: #282828;
-	border-bottom: 1px solid #363636;
-}
+/* the first 76px are the OS's: three lights, inset by trafficLightPosition —
+   and this bar is the window's title bar, so a hand on it moves the window */
+.spool-top.is-desk { padding-left: 76px; -webkit-app-region: drag; }
+.spool-top.is-desk button, .spool-top.is-desk .spool-picker { -webkit-app-region: no-drag; }
+/* full height, so the picker opens flush under the bar rather than under a button */
+.spool-top .spool-bar-switcher { align-self: stretch; align-items: center; }
 .spool-bar-rule { flex: none; width: 1px; height: 14px; background: #363636; }
 .spool-bar-back {
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	padding: 4px 8px 4px 4px;
+	flex: none;
+	gap: 4px;
+	padding: 4px 6px;
 	border-radius: 4px;
+	background: none;
+	border: 0;
 	color: #8e8c88;
+	font: inherit;
 	font-size: 10px;
 	text-decoration: none;
+	cursor: pointer;
 }
-.spool-bar-back:hover { color: #f0efed; }
+.spool-bar-back:hover { background: #1c1c1c; color: #f0efed; }
 .spool-bar-switcher { position: relative; display: flex; }
 .spool-bar-frame {
 	display: flex;
@@ -444,8 +435,9 @@ body { margin: 0; background: #0e0e0e; }
 .spool-bar-chevron { color: #8e8c88; transition: rotate 150ms ease; }
 .spool-bar-chevron.is-open { rotate: 180deg; }
 .spool-bar-end { display: flex; align-items: center; gap: 12px; margin-left: auto; }
-.spool-bar-hint { color: #8e8c88; font-size: 10px; }
-.spool-bar-close {
+.spool-bar-hint { color: #8e8c88; font-size: 10px; white-space: nowrap; }
+/* the eye and the close: one box each, lit on hover */
+.spool-bar-icon {
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -460,16 +452,35 @@ body { margin: 0; background: #0e0e0e; }
 	color: #8e8c88;
 	cursor: pointer;
 }
-.spool-bar-close:hover { background: #1c1c1c; color: #f0efed; }
-/* the scrim a video player draws under its controls: the page is not cut in
-   half by the bar's edge, it fades under it */
-.spool-edge-scrim {
+.spool-bar-icon:hover { background: #1c1c1c; color: #f0efed; }
+/* the bar put away (#227): the strip is where it was, the nub is its trace,
+   and the bar sits inside the strip so hovering either is one hover. Resting
+   there peeks it in over the page; leaving takes it away; pressing the nub
+   puts it back on */
+.spool-peek { position: fixed; inset: 0 0 auto; z-index: 10; height: 6px; }
+.spool-nub {
 	position: absolute;
-	inset: 40px 0 auto;
-	height: 56px;
-	background: linear-gradient(to bottom, #0e0e0e, transparent);
-	pointer-events: none;
+	top: 0;
+	left: 50%;
+	width: 40px;
+	height: 3px;
+	margin: 0 0 0 -20px;
+	padding: 0;
+	border: 0;
+	border-radius: 0 0 999px 999px;
+	background: #363636;
+	opacity: 0.7;
+	cursor: pointer;
+	transition: opacity 200ms ease;
 }
+.spool-peek.is-open .spool-nub { opacity: 0; }
+.spool-peek .spool-top {
+	translate: 0 -100%;
+	opacity: 0;
+	pointer-events: none;
+	transition: translate 200ms ease-out, opacity 200ms ease-out;
+}
+.spool-peek.is-open .spool-top { translate: 0 0; opacity: 1; pointer-events: auto; }
 /* the switcher, closed by default: that is how it will be seen nine times in ten */
 .spool-picker {
 	position: absolute;
@@ -507,46 +518,6 @@ body { margin: 0; background: #0e0e0e; }
 .spool-dash { flex: none; width: 8px; height: 2px; background: transparent; }
 .spool-picker-row.is-here .spool-dash { background: #f5391a; }
 .spool-picker-foot { display: block; padding: 8px 14px; border-top: 1px solid #262626; color: #8e8c88; font-size: 10px; }
-/* the Mac app's play window (#275): the app made this window, sized it from the
-   frame's own two numbers and left the title bar off, so these 30px are the bar
-   spool draws in its place — the traffic lights inset into it. Permanent rather
-   than summoned, which is the trade: 30px of page for a name that is always
-   readable and a switcher that never has to be found */
-.spool-page.is-desk { box-sizing: border-box; padding-top: 30px; }
-.spool-page.is-desk .spool-screen { min-height: calc(100vh - 30px); }
-.spool-desk {
-	position: fixed;
-	inset: 0 0 auto;
-	z-index: 10;
-	/* its hairline is inside its 30px, so the page's inset and the bar agree */
-	box-sizing: border-box;
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	/* the first 76px are the OS's: three lights, inset by trafficLightPosition */
-	padding: 0 16px 0 76px;
-	background: #282828;
-	border-bottom: 1px solid #363636;
-	color: #f0efed;
-	font: 400 12px/1 "Fragment Mono", ui-monospace, monospace;
-	-webkit-font-smoothing: antialiased;
-	font-synthesis: none;
-	/* this bar is the window's title bar, so a hand on it moves the window */
-	-webkit-app-region: drag;
-}
-.spool-desk button, .spool-desk .spool-picker { -webkit-app-region: no-drag; }
-/* full height, so the picker opens flush under the bar rather than under a button */
-.spool-desk .spool-bar-switcher { align-self: stretch; align-items: center; }
-.spool-desk-canvas {
-	flex: none;
-	gap: 4px;
-	padding: 4px 6px;
-	background: none;
-	border: 0;
-	font: inherit;
-	cursor: pointer;
-}
-.spool-desk-canvas:hover { background: #1c1c1c; color: #f0efed; }
 .spool-desk-restored { display: flex; align-items: center; gap: 8px; color: #8e8c88; font-size: 10px; }
 .spool-dash.is-lit { background: #f5391a; }
 .spool-desk-reset {

@@ -3,7 +3,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { terminalSourceVersion } from "../daemon/term-source";
 import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 
@@ -157,12 +157,37 @@ async function waitForFrame(name: string): Promise<void> {
 	await waitForText(".spool-bar-name", name);
 }
 
-/** Rest the pointer against the top edge until the bar peels in. */
+/**
+ * A remembered choice needs somewhere to be remembered. happy-dom hands this
+ * document no storage, so the test gives it one that lasts the test.
+ */
+function rememberIn(store: Map<string, string>): void {
+	Object.defineProperty(window, "localStorage", {
+		configurable: true,
+		value: {
+			getItem: (key: string) => store.get(key) ?? null,
+			setItem: (key: string, value: string) => void store.set(key, value),
+			removeItem: (key: string) => void store.delete(key),
+		},
+	});
+	onTestFinished(() => {
+		Object.defineProperty(window, "localStorage", { configurable: true, value: undefined });
+	});
+}
+
+/**
+ * The hand arriving on the strip, or leaving it, as React sees it: it draws
+ * enter and leave from the pair the browser bubbles, so that pair is what a
+ * test sends.
+ */
+function hover(target: Element, on: boolean): void {
+	target.dispatchEvent(new MouseEvent(on ? "mouseover" : "mouseout", { bubbles: true, relatedTarget: document.body }));
+}
+
+/** The bar is worn, not summoned: it is there as soon as the page is. */
 async function summonEdgeBar(): Promise<HTMLElement> {
-	const page = document.querySelector(".spool-page") as HTMLElement;
-	page.dispatchEvent(new MouseEvent("mousemove", { clientY: 2, bubbles: true }));
-	await vi.waitFor(() => expect(document.querySelector(".spool-edge.is-open")).not.toBeNull());
-	return page;
+	await vi.waitFor(() => expect(document.querySelector(".spool-top:not(.is-away)")).not.toBeNull());
+	return document.querySelector(".spool-page") as HTMLElement;
 }
 
 /** An accel chord as the platform this test runs on spells it. */
@@ -309,12 +334,6 @@ describe("the player session", () => {
 		expect(open?.rel).toBe("noopener noreferrer");
 		expect(document.querySelector("output")?.textContent).toBe("5");
 		expect(document.querySelector(".spool-bar-name")?.textContent).toBe("menu");
-		// the dialog owns the moment: the edge bar cannot be summoned over it
-		(document.querySelector(".spool-page") as HTMLElement).dispatchEvent(
-			new MouseEvent("mousemove", { clientY: 2, bubbles: true }),
-		);
-		await new Promise((resolve) => setTimeout(resolve, 400));
-		expect(document.querySelector(".spool-edge.is-open")).toBeNull();
 
 		window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
 		await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
@@ -490,7 +509,7 @@ export default function Hints() {
 	});
 });
 
-describe("the played page and the edge bar (#227)", () => {
+describe("the played page and its bar (#227)", () => {
 	it("lays the page out at the viewport, capped at the authored width", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
@@ -506,61 +525,67 @@ describe("the played page and the edge bar (#227)", () => {
 		expect(screen.style.transform).toBe("");
 	});
 
-	it("draws nothing over the page until the cursor rests against the top edge", async () => {
+	it("wears the bar, puts it away on the eye, and peeks it back on a rest against the top edge", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
+		const remembered = new Map<string, string>();
+		rememberIn(remembered);
 
 		await loadPlayerDocument(harness, "?frame=menu");
 		await waitForFrame("menu");
 		const page = document.querySelector(".spool-page") as HTMLElement;
-		const move = (y: number) => page.dispatchEvent(new MouseEvent("mousemove", { clientY: y, bubbles: true }));
+		const away = () => document.querySelector(".spool-top.is-away");
 
-		// at rest there is a nub and nothing else — the page is the page
-		expect(document.querySelector(".spool-edge.is-open")).toBeNull();
+		// worn by default, and the page is inset by it
+		expect(document.querySelector(".spool-top")).not.toBeNull();
+		expect(away()).toBeNull();
+		expect(page.classList.contains("has-bar")).toBe(true);
+		expect(document.querySelector(".spool-nub")).toBeNull();
+
+		// the eye puts it away: the page gets its 30px back, the nub is the trace,
+		// and the choice is remembered
+		click("#spool-bar-eye");
+		await vi.waitFor(() => expect(away()).not.toBeNull());
+		expect(page.classList.contains("has-bar")).toBe(false);
 		expect(document.querySelector(".spool-nub")).not.toBeNull();
+		expect(remembered.get("spool:player-bar-hidden")).toBe("1");
 
-		// using a prototype means moving the pointer around it, and none of that
-		// may summon chrome over what is being used
-		move(window.innerHeight / 2);
-		move(window.innerHeight - 10);
-		await new Promise((resolve) => setTimeout(resolve, 400));
-		expect(document.querySelector(".spool-edge.is-open")).toBeNull();
+		// resting against the top edge peeks it in over the page, and the dwell
+		// is what makes it a rest rather than a pass
+		const strip = document.querySelector(".spool-peek") as HTMLElement;
+		hover(strip, true);
+		expect(away()).not.toBeNull();
+		await vi.waitFor(() => expect(away()).toBeNull());
+		expect(document.querySelector(".spool-peek.is-open")).not.toBeNull();
+		expect(page.classList.contains("has-bar")).toBe(false);
 
-		// resting against the top edge is the ask, and the dwell is what makes it
-		// a rest rather than a pass
-		move(2);
-		expect(document.querySelector(".spool-edge.is-open")).toBeNull();
-		await vi.waitFor(() => expect(document.querySelector(".spool-edge.is-open")).not.toBeNull());
-		expect(document.querySelector(".spool-nub.is-hidden")).not.toBeNull();
+		// leaving takes it away at once
+		hover(strip, false);
+		await vi.waitFor(() => expect(away()).not.toBeNull());
 
-		// and moving back down into the page takes it away at once
-		move(window.innerHeight / 2);
-		await vi.waitFor(() => expect(document.querySelector(".spool-edge.is-open")).toBeNull());
+		// a pass through the strip on the way out never peeks it
+		hover(strip, true);
+		hover(strip, false);
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(away()).not.toBeNull();
+
+		// pressing the nub puts it back on
+		click(".spool-nub");
+		await vi.waitFor(() => expect(document.querySelector(".spool-peek")).toBeNull());
+		expect(page.classList.contains("has-bar")).toBe(true);
+		expect(remembered.has("spool:player-bar-hidden")).toBe(false);
 	});
 
-	it("never reveals on a pass through the edge on the way out of the document", async () => {
+	it("opens put away when it was put away last time", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
+		rememberIn(new Map([["spool:player-bar-hidden", "1"]]));
 
 		await loadPlayerDocument(harness, "?frame=menu");
 		await waitForFrame("menu");
-		const page = document.querySelector(".spool-page") as HTMLElement;
-
-		// the last thing seen inside the page is a point in the strip, and then
-		// the pointer is gone — up into the browser's own chrome
-		page.dispatchEvent(new MouseEvent("mousemove", { clientY: 2, bubbles: true }));
-		document.documentElement.dispatchEvent(new MouseEvent("mouseleave"));
-
-		await new Promise((resolve) => setTimeout(resolve, 400));
-		expect(document.querySelector(".spool-edge.is-open")).toBeNull();
-
-		// but a frame reporting that it lost the pointer is not the window losing
-		// it: on a capped page the hand leaves the column every time it moves out
-		// onto the background beside it, and that is where the bar is asked for
-		page.dispatchEvent(new MouseEvent("mousemove", { clientY: 2, bubbles: true }));
-		window.dispatchEvent(new CustomEvent("spool-player-wake", { detail: { y: null } }));
-
-		await vi.waitFor(() => expect(document.querySelector(".spool-edge.is-open")).not.toBeNull());
+		expect(document.querySelector(".spool-top.is-away")).not.toBeNull();
+		expect(document.querySelector(".spool-nub")).not.toBeNull();
+		expect((document.querySelector(".spool-page") as HTMLElement).classList.contains("has-bar")).toBe(false);
 	});
 
 	it("carries the switcher and the exits, and nothing the pill used to", async () => {

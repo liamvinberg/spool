@@ -1378,18 +1378,6 @@ function followGeometry(): void {
 			announcePendingMount();
 			scheduleGeometryReady();
 		});
-		// Where the pointer is, not merely that it moved: the edge bar is summoned
-		// by resting against the top of the window, and this document covers it,
-		// so the shell can only know where the hand is by being told (#227).
-		addEventListener("mousemove", (event) => {
-			postPlayerMessage({ spool: "player-wake", y: event.clientY });
-		});
-		// And that it has gone. A pointer on its way to the browser's own chrome
-		// crosses the top edge and leaves; without this the dwell it started on
-		// the way through would finish and peel the bar in behind it.
-		window.document.documentElement.addEventListener("mouseleave", () => {
-			postPlayerMessage({ spool: "player-wake", y: -1 });
-		});
 		// Spool never steals a plain key from a live frame; its own gesture lives
 		// behind accel (#227). Focus sits in here whenever a prototype is being
 		// used, so this chord only reaches the shell by being forwarded.

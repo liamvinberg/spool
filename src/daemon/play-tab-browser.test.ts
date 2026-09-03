@@ -93,14 +93,13 @@ it("opens a tab whose page is a real document, and walks the URL with it", { tim
 
 	// close really closes: the tab spool opened stays closable after a walk has
 	// given it a history of its own
-	await played.mouse.move(640, 450);
-	await played.mouse.move(640, 2);
-	await expect.poll(() => played.locator(".spool-edge.is-open").count(), { timeout: 10_000 }).toBe(1);
 	await played.locator("#spool-close").click();
 	await expect.poll(() => played.isClosed(), { timeout: 10_000 }).toBe(true);
 });
 
-it("summons the edge bar on a dwell against the top edge, and nothing else", { timeout: 180_000 }, async () => {
+it("wears the bar, puts it away on the eye, and peeks it back on a rest against the top edge", {
+	timeout: 180_000,
+}, async () => {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());
 	const project = await canvasWithFrames();
@@ -109,24 +108,43 @@ it("summons the edge bar on a dwell against the top edge, and nothing else", { t
 	await played.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=one`);
 	await expect.poll(() => played.locator(".spool-screen").count(), { timeout: 30_000 }).toBe(1);
 
-	const open = () => played.locator(".spool-edge.is-open").count();
-	// at rest the page is the page — the nub is the only trace spool leaves
-	expect(await played.locator(".spool-nub").count()).toBe(1);
-	expect(await open()).toBe(0);
+	const away = () => played.locator(".spool-top.is-away").count();
+	// worn by default: the name is readable without asking, and the page sits under it
+	expect(await played.locator(".spool-top").count()).toBe(1);
+	expect(await away()).toBe(0);
+	await expect.poll(() => played.locator("#spool-switcher").innerText()).toContain("one");
+	expect(await played.locator(".spool-page.has-bar").count()).toBe(1);
+	expect(await played.locator(".spool-nub").count()).toBe(0);
 
-	// the pointer is over the frame's own document, so every one of these has to
-	// cross the iframe boundary to be seen at all
+	// the eye puts it away: the page gets the whole window, the nub is the trace
+	await played.locator("#spool-bar-eye").click();
+	await expect.poll(away, { timeout: 5_000 }).toBe(1);
+	expect(await played.locator(".spool-page.has-bar").count()).toBe(0);
+	expect(await played.locator(".spool-nub").count()).toBe(1);
+
+	// the pointer is over the frame's own document, and nothing there peeks the bar
 	await played.mouse.move(640, 450);
 	await played.mouse.move(640, 600);
-	await played.waitForTimeout(500);
-	expect(await open()).toBe(0);
+	await played.waitForTimeout(400);
+	expect(await away()).toBe(1);
 
-	// resting against the top edge is the ask
+	// resting against the top edge peeks it in over the page
 	await played.mouse.move(640, 2);
-	await expect.poll(open, { timeout: 5_000 }).toBe(1);
-	await expect.poll(() => played.locator("#spool-switcher").innerText()).toContain("one");
+	await expect.poll(away, { timeout: 5_000 }).toBe(0);
+	expect(await played.locator(".spool-page.has-bar").count()).toBe(0);
 
 	// and moving back down into the page takes it away
 	await played.mouse.move(640, 500);
-	await expect.poll(open, { timeout: 5_000 }).toBe(0);
+	await expect.poll(away, { timeout: 5_000 }).toBe(1);
+
+	// pressing the nub puts it back on, and a fresh tab remembers either way
+	await played.mouse.move(640, 2);
+	await expect.poll(away, { timeout: 5_000 }).toBe(0);
+	await played.locator("#spool-bar-eye").click();
+	await expect.poll(() => played.locator(".spool-page.has-bar").count(), { timeout: 5_000 }).toBe(1);
+	await played.locator("#spool-bar-eye").click();
+	await expect.poll(away, { timeout: 5_000 }).toBe(1);
+	const again = await context.newPage();
+	await again.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=one`);
+	await expect.poll(() => again.locator(".spool-top.is-away").count(), { timeout: 30_000 }).toBe(1);
 });

@@ -1,25 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DESK_BAR_WIDE_PX, deskBarLayout, deskWindow } from "./player-page";
+import { barLayout, DESK_BAR_WIDE_PX, deskWindow } from "./player-page";
 
-describe("deskBarLayout — what a bar this wide can carry (#275)", () => {
+describe("barLayout — what a bar this wide can carry (#275)", () => {
 	it("carries everything on a window a desktop frame opened", () => {
-		expect(deskBarLayout(1200)).toEqual({ project: true, size: true, canvasLabel: true });
+		expect(barLayout(1200)).toEqual({ project: true, size: true, canvasLabel: true });
 	});
 
 	it("drops the project prefix and the size on a phone frame's window", () => {
-		expect(deskBarLayout(390)).toEqual({ project: false, size: false, canvasLabel: false });
+		expect(barLayout(390)).toEqual({ project: false, size: false, canvasLabel: false });
 	});
 
 	it("chooses at 520 and not a pixel earlier", () => {
-		expect(deskBarLayout(DESK_BAR_WIDE_PX).project).toBe(true);
-		expect(deskBarLayout(DESK_BAR_WIDE_PX - 1).project).toBe(false);
+		expect(barLayout(DESK_BAR_WIDE_PX).project).toBe(true);
+		expect(barLayout(DESK_BAR_WIDE_PX - 1).project).toBe(false);
 	});
 
 	it("never drops the frame's name, however narrow the window is dragged", () => {
 		// The name is not one of the answers this function gives, at any width:
 		// a bar with no name on it is a window nobody can tell apart.
 		for (const width of [240, 320, 390, 519, 520, 1440]) {
-			expect(Object.values(deskBarLayout(width))).not.toContain(undefined);
+			expect(Object.values(barLayout(width))).not.toContain(undefined);
 		}
 	});
 });
