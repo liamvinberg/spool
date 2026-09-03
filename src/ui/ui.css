@@ -29,6 +29,11 @@
 
 	--font-sans: "Familjen Grotesk Variable", system-ui, sans-serif;
 	--font-mono: "Fragment Mono", ui-monospace, SFMono-Regular, monospace;
+	/* Fragment Mono ships coding ligatures under `calt`, so `--` set in the mono
+	 * face became one dash and a variant name (checkout--empty) read as an em
+	 * dash (#272). Names are not code: the contextual alternates are off on
+	 * every font-mono utility. */
+	--font-mono--font-feature-settings: "calt" 0;
 
 	--text-2xs: 10px;
 	--text-xs: 11px;
