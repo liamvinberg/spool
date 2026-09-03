@@ -48,8 +48,8 @@ import { SpoolShell } from "shared/ui/spool/shell";
 /* ---------- the projection ---------- */
 
 const PAD = 14;
-const ICON_W = 112;
-const ICON_H = 56;
+const ICON_W = 136;
+const ICON_H = 64;
 const TOKENS_W = 544;
 const TOKENS_H = 148;
 
@@ -101,7 +101,7 @@ function layout(): { frames: readonly Frame[]; families: readonly Family[] } {
 	const WRAP = 1180;
 	const GAP = 40;
 	const KIN = 12;
-	const ROW = 92;
+	const ROW = 110;
 	const LEFT = 48;
 
 	const frames: Frame[] = [];
@@ -160,7 +160,7 @@ function layout(): { frames: readonly Frame[]; families: readonly Family[] } {
 			x += size.w + KIN;
 			right = Math.max(right, x - KIN);
 		});
-		families.push({ file: file.file, note: file.note, x: startX - 16, y: startY - 62, w: right - startX + 32, h: y + rowH - startY + 62 + 34 });
+		families.push({ file: file.file, note: file.note, x: startX - 16, y: startY - 78, w: right - startX + 32, h: y + rowH - startY + 78 + 34 });
 		if (rows > 1) wrap();
 		else x += GAP - KIN;
 	}
