@@ -52,9 +52,16 @@ jobs:
           title: "release: spool.page"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The action pushes the tag only when it also creates the GitHub release,
+      # and that is off above. So the tag `changeset tag` just made is pushed
+      # here, or the two jobs below check out a tag that only ever existed on
+      # this runner.
       - id: tag
         if: steps.changesets.outputs.published == 'true'
-        run: echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          git push origin "refs/tags/$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       # The action's title input is static and its body opens with bot
       # boilerplate; name the PR after the version it proposes and keep
       # only the releases. Reapplied after every action update.
