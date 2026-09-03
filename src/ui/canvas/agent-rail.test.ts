@@ -1369,6 +1369,42 @@ describe("when the reader takes the wheel", () => {
 	});
 
 	/**
+	 * The box moves with nothing grown: a focus pulled into view, a row folding shut
+	 * to the height it had, a scroll the browser owes to nothing the log can see. The old
+	 * rule read any move that was neither the log's own nor the follow point as the reader
+	 * taking the wheel, and dropped them out of live. A move with no gesture behind it is
+	 * never the reader's: the log re-aims and stays live.
+	 */
+	it("a scroll with no gesture behind it never ends following: the log re-aims", async () => {
+		const { canvas, log, geometry } = await atEnd();
+		await scrolled(log, 120);
+		expect(log.scrollTop).toBe(200);
+		await settle(150);
+		expect(chip(canvas.host)).toBeNull();
+		geometry(760, 400);
+		canvas.turn.push(say(" and the rest of it"));
+		await until(() => log.scrollTop === 260);
+		expect(chip(canvas.host)).toBeNull();
+	});
+
+	/** the one scroll without a wheel, finger or key that is still the reader's: a scrollbar under a held pointer */
+	it("a scrollbar drag ends following, and letting go hands the box back to the browser's moves", async () => {
+		const { canvas, log } = await atEnd();
+		await act(async () => {
+			log.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+		});
+		await scrolled(log, 120);
+		expect(log.scrollTop).toBe(120);
+		await until(() => chip(canvas.host) !== null);
+		await act(async () => {
+			window.dispatchEvent(new Event("pointerup"));
+		});
+		canvas.turn.push(say(" and the rest of it"));
+		await settle(150);
+		expect(log.scrollTop).toBe(120);
+	});
+
+	/**
 	 * A row opening is 260ms of growth, so the watcher pins every frame and every pin causes
 	 * a scroll event of its own a frame later. Each has to be read as the log's write, or the
 	 * first frame of every arrival would read as the reader leaving.

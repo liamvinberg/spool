@@ -969,7 +969,7 @@ function Transcript({
 	 * who had plainly scrolled. And Chrome's scroll anchoring moves the box on its own
 	 * schedule, which a spent flag then misread as the reader leaving. Holding the
 	 * number lets every event answer the question that matters: is the box where the
-	 * log put it, or where following would sit? Anything else is the reader.
+	 * log put it? Anything else is the browser or the reader, and only a gesture says which.
 	 */
 	const wrote = useRef<number | null>(null);
 	/** the last send this log answered, so speaking re-enters follow exactly once */
@@ -994,23 +994,13 @@ function Transcript({
 		box.scrollTop = to;
 	};
 	/**
-	 * How tall the log was when it last aimed, so a scroll event can be dated against the
-	 * content rather than only against the last write (#149).
-	 *
-	 * Rows open, paragraphs open and pictures land, and every one of them is growth under
-	 * a still scrollbar. The size watcher below pins after each layout, but a browser may
-	 * move the box itself in the frame between the growth and that pin, and the event it
-	 * fires is then neither the log's own write nor where following sits — which read as the
-	 * reader taking the wheel, and is how a picture landing dropped the reader out of live.
-	 * A scroll that arrives while the content is taller than the log last saw is the log's to
-	 * re-aim, and the reader's next scroll, against content that has stopped growing, is
-	 * still theirs.
+	 * Whether a pointer is holding the box: pressed on it and not yet let go. A scrollbar
+	 * drag is the one way to scroll a log that fires no wheel, touch or key, and it is the
+	 * only scroll the log reads as the reader's without one of those. Cleared on the
+	 * window rather than the box, because a drag lets go wherever the pointer is.
 	 */
-	const measured = useRef<number | null>(null);
-	const pin = (box: HTMLElement) => {
-		measured.current = box.scrollHeight;
-		carry(box, aim(box));
-	};
+	const pressed = useRef(false);
+	const pin = (box: HTMLElement) => carry(box, aim(box));
 	/**
 	 * Whether the chip has anything to name: the reader is off the follow point *and*
 	 * there is log below them. The second half is what the first half cannot say. The
@@ -1071,7 +1061,18 @@ function Transcript({
 			else setAway(adrift(box));
 		});
 		watcher.observe(body);
-		return () => watcher.disconnect();
+		const release = () => {
+			pressed.current = false;
+		};
+		window.addEventListener("pointerup", release);
+		window.addEventListener("pointercancel", release);
+		window.addEventListener("blur", release);
+		return () => {
+			watcher.disconnect();
+			window.removeEventListener("pointerup", release);
+			window.removeEventListener("pointercancel", release);
+			window.removeEventListener("blur", release);
+		};
 	}, []);
 
 	return (
@@ -1085,17 +1086,19 @@ function Transcript({
 					const own = wrote.current;
 					wrote.current = null;
 					if (own !== null && Math.abs(box.scrollTop - own) < 1) return;
-					// the content grew since the log last aimed and the watcher has not caught up:
-					// a scroll landing now is the box moving under growth, and the log re-aims it
-					if (follow && measured.current !== null && box.scrollHeight !== measured.current) {
+					// following, and the box moved by neither the log nor a hand on it: a picture
+					// landing, a row folding, a focus pulled into view, the browser re-aiming under
+					// growth (#149). None of it is the reader, so none of it ends following — the
+					// log re-aims and the reader stays live. Following ends on a gesture only: a
+					// wheel, a finger, a key, or a scrollbar under a held pointer.
+					if (follow && !pressed.current) {
 						pin(box);
 						return;
 					}
 					const to = aim(box);
 					const end = box.scrollHeight - box.clientHeight;
 					const off = Math.abs(box.scrollTop - to) >= 1;
-					// moved, not by the log, and not to where following sits: a scrollbar
-					// drag, the one way to scroll a log without touching it
+					// a scrollbar drag that moved the box off the follow point: the reader
 					if (follow && off) leave();
 					// the end re-arms follow only when the end is where following would sit
 					// anyway, so re-entering moves nothing
@@ -1103,6 +1106,9 @@ function Transcript({
 					// last, so it overrides the optimistic `away` that leaving sets before it
 					// can see where the scroll landed
 					setAway(off && box.scrollTop < end - 1);
+				}}
+				onPointerDown={() => {
+					pressed.current = true;
 				}}
 				onWheel={(event) => {
 					if (!follow || event.deltaY === 0) return;
