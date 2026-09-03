@@ -48,7 +48,7 @@ import { SpoolShell } from "shared/ui/spool/shell";
 /* ---------- the projection ---------- */
 
 const PAD = 14;
-const ICON_W = 96;
+const ICON_W = 112;
 const ICON_H = 56;
 const TOKENS_W = 544;
 const TOKENS_H = 148;
@@ -98,17 +98,17 @@ function frameSize(file: LibFile, part: LibPart | undefined): { w: number; h: nu
  * so its tint stays one rectangle.
  */
 function layout(): { frames: readonly Frame[]; families: readonly Family[] } {
-	const WRAP = 1120;
+	const WRAP = 1180;
 	const GAP = 40;
 	const KIN = 12;
-	const ROW = 68;
-	const LEFT = 64;
+	const ROW = 92;
+	const LEFT = 48;
 
 	const frames: Frame[] = [];
 	const families: Family[] = [];
 
 	let x = LEFT;
-	let y = 84;
+	let y = 132;
 	let rowH = 0;
 
 	const place = (frame: Omit<Frame, "x" | "y">) => {
@@ -143,16 +143,26 @@ function layout(): { frames: readonly Frame[]; families: readonly Family[] } {
 		const sizes = file.parts.map((part) => frameSize(file, part));
 		const width = sizes.reduce((sum, size) => sum + size.w, 0) + KIN * (sizes.length - 1);
 		if (x + width > LEFT + WRAP) wrap();
+		/* a family wider than the page breaks into even rows rather than one long one and a stub */
+		const rows = Math.ceil(width / WRAP);
+		const perRow = Math.ceil(file.parts.length / rows);
 		const startX = x;
-		let tall = 0;
+		const startY = y;
+		let right = x;
 		file.parts.forEach((part, index) => {
+			if (index > 0 && index % perRow === 0) {
+				x = startX;
+				y += rowH + ROW;
+				rowH = 0;
+			}
 			const size = sizes[index] as { w: number; h: number };
 			place({ id: part.name, kind: "part", file: file.file, solo: false, part, ...size });
 			x += size.w + KIN;
-			tall = Math.max(tall, size.h);
+			right = Math.max(right, x - KIN);
 		});
-		x += GAP - KIN;
-		families.push({ file: file.file, note: file.note, x: startX - 16, y: y - 38, w: width + 32, h: tall + 38 + 30 });
+		families.push({ file: file.file, note: file.note, x: startX - 16, y: startY - 62, w: right - startX + 32, h: y + rowH - startY + 62 + 34 });
+		if (rows > 1) wrap();
+		else x += GAP - KIN;
 	}
 
 	return { frames, families };
@@ -179,7 +189,7 @@ const PAGES: readonly PageRow[] = [
 
 const MIN_K = 0.25;
 const MAX_K = 3;
-const START_K = 0.72;
+const START_K = 0.66;
 const FLIGHT_MS = 220;
 const EASE = [0.33, 1, 0.68, 1] as const;
 const STEP = 1.25;
@@ -326,7 +336,7 @@ export default function LibraryFramesFrame() {
 						))}
 					</motion.div>
 
-					<span className="pointer-events-none absolute top-7 left-10 flex items-baseline gap-2 font-mono text-base text-text/70 leading-base">
+					<span className="pointer-events-none absolute top-6 left-8 flex items-baseline gap-2 font-mono text-base text-text/70 leading-base">
 						src/ui
 						<span className="text-2xs text-muted/40 leading-3">
 							{TVARSO_PARTS} components · {TOKEN_COUNT} tokens
@@ -355,7 +365,7 @@ function Tint({ family }: { family: Family }) {
 		>
 			<span
 				className="absolute origin-top-left whitespace-nowrap font-mono text-2xs text-muted/40 leading-3"
-				style={{ left: 16, top: 12, transform: "scale(var(--ik))" }}
+				style={{ left: 16, top: 10, transform: "scale(var(--ik))" }}
 			>
 				{family.file}
 			</span>
@@ -392,12 +402,12 @@ function FrameBody({
 			onPointerEnter={onOver}
 			onPointerLeave={onOut}
 		>
-			{/* the label spool puts over every frame, the file riding it where the file is one component */}
+			{/* the label spool puts over every frame, the name and nothing else */}
 			<div
 				className="pointer-events-none absolute bottom-full left-0 origin-bottom-left whitespace-nowrap"
 				style={{ width: frame.w * k, transform: `scale(${1 / k})` }}
 			>
-				<div className="flex w-full min-w-0 items-baseline gap-2 pb-2">
+				<div className="flex w-full min-w-0 items-baseline pb-2">
 					<span
 						className={cn(
 							"min-w-0 truncate font-mono text-sm leading-4",
@@ -406,9 +416,6 @@ function FrameBody({
 					>
 						{frame.id}
 					</span>
-					{frame.solo && frame.kind !== "tokens" ? (
-						<span className="shrink-0 font-mono text-2xs text-muted/35 leading-3">{frame.file}</span>
-					) : null}
 				</div>
 			</div>
 
@@ -417,7 +424,7 @@ function FrameBody({
 				{held ? <Ring /> : over ? <Hair /> : null}
 			</div>
 
-			{/* the count, at rest: on this page the number is what you came for */}
+			{/* the file and the count, at rest: on this page the number is what you came for */}
 			<div
 				className="pointer-events-none absolute left-0 origin-top-left whitespace-nowrap pt-2 font-mono text-2xs leading-3"
 				style={{ top: frame.h, transform: "scale(var(--ik))" }}
@@ -425,11 +432,13 @@ function FrameBody({
 				{frame.kind === "tokens" ? (
 					<span className="text-muted/55">read by every component</span>
 				) : frame.kind === "slot" ? (
-					<span className="text-muted/55">no frame renders it yet</span>
+					<span className="text-muted/55">
+						<span className="text-muted/35">{frame.file} · </span>no frame renders it yet
+					</span>
 				) : (
 					<span className="text-muted/55">
+						{frame.solo ? <span className="text-muted/35">{frame.file} · </span> : null}
 						{count} {count === 1 ? "frame" : "frames"}
-						{frame.w >= 160 ? <span className="text-muted/35"> · first in {holders(frame)[0]}</span> : null}
 					</span>
 				)}
 			</div>
