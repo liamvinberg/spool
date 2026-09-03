@@ -422,22 +422,19 @@ function mount({ still = false }: { still?: boolean } = {}) {
 
 const rail = (host: HTMLElement) => host.querySelector<HTMLElement>('[aria-label="Agent"]');
 const field = (host: HTMLElement) => host.querySelector<HTMLTextAreaElement>("textarea");
-/** how much of a message still arriving is on screen; a settled one has no such box */
-const arriving = (host: HTMLElement) => host.querySelector("[data-agent-prose]")?.textContent ?? "";
+/** the paragraphs of the agent's words on screen, in order */
+const paragraphs = (host: HTMLElement) =>
+	[...host.querySelectorAll("[data-agent-paragraph]")].map((paragraph) => paragraph.textContent);
+/** the live end marker, which stands while a message is still being written */
+const caret = (host: HTMLElement) => host.querySelector("[data-agent-caret]");
 
-/** long enough that the pace cannot spend it inside one tick of the rail's clock */
 const MESSAGE = "the frame is authored and live on the canvas, and the shot came back clean.";
 
 /**
- * The same sentence twenty times over: long enough to still be arriving, and plain, so
- * the text the log draws is the text that went in.
- *
- * It is how a stopped clock is observed now that nothing in the log draws a duration. The
- * pace is `min(12ms, 250ms ÷ pending)` per character, so a running clock spends a whole
- * delta inside 250ms whatever its length — which makes "is any of it still arriving" a
- * binary reading of whether the clock moved at all, with no window to tune. The arriving
- * window is the only place a partial message is drawn: once the whole of it is on screen
- * `Prose` draws it settled and the box is gone.
+ * The same sentence twenty times over, one paragraph, and plain, so the text the log draws
+ * is the text that went in. A paragraph reaches the screen once the text after it has
+ * begun or the message has ended, so a message that is one paragraph and not over is one
+ * that draws a caret and nothing else.
  */
 const LONG = Array.from({ length: 20 }, () => MESSAGE).join(" ");
 
@@ -772,34 +769,43 @@ describe("one turn", () => {
 		expect(log(canvas.host)).toContain("thinking");
 	});
 
-	it("lets the agent's words arrive rather than appear whole", async () => {
+	/**
+	 * The agent's words arrive a paragraph at a time (#149): nothing of a paragraph still
+	 * being written reaches the screen, and it lands whole the moment the text after it has
+	 * begun, opening into the log the way a row does.
+	 */
+	it("lets the agent's words arrive a paragraph at a time rather than appear whole", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "go");
 
 		canvas.turn.push(waiting);
 		canvas.turn.push(speaking);
-		// one delta, long enough that the pace cannot spend it in a single tick
 		canvas.turn.push(say(MESSAGE));
 		await settle(120);
-		const drawn = arriving(canvas.host);
-		expect(drawn.length).toBeGreaterThan(0);
-		expect(drawn.length).toBeLessThan(MESSAGE.length);
-		// one caret at the live edge, static, saying more is coming — every fade completes
-		// during a pause, so it is then the only thing that does
-		const carets = canvas.host.querySelectorAll("[data-agent-caret]");
-		expect(carets).toHaveLength(1);
-		expect(carets[0]?.className).not.toMatch(/animate-/);
-		// and words are arriving rather than appearing
-		expect(canvas.host.querySelectorAll(".animate-agent-word").length).toBeGreaterThan(0);
+		// one paragraph and not over: a caret alone on its own line, and none of the words
+		expect(paragraphs(canvas.host)).toEqual([]);
+		expect(rail(canvas.host)?.textContent).not.toContain(MESSAGE);
+		expect(canvas.host.querySelectorAll("[data-agent-caret]")).toHaveLength(1);
+		expect(canvas.host.querySelector("[data-agent-caret-line]")).not.toBeNull();
+		expect(caret(canvas.host)?.className).not.toMatch(/animate-/);
 
+		// the break lands: the first paragraph is whole and opens, the caret rides its end
+		canvas.turn.push(say("\n\nAnd the"));
+		await settle(120);
+		expect(paragraphs(canvas.host)).toEqual([MESSAGE]);
+		expect(canvas.host.querySelector("[data-agent-paragraph]")?.className).toContain("animate-agent-paragraph");
+		expect(canvas.host.querySelector("[data-agent-caret-line]")).toBeNull();
+		expect(canvas.host.querySelector("[data-agent-paragraph] p")?.contains(caret(canvas.host))).toBe(true);
+
+		canvas.turn.push(say(" receipt is next."));
 		canvas.turn.push(ended);
 		canvas.turn.push(closed);
 		canvas.turn.close();
-		await settle(1400);
-		expect(rail(canvas.host)?.textContent).toContain(MESSAGE);
-		// and nothing is left half-written once the turn is over
-		expect(canvas.host.querySelector("[data-agent-prose]")).toBeNull();
+		await until(() => paragraphs(canvas.host).length === 2, 3000);
+		expect(paragraphs(canvas.host)).toEqual([MESSAGE, "And the receipt is next."]);
+		// and nothing says more is coming once the turn is over
+		expect(caret(canvas.host)).toBeNull();
 	});
 
 	/**
@@ -826,9 +832,8 @@ describe("one turn", () => {
 		expect(src()).not.toBe(before);
 		expect(canvas.turn.open).toBe(true);
 		// the message that explains it has not finished landing
-		const drawn = arriving(canvas.host);
-		expect(drawn.length).toBeGreaterThan(0);
-		expect(drawn.length).toBeLessThan(MESSAGE.length);
+		expect(caret(canvas.host)).not.toBeNull();
+		expect(paragraphs(canvas.host)).toEqual([]);
 	});
 
 	/**
@@ -848,12 +853,10 @@ describe("one turn", () => {
 		await settle(300);
 
 		expect(rail(canvas.host)?.textContent).toContain(MESSAGE);
-		// nothing is mid-arrival, so there is no live copy at all
-		expect(canvas.host.querySelector("[data-agent-prose]")).toBeNull();
-		// and nothing about the settled message moves: no word is arriving and no caret
+		// and nothing about the settled message moves: no paragraph is opening and no caret
 		// says more is coming
-		expect(canvas.host.querySelectorAll(".animate-agent-word")).toHaveLength(0);
-		expect(canvas.host.querySelector("[data-agent-caret]")).toBeNull();
+		expect(canvas.host.querySelector(".animate-agent-paragraph")).toBeNull();
+		expect(caret(canvas.host)).toBeNull();
 	});
 
 	it("holds the press while a turn runs, and gives the composer back when it ends", async () => {
@@ -928,14 +931,12 @@ describe("a long message", () => {
 
 		canvas.turn.push(waiting);
 		canvas.turn.push(speaking);
-		canvas.turn.push(say(DOCUMENT));
+		// the whole message at once, which is what a runtime that sends no partials does
+		canvas.turn.push({ kind: "said", text: DOCUMENT, parent: null });
 		canvas.turn.push(ended);
 		canvas.turn.push(closed);
 		canvas.turn.close();
-		// the pace drains a backlog this big in about 1.6s, and the live copy going away is
-		// the edge having caught up with the wire
-		await until(() => arriving(canvas.host).length > 0);
-		await until(() => canvas.host.querySelector("[data-agent-prose]") === null, 8000);
+		await until(() => canvas.host.querySelectorAll("[data-agent-log] pre").length === 2);
 
 		const said = canvas.host.querySelector("[data-agent-log]")?.firstElementChild?.lastElementChild;
 		if (!(said instanceof HTMLElement)) throw new Error("no message");
@@ -963,65 +964,27 @@ describe("a long message", () => {
 	});
 
 	/**
-	 * A sentence holds the pace's lag so its last lines do not walk in one at a time; a
-	 * document does not, because the reserve would put its whole height into the scroll
-	 * range from the first character and leave screens of scrollable nothing under a
-	 * message still being written.
+	 * A paragraph that has landed stays where it is: a later delta re-renders the block and
+	 * must not remount what is already on screen, or every paragraph would open again.
 	 */
-	it("reserves the height of a short message and lets a document grow instead", async () => {
-		const reserve = (host: HTMLElement) => host.querySelector("[data-agent-reserve]");
-
-		const sentence = mount();
-		await sentence.render();
-		await send(sentence.host, "go");
-		sentence.turn.push(waiting);
-		sentence.turn.push(speaking);
-		sentence.turn.push(say(MESSAGE));
-		await until(() => arriving(sentence.host).length > 0);
-
-		expect(reserve(sentence.host)).not.toBeNull();
-
-		const report = mount();
-		await report.render();
-		await send(report.host, "check the copy");
-		report.turn.push(waiting);
-		report.turn.push(speaking);
-		report.turn.push(say(DOCUMENT));
-		await until(() => arriving(report.host).length > 0);
-
-		expect(reserve(report.host)).toBeNull();
-	});
-
-	/**
-	 * The crossover happens mid-stream, because the paragraph count is read off what the
-	 * wire has sent: a message is a sentence until its fourth paragraph lands and a document
-	 * afterwards. The live copy has to survive that, or every word in the window fires its
-	 * arrival again at the moment the reserve goes.
-	 */
-	it("keeps the live copy mounted when a message becomes a document mid-stream", async () => {
+	it("keeps the paragraphs already on screen when the next lands", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "check the copy");
 		canvas.turn.push(waiting);
 		canvas.turn.push(speaking);
-		// three paragraphs: still a sentence as far as the reserve is concerned
 		const blocks = chunksOf(DOCUMENT).flatMap((chunk) =>
 			chunk.kind === "p" ? [chunk.spans.map((span) => span.text).join("")] : [],
 		);
-		canvas.turn.push(say(blocks.slice(0, 3).join("\n\n")));
-		await until(() => arriving(canvas.host).length > 0);
-		const before = canvas.host.querySelector("[data-agent-prose]");
+		canvas.turn.push(say(`${blocks.slice(0, 2).join("\n\n")}\n\n`));
+		await until(() => paragraphs(canvas.host).length === 1);
+		const before = canvas.host.querySelector("[data-agent-paragraph]");
 
-		expect(before).not.toBeNull();
-		expect(canvas.host.querySelector("[data-agent-reserve]")).not.toBeNull();
+		canvas.turn.push(say(`${blocks[2] ?? ""}\n\n${blocks[3] ?? ""}`));
+		await until(() => paragraphs(canvas.host).length === 3, 3000);
 
-		// and the fourth lands
-		canvas.turn.push(say(`\n\n${blocks[3] ?? ""}`));
-		await until(() => canvas.host.querySelector("[data-agent-reserve]") === null);
-
-		// the same element, so nothing inside it remounted and no word arrived twice
-		expect(canvas.host.querySelector("[data-agent-prose]")).toBe(before);
-		expect(arriving(canvas.host).length).toBeGreaterThan(0);
+		// the same element, so nothing inside it remounted and no paragraph arrived twice
+		expect(canvas.host.querySelector("[data-agent-paragraph]")).toBe(before);
 	});
 
 	/**
@@ -1126,12 +1089,13 @@ describe("what an entry redraws for", () => {
 		expect(sameEntry(props(row, 400), props(row, 900))).toBe(true);
 	});
 
-	it("draws again while the edge is still moving through a message", () => {
-		expect(sameEntry(props(arriving, 40), props(arriving, 140))).toBe(false);
+	/** a message keeps its own time: its paragraphs release themselves, and the clock is not theirs */
+	it("sits out the clock for a message still arriving", () => {
+		expect(sameEntry(props(arriving, 40), props(arriving, 140))).toBe(true);
 	});
 
-	it("sits out the clock once the whole message is on screen", () => {
-		expect(sameEntry(props(arriving, 4000), props(arriving, 9000))).toBe(true);
+	it("draws again when the wire moves a message", () => {
+		expect(sameEntry(props(arriving, 40), props({ ...arriving, full: "the frame is live. And" }, 40))).toBe(false);
 	});
 
 	it("draws again while a request out still has a digit to turn over", () => {
@@ -2295,30 +2259,25 @@ describe("a question in the log", () => {
 	});
 
 	/**
-	 * The clock is read off the arriving edge of a message, which is the one thing in this
-	 * rail that is paced by it: a running clock spends a whole delta inside 250ms, so a
-	 * message still short of its own end after 700ms is a clock that never moved.
+	 * A question parks the turn: the message it interrupted stays held where the wire left
+	 * it, and nothing spool runs ever submits an answer on anybody's behalf.
 	 */
-	it("stops the clock while it waits and never answers for anybody", async () => {
+	it("holds the words where they stopped and never answers for anybody", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "shoot the receipt");
 		canvas.turn.push({ kind: "waiting", parent: null });
 		canvas.turn.push(speaking);
 		canvas.turn.push(say(LONG));
-		// the edge has to be somewhere before the question stops it, or a frozen clock at
-		// zero would pass this by drawing nothing at all
-		await until(() => arriving(canvas.host).length > 0);
+		await until(() => caret(canvas.host) !== null);
 		ask(canvas);
 		await until(() => options(canvas.host).length === 2);
-		expect(arriving(canvas.host).length).toBeLessThan(LONG.length);
 		await settle(700);
 
-		// the words are not arriving while somebody decides, so 700ms later some of the
-		// message is still on its way — and nothing spool runs ever submits an answer
-		const held = arriving(canvas.host);
-		expect(held.length).toBeGreaterThan(0);
-		expect(held.length).toBeLessThan(LONG.length);
+		// one paragraph and not over, so it is a caret and none of the words, however long
+		// somebody takes to decide
+		expect(paragraphs(canvas.host)).toEqual([]);
+		expect(caret(canvas.host)).not.toBeNull();
 		expect(canvas.turn.answers).toEqual([]);
 		expect(canvas.host.querySelector("[data-agent-ask]")?.getAttribute("data-agent-ask")).toBe("open");
 	});
@@ -2446,12 +2405,12 @@ describe("an approval in the log", () => {
 		canvas.turn.push({ kind: "waiting", parent: null });
 		canvas.turn.push(speaking);
 		canvas.turn.push(say(LONG));
+		canvas.turn.push({ kind: "said", text: LONG, parent: null });
 		await until(() => canvas.host.querySelector("[data-agent-ask]")?.getAttribute("data-agent-ask") === "dropped");
 
-		// the clock has to come back with the drop, or the message stamped after it would
-		// sit at zero characters forever: nothing left arriving, and the whole of it drawn
-		await until(() => canvas.host.querySelector("[data-agent-prose]") === null);
-		expect(log(canvas.host)).toContain(LONG);
+		// and the message that followed the drop is drawn whole, with nothing left arriving
+		await until(() => log(canvas.host).includes(LONG), 3000);
+		expect(caret(canvas.host)).toBeNull();
 	});
 });
 
@@ -3367,15 +3326,10 @@ describe("what survives a restart", () => {
 		expect(log(canvas.host)).toContain("write the copy deck");
 		expect(log(canvas.host)).toContain("The header is tighter now.");
 		expect(canvas.host.querySelector('[data-agent-row="edit copy-deck"]')).not.toBeNull();
-		/*
-		 * And it is *drawn*, rather than sitting in the invisible reserve a message still
-		 * arriving holds. A restored message has no clock to be paced against, so both of
-		 * the live edge's boxes have to be absent: an arriving copy with nothing in it and a
-		 * reserve holding the text it cannot reach is exactly what a schedule read against a
-		 * clock that starts again at zero produces.
-		 */
-		expect(canvas.host.querySelector("[data-agent-prose]")).toBeNull();
-		expect(canvas.host.querySelector("[data-agent-reserve]")).toBeNull();
+		// and it is a picture rather than an arrival: nothing opens and nothing says more is
+		// coming, because a restored message is over
+		expect(canvas.host.querySelector(".animate-agent-paragraph")).toBeNull();
+		expect(caret(canvas.host)).toBeNull();
 	});
 
 	/** a reboot is not a hand: the thread reads stopped and nothing offers to run it again */
@@ -3461,7 +3415,7 @@ describe("what survives a restart", () => {
 		canvas.turn.push(ended);
 		canvas.turn.push(closed);
 		canvas.turn.close();
-		await until(() => arriving(canvas.host) === "");
+		await until(() => caret(canvas.host) === null && log(canvas.host).includes(MESSAGE));
 
 		await send(canvas.host, "and now the receipt");
 		canvas.turn.push(waiting);
@@ -3469,12 +3423,12 @@ describe("what survives a restart", () => {
 		canvas.turn.push(say("Receipt is next."));
 		await settle(120);
 
-		// the first turn is settled text with no live boxes of its own, under the second
+		// the first turn is settled text with no live marker of its own, under the second
 		expect(log(canvas.host)).toContain(MESSAGE);
 		expect(log(canvas.host)).toContain("tighten the header");
 		expect(log(canvas.host)).toContain("and now the receipt");
 		// and exactly one message is arriving: the one that is
-		expect(canvas.host.querySelectorAll("[data-agent-prose]")).toHaveLength(1);
+		expect(canvas.host.querySelectorAll("[data-agent-caret]")).toHaveLength(1);
 	});
 
 	it("carries on in a thread whose session is still there", async () => {

@@ -950,6 +950,11 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	 * here: its clock is the turn's, and the turn is over. What it keeps is how long it
 	 * had been out when the lights went out, which is a fact, rather than a total it
 	 * never reached (#212).
+	 *
+	 * And a message the stream left mid-sentence is as settled as it will ever be: the
+	 * authority that would have confirmed it is not coming, so what landed is the whole of
+	 * it, and the rail draws its last paragraph rather than holding it for a break that
+	 * never arrives (#149).
 	 */
 	const finish = () => {
 		if (outstanding !== null) {
@@ -957,6 +962,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			outstanding.state = "stopped";
 			outstanding = null;
 		}
+		for (const block of prose.values()) block.settled = true;
 		for (const thread of [...runs.keys()]) endRun(thread);
 		for (const block of blocks.values()) {
 			if (block.row === null && !block.joined) nameRow(block, block.fragments, false, null);

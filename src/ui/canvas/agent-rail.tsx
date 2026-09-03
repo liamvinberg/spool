@@ -7,11 +7,10 @@ import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
 import { limitReadout } from "./agent-limit";
-import { closedText } from "./agent-markers";
 import { type AgentModelDeck, menuLongest, menuSays } from "./agent-model";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
-import { Caret, Said } from "./agent-said";
+import { Caret, Paragraphs } from "./agent-said";
 import { Lightbox, Shot } from "./agent-shot";
 import type { TurnPhase } from "./agent-stream";
 import { type Life, type Thread, UNSAID } from "./agent-threads";
@@ -22,10 +21,10 @@ import {
 	type AgentSent,
 	duration,
 	type RowState,
-	shownBy,
 } from "./agent-transcript";
 import { ageOf } from "./frame-find";
 import { ChevronIcon, PanelCaret } from "./sidebar";
+import { useStillness } from "./stillness";
 
 /**
  * The agent rail (#144, #192, #193, #194): the right rail, whole, drawn as one
@@ -79,14 +78,6 @@ const TOP_INSET = 10;
 
 /** the mark's own width and the gap beside it, so a disclosure lines up under the verb */
 const INDENT = 14 + 10;
-
-/**
- * How much of an arriving message is still treated as live, in drawn characters.
- *
- * About a second at the measured 171 characters a second, which is longer than the
- * arrival animation, so a word always finishes before it stops being live.
- */
-const LIVE_TAIL = 150;
 
 const MIN_H = 60;
 const MAX_H = 160;
@@ -1206,7 +1197,6 @@ export function sameEntry(before: EntryDrawn, after: EntryDrawn): boolean {
 	if (before.entry !== after.entry || before.jump !== after.jump || before.onAnswer !== after.onAnswer) return false;
 	if (before.elapsed === after.elapsed) return true;
 	const entry = after.entry;
-	if (entry.kind === "prose") return shownBy(entry, before.elapsed) === shownBy(entry, after.elapsed);
 	// a receipt with a total on it is a record rather than a clock, and one that is not
 	// running has nothing left to count
 	if (entry.kind === "wait" && entry.ms === null && entry.state === "running") {
@@ -1270,7 +1260,7 @@ const Entry = memo(function Entry({ entry, elapsed, jump, onAnswer }: EntryDrawn
 	if (entry.kind === "row") return <Row entry={entry} jump={jump} />;
 	if (entry.kind === "wait") return <Wait entry={entry} elapsed={elapsed} />;
 	if (entry.kind === "ask") return <Ask entry={entry} onAnswer={onAnswer} />;
-	return <Prose entry={entry} elapsed={elapsed} />;
+	return <Prose entry={entry} />;
 }, sameEntry);
 
 /* ---------- one tool call, one line ----------
@@ -1746,70 +1736,18 @@ function AskOutcome({ state, text }: { state: RowState; text: string }) {
 }
 
 /**
- * The paragraph count at which a message stops being a sentence and is a document.
+ * One block of the agent's prose, a paragraph at a time (#149).
  *
- * Nothing is measured to decide it. It is the same test the lede candidate asked of a
- * message, answered off the paragraph breaks in the text rather than off the renderer's
- * chunks or a layout pass, so it is known from the character the fourth paragraph opens
- * on rather than from a box that has already been drawn.
+ * What is drawn is what the wire has delivered whole: `full` is every character that has
+ * arrived, and a paragraph of it reaches the screen once the text after it has begun, or
+ * once the block has settled — the assistant message confirmed it, or the turn ended and
+ * nothing more is coming. Nothing here reads the clock: the paragraphs release themselves
+ * on their own timer, and the open is CSS, so the log re-renders when the wire moves and
+ * not per frame.
  */
-const DOCUMENT_BLOCKS = 4;
-
-/**
- * One block of the agent's prose, however much of it has arrived.
- *
- * A short message reserves the height of everything that has *landed* rather than the
- * height of what is drawn, which is the pace's lag — up to 0.8s of text the wire has
- * sent and the edge has not reached. That much is held so the last lines do not walk
- * in one at a time under the reader. It is not the finished message's height and
- * cannot be: the wire has not sent the rest yet. Rendered, the reserve cannot be a
- * hidden copy of the same string either — a half-typed `**bold` is not the geometry of
- * a finished `**bold**` — so it is the landed text drawn invisibly with the arriving
- * one drawn over it.
- *
- * **A document grows instead.** The reserve puts its whole height into the scroll
- * range from the first character, so a message still being written for twenty seconds
- * leaves screens of scrollable nothing under it and the scrollbar says the log is
- * longer than anything in it. Growing has no such space. The empty-screen argument
- * that used to be made against the reserve at this size was a bottom-pinning artefact
- * and the top-anchored follow above answered it, so what is left is only the scroll
- * range — enough to keep the reserve off a document, and not enough to pretend the
- * reserve was ever unwatchable.
- */
-function Prose({ entry, elapsed }: { entry: Extract<AgentEntry, { kind: "prose" }>; elapsed: number }) {
-	const upto = shownBy(entry, elapsed);
-	const streaming = upto < entry.full.length;
-	if (!streaming) return <Said text={entry.full} />;
-	/*
-	 * `closedText` closes a marker the message has not finished writing, which is the
-	 * thing that made streaming markdown jitter: `**The shot failed` renders as two
-	 * literal asterisks in body weight, and when the closing `**` lands 200ms later the
-	 * asterisks vanish, the run goes bold, and the paragraph re-wraps under the line
-	 * being read. An unterminated fence is worse — it swallows the rest of the message
-	 * into a `<pre>`. Closed instead, what is drawn is always a prefix of what will be.
-	 */
-	const shown = closedText(entry.full.slice(0, upto));
-	const grows = entry.full.split(/\n\n+/).length >= DOCUMENT_BLOCKS;
-	return (
-		<div className="relative">
-			{/*
-			 * The reserve, whose slot is held open when there is nothing in it. A message
-			 * crosses into being a document mid-stream, and a tree that changed shape at that
-			 * moment would take the live copy with it: React would remount the window and
-			 * every word inside it would fire its arrival again, all at once.
-			 */}
-			{grows ? null : (
-				<div data-agent-reserve="" className="invisible" aria-hidden="true">
-					<Said text={entry.full} />
-				</div>
-			)}
-			{/* the arriving copy, and the only place in the rail that holds a partial message:
-			    it is addressable so a test can ask how much has landed */}
-			<div data-agent-prose="" className={cn(!grows && "absolute inset-0")}>
-				<Said text={shown} live={Math.min(LIVE_TAIL, shown.length)} caret={<Caret />} />
-			</div>
-		</div>
-	);
+function Prose({ entry }: { entry: Extract<AgentEntry, { kind: "prose" }> }) {
+	const still = useStillness();
+	return <Paragraphs text={entry.full} finished={entry.settled} still={still} caret={<Caret />} />;
 }
 
 /* ---------- the mark ----------

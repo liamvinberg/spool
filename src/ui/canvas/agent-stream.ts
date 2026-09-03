@@ -41,6 +41,7 @@ import {
 	transcriptOf,
 	unpaced,
 } from "./agent-transcript";
+import { useStillness } from "./stillness";
 
 /**
  * Every conversation a project has, and the one turn the rail is watching (#192, #200).
@@ -238,11 +239,6 @@ export interface AgentDeck {
 	/** the plus on the plate */
 	readonly onNew: () => void;
 }
-
-const stillness = () =>
-	typeof window !== "undefined" && typeof window.matchMedia === "function"
-		? window.matchMedia("(prefers-reduced-motion: reduce)").matches
-		: false;
 
 /**
  * One thread's whole runtime.
@@ -542,7 +538,7 @@ function archive(entries: readonly AgentEntry[], token: string): AgentEntry[] {
 }
 
 export function useAgentThreads(project: string): AgentDeck {
-	const [still] = useState(stillness);
+	const still = useStillness();
 	const threads = useRef(new Map<string, Live>());
 	const [open, setOpen] = useState("");
 	/** climbs whenever anything a render reads has moved, which is what redraws the rail */

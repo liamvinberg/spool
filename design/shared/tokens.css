@@ -73,13 +73,18 @@
 	 * a loop would have to cut from full back to empty, and eased at both ends
 	 * means the mark is never moving at the moment it changes direction. */
 	--animate-boot-wind: boot-wind 1500ms ease-in-out infinite alternate;
-	/* the agent rail (#192): an entry settles into the log, a word fades in as it
-	 * arrives, and a ring turns slowly enough to read as work rather than an alarm.
-	 * 170ms on the word is where the sourced numbers land — Streamdown defaults to
-	 * 150 and recommends more only for faster streams; anything entering stays under
-	 * 300 and eases out, because accelerating at the start reads as responsive. At
-	 * 260 four words are mid-fade at once against two at 170. */
+	/* the agent rail (#192, #149): a row opens from no height to its own over 260ms and
+	 * rises 6px into it, so the log above glides up because the thing pushing it is
+	 * growing rather than appearing; a paragraph of the agent's words does the same over
+	 * 340ms, because it is a bigger box and the same gesture. `agent-entry` is the rise
+	 * alone, for what stands still around a box that is already its size. A ring turns
+	 * slowly enough to read as work rather than an alarm. 170ms on a delegate's step is
+	 * where the sourced numbers land — anything entering stays under 300 and eases out,
+	 * because accelerating at the start reads as responsive. */
 	--animate-agent-entry: agent-entry 280ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	--animate-agent-open: agent-open 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	--animate-agent-paragraph: agent-open 340ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	--animate-agent-rise: agent-entry 340ms cubic-bezier(0.22, 0.61, 0.36, 1);
 	--animate-agent-word: agent-word 170ms cubic-bezier(0.22, 0.61, 0.36, 1);
 	/* a delegate's live step (#194). One duration for all three of them, and it is the
 	 * word's: the line opens, the line closes, and the words that are being replaced go
@@ -224,6 +229,19 @@
 	@keyframes agent-word {
 		from {
 			opacity: 0;
+		}
+	}
+
+	/* a box opening to its own height: a one-row grid whose track grows from nothing, so
+	 * the content inside is laid out at its final size from the first frame and only the
+	 * clip moves. Both ends stated, because the element's own value is `none` and a track
+	 * cannot interpolate to that */
+	@keyframes agent-open {
+		from {
+			grid-template-rows: 0fr;
+		}
+		to {
+			grid-template-rows: 1fr;
 		}
 	}
 
@@ -439,6 +457,9 @@
 	.animate-find-in,
 	.animate-find-panel-in,
 	.animate-agent-entry,
+	.animate-agent-open,
+	.animate-agent-paragraph,
+	.animate-agent-rise,
 	.animate-agent-word,
 	.animate-agent-step,
 	.animate-agent-menu-in,

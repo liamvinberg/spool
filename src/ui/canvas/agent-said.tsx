@@ -1,91 +1,28 @@
-import { memo, type ReactNode } from "react";
+import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "../cn";
-import { type Chunk, chunksOf, drawnText, type Span } from "./agent-markdown";
+import { type Chunk, chunksOf, type Span } from "./agent-markdown";
+import { closedText } from "./agent-markers";
 
 /**
- * The agent's own words, rendered, with an optional live tail (#148, #149, #192).
+ * The agent's own words, rendered (#148, #163, #195), and how they arrive: a paragraph at
+ * a time (#149).
  *
- * `live` is a count of trailing drawn characters still arriving. Zero renders
- * finished prose, which is what a settled transcript passes.
- *
- * **The arriving unit is a word, and that is not a preference — per character
- * cannot be made to hold still.** Wrapping a glyph in a span breaks text shaping at
- * the span boundary, so a run of per-character spans measures wider than the same
- * characters as one text node. Every frame, characters at the trailing edge stop
- * being spans and become plain text, so the paragraph's width changes under the
- * cursor continuously: it reads as the block flickering and rebreaking, worst at the
- * start where the whole message is inside the window. Per word, the boundaries land
- * on spaces, so the same trailing edge costs nothing.
- *
- * **A settled word gets no element at all**, and the span an arriving one gets is a
- * plain inline span. Wrapping every word was measured and it was a defect rather
- * than a cost: `white-space: pre` is `text-wrap: nowrap` inside the box, so a
- * wrapped word cannot break *inside itself* — and this corpus is made of words that
- * should (`'kaffe-receipt-copy'`, `design/shared/tokens.css`). It broke the prose
- * differently from raw text at 3 of 12 column widths including the rail's own, and
- * the reflow is lateral, which is why looking at a height never caught it.
- * `inline-block` turned out to be doing nothing; a plain span splits the same word
- * raw text splits.
- *
- * So nothing is unwrapped at a finish line: the live window is the only thing
- * wrapped, and its trailing edge is free to move.
+ * `Said` draws a settled run of markdown and leaves the DOM raw text would leave: a word
+ * contributes no element, the block stack and one wrapper per markdown run are all there
+ * is. Nothing here is ever a partial message, because the rail stopped drawing the
+ * stream: text still arriving cannot be read, so drawing it was motion the reader waited
+ * out anyway. `Paragraphs` holds a paragraph until it is whole and then lets it arrive
+ * the way a row does, opening into the log with the words rising into it.
  */
-
-/**
- * A run of text where the trailing `live` characters are arriving.
- *
- * `from` is how many drawn characters precede this run, so distance from the end is
- * absolute across the whole message rather than per span. Whitespace is never
- * wrapped, and that is not a nicety: a span holding a single space keeps that space
- * from collapsing at a soft-wrap opportunity, so every line whose break lands on one
- * begins with a visible indent and the paragraph looks ragged down its left edge.
- */
-function Run({ text, from, total, live }: { text: string; from: number; total: number; live: number }) {
-	if (live <= 0) return <>{text}</>;
-	const start = total - live;
-	let at = from;
-	return (
-		<>
-			{text.split(/(\s+)/).map((piece) => {
-				const pos = at;
-				at += piece.length;
-				if (piece === "") return null;
-				if (piece.trim() === "") return piece;
-				// a settled word is text rather than an element: see the word rule above
-				if (pos + piece.length <= start) return piece;
-				return (
-					/*
-					 * The key is the word's own offset in the message, which is what makes it
-					 * stable: `closedText` guarantees the drawn text only ever grows, so a word
-					 * mounts once and its arrival animation fires once.
-					 *
-					 * One class and nothing else, which is the frame's own `fade`. A delay across
-					 * the last half-line was drawn and it is a defect rather than a softer edge: a
-					 * CSS animation with no fill mode has no effect during its delay, so a delayed
-					 * word paints at full strength and then snaps to nothing to begin its own fade.
-					 * That is the one thing a fade exists to prevent, at the live edge where every
-					 * arriving word is.
-					 */
-					<span key={pos} className="animate-agent-word">
-						{piece}
-					</span>
-				);
-			})}
-		</>
-	);
-}
 
 /**
  * The live end marker: one static bar, and the *static* is the decision (#149).
  *
- * That it survives at all is because the pace stalls — every fade completes during a
- * pause, so the caret is then the only thing separating *still writing* from *done*.
- * Nothing that ships blinks one: of thirteen chat surfaces read at the source, zero
- * blink at the live edge, and the two that pair a caret with a per-word fade both
- * draw a static glyph. WCAG 2.2.2 also lists blinking beside moving and scrolling
- * under the same five-second trigger, so a caret blinking through a twenty-second
- * message would owe a pause mechanism — and the exemption for blinking that is
- * *essential* is unavailable, because the fade is already a liveness signal. A CSS
+ * It rides the end of the last whole paragraph while more is coming, and stands alone on
+ * a line of its own before the first paragraph is whole. Nothing that ships blinks one:
+ * of thirteen chat surfaces read at the source, zero blink at the live edge. WCAG 2.2.2
+ * also lists blinking beside moving and scrolling under the same five-second trigger, so
+ * a caret blinking through a twenty-second message would owe a pause mechanism. A CSS
  * blink would also silently defeat macOS's own non-blinking-cursor setting.
  */
 export function Caret() {
@@ -111,26 +48,16 @@ const INDENT = 14;
 /**
  * Rendered on its props and nothing else, which is why it is held.
  *
- * The block that is arriving draws twice: an invisible copy of the whole landed message
- * holding the height open, and the words the edge has reached drawn over it. The
- * invisible one is the same string for the whole of the message's life and the visible
- * one changes ten times a second, so the reserve is re-rendered a hundred times for
- * nothing unless it is told it may sit still.
+ * A paragraph's text never changes once it is whole, and the log around it re-renders on
+ * every tick of the rail's clock while a turn runs, so the memo is what lets a settled
+ * paragraph sit out the whole of the turn after its own arrival.
  */
-export const Said = memo(function Said({ text, live = 0, caret }: { text: string; live?: number; caret?: ReactNode }) {
+export const Said = memo(function Said({ text, caret }: { text: string; caret?: ReactNode }) {
 	const chunks = chunksOf(text);
-	const total = drawnText(chunks).length;
-	let seen = 0;
-	const run = (value: string): ReactNode => {
-		const node = <Run text={value} from={seen} total={total} live={live} />;
-		seen += value.length;
-		return node;
-	};
 	/*
 	 * A span is one element carrying whatever its markers added, rather than one element
 	 * per marker. Nesting them would wrap an emphasised path in three tags to say what
-	 * two classes say, and every extra element is one more thing between an arriving word
-	 * and the text shaping it belongs to (#163).
+	 * two classes say (#163).
 	 *
 	 * A link is the exception and has to be: it is the one marker that is an element
 	 * rather than a face.
@@ -145,7 +72,6 @@ export const Said = memo(function Said({ text, live = 0, caret }: { text: string
 					// strength reads as emphasis at a glance
 					span.strike === true && "text-text/50 line-through",
 				);
-				const inner = run(span.text);
 				if (span.code === true) {
 					return (
 						<code
@@ -156,7 +82,7 @@ export const Said = memo(function Said({ text, live = 0, caret }: { text: string
 								face,
 							)}
 						>
-							{inner}
+							{span.text}
 						</code>
 					);
 				}
@@ -183,20 +109,20 @@ export const Said = memo(function Said({ text, live = 0, caret }: { text: string
 								face,
 							)}
 						>
-							{inner}
+							{span.text}
 						</a>
 					);
 				}
 				if (span.bold === true) {
 					return (
 						<strong key={key} className={cn("font-medium text-text", face)}>
-							{inner}
+							{span.text}
 						</strong>
 					);
 				}
 				return (
 					<span key={key} className={face}>
-						{inner}
+						{span.text}
 					</span>
 				);
 			})}
@@ -220,7 +146,7 @@ export const Said = memo(function Said({ text, live = 0, caret }: { text: string
 							key={key}
 							className="pages-scrollbar overflow-x-auto rounded-sm border border-border bg-surface px-2.5 py-2 font-mono text-2xs text-text/80 leading-4"
 						>
-							{run(chunk.text)}
+							{chunk.text}
 							{end}
 						</pre>
 					);
@@ -264,3 +190,174 @@ export const Said = memo(function Said({ text, live = 0, caret }: { text: string
 		</div>
 	);
 });
+
+/* ---------- a paragraph at a time (#149) ----------
+ * The rail drew the stream, per word, through a drain that paced the wire's chunks into a
+ * cadence. Text still arriving cannot be read, so all of that was motion the reader waited
+ * out anyway; and a message gaining a line gained it at once under the reader, which is the
+ * step the rows had already stopped making. So the unit is the paragraph: held until it is
+ * whole, then arriving the way a row does, a box opening to its height with the words
+ * rising into it. A caret alone between paragraphs says more is coming.
+ *
+ * A paragraph is whole when the text after it has begun, which is when its break landed,
+ * or when the message has ended. A fence is never split: blank lines inside one are its
+ * own, and a half fence renders as a swallowed message, so blank lines are counted against
+ * open fences before a break is honoured. */
+
+/** paragraphs of `text`, with fences kept whole; an empty run between two breaks is not one */
+export function paragraphsOf(text: string): string[] {
+	const out: string[] = [];
+	let held = "";
+	let fenced = false;
+	for (const part of text.split(/\n\n+/)) {
+		const ticks = (part.match(/```/g) ?? []).length;
+		if (fenced) {
+			held += `\n\n${part}`;
+			if (ticks % 2 === 1) {
+				fenced = false;
+				out.push(held);
+				held = "";
+			}
+			continue;
+		}
+		if (ticks % 2 === 1) {
+			fenced = true;
+			held = part;
+			continue;
+		}
+		out.push(part);
+	}
+	if (held !== "") out.push(held);
+	return out.filter((paragraph) => paragraph.trim() !== "");
+}
+
+/**
+ * The least two paragraphs are apart, so two completing in one delta land as two arrivals.
+ *
+ * The wire delivers two paragraphs in one delta often enough that without the gap they
+ * land as one block, which is the step this exists to remove: a burst becomes a cadence.
+ */
+export const UNIT_GAP_MS = 700;
+/** the caret's own line, which is what the first paragraph opens out of */
+const CARET_LINE = 20;
+/** a paragraph that was whole when this mounted: drawn settled, never arriving, gating nothing */
+const SETTLED = Number.NEGATIVE_INFINITY;
+
+/**
+ * The agent's prose, a paragraph at a time.
+ *
+ * `text` is what has landed, and `finished` says the message is over, so the last
+ * paragraph is whole too. Every paragraph that is whole when this mounts is drawn settled
+ * at once — a restored thread, a thread switched back to and a message that arrived whole
+ * are all pictures rather than arrivals — and only a paragraph that becomes whole while
+ * this is on screen arrives. Under stillness everything landed is drawn settled and no
+ * caret says more is coming: the arrival is what the reader asked not to see, and the
+ * updates are not.
+ *
+ * The open is CSS: a grid row going from no height to its own, the words rising into it.
+ * Nothing here re-renders per frame; a render happens when the wire moves and when a held
+ * paragraph comes due, and never otherwise.
+ */
+export function Paragraphs({
+	text,
+	finished,
+	still,
+	caret,
+}: {
+	text: string;
+	finished: boolean;
+	/** the reader asked for stillness, so nothing is held and nothing opens */
+	still: boolean;
+	/** the live marker, at the end of the last whole paragraph while more is coming */
+	caret?: ReactNode;
+}) {
+	/**
+	 * When each paragraph was let onto the screen, by index. A paragraph is whole when the
+	 * wire says so, and released at that moment or `UNIT_GAP_MS` after the paragraph before
+	 * it, whichever is later. `SETTLED` is a paragraph that was already whole at mount, which is
+	 * drawn without arriving.
+	 */
+	const released = useRef(new Map<number, number>());
+	const mounted = useRef(false);
+	const [, wake] = useState(0);
+	const now = performance.now();
+
+	const paragraphs = paragraphsOf(text);
+	const whole = (at: number) => finished || at < paragraphs.length - 1;
+	/** the latest arrival so far; a picture drawn at mount is not one, so it gates nothing */
+	let last: number | null = null;
+	for (const at of released.current.values()) if (Number.isFinite(at)) last = last === null ? at : Math.max(last, at);
+	let next: number | null = null;
+	if (!still) {
+		paragraphs.forEach((_, at) => {
+			if (!whole(at)) return;
+			let when = released.current.get(at);
+			if (when === undefined) {
+				when = !mounted.current ? SETTLED : last === null ? now : Math.max(now, last + UNIT_GAP_MS);
+				released.current.set(at, when);
+			}
+			if (Number.isFinite(when)) last = last === null ? when : Math.max(last, when);
+			if (when > now && (next === null || when < next)) next = when;
+		});
+	}
+	mounted.current = true;
+	// wake exactly when the next held paragraph is due, and not before
+	useEffect(() => {
+		if (next === null) return;
+		const timer = window.setTimeout(() => wake((count) => count + 1), Math.max(0, next - performance.now()));
+		return () => window.clearTimeout(timer);
+	}, [next]);
+
+	if (still) {
+		return (
+			<div data-agent-paragraphs="">
+				<Said text={closedText(text)} />
+			</div>
+		);
+	}
+
+	const out = (at: number) => whole(at) && (released.current.get(at) ?? Number.POSITIVE_INFINITY) <= now;
+	const shown = paragraphs.map((paragraph, at) => ({ at, paragraph })).filter(({ at }) => out(at));
+	const lastOut = shown[shown.length - 1];
+	/** something is still to come: not landed, not whole, or whole and held */
+	const more = !finished || shown.length < paragraphs.length;
+	/** the caret stands on a line of its own only until there is a paragraph to stand at the end of */
+	const alone = more && lastOut === undefined;
+
+	return (
+		<div data-agent-paragraphs="" className="flex flex-col">
+			{shown.map(({ at, paragraph }, index) => {
+				// the caret rides the end of the last whole paragraph, so the message ending
+				// removes a glyph and never a line
+				const tail = more && at === lastOut?.at ? caret : undefined;
+				const inner = (
+					<div className={index === 0 ? undefined : "pt-2"}>
+						<Said text={closedText(paragraph)} caret={tail} />
+					</div>
+				);
+				// already whole at mount: a picture, not an arrival
+				if (released.current.get(at) === SETTLED) {
+					return (
+						<div key={at} data-agent-paragraph="">
+							{inner}
+						</div>
+					);
+				}
+				return (
+					<div key={at} data-agent-paragraph="" className="grid animate-agent-paragraph">
+						{/* the first paragraph opens out of the caret's own line rather than out of
+						    nothing, so the line it replaces never reads as the log dropping */}
+						<div className={cn("overflow-hidden", index === 0 ? "min-h-5" : "min-h-0")}>
+							<div className="animate-agent-rise">{inner}</div>
+						</div>
+					</div>
+				);
+			})}
+			{alone && caret !== undefined ? (
+				<div data-agent-caret-line="" className="flex items-center" style={{ height: CARET_LINE }}>
+					{caret}
+				</div>
+			) : null}
+		</div>
+	);
+}
