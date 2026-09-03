@@ -300,6 +300,7 @@ function Overlay({
 	const hovered = hover === null || (selection !== null && hover.id === selection.id && hover.key === selection.key) ? undefined : box("cart", hover);
 	const element = selection === null ? undefined : elementOf(selection.id);
 	const parent = element?.parent == null ? undefined : box("cart", { id: element.parent, key: element.parent });
+	const root = box("cart", { id: "screen", key: "screen" });
 
 	const tint = take === "tint";
 	const accent = (id: string | undefined) => (tint && id !== undefined && shared(id) ? TINT : THREAD);
@@ -341,9 +342,15 @@ function Overlay({
 			{hovered === undefined ? null : (
 				<>
 					{named?.origin === undefined ? null : (
+						// above the ring, and inside it when above would be the frame's own label
 						<span
 							className="absolute rounded-xs px-1 py-[1px] font-mono text-2xs leading-3"
-							style={{ left: hovered.x - 1, top: hovered.y - 17, color: THREAD, background: "#161616" }}
+							style={{
+								left: hovered.x + (inside(hovered, root) ? 3 : -1),
+								top: inside(hovered, root) ? hovered.y + 3 : hovered.y - 17,
+								color: THREAD,
+								background: "#161616",
+							}}
 						>
 							{named.origin.export}
 						</span>
@@ -467,6 +474,11 @@ function Origin({ take, element }: { take: (typeof TAKES)[TakeName]; element: Do
 			{count === null ? null : <span className={FAINT}>{count}</span>}
 		</div>
 	);
+}
+
+/** true when a label over this rect would land on the frame's name */
+function inside(rect: Rect, root: Rect | undefined): boolean {
+	return root !== undefined && rect.y - 17 < root.y;
 }
 
 function grow(rect: Rect, by: number): Rect {
