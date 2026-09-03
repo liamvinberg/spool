@@ -1305,6 +1305,89 @@ describe("when the reader takes the wheel", () => {
 		await send(canvas.host, "and once more");
 		await until(() => chip(canvas.host) === null && log.scrollTop !== 40);
 	});
+
+	/* ---------- growth under a still scrollbar (#149) ----------
+	 * Rows open, paragraphs open, pictures land: the log grows under a reader who touched
+	 * nothing, and following has to survive every one of them. The box moves only up, only
+	 * by the log's own hand, and never leaves live. */
+
+	/** at the plain end of a log that fits its last entry: 700px of log in a 500px box */
+	async function atEnd() {
+		const { canvas, log, geometry } = await pinned();
+		geometry(700, 400);
+		await canvas.grew();
+		expect(log.scrollTop).toBe(200);
+		return { canvas, log, geometry };
+	}
+
+	it("keeps following while a paragraph opens and a picture lands, and never moves the log down", async () => {
+		const { canvas, log, geometry } = await atEnd();
+		// a six-line paragraph opens under the reader: 60px more log, no scroll of theirs
+		geometry(760, 400);
+		await canvas.grew();
+		expect(log.scrollTop).toBe(260);
+		// and a tall picture lands under a look
+		geometry(860, 400);
+		await canvas.grew();
+		expect(log.scrollTop).toBe(360);
+		expect(chip(canvas.host)).toBeNull();
+		// still following: the next write carries the reader to the new end
+		geometry(880, 400);
+		canvas.turn.push(say(" and the rest of it"));
+		await until(() => log.scrollTop === 380);
+		expect(chip(canvas.host)).toBeNull();
+	});
+
+	/**
+	 * The one from the field: a picture landing in the log dropped the reader out of live.
+	 *
+	 * Between the content growing and the size watcher pinning it, a browser can move the
+	 * box itself — Chrome's scroll anchoring re-aims a scroller whose content changed under
+	 * it — and the scroll event that lands is neither the log's own write nor where following
+	 * sits, which read as the reader taking the wheel. The box says `overflow-anchor: none`
+	 * so Chrome never does that here, and a scroll that arrives while the content has grown
+	 * past what the log last aimed at is the log's to re-aim rather than the reader's.
+	 */
+	it("a picture landing never drops the reader out of live, even if the browser re-aims the box first", async () => {
+		const { canvas, log, geometry } = await atEnd();
+		expect(log.className).toContain("[overflow-anchor:none]");
+
+		// the picture lands: the log is 160px taller and the browser moves the box on its own
+		// before the watcher has said anything
+		geometry(860, 400);
+		await scrolled(log, 260);
+		await settle(150);
+		expect(chip(canvas.host)).toBeNull();
+
+		await canvas.grew();
+		expect(log.scrollTop).toBe(360);
+		// and following is intact: the next write carries the reader to the new end
+		geometry(880, 400);
+		canvas.turn.push(say(" and the rest of it"));
+		await until(() => log.scrollTop === 380);
+		expect(chip(canvas.host)).toBeNull();
+	});
+
+	/**
+	 * A row opening is 260ms of growth, so the watcher pins every frame and every pin causes
+	 * a scroll event of its own a frame later. Each has to be read as the log's write, or the
+	 * first frame of every arrival would read as the reader leaving.
+	 */
+	it("recognises its own writes frame after frame while a row opens", async () => {
+		const { canvas, log, geometry } = await atEnd();
+		for (let frame = 1; frame <= 12; frame += 1) {
+			// the track grows, the watcher pins, and the browser reports the pin's own scroll
+			geometry(700 + frame * 3, 400);
+			await canvas.grew();
+			expect(log.scrollTop).toBe(200 + frame * 3);
+			await scrolled(log, log.scrollTop);
+		}
+		expect(chip(canvas.host)).toBeNull();
+		geometry(800, 400);
+		canvas.turn.push(say(" and the rest of it"));
+		await until(() => log.scrollTop === 300);
+		expect(chip(canvas.host)).toBeNull();
+	});
 });
 
 /* ---------- the log ----------

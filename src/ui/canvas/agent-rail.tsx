@@ -993,7 +993,24 @@ function Transcript({
 		wrote.current = to;
 		box.scrollTop = to;
 	};
-	const pin = (box: HTMLElement) => carry(box, aim(box));
+	/**
+	 * How tall the log was when it last aimed, so a scroll event can be dated against the
+	 * content rather than only against the last write (#149).
+	 *
+	 * Rows open, paragraphs open and pictures land, and every one of them is growth under
+	 * a still scrollbar. The size watcher below pins after each layout, but a browser may
+	 * move the box itself in the frame between the growth and that pin, and the event it
+	 * fires is then neither the log's own write nor where following sits — which read as the
+	 * reader taking the wheel, and is how a picture landing dropped the reader out of live.
+	 * A scroll that arrives while the content is taller than the log last saw is the log's to
+	 * re-aim, and the reader's next scroll, against content that has stopped growing, is
+	 * still theirs.
+	 */
+	const measured = useRef<number | null>(null);
+	const pin = (box: HTMLElement) => {
+		measured.current = box.scrollHeight;
+		carry(box, aim(box));
+	};
 	/**
 	 * Whether the chip has anything to name: the reader is off the follow point *and*
 	 * there is log below them. The second half is what the first half cannot say. The
@@ -1039,9 +1056,10 @@ function Transcript({
 	 * list. A fence settles, an answered question folds its options, a message settles
 	 * — the body resizes with nothing new in it, and until the next render either
 	 * the pin or the chip is stale. Watching the body itself closes that gap: following
-	 * re-pins, and a reader who is away learns the live end moved. (happy-dom
-	 * constructs the observer and lays nothing out, so tests drive the pin through the
-	 * rail's clock instead.)
+	 * re-pins, and a reader who is away learns the live end moved. Rows and paragraphs open
+	 * over hundreds of milliseconds, so while one does this fires every frame and every pin
+	 * is one write whose event the next frame reads as the log's own. (happy-dom lays
+	 * nothing out, so tests fire the watcher by hand after setting the geometry.)
 	 */
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the watcher reads refs and the box, nothing rendered
 	useEffect(() => {
@@ -1067,6 +1085,12 @@ function Transcript({
 					const own = wrote.current;
 					wrote.current = null;
 					if (own !== null && Math.abs(box.scrollTop - own) < 1) return;
+					// the content grew since the log last aimed and the watcher has not caught up:
+					// a scroll landing now is the box moving under growth, and the log re-aims it
+					if (follow && measured.current !== null && box.scrollHeight !== measured.current) {
+						pin(box);
+						return;
+					}
 					const to = aim(box);
 					const end = box.scrollHeight - box.clientHeight;
 					const off = Math.abs(box.scrollTop - to) >= 1;
@@ -1108,7 +1132,10 @@ function Transcript({
 					const room = box.scrollHeight - box.clientHeight - box.scrollTop;
 					if (way < 0 ? box.scrollTop > 0 : room >= 1) leave();
 				}}
-				className="pages-scrollbar flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-3.5 pt-6 pb-4"
+				// scroll anchoring off: Chrome would otherwise re-aim the box on its own every
+				// frame a row or a paragraph opens under it, and the two would fight over one
+				// number the pin already owns
+				className="pages-scrollbar flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-3.5 pt-6 pb-4 [overflow-anchor:none]"
 			>
 				{/* `mt-auto` rather than `justify-end`: a flex container that end-justifies its
 				    overflow puts the top of it out of reach of the scrollbar */}
