@@ -13,6 +13,7 @@ import {
 	subscribeSse,
 } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
+import { desktopBridge } from "./desktop-bridge";
 import { ForgetToast } from "./forget-toast";
 import { Home } from "./home";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
@@ -59,6 +60,8 @@ export function App() {
 	const toastRef = useRef(toast);
 	toastRef.current = toast;
 	const dismissedLatest = useRef<string | null>(null);
+	/** The Mac app around this window, if there is one; a tab has none. */
+	const bridge = useMemo(() => desktopBridge(), []);
 
 	const byRoot = useMemo(() => new Map(projects.map((p) => [p.root, p])), [projects]);
 	const tabs: TabProject[] = useMemo(
@@ -113,6 +116,21 @@ export function App() {
 		if (toastRef.current !== null && toastRef.current.kind !== "offer") return;
 		setToast({ kind: "offer", latest });
 	}, []);
+
+	// The app's own update, over its bridge. It takes the pill whenever it has
+	// something to say: the app is what the person is looking at, and the
+	// daemon's offer comes back the next time the daemon says it.
+	useEffect(() => {
+		if (bridge === undefined) return;
+		const show = (update: typeof bridge.update) => {
+			setToast((current) => {
+				if (update !== null) return { kind: "app", update };
+				return current?.kind === "app" ? null : current;
+			});
+		};
+		show(bridge.update);
+		return bridge.onUpdate(show);
+	}, [bridge]);
 
 	// `spool open` in a shell lands here as a session event — a background tab.
 	// hello carries what the daily check found, on every connection, so a page
@@ -213,8 +231,9 @@ export function App() {
 
 	const dismissToast = useCallback(() => {
 		if (toastRef.current?.kind === "offer") dismissedLatest.current = toastRef.current.latest;
+		if (toastRef.current?.kind === "app") bridge?.dismiss();
 		setToast(null);
-	}, []);
+	}, [bridge]);
 
 	useEffect(() => {
 		document.title = focusedTab === undefined ? "spool" : `${focusedTab.name} · spool`;
@@ -413,7 +432,7 @@ export function App() {
 					toast={toast}
 					aboveCanvasTools={focusedTab !== undefined && chrome !== null}
 					stacked={pendingForget !== null}
-					onUpdate={() => void startUpgrade()}
+					onUpdate={() => (toast.kind === "app" ? bridge?.install() : void startUpgrade())}
 					onDismiss={dismissToast}
 				/>
 			)}

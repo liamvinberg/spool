@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	app,
@@ -28,15 +28,22 @@ import {
 } from "./play-window";
 import { bundledCli, bundledShim } from "./runtime";
 import {
+	CHECK_INTERVAL_MS,
+	checkCachePath,
+	checkForUpdate,
+	DOWNLOAD_URL,
 	installUpdate,
 	lastUpdaterError,
 	latestRelease,
+	nextCheckDelay,
 	RELEASES_PAGE,
+	type Release,
+	readCheckCache,
 	relaunchIntoUpdate,
 	UpdateCheckError,
 	updaterAvailable,
 } from "./updates";
-import { compareVersions, formatVersion, parseVersion, type Version } from "./version";
+import { compareVersions, formatVersion, parseVersion } from "./version";
 
 // Spool, as a Mac app: a window on the canvas the daemon already serves.
 //
@@ -81,12 +88,26 @@ let startedPid: number | undefined;
 let daemonPort: number | undefined;
 /** Its credential, held for the one control request this app makes: play geometry. */
 let daemonControlToken: string | undefined;
-let checkingForUpdates = false;
-/** The download in flight, if one is, for the menu bar and the Dock. */
-let downloading: { version: string; percent: number } | undefined;
+/** The daemon the window is on: whose it is and which version, for the tray. */
+let daemonInfo: { version: string; adopted: boolean } | undefined;
 let shuttingDown = false;
 
+/**
+ * What this copy calls its version. A packaged app reads the bundle's, which
+ * scripts/version.sh stamped from the repo. An unpackaged run (`pnpm dev app`)
+ * would get Electron's own number from the same call, and then say it was up to
+ * date against every release forever, so it reads the checkout's instead.
+ */
 export function version(): string {
+	if (app.isPackaged) return app.getVersion();
+	try {
+		const parsed = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
+			version?: unknown;
+		};
+		if (typeof parsed.version === "string") return parsed.version;
+	} catch {
+		// not a checkout: Electron's number is all there is
+	}
 	return app.getVersion();
 }
 
@@ -122,7 +143,7 @@ function createWindow(): BrowserWindow {
 		minHeight: 480,
 		title: NAME,
 		backgroundColor: "#0e0e0e",
-		webPreferences: { spellcheck: false },
+		webPreferences: { spellcheck: false, preload: join(__dirname, "canvas-preload.js") },
 	});
 
 	guard(created);
@@ -213,6 +234,8 @@ function point(
 ): void {
 	daemonPort = Number(new URL(url).port);
 	daemonControlToken = controlToken;
+	daemonInfo = { version: daemonVersion, adopted: verdict === "adopted" };
+	tray?.setContextMenu(buildTrayMenu());
 	log("daemon", verdict, `pid=${pid}`, `v${daemonVersion}`, url);
 	// Reopening from the Dock should give back the canvas as it was left, not
 	// reload it out from under whatever was on screen.
@@ -554,15 +577,35 @@ export function buildTrayMenu(): Menu {
 	return Menu.buildFromTemplate([
 		{ label: "Open Canvas", click: () => void openCanvas() },
 		{ type: "separator" },
-		// Disabled on purpose: it is a label, not a thing to click. Which version
-		// is running is the first question every bug report answers.
+		// Disabled on purpose: these are labels, not things to click. Which
+		// version is running is the first question every bug report answers, and
+		// an adopted daemon on another version is the second: the app can be
+		// updated and the canvas still be the cli's, and this is where that is said.
 		{ label: `${NAME} ${version()}`, enabled: false },
-		downloading === undefined
-			? { label: "Check for Updates…", click: () => void checkForUpdates() }
-			: { label: `Downloading ${downloading.version}… ${downloading.percent}%`, enabled: false },
+		...(daemonInfo?.adopted && daemonInfo.version !== version()
+			? [{ label: `daemon ${daemonInfo.version}, started by the cli`, enabled: false }]
+			: []),
+		updateItem(),
 		{ type: "separator" },
 		{ label: `Quit ${NAME}`, accelerator: "Command+Q", click: () => app.quit() },
 	]);
+}
+
+/** The update as one tray line: an offer to take, a download to watch, a failure to read. */
+function updateItem(): MenuItemConstructorOptions {
+	if (update === null) return { label: "Check for Updates…", click: () => void checkForUpdates() };
+	switch (update.kind) {
+		case "offer": {
+			const { version: target } = update;
+			return { label: `Update to ${target}…`, click: () => void downloadAndRelaunch(target) };
+		}
+		case "downloading":
+			return { label: `Downloading ${update.version}… ${update.percent}%`, enabled: false };
+		case "restarting":
+			return { label: `Restarting into ${update.version}…`, enabled: false };
+		case "failed":
+			return { label: `Download Spool ${update.version}…`, click: () => void shell.openExternal(DOWNLOAD_URL) };
+	}
 }
 
 function installTray(): void {
@@ -575,21 +618,127 @@ function installTray(): void {
 
 // MARK: - Updates
 
-async function checkForUpdates(): Promise<void> {
-	if (checkingForUpdates) return;
-	checkingForUpdates = true;
+/**
+ * What the app knows about its own next version, as one value the tray, the
+ * Dock and the canvas all draw from. null is nothing to say.
+ */
+type AppUpdate =
+	| { kind: "offer"; version: string }
+	| { kind: "downloading"; version: string; percent: number }
+	| { kind: "restarting"; version: string }
+	| { kind: "failed"; version: string; message: string };
+
+let update: AppUpdate | null = null;
+/** A check or a download in flight, so a second click does not stack one. */
+let busy = false;
+/** The next automatic check, so a manual one can push it out a day. */
+let nextCheck: NodeJS.Timeout | undefined;
+
+/** Every surface at once: the pill in the canvas, the tray, the Dock. */
+function setUpdate(next: AppUpdate | null): void {
+	update = next;
+	window?.webContents.send("spool:app-update-changed", next);
+	window?.setProgressBar(next?.kind === "downloading" ? next.percent / 100 : -1);
+	tray?.setContextMenu(buildTrayMenu());
+}
+
+/**
+ * The page's side of the bridge. The state is answered synchronously because
+ * the preload asks before the page runs; the two verbs are refused from any
+ * window that is not the canvas, which is the only one carrying the preload.
+ */
+function installUpdateChannels(): void {
+	ipcMain.on("spool:app-version", (event) => {
+		event.returnValue = version();
+	});
+	ipcMain.on("spool:app-update-state", (event) => {
+		event.returnValue = update;
+	});
+	ipcMain.on("spool:app-update-install", (event) => {
+		if (window === undefined || event.sender.id !== window.webContents.id) return;
+		if (update?.kind !== "offer") return;
+		void downloadAndRelaunch(update.version);
+	});
+	ipcMain.on("spool:app-update-dismiss", (event) => {
+		if (window === undefined || event.sender.id !== window.webContents.id) return;
+		if (update?.kind === "downloading" || update?.kind === "restarting") return;
+		setUpdate(null);
+	});
+}
+
+/**
+ * The clock. A packaged app asks the feed ten seconds after launch, unless it
+ * asked within the day, and daily after that. A newer release becomes an offer
+ * and nothing more: no dialog, no download, a pill in the canvas and a line in
+ * the tray until somebody says yes.
+ */
+function scheduleChecks(): void {
+	if (!updaterAvailable()) return;
+	const cache = readCheckCache(DIRECTORY);
+	const installed = parseVersion(version());
+	// A cached answer that is already newer than this copy is an offer that
+	// costs no network at all.
+	const cached = cache === undefined ? undefined : parseVersion(cache.latest);
+	if (installed !== undefined && cached !== undefined && compareVersions(cached, installed) > 0 && update === null) {
+		setUpdate({ kind: "offer", version: formatVersion(cached) });
+	}
+	scheduleCheckIn(nextCheckDelay(cache));
+}
+
+function scheduleCheckIn(delay: number): void {
+	if (nextCheck !== undefined) clearTimeout(nextCheck);
+	nextCheck = setTimeout(() => {
+		nextCheck = undefined;
+		void automaticCheck().finally(() => scheduleCheckIn(CHECK_INTERVAL_MS));
+	}, delay);
+	nextCheck.unref();
+}
+
+async function automaticCheck(): Promise<void> {
+	if (busy || update !== null) return;
+	busy = true;
 	try {
-		const installed = parseVersion(version());
-		if (installed === undefined) {
-			log("updates", "FAIL", "no version in bundle");
-			tell(
-				"Spool cannot tell which version it is.",
-				"This copy has no version number in it, which usually means it was not packaged by scripts/build.sh. Compare it against the releases page yourself.",
-				"warning",
-			);
-			return;
-		}
-		let latest: Awaited<ReturnType<typeof latestRelease>>;
+		const found = await checkForUpdate((line) => log("updates", line));
+		rememberCheck(found.latest);
+		log("updates", "OK", `installed=${version()}`, `latest=${found.latest}`, found.newer ? "offer" : "current");
+		if (found.newer) setUpdate({ kind: "offer", version: found.latest });
+	} catch (error) {
+		// Offline is a normal day. The check can only ever add a pill.
+		log("updates", "skip", error instanceof UpdateCheckError ? error.message : String(error));
+	} finally {
+		busy = false;
+	}
+}
+
+function rememberCheck(latest: string): void {
+	try {
+		writeFileSync(
+			checkCachePath(DIRECTORY),
+			`${JSON.stringify({ latest, checkedAt: new Date().toISOString() }, null, "\t")}\n`,
+		);
+	} catch {
+		// an unwritable state directory is the daemon's problem to report
+	}
+}
+
+/** The menu item: the same check, with an answer either way. */
+async function checkForUpdates(): Promise<void> {
+	if (busy) return;
+	const installed = parseVersion(version());
+	if (installed === undefined) {
+		log("updates", "FAIL", "no version in bundle");
+		tell(
+			"Spool cannot tell which version it is.",
+			"This copy has no version number in it, which usually means it was not packaged by scripts/build.sh. Compare it against the releases page yourself.",
+			"warning",
+		);
+		return;
+	}
+
+	// A copy with no feed, which is every checkout build, can only be pointed
+	// at the download. It still gets told whether there is one.
+	if (!updaterAvailable()) {
+		let latest: Release;
 		try {
 			latest = await latestRelease();
 		} catch (error) {
@@ -598,8 +747,13 @@ async function checkForUpdates(): Promise<void> {
 			tell("Spool could not check for updates.", `${detail}\n\nYou have ${formatVersion(installed)}.`, "warning");
 			return;
 		}
-		log("updates", "OK", `installed=${formatVersion(installed)}`, `latest=${formatVersion(latest.version)}`);
-
+		log(
+			"updates",
+			"OK",
+			`installed=${formatVersion(installed)}`,
+			`latest=${formatVersion(latest.version)}`,
+			"no feed",
+		);
 		// Not a mismatch test: a local build ahead of the published release is
 		// every machine that ever builds this app, and offering it a downgrade
 		// would be nonsense.
@@ -607,94 +761,170 @@ async function checkForUpdates(): Promise<void> {
 			tell("Spool is up to date.", `You have ${formatVersion(installed)}, which is the latest release.`, "info");
 			return;
 		}
-
-		// The packaged, feed-carrying app updates itself; anything else (a local
-		// build, a release from before the feed existed) is pointed at the page.
-		if (!updaterAvailable()) {
-			const answer = await dialog.showMessageBox({
-				type: "info",
-				message: `Spool ${formatVersion(latest.version)} is available.`,
-				detail: `You have ${formatVersion(installed)}. The release page has the download and the checksum to check it against.\n\nUpdating means replacing Spool in your Applications folder, so quit this copy first.`,
-				buttons: ["Open Release Page", "Later"],
-				defaultId: 0,
-				cancelId: 1,
-			});
-			if (answer.response === 0) void shell.openExternal(latest.page);
-			return;
-		}
-
 		const answer = await dialog.showMessageBox({
 			type: "info",
 			message: `Spool ${formatVersion(latest.version)} is available.`,
-			detail: `You have ${formatVersion(installed)}. Update downloads in the background and Spool relaunches into it. A daemon this app started is stopped and started again; one the CLI runs is left alone.`,
-			buttons: ["Update and Relaunch", "Later"],
+			detail: `You have ${formatVersion(installed)}. This copy was built from a checkout, so it cannot replace itself: Download starts the dmg, and replacing Spool in Applications by hand is the rest.`,
+			buttons: ["Download", "Later"],
 			defaultId: 0,
 			cancelId: 1,
 		});
-		if (answer.response !== 0) return;
-		await downloadAndRelaunch(latest.version, latest.page);
-	} finally {
-		checkingForUpdates = false;
+		if (answer.response === 0) void shell.openExternal(DOWNLOAD_URL);
+		return;
 	}
+
+	busy = true;
+	let found: Awaited<ReturnType<typeof checkForUpdate>>;
+	try {
+		found = await checkForUpdate((line) => log("updates", line));
+	} catch (error) {
+		busy = false;
+		const detail = error instanceof UpdateCheckError ? error.message : String(error);
+		log("updates", "FAIL", detail);
+		tell("Spool could not check for updates.", `${detail}\n\nYou have ${formatVersion(installed)}.`, "warning");
+		return;
+	}
+	busy = false;
+	rememberCheck(found.latest);
+	// Asked by hand today, so the clock need not ask again until tomorrow.
+	scheduleCheckIn(CHECK_INTERVAL_MS);
+	log(
+		"updates",
+		"OK",
+		`installed=${formatVersion(installed)}`,
+		`latest=${found.latest}`,
+		found.newer ? "offer" : "current",
+	);
+	if (!found.newer) {
+		tell("Spool is up to date.", `You have ${formatVersion(installed)}, which is the latest release.`, "info");
+		return;
+	}
+
+	const answer = await dialog.showMessageBox({
+		type: "info",
+		message: `Spool ${found.latest} is available.`,
+		detail: `You have ${formatVersion(installed)}. Update downloads in the background and Spool relaunches into it. A daemon this app started is stopped and started again; one the CLI runs is left alone.`,
+		buttons: ["Update and Relaunch", "Later"],
+		defaultId: 0,
+		cancelId: 1,
+	});
+	if (answer.response !== 0) {
+		setUpdate({ kind: "offer", version: found.latest });
+		return;
+	}
+	await downloadAndRelaunch(found.latest);
+}
+
+/**
+ * Whether Squirrel can replace this bundle at all. It cannot from a mounted dmg
+ * or a Gatekeeper-translocated copy, and it says so only after the download,
+ * so the reason is given first and the download never starts.
+ */
+function whyNotInstallable(): string | undefined {
+	if (process.platform !== "darwin" || !app.isPackaged || LANE) return undefined;
+	if (process.execPath.includes("/AppTranslocation/")) {
+		return "Spool is running from a quarantined copy, which macOS does not let it replace. Move Spool to Applications and open it from there.";
+	}
+	if (!app.isInApplicationsFolder()) {
+		return "Spool is not in the Applications folder, so macOS will not let it replace itself. Move it there and open it again.";
+	}
+	return undefined;
+}
+
+/**
+ * First launch from the dmg or Downloads: offer the move, once. Nothing about
+ * the app needs Applications to run, but the self-update does, and the offer
+ * here is a sentence where the refusal later would be a wait.
+ */
+async function offerApplicationsFolder(): Promise<void> {
+	if (process.platform !== "darwin" || !app.isPackaged || LANE) return;
+	if (app.isInApplicationsFolder()) return;
+	// Declined once is declined: a question on every launch is a nag, and the
+	// refusal at update time says the same thing at the moment it matters.
+	const declined = join(app.getPath("userData"), "stay-put");
+	if (existsSync(declined)) return;
+	const answer = await dialog.showMessageBox({
+		type: "question",
+		message: "Move Spool to the Applications folder?",
+		detail:
+			"Spool runs from anywhere, but it can only update itself from Applications. Moving it takes a moment and opens it again from there.",
+		buttons: ["Move to Applications", "Not Now"],
+		defaultId: 0,
+		cancelId: 1,
+	});
+	if (answer.response !== 0) {
+		try {
+			writeFileSync(declined, "");
+		} catch {
+			// asked again next launch, which is the worse of two small things
+		}
+		return;
+	}
+	log("boot", "moving to Applications");
+	// On success this process is replaced by the moved copy; a false here is a
+	// declined system prompt, and the launch goes on from where it is.
+	if (!app.moveToApplicationsFolder()) log("boot", "the move was declined");
 }
 
 /**
  * The download, and the exit that swaps the bundle.
  *
  * Nothing here blocks the window, so the progress has to be somewhere a person
- * can see it without a panel in the way: the Dock icon fills, and the menu bar
- * item counts. A hundred megabytes with no sign of movement is the same as a
- * button that did nothing, and that is what this used to be.
+ * can see it without a panel in the way: the pill in the canvas counts, the
+ * Dock icon fills, and the tray item says the same. A hundred megabytes with no
+ * sign of movement is the same as a button that did nothing.
+ *
+ * The daemon is stopped and the window blanked only once Squirrel has said the
+ * bundle is verified and ready. Everything that can go wrong with the download
+ * or the bundle arrives before that as a rejection, and the person is still
+ * looking at a working canvas when it does.
  */
-async function downloadAndRelaunch(target: Version, page: string): Promise<void> {
-	downloading = { version: formatVersion(target), percent: 0 };
-	showProgress();
+async function downloadAndRelaunch(target: string): Promise<void> {
+	if (busy) return;
+	const refusal = whyNotInstallable();
+	if (refusal !== undefined) {
+		log("updates", "FAIL", refusal);
+		setUpdate({ kind: "failed", version: target, message: refusal });
+		tell(
+			"Spool cannot update itself from here.",
+			`${refusal}\n\nDownload starts the dmg, which is the other way onto ${target}.`,
+			"warning",
+		);
+		return;
+	}
+	busy = true;
+	setUpdate({ kind: "downloading", version: target, percent: 0 });
 	try {
 		await installUpdate(
 			(line) => log("updates", line),
-			(percent) => {
-				if (downloading === undefined) return;
-				downloading.percent = percent;
-				showProgress();
-			},
+			(percent) => setUpdate({ kind: "downloading", version: target, percent }),
 		);
 	} catch (error) {
+		busy = false;
 		const detail = error instanceof UpdateCheckError ? error.message : String(error);
 		log("updates", "FAIL", detail);
-		clearProgress();
-		tell(
-			"The update did not install.",
-			`${detail}\n\nThe release page has the download; replacing Spool in Applications by hand still works.`,
-			"warning",
-		);
-		void shell.openExternal(page);
+		setUpdate({ kind: "failed", version: target, message: detail });
 		return;
 	}
-	clearProgress();
+	busy = false;
 
 	// Squirrel replaces the app on quit and relaunches it. The daemon this app
 	// started is stopped here, on purpose, before the updater owns the exit:
 	// will-quit's own preventDefault path would fight it.
+	setUpdate({ kind: "restarting", version: target });
 	shuttingDown = true;
 	await shutdown();
 	log("updates", "relaunching");
-	fallback("Updating Spool", `Spool ${formatVersion(target)} is being swapped in, and the app reopens by itself.`);
+	fallback("Updating Spool", `Spool ${target} is being swapped in, and the app reopens by itself.`);
 
-	// Squirrel's own step is silent when it refuses — an unwritable Applications
-	// folder, a bundle whose signature does not match this one's — and what a
-	// person sees then is a window that stopped. So the exit is raced against a
-	// clock, and a Spool still running after it is one that has to say so and
-	// put its daemon back.
+	// Squirrel has already said yes, so the quit that follows is immediate. A
+	// Spool still running after this clock is one whose exit was refused by
+	// something in this process, and it has to say so and put its daemon back.
 	const deadline = setTimeout(() => {
 		shuttingDown = false;
-		const detail = lastUpdaterError();
-		log("updates", "FAIL", "no relaunch", detail ?? "no reason given");
-		tell(
-			"Spool could not swap itself out.",
-			`${detail ?? "The updater staged the new version but macOS did not install it."}\n\nThis usually means Spool is not in Applications, or the copy running was not the one installed there. The release page has the download.`,
-			"warning",
-		);
-		void shell.openExternal(page);
+		const detail = lastUpdaterError() ?? "The updater staged the new version but the app did not quit into it.";
+		log("updates", "FAIL", "no relaunch", detail);
+		setUpdate({ kind: "failed", version: target, message: detail });
 		void openCanvas();
 	}, RELAUNCH_DEADLINE_MS);
 
@@ -704,26 +934,13 @@ async function downloadAndRelaunch(target: Version, page: string): Promise<void>
 		clearTimeout(deadline);
 		shuttingDown = false;
 		log("updates", "FAIL", String(error));
-		tell("The update did not install.", String(error), "warning");
+		setUpdate({ kind: "failed", version: target, message: String(error) });
 		void openCanvas();
 	}
 }
 
-/** Long enough for Squirrel to unpack and verify a bundle on a slow disk. */
-const RELAUNCH_DEADLINE_MS = 90_000;
-
-function showProgress(): void {
-	if (downloading === undefined) return;
-	window?.setProgressBar(downloading.percent / 100);
-	tray?.setContextMenu(buildTrayMenu());
-}
-
-function clearProgress(): void {
-	downloading = undefined;
-	// -1 is how a Dock progress bar is taken away again.
-	window?.setProgressBar(-1);
-	tray?.setContextMenu(buildTrayMenu());
-}
+/** Squirrel has verified the bundle by now; this only covers a quit that never came. */
+const RELAUNCH_DEADLINE_MS = 15_000;
 
 /**
  * One thing to say and a button to dismiss it, and never a modal that blocks the
@@ -776,6 +993,7 @@ export function boot(): void {
 
 	openLog(DIRECTORY);
 	installPlayChannels();
+	installUpdateChannels();
 	app.setAboutPanelOptions({ applicationName: NAME, applicationVersion: version(), credits: "MIT" });
 
 	app.on("window-all-closed", () => {
@@ -792,11 +1010,13 @@ export function boot(): void {
 		void shutdown().then(() => app.exit(0));
 	});
 
-	void app.whenReady().then(() => {
+	void app.whenReady().then(async () => {
 		log("boot", `pid=${process.pid}`, `v${version()}`, DIRECTORY);
+		await offerApplicationsFolder();
 		Menu.setApplicationMenu(buildAppMenu());
 		installDockIcon();
 		installTray();
+		scheduleChecks();
 		return openCanvas();
 	});
 }

@@ -182,22 +182,35 @@ safety: a DMG failure cannot retract anything, since npm already has the release
 and the GitHub release already exists. Rerun it the way a refused publish is
 rerun, with `gh workflow run publish.yml -f tag=vX.Y.Z`.
 
-Check for Updates asks this repo's `releases/latest` for its tag and compares it.
-On a newer release it updates in place: electron-updater downloads the release's
-zip, checks it against `latest-mac.yml`, and hands it to Squirrel.Mac, which
-verifies the new bundle's signature against the running one's and swaps it on
-quit. The feed is the release itself — `app-update.yml` inside the bundle names
-this repo, `latest-mac.yml` beside the dmg names the zip — so there is no update
-server. A checkout build has no feed file and falls back to opening the release
-page.
+The app checks for a release by itself, ten seconds after launch unless it
+checked within the day, and daily after that; Check for Updates is the same
+check by hand. The source is the release's own `latest-mac.yml`, read by
+electron-updater, so a version it names is one it can install. A newer one is
+an offer and nothing more: the canvas shows it in the update pill it already has
+for the npm package, fed over `src/canvas-preload.ts` the way the play window's
+bar is, and the tray says the same. Update downloads in place, the pill counts,
+and Squirrel.Mac verifies the new bundle's signature against the running one's
+and swaps it on quit. The feed is the release itself — `app-update.yml` inside
+the bundle names this repo, `latest-mac.yml` beside the dmg names the zip — so
+there is no update server.
 
-Two things about that path cost a release to find out, and `src/updates.ts` says
-both at length. Squirrel cannot be handed a file, so electron-updater downloads
-the zip and then serves it to Squirrel over loopback; `autoInstallOnAppQuit` is
-what makes Squirrel ask for it, and with it off the download completes having
-installed nothing. And every failure arrives as an `error` event, which on an
-emitter with no listener throws out of the main process. `src/updates.test.ts`
-pins both, against a stand-in for electron-updater.
+Three things about that path cost a release each to find out, and
+`src/updates.ts` says all of them at length. Squirrel cannot be handed a file,
+so electron-updater downloads the zip and then serves it to Squirrel over
+loopback; `autoInstallOnAppQuit` is what makes Squirrel ask for it, and with it
+off the download completes having installed nothing. electron-updater resolves
+when Squirrel has fetched the zip, not when it has verified it, so the app waits
+for Squirrel's own verdict before it stops its daemon and blanks the window;
+before it did, a refused bundle looked like an app that froze. And every failure
+arrives as an `error` event, which on an emitter with no listener throws out of
+the main process. `src/updates.test.ts` pins all three, against stand-ins for
+electron-updater and Squirrel.
+
+Squirrel refuses two copies outright, and the app says so before downloading
+anything rather than after: an ad-hoc signed build, which is every checkout
+build, so `build.sh` leaves the feed file out of those and Check for Updates
+hands them the dmg instead; and a copy outside Applications, a mounted dmg or a
+translocated one, which the app offers to move on first launch.
 
 ## Signing, for a fork
 
