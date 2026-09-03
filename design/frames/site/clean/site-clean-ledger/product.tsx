@@ -424,24 +424,35 @@ function Rule({ tone = "dark", className }: { tone?: "dark" | "paper"; className
 	);
 }
 
-function EmberButton({
+/**
+ * The one filled action, in bone on the dark and in ink on the paper. Brasa's
+ * fire lives in the light behind the page rather than in a button, which is also
+ * how it stays out of spool's red.
+ */
+function SolidButton({
 	children,
 	height = 48,
 	className,
 	onClick,
 	full = false,
+	tone = "dark",
 }: {
 	children: ReactNode;
 	height?: number;
 	className?: string;
 	onClick?: () => void;
 	full?: boolean;
+	tone?: "dark" | "paper";
 }) {
 	return (
 		<button
 			type="button"
 			onClick={onClick}
-			style={{ height, background: "var(--ember)", color: "#160b05" }}
+			style={
+				tone === "paper"
+					? { height, background: "var(--paper-ink)", color: "var(--paper)" }
+					: { height, background: "var(--cream)", color: "#17110e" }
+			}
 			className={cn(
 				"inline-flex cursor-pointer select-none items-center justify-center rounded-full px-7 font-medium leading-none transition-opacity duration-200 hover:opacity-88",
 				full && "w-full",
@@ -506,7 +517,7 @@ function BrasaBar({ page = "home", tone = "dark" }: { page?: string; tone?: "dar
 			style={{ borderBottom: `1px solid ${paper ? "var(--paper-line)" : "var(--line)"}` }}
 		>
 			<span className="flex items-center gap-3">
-				<Flame className="h-[19px] w-[15px]" style={{ color: "var(--ember)" }} />
+				<Flame className="h-[19px] w-[15px]" style={{ color: "var(--gold)" }} />
 				<span
 					className="disp text-[23px] leading-none tracking-[0.015em]"
 					style={{ color: paper ? "var(--paper-ink)" : "var(--cream)", fontWeight: 500 }}
@@ -605,7 +616,7 @@ export function HomeScreen() {
 							{HOME_INTENT}
 						</p>
 						<div className="mt-10 flex items-center gap-8">
-							<EmberButton className="text-[14px]">Book a table</EmberButton>
+							<SolidButton className="text-[14px]">Book a table</SolidButton>
 							<QuietLink>See the menu</QuietLink>
 						</div>
 					</div>
@@ -674,14 +685,14 @@ export function HomeCandlelit() {
 					</span>
 				</div>
 
-				<div className="max-w-[600px]">
+				<div className="max-w-[720px]">
 					<h1
 						className="disp"
 						style={{
-							fontSize: 74,
-							lineHeight: 1.02,
+							fontSize: 96,
+							lineHeight: 0.98,
 							fontWeight: 300,
-							letterSpacing: "-0.028em",
+							letterSpacing: "-0.034em",
 							color: "#fbf2e6",
 						}}
 					>
@@ -691,7 +702,7 @@ export function HomeCandlelit() {
 						<br />
 						the fire.
 					</h1>
-					<p className="mt-7 max-w-[400px] text-[15.5px] leading-[27px]" style={{ color: "var(--dim)" }}>
+					<p className="mt-8 max-w-[430px] text-[16px] leading-[28px]" style={{ color: "var(--dim)" }}>
 						Twenty-four seats. Two sittings. Oak, birch, and time enough to use them properly.
 					</p>
 					<div className="mt-9 flex items-center gap-9">
@@ -796,9 +807,9 @@ export function HomeEditorial() {
 							Bookings open thirty days ahead. Larger tables are arranged in the room.
 						</p>
 						<div className="mt-auto">
-							<EmberButton className="text-[13.5px]" height={44} full>
+							<SolidButton className="text-[13.5px]" height={44} full tone="paper">
 								Book a table
-							</EmberButton>
+							</SolidButton>
 						</div>
 					</div>
 				</div>
@@ -834,7 +845,7 @@ export function HomePlayful() {
 					))}
 					<span
 						className="pop flex h-10 cursor-pointer items-center rounded-full px-5 text-[13.5px] leading-none"
-						style={{ background: "#d1421a", color: "#fdf0dd", fontWeight: 600 }}
+						style={{ background: "#d78419", color: "#fdf0dd", fontWeight: 600 }}
 					>
 						Book a table
 					</span>
@@ -842,26 +853,37 @@ export function HomePlayful() {
 			</div>
 
 			<div
-				className="pop absolute left-[-38px] whitespace-nowrap"
+				className="pop absolute left-[-44px] whitespace-nowrap"
 				style={{
-					top: 132,
-					fontSize: 268,
+					top: 152,
+					fontSize: 330,
 					lineHeight: 0.78,
 					fontWeight: 800,
-					letterSpacing: "-0.045em",
-					color: "#d1421a",
+					letterSpacing: "-0.048em",
+					color: "#d78419",
 				}}
 			>
 				BRASA
+			</div>
+
+			<div className="absolute right-12 left-12" style={{ top: 452 }}>
+				<span aria-hidden="true" className="block h-[3px] w-full" style={{ background: "#231007" }} />
+				<div className="mt-4 flex items-center justify-between">
+					{["Wood fire", "Twenty-four seats", "Two sittings", "Södermalm"].map((word) => (
+						<span key={word} className="pop text-[22px] leading-none" style={{ fontWeight: 600 }}>
+							{word}
+						</span>
+					))}
+				</div>
 			</div>
 
 			<div
 				className="absolute flex items-center justify-center rounded-full"
 				style={{
 					right: 74,
-					top: 158,
-					width: 172,
-					height: 172,
+					top: 176,
+					width: 176,
+					height: 176,
 					background: "#231007",
 					transform: "rotate(-12deg)",
 				}}
@@ -882,10 +904,10 @@ export function HomePlayful() {
 			<div className="absolute right-12 bottom-11 left-12 flex items-end gap-8">
 				<div
 					className="flex flex-1 flex-col justify-between rounded-[22px] p-9"
-					style={{ height: 268, background: "#231007", color: "#f7e6cc" }}
+					style={{ height: 300, background: "#231007", color: "#f7e6cc" }}
 				>
-					<p className="pop text-[34px] leading-[1.12]" style={{ fontWeight: 600, letterSpacing: "-0.02em" }}>
-						Wood fire, twenty-four seats, and six courses that change when the market does.
+					<p className="pop text-[36px] leading-[1.12]" style={{ fontWeight: 600, letterSpacing: "-0.02em" }}>
+						Six courses over open fire, written each morning and served twice a night.
 					</p>
 					<span className="text-[13.5px]" style={{ color: "#c39a72" }}>
 						{ADDRESS}
@@ -893,7 +915,7 @@ export function HomePlayful() {
 				</div>
 				<div
 					className="flex flex-col justify-between rounded-[22px] p-8"
-					style={{ width: 386, height: 268, background: "#e7cda6" }}
+					style={{ width: 386, height: 300, background: "#e7cda6" }}
 				>
 					{HOURS.map((h) => (
 						<span key={h.days} className="flex items-baseline justify-between">
@@ -935,7 +957,7 @@ export function HomeClassic() {
 			</div>
 
 			<div className="relative mt-9 flex flex-col items-center">
-				<Flame className="h-[22px] w-[17px]" style={{ color: "#a8492a" }} />
+				<Flame className="h-[22px] w-[17px]" style={{ color: "#9a6b3c" }} />
 				<span
 					className="disp mt-4 text-[30px] leading-none tracking-[0.42em]"
 					style={{ fontWeight: 500, paddingLeft: "0.42em" }}
@@ -1185,12 +1207,12 @@ function DayPill({
 			style={{
 				width,
 				height,
-				borderColor: on ? "var(--ember)" : "var(--line)",
-				background: on ? "rgba(224,100,43,0.12)" : "transparent",
+				borderColor: on ? "var(--gold)" : "var(--line)",
+				background: on ? "rgba(234,185,108,0.10)" : "transparent",
 				opacity: closed ? 0.34 : 1,
 			}}
 		>
-			<span className="text-[11.5px] leading-none" style={{ color: on ? "var(--ember)" : "var(--faint)" }}>
+			<span className="text-[11.5px] leading-none" style={{ color: on ? "var(--gold)" : "var(--faint)" }}>
 				{day}
 			</span>
 			<span
@@ -1220,8 +1242,8 @@ function ChoicePill({
 			style={{
 				width,
 				height,
-				borderColor: on ? "var(--ember)" : "var(--line)",
-				background: on ? "rgba(224,100,43,0.12)" : "transparent",
+				borderColor: on ? "var(--gold)" : "var(--line)",
+				background: on ? "rgba(234,185,108,0.10)" : "transparent",
 				color: on ? "var(--cream)" : "var(--dim)",
 			}}
 		>
@@ -1258,13 +1280,15 @@ export function ReserveScreen({ confirmed = false }: { confirmed?: boolean }) {
 			<BrasaBar page="hours" />
 			<div className="relative flex min-h-0 flex-1">
 				<div className="relative w-[544px] shrink-0">
-					<Photo
-						src={bokehPhoto}
-						className="h-full w-full"
-						position="50% 46%"
-						scrim="linear-gradient(180deg, rgba(13,9,8,0.30) 0%, rgba(13,9,8,0.20) 40%, rgba(13,9,8,0.92) 100%)"
-						tint="radial-gradient(72% 58% at 42% 34%, rgba(224,100,43,0.24), rgba(13,9,8,0) 62%)"
-					/>
+					<div className="absolute inset-0" style={{ filter: "saturate(0.68) brightness(0.82)" }}>
+						<Photo
+							src={bokehPhoto}
+							className="h-full w-full"
+							position="50% 46%"
+							scrim="linear-gradient(180deg, rgba(13,9,8,0.52) 0%, rgba(13,9,8,0.34) 38%, rgba(13,9,8,0.95) 100%)"
+							tint="radial-gradient(68% 54% at 42% 32%, rgba(234,185,108,0.14), rgba(13,9,8,0) 64%)"
+						/>
+					</div>
 					<div className="absolute right-12 bottom-12 left-12">
 						<span
 							className="disp block text-[34px] leading-[1.16]"
@@ -1284,7 +1308,7 @@ export function ReserveScreen({ confirmed = false }: { confirmed?: boolean }) {
 				<div className="flex min-w-0 flex-1 flex-col px-[76px] py-[54px]">
 					{confirmed ? (
 						<>
-							<Flame className="h-[26px] w-[20px]" style={{ color: "var(--ember)" }} />
+							<Flame className="h-[26px] w-[20px]" style={{ color: "var(--gold)" }} />
 							<h1
 								className="disp mt-6"
 								style={{ fontSize: 52, lineHeight: 1.06, fontWeight: 300, letterSpacing: "-0.028em" }}
@@ -1306,7 +1330,7 @@ export function ReserveScreen({ confirmed = false }: { confirmed?: boolean }) {
 								<Rule />
 							</div>
 							<div className="mt-9 flex items-center gap-8">
-								<EmberButton className="text-[14px]">Add to calendar</EmberButton>
+								<SolidButton className="text-[14px]">Add to calendar</SolidButton>
 								<QuietLink>Change the booking</QuietLink>
 							</div>
 							<span className="mt-auto text-[12.5px]" style={{ color: "var(--faint)" }}>
@@ -1370,9 +1394,9 @@ export function ReserveScreen({ confirmed = false }: { confirmed?: boolean }) {
 							</div>
 
 							<div className="mt-9 flex items-center gap-7">
-								<EmberButton className="text-[14px]" height={52}>
+								<SolidButton className="text-[14px]" height={52}>
 									Confirm the table
-								</EmberButton>
+								</SolidButton>
 								<span className="text-[12.5px]" style={{ color: "var(--faint)" }}>
 									We hold the table fifteen minutes past the sitting.
 								</span>
@@ -1433,7 +1457,7 @@ export function ReserveCardScreen() {
 			<div className="relative flex min-h-0 flex-1 flex-col px-[22px] py-[20px]">
 				<div className="flex shrink-0 items-center justify-between">
 					<span className="flex items-center gap-2.5">
-						<Flame className="h-[15px] w-[12px]" style={{ color: "var(--ember)" }} />
+						<Flame className="h-[15px] w-[12px]" style={{ color: "var(--gold)" }} />
 						<span className="disp text-[17px] leading-none tracking-[0.015em]" style={{ fontWeight: 500 }}>
 							Brasa
 						</span>
@@ -1520,13 +1544,16 @@ export function ReserveCardScreen() {
 							spellCheck={false}
 							aria-label="Name"
 							placeholder="Your name"
-							className="mt-3.5 h-[38px] w-full shrink-0 border-b bg-transparent text-[14px] outline-none transition-colors duration-200 focus:border-[var(--ember)]"
+							className="mt-4 h-[40px] w-full shrink-0 border-b bg-transparent text-[14px] outline-none transition-colors duration-200 focus:border-[var(--gold)]"
 							style={{ borderColor: "var(--line-2)", color: "var(--cream)" }}
 						/>
 
-						<EmberButton className="mt-auto text-[13.5px]" height={44} full onClick={() => setHeld(true)}>
+						<span className="mt-auto mb-3 block text-[11.5px] leading-[17px]" style={{ color: "var(--faint)" }}>
+							{MONTH[date]} at {sitting}, for {guests}. We hold the table fifteen minutes.
+						</span>
+						<SolidButton className="text-[13.5px]" height={44} full onClick={() => setHeld(true)}>
 							Confirm the table
-						</EmberButton>
+						</SolidButton>
 					</div>
 				)}
 			</div>
@@ -1612,9 +1639,9 @@ export function PhoneBookScreen() {
 					</div>
 				</div>
 
-				<EmberButton className="relative mt-auto text-[14.5px]" height={54} full>
+				<SolidButton className="relative mt-auto text-[14.5px]" height={54} full>
 					Confirm the table
-				</EmberButton>
+				</SolidButton>
 				<span className="relative mt-4 text-center text-[12px]" style={{ color: "var(--faint)" }}>
 					We hold the table fifteen minutes past the sitting.
 				</span>
@@ -2218,13 +2245,14 @@ const SOURCE: readonly { indent: number; text: string; dim?: boolean }[] = [
 	{ indent: 0, text: "" },
 	{ indent: 0, text: "export default function Reserve() {" },
 	{ indent: 1, text: 'const [sitting, pick] = useState("20:30");' },
-	{ indent: 1, text: "const [guests, setGuests] = useState(2);" },
+	{ indent: 1, text: "const [guests, set] = useState(2);" },
 	{ indent: 1, text: "return (" },
 	{ indent: 2, text: '<Page nav="reserve">' },
 	{ indent: 3, text: "<Sittings picked={sitting}" },
 	{ indent: 4, text: "onPick={pick} />" },
-	{ indent: 3, text: "<Guests count={guests} onSet={setGuests}" },
-	{ indent: 4, text: 'onDone={() => ui.go("reserve--confirmed")} />' },
+	{ indent: 3, text: "<Guests count={guests} onSet={set} />" },
+	{ indent: 3, text: "<Confirm onDone={() =>" },
+	{ indent: 4, text: 'ui.go("reserve--confirmed")} />' },
 	{ indent: 2, text: "</Page>" },
 	{ indent: 1, text: ");" },
 	{ indent: 0, text: "}" },
