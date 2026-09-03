@@ -15,7 +15,6 @@ import {
 	taskWritten,
 	writeOf,
 } from "./agent-nouns";
-import { drawnBy, type Landed } from "./agent-pace";
 import { LOGIN_REMEDY, NO_KEY, signedOut } from "./agent-preflight";
 
 /**
@@ -239,20 +238,16 @@ export type AgentEntry =
 	/**
 	 * One block of the agent's prose.
 	 *
-	 * `full` is every character that has arrived and `landed` is when each delta
-	 * landed, which is what the pace reads. Its last entry is therefore how much the
-	 * schedule can ever deliver, which is what tells a caller the edge has caught up;
-	 * an empty schedule is a message that never streamed and is drawn whole.
-	 *
-	 * `settled` marks the block the settled assistant message has confirmed: the
-	 * deltas are a preview and this is the authority, so a stream that dropped a
-	 * fragment is corrected rather than left short.
+	 * `full` is every character that has arrived. `settled` marks the block the settled
+	 * assistant message has confirmed, or that the stream ended under: the deltas are a
+	 * preview and the message is the authority, so a stream that dropped a fragment is
+	 * corrected rather than left short — and a block that is settled is one nothing more
+	 * is coming to, which is what lets the rail draw its last paragraph (#149).
 	 */
 	| {
 			readonly key: string;
 			readonly kind: "prose";
 			readonly full: string;
-			readonly landed: readonly Landed[];
 			readonly settled: boolean;
 	  }
 	| AgentRow
@@ -372,14 +367,11 @@ export function drawableEntries(entries: readonly unknown[]): AgentEntry[] {
 }
 
 /**
- * The same entries with nothing left to pace (#149, #200).
+ * The same entries with nothing left arriving in them (#149, #200).
  *
- * A message's schedule is a fact about one clock, and a clock belongs to one turn: it is
- * milliseconds from that turn's send. So the moment an entry leaves its own turn — into
- * the turns a conversation has already had, or onto disk — the schedule means nothing, and
- * reading it against a clock that starts again at zero draws the message as no characters
- * at all. Dropping it is what `shownBy` already documents for a block that never streamed:
- * a message with no schedule is drawn whole.
+ * The moment an entry leaves its own turn — into the turns a conversation has already had,
+ * or onto disk — nothing more is coming to it, so a message is over whatever the wire had
+ * confirmed: it is drawn whole, with no caret saying otherwise.
  *
  * A receipt still counting is the same fact about the same clock (#212). A turn saves
  * itself on a throttle while it runs, so a request that was out when the lights went out
@@ -388,9 +380,9 @@ export function drawableEntries(entries: readonly unknown[]): AgentEntry[] {
  * never answered takes, and says no number rather than a wrong one: what it knows is that
  * the request went out, and how long it took is a thing nobody ever found out.
  */
-export function unpaced(entries: readonly AgentEntry[]): AgentEntry[] {
+export function settledPicture(entries: readonly AgentEntry[]): AgentEntry[] {
 	return entries.map((entry) => {
-		if (entry.kind === "prose" && entry.landed.length > 0) return { ...entry, landed: [], settled: true };
+		if (entry.kind === "prose" && !entry.settled) return { ...entry, settled: true };
 		if (entry.kind === "wait" && entry.state === "running") return { ...entry, state: "stopped" as const };
 		return entry;
 	});
@@ -439,32 +431,9 @@ export interface Transcript {
 	readonly writes: readonly AgentWrite[];
 }
 
-/**
- * How much of one block is on screen at `elapsed`, and the one place that rule
- * lives.
- *
- * The renderer and the clock both need it and they must not disagree: if the clock
- * thought a block could still grow when the renderer had already drawn all of it,
- * the tick would never stop. A block with no schedule never streamed and is drawn
- * whole; anything else is what the pace has spent, bounded by the text there is.
- */
-export function shownBy(entry: Extract<AgentEntry, { kind: "prose" }>, elapsed: number): number {
-	if (entry.landed.length === 0) return entry.full.length;
-	return Math.min(entry.full.length, drawnBy(entry.landed, elapsed));
-}
-
-/** the whole message is on screen: nothing about this block is still arriving */
-export function fullyShown(entry: Extract<AgentEntry, { kind: "prose" }>, elapsed: number): boolean {
-	// against what the schedule can ever deliver rather than against the text, because
-	// a `said` shorter than its own deltas leaves an edge the pace can never reach
-	const deliverable = Math.min(entry.full.length, entry.landed[entry.landed.length - 1]?.upto ?? entry.full.length);
-	return shownBy(entry, elapsed) >= deliverable;
-}
-
 interface Prose {
 	key: string;
 	full: string;
-	landed: Landed[];
 	settled: boolean;
 }
 
@@ -1304,14 +1273,13 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				const key = `say:${message}:${event.block}`;
 				let block = prose.get(key);
 				if (block === undefined) {
-					block = { key, full: "", landed: [], settled: false };
+					block = { key, full: "", settled: false };
 					prose.set(key, block);
 					order.push({ kind: "prose", key });
 					opened.push(key);
 					endRun("");
 				}
 				block.full += event.text;
-				block.landed.push({ at, upto: block.full.length });
 				break;
 			}
 			case "said": {
@@ -1319,23 +1287,17 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				settled(at);
 				// the settled message confirms the blocks its own deltas opened, in order.
 				// A runtime that sends no partial messages opens none, so the text arrives
-				// here first and is drawn whole — which is the same entry with no schedule.
+				// here first and is drawn whole — which is the same entry, already settled.
 				const key = opened[confirmed] ?? `said:${message}:${confirmed}`;
 				confirmed += 1;
 				const block = prose.get(key);
 				if (block === undefined) {
-					prose.set(key, { key, full: event.text, landed: [], settled: true });
+					prose.set(key, { key, full: event.text, settled: true });
 					order.push({ kind: "prose", key });
 					endRun("");
 				} else {
 					block.full = event.text;
 					block.settled = true;
-					// the authority is longer than the deltas delivered, so the schedule gains
-					// the rest at this moment. Without it the pace has nothing left to spend
-					// and the last characters would never be drawn at all.
-					if ((block.landed[block.landed.length - 1]?.upto ?? 0) < event.text.length) {
-						block.landed.push({ at, upto: event.text.length });
-					}
 				}
 				break;
 			}
@@ -1441,7 +1403,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 		}
 		const block = prose.get(slot.key);
 		// a text block that opened and never carried a character is not a message
-		if (block !== undefined && block.full !== "") entries.push({ ...block, kind: "prose", landed: block.landed });
+		if (block !== undefined && block.full !== "") entries.push({ ...block, kind: "prose" });
 	}
 	/*
 	 * The plan, in the two phrasings the agent supplied and no others: the list reads in

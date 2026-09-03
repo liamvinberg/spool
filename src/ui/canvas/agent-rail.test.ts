@@ -373,6 +373,31 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		return 1;
 	});
 	vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+	/**
+	 * Every size watcher the page put on something, so a test can say the content grew.
+	 *
+	 * happy-dom lays nothing out, so the observer it constructs never fires: the log's own
+	 * pin, which rides the body's size, is driven from here by hand — set the geometry, then
+	 * say it changed, which is what a browser does in one layout.
+	 */
+	const watchers: { callback: ResizeObserverCallback; targets: Element[] }[] = [];
+	vi.stubGlobal(
+		"ResizeObserver",
+		class {
+			private readonly entry: { callback: ResizeObserverCallback; targets: Element[] };
+			constructor(callback: ResizeObserverCallback) {
+				this.entry = { callback, targets: [] };
+				watchers.push(this.entry);
+			}
+			observe(target: Element) {
+				this.entry.targets.push(target);
+			}
+			unobserve() {}
+			disconnect() {
+				this.entry.targets = [];
+			}
+		},
+	);
 
 	const host = document.createElement("div");
 	document.body.append(host);
@@ -395,6 +420,15 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		stored,
 		offered,
 		preflight,
+		/** the log's body changed size: what a browser tells the rail's watcher after a layout */
+		grew: async () => {
+			await act(async () => {
+				for (const watcher of watchers) {
+					if (!watcher.targets.some((target) => target.closest("[data-agent-log]") !== null)) continue;
+					watcher.callback([], watcher as unknown as ResizeObserver);
+				}
+			});
+		},
 		render: async () => {
 			await act(async () => {
 				root.render(
@@ -1011,15 +1045,15 @@ describe("a long message", () => {
 		};
 
 		// 1,400px of message in a 500px box, its first line 100px down: the first line wins.
-		// Waited for rather than deadlined: what moves the box is the rail's own 100ms tick,
-		// and a fixed sleep makes the assertion a race with whatever else the machine is doing
+		// What moves the box is the size watcher on the log's body, which is what a browser
+		// fires once the message has laid out at that height
 		geometry(1400, 100);
-		await until(() => log.scrollTop === 90);
+		await canvas.grew();
 		expect(log.scrollTop).toBe(90);
 
 		// and an entry that fits keeps ordinary follow-the-end
 		geometry(520, 400);
-		await until(() => log.scrollTop === 20);
+		await canvas.grew();
 		expect(log.scrollTop).toBe(20);
 	});
 });
@@ -1080,7 +1114,6 @@ describe("what an entry redraws for", () => {
 		key: "say:1:0",
 		kind: "prose",
 		full: "the frame is live.",
-		landed: [{ at: 0, upto: 18 }],
 		settled: false,
 	};
 	const out: AgentEntry = { key: "wait:1", kind: "wait", state: "running", at: 0, ms: null };
@@ -1140,7 +1173,8 @@ describe("when the reader takes the wheel", () => {
 		};
 		// 1,400px of live entry in a 500px box, its first line held at 90
 		geometry(1400, 100);
-		await until(() => log.scrollTop === 90);
+		await canvas.grew();
+		expect(log.scrollTop).toBe(90);
 		return { canvas, log, geometry };
 	}
 
@@ -1189,7 +1223,8 @@ describe("when the reader takes the wheel", () => {
 		// the same entry, now short of the box: its top 400px into a 700px scroll, so
 		// the follow point is the plain end at 200
 		geometry(700, 400);
-		await until(() => log.scrollTop === 200);
+		await canvas.grew();
+		expect(log.scrollTop).toBe(200);
 		await wheel(log, -53);
 		await scrolled(log, 80);
 		await scrolled(log, 200);
@@ -2879,20 +2914,10 @@ function storedThread({
 				parent: null,
 				delegated: [],
 			},
-			/*
-			 * The schedule the message arrived on, kept in the fixture on purpose.
-			 *
-			 * Every real streamed message has one, and it is milliseconds from *that* turn's
-			 * send. A restored thread has no clock to read it against — the daemon that held one
-			 * is gone — so a picture that came back still carrying its schedule drew as no
-			 * characters at all, which is the one way "restored is identical to live" can fail
-			 * silently.
-			 */
 			{
 				key: "p0",
 				kind: "prose",
 				full: "The header is tighter now.",
-				landed: [{ at: 4200, upto: 26 }],
 				settled: true,
 			},
 		],

@@ -34,12 +34,10 @@ import {
 	type AgentSent,
 	type AgentWords,
 	drawableEntries,
-	fullyShown,
 	type Stamped,
-	shownBy,
+	settledPicture,
 	type Transcript,
 	transcriptOf,
-	unpaced,
 } from "./agent-transcript";
 import { useStillness } from "./stillness";
 
@@ -53,9 +51,10 @@ import { useStillness } from "./stillness";
  * projection and the revision it was folded at, which is a cache rather than a copy: it
  * answers to the events and is gone the moment one of them lands.
  *
- * The clock is the pace's clock. #149's smoother is a closed-form function of elapsed
- * milliseconds rather than an accumulator, so a tick is a read rather than a step: a
- * dropped frame costs nothing and the edge lands where it would have.
+ * The clock is the receipts' clock: a request still out counts up on it, and it is what
+ * dates every event so a question can stop it. A tick is a read rather than a step, so a
+ * dropped frame costs nothing. The agent's words do not read it: a paragraph arrives when
+ * it is whole, on the wire's own timing (#149).
  *
  * **A project holds many of them and they keep running when you look away**, which is
  * why a thread is a plain object here rather than a hook. Hooks cannot be N of anything,
@@ -66,11 +65,11 @@ import { useStillness } from "./stillness";
  */
 
 /**
- * How often the log is read, at the pace's own resolution.
+ * How often the log is read.
  *
- * The edge moves at 83 characters a second at its floor, so ten reads a second is
- * about eight characters a tick — a word. Faster buys sub-word steps nobody can
- * see; slower turns a stream into a slideshow.
+ * Ten times a second is the resolution a receipt's tenths are drawn at, and it is how
+ * long an event waits at most between landing and reaching the screen. Faster buys
+ * nothing a reader can see; slower turns a turn into a slideshow.
  */
 const TICK_MS = 100;
 
@@ -88,12 +87,11 @@ const SAVE_MS = 2000;
 /**
  * How far in the past a picked-up turn's clock is started (#211).
  *
- * Everything replayed is stamped at zero, so this is what makes all of it due at once: a
- * turn arriving whole is drawn whole rather than typed out from the beginning, which is
- * the rule a picture off disk has always been under. Anything the pace could still be
- * owed is bounded by the turn's own length, so a day is not a number to tune — it is far
- * past every schedule a turn can write, and what arrives after the replay paces normally
- * from wherever the clock then stands.
+ * Everything replayed is stamped at zero, so this is what makes all of it settled at once:
+ * every receipt in a turn arriving whole has its total rather than counting up from the
+ * beginning, which is the rule a picture off disk has always been under. A day is not a
+ * number to tune — it is far past the length of any turn, and what arrives after the
+ * replay counts normally from wherever the clock then stands.
  */
 const REPLAYED_MS = 86_400_000;
 
@@ -118,9 +116,9 @@ export interface AgentTurn {
 	readonly plan: AgentPlan | null;
 	readonly phase: TurnPhase;
 	/**
-	 * Milliseconds since the send, and infinite once there is nothing left to pace —
-	 * which is also what reduced motion asks for from the first frame, since a jump
-	 * cut is the honest downgrade of an arrival rather than a slower one.
+	 * Milliseconds since the send, and infinite once the turn is over — which is also what
+	 * reduced motion asks for from the first frame, since a receipt counting up is motion
+	 * and a jump cut to its total is the honest downgrade.
 	 */
 	readonly elapsed: number;
 	/**
@@ -313,15 +311,15 @@ interface Live {
 	/** the stream is open, written by the stream rather than by a render */
 	streaming: boolean;
 	ms: number;
-	/** the stream is closed and the edge has caught up with it: nothing left to read */
+	/** the stream is closed and the rail has drawn its end: nothing left to read */
 	drained: boolean;
 	/**
 	 * The time the turn spent waiting on the person, which is time the log never had.
 	 *
 	 * A question stops the clock. Everything the transcript reads is measured from the
-	 * send — a beat's length, the rate a message is paced at — and none of it should
-	 * count the seconds somebody spent deciding: the agent is not thinking during them
-	 * and nothing is arriving.
+	 * send — how long a request has been out — and none of it should count the seconds
+	 * somebody spent deciding: the agent is not thinking during them and nothing is
+	 * arriving.
 	 */
 	parked: { total: number; since: number | null };
 	/**
@@ -399,9 +397,9 @@ function born(id: string, over: Partial<Live> = {}): Live {
  * that would say it are gone.
  */
 function restored(stored: ServedThread): Live {
-	// nothing off disk is being paced: the clock its schedule was written against ended
-	// with the daemon that held it
-	const entries = unpaced(drawableEntries(stored.entries));
+	// nothing off disk is still arriving: the turn that wrote it ended with the daemon that
+	// held it
+	const entries = settledPicture(drawableEntries(stored.entries));
 	/*
 	 * A turn this daemon is still holding is not a cut and not a drawing: it is a stream to
 	 * pick back up (#211). What is kept of the picture is everything above the boundary the
@@ -456,9 +454,9 @@ function stirred(thread: Live): void {
  * This thread's transcript, folded once per change to the things it is folded from.
  *
  * The fold is a pure function of the words that started the turn and the events that
- * followed it — the clock is not one of its inputs, because pacing is a schedule the
- * fold writes and the renderer reads — so the same revision is the same transcript, and
- * the one already in hand is the honest answer.
+ * followed it — the clock is not one of its inputs, because what the clock moves is read
+ * off the entries by the renderer — so the same revision is the same transcript, and the
+ * one already in hand is the honest answer.
  *
  * It is a cache because of how many things ask. The tick asks per thread, every render
  * asks for the open thread and then again for every other one, and a render happens on
@@ -532,9 +530,8 @@ function planOf(thread: Live, shown: { plan: AgentPlan | null }): AgentPlan | nu
  * session that has ended, and its next turn would be numbered over the top of them.
  */
 function archive(entries: readonly AgentEntry[], token: string): AgentEntry[] {
-	// and it loses its schedule with its clock: the next turn's starts again at zero, and a
-	// message read against that one draws as no characters at all
-	return unpaced(entries).map((entry) => ({ ...entry, key: `${token}:${entry.key}` }));
+	// and nothing in it is still arriving: its turn is over, whatever the wire confirmed
+	return settledPicture(entries).map((entry) => ({ ...entry, key: `${token}:${entry.key}` }));
 }
 
 export function useAgentThreads(project: string): AgentDeck {
@@ -612,9 +609,8 @@ export function useAgentThreads(project: string): AgentDeck {
 				ask: askOf(entries),
 				life: storedLife(lifeFor(thread, openRef.current, shown)),
 				at: thread.at,
-				// nothing on disk is being paced: what a reader will see is drawn whole, so the
-				// schedule goes rather than sitting there meaning nothing
-				entries: unpaced(entries),
+				// nothing on disk is still arriving: what a reader will see is drawn whole
+				entries: settledPicture(entries),
 				// where the turn in flight begins, so a reader that can pick that turn up keeps
 				// the conversation and refolds the rest off the log rather than drawing it twice
 				// (#211). Everything, once nothing is running: `keptOf` is the whole rule
@@ -735,9 +731,10 @@ export function useAgentThreads(project: string): AgentDeck {
 			 * How many of the events still to arrive already happened (#211).
 			 *
 			 * A replay is not an arrival. Everything before this rail attached is stamped at zero
-			 * against a clock started long enough ago that all of it is due, which draws it whole
-			 * — the same rule a picture off disk is under, and for the same reason: neither of
-			 * them is happening now. What arrives after the replay is paced as it always was.
+			 * against a clock started long enough ago that every receipt in it has its total,
+			 * and the prose it carries mounts whole rather than paragraph by paragraph — the same
+			 * rule a picture off disk is under, and for the same reason: neither of them is
+			 * happening now. What arrives after the replay arrives as it always did.
 			 */
 			let replaying = 0;
 			const clock = () =>
@@ -957,30 +954,25 @@ export function useAgentThreads(project: string): AgentDeck {
 	 * One clock for every thread, and the one thing that stops each of them.
 	 *
 	 * It runs under reduced motion too, which is not a contradiction: the tick is what
-	 * puts arriving events on screen, and the pace is what `elapsed` decides. Stopping
-	 * the tick would leave a still-preferring reader looking at their own sentence and
-	 * nothing else until the process exited, then the whole turn at once.
+	 * puts arriving events on screen, and stillness is a fact about how they are drawn.
+	 * Stopping the tick would leave a still-preferring reader looking at their own sentence
+	 * and nothing else until the process exited, then the whole turn at once.
 	 *
-	 * It outlives a stream on purpose: the pace is up to 0.8s behind the wire, so the
-	 * last words of a message arrive after the process has gone. A thread stops ticking
-	 * when its edge has reached the end of every message, which is the only moment at
-	 * which there is nothing left to draw.
+	 * It stops one tick after the stream closes: that tick draws the end of the turn and
+	 * hands the rail an infinite clock, which is what tells a receipt it has its total.
 	 *
 	 * **A tick that changed nothing draws nothing.** The interval used to redraw for every
 	 * thread that had ever run, which is a render of the whole canvas ten times a second
 	 * for as long as a turn stayed open — including the long middle of a turn where the
 	 * agent is running a tool, no words are arriving and not one pixel is owed. So each
-	 * thread is asked what it has moved, and there are only three answers: events landed
-	 * that nothing else draws, the pace moved the edge of a message, or a request that is
-	 * still out has a number climbing on it.
+	 * thread is asked what it has moved, and there are only two answers: events landed
+	 * that nothing else draws, or a request that is still out has a number climbing on it.
 	 */
 	useEffect(() => {
 		const timer = setInterval(() => {
 			let moved = false;
 			for (const thread of threads.current.values()) {
 				if (thread.run === 0 || thread.drained) continue;
-				// the clock the rail was last handed, which is what is on screen right now
-				const drawn = thread.ms;
 				const now =
 					Date.now() -
 					thread.started -
@@ -998,19 +990,6 @@ export function useAgentThreads(project: string): AgentDeck {
 					moved = true;
 				}
 				const { entries } = shownOf(thread);
-				const clock = still ? Number.POSITIVE_INFINITY : now;
-				const was = still ? Number.POSITIVE_INFINITY : drawn;
-				/*
-				 * The edge moved since the rail last drew it, which is the only reading that can
-				 * decide this. Asking whether a message is finished cannot: the tick that finds
-				 * the last character is the tick that has to hand it over, and a thread that
-				 * stopped one step short would sit at the second-to-last word for the rest of the
-				 * turn. `shownBy` is what the renderer itself spends the clock on, so comparing
-				 * two of them is exactly the question of whether anything would look different.
-				 */
-				if (entries.some((entry) => entry.kind === "prose" && shownBy(entry, was) !== shownBy(entry, clock))) {
-					moved = true;
-				}
 				/*
 				 * A request still out is the one thing in a quiet log that moves on the clock
 				 * alone: its receipt counts up until something answers it. Under stillness it
@@ -1024,10 +1003,9 @@ export function useAgentThreads(project: string): AgentDeck {
 					moved = true;
 				}
 				if (thread.streaming) continue;
-				if (entries.some((entry) => entry.kind === "prose" && !fullyShown(entry, clock))) continue;
 				thread.drained = true;
-				// the drain is drawn: it is what hands the rail an infinite clock, which is the
-				// difference between a message still arriving and a message that is over
+				// the end is drawn: it is what hands the rail an infinite clock, which is the
+				// difference between a turn still running and a turn that is over
 				moved = true;
 			}
 			if (moved) redraw();

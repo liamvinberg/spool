@@ -2,16 +2,13 @@ import { describe, expect, it } from "vitest";
 import { createClaudeAdapter } from "../../daemon/agent-claude";
 import type { AgentEvent } from "../../daemon/agent-events";
 import { CAPTURES, readCapture } from "../../test-helpers";
-import { drawnBy } from "./agent-pace";
 import {
 	type AgentEntry,
 	type AgentRow,
 	duration,
-	fullyShown,
 	type Stamped,
-	shownBy,
+	settledPicture,
 	transcriptOf,
-	unpaced,
 } from "./agent-transcript";
 
 /**
@@ -292,7 +289,7 @@ describe("the wait before the first token", () => {
 	 */
 	it("stops a receipt that is still counting when it leaves its own turn", () => {
 		const { entries } = transcriptOf([{ text: "go" }], stamp([[400, waiting]]));
-		const [kept] = unpaced(entries).filter((entry) => entry.kind === "wait");
+		const [kept] = settledPicture(entries).filter((entry) => entry.kind === "wait");
 
 		expect(entries.at(-1)).toMatchObject({ kind: "wait", state: "running", ms: null });
 		expect(kept).toMatchObject({ kind: "wait", state: "stopped", ms: null });
@@ -307,7 +304,7 @@ describe("the wait before the first token", () => {
 				[1970, say("done.")],
 			]),
 		);
-		const [kept] = unpaced(entries).filter((entry) => entry.kind === "wait");
+		const [kept] = settledPicture(entries).filter((entry) => entry.kind === "wait");
 
 		expect(kept).toMatchObject({ kind: "wait", state: "done", ms: 1970 });
 	});
@@ -383,7 +380,7 @@ describe("the wait before the first token", () => {
 });
 
 describe("the agent's words", () => {
-	it("arrive as they are written rather than appearing whole", () => {
+	it("accumulate as they are written, and are not settled until the message is", () => {
 		const { entries } = transcriptOf(
 			[{ text: "go" }],
 			stamp([
@@ -395,13 +392,9 @@ describe("the agent's words", () => {
 		);
 		const [block] = prose(entries);
 
-		expect(block).toMatchObject({ full: "the frame is live.", settled: false });
-		expect(block?.kind === "prose" ? block.landed : []).toEqual([
-			{ at: 1000, upto: 10 },
-			{ at: 1400, upto: 18 },
-		]);
-		// and the schedule is what the pace reads, so nothing is drawn before it landed
-		expect(drawnBy(block?.kind === "prose" ? block.landed : [], 950)).toBe(0);
+		// what has arrived, whole, and no claim that the message is over: the rail holds
+		// the last paragraph of an unsettled block until the text after it begins
+		expect(block).toEqual({ key: "say:1:0", kind: "prose", full: "the frame is live.", settled: false });
 	});
 
 	it("keeps two blocks of one message apart", () => {
@@ -433,15 +426,11 @@ describe("the agent's words", () => {
 			stamp([waiting, speaking, { kind: "said", text: "done.", parent: null }, done]),
 		);
 
-		expect(prose(entries)).toEqual([{ key: "said:1:0", kind: "prose", full: "done.", landed: [], settled: true }]);
+		expect(prose(entries)).toEqual([{ key: "said:1:0", kind: "prose", full: "done.", settled: true }]);
 	});
 
-	/**
-	 * The pace can only spend what the schedule delivered, so text the authority added
-	 * has to arrive on it too. Without this the last characters are undrawable and the
-	 * clock that waits for the edge never stops.
-	 */
-	it("puts text the settled message added onto the schedule so the edge can reach it", () => {
+	/** the authority is longer than the deltas delivered, so the block takes its text whole */
+	it("lets the settled message add the text the deltas never carried", () => {
 		const { entries } = transcriptOf(
 			[{ text: "go" }],
 			stamp([
@@ -451,12 +440,21 @@ describe("the agent's words", () => {
 				[1600, { kind: "said", text: "the frame is live.", parent: null }],
 			]),
 		);
-		const [block] = prose(entries);
-		if (block?.kind !== "prose") throw new Error("no block");
 
-		expect(block.landed.at(-1)).toEqual({ at: 1600, upto: 18 });
-		expect(fullyShown(block, 4000)).toBe(true);
-		expect(shownBy(block, 4000)).toBe(18);
+		expect(prose(entries)).toEqual([{ key: "say:1:0", kind: "prose", full: "the frame is live.", settled: true }]);
+	});
+
+	/**
+	 * A stream that ends under a message is as settled as that message will ever be: the
+	 * authority is not coming, so the rail must not hold the last paragraph for it (#149).
+	 */
+	it("settles a message the stream ended under", () => {
+		const { entries } = transcriptOf(
+			[{ text: "go" }],
+			stamp([waiting, speaking, say("the frame is liv"), { kind: "closed", code: 1, parent: null }]),
+		);
+
+		expect(prose(entries)).toEqual([{ key: "say:1:0", kind: "prose", full: "the frame is liv", settled: true }]);
 	});
 
 	it("draws nothing for a text block that never carried a character", () => {

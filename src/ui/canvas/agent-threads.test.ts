@@ -213,7 +213,7 @@ describe("the last line a thread drew", () => {
 	/** prose is paragraphs and the flyout has one line, so a message is not a line */
 	it("is empty until the thread has drawn a row at all", () => {
 		expect(lastOf([])).toBe("");
-		expect(lastOf([asked, { key: "p0", kind: "prose", full: "done.", landed: [], settled: true }])).toBe("");
+		expect(lastOf([asked, { key: "p0", kind: "prose", full: "done.", settled: true }])).toBe("");
 	});
 });
 

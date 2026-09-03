@@ -52,7 +52,7 @@ const row = (over: Partial<AgentRow> = {}): AgentRow => ({
 	...over,
 });
 
-const prose: AgentEntry = { key: "p", kind: "prose", full: "on it", landed: [], settled: true };
+const prose: AgentEntry = { key: "p", kind: "prose", full: "on it", settled: true };
 
 describe("where the agent is", () => {
 	it("is nowhere at all while no turn is running", () => {

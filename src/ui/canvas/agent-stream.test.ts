@@ -5,7 +5,6 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AgentEvent, ServedThread, ThreadPut } from "../api";
 import { type AgentDeck, type AgentTurn, useAgentThreads } from "./agent-stream";
-import { fullyShown } from "./agent-transcript";
 
 /**
  * The hook that owns every thread's turn (#192, #200), on its own rather than under the
@@ -173,16 +172,15 @@ describe("the turn a thread is running", () => {
 		// the stream is still open, so nothing but the tick can have rendered this
 		expect(canvas.latest().phase).toBe("playing");
 		expect(canvas.latest().entries.filter((entry) => entry.kind === "prose")).toEqual([
-			{ key: "say:1:0", kind: "prose", full: "the frame is live.", landed: expect.anything(), settled: false },
+			{ key: "say:1:0", kind: "prose", full: "the frame is live.", settled: false },
 		]);
 	});
 
 	/**
-	 * The clock outlives the stream by design — the pace runs up to 0.8s behind the
-	 * wire — and it has to stop once the edge has caught up, or it re-folds the
-	 * transcript ten times a second for the rest of the session.
+	 * The clock stops one tick after the stream closes, or it re-folds the transcript ten
+	 * times a second for the rest of the session.
 	 */
-	it("stops its clock once the last word has landed", async () => {
+	it("stops its clock once the turn is over", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await act(async () => {
@@ -228,7 +226,7 @@ describe("the turn a thread is running", () => {
 		}
 	});
 
-	/** a message that never streamed has no schedule to spend, so the clock must not wait on one */
+	/** a message that never streamed is settled on arrival, and the clock stops with the turn */
 	it("stops its clock on a message that arrived whole", async () => {
 		const canvas = mount();
 		await canvas.render();
@@ -435,7 +433,7 @@ describe("a turn picked back up", () => {
 		at: 1_700_000_000_000,
 		entries: [
 			{ key: "u0", kind: "user", text: "make the header tighter", context: null, attached: null },
-			{ key: "say:1:0", kind: "prose", full: "Reading the header.", landed: [], settled: true },
+			{ key: "say:1:0", kind: "prose", full: "Reading the header.", settled: true },
 		],
 		// the human's words are the conversation's; the prose under them is the turn's, and
 		// the replay is what draws that
@@ -468,11 +466,8 @@ describe("a turn picked back up", () => {
 		// replay — the boundary is what keeps the second from being drawn twice
 		expect(turn.entries.filter((entry) => entry.kind === "user")).toHaveLength(1);
 		expect(turn.entries.filter((entry) => entry.kind === "prose")).toEqual([
-			{ key: "say:0:0", kind: "prose", full: "Reading the header.", landed: expect.anything(), settled: false },
+			{ key: "say:0:0", kind: "prose", full: "Reading the header.", settled: false },
 		]);
-		// and a replay is not an arrival: it is drawn whole rather than typed out from the
-		// beginning, the way a picture off disk is
-		expect(fullyShown(turn.entries.find((entry) => entry.kind === "prose") as never, turn.elapsed)).toBe(true);
 	});
 
 	it("carries on live from where the replay left off", async () => {
