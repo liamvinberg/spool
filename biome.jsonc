@@ -6,6 +6,11 @@
 		"useIgnoreFile": true
 	},
 	"files": {
+		// design/ stays out on purpose (#218): `pnpm check` is the handoff gate for src/,
+		// and design/ is live canvas work another session may have open, so pulling it in
+		// makes one gate reach into somebody else's in-progress frame. A `--write` there also
+		// fires the daemon's watcher and reloads frames mid-edit, and the recommended preset is
+		// aimed at product code, not at sketches. Frames are read far more than maintained.
 		"includes": ["**", "!bench/evidence", "!design", "!fixtures/captures", "!spikes", "!research"]
 	},
 	"formatter": {
