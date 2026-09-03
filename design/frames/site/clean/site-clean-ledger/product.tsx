@@ -645,15 +645,15 @@ export function HomeCandlelit() {
 			<img
 				src={candlePhoto}
 				alt=""
-				className="absolute top-0 right-0 h-full w-[760px] object-cover"
-				style={{ objectPosition: "48% 50%" }}
+				className="absolute top-0 right-0 h-full w-[1120px] object-cover"
+				style={{ objectPosition: "50% 50%" }}
 			/>
 			<span
 				aria-hidden="true"
-				className="absolute top-0 right-0 h-full w-[760px]"
+				className="absolute top-0 right-0 h-full w-[1120px]"
 				style={{
 					background:
-						"radial-gradient(42% 32% at 52% 52%, rgba(234,150,60,0.34), rgba(7,4,3,0) 62%)",
+						"radial-gradient(38% 30% at 50% 52%, rgba(234,150,60,0.36), rgba(7,4,3,0) 64%)",
 					animation: "brasa-breathe 6s cubic-bezier(0.45, 0, 0.55, 1) infinite",
 				}}
 			/>
@@ -662,7 +662,7 @@ export function HomeCandlelit() {
 				className="absolute inset-0"
 				style={{
 					background:
-						"linear-gradient(90deg, #070403 32%, rgba(7,4,3,0.86) 48%, rgba(7,4,3,0.30) 72%, rgba(7,4,3,0.72) 100%)",
+						"linear-gradient(90deg, #070403 34%, rgba(7,4,3,0.88) 48%, rgba(7,4,3,0.34) 70%, rgba(7,4,3,0.74) 100%)",
 				}}
 			/>
 			<Grain opacity={0.16} />
@@ -766,8 +766,8 @@ export function HomeEditorial() {
 					Everything here has been over the fire.
 				</h1>
 
-				<div className="mt-9 grid min-h-0 flex-1 grid-cols-[1fr_420px_260px] gap-12">
-					<div>
+				<div className="mt-9 grid min-h-0 flex-1 grid-cols-[1fr_452px_268px] gap-12">
+					<div className="flex flex-col">
 						<p className="text-[14.5px] leading-[25px]" style={{ color: "var(--paper-ink)" }}>
 							<span
 								className="ed float-left mt-[9px] mr-3 leading-[0.72]"
@@ -783,8 +783,26 @@ export function HomeEditorial() {
 							Two sittings a night, at 17:30 and at 20:30. The kitchen keeps the last hour of the
 							evening for whatever is left in the embers.
 						</p>
-						<div className="mt-7">
-							<QuietLink tone="paper">Read the menu</QuietLink>
+						<span className="mt-7 block h-px w-full" style={{ background: "var(--paper-ink)" }} />
+						<span className="ed mt-4 block text-[22px] leading-none">Tonight</span>
+						<div className="mt-3">
+							{COURSES.map((c) => (
+								<div key={c.numeral} className="flex items-baseline gap-3 py-[7px]">
+									<span
+										className="ed w-[26px] shrink-0 text-[12px] leading-none"
+										style={{ color: "var(--paper-dim)" }}
+									>
+										{c.numeral}
+									</span>
+									<span className="min-w-0 flex-1 truncate text-[13.5px] leading-none">{c.name}</span>
+									<span className="num text-[13px] leading-none" style={{ color: "var(--paper-dim)" }}>
+										{c.price}
+									</span>
+								</div>
+							))}
+						</div>
+						<div className="mt-auto pt-6">
+							<QuietLink tone="paper">Read the whole menu</QuietLink>
 						</div>
 					</div>
 
@@ -792,7 +810,7 @@ export function HomeEditorial() {
 						<img
 							src={boardPhoto}
 							alt=""
-							className="h-[300px] w-full object-cover"
+							className="min-h-0 w-full flex-1 object-cover"
 							style={{ filter: "saturate(0.86) contrast(1.04)" }}
 						/>
 						<figcaption className="mt-2.5 text-[11.5px] leading-[17px]" style={{ color: "var(--paper-dim)" }}>
@@ -801,16 +819,20 @@ export function HomeEditorial() {
 					</figure>
 
 					<div className="flex flex-col">
-						<HoursList tone="paper" width={260} />
+						<HoursList tone="paper" width={268} />
 						<span className="mt-6 block h-px w-full" style={{ background: "var(--paper-ink)" }} />
 						<p className="mt-4 text-[13px] leading-[21px]" style={{ color: "var(--paper-dim)" }}>
-							Bookings open thirty days ahead. Larger tables are arranged in the room.
+							Bookings open thirty days ahead. Larger tables are arranged in the room, and the kitchen
+							works around allergies when it knows about them.
 						</p>
-						<div className="mt-auto">
+						<div className="mt-6">
 							<SolidButton className="text-[13.5px]" height={44} full tone="paper">
 								Book a table
 							</SolidButton>
 						</div>
+						<p className="mt-auto text-[12.5px] leading-[19px]" style={{ color: "var(--paper-dim)" }}>
+							{ADDRESS}
+						</p>
 					</div>
 				</div>
 			</div>
@@ -909,9 +931,15 @@ export function HomePlayful() {
 					<p className="pop text-[36px] leading-[1.12]" style={{ fontWeight: 600, letterSpacing: "-0.02em" }}>
 						Six courses over open fire, written each morning and served twice a night.
 					</p>
-					<span className="text-[13.5px]" style={{ color: "#c39a72" }}>
-						{ADDRESS}
-					</span>
+					<div className="flex items-end justify-between gap-8">
+						<p className="max-w-[430px] text-[14px] leading-[22px]" style={{ color: "#c39a72" }}>
+							The room holds twenty-four, so a table booked is a table kept. Bookings open thirty days
+							ahead and the kitchen works around allergies when it knows about them.
+						</p>
+						<span className="pop shrink-0 text-[14px]" style={{ color: "#f7e6cc", fontWeight: 600 }}>
+							{ADDRESS}
+						</span>
+					</div>
 				</div>
 				<div
 					className="flex flex-col justify-between rounded-[22px] p-8"
@@ -947,7 +975,7 @@ export function HomeClassic() {
 			<BrasaType />
 			<Grain opacity={0.13} blend="multiply" />
 
-			<div className="relative flex w-full items-center justify-between px-16 pt-8">
+			<div className="relative flex w-full items-center justify-between px-16 pt-10">
 				<span className="text-[11.5px] tracking-[0.22em]" style={{ color: "#6f675d" }}>
 					SÖDERMALM
 				</span>
@@ -982,7 +1010,7 @@ export function HomeClassic() {
 				of it over wood.
 			</p>
 
-			<div className="relative mt-9 h-[214px] w-[1096px] overflow-hidden">
+			<div className="relative mt-10 h-[298px] w-[1096px] overflow-hidden">
 				<img
 					src={silverPhoto}
 					alt=""
