@@ -199,8 +199,8 @@ describe("how long the hand stays after the call that made it", () => {
 
 const CAMERA: Camera = { x: 0, y: 0, k: 1 };
 const FRAMES: ProjectedFrame[] = [
-	{ name: "home", x: 100, y: 100, w: 390, h: 844, kind: "html" } as ProjectedFrame,
-	{ name: "cart", x: 600, y: 100, w: 390, h: 844, kind: "html" } as ProjectedFrame,
+	{ name: "home", x: 100, y: 100, w: 390, h: 844 } as ProjectedFrame,
+	{ name: "cart", x: 600, y: 100, w: 390, h: 844 } as ProjectedFrame,
 ];
 
 const hand = (over: Partial<Hand> = {}): Hand => ({

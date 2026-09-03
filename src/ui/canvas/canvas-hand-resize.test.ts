@@ -19,7 +19,7 @@ import type { PickedHit } from "./protocol";
 
 const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
-const frames = [{ name: "home", x: 0, y: 0, w: 640, h: 480, kind: "html" }];
+const frames = [{ name: "home", x: 0, y: 0, w: 640, h: 480 }];
 
 const STAMP = "frames/home/frame.tsx:7:4";
 

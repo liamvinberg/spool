@@ -88,30 +88,6 @@ describe("page discovery", () => {
 	});
 });
 
-describe("pages and frame kinds compose", () => {
-	it("keeps a term-only folder a frame and attributes paged terminals", async () => {
-		const { spoolDir, root, name } = pageProject();
-		writeDesignFile(root, "frames/console/term.tsx", "export default function T() {\n\treturn null;\n}\n");
-		writeDesignFile(root, "frames/ops/dashboard/term.tsx", "export default function T() {\n\treturn null;\n}\n");
-		const app = makeApp(spoolDir);
-
-		const projection = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
-			pages: string[];
-			frames: { name: string; kind: string; page?: string }[];
-		};
-
-		// the entry filename is the kind (#42); a folder holding one is a frame,
-		// never a page — whichever entry it holds
-		expect(projection.pages).toEqual(["ops"]);
-		const console_ = projection.frames.find((frame) => frame.name === "console");
-		expect(console_?.kind).toBe("term");
-		expect("page" in (console_ ?? {})).toBe(false);
-		const dashboard = projection.frames.find((frame) => frame.name === "dashboard");
-		expect(dashboard?.kind).toBe("term");
-		expect(dashboard?.page).toBe("ops");
-	});
-});
-
 describe("name collisions", () => {
 	it("reports both locations and refuses to serve the ambiguous name", async () => {
 		const { spoolDir, root, name } = pageProject();
@@ -292,7 +268,6 @@ describe("page-aware change events", () => {
 	it("names the leaf frame for page edits and stays quiet on page sidecars", { timeout: 20_000 }, async () => {
 		const { spoolDir, root, name } = pageProject();
 		writePageFrame(root, "shop", "checkout", label("checkout"));
-		writeDesignFile(root, "frames/console/term.tsx", "export default function T() {\n\treturn null;\n}\n");
 		const app = makeApp(spoolDir);
 		const controller = new AbortController();
 		onTestFinished(() => controller.abort());
@@ -326,10 +301,6 @@ describe("page-aware change events", () => {
 		// a page born on disk reaches the canvas as a discovery change
 		mkdirSync(join(root, "design", "frames", "admin"), { recursive: true });
 		await nextMatching({ event: "change", data: { kind: "frame", frame: "admin" } });
-
-		// a term-only folder is a frame, never a page (#42): its edit names it
-		writeDesignFile(root, "frames/console/term.tsx", "export default function T() {\n\treturn <p>hi</p>;\n}\n");
-		await nextMatching({ event: "change", data: { kind: "frame", frame: "console" } });
 
 		// geometry stays hands-owned at its new depth: a page sidecar is a move of
 		// the leaf frame rather than an edit of it, and names it (#113)

@@ -489,7 +489,7 @@ function discoverHtmlFrames(designDir: string): string[] {
 	}
 	const entries: string[] = [];
 	// discovery's own walk: a folder holding an entry is a frame, and one holding
-	// neither is a page whose own folders get the same question (#231)
+	// none is a page whose own folders get the same question (#231)
 	const walk = (dir: string): void => {
 		for (const entry of directories(designDir, dir)) {
 			const frame = join(dir, entry, "frame.tsx");
@@ -497,7 +497,6 @@ function discoverHtmlFrames(designDir: string): string[] {
 				entries.push(frame);
 				continue;
 			}
-			if (entryMarkerExists(join(dir, entry, "term.tsx"))) continue;
 			walk(join(dir, entry));
 		}
 	};
@@ -530,16 +529,6 @@ function designFileExists(designDir: string, file: string): boolean {
 			throw error;
 		}
 		if (!stat.isFile()) throw new NonRegularDesignFileError(designPath(designDir, file));
-		return true;
-	} catch (error) {
-		if (isMissing(error)) return false;
-		throw error;
-	}
-}
-
-function entryMarkerExists(file: string): boolean {
-	try {
-		lstatSync(file);
 		return true;
 	} catch (error) {
 		if (isMissing(error)) return false;

@@ -10,7 +10,7 @@ vi.mock("../thumbnail", async () => {
 	const { createElement } = await import("react");
 	return {
 		Thumbnail: ({ alt, style, className }: { alt: string; style?: Record<string, string>; className?: string }) =>
-			createElement("img", { alt, style, className, "data-terminal-cover": "image" }),
+			createElement("img", { alt, style, className, "data-cover": "image" }),
 	};
 });
 
@@ -102,21 +102,6 @@ describe("coverPlan", () => {
 			expect(plan({ state, entered: false, ready: true, settled: true }).cover).toBe(true);
 		}
 	});
-
-	it("lets an unavailable terminal message override a cached image", () => {
-		expect(
-			plan({
-				state: "picture",
-				entered: false,
-				terminalCover: { kind: "never-run", message: "saving it does not create a screen" },
-			}),
-		).toEqual({
-			cover: true,
-			image: "terminal-message",
-			badge: false,
-			message: "saving it does not create a screen",
-		});
-	});
 });
 
 describe("FrameShell documents", () => {
@@ -127,11 +112,9 @@ describe("FrameShell documents", () => {
 		settled: true,
 		entered: false,
 		interactive: false,
-		terminal: false,
 		docNonce: 0,
 		holdNonce: null,
 		cover: COVER,
-		terminalCover: undefined,
 		walkArrival: false,
 		onIframe: vi.fn(),
 	};
@@ -233,115 +216,6 @@ describe("FrameShell documents", () => {
 	it("keeps the still out of the DOM for a frame that has none", async () => {
 		const { host, root } = await render({ state: "live", cover: undefined });
 		expect(host.querySelector("img")).toBeNull();
-		act(() => root.unmount());
-	});
-
-	it("asks a terminal for the freeze no CSS can reach, and never asks an html frame", async () => {
-		const { host, root, again } = await render({ state: "live", terminal: true });
-		const post = vi.fn();
-		const window = host.querySelector("iframe")?.contentWindow;
-		if (window === null || window === undefined) throw new Error("no frame window");
-		window.postMessage = post;
-
-		await again({ state: "held", terminal: true });
-		expect(post).toHaveBeenCalledWith({ spool: "freeze", on: true }, "*");
-		act(() => root.unmount());
-
-		const html = await render({ state: "live" });
-		const htmlPost = vi.fn();
-		const htmlWindow = html.host.querySelector("iframe")?.contentWindow;
-		if (htmlWindow === null || htmlWindow === undefined) throw new Error("no frame window");
-		htmlWindow.postMessage = htmlPost;
-		await html.again({ state: "held" });
-		expect(htmlPost).not.toHaveBeenCalled();
-		act(() => html.root.unmount());
-	});
-});
-
-describe("FrameShell terminal covers", () => {
-	it("replaces a cached current image with the actionable stale message", async () => {
-		const host = document.createElement("div");
-		const root = createRoot(host);
-		const props = {
-			project: "demo",
-			name: "dash",
-			state: "picture" as const,
-			ready: false,
-			settled: false,
-			entered: false,
-			interactive: false,
-			terminal: true,
-			docNonce: 0,
-			holdNonce: null,
-			cover: COVER,
-			walkArrival: false,
-			onIframe: vi.fn(),
-		};
-
-		await act(async () => {
-			root.render(createElement(FrameShell, { ...props, terminalCover: { kind: "current" } }));
-		});
-		expect(host.querySelector('[data-terminal-cover="image"]')).not.toBeNull();
-
-		await act(async () => {
-			root.render(
-				createElement(FrameShell, {
-					...props,
-					terminalCover: {
-						kind: "stale",
-						message:
-							'persisted screen for "dash" is stale after its source changed; terminal execution is disabled, so no current screen is available',
-					},
-				}),
-			);
-		});
-		expect(host.querySelector('[data-terminal-cover="image"]')).toBeNull();
-		expect(host.textContent).toContain("stale after its source changed");
-
-		act(() => root.unmount());
-	});
-
-	it("covers an already-mounted terminal when its source becomes stale", async () => {
-		const host = document.createElement("div");
-		const root = createRoot(host);
-		const props = {
-			project: "demo",
-			name: "dash",
-			state: "held" as const,
-			ready: true,
-			settled: true,
-			entered: false,
-			interactive: false,
-			terminal: true,
-			docNonce: 0,
-			holdNonce: null,
-			cover: COVER,
-			walkArrival: false,
-			onIframe: vi.fn(),
-		};
-
-		await act(async () => {
-			root.render(createElement(FrameShell, { ...props, terminalCover: { kind: "current" } }));
-		});
-		const iframe = host.querySelector("iframe");
-		expect(iframe).not.toBeNull();
-		expect(host.textContent).not.toContain("stale");
-
-		await act(async () => {
-			root.render(
-				createElement(FrameShell, {
-					...props,
-					terminalCover: {
-						kind: "stale",
-						message:
-							'persisted screen for "dash" is stale after its source changed; terminal execution is disabled, so no current screen is available',
-					},
-				}),
-			);
-		});
-		expect(host.querySelector("iframe")).toBe(iframe);
-		expect(host.textContent).toContain("stale after its source changed");
-
 		act(() => root.unmount());
 	});
 });

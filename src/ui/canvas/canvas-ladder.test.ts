@@ -23,7 +23,7 @@ const ACCEL_KEY = accelKeyName();
 const ACCEL = ACCEL_KEY === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
 // wide enough to be readable at zoom 1, so the document stays mounted throughout
-const frames = [{ name: "home", x: 0, y: 0, w: 640, h: 480, kind: "html" }];
+const frames = [{ name: "home", x: 0, y: 0, w: 640, h: 480 }];
 
 /** An ancestry the shim would answer with, root element first. */
 const ancestry = (...selectors: readonly string[]): PickedHit[] =>

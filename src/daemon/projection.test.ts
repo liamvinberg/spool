@@ -1,55 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { pxForCells } from "../term/cells";
 import { makeTempDir, writeDesignFile } from "../test-helpers";
 import { realDesignDir } from "./design-path";
 import { writePlacement } from "./geometry";
-import { frameKind, listProjectFrames, readFrameGeometry } from "./projection";
-
-describe("frame kinds", () => {
-	it("discovers term.tsx folders as terminal frames beside html ones", () => {
-		const root = makeTempDir();
-		writeDesignFile(root, join("frames", "web", "frame.tsx"), "export default () => null;\n");
-		writeDesignFile(root, join("frames", "tui", "term.tsx"), "// tui\n");
-
-		const { frames } = listProjectFrames(root);
-		expect(frames.map((f) => ({ name: f.name, kind: f.kind }))).toEqual([
-			{ name: "tui", kind: "term" },
-			{ name: "web", kind: "html" },
-		]);
-	});
-
-	it("births terminal frames at 80×24, not phone-sized", () => {
-		const root = makeTempDir();
-		writeDesignFile(root, join("frames", "tui", "term.tsx"), "// tui\n");
-
-		const { frames } = listProjectFrames(root);
-		const expected = pxForCells(80, 24);
-		expect(frames[0]).toMatchObject({ w: expected.w, h: expected.h });
-		// placement is durable, written through the same sidecar path
-		const sidecar = JSON.parse(readFileSync(join(root, "design", "frames", "tui", "frame.json"), "utf8"));
-		expect(sidecar).toMatchObject({ w: expected.w, h: expected.h });
-	});
-
-	it("names a folder holding both entries a conflict, and still shows it", () => {
-		const root = makeTempDir();
-		writeDesignFile(root, join("frames", "both", "frame.tsx"), "export default () => null;\n");
-		writeDesignFile(root, join("frames", "both", "term.tsx"), "// tui\n");
-
-		const designDir = realDesignDir(root);
-		expect(frameKind(join(designDir, "frames", "both"), designDir)).toBe("conflict");
-		const { frames } = listProjectFrames(root);
-		expect(frames.map((f) => f.name)).toEqual(["both"]);
-	});
-
-	it("variants are just names — a --variant terminal frame discovers like any frame", () => {
-		const root = makeTempDir();
-		writeDesignFile(root, join("frames", "dash--empty", "term.tsx"), "// tui\n");
-		const { frames } = listProjectFrames(root);
-		expect(frames[0]).toMatchObject({ name: "dash--empty", kind: "term" });
-	});
-});
+import { listProjectFrames, readFrameGeometry } from "./projection";
 
 describe("frame birth", () => {
 	it("carries the folder's birth time so the finder can sort newest first", () => {
@@ -158,14 +113,6 @@ describe("a sidecar that states size without position", () => {
 		expect(wide?.x).toBeGreaterThan((home?.x ?? 0) + (home?.w ?? 0));
 	});
 
-	it("sizes a terminal frame the same way, past its 80×24 floor", () => {
-		const root = makeTempDir();
-		sized(root, "shell", '{ "w": 1080, "h": 720 }\n');
-		writeDesignFile(root, join("frames", "shell", "term.tsx"), "// tui\n");
-
-		expect(listProjectFrames(root).frames[0]).toMatchObject({ kind: "term", w: 1080, h: 720 });
-	});
-
 	it("shoots at the authored size before anything has placed the frame", () => {
 		const root = makeTempDir();
 		sized(root, "pricing", '{ "w": 1440, "h": 900 }\n');
@@ -230,7 +177,11 @@ describe("pages at any depth", () => {
 			join("frames", "explorations", "chat", "agent-chat", "frame.tsx"),
 			"export default () => null;\n",
 		);
-		writeDesignFile(root, join("frames", "explorations", "chat", "deeper", "shell", "term.tsx"), "// tui\n");
+		writeDesignFile(
+			root,
+			join("frames", "explorations", "chat", "deeper", "shell", "frame.tsx"),
+			"export default () => null;\n",
+		);
 		return root;
 	}
 
@@ -238,11 +189,11 @@ describe("pages at any depth", () => {
 		const { pages, frames } = listProjectFrames(deep());
 
 		expect(pages).toEqual(["explorations", "explorations/chat", "explorations/chat/deeper"]);
-		expect(frames.map((frame) => ({ name: frame.name, page: frame.page, kind: frame.kind }))).toEqual([
-			{ name: "agent-chat", page: "explorations/chat", kind: "html" },
-			{ name: "home", page: undefined, kind: "html" },
-			{ name: "notes", page: "explorations", kind: "html" },
-			{ name: "shell", page: "explorations/chat/deeper", kind: "term" },
+		expect(frames.map((frame) => ({ name: frame.name, page: frame.page }))).toEqual([
+			{ name: "agent-chat", page: "explorations/chat" },
+			{ name: "home", page: undefined },
+			{ name: "notes", page: "explorations" },
+			{ name: "shell", page: "explorations/chat/deeper" },
 		]);
 	});
 

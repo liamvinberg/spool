@@ -18,9 +18,9 @@ const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
 /** Two frames a gutter of 80 apart, and a third out on its own to drag in. */
 const ROW = [
-	{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html" },
-	{ name: "shell", x: 400, y: 0, w: 320, h: 240, kind: "html" },
-	{ name: "detail", x: 1000, y: 0, w: 320, h: 240, kind: "html" },
+	{ name: "home", x: 0, y: 0, w: 320, h: 240 },
+	{ name: "shell", x: 400, y: 0, w: 320, h: 240 },
+	{ name: "detail", x: 1000, y: 0, w: 320, h: 240 },
 ];
 
 let asked: Array<{ url: string; body: unknown }> = [];

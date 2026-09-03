@@ -20,7 +20,7 @@ import type { MeasuredBox, PickedHit, SpacingReading } from "./protocol";
 const ACCEL_KEY = accelKeyName();
 const ACCEL = ACCEL_KEY === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
-const frames = [{ name: "home", x: 0, y: 0, w: 640, h: 480, kind: "html" }];
+const frames = [{ name: "home", x: 0, y: 0, w: 640, h: 480 }];
 
 const ROOT: PickedHit[] = [
 	{

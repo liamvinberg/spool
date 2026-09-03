@@ -18,7 +18,7 @@ import { SpoolError } from "./errors";
  */
 const spoolPackageJson = () => fileURLToPath(new URL("../package.json", import.meta.url));
 
-const overview = `spool — the live prototyping canvas. Html frames are TSX components in design/ on disk; the canvas is a projection the human arranges and plays. You author files; spool renders, links, and verifies them.
+const overview = `spool — the live prototyping canvas. Frames are TSX components in design/ on disk; the canvas is a projection the human arranges and plays. You author files; spool renders, links, and verifies them.
 
 This skill is the complete contract: if it isn't here, spool doesn't do it.
 
@@ -26,31 +26,28 @@ The one law: never write app-owned files — design/canvas.json and design/.spoo
 
 A frame is born by writing design/frames/<name>/frame.tsx default-exporting one React component — no registration, no \`spool new\`. It appears on the canvas live. Variants are \`--\`-named sibling folders (checkout--empty). spool owns the document: pinned React, Tailwind compiled at serve, preflight, tokens, fonts, the flow runtime are all injected — write only the component. Frames render nowhere outside spool.
 
-There are exactly two frame kinds, told apart by the entry filename: frame.tsx is an html frame; term.tsx remains recognized as a terminal frame, but spool renders a static disabled surface and does not execute its source until project code can run inside an OS sandbox (topic: terminals). A folder holding both entries is an error naming the folder; pick one.
-
 Lifecycle (offline, take a path):
   spool init [path]     scaffold design/, register the project, and open its tab
   spool open [path]     register an existing project by walk-up and open its tab
   spool remove [path]   forget one exact registered root without deleting its files
-  spool check [path]    strictly type-check HTML frames without starting spool
+  spool check [path]    strictly type-check frames without starting spool
 
 For a disposable implementation lane, run \`spool open <lane>\` before verification and \`spool remove <lane>\` before erasing the worktree. Never alias a lane to the registered main checkout: verification must read the lane's source.
 
 Read verbs (work from any cwd inside a registered project, auto-start the daemon):
   spool selection       what the human points at, as one <selection> block: frames and elements, paths and lines
   spool flows           the link graph, read from source: edges, certainty, verified walks
-  spool shot <frame>    HTML headless screenshot, or terminal source-current persisted-grid SVG
-  spool logs <frame>    the same scenario HTML boot's console, cached by compiled source
+  spool shot <frame>    headless screenshot of the frame
+  spool logs <frame>    the same scenario boot's console, cached by compiled source
   spool url <frame>     mint a player URL; --raw mints the bare frame document
   spool skill [topic]   this text (needs nothing)
 
-The daemon: \`spool serve\` / \`spool status\` / \`spool stop\` are the handles; \`spool autostart\` makes it start at login (macOS); \`spool upgrade\` installs the latest release and restarts it. The CLI boots HTML frames in spool's own headless Chrome; it never reads the human's canvas. A terminal shot executes nothing and rasterizes only a persisted source-current grid to SVG.
+The daemon: \`spool serve\` / \`spool status\` / \`spool stop\` are the handles; \`spool autostart\` makes it start at login (macOS); \`spool upgrade\` installs the latest release and restarts it. The CLI boots frames in spool's own headless Chrome; it never reads the human's canvas.
 
 History: where a project's design/canvas.json says \`"history": true\`, the daemon commits design/ for you — everything that changed lands as one \`design: <counts>\` commit on the checked-out branch once the folder has been quiet for 45 seconds. So never commit design/ yourself and never stage it: the save is built from its own index, your staging area is left exactly as you found it, and spool never pushes. \`spool init\` turns history on and says so (\`spool init --no-history\` starts a project without it); a project older than the flag has no key, which reads as off; \`"history": false\` in ~/.spool/config.json turns it off on that machine whatever a project asks for. A repository mid-merge, mid-rebase, on a detached HEAD, or with its index held waits for the next window.
 
 Topics — \`spool skill <topic>\`:
   frames      the design/ contract: folders, sidecars, shared/, libraries
-  terminals   term.tsx: recognized, but static and disabled until OS-sandboxed
   flows       data-go, ui.go/back/state/use, sessions, arrows
   scenarios   named seeds: { state }
   styling     Tailwind, tokens.css, cn(), motion
@@ -79,9 +76,9 @@ const topics: Record<string, () => string> = {
 
 Names are folder names — no leading dot, no slashes. Variants are \`--\`-suffixed siblings (checkout--empty), complete frames in their own right and valid walk targets. Renaming a frame is renaming its folder: update data-go and ui.go literals that target it, or the map marks them missing. Deleting is deleting the folder.
 
-Pages group frames into journeys: a folder under frames/ without a frame entry (frame.tsx or term.tsx) is a page, and its subfolders are frames of either kind or pages of their own, to any depth. A page is named by its path under frames/ (explorations/chat); each page is its own canvas, and the flat top level is the permanent root page. Start flat — introduce pages when the project grows and flows cluster into distinct journeys, and nest them when one journey holds several. Frame names stay identity project-wide: unique across every page at every depth (two claimants is a loud error naming both), so walk targets, URLs, thumbnails, and geometry all survive moves. A page's own name only has to be free among the pages beside it, so explorations/chat and site/chat are two pages rather than a collision. Create a page by creating its folder; move a frame or a page by moving its folder. Import shared/ by its design-relative path — import { cn } from "shared/lib/utils" — which resolves from any frame at any depth, so a move never breaks it; a stylesheet writes the same form (@import "shared/tokens.css"). A \`../\` path into shared/ still compiles, but it counts folders and a move changes the count; spool re-aims such imports when it moves a folder, a folder moved outside spool is yours to re-aim. The canvas reflects either kind immediately. Walks cross pages freely: the player ignores pages entirely, and on the canvas a walk that lands on another page docks on the frame declaring it as a tag naming the target and its page — pressing it goes there. A walk that lands nowhere is not drawn at all: there is nowhere to press, so a name no frame answers to and a destination the parser cannot read are reported by \`spool flows\` and by this skill rather than on the canvas.
+Pages group frames into journeys: a folder under frames/ without a frame.tsx is a page, and its subfolders are frames or pages of their own, to any depth. A page is named by its path under frames/ (explorations/chat); each page is its own canvas, and the flat top level is the permanent root page. Start flat — introduce pages when the project grows and flows cluster into distinct journeys, and nest them when one journey holds several. Frame names stay identity project-wide: unique across every page at every depth (two claimants is a loud error naming both), so walk targets, URLs, thumbnails, and geometry all survive moves. A page's own name only has to be free among the pages beside it, so explorations/chat and site/chat are two pages rather than a collision. Create a page by creating its folder; move a frame or a page by moving its folder. Import shared/ by its design-relative path — import { cn } from "shared/lib/utils" — which resolves from any frame at any depth, so a move never breaks it; a stylesheet writes the same form (@import "shared/tokens.css"). A \`../\` path into shared/ still compiles, but it counts folders and a move changes the count; spool re-aims such imports when it moves a folder, a folder moved outside spool is yours to re-aim. The canvas reflects either kind immediately. Walks cross pages freely: the player ignores pages entirely, and on the canvas a walk that lands on another page docks on the frame declaring it as a tag naming the target and its page — pressing it goes there. A walk that lands nowhere is not drawn at all: there is nowhere to press, so a name no frame answers to and a destination the parser cannot read are reported by \`spool flows\` and by this skill rather than on the canvas.
 
-frame.json is the one file both hands write, geometry only, and the split is fixed: you write the size, spool writes the position. State every new frame's size — write \`{ "w": 1440, "h": 900 }\` before its frame entry and the frame's first appearance is already that size, placed beside its own page's frames and never on top of them, spool completing the same file with x and y. Writing it afterwards costs only that first appearance: a frame whose size changes has its picture retaken, whichever hand changed it. Leave the size out and the frame is 1440×900 (a terminal 720×480), which is a size to choose rather than one to inherit — a phone is 390×844 and says so. Write all four numbers only to move something: a placement already on disk is never overwritten, and neither are bytes spool cannot read, so a sidecar caught mid-write is safe. The human's drags and resizes rewrite the file after that. shot and logs only read geometry and never create this file. Beyond that, the rail drives folder operations for the human: rename, move a frame between pages, move a page into or out of another, duplicate, new page, and delete to the OS Trash. Frame source the human edits only as span patches: one gated op — a class token, a string attribute, an element's text, an element removed — spliced into the characters it names, the rest of the file byte-identical, refused outright where it could not be made honestly. Swapping an image is the one op that also writes a file: the picture lands beside the frame, the import is written, and \`src\` is pointed at the identifier, because an image is an import and never a URL. Expect a frame you authored to come back with a value changed and its shape intact; you stay the author.
+frame.json is the one file both hands write, geometry only, and the split is fixed: you write the size, spool writes the position. State every new frame's size — write \`{ "w": 1440, "h": 900 }\` before its frame entry and the frame's first appearance is already that size, placed beside its own page's frames and never on top of them, spool completing the same file with x and y. Writing it afterwards costs only that first appearance: a frame whose size changes has its picture retaken, whichever hand changed it. Leave the size out and the frame is 1440×900, which is a size to choose rather than one to inherit — a phone is 390×844 and says so. Write all four numbers only to move something: a placement already on disk is never overwritten, and neither are bytes spool cannot read, so a sidecar caught mid-write is safe. The human's drags and resizes rewrite the file after that. shot and logs only read geometry and never create this file. Beyond that, the rail drives folder operations for the human: rename, move a frame between pages, move a page into or out of another, duplicate, new page, and delete to the OS Trash. Frame source the human edits only as span patches: one gated op — a class token, a string attribute, an element's text, an element removed — spliced into the characters it names, the rest of the file byte-identical, refused outright where it could not be made honestly. Swapping an image is the one op that also writes a file: the picture lands beside the frame, the import is written, and \`src\` is pointed at the identifier, because an image is an import and never a URL. Expect a frame you authored to come back with a value changed and its shape intact; you stay the author.
 
 The rail keeps a manual order for the pages a page holds and for the frames on it: the hands' arrangement, stored in canvas.json, which is app-owned and never yours to write. A frame you create arrives at its alphabetical spot, and a \`--\` variant arrives beside its base, so a well-named variant files itself. There is no order verb.
 
@@ -100,28 +97,6 @@ Static assets: import the file and use the value. The compiler bakes it into the
 
 Kinds: .png, .jpg, .jpeg, .webp, .gif, .svg; a .json import parses into an object and a .txt import is the file's text. Put an asset beside the frame that uses it; move it to shared/assets/ when a second frame does. It must be an import and never a URL string: the import is what puts the file in the frame's closure, so editing it reissues the document and its cover. One document carries at most 512 KB of images — that is base64, so roughly 385 KB of real file — and the compile fails naming the file when it doesn't fit; nothing is downscaled. Video and audio are not supported. Remote image URLs still work in a live frame, but nothing fetched ever appears in a still.`,
 
-	terminals:
-		() => `A terminal frame is born by writing design/frames/<name>/term.tsx. Spool still recognizes the entry as the terminal frame kind, gives it whole-cell geometry, and includes it on the canvas and in the player.
-
-Terminal execution is disabled until project code can run inside an OS sandbox. The daemon does not compile, evaluate, or execute term.tsx, and it never starts Bun, OpenTUI, a shell, a PTY, or any other process for the entry. Spool renders its own static disabled surface instead; that surface contains no project code and carries no capability to control the daemon. Saving, entering, reloading, or restarting the frame cannot spawn a process.
-
-New terminal frames keep their 80×24 geometry floor: one cell is 9×20px in the pinned mono, so 80×24 = 720×480. frame.json remains pixels, the canvas's one geometry language. Geometry and any already persisted grid can still be represented in whole cells, but there is no live process to resize or repaint it.
-
-A persisted terminal grid is readable only while it matches the current source in that frame's whole folder and shared/. Editing source makes the old grid stale; frame.json geometry and app-owned state do not. Saving a never-run terminal does not create a screen.
-
-Play assembles every terminal poster up front, so any stale or never-run terminal rejects the whole player request, even when the selected starting frame is HTML.
-
-The flow parser still recognizes the terminal dialect's coded walk in source:
-
-  import { term } from "spool/term";
-  term.go("checkout")
-
-The map reads term.go literals like every other navigation site: solid when unconditional, faint inside a branch, and unreadable destinations named by \`spool flows\`, never guessed. Keep literal \`term.go("target")\` calls in term.tsx and pass callbacks into shared components, so the frame owns the claim the map reads. For nested terminal spans, use the formatter-stable inline spacing form \`{"\\u00a0"}\`. Because term.tsx does not run, the disabled surface cannot trigger or verify one of these edges.
-
-There is currently no terminal input, output, process lifecycle, restart, or shared live session. The platform modifier + Escape still leaves an entered terminal surface; no other key reaches project code.
-
-Headless verification never boots terminal project code. \`spool shot <name>\` can only rasterize a source-current persisted grid; a stale or never-run terminal is an actionable error. \`spool logs\` remains an html-frame verb.`,
-
 	flows: () => `Navigation is walking: a session stands in one frame and walks to another by name.
 
 data-go="<frame-name>" on any element walks there on click — nearest data-go ancestor wins, anchors get preventDefault, variants are valid targets. data-transition="<type>" on the same element names the move for transition styling (felt in the player). That is all the markup sugar; everything richer is code:
@@ -133,7 +108,7 @@ data-go="<frame-name>" on any element walks there on click — nearest data-go a
   ui.use()              hook — subscribe the calling component to ui.state changes
   ui.copy(text)         write text to the clipboard through the trusted canvas or player
 
-For a shared html component, keep the literal ui.go("target") call or data-go navigation in the frame-owned file and pass a callback or prop into shared UI. Spool does not traverse imports to guess a flow claim.
+For a shared component, keep the literal ui.go("target") call or data-go navigation in the frame-owned file and pass a callback or prop into shared UI. Spool does not traverse imports to guess a flow claim.
 
 Coded walks carry no transition name — data-transition rides the element, ui.go has no third argument. Walking to a frame that doesn't exist logs an error and stays put on the canvas and in the player, so a typo never eats the session; a bare frame document walks by navigation and lands on the daemon's 404 instead (topic: verbs). ui.state is schemaless and shared by every frame in the session: initialize defensively (ui.state.items ??= [...]) because any frame can be a session's first. Top-level keys are the unit of reasoning; nested writes still react. Writes belong in handlers and effects, never in a render — a write from a component body makes React run that render again, so the value that render read is dropped, and the runtime warns once per site in the frame's console. A one-shot flag a walk hands over is read in render and cleared in an effect, never cleared by the render that reads it.
 
@@ -141,9 +116,9 @@ Clipboard writes are \`await ui.copy(text)\` directly inside a click or non-rese
 
 The session seeds from a scenario before first render — a frame never renders unseeded (topic: scenarios). ?scenario=<name> on a frame document's URL names the seed, and a name different from the running session's restarts it. Two surfaces carry a session across a walk. On the canvas the walk hands it to the next frame. In the player the whole walk happens inside one document, and every load is a fresh session — reload is restart. A bare frame document opened on its own (\`spool url --raw\`) carries nothing: it is sandboxed onto an opaque origin with no storage, so its session ends with the document and a walk out of it starts the next frame from the scenario (topic: verbs).
 
-Arrows claim what the code says. Every literal data-go target, ui.go(name) call, and term.go(name) call anywhere in a frame's folder is an edge, drawn from the element that causes it: solid when the walk is unconditional (will go), faint when the literal sits inside a branch — ternary, if/else, switch, &&/|| (might go; ui.go(ok ? "receipt" : "topup") draws two faint arrows). Terminal term.go sites remain visible in this static analysis while execution is disabled, but their surface cannot take or verify the walk (topic: terminals). A destination the parser cannot read (ui.go(routeFor(state))) draws nothing and is reported by \`spool flows\` as unreadable — prefer literal targets when you want the map to show the flow. Playing never adds or removes an arrow; real walks only flip verified marks on derived edges, dropped when the from-frame's source changes. A headless shot/logs boot never verifies anything.
+Arrows claim what the code says. Every literal data-go target and ui.go(name) call anywhere in a frame's folder is an edge, drawn from the element that causes it: solid when the walk is unconditional (will go), faint when the literal sits inside a branch — ternary, if/else, switch, &&/|| (might go; ui.go(ok ? "receipt" : "topup") draws two faint arrows). A destination the parser cannot read (ui.go(routeFor(state))) draws nothing and is reported by \`spool flows\` as unreadable — prefer literal targets when you want the map to show the flow. Playing never adds or removes an arrow; real walks only flip verified marks on derived edges, dropped when the from-frame's source changes. A headless shot/logs boot never verifies anything.
 
-The player composes every html frame into one document, so walks are View Transitions, not navigations: crossfade by default; morphs happen wherever two frames give an element the same view-transition-name. Each swap carries its direction (forward, back) plus any data-transition type as View Transitions types, not root attributes: in shared/transitions.css a bare ::view-transition-* rule styles every swap alike, and :active-view-transition-type() picks one out, plain CSS — html:active-view-transition-type(forward)::view-transition-old(root) { animation: 0.2s slide-out; }. A data-transition type is active alongside its direction, so the narrower rule comes later in the file. Reduced motion is respected. Screen components mount fresh on every arrival. Terminal frames remain valid destinations, but the player renders their static disabled surface without executing or restarting project code (topic: terminals).`,
+The player composes every frame into one document, so walks are View Transitions, not navigations: crossfade by default; morphs happen wherever two frames give an element the same view-transition-name. Each swap carries its direction (forward, back) plus any data-transition type as View Transitions types, not root attributes: in shared/transitions.css a bare ::view-transition-* rule styles every swap alike, and :active-view-transition-type() picks one out, plain CSS — html:active-view-transition-type(forward)::view-transition-old(root) { animation: 0.2s slide-out; }. A data-transition type is active alongside its direction, so the narrower rule comes later in the file. Reduced motion is respected. Screen components mount fresh on every arrival.`,
 
 	scenarios:
 		() => `shared/scenarios/<name>.json = { "state": { ... } } — one named way the app can be. state seeds ui.state at session start. The key is optional; no default.json means an empty seed. Names are file names: no leading dot, no slashes.
@@ -179,24 +154,23 @@ The document's baseline: preflight (the same zero a product starts from), tokens
 
 	verbs: () => `The project verbs — selection, flows, shot, logs, url — resolve the project by walking up from cwd to design/canvas.json and refuse roots they don't know (\`spool open\` once per machine registers), and auto-start the daemon; \`spool status\` prints where it listens and warns when a running daemon predates the CLI (\`spool stop\`, then any verb, updates it). init and open work offline; skill needs nothing.
 
-The verify loop has two paths. For HTML frames, shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 1440×900). Device scale is picked for legibility: 2× for narrow frames, tapering above 800px wide so the raster stays near what a vision model keeps. Reading a missing or invalid sidecar never creates it. A terminal shot does not boot or execute source; it only rasterizes a persisted source-current grid to SVG.
+shot and logs are two outputs of one boot: the frame's really-served document in spool's own headless Chrome, seeded with --scenario <name> (default when omitted), viewport from frame.json (else a narrated 1440×900). Device scale is picked for legibility: 2× for narrow frames, tapering above 800px wide so the raster stays near what a vision model keeps. Reading a missing or invalid sidecar never creates it.
 
   spool shot <frame> [--viewport <width>x<height>] [--at <milliseconds>] [--scenario <name>]
-                       HTML boots headless and writes design/.spool/verify/<frame>.png, printing the path.
+                       Boots headless and writes design/.spool/verify/<frame>.png, printing the path.
                        A frame much taller than a screen writes top-to-bottom slices <frame>.1.png … <frame>.N.png instead, one printed path per line, each slice legible on its own with a small overlap across cuts. Read every printed file — the layout's truth is the whole stack.
                        --viewport sets exact positive-integer CSS pixels instead of frame.json.
                        --at sets the post-commit settle wait; the default is 300ms.
-                       A terminal never executes for a shot; its persisted source-current grid rasterizes to <frame>.svg, otherwise stale/never-run is reported (topic: terminals).
-                       HTML doesn't compile: the toolchain's error verbatim on stderr, exit 1, no browser.
-                       HTML throws uncaught while booting: shot still written, errors on stderr, exit 1.
-                       HTML waits for #root to have children (up to 10s), settles, then shoots; a frame that renders nothing still shoots.
+                       Doesn't compile: the toolchain's error verbatim on stderr, exit 1, no browser.
+                       Throws uncaught while booting: shot still written, errors on stderr, exit 1.
+                       Waits for #root to have children (up to 10s), settles, then shoots; a frame that renders nothing still shoots.
   spool logs <frame> [--scenario <name>]
-                       HTML only: prints the same scenario boot's console as [type] text lines, uncaught errors included.
-                       The cache identity is compiled document plus scenario name. Code and stylesheet edits re-boot; a scenario JSON edit under the same name does not. An HTML shot always boots fresh and refreshes that scenario's cache, so after editing data run shot first, then logs.
+                       Prints the same scenario boot's console as [type] text lines, uncaught errors included.
+                       The cache identity is compiled document plus scenario name. Code and stylesheet edits re-boot; a scenario JSON edit under the same name does not. A shot always boots fresh and refreshes that scenario's cache, so after editing data run shot first, then logs.
                        A replay says "cache matches current compiled source": it is the fresh boot that shot recorded, not evidence that a source edit was ignored.
                        Scenario failures land here; read shot and logs together.
 
-The first HTML browser boot on a machine downloads spool's pinned headless Chrome once, narrated on stderr — relay the wait, don't kill it.
+The first browser boot on a machine downloads spool's pinned headless Chrome once, narrated on stderr — relay the wait, don't kill it.
 
 The drive loop — \`spool url <frame>\` prints the player URL after checking the frame exists. Append &scenario=<name> to pick its seed. \`spool url --raw <frame>\` prints the stable bare frame document instead; append ?scenario=<name> there.
 

@@ -1,19 +1,13 @@
 import type { Unseen } from "../../daemon/seen";
-import { exitChordLabel } from "../../runtime/term-keys";
 import { UnseenMark } from "./unseen-mark";
-
-/** The exit binding as this platform spells it — the chip must show a chord that works here. */
-const EXIT_CHORD = exitChordLabel();
 
 export function FrameLabel({
 	name,
 	frameWidth,
 	k,
 	entered,
-	paused,
 	selected,
 	hovered,
-	terminal = false,
 	unseen,
 	onPlay,
 }: {
@@ -21,11 +15,8 @@ export function FrameLabel({
 	frameWidth: number;
 	k: number;
 	entered: boolean;
-	paused: boolean;
 	selected: boolean;
 	hovered: boolean;
-	/** An entered terminal owns every key (#42) — the chip must show the one way out. */
-	terminal?: boolean;
 	/**
 	 * Nobody has looked at this frame, or nobody has since it moved. The mark rides
 	 * the label because the label is the one thing on the field that does not scale:
@@ -39,7 +30,6 @@ export function FrameLabel({
 	// The camera scales this after the label's 1/k counter-scale. Pre-scaling
 	// the layout width by k keeps its final screen width equal to the frame.
 	const width = frameWidth * k;
-	const state = paused ? "paused" : "live";
 
 	return (
 		<div
@@ -50,12 +40,11 @@ export function FrameLabel({
 			{entered ? (
 				<div className="flex items-center pb-2.5">
 					<span className="rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3">
-						{terminal ? `${state} · ${EXIT_CHORD} exits` : `${state} · esc exits`}
+						live · esc exits
 					</span>
 				</div>
 			) : (
 				<div className="flex w-full min-w-0 items-center gap-1.5 pb-2.5">
-					{paused && <span className="shrink-0 font-mono text-2xs text-muted leading-3">▸</span>}
 					{unseen !== undefined && <UnseenMark mark={unseen} className="-ml-0.5" />}
 					<span
 						className={`min-w-0 truncate font-mono text-sm leading-4 ${

@@ -22,9 +22,8 @@ import {
 
 const SWEEP_MS = 300;
 
-const frame = (name: string, x: number, y: number, kind: "html" | "term" = "html"): ProjectedFrame => ({
+const frame = (name: string, x: number, y: number): ProjectedFrame => ({
 	name,
-	kind,
 	x,
 	y,
 	w: 100,
@@ -407,8 +406,8 @@ describe("intent", () => {
 		).toEqual({ a: "held", b: "held", export: "held" });
 	});
 
-	it("leaves a readable HTML selection live while Select owns it and an export holds it", () => {
-		const frames = [frame("a", 0, 0), frame("terminal", 200, 0, "term")];
+	it("leaves a readable selection live while Select owns it and an export holds it", () => {
+		const frames = [frame("a", 0, 0), frame("b", 200, 0)];
 		const s = sweeper();
 
 		expect(
@@ -418,14 +417,7 @@ describe("intent", () => {
 				camera: { x: 0, y: 0, k: 4 },
 				viewport: { width: 1000, height: 1000 },
 			}).states,
-		).toEqual({ a: "live", terminal: "live" });
-		expect(
-			s.sweep(frames, {
-				selectionTargets: new Set(["terminal"]),
-				camera: { x: 0, y: 0, k: 4 },
-				viewport: { width: 1000, height: 1000 },
-			}).states.terminal,
-		).toBe("held");
+		).toEqual({ a: "live", b: "live" });
 	});
 
 	it("keeps an unreadable selection held behind its still", () => {
@@ -516,18 +508,6 @@ describe("what is worth photographing", () => {
 		// named as an expired errand (#173) — the boot-failure case `spool logs`
 		// has to be told about, since nothing later carries a reason of its own
 		expect(expired).toEqual(["a"]);
-	});
-
-	it("never photographs a terminal: its still is the daemon's grid", () => {
-		const frames = [frame("dash", 450, 450, "term")];
-		const s = sweeper();
-		const uncovered = { hasCover: () => false };
-
-		for (let sweeps = 0; sweeps < 6; sweeps++) {
-			const result = s.sweep(frames, uncovered);
-			expect(result.states.dash).toBe("picture");
-			expect(result.refreshCaptures).toEqual([]);
-		}
 	});
 });
 

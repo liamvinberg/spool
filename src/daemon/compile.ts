@@ -13,9 +13,8 @@ import {
 } from "./design-path";
 import { assembleFrameDocument, errorDocument, mergeImportMap, shimHash } from "./document";
 import { readIfExists } from "./project-files";
-import { describeCollision, describeMissingFrame, frameFolder, frameKind, lookupFrame } from "./projection";
+import { describeCollision, describeMissingFrame, frameFolder, hasFrameEntry, lookupFrame } from "./projection";
 import { buildFrameCss } from "./tailwind";
-import { assembleTermDocument, termDocumentEtag } from "./term-document";
 import { importMapPins } from "./vendor";
 import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./webfonts";
 
@@ -64,28 +63,14 @@ export function createFrameCompiler(version: string, webfonts: Webfonts = inertW
 		}
 		const frameDir = lookup.dir;
 		const designDir = realDesignDir(root);
-		// the raw entry read, not the projection's normalization: a both-entries
-		// folder must serve its error, not compile as html (#42)
-		const kind = frameKind(frameDir, designDir);
-		if (kind === undefined) {
+		// the raw entry read, not the projection's memory of it
+		if (!hasFrameEntry(frameDir, designDir)) {
 			// discovery saw an entry here and the raw read no longer does: the folder
 			// is known, so name it exactly, page segment and all
 			return {
 				kind: "missing",
 				message: `no frame "${frame}" — expected design/${frameFolder(frame, lookup.page)}/frame.tsx`,
 			};
-		}
-		if (kind === "conflict") {
-			// same as the missing case above: the folder is known, so name it exactly
-			const folder = frameFolder(frame, lookup.page);
-			const message = `design/${folder} holds both frame.tsx and term.tsx — a frame is one kind; remove one entry`;
-			return { kind: "error", document: errorDocument(frame, message), message };
-		}
-		if (kind === "term") {
-			// Project terminal code stays unread and unexecuted until Spool has an
-			// OS sandbox. This static document is authored wholly by Spool.
-			const document = assembleTermDocument({ frame });
-			return { kind: "ok", document, etag: termDocumentEtag(version, document), cache: "hit" };
 		}
 
 		const stamp = `${frame}\0${authority.projectCapability}\0${authority.controlOrigin}`;

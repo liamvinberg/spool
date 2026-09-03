@@ -12,8 +12,8 @@ import { CanvasSidebar, type FrameSpan, type RailEntry, type RunEntry } from "./
 const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
 const frames = [
-	{ name: "home", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
-	{ name: "checkout", page: "shop", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+	{ name: "home" as const, x: 0, y: 0, w: 390, h: 844 },
+	{ name: "checkout", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
 ];
 
 const mounted: Array<{ root: ReturnType<typeof createRoot>; host: HTMLElement }> = [];
@@ -189,7 +189,7 @@ describe("the stored order", () => {
 		stubDaemon({ "/order": { json: { pages: ["shop"], frames: { "": ["shell", "home"] } } } });
 		const { host } = await render({
 			pages: ["shop", "admin"],
-			frames: [...frames, { name: "shell", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 }],
+			frames: [...frames, { name: "shell" as const, x: 0, y: 0, w: 390, h: 844 }],
 		});
 		const tree = host.querySelector('[aria-label="Pages tree"]');
 		const listed = [
@@ -219,8 +219,8 @@ describe("the stored order", () => {
 	 */
 	it("keeps a trashed page's frame arrangement while the toast is up, so undo brings it back whole", async () => {
 		const shopFrames = [
-			{ name: "cart", page: "shop", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
-			{ name: "checkout", page: "shop", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+			{ name: "cart", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
+			{ name: "checkout", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
 		];
 		const onTrashPage = vi.fn();
 		const { host, rerender } = await render({ pages: ["shop"], frames: shopFrames, onTrashPage });
@@ -478,7 +478,7 @@ describe("the row menu", () => {
 		const kept: HistoryEntry[] = [];
 		const { host } = await render({
 			pages: deep,
-			frames: [{ name: "home", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 }],
+			frames: [{ name: "home" as const, x: 0, y: 0, w: 390, h: 844 }],
 			onRecord: (e) => kept.push(e),
 		});
 
@@ -627,8 +627,8 @@ describe("the sidebar scope", () => {
 		const { host } = await render({
 			pages: [],
 			frames: [
-				{ name: "home", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
-				{ name: "shell", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+				{ name: "home" as const, x: 0, y: 0, w: 390, h: 844 },
+				{ name: "shell" as const, x: 0, y: 0, w: 390, h: 844 },
 			],
 			onExtendSelection: (span: FrameSpan) => spans.push(span),
 		});
@@ -723,8 +723,8 @@ describe("the sidebar scope", () => {
  */
 describe("the one undo stack", () => {
 	const shopFrames = [
-		{ name: "cart", page: "shop", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
-		{ name: "checkout", page: "shop", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+		{ name: "cart", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
+		{ name: "checkout", page: "shop" as const, x: 0, y: 0, w: 390, h: 844 },
 	];
 
 	it("records a reorder, and states the list it replaced again on the way back", async () => {
@@ -881,8 +881,8 @@ describe("the one undo stack", () => {
 describe("pages inside pages", () => {
 	const deepPages = ["explorations", "explorations/chat", "application"];
 	const deepFrames = [
-		{ name: "home", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
-		{ name: "agent-chat", page: "explorations/chat", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+		{ name: "home" as const, x: 0, y: 0, w: 390, h: 844 },
+		{ name: "agent-chat", page: "explorations/chat" as const, x: 0, y: 0, w: 390, h: 844 },
 	];
 
 	it("draws a page inside a page by its own name, one step further in", async () => {
@@ -985,8 +985,8 @@ describe("pages inside pages", () => {
  */
 describe("the root page has no row", () => {
 	const loose = [
-		{ name: "home", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
-		{ name: "shell", kind: "html" as const, x: 0, y: 0, w: 390, h: 844 },
+		{ name: "home" as const, x: 0, y: 0, w: 390, h: 844 },
+		{ name: "shell" as const, x: 0, y: 0, w: 390, h: 844 },
 	];
 
 	it("draws a flat project as its frames alone, with no folder ceremony around them", async () => {

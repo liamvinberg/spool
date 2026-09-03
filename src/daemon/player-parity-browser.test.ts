@@ -4,7 +4,6 @@ import { chromium, type Frame, type Page } from "playwright-core";
 import { build as buildUi } from "vite";
 import { expect, it, onTestFinished } from "vitest";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
-import { terminalSourceVersion } from "./term-source";
 
 interface Probe {
 	rect: { width: number; height: number; x: number; y: number };
@@ -648,7 +647,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 						arrival: 0,
 						externalHref: null,
 						log: [],
-							state: { scenario: "default", rows: [] },
+						state: { scenario: "default", rows: [] },
 					},
 				},
 				source: forged.contentWindow,
@@ -3333,49 +3332,6 @@ it("keeps a ready player visible after a late authored exception", { timeout: 60
 	});
 });
 
-it("shows a terminal that becomes stale between the shell preflight and render load", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const project = await serveProject();
-	writeDesignFile(project.root, "frames/dash/term.tsx", "// current terminal source\n");
-	writeDesignFile(
-		project.root,
-		".spool/term/dash.screen",
-		`${JSON.stringify({
-			cols: 80,
-			rows: 24,
-			screen: "current terminal",
-			sourceVersion: terminalSourceVersion(project.root, "dash"),
-		})}\n`,
-	);
-
-	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-	onTestFinished(() => page.close());
-	let innerRequestedResolve: () => void = () => {};
-	const innerRequested = new Promise<void>((resolve) => {
-		innerRequestedResolve = resolve;
-	});
-	let releaseInnerResolve: () => void = () => {};
-	const releaseInner = new Promise<void>((resolve) => {
-		releaseInnerResolve = resolve;
-	});
-	await page.route(`${project.renderUrl}/play/${encodeURIComponent(project.name)}**`, async (route) => {
-		innerRequestedResolve();
-		await releaseInner;
-		await route.continue();
-	});
-	const navigation = page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=dash`);
-	await innerRequested;
-	writeDesignFile(project.root, "frames/dash/term.tsx", "// changed terminal source\n");
-	releaseInnerResolve();
-	const response = await navigation;
-
-	expect(response?.status()).toBe(200);
-	await page.locator('[role="alert"]').waitFor({ timeout: 5_000 });
-	expect(await page.locator('[role="alert"]').innerText()).toContain("stale after its source changed");
-	expect(await page.locator("#spool-player").count()).toBe(0);
-});
-
 it("does not register Spool fonts under an authored family name", { timeout: 60_000 }, async () => {
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());
@@ -3418,11 +3374,7 @@ it("keeps existing player behavior through the control shell", { timeout: 60_000
 	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
 	onTestFinished(() => browser.close());
 	const project = await serveProject();
-	writeDesignFile(
-		project.root,
-		"shared/scenarios/default.json",
-		'{ "state": { "count": 2 } }\n',
-	);
+	writeDesignFile(project.root, "shared/scenarios/default.json", '{ "state": { "count": 2 } }\n');
 	writeFrame(
 		project.root,
 		"menu",
@@ -3478,42 +3430,6 @@ export default function Next() {
 
 	await page.locator("#spool-close").click();
 	await page.waitForURL(`${project.url}/p/${encodeURIComponent(project.name)}`);
-});
-
-it("keeps terminal poster and chrome behavior through the control shell", { timeout: 60_000 }, async () => {
-	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
-	onTestFinished(() => browser.close());
-	const project = await serveProject();
-	writeDesignFile(project.root, "frames/dash/term.tsx", "// execution disabled until OS-sandboxed\n");
-	writeDesignFile(
-		project.root,
-		".spool/term/dash.screen",
-		`${JSON.stringify({
-			cols: 80,
-			rows: 24,
-			screen: "persisted terminal",
-			sourceVersion: terminalSourceVersion(project.root, "dash"),
-		})}\n`,
-	);
-
-	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-	onTestFinished(() => page.close());
-	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=dash`);
-	const inner = page.frameLocator("#spool-player");
-	const poster = inner.locator("img.spool-term-poster");
-	await poster.waitFor();
-	const posterSvg = await poster.getAttribute("src");
-	expect(decodeURIComponent(posterSvg?.split(",", 2)[1] ?? "")).toContain("persisted terminal");
-	const viewport = await inner
-		.locator(".spool-term-screen")
-		.evaluate(() => ({ width: innerWidth, height: innerHeight }));
-	// a terminal is a character grid, not a document: it keeps the box it was
-	// authored at rather than growing into the window
-	expect(viewport).toEqual({ width: 720, height: 480 });
-	expect(await page.locator("#spool-player").evaluate((host) => getComputedStyle(host).opacity)).toBe("1");
-
-	await summonEdgeBar(page);
-	expect(await page.locator(".spool-bar-name").textContent()).toBe("dash");
 });
 
 const typedHome = `export default function TypedHome() {

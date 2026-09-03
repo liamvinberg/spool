@@ -139,7 +139,6 @@ describe("capture request lifecycle", () => {
 		broker.raster.mockImplementationOnce(() => new Promise<CoverRaster>(() => {})).mockResolvedValueOnce(sheet);
 		const frame: ProjectedFrame = {
 			name: "landing",
-			kind: "html",
 			x: 0,
 			y: 0,
 			w: 390,

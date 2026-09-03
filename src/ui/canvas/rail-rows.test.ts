@@ -17,7 +17,7 @@ import {
 	sameLanding,
 } from "./rail-rows";
 
-const html = (name: string): RailFrame => ({ name, kind: "html" });
+const html = (name: string): RailFrame => ({ name });
 
 /** root: home, shell · shop (shut): cart · admin: users */
 const pages = new Map<string, readonly string[]>([[ROOT_PAGE, ["shop", "admin"]]]);

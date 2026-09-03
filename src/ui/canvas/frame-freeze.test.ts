@@ -38,7 +38,6 @@ afterEach(async () => {
 
 const landing: ProjectedFrame = {
 	name: "landing",
-	kind: "html",
 	// drawn wide enough to read at k=1, so the resting camera makes it live
 	x: 0,
 	y: 0,
@@ -185,15 +184,6 @@ describe("delivering the freeze", () => {
 
 	it("says nothing to the frame you went inside", async () => {
 		const { lifecycle, post, wait } = await mountLive({ entered: "landing" });
-
-		await act(() => lifecycle.noteCameraMoving(true));
-		await wait(IDLE_FREEZE_MS * 2);
-
-		expect(freezes(post)).toEqual([]);
-	});
-
-	it("says nothing to a terminal, whose freeze is the daemon's own", async () => {
-		const { lifecycle, post, wait } = await mountLive({ frame: { ...landing, kind: "term" } });
 
 		await act(() => lifecycle.noteCameraMoving(true));
 		await wait(IDLE_FREEZE_MS * 2);

@@ -4,7 +4,6 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it, onTestFinished, vi } from "vitest";
-import { terminalSourceVersion } from "../daemon/term-source";
 import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 
 /**
@@ -63,14 +62,6 @@ async function loadPlayerDocument(harness: Harness, query = "") {
 		if (listener) boundListeners.push({ type, listener });
 		addEventListener(type, listener, opts);
 	});
-
-	// terminal screens mount iframes (#44) — no daemon listens on the test URL,
-	// so happy-dom must not try to really load them. It prints one unsuppressible
-	// "Iframe page loading is disabled" notice per mount (it holds the worker's
-	// original console, captured before vitest's interception): known noise.
-	const settings = (window as unknown as { happyDOM?: { settings?: { disableIframePageLoading?: boolean } } }).happyDOM
-		?.settings;
-	if (settings !== undefined) settings.disableIframePageLoading = true;
 
 	const fetched: { method: string; url: string }[] = [];
 	window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -664,100 +655,5 @@ describe("the played page and its bar (#227)", () => {
 		// behind accel, the same key is spool's
 		accelKeydown("Escape");
 		expect(close).toHaveBeenCalled();
-	});
-});
-
-const hallTsx = `export default function Hall() {
-	return <button type="button" id="to-dash" data-go="dash">to dash</button>;
-}
-`;
-
-function scaffoldTerminal(harness: Harness): void {
-	writeDesignFile(harness.root, join("frames", "dash", "term.tsx"), "// execution disabled until OS-sandboxed\n");
-	writeDesignFile(
-		harness.root,
-		join(".spool", "term", "dash.screen"),
-		`${JSON.stringify({
-			cols: 80,
-			rows: 24,
-			screen: "persisted screen",
-			sourceVersion: terminalSourceVersion(harness.root, "dash"),
-		})}\n`,
-	);
-	writeFrame(harness.root, "hall", hallTsx);
-	writeDesignFile(harness.root, "shared/scenarios/default.json", '{\n\t"state": {}\n}\n');
-}
-
-function termIframe(): HTMLIFrameElement {
-	const el = document.querySelector<HTMLIFrameElement>(".spool-term-screen iframe");
-	expect(el, "the terminal screen's iframe").not.toBeNull();
-	return el as HTMLIFrameElement;
-}
-
-function postFromTerm(iframe: HTMLIFrameElement, data: Record<string, unknown>): void {
-	window.dispatchEvent(new MessageEvent("message", { data, source: iframe.contentWindow }));
-}
-
-describe("static terminal screens", () => {
-	it("hosts the disabled term document over the last persisted grid", async () => {
-		const harness = makeHarness();
-		scaffoldTerminal(harness);
-
-		await loadPlayerDocument(harness, "?frame=dash");
-		await vi.waitFor(() => termIframe());
-
-		const iframe = termIframe();
-		expect(iframe.getAttribute("src")).toBe(`/p/${harness.name}/frames/dash`);
-		expect(iframe.getAttribute("sandbox")).toBe("allow-scripts");
-		expect(iframe.getAttribute("title")).toBe("dash");
-		const poster = document.querySelector<HTMLImageElement>("img.spool-term-poster");
-		expect(poster).not.toBeNull();
-		expect(decodeURIComponent(poster?.src.split(",", 2)[1] ?? "")).toContain("persisted screen");
-
-		// The static surface keeps terminal framing and takes focus explicitly
-		// once its Spool-owned document loads.
-		expect.soft(document.querySelector(".spool-term-chord")).toBeNull();
-		expect.soft(document.querySelector("#spool-hint")).toBeNull();
-		expect.soft(document.querySelector(".spool-screen")?.classList.contains("is-terminal")).toBe(true);
-
-		// a terminal is a character grid, not a document: it keeps the box it was
-		// authored at, capped by the window like anything else, and never scales
-		const screen = document.querySelector<HTMLElement>(".spool-screen");
-		expect.soft(screen?.style.width).toBe(`${Math.min(window.innerWidth, 720)}px`);
-		expect.soft(screen?.style.height).toBe("480px");
-		expect.soft(screen?.style.transform).toBe("");
-
-		const postMessage = vi.fn();
-		Object.defineProperty(iframe, "contentWindow", {
-			configurable: true,
-			value: { postMessage },
-		});
-		iframe.dispatchEvent(new Event("load"));
-		expect.soft(postMessage).toHaveBeenCalledWith({ spool: "focus", surface: "player" }, "*");
-	});
-
-	it("names the terminal frame on the bar like any other screen", async () => {
-		const harness = makeHarness();
-		scaffoldTerminal(harness);
-
-		await loadPlayerDocument(harness, "?frame=dash");
-		await vi.waitFor(() => termIframe());
-
-		expect(document.querySelector(".spool-bar-name")?.textContent).toBe("dash");
-	});
-
-	it("has no keyboard exit state", async () => {
-		const harness = makeHarness();
-		scaffoldTerminal(harness);
-
-		await loadPlayerDocument(harness, "?frame=dash");
-		await vi.waitFor(() => termIframe());
-
-		const iframe = termIframe();
-		await vi.waitFor(() => expect(document.activeElement).toBe(iframe));
-
-		postFromTerm(iframe, { spool: "key", key: "Escape" });
-		await new Promise((resolve) => setTimeout(resolve, 25));
-		expect(document.activeElement).toBe(iframe);
 	});
 });

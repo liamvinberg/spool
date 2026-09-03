@@ -6,7 +6,6 @@ import { FindPalette } from "./find-palette";
 
 const frame = (name: string, page: string, born: number): ProjectedFrame => ({
 	name,
-	kind: "html",
 	page,
 	x: 0,
 	y: 0,

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import type { Cover } from "../cover";
 import { composePage, medianFrameArea, pageBox, type Rect, type Size } from "../page-box";
 import { isSafeName, pageHolds, pageName, pageParent, pageSlot, pageUnder, ROOT_PAGE } from "../page-path";
-import { DEFAULT_COLS, DEFAULT_ROWS, pxForCells } from "../term/cells";
 import { type CanvasPlaces, type Place, readPlaces, writePlaces } from "./canvas-places";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 import { type Footprint, readSidecar, writePlacement } from "./geometry";
@@ -22,33 +21,13 @@ import { type DatedCover, scanCovers, scanDatedCovers } from "./thumbs";
  * placement is durable, never re-rolled per request (#3: "optional frame.json,
  * app fills in").
  *
- * The kind discriminant (#42) is the entry filename — frame.tsx is html,
- * term.tsx is terminal — because a kind must stay knowable by every layer
- * even while source is broken mid-edit; a filename survives a syntax error.
- * Both entries in one folder is a discovery error naming the folder: it
- * projects as html so the canvas can show the error document.
+ * What makes a folder a frame is its entry filename, frame.tsx, because that
+ * must stay knowable by every layer even while source is broken mid-edit; a
+ * filename survives a syntax error.
  */
-
-export type FrameKind = "html" | "term";
-
-export type TerminalCoverUnavailable = { kind: "stale"; message: string } | { kind: "never-run"; message: string };
-
-export type TerminalCoverState = { kind: "current" } | TerminalCoverUnavailable;
-
-/**
- * One read of a terminal's persisted screen, answering both things the canvas
- * needs: whether it is current, and what addresses it. The image is absent
- * until a screen has been persisted once — a live session that has never saved
- * has nothing a reboot would land in.
- */
-export interface TerminalCover {
-	state: TerminalCoverState;
-	cover?: Cover;
-}
 
 export interface ProjectedFrame {
 	name: string;
-	kind: FrameKind;
 	/** The path of the page holding the frame's folder; absent on the root page. */
 	page?: string;
 	x: number;
@@ -62,12 +41,9 @@ export interface ProjectedFrame {
 	born?: number;
 	/**
 	 * The frame's cover image. It is absent when it has none, which is what
-	 * the canvas reads as "show the placeholder". Terminal frames are filled in
-	 * from their persisted screen, which only the session store can address.
+	 * the canvas reads as "show the placeholder".
 	 */
 	cover?: Cover;
-	/** Terminal-only cover truth; unavailable states carry the canvas message. */
-	terminalCover?: TerminalCoverState;
 	/**
 	 * Nobody has looked at this frame yet, or nobody has looked at it since its
 	 * folder last moved. Only the canvas asks for it — `listProjectFrames` leaves
@@ -103,45 +79,37 @@ export interface Projection {
 
 /** Where a bare frame name lands on disk — or why it cannot. */
 export type FrameLookup =
-	| { kind: "found"; dir: string; frameKind: FrameKind; page?: string }
+	| { kind: "found"; dir: string; page?: string }
 	| { kind: "missing" }
 	| { kind: "collision"; paths: string[] };
 
-export function frameKind(frameDir: string, designDir: string): FrameKind | "conflict" | undefined {
+export function hasFrameEntry(frameDir: string, designDir: string): boolean {
 	let directory: string;
 	try {
 		directory = resolveDesignPath(designDir, frameDir);
 	} catch (error) {
 		if (error instanceof DesignBoundaryError) throw error;
-		return undefined;
+		return false;
 	}
-	return entryKind(directory);
+	return hasEntry(directory);
 }
 
 /**
- * The kind marker inside a folder already known to sit in design/. Callers that
+ * The entry marker inside a folder already known to sit in design/. Callers that
  * built the path from a resolved parent and a `readdirSync` entry that reports
  * itself a directory — a symlink never does — have nothing left to resolve, and
- * resolving anyway costs two `realpath` calls per frame on every discovery.
+ * resolving anyway costs a `realpath` call per frame on every discovery.
  */
-function entryKind(directory: string): FrameKind | "conflict" | undefined {
-	const present = (entry: string): boolean => {
-		try {
-			// Kind is a lexical source marker. Following its symlink here would
-			// hide an escaped entry as a missing frame before the compiler or
-			// terminal launcher can report the boundary violation.
-			lstatSync(join(directory, entry));
-			return true;
-		} catch {
-			return false;
-		}
-	};
-	const html = present("frame.tsx");
-	const term = present("term.tsx");
-	if (html && term) return "conflict";
-	if (term) return "term";
-	if (html) return "html";
-	return undefined;
+function hasEntry(directory: string): boolean {
+	try {
+		// The entry is a lexical source marker. Following its symlink here would
+		// hide an escaped entry as a missing frame before the compiler can report
+		// the boundary violation.
+		lstatSync(join(directory, "frame.tsx"));
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -156,20 +124,18 @@ export function isPageFolder(directory: string): boolean {
 	} catch {
 		return false;
 	}
-	return entryKind(directory) === undefined;
+	return !hasEntry(directory);
 }
 
-/** A frame's kind for root + name; conflicted folders count as html so their error shows. */
-export function projectedKind(root: string, frame: string): FrameKind | undefined {
-	const found = lookupFrame(root, frame);
-	return found.kind === "found" ? found.frameKind : undefined;
+/** Whether root + name resolves to one frame folder. */
+export function frameExists(root: string, frame: string): boolean {
+	return lookupFrame(root, frame).kind === "found";
 }
 
 interface DiscoveredFrame {
 	name: string;
 	page: string | undefined;
 	dir: string;
-	kind: FrameKind;
 }
 
 interface Discovery {
@@ -192,19 +158,13 @@ const DEFAULT_W = 1440;
 const DEFAULT_H = 900;
 const GUTTER = 80;
 
-/** New terminal frames start at the conventional floor, in exact cell pixels. */
-const TERM_DEFAULT = pxForCells(DEFAULT_COLS, DEFAULT_ROWS);
-
-function defaultFootprint(kind: FrameKind): Footprint {
-	return kind === "term" ? TERM_DEFAULT : { w: DEFAULT_W, h: DEFAULT_H };
-}
+const DEFAULT_FOOTPRINT: Footprint = { w: DEFAULT_W, h: DEFAULT_H };
 
 /** One folder claiming a frame name, before anything knows whether two do. */
 interface FrameClaim {
 	name: string;
 	page: string | undefined;
 	dir: string;
-	kind: FrameKind | "conflict";
 }
 
 /** Where a project's frames live, or nothing when design/ cannot be read. */
@@ -235,8 +195,7 @@ function assemble(designDir: string, claimed: FrameClaim[], pages: string[]): Di
 	for (const [name, list] of claims) {
 		const first = list[0];
 		if (list.length === 1 && first !== undefined) {
-			// a both-entries folder projects as html so the error document shows (#42)
-			frames.push({ name, page: first.page, dir: first.dir, kind: first.kind === "conflict" ? "html" : first.kind });
+			frames.push({ name, page: first.page, dir: first.dir });
 		} else {
 			collisions.push({ name, paths: list.map((entry) => frameFolder(name, entry.page)).sort() });
 		}
@@ -271,9 +230,8 @@ function discover(root: string): Discovery | undefined {
 		for (const entry of entries) {
 			if (!entry.isDirectory() || !isSafeName(entry.name)) continue;
 			const child = join(dir, entry.name);
-			const kind = entryKind(child);
-			if (kind !== undefined) {
-				claimed.push({ name: entry.name, page: page === ROOT_PAGE ? undefined : page, dir: child, kind });
+			if (hasEntry(child)) {
+				claimed.push({ name: entry.name, page: page === ROOT_PAGE ? undefined : page, dir: child });
 				continue;
 			}
 			const inner = pageUnder(page, entry.name);
@@ -306,11 +264,10 @@ async function discoverAwaited(root: string): Promise<Discovery | undefined> {
 				.filter((entry) => entry.isDirectory() && isSafeName(entry.name))
 				.map(async (entry): Promise<{ pages: string[]; claimed: FrameClaim[] }> => {
 					const child = join(dir, entry.name);
-					const kind = await entryKindAwaited(child);
-					if (kind !== undefined) {
+					if (await hasEntryAwaited(child)) {
 						return {
 							pages: [],
-							claimed: [{ name: entry.name, page: page === ROOT_PAGE ? undefined : page, dir: child, kind }],
+							claimed: [{ name: entry.name, page: page === ROOT_PAGE ? undefined : page, dir: child }],
 						};
 					}
 					const inner = pageUnder(page, entry.name);
@@ -324,21 +281,14 @@ async function discoverAwaited(root: string): Promise<Discovery | undefined> {
 	return assemble(dirs.designDir, walked.claimed, walked.pages);
 }
 
-/** `entryKind` without the blocking stats; the same lexical marker either way. */
-async function entryKindAwaited(directory: string): Promise<FrameKind | "conflict" | undefined> {
-	const present = async (entry: string): Promise<boolean> => {
-		try {
-			await lstat(join(directory, entry));
-			return true;
-		} catch {
-			return false;
-		}
-	};
-	const [html, term] = await Promise.all([present("frame.tsx"), present("term.tsx")]);
-	if (html && term) return "conflict";
-	if (term) return "term";
-	if (html) return "html";
-	return undefined;
+/** `hasEntry` without the blocking stat; the same lexical marker either way. */
+async function hasEntryAwaited(directory: string): Promise<boolean> {
+	try {
+		await lstat(join(directory, "frame.tsx"));
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /** The design-relative folder a frame name resolves to, wire-format slashes —
@@ -359,7 +309,6 @@ export function lookupFrame(root: string, frame: string): FrameLookup {
 	return {
 		kind: "found",
 		dir: found.dir,
-		frameKind: found.kind,
 		...(found.page === undefined ? {} : { page: found.page }),
 	};
 }
@@ -468,13 +417,13 @@ export function listProjectFrames(root: string, options: { seen?: boolean } = {}
 
 	const placed: ProjectedFrame[] = [];
 	// a frame awaiting a position carries the size it will get it at: the one its
-	// sidecar states, else the default for its kind (#113)
+	// sidecar states, else the default (#113)
 	const unplaced: { frame: DiscoveredFrame; footprint: Footprint }[] = [];
 	for (const frame of discovery.frames) {
 		const sidecar = readSidecar(join(frame.dir, "frame.json"), discovery.designDir);
 		if (sidecar.kind === "placed") placed.push(projected(frame, sidecar.geometry, covers.get(frame.name)));
 		else {
-			const footprint = sidecar.kind === "sized" ? sidecar.footprint : defaultFootprint(frame.kind);
+			const footprint = sidecar.kind === "sized" ? sidecar.footprint : DEFAULT_FOOTPRINT;
 			unplaced.push({ frame, footprint });
 		}
 	}
@@ -545,13 +494,10 @@ function projected(
 	const born = folderBorn(frame.dir);
 	return {
 		name: frame.name,
-		kind: frame.kind,
 		...(frame.page === undefined ? {} : { page: frame.page }),
 		...geometry,
 		...(born === undefined ? {} : { born }),
-		// a terminal's cover is its persisted screen, which only the session store
-		// can hash and size — the frames read fills those in (#42)
-		...(frame.kind === "term" || cover === undefined ? {} : { cover }),
+		...(cover === undefined ? {} : { cover }),
 	};
 }
 
@@ -647,7 +593,7 @@ export function readFrameGeometry(root: string, frame: string): { w: number; h: 
 	const sidecar = readSidecar(join(found.dir, "frame.json"), designDir);
 	if (sidecar.kind === "placed") return { w: sidecar.geometry.w, h: sidecar.geometry.h, persisted: true };
 	if (sidecar.kind === "sized") return { ...sidecar.footprint, persisted: true };
-	return { ...defaultFootprint(found.frameKind), persisted: false };
+	return { ...DEFAULT_FOOTPRINT, persisted: false };
 }
 
 /** One card slot: the frame and its picture. */

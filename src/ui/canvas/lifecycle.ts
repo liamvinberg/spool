@@ -28,9 +28,8 @@ import { arriveMessage, type CaptureSourceReply, captureMessage, freezeMessage }
  * A picture stands in below the readable threshold. Above it, a nearby frame
  * is live; a borrowed or held frame remains behind its still.
  *
- * HTML documents keep running: Select leaves a readable one live, and an
- * unreadable held one runs behind its still. A terminal's held state sends
- * SIGSTOP to its real process (`daemon/term-sessions.ts`).
+ * Documents keep running: Select leaves a readable one live, and an
+ * unreadable held one runs behind its still.
  *
  * Live HTML frames hold their animations while the camera moves (#171) and
  * again once nothing has attended them for a long minute (#172) — the mount is
@@ -402,14 +401,14 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		const current = states[name] ?? "picture";
 		// Select wins over entering: it takes the pointer back to reach an
 		// element. A readable HTML frame remains the live thing it is showing.
-		if (entered === name && frame.kind !== "term") model.wentInside.add(name);
+		if (entered === name) model.wentInside.add(name);
 		const modelLive = isFrameLive(frame, camera, viewport);
 		const selected = selectionTargets.has(name);
 		if (modelLive && entered !== name && !model.wentInside.has(name)) {
 			model.modelLive.add(name);
 		}
 		let intent: FrameState | null;
-		if (selected && frame.kind === "html" && modelLive) {
+		if (selected && modelLive) {
 			intent = "live";
 		} else if (selected) {
 			intent = "held";
@@ -425,7 +424,7 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		// what its still records — leaving it is a change like any other.
 		// Zooming past a frame is not using it, and a still of a freshly booted
 		// frame is still true of the frame that just booted and did nothing.
-		if (current === "live" && intent !== "live" && frame.kind !== "term" && !wasModelLive.has(name)) {
+		if (current === "live" && intent !== "live" && !wasModelLive.has(name)) {
 			markPictureWrong(model, name);
 			model.wentInside.delete(name);
 		}
@@ -452,24 +451,18 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 		// capture heals whatever this one gets wrong.
 		const readyAt = ready.get(name);
 		if (readyAt === undefined) model.arrived.delete(name);
-		else if (
-			running(current, frame.kind) &&
-			!model.arrived.has(name) &&
-			(now - readyAt >= CAPTURE_AFTER_READY_MS || overdue)
-		) {
+		else if (running(current) && !model.arrived.has(name) && (now - readyAt >= CAPTURE_AFTER_READY_MS || overdue)) {
 			model.arrived.add(name);
 		}
 
 		// A frame with no picture, or the wrong one, is worth a document for as
-		// long as it takes to photograph it. Terminals are out: their still is
-		// the daemon's grid (#42), never a self-capture.
+		// long as it takes to photograph it.
 		// A picture that landed clears `photographed` the moment the projection
 		// catches up: the flag only ever bridges the gap between a shot resolving
 		// and its cover reaching disk, and holding it any longer would mean a
 		// cover deleted later never being noticed.
 		if (model.photographed.has(name) && hasCover(name)) model.photographed.delete(name);
 		const debt =
-			frame.kind !== "term" &&
 			!model.photographed.has(name) &&
 			(model.tries.get(name) ?? 0) < PICTURE_TRIES &&
 			(model.stale.has(name) || !hasCover(name));
@@ -555,9 +548,8 @@ export function sweepLifecycle(model: LifecycleModel, input: SweepInput): SweepR
 	};
 }
 
-/** Whether the mounted document has been allowed to run. Held HTML runs behind its still. */
-const running = (state: FrameState, kind: ProjectedFrame["kind"]): boolean =>
-	state === "live" || state === "refreshing" || (state === "held" && kind === "html");
+/** Whether the mounted document has been allowed to run. A held frame runs behind its still. */
+const running = (state: FrameState): boolean => state === "live" || state === "refreshing" || state === "held";
 
 /**
  * Every frame that gave up on its picture may ask again.
@@ -732,8 +724,6 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 			const entered = enteredRef.current;
 			const alive = new Set<string>();
 			for (const frame of framesRef.current) {
-				// a terminal's freeze is the daemon's SIGSTOP, sent by its shell
-				if (frame.kind !== "html") continue;
 				const name = frame.name;
 				alive.add(name);
 				const state = states[name];
@@ -849,16 +839,11 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	 * The boot reported loaded, which is where arrival starts rather than ends
 	 * (#177): ask the document to say when it has settled, and keep a deadline
 	 * against the answer never coming.
-	 *
-	 * A terminal document carries the small canvas protocol, not the shim
-	 * (`daemon/term-document.ts`) — it has no settle to report and animates
-	 * nothing in, so loaded is its arrival.
 	 */
 	const askArrival = useCallback(
 		(frame: string) => {
-			const kind = allFramesRef.current.find((candidate) => candidate.name === frame)?.kind;
 			const sourceWindow = iframes.current.get(frame)?.contentWindow;
-			if (kind === "term" || sourceWindow == null) {
+			if (sourceWindow == null) {
 				noteArrived(frame);
 				return;
 			}
@@ -868,7 +853,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 				setTimeout(() => noteArrived(frame), ARRIVE_DEADLINE_MS),
 			);
 		},
-		[allFramesRef, noteArrived],
+		[noteArrived],
 	);
 
 	useEffect(
@@ -1059,10 +1044,7 @@ export function useFrameLifecycle(deps: LifecycleDeps) {
 	 */
 	const captureExport = useCallback(
 		async (frame: string): Promise<CoverRaster | undefined> => {
-			if (
-				exportFrame.current !== null ||
-				!framesRef.current.some((candidate) => candidate.name === frame && candidate.kind === "html")
-			) {
+			if (exportFrame.current !== null || !framesRef.current.some((candidate) => candidate.name === frame)) {
 				return undefined;
 			}
 

@@ -43,8 +43,6 @@ export interface PlayerController {
 	geometry(frame: string): { w: number; h: number };
 	/** Every screen in the composition, in the order the projection gave them. */
 	frames(): string[];
-	/** Whether this screen is a terminal frame (#44). */
-	terminal(frame: string): boolean;
 	/**
 	 * Walk to another screen because the reader asked spool rather than the
 	 * prototype: the switcher's press, and the browser's own back and forward.
@@ -79,9 +77,8 @@ export function Player({
 }) {
 	useSyncExternalStore(controller.subscribe, controller.version);
 	const { frame, arrival, externalHref } = controller.read();
-	const { w, h } = controller.geometry(frame);
+	const { w } = controller.geometry(frame);
 	const viewport = useViewport();
-	const terminal = controller.terminal(frame);
 	const Screen = frames[frame];
 	const [picking, setPicking] = useState(false);
 	// Which shell this document is in, asked once: a window the app made and
@@ -153,15 +150,12 @@ export function Player({
 	return (
 		<div className={inset ? "spool-page has-bar" : "spool-page"}>
 			<div
-				className={terminal ? "spool-screen is-terminal" : "spool-screen"}
+				className="spool-screen"
 				// The one number spool imposes: the authored width as a cap, and the
 				// real viewport below it. Written here rather than left to `max-width`
 				// so the shell's iframe is exactly the box the runtime inside it will
 				// measure, which is what the geometry handshake compares against.
-				//
-				// A terminal is a character grid rather than a document, so it keeps
-				// the height it was authored at. Everything else is as tall as it is.
-				style={{ width: Math.min(viewport.vw, w), ...(terminal ? { height: h } : {}) }}
+				style={{ width: Math.min(viewport.vw, w) }}
 			>
 				{host ?? (Screen === undefined ? null : <Screen key={arrival} />)}
 			</div>
@@ -522,32 +516,6 @@ function Eye({ shut }: { shut: boolean }) {
 				</>
 			)}
 		</svg>
-	);
-}
-
-/** A static terminal surface over its last persisted grid. */
-export function TermScreen({ src, poster, title }: { src: string; poster: string; title: string }) {
-	return (
-		<div className="spool-term-screen" style={{ position: "relative", height: "100%", background: "#111110" }}>
-			<img
-				className="spool-term-poster"
-				src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(poster)}`}
-				alt=""
-				aria-hidden
-				style={{ position: "absolute", inset: 0, display: "block", width: "100%", height: "100%" }}
-			/>
-			<iframe
-				ref={(el) => el?.focus()}
-				src={src}
-				title={title}
-				sandbox="allow-scripts"
-				style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
-				onLoad={(event) => {
-					event.currentTarget.focus({ preventScroll: true });
-					event.currentTarget.contentWindow?.postMessage({ spool: "focus", surface: "player" }, "*");
-				}}
-			/>
-		</div>
 	);
 }
 

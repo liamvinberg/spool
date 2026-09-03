@@ -104,11 +104,8 @@ export const vendorSpoolJsxJs: () => Promise<VendorModule> = lazyBuild(() => ven
 
 export const vendorPlayerShellJs: () => Promise<VendorModule> = lazyBuild(() => vendorRuntime("player-shell-runtime"));
 
-/** The terminal runtime (#42): xterm bundled in — a terminal frame needs no import map. */
-export const vendorSpoolTermJs: () => Promise<VendorModule> = lazyBuild(() => vendorRuntime("term-runtime"));
-
 async function vendorRuntime(
-	name: "frame-runtime" | "player-shell-runtime" | "jsx-dev-runtime" | "term-runtime",
+	name: "frame-runtime" | "player-shell-runtime" | "jsx-dev-runtime",
 ): Promise<VendorModule> {
 	const js = await runtimeJs(name);
 	return { js, etag: `"spool-${createHash("sha256").update(js).digest("hex").slice(0, 32)}"` };

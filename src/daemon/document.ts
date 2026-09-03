@@ -354,10 +354,9 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
 
 /**
  * The canvas shim (#8/#22), a classic script installed before any module so it
- * holds native references before frame code can replace them. HTML frames keep
- * running when Select owns the pointer; a terminal's freeze is a SIGSTOP in the
- * terminal runtime, and an HTML frame's is the rAF gate below. Speaks the host
- * protocol:
+ * holds native references before frame code can replace them. Frames keep
+ * running when Select owns the pointer; a freeze is the rAF gate below. Speaks
+ * the host protocol:
  * {spool:"freeze", on} holds this document's animations while the camera moves
  * (#171) or while nothing has attended the frame for a long minute (#172), and
  * re-delivers every held rAF callback on thaw;

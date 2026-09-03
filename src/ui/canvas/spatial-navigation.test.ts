@@ -4,7 +4,6 @@ import { MAX_SPATIAL_DISTANCE, nextSpatialFrame, type SpatialDirection } from ".
 
 const frame = (name: string, x: number, y: number, w = 100, h = 100): ProjectedFrame => ({
 	name,
-	kind: "html",
 	x,
 	y,
 	w,

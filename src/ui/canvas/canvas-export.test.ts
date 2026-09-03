@@ -26,9 +26,8 @@ const PNG_BYTES = Uint8Array.from(
 );
 const PNG_URL = `data:image/png;base64,${Buffer.from(PNG_BYTES).toString("base64")}`;
 const frames = [
-	{ name: "a", kind: "html", x: 0, y: 0, w: 100, h: 100, cover: { hash: "a".repeat(32) } },
-	{ name: "b", kind: "html", x: 160, y: 0, w: 100, h: 100, cover: { hash: "b".repeat(32) } },
-	{ name: "terminal", kind: "term", x: 320, y: 0, w: 100, h: 100, cover: { hash: "c".repeat(32) } },
+	{ name: "a", x: 0, y: 0, w: 100, h: 100, cover: { hash: "a".repeat(32) } },
+	{ name: "b", x: 160, y: 0, w: 100, h: 100, cover: { hash: "b".repeat(32) } },
 ];
 
 describe("multi-frame canvas export", () => {
@@ -49,7 +48,7 @@ describe("multi-frame canvas export", () => {
 					return Response.json({ root: "/project", pages: [], frames, collisions: [] });
 				}
 				if (url.pathname.endsWith("/flows")) {
-					return Response.json({ frames: ["a", "b", "terminal"], links: [], edges: [], unreadable: [] });
+					return Response.json({ frames: ["a", "b"], links: [], edges: [], unreadable: [] });
 				}
 				if (url.pathname.startsWith("/covers/")) {
 					return new Response(PNG_BYTES, { headers: { "content-type": "image/png" } });
@@ -141,16 +140,14 @@ describe("multi-frame canvas export", () => {
 
 		await completeMountedCapture(host, "a", "11111111111111111111111111111111");
 		await completeMountedCapture(host, "b", "22222222222222222222222222222222", heldBPost);
-		await until(() => host.textContent?.includes("Exported 3 PNG images") === true);
+		await until(() => host.textContent?.includes("Exported 2 PNG images") === true);
 
-		expect(downloads).toEqual(["a.png", "b.png", "terminal.png"]);
+		expect(downloads).toEqual(["a.png", "b.png"]);
 		expect(broker.raster.mock.calls.map(([source]) => [source.frame, source.targetWidth])).toEqual([
 			["a", 0],
 			["b", 0],
 		]);
-		expect(requests.filter((path) => path.startsWith("/covers/"))).toEqual([
-			`/covers/test/terminal/${"c".repeat(32)}`,
-		]);
+		expect(requests.filter((path) => path.startsWith("/covers/"))).toEqual([]);
 		const restoredSelection = host.querySelector<HTMLIFrameElement>('iframe[title="b"]');
 		expect(restoredSelection?.parentElement?.style.visibility).toBe("hidden");
 	});

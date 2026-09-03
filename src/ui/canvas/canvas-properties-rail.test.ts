@@ -20,8 +20,8 @@ import type { PickedHit } from "./protocol";
 const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
 const frames = [
-	{ name: "home", x: 0, y: 0, w: 640, h: 480, kind: "html" },
-	{ name: "receipt", x: 900, y: 0, w: 390, h: 640, kind: "html" },
+	{ name: "home", x: 0, y: 0, w: 640, h: 480 },
+	{ name: "receipt", x: 900, y: 0, w: 390, h: 640 },
 ];
 
 /** An ancestry the shim would answer with, root element first, every rung stamped. */

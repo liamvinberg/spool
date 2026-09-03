@@ -17,7 +17,6 @@ import { ProjectCanvas } from "./canvas";
 interface Projected {
 	name: string;
 	page?: string;
-	kind: "html";
 	x: number;
 	y: number;
 	w: number;
@@ -28,7 +27,7 @@ interface Projected {
 const written: Record<string, { x: number; y: number }>[] = [];
 
 function frame(name: string, extra: Partial<Projected> = {}): Projected {
-	return { name, kind: "html", x: 0, y: 0, w: 100, h: 100, ...extra };
+	return { name, x: 0, y: 0, w: 100, h: 100, ...extra };
 }
 
 const PROJECT = {

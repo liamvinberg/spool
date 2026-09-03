@@ -1,9 +1,8 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { describe, expect, it } from "vitest";
 import { readDaemonState } from "./daemon/lifecycle";
-import { terminalSourceVersion } from "./daemon/term-source";
 import { writeCaptureError } from "./daemon/thumbs";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "./test-helpers";
 import { type BootDeps, logsFrame, planShot, shotFrame } from "./verify";
@@ -77,29 +76,6 @@ describe("shot and logs, compile paths", () => {
 		expect((logs as { message: string }).message).not.toContain("frames/site-local--thread");
 	});
 
-	it("does not write a terminal shot through an escaped verify directory", async () => {
-		const { root, deps } = await serveVerifyProject();
-		writeDesignFile(root, join("frames", "dash", "term.tsx"), "// inert terminal\n");
-		writeDesignFile(
-			root,
-			join(".spool", "term", "dash.screen"),
-			`${JSON.stringify({
-				cols: 80,
-				rows: 24,
-				screen: "persisted screen",
-				sourceVersion: terminalSourceVersion(root, "dash"),
-			})}\n`,
-		);
-		const outside = makeTempDir();
-		mkdirSync(join(root, "design", ".spool"), { recursive: true });
-		symlinkSync(outside, join(root, "design", ".spool", "verify"), "dir");
-
-		await expect(shotFrame(deps("dash"))).rejects.toThrow(
-			'design boundary: ".spool/verify/dash.svg" resolves outside design/',
-		);
-		expect(readdirSync(outside)).toEqual([]);
-	});
-
 	it("does not read an html log cache through an escaped verify directory", async () => {
 		const { root, deps } = await serveVerifyProject();
 		writeFrame(root, "quiet", "export default function Quiet() { return <main>quiet</main> }\n");
@@ -147,20 +123,6 @@ describe("shot and logs, compile paths", () => {
 		);
 		const cleanLogs = await logsFrame(deps("clean"));
 		expect((cleanLogs as { captureError?: unknown }).captureError).toBeUndefined();
-	});
-
-	it("does not reclassify a terminal when its persisted-screen read escapes design", async () => {
-		const { root, deps } = await serveVerifyProject();
-		writeDesignFile(root, join("frames", "dash", "term.tsx"), "// inert terminal\n");
-		const termDir = join(root, "design", ".spool", "term");
-		mkdirSync(termDir, { recursive: true });
-		const outside = join(makeTempDir(), "dash.screen");
-		writeFileSync(outside, JSON.stringify({ cols: 80, rows: 24, screen: "outside" }));
-		symlinkSync(outside, join(termDir, "dash.screen"));
-
-		await expect(shotFrame(deps("dash"))).rejects.toThrow(
-			'design boundary: ".spool/term/dash.screen" resolves outside design/',
-		);
 	});
 });
 

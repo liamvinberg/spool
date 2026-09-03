@@ -16,9 +16,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Experiment**: A surface that stands only where `~/.spool/config.json` names it in `experiments`, switched per machine rather than per command because the daemon outlives any one of them. Off is absent rather than hidden: the names ride the boot script the canvas document already carries, so a surface that is off never renders and leaves nothing to press. The daemon carries whatever the file said and judges none of it, so a name nothing answers to does nothing — which is also what retires one. Nothing stands behind a flag today: `agent-panel` was the first and it graduated into the **dock**, so a machine still naming it in config.json boots exactly as it did and the mechanism waits for the next surface that needs it. _Avoid_: feature flag, beta toggle
 
-**Frame**: A folder under `design/frames/<name>/` holding one entry file — `frame.tsx` (html) or `term.tsx` (terminal); the unit prototypes are made of. The entry filename is the kind, and a folder holding both is a discovery error. _Avoid_: screen, artboard, mockup
-
-**Terminal frame**: A frame recognized by its `term.tsx` entry. Until project code can run inside an OS sandbox, spool never compiles or executes the entry; the canvas and player render a spool-owned static disabled surface instead. The second and final frame kind.
+**Frame**: A folder under `design/frames/<name>/` holding a `frame.tsx` entry; the unit prototypes are made of. _Avoid_: screen, artboard, mockup
 
 **Variant**: A frame whose `--`-suffixed name marks it as an alternative take on its base frame (`home--empty`).
 
@@ -44,7 +42,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Hand**: The canvas tool for panning with a primary-button drag; holding Space borrows it temporarily. Each tool is also the other's transient: Space borrows the Hand anywhere, the platform modifier borrows Edit inside Select.
 
-**Entered**: The state of a frame after a double-click or ⏎: pointer and keyboard input belong to its app, and walks happen in place. Esc leaves an html frame. A terminal frame currently has no TUI keyboard session because it renders a static disabled surface; the platform modifier + Esc still leaves it. Holding the platform modifier hands the pointer back so an element can be reached; the frame keeps painting, because you are still looking at it. _Avoid_: focused, interact
+**Entered**: The state of a frame after a double-click or ⏎: pointer and keyboard input belong to its app, and walks happen in place. Esc leaves it. Holding the platform modifier hands the pointer back so an element can be reached; the frame keeps painting, because you are still looking at it. _Avoid_: focused, interact
 
 **Still**: One immutable, content-addressed picture of a frame, taken by the frame itself once it has finished arriving with its own fonts and settled content. It is what the canvas draws below a readable size, and it covers a frame until its document boots. A still is a placeholder, not an artifact: it is sharp up to 400 CSS px drawn width; above that, a nearby frame is live. _Avoid_: screenshot, snapshot
 
@@ -104,7 +102,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Flow map**: The arrow layer: the link graph derived by reading frame source. Walking can verify an edge, never add or remove one.
 
-**Navigation site**: A place in frame source that navigates — a `data-go` attribute, a `ui.go(...)` call, or a terminal frame's `term.go(...)` call; each site's arrow grows out of its element.
+**Navigation site**: A place in frame source that navigates — a `data-go` attribute or a `ui.go(...)` call; each site's arrow grows out of its element.
 
 **Certainty**: An arrow's claim: `will` (solid, unconditional site) or `might` (faint, the site sits inside a branch). _Avoid_: dashed arrows (retired)
 

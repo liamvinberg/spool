@@ -19,8 +19,8 @@ import { lookupFrame } from "./projection";
 
 export interface NavSite {
 	target: string;
-	/** how the source spells the walk — markup sugar or a dialect's coded call */
-	via: "data-go" | "ui.go" | "term.go";
+	/** how the source spells the walk — markup sugar or the coded call */
+	via: "data-go" | "ui.go";
 	/** design-relative source file of the site */
 	path: string;
 	/** 1-based line of the site itself — the attribute or the call */
@@ -402,11 +402,10 @@ function underBranch(ancestors: readonly Node[]): boolean {
 }
 
 /**
- * Each dialect's one coded walk: `ui.go(...)` in HTML frames (#5) and
- * `term.go(...)` in terminal frames (#42) — plain member calls, matched
+ * The one coded walk, `ui.go(...)` (#5) — a plain member call, matched
  * syntactically like everything else here.
  */
-function codedWalk(callee: Node): "ui.go" | "term.go" | undefined {
+function codedWalk(callee: Node): "ui.go" | undefined {
 	if (
 		callee.type !== "MemberExpression" ||
 		callee.computed ||
@@ -416,9 +415,7 @@ function codedWalk(callee: Node): "ui.go" | "term.go" | undefined {
 	) {
 		return undefined;
 	}
-	if (callee.object.name === "ui") return "ui.go";
-	if (callee.object.name === "term") return "term.go";
-	return undefined;
+	return callee.object.name === "ui" ? "ui.go" : undefined;
 }
 
 interface TargetRead {

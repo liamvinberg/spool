@@ -9,7 +9,7 @@ import { ProjectCanvas } from "./canvas";
 /** The deep-select modifier as this environment binds it — ctrl under happy-dom, ⌘ on a Mac. */
 const ACCEL = accelKeyName() === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
-const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html" }];
+const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240 }];
 
 describe("canvas context menu", () => {
 	it("reloads a frame with a fresh document", async () => {
@@ -21,23 +21,6 @@ describe("canvas context menu", () => {
 
 		expect(host.querySelector('iframe[title="home"]')).not.toBe(firstDocument);
 		expect(host.querySelector('[role="menu"]')).toBeNull();
-	});
-
-	it("reloads a static terminal frame without asking the daemon to execute it", async () => {
-		const { host, canvas, requests } = await renderCanvas([
-			{ name: "shell", x: 0, y: 0, w: 320, h: 240, kind: "term" },
-		]);
-		const firstDocument = host.querySelector<HTMLIFrameElement>('iframe[title="shell"]');
-		await reloadFromMenu(host, canvas);
-
-		expect(host.querySelector('iframe[title="shell"]')).not.toBe(firstDocument);
-		expect(
-			requests.mock.calls.some(([input, init]) => {
-				const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
-				const method = input instanceof Request ? input.method : init?.method;
-				return url.pathname === "/api/p/test/term/shell/restart" && method === "POST";
-			}),
-		).toBe(false);
 	});
 
 	it("opens for a frame without selecting an element", async () => {

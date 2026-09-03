@@ -133,8 +133,8 @@ describe("canvas keyboard navigation", () => {
 			elements?: Array<{ frame: string; selector: string }>;
 		}> = [];
 		const walkFrames = [
-			{ name: "origin", x: 0, y: 0, w: 100, h: 100, kind: "html", cover },
-			{ name: "right", x: 180, y: 0, w: 100, h: 100, kind: "html", cover },
+			{ name: "origin", x: 0, y: 0, w: 100, h: 100, cover },
+			{ name: "right", x: 180, y: 0, w: 100, h: 100, cover },
 		];
 		vi.stubGlobal(
 			"fetch",
@@ -301,8 +301,8 @@ describe("canvas keyboard navigation", () => {
 	it("ctrl+o crosses back to the page it left and stands inside the frame again", async () => {
 		const cover = { hash: "c".repeat(32) };
 		const walkFrames = [
-			{ name: "origin", x: 0, y: 0, w: 100, h: 100, kind: "html", cover },
-			{ name: "checkout", page: "shop", x: 0, y: 0, w: 100, h: 100, kind: "html", cover },
+			{ name: "origin", x: 0, y: 0, w: 100, h: 100, cover },
+			{ name: "checkout", page: "shop", x: 0, y: 0, w: 100, h: 100, cover },
 		];
 		vi.stubGlobal(
 			"fetch",

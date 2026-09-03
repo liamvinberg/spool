@@ -349,13 +349,12 @@ export function CanvasSidebar({
 		const byPage = new Map<string, readonly RailFrame[]>();
 		for (const page of [ROOT_PAGE, ...orderedPages]) {
 			const here = framesOnPage(frames, page);
-			const kinds = new Map(here.map((frame) => [frame.name, frame.kind]));
 			byPage.set(
 				page,
 				mergeOrder(
 					order.frames?.[page],
 					here.map((frame) => frame.name),
-				).map((name) => ({ name, kind: kinds.get(name) ?? "html" }) satisfies RailFrame),
+				).map((name) => ({ name }) satisfies RailFrame),
 			);
 		}
 		return byPage;
@@ -1952,11 +1951,7 @@ function TreeRow({
 								className="flex h-full w-full min-w-0 items-center gap-2 pr-3 text-left"
 								style={{ paddingLeft: contentX(row.depth) }}
 							>
-								{row.terminal ? (
-									<TermIcon className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-thread" : "text-muted")} />
-								) : (
-									<FrameIcon className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-thread" : "text-muted")} />
-								)}
+								<FrameIcon className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-thread" : "text-muted")} />
 								<span
 									className={cn(
 										// the name runs to the row's edge; the menu that fades in over
@@ -1977,11 +1972,7 @@ function TreeRow({
 								className="flex h-full w-full min-w-0 items-center gap-2 pr-3"
 								style={{ paddingLeft: contentX(row.depth) }}
 							>
-								{row.terminal ? (
-									<TermIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
-								) : (
-									<FrameIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
-								)}
+								<FrameIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
 								<RenameField
 									state={rename.state}
 									size="frame"
@@ -2188,28 +2179,6 @@ function FrameIcon({ className }: { className?: string }) {
 		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
 			<path d="M3 1.75h5l3 3v7.5H3z" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round" />
 			<path d="M8 1.75v3h3" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round" />
-		</svg>
-	);
-}
-
-/**
- * A terminal frame's row.
- *
- * The kind used to be written out as `term.tsx` at the row's right edge; with
- * that gone the icon is what says a frame is a terminal, which is where the
- * canvas says it too.
- */
-function TermIcon({ className }: { className?: string }) {
-	return (
-		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
-			<rect x="1.75" y="2.75" width="10.5" height="8.5" rx="1.25" stroke="currentColor" strokeWidth="1.15" />
-			<path
-				d="M4.5 6 6 7.5 4.5 9M7.75 9.25h2"
-				stroke="currentColor"
-				strokeWidth="1.15"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-			/>
 		</svg>
 	);
 }

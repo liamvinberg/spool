@@ -74,12 +74,7 @@ describe("initProject", () => {
 
 		expect(readDesign(root, "AGENTS.md")).toContain("spool skill");
 		expect(readDesign(root, "AGENTS.md")).toContain("frames/<name>/frame.tsx");
-		expect(readDesign(root, "AGENTS.md")).toContain("static disabled surface");
-		expect(readDesign(root, "AGENTS.md")).toContain("inside an OS sandbox");
-		expect(readDesign(root, "AGENTS.md")).toContain(
-			"Topics: `spool skill frames|terminals|flows|scenarios|styling|verbs`.",
-		);
-		expect(readDesign(root, "AGENTS.md")).toContain("saving a never-run terminal does not create one");
+		expect(readDesign(root, "AGENTS.md")).toContain("Topics: `spool skill frames|flows|scenarios|styling|verbs`.");
 		expect(readDesign(root, "AGENTS.md")).toContain("never write app-owned files");
 		expect(readDesign(root, "CLAUDE.md")).toBe("@AGENTS.md\n");
 	});

@@ -20,8 +20,8 @@ import {
 import { realDesignDir, resolveDesignPath } from "./design-path";
 import { reaimEscapingImports } from "./import-aim";
 import { pageMovedInState, pagesDroppedFromState, readCanvasState, writeCanvasState } from "./project-state";
-import { claimedNames, describeCollision, describeMissingFrame, frameKind, lookupFrame } from "./projection";
-import { coverDir, termScreenFile } from "./thumbs";
+import { claimedNames, describeCollision, describeMissingFrame, hasFrameEntry, lookupFrame } from "./projection";
+import { coverDir } from "./thumbs";
 
 /**
  * The explorer's file operations (#228): what the rail's verbs do on disk, at
@@ -93,16 +93,13 @@ interface Carry {
 }
 
 /**
- * The stores keyed by the bare name (#228): a frame's covers and its persisted
- * terminal screen. The geometry sidecar needs nothing — it rides inside the
- * folder — but these two sit in .spool/ under the old name, and a rename that
- * left them there would blank the picture the canvas is drawing right now.
+ * The store keyed by the bare name (#228): a frame's covers. The geometry
+ * sidecar needs nothing — it rides inside the folder — but the covers sit in
+ * .spool/ under the old name, and a rename that left them there would blank
+ * the picture the canvas is drawing right now.
  */
 function nameKeyedStores(root: string, from: string, to: string): Carry[] {
-	return [
-		{ from: coverDir(root, from), to: coverDir(root, to) },
-		{ from: termScreenFile(root, from), to: termScreenFile(root, to) },
-	];
+	return [{ from: coverDir(root, from), to: coverDir(root, to) }];
 }
 
 function carry({ from, to }: Carry): void {
@@ -237,7 +234,7 @@ export function moveFrames(root: string, frames: readonly string[], page: string
 		moves.push({ from: resolveDesignPath(designDir, found.dir), to: target });
 	}
 	// name is identity, so the folder is the whole move: geometry, stills, the
-	// terminal screen, the frame's URL and every flow into it are untouched.
+	// frame's URL and every flow into it are untouched.
 	// The one thing inside it a move does touch is a `../` import (#273): its
 	// target stayed put while the folder's depth changed, so the import is
 	// re-aimed rather than the frame left broken
@@ -420,7 +417,7 @@ function frameFoldersUnder(dir: string, designDir: string): string[] {
 			if (!entry.isDirectory() || !isSafeName(entry.name)) continue;
 			const child = join(at, entry.name);
 			const held = pageUnder(under, entry.name);
-			if (frameKind(child, designDir) !== undefined) found.push(held);
+			if (hasFrameEntry(child, designDir)) found.push(held);
 			else walk(child, held);
 		}
 	};

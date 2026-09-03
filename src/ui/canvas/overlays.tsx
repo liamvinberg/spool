@@ -1,4 +1,3 @@
-import { cellsForPx } from "../../term/cells";
 import type { Camera, ProjectedFrame } from "../api";
 import { WHOLE_SELECTION } from "./agent-chips";
 import type { Box } from "./camera";
@@ -314,9 +313,7 @@ export function SelectionOverlay({
 								style={{ left: rect.x + rect.w / 2, top: rect.y + rect.h + 14, transform: "translateX(-50%)" }}
 							>
 								<span className="font-mono text-2xs text-on-thread leading-3">
-									{single.kind === "term"
-										? `${cellsForPx(single.w, single.h).cols} × ${cellsForPx(single.w, single.h).rows}`
-										: `${Math.round(single.w)} × ${Math.round(single.h)}`}
+									{`${Math.round(single.w)} × ${Math.round(single.h)}`}
 								</span>
 							</div>
 						</>

@@ -31,15 +31,6 @@ describe("offline design checking", () => {
 		expect(messages(root)).toEqual(["design/frames:1:1 TS5083: Filesystem read failed (ENOTDIR)"]);
 	});
 
-	it("does not discover nested HTML source inside a top-level terminal frame", () => {
-		const root = makeTempDir();
-		markProject(root);
-		writeDesignFile(root, "frames/terminal/term.tsx", "this source stays inert;\n");
-		writeDesignFile(root, "frames/terminal/internal/frame.tsx", "terminalImplementationMustStayInert;\n");
-
-		expect(messages(root)).toEqual([]);
-	});
-
 	it("rejects an escaped frames directory before enumerating it", () => {
 		const root = makeTempDir();
 		markProject(root);

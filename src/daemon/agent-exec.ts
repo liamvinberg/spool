@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 import type { AgentSpawn } from "./agent-spawn";
 
 /**
- * The agent executor seam (#191), mirroring the terminal executor already on the
- * daemon app's options for exactly this reason: the turn runner takes its spawn
- * as input, so a fixture implementation replays a captured session line by line
+ * The agent executor seam (#191), on the daemon app's options for exactly this
+ * reason: the turn runner takes its spawn as input, so a fixture implementation
+ * replays a captured session line by line
  * and CI never spawns an agent, never touches a login, and never depends on a
  * model.
  *
@@ -86,7 +86,7 @@ const STDERR_KEPT = 400;
 /**
  * How long the asked-for way out gets before it stops being a request.
  *
- * The same three seconds the terminal executor gives a supervisor, for the same reason:
+ * Three seconds, the grace a supervisor gives a process, for the same reason:
  * a process that has been asked to go and has not is not going to, and what it is
  * holding — a port, a lock, a repo — is held against everybody.
  */

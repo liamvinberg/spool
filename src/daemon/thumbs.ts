@@ -31,11 +31,6 @@ export function coverDir(root: string, frame: string): string {
 	return resolveDesignPath(designDir, join(designDir, ".spool", "thumbs", frame));
 }
 
-export function termScreenFile(root: string, frame: string): string {
-	const designDir = realDesignDir(root);
-	return resolveDesignPath(designDir, join(designDir, ".spool", "term", `${frame}.screen`));
-}
-
 function listing(dir: string): Dirent[] {
 	try {
 		return readdirSync(dir, { withFileTypes: true });

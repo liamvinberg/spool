@@ -40,7 +40,7 @@ export const HISTORY_MESSAGE = "design: save";
  * a batch's paths are read back into frames: `frames/agent/chat/frame.json` is
  * a sidecar of the frame `agent/chat` only because `agent/chat` holds an entry.
  */
-const FRAME_ENTRIES = new Set(["frame.tsx", "term.tsx"]);
+const FRAME_ENTRIES = new Set(["frame.tsx"]);
 
 /** The one file the hands own (#3). A frame that wrote only this one moved. */
 const GEOMETRY_SIDECAR = "frame.json";

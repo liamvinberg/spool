@@ -5,7 +5,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { type ClipboardCopyResult, parseClipboardCopyResult } from "./clipboard-protocol";
 import { accelChord } from "./platform-keys";
-import { BrokenFrame, Player, type PlayerController, TermScreen } from "./player-chrome";
+import { BrokenFrame, Player, type PlayerController } from "./player-chrome";
 import type { SpoolUi } from "./spool-public";
 import { parseWalkDecision } from "./walk-protocol";
 
@@ -52,8 +52,6 @@ export interface PlayerConfig {
 	start: string;
 	scenario: string;
 	frames: Record<string, { w: number; h: number }>;
-	/** Terminal frames: the last persisted grid behind Spool's disabled surface. */
-	terminals?: Record<string, { svg: string }>;
 	shell?: true;
 }
 
@@ -1456,7 +1454,6 @@ const playerController: PlayerController = {
 			? (play.frames[frame] as { w: number; h: number })
 			: { w: 1440, h: 900 },
 	frames: () => (play === undefined ? [] : Object.keys(play.frames)),
-	terminal: (frame) => play?.terminals !== undefined && Object.hasOwn(play.terminals, frame),
 	walk: (frame, back = false) => jump(frame, back),
 	dismissExternal() {
 		if (externalHref === null) return;
@@ -1489,21 +1486,8 @@ export function bootPlayer(frames: Record<string, ComponentType>): void {
 	motionOn = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 	const root = window.document.getElementById("root");
 	if (root === null) throw new Error("spool: the player document has no #root");
-	// Terminal frames keep their screen shape and persisted poster, but their
-	// document is a Spool-owned disabled surface until an OS sandbox exists.
-	const termScreens = Object.fromEntries(
-		Object.entries(config.terminals ?? {}).map(([name, screen]) => [
-			name,
-			() =>
-				createElement(TermScreen, {
-					src: `/p/${encodeURIComponent(config.project)}/frames/${encodeURIComponent(name)}`,
-					poster: screen.svg,
-					title: name,
-				}),
-		]),
-	);
 	followGeometry();
-	const screens = Object.fromEntries([...Object.entries(frames), ...Object.entries(termScreens)]);
+	const screens = frames;
 	playerBooted = true;
 	if (config.shell === true) {
 		const playerRoot = createRoot(root);

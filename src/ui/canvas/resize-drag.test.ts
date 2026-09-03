@@ -17,7 +17,7 @@ import { ProjectCanvas } from "./canvas";
  */
 
 /** One frame, alone: nothing to snap an edge to, so the numbers are the pointer's. */
-const ALONE = [{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html" }];
+const ALONE = [{ name: "home", x: 0, y: 0, w: 320, h: 240 }];
 
 let asked: Array<{ url: string; body: unknown }> = [];
 let painting = new Map<number, FrameRequestCallback>();

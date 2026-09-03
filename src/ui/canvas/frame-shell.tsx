@@ -1,10 +1,8 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { Cover } from "../../cover";
-import type { TerminalCoverState } from "../../daemon/projection";
 import { frameDocumentUrl } from "../api";
 import { Thumbnail } from "../thumbnail";
 import type { FrameState } from "./lifecycle";
-import { freezeMessage } from "./protocol";
 
 /**
  * One frame on the canvas, rendering whatever the lifecycle says:
@@ -24,10 +22,9 @@ import { freezeMessage } from "./protocol";
 export interface CoverPlan {
 	/** The cover layer sits fully opaque over the (missing or booting) frame. */
 	cover: boolean;
-	image: "cover" | "placeholder" | "terminal-message";
+	image: "cover" | "placeholder";
 	/** The 55% veil + mono "booting" label — the honest boot cover. */
 	badge: boolean;
-	message?: string;
 }
 
 /**
@@ -71,17 +68,8 @@ export function coverPlan(input: {
 	 * nothing for a cover to stand in for.
 	 */
 	holding?: boolean;
-	terminalCover?: TerminalCoverState | undefined;
 }): CoverPlan {
-	const { state, ready, settled, entered, covered, walk, holding = false, terminalCover } = input;
-	if (terminalCover?.kind === "stale" || terminalCover?.kind === "never-run") {
-		return {
-			cover: true,
-			image: "terminal-message",
-			badge: false,
-			message: terminalCover.message,
-		};
-	}
+	const { state, ready, settled, entered, covered, walk, holding = false } = input;
 	return {
 		// A live frame is what the canvas is showing, whether it is entered or
 		// Select currently owns the pointer above it.
@@ -105,8 +93,6 @@ export const FrameShell = memo(function FrameShell({
 	docNonce,
 	holdNonce,
 	cover,
-	terminal,
-	terminalCover,
 	walkArrival,
 	onIframe,
 }: {
@@ -120,8 +106,6 @@ export const FrameShell = memo(function FrameShell({
 	entered: boolean;
 	/** Whether the entered iframe currently owns pointer input. */
 	interactive: boolean;
-	/** A terminal frame: its freeze is a SIGSTOP the daemon owns, not a CSS lock. */
-	terminal: boolean;
 	/** Bumped by SSE source changes — a new nonce reloads the document. */
 	docNonce: number;
 	/**
@@ -138,8 +122,6 @@ export const FrameShell = memo(function FrameShell({
 	holdNonce: number | null;
 	/** The frame's immutable cover image, absent when it has none to show. */
 	cover: Cover | undefined;
-	/** Terminal-only current/stale/never-run cover truth from the projection. */
-	terminalCover: TerminalCoverState | undefined;
 	/** Set while the current boot is a walk arrival (#28) — quiet cover. */
 	walkArrival: boolean;
 	onIframe: (name: string, el: HTMLIFrameElement | null) => void;
@@ -154,14 +136,6 @@ export const FrameShell = memo(function FrameShell({
 		},
 		[name, onIframe],
 	);
-
-	// A terminal's freeze is the one that no CSS can reach: `held` SIGSTOPs the
-	// real process behind the frame (daemon/term-sessions.ts). Re-send when ready
-	// flips so a booting terminal receives its freeze once its listener exists.
-	// biome-ignore lint/correctness/useExhaustiveDependencies(ready): the re-send on boot is the point
-	useEffect(() => {
-		if (terminal) elRef.current?.contentWindow?.postMessage(freezeMessage(state === "held"), "*");
-	}, [state, ready, terminal]);
 
 	// The cover: shown for every non-live frame, and over a live one until it
 	// boots, then fades without a white flash on entry (#8
@@ -179,7 +153,6 @@ export const FrameShell = memo(function FrameShell({
 		covered: cover !== undefined,
 		walk: walkArrival,
 		holding: held !== null,
-		terminalCover,
 	});
 	const [veil, setVeil] = useState(plan.cover);
 	useEffect(() => {
@@ -263,11 +236,7 @@ export const FrameShell = memo(function FrameShell({
 					className="pointer-events-none absolute inset-0"
 					style={{ opacity: plan.cover ? 1 : 0, transition: "opacity 180ms ease-out" }}
 				>
-					{plan.image === "terminal-message" ? (
-						<div className="absolute inset-0 flex items-center justify-center bg-surface px-8 text-center">
-							<span className="max-w-lg font-mono text-xs leading-relaxed text-muted">{plan.message}</span>
-						</div>
-					) : plan.image === "cover" && cover !== undefined ? (
+					{plan.image === "cover" && cover !== undefined ? (
 						// The still at its true shape, never stretched to the box: a cover
 						// is the document photographed at one footprint, and a resize gives
 						// the frame another before the recapture lands. Those seconds — and

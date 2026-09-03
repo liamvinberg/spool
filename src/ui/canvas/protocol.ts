@@ -8,8 +8,7 @@ import type { Box } from "./camera";
 /**
  * The postMessage bridge between canvas and frames. The frame side lives in
  * the served document (capture/key shim in daemon/document.ts, session and
- * walks in runtime/frame-runtime.ts); terminal freeze lives in
- * runtime/term-runtime.ts. This is the canvas's vocabulary for both.
+ * walks in runtime/frame-runtime.ts). This is the canvas's vocabulary for it.
  * SessionRecord is the runtime's own type, with one shape in both realms.
  */
 
@@ -258,21 +257,19 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 }
 
 type WalkMessage = Extract<FrameMessage, { spool: "go" | "back" }>;
-type FrameSourceKind = "html" | "term" | undefined;
-
-export function clipboardCopyAllowed(sourceKind: FrameSourceKind, active: boolean, blocked: boolean): boolean {
-	return sourceKind === "html" && active && !blocked;
+export function clipboardCopyAllowed(known: boolean, active: boolean, blocked: boolean): boolean {
+	return known && active && !blocked;
 }
 
+/** A walk is sequenced (carries an id) from every frame document; a bare one is nobody's. */
 export function walkRejectionReason(
 	message: WalkMessage,
-	sourceKind: FrameSourceKind,
+	known: boolean,
 	active: boolean,
 	targetExists: boolean,
 	blocked: boolean,
 ): "inactive" | "missing" | undefined {
-	const sequenced = message.id !== undefined;
-	if (!active || (sequenced ? sourceKind !== "html" || blocked : sourceKind !== "term")) return "inactive";
+	if (!active || message.id === undefined || !known || blocked) return "inactive";
 	return targetExists ? undefined : "missing";
 }
 

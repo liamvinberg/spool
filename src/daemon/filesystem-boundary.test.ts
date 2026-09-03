@@ -1,8 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { fixtureTermExecutor, makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
-import { createTermSessions } from "./term-sessions";
+import { makeApp, makeProject, makeTempDir, writeFrame } from "../test-helpers";
 
 const SENTINEL = "outside-design-sentinel";
 const HASH = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4";
@@ -125,36 +124,6 @@ describe("project filesystem sinks", () => {
 		const response = await app.request(`/api/p/${name}/walked`, json("POST", { from: "checkout", to: "done" }));
 		await expectBoundary(response, ".spool/walked.json", root);
 		expect(readFileSync(outside, "utf8")).toBe(sentinel);
-	});
-
-	it("rejects an escaped terminal entry before invoking the process executor", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root } = makeProject(spoolDir);
-		const termDir = join(root, "design", "frames", "dash");
-		mkdirSync(termDir, { recursive: true });
-		const outside = join(root, "outside.tsx");
-		writeFileSync(outside, `process.stdout.write(${JSON.stringify(SENTINEL)});\n`);
-		symlinkSync(outside, join(termDir, "term.tsx"));
-		const { spawned, executor } = fixtureTermExecutor();
-		const sessions = createTermSessions({ executor, publish: () => {} });
-
-		await expect(sessions.attach(root, "dash", { send: () => {} })).rejects.toThrow("design boundary");
-		expect(spawned).toEqual([]);
-		await sessions.close();
-	});
-
-	it("does not read a persisted terminal screen through an escaped cache symlink", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeDesignFile(root, "frames/dash/term.tsx", "export default function Dash() {}\n");
-		const cache = join(root, "design", ".spool", "term");
-		mkdirSync(cache, { recursive: true });
-		const outside = join(root, "outside-screen.json");
-		writeFileSync(outside, JSON.stringify({ cols: 1, rows: 1, screen: SENTINEL }));
-		symlinkSync(outside, join(cache, "dash.screen"));
-		const app = makeApp(spoolDir);
-
-		await expectBoundary(await app.request(`/api/p/${name}/thumbs/dash`), ".spool/term/dash.screen", root);
 	});
 
 	it("does not search out of home through a symlink pointing above it", async () => {

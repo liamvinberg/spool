@@ -20,12 +20,11 @@ import {
  * things these hold the daemon to are the ones a folder move can quietly break:
  * a bare frame name is identity across the whole project, so a landing name
  * that is claimed anywhere is refused rather than guessed at; and the stores
- * keyed by that name — a frame's covers, a terminal's persisted screen, a
- * page's camera and its place in the rail — follow the name when it changes.
+ * keyed by that name — a frame's covers, a page's camera and its place in the
+ * rail — follow the name when it changes.
  */
 
 const label = (text: string) => `export default function F() {\n\treturn <p>${text}</p>;\n}\n`;
-const termTsx = "export default function T() {\n\treturn null;\n}\n";
 
 function jsonPost(body: unknown): RequestInit {
 	return { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
@@ -80,19 +79,6 @@ describe("renaming a frame", () => {
 			frames: { name: string; page?: string; cover?: { hash: string } }[];
 		};
 		expect(frames).toMatchObject([{ name: "basket", page: "shop", cover: { hash } }]);
-	});
-
-	it("carries a terminal frame's persisted screen", async () => {
-		const { spoolDir, root, name } = explorerProject();
-		writeDesignFile(root, "frames/console/term.tsx", termTsx);
-		writeDesignFile(root, ".spool/term/console.screen", "the last grid\n");
-		const app = makeApp(spoolDir);
-
-		const res = await app.request(`/api/p/${name}/frames/rename`, jsonPost({ from: "console", to: "shell" }));
-
-		expect(res.status).toBe(204);
-		expect(existsSync(designFile(root, ".spool", "term", "console.screen"))).toBe(false);
-		expect(readFileSync(designFile(root, ".spool", "term", "shell.screen"), "utf8")).toBe("the last grid\n");
 	});
 
 	it("refuses a name claimed anywhere in the project, on any page", async () => {

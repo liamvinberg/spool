@@ -47,8 +47,8 @@ const PROJECTION = {
 	root: "/project",
 	pages: ["site"],
 	frames: [
-		{ name: "home", kind: "html", x: 0, y: 0, w: 390, h: 844 },
-		{ name: "receipt", page: "site", kind: "html", x: 0, y: 0, w: 390, h: 844 },
+		{ name: "home", x: 0, y: 0, w: 390, h: 844 },
+		{ name: "receipt", page: "site", x: 0, y: 0, w: 390, h: 844 },
 	],
 	collisions: [],
 };

@@ -87,7 +87,6 @@ describe("spool cli", { timeout: 30_000 }, () => {
 			'export function Card() { return <main aria-label="home">home</main>; }\n',
 		);
 		writePageFrame(root, "account", "settings", "export default function Settings() { return <p>settings</p>; }\n");
-		writeDesignFile(root, "frames/terminal/term.tsx", "this is never parsed;\n");
 		const nested = join(root, "src", "feature");
 		mkdirSync(nested, { recursive: true });
 
@@ -665,14 +664,5 @@ describe("spool cli", { timeout: 30_000 }, () => {
 
 		expect(result.status).toBe(0);
 		expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
-	});
-
-	it("distinguishes html screenshots from terminal persisted-grid SVGs in shot help", () => {
-		const result = spool(["shot", "--help"], makeTempDir());
-
-		expect(result.status).toBe(0);
-		expect(result.stdout).toContain(
-			"save an HTML headless screenshot or a terminal source-current persisted-grid SVG",
-		);
 	});
 });

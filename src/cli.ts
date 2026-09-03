@@ -208,7 +208,7 @@ program
 
 program
 	.command("shot")
-	.description("save an HTML headless screenshot or a terminal source-current persisted-grid SVG")
+	.description("save a headless screenshot of a frame")
 	.argument("<frame>", "frame folder name")
 	.option("--viewport <width>x<height>", "exact CSS viewport", parseViewport)
 	.option("--at <milliseconds>", "post-commit wait", parseMilliseconds)

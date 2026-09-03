@@ -32,8 +32,8 @@ beforeEach(() => {
 	asked = [];
 	projectedPages = [];
 	projected = [
-		{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html" },
-		{ name: "shell", x: 400, y: 0, w: 320, h: 240, kind: "html" },
+		{ name: "home", x: 0, y: 0, w: 320, h: 240 },
+		{ name: "shell", x: 400, y: 0, w: 320, h: 240 },
 	];
 });
 
@@ -138,7 +138,7 @@ it("takes a page made with the selection back in one press, and puts it back in 
 
 /** The daemon answered: the first frame goes by another name from here on. */
 function renamedTo(name: string) {
-	projected = [{ name, x: 0, y: 0, w: 320, h: 240, kind: "html" }, ...projected.slice(1)];
+	projected = [{ name, x: 0, y: 0, w: 320, h: 240 }, ...projected.slice(1)];
 }
 
 /** The page exists from here on, and the first frame is inside it or back out of it. */

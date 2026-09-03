@@ -12,7 +12,7 @@ import { framesUnder, pageIsBare, pageObjectAt, pageObjectsOn } from "./page-obj
  */
 
 function frame(name: string, page: string | undefined, rect: { x: number; y: number }): ProjectedFrame {
-	return { name, kind: "html", ...(page === undefined ? {} : { page }), ...rect, w: 1000, h: 600 };
+	return { name, ...(page === undefined ? {} : { page }), ...rect, w: 1000, h: 600 };
 }
 
 const FRAMES: ProjectedFrame[] = [

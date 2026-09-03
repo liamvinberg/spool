@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ProjectCanvas } from "./canvas";
 
-const frames = [{ name: "home", kind: "html", x: 0, y: 0, w: 100, h: 100 }];
+const frames = [{ name: "home", x: 0, y: 0, w: 100, h: 100 }];
 
 describe("canvas boot", () => {
 	it("opens while the flow resolve is still running, and takes its arrows when it lands", async () => {

@@ -3,8 +3,8 @@ import { dirname, join } from "node:path";
 import { writeAtomic } from "./atomic-write";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./daemon/design-path";
 import { renderOrigin } from "./daemon/lifecycle";
-import { projectedKind, readFrameGeometry } from "./daemon/projection";
-import { type CaptureError, readCaptureError, termScreenFile } from "./daemon/thumbs";
+import { readFrameGeometry } from "./daemon/projection";
+import { type CaptureError, readCaptureError } from "./daemon/thumbs";
 import { SpoolError } from "./errors";
 import { launchHeadlessShell } from "./headless-shell";
 import { refusalOf } from "./verbs";
@@ -55,7 +55,6 @@ export type LogsOutcome =
 	| { kind: "logs"; entries: LogEntry[]; replayed: boolean; captureError?: CaptureError };
 
 export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
-	if (await isTermFrame(deps)) return termShot(deps);
 	const probe = await probeCompile(deps);
 	if (probe.kind === "error") return { kind: "broken", message: probe.message };
 	if (probe.kind === "missing") return probe;
@@ -65,12 +64,6 @@ export async function shotFrame(deps: BootDeps): Promise<ShotOutcome> {
 }
 
 export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
-	if (await isTermFrame(deps)) {
-		return {
-			kind: "broken",
-			message: `"${deps.frame}" is a terminal frame — its output is its screen; use \`spool shot ${deps.frame}\``,
-		};
-	}
 	const probe = await probeCompile(deps);
 	if (probe.kind === "error") return { kind: "broken", message: probe.message };
 	if (probe.kind === "missing") return probe;
@@ -96,30 +89,6 @@ export async function logsFrame(deps: BootDeps): Promise<LogsOutcome> {
 		replayed: false,
 		...(captureError === undefined ? {} : { captureError }),
 	};
-}
-
-/**
- * A terminal frame's shot (#42) needs no browser: the daemon rasterizes the
- * screen grid in the pinned font, so the artifact is the process's own truth.
- */
-async function termShot(deps: BootDeps): Promise<ShotOutcome> {
-	const url = `${deps.daemonUrl}/api/p/${encodeURIComponent(deps.name)}/thumbs/${encodeURIComponent(deps.frame)}`;
-	const res = await fetch(url, { headers: controlHeaders(deps.controlToken) });
-	// a refusal is not a broken frame: it throws, so the boundary can name a skew
-	if (res.status === 401 || res.status === 403) throw await refusalOf(res, url);
-	if (!res.ok) return { kind: "broken", message: await res.text() };
-	const file = verifyFile(deps.root, deps.frame, "svg");
-	writeAtomic(file, await res.text());
-	return { kind: "shot", files: [file], bootErrors: [] };
-}
-
-async function isTermFrame(deps: BootDeps): Promise<boolean> {
-	const kind = projectedKind(deps.root, deps.frame);
-	if (kind !== "term") return false;
-	// Resolve the persisted-screen boundary without asking the canvas projection,
-	// which would materialize a missing geometry sidecar.
-	termScreenFile(deps.root, deps.frame);
-	return true;
 }
 
 export function shotFile(root: string, frame: string): string {

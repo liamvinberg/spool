@@ -678,8 +678,8 @@ export function coverUrl(project: string, frame: string, hash: string): string {
 }
 
 /**
- * A terminal cover as bytes for export. A plain fetch works because the
- * content-addressed URL is the credential.
+ * A cover as bytes. A plain fetch works because the content-addressed URL is
+ * the credential.
  */
 export async function fetchCover(project: string, frame: string, cover: Cover): Promise<Blob | undefined> {
 	try {

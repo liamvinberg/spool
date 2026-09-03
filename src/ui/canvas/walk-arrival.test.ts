@@ -16,11 +16,11 @@ import { ProjectCanvas } from "./canvas";
 
 const COVER = { hash: "b".repeat(32) };
 const frames = [
-	{ name: "origin", x: 0, y: 0, w: 100, h: 100, kind: "html", cover: COVER },
+	{ name: "origin", x: 0, y: 0, w: 100, h: 100, cover: COVER },
 	// no cover, so the canvas borrows it to make one: the only way a frame you
 	// are not inside holds a document at all (#112), and the mounted, booted
 	// target this test is about
-	{ name: "right", x: 180, y: 0, w: 100, h: 100, kind: "html" },
+	{ name: "right", x: 180, y: 0, w: 100, h: 100 },
 ];
 
 describe("walk arrival", () => {

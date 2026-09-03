@@ -1,9 +1,6 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import type { IncomingMessage } from "node:http";
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
-import type { Duplex } from "node:stream";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
@@ -20,7 +17,6 @@ import { createProject, initProject } from "../init";
 import { openProject } from "../open";
 import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
-import { gridToSvg } from "../term/still";
 import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
@@ -74,13 +70,12 @@ import { type ProjectJson, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
 import {
 	FRAME_BIRTH,
-	type FrameKind,
 	frameDirectories,
+	frameExists,
 	frameGeometry,
 	listProjectFrames,
 	lookupFrame,
 	type ProjectCard,
-	projectedKind,
 	summarizeProject,
 } from "./projection";
 import { createResolvePass } from "./resolve-pass";
@@ -107,9 +102,6 @@ import {
 	watchMachineState,
 } from "./session";
 import { createShotTaker } from "./shots";
-import type { TermExecutor } from "./term-exec";
-import { termFontDataCss, termFontFile } from "./term-fonts";
-import { createTermSessions } from "./term-sessions";
 import { compileClasses, readTheme } from "./theme";
 import {
 	createThumbHealer,
@@ -128,7 +120,6 @@ import {
 	vendorReactJs,
 	vendorSpoolJs,
 	vendorSpoolJsxJs,
-	vendorSpoolTermJs,
 } from "./vendor";
 import { createWebfonts } from "./webfonts";
 
@@ -159,8 +150,6 @@ export interface DaemonOptions {
 	fetchLatest?: () => Promise<string | undefined>;
 	/** The toast door's detached `spool upgrade` spawn — swapped out by seam tests. */
 	upgrade?: () => { ok: true } | { ok: false; error: string };
-	/** Retained seam for dormant session tests; public daemon routes never invoke it. */
-	termExecutor?: TermExecutor;
 	/** The agent spawn (#191) — swapped for a capture replayer so CI never runs a real agent. */
 	agentExecutor?: AgentExecutor;
 	/**
@@ -330,10 +319,6 @@ function attachTurn(c: Context, held: AgentHeld, from: number) {
 	});
 }
 
-const disabledTermExecutor: TermExecutor = async () => {
-	throw new SpoolError("terminal execution is disabled until it can run in an OS sandbox");
-};
-
 /**
  * The daemon's Hono app, the primary seam: everything observable rides
  * app.request(), no port needed. The inferred AppType is the compile-time
@@ -352,7 +337,6 @@ export function createDaemonApp({
 	history: historyAllowed,
 	fetchLatest,
 	upgrade,
-	termExecutor,
 	agentExecutor,
 	agentLook,
 	machineStateWatchAdapter,
@@ -617,18 +601,6 @@ export function createDaemonApp({
 		sources: (root) => flowGraph.sources(root),
 		moved: (root) => hub.publish(root, { kind: "resolved" }),
 		now: () => new Date().toISOString(),
-	});
-
-	// Persisted terminal grids remain readable, but the default executor is a
-	// hard stop until project processes can run inside an OS sandbox.
-	const terms = createTermSessions({
-		executor: termExecutor ?? disabledTermExecutor,
-		// a persisted screen is a new cover: name its image in the event, so the
-		// canvas swaps addresses without a projection read
-		publish: (root, frame) => {
-			const { cover } = terms.cover(root, frame);
-			hub.publish(root, { kind: "thumb", frame, ...(cover === undefined ? {} : { cover }) });
-		},
 	});
 
 	// #191's ADR: the daemon spawns the developer's own agent when the hands ask
@@ -1078,50 +1050,18 @@ export function createDaemonApp({
 				return c.json({
 					...projection,
 					frames: projection.frames.map((frame) => {
-						if (frame.kind === "html") {
-							// This read is the moment a canvas learns a frame has no cover
-							// to show, and a frame with none renders its placeholder and
-							// asks for nothing (#111). So the heal is enqueued here rather
-							// than waiting for a request that will never come.
-							if (frame.cover === undefined) requestHeal(project.root, name, frame.name, frame);
-							return frame;
-						}
-						const { state, cover } = terms.cover(project.root, frame.name);
-						return { ...frame, ...(cover === undefined ? {} : { cover }), terminalCover: state };
+						// This read is the moment a canvas learns a frame has no cover
+						// to show, and a frame with none renders its placeholder and
+						// asks for nothing (#111). So the heal is enqueued here rather
+						// than waiting for a request that will never come.
+						if (frame.cover === undefined) requestHeal(project.root, name, frame.name, frame);
+						return frame;
 					}),
 				});
 			} catch (error) {
 				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
 				throw error;
 			}
-		})
-		.get("/api/p/:project/thumbs/:frame", async (c) => {
-			// A terminal frame's still, for `spool shot` and `spool verify` (#42):
-			// rasterized from the persisted grid in the pinned font, which never
-			// starts project code. The canvas reads covers from /covers instead —
-			// this door exists because the CLI has a control token and no image URL.
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const frame = c.req.param("frame");
-			if (!isSafeName(frame)) return c.text(`not a frame name: "${frame}"`, 404);
-			if (projectedKind(project.root, frame) !== "term") {
-				return c.text(`"${frame}" is not a terminal frame; its cover is a stored image, not a grid`, 404);
-			}
-			let screen: Awaited<ReturnType<typeof terms.screen>>;
-			try {
-				screen = await terms.screen(project.root, frame);
-			} catch (error) {
-				if (error instanceof DesignBoundaryError) return c.text(error.message, 400);
-				throw error;
-			}
-			if (screen.kind !== "current") return c.text(screen.message, screen.kind === "stale" ? 409 : 404);
-			const still = gridToSvg(screen.grid, termFontDataCss());
-			const etag = `"term-still-${createHash("sha256").update(still).digest("hex").slice(0, 32)}"`;
-			c.header("cache-control", "no-cache");
-			if (c.req.header("if-none-match") === etag) return c.body(null, 304);
-			c.header("etag", etag);
-			c.header("content-type", "image/svg+xml; charset=utf-8");
-			return c.body(still);
 		})
 		.get("/covers/:project/:frame/:hash", async (c) => {
 			// The hash addresses the image content, which makes the URL both the credential because an <img> cannot
@@ -1135,17 +1075,10 @@ export function createDaemonApp({
 			if (!isSafeName(frame) || !isCoverHash(hash)) {
 				return c.text("no such cover", 404);
 			}
-			let kind: FrameKind | undefined;
+			let exists = false;
 			try {
-				kind = projectedKind(project.root, frame);
-				if (kind === "term") {
-					if (terms.cover(project.root, frame).cover?.hash !== hash) return c.text("no such cover", 404);
-					const still = await terms.persistedStill(project.root, frame);
-					if (still === undefined) return c.text("no such cover", 404);
-					immutableCover(c, "image/svg+xml; charset=utf-8");
-					return c.body(still);
-				}
-				const image = kind === "html" ? readCoverImage(project.root, frame, hash) : undefined;
+				exists = frameExists(project.root, frame);
+				const image = exists ? readCoverImage(project.root, frame, hash) : undefined;
 				if (image !== undefined) {
 					immutableCover(c, image.type);
 					return c.body(new Uint8Array(image.bytes));
@@ -1157,7 +1090,7 @@ export function createDaemonApp({
 			// The address named a cover this frame does not have. Heal it: the shot
 			// lands, the thumb event carries the new image, and the canvas asks
 			// again at the address that now exists.
-			if (kind === "html") requestHeal(project.root, name, frame);
+			if (exists) requestHeal(project.root, name, frame);
 			return c.text("no such cover", 404);
 		})
 		.get("/api/p/:project/state", (c) => {
@@ -1269,9 +1202,7 @@ export function createDaemonApp({
 			// origin to render from, and in-process app.request() never binds one
 			if (selfOrigin === undefined) return c.json({ skipped: 0, read: 0, unavailable: 0, ran: false });
 			const listing = listProjectFrames(project.root);
-			const frames = listing.frames
-				.filter((frame) => frame.kind === "html")
-				.map((frame) => ({ name: frame.name, width: frame.w, height: frame.h }));
+			const frames = listing.frames.map((frame) => ({ name: frame.name, width: frame.w, height: frame.h }));
 			try {
 				const result = await resolvePass.run({
 					root: project.root,
@@ -1301,7 +1232,7 @@ export function createDaemonApp({
 				// only witness walks between frames that really exist — a session
 				// racing a delete records nothing
 				for (const frame of [from, to]) {
-					if (projectedKind(project.root, frame) === undefined) {
+					if (!frameExists(project.root, frame)) {
 						return c.text(`no frame "${frame}" to walk`, 404);
 					}
 				}
@@ -1348,15 +1279,6 @@ export function createDaemonApp({
 				return c.body(null, 204);
 			},
 		)
-		.post("/api/p/:project/term/:frame/restart", (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const frame = c.req.param("frame");
-			if (!isSafeName(frame) || projectedKind(project.root, frame) !== "term") {
-				return c.text(`no terminal frame "${frame}" to restart`, 404);
-			}
-			return c.text("terminal execution is disabled until it can run in an OS sandbox", 409);
-		})
 		/*
 		 * The two ways there is no agent to talk to, one door each (#201).
 		 *
@@ -2244,12 +2166,8 @@ export function createDaemonApp({
 			if ("response" in project) return project.response;
 			const frame = c.req.param("frame");
 			// captures are only accepted for frames that exist — never a write for a ghost
-			const kind = isSafeName(frame) ? projectedKind(project.root, frame) : undefined;
-			if (kind === undefined) return c.text(`no frame "${frame}" to cover`, 404);
-			// a terminal's still is the daemon's grid, never a DOM capture
-			if (kind === "term") {
-				return c.text(`"${frame}" is a terminal frame — its stills rasterize from the grid`, 400);
-			}
+			if (!isSafeName(frame) || !frameExists(project.root, frame))
+				return c.text(`no frame "${frame}" to cover`, 404);
 			let image: Buffer;
 			try {
 				image = await parseCover(c);
@@ -2277,18 +2195,15 @@ export function createDaemonApp({
 			}),
 			(c) => {
 				// The reason a self-capture failed (#173), recorded beside the cover it
-				// never wrote. Same existence and kind checks as the PUT above — a
-				// ghost or a terminal frame has nothing to record a capture reason
-				// against — and no SSE event: the placeholder it explains is already on
-				// screen, and this is read by `spool logs`, never drawn on the canvas.
+				// never wrote. Same existence check as the PUT above — a ghost has
+				// nothing to record a capture reason against — and no SSE event: the
+				// placeholder it explains is already on screen, and this is read by
+				// `spool logs`, never drawn on the canvas.
 				const project = resolveProject(c, c.req.param("project"));
 				if ("response" in project) return project.response;
 				const frame = c.req.param("frame");
-				const kind = isSafeName(frame) ? projectedKind(project.root, frame) : undefined;
-				if (kind === undefined) return c.text(`no frame "${frame}" to cover`, 404);
-				if (kind === "term") {
-					return c.text(`"${frame}" is a terminal frame — its stills rasterize from the grid`, 400);
-				}
+				if (!isSafeName(frame) || !frameExists(project.root, frame))
+					return c.text(`no frame "${frame}" to cover`, 404);
 				writeCaptureError(project.root, frame, c.req.valid("json").error);
 				return c.body(null, 204);
 			},
@@ -2362,29 +2277,8 @@ export function createDaemonApp({
 				// Validate before returning the control shell. The render-origin
 				// iframe repeats this request, but the player compiler is content-
 				// cached, so project code is built only once.
-				const htmlFrames = projection.frames.filter((entry) => entry.kind === "html");
-				const termFrames = projection.frames.filter((entry) => entry.kind === "term");
-				const compiled = await playerCompiler.getBundle(project.root, htmlFrames);
+				const compiled = await playerCompiler.getBundle(project.root, projection.frames);
 				if (compiled.kind === "error") return c.html(playerLoadErrorDocument(compiled.message), 500);
-				const terminals = Object.create(null) as Record<string, { svg: string }>;
-				for (const entry of termFrames) {
-					let screen: Awaited<ReturnType<typeof terms.screen>>;
-					try {
-						screen = await terms.screen(project.root, entry.name);
-					} catch (error) {
-						if (error instanceof DesignBoundaryError) {
-							return shellRender ? shellFailure(error.message, 400) : c.text(error.message, 400);
-						}
-						throw error;
-					}
-					if (screen.kind !== "current") {
-						return c.html(
-							playerLoadErrorDocument(screen.message, "failed to load"),
-							screen.kind === "stale" ? 409 : 404,
-						);
-					}
-					terminals[entry.name] = { svg: gridToSvg(screen.grid, termFontDataCss()) };
-				}
 				if (controlRequest) {
 					const requestUrl = new URL(c.req.url);
 					requestUrl.searchParams.set("frame", start);
@@ -2396,7 +2290,6 @@ export function createDaemonApp({
 							project: name,
 							start,
 							frames,
-							terminals: termFrames.map((entry) => entry.name),
 							controlToken,
 							innerUrl: `${renderOrigin}${requestUrl.pathname}${requestUrl.search}`,
 						}),
@@ -2409,7 +2302,6 @@ export function createDaemonApp({
 					scenario: playScenario,
 					frames,
 					...(shell === "1" ? { shell: true as const } : {}),
-					...(termFrames.length === 0 ? {} : { terminals }),
 				};
 				const etag = playerEtag(compiled.bundle, config);
 				if (!shellRender && c.req.header("if-none-match") === etag) return c.body(null, 304);
@@ -2455,11 +2347,10 @@ export function createDaemonApp({
 		})
 		.get("/vendor/spool.js", (c) => serveRuntime(c, vendorSpoolJs))
 		.get("/vendor/spool-jsx.js", (c) => serveRuntime(c, vendorSpoolJsxJs))
-		.get("/vendor/spool-term.js", (c) => serveRuntime(c, vendorSpoolTermJs))
 		.get("/vendor/fonts/:file", (c) => {
-			// chrome and terminal monos ride spool's own install — never a CDN;
+			// the chrome mono rides spool's own install — never a CDN;
 			// null-origin sandboxed frames fetch fonts under CORS
-			const file = chromeFontFile(c.req.param("file")) ?? termFontFile(c.req.param("file"));
+			const file = chromeFontFile(c.req.param("file"));
 			if (file === undefined) return c.text("no such font", 404);
 			c.header("access-control-allow-origin", "*");
 			const etag = `"font-${version}-${c.req.param("file")}"`;
@@ -2584,18 +2475,16 @@ export function createDaemonApp({
 		project,
 		start,
 		frames,
-		terminals,
 		controlToken: shellToken,
 		innerUrl,
 	}: {
 		project: string;
 		start: string;
 		frames: Record<string, { w: number; h: number }>;
-		terminals: string[];
 		controlToken: string;
 		innerUrl: string;
 	}): string {
-		const config = escapeJsonScript({ project, start, frames, terminals, innerUrl, controlToken: shellToken });
+		const config = escapeJsonScript({ project, start, frames, innerUrl, controlToken: shellToken });
 		const bridge = `(() => {
 	const config = window.__SPOOL_SHELL__;
 	const headers = { "${CONTROL_HEADER}": config.controlToken };
@@ -2721,12 +2610,6 @@ export function createDaemonApp({
 `;
 	}
 
-	// Project terminal code has no OS sandbox. Refuse at the socket boundary
-	// before parsing a path, looking up a project, or touching an executor.
-	function handleUpgrade(_req: IncomingMessage, socket: Duplex, _head: Buffer): void {
-		socket.destroy();
-	}
-
 	return {
 		app,
 		controlToken,
@@ -2748,7 +2631,6 @@ export function createDaemonApp({
 			void refreshIndex(fsIndex);
 		},
 		/** The /term upgrade path — wired by serveDaemon onto the raw server. */
-		handleUpgrade,
 		/**
 		 * The checkout's UI watcher finished a rebuild (#30's blind spot).
 		 *
@@ -2762,14 +2644,11 @@ export function createDaemonApp({
 		announceUiBuild: () => {
 			emitAppEvent({ kind: "ui" });
 		},
-		/** Terminal sessions, exposed for the player's static grids and seam tests. */
-		terms,
 		close: () => {
 			machineStateWatch.stop();
 			history.close();
 			liveTurns.close();
 			agentAsks.clear();
-			void terms.close();
 			hub.close();
 			updateChecker.stop();
 			void shots.close();

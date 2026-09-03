@@ -12,8 +12,8 @@ import { ProjectCanvas } from "./canvas";
  */
 
 const frames = [
-	{ name: "menu", x: 0, y: 0, w: 390, h: 844, kind: "html" },
-	{ name: "cart", x: 600, y: 0, w: 390, h: 844, kind: "html" },
+	{ name: "menu", x: 0, y: 0, w: 390, h: 844 },
+	{ name: "cart", x: 600, y: 0, w: 390, h: 844 },
 ];
 
 interface Harness {

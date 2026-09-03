@@ -36,8 +36,6 @@ export interface PlayerConfig {
 	scenario: string;
 	/** Every frame in the composition with its authored geometry. */
 	frames: Record<string, { w: number; h: number }>;
-	/** Terminal frames as static grids from the daemon-held buffer (#42). */
-	terminals?: Record<string, { svg: string }>;
 	/** The control-origin shell mounts this composed document in a native iframe. */
 	shell?: true;
 }
@@ -346,16 +344,6 @@ body { margin: 0; background: #0e0e0e; }
 /* the outward-link confirmation is modal, and this page scrolls: pinned to the
    window rather than to the page, or a tall document puts it out of sight */
 .spool-page > .spool-external-backdrop { position: fixed; }
-/* a terminal is a character grid, not a document: it keeps the box it was
-   authored at rather than growing into the window, and sits centred on the
-   page's background */
-.spool-screen.is-terminal {
-	min-height: 0;
-	align-self: center;
-	overflow: hidden;
-	color-scheme: dark;
-	background: #111110;
-}
 .spool-player-error {
 	box-sizing: border-box;
 	width: 100%;
@@ -374,7 +362,7 @@ body { margin: 0; background: #0e0e0e; }
    summoned, which is the trade: 30px of page for a name that is always
    readable and a switcher that never has to be found */
 .spool-page.has-bar { box-sizing: border-box; padding-top: 30px; }
-.spool-page.has-bar .spool-screen:not(.is-terminal) { min-height: calc(100vh - 30px); }
+.spool-page.has-bar .spool-screen { min-height: calc(100vh - 30px); }
 .spool-top {
 	position: fixed;
 	inset: 0 0 auto;

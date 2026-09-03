@@ -13,7 +13,6 @@ import {
 import { createDaemonApp } from "./app";
 import { writeSession } from "./session";
 import { createMachineStateWatchHarness } from "./session-test-harness";
-import { terminalSourceVersion } from "./term-source";
 import { readCaptureError } from "./thumbs";
 
 /** Smallest real PNG: 1×1 transparent pixel. */
@@ -67,9 +66,7 @@ describe("frame projection", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { root: string; frames: unknown[] };
 		expect(body.root).toBe(root);
-		expect(body.frames).toEqual([
-			{ name: "checkout", kind: "html", x: 120, y: 40, w: 800, h: 600, born: expect.any(Number) },
-		]);
+		expect(body.frames).toEqual([{ name: "checkout", x: 120, y: 40, w: 800, h: 600, born: expect.any(Number) }]);
 	});
 
 	/**
@@ -223,64 +220,6 @@ describe("frame projection", () => {
 			frames: { name: string; cover?: Cover }[];
 		};
 		expect(frames[0]?.cover).toBeUndefined();
-	});
-
-	it("projects actionable terminal cover state and refreshes it after shared source changes", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeDesignFile(root, "frames/dash/term.tsx", "// current\n");
-		writeDesignFile(root, "frames/fresh/term.tsx", "// never run\n");
-		writeDesignFile(root, "shared/value.ts", "export const value = 1;\n");
-		writeDesignFile(
-			root,
-			".spool/term/dash.screen",
-			`${JSON.stringify({
-				cols: 80,
-				rows: 24,
-				screen: "current grid",
-				sourceVersion: terminalSourceVersion(root, "dash"),
-			})}\n`,
-		);
-		const app = makeApp(spoolDir);
-
-		const projected = (await (await app.request(`/api/p/${name}/frames`)).json()) as {
-			frames: {
-				name: string;
-				cover?: Cover;
-				terminalCover: { kind: string; message?: string };
-			}[];
-		};
-		const first = Object.fromEntries(projected.frames.map((frame) => [frame.name, frame]));
-		// a terminal's persisted screen is one immutable image.
-		expect(first.dash?.cover?.hash).toMatch(/^[0-9a-f]{32}$/);
-		expect(first.dash?.terminalCover).toEqual({ kind: "current" });
-		expect(first.fresh?.cover).toBeUndefined();
-		expect(first.fresh).toMatchObject({
-			terminalCover: { kind: "never-run", message: expect.stringContaining("saving it does not create a screen") },
-		});
-
-		writeDesignFile(root, "shared/value.ts", "export const value = 2;\n");
-		const refreshed = (await (await app.request(`/api/p/${name}/frames`)).json()) as typeof projected;
-		const staled = refreshed.frames.find((frame) => frame.name === "dash");
-		expect(staled?.cover).toBeUndefined();
-		expect(staled?.terminalCover).toMatchObject({
-			kind: "stale",
-			message: expect.stringContaining("stale after its source changed"),
-		});
-
-		writeDesignFile(
-			root,
-			".spool/term/dash.screen",
-			`${JSON.stringify({
-				cols: 80,
-				rows: 24,
-				screen: "refreshed grid",
-				sourceVersion: terminalSourceVersion(root, "dash"),
-			})}\n`,
-		);
-		writeDesignFile(root, "frames/dash/term.tsx", "// changed\n");
-		const frameRefreshed = (await (await app.request(`/api/p/${name}/frames`)).json()) as typeof projected;
-		expect(frameRefreshed.frames.find((frame) => frame.name === "dash")?.terminalCover.kind).toBe("stale");
 	});
 
 	it("lists an empty frames/ as an empty projection, even when the folder is missing", async () => {
@@ -1311,14 +1250,12 @@ describe("thumbnails", () => {
 			).toBe(400);
 		});
 
-		it("rejects a frame that does not exist or is a terminal", async () => {
+		it("rejects a frame that does not exist", async () => {
 			const spoolDir = join(makeTempDir(), ".spool");
-			const { root, name } = makeProject(spoolDir);
-			writeDesignFile(root, "frames/dash/term.tsx", "// inert terminal\n");
+			const { name } = makeProject(spoolDir);
 			const app = makeApp(spoolDir);
 
 			expect((await postCaptureError(app, name, "ghost", "capture reply timed out")).status).toBe(404);
-			expect((await postCaptureError(app, name, "dash", "capture reply timed out")).status).toBe(400);
 		});
 
 		it("clears once a landed cover retires every other file in the frame's cover dir", async () => {

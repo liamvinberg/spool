@@ -7,7 +7,6 @@ import { fulfillClipboardCopy, rejectClipboardCopy } from "../../runtime/clipboa
 import { ExternalLinkDialog } from "../../runtime/external-link-dialog";
 import { accelKeyName, accelPressed } from "../../runtime/platform-keys";
 import { walkAccepted, walkRejected } from "../../runtime/walk-protocol";
-import { snapPxToCells } from "../../term/cells";
 import type {
 	Camera,
 	FlowEdge,
@@ -24,7 +23,6 @@ import {
 	applyPatch,
 	beaconTrash,
 	fetchCanvasState,
-	fetchCover,
 	fetchFlows,
 	fetchProjection,
 	fileAsAsset,
@@ -852,24 +850,12 @@ export function ProjectCanvas({
 		lifecycleRef.current.onIframe(name, el);
 	}, []);
 
-	const capturePng = useCallback(
-		async (frame: ProjectedFrame): Promise<CapturedFrame> => {
-			if (frame.kind === "html") {
-				const sheet = await lifecycleRef.current.captureExport(frame.name);
-				if (sheet === undefined) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
-				const png = await pngBytesFromImageBlob(await (await fetch(sheet.url)).blob(), frame.w, frame.h);
-				return { name: frame.name, width: frame.w, height: frame.h, png };
-			}
-
-			// A terminal has no HTML document to mount, so its stored cover is
-			// the export source.
-			const stored = frame.cover === undefined ? undefined : await fetchCover(project, frame.name, frame.cover);
-			if (stored === undefined) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
-			const png = await pngBytesFromImageBlob(stored, frame.w, frame.h);
-			return { name: frame.name, width: frame.w, height: frame.h, png };
-		},
-		[project],
-	);
+	const capturePng = useCallback(async (frame: ProjectedFrame): Promise<CapturedFrame> => {
+		const sheet = await lifecycleRef.current.captureExport(frame.name);
+		if (sheet === undefined) throw new Error(`Couldn’t capture ${frame.name}. Try again.`);
+		const png = await pngBytesFromImageBlob(await (await fetch(sheet.url)).blob(), frame.w, frame.h);
+		return { name: frame.name, width: frame.w, height: frame.h, png };
+	}, []);
 
 	const runExport = useCallback(
 		async (names: readonly string[], format: ExportFormat) => {
@@ -2789,8 +2775,8 @@ export function ProjectCanvas({
 				case "copy": {
 					const source = event.source as WindowProxy;
 					const blocked = departedFrameDocuments.current.has(message.frame);
-					const sourceKind = allFramesRef.current.find((candidate) => candidate.name === message.frame)?.kind;
-					if (!clipboardCopyAllowed(sourceKind, enteredRef.current === message.frame, blocked)) {
+					const known = allFramesRef.current.some((candidate) => candidate.name === message.frame);
+					if (!clipboardCopyAllowed(known, enteredRef.current === message.frame, blocked)) {
 						rejectClipboardCopy(
 							message,
 							(result) => source.postMessage(result, "*"),
@@ -3009,11 +2995,11 @@ export function ProjectCanvas({
 				case "back": {
 					const source = event.source as WindowProxy;
 					const active = enteredRef.current === message.frame;
-					const sourceKind = allFramesRef.current.find((candidate) => candidate.name === message.frame)?.kind;
+					const known = allFramesRef.current.some((candidate) => candidate.name === message.frame);
 					const targetExists = allFramesRef.current.some((candidate) => candidate.name === message.target);
 					const rejection = walkRejectionReason(
 						message,
-						sourceKind,
+						known,
 						active,
 						targetExists,
 						departedFrameDocuments.current.has(message.frame),
@@ -3798,17 +3784,6 @@ export function ProjectCanvas({
 					h = edge - anchor.y;
 				}
 			}
-			// a terminal resizes in its own units (#42): whole cells, and a cell
-			// snap that moved an edge drops that axis's guides like the clamp does
-			if (framesRef.current.find((f) => f.name === active.frame)?.kind === "term") {
-				const snapped = snapPxToCells(w, h);
-				if (snapped.w !== w) vGuides = [];
-				if (snapped.h !== h) hGuides = [];
-				if (handle.includes("w")) x = anchor.x - snapped.w;
-				if (handle.includes("n")) y = anchor.y - snapped.h;
-				w = snapped.w;
-				h = snapped.h;
-			}
 			paintResize({
 				frame: active.frame,
 				box: { x, y, w, h },
@@ -4563,11 +4538,9 @@ export function ProjectCanvas({
 													? true
 													: isEntered && !accelDown
 											}
-											terminal={frame.kind === "term"}
 											docNonce={docNonces[frame.name] ?? 0}
 											holdNonce={heldPaint[frame.name] ?? null}
 											cover={frame.cover}
-											terminalCover={frame.terminalCover}
 											walkArrival={walkArrivals.has(frame.name)}
 											onIframe={onIframe}
 										/>
@@ -4587,11 +4560,9 @@ export function ProjectCanvas({
 						    later neighboring frame paint over the label regardless of the
 						    label's own z-index. */}
 						{visibleFrames.map((frame) => {
-							const state = lifecycle.states[frame.name] ?? "picture";
 							const isEntered = entered === frame.name;
 							const isSelected = selected.includes(frame.name);
 							const isHovered = pointerTool && hovered?.visible === true && hovered.frame === frame.name;
-							const paused = frame.kind === "term" && state === "held";
 							return (
 								<div
 									key={`${frame.name}:label`}
@@ -4601,17 +4572,15 @@ export function ProjectCanvas({
 										width: frame.w,
 									}}
 								>
-									{/* Mono, muted; thread when selected; ▸ only marks a terminal
-										    SIGSTOP. Entered swaps it for the state chip (#28). */}
+									{/* Mono, muted; thread when selected. Entered swaps it for the
+										    state chip (#28). */}
 									<FrameLabel
 										name={frame.name}
 										frameWidth={frame.w}
 										k={k}
 										entered={isEntered}
-										paused={paused}
 										selected={isSelected}
 										hovered={isHovered}
-										terminal={frame.kind === "term"}
 										unseen={unseen.get(frame.name)}
 										onPlay={() => playFrame(frame.name)}
 									/>

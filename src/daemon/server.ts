@@ -6,7 +6,6 @@ import type { AgentExecutor } from "./agent-exec";
 import type { Look } from "./agent-preflight";
 import { createDaemonApp } from "./app";
 import { assertLoopbackHost, clearDaemonState, daemonUrl, writeDaemonState } from "./lifecycle";
-import type { TermExecutor } from "./term-exec";
 
 export interface ServeDaemonOptions {
 	spoolDir: string;
@@ -21,8 +20,6 @@ export interface ServeDaemonOptions {
 	experiments?: readonly string[] | undefined;
 	/** #158 the per-user history switch — absent means on, since only `false` is a refusal. */
 	history?: boolean | undefined;
-	/** Retained only for dormant terminal-session seam tests. */
-	termExecutor?: TermExecutor | undefined;
 	/** A stand-in for the agent binary, so a browser test can drive a whole turn. */
 	agentExecutor?: AgentExecutor | undefined;
 	/** A stand-in for the `which` behind the install wall, so that turn has a composer. */
@@ -54,7 +51,6 @@ export function serveDaemon({
 	updateCheck,
 	experiments,
 	history,
-	termExecutor,
 	agentExecutor,
 	agentLook,
 }: ServeDaemonOptions): Promise<RunningDaemon> {
@@ -68,16 +64,12 @@ export function serveDaemon({
 		updateCheck,
 		experiments,
 		history,
-		...(termExecutor === undefined ? {} : { termExecutor }),
 		...(agentExecutor === undefined ? {} : { agentExecutor }),
 		...(agentLook === undefined ? {} : { agentLook }),
 	});
 
 	return new Promise<RunningDaemon>((resolve, reject) => {
 		const server = serve({ fetch: daemon.app.fetch, hostname: host, port, createServer }, (info: AddressInfo) => {
-			// Keep the raw upgrade boundary wired so every terminal socket is
-			// refused centrally until project processes have an OS sandbox.
-			server.on("upgrade", daemon.handleUpgrade);
 			// bound: the daemon can now dial itself (the thumb healer's shots)
 			daemon.setSelfOrigin(daemonUrl(host, info.port));
 			// listening first, asking after — the registry never delays the canvas

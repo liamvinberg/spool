@@ -198,14 +198,14 @@ describe("skill", () => {
 	});
 
 	it("prints every listed topic", () => {
-		for (const topic of ["frames", "terminals", "flows", "scenarios", "styling", "verbs"]) {
+		for (const topic of ["frames", "flows", "scenarios", "styling", "verbs"]) {
 			expect(skillText(topic).length).toBeGreaterThan(100);
 		}
 	});
 
 	it("refuses an unknown topic, listing the real ones", () => {
 		expect(() => skillText("vibes")).toThrowError(SpoolError);
-		expect(() => skillText("vibes")).toThrowError(/frames, terminals, flows, scenarios, styling, verbs/);
+		expect(() => skillText("vibes")).toThrowError(/frames, flows, scenarios, styling, verbs/);
 	});
 
 	it("opens with the completeness contract and carries the fixed laws verbatim", () => {
@@ -261,20 +261,6 @@ describe("skill", () => {
 		expect(flows).toContain("Clipboard reads and paste are not available");
 	});
 
-	it("distinguishes html browser boots from inert terminal persisted-grid shots in the overview", () => {
-		expect(skillText()).toContain(
-			"The CLI boots HTML frames in spool's own headless Chrome; it never reads the human's canvas. A terminal shot executes nothing and rasterizes only a persisted source-current grid to SVG.",
-		);
-	});
-
-	it("keeps the detailed verify loop kind-specific", () => {
-		const verbs = skillText("verbs");
-		expect(verbs).toContain("For HTML frames, shot and logs are two outputs of one boot");
-		expect(verbs).toContain(
-			"A terminal shot does not boot or execute source; it only rasterizes a persisted source-current grid to SVG.",
-		);
-	});
-
 	it("teaches disposable lanes to register their own source for verification", () => {
 		const text = skillText();
 		expect(text).toContain("spool open <lane>");
@@ -283,22 +269,6 @@ describe("skill", () => {
 		expect(text).toContain("before erasing the worktree");
 		expect(text).toContain("Never alias");
 		expect(text).toContain("main checkout");
-	});
-
-	it("teaches that terminal source stays inert until it has an OS sandbox", () => {
-		expect(skillText()).toContain("static disabled surface");
-		const terminals = skillText("terminals");
-		expect(terminals).toContain("does not compile, evaluate, or execute term.tsx");
-		expect(terminals).toContain("inside an OS sandbox");
-		expect(terminals).toContain("no terminal input, output, process lifecycle, restart, or shared live session");
-		expect(terminals).toContain("Saving a never-run terminal does not create a screen.");
-		expect(terminals).toContain('literal `term.go("target")` calls in term.tsx');
-		expect(terminals).toContain('`{"\\u00a0"}`');
-		expect(terminals).toContain(
-			"any stale or never-run terminal rejects the whole player request, even when the selected starting frame is HTML",
-		);
-		expect(skillText()).toContain("terminal source-current persisted-grid SVG");
-		expect(skillText("verbs")).toContain("A terminal never executes for a shot");
 	});
 
 	it("puts design history in the contract, switches included (#160)", () => {
@@ -312,7 +282,7 @@ describe("skill", () => {
 	});
 
 	it("indexes every topic as its own overview row", () => {
-		for (const topic of ["frames", "terminals", "flows", "scenarios", "styling", "verbs"]) {
+		for (const topic of ["frames", "flows", "scenarios", "styling", "verbs"]) {
 			expect(skillText()).toMatch(new RegExp(`^  ${topic} {2,}\\S`, "m"));
 		}
 	});

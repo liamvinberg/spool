@@ -4,7 +4,6 @@ import { ageOf, findFrames, newestFirst } from "./frame-find";
 
 const frame = (name: string, born?: number): ProjectedFrame => ({
 	name,
-	kind: "html",
 	page: "agent",
 	x: 0,
 	y: 0,

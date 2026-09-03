@@ -1,6 +1,6 @@
 import { createElement, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
-import { fulfillClipboardCopy, rejectClipboardCopy } from "./clipboard-host";
+import { fulfillClipboardCopy } from "./clipboard-host";
 import { parseClipboardCopyRequest } from "./clipboard-protocol";
 import { Player, type PlayerController } from "./player-chrome";
 import { DESK_BAR_PX, deskWindow, readBarHidden } from "./player-page";
@@ -27,7 +27,6 @@ export interface ShellConfig {
 	project: string;
 	start: string;
 	frames: Record<string, FrameGeometry>;
-	terminals: string[];
 	innerUrl: string;
 }
 
@@ -308,18 +307,15 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 	 * what the iframe is sized to and what the runtime inside it will measure —
 	 * which is why every w/h that crosses the port is in this space and not the
 	 * authored one, and why being 30px out here wedges the reveal shut.
-	 *
-	 * A terminal is a character grid rather than a document, so it keeps the
-	 * height it was authored at instead of growing into the window.
 	 */
-	const playedBox = (name: string, geometry: FrameGeometry): FrameGeometry => ({
+	const playedBox = (geometry: FrameGeometry): FrameGeometry => ({
 		w: Math.min(window.innerWidth, geometry.w),
-		h: config.terminals.includes(name) ? geometry.h : Math.max(window.innerHeight - chromeInset, 1),
+		h: Math.max(window.innerHeight - chromeInset, 1),
 	});
 	const playedList = (frames: { name: string; w: number; h: number }[]) =>
-		frames.map((frame) => (isGeometry(frame) ? { name: frame.name, ...playedBox(frame.name, frame) } : frame));
+		frames.map((frame) => (isGeometry(frame) ? { name: frame.name, ...playedBox(frame) } : frame));
 	const playedRecord = (frames: Record<string, FrameGeometry>): Record<string, FrameGeometry> =>
-		Object.fromEntries(Object.entries(frames).map(([name, geometry]) => [name, playedBox(name, geometry)]));
+		Object.fromEntries(Object.entries(frames).map(([name, geometry]) => [name, playedBox(geometry)]));
 	config.frames = playedRecord(config.frames);
 
 	const controller: PlayerController = {
@@ -331,7 +327,6 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		read: () => ({ ...snapshot }),
 		geometry: (frame) => (hasFrame(config.frames, frame) ? config.frames[frame] : undefined) ?? { w: 1440, h: 900 },
 		frames: () => Object.keys(config.frames),
-		terminal: (frame) => config.terminals.includes(frame),
 		walk: (frame, back = false) => {
 			if (hasFrame(config.frames, frame) && frame !== snapshot.frame) command("walk", { to: frame, back });
 		},
@@ -550,14 +545,6 @@ export function createPlayerShell(config: ShellConfig, host: PlayerShellHost): P
 		const clipboard = parseClipboardCopyRequest(message);
 		if (clipboard !== undefined) {
 			const reply = postToRuntime;
-			if (reply !== undefined && config.terminals.includes(clipboard.frame)) {
-				rejectClipboardCopy(
-					clipboard,
-					reply,
-					new DOMException("Clipboard writes require an HTML frame", "NotSupportedError"),
-				);
-				return;
-			}
 			if (
 				reply === undefined ||
 				pendingNavigation !== undefined ||

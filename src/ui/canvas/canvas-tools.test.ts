@@ -14,7 +14,7 @@ import { ProjectCanvas } from "./canvas";
 const ACCEL_KEY = accelKeyName();
 const ACCEL = ACCEL_KEY === "Meta" ? { metaKey: true } : { ctrlKey: true };
 
-const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240, kind: "html" }];
+const frames = [{ name: "home", x: 0, y: 0, w: 320, h: 240 }];
 
 it("previews a hovered frame without selecting it", async () => {
 	const { host, canvas } = await renderCanvas();

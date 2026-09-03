@@ -3,7 +3,6 @@ import { type Browser, chromium, type Frame, type Page } from "playwright-core";
 import { build as buildUi } from "vite";
 import { expect, it, onTestFinished } from "vitest";
 import { COVER_PNG, makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
-import { terminalSourceVersion } from "./term-source";
 
 async function launchBrowser(): Promise<Browser | undefined> {
 	try {
@@ -84,32 +83,6 @@ export default function NavigationClipboardFrame() {
 		}
 	}
 	return <button id="leave-then-copy" onClick={() => void leaveThenCopy()}>leave</button>;
-}
-`;
-
-const terminalNavigationClipboardFrame = `import { ui } from "spool";
-
-const probe = window as unknown as { __terminalCopy?: string };
-probe.__terminalCopy = "idle";
-
-export default function TerminalNavigationClipboardFrame() {
-	async function leaveThenCopy() {
-		probe.__terminalCopy = "pending";
-		ui.go("dash");
-		const deadline = performance.now() + 3_000;
-		while (document.querySelector(".spool-term-screen") === null && performance.now() < deadline) {
-			await new Promise((resolve) => setTimeout(resolve, 10));
-		}
-		await new Promise((resolve) => setTimeout(resolve, 150));
-		try {
-			await ui.copy("must not write from a terminal frame");
-			probe.__terminalCopy = "copied";
-		} catch (error) {
-			const value = error as { name?: unknown; message?: unknown };
-			probe.__terminalCopy = String(value.name) + ":" + String(value.message);
-		}
-	}
-	return <button id="to-terminal" onClick={() => void leaveThenCopy()}>terminal</button>;
 }
 `;
 
@@ -326,50 +299,6 @@ it("copies from real canvas and player clicks over their trusted transports", { 
 
 	// Neither surface leaves the frame arguing with a permissions policy.
 	expect(blocked).toEqual([]);
-});
-
-it("rejects retained html clipboard writes after the player enters a terminal frame", { timeout: 90_000 }, async () => {
-	const browser = await launchBrowser();
-	if (browser === undefined) return;
-	onTestFinished(() => browser.close());
-
-	const uiDir = join(makeTempDir(), "ui");
-	const project = await serveProject({ uiDir });
-	writeFrame(project.root, "start", terminalNavigationClipboardFrame);
-	writeDesignFile(project.root, "frames/dash/term.tsx", "// execution disabled until OS-sandboxed\n");
-	writeDesignFile(
-		project.root,
-		".spool/term/dash.screen",
-		`${JSON.stringify({
-			cols: 80,
-			rows: 24,
-			screen: "terminal clipboard boundary",
-			sourceVersion: terminalSourceVersion(project.root, "dash"),
-		})}\n`,
-	);
-	await buildUi({
-		configFile: join(process.cwd(), "vite.config.ts"),
-		logLevel: "silent",
-		build: { outDir: uiDir, emptyOutDir: true },
-	});
-
-	const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-	onTestFinished(() => context.close());
-	await context.grantPermissions(["clipboard-read", "clipboard-write"], {
-		origin: new URL(project.url).origin,
-	});
-	const page = await context.newPage();
-	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
-	const frame = await childFrame(page, "#spool-player");
-	await frame.locator("#to-terminal").waitFor();
-	await page.evaluate(() => navigator.clipboard.writeText("terminal boundary baseline"));
-	await frame.locator("#to-terminal").click();
-	await frame.locator(".spool-term-screen").waitFor();
-
-	await expect
-		.poll(() => frame.evaluate(() => (window as unknown as { __terminalCopy?: string }).__terminalCopy))
-		.toBe("NotSupportedError:Clipboard writes require an HTML frame");
-	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("terminal boundary baseline");
 });
 
 it("can copy after the canvas ignores an automatic walk from the same held frame", { timeout: 90_000 }, async () => {

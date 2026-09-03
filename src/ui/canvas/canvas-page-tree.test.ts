@@ -8,7 +8,6 @@ import { ProjectCanvas } from "./canvas";
 interface Projected {
 	name: string;
 	page?: string;
-	kind: "html";
 	x: number;
 	y: number;
 	w: number;
@@ -77,7 +76,7 @@ describe("canvas page tree", () => {
 });
 
 function frame(name: string, extra: Partial<Projected> = {}): Projected {
-	return { name, kind: "html", x: 0, y: 0, w: 100, h: 100, ...extra };
+	return { name, x: 0, y: 0, w: 100, h: 100, ...extra };
 }
 
 /** every frame row on screen, in the order the rail is drawing them */
