@@ -214,38 +214,58 @@ export async function runUpgrade(
 	// restart then carries every canvas down onto the older build. Offline
 	// answers undefined, and an upgrade a human asked for outright is not
 	// refused by a registry that will not talk.
+	//
+	// The one skew with nothing to install: the cli is already what the
+	// registry offers and the daemon is behind it — the Mac app started the
+	// daemon from its older bundle, or the package was reinstalled by hand under
+	// a daemon nobody restarted. `status` has already promised that this verb
+	// brings them in step, so it does: no install, the daemon restarted onto the
+	// cli that is running.
 	const latest = await (io.fetchLatest ?? fetchLatestVersion)();
+	const daemonBehindCli = daemonVersion !== undefined && isNewer(currentVersion, daemonVersion);
+	let restartOnly = false;
 	if (latest !== undefined) {
 		const beatsCli = isNewer(latest, currentVersion);
 		const beatsDaemon = daemonVersion === undefined || isNewer(latest, daemonVersion);
-		if (!beatsCli || !beatsDaemon) return { kind: "current", latest, cli: currentVersion, daemon: daemonVersion };
+		if (!beatsCli && daemonBehindCli) restartOnly = true;
+		else if (!beatsCli || !beatsDaemon) {
+			return { kind: "current", latest, cli: currentVersion, daemon: daemonVersion };
+		}
 	}
 
 	// A restart takes every process under the daemon with it, so the terminal
 	// says so before it happens. The toast door spawns detached with no tty
 	// and passes no confirm: the canvas asks in its own way before it POSTs.
 	if (io.confirm !== undefined && (before.running || hasPlist)) {
-		const target = latest === undefined ? "the latest release" : `v${latest}`;
+		const target = restartOnly ? `v${currentVersion}` : latest === undefined ? "the latest release" : `v${latest}`;
 		const cost = before.running
 			? `stops the daemon (v${before.version}) and everything running under it`
 			: "re-bakes the launch agent";
-		if (!(await io.confirm(`upgrade to ${target} — this ${cost}. continue?`))) return { kind: "declined" };
+		const verb = restartOnly ? "restart the daemon onto" : "upgrade to";
+		if (!(await io.confirm(`${verb} ${target} — this ${cost}. continue?`))) return { kind: "declined" };
 	}
 
-	narrate(`${plan.manager} owns this install — running: ${[plan.bin, ...plan.args].join(" ")}`);
-	const exit = (io.runInstall ?? runInstallDefault)(plan.bin, plan.args);
-	if (exit !== 0) {
-		return {
-			kind: "failed",
-			message: `${plan.manager} exited with ${exit ?? "a spawn failure"} — nothing was restarted`,
-		};
-	}
+	let to = currentVersion;
+	let newCli = real;
+	if (restartOnly) {
+		narrate(`the cli is already v${currentVersion} — restarting the daemon onto it, nothing to install`);
+	} else {
+		narrate(`${plan.manager} owns this install — running: ${[plan.bin, ...plan.args].join(" ")}`);
+		const exit = (io.runInstall ?? runInstallDefault)(plan.bin, plan.args);
+		if (exit !== 0) {
+			return {
+				kind: "failed",
+				message: `${plan.manager} exited with ${exit ?? "a spawn failure"} — nothing was restarted`,
+			};
+		}
 
-	const to = (io.readInstalledVersion ?? readPackageVersion)(plan.packageDir);
-	if (to === undefined) {
-		return { kind: "failed", message: `installed, but cannot read ${join(plan.packageDir, "package.json")}` };
+		const installed = (io.readInstalledVersion ?? readPackageVersion)(plan.packageDir);
+		if (installed === undefined) {
+			return { kind: "failed", message: `installed, but cannot read ${join(plan.packageDir, "package.json")}` };
+		}
+		to = installed;
+		newCli = join(plan.packageDir, "dist", "cli.js");
 	}
-	const newCli = join(plan.packageDir, "dist", "cli.js");
 
 	if (hasPlist) {
 		// autostart promises a running daemon: re-bake keeps it supervised and

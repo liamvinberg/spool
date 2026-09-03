@@ -202,6 +202,51 @@ describe("runUpgrade", () => {
 		expect(calls.ensures).toEqual([]);
 	});
 
+	it("restarts a daemon behind a cli that is already the latest, installing nothing", async () => {
+		// the Mac app started the daemon from its older bundle, then the cli was
+		// reinstalled: `status` says the skew and promises this verb fixes it
+		const { io, calls } = fakeIo({
+			statuses: [
+				{ running: true, url: "http://x", pid: 1, version: "0.1.0" },
+				{ running: true, url: "http://x", pid: 2, version: "0.2.0" },
+			],
+			fetchLatest: async () => "0.2.0",
+		});
+
+		const outcome = await runUpgrade(makeTempDir(), "0.2.0", io);
+
+		expect(calls.installs).toEqual([]);
+		expect(calls.stops).toBe(1);
+		// onto the cli that is running, by its own real path
+		expect(calls.ensures).toEqual([["/opt/homebrew/bin/node", NPM_CLI, "serve", "--foreground"]]);
+		expect(outcome).toEqual({
+			kind: "done",
+			from: "0.2.0",
+			to: "0.2.0",
+			daemon: { running: true, url: "http://127.0.0.1:7766", restarted: true },
+		});
+	});
+
+	it("asks before that restart too, naming it as a restart rather than an upgrade", async () => {
+		const asked: string[] = [];
+		const { io, calls } = fakeIo({
+			statuses: [{ running: true, url: "http://x", pid: 1, version: "0.1.0" }],
+			fetchLatest: async () => "0.2.0",
+			confirm: async (question) => {
+				asked.push(question);
+				return false;
+			},
+		});
+
+		const outcome = await runUpgrade(makeTempDir(), "0.2.0", io);
+
+		expect(asked).toEqual([
+			"restart the daemon onto v0.2.0 — this stops the daemon (v0.1.0) and everything running under it. continue?",
+		]);
+		expect(outcome).toEqual({ kind: "declined" });
+		expect(calls.stops).toBe(0);
+	});
+
 	it("refuses to reinstall under a daemon that is already ahead of the registry", async () => {
 		// the publish lag that downgraded a live machine: cli and registry agree
 		// on 0.3.0 while the daemon is already serving 0.4.0
