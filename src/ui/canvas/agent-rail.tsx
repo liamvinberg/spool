@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentLimit } from "../../daemon/agent-events";
@@ -201,8 +201,8 @@ export function AgentRail({
 	 *
 	 * The column holds one surface at a time and the strip is the index of what
 	 * can stand in it, so where the rail stands is one fact the dock holds rather
-	 * than two the rails argue about. The number still matters here: the threads
-	 * take 34 of it and the composer measures what is left.
+	 * than two the rails argue about. The number still matters here: the composer
+	 * measures its chip strip against it.
 	 */
 	width: number;
 	/** the carets inside the rail: they shut the column, which is the dock's state */
@@ -253,6 +253,8 @@ export function AgentRail({
 }) {
 	/** how many sends this rail has watched go out, which is the log's cue to follow again */
 	const [spoke, setSpoke] = useState(0);
+	/** the clock read when the thread list was dropped over the log, or null while it is shut */
+	const [listing, setListing] = useState<number | null>(null);
 	/**
 	 * What the composer is holding, lifted out of it because two things write here
 	 * (#170).
@@ -327,8 +329,6 @@ export function AgentRail({
 			entry.kind === "wait" && entry.state === "running" && entry.ms === null,
 	);
 	const waited = outstanding === undefined ? 0 : Math.max(0, elapsed - outstanding.at);
-	/** what the panel has left once the column has taken its 34, which two things measure */
-	const panel = width - SPINE_W;
 	return (
 		<section
 			aria-label="Agent"
@@ -347,25 +347,24 @@ export function AgentRail({
 				<div className="flex h-full min-w-[200px] flex-col">
 					<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
 						<InstallWall install={install} />
-						{/* the wall has no nameplate to ride, so here alone the caret floats */}
+						{/* the wall has no plate and no glyph to lean on, so here alone the caret floats */}
 						<CollapseCaret onCollapse={onCollapse} className="absolute top-2 right-2 z-10" />
 					</div>
 					<DeadComposer />
 				</div>
 			) : (
 				/*
-				 * The rail is a panel and a column beside it (#205).
-				 *
-				 * The threads are 34px of the rail's own width down its outer edge rather than a
-				 * line of its height above the log, which is the axis a rail has spare. The panel
-				 * is everything one conversation is and the column is every conversation there is,
-				 * and a press on the column changes only the panel.
+				 * The rail is one panel, and the plate over it is where the other conversations
+				 * live (#205). The panel is everything one conversation is; the list the plate
+				 * drops is every conversation there is, and a press on it changes only the panel.
 				 */
-				<div className="flex h-full min-w-[200px]">
-					<div className="flex min-w-0 flex-1 flex-col">
-						{/* the nameplate leads the shelf, because it says which thread everything
-						    under it belongs to */}
-						<Nameplate threads={threads} onCollapse={onCollapse} />
+				<div className="flex h-full min-w-[200px] flex-col">
+					{/* the plate leads the shelf, because it says which thread everything under it
+					    belongs to, and it is where the others are reached from */}
+					<ThreadPlate threads={threads} listing={listing} onList={setListing} />
+					{/* the list drops over the shelf and the log together, so it hangs off the plate
+					    whatever the shelf is carrying */}
+					<div className="relative flex min-h-0 flex-1 flex-col">
 						{/* the standing half of being signed out, on the shelf the plan would take —
 						    and they never want it at once, because a plan belongs to a turn that is
 						    running and this exists precisely because none can (#201) */}
@@ -379,326 +378,245 @@ export function AgentRail({
 							jump={jump}
 							onAnswer={onAnswer}
 						/>
-						{/* the strip is measured against the composer's own inner width, which is the
-						    rail's drag less the column standing beside it: the same three chips fit at
-						    420 and are a count at the 200 floor, because the rule is one line rather
-						    than one width */}
-						<Composer
-							phase={phase}
-							waited={waited}
-							finished={threads.finished}
-							answering={asking?.kind === "ask" ? asking.request : null}
-							strip={stripOf(pointing.entries, composerWidth(panel), pointing.inside)}
-							pointing={pointing}
-							draft={holding.draft}
-							onDraft={writeDraft}
-							attached={holding.attached}
-							onAttach={(attached) => write((was) => ({ ...was, attached }))}
-							queued={queued}
-							model={model}
-							limit={limit}
-							onSend={(text, sent) => {
-								const took = onSend(text, sent);
-								// the log follows the live edge again because something was said, so a press
-								// that said nothing must not move it
-								if (took) setSpoke((count) => count + 1);
-								return took;
-							}}
-							running={running}
-							onQueue={onQueue}
-							onUnqueue={onUnqueue}
-							onStop={onStop}
-							onAnswer={onAnswer}
-						/>
+						{listing === null ? null : (
+							<ThreadDrop threads={threads} now={listing} onDone={() => setListing(null)} />
+						)}
 					</div>
-					<Spine threads={threads} room={panel} />
+					{/* the strip is measured against the composer's own inner width: the same three
+					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
+					    rather than one width */}
+					<Composer
+						phase={phase}
+						waited={waited}
+						finished={threads.finished}
+						answering={asking?.kind === "ask" ? asking.request : null}
+						strip={stripOf(pointing.entries, composerWidth(width), pointing.inside)}
+						pointing={pointing}
+						draft={holding.draft}
+						onDraft={writeDraft}
+						attached={holding.attached}
+						onAttach={(attached) => write((was) => ({ ...was, attached }))}
+						queued={queued}
+						model={model}
+						limit={limit}
+						onSend={(text, sent) => {
+							const took = onSend(text, sent);
+							// the log follows the live edge again because something was said, so a press
+							// that said nothing must not move it
+							if (took) setSpoke((count) => count + 1);
+							return took;
+						}}
+						running={running}
+						onQueue={onQueue}
+						onUnqueue={onUnqueue}
+						onStop={onStop}
+						onAnswer={onAnswer}
+					/>
 				</div>
 			)}
 		</section>
 	);
 }
 
-/* ---------- the threads, in a column down the rail's outer edge (#136, #161, #200, #205) ----------
- * Every conversation on screen at once, in a rail with no room for their names — so the
- * column stops spending width on them. The strip's break was always width: #136 measured
- * four names at 112px each and called that the floor, and #144 kept the bet by collapsing
- * everything unopened to a mark, which buys the room back and spends the names to do it.
- * Turned ninety degrees the constraint is gone rather than traded. The rail is as tall as
- * the window and a cell is 34, so a dozen threads is a third of an ordinary screen and a
- * hundred scroll a column that had the room to scroll.
+/* ---------- the threads, on the plate over the log (#136, #161, #200, #205) ----------
+ * One panel, and every other conversation reached from the line at the top of it. The
+ * plate carries the open thread's ask, the marks of whatever is moving in another thread,
+ * a chevron that drops the list over the log, and the plus. The column this replaced put a
+ * mark per thread down the rail's outer edge and the rest behind a hover; it was a third
+ * edge on a 420px rail, and every thread you were not looking at cost a blank cell. The
+ * plate spends one line the rail already spends, and the list is drawn only while it is
+ * asked for.
  *
- * It stands on the *outer* edge on purpose. The inner edge is the drag handle, a 12px
- * column with pointer capture on it, and the outer edge is the one the rail collapses onto
- * at `STRIP_WIDTH` — so the column and the shut rail want the same edge rather than two
- * different ones. **The strip does not draw the column**: shutting the rail is asking for
- * the canvas back, and it stays the one control that opens it again. The 34 comes out of
- * the rail's own width rather than being added beside it, at every width, and the honest
- * squeeze is the 200 floor.
- *
- * **Nothing in the column is a name, and the flyout is the whole of the answer.** Hover a
- * cell and the thread arrives to the left of it over the log: what it is called, the last
- * line it drew, its age and its ✕. A press opens it. The ✕ has nowhere else to be — a 34px
- * cell holding a 14px mark and a 14px close would be two hit targets four pixels apart — so
- * a close is a deliberate act inside the flyout rather than a hover-reveal on the cell.
- *
- * The plus leads, at the top, for #144's reason turned ninety degrees: a column is read
- * downward, so *new* belongs above the newest rather than below the oldest.
- *
- * The second cost is the real one and it is on screen: twelve read threads are twelve
- * identical blank cells. This bets that the job here is *what is moving now*, which a column
- * answers at a glance, and that finding one two-hour-old conversation is a different job it
- * does through the hover.
+ * No collapse caret on the plate: the dock glyph that opened the panel is the thing that
+ * shuts it, and a second control for the same act was the doubling in miniature.
  *
  * Nothing is coloured and nothing re-sorts. State in this rail is motion, the one accent
- * belongs to the selection, and the order is recency fixed once — a column that re-sorted
- * as its threads worked would move a cell out from under a cursor already reaching for it.
+ * belongs to the selection and to the row that is open, and the order is recency fixed
+ * once, so a row never moves out from under a cursor already reaching for it.
  */
-
-/** the column's width, and every cell is square in it */
-const SPINE_W = 34;
-
-/** what the flyout wants, and what it settles for once the rail is dragged narrow */
-const FLYOUT_W = 268;
 
 /**
- * The tallest the flyout gets, which is what the last cell's is held above the floor by.
+ * The plate: which thread this is, what is moving elsewhere, and the way to the rest.
  *
- * An upper bound rather than a measurement: the name wraps and a name is at most two frames
- * and a count, which is three lines of mono at the narrowest rail the panel allows. Reserving
- * the tall case costs a cell near the bottom a few pixels of lift and nothing else, where
- * measuring the box would cost a second layout pass on every hover.
+ * The ask is drawn in sentence type because it is a sentence somebody said, and it
+ * truncates to the one line the plate has: the list under it is where it wraps. The marks
+ * carry no names, which is exactly what the column was, so a ring turning here means
+ * something is working in another thread and a dot means one finished while you were
+ * here. A thread that is read draws nothing, because the plate says what is moving.
+ *
+ * `listing` is the clock read when the list was opened, or null while it is shut: the
+ * moment the list opened is the moment the ages in it are about.
  */
-const FLYOUT_H = 128;
-
-/** which thread the pointer is asking about, where its flyout goes, and when it asked */
-interface Hovered {
-	readonly id: string;
-	readonly top: number;
-	/** how far in from the window's right edge the flyout ends, which is the column's left edge */
-	readonly right: number;
-	/** the clock read at the hover, because that is the moment the age is about */
-	readonly now: number;
-}
-
-/**
- * Where a cell's flyout goes, measured off the cell rather than counted off its index.
- *
- * An index is the right answer only while the column has never scrolled, which is the one
- * case this column exists to survive: past the cells that fit, a thread's place in the list
- * and its place on the screen are different numbers. So the cell is asked where it is, and
- * the flyout is held clear of the bottom edge from there.
- *
- * The numbers are the window's rather than the column's because the flyout is `fixed` (#207):
- * it belongs to its cell in the tree, so the caret reaches the close from the cell it is on,
- * and the scroller its cell lives in would otherwise clip it away entirely.
- */
-/** whether focus landed inside a flyout, which is the one place a cell may lose it to */
-const inFlyout = (target: EventTarget | null): boolean =>
-	target instanceof Element && target.closest("[data-agent-flyout]") !== null;
-
-function flyoutAt(cell: HTMLElement, column: HTMLElement | null): { top: number; right: number } {
-	if (column === null) return { top: 0, right: 0 };
-	const box = column.getBoundingClientRect();
-	const wanted = cell.getBoundingClientRect().top;
-	return {
-		top: Math.max(box.top, Math.min(wanted, box.bottom - FLYOUT_H)),
-		right: Math.max(0, window.innerWidth - box.left),
-	};
-}
-
-function Spine({ threads, room }: { threads: Threads; room: number }) {
-	const { list, open, onOpen, onClose, onNew } = threads;
-	const column = useRef<HTMLDivElement>(null);
-	const [over, setOver] = useState<Hovered | null>(null);
-	/** the cell the open flyout was measured off, so a scroll can measure it again */
-	const asked = useRef<HTMLElement | null>(null);
-	/** the pointer and the caret ask the same question, and it is answered the same way */
-	const ask = (id: string) => (event: { currentTarget: HTMLElement }) => {
-		asked.current = event.currentTarget;
-		setOver({ id, now: Date.now(), ...flyoutAt(event.currentTarget, column.current) });
-	};
-
+function ThreadPlate({
+	threads,
+	listing,
+	onList,
+}: {
+	threads: Threads;
+	listing: number | null;
+	onList: (at: number | null) => void;
+}) {
+	const { list, open, onNew } = threads;
+	const name = list.find((thread) => thread.id === open)?.name ?? UNSAID;
+	const elsewhere = list.filter((thread) => thread.id !== open && thread.life !== "read");
+	const listed = listing !== null;
 	return (
-		// the flyout is a child, so moving the pointer off a cell and onto it never leaves
-		// the column and never closes the thing being reached for
-		// biome-ignore lint/a11y/noStaticElementInteractions: the handler only takes the hover surface away again; every control in the column is a button
-		<div
-			ref={column}
-			data-agent-threads=""
-			className="relative flex shrink-0 flex-col border-border border-l"
-			style={{ width: SPINE_W }}
-			onMouseLeave={() => setOver(null)}
-		>
+		<div data-agent-plate="" className="flex h-[34px] shrink-0 items-center gap-1 border-border border-b px-3.5">
+			<button
+				type="button"
+				data-agent-plate-ask=""
+				aria-expanded={listed}
+				onClick={() => onList(listed ? null : Date.now())}
+				className="-ml-1.5 flex h-7 min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150 hover:bg-surface"
+			>
+				<span
+					className={cn(
+						"min-w-0 flex-1 truncate text-sm leading-4",
+						name === UNSAID ? "text-muted/60" : "text-text",
+					)}
+				>
+					{name}
+				</span>
+				{elsewhere.length === 0 ? null : (
+					<span data-agent-elsewhere="" className="flex shrink-0 items-center gap-1">
+						{elsewhere.map((thread) => (
+							<ThreadMark key={thread.id} life={thread.life} />
+						))}
+					</span>
+				)}
+				<ChevronIcon open={listed} className="h-2.5 w-2.5 shrink-0 text-muted/45" />
+			</button>
 			<button
 				type="button"
 				aria-label="New thread"
-				onClick={onNew}
-				className="flex h-[34px] shrink-0 items-center justify-center border-border border-b text-muted/45 transition-colors duration-150 hover:text-text"
+				onClick={() => {
+					onList(null);
+					onNew();
+				}}
+				className="-mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-150 hover:text-text"
 			>
 				<PlusIcon />
 			</button>
-			<div
-				className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-				// a fixed box does not travel with the cell it belongs to, so the cell is asked
-				// again where it is rather than the flyout being taken away mid-read
-				onScroll={() => {
-					const cell = asked.current;
-					if (cell === null) return;
-					setOver((was) => (was === null ? was : { ...was, ...flyoutAt(cell, column.current) }));
-				}}
-			>
-				{list.map((thread) => {
-					const on = thread.id === open;
-					return (
-						<Fragment key={thread.id}>
-							<button
-								type="button"
-								data-agent-thread={thread.name}
-								data-agent-thread-life={thread.life}
-								aria-label={thread.name}
-								aria-current={on ? "true" : undefined}
-								onMouseEnter={ask(thread.id)}
-								onFocus={ask(thread.id)}
-								// a caret leaving takes the flyout it opened with it, and only that one:
-								// the pointer may be somewhere else by now, and it asked more recently. Its
-								// own flyout is not leaving: that is where the close it reached for is (#207)
-								onBlur={(event) => {
-									if (inFlyout(event.relatedTarget)) return;
-									setOver((was) => (was?.id === thread.id ? null : was));
-								}}
-								onClick={() => onOpen(thread.id)}
-								className={cn(
-									"relative flex h-[34px] shrink-0 items-center justify-center transition-colors duration-150",
-									on ? "bg-surface/70" : "hover:bg-surface/40",
-								)}
-							>
-								{/* the accent says which one is open, exactly as the tab's underline did, and it
-							    faces the panel it owns. With one thread there is no which, so it draws none */}
-								{on && list.length > 1 ? (
-									<span className="pointer-events-none absolute inset-y-0 left-0 w-[2px] bg-thread" />
-								) : null}
-								<ThreadMark life={thread.life} />
-							</button>
-							{over?.id === thread.id ? (
-								<Flyout
-									thread={thread}
-									top={over.top}
-									right={over.right}
-									now={over.now}
-									room={room}
-									onClose={() => onClose(thread.id)}
-									onLeave={() => setOver((was) => (was?.id === thread.id ? null : was))}
-								/>
-							) : null}
-						</Fragment>
-					);
-				})}
-			</div>
 		</div>
 	);
 }
 
 /**
- * The thread, at the width a name needs, for exactly as long as you are asking for it.
+ * The list, dropped over the log for as long as it is asked for.
  *
- * It reaches left over the log rather than right off the window, and it is clamped to the
- * column so the last cell's flyout does not hang off the bottom. The name wraps rather than
- * truncating, because a name made of several frames is the case worth reading whole; the
- * line under it is the last thing the thread drew, in the rail's own nouns.
+ * One row per thread: the mark, the ask wrapping to three lines, and under it the frames
+ * it wrote or, where it has written none, the last line it drew, with its age on the
+ * right. The open row is shaded and carries the accent. A close appears on hover at the
+ * top right, off the ask so a miss opens rather than closes, and the end of the first
+ * line fades out under it (`.agent-thread-ask` in `ui.css`) rather than the two
+ * overprinting.
  *
- * Its width is the room there is rather than a constant. The rail is draggable and it
- * clips: 268 sits inside the 420 default with the column already paid for, and at the 200
- * floor a flyout that kept it would be cut in half by the edge it hangs over.
- *
- * It sits in its own cell's markup and is placed against the window rather than the column,
- * because the two ways to reach it want opposite things (#207). The pointer wants it clear of
- * the scroller, which clips anything hanging out of its side; the caret wants it next after
- * the cell, which is the only ordering that puts the close one tab away. A `fixed` box in the
- * cell's own subtree is both, and it costs the assumption that nothing above the rail makes a
- * containing block — nothing does, and a transform anywhere over it would be visible at once.
+ * It goes the way a menu goes: a press on a row, on the plate, or anywhere else, and
+ * escape. The press outside is a backdrop rather than a document listener, which is how
+ * the model menu does it; escape is taken on the way down, before the composer or the
+ * canvas can read it as theirs, because while the list is up it is the thing escape is
+ * about.
  */
-function Flyout({
+function ThreadDrop({ threads, now, onDone }: { threads: Threads; now: number; onDone: () => void }) {
+	const { list, open, onOpen, onClose } = threads;
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			event.preventDefault();
+			event.stopPropagation();
+			onDone();
+		};
+		window.addEventListener("keydown", onKey, true);
+		return () => window.removeEventListener("keydown", onKey, true);
+	}, [onDone]);
+	return (
+		<>
+			<button
+				type="button"
+				aria-label="close the threads"
+				className="fixed inset-0 z-10 cursor-default"
+				onClick={onDone}
+			/>
+			<div
+				data-agent-threads=""
+				className="absolute inset-x-0 top-0 z-20 animate-agent-menu-in border-border border-b bg-bg p-1.5"
+			>
+				{list.map((thread) => (
+					<ThreadRow
+						key={thread.id}
+						thread={thread}
+						on={thread.id === open}
+						now={now}
+						onPick={() => {
+							onOpen(thread.id);
+							onDone();
+						}}
+						onClose={() => onClose(thread.id)}
+					/>
+				))}
+			</div>
+		</>
+	);
+}
+
+function ThreadRow({
 	thread,
-	top,
-	right,
+	on,
 	now,
-	room,
+	onPick,
 	onClose,
-	onLeave,
 }: {
 	thread: Thread;
-	top: number;
-	right: number;
+	on: boolean;
 	now: number;
-	/** what the panel has left, which is as wide as this may get */
-	room: number;
+	onPick: () => void;
 	onClose: () => void;
-	/** the caret left the flyout for something that is not in it */
-	onLeave: () => void;
 }) {
+	// what it did, in one line: where the work landed, or what it was doing where it has
+	// not landed anywhere yet
+	const line = thread.wrote !== "" ? thread.wrote : thread.last !== "" ? thread.last : "nothing yet";
 	return (
-		<div
-			data-agent-flyout={thread.name}
-			className="fixed z-20 border border-border-raised bg-surface px-3 py-2.5"
-			style={{ top, right, width: Math.min(FLYOUT_W, room) }}
-		>
-			<p className="font-mono text-sm text-text leading-4">{thread.name}</p>
-			<div className="mt-1.5 flex items-center gap-2">
-				<span className="min-w-0 flex-1 truncate font-mono text-2xs text-muted/60 leading-3">
-					{thread.last === "" ? "nothing yet" : thread.last}
+		<div className="group agent-thread-row relative flex">
+			<button
+				type="button"
+				data-agent-thread={thread.name}
+				data-agent-thread-life={thread.life}
+				aria-current={on ? "true" : undefined}
+				onClick={onPick}
+				className={cn(
+					"relative flex min-w-0 flex-1 items-start gap-2.5 rounded-sm px-2 py-2 text-left transition-colors duration-150",
+					on ? "bg-surface/70" : "hover:bg-surface/40",
+				)}
+			>
+				{on ? (
+					<span className="pointer-events-none absolute inset-y-0 left-0 w-[2px] rounded-full bg-thread" />
+				) : null}
+				<ThreadMark life={thread.life} className="mt-px" />
+				<span className="flex min-w-0 flex-1 flex-col gap-1">
+					<span
+						className={cn("agent-thread-ask line-clamp-3 text-sm leading-4", on ? "text-text" : "text-text/85")}
+					>
+						{thread.name}
+					</span>
+					<span className="flex items-center gap-2">
+						<span className="min-w-0 flex-1 truncate font-mono text-2xs text-muted/55 leading-3">{line}</span>
+						<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">{ageOf(thread.at, now)}</span>
+					</span>
 				</span>
-				<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">{ageOf(thread.at, now)}</span>
-				{/* a close is a tidy rather than a delete: neither the agent's own session nor
-				    spool's stored picture goes with the cell */}
+			</button>
+			{/* a close is a tidy rather than a delete: neither the agent's own session nor
+			    spool's stored picture goes with the row */}
+			<span className="absolute top-2 right-2 opacity-0 transition-opacity duration-[180ms] group-focus-within:opacity-100 group-hover:opacity-100">
 				<button
 					type="button"
 					data-agent-thread-close={thread.name}
 					aria-label={`close ${thread.name}`}
 					onClick={onClose}
-					// the only thing in here a caret can hold, so its leaving is the flyout's
-					onBlur={onLeave}
 					className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-muted/45 transition-colors duration-150 hover:text-text"
 				>
 					<CloseIcon />
 				</button>
-			</div>
-		</div>
-	);
-}
-
-/**
- * The name of the thread you are in, and the only place it is written (#205).
- *
- * The obvious home for a title is the head of the log, the way a document carries one. The
- * transcript will not have it: it is bottom-anchored by design, so the first thing in a
- * conversation longer than the box is above the box, and a title you cannot see is not a
- * title. So the name is chrome after all, at the plan strip's own 34px.
- *
- * It is a label rather than a control. A name is derived from what the thread wrote and
- * recomputed on every read, so there is nothing here for a press to change: a rename would
- * be a second name stored beside the one the work already says, and the first write after
- * it would put the two out of step.
- *
- * Mono throughout, because a derived name is machine text — it is the frames the thread
- * wrote. A thread that has written none is still its ask, and it keeps the one register
- * rather than changing typeface the moment it writes its first frame; the row this replaced
- * drew the ask in mono for its whole life, so nothing about a sentence in here is new. One
- * that has said nothing at all is dimmed, because that is the machine saying there is
- * nothing to say yet rather than a name anybody chose.
- */
-function Nameplate({ threads, onCollapse }: { threads: Threads; onCollapse: () => void }) {
-	const name = threads.list.find((thread) => thread.id === threads.open)?.name ?? UNSAID;
-	return (
-		<div data-agent-nameplate="" className="flex h-[34px] shrink-0 items-center gap-2 border-border border-b px-3.5">
-			<span
-				className={cn(
-					"min-w-0 flex-1 truncate font-mono text-sm leading-4",
-					name === UNSAID ? "text-muted/60" : "text-text",
-				)}
-			>
-				{name}
 			</span>
-			<CollapseCaret onCollapse={onCollapse} className="-mr-1.5 h-6 w-6" />
 		</div>
 	);
 }
@@ -706,36 +624,32 @@ function Nameplate({ threads, onCollapse }: { threads: Threads; onCollapse: () =
 /**
  * What a thread is doing, in the smallest thing that can say it (#161).
  *
- * The box is always 14px whatever is inside it, so every cell in the column draws its mark
- * in the same place and a mark appearing never moves the one below it.
+ * The box is always 14px whatever is inside it, so every row in the list draws its mark
+ * in the same place and the plate's marks stand in one line.
  *
- * Four readings of five lives. Streaming draws nothing and keeps the cell aligned: the
- * transcript beside it is already a turning mark and a live edge, so a second spinner on
- * the cell naming the thread you are watching says nothing the screen does not. Running turns,
- * colourless, because state in this rail is motion and the one accent belongs to the
- * selection. Waiting is `unread`'s disc held inside `running`'s ring — the turn that
- * stopped, with the thing that stopped it sitting in it — and it is the loudest of the
- * three on purpose, because it is the only one of them that is actually stuck. Unread is a
- * solid dot at text strength, the way a mailbox says it. Read is a hollow one.
+ * Four drawings of five lives. Streaming and running turn the same ring, colourless,
+ * because state in this rail is motion and the one accent belongs to the selection.
+ * Waiting is `unread`'s disc held inside `running`'s ring — the turn that stopped, with
+ * the thing that stopped it sitting in it — and it is the loudest of the three on
+ * purpose, because it is the only one of them that is actually stuck. Unread is a solid
+ * dot at text strength, the way a mailbox says it. Read is a hollow one, at the strength
+ * a disabled thing gets rather than nothing at all, so a row for an old thread still
+ * reads as pressable.
  *
  * Two candidates for waiting died on facts rather than taste. Freezing the spinner is
  * pixel-identical to what `prefers-reduced-motion` already renders for a working thread,
  * so it would be working's drawing with a second meaning for every reduced-motion reader.
  * Borrowing the disc alone breaks on the clearing rule: a disc clears when you open the
- * thread and a question does not, so a strip that spent it here would go quiet about a
+ * thread and a question does not, so a mark that spent it here would go quiet about a
  * thread that will never finish.
- *
- * `read` is the one departure, and it is #144's own carried into the column: out here the
- * mark *is* the thread, and a thread you cannot see is a thread you cannot press, so read
- * is a hollow dot at the strength a disabled thing gets rather than nothing at all.
  */
-function ThreadMark({ life }: { life: Life }) {
+function ThreadMark({ life, className }: { life: Life; className?: string }) {
 	// the thread you are watching turns the same ring as the ones you are not: the two
 	// lives are one drawing, and they are separate lives only because `streaming` is a
 	// fact about this browser and never reaches disk
 	const turning = life === "streaming" || life === "running";
 	return (
-		<span data-agent-mark={life} className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+		<span data-agent-mark={life} className={cn("flex h-3.5 w-3.5 shrink-0 items-center justify-center", className)}>
 			{turning ? (
 				<svg
 					viewBox="0 0 14 14"
@@ -763,16 +677,12 @@ function ThreadMark({ life }: { life: Life }) {
 }
 
 /**
- * The way back to the strip.
+ * The way back to the strip, on the wall alone.
  *
- * It rides the nameplate's own row rather than a line of its own. #144's finding still
- * holds — a line of a 420px column is too expensive to spend on chrome — and the
- * nameplate is already spending that line, so the caret costs nothing by sitting at the
- * end of it. Floating it over the log's top fade cost nothing either, but it put a
- * control inside the reading surface, where it hung over whichever entry happened to
- * scroll under it. Chrome belongs on the chrome row. The wall keeps the floating
- * placement, because it has no nameplate and a rail you cannot collapse is a rail that
- * has taken the column hostage over a state nobody caused.
+ * Everywhere else the dock glyph that opened the panel is the thing that shuts it, and the
+ * plate carries no caret (#205). The wall has no plate and no glyph in reach of a reader
+ * who has never opened the dock, and a rail you cannot collapse is a rail that has taken
+ * the column hostage over a state nobody caused, so here alone the caret floats.
  */
 function CollapseCaret({ onCollapse, className }: { onCollapse: () => void; className?: string }) {
 	return (

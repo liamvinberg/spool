@@ -2809,28 +2809,23 @@ describe("the queue", () => {
 
 /* ---------- the threads, and what survives a restart (#120, #136, #200, #205) ---------- */
 
-/** the column's cells, in the order it lays them out: newest at the top, fixed once */
-const cells = (host: HTMLElement) =>
-	[...host.querySelectorAll("[data-agent-thread]")].map((cell) => cell.getAttribute("data-agent-thread"));
+/** the plate over the log: the open thread's ask, the marks of the rest, and the way to them */
+const plate = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-plate]");
 
-const cell = (host: HTMLElement, name: string) => host.querySelector<HTMLElement>(`[data-agent-thread="${name}"]`);
+/** the press on the plate that drops the list */
+const plateAsk = (host: HTMLElement) => plate(host)?.querySelector<HTMLElement>("[data-agent-plate-ask]") ?? null;
 
-/** the column itself, which is 34px of the rail's own width whatever is in it */
-const spine = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-threads]");
+/** the thread you are in, which is the one place its name is written outside the list */
+const nameplate = (host: HTMLElement) => plate(host)?.querySelector("[data-agent-plate-ask] > span")?.textContent ?? "";
 
-const lifeOfCell = (host: HTMLElement, name: string) => cell(host, name)?.getAttribute("data-agent-thread-life");
+/** the marks on the plate, which are the lives of the threads moving somewhere you are not looking */
+const elsewhere = (host: HTMLElement) =>
+	[...(plate(host)?.querySelectorAll("[data-agent-elsewhere] [data-agent-mark]") ?? [])].map((mark) =>
+		mark.getAttribute("data-agent-mark"),
+	);
 
-/** the thread you are in, which is the one place a name is written */
-const nameplate = (host: HTMLElement) => host.querySelector("[data-agent-nameplate]")?.textContent ?? "";
-
-/** the ring, the disc and the dot, counted inside the mark's own 14px box */
-const marks = (host: HTMLElement, name: string) => {
-	const mark = cell(host, name)?.querySelector("[data-agent-mark]");
-	return {
-		turning: mark?.querySelectorAll(".animate-agent-spin").length ?? 0,
-		drawn: mark?.children.length ?? 0,
-	};
-};
+/** the list dropped over the log, or null while it is shut */
+const threadList = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-threads]");
 
 async function press(element: Element | null | undefined) {
 	if (element === null || element === undefined) throw new Error("nothing to press");
@@ -2839,17 +2834,41 @@ async function press(element: Element | null | undefined) {
 	});
 }
 
-const openCell = (host: HTMLElement, name: string) => press(cell(host, name));
-
-/** the thread under the pointer, arriving over the log because the cell cannot hold it */
-async function point(host: HTMLElement, name: string) {
-	await hover(cell(host, name));
-	return host.querySelector<HTMLElement>("[data-agent-flyout]");
+/** the list, dropped if it is not already: a row exists only while the list is up */
+async function listed(host: HTMLElement) {
+	if (threadList(host) === null) await press(plateAsk(host));
+	return threadList(host);
 }
 
-/** the ✕, which is in the flyout because a 34px cell has room for one hit target */
+/** the rows, in the order the list lays them out: newest at the top, fixed once */
+async function cells(host: HTMLElement) {
+	await listed(host);
+	return [...host.querySelectorAll("[data-agent-thread]")].map((row) => row.getAttribute("data-agent-thread"));
+}
+
+async function cell(host: HTMLElement, name: string) {
+	await listed(host);
+	return host.querySelector<HTMLElement>(`[data-agent-thread="${name}"]`);
+}
+
+const lifeOfCell = async (host: HTMLElement, name: string) =>
+	(await cell(host, name))?.getAttribute("data-agent-thread-life");
+
+/** the ring, the disc and the dot, counted inside the mark's own 14px box */
+const marks = async (host: HTMLElement, name: string) => {
+	const mark = (await cell(host, name))?.querySelector("[data-agent-mark]");
+	return {
+		turning: mark?.querySelectorAll(".animate-agent-spin").length ?? 0,
+		drawn: mark?.children.length ?? 0,
+	};
+};
+
+/** a press on a row, which opens that thread and shuts the list */
+const openCell = async (host: HTMLElement, name: string) => press(await cell(host, name));
+
+/** the ✕ on a row, which appears on hover and is off the ask so a miss opens rather than closes */
 const closeThread = async (host: HTMLElement, name: string) => {
-	await point(host, name);
+	await cell(host, name);
 	await press(host.querySelector(`[data-agent-thread-close="${name}"]`));
 };
 
@@ -2933,74 +2952,130 @@ function storedThread({
 const ONE = "1f0e2d3c-4b5a-4697-8899-aabbccddeeff";
 const TWO = "2a1b3c4d-5e6f-4788-9900-112233445566";
 
-/** a project with as many restored threads in it as asked for, each named by its own frame */
+/** a project with as many restored threads in it as asked for, each with its own ask and frame */
 const written = (count: number): ServedThread[] =>
 	Array.from({ length: count }, (_, at) =>
 		storedThread({ id: `thread-${at}`, ask: `ask ${at}`, frame: `frame-${at}`, at }),
 	);
 
-describe("the threads column", () => {
-	it("opens on one thread, named above the log rather than in the column", async () => {
+describe("the thread plate", () => {
+	it("opens on one thread, its ask on the plate and no list until asked", async () => {
 		const canvas = mount();
 		await canvas.render();
 
-		expect(cells(canvas.host)).toEqual(["new thread"]);
-		// nothing in the column is a name: a cell is a mark, and the name is on the nameplate
-		expect(cell(canvas.host, "new thread")?.textContent).toBe("");
 		expect(nameplate(canvas.host)).toBe("new thread");
-		// the accent says which of several is open, so with one thread there is no which
-		expect(canvas.host.querySelector('[data-agent-thread="new thread"] .bg-thread')).toBeNull();
+		expect(threadList(canvas.host)).toBeNull();
+		expect(plateAsk(canvas.host)?.getAttribute("aria-expanded")).toBe("false");
+		// the plate ends on the plus: the way to a new thread is on the line that names this one
+		expect(plate(canvas.host)?.querySelector('button[aria-label="New thread"]')).not.toBeNull();
+		// and nothing else moves in the panel while nothing is moving elsewhere
+		expect(elsewhere(canvas.host)).toEqual([]);
 	});
 
-	/**
-	 * The claim the column is for: what it costs does not move with the number of threads.
-	 *
-	 * The row's did. #136 measured four names at 112px each and called that the floor, so a
-	 * fifth thread was already scrolling under a fade. Nothing here is laid out — happy-dom
-	 * computes no boxes — so what is asserted is the part that would have to move first:
-	 * every thread has a cell of its own, none is elided into an overflow, and the number of
-	 * them reaches neither the rail's width nor the column's.
-	 */
-	it.each([1, 4, 12])("draws %i threads without widening anything", async (count) => {
+	/** every thread has a row of its own: nothing is elided into an overflow */
+	it.each([1, 4, 12])("lists %i threads whole, and the plate stays one line", async (count) => {
 		const canvas = mount();
 		canvas.stored.served = written(count);
 		await canvas.render();
 		await settle();
 
-		expect(cells(canvas.host)).toHaveLength(count);
-		// every one of them is in it: nothing overflows into a menu and nothing is elided
-		expect(cells(canvas.host)).toContain(`frame-${count - 1}`);
-		expect(cells(canvas.host)).toContain("frame-0");
-		// 34 is the ticket's own number, pinned here rather than read back off the component
-		expect(spine(canvas.host)?.style.width).toBe("34px");
+		expect(await cells(canvas.host)).toHaveLength(count);
+		expect(await cells(canvas.host)).toContain(`ask ${count - 1}`);
+		expect(await cells(canvas.host)).toContain("ask 0");
+		expect(plate(canvas.host)?.className).toContain("h-[34px]");
 		expect(rail(canvas.host)?.style.width).toBe("420px");
 	});
 
-	/** the name is what it wrote, derived on read: no call, no invention, nothing to store */
-	it("names a thread by the frames it wrote", async () => {
+	/** the ask is the name, in sentence type; the frames it wrote are the line under it */
+	it("names the open thread by its ask and puts the frames it wrote under it", async () => {
 		const canvas = mount();
-		canvas.stored.served = [storedThread({ id: ONE, ask: "tighten the header", frame: "home" })];
+		canvas.stored.served = [
+			storedThread({ id: ONE, ask: "tighten the header", frame: "home", at: Date.now() - 5 * 60_000 }),
+		];
 		await canvas.render();
 		await settle();
 
-		expect(cells(canvas.host)).toEqual(["home"]);
-		expect(nameplate(canvas.host)).toBe("home");
-		// the record on disk keeps the ask, which is a different fact and still true
-		expect(canvas.stored.served[0]?.ask).toBe("tighten the header");
+		expect(nameplate(canvas.host)).toBe("tighten the header");
+		// sentence type rather than the machine register: the ask is something somebody said
+		expect(plate(canvas.host)?.querySelector("[data-agent-plate-ask] > span")?.className).not.toContain("font-mono");
+
+		const row = await cell(canvas.host, "tighten the header");
+		expect(row?.textContent).toContain("tighten the header");
+		expect(row?.textContent).toContain("home");
+		expect(row?.textContent).toContain("5m");
+		// the ask wraps to three lines in the list and truncates to one on the plate
+		expect(row?.querySelector(".agent-thread-ask")?.className).toContain("line-clamp-3");
+		expect(plate(canvas.host)?.querySelector("[data-agent-plate-ask] > span")?.className).toContain("truncate");
 	});
 
-	/** a thread that has written nothing is still its ask: a better name where there is one */
-	it("falls back to the ask until the thread has written something", async () => {
+	it("says what a thread did where it has written nothing", async () => {
 		const canvas = mount();
 		await canvas.render();
-		await send(canvas.host, "shoot home and fix whatever reads wrong");
-		await settle();
 
-		expect(nameplate(canvas.host)).toBe("shoot home and fix whatever reads wrong");
-		expect(cells(canvas.host)).toEqual(["shoot home and fix whatever reads wrong"]);
+		expect((await cell(canvas.host, "new thread"))?.textContent).toContain("nothing yet");
+
+		await send(canvas.host, "shoot home");
+		canvas.turn.push(ready);
+		canvas.turn.push(called("s1", "Read", { file_path: "/project/design/.spool/verify/home.png" }));
+		await settle(120);
+
+		// the last line it drew, in the rail's own nouns, until it writes a frame
+		expect((await cell(canvas.host, "shoot home"))?.textContent).toContain("look home");
 	});
 
-	it("holds many conversations and switches between them in one press", async () => {
+	/**
+	 * The column's one glanceable answer, kept: what is moving in a thread you are not looking
+	 * at. The plate carries their marks and no names, and nothing for the thread you are in
+	 * or for one that is read, because the log beside it is already the first and the plate
+	 * says what is moving.
+	 */
+	it("carries the marks of the threads moving elsewhere, and none for the one you are in", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "three takes on the empty cart");
+		canvas.turn.push(waiting);
+		await settle();
+		expect(elsewhere(canvas.host)).toEqual([]);
+
+		await newThread(canvas.host);
+		expect(elsewhere(canvas.host)).toEqual(["running"]);
+
+		await answerTurn(canvas.turn.streams[0] as Stream, "Three takes are up.");
+		expect(elsewhere(canvas.host)).toEqual(["unread"]);
+
+		await openCell(canvas.host, "three takes on the empty cart");
+		// opened, so read; and the new thread beside it has nothing happening in it
+		expect(elsewhere(canvas.host)).toEqual([]);
+	});
+
+	it("drops the list on a press and takes it away on the next", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		await press(plateAsk(canvas.host));
+		expect(threadList(canvas.host)).not.toBeNull();
+		expect(plateAsk(canvas.host)?.getAttribute("aria-expanded")).toBe("true");
+
+		await press(plateAsk(canvas.host));
+		expect(threadList(canvas.host)).toBeNull();
+	});
+
+	it("goes on escape and on a press anywhere outside it", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		await press(plateAsk(canvas.host));
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+		});
+		expect(threadList(canvas.host)).toBeNull();
+
+		await press(plateAsk(canvas.host));
+		await press(canvas.host.querySelector('[aria-label="close the threads"]'));
+		expect(threadList(canvas.host)).toBeNull();
+	});
+
+	it("holds many conversations, and picking a row opens that thread and shuts the list", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "tighten the header");
@@ -3011,15 +3086,54 @@ describe("the threads column", () => {
 		await answerTurn(canvas.turn.streams[1] as Stream, "The copy deck landed.");
 
 		// newest at the top, and each turn ran under its own thread
-		expect(cells(canvas.host)).toEqual(["write the swedish copy deck", "tighten the header"]);
+		expect(await cells(canvas.host)).toEqual(["write the swedish copy deck", "tighten the header"]);
 		expect(canvas.turn.streams[0]?.thread).not.toBe(canvas.turn.streams[1]?.thread);
 		expect(log(canvas.host)).toContain("The copy deck landed.");
+		// the open row is shaded and carries the accent
+		const open = threadList(canvas.host)?.querySelector('[data-agent-thread][aria-current="true"]');
+		expect(open?.getAttribute("data-agent-thread")).toBe("write the swedish copy deck");
+		expect(open?.querySelector(".bg-thread")).not.toBeNull();
 
 		await openCell(canvas.host, "tighten the header");
 
+		expect(threadList(canvas.host)).toBeNull();
 		expect(log(canvas.host)).toContain("The header is tighter now.");
 		expect(log(canvas.host)).not.toContain("The copy deck landed.");
 		expect(nameplate(canvas.host)).toBe("tighten the header");
+	});
+
+	/**
+	 * The dock glyph that opened the panel is the thing that shuts it (#256), so the plate
+	 * carries no caret of its own: a second control for the same act was the doubling in
+	 * miniature.
+	 */
+	it("has no collapse caret, and the dock glyph still shuts the panel", async () => {
+		const canvas = mount();
+		await canvas.render();
+
+		expect(plate(canvas.host)?.querySelector('[aria-label="Collapse agent"]')).toBeNull();
+		expect(rail(canvas.host)?.querySelector('[aria-label="Collapse agent"]')).toBeNull();
+
+		await press(canvas.host.querySelector('[aria-label="Shut agent"]'));
+
+		expect(canvas.host.querySelector<HTMLElement>("[data-dock-panel]")?.style.width).toBe("0px");
+		expect(canvas.host.querySelector('[aria-label="Expand agent"]')).not.toBeNull();
+	});
+
+	/** the plus is a button on the plate, so the keyboard reaches it the way it reaches any */
+	it("starts a new thread from the plus, list or no list", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tighten the header");
+		await answerTurn(canvas.turn.streams[0] as Stream, "done.");
+
+		await press(plateAsk(canvas.host));
+		await newThread(canvas.host);
+
+		// the list goes with the press, because the thread it was about has changed
+		expect(threadList(canvas.host)).toBeNull();
+		expect(nameplate(canvas.host)).toBe("new thread");
+		expect(await cells(canvas.host)).toEqual(["new thread", "tighten the header"]);
 	});
 
 	/**
@@ -3047,86 +3161,25 @@ describe("the threads column", () => {
 			[...canvas.host.querySelectorAll("[data-frame-label]")].map((frame) => frame.getAttribute("data-frame-label")),
 		).toEqual(frames);
 	});
-});
-
-describe("the thread under the pointer", () => {
-	/** the cell cannot name anything, so the hover is the whole of the answer */
-	it("arrives over the log with the name, the last line, the age and the ✕", async () => {
-		const canvas = mount();
-		canvas.stored.served = [
-			storedThread({ id: ONE, ask: "tighten the header", frame: "home", at: Date.now() - 5 * 60_000 }),
-		];
-		await canvas.render();
-		await settle();
-
-		const shown = await point(canvas.host, "home");
-
-		expect(shown?.textContent).toContain("home");
-		// the last line it drew, in the rail's own nouns rather than the tool's words
-		expect(shown?.textContent).toContain("edit home");
-		expect(shown?.textContent).toContain("5m");
-		expect(shown?.querySelector('[data-agent-thread-close="home"]')).not.toBeNull();
-	});
-
-	it("says so when a thread has drawn no line yet", async () => {
-		const canvas = mount();
-		await canvas.render();
-
-		expect((await point(canvas.host, "new thread"))?.textContent).toContain("nothing yet");
-	});
-
-	/** a caret opens the same flyout a pointer does, and takes it away again on the way out */
-	it("goes when the caret leaves the cell that opened it", async () => {
-		const canvas = mount();
-		await canvas.render();
-		const one = cell(canvas.host, "new thread");
-		await act(async () => one?.dispatchEvent(new FocusEvent("focusin", { bubbles: true })));
-		expect(canvas.host.querySelector("[data-agent-flyout]")).not.toBeNull();
-
-		await act(async () => one?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
-
-		expect(canvas.host.querySelector("[data-agent-flyout]")).toBeNull();
-	});
 
 	/**
-	 * The caret's own route to the ✕ (#207).
-	 *
-	 * The close is in the flyout because a 34px cell has room for one hit target, and that left
-	 * it pointer-only for as long as the flyout was drawn after the whole column: tabbing off a
-	 * cell reached the next cell, never the close the cell had just opened. The flyout belongs
-	 * to its cell in the markup now, so the stop after a cell is its own ✕.
+	 * The close lands on the first line's end, so on hover that corner of the ask fades out
+	 * under it rather than the two overprinting. A mask image cannot transition, so the cut
+	 * is always in the mask and parked past the right edge; hover slides it in. Plain CSS
+	 * rather than a utility, because the value carries a slash the class parser reads as a
+	 * modifier.
 	 */
-	it("puts the ✕ one stop after the cell that opened it, and holds it there", async () => {
-		const canvas = mount();
-		await canvas.render();
-		const one = cell(canvas.host, "new thread");
-		await act(async () => one?.dispatchEvent(new FocusEvent("focusin", { bubbles: true })));
-		const shown = canvas.host.querySelector("[data-agent-flyout]");
-		expect(one?.nextElementSibling).toBe(shown);
-
-		// a caret moving into the flyout is not a caret leaving the thread
-		const close = shown?.querySelector<HTMLElement>('[data-agent-thread-close="new thread"]') ?? null;
-		await act(async () => {
-			one?.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: close }));
-		});
-		expect(canvas.host.querySelector("[data-agent-flyout]")).not.toBeNull();
-
-		// and leaving the ✕ for anything else is
-		await act(async () => close?.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
-		expect(canvas.host.querySelector("[data-agent-flyout]")).toBeNull();
-	});
-
-	it("goes when the pointer leaves the column", async () => {
-		const canvas = mount();
-		await canvas.render();
-		await point(canvas.host, "new thread");
-
-		await act(async () => {
-			spine(canvas.host)?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
-			spine(canvas.host)?.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
-		});
-
-		expect(canvas.host.querySelector("[data-agent-flyout]")).toBeNull();
+	it("fades the end of the first line out under the close, in the stylesheet", () => {
+		const CSS = readFileSync(join(process.cwd(), "src/ui/ui.css"), "utf8");
+		const at = CSS.indexOf(".agent-thread-ask {");
+		expect(at).toBeGreaterThan(-1);
+		const rule = CSS.slice(at, CSS.indexOf("\n}", at));
+		expect(rule).toContain("mask-composite: exclude");
+		expect(rule).toContain("calc(100% + 56px) 0 / 56px 16px");
+		expect(rule).toContain("180ms cubic-bezier(0.22, 0.61, 0.36, 1)");
+		expect(CSS).toContain(".agent-thread-row:hover .agent-thread-ask");
+		// and the design canvas carries the same rule
+		expect(readFileSync(join(process.cwd(), "design/shared/tokens.css"), "utf8")).toContain(rule);
 	});
 });
 
@@ -3146,8 +3199,8 @@ describe("a thread's mark", () => {
 		canvas.turn.push(waiting);
 		await settle();
 
-		expect(lifeOfCell(canvas.host, "tighten the header")).toBe("streaming");
-		expect(marks(canvas.host, "tighten the header").turning).toBe(1);
+		expect(await lifeOfCell(canvas.host, "tighten the header")).toBe("streaming");
+		expect((await marks(canvas.host, "tighten the header")).turning).toBe(1);
 	});
 
 	it("turns for a thread working somewhere you are not looking", async () => {
@@ -3158,8 +3211,8 @@ describe("a thread's mark", () => {
 		await settle();
 		await newThread(canvas.host);
 
-		expect(lifeOfCell(canvas.host, "three takes on the empty cart")).toBe("running");
-		expect(marks(canvas.host, "three takes on the empty cart").turning).toBe(1);
+		expect(await lifeOfCell(canvas.host, "three takes on the empty cart")).toBe("running");
+		expect((await marks(canvas.host, "three takes on the empty cart")).turning).toBe(1);
 		// and the stream it left behind is still open, which is the whole point
 		expect(canvas.turn.streams[0]?.aborted()).toBe(false);
 	});
@@ -3173,11 +3226,11 @@ describe("a thread's mark", () => {
 		await newThread(canvas.host);
 
 		await answerTurn(canvas.turn.streams[0] as Stream, "Home is shot.");
-		expect(lifeOfCell(canvas.host, "shoot home")).toBe("unread");
+		expect(await lifeOfCell(canvas.host, "shoot home")).toBe("unread");
 
 		await openCell(canvas.host, "shoot home");
 		// opening a thread is what reads it, wherever the opening happened
-		expect(lifeOfCell(canvas.host, "shoot home")).toBe("read");
+		expect(await lifeOfCell(canvas.host, "shoot home")).toBe("read");
 	});
 
 	it("keeps a collapsed read thread pressable with a hollow dot", async () => {
@@ -3189,8 +3242,8 @@ describe("a thread's mark", () => {
 
 		// out here the mark is the thread, and a thread you cannot see is one you cannot
 		// press, so read falls back to the strength a disabled thing gets
-		expect(lifeOfCell(canvas.host, "shoot home")).toBe("read");
-		expect(marks(canvas.host, "shoot home").drawn).toBe(1);
+		expect(await lifeOfCell(canvas.host, "shoot home")).toBe("read");
+		expect((await marks(canvas.host, "shoot home")).drawn).toBe(1);
 	});
 });
 
@@ -3215,9 +3268,9 @@ describe("a thread waiting on a person", () => {
 		});
 		await settle();
 
-		expect(lifeOfCell(canvas.host, "pick a direction")).toBe("waiting");
+		expect(await lifeOfCell(canvas.host, "pick a direction")).toBe("waiting");
 		// nothing turns: the thread has stopped and is costing nothing
-		expect(marks(canvas.host, "pick a direction").turning).toBe(0);
+		expect((await marks(canvas.host, "pick a direction")).turning).toBe(0);
 	});
 
 	it("draws the disc for an approval nobody has answered", async () => {
@@ -3240,7 +3293,7 @@ describe("a thread waiting on a person", () => {
 		});
 		await settle();
 
-		expect(lifeOfCell(canvas.host, "tidy the repo")).toBe("waiting");
+		expect(await lifeOfCell(canvas.host, "tidy the repo")).toBe("waiting");
 	});
 
 	it("draws the disc for a signed-out bounce, in the binary's own words", async () => {
@@ -3251,7 +3304,7 @@ describe("a thread waiting on a person", () => {
 		canvas.turn.close();
 		await settle();
 
-		expect(lifeOfCell(canvas.host, "shoot home")).toBe("waiting");
+		expect(await lifeOfCell(canvas.host, "shoot home")).toBe("waiting");
 	});
 
 	/** the agent is told to finish and does, so a wind-down is not a thread that is stuck */
@@ -3268,7 +3321,7 @@ describe("a thread waiting on a person", () => {
 		await settle();
 		await newThread(canvas.host);
 
-		expect(lifeOfCell(canvas.host, "three takes on the cart")).toBe("running");
+		expect(await lifeOfCell(canvas.host, "three takes on the cart")).toBe("running");
 	});
 
 	/** a look reads a thread; nothing about looking answers a question */
@@ -3291,11 +3344,11 @@ describe("a thread waiting on a person", () => {
 		});
 		await settle();
 		await newThread(canvas.host);
-		expect(lifeOfCell(canvas.host, "pick a direction")).toBe("waiting");
+		expect(await lifeOfCell(canvas.host, "pick a direction")).toBe("waiting");
 
 		await openCell(canvas.host, "pick a direction");
 
-		expect(lifeOfCell(canvas.host, "pick a direction")).toBe("waiting");
+		expect(await lifeOfCell(canvas.host, "pick a direction")).toBe("waiting");
 	});
 });
 
@@ -3309,7 +3362,7 @@ describe("what survives a restart", () => {
 		await canvas.render();
 		await settle();
 
-		expect(cells(canvas.host)).toEqual(["copy-deck", "home"]);
+		expect(await cells(canvas.host)).toEqual(["write the copy deck", "tighten the header"]);
 		// the picture is the whole of it: nothing capped, nothing elided, the same view
 		expect(log(canvas.host)).toContain("write the copy deck");
 		expect(log(canvas.host)).toContain("The header is tighter now.");
@@ -3388,7 +3441,7 @@ describe("what survives a restart", () => {
 		// a new thread, rather than a resume that would fail. The words that started it are
 		// its name until it writes something; the restored one is called what it wrote
 		expect(canvas.turn.streams[0]?.thread).not.toBe(ONE);
-		expect(cells(canvas.host)).toEqual(["and now the receipt", "home"]);
+		expect(await cells(canvas.host)).toEqual(["and now the receipt", "tighten the header"]);
 	});
 
 	/**
@@ -3437,7 +3490,7 @@ describe("what survives a restart", () => {
 		// the conversation keeps what it had drawn, above the turn that continues it
 		expect(log(canvas.host)).toContain("The header is tighter now.");
 		expect(log(canvas.host)).toContain("and now the receipt");
-		expect(cells(canvas.host)).toEqual(["home"]);
+		expect(await cells(canvas.host)).toEqual(["tighten the header"]);
 	});
 
 	it("writes the picture down as it draws it", async () => {
@@ -3481,7 +3534,7 @@ describe("closing a thread", () => {
 
 		await closeThread(canvas.host, "tighten the header");
 
-		expect(cells(canvas.host)).toEqual(["write the copy deck"]);
+		expect(await cells(canvas.host)).toEqual(["write the copy deck"]);
 		// its own door, which writes one flag: nothing here is a delete
 		expect(canvas.stored.closed).toEqual([canvas.turn.streams[0]?.thread]);
 	});
@@ -3497,7 +3550,7 @@ describe("closing a thread", () => {
 
 		await closeThread(canvas.host, "write the copy deck");
 
-		expect(cells(canvas.host)).toEqual(["tighten the header"]);
+		expect(await cells(canvas.host)).toEqual(["tighten the header"]);
 		expect(log(canvas.host)).toContain("The header is tighter now.");
 	});
 
@@ -3528,7 +3581,7 @@ describe("closing a thread", () => {
 
 		await closeThread(canvas.host, "tighten the header");
 
-		expect(cells(canvas.host)).toEqual(["new thread"]);
+		expect(await cells(canvas.host)).toEqual(["new thread"]);
 		expect(field(canvas.host)?.placeholder).toBe("say what to change");
 	});
 
@@ -3558,7 +3611,7 @@ describe("closing a thread", () => {
 
 		// the thread is gone, its turn was stopped, and the words it was holding are in the
 		// box in front of the person who wrote them, in the order they were going to be said
-		expect(cells(canvas.host)).toEqual(["tighten the header"]);
+		expect(await cells(canvas.host)).toEqual(["tighten the header"]);
 		expect(field(canvas.host)?.value).toBe("hold off on the empty state\n\nswedish weekday chips");
 		expect(queuedRows(canvas.host)).toEqual([]);
 	});
@@ -3797,7 +3850,7 @@ describe("the model menu", () => {
 		await canvas.render();
 		await until(() => canvas.offered.asked.length > 0);
 
-		await openCell(canvas.host, "copy-deck");
+		await openCell(canvas.host, "write the copy deck");
 		await until(() => canvas.offered.asked.length > 1);
 
 		// a project runs one thread on Opus and another on Haiku, so switching re-asks
@@ -4281,7 +4334,7 @@ describe("signed out", () => {
 		canvas.turn.push(refused);
 		canvas.turn.close();
 		await settle();
-		expect(lifeOfCell(canvas.host, "shoot home")).toBe("waiting");
+		expect(await lifeOfCell(canvas.host, "shoot home")).toBe("waiting");
 
 		canvas.preflight.login = { signedIn: true, account: "ada@kaffe.se" };
 		await checkAgain(outStrip(canvas.host));
@@ -4289,7 +4342,7 @@ describe("signed out", () => {
 		await settle(150);
 
 		// the turn that ran is what says the bounce stopped, and it says it while it runs
-		expect(lifeOfCell(canvas.host, "shoot home")).toBe("streaming");
+		expect(await lifeOfCell(canvas.host, "shoot home")).toBe("streaming");
 		expect(outStrip(canvas.host)).toBeNull();
 
 		canvas.turn.push(speaking);
@@ -4301,7 +4354,7 @@ describe("signed out", () => {
 
 		// and it stays stopped: the refusal is in the log above, where it happened, and the
 		// thread it happened in is one somebody has read
-		expect(lifeOfCell(canvas.host, "shoot home")).toBe("read");
+		expect(await lifeOfCell(canvas.host, "shoot home")).toBe("read");
 		expect(outStrip(canvas.host)).toBeNull();
 	});
 

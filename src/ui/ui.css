@@ -412,6 +412,36 @@
 	}
 }
 
+/* the ask on a thread row fades out under the close on hover (#205). A mask image cannot
+ * transition, so the cut is always in the mask and parked 56px past the right edge where
+ * it masks nothing; hover slides it in over 180ms on the house curve. Exclude is XOR: the
+ * full layer minus the gradient's box, so the top-right 56 by 16 px of the first line goes
+ * from ink to nothing under the close. Plain CSS rather than a utility, because the value
+ * carries a slash and a comma list, which the class parser reads as a modifier and drops. */
+.agent-thread-ask {
+	-webkit-mask:
+		linear-gradient(#000, #000),
+		linear-gradient(to right, transparent, #000) calc(100% + 56px) 0 / 56px 16px no-repeat;
+	-webkit-mask-composite: xor;
+	mask:
+		linear-gradient(#000, #000),
+		linear-gradient(to right, transparent, #000) calc(100% + 56px) 0 / 56px 16px no-repeat;
+	mask-composite: exclude;
+	transition:
+		-webkit-mask-position 180ms cubic-bezier(0.22, 0.61, 0.36, 1),
+		mask-position 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.agent-thread-row:hover .agent-thread-ask,
+.agent-thread-row:focus-within .agent-thread-ask {
+	-webkit-mask-position:
+		0 0,
+		100% 0;
+	mask-position:
+		0 0,
+		100% 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.animate-menu-in,
 	.animate-toast-in,
@@ -428,6 +458,11 @@
 
 	.animate-boot-in {
 		animation: none;
+	}
+
+	/* the fade under a thread row's close is a cut rather than a slide */
+	.agent-thread-ask {
+		transition: none;
 	}
 
 	/* a still mark is the whole mark: frozen part-wound it reads as a logo that
