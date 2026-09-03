@@ -223,6 +223,55 @@ export async function status(directory: string): Promise<DaemonStatus> {
 	return { running: true, url, pid: state.pid, version: live.version, controlToken: state.controlToken };
 }
 
+/**
+ * Where a daemon would listen, read the way `spool serve` reads it: config.json
+ * `{host, port}` in the state directory, SPOOL_HOST and SPOOL_PORT on top,
+ * loopback 7766 when nothing says otherwise. A value this cannot read is the
+ * default rather than a refusal, because this is only ever used to name a
+ * squatter, and the daemon's own start is where a bad config is explained.
+ */
+export function configuredAddress(
+	directory: string,
+	env: NodeJS.ProcessEnv = process.env,
+): { host: string; port: number } {
+	let host = "127.0.0.1";
+	let port = 7766;
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(join(directory, "config.json"), "utf8"));
+		if (typeof parsed === "object" && parsed !== null) {
+			const config = parsed as { host?: unknown; port?: unknown };
+			if (typeof config.host === "string" && config.host !== "") host = config.host;
+			if (typeof config.port === "number" && Number.isInteger(config.port)) port = config.port;
+		}
+	} catch {
+		// absent or unreadable: the defaults
+	}
+	if (env.SPOOL_HOST !== undefined && env.SPOOL_HOST !== "") host = env.SPOOL_HOST;
+	if (env.SPOOL_PORT !== undefined && env.SPOOL_PORT !== "") {
+		const parsed = Number(env.SPOOL_PORT);
+		if (Number.isInteger(parsed)) port = parsed;
+	}
+	return { host, port };
+}
+
+/**
+ * A spool daemon on the configured address that no state file accounts for:
+ * one whose daemon.json was lost, or one started under another SPOOL_DIR on the
+ * same port. The bundled daemon cannot bind beside it and its log only shows
+ * the bind failing, so the squatter is named instead. Never stopped from here,
+ * for the same reason the CLI never stops one without `--force`: the address is
+ * not proof of ownership.
+ */
+export async function unrecordedDaemon(
+	directory: string,
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<{ url: string; pid: number; version: string } | undefined> {
+	const { host, port } = configuredAddress(directory, env);
+	const url = daemonUrl(host, port);
+	const live = await health(url);
+	return live === undefined ? undefined : { url, pid: live.pid, version: live.version };
+}
+
 export interface StartOptions {
 	/** The program that runs the bundled cli. Electron's own binary, as node. */
 	execPath: string;
@@ -278,12 +327,19 @@ export async function start(options: StartOptions): Promise<DaemonStatus> {
 		return current.running ? current : undefined;
 	});
 	if (live !== undefined) return live;
-	// Whatever it printed is in daemon.log, which is the only place worth
-	// pointing at: this app has no console.
 	try {
 		process.kill(child.pid ?? 0, "SIGTERM");
 	} catch {
 		// already gone, which is the same outcome
+	}
+	// The one failure with a name: a daemon nobody recorded holds the port, and
+	// the child died on the bind. Everything else is in daemon.log, which is the
+	// only place worth pointing at: this app has no console.
+	const squatter = await unrecordedDaemon(directory, options.env ?? process.env);
+	if (squatter !== undefined) {
+		throw new DaemonStartError(
+			`a spool daemon (v${squatter.version}, pid ${squatter.pid}) already serves ${squatter.url}, but nothing records it, so it cannot be adopted. Run \`spool stop --force\` in a terminal, then open Spool again.`,
+		);
 	}
 	throw new DaemonStartError(`the spool daemon did not come up, see ${join(directory, "daemon.log")}`);
 }

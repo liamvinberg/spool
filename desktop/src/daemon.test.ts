@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
 	alive,
+	configuredAddress,
 	connectHost,
 	daemonUrl,
 	health,
@@ -195,4 +196,16 @@ test("nothing running is started, waited for, and stopped by pid", async () => {
 
 test("stopping a pid that is already gone is a stop", async () => {
 	assert.equal(await stop(0x7ffffff0), true);
+});
+
+test("the address a daemon would take is config.json's, with SPOOL_HOST and SPOOL_PORT on top", () => {
+	const directory = temporary();
+	assert.deepEqual(configuredAddress(directory, {}), { host: "127.0.0.1", port: 7766 });
+	writeFileSync(join(directory, "config.json"), JSON.stringify({ host: "localhost", port: 7800 }));
+	assert.deepEqual(configuredAddress(directory, {}), { host: "localhost", port: 7800 });
+	assert.deepEqual(configuredAddress(directory, { SPOOL_PORT: "7767" }), { host: "localhost", port: 7767 });
+	assert.deepEqual(configuredAddress(directory, { SPOOL_HOST: "::1", SPOOL_PORT: "x" }), { host: "::1", port: 7800 });
+	// unreadable is the default, never a refusal: this only names a squatter
+	writeFileSync(join(directory, "config.json"), "{");
+	assert.deepEqual(configuredAddress(directory, {}), { host: "127.0.0.1", port: 7766 });
 });
