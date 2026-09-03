@@ -20,7 +20,7 @@ import { SpoolShell } from "shared/ui/spool/shell";
  * makes: at 100% a project of twenty three components is already a long way down.
  */
 
-const LAID = layout(760, 64);
+const LAID = layout(760, 84, 46);
 const TALL = Math.max(...LAID.frames.map((frame) => frame.y + frame.h)) + 96;
 
 export default function LibraryPageFrame() {
