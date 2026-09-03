@@ -137,6 +137,7 @@ export type FrameMessage =
 	| { spool: "shot"; frame: string; url?: string; error?: string }
 	| CaptureSourceReply
 	| { spool: "session?"; frame: string }
+	| { spool: "state"; frame: string; scenario: string; state: Record<string, unknown> }
 	| { spool: "key"; frame: string; key: string }
 	| FrameModifierMessage
 	| FramePanMessage
@@ -190,6 +191,8 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 		case "shot":
 		case "session?":
 			return m as unknown as FrameMessage;
+		case "state":
+			return typeof m.scenario === "string" && isPlainRecord(m.state) ? (m as unknown as FrameMessage) : undefined;
 		case "capture-source":
 			return captureSourceMessage(m) || captureSourceErrorMessage(m)
 				? (m as unknown as CaptureSourceReply)
@@ -515,4 +518,10 @@ export const editMessage = (selector: string, x: number, y: number, id: number) 
 	({ spool: "edit", selector, x, y, id }) as const;
 export const endEditMessage = (commit: boolean) => ({ spool: "edit-end", commit }) as const;
 export const sessionReply = (record: SessionRecord | null) => ({ spool: "session", record }) as const;
+
+/** The page's state handed to a sibling frame after one of them wrote. */
+export const sharedStateMessage = (state: Record<string, unknown>) => ({ spool: "state", state }) as const;
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
 export const sitesMessage = (sites: SiteAnchor[], id: number) => ({ spool: "sites", sites, id }) as const;

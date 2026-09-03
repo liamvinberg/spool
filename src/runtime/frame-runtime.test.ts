@@ -468,6 +468,48 @@ describe("a ui.state write from a render", () => {
 });
 
 describe("embedded in a canvas", () => {
+	it("shares writes with the page through the host and applies the page's state without echoing it", async () => {
+		const harness = makeHarness();
+		scaffoldFlow(harness);
+		const messages: Record<string, unknown>[] = [];
+		await loadFrameDocument(harness, "inbox", {
+			host: (message) => {
+				messages.push(message);
+				if (message.spool === "session?") hostReply({ spool: "session", record: null });
+			},
+		});
+		await waitForText("output", "2");
+		// the seed is where this frame starts, not a fact about the app
+		expect(messages.filter((message) => message.spool === "state")).toEqual([]);
+
+		click("#bump");
+		await waitForText("output", "5");
+		await vi.waitFor(() => {
+			expect(messages.filter((message) => message.spool === "state")).toEqual([
+				{ spool: "state", frame: "inbox", scenario: "default", state: { unread: 5 } },
+			]);
+		});
+
+		// a sibling wrote: the page's state lands whole and re-renders, and is not sent back
+		hostReply({ spool: "state", state: { unread: 9 } });
+		await waitForText("output", "9");
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(messages.filter((message) => message.spool === "state")).toHaveLength(1);
+	});
+
+	it("boots onto a page's session when the host hands one over", async () => {
+		const harness = makeHarness();
+		scaffoldFlow(harness);
+		await loadFrameDocument(harness, "inbox", {
+			host: (message) => {
+				if (message.spool === "session?") {
+					hostReply({ spool: "session", record: { scenario: "default", state: { unread: 7 }, stack: [] } });
+				}
+			},
+		});
+		await waitForText("output", "7");
+	});
+
 	it("routes concurrent ui.copy results by safe request id and preserves browser failures", async () => {
 		const harness = makeHarness();
 		writeFrame(harness.root, "clipboard", clipboardTsx);

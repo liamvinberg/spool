@@ -160,6 +160,7 @@ import {
 	type SiteAnchor,
 	type SpacingReading,
 	sessionReply,
+	sharedStateMessage,
 	sitesMessage,
 	walkRejectionReason,
 } from "./protocol";
@@ -556,6 +557,12 @@ export function ProjectCanvas({
 	// the walk session mirror: what the last go/back carried, owed to the next boot
 	const walkSession = useRef<SessionRecord | null>(null);
 	const walkTarget = useRef<string | null>(null);
+	/**
+	 * One session per page: the last state a frame on that page wrote,
+	 * handed to every sibling as it is written and to any frame booting onto the
+	 * page after. It lives as long as this canvas tab; nothing is written to disk.
+	 */
+	const pageSessions = useRef(new Map<string, SessionRecord>());
 	const departedFrameDocuments = useRef(new Set<string>());
 	const iframes = useRef(new Map<string, HTMLIFrameElement>());
 	const pickWaiters = useRef(new Map<number, (chain: PickedHit[]) => void>());
@@ -2592,6 +2599,10 @@ export function ProjectCanvas({
 			}
 			walkSession.current = session;
 			walkTarget.current = target;
+			// a walk carries the app's knowledge with it: the page it lands on now knows it too
+			if (session !== null && across !== undefined) {
+				pageSessions.current.set(pageOf(across), { ...session, stack: [] });
+			}
 			// arrival is instant — entered (and its chip) must name the frame whose
 			// time runs the moment the walk lands
 			setEntered(target);
@@ -2866,8 +2877,27 @@ export function ProjectCanvas({
 					setWalkArrivals((current) => withoutFrame(current, message.frame));
 					return;
 				case "session?": {
-					const record = walkTarget.current === message.frame ? walkSession.current : null;
+					const own = allFramesRef.current.find((candidate) => candidate.name === message.frame);
+					const record =
+						walkTarget.current === message.frame
+							? walkSession.current
+							: own === undefined
+								? null
+								: (pageSessions.current.get(pageOf(own)) ?? null);
 					(event.source as WindowProxy | null)?.postMessage(sessionReply(record), "*");
+					return;
+				}
+				case "state": {
+					const own = allFramesRef.current.find((candidate) => candidate.name === message.frame);
+					if (own === undefined) return;
+					const page = pageOf(own);
+					pageSessions.current.set(page, { scenario: message.scenario, state: message.state, stack: [] });
+					for (const [name, iframe] of iframes.current) {
+						if (name === message.frame) continue;
+						const sibling = allFramesRef.current.find((candidate) => candidate.name === name);
+						if (sibling === undefined || pageOf(sibling) !== page) continue;
+						iframe.contentWindow?.postMessage(sharedStateMessage(message.state), "*");
+					}
 					return;
 				}
 				case "external":

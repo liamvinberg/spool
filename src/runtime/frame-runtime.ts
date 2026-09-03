@@ -306,6 +306,11 @@ if (play === undefined) {
 			settleClipboardWrite(result);
 			return;
 		}
+		const shared = parseSharedState(event.data);
+		if (shared !== undefined) {
+			applySharedState(shared);
+			return;
+		}
 		const decision = parseWalkDecision(event.data);
 		if (decision === undefined || decision.frame !== doc.frame || decision.id !== embeddedWalkPending?.id) {
 			return;
@@ -333,6 +338,44 @@ function notify(): void {
 	for (const listener of listeners) listener();
 	if (playerBooted && play?.shell === true) postPlayerState();
 	schedulePersist();
+	scheduleShare();
+}
+
+// --- page session -----------------------------------------------------------
+
+/**
+ * On the canvas, every frame on a page stands in one session: a write in one
+ * frame is what the app knows, so the frames beside it re-render on it. The
+ * canvas is the bus — a sandboxed frame reaches nothing but its parent — and
+ * the bus's memory: a frame booting onto a page where something was already
+ * written joins that state through the same handshake a walk uses.
+ *
+ * Only writes after boot are shared. The scenario seed is what this frame
+ * starts from, not a fact about the app, and a state that arrived from a
+ * sibling is applied without being sent back — that is the whole loop guard.
+ */
+let started = false;
+let applyingShared = false;
+let shareScheduled = false;
+
+function scheduleShare(): void {
+	if (!embedded || play !== undefined || !started || applyingShared || shareScheduled) return;
+	shareScheduled = true;
+	queueMicrotask(() => {
+		shareScheduled = false;
+		post({ spool: "state", scenario: scenarioName, state: JSON.parse(JSON.stringify(stateTarget)) });
+	});
+}
+
+function applySharedState(next: Record<string, unknown>): void {
+	applyingShared = true;
+	try {
+		for (const key of Object.keys(stateTarget)) delete stateTarget[key];
+		Object.assign(stateTarget, structuredClone(next));
+		notify();
+	} finally {
+		applyingShared = false;
+	}
 }
 
 interface ReactDispatcher {
@@ -452,6 +495,16 @@ const stack: string[] = [];
 let scenarioName = "default";
 
 const storageKey = `spool:session:${doc.project}`;
+
+/** The host's fan-out of a sibling's write: the page's state, whole. */
+function parseSharedState(data: unknown): Record<string, unknown> | undefined {
+	if (typeof data !== "object" || data === null) return undefined;
+	const message = data as { spool?: unknown; state?: unknown };
+	if (message.spool !== "state") return undefined;
+	const { state } = message;
+	if (typeof state !== "object" || state === null || Array.isArray(state)) return undefined;
+	return state as Record<string, unknown>;
+}
 
 /** Sandboxed null-origin frames throw on storage access — no persistence there. */
 function storage(): Storage | undefined {
@@ -581,6 +634,7 @@ async function start(): Promise<void> {
 		stack.push(...resume.stack);
 	}
 	persist();
+	started = true;
 }
 
 // --- navigation -------------------------------------------------------------
