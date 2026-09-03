@@ -15,6 +15,8 @@ import { cn } from "shared/lib/utils";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { AgentPlate, DocFor } from "shared/ui/explore/manipulate/shared-doc";
 import { SpoolShell } from "shared/ui/spool/shell";
+import { elementOf as modelElementOf } from "shared/lib/spool/properties-model";
+import { type Acts, Rail as RealRail, type Reading } from "shared/ui/spool/properties-rail";
 
 /**
  * Five readings of one question (spool-cloud#30): how spool says the element
@@ -81,6 +83,7 @@ interface Wrote {
 }
 
 const MOTION = `
+@keyframes shared-echo-in { from { opacity: 0; transform: scale(1.04); } }
 @keyframes shared-pulse { from { opacity: .85; transform: scale(1); } to { opacity: 0; transform: scale(1.05); } }
 @keyframes shared-wake { 0% { opacity: 0; } 10% { opacity: 1; } 68% { opacity: 1; } 100% { opacity: 0; } }
 `;
@@ -154,18 +157,54 @@ export function SharedScreen({ take: name }: { take: TakeName }) {
 	// `wake` says nothing before the write: its whole claim is that the first one
 	// is the only moment worth spending, so there is no mark until it arrives
 	const woken = name === "wake" && wrote?.first === true;
+	// rail and name put the reach in the pages rail as well as on the canvas
+	const mapped = name === "rail" || name === "name";
+
+	/* ---------- what the shipped rail reads, for the take that stands in it ---------- */
+
+	const cartFrame = FIELD.find((frame) => frame.edited === true) ?? FIELD[0];
+	const reading: Reading | null =
+		element === null || selection === null
+			? null
+			: (() => {
+					const model = modelElementOf(element.id);
+					if (model === undefined) return null;
+					const box = boxes.get(`cart:${selection.id}:${selection.key}`) ?? { x: 0, y: 0, w: 0, h: 0 };
+					return {
+						// the fixture's own tag, so the crumb says Button; and no `shared`, because the refusal is retired
+						element: { ...model, tag: element.tag, shared: undefined },
+						pick: selection,
+						className: classes[element.id] ?? classOf(element.id),
+						text: texts[element.id] ?? element.text ?? null,
+						box,
+						inFrame: { x: box.x - cartFrame.x, y: box.y - cartFrame.y },
+						frame: { x: cartFrame.x, y: cartFrame.y, w: cartFrame.w, h: cartFrame.h },
+						original: new Set(classOf(element.id).split(/\s+/)),
+					};
+				})();
+	const acts: Acts = {
+		setClass: (id, next) => setClass(id, (held) => next(held)),
+		setText,
+		setFrame: () => {},
+		select: setSelection,
+		undo: () => {},
+		canUndo: false,
+	};
 
 	return (
 		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="100%">
 			<style>{MOTION}</style>
 			<CanvasChrome
-				pages={name === "rail" ? PAGES_FULL : PAGES}
-				holding={name === "rail" ? element?.origin?.holders : undefined}
+				pages={mapped ? PAGES_FULL : PAGES}
+				holding={mapped ? (element?.origin?.holders ?? []) : undefined}
 				selected="cart"
 				tool="select"
 				railLabel="properties"
 				railWidth={RAIL_W}
 				rail={
+					name === "name" ? (
+						<RealRail reading={reading} acts={acts} head={element === null ? null : <Origin take={take} element={element} />} />
+					) : (
 					<Rail
 						take={name}
 						element={element}
@@ -178,6 +217,7 @@ export function SharedScreen({ take: name }: { take: TakeName }) {
 						onText={setText}
 						onReset={reset}
 					/>
+					)
 				}
 			>
 				<div ref={fieldRef} className="absolute inset-0">
@@ -275,7 +315,13 @@ function Overlay({
 	// reach answers the cursor. select, echo and rail answer a click, because most of
 	// what a cursor crosses is shared and a field that answers every hover flickers.
 	const elsewhere =
-		take === "reach" ? echoOf(hover ?? selection) : take === "select" || take === "echo" || take === "rail" ? echoOf(selection) : [];
+		take === "reach"
+			? echoOf(hover ?? selection)
+			: take === "select" || take === "echo" || take === "rail" || take === "name"
+				? echoOf(selection)
+				: [];
+	/** what the cursor is on, for the take that names it */
+	const named = take === "name" && hover !== null ? elementOf(hover.id) : undefined;
 	// echo's second volume: the cursor's, under the hand's
 	const faint =
 		take === "echo" && hover !== null && (selection === null || hover.id !== selection.id) ? echoOf(hover) : [];
@@ -294,6 +340,14 @@ function Overlay({
 		<div className="pointer-events-none absolute inset-0">
 			{hovered === undefined ? null : (
 				<>
+					{named?.origin === undefined ? null : (
+						<span
+							className="absolute rounded-xs px-1 py-[1px] font-mono text-2xs leading-3"
+							style={{ left: hovered.x - 1, top: hovered.y - 17, color: THREAD, background: "#161616" }}
+						>
+							{named.origin.export}
+						</span>
+					)}
 					{take === "ring" && hover !== null && shared(hover.id) ? (
 						<Ring rect={grow(hovered, 3)} colour={THREAD} width={1} opacity={0.3} />
 					) : null}
@@ -302,11 +356,7 @@ function Overlay({
 			)}
 
 			{/* select, echo, rail: the same ring where it also stands, and nothing written beside it */}
-			{take === "reach"
-				? null
-				: elsewhere.map(({ frame, rect }) => (
-						<Ring key={`echo-${frame}`} rect={grow(rect, 3)} colour={THREAD} width={1} opacity={0.7} />
-					))}
+			{take === "reach" ? null : <Echoes rings={elsewhere} />}
 			{faint.map(({ frame, rect }) => (
 				<Ring key={`faint-${frame}`} rect={grow(rect, 3)} colour={THREAD} width={1} opacity={0.22} />
 			))}
@@ -367,6 +417,54 @@ function Overlay({
 						</span>
 					))
 				: null}
+		</div>
+	);
+}
+
+/**
+ * The rings in the other frames arrive on a short fade and leave on one: the last
+ * set stays mounted at opacity 0 for the length of the transition, so a deselect
+ * does not pop.
+ */
+function Echoes({ rings }: { rings: readonly { frame: string; rect: Rect }[] }) {
+	const [linger, setLinger] = useState(rings);
+	useEffect(() => {
+		if (rings.length > 0) setLinger(rings);
+	}, [rings]);
+	const shown = rings.length > 0 ? rings : linger;
+	return (
+		<>
+			{shown.map(({ frame, rect }) => (
+				<span
+					key={`echo-${frame}`}
+					className="absolute rounded-[3px] transition-opacity duration-[160ms] ease-out motion-reduce:transition-none"
+					style={{
+						left: rect.x - 3,
+						top: rect.y - 3,
+						width: rect.w + 6,
+						height: rect.h + 6,
+						border: `1px solid ${THREAD}`,
+						opacity: rings.length > 0 ? 0.7 : 0,
+						animation: rings.length > 0 ? "shared-echo-in 160ms ease-out" : undefined,
+						transformOrigin: "center",
+					}}
+				/>
+			))}
+		</>
+	);
+}
+
+/** where a shared element is written, said under the crumb of the shipped rail */
+function Origin({ take, element }: { take: (typeof TAKES)[TakeName]; element: DocElement }) {
+	const origin = element.origin;
+	if (origin === undefined) return null;
+	const count = countLine(take, element);
+	return (
+		<div className="flex flex-col gap-0.5 px-2.5 pb-2">
+			<span className={cn("truncate", VALUE)}>
+				{origin.file}:{origin.line}
+			</span>
+			{count === null ? null : <span className={FAINT}>{count}</span>}
 		</div>
 	);
 }

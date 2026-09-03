@@ -137,7 +137,8 @@ function PagesRail({
 	holding?: readonly string[] | undefined;
 }) {
 	const reached = new Map(targets.map((target) => [target.frame, target]));
-	const held = new Set(holding);
+	// null when nothing asked the rail to mark: the slot then takes no room in any row
+	const held = holding === undefined ? null : new Set(holding);
 	const listed = pages.filter((page) => page.foot !== true);
 	const footed = pages.filter((page) => page.foot === true);
 	return (
@@ -176,7 +177,7 @@ function PageBlock({
 	page: PageRow;
 	selected?: string | undefined;
 	reached: Map<string, Target>;
-	held: ReadonlySet<string>;
+	held: ReadonlySet<string> | null;
 }) {
 	return (
 		<div className={cn(page.ruled === true && "border-border border-b pb-2 mb-2")}>
@@ -220,7 +221,7 @@ function PageBlock({
 				{page.open === true || !page.frames.some((frame) => reached.has(frame)) ? null : (
 					<WalkTick className="mr-2 h-2 w-2.5 text-thread" />
 				)}
-				{page.open === true || !page.frames.some((frame) => held.has(frame)) ? null : <HoldDot className="mr-2" />}
+				{held === null || page.open === true ? null : <HoldDot on={page.frames.some((frame) => held.has(frame))} className="mr-2" />}
 				<span className="font-mono text-2xs text-muted/60 leading-3">{page.frames.length}</span>
 			</div>
 			{page.open === true ? (
@@ -253,7 +254,7 @@ function PageBlock({
 									</span>
 								</span>
 									<FrameMark mark={page.unseen?.[frame]} className="ml-auto" />
-								{held.has(frame) ? <HoldDot className="mr-2 ml-auto" /> : null}
+								{held === null ? null : <HoldDot on={held.has(frame)} className="mr-2 ml-auto" />}
 								{target === undefined ? null : (
 									<WalkTick
 										className={cn(
@@ -288,9 +289,22 @@ function FrameMark({ mark, className }: { mark: Mark | undefined; className?: st
 }
 
 /** the arrow a walked-to frame wears in the tree: the canvas's own edge, one row long */
-/** this frame renders the element the hand is on: a dot, and no number beside it */
-function HoldDot({ className }: { className?: string | undefined }) {
-	return <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full bg-thread", className)} />;
+/**
+ * This frame renders the element the hand is on: a dot, and no number beside it.
+ * Always mounted once the rail is marking, so it arrives and leaves on the unseen
+ * mark's own curve instead of popping, and a name never moves when one comes.
+ */
+function HoldDot({ on, className }: { on: boolean; className?: string | undefined }) {
+	return (
+		<span
+			aria-hidden="true"
+			className={cn(
+				"h-1.5 w-1.5 shrink-0 rounded-full bg-thread transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none",
+				on ? "scale-100 opacity-100" : "scale-[0.4] opacity-0",
+				className,
+			)}
+		/>
+	);
 }
 
 function WalkTick({ className }: { className?: string | undefined }) {

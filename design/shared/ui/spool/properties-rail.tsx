@@ -191,7 +191,8 @@ function sectionReason(element: SourceElement, verdict: Verdict): string | undef
 
 /* ---------- the rail ---------- */
 
-export function Rail({ reading, acts }: { reading: Reading | null; acts: Acts }) {
+/** `head` stands under the crumb: what a proposal has to say about the element before the fields (spool-cloud#30) */
+export function Rail({ reading, acts, head }: { reading: Reading | null; acts: Acts; head?: ReactNode | undefined }) {
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-bg">
 			{reading === null ? (
@@ -199,13 +200,13 @@ export function Rail({ reading, acts }: { reading: Reading | null; acts: Acts })
 					<span className={cn("text-muted/50", VALUE)}>no selection</span>
 				</div>
 			) : (
-				<Panel key={reading.element.id} reading={reading} acts={acts} />
+				<Panel key={reading.element.id} reading={reading} acts={acts} head={head} />
 			)}
 		</div>
 	);
 }
 
-function Panel({ reading, acts }: { reading: Reading; acts: Acts }) {
+function Panel({ reading, acts, head }: { reading: Reading; acts: Acts; head?: ReactNode | undefined }) {
 	const [scope, setScope] = useState<Scope>([]);
 	const [extraScopes, setExtraScopes] = useState<Scope[]>([]);
 	const { element } = reading;
@@ -236,7 +237,7 @@ function Panel({ reading, acts }: { reading: Reading; acts: Acts }) {
 
 	return (
 		<>
-			<Head reading={reading} acts={acts} />
+			<Head reading={reading} acts={acts} head={head} />
 			{isFrame ? null : (
 				<ScopeBar
 					scopes={scopes}
@@ -265,7 +266,7 @@ function Panel({ reading, acts }: { reading: Reading; acts: Acts }) {
 	);
 }
 
-function Head({ reading, acts }: { reading: Reading; acts: Acts }) {
+function Head({ reading, acts, head }: { reading: Reading; acts: Acts; head?: ReactNode | undefined }) {
 	const chain = chainOf(reading.element.id);
 	const verdict = literalVerdict(reading.element);
 	return (
@@ -295,6 +296,7 @@ function Head({ reading, acts }: { reading: Reading; acts: Acts }) {
 					<span className={cn("min-w-0 truncate", FAINT)}>{reasonFor(reading.element, verdict)}</span>
 				</div>
 			)}
+			{head}
 		</div>
 	);
 }

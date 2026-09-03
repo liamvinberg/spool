@@ -151,7 +151,7 @@ export function reachOf(id: string): readonly string[] {
 
 /* ---------- the takes ---------- */
 
-export type TakeName = "source" | "ring" | "tint" | "reach" | "wake" | "select" | "echo" | "rail";
+export type TakeName = "source" | "ring" | "tint" | "reach" | "wake" | "select" | "echo" | "rail" | "name";
 
 export interface Take {
 	name: TakeName;
@@ -220,6 +220,13 @@ export const TAKES: Readonly<Record<TakeName, Take>> = {
 		mark: "Select, and the pages rail marks every frame that renders the export, on this page or another. The canvas rings the ones on screen.",
 		volume: "Same as select. The rail is the map of the seven you cannot see.",
 		cost: "Two surfaces carry one fact. The rail has to know the export, which is the finer index again.",
+		counts: "export",
+	},
+	name: {
+		name: "name",
+		mark: "Rail, and a name at hover. Point at a shared element and its export stands over the hover ring, Button, in the one accent. A local element stays unlabelled.",
+		volume: "Same as rail. The name is the cursor's mark, the rings and the dots are the hand's.",
+		cost: "A word on every hover of a shared element, which is most hovers. It is the smallest word there is, and it still has to earn its place.",
 		counts: "export",
 	},
 };
