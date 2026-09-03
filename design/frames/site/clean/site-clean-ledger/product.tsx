@@ -1541,7 +1541,7 @@ export function ReserveCardScreen() {
 						<button
 							type="button"
 							onClick={() => setHeld(false)}
-							className="mt-auto cursor-pointer self-start border-b pb-1 text-[12.5px] leading-none transition-colors duration-200"
+							className="mt-auto cursor-pointer self-start border-b pt-4 pb-1 text-[12.5px] leading-none transition-colors duration-200"
 							style={{ color: "var(--dim)", borderColor: "var(--line)" }}
 						>
 							Book another table
