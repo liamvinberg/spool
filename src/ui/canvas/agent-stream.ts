@@ -214,7 +214,7 @@ export interface AgentTurn {
  *
  * `turn` is the open thread's, so everything the rail already drew keeps its shape: the
  * transcript, the composer and the queue are one thread's and always were. What is new
- * is the column beside them and the fact that the others are still running.
+ * is the list of them and the fact that the others are still running.
  */
 export interface AgentDeck {
 	readonly threads: readonly Thread[];
@@ -231,11 +231,11 @@ export interface AgentDeck {
 	readonly finished: boolean;
 	/** the agent would not start because nobody is signed in, and the way out of it (#201) */
 	readonly login: LoginDeck;
-	/** a press on a cell, which reads the thread and moves nothing else */
+	/** a press on a row of the list, which reads the thread and moves nothing else */
 	readonly onOpen: (id: string) => void;
-	/** the ✕ in the flyout: it leaves the column, and neither the session nor the picture goes */
+	/** the ✕ on a row: it leaves the list, and neither the session nor the picture goes */
 	readonly onClose: (id: string) => void;
-	/** the plus that leads the column */
+	/** the plus on the plate */
 	readonly onNew: () => void;
 }
 
@@ -284,7 +284,7 @@ interface Live {
 	continuable: boolean;
 	/** it landed somewhere nobody was looking, and nobody has looked since */
 	unread: boolean;
-	/** unix ms of the last thing that happened in it, which is the column's order */
+	/** unix ms of the last thing that happened in it, which is the list's order */
 	at: number;
 	events: Stamped[];
 	started: number;
@@ -548,7 +548,7 @@ export function useAgentThreads(project: string): AgentDeck {
 	/** climbs whenever anything a render reads has moved, which is what redraws the rail */
 	const [, bump] = useState(0);
 	const redraw = useCallback(() => bump((count) => count + 1), []);
-	/** what the column has open, for the stream callbacks that outlive the render */
+	/** what the list has open, for the stream callbacks that outlive the render */
 	const openRef = useRef(open);
 	openRef.current = open;
 	/**
@@ -666,7 +666,7 @@ export function useAgentThreads(project: string): AgentDeck {
 	/**
 	 * The look that reads a thread, wherever the looking happened (#136).
 	 *
-	 * A press on a cell, and the opening a restore performs on the newest thread it
+	 * A press on a row, and the opening a restore performs on the newest thread it
 	 * found: both are somebody looking at it, so both clear the dot. Neither touches the
 	 * waiting mark, because nothing about looking answers a question.
 	 */
@@ -919,7 +919,7 @@ export function useAgentThreads(project: string): AgentDeck {
 				 * This is the whole of what a refresh costs now: the daemon held the turn, the log
 				 * is replayed into a fold that rebuilds what was on screen, and the rest arrives
 				 * as it always would have. It happens for every live thread and not only the one
-				 * the column opens on, because they were all still working while the page was
+				 * the list opens on, because they were all still working while the page was
 				 * away — which is the same promise #192 made about looking at another thread.
 				 */
 				if (one.live) {
@@ -941,7 +941,7 @@ export function useAgentThreads(project: string): AgentDeck {
 			// a project with nothing stored gets one fresh thread, which is what the rail
 			// has always shown
 			if (openRef.current !== "") return;
-			// newest first, which is the column's own order: the one you were most likely
+			// newest first, which is the list's own order: the one you were most likely
 			// reading is the one it opens on, and opening it is what reads it
 			const newest = [...threads.current.values()].sort((one, two) => two.at - one.at)[0];
 			if (newest === undefined) {
@@ -1059,16 +1059,16 @@ export function useAgentThreads(project: string): AgentDeck {
 	const phase = phaseOf(here, seen);
 	const entries = entriesOf(here, seen);
 	/*
-	 * The column, in recency order, fixed once (#136, #205).
+	 * The list, in recency order, fixed once (#136, #205).
 	 *
 	 * Newest at the top and it stays there, so the one you are reading is the one you can
-	 * always see. A column that re-sorted as its threads worked would move a cell out from
+	 * always see. A list that re-sorted as its threads worked would move a row out from
 	 * under a cursor already reaching for it, which is why the order reads `at` — the last
 	 * time something happened in the thread — and never a life.
 	 *
-	 * Each thread is folded once here and read three times: for its name, for its mark and
-	 * for the line the flyout shows. The fold is the only way to know any of them — what a
-	 * thread wrote, what its turn is doing and what it did last all live in the events.
+	 * Each thread is folded once here and read four times: for its ask, for the frames it
+	 * wrote, for its mark and for the line it drew last. The fold is the only way to know
+	 * any of them, because all four live in the events.
 	 */
 	const column: readonly Thread[] = [...threads.current.values()]
 		.sort((one, two) => two.at - one.at)
@@ -1077,7 +1077,8 @@ export function useAgentThreads(project: string): AgentDeck {
 			const drawn = thread.id === open ? entries : entriesOf(thread, shown);
 			return {
 				id: thread.id,
-				name: nameOf(drawn),
+				name: askOf(drawn),
+				wrote: nameOf(drawn),
 				life: lifeFor(thread, open, shown),
 				at: thread.at,
 				last: lastOf(drawn),
@@ -1155,7 +1156,7 @@ export function useAgentThreads(project: string): AgentDeck {
 			/*
 			 * Closing a thread is a tidy rather than a delete (#136).
 			 *
-			 * It leaves the column, and neither the agent's own session nor spool's stored
+			 * It leaves the list, and neither the agent's own session nor spool's stored
 			 * picture goes with it. What does stop is the turn, because a tab nobody can
 			 * reach must not go on holding a process the hands cannot see.
 			 *

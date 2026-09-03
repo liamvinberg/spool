@@ -141,13 +141,12 @@ describe("the name", () => {
 });
 
 /**
- * The name a thread carries once it has done something (#200).
+ * The line under the ask: the frames a thread wrote (#200, #205).
  *
- * The ask was never a name, it was a sentence standing in for one, and every drawing of
- * it was a truncation. What a thread wrote is already short, already unique and already
- * what the conversation was about.
+ * The ask says why and this says where the work landed. It is derived from the rows, so
+ * it is a fact about the repo rather than a label anybody chose.
  */
-describe("naming a thread after what it wrote", () => {
+describe("the frames a thread wrote", () => {
 	const wrote = (frame: string): Extract<AgentEntry, { kind: "row" }> => ({
 		...row("done", "write"),
 		key: `row:write:${frame}`,
@@ -165,8 +164,8 @@ describe("naming a thread after what it wrote", () => {
 
 	/** a turn reads far more than it writes, and where it looked is not what it did */
 	it("ignores what it only read", () => {
-		expect(nameOf([asked, row("done", "read"), row("done", "run")])).toBe("shoot home and fix what reads wrong");
-		expect(nameOf([asked, row("done", "look")])).toBe("shoot home and fix what reads wrong");
+		expect(nameOf([asked, row("done", "read"), row("done", "run")])).toBe("");
+		expect(nameOf([asked, row("done", "look")])).toBe("");
 	});
 
 	/**
@@ -191,9 +190,10 @@ describe("naming a thread after what it wrote", () => {
 		expect(nameOf([asked, ...many])).toBe("a, b +2");
 	});
 
-	it("falls back to the ask, and then to nothing having happened at all", () => {
-		expect(nameOf([asked])).toBe("shoot home and fix what reads wrong");
-		expect(nameOf([])).toBe("new thread");
+	/** the ask is the name, so a thread that has written nothing has no second line to add */
+	it("is empty until the thread has written something", () => {
+		expect(nameOf([asked])).toBe("");
+		expect(nameOf([])).toBe("");
 	});
 });
 

@@ -5,26 +5,25 @@ import type { AgentEntry, AgentRow } from "./agent-transcript";
 
 /**
  * More than one conversation in a project, and most of them somewhere you are not
- * looking (#120, #136, #161, #200).
+ * looking (#120, #136, #161, #200, #205).
  *
  * A thread is a conversation in a project and nothing else. It is not bound to a page:
  * an agent asked to clean something up, or to move frames between pages, writes across
  * many pages or none, so there is no page field here to bind it with — which is also
  * why switching a thread does not move the canvas. There is nowhere to move to.
  *
- * The name is what the thread wrote, derived on read and stored nowhere (`nameOf` below
- * carries the argument). Nothing is borrowed and nothing is generated: the binary's own
- * title never reaches print mode — it is absent from both parent captures and from a
- * fresh three-turn print-mode session, in its output and in its own transcript file —
- * and spool naming a conversation with a side call to a cheap model was rejected as
- * silent spend on somebody's own subscription for a label.
+ * A thread is called what the person first asked (`askOf`), and the frames it wrote
+ * (`nameOf`) stand under that as a second line. Both are derived on read and stored
+ * nowhere. Nothing is borrowed and nothing is generated: the binary's own title never
+ * reaches print mode, and spool naming a conversation with a side call to a cheap model
+ * was rejected as silent spend on somebody's own subscription for a label.
  */
 
 /**
  * Five lives, and every one of them draws a mark.
  *
  *   streaming   working, in the thread you are looking at. The same turning ring
- *               `running` draws, because the cell is the one place in a column that
+ *               `running` draws, because the mark is the one place in the list that
  *               says whether a thread is moving, and the thread you are watching is
  *               the one you are most likely to be waiting on. Which one is open is the
  *               accent's to say, and it says it whether the thread is moving or not.
@@ -36,27 +35,28 @@ import type { AgentEntry, AgentRow } from "./agent-transcript";
  *               actually stuck.
  *   unread      it finished while you were away and nobody has read it. A solid dot at
  *               text strength, the way a mailbox says it, and still not the accent.
- *   read        an old thread, and out here it has no name beside it, so the mark is
- *               the whole of the thread. A hollow dot: present, and spent.
+ *   read        an old thread. A hollow dot: present, and spent. The one life the plate
+ *               leaves out, because the plate says what is moving elsewhere.
  */
 export type Life = "streaming" | "running" | "waiting" | "unread" | "read";
 
 /**
- * What the column draws of one thread: a mark in it, and the rest behind a hover (#205).
+ * What the plate and its list draw of one thread (#205).
  *
- * `name` is derived rather than stored, and it is not the `ask` the record on disk keeps:
- * an ask is the first thing a person said and stays true whatever the thread went on to
- * write, while the name is recomputed from the entries every time they are read.
- *
- * `at` and `last` are the flyout's. They are fields rather than a second read of the
- * entries because the fold that derives the name has both in its hand already.
+ * `name` is the ask: the first thing the person said, which stays true whatever the
+ * thread went on to write. `wrote` is the frames it changed, recomputed from the entries
+ * every time they are read, and empty until it has changed one. `at` and `last` are the
+ * list's: fields rather than a second read of the entries, because the fold that derives
+ * the rest has both in its hand already.
  */
 export interface Thread {
 	readonly id: string;
-	/** what it wrote, or the ask where it has written nothing yet */
+	/** the ask, or `UNSAID` where nothing has been said */
 	readonly name: string;
+	/** the frames it wrote, two and a count, or empty where it has written none */
+	readonly wrote: string;
 	readonly life: Life;
-	/** unix ms of the last thing that happened in it, which the flyout says as an age */
+	/** unix ms of the last thing that happened in it, which the list says as an age */
 	readonly at: number;
 	/** the last line it drew, in the rail's own nouns, or empty where it has drawn none */
 	readonly last: string;
@@ -96,8 +96,8 @@ export function bounced(entries: readonly AgentEntry[]): boolean {
  * `unread` and `waiting` are told apart by what clears them, and that is the whole
  * reason they are two drawings rather than one. A look clears `unread`, wherever the look
  * happened; nothing about looking answers a question, so `waiting` is decided above it
- * and no look reaches it. A column that spent the disc on waiting would go silent about a
- * thread that will never finish, which is the one case the column exists for.
+ * and no look reaches it. A list that spent the disc on waiting would go silent about a
+ * thread that will never finish, which is the one case the list exists for.
  */
 export function lifeOf({
 	phase,
@@ -132,18 +132,18 @@ export function storedLife(life: Life): StoredLife {
  * What a thread with nothing in it is called.
  *
  * It is the machine saying there is nothing to say yet rather than a name anybody chose,
- * which is why the nameplate draws it dimmed: exported so the one surface that has to tell
- * a name from its absence tests the same string both fallbacks produce.
+ * which is why the plate draws it dimmed: exported so the one surface that has to tell a
+ * name from its absence tests the same string.
  */
 export const UNSAID = "new thread";
 
-/** the human's own first sentence, which is what a thread falls back to being called */
+/** the human's own first sentence, which is what a thread is called (#205) */
 export function askOf(entries: readonly AgentEntry[], fallback = UNSAID): string {
 	const said = entries.find((entry) => entry.kind === "user");
 	return said?.kind === "user" && said.text.trim() !== "" ? said.text : fallback;
 }
 
-/** two names and then a count: past this a nameplate is a list, and a list is the deck's job */
+/** two names and then a count: past this a line is a list */
 const SHOWN = 2;
 
 /**
@@ -162,45 +162,33 @@ const SHOWN = 2;
 const CHANGED = new Set(["write", "edit"]);
 
 /**
- * What a thread is called, which is what it wrote (#200).
+ * The frames a thread wrote, which is the line under its ask (#200, #205).
  *
- * The ask was the name because there was nothing to borrow, and the note above still
- * holds on both alternatives it rejected: the binary's own generated title never reaches
- * print mode, and naming a conversation with a side call to a cheap model is silent spend
- * on somebody's subscription for a label. The third option was the one nobody had looked
- * at, because the answer is already in the log. **A thread that has written frames has a
- * name made of facts about the repo** — no call, no invention, and nothing to keep in
- * sync, since it is derived on read rather than stored.
- *
- * It beats the ask on the thing the ask is worst at. An ask is a sentence and a name is
- * a label, so every name was a truncation: `so when the like shot patches or disappears
- * its li…`, cut mid-word, at whatever width the furniture left over. A frame name is
- * already short, already unique in the project, and already the thing the conversation
- * was *about* — and it is what you would say out loud to name that conversation.
+ * A line made of facts about the repo: no call, no invention, and nothing to keep in
+ * sync, since it is derived on read rather than stored. It says where the work landed,
+ * which the ask cannot, and a frame name is what you would say out loud to point at it.
  *
  * Only writes count. A turn reads far more than it writes, and the frames it read are
- * where it looked rather than what it did; a name made of them would call every thread
+ * where it looked rather than what it did; a line made of them would call every thread
  * after the file it happened to open first.
  *
  * Two names and then a count, rather than a truncation: the count is a fact where a
- * cut string is a broken one, and `--worked` measured two at 208px against a 492px ask.
- * A thread that has written nothing yet is still the ask, and one that has said nothing
- * at all is still `new thread` — this is a better name where there is one, not a
- * different fallback.
+ * cut string is a broken one. Empty where the thread has written nothing yet, so the
+ * surface drawing it can say what the thread did instead.
  */
-export function nameOf(entries: readonly AgentEntry[], fallback = UNSAID): string {
+export function nameOf(entries: readonly AgentEntry[]): string {
 	const written: string[] = [];
 	const walk = (rows: readonly AgentRow[]) => {
 		for (const row of rows) {
 			// a delegate's writes are the thread's writes: the frames are out on the canvas
-			// either way, and which process authored one is not what the name is about
+			// either way, and which process authored one is not what the line is about
 			walk(row.delegated);
 			if (!CHANGED.has(row.verb) || row.frame === null) continue;
 			if (!written.includes(row.frame)) written.push(row.frame);
 		}
 	};
 	walk(entries.filter((entry): entry is AgentRow => entry.kind === "row"));
-	if (written.length === 0) return askOf(entries, fallback);
+	if (written.length === 0) return "";
 	const shown = written.slice(0, SHOWN).join(", ");
 	return written.length > SHOWN ? `${shown} +${written.length - SHOWN}` : shown;
 }
@@ -208,12 +196,12 @@ export function nameOf(entries: readonly AgentEntry[], fallback = UNSAID): strin
 /**
  * The last line the thread drew, in the rail's own nouns (#205).
  *
- * Rows only, and the last of them: it is what the thread is *doing*, which the name cannot
- * say because the name is the frames it has touched and carries no verb. A message is not a
- * line — prose is paragraphs and the flyout has one line to spend — and a delegate's rows
- * are not either, because the transcript keeps them inside the row that launched them.
+ * Rows only, and the last of them: it is what the thread is *doing*, which neither the ask
+ * nor the frames can say. A message is not a line — prose is paragraphs and the list has
+ * one line to spend — and a delegate's rows are not either, because the transcript keeps
+ * them inside the row that launched them.
  *
- * Empty where a thread has drawn no row at all, which the flyout words itself.
+ * Empty where a thread has drawn no row at all, which the list words itself.
  */
 export function lastOf(entries: readonly AgentEntry[]): string {
 	const rows = entries.filter((entry): entry is AgentRow => entry.kind === "row");
