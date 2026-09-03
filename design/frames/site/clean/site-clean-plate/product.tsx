@@ -1833,7 +1833,7 @@ export function AskScreen() {
 				) : (
 					<div className="mt-3 flex flex-1 flex-col">
 						<p className="shrink-0 text-[12.5px] leading-[1.6] text-[var(--t2)]">
-							Personio has Karl Nyberg starting on 1 September with no department set. Three teams have an
+							Personio has Noa Lind starting on 1 September with no department set. Three teams have an
 							open seat, so I cannot pick one from the record.
 						</p>
 
