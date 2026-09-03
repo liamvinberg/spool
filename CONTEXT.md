@@ -112,9 +112,7 @@ Spool is a local-first prototyping canvas: agents author frame files on disk; pe
 
 **Walk**: Traversing navigation from an entered frame or in the player; a walk can flip a derived edge's verified mark.
 
-**Scenario**: The `{state, mock}` seed a play session boots from; frames never branch on which scenario is active. _Avoid_: preset
-
-**Mock**: The declarative layer answering a frame's relative fetches with named fixtures, per route. _Avoid_: stub
+**Scenario**: The `{state}` seed a play session boots from; frames never branch on which scenario is active. _Avoid_: preset
 
 **Play session**: One run through the flows: name-stack history, state seeded from the scenario. The session is the page, so reloading the tab starts it over.
 

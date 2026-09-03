@@ -14,12 +14,7 @@ function makeSecurityHarness() {
 	const spoolDir = makeTempDir();
 	const project = makeProject(spoolDir);
 	writeFrame(project.root, "home", "export default function Home() { return <main>safe</main> }");
-	writeDesignFile(
-		project.root,
-		"shared/scenarios/default.json",
-		JSON.stringify({ state: { owner: project.root }, mock: {} }),
-	);
-	writeDesignFile(project.root, "shared/fixtures/secret.json", JSON.stringify({ project: project.root }));
+	writeDesignFile(project.root, "shared/scenarios/default.json", JSON.stringify({ state: { owner: project.root } }));
 	const daemon = createDaemonApp({
 		spoolDir,
 		version: "0.0.0-test",
@@ -486,17 +481,10 @@ describe("project data capabilities", () => {
 	it("accepts opaque-origin reads only with the matching project capability", async () => {
 		const first = makeSecurityHarness();
 		const second = makeProject(first.spoolDir);
-		writeDesignFile(second.root, "shared/fixtures/secret.json", JSON.stringify({ project: second.root }));
-		writeDesignFile(
-			second.root,
-			"shared/scenarios/default.json",
-			JSON.stringify({ state: { owner: second.root }, mock: {} }),
-		);
+		writeDesignFile(second.root, "shared/scenarios/default.json", JSON.stringify({ state: { owner: second.root } }));
 		const capability = first.daemon.projectCapability(first.project.root);
-		const firstPath = `/api/p/${encodeURIComponent(first.project.name)}/fixtures/secret`;
-		const firstScenarioPath = `/api/p/${encodeURIComponent(first.project.name)}/scenarios/default`;
-		const secondPath = `/api/p/${encodeURIComponent(second.name)}/fixtures/secret`;
-		const secondScenarioPath = `/api/p/${encodeURIComponent(second.name)}/scenarios/default`;
+		const firstPath = `/api/p/${encodeURIComponent(first.project.name)}/scenarios/default`;
+		const secondPath = `/api/p/${encodeURIComponent(second.name)}/scenarios/default`;
 		const headers = { origin: "null", "x-spool-project": capability };
 
 		expect((await first.render(firstPath, { headers: { origin: "null" } })).status).toBe(401);
@@ -514,21 +502,14 @@ describe("project data capabilities", () => {
 
 		const own = await first.render(firstPath, { headers });
 		expect(own.status).toBe(200);
-		expect((await own.json()) as unknown).toEqual({ project: first.project.root });
+		expect(await own.json()).toEqual({ state: { owner: first.project.root } });
 		expect(own.headers.get("access-control-allow-origin")).toBe("null");
 		expect(own.headers.get("access-control-allow-origin")).not.toBe("*");
 		expect(own.headers.get("vary")).toContain("Origin");
 
-		const ownScenario = await first.render(firstScenarioPath, { headers });
-		expect(ownScenario.status).toBe(200);
-		expect(await ownScenario.json()).toEqual({ state: { owner: first.project.root }, mock: {} });
-
 		const crossProject = await first.render(secondPath, { headers });
 		expect(crossProject.status).toBe(403);
 		expect(await crossProject.text()).not.toContain(second.root);
-		const crossProjectScenario = await first.render(secondScenarioPath, { headers });
-		expect(crossProjectScenario.status).toBe(403);
-		expect(await crossProjectScenario.text()).not.toContain(second.root);
 
 		const foreignOrigin = await first.render(firstPath, {
 			headers: { origin: "https://attacker.example", "x-spool-project": capability },
@@ -545,8 +526,8 @@ describe("project data capabilities", () => {
 		mkdirSync(secondDir);
 		const first = { root: initProject(firstDir, spoolDir).root, name: "same-name" };
 		const second = { root: initProject(secondDir, spoolDir).root, name: "same-name" };
-		writeDesignFile(first.root, "shared/fixtures/secret.json", JSON.stringify({ owner: "first" }));
-		writeDesignFile(second.root, "shared/fixtures/secret.json", JSON.stringify({ owner: "second" }));
+		writeDesignFile(first.root, "shared/scenarios/default.json", JSON.stringify({ state: { owner: "first" } }));
+		writeDesignFile(second.root, "shared/scenarios/default.json", JSON.stringify({ state: { owner: "second" } }));
 		const daemon = createDaemonApp({
 			spoolDir,
 			version: "0.0.0-test",
@@ -555,15 +536,15 @@ describe("project data capabilities", () => {
 		});
 		onTestFinished(() => daemon.close());
 		const read = (capability: string) =>
-			daemon.app.request(`http://${RENDER_HOST}/api/p/same-name/fixtures/secret`, {
+			daemon.app.request(`http://${RENDER_HOST}/api/p/same-name/scenarios/default`, {
 				headers: { origin: "null", "x-spool-project": capability },
 			});
 
 		const firstRead = await read(daemon.projectCapability(first.root));
-		expect(await firstRead.json()).toEqual({ owner: "first" });
+		expect(await firstRead.json()).toEqual({ state: { owner: "first" } });
 		expect(firstRead.headers.get("cache-control")).toBe("no-store");
 		expect(firstRead.headers.get("vary")).toContain("X-Spool-Project");
-		expect(await (await read(daemon.projectCapability(second.root))).json()).toEqual({ owner: "second" });
+		expect(await (await read(daemon.projectCapability(second.root))).json()).toEqual({ state: { owner: "second" } });
 		const controlAmbiguity = await daemon.app.request(`http://${CONTROL_HOST}/api/p/same-name/frames`, {
 			headers: { "x-spool-control": CONTROL_TOKEN },
 		});
@@ -602,6 +583,6 @@ describe("project data capabilities", () => {
 			},
 		});
 		expect(scenario.status).toBe(200);
-		expect(await scenario.json()).toEqual({ state: { owner: project.root }, mock: {} });
+		expect(await scenario.json()).toEqual({ state: { owner: project.root } });
 	});
 });

@@ -609,7 +609,6 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 					arrival: 2,
 					externalHref: null,
 					log: [{ kind: "go", from: "same", to: "cross", at: 1, changed: [], snapshot: { secret: true } }],
-					mock: [],
 					elapsed: 1,
 					state: { scenario: "default", rows: [] },
 				},
@@ -628,7 +627,6 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 					arrival: 2,
 					externalHref: "javascript:alert(1)",
 					log: [],
-					mock: [],
 					elapsed: 1,
 					state: { scenario: "default", rows: [] },
 				},
@@ -650,8 +648,7 @@ it("keeps frame measurements native through canvas and player walks", { timeout:
 						arrival: 0,
 						externalHref: null,
 						log: [],
-						mock: [],
-						state: { scenario: "default", rows: [] },
+							state: { scenario: "default", rows: [] },
 					},
 				},
 				source: forged.contentWindow,
@@ -3424,21 +3421,17 @@ it("keeps existing player behavior through the control shell", { timeout: 60_000
 	writeDesignFile(
 		project.root,
 		"shared/scenarios/default.json",
-		'{ "state": { "count": 2 }, "mock": { "GET /api/value": { "body": { "value": "mocked" } } } }\n',
+		'{ "state": { "count": 2 } }\n',
 	);
 	writeFrame(
 		project.root,
 		"menu",
-		`import { useEffect, useState } from "react";
+		`import { useState } from "react";
 import { ui } from "spool";
 export default function Menu() {
 	const state = ui.use();
-	const [mocked, setMocked] = useState("loading");
 	const [key, setKey] = useState("");
-	useEffect(() => {
-		fetch("/api/value").then((response) => response.json()).then((body) => setMocked(body.value));
-	}, []);
-	return <main><output id="count">{state.count}</output><output id="mocked">{mocked}</output><button id="key" onKeyDown={(event) => setKey(event.key)}>{key || "key"}</button><button id="bump" onClick={() => { ui.state.count = 5; }}>bump</button><button id="next" data-go="next">next</button></main>;
+	return <main><output id="count">{state.count}</output><button id="key" onKeyDown={(event) => setKey(event.key)}>{key || "key"}</button><button id="bump" onClick={() => { ui.state.count = 5; }}>bump</button><button id="next" data-go="next">next</button></main>;
 }
 `,
 	);
@@ -3459,8 +3452,7 @@ export default function Next() {
 	onTestFinished(() => page.close());
 	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=menu`);
 	const inner = page.frameLocator("#spool-player");
-	await inner.locator("#mocked").filter({ hasText: "mocked" }).waitFor();
-	expect(await inner.locator("#count").innerText()).toBe("2");
+	await inner.locator("#count").filter({ hasText: "2" }).waitFor();
 	await inner.locator("#bump").click();
 	await inner.locator("#next").click();
 	await inner.getByText("external").waitFor();

@@ -8,7 +8,6 @@ import { makeProject, makeTempDir, serveProject, writeDesignFile, writeFrame } f
 interface HostileResult {
 	surface: "canvas" | "player" | "direct";
 	js: "executed";
-	ownFixture: unknown;
 	scenarioSeed: unknown;
 	remote: unknown;
 	controlRead: string;
@@ -88,7 +87,6 @@ import { ui } from "spool";
 interface Result {
 	surface: "canvas" | "player" | "direct";
 	js: "executed";
-	ownFixture: unknown;
 	scenarioSeed: unknown;
 	remote: unknown;
 	controlRead: string;
@@ -125,7 +123,7 @@ async function requestOutcome(input: string, init?: RequestInit): Promise<string
 	}
 }
 
-async function tryForeignFixture(): Promise<string> {
+async function tryForeignScenario(): Promise<string> {
 	try {
 		let capability = (window as any).__SPOOL__.projectCapability as string;
 		if (window.parent === window) {
@@ -138,7 +136,7 @@ async function tryForeignFixture(): Promise<string> {
 			}
 		}
 		const response = await fetch(
-			renderOrigin + "/api/p/" + encodeURIComponent(foreignProject) + "/fixtures/secret",
+			renderOrigin + "/api/p/" + encodeURIComponent(foreignProject) + "/scenarios/default",
 			{ headers: { "X-Spool-Project": capability } },
 		);
 		return response.ok ? "allowed:" + response.status : "denied:" + response.status;
@@ -158,12 +156,10 @@ export default function Hostile() {
 					: window.parent === window
 						? "direct"
 						: "canvas";
-			const ownFixture = await fetch("/api/own").then((response) => response.json());
 			const remote = await fetch(remoteOrigin + "/probe").then((response) => response.json());
 			setResult({
 				surface,
 				js: "executed",
-				ownFixture,
 				scenarioSeed: state.scenarioSeed,
 				remote,
 				controlRead: await requestOutcome(controlOrigin + "/api/projects"),
@@ -172,7 +168,7 @@ export default function Hostile() {
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ camera: { x: 999, y: 999, zoom: 9 } }),
 				}),
-				crossProject: await tryForeignFixture(),
+				crossProject: await tryForeignScenario(),
 				controlCookie: probe(() => document.cookie),
 				controlStorage: probe(() => localStorage.getItem("control-secret")),
 				parentCookie: probe(() => window.parent.document.cookie),
@@ -238,7 +234,6 @@ async function readHostileResult(frame: Frame): Promise<HostileResult> {
 
 function expectAuthorityDenied(result: HostileResult, controlToken: string): void {
 	expect(result.js).toBe("executed");
-	expect(result.ownFixture).toEqual({ owner: "own" });
 	expect(result.scenarioSeed).toBe("own");
 	expect(result.remote).toEqual({ network: "open" });
 	expect(denied(result.controlRead)).toBe(true);
@@ -271,13 +266,12 @@ describe("hostile project browser boundary", () => {
 		const uiDir = join(makeTempDir(), "ui");
 		const project = await serveProject({ uiDir });
 		const foreign = makeProject(project.spoolDir);
-		writeDesignFile(project.root, "shared/fixtures/own.json", JSON.stringify({ owner: "own" }));
 		writeDesignFile(
 			project.root,
 			"shared/scenarios/default.json",
-			JSON.stringify({ state: { scenarioSeed: "own" }, mock: {} }),
+			JSON.stringify({ state: { scenarioSeed: "own" } }),
 		);
-		writeDesignFile(foreign.root, "shared/fixtures/secret.json", JSON.stringify({ owner: "foreign" }));
+		writeDesignFile(foreign.root, "shared/scenarios/default.json", JSON.stringify({ state: { owner: "foreign" } }));
 		writeFrame(foreign.root, "foreign", "export default function Foreign() { return <main>foreign</main> }");
 		writeFrame(project.root, "next", 'export default function Next() { return <main id="next">next</main> }');
 		writeFrame(

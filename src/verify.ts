@@ -13,7 +13,7 @@ import { refusalOf } from "./verbs";
  * shot and logs (#25): two outputs of one headless scenario-seeded boot of the
  * really-served frame document in spool's own Chrome. The CLI runs your frame,
  * never reads the canvas — the boot is a fresh page, seeded like any first
- * open (named or default scenario, mock installed). Compile errors surface
+ * open (named or default scenario). Compile errors surface
  * verbatim before a browser ever launches; the log cache under
  * design/.spool/verify is keyed to the document's closure etag and scenario,
  * so unchanged source in the same scenario replays without a boot.

@@ -83,7 +83,7 @@ export function makeApp(spoolDir: string, options?: Partial<Parameters<typeof cr
 		request: (input: string, init?: RequestInit) => {
 			const url = new URL(input, "http://localhost:7766");
 			const path = url.pathname;
-			const projectData = /^\/api\/p\/([^/]+)\/(?:scenarios\/|fixtures\/)/.exec(path);
+			const projectData = /^\/api\/p\/([^/]+)\/scenarios\//.exec(path);
 			const render =
 				/^\/p\/[^/]+\/frames\/[^/]+$/.test(path) ||
 				path.startsWith("/play/") ||
@@ -318,8 +318,8 @@ export const CAPTURES = [
  * has one reader on each side of the wire and three tests asserting on it, so it is read
  * from here rather than typed out again in each — the same rule the captures are under.
  *
- * The canvas keeps its own copy under `design/shared/fixtures/`, because spool's mock
- * convention resolves fixtures under `design/` and nowhere else.
+ * The canvas keeps its own copy beside `design/shared/lib/spool/agent-model.ts`, because
+ * a frame's import resolves under `design/` and nowhere else.
  */
 export function readModelsReply(): unknown {
 	const file = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "claude-models.json");

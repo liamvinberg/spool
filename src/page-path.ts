@@ -14,7 +14,7 @@
 /** The root page's slot — the frames directory itself, and the wire's spelling of it. */
 export const ROOT_PAGE = "";
 
-/** One rule for every name that becomes a path segment: frames, pages, scenarios, fixture parts. */
+/** One rule for every name that becomes a path segment: frames, pages, scenarios. */
 export function isSafeName(segment: string): boolean {
 	return segment.length > 0 && !segment.startsWith(".") && !segment.includes("/") && !segment.includes("\\");
 }

@@ -1,8 +1,7 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { readFixture } from "./daemon/project-files";
 import { mirrorCaptures } from "./dev-captures";
 import { CAPTURES, makeProject, makeTempDir } from "./test-helpers";
 
@@ -21,23 +20,24 @@ describe("the agent captures", () => {
 		}
 	});
 
-	it("mirror into the canvas where its fixtures convention serves them", () => {
+	it("mirror into the canvas where frames import them", () => {
 		const { root } = makeProject(join(makeTempDir(), ".spool"));
-		const mirror = join(root, "design", "shared", "fixtures", "captures");
+		const mirror = join(root, "design", "shared", "captures");
 		mirrorCaptures(home, mirror);
 
 		for (const name of CAPTURES) {
-			const served = readFixture(root, `captures/${name}`);
-			expect(served.kind, name).toBe("ok");
-			expect(served.kind === "ok" && served.json).toBe(readFileSync(join(home, `${name}.json`), "utf8"));
+			expect(readFileSync(join(mirror, `${name}.json`), "utf8"), name).toBe(
+				readFileSync(join(home, `${name}.json`), "utf8"),
+			);
 		}
 
 		// a capture edited at its home reaches the canvas, and nothing else survives
 		writeFileSync(join(mirror, "claude-turn.json"), "[]");
 		writeFileSync(join(mirror, "stray.json"), "[]");
 		mirrorCaptures(home, mirror);
-		const turn = readFixture(root, "captures/claude-turn");
-		expect(turn.kind === "ok" && turn.json).toBe(readFileSync(join(home, "claude-turn.json"), "utf8"));
-		expect(readFixture(root, "captures/stray").kind).toBe("missing");
+		expect(readFileSync(join(mirror, "claude-turn.json"), "utf8")).toBe(
+			readFileSync(join(home, "claude-turn.json"), "utf8"),
+		);
+		expect(existsSync(join(mirror, "stray.json"))).toBe(false);
 	});
 });

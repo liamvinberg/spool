@@ -322,7 +322,7 @@ export default function Noisy() {
 		if (!(await browserAvailable())) return;
 
 		const { root, deps } = await serveVerifyProject();
-		writeDesignFile(root, "shared/scenarios/review.json", '{ "state": {}, "mock": {} }\n');
+		writeDesignFile(root, "shared/scenarios/review.json", '{ "state": {} }\n');
 		writeFrame(
 			root,
 			"seeded",

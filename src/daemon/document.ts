@@ -387,9 +387,8 @@ ${fontsBlock}${bundledBlock}<script type="importmap">${escapeJsonScript(importMa
  */
 const canvasShimJs = `(() => {
 	// Both taken before any module evaluates, because frame code may replace
-	// either: the runtime's mock layer answers 404 to every route a scenario
-	// never declared, and an animation library may own rAF outright. The shim's
-	// own reads and its own frames are spool's, not the frame's.
+	// either: an animation library may own rAF outright. The shim's own reads
+	// and its own frames are spool's, not the frame's.
 	const nativeFetch = window.fetch.bind(window);
 	const nativeRaf = window.requestAnimationFrame.bind(window);
 	const nativeCancelRaf = window.cancelAnimationFrame.bind(window);

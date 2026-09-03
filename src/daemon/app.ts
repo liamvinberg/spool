@@ -70,7 +70,7 @@ import { createHistory, type HistoryClock } from "./history";
 import { locateInDesign } from "./locate";
 import { isLoopbackHost } from "./loopback";
 import { assemblePlayerDocument, chromeFontFile, createPlayerCompiler, playerChromeCss, playerEtag } from "./play";
-import { type ProjectJson, readFixture, readScenario } from "./project-files";
+import { type ProjectJson, readScenario } from "./project-files";
 import { parseCanvasState, readCanvasState, writeCanvasState } from "./project-state";
 import {
 	FRAME_BIRTH,
@@ -795,7 +795,7 @@ export function createDaemonApp({
 	}
 
 	function isProjectDataPath(path: string): boolean {
-		return /^\/api\/p\/[^/]+\/(?:scenarios\/[^/]+|fixtures\/.+)$/.test(path);
+		return /^\/api\/p\/[^/]+\/scenarios\/[^/]+$/.test(path);
 	}
 
 	function isExecutableRenderPath(path: string): boolean {
@@ -834,7 +834,7 @@ export function createDaemonApp({
 		return { root };
 	}
 
-	// scenario and fixture reads land in null-origin sandboxed frames. Their
+	// scenario reads land in null-origin sandboxed frames. Their
 	// capability, not a wildcard origin, selects the one root they may read.
 	function serveProjectJson(c: Context, result: ProjectJson): Response {
 		// The same display-name URL can select different registered roots by
@@ -2423,16 +2423,10 @@ export function createDaemonApp({
 			},
 		)
 		.options("/api/p/:project/scenarios/:name", (c) => serveProjectDataPreflight(c))
-		.options("/api/p/:project/fixtures/:name{.+}", (c) => serveProjectDataPreflight(c))
 		.get("/api/p/:project/scenarios/:name", (c) => {
 			const project = resolveProjectData(c);
 			if ("response" in project) return project.response;
 			return serveProjectJson(c, readScenario(project.root, c.req.param("name")));
-		})
-		.get("/api/p/:project/fixtures/:name{.+}", (c) => {
-			const project = resolveProjectData(c);
-			if ("response" in project) return project.response;
-			return serveProjectJson(c, readFixture(project.root, c.req.param("name")));
 		})
 		.get("/api/p/:project/events", (c) => {
 			const name = c.req.param("project");

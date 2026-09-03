@@ -15,7 +15,7 @@ describe("scenario serve", () => {
 		writeDesignFile(
 			root,
 			"shared/scenarios/checkout-error.json",
-			'{\n\t"state": { "cart": [] },\n\t"mock": { "POST /api/pay": { "status": 500 } }\n}\n',
+			'{\n\t"state": { "cart": [], "payment": "failed" }\n}\n',
 		);
 		const app = makeApp(spoolDir);
 
@@ -24,7 +24,7 @@ describe("scenario serve", () => {
 		expect(res.status).toBe(200);
 		expect(res.headers.get("content-type")).toContain("application/json");
 		expect(res.headers.get("access-control-allow-origin")).toBe("null");
-		expect(await res.json()).toEqual({ state: { cart: [] }, mock: { "POST /api/pay": { status: 500 } } });
+		expect(await res.json()).toEqual({ state: { cart: [], payment: "failed" } });
 	});
 
 	it("serves the built-in empty seed when default.json is absent", async () => {
@@ -36,7 +36,7 @@ describe("scenario serve", () => {
 		const res = await app.request(`/api/p/${name}/scenarios/default`);
 
 		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual({ state: {}, mock: {} });
+		expect(await res.json()).toEqual({ state: {} });
 	});
 
 	it("404s a missing named scenario with the expected path", async () => {
@@ -71,69 +71,7 @@ describe("scenario serve", () => {
 		const { name } = makeProject(spoolDir);
 		const app = makeApp(spoolDir);
 
-		expect((await app.request(`/api/p/${name}/scenarios/${encodeURIComponent("../fixtures/x")}`)).status).toBe(404);
-	});
-});
-
-describe("fixture serve", () => {
-	it("serves a fixture by name, CORS-open, nested names included", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeDesignFile(root, "shared/fixtures/products.json", '[{ "id": 1, "title": "yarn" }]\n');
-		writeDesignFile(root, "shared/fixtures/users/42.json", '{ "name": "Liam" }\n');
-		const app = makeApp(spoolDir);
-
-		const products = await app.request(`/api/p/${name}/fixtures/products`);
-		expect(products.status).toBe(200);
-		expect(products.headers.get("content-type")).toContain("application/json");
-		expect(products.headers.get("access-control-allow-origin")).toBe("null");
-		expect(await products.json()).toEqual([{ id: 1, title: "yarn" }]);
-
-		const nested = await app.request(`/api/p/${name}/fixtures/users/42`);
-		expect(nested.status).toBe(200);
-		expect(await nested.json()).toEqual({ name: "Liam" });
-	});
-
-	it("normalizes a trailing .json in the fixture name", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeDesignFile(root, "shared/fixtures/products.json", "[]\n");
-		const app = makeApp(spoolDir);
-
-		expect((await app.request(`/api/p/${name}/fixtures/products.json`)).status).toBe(200);
-	});
-
-	it("404s a missing fixture with the expected path", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { name } = makeProject(spoolDir);
-		const app = makeApp(spoolDir);
-
-		const res = await app.request(`/api/p/${name}/fixtures/ghost`);
-
-		expect(res.status).toBe(404);
-		expect(await res.text()).toContain("shared/fixtures/ghost.json");
-	});
-
-	it("never escapes the fixtures dir", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeDesignFile(root, "shared/secret.json", '{ "leak": true }\n');
-		const app = makeApp(spoolDir);
-
-		expect((await app.request(`/api/p/${name}/fixtures/${encodeURIComponent("../secret")}`)).status).toBe(404);
-		expect((await app.request(`/api/p/${name}/fixtures/..%2Fsecret`)).status).toBe(404);
-	});
-
-	it("500s invalid fixture JSON with the filename", async () => {
-		const spoolDir = join(makeTempDir(), ".spool");
-		const { root, name } = makeProject(spoolDir);
-		writeDesignFile(root, "shared/fixtures/broken.json", "{ nope\n");
-		const app = makeApp(spoolDir);
-
-		const res = await app.request(`/api/p/${name}/fixtures/broken`);
-
-		expect(res.status).toBe(500);
-		expect(await res.text()).toContain("shared/fixtures/broken.json");
+		expect((await app.request(`/api/p/${name}/scenarios/${encodeURIComponent("../ui/x")}`)).status).toBe(404);
 	});
 });
 

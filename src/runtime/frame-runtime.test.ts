@@ -211,19 +211,6 @@ const checkoutEmptyTsx = `export default function CheckoutEmpty() {
 }
 `;
 
-const productsTsx = `import { useEffect, useState } from "react";
-
-export default function Products() {
-	const [titles, setTitles] = useState<string[]>([]);
-	useEffect(() => {
-		fetch("/api/products")
-			.then((res) => res.json())
-			.then((items: Array<{ title: string }>) => setTitles(items.map((item) => item.title)));
-	}, []);
-	return <ul>{titles.map((title) => <li key={title}>{title}</li>)}</ul>;
-}
-`;
-
 const clipboardTsx = `import { useState } from "react";
 import { ui } from "spool";
 
@@ -308,7 +295,7 @@ function scaffoldFlow(harness: Harness): void {
 	writeFrame(harness.root, "inbox", inboxTsx);
 	writeFrame(harness.root, "thread--detail", threadDetailTsx);
 	writeFrame(harness.root, "checkout--empty", checkoutEmptyTsx);
-	writeDesignFile(harness.root, "shared/scenarios/default.json", '{\n\t"state": { "unread": 2 },\n\t"mock": {}\n}\n');
+	writeDesignFile(harness.root, "shared/scenarios/default.json", '{\n\t"state": { "unread": 2 }\n}\n');
 }
 
 describe("walking a flow", () => {
@@ -407,18 +394,14 @@ describe("walking a flow", () => {
 		await waitForWalk(inbox.assign, `/p/${harness.name}/frames/checkout--empty`);
 	});
 
-	it("data-go and the mock work in a frame that never imports spool", async () => {
+	it("data-go works in a frame that never imports spool", async () => {
 		const harness = makeHarness();
 		scaffoldFlow(harness);
-		writeDesignFile(harness.root, "shared/fixtures/products.json", '[{ "title": "yarn" }]\n');
 
 		const checkout = await loadFrameDocument(harness, "checkout--empty");
 		await vi.waitFor(() => {
 			expect(document.querySelector("p")?.textContent).toBe("checkout is empty");
 		});
-
-		const res = await window.fetch("/api/products");
-		expect(await res.json()).toEqual([{ title: "yarn" }]);
 
 		click("p");
 		await waitForWalk(checkout.assign, `/p/${harness.name}/frames/inbox`);
@@ -427,7 +410,7 @@ describe("walking a flow", () => {
 	it("a ?scenario= URL starts and restarts the session on that scenario, and walks preserve it", async () => {
 		const harness = makeHarness();
 		scaffoldFlow(harness);
-		writeDesignFile(harness.root, "shared/scenarios/vip.json", '{\n\t"state": { "unread": 9 },\n\t"mock": {}\n}\n');
+		writeDesignFile(harness.root, "shared/scenarios/vip.json", '{\n\t"state": { "unread": 9 }\n}\n');
 
 		// an existing default-scenario session is mid-walk…
 		await loadFrameDocument(harness, "inbox");
@@ -481,99 +464,6 @@ describe("a ui.state write from a render", () => {
 		} finally {
 			warnings.restore();
 		}
-	});
-});
-
-describe("the mock layer", () => {
-	it("serves fixtures to a frame's fetch with configured latency and status", async () => {
-		const harness = makeHarness();
-		writeFrame(harness.root, "products", productsTsx);
-		writeDesignFile(harness.root, "shared/fixtures/products.json", '[{ "title": "yarn" }, { "title": "thread" }]\n');
-		writeDesignFile(
-			harness.root,
-			"shared/scenarios/default.json",
-			'{\n\t"state": {},\n\t"mock": {\n\t\t"latency": 60,\n\t\t"POST /api/pay": { "status": 500 }\n\t}\n}\n',
-		);
-
-		await loadFrameDocument(harness, "products");
-
-		// the frame's own fetch resolves the fixture by name, felt through latency
-		await vi.waitFor(() => {
-			const titles = [...document.querySelectorAll("li")].map((li) => li.textContent);
-			expect(titles).toEqual(["yarn", "thread"]);
-		});
-
-		// latency: the bare top-level dial slows every mocked response
-		const before = performance.now();
-		const products = await window.fetch("/api/products");
-		expect(performance.now() - before).toBeGreaterThanOrEqual(55);
-		expect(products.status).toBe(200);
-		expect(products.headers.get("content-type")).toContain("application/json");
-		expect(await products.json()).toEqual([{ title: "yarn" }, { title: "thread" }]);
-
-		// status: the method-prefixed rule answers the write with its canned status
-		const pay = await window.fetch("/api/pay", { method: "POST" });
-		expect(pay.status).toBe(500);
-
-		// a GET of the same path misses the POST rule and falls through
-		const getPay = await window.fetch("/api/pay");
-		expect(getPay.status).toBe(404);
-	});
-
-	it("resolves rules over convention, inline bodies, rule fixtures, and latency-only rules", async () => {
-		const harness = makeHarness();
-		writeFrame(harness.root, "products", productsTsx);
-		writeDesignFile(harness.root, "shared/fixtures/products.json", '[{ "title": "from-convention" }]\n');
-		writeDesignFile(harness.root, "shared/fixtures/vip-products.json", '[{ "title": "from-rule-fixture" }]\n');
-		writeDesignFile(
-			harness.root,
-			"shared/scenarios/default.json",
-			`{
-	"state": {},
-	"mock": {
-		"/api/products": { "fixture": "vip-products" },
-		"GET /api/inline": { "greeting": "hi" },
-		"/api/slow": { "latency": 40 }
-	}
-}
-`,
-		);
-		writeDesignFile(harness.root, "shared/fixtures/slow.json", '{ "ok": true }\n');
-
-		await loadFrameDocument(harness, "products");
-
-		// scenario rules sit above the fixtures convention in the resolution order
-		await vi.waitFor(() => {
-			const titles = [...document.querySelectorAll("li")].map((li) => li.textContent);
-			expect(titles).toEqual(["from-rule-fixture"]);
-		});
-
-		// an object of non-reserved keys is an inline body
-		expect(await (await window.fetch("/api/inline")).json()).toEqual({ greeting: "hi" });
-
-		// a latency-only rule shapes timing while the body resolves by convention
-		const before = performance.now();
-		const slow = await window.fetch("/api/slow");
-		expect(performance.now() - before).toBeGreaterThanOrEqual(35);
-		expect(await slow.json()).toEqual({ ok: true });
-	});
-
-	it("passes absolute URLs through and 404s unmocked relative fetches loudly", async () => {
-		const harness = makeHarness();
-		writeFrame(harness.root, "checkout--empty", checkoutEmptyTsx);
-
-		await loadFrameDocument(harness, "checkout--empty", {
-			outside: (url) => (url.startsWith("https://outside.test/") ? new Response("outside network") : undefined),
-		});
-
-		const outside = await window.fetch("https://outside.test/ping");
-		expect(await outside.text()).toBe("outside network");
-
-		const missing = await window.fetch("/api/ghost");
-		expect(missing.status).toBe(404);
-		const notice = await missing.text();
-		expect(notice).toContain("GET /api/ghost");
-		expect(notice).toContain("scenario rule");
 	});
 });
 

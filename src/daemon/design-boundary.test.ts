@@ -138,7 +138,6 @@ describe("the design filesystem boundary", () => {
 		["shared/importmap.json", "frame", "none"],
 		["shared/transitions.css", "player", "none"],
 		["shared/scenarios/escape.json", "scenario", "none"],
-		["shared/fixtures/escape.json", "fixture", "none"],
 		["shared/assets/logo.svg", "frame", "import"],
 		["shared/assets/fonts/local.woff2", "frame", "font"],
 	] as const) {
@@ -170,9 +169,9 @@ describe("the design filesystem boundary", () => {
 					? `/p/${name}/frames/entry`
 					: path === "player"
 						? `/play/${name}`
-						: `/api/p/${name}/${path === "scenario" ? "scenarios" : "fixtures"}/escape`;
+						: `/api/p/${name}/scenarios/escape`;
 
-			const res = path === "scenario" || path === "fixture" ? await projectData(request) : await render(request);
+			const res = path === "scenario" ? await projectData(request) : await render(request);
 			expect(res.status).toBeGreaterThanOrEqual(400);
 			const body = await res.text();
 			expect(body).toContain("design boundary");

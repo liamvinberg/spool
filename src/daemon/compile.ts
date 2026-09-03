@@ -268,9 +268,9 @@ async function compileFrame({
  * entirely in offscreen iframes, and offscreen frames must still report —
  * an effect fires after the first committed render regardless of visibility.
  *
- * "spool" is imported for its side effects in every document — data-go and
- * the mock layer work in frames that never import it — and its top-level
- * await holds the first render until the session is seeded.
+ * "spool" is imported for its side effects in every document — data-go works
+ * in frames that never import it — and its top-level await holds the first
+ * render until the session is seeded.
  */
 function bootEntry(frame: string): string {
 	return `import "spool";

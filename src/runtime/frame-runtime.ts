@@ -11,10 +11,10 @@ import { parseWalkDecision } from "./walk-protocol";
 
 /**
  * The "spool" module (#5, #16): every frame document imports it — explicitly
- * for ui.go/back/state/use, implicitly via the boot module so data-go and the
- * mock layer work in frames that never import it. Evaluation top-level-awaits
- * the session seed, so a frame's first render always sees seeded state and an
- * installed mock. Bundled per spool version and served at /vendor/spool.js;
+ * for ui.go/back/state/use, implicitly via the boot module so data-go works in
+ * frames that never import it. Evaluation top-level-awaits the session seed,
+ * so a frame's first render always sees seeded state. Bundled per spool
+ * version and served at /vendor/spool.js;
  * the import map pins the specifier.
  *
  * The same module is the player runtime (#24): a /play/ document declares
@@ -36,7 +36,6 @@ interface SpoolDocument {
 
 interface Scenario {
 	state: Record<string, unknown>;
-	mock: Record<string, unknown>;
 }
 
 /** One play session on the wire: storage record, host handoff, walk snapshot. */
@@ -79,7 +78,7 @@ let currentFrame = doc.frame;
 /** What React has committed. Cross-size cuts keep this behind currentFrame. */
 let mountedFrame = doc.frame;
 
-/** The runtime's own plumbing (scenario, fixtures) always rides the real fetch. */
+/** The runtime's own plumbing (the scenario) always rides the real fetch. */
 const nativeFetch = window.fetch.bind(window);
 
 /** Project data is the render document's only daemon authority. */
@@ -453,7 +452,6 @@ function seedState(seed: Record<string, unknown>): void {
 
 const stack: string[] = [];
 let scenarioName = "default";
-let mockConfig: Record<string, unknown> = {};
 
 const storageKey = `spool:session:${doc.project}`;
 
@@ -549,11 +547,11 @@ async function loadScenario(name: string): Promise<Scenario> {
 		const res = await projectFetch(`/api/p/${encodeURIComponent(doc.project)}/scenarios/${encodeURIComponent(name)}`);
 		if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
 		const value = (await res.json()) as Partial<Scenario>;
-		return { state: value.state ?? {}, mock: value.mock ?? {} };
+		return { state: value.state ?? {} };
 	} catch (error) {
 		// a broken scenario never blanks the frame: loud notice, empty seed
 		console.error(`spool: scenario "${name}" failed to load — playing with an empty seed`, error);
-		return { state: {}, mock: {} };
+		return { state: {} };
 	}
 }
 
@@ -569,7 +567,6 @@ async function start(): Promise<void> {
 		// reload is just restart spelled by the browser
 		scenarioName = play.scenario;
 		const scenario = await loadScenario(scenarioName);
-		mockConfig = scenario.mock;
 		seedState(scenario.state);
 		return;
 	}
@@ -579,7 +576,6 @@ async function start(): Promise<void> {
 		record !== undefined && (requested === undefined || requested === record.scenario) ? record : undefined;
 	scenarioName = resume?.scenario ?? requested ?? "default";
 	const scenario = await loadScenario(scenarioName);
-	mockConfig = scenario.mock;
 	if (resume === undefined) {
 		seedState(scenario.state);
 	} else {
@@ -622,8 +618,7 @@ function isFrameName(name: string): boolean {
  * (#25). Only the player reports — embedded walks ride the bridge and the
  * canvas is their witness, and standalone documents stay silent because
  * `spool shot`/`logs` boots exactly that surface: a robot's boot must never
- * mint an edge (#5: no robo-simulation). Plumbing rides nativeFetch so the
- * mock never swallows it.
+ * mint an edge (#5: no robo-simulation).
  */
 function reportWalk(from: string, to: string): void {
 	if (play !== undefined && embedded) {
@@ -1484,7 +1479,7 @@ export function brokenFrame(details: { frame: string; file: string; error: strin
 /**
  * Boot the /play/ document (#24): called by the served composition with every
  * frame component, after this module's top-level await has seeded the session
- * — the first paint of any screen sees seeded state and an installed mock.
+ * — the first paint of any screen sees seeded state.
  */
 export function bootPlayer(frames: Record<string, ComponentType>): void {
 	if (play === undefined) {
@@ -1541,107 +1536,6 @@ function PlayerDocument({ frames }: { frames: Record<string, ComponentType> }) {
 	return Screen === undefined ? null : createElement(Screen, { key: arrival });
 }
 
-// --- mock -------------------------------------------------------------------
-
-interface MockRule {
-	status?: number;
-	fixture?: string;
-	latency?: number;
-	body?: unknown;
-}
-
-const RULE_KEYS = new Set(["status", "fixture", "latency", "body"]);
-const JSON_HEADERS = { "content-type": "application/json" };
-
-/** A rule object uses reserved keys only; any other object is an inline body. */
-function asRule(value: unknown): MockRule | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-	const keys = Object.keys(value);
-	if (keys.length === 0 || !keys.every((key) => RULE_KEYS.has(key))) return undefined;
-	return value as MockRule;
-}
-
-function isAbsolute(url: string): boolean {
-	return /^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith("//");
-}
-
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function jsonResponse(body: unknown, status: number): Response {
-	return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
-}
-
-function fixtureUrl(name: string): string {
-	const path = name.split("/").map(encodeURIComponent).join("/");
-	return `/api/p/${encodeURIComponent(doc.project)}/fixtures/${path}`;
-}
-
-/** Method-prefixed key wins over the bare path; "latency" is the reserved dial. */
-function lookupRule(method: string, path: string): unknown {
-	return mockConfig[`${method} ${path}`] ?? (path === "latency" ? undefined : mockConfig[path]);
-}
-
-async function ruleResponse(value: unknown): Promise<Response | undefined> {
-	const rule = asRule(value);
-	if (rule === undefined) return jsonResponse(value, 200);
-	if (rule.body !== undefined) return jsonResponse(rule.body, rule.status ?? 200);
-	if (rule.fixture !== undefined) {
-		const res = await projectFetch(fixtureUrl(rule.fixture));
-		// a configured-but-broken fixture surfaces the daemon's message verbatim
-		if (!res.ok) return new Response(await res.text(), { status: res.status });
-		return new Response(await res.text(), { status: rule.status ?? 200, headers: JSON_HEADERS });
-	}
-	if (rule.status !== undefined) return new Response(null, { status: rule.status });
-	return undefined; // latency-only rule: shapes timing, body resolves by convention
-}
-
-/** Zero config: /api/<name> serves shared/fixtures/<name>.json, any method. */
-async function conventionResponse(path: string): Promise<Response | undefined> {
-	if (!path.startsWith("/api/")) return undefined;
-	const name = path.slice("/api/".length).replace(/\/+$/, "");
-	if (name.length === 0) return undefined;
-	const res = await projectFetch(fixtureUrl(name));
-	if (res.status === 404) return undefined;
-	if (!res.ok) return new Response(await res.text(), { status: res.status });
-	return new Response(await res.text(), { status: 200, headers: JSON_HEADERS });
-}
-
-/**
- * The boundary (#5): relative URL strings are the fake backend, absolute URLs
- * pass through to the real network. Resolution order — [slot zero reserved
- * for the programmable shared/mock.js handler layer] → scenario rules →
- * fixtures convention → 404. Writes are theater: any method gets its canned
- * response; persistence is the frame updating ui.state.
- */
-async function mockedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-	const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-	if (isAbsolute(url)) return nativeFetch(input, init);
-	const method = (
-		init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET")
-	).toUpperCase();
-	const path = url.split(/[?#]/, 1)[0] ?? url;
-	const ruleValue = lookupRule(method, path);
-	const rule = asRule(ruleValue);
-	const baseLatency = typeof mockConfig.latency === "number" ? mockConfig.latency : 0;
-	const latency = rule?.latency ?? baseLatency;
-	if (latency > 0) await sleep(latency);
-
-	let response: Response | undefined;
-	if (ruleValue !== undefined) response = await ruleResponse(ruleValue);
-	response ??= await conventionResponse(path);
-	response ??= new Response(
-		`spool mock: no response for ${method} ${path} — add a scenario rule or shared/fixtures/<name>.json (served at /api/<name>)`,
-		{ status: 404 },
-	);
-	return response;
-}
-
-function installMock(): void {
-	window.fetch = mockedFetch;
-}
-
 // --- boot -------------------------------------------------------------------
 
 const state = reactive(stateTarget);
@@ -1653,7 +1547,6 @@ function useSpoolState(): SpoolState {
 
 export const ui: SpoolUi = Object.freeze({ state, use: useSpoolState, go, back, copy });
 
-installMock();
 bindDataGo();
 bindExternalLinks();
 // importers wait here: no frame renders before its session is seeded

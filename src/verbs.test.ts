@@ -198,14 +198,14 @@ describe("skill", () => {
 	});
 
 	it("prints every listed topic", () => {
-		for (const topic of ["frames", "terminals", "flows", "scenarios", "mock", "styling", "verbs"]) {
+		for (const topic of ["frames", "terminals", "flows", "scenarios", "styling", "verbs"]) {
 			expect(skillText(topic).length).toBeGreaterThan(100);
 		}
 	});
 
 	it("refuses an unknown topic, listing the real ones", () => {
 		expect(() => skillText("vibes")).toThrowError(SpoolError);
-		expect(() => skillText("vibes")).toThrowError(/frames, terminals, flows, scenarios, mock, styling, verbs/);
+		expect(() => skillText("vibes")).toThrowError(/frames, terminals, flows, scenarios, styling, verbs/);
 	});
 
 	it("opens with the completeness contract and carries the fixed laws verbatim", () => {
@@ -312,7 +312,7 @@ describe("skill", () => {
 	});
 
 	it("indexes every topic as its own overview row", () => {
-		for (const topic of ["frames", "terminals", "flows", "scenarios", "mock", "styling", "verbs"]) {
+		for (const topic of ["frames", "terminals", "flows", "scenarios", "styling", "verbs"]) {
 			expect(skillText()).toMatch(new RegExp(`^  ${topic} {2,}\\S`, "m"));
 		}
 	});

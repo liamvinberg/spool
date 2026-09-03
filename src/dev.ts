@@ -23,9 +23,9 @@ if (process.env.SPOOL_PORT === undefined && configuredPort(resolveSpoolDir(proce
 	process.env.SPOOL_PORT = "7767";
 }
 
-// the canvas plays the captures out of its own fixtures, and they are tracked
-// outside it, so every checkout entry refreshes the mirror before serving
-mirrorCaptures(join(repoRoot, "fixtures", "captures"), join(repoRoot, "design", "shared", "fixtures", "captures"));
+// the canvas plays the captures out of its own shared/captures, and they are
+// tracked outside it, so every checkout entry refreshes the mirror before serving
+mirrorCaptures(join(repoRoot, "fixtures", "captures"), join(repoRoot, "design", "shared", "captures"));
 
 if (process.argv[2] === "skill") {
 	process.stdout.write(

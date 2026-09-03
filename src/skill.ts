@@ -24,7 +24,7 @@ This skill is the complete contract: if it isn't here, spool doesn't do it.
 
 The one law: never write app-owned files — design/canvas.json and design/.spool/ are spool's. Everything else under design/ is yours to author, rename, and delete. Frame authoring needs no locks or shared registries: parallel agents stay safe by writing separate frame folders. Lifecycle commands coordinate machine-global state inside spool.
 
-A frame is born by writing design/frames/<name>/frame.tsx default-exporting one React component — no registration, no \`spool new\`. It appears on the canvas live. Variants are \`--\`-named sibling folders (checkout--empty). spool owns the document: pinned React, Tailwind compiled at serve, preflight, tokens, fonts, the mock and flow runtime are all injected — write only the component. Frames render nowhere outside spool.
+A frame is born by writing design/frames/<name>/frame.tsx default-exporting one React component — no registration, no \`spool new\`. It appears on the canvas live. Variants are \`--\`-named sibling folders (checkout--empty). spool owns the document: pinned React, Tailwind compiled at serve, preflight, tokens, fonts, the flow runtime are all injected — write only the component. Frames render nowhere outside spool.
 
 There are exactly two frame kinds, told apart by the entry filename: frame.tsx is an html frame; term.tsx remains recognized as a terminal frame, but spool renders a static disabled surface and does not execute its source until project code can run inside an OS sandbox (topic: terminals). A folder holding both entries is an error naming the folder; pick one.
 
@@ -52,8 +52,7 @@ Topics — \`spool skill <topic>\`:
   frames      the design/ contract: folders, sidecars, shared/, libraries
   terminals   term.tsx: recognized, but static and disabled until OS-sandboxed
   flows       data-go, ui.go/back/state/use, sessions, arrows
-  scenarios   named seeds: { state, mock }
-  mock        the fake backend behind relative fetch
+  scenarios   named seeds: { state }
   styling     Tailwind, tokens.css, cn(), motion
   verbs       the loops: shot, logs, url, selection, flows`;
 
@@ -74,7 +73,6 @@ const topics: Record<string, () => string> = {
   shared/fonts.css           @import / @font-face, injected into every document
   shared/importmap.json      URL imports for libraries (below)
   shared/scenarios/*.json    named seeds (topic: scenarios)
-  shared/fixtures/*.json     the mock's data (topic: mock)
   shared/assets/             images and fonts more than one frame uses (below)
   AGENTS.md, CLAUDE.md       init's signposts pointing here; .gitignore covers .spool/
   canvas.json, .spool/       app-owned — never write these
@@ -148,32 +146,15 @@ Arrows claim what the code says. Every literal data-go target, ui.go(name) call,
 The player composes every html frame into one document, so walks are View Transitions, not navigations: crossfade by default; morphs happen wherever two frames give an element the same view-transition-name. Each swap carries its direction (forward, back) plus any data-transition type as View Transitions types, not root attributes: in shared/transitions.css a bare ::view-transition-* rule styles every swap alike, and :active-view-transition-type() picks one out, plain CSS — html:active-view-transition-type(forward)::view-transition-old(root) { animation: 0.2s slide-out; }. A data-transition type is active alongside its direction, so the narrower rule comes later in the file. Reduced motion is respected. Screen components mount fresh on every arrival. Terminal frames remain valid destinations, but the player renders their static disabled surface without executing or restarting project code (topic: terminals).`,
 
 	scenarios:
-		() => `shared/scenarios/<name>.json = { "state": { ... }, "mock": { ... } } — one named way the app can be. state seeds ui.state at session start; mock configures the fake backend (topic: mock). Both keys optional; no default.json means an empty seed. Names are file names: no leading dot, no slashes.
+		() => `shared/scenarios/<name>.json = { "state": { ... } } — one named way the app can be. state seeds ui.state at session start. The key is optional; no default.json means an empty seed. Names are file names: no leading dot, no slashes.
 
 default.json is what loads when nothing else is named or resumed: canvas plays, shot/logs boots. The player URL takes ?scenario=<name>; a frame document's URL takes the same query, and naming a different scenario restarts the session. Reloading the tab re-reads the file, so an edited seed lands without a new URL.
 
-Frames never branch on which scenario is loaded — no scenario name in ui.state, no "if demo". A scenario is felt through what it seeds: loading is mock latency, empty is an empty fixture or state, failure is a mock status rule. If a frame needs a flag, that flag is state.
+Frames never branch on which scenario is loaded — no scenario name in ui.state, no "if demo". A scenario is felt through what it seeds: empty is an empty list in state, an error is a flag in state that the frame renders. If a frame needs a flag, that flag is state.
+
+There is no fake backend: a frame's fetch reaches the real network. What the app knows lives in ui.state, seeded by the scenario and written by the frame; a request the prototype only pretends to make is an optimistic ui.state update and nothing else.
 
 A scenario file that is missing or broken never blanks the frame: it plays with an empty seed and the error lands in the frame's console — \`spool logs\` shows it.`,
-
-	mock: () => `Inside a session, relative URLs are the fake backend and absolute URLs are the real network. The boundary is the URL string, and only fetch is intercepted — no XHR, no WebSocket.
-
-Zero config: fetch("/api/<name>") answers with shared/fixtures/<name>.json — nested names allowed (/api/users/1 → fixtures/users/1.json), a .json suffix tolerated. Any method gets the same answer: writes are theater, persistence is your frame updating ui.state after the "request" succeeds.
-
-A scenario's mock object refines any relative route (keys match the path; query strings are ignored):
-
-  "mock": {
-    "latency": 400,                             // ms, applied to every mocked route
-    "GET /api/orders": { "fixture": "orders-empty" },
-    "/api/orders": { "status": 500 },           // method-prefixed key wins over the bare path
-    "/api/me": { "body": { "plan": "pro" } },   // inline answer, status 200 unless given
-    "/api/slow": { "latency": 2000 },           // timing only — body still resolves by convention
-    "/api/flags": ["a", "b"]                    // any non-rule value is served verbatim as the body
-  }
-
-Rule keys are exactly status, fixture (a fixtures/ name), latency (ms), and body (inline JSON); an object made only of those is a rule, anything else is the response itself. status alone answers an empty body. An unmatched relative fetch 404s with a message naming the fix; a malformed fixture fails loud with its path.
-
-There is no programmable mock — behavior richer than rules belongs in the frame: optimistic ui.state updates over theater requests is the idiom.`,
 
 	styling:
 		() => `Tailwind v4, compiled at serve: write utility classes in JSX and the document arrives with finished CSS — theme, preflight, exactly the utilities your source uses. No config file, no directives, no build step of yours; the compiler is spool's, pinned per format version, arbitrary values and variants all working.
@@ -211,9 +192,9 @@ The verify loop has two paths. For HTML frames, shot and logs are two outputs of
                        HTML waits for #root to have children (up to 10s), settles, then shoots; a frame that renders nothing still shoots.
   spool logs <frame> [--scenario <name>]
                        HTML only: prints the same scenario boot's console as [type] text lines, uncaught errors included.
-                       The cache identity is compiled document plus scenario name. Code and stylesheet edits re-boot; a scenario or fixture JSON edit under the same name does not. An HTML shot always boots fresh and refreshes that scenario's cache, so after editing data run shot first, then logs.
+                       The cache identity is compiled document plus scenario name. Code and stylesheet edits re-boot; a scenario JSON edit under the same name does not. An HTML shot always boots fresh and refreshes that scenario's cache, so after editing data run shot first, then logs.
                        A replay says "cache matches current compiled source": it is the fresh boot that shot recorded, not evidence that a source edit was ignored.
-                       Scenario failures and mock 404s land here; read shot and logs together.
+                       Scenario failures land here; read shot and logs together.
 
 The first HTML browser boot on a machine downloads spool's pinned headless Chrome once, narrated on stderr — relay the wait, don't kill it.
 

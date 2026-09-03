@@ -247,19 +247,6 @@ export default function PayDone() {
 }
 `;
 
-const productsTsx = `import { useEffect, useState } from "react";
-
-export default function Products() {
-	const [titles, setTitles] = useState([]);
-	useEffect(() => {
-		fetch("/api/products")
-			.then((res) => res.json())
-			.then((items) => setTitles(items.map((item) => item.title)));
-	}, []);
-	return <ul>{titles.map((title) => <li key={title}>{title}</li>)}</ul>;
-}
-`;
-
 function scaffold(harness: Harness): void {
 	writeFrame(harness.root, "menu", menuTsx);
 	// stated rather than inherited: the width cap is what these tests are about,
@@ -267,7 +254,7 @@ function scaffold(harness: Harness): void {
 	writeDesignFile(harness.root, join("frames", "menu", "frame.json"), '{ "w": 390, "h": 844 }\n');
 	writeFrame(harness.root, "cart", cartTsx);
 	writeFrame(harness.root, "pay--done", payDoneTsx);
-	writeDesignFile(harness.root, "shared/scenarios/default.json", '{\n\t"state": { "count": 2 },\n\t"mock": {}\n}\n');
+	writeDesignFile(harness.root, "shared/scenarios/default.json", '{\n\t"state": { "count": 2 }\n}\n');
 }
 
 describe("the player session", () => {
@@ -415,25 +402,11 @@ describe("the player session", () => {
 	it("seeds from the ?scenario= the URL names", async () => {
 		const harness = makeHarness();
 		scaffold(harness);
-		writeDesignFile(harness.root, "shared/scenarios/vip.json", '{\n\t"state": { "count": 41 },\n\t"mock": {}\n}\n');
+		writeDesignFile(harness.root, "shared/scenarios/vip.json", '{\n\t"state": { "count": 41 }\n}\n');
 
 		await loadPlayerDocument(harness, "?frame=menu&scenario=vip");
 
 		await waitForText("output", "41");
-	});
-
-	it("serves the mock layer to composed frames", async () => {
-		const harness = makeHarness();
-		scaffold(harness);
-		writeFrame(harness.root, "products", productsTsx);
-		writeDesignFile(harness.root, "shared/fixtures/products.json", '[{ "title": "yarn" }, { "title": "thread" }]\n');
-
-		await loadPlayerDocument(harness, "?frame=products");
-
-		await vi.waitFor(() => {
-			const titles = [...document.querySelectorAll(".spool-screen li")].map((li) => li.textContent);
-			expect(titles).toEqual(["yarn", "thread"]);
-		});
 	});
 
 	it("a driven session flips a verified mark on the derived edge it walks (#34)", async () => {
@@ -596,14 +569,7 @@ describe("the played page and its bar (#227)", () => {
 		await waitForFrame("menu");
 		await summonEdgeBar();
 
-		for (const gone of [
-			".spool-rail",
-			".spool-walk-hop",
-			".spool-mock",
-			".spool-ticks",
-			".spool-hud",
-			".spool-pill",
-		]) {
+		for (const gone of [".spool-rail", ".spool-walk-hop", ".spool-ticks", ".spool-hud", ".spool-pill"]) {
 			expect(document.querySelector(gone), gone).toBeNull();
 		}
 		// the pill's own controls are gone with it: a tab reloads to restart and
@@ -719,7 +685,7 @@ function scaffoldTerminal(harness: Harness): void {
 		})}\n`,
 	);
 	writeFrame(harness.root, "hall", hallTsx);
-	writeDesignFile(harness.root, "shared/scenarios/default.json", '{\n\t"state": {},\n\t"mock": {}\n}\n');
+	writeDesignFile(harness.root, "shared/scenarios/default.json", '{\n\t"state": {}\n}\n');
 }
 
 function termIframe(): HTMLIFrameElement {

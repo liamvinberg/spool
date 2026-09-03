@@ -42,7 +42,6 @@ describe("initProject", () => {
 			"design/shared/",
 			"design/shared/assets/",
 			"design/shared/assets/fonts/",
-			"design/shared/fixtures/",
 			"design/shared/fonts.css",
 			"design/shared/importmap.json",
 			"design/shared/lib/",
@@ -78,7 +77,7 @@ describe("initProject", () => {
 		expect(readDesign(root, "AGENTS.md")).toContain("static disabled surface");
 		expect(readDesign(root, "AGENTS.md")).toContain("inside an OS sandbox");
 		expect(readDesign(root, "AGENTS.md")).toContain(
-			"Topics: `spool skill frames|terminals|flows|scenarios|mock|styling|verbs`.",
+			"Topics: `spool skill frames|terminals|flows|scenarios|styling|verbs`.",
 		);
 		expect(readDesign(root, "AGENTS.md")).toContain("saving a never-run terminal does not create one");
 		expect(readDesign(root, "AGENTS.md")).toContain("never write app-owned files");
@@ -104,11 +103,11 @@ describe("initProject", () => {
 		}
 	});
 
-	it("seeds a default scenario of state plus mock", () => {
+	it("seeds a default scenario of empty state", () => {
 		const root = makeTempDir();
 		initProject(root, join(makeTempDir(), ".spool"));
 
-		expect(JSON.parse(readDesign(root, "shared/scenarios/default.json"))).toEqual({ state: {}, mock: {} });
+		expect(JSON.parse(readDesign(root, "shared/scenarios/default.json"))).toEqual({ state: {} });
 	});
 
 	it("gitignores .spool/ inside design/", () => {

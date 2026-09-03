@@ -4,9 +4,9 @@ import { isSafeName } from "../page-path";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
 
 /**
- * Scenario and fixture reads for the flow runtime (#5): both are project JSON
- * under design/shared/, parse-validated here so a broken file fails loud at
- * the daemon with its path, never as a mystery inside a frame's fetch.
+ * Scenario reads for the flow runtime (#5): project JSON under design/shared/,
+ * parse-validated here so a broken file fails loud at the daemon with its
+ * path, never as a mystery inside a frame.
  */
 
 export type ProjectJson =
@@ -14,8 +14,8 @@ export type ProjectJson =
 	| { kind: "missing"; message: string }
 	| { kind: "invalid"; message: string };
 
-/** Zero-config default: empty state, fixtures-backed mock. */
-const EMPTY_SCENARIO = `{ "state": {}, "mock": {} }`;
+/** Zero-config default: an empty seed. */
+const EMPTY_SCENARIO = `{ "state": {} }`;
 
 export function readScenario(root: string, name: string): ProjectJson {
 	if (!isSafeName(name)) return { kind: "missing", message: `not a scenario name: "${name}"` };
@@ -35,35 +35,9 @@ export function readScenario(root: string, name: string): ProjectJson {
 	const parsed = parseJson(raw, rel);
 	if (parsed.kind === "invalid") return parsed;
 	const scenario = parsed.value;
-	if (
-		!isPlainObject(scenario) ||
-		("state" in scenario && !isPlainObject(scenario.state)) ||
-		("mock" in scenario && !isPlainObject(scenario.mock))
-	) {
-		return { kind: "invalid", message: `design/${rel} must be a JSON object of shape { "state": {}, "mock": {} }` };
+	if (!isPlainObject(scenario) || ("state" in scenario && !isPlainObject(scenario.state))) {
+		return { kind: "invalid", message: `design/${rel} must be a JSON object of shape { "state": {} }` };
 	}
-	return { kind: "ok", json: raw };
-}
-
-export function readFixture(root: string, name: string): ProjectJson {
-	// the runtime maps /api/<name> to a fixture verbatim, so a fetch spelled
-	// /api/products.json still lands on fixtures/products.json
-	const clean = name.endsWith(".json") ? name.slice(0, -".json".length) : name;
-	if (clean.length === 0 || !clean.split("/").every(isSafeName)) {
-		return { kind: "missing", message: `not a fixture name: "${name}"` };
-	}
-	const designDir = realDesignDir(root);
-	const rel = join("shared", "fixtures", `${clean}.json`);
-	let raw: string | undefined;
-	try {
-		raw = readIfExists(join(designDir, rel), designDir);
-	} catch (error) {
-		if (error instanceof DesignBoundaryError) return { kind: "invalid", message: error.message };
-		throw error;
-	}
-	if (raw === undefined) return { kind: "missing", message: `no fixture "${clean}" — expected design/${rel}` };
-	const parsed = parseJson(raw, rel);
-	if (parsed.kind === "invalid") return parsed;
 	return { kind: "ok", json: raw };
 }
 

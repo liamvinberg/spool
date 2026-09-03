@@ -4,10 +4,10 @@ dist/
 .boot-tmp/
 .tmp/
 
-# The agent captures are tracked at fixtures/captures/. The canvas plays them
-# through its own fixtures, which only resolve under design/, so `pnpm dev`
-# mirrors them here rather than linking.
-design/shared/fixtures/captures/
+# The agent captures are tracked at fixtures/captures/. The canvas imports
+# them, and an import only resolves under design/, so `pnpm dev` mirrors them
+# here rather than linking.
+design/shared/captures/
 
 # Maintainer-local agent context. Never ships.
 .claude/local.md

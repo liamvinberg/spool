@@ -6,9 +6,9 @@ import { join } from "node:path";
  * suite reads them without reaching into the dogfood canvas and canvas work in
  * flight can never red the build.
  *
- * The canvas reads them through spool's own fixtures convention, which resolves
- * under design/ and nowhere else: the design boundary rejects any path whose
- * target leaves design/, a symlink to a file inside the project root included
+ * The canvas imports them as JSON, and an import resolves under design/ and
+ * nowhere else: the design boundary rejects any path whose target leaves
+ * design/, a symlink to a file inside the project root included
  * (design-boundary.test.ts). So the canvas gets a mirror rather than a link. It
  * is untracked, this is its only writer, and the tracked home is the source.
  */
