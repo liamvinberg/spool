@@ -14,20 +14,25 @@ import { cn } from "./cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import type { HotkeyIdFor } from "./hotkeys";
 import { FolderIcon, PlusIcon, SearchIcon } from "./icons";
-import { browseRows, crumbsOf, shortPath } from "./picker-model";
+import { askOf, browseRows, crumbsOf, shortPath, within } from "./picker-model";
 
 /**
- * The "+" folder picker (#4/#22/#251/#242): one field, a list under it.
+ * The "+" folder picker (#4/#22/#251/#242/#277): one field, a list under it.
  *
  * What shipped with #251 was five bands deep — a header with a back arrow, a
  * field and a folder count; a breadcrumb; a list with group labels; a jump row;
  * a footer of key hints and two buttons — and together they answered so many
  * questions that the folder you came for was the quietest thing on screen.
- * Nothing the picker does changed here, only the chrome: the breadcrumb lives
- * inside the field as a pressable prefix in front of the caret, and drops the
- * moment a query starts, because search reaches every folder under home and a
- * path in front of the query would say it was scoped. Where a result sits is
- * printed on the result instead.
+ * Nothing the picker does changed there, only the chrome: the breadcrumb lives
+ * inside the field as a pressable prefix in front of the caret.
+ *
+ * Typing filters the folder the breadcrumb names, so the prefix stays put and
+ * means what it says (#277): standing in `~/projects/` and typing `art` reads
+ * as the path it looks like. Where a hit sits is printed on the hit, relative
+ * to that folder. `~/` typed in front of a query is the one way out: it stands
+ * in for the breadcrumb and the search is every folder under home. While an
+ * answer is on its way the last rows stay; the empty state is for an answer
+ * that came back empty, never for one that has not come back.
  *
  * Enter is one rule the list always had: a folder spool recognises opens, a
  * folder it does not is somewhere to go. Open resolves by git-style walk-up;
@@ -60,8 +65,11 @@ export function FolderPicker({
 }) {
 	const [listing, setListing] = useState<FsListing | null>(null);
 	const [home, setHome] = useState<string | null>(null);
+	/** home's one level, kept from the first browse: what `~/` alone shows without another round trip */
+	const [homeListing, setHomeListing] = useState<FsListing | null>(null);
 	const [query, setQuery] = useState("");
-	const [found, setFound] = useState<FsSearch | null>(null);
+	/** the last answer and the question it answered, so a stale one is never mistaken for the current */
+	const [found, setFound] = useState<{ key: string; answer: FsSearch } | null>(null);
 	const [at, setAt] = useState(0);
 	const [offerInit, setOfferInit] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
@@ -82,29 +90,50 @@ export function FolderPicker({
 		if (listing === undefined) return;
 		setListing(listing);
 		// the first browse is home, and home is what every path on screen is printed against
-		if (path === undefined) setHome(listing.path);
+		if (path === undefined) {
+			setHome(listing.path);
+			setHomeListing(listing);
+		}
 	}, []);
 
 	useEffect(() => {
 		void browse();
 	}, [browse]);
 
-	const searching = query.trim().length > 0;
+	const ask = askOf(query);
+	const searching = ask.term.length > 0;
+	// the folder the search is under: the one in the breadcrumb, or home past `~/`. Above home there
+	// is nothing indexed, so the browse can stand there but a search still reads under `~`.
+	const scope =
+		home === null
+			? null
+			: ask.wide || listing === null || (listing.path !== home && !listing.path.startsWith(`${home}/`))
+				? home
+				: listing.path;
+	const key = scope === null ? null : `${scope}\0${ask.term}`;
 
 	// a keystroke is a round trip, and answers can land out of order: only the latest counts
-	const asked = useRef(0);
 	useEffect(() => {
-		if (!searching) return;
-		const mine = ++asked.current;
-		void searchDirectories(query).then((answer) => {
-			if (answer !== undefined && asked.current === mine) setFound(answer);
+		if (!searching || scope === null || key === null) return;
+		let mine = true;
+		void searchDirectories(ask.term, scope).then((answer) => {
+			if (answer !== undefined && mine) setFound({ key, answer });
 		});
-	}, [query, searching]);
+		return () => {
+			mine = false;
+		};
+	}, [ask.term, searching, scope, key]);
+
+	const answered = found !== null && found.key === key ? found.answer : null;
+	/** asked and not yet answered: the last rows stay up, and nothing claims there is nothing */
+	const pending = searching && answered === null;
 
 	const flat = useMemo<readonly FsHit[]>(() => {
-		if (searching) return found?.hits ?? [];
+		if (searching) return (answered ?? found?.answer)?.hits ?? [];
+		// `~/` alone is home's browse, out of the listing already held
+		if (ask.wide) return homeListing === null ? [] : browseRows(homeListing);
 		return listing === null ? [] : browseRows(listing);
-	}, [searching, found, listing]);
+	}, [searching, answered, found, ask.wide, homeListing, listing]);
 	const picked = flat[at];
 
 	useEffect(() => {
@@ -284,7 +313,7 @@ export function FolderPicker({
 				) : (
 					<div className="flex h-[52px] shrink-0 items-center px-4">
 						<SearchIcon className="mr-2 h-3 w-3 shrink-0 text-muted/45" />
-						{searching ? null : <Prefix crumbs={crumbs} onPress={(path) => void browse(path)} />}
+						{ask.wide ? null : <Prefix crumbs={crumbs} onPress={(path) => void browse(path)} />}
 						<input
 							ref={inputRef}
 							value={query}
@@ -337,25 +366,28 @@ export function FolderPicker({
 								{flat.length === 0 && !offerInit && notice === null && (
 									<div className="flex h-[34px] items-center gap-3 px-4 font-mono text-muted/45 text-sm leading-sm">
 										<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
-										{searching ? "nothing under ~ answers to that" : "no folders here"}
+										{pending
+											? `searching ${scope === null || home === null ? "~" : shortPath(scope, home)}…`
+											: searching
+												? `nothing under ${scope === null || home === null ? "~" : shortPath(scope, home)} answers to that`
+												: "no folders here"}
 									</div>
 								)}
 								{flat.map((row, index) => (
 									<Row
 										key={row.path}
 										row={row}
-										home={home}
 										at={index}
 										picked={index === at}
-										searching={searching}
+										place={searching && scope !== null ? within(row.parent, scope) : ""}
 										onPoint={() => setAt(index)}
 										onEnter={() => enter(index)}
 									/>
 								))}
 								{/* the wire carries the best rows, not every one: a list that stops has to say so */}
-								{searching && found !== null && found.answered > flat.length ? (
+								{answered !== null && answered.answered > flat.length ? (
 									<div className="flex h-7 items-center px-4 font-mono text-2xs text-muted/45 leading-3">
-										{`the best ${flat.length} of ${found.answered} — type more to narrow it`}
+										{`the best ${flat.length} of ${answered.answered} — type more to narrow it`}
 									</div>
 								) : null}
 								{notice !== null ? (
@@ -421,19 +453,17 @@ function Prefix({ crumbs, onPress }: { crumbs: ReturnType<typeof crumbsOf>; onPr
 
 function Row({
 	row,
-	home,
 	at,
 	picked,
-	searching,
+	place,
 	onPoint,
 	onEnter,
 }: {
 	row: FsHit;
-	home: string | null;
 	at: number;
 	picked: boolean;
-	/** where a result sits is printed only when the list can be from anywhere */
-	searching: boolean;
+	/** where a hit sits under the folder searched — empty for a browse row, and for a hit sitting right there */
+	place: string;
 	onPoint: () => void;
 	onEnter: () => void;
 }) {
@@ -464,11 +494,9 @@ function Row({
 						))}
 			</span>
 			<span className="flex-1" />
-			{searching && home !== null ? (
-				<span className="min-w-0 shrink truncate font-mono text-2xs text-muted/55 leading-3">
-					{shortPath(row.parent, home)}
-				</span>
-			) : null}
+			{place === "" ? null : (
+				<span className="min-w-0 shrink truncate font-mono text-2xs text-muted/55 leading-3">{place}</span>
+			)}
 			{row.frames === undefined ? null : (
 				<span className="shrink-0 font-mono text-2xs text-muted/55 leading-3">{row.frames}</span>
 			)}

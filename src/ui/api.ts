@@ -159,9 +159,9 @@ export async function browseDirectory(path?: string): Promise<FsListing | undefi
 	return (await res.json()) as FsListing;
 }
 
-/** Every folder under home the query answers to, ranked (#251) — the daemon walks, the picker draws. */
-export async function searchDirectories(query: string): Promise<FsSearch | undefined> {
-	const res = await client.api.fs.search.$get({ query: { q: query } });
+/** Every folder under `under` (home when absent) the query answers to, ranked (#251/#277) — the daemon walks, the picker draws. */
+export async function searchDirectories(query: string, under?: string): Promise<FsSearch | undefined> {
+	const res = await client.api.fs.search.$get({ query: under === undefined ? { q: query } : { q: query, under } });
 	if (!res.ok) return undefined;
 	return (await res.json()) as FsSearch;
 }

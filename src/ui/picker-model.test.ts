@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { browseRows, crumbsOf, shortPath } from "./picker-model";
+import { askOf, browseRows, crumbsOf, shortPath, within } from "./picker-model";
 
 const HOME = "/Users/liam";
 
@@ -46,5 +46,23 @@ describe("browseRows", () => {
 				matched: [],
 			},
 		]);
+	});
+});
+
+describe("askOf", () => {
+	it("reads a query as the folder's own until ~/ is typed in front", () => {
+		expect(askOf("  gym ")).toEqual({ wide: false, term: "gym" });
+		expect(askOf("~/gym")).toEqual({ wide: true, term: "gym" });
+		expect(askOf("~/")).toEqual({ wide: true, term: "" });
+		// a tilde alone is still being typed
+		expect(askOf("~")).toEqual({ wide: false, term: "~" });
+	});
+});
+
+describe("within", () => {
+	it("prints where a hit sits relative to the folder searched, and nothing when it sits right there", () => {
+		expect(within(`${HOME}/projects/droneit/spikes`, `${HOME}/projects`)).toBe("droneit/spikes");
+		expect(within(`${HOME}/projects`, `${HOME}/projects`)).toBe("");
+		expect(within("/etc", `${HOME}/projects`)).toBe("/etc");
 	});
 });
