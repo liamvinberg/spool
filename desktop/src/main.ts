@@ -52,15 +52,18 @@ import { compareVersions, formatVersion, parseVersion } from "./version";
 // canvas than the browser does; wrapping the same engine the canvas is developed
 // against is the only shell that shows it truthfully.
 //
-// The shape, in three sentences. On launch it looks for a daemon and adopts the
+// The shape, in four sentences. On launch it looks for a daemon and adopts the
 // one it finds, because the app and the CLI share one state directory and two
-// supervisors that disagree would both start one. Only when nothing answers does
-// it start the `spool.page` inside the bundle, as a child process running under
-// Electron's own binary with ELECTRON_RUN_AS_NODE=1, which is plain Node: the
-// native addons in spool's dependency tree load into that process rather than
-// into the one drawing the window. Closing the window leaves the app in the menu
-// bar with the daemon running; quitting stops a daemon this app started and
-// leaves an adopted one alone.
+// supervisors that disagree would both start one. The one daemon it does not
+// adopt is one behind the bundle: the daemon is what draws the canvas, so that
+// one is stopped and replaced, the way `spool upgrade` replaces it from the
+// terminal, and nothing ever downgrades. When nothing answers, or the old one
+// has been stopped, it starts the `spool.page` inside the bundle, as a child
+// process running under Electron's own binary with ELECTRON_RUN_AS_NODE=1, which
+// is plain Node: the native addons in spool's dependency tree load into that
+// process rather than into the one drawing the window. Closing the window leaves
+// the app in the menu bar with the daemon running; quitting stops a daemon this
+// app started and leaves an adopted one alone.
 
 const DIRECTORY = daemon.stateDirectory();
 
@@ -206,7 +209,7 @@ export async function openCanvas(): Promise<void> {
 	showing.focus();
 
 	const current = await daemon.status(DIRECTORY);
-	if (current.running) {
+	if (current.running && (current.pid === startedPid || !daemon.behind(current.version, version()))) {
 		point(
 			showing,
 			current.url,
@@ -218,7 +221,26 @@ export async function openCanvas(): Promise<void> {
 		return;
 	}
 
-	void showing.loadURL(holdingPage("Starting Spool", "The canvas opens as soon as the daemon answers."));
+	if (current.running) {
+		// Behind the bundle: the cli started it before the app updated, or an older
+		// app did. The canvas it would draw is the older one, so it is stopped and
+		// the bundled daemon takes the address. The cost is `spool upgrade`'s, every
+		// canvas on it and every process under it, spent on the same thing: a newer
+		// Spool the person just opened. A daemon that will not exit is adopted after
+		// all, and the tray says which version it is on.
+		log("daemon", "replacing", `pid=${current.pid}`, `v${current.version}`, `bundle=v${version()}`);
+		void showing.loadURL(
+			holdingPage("Updating Spool", `The daemon was on ${current.version}. This copy carries ${version()}.`),
+		);
+		const stopped = await daemon.stop(current.pid);
+		if (!stopped) {
+			log("daemon", "FAIL did not exit", `pid=${current.pid}`, "adopting it as it is");
+			point(showing, current.url, current.pid, "adopted", current.version, current.controlToken);
+			return;
+		}
+	} else {
+		void showing.loadURL(holdingPage("Starting Spool", "The canvas opens as soon as the daemon answers."));
+	}
 	const started = await startBundled();
 	if (started === undefined) return;
 	point(showing, started.url, started.pid, "started", started.version, started.controlToken);

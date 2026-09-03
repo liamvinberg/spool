@@ -31,9 +31,16 @@ One rule, and it is the CLI's rule seen from the other side:
 
 - On launch the app reads `daemon.json` in the state directory and asks the
   daemon it names for `/api/health`. An answer that names the same pid means a
-  daemon is running, and it is adopted exactly as it is: not restarted, not
-  upgraded.
-- Only when nothing answers does the bundled daemon start, as a child process
+  daemon is running, and it is adopted as it is, whichever version it is on.
+- Unless it is behind the bundle. The daemon is what draws the canvas, so a
+  daemon the CLI started before the app updated would show the older Spool in
+  a newer window. That one is stopped and the bundled daemon takes its place,
+  which is what `spool upgrade` does from the terminal, at the same cost: every
+  canvas on it and every process under it. Equal versions are left alone, and
+  a newer daemon is never downgraded. The rule in one line: the daemon runs the
+  newest spool on the machine, whoever started it.
+- Only when nothing answers, or the older one has been stopped, does the
+  bundled daemon start, as a child process
   running under Electron's own executable with `ELECTRON_RUN_AS_NODE=1`. That is
   plain Node, so the native addons in spool's dependency tree load into that
   process rather than into the one drawing the window, and a daemon that crashes

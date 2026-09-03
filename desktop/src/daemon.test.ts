@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
 	alive,
+	behind,
 	configuredAddress,
 	connectHost,
 	daemonUrl,
@@ -72,6 +73,16 @@ test("corrupt, absent and half-written state all read as absent", () => {
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
+});
+
+test("a daemon is behind the bundle only when both rank and the bundle's is higher", () => {
+	assert.equal(behind("0.13.0", "0.14.0"), true);
+	assert.equal(behind("0.14.0", "0.14.0"), false);
+	assert.equal(behind("0.15.0", "0.14.0"), false);
+	assert.equal(behind("0.9.9", "0.10.0"), true);
+	// unrankable on either side is never a replacement: it could be a downgrade
+	assert.equal(behind("0.13.0-dev", "0.14.0"), false);
+	assert.equal(behind("0.13.0", "next"), false);
 });
 
 test("a bind-everything host is not a dialable address", () => {

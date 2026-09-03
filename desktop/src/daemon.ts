@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { compareVersions, parseVersion } from "./version";
 
 // The daemon, as seen from outside it.
 //
@@ -17,6 +18,10 @@ import { isAbsolute, join, resolve } from "node:path";
 //     the same pid the file does.
 //   - First supervisor wins. A daemon that is already up is adopted whoever
 //     started it; the bundled one starts only when nothing answers.
+//   - Except that the daemon runs the newest spool on the machine. One that is
+//     behind this bundle is stopped and replaced, never adopted: it is the
+//     daemon that draws the canvas, so adopting an older one shows an older
+//     Spool than the one that was just opened. Nothing ever downgrades.
 //
 // The control token in daemon.json is a credential, and it is read for exactly
 // one thing: play opens a window sized from the frame's authored geometry, and
@@ -122,6 +127,19 @@ export function readState(directory: string): DaemonState | undefined {
 		startedAt: state.startedAt,
 		controlToken: state.controlToken,
 	};
+}
+
+/**
+ * Whether a running daemon is older than the spool this bundle carries, which is
+ * the one case a daemon is replaced rather than adopted. Equal never is, and a
+ * version this cannot rank (a suffix, a word) is left alone: replacing on a
+ * guess could be a downgrade.
+ */
+export function behind(running: string, bundled: string): boolean {
+	const current = parseVersion(running);
+	const carried = parseVersion(bundled);
+	if (current === undefined || carried === undefined) return false;
+	return compareVersions(current, carried) < 0;
 }
 
 /** A bind-everything host is not a dialable address. */
