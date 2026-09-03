@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentLimit } from "../../daemon/agent-events";
@@ -862,17 +862,19 @@ function PlanStrip({ plan }: { plan: AgentPlan }) {
 				<ChevronIcon open={open} className="ml-auto h-2.5 w-2.5 shrink-0 text-muted/35" />
 			</button>
 			{open ? (
-				<div className="relative flex shrink-0 flex-col pb-2 pl-[18px]">
-					{/* the rule stands where the list hangs from, a little in from the strip's own
-					    left edge, so the tasks read as belonging to the line above them */}
-					<span className="absolute top-1 bottom-3 left-[18px] w-px bg-border-raised" />
-					{plan.tasks.map((task) => (
-						<span key={task.key} className="flex h-[22px] items-center gap-2 pl-2.5">
-							<StateMark state={task.state} className="h-3 w-3" />
-							<span className="truncate font-mono text-2xs text-muted leading-3">{task.name}</span>
-						</span>
-					))}
-				</div>
+				<Arrive gap={0}>
+					<div className="relative flex shrink-0 flex-col pb-2 pl-[18px]">
+						{/* the rule stands where the list hangs from, a little in from the strip's own
+						    left edge, so the tasks read as belonging to the line above them */}
+						<span className="absolute top-1 bottom-3 left-[18px] w-px bg-border-raised" />
+						{plan.tasks.map((task) => (
+							<span key={task.key} className="flex h-[22px] items-center gap-2 pl-2.5">
+								<StateMark state={task.state} className="h-3 w-3" />
+								<span className="truncate font-mono text-2xs text-muted leading-3">{task.name}</span>
+							</span>
+						))}
+					</div>
+				</Arrive>
 			) : null}
 		</div>
 	);
@@ -1112,13 +1114,9 @@ function Transcript({
 				    overflow puts the top of it out of reach of the scrollbar */}
 				<div className="mt-auto shrink-0">
 					{entries.map((entry, index) => (
-						<div
-							key={entry.key}
-							className="animate-agent-entry shrink-0"
-							style={{ paddingTop: gapBefore(entries[index - 1], entry) }}
-						>
+						<Arrive key={entry.key} gap={gapBefore(entries[index - 1], entry)}>
 							<Entry entry={entry} elapsed={elapsed} jump={jump} onAnswer={onAnswer} />
-						</div>
+						</Arrive>
 					))}
 				</div>
 			</div>
@@ -1170,6 +1168,34 @@ function gapBefore(previous: AgentEntry | undefined, entry: AgentEntry): number 
 	if (previous === undefined) return 0;
 	if (TIGHT.has(previous.kind) && TIGHT.has(entry.kind)) return 6;
 	return 14;
+}
+
+/**
+ * What a row does in the frame it mounts: it opens (#149).
+ *
+ * A row used to take its height in the frame it mounted and the log snapped up by that
+ * much; now a one-row grid opens its track from nothing to the row's own height over
+ * 260ms while the row rises 6px into it, so the log above glides up because the thing
+ * pushing it is growing rather than appearing. The gap before an entry rides inside the
+ * clipped cell, so the gap opens with the row rather than landing ahead of it. Every
+ * disclosure that grows a row — a picture landing under `look`, a plan opening — is the
+ * same growth and takes the same wrapper.
+ *
+ * The cell clips for good rather than for the length of the animation, so the row's
+ * hover, which reaches 6px past the content on either side, is given that much room to
+ * reach into. Nothing here is measured and nothing re-renders per frame: the words are
+ * laid out at their final size from the first frame and only the clip moves.
+ */
+function Arrive({ gap, children }: { gap: number; children: ReactNode }) {
+	return (
+		<div data-agent-arrive="" className="grid animate-agent-open">
+			<div className="-mx-1.5 min-h-0 overflow-hidden px-1.5">
+				<div className="animate-agent-entry" style={{ paddingTop: gap }}>
+					{children}
+				</div>
+			</div>
+		</div>
+	);
 }
 
 interface EntryDrawn {
@@ -1417,20 +1443,24 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 			</button>
 			<Step text={entry.step} />
 			{open ? (
-				<div className="flex flex-col pt-0.5 pb-1" style={{ paddingLeft: INDENT }}>
-					{/* the picture takes the payload's place rather than sitting under a line of
-					    file metadata: `image/png` is a fact about a file and the row above already
-					    said `look`. The caption is dropped where the line already carries it, since
-					    every shot in the captures is of the frame its own row names. */}
-					{shot === null ? null : (
-						<Shot shot={shot} of={entry.frame ?? entry.detail} quiet={entry.frame === entry.subject} />
-					)}
-					{shot === null && entry.detail !== null ? (
-						<span data-agent-detail="" className="block truncate font-mono text-2xs text-muted/55 leading-4">
-							{entry.detail}
-						</span>
-					) : null}
-				</div>
+				// a disclosure landing is the same growth as a row landing, so it opens the same
+				// way and the log above it moves for the same reason
+				<Arrive gap={0}>
+					<div className="flex flex-col pt-0.5 pb-1" style={{ paddingLeft: INDENT }}>
+						{/* the picture takes the payload's place rather than sitting under a line of
+						    file metadata: `image/png` is a fact about a file and the row above already
+						    said `look`. The caption is dropped where the line already carries it, since
+						    every shot in the captures is of the frame its own row names. */}
+						{shot === null ? null : (
+							<Shot shot={shot} of={entry.frame ?? entry.detail} quiet={entry.frame === entry.subject} />
+						)}
+						{shot === null && entry.detail !== null ? (
+							<span data-agent-detail="" className="block truncate font-mono text-2xs text-muted/55 leading-4">
+								{entry.detail}
+							</span>
+						) : null}
+					</div>
+				</Arrive>
 			) : null}
 		</div>
 	);

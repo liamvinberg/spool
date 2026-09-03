@@ -1636,6 +1636,86 @@ describe("a screenshot", () => {
 	});
 });
 
+/**
+ * A row opens (#149): from no height to its own over 260ms, the row rising into it, so
+ * the log above glides up because the thing pushing it is growing rather than appearing.
+ * The gap before an entry rides inside the clipped cell, and every disclosure that grows a
+ * row opens the same way. Nothing here is laid out, so what is asserted is the shape the
+ * animation needs: a grid cell that clips, with the padding inside it.
+ */
+describe("a row opening", () => {
+	const arrivals = (host: HTMLElement) => [
+		...host.querySelectorAll<HTMLElement>("[data-agent-log] [data-agent-arrive]"),
+	];
+	/** the cell that clips, and the padded content inside it */
+	const cellOf = (arrive: HTMLElement) => arrive.firstElementChild as HTMLElement;
+	const innerOf = (arrive: HTMLElement) => cellOf(arrive).firstElementChild as HTMLElement;
+
+	it("opens every entry from no height, with its gap inside the clipped cell", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "tidy the receipt");
+		canvas.turn.push(ready);
+		canvas.turn.push(edit("c1"));
+		canvas.turn.push(settled("c1"));
+		canvas.turn.push(called("c2", "Read", { file_path: "/project/design/frames/home/frame.tsx" }));
+		await settle(120);
+
+		const [words, first, second] = arrivals(canvas.host);
+		expect(arrivals(canvas.host)).toHaveLength(3);
+		for (const arrive of arrivals(canvas.host)) {
+			expect(arrive.className).toContain("animate-agent-open");
+			expect(arrive.className).toContain("grid");
+			expect(cellOf(arrive).className).toContain("overflow-hidden");
+			expect(cellOf(arrive).className).toContain("min-h-0");
+			// the rise is the row's, inside the box that is opening
+			expect(innerOf(arrive).className).toContain("animate-agent-entry");
+		}
+		// the gap opens with the row rather than landing ahead of it: it is the padding of
+		// the content inside the clip, never a margin on the cell
+		expect(innerOf(words as HTMLElement).style.paddingTop).toBe("0px");
+		expect(innerOf(first as HTMLElement).style.paddingTop).toBe("14px");
+		expect(innerOf(second as HTMLElement).style.paddingTop).toBe("6px");
+		for (const arrive of arrivals(canvas.host)) {
+			expect(arrive.style.marginTop).toBe("");
+			expect(arrive.style.paddingTop).toBe("");
+		}
+	});
+
+	/** a picture landing under `look` is the same growth as a row landing */
+	it("opens the picture that lands under a look the same way", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "check the home frame");
+		canvas.turn.push(ready);
+		canvas.turn.push(called("s1", "Read", { file_path: "/project/design/.spool/verify/home.png" }));
+		await settle(120);
+		expect(canvas.host.querySelector('[data-agent-row="look home"] [data-agent-arrive]')).toBeNull();
+
+		canvas.turn.push(settled("s1", { images: [{ media: "image/png", data: "iVBORw0KGgo" }] }));
+		await settle(120);
+
+		const opened = canvas.host.querySelector<HTMLElement>('[data-agent-row="look home"] [data-agent-arrive]');
+		expect(opened?.className).toContain("animate-agent-open");
+		expect(opened?.querySelector("img")).not.toBeNull();
+	});
+
+	it("opens the plan's list the same way", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await send(canvas.host, "build the streak app");
+		canvas.turn.push(ready);
+		canvas.turn.push(task("Author the home frame", "Authoring the home frame", "p1"));
+		await settle(120);
+
+		await press(canvas.host.querySelector('[aria-label="plan"]'));
+
+		const opened = canvas.host.querySelector<HTMLElement>("[data-agent-plan] [data-agent-arrive]");
+		expect(opened?.className).toContain("animate-agent-open");
+		expect(opened?.textContent).toContain("Author the home frame");
+	});
+});
+
 describe("a row that names a frame", () => {
 	const name = (host: HTMLElement, frame: string) => host.querySelector<HTMLElement>(`[data-agent-jump="${frame}"]`);
 	const press = async (element: HTMLElement | null) => {
