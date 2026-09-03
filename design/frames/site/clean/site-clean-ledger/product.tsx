@@ -1628,7 +1628,7 @@ export function PhoneBookScreen() {
 					src={candlePhoto}
 					className="h-full w-full"
 					position="50% 48%"
-					scrim="linear-gradient(180deg, rgba(13,9,8,0.42) 0%, rgba(13,9,8,0.18) 46%, var(--ink) 100%)"
+					scrim="linear-gradient(180deg, rgba(13,9,8,0.46) 0%, rgba(13,9,8,0.20) 38%, rgba(13,9,8,0.84) 76%, var(--ink) 100%)"
 					tint="radial-gradient(46% 40% at 50% 46%, rgba(234,150,60,0.30), rgba(13,9,8,0) 66%)"
 				/>
 				<div className="absolute top-[26px] right-6 left-6 flex items-center justify-between">
