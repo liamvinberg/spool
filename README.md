@@ -20,6 +20,8 @@ npm i -g spool.page --allow-scripts=esbuild
 
 Node 22+, and the canvas wants Chrome (WebKit renders transformed iframes blurry). macOS and Linux; on Windows, use WSL. `spool autostart` is launchd-backed, so it is macOS-only.
 
+Or skip Node: [Spool.dmg](https://github.com/liamvinberg/spool/releases/latest/download/Spool.dmg) is the same canvas as a Mac app, Apple silicon, macOS 14 or later. It carries its own copy of `spool.page`, shares the daemon with the CLI, and updates itself.
+
 ```sh
 cd your-product
 spool             # open your canvas in the browser; --no-open just prints its address
