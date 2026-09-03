@@ -42,6 +42,14 @@ const PAGES: readonly PageRow[] = [
 	{ name: "components", frames: [] },
 ];
 
+/** the project as `rail` needs it: enough frames off screen that the seven you cannot see have rows */
+const PAGES_FULL: readonly PageRow[] = [
+	{ name: "app", frames: ["menu", "cart", "receipt", "checkout", "orders", "profile", "tip"], active: true, open: true },
+	{ name: "onboarding", frames: ["welcome", "signin", "verify"] },
+	{ name: "manipulate", frames: [] },
+	{ name: "components", frames: [] },
+];
+
 const RAIL_W = 300;
 const LABEL_H = 22;
 
@@ -151,7 +159,8 @@ export function SharedScreen({ take: name }: { take: TakeName }) {
 		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} zoom="100%">
 			<style>{MOTION}</style>
 			<CanvasChrome
-				pages={PAGES}
+				pages={name === "rail" ? PAGES_FULL : PAGES}
+				holding={name === "rail" ? element?.origin?.holders : undefined}
 				selected="cart"
 				tool="select"
 				railLabel="properties"
@@ -256,14 +265,20 @@ function Overlay({
 	const accent = (id: string | undefined) => (tint && id !== undefined && shared(id) ? TINT : THREAD);
 
 	/** the same element, in the other frames on screen that render it */
-	const pointed = hover ?? selection;
-	const elsewhere =
-		pointed === null || !shared(pointed.id)
+	const echoOf = (pick: Pick | null) =>
+		pick === null || !shared(pick.id)
 			? []
-			: reachOf(pointed.id).flatMap((frame) => {
-					const rect = box(frame, { id: pointed.id, key: pointed.id });
+			: reachOf(pick.id).flatMap((frame) => {
+					const rect = box(frame, { id: pick.id, key: pick.id });
 					return rect === undefined ? [] : [{ frame, rect }];
 				});
+	// reach answers the cursor. select, echo and rail answer a click, because most of
+	// what a cursor crosses is shared and a field that answers every hover flickers.
+	const elsewhere =
+		take === "reach" ? echoOf(hover ?? selection) : take === "select" || take === "echo" || take === "rail" ? echoOf(selection) : [];
+	// echo's second volume: the cursor's, under the hand's
+	const faint =
+		take === "echo" && hover !== null && (selection === null || hover.id !== selection.id) ? echoOf(hover) : [];
 
 	/** what the write moved, drawn only for the take that speaks at the write */
 	const changed =
@@ -285,6 +300,16 @@ function Overlay({
 					<Ring rect={hovered} colour={accent(hover?.id)} width={1} opacity={0.55} />
 				</>
 			)}
+
+			{/* select, echo, rail: the same ring where it also stands, and nothing written beside it */}
+			{take === "reach"
+				? null
+				: elsewhere.map(({ frame, rect }) => (
+						<Ring key={`echo-${frame}`} rect={grow(rect, 3)} colour={THREAD} width={1} opacity={0.7} />
+					))}
+			{faint.map(({ frame, rect }) => (
+				<Ring key={`faint-${frame}`} rect={grow(rect, 3)} colour={THREAD} width={1} opacity={0.22} />
+			))}
 
 			{/* reach: the same element, ringed where it also stands */}
 			{take === "reach"

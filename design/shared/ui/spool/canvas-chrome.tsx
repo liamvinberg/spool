@@ -66,6 +66,7 @@ export function CanvasChrome({
 	railLabel = "properties",
 	life,
 	targets,
+	holding,
 	children,
 }: {
 	pages: readonly PageRow[];
@@ -87,13 +88,19 @@ export function CanvasChrome({
 	life?: Life | undefined;
 	/** where the selected frame's walks land, drawn in the tree rather than in a rail (#144) */
 	targets?: readonly Target[] | undefined;
+	/**
+	 * Frames that render the element under the hand, by name, on screen or not. A
+	 * row wears a dot; a collapsed page says only that something on it does
+	 * (spool-cloud#30, the `rail` take).
+	 */
+	holding?: readonly string[] | undefined;
 	children?: ReactNode;
 }) {
 	const shut = rail === null || railWidth === 0;
 	const lit: DockSurface | null = shut ? null : railLabel.toLowerCase() === "agent" ? "agent" : "properties";
 	return (
 		<div className="flex h-full w-full overflow-hidden bg-bg">
-			<PagesRail pages={pages} selected={selected} targets={targets} />
+			<PagesRail pages={pages} selected={selected} targets={targets} holding={holding} />
 			<div className="relative min-w-0 flex-1 overflow-hidden bg-canvas">
 				{children}
 				{tool === "none" ? null : <CanvasTools tool={tool} />}
@@ -122,12 +129,15 @@ function PagesRail({
 	pages,
 	selected,
 	targets = [],
+	holding = [],
 }: {
 	pages: readonly PageRow[];
 	selected?: string | undefined;
 	targets?: readonly Target[] | undefined;
+	holding?: readonly string[] | undefined;
 }) {
 	const reached = new Map(targets.map((target) => [target.frame, target]));
+	const held = new Set(holding);
 	const listed = pages.filter((page) => page.foot !== true);
 	const footed = pages.filter((page) => page.foot === true);
 	return (
@@ -143,13 +153,13 @@ function PagesRail({
 			</div>
 			<div className="min-h-0 flex-1 overflow-hidden py-2">
 				{listed.map((page) => (
-					<PageBlock key={page.name} page={page} selected={selected} reached={reached} />
+					<PageBlock key={page.name} page={page} selected={selected} reached={reached} held={held} />
 				))}
 			</div>
 			{footed.length === 0 ? null : (
 				<div className="shrink-0 border-border border-t py-2">
 					{footed.map((page) => (
-						<PageBlock key={page.name} page={page} selected={selected} reached={reached} />
+						<PageBlock key={page.name} page={page} selected={selected} reached={reached} held={held} />
 					))}
 				</div>
 			)}
@@ -161,10 +171,12 @@ function PageBlock({
 	page,
 	selected,
 	reached,
+	held,
 }: {
 	page: PageRow;
 	selected?: string | undefined;
 	reached: Map<string, Target>;
+	held: ReadonlySet<string>;
 }) {
 	return (
 		<div className={cn(page.ruled === true && "border-border border-b pb-2 mb-2")}>
@@ -208,6 +220,7 @@ function PageBlock({
 				{page.open === true || !page.frames.some((frame) => reached.has(frame)) ? null : (
 					<WalkTick className="mr-2 h-2 w-2.5 text-thread" />
 				)}
+				{page.open === true || !page.frames.some((frame) => held.has(frame)) ? null : <HoldDot className="mr-2" />}
 				<span className="font-mono text-2xs text-muted/60 leading-3">{page.frames.length}</span>
 			</div>
 			{page.open === true ? (
@@ -240,6 +253,7 @@ function PageBlock({
 									</span>
 								</span>
 									<FrameMark mark={page.unseen?.[frame]} className="ml-auto" />
+								{held.has(frame) ? <HoldDot className="mr-2 ml-auto" /> : null}
 								{target === undefined ? null : (
 									<WalkTick
 										className={cn(
@@ -274,6 +288,11 @@ function FrameMark({ mark, className }: { mark: Mark | undefined; className?: st
 }
 
 /** the arrow a walked-to frame wears in the tree: the canvas's own edge, one row long */
+/** this frame renders the element the hand is on: a dot, and no number beside it */
+function HoldDot({ className }: { className?: string | undefined }) {
+	return <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full bg-thread", className)} />;
+}
+
 function WalkTick({ className }: { className?: string | undefined }) {
 	return (
 		<svg viewBox="0 0 10 8" className={className} fill="none" aria-hidden="true">

@@ -25,6 +25,8 @@ export interface Origin {
 	fileFrames: number;
 	/** frames rendering this export: what a hand actually means, and needs a finer index */
 	exportFrames: number;
+	/** those frames by name, on screen or not, so a rail can point at them instead of counting */
+	holders: readonly string[];
 }
 
 export interface DocElement {
@@ -47,8 +49,22 @@ export interface DocElement {
 
 const CHROME = "shared/ui/kaffe-chrome.tsx";
 
-const HEADER: Origin = { file: CHROME, line: 12, export: "ScreenHeader", fileFrames: 12, exportFrames: 6 };
-const BUTTON: Origin = { file: CHROME, line: 34, export: "Button", fileFrames: 12, exportFrames: 9 };
+const HEADER: Origin = {
+	file: CHROME,
+	line: 12,
+	export: "ScreenHeader",
+	fileFrames: 12,
+	exportFrames: 6,
+	holders: ["menu", "cart", "receipt", "checkout", "orders", "profile"],
+};
+const BUTTON: Origin = {
+	file: CHROME,
+	line: 34,
+	export: "Button",
+	fileFrames: 12,
+	exportFrames: 9,
+	holders: ["menu", "cart", "checkout", "orders", "profile", "tip", "welcome", "signin", "verify"],
+};
 
 /** kaffe's cart as three files write it: the frame's own, and the two exports it renders. */
 export const DOC: readonly DocElement[] = [
@@ -135,7 +151,7 @@ export function reachOf(id: string): readonly string[] {
 
 /* ---------- the takes ---------- */
 
-export type TakeName = "source" | "ring" | "tint" | "reach" | "wake";
+export type TakeName = "source" | "ring" | "tint" | "reach" | "wake" | "select" | "echo" | "rail";
 
 export interface Take {
 	name: TakeName;
@@ -184,6 +200,27 @@ export const TAKES: Readonly<Record<TakeName, Take>> = {
 		volume: "The first write of a session wakes the frames it changed, once. After that, silence.",
 		cost: "The first edit is a surprise by design, and the second is unannounced.",
 		counts: "none",
+	},
+	select: {
+		name: "select",
+		mark: "Reach, on a click. Hover rings the element under the cursor and nothing else; select it and it rings wherever it stands.",
+		volume: "The rings hold while it is selected, so the write lands inside them.",
+		cost: "Most of what a cursor crosses is shared. Hover answering everywhere is a field that flickers, so the cursor learns nothing until it commits.",
+		counts: "screen",
+	},
+	echo: {
+		name: "echo",
+		mark: "Reach at two volumes. Hover echoes faintly in the other frames; selection rings them.",
+		volume: "Same as select. The faint echo is the cursor's, the ring is the hand's.",
+		cost: "Two weights of the same line, and the faint one still moves the periphery on every hover.",
+		counts: "screen",
+	},
+	rail: {
+		name: "rail",
+		mark: "Select, and the pages rail marks every frame that renders the export, on this page or another. The canvas rings the ones on screen.",
+		volume: "Same as select. The rail is the map of the seven you cannot see.",
+		cost: "Two surfaces carry one fact. The rail has to know the export, which is the finer index again.",
+		counts: "export",
 	},
 };
 
