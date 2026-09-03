@@ -36,13 +36,18 @@ jobs:
           package-manager-cache: false
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      # `changeset tag` only tags and cuts the GitHub release; npm publish
-      # happens in the gated job below, from the frozen tag.
+      # `changeset tag` only tags; npm publish happens in the gated job below,
+      # from the frozen tag, and the GitHub release is the dmg job's to create.
+      # It used to be created here, which meant `releases/latest` named a
+      # version for the half hour before its dmg and update feed existed: every
+      # installed app that checked in that window was told about a release it
+      # could not install. A release now exists only once everything on it does.
       - id: changesets
         uses: changesets/action@v1
         with:
           version: pnpm changeset version
           publish: pnpm changeset tag
+          createGithubReleases: false
           commit: "release: version spool.page"
           title: "release: spool.page"
         env:
@@ -98,9 +103,10 @@ jobs:
 
   # The macOS app (#63). It bundles the spool package of its own version, so it
   # can only be built once that version is on npm, which is why this job is last
-  # and why it depends on the one above rather than racing it. A failure here
-  # cannot retract anything: npm already has the release and the GitHub release
-  # already exists, and all that is missing is a file attached to it. Rerun it
+  # and why it depends on the one above rather than racing it. It also creates
+  # the GitHub release, because a release is only worth naming once the dmg and
+  # the update feed are on it. A failure here cannot retract anything: npm
+  # already has the version, and all that is missing is the release. Rerun it
   # the same way a refused publish is rerun, with
   # `gh workflow run publish.yml -f tag=vX.Y.Z` — this job does not need the
   # publish step to have succeeded on that rerun, only for the version to be on
@@ -189,7 +195,7 @@ jobs:
           echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
           NOTARY_KEY="$RUNNER_TEMP/notary.p8" OUT="$RUNNER_TEMP/dist" desktop/scripts/package.sh
           rm -f "$RUNNER_TEMP/notary.p8"
-      - name: Attach the dmg to the release
+      - name: Create the release with the dmg on it
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -204,23 +210,34 @@ jobs:
           # but only if the file is named the same every time.
           cp "$dmg" "$RUNNER_TEMP/dist/Spool.dmg"
 
+          # The notes are this version's section of the changelog, which is what
+          # the changesets action used to put there, with the app on the end.
+          {
+            awk -v v="$version" '
+              /^## / { on = ($2 == v) ; if (on) next }
+              on { print }
+            ' CHANGELOG.md
+            echo "### Spool for macOS"
+            echo
+            echo "Apple silicon, macOS 14 or later. Signed and notarized, so it opens without a right-click. Drag it to Applications and open it: the canvas is in the window, and there is a menu bar item for when the window is closed. It brings its own copy of \`spool.page@$version\`, so nothing else has to be installed, and it updates itself from here."
+            echo
+            echo "\`Spool-$version.dmg\` sha256 \`$sum\`"
+            echo
+            echo "\`Spool.dmg\` is the same file under a name that does not move, for anything linking to the newest release."
+          } > "$RUNNER_TEMP/notes.md"
+
+          # Created as a draft, filled, then published: releases/latest and the
+          # update feed never see a release that is missing its files. A rerun
+          # for a tag whose release already exists refreshes what is on it.
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "$TAG" --draft --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
           gh release upload "$TAG" \
             "$dmg" \
             "$RUNNER_TEMP/dist/Spool.dmg" \
             "$RUNNER_TEMP/dist/Spool-$version-arm64-mac.zip" \
             "$RUNNER_TEMP/dist/latest-mac.yml" \
             --clobber
-
-          {
-            echo "### Spool for macOS"
-            echo
-            echo "Apple silicon, macOS 14 or later. Signed and notarized, so it opens without a right-click. Drag it to Applications and open it: the canvas is in the window, and there is a menu bar item for when the window is closed. It brings its own copy of \`spool.page@$version\`, so nothing else has to be installed."
-            echo
-            echo "\`Spool-$version.dmg\` sha256 \`$sum\`"
-            echo
-            echo "\`Spool.dmg\` is the same file under a name that does not move, for anything linking to the newest release."
-          } > "$RUNNER_TEMP/dmg-notes.md"
-          gh release view "$TAG" --json body -q .body > "$RUNNER_TEMP/notes.md"
-          printf '\n' >> "$RUNNER_TEMP/notes.md"
-          cat "$RUNNER_TEMP/dmg-notes.md" >> "$RUNNER_TEMP/notes.md"
-          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release edit "$TAG" --draft=false --latest
