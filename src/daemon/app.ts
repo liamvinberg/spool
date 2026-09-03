@@ -59,7 +59,7 @@ import {
 	renamePage,
 } from "./explorer";
 import { createFlowGraph, recordWalk } from "./flows";
-import { listDirectory, searchDirectories } from "./fs-list";
+import { listDirectory, refreshIndex, searchDirectories } from "./fs-list";
 import { type Geometry, parseGeometry, sidecarFileIn, writeGeometry } from "./geometry";
 import { createGoReader } from "./go-reader";
 import { ASSET_REQUEST_CAP, base64Length, listAssets } from "./hand-asset";
@@ -570,6 +570,8 @@ export function createDaemonApp({
 		...(onHistoryNotice === undefined ? {} : { notice: onHistoryNotice }),
 		...(historyAllowed === undefined ? {} : { enabled: historyAllowed }),
 	});
+	/** The home the picker's search indexes, and the registry that marks its projects (#251/#277). */
+	const fsIndex = { home: home ?? homedir(), spoolDir };
 	const registeredRoots = () => readRegistry(spoolDir).projects.map((project) => project.root);
 
 	// the app-level channel: registry and session changes, fanned to every page
@@ -982,13 +984,18 @@ export function createDaemonApp({
 			});
 		})
 		.get("/api/fs/list", (c) => {
-			const listing = listDirectory(c.req.query("path"));
+			const path = c.req.query("path");
+			const listing = listDirectory(path);
 			if (listing === undefined) return c.json({ error: "no such directory" }, 404);
+			// no path is the picker opening: the moment to walk home again behind the index that stands (#277)
+			if (path === undefined) void refreshIndex(fsIndex);
 			return c.json(listing);
 		})
 		.get("/api/fs/search", async (c) => {
-			// one bounded, cached walk of home: the browse is what an empty query still shows
-			return c.json(await searchDirectories(c.req.query("q") ?? "", { home: home ?? homedir(), spoolDir }));
+			// one indexed walk of home, answered under the folder asked for: the browse is what an empty query still shows
+			const found = await searchDirectories(c.req.query("q") ?? "", { ...fsIndex, under: c.req.query("under") });
+			if (found === undefined) return c.json({ error: "not under home" }, 400);
+			return c.json(found);
 		})
 		.post("/api/projects/open", validator("json", requestedPath), (c) => {
 			try {
@@ -2741,6 +2748,10 @@ export function createDaemonApp({
 		/** Begin the daily phone-home — post-listen only, and only when opted in. */
 		startUpdateCheck: () => {
 			if (updateCheck === true) updateChecker.start();
+		},
+		/** Walk home for the picker's search now, so the first keystroke ever finds an index standing (#277). */
+		warmFsIndex: () => {
+			void refreshIndex(fsIndex);
 		},
 		/** The /term upgrade path — wired by serveDaemon onto the raw server. */
 		handleUpgrade,

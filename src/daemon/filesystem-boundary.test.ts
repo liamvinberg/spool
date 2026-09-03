@@ -174,6 +174,18 @@ describe("project filesystem sinks", () => {
 		expect(JSON.parse(body)).toMatchObject({ hits: [] });
 	});
 
+	it("does not search under a folder outside home", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const home = makeTempDir();
+		const outside = makeTempDir();
+		mkdirSync(join(outside, `${SENTINEL}-folder`), { recursive: true });
+		const app = makeApp(spoolDir, { home });
+
+		const response = await app.request(`/api/fs/search?q=${SENTINEL}&under=${encodeURIComponent(outside)}`);
+		expect(response.status).toBe(400);
+		expect(await response.text()).not.toContain(SENTINEL);
+	});
+
 	it("does not move an escaped frame-directory symlink to Trash", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { root, name } = makeProject(spoolDir);

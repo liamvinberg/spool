@@ -884,6 +884,13 @@ describe("the folder picker", () => {
 		// nothing typed is the browse, and the browse is the other endpoint
 		const empty = (await (await app.request("/api/fs/search?q=%20")).json()) as { hits: unknown[] };
 		expect(empty.hits).toEqual([]);
+
+		// standing in a folder, the search is that folder's (#277)
+		const under = encodeURIComponent(join(home, "personal"));
+		const scoped = (await (await app.request(`/api/fs/search?q=gym&under=${under}`)).json()) as {
+			hits: { name: string }[];
+		};
+		expect(scoped.hits.map((hit) => hit.name)).toEqual(["gym-brute"]);
 	});
 
 	it("opens by walk-up through the app door, registering the found root", async () => {

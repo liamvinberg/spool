@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initProject } from "../init";
 import { makeTempDir } from "../test-helpers";
-import { searchDirectories } from "./fs-list";
+import { refreshIndex, searchDirectories } from "./fs-list";
 
 /** A home to search: every path is a directory, `#` marks a spool project. */
 function makeHome(paths: readonly string[]): string {
@@ -19,7 +19,8 @@ function makeHome(paths: readonly string[]): string {
 	return home;
 }
 
-const names = (found: Awaited<ReturnType<typeof searchDirectories>>): string[] => found.hits.map((hit) => hit.name);
+const names = (found: Awaited<ReturnType<typeof searchDirectories>>): string[] =>
+	(found?.hits ?? []).map((hit) => hit.name);
 
 describe("searchDirectories", () => {
 	it("reaches a folder three levels down that browsing needs three clicks for", async () => {
@@ -27,9 +28,9 @@ describe("searchDirectories", () => {
 		const found = await searchDirectories("gymbrute", { home, spoolDir: join(makeTempDir(), ".spool") });
 
 		expect(names(found)).toEqual(["gym-brute"]);
-		expect(found.hits[0]?.path).toBe(join(realpathSync(home), "personal/projects/gym-brute"));
-		expect(found.hits[0]?.parent).toBe(join(realpathSync(home), "personal/projects"));
-		expect(found.hits[0]?.isProject).toBe(true);
+		expect(found?.hits[0]?.path).toBe(join(realpathSync(home), "personal/projects/gym-brute"));
+		expect(found?.hits[0]?.parent).toBe(join(realpathSync(home), "personal/projects"));
+		expect(found?.hits[0]?.isProject).toBe(true);
 	});
 
 	it("reads a seam the same however the machine spells it", async () => {
@@ -44,12 +45,12 @@ describe("searchDirectories", () => {
 		const found = await searchDirectories("kaffe", { home, spoolDir: join(makeTempDir(), ".spool") });
 
 		const real = realpathSync(home);
-		expect(found.hits.map((hit) => hit.path)).toEqual([
+		expect(found?.hits.map((hit) => hit.path)).toEqual([
 			join(real, "kaffe"),
 			join(real, "a/kaffe"),
 			join(real, "deep/deeper/deepest/kaffe"),
 		]);
-		expect(found.hits[0]?.isProject).toBe(true);
+		expect(found?.hits[0]?.isProject).toBe(true);
 	});
 
 	it("answers a registered project with what the registry knows", async () => {
@@ -62,8 +63,8 @@ describe("searchDirectories", () => {
 		writeFileSync(join(root, "design", "frames", "checkout", "frame.tsx"), "export default () => null\n");
 
 		const found = await searchDirectories("kaffe", { home, spoolDir });
-		expect(found.hits[0]?.frames).toBe(1);
-		expect(found.hits[0]?.openedAt).toEqual(expect.any(String));
+		expect(found?.hits[0]?.frames).toBe(1);
+		expect(found?.hits[0]?.openedAt).toEqual(expect.any(String));
 	});
 
 	it("hides dotfolders and does not descend the folders nobody searches", async () => {
@@ -80,7 +81,7 @@ describe("searchDirectories", () => {
 		expect(names(found)).not.toContain("lodash");
 		expect(names(found)).not.toContain("nvim");
 		// app, node_modules, dist, src — and nothing from inside the two never entered
-		expect(found.total).toBe(4);
+		expect(found?.total).toBe(4);
 	});
 
 	it("stops at the depth cap rather than walking a home to the bottom", async () => {
@@ -95,18 +96,52 @@ describe("searchDirectories", () => {
 		});
 	});
 
-	it("stands its index for a while rather than watching a home directory", async () => {
+	it("stands its index until asked to walk again rather than watching a home directory", async () => {
 		const home = makeHome(["projects/kaffe"]);
 		const spoolDir = join(makeTempDir(), ".spool");
-		let clock = 1_000;
-		const now = () => clock;
 
-		await searchDirectories("kaffe", { home, spoolDir, now });
+		await searchDirectories("kaffe", { home, spoolDir });
 		mkdirSync(join(home, "projects", "ruter"));
-		expect(names(await searchDirectories("ruter", { home, spoolDir, now }))).toEqual([]);
+		expect(names(await searchDirectories("ruter", { home, spoolDir }))).toEqual([]);
 
-		clock += 60_000;
-		expect(names(await searchDirectories("ruter", { home, spoolDir, now }))).toEqual(["ruter"]);
+		await refreshIndex({ home, spoolDir });
+		expect(names(await searchDirectories("ruter", { home, spoolDir }))).toEqual(["ruter"]);
+	});
+
+	it("shares one walk between everyone who asks while it runs", async () => {
+		const home = makeHome(["projects/kaffe"]);
+		const spoolDir = join(makeTempDir(), ".spool");
+
+		const first = refreshIndex({ home, spoolDir });
+		expect(refreshIndex({ home, spoolDir })).toBe(first);
+		await first;
+		expect(refreshIndex({ home, spoolDir })).not.toBe(first);
+	});
+
+	it("answers under the folder asked for, out of the same index", async () => {
+		const home = makeHome(["work/clients/kaffe-api", "personal/projects/kaffe#", "personal/kaffe-notes"]);
+		const spoolDir = join(makeTempDir(), ".spool");
+		const real = realpathSync(home);
+
+		const under = await searchDirectories("kaffe", { home, spoolDir, under: join(home, "personal") });
+		expect(under?.hits.map((hit) => hit.path)).toEqual([
+			join(real, "personal/projects/kaffe"),
+			join(real, "personal/kaffe-notes"),
+		]);
+		// projects, kaffe, its design, kaffe-notes: the count is the folder's, not home's
+		expect(under?.total).toBe(4);
+
+		const everywhere = await searchDirectories("kaffe", { home, spoolDir });
+		expect(names(everywhere)).toEqual(["kaffe", "kaffe-notes", "kaffe-api"]);
+	});
+
+	it("answers nothing at all for a folder outside home", async () => {
+		const home = makeHome(["projects/kaffe"]);
+		const elsewhere = makeTempDir();
+		mkdirSync(join(elsewhere, "kaffe"));
+		expect(
+			await searchDirectories("kaffe", { home, spoolDir: join(makeTempDir(), ".spool"), under: elsewhere }),
+		).toBe(undefined);
 	});
 
 	it("never follows a symlink out of home", async () => {
@@ -116,7 +151,7 @@ describe("searchDirectories", () => {
 		symlinkSync(outside, join(home, "personal", "escape"));
 
 		const found = await searchDirectories("elsewhere", { home, spoolDir: join(makeTempDir(), ".spool") });
-		expect(found.hits).toEqual([]);
+		expect(found?.hits).toEqual([]);
 		expect(names(await searchDirectories("escape", { home, spoolDir: join(makeTempDir(), ".spool") }))).toEqual([]);
 	});
 

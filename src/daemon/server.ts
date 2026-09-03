@@ -82,6 +82,8 @@ export function serveDaemon({
 			daemon.setSelfOrigin(daemonUrl(host, info.port));
 			// listening first, asking after — the registry never delays the canvas
 			daemon.startUpdateCheck();
+			// the picker's index, walked once now rather than on the first keystroke
+			daemon.warmFsIndex();
 			writeDaemonState(spoolDir, {
 				pid: process.pid,
 				host,
