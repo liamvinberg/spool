@@ -1,4 +1,4 @@
-import claudeModels from "shared/captures/claude-models.json";
+import claudeModels from "./claude-models.json";
 import { useCallback, useEffect, useState } from "react";
 import type { PlayEntry } from "shared/lib/spool/turn-play";
 
@@ -22,7 +22,7 @@ import type { PlayEntry } from "shared/lib/spool/turn-play";
  * never cuts a release for either, and there is nothing to cache: the reply
  * arrives on a session that is already open.
  *
- * shared/captures/claude-models.json is that reply, captured whole.
+ * claude-models.json beside this file is that reply, captured whole.
  *
  * **It answers with five choices, not with ten aliases.** `/model`'s usage line
  * accepts `sonnet, opus, haiku, fable, best, sonnet[1m], opus[1m], fable[1m],
