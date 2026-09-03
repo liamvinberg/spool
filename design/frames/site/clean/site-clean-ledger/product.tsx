@@ -1064,7 +1064,7 @@ const COURSES: readonly Course[] = [
 	{
 		numeral: "I",
 		name: "Fire bread, cultured butter",
-		note: "Baked straight in the ash, brushed with last week's whey.",
+		note: "Baked straight in the ash, brushed with last week’s whey.",
 		price: "95",
 	},
 	{
@@ -1094,7 +1094,7 @@ const COURSES: readonly Course[] = [
 	{
 		numeral: "VI",
 		name: "Burnt cream, sea buckthorn",
-		note: "The oven's last heat does most of the work.",
+		note: "The oven’s last heat does most of the work.",
 		price: "120",
 	},
 ];
