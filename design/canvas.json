@@ -561,6 +561,10 @@
 		"explore/agent/say": {
 			"x": 14428,
 			"y": 1224
+		},
+		"explore/components/library/library-dock": {
+			"x": 1600,
+			"y": 80
 		}
 	}
 }

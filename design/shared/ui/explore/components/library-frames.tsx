@@ -65,12 +65,11 @@ function frameSize(file: LibFile, part: LibPart | undefined): { w: number; h: nu
 }
 
 /**
- * File order, flowing left to right and wrapping at the page's width. A file
+ * File order, flowing left to right and wrapping at `WRAP`. A file
  * with several members never splits across a wrap: it starts a new row instead,
  * so its tint stays one rectangle.
  */
-function layout(): { frames: readonly Frame[]; families: readonly Family[] } {
-	const WRAP = 1180;
+export function layout(WRAP = 1180): { frames: readonly Frame[]; families: readonly Family[] } {
 	const GAP = 40;
 	const KIN = 12;
 	const ROW = 110;
