@@ -69,10 +69,9 @@ function frameSize(file: LibFile, part: LibPart | undefined): { w: number; h: nu
  * with several members never splits across a wrap: it starts a new row instead,
  * so its tint stays one rectangle.
  */
-export function layout(WRAP = 1180): { frames: readonly Frame[]; families: readonly Family[] } {
+export function layout(WRAP = 1180, ROW = 110): { frames: readonly Frame[]; families: readonly Family[] } {
 	const GAP = 40;
 	const KIN = 12;
-	const ROW = 110;
 	const LEFT = 48;
 
 	const frames: Frame[] = [];
