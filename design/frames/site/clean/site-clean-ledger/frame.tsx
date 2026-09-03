@@ -250,13 +250,13 @@ const STEPS: readonly { n: string; head: string; mono: string; body: string }[] 
 	{
 		n: "2",
 		head: "Point it at a folder",
-		mono: "cd chamfer && spool init",
+		mono: "cd brasa && spool init",
 		body: "A repo you already have is the right place. design/ appears beside your source.",
 	},
 	{
 		n: "3",
 		head: "Ask your agent for a screen",
-		mono: "design/frames/runs/pt-journal/",
+		mono: "design/frames/brasa/reserve/",
 		body: "It writes one folder with one component in it. The frame is on the canvas before you switch windows.",
 	},
 	{
@@ -363,12 +363,12 @@ export default function SiteCleanLedger() {
 
 				<Band
 					rootRef={rootRef}
-					margin={["$ spool url pt-ask", "localhost:7766", "  /play/pt-ask"]}
+					margin={["$ spool url reserve-card", "localhost:7766", "  /play/reserve-card"]}
 					title="See it before you build it."
 					body={
 						<>
 							<p>
-								A frame is one TSX component in your project, rendered live. The select opens, the field
+								A frame is one TSX component in your project, rendered live. The dates pick, the field
 								takes text, and pressing play walks the flow at full size.
 							</p>
 							<p className="mt-3.5">
@@ -383,7 +383,7 @@ export default function SiteCleanLedger() {
 				<Band
 					rootRef={rootRef}
 					flip
-					margin={["design/frames/runs/", "  pt-journal/", "  pt-journal--failed/", "  pt-journal--waiting/", "  pt-journal--queued/"]}
+					margin={["design/frames/brasa/", "  home--candlelit/", "  home--classic/", "  home--editorial/", "  home--playful/"]}
 					title="Make variations until one feels right."
 					body={
 						<>
@@ -405,7 +405,7 @@ export default function SiteCleanLedger() {
 
 				<Band
 					rootRef={rootRef}
-					margin={["$ git status", " M design/frames/", "    runs/pt-journal/", "      frame.tsx"]}
+					margin={["$ git status", " M design/frames/", "    brasa/reserve/", "      frame.tsx"]}
 					title="It lives in your repo."
 					body={
 						<>

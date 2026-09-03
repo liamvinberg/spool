@@ -1,6 +1,11 @@
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { cn } from "shared/lib/utils";
 import { SpoolMark } from "shared/ui/spool/mark";
+import boardPhoto from "./brasa-board.jpg";
+import bokehPhoto from "./brasa-bokeh.jpg";
+import candlePhoto from "./brasa-candle.jpg";
+import silverPhoto from "./brasa-silver.jpg";
+import tablePhoto from "./brasa-table.jpg";
 
 /**
  * The product imagery for site-clean--ledger.
@@ -34,10 +39,11 @@ import { SpoolMark } from "shared/ui/spool/mark";
  *                    and 9 across, bow max(40, distance * 0.4)
  *
  * The other rule: red belongs to spool and nothing else. Rings, threads, labels
- * and the rail's spine carry the thread; chamfer, the product standing on the
- * canvas, brings its own greys, its own two typefaces and its own five status
- * colours. So a visitor can tell at a glance which pixels are the tool and which
- * are the thing being designed.
+ * and the rail's spine carry the thread; Brasa, the restaurant standing on the
+ * canvas, brings its own warm dark, its own four typefaces and its own ember,
+ * which is an orange far enough from --color-thread to read as another world. So
+ * a visitor can tell at a glance which pixels are the tool and which are the
+ * thing being designed.
  *
  * Screens are drawn at the size they are shown, 1:1. Where a composition is
  * smaller than life it is one transform on a real screen, with the labels and
@@ -283,236 +289,162 @@ function UnseenMark({ mark, className }: { mark: "new" | "changed"; className?: 
 	);
 }
 
-/* ---------- chamfer: the product standing on the canvas ---------- */
+/* ---------- Brasa: the product standing on the canvas ---------- */
 
 /**
- * chamfer runs automations and keeps the record of what they did. It was
- * prototyped in spool, so the frames on this page are the ones that exist:
- * pt-home, pt-runs, pt-graph and pt-journal with its siblings, at the 1440 by
- * 900 every frame on that canvas measures.
+ * Brasa is a twenty-four seat restaurant on Hökens gata that cooks everything
+ * over wood. Its site was prototyped in spool, so the frames on this page are
+ * the ones that exist: home and its four takes, menu, reserve and the state
+ * after it, the booking card, and the phone flow.
  *
- * Its whole system arrives from chamfer's design/shared/tokens.css and nothing
- * is invented here: Geist and Geist Mono, six named greys in oklch, an ink
- * accent that marks only what you can press, five status colours that are a
- * closed set the accent never joins, and one chamfered corner on the one
- * primary action. Light is :root, so these panels stand white on spool's dark
- * field and each frame reads as an object without spool drawing a border round
- * it.
+ * Its whole system arrives from Brasa's own design/shared/tokens.css and
+ * nothing is invented here: a warm near-black ground, cream ink, one ember and
+ * one candle gold, a paper side for the daylight takes, and four faces with one
+ * job each.
  *
- * The plane ladder runs the other way under light, which is the one thing a
- * reader of the dark screens has to translate: a table there rises to a lighter
- * grey, here it rises to --panel, which is white, and the rail and the table
- * head are the greys under the page rather than over it.
+ *   Fraunces             the restaurant's own voice, everything at display size
+ *   Instrument Serif     the editorial take, headline and pull quote
+ *   Bricolage Grotesque  the playful take, where type is the whole design
+ *   Inter Tight          every sentence, label, price and field on every screen
  *
- *   the app ground   --page      the rail          --sunk
- *   a plane          --panel     a row under you   --hover
- *   a tag, the head  --sunk      the row you took  --acc-wash
+ * Atmosphere is drawn rather than decorated. Light comes from two radial
+ * sources, a low ember and a high candle, a photograph is always laid under a
+ * warm scrim so type stays readable on it, and a fine grain sits over the whole
+ * ground at overlay so the flat fills stop looking like flat fills. One thing
+ * on the page moves by itself: the glow behind the candle breathes on a six
+ * second cycle, and it stops under prefers-reduced-motion.
  *
- * The five status marks are chamfer's shapes, not colour alone: a hollow ring
- * queued, a dot inside a ring running, a half-filled square waiting, a filled
- * square succeeded, a ringed minus failed. Only the running dot breathes, and
- * it is the one thing on this page that moves by itself.
+ * The photographs are Unsplash-licensed and land beside this file as imports,
+ * because an image is an import and never a URL.
  */
 
 const APP_W = 1440;
 const APP_H = 900;
-const ASK_W = 460;
-const ASK_H = 372;
+const PHONE_W = 390;
+const PHONE_H = 844;
+const CARD_W = 460;
+const CARD_H = 392;
 
-const CHAMFER_CSS = `@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap');
-.chm {
-	--page: oklch(0.975 0 0);
-	--panel: oklch(1 0 0);
-	--line: oklch(0.898 0 0);
-	--line-lift: oklch(0.836 0 0);
-	--t3: oklch(0.530 0 0);
-	--t2: oklch(0.45 0 0);
-	--t1: oklch(0.196 0 0);
-	--hover: oklch(0.957 0 0);
-	--sunk: oklch(0.947 0 0);
-	--acc: oklch(0.165 0 0);
-	--acc-hover: oklch(0.265 0 0);
-	--acc-ink: oklch(0.995 0 0);
-	--acc-wash: oklch(0.950 0 0);
-	--st-queued: oklch(0.615 0.008 250);
-	--st-running: oklch(0.518 0.172 254);
-	--st-waiting: oklch(0.555 0.115 66);
-	--st-succeeded: oklch(0.53 0.13 152);
-	--st-failed: oklch(0.53 0.195 24);
-	font-family: Geist, ui-sans-serif, system-ui, sans-serif;
+const BRASA_CSS = `@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Fraunces:opsz,wght@9..144,300..700&family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@400..600&display=swap');
+.brs {
+	--ink: #0d0908;
+	--ink-2: #17100d;
+	--ink-3: #221812;
+	--line: rgba(246,236,225,0.14);
+	--line-2: rgba(246,236,225,0.30);
+	--cream: #f6ece1;
+	--dim: #c8b4a4;
+	--faint: #8d7b6d;
+	--ember: #e0642b;
+	--gold: #eab96c;
+	--paper: #f2ebe0;
+	--paper-2: #e6dccd;
+	--paper-line: rgba(23,17,14,0.16);
+	--paper-ink: #17110e;
+	--paper-dim: #6d5f52;
+	font-family: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
+	-webkit-font-smoothing: antialiased;
 }
-.chm .font-mono { font-family: "Geist Mono", ui-monospace, monospace; }
-@keyframes chamfer-breathe {
-	0%, 100% { opacity: 1; transform: scale(1); }
-	50% { opacity: 0.35; transform: scale(0.82); }
+.brs .disp {
+	font-family: Fraunces, "Iowan Old Style", Georgia, serif;
+	font-variation-settings: "opsz" 144, "SOFT" 24, "WONK" 0;
+}
+.brs .ed { font-family: "Instrument Serif", "Iowan Old Style", Georgia, serif; }
+.brs .pop { font-family: "Bricolage Grotesque", "Inter Tight", ui-sans-serif, sans-serif; }
+.brs .num { font-variant-numeric: tabular-nums; }
+@keyframes brasa-breathe {
+	0%, 100% { opacity: 0.72; }
+	50% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-	@keyframes chamfer-breathe { 0%, 100% { opacity: 0.7; transform: scale(1); } }
+	@keyframes brasa-breathe { 0%, 100% { opacity: 0.86; } }
 }`;
 
-/** One stylesheet for the whole demo product, mounted with every plate. */
-function ChamferType() {
+/** One stylesheet for the whole restaurant, mounted with every plate. */
+function BrasaType() {
 	// biome-ignore lint/security/noDangerouslySetInnerHtml: a stylesheet, written here
-	return <style dangerouslySetInnerHTML={{ __html: CHAMFER_CSS }} />;
+	return <style dangerouslySetInnerHTML={{ __html: BRASA_CSS }} />;
 }
 
-/* ---- the five states, as shapes ---- */
+/** A tiled fractal noise, laid over the ground at overlay so fills gain a tooth. */
+const GRAIN =
+	"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E\")";
 
-type RunState = "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+const BLEND = {
+	overlay: "mix-blend-overlay",
+	"soft-light": "mix-blend-soft-light",
+	multiply: "mix-blend-multiply",
+} as const;
 
-const stateVar: Record<RunState, string> = {
-	queued: "var(--st-queued)",
-	running: "var(--st-running)",
-	waiting: "var(--st-waiting)",
-	succeeded: "var(--st-succeeded)",
-	failed: "var(--st-failed)",
-	cancelled: "var(--t3)",
-};
-
-const stateWord: Record<RunState, string> = {
-	queued: "Queued",
-	running: "Running",
-	waiting: "Waiting on a human",
-	succeeded: "Succeeded",
-	failed: "Failed",
-	cancelled: "Cancelled",
-};
-
-/** Coloured only when something is being asked or something stopped. */
-function wordColour(state: RunState): string {
-	if (state === "failed" || state === "waiting" || state === "running") return stateVar[state];
-	return "var(--t3)";
-}
-
-function StateMark({ state, size = 10, live = true }: { state: RunState; size?: number; live?: boolean }) {
-	const c = stateVar[state];
-	const s = size;
-	const mid = s / 2;
-	const box = { width: s, height: s, viewBox: `0 0 ${s} ${s}` };
-
-	if (state === "succeeded") {
-		return (
-			<svg {...box} aria-hidden="true" className="shrink-0">
-				<rect width={s} height={s} fill={c} />
-			</svg>
-		);
-	}
-	if (state === "waiting") {
-		return (
-			<svg {...box} fill="none" aria-hidden="true" className="shrink-0">
-				<rect x={0.5} y={0.5} width={s - 1} height={s - 1} stroke={c} strokeWidth={1} />
-				<rect x={0.5} y={0.5} width={(s - 1) / 2} height={s - 1} fill={c} />
-			</svg>
-		);
-	}
-	if (state === "failed" || state === "cancelled") {
-		return (
-			<svg {...box} fill="none" aria-hidden="true" className="shrink-0">
-				<circle cx={mid} cy={mid} r={mid - s * 0.11} stroke={c} strokeWidth={s * 0.13} />
-				<rect x={s * 0.26} y={mid - s * 0.065} width={s * 0.48} height={s * 0.13} fill={c} />
-			</svg>
-		);
-	}
-	const dot: CSSProperties =
-		state === "running" && live
-			? { transformOrigin: "center", animation: "chamfer-breathe 2400ms cubic-bezier(0.4, 0, 0.6, 1) infinite" }
-			: {};
+function Grain({ opacity = 0.13, blend = "overlay" }: { opacity?: number; blend?: keyof typeof BLEND }) {
 	return (
-		<svg {...box} fill="none" aria-hidden="true" className="shrink-0">
-			<circle cx={mid} cy={mid} r={mid - s * 0.11} stroke={c} strokeWidth={s * 0.13} />
-			{state === "running" ? <circle cx={mid} cy={mid} r={s * 0.19} fill={c} style={dot} /> : null}
+		<span
+			aria-hidden="true"
+			className={cn("pointer-events-none absolute inset-0", BLEND[blend])}
+			style={{ backgroundImage: GRAIN, backgroundSize: "180px 180px", opacity }}
+		/>
+	);
+}
+
+/** Two light sources on the ground: a low ember, a high candle. */
+function Hearth({ style }: { style?: CSSProperties }) {
+	return (
+		<span
+			aria-hidden="true"
+			className="pointer-events-none absolute inset-0"
+			style={
+				style ?? {
+					background:
+						"radial-gradient(62% 58% at 10% 84%, rgba(224,100,43,0.20), rgba(224,100,43,0) 68%), radial-gradient(48% 42% at 72% 4%, rgba(234,185,108,0.10), rgba(234,185,108,0) 70%)",
+				}
+			}
+		/>
+	);
+}
+
+/** A flame cut to one shape, so the mark reads at 12px and at 120. */
+function Flame({ className, style }: { className?: string; style?: CSSProperties }) {
+	return (
+		<svg viewBox="0 0 16 20" fill="none" aria-hidden="true" className={className} style={style}>
+			<path d="M8 0.8c3.6 4.6 5.4 7.5 5.4 10.6a5.4 5.4 0 0 1-10.8 0C2.6 8.3 4.4 5.4 8 0.8Z" fill="currentColor" />
+			<path d="M8 8.4c1.5 2 2.3 3.3 2.3 4.6a2.3 2.3 0 0 1-4.6 0c0-1.3 0.8-2.6 2.3-4.6Z" fill="#0d0908" opacity="0.55" />
 		</svg>
 	);
 }
 
-/* ---- the type and the small parts ---- */
+/* ---- the small parts every Brasa screen shares ---- */
 
-function Mono({ children, className }: { children: ReactNode; className?: string }) {
-	return <span className={cn("font-mono text-[11.5px] tracking-[0.005em]", className)}>{children}</span>;
-}
-
-function Note({ children, className }: { children: ReactNode; className?: string }) {
-	return <span className={cn("text-[12px] leading-[1.5] text-[var(--t3)]", className)}>{children}</span>;
-}
-
-function ChamferHead({ children }: { children: ReactNode }) {
-	return <h2 className="text-[16px] font-semibold leading-[1.35] tracking-[-0.008em] text-[var(--t1)]">{children}</h2>;
-}
-
-function ChamferH1({ children, className }: { children: ReactNode; className?: string }) {
-	return (
-		<h1 className={cn("text-[30px] font-semibold leading-[1.24] tracking-[-0.022em] text-[var(--t1)]", className)}>
-			{children}
-		</h1>
-	);
-}
-
-/** A reading, so it takes a ground rather than an edge. */
-function Tag({ children, className }: { children: ReactNode; className?: string }) {
+function Rule({ tone = "dark", className }: { tone?: "dark" | "paper"; className?: string }) {
 	return (
 		<span
-			className={cn(
-				"inline-flex h-[18px] shrink-0 items-center rounded-[4px] px-1.5 font-mono text-[11.5px] tracking-[0.005em] text-[var(--t2)]",
-				className,
-			)}
-			style={{ background: "var(--sunk)" }}
-		>
-			{children}
-		</span>
+			aria-hidden="true"
+			className={cn("block h-px w-full", className)}
+			style={{ background: tone === "paper" ? "var(--paper-line)" : "var(--line)" }}
+		/>
 	);
 }
 
-/**
- * The cut marks the action. One primary per screen, bottom right at 45 degrees
- * with leg = height / 4, and every other corner square. A secondary is a plane
- * step, a quiet one is ink alone, and a destructive one is red ink and never a
- * fill.
- */
-function Btn({
-	kind = "secondary",
-	height = 36,
+function EmberButton({
+	children,
+	height = 48,
 	className,
 	onClick,
-	children,
+	full = false,
 }: {
-	kind?: "primary" | "secondary" | "quiet" | "danger";
+	children: ReactNode;
 	height?: number;
 	className?: string;
 	onClick?: () => void;
-	children: ReactNode;
+	full?: boolean;
 }) {
-	const shared =
-		"inline-flex shrink-0 cursor-pointer select-none items-center justify-center whitespace-nowrap px-4 text-[13.5px] font-medium leading-none transition-colors duration-150";
-	if (kind === "primary") {
-		// leg = height / 4, cut into the shape rather than rounded off it, so a small
-		// button and a large one are the same device rather than two angles.
-		const leg = height / 4;
-		return (
-			<button
-				type="button"
-				onClick={onClick}
-				style={{
-					height,
-					borderRadius: 6,
-					clipPath: `polygon(0 0, 100% 0, 100% calc(100% - ${leg}px), calc(100% - ${leg}px) 100%, 0 100%)`,
-				}}
-				className={cn(shared, "bg-[var(--acc)] text-[var(--acc-ink)] hover:bg-[var(--acc-hover)]", className)}
-			>
-				{children}
-			</button>
-		);
-	}
 	return (
 		<button
 			type="button"
 			onClick={onClick}
-			style={{ height }}
+			style={{ height, background: "var(--ember)", color: "#160b05" }}
 			className={cn(
-				shared,
-				"rounded-[6px]",
-				kind === "secondary" && "bg-[var(--sunk)] text-[var(--t1)] hover:bg-[var(--hover)]",
-				kind === "quiet" && "bg-transparent text-[var(--t2)] hover:bg-[var(--sunk)] hover:text-[var(--t1)]",
-				kind === "danger" && "bg-[var(--sunk)] text-[var(--st-failed)] hover:bg-[var(--hover)]",
+				"inline-flex cursor-pointer select-none items-center justify-center rounded-full px-7 font-medium leading-none transition-opacity duration-200 hover:opacity-88",
+				full && "w-full",
 				className,
 			)}
 		>
@@ -521,1411 +453,1171 @@ function Btn({
 	);
 }
 
-/** A closed set, so it is a chip. Selected is an accent fill and stays square. */
-function Chip({ label, count, on }: { label: string; count?: string; on?: boolean }) {
+function QuietLink({ children, tone = "dark" }: { children: ReactNode; tone?: "dark" | "paper" }) {
 	return (
 		<span
-			className={cn(
-				"inline-flex h-9 select-none items-center gap-2.5 rounded-[6px] px-3.5 text-[13px] leading-none",
-				on === true ? "bg-[var(--acc)] text-[var(--acc-ink)]" : "bg-[var(--panel)] text-[var(--t2)]",
-			)}
+			className="cursor-pointer border-b pb-1 text-[14px] leading-none transition-colors duration-200"
+			style={{
+				color: tone === "paper" ? "var(--paper-ink)" : "var(--cream)",
+				borderColor: tone === "paper" ? "var(--paper-line)" : "var(--line-2)",
+			}}
 		>
-			<span>{label}</span>
-			{count === undefined ? null : (
-				<span className="font-mono text-[11.5px] tabular-nums" style={{ opacity: on === true ? 0.8 : 0.66 }}>
-					{count}
-				</span>
-			)}
+			{children}
 		</span>
 	);
 }
 
-function Selector({ value, width = 196 }: { value: string; width?: number }) {
-	return (
-		<span
-			className="flex h-9 items-center justify-between gap-2 rounded-[6px] px-3.5 text-[13px] text-[var(--t2)]"
-			style={{ width, background: "var(--panel)" }}
-		>
-			<span className="truncate">{value}</span>
-			<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-				<path d="M4.75 3 7.75 6l-3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-			</svg>
-		</span>
-	);
-}
-
-/** A chamfer is a flat cut off a square edge, so the mark is that shape, in ink. */
-function ChamferMark({ size = 19 }: { size?: number }) {
-	return (
-		<svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
-			<path
-				d="M5 0.75 H19 A4.25 4.25 0 0 1 23.25 5 V14.6 L14.6 23.25 H5 A4.25 4.25 0 0 1 0.75 19 V5 A4.25 4.25 0 0 1 5 0.75 Z"
-				fill="var(--t1)"
-			/>
-		</svg>
-	);
-}
-
-/* ---- the rail ---- */
-
-interface Room {
-	label: string;
-	count?: string;
-	waiting?: boolean;
-	badge?: string;
-}
-
-const PROJECT_ROOMS: readonly Room[] = [
-	{ label: "Automations", count: "3" },
-	{ label: "Runs" },
-	{ label: "Versions", count: "v41" },
-	{ label: "Secrets", count: "5" },
-	{ label: "Settings" },
+const HOURS: readonly { days: string; time: string }[] = [
+	{ days: "Tuesday to Thursday", time: "17:30 to 23:00" },
+	{ days: "Friday and Saturday", time: "17:00 to midnight" },
+	{ days: "Sunday and Monday", time: "Closed" },
 ];
 
-const INSTANCE_ROOMS: readonly Room[] = [
-	{ label: "Inbox", count: "2", waiting: true },
-	{ label: "Connections", count: "7" },
-	{ label: "Members", count: "6" },
-	{ label: "Instance settings", badge: "v0.4.2" },
-];
-
-function RoomRow({ room, on }: { room: Room; on: boolean }) {
+function HoursList({ tone = "dark", width = 380 }: { tone?: "dark" | "paper"; width?: number }) {
+	const dim = tone === "paper" ? "var(--paper-dim)" : "var(--faint)";
+	const ink = tone === "paper" ? "var(--paper-ink)" : "var(--dim)";
 	return (
-		<span
-			className={cn(
-				"flex h-10 items-center rounded-[6px] px-3 text-[13.5px]",
-				on ? "text-[var(--t1)]" : "text-[var(--t2)]",
-			)}
-			style={on ? { background: "var(--panel)" } : undefined}
-		>
-			<span>{room.label}</span>
-			{room.badge !== undefined ? (
-				<span
-					className="ml-auto rounded-[4px] px-1.5 py-[3px] font-mono text-[11.5px] leading-none text-[var(--t1)]"
-					style={{ background: "var(--panel)" }}
-				>
-					{room.badge}
-				</span>
-			) : room.count === undefined ? null : (
-				<span
-					className="ml-auto font-mono text-[11.5px] tabular-nums"
-					style={{ color: room.waiting === true ? "var(--st-waiting)" : "var(--t3)" }}
-				>
-					{room.count}
-				</span>
-			)}
-		</span>
-	);
-}
-
-/** 264 wide, on the ground under the page, so the split reads with no line in it. */
-function ChamferRail({ active, home = false }: { active: string; home?: boolean }) {
-	return (
-		<nav className="flex w-[264px] shrink-0 flex-col p-4" style={{ background: "var(--sunk)" }}>
-			<span
-				className="flex h-11 items-center gap-2.5 rounded-[6px] px-2.5"
-				style={home ? { background: "var(--panel)" } : undefined}
-			>
-				<ChamferMark />
-				<span className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--t1)]">Eidra</span>
-				<Mono className="ml-auto text-[var(--t3)]">fjord-prod</Mono>
-			</span>
-
-			<span
-				className="mt-4 flex h-10 items-center justify-between rounded-[6px] px-3 text-[13.5px] text-[var(--t1)]"
-				style={{ background: "var(--page)" }}
-			>
-				<span>fjord-automations</span>
-				<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true" className="text-[var(--t3)]">
-					<path d="M4.75 3 7.75 6l-3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-				</svg>
-			</span>
-
-			<span className="mt-5 flex flex-col gap-0.5">
-				{PROJECT_ROOMS.map((r) => (
-					<RoomRow key={r.label} room={r} on={r.label === active} />
-				))}
-			</span>
-
-			<span className="mt-auto flex flex-col gap-0.5">
-				{INSTANCE_ROOMS.map((r) => (
-					<RoomRow key={r.label} room={r} on={r.label === active} />
-				))}
-			</span>
-
-			<span className="mt-5 flex h-11 items-center gap-3 rounded-[6px] px-2.5" style={{ background: "var(--page)" }}>
-				<span
-					className="flex size-7 items-center justify-center rounded-[6px] font-mono text-[11px] text-[var(--t2)]"
-					style={{ background: "var(--sunk)" }}
-				>
-					LV
-				</span>
-				<span className="text-[13px] text-[var(--t1)]">Liam Vinberg</span>
-				<span className="ml-auto text-[12px] text-[var(--t3)]">Admin</span>
-			</span>
-		</nav>
-	);
-}
-
-function ChamferShell({ active, home = false, children }: { active: string; home?: boolean; children: ReactNode }) {
-	return (
-		<div
-			className="chm flex overflow-hidden text-[var(--t1)] antialiased"
-			style={{ width: APP_W, height: APP_H, background: "var(--page)" }}
-		>
-			<ChamferType />
-			<ChamferRail active={active} home={home} />
-			<main className="flex h-full min-w-0 flex-1 flex-col px-10 pb-8 pt-9">{children}</main>
-		</div>
-	);
-}
-
-/* ---- pt-home ---- */
-
-interface HomeProject {
-	id: string;
-	mark: RunState;
-	automations: string;
-	automation?: string;
-	sentence: string;
-	last: { at: string; state: RunState };
-	failedToday: number;
-	waiting: number;
-	version: string;
-	action?: boolean;
-}
-
-const HOME_PROJECTS: readonly HomeProject[] = [
-	{
-		id: "fjord-automations",
-		mark: "waiting",
-		automations: "3 Automations",
-		automation: "hris-workspace-sync",
-		sentence: "412 checked against Personio, 36 updated",
-		last: { at: "4 seconds ago", state: "succeeded" },
-		failedToday: 0,
-		waiting: 2,
-		version: "v41",
-	},
-	{
-		id: "liam-personal",
-		mark: "failed",
-		automations: "2 Automations",
-		automation: "gmail-to-slack",
-		sentence: "page the on-call stopped on invalid_auth from Slack, not retried",
-		last: { at: "20 minutes ago", state: "failed" },
-		failedToday: 1,
-		waiting: 0,
-		version: "v7",
-		action: true,
-	},
-	{
-		id: "fjord-finance",
-		mark: "succeeded",
-		automations: "4 Automations",
-		automation: "invoice-digest",
-		sentence: "channel #people-ops, posted 6",
-		last: { at: "1 hour ago", state: "succeeded" },
-		failedToday: 0,
-		waiting: 0,
-		version: "v12",
-	},
-	{
-		id: "fjord-onboarding",
-		mark: "succeeded",
-		automations: "2 Automations",
-		sentence: "onboarding waits for a webhook from Personio.",
-		last: { at: "3 days ago", state: "succeeded" },
-		failedToday: 0,
-		waiting: 0,
-		version: "v3",
-	},
-];
-
-/** A zero keeps the mark's slot without drawing one, so the digits stay on a rail. */
-function HomeCount({ n, state }: { n: number; state: RunState }) {
-	if (n === 0) {
-		return (
-			<>
-				<span className="block h-[9px] w-[9px] shrink-0" />
-				<Mono className="tabular-nums text-[var(--t3)]">0</Mono>
-			</>
-		);
-	}
-	return (
-		<>
-			<StateMark state={state} size={9} live={false} />
-			<span className="font-mono text-[11.5px] tabular-nums" style={{ color: stateVar[state] }}>
-				{n}
-			</span>
-		</>
-	);
-}
-
-function HomeFact({ w, label, children }: { w: number; label: string; children: ReactNode }) {
-	return (
-		<div className="shrink-0" style={{ width: w }}>
-			<div className="flex h-4 items-center gap-2">{children}</div>
-			<div className="mt-1.5 text-[12px] leading-none text-[var(--t3)]">{label}</div>
-		</div>
-	);
-}
-
-function HomeBlock({ p }: { p: HomeProject }) {
-	return (
-		<div className="-mx-4 flex gap-4 rounded-[6px] px-4 py-[18px]">
-			<span className="mt-[3px] shrink-0">
-				<StateMark state={p.mark} size={14} live={p.mark !== "failed"} />
-			</span>
-			<div className="min-w-0 flex-1">
-				<div className="flex items-baseline gap-2.5">
-					<h3 className="text-[16px] font-semibold leading-[1.3] tracking-[-0.008em] text-[var(--t1)]">{p.id}</h3>
-					<span className="text-[12px] text-[var(--t3)]">{p.automations}</span>
-				</div>
-				{p.automation === undefined ? (
-					<p className="mt-1.5 max-w-[720px] text-[13.5px] leading-[1.6] text-[var(--t2)]">{p.sentence}</p>
-				) : (
-					<div className="mt-1.5 flex max-w-[860px] items-baseline gap-3">
-						<span className="w-[140px] shrink-0 truncate">
-							<Mono className="text-[var(--t1)]">{p.automation}</Mono>
+		<div style={{ width }}>
+			{HOURS.map((h) => (
+				<div key={h.days}>
+					<Rule tone={tone} />
+					<div className="flex items-baseline justify-between py-2.5">
+						<span className="text-[13.5px]" style={{ color: dim }}>
+							{h.days}
 						</span>
-						<span className="min-w-0 flex-1 text-[13.5px] leading-[1.6] text-[var(--t2)]">{p.sentence}</span>
+						<span className="num text-[13.5px]" style={{ color: h.time === "Closed" ? dim : ink }}>
+							{h.time}
+						</span>
 					</div>
-				)}
-				<div className="mt-3.5 flex">
-					<HomeFact w={148} label="Last Run">
-						<StateMark state={p.last.state} size={9} live={false} />
-						<Mono className="text-[var(--t2)]">{p.last.at}</Mono>
-					</HomeFact>
-					<HomeFact w={116} label="Failed today">
-						<HomeCount n={p.failedToday} state="failed" />
-					</HomeFact>
-					<HomeFact w={128} label="Waiting on you">
-						<HomeCount n={p.waiting} state="waiting" />
-					</HomeFact>
-					<HomeFact w={96} label="Live">
-						<Mono className="text-[var(--t1)]">{p.version}</Mono>
-					</HomeFact>
 				</div>
-			</div>
-			{p.action === true ? (
-				<div className="flex shrink-0 items-center gap-2 self-start">
-					<Btn kind="quiet" height={32} className="px-3 text-[12.5px]">
-						Read why
-					</Btn>
-					<Btn kind="primary" height={32} className="px-3 text-[12.5px]">
-						Retry
-					</Btn>
-				</div>
-			) : (
-				<div className="w-[18px] shrink-0" />
-			)}
+			))}
 		</div>
 	);
 }
 
-function Counter({ value, label, state }: { value: string; label: string; state?: RunState }) {
+const NAV = ["Menu", "Hours", "Find us"] as const;
+
+/** 80 tall, ruled underneath, the wordmark at the left and one filled action at the right. */
+function BrasaBar({ page = "home", tone = "dark" }: { page?: string; tone?: "dark" | "paper" }) {
+	const paper = tone === "paper";
 	return (
-		<div className="shrink-0">
-			<div className="text-[26px] font-medium leading-none tracking-[-0.02em] tabular-nums text-[var(--t1)]">
-				{value}
-			</div>
-			<div className="mt-2.5 flex items-center gap-1.5">
-				{state === undefined ? null : <StateMark state={state} size={9} live={false} />}
-				<span className="text-[12px] text-[var(--t3)]">{label}</span>
-			</div>
+		<header
+			className="relative z-10 flex h-[80px] shrink-0 items-center justify-between px-14"
+			style={{ borderBottom: `1px solid ${paper ? "var(--paper-line)" : "var(--line)"}` }}
+		>
+			<span className="flex items-center gap-3">
+				<Flame className="h-[19px] w-[15px]" style={{ color: "var(--ember)" }} />
+				<span
+					className="disp text-[23px] leading-none tracking-[0.015em]"
+					style={{ color: paper ? "var(--paper-ink)" : "var(--cream)", fontWeight: 500 }}
+				>
+					Brasa
+				</span>
+			</span>
+			<nav className="flex items-center gap-9">
+				{NAV.map((item) => (
+					<span
+						key={item}
+						className="cursor-pointer text-[13.5px] leading-none transition-colors duration-200"
+						style={{
+							color:
+								item.toLowerCase() === page
+									? paper
+										? "var(--paper-ink)"
+										: "var(--cream)"
+									: paper
+										? "var(--paper-dim)"
+										: "var(--faint)",
+						}}
+					>
+						{item}
+					</span>
+				))}
+				<span
+					className="flex h-9 cursor-pointer items-center rounded-full border px-5 text-[13px] leading-none"
+					style={{
+						borderColor: paper ? "var(--paper-line)" : "var(--line-2)",
+						color: paper ? "var(--paper-ink)" : "var(--cream)",
+					}}
+				>
+					Book a table
+				</span>
+			</nav>
+		</header>
+	);
+}
+
+/** A photograph, always under a warm scrim so cream type survives on top of it. */
+function Photo({
+	src,
+	className,
+	scrim = "linear-gradient(90deg, var(--ink) 0%, rgba(13,9,8,0.55) 26%, rgba(13,9,8,0.10) 62%, rgba(13,9,8,0.45) 100%)",
+	tint = "radial-gradient(88% 70% at 62% 80%, rgba(224,100,43,0.26), rgba(13,9,8,0) 58%)",
+	position = "center",
+}: {
+	src: string;
+	className?: string;
+	scrim?: string;
+	tint?: string;
+	position?: string;
+}) {
+	return (
+		<div className={cn("relative overflow-hidden", className)}>
+			<img src={src} alt="" className="h-full w-full object-cover" style={{ objectPosition: position }} />
+			<span aria-hidden="true" className="absolute inset-0" style={{ background: tint }} />
+			<span aria-hidden="true" className="absolute inset-0" style={{ background: scrim }} />
+			<Grain opacity={0.1} blend="soft-light" />
 		</div>
 	);
 }
+
+/* ---- home ---- */
+
+const HOME_LINE = "Everything here has been over the fire.";
+const HOME_INTENT =
+	"Twenty-four seats on Hökens gata. Two sittings a night, six courses, and a room that smells of oak from four in the afternoon.";
+const ADDRESS = "Hökens gata 4, Södermalm, Stockholm";
 
 export function HomeScreen() {
 	return (
-		<ChamferShell active="Home" home>
-			<div className="flex shrink-0 items-start gap-8">
-				<ChamferH1 className="max-w-[880px]">
-					<span className="whitespace-nowrap">liam-personal</span> stopped 20 minutes ago. Two Runs in{" "}
-					<span className="whitespace-nowrap">fjord-automations</span> are waiting on you.
-				</ChamferH1>
-				<span className="ml-auto flex shrink-0 items-baseline gap-2 pt-1.5 text-[12px] text-[var(--t3)]">
-					<span>Monday 24 August</span>
-					<span>·</span>
-					<Mono className="text-[var(--t2)]">06:12</Mono>
-				</span>
+		<div
+			className="brs relative flex flex-col overflow-hidden"
+			style={{ width: APP_W, height: APP_H, background: "var(--ink)", color: "var(--cream)" }}
+		>
+			<BrasaType />
+			<Hearth />
+			<Grain />
+			<BrasaBar page="home" />
+			<div className="relative flex min-h-0 flex-1">
+				<div className="flex min-w-0 flex-1 flex-col justify-between py-[64px] pr-14 pl-[72px]">
+					<div>
+						<h1
+							className="disp"
+							style={{ fontSize: 92, lineHeight: 0.96, fontWeight: 300, letterSpacing: "-0.03em" }}
+						>
+							Everything here
+							<br />
+							has been over
+							<br />
+							the fire.
+						</h1>
+						<p className="mt-8 max-w-[440px] text-[16.5px] leading-[28px]" style={{ color: "var(--dim)" }}>
+							{HOME_INTENT}
+						</p>
+						<div className="mt-10 flex items-center gap-8">
+							<EmberButton className="text-[14px]">Book a table</EmberButton>
+							<QuietLink>See the menu</QuietLink>
+						</div>
+					</div>
+					<div>
+						<HoursList width={420} />
+						<div className="mt-5 text-[13px]" style={{ color: "var(--faint)" }}>
+							{ADDRESS}
+						</div>
+					</div>
+				</div>
+				<Photo src={tablePhoto} className="w-[552px] shrink-0" position="60% 50%" />
 			</div>
-
-			<section className="mt-7 flex shrink-0 flex-col">
-				<div className="flex items-baseline gap-3">
-					<ChamferHead>Projects</ChamferHead>
-					<Note>Four Projects deploy to this Instance.</Note>
-				</div>
-				<div className="mt-2.5">
-					{HOME_PROJECTS.map((p) => (
-						<HomeBlock key={p.id} p={p} />
-					))}
-				</div>
-			</section>
-
-			<section className="mt-8 flex shrink-0 flex-col">
-				<div className="flex items-baseline gap-3">
-					<ChamferHead>Since midnight</ChamferHead>
-					<Note>All four Projects together.</Note>
-				</div>
-				<div className="mt-4 flex items-end gap-14">
-					<Counter value="62" label="Runs" />
-					<Counter value="58" label="Succeeded" state="succeeded" />
-					<Counter value="1" label="Failed" state="failed" />
-					<Counter value="2" label="Waiting" state="waiting" />
-					<Counter value="6m 11s" label="Longest" />
-				</div>
-			</section>
-
-			<p className="pt-7 text-[13px] leading-[1.65] text-[var(--t3)]">
-				birthday-bot fires at 07:00 and hris-workspace-sync at 12:00. Nothing else is scheduled before then.
-			</p>
-		</ChamferShell>
+		</div>
 	);
 }
 
-/* ---- pt-runs ---- */
+/* ---- home--candlelit: the same page with the lights taken down ---- */
 
-interface RunLine {
-	id: string;
-	automation: string;
-	at: string;
-	did: string;
-	took: string;
-	state: RunState;
+export function HomeCandlelit() {
+	return (
+		<div
+			className="brs relative overflow-hidden"
+			style={{ width: APP_W, height: APP_H, background: "#070403", color: "var(--cream)" }}
+		>
+			<BrasaType />
+			<img
+				src={candlePhoto}
+				alt=""
+				className="absolute top-0 right-0 h-full w-[760px] object-cover"
+				style={{ objectPosition: "48% 50%" }}
+			/>
+			<span
+				aria-hidden="true"
+				className="absolute top-0 right-0 h-full w-[760px]"
+				style={{
+					background:
+						"radial-gradient(42% 32% at 52% 52%, rgba(234,150,60,0.34), rgba(7,4,3,0) 62%)",
+					animation: "brasa-breathe 6s cubic-bezier(0.45, 0, 0.55, 1) infinite",
+				}}
+			/>
+			<span
+				aria-hidden="true"
+				className="absolute inset-0"
+				style={{
+					background:
+						"linear-gradient(90deg, #070403 32%, rgba(7,4,3,0.86) 48%, rgba(7,4,3,0.30) 72%, rgba(7,4,3,0.72) 100%)",
+				}}
+			/>
+			<Grain opacity={0.16} />
+			<div className="relative flex h-full flex-col justify-between px-[72px] py-[60px]">
+				<div className="flex items-center justify-between">
+					<span className="flex items-center gap-3">
+						<Flame className="h-[18px] w-[14px]" style={{ color: "var(--gold)" }} />
+						<span
+							className="disp text-[21px] leading-none tracking-[0.02em]"
+							style={{ color: "var(--cream)", fontWeight: 400 }}
+						>
+							Brasa
+						</span>
+					</span>
+					<span
+						className="flex h-9 cursor-pointer items-center rounded-full border px-5 text-[13px] leading-none"
+						style={{ borderColor: "rgba(234,185,108,0.34)", color: "var(--gold)" }}
+					>
+						Book a table
+					</span>
+				</div>
+
+				<div className="max-w-[600px]">
+					<h1
+						className="disp"
+						style={{
+							fontSize: 74,
+							lineHeight: 1.02,
+							fontWeight: 300,
+							letterSpacing: "-0.028em",
+							color: "#fbf2e6",
+						}}
+					>
+						Everything here
+						<br />
+						has been over
+						<br />
+						the fire.
+					</h1>
+					<p className="mt-7 max-w-[400px] text-[15.5px] leading-[27px]" style={{ color: "var(--dim)" }}>
+						Twenty-four seats. Two sittings. Oak, birch, and time enough to use them properly.
+					</p>
+					<div className="mt-9 flex items-center gap-9">
+						<span
+							className="num text-[13px] leading-none"
+							style={{ color: "var(--gold)" }}
+						>
+							17:30
+						</span>
+						<span className="num text-[13px] leading-none" style={{ color: "var(--gold)" }}>
+							20:30
+						</span>
+						<span className="text-[13px] leading-none" style={{ color: "var(--faint)" }}>
+							Tuesday to Saturday
+						</span>
+					</div>
+				</div>
+
+				<div className="flex items-end justify-between">
+					<span className="text-[12.5px]" style={{ color: "var(--faint)" }}>
+						{ADDRESS}
+					</span>
+					<span className="text-[12.5px]" style={{ color: "var(--faint)" }}>
+						Closed Sunday and Monday
+					</span>
+				</div>
+			</div>
+		</div>
+	);
 }
 
-const RUN_ROWS: readonly RunLine[] = [
+/* ---- home--editorial: the same page as a broadsheet ---- */
+
+export function HomeEditorial() {
+	return (
+		<div
+			className="brs relative flex flex-col overflow-hidden"
+			style={{ width: APP_W, height: APP_H, background: "var(--paper)", color: "var(--paper-ink)" }}
+		>
+			<BrasaType />
+			<Grain opacity={0.16} blend="multiply" />
+			<div className="relative flex items-center justify-between px-[72px] pt-9 pb-6">
+				<span className="num text-[12px]" style={{ color: "var(--paper-dim)" }}>
+					Est. 2019
+				</span>
+				<span className="ed text-[40px] leading-none tracking-[0.06em]">BRASA</span>
+				<span className="text-[12px]" style={{ color: "var(--paper-dim)" }}>
+					Södermalm, Stockholm
+				</span>
+			</div>
+			<div className="px-[72px]">
+				<span className="block h-px w-full" style={{ background: "var(--paper-ink)" }} />
+				<span className="mt-[3px] block h-px w-full" style={{ background: "var(--paper-line)" }} />
+			</div>
+
+			<div className="relative flex min-h-0 flex-1 flex-col px-[72px] pt-10 pb-9">
+				<h1
+					className="ed max-w-[1080px] italic"
+					style={{ fontSize: 68, lineHeight: 1.04, letterSpacing: "-0.01em" }}
+				>
+					Everything here has been over the fire.
+				</h1>
+
+				<div className="mt-9 grid min-h-0 flex-1 grid-cols-[1fr_420px_260px] gap-12">
+					<div>
+						<p className="text-[14.5px] leading-[25px]" style={{ color: "var(--paper-ink)" }}>
+							<span
+								className="ed float-left mt-[9px] mr-3 leading-[0.72]"
+								style={{ fontSize: 68 }}
+							>
+								T
+							</span>
+							wenty-four seats on Hökens gata, one long room, and a hearth that is lit at two in the
+							afternoon. Six courses arrive in the order the coals allow, so the menu is written each
+							morning and printed once.
+						</p>
+						<p className="mt-4 text-[14.5px] leading-[25px]" style={{ color: "var(--paper-dim)" }}>
+							Two sittings a night, at 17:30 and at 20:30. The kitchen keeps the last hour of the
+							evening for whatever is left in the embers.
+						</p>
+						<div className="mt-7">
+							<QuietLink tone="paper">Read the menu</QuietLink>
+						</div>
+					</div>
+
+					<figure className="m-0 flex min-h-0 flex-col">
+						<img
+							src={boardPhoto}
+							alt=""
+							className="h-[300px] w-full object-cover"
+							style={{ filter: "saturate(0.86) contrast(1.04)" }}
+						/>
+						<figcaption className="mt-2.5 text-[11.5px] leading-[17px]" style={{ color: "var(--paper-dim)" }}>
+							The table is laid at four, an hour before the first sitting.
+						</figcaption>
+					</figure>
+
+					<div className="flex flex-col">
+						<HoursList tone="paper" width={260} />
+						<span className="mt-6 block h-px w-full" style={{ background: "var(--paper-ink)" }} />
+						<p className="mt-4 text-[13px] leading-[21px]" style={{ color: "var(--paper-dim)" }}>
+							Bookings open thirty days ahead. Larger tables are arranged in the room.
+						</p>
+						<div className="mt-auto">
+							<EmberButton className="text-[13.5px]" height={44} full>
+								Book a table
+							</EmberButton>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+/* ---- home--playful: the type is the whole design ---- */
+
+export function HomePlayful() {
+	return (
+		<div
+			className="brs relative overflow-hidden"
+			style={{ width: APP_W, height: APP_H, background: "#f2ddbe", color: "#231007" }}
+		>
+			<BrasaType />
+			<Grain opacity={0.2} blend="multiply" />
+
+			<div className="relative flex h-[92px] items-center justify-between px-12">
+				<span className="pop text-[17px] leading-none" style={{ fontWeight: 800, letterSpacing: "-0.01em" }}>
+					BRASA
+				</span>
+				<span className="flex items-center gap-2.5">
+					{["Menu", "Hours", "Find us"].map((item) => (
+						<span
+							key={item}
+							className="pop flex h-10 cursor-pointer items-center rounded-full px-5 text-[13.5px] leading-none"
+							style={{ background: "#e7cda6", fontWeight: 600 }}
+						>
+							{item}
+						</span>
+					))}
+					<span
+						className="pop flex h-10 cursor-pointer items-center rounded-full px-5 text-[13.5px] leading-none"
+						style={{ background: "#d1421a", color: "#fdf0dd", fontWeight: 600 }}
+					>
+						Book a table
+					</span>
+				</span>
+			</div>
+
+			<div
+				className="pop absolute left-[-38px] whitespace-nowrap"
+				style={{
+					top: 132,
+					fontSize: 268,
+					lineHeight: 0.78,
+					fontWeight: 800,
+					letterSpacing: "-0.045em",
+					color: "#d1421a",
+				}}
+			>
+				BRASA
+			</div>
+
+			<div
+				className="absolute flex items-center justify-center rounded-full"
+				style={{
+					right: 74,
+					top: 158,
+					width: 172,
+					height: 172,
+					background: "#231007",
+					transform: "rotate(-12deg)",
+				}}
+			>
+				<span className="flex flex-col items-center gap-1" style={{ color: "#f2ddbe" }}>
+					<span className="pop num text-[27px] leading-none" style={{ fontWeight: 800 }}>
+						17:30
+					</span>
+					<span className="pop num text-[27px] leading-none" style={{ fontWeight: 800 }}>
+						20:30
+					</span>
+					<span className="pop mt-1 text-[11px] leading-none" style={{ fontWeight: 600 }}>
+						two sittings
+					</span>
+				</span>
+			</div>
+
+			<div className="absolute right-12 bottom-11 left-12 flex items-end gap-8">
+				<div
+					className="flex flex-1 flex-col justify-between rounded-[22px] p-9"
+					style={{ height: 268, background: "#231007", color: "#f7e6cc" }}
+				>
+					<p className="pop text-[34px] leading-[1.12]" style={{ fontWeight: 600, letterSpacing: "-0.02em" }}>
+						Wood fire, twenty-four seats, and six courses that change when the market does.
+					</p>
+					<span className="text-[13.5px]" style={{ color: "#c39a72" }}>
+						{ADDRESS}
+					</span>
+				</div>
+				<div
+					className="flex flex-col justify-between rounded-[22px] p-8"
+					style={{ width: 386, height: 268, background: "#e7cda6" }}
+				>
+					{HOURS.map((h) => (
+						<span key={h.days} className="flex items-baseline justify-between">
+							<span className="pop text-[15px] leading-none" style={{ fontWeight: 600 }}>
+								{h.days.replace("Tuesday to Thursday", "Tue to Thu").replace("Friday and Saturday", "Fri and Sat").replace("Sunday and Monday", "Sun and Mon")}
+							</span>
+							<span className="pop num text-[15px] leading-none" style={{ color: "#8b5a33", fontWeight: 600 }}>
+								{h.time}
+							</span>
+						</span>
+					))}
+					<span className="pop text-[13px] leading-[19px]" style={{ color: "#8b5a33" }}>
+						The fire is lit at two. Everything after that is timing.
+					</span>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+/* ---- home--classic: centred, ruled, and quiet ---- */
+
+export function HomeClassic() {
+	return (
+		<div
+			className="brs relative flex flex-col items-center overflow-hidden"
+			style={{ width: APP_W, height: APP_H, background: "#f6f3ec", color: "#1a1714" }}
+		>
+			<BrasaType />
+			<Grain opacity={0.13} blend="multiply" />
+
+			<div className="relative flex w-full items-center justify-between px-16 pt-8">
+				<span className="text-[11.5px] tracking-[0.22em]" style={{ color: "#6f675d" }}>
+					SÖDERMALM
+				</span>
+				<span className="text-[11.5px] tracking-[0.22em]" style={{ color: "#6f675d" }}>
+					SINCE 2019
+				</span>
+			</div>
+
+			<div className="relative mt-9 flex flex-col items-center">
+				<Flame className="h-[22px] w-[17px]" style={{ color: "#a8492a" }} />
+				<span
+					className="disp mt-4 text-[30px] leading-none tracking-[0.42em]"
+					style={{ fontWeight: 500, paddingLeft: "0.42em" }}
+				>
+					BRASA
+				</span>
+			</div>
+
+			<div className="relative mt-8 w-[1096px]">
+				<span className="block h-px w-full" style={{ background: "#c9c1b4" }} />
+				<span className="mt-[3px] block h-[2px] w-full" style={{ background: "#1a1714" }} />
+			</div>
+
+			<h1
+				className="disp relative mt-10 max-w-[880px] text-center"
+				style={{ fontSize: 50, lineHeight: 1.12, fontWeight: 400, letterSpacing: "-0.012em" }}
+			>
+				Everything here has been over the fire.
+			</h1>
+			<p className="relative mt-5 max-w-[560px] text-center text-[14.5px] leading-[25px]" style={{ color: "#5d564d" }}>
+				Twenty-four seats, one long room, six courses. The kitchen writes the menu each morning and cooks all
+				of it over wood.
+			</p>
+
+			<div className="relative mt-9 h-[214px] w-[1096px] overflow-hidden">
+				<img
+					src={silverPhoto}
+					alt=""
+					className="h-full w-full object-cover"
+					style={{ objectPosition: "50% 46%", filter: "grayscale(1) contrast(1.06) brightness(1.04)" }}
+				/>
+			</div>
+
+			<div className="relative mt-9 grid w-[1096px] grid-cols-3">
+				{HOURS.map((h, i) => (
+					<div
+						key={h.days}
+						className="flex flex-col items-center gap-2 px-6"
+						style={{ borderLeft: i === 0 ? "none" : "1px solid #d6cfc3" }}
+					>
+						<span className="text-[11px] tracking-[0.2em]" style={{ color: "#6f675d" }}>
+							{h.days.toUpperCase()}
+						</span>
+						<span className="disp num text-[19px] leading-none" style={{ fontWeight: 400 }}>
+							{h.time}
+						</span>
+					</div>
+				))}
+			</div>
+
+			<div className="relative mt-9 flex items-center gap-7">
+				<span
+					className="flex h-[46px] cursor-pointer items-center px-8 text-[13px] tracking-[0.14em]"
+					style={{ background: "#1a1714", color: "#f6f3ec" }}
+				>
+					BOOK A TABLE
+				</span>
+				<span className="text-[13px]" style={{ color: "#6f675d" }}>
+					{ADDRESS}
+				</span>
+			</div>
+		</div>
+	);
+}
+
+/* ---- menu ---- */
+
+interface Course {
+	numeral: string;
+	name: string;
+	note: string;
+	price: string;
+}
+
+const COURSES: readonly Course[] = [
 	{
-		id: "run_8f21c4",
-		automation: "hris-workspace-sync",
-		at: "06:00:04",
-		did: "Running update, 3m 53s into the Step",
-		took: "4m 14s",
-		state: "running",
+		numeral: "I",
+		name: "Fire bread, cultured butter",
+		note: "Baked straight in the ash, brushed with last week's whey.",
+		price: "95",
 	},
 	{
-		id: "run_2c7b10",
-		automation: "offboarding",
-		at: "05:58:11",
-		did: "Waiting on an approval in the Inbox since 06:02",
-		took: "6m 7s",
-		state: "waiting",
+		numeral: "II",
+		name: "Oysters, burnt apple, dill",
+		note: "Three from the west coast, thirty seconds over the coals.",
+		price: "145",
 	},
 	{
-		id: "run_91de40",
-		automation: "offboarding",
-		at: "04:41:52",
-		did: "suspended bo@fjord.co, groups 4, drive ida@fjord.co",
-		took: "38.2s",
-		state: "succeeded",
+		numeral: "III",
+		name: "Cabbage in its own leaves",
+		note: "Two hours in the embers, then vinegar and brown butter.",
+		price: "165",
 	},
 	{
-		id: "run_5a0c83",
-		automation: "hris-workspace-sync",
-		at: "03:58:20",
-		did: "update ines@fjord.co stopped on 403 Rate Limit Exceeded, retried three times",
-		took: "1m 12s",
-		state: "failed",
+		numeral: "IV",
+		name: "Pike-perch over birch",
+		note: "Whole fish, split at the pass and salted at noon.",
+		price: "265",
 	},
 	{
-		id: "run_4d17a2",
-		automation: "hris-workspace-sync",
-		at: "03:12:40",
-		did: "Liam cancelled it at update, 18 of 409 updated",
-		took: "47.1s",
-		state: "cancelled",
+		numeral: "V",
+		name: "Ox rib, three days over oak",
+		note: "Carved at the table. Enough for everyone sitting at it.",
+		price: "340",
 	},
 	{
-		id: "run_77b2ef",
-		automation: "hris-workspace-sync",
-		at: "02:14:06",
-		did: "1 checked against Personio, 1 updated",
-		took: "6.4s",
-		state: "succeeded",
-	},
-	{
-		id: "run_38aa71",
-		automation: "offboarding",
-		at: "00:31:44",
-		did: "suspended cleo@fjord.co, groups 2, drive ida@fjord.co",
-		took: "41.9s",
-		state: "succeeded",
-	},
-	{
-		id: "run_0e4419",
-		automation: "hris-workspace-sync",
-		at: "00:00:02",
-		did: "411 checked against Personio, 0 updated",
-		took: "22.6s",
-		state: "succeeded",
+		numeral: "VI",
+		name: "Burnt cream, sea buckthorn",
+		note: "The oven's last heat does most of the work.",
+		price: "120",
 	},
 ];
 
-/** RUN_COLS: 20 / 112 / 168 / grows / 76 / 132, gap-4 inside px-4. */
-const RUN_RAILS = "20px 112px 168px minmax(0,1fr) 76px 132px";
-
-export function RunsScreen() {
+export function MenuScreen() {
 	return (
-		<ChamferShell active="Runs">
-			<div className="flex shrink-0 items-start gap-8">
-				<ChamferH1 className="max-w-[700px]">
-					Eight Runs since midnight. One is running and one is waiting on you.
-				</ChamferH1>
-				<div className="ml-auto flex shrink-0 items-center gap-5 pt-1">
-					<span className="flex items-baseline gap-2 text-[12px] text-[var(--t3)]">
-						Now
-						<Mono className="text-[var(--t2)]">06:04:18</Mono>
-					</span>
-					<Btn kind="primary">Run by hand</Btn>
-				</div>
-			</div>
+		<div
+			className="brs relative flex flex-col overflow-hidden"
+			style={{ width: APP_W, height: APP_H, background: "var(--ink)", color: "var(--cream)" }}
+		>
+			<BrasaType />
+			<Hearth
+				style={{
+					background:
+						"radial-gradient(52% 46% at 6% 16%, rgba(224,100,43,0.13), rgba(224,100,43,0) 70%), radial-gradient(40% 38% at 44% 96%, rgba(234,185,108,0.08), rgba(234,185,108,0) 70%)",
+				}}
+			/>
+			<Grain />
+			<BrasaBar page="menu" />
+			<div className="relative flex min-h-0 flex-1">
+				<div className="flex min-w-0 flex-1 flex-col py-[52px] pr-14 pl-[72px]">
+					<h1 className="disp" style={{ fontSize: 54, lineHeight: 1.04, fontWeight: 300, letterSpacing: "-0.026em" }}>
+						Six courses, written
+						<br />
+						this morning.
+					</h1>
+					<p className="mt-5 max-w-[520px] text-[15px] leading-[26px]" style={{ color: "var(--dim)" }}>
+						One menu for the whole room, 795 kr. It changes when the market and the fire change, which is
+						most days.
+					</p>
 
-			<div className="mb-3.5 mt-7 flex shrink-0 items-baseline gap-3">
-				<ChamferHead>Runs</ChamferHead>
-				<Note>Newest first. A Run is pinned to the Version that was live when it started.</Note>
-			</div>
+					<div className="mt-8">
+						{COURSES.map((c) => (
+							<div key={c.numeral}>
+								<Rule />
+								<div className="flex items-start gap-6 py-[13px]">
+									<span
+										className="disp w-[34px] shrink-0 pt-[3px] text-[13px] leading-none tracking-[0.08em]"
+										style={{ color: "var(--gold)" }}
+									>
+										{c.numeral}
+									</span>
+									<span className="min-w-0 flex-1">
+										<span
+											className="disp block text-[21px] leading-[1.2]"
+											style={{ fontWeight: 400, letterSpacing: "-0.012em" }}
+										>
+											{c.name}
+										</span>
+										<span
+											className="mt-1 block max-w-[420px] text-[13px] leading-[19px]"
+											style={{ color: "var(--faint)" }}
+										>
+											{c.note}
+										</span>
+									</span>
+									<span className="num shrink-0 pt-[5px] text-[14px]" style={{ color: "var(--dim)" }}>
+										{c.price}
+									</span>
+								</div>
+							</div>
+						))}
+						<Rule />
+					</div>
 
-			<div className="mb-4 flex shrink-0 items-center gap-2">
-				<Chip label="All" count="8" on />
-				<Chip label="Running" count="1" />
-				<Chip label="Waiting" count="1" />
-				<Chip label="Failed" count="1" />
-				<Chip label="Succeeded" count="4" />
-				<Chip label="Cancelled" count="1" />
-				<span className="ml-auto flex items-center gap-2">
-					<Selector value="Every Automation" width={198} />
-					<Selector value="Every Trigger" width={140} />
-					<Selector value="Since midnight" width={152} />
-				</span>
-			</div>
-
-			<div className="min-h-0 flex-1 overflow-hidden rounded-[8px]" style={{ background: "var(--panel)" }}>
-				<div
-					className="grid h-10 items-center gap-4 px-4 text-[12px] text-[var(--t3)]"
-					style={{ background: "var(--sunk)", gridTemplateColumns: RUN_RAILS }}
-				>
-					<span />
-					<span className="flex items-center gap-1 text-[var(--t1)]">
-						Started
-						<svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true" className="rotate-90">
-							<path d="M4.75 3 7.75 6l-3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-						</svg>
-					</span>
-					<span>Automation</span>
-					<span>What it did</span>
-					<span className="text-right">Took</span>
-					<span>State</span>
-				</div>
-				{RUN_ROWS.map((r, i) => (
-					<div
-						key={r.id}
-						className="grid h-11 items-center gap-4 px-4"
-						style={{
-							gridTemplateColumns: RUN_RAILS,
-							background: i === 0 ? "var(--hover)" : "transparent",
-						}}
+					<p
+						className="ed mt-7 max-w-[560px] text-[26px] leading-[1.34] italic"
+						style={{ color: "var(--gold)" }}
 					>
-						<StateMark state={r.state} />
-						<Mono className="tabular-nums text-[var(--t3)]">{r.at}</Mono>
-						<span className="truncate text-[13.5px] text-[var(--t1)]">{r.automation}</span>
-						<span
-							className="truncate text-[13.5px] leading-[1.65]"
-							style={{ color: r.state === "failed" ? "var(--st-failed)" : "var(--t2)" }}
-						>
-							{r.did}
+						"The fire is lit at two. Everything after that is timing."
+					</p>
+
+					<div className="mt-auto flex items-baseline gap-8 pt-6">
+						<span className="num text-[13px]" style={{ color: "var(--dim)" }}>
+							Wine pairing 545
 						</span>
-						<Mono className="text-right tabular-nums text-[var(--t2)]">{r.took}</Mono>
-						<span className="truncate text-[13px]" style={{ color: wordColour(r.state) }}>
-							{stateWord[r.state]}
+						<span className="num text-[13px]" style={{ color: "var(--dim)" }}>
+							Juice pairing 295
+						</span>
+						<span className="text-[13px]" style={{ color: "var(--faint)" }}>
+							Tell us about allergies when you book and the kitchen works around them.
 						</span>
 					</div>
-				))}
+				</div>
+				<Photo
+					src={boardPhoto}
+					className="w-[476px] shrink-0"
+					position="52% 50%"
+					scrim="linear-gradient(90deg, var(--ink) 0%, rgba(13,9,8,0.62) 24%, rgba(13,9,8,0.14) 58%, rgba(13,9,8,0.40) 100%)"
+					tint="radial-gradient(84% 66% at 60% 74%, rgba(224,100,43,0.22), rgba(13,9,8,0) 60%)"
+				/>
 			</div>
-
-			<div className="mt-3 flex shrink-0 items-center gap-3">
-				<Mono className="tabular-nums text-[var(--t3)]">8</Mono>
-				<p className="text-[13px] text-[var(--t3)]">Runs since midnight, and every one of them is here.</p>
-				<span className="ml-auto">
-					<Btn kind="quiet">Widen to the last 90 days</Btn>
-				</span>
-			</div>
-
-			<p className="shrink-0 pt-6 text-[13px] leading-[1.65] text-[var(--t3)]">
-				hris-workspace-sync fires again at 12:00, and birthday-bot at 07:00.
-			</p>
-		</ChamferShell>
+		</div>
 	);
 }
 
-/* ---- the Run page head, shared by the Graph and the Journal ---- */
+/* ---- reserve, and the state after it ---- */
 
-interface RunHead {
-	id: string;
-	version: string;
-	trigger: string;
-	startedAt: string;
-	state: RunState;
-	title: string;
-	elapsed: string;
-	entries?: number;
-}
+const DAYS: readonly { day: string; date: string; closed?: boolean }[] = [
+	{ day: "Wed", date: "10" },
+	{ day: "Thu", date: "11" },
+	{ day: "Fri", date: "12" },
+	{ day: "Sat", date: "13" },
+	{ day: "Sun", date: "14", closed: true },
+	{ day: "Mon", date: "15", closed: true },
+	{ day: "Tue", date: "16" },
+];
 
-const VERB: Record<RunState, string> = {
-	queued: "Queued for",
-	running: "Running for",
-	waiting: "Waiting,",
-	succeeded: "Took",
-	failed: "Failed after",
-	cancelled: "Cancelled after",
-};
+const SITTINGS = ["17:30", "20:30"] as const;
+const PARTY = ["1", "2", "3", "4", "5", "6"] as const;
 
-function RunPageHead({ run, tab, action }: { run: RunHead; tab: "journal" | "graph"; action: ReactNode }) {
+function FieldLabel({ children }: { children: string }) {
 	return (
-		<>
-			<div className="flex shrink-0 items-start gap-8 pb-6">
-				<div className="min-w-0 flex-1">
-					<div className="flex items-start gap-2.5">
-						<span className="mt-[12px] shrink-0">
-							<StateMark state={run.state} size={13} />
-						</span>
-						<ChamferH1 className="max-w-[700px]">{run.title}</ChamferH1>
-					</div>
-					<div className="mt-2.5 flex items-baseline gap-2 pl-[23px] text-[12px] text-[var(--t3)]">
-						<Mono className="text-[var(--t2)]">{run.id}</Mono>
-						<span>·</span>
-						<Mono className="text-[var(--t2)]">{run.version}</Mono>
-						<span>·</span>
-						<span>
-							{run.trigger} fired at <Mono className="text-[var(--t2)]">{run.startedAt}</Mono>
-						</span>
-					</div>
-				</div>
-				<div className="flex shrink-0 items-center gap-5 pt-1.5">
-					<span className="flex items-baseline gap-2 text-[12px] text-[var(--t3)]">
-						{VERB[run.state]}
-						<Mono className="tabular-nums text-[var(--t2)]">{run.elapsed}</Mono>
-						{run.state === "waiting" ? <span>in</span> : null}
-					</span>
-					{action}
-				</div>
-			</div>
-
-			<div className="flex shrink-0 items-end">
-				{(["journal", "graph"] as const).map((id) => (
-					<span
-						key={id}
-						className={cn(
-							"relative inline-flex items-center gap-2 px-3.5 pb-2.5 text-[13.5px] leading-none",
-							id === tab ? "text-[var(--t1)]" : "text-[var(--t2)]",
-						)}
-					>
-						{id === "journal" ? "Journal" : "Graph"}
-						{id === "journal" && run.entries !== undefined ? (
-							<Mono className="tabular-nums text-[var(--t3)]">{run.entries}</Mono>
-						) : null}
-						<span
-							aria-hidden="true"
-							className="absolute inset-x-0 bottom-0 h-[2px] rounded-[1px]"
-							style={{ background: id === tab ? "var(--acc)" : "var(--sunk)" }}
-						/>
-					</span>
-				))}
-			</div>
-		</>
-	);
-}
-
-/* ---- pt-journal and its siblings ---- */
-
-interface JournalRow {
-	name: string;
-	depth: number;
-	state: RunState;
-	at: string;
-	took: string;
-	tag?: string;
-	fan?: { total: number; succeeded: number; failed: number; running: number; queued: number };
-	attempts?: number;
-	picked?: boolean;
-}
-
-interface Tally {
-	tally: true;
-	count: string;
-	sentence: string;
-}
-
-type JournalLine = JournalRow | Tally;
-
-const isTally = (l: JournalLine): l is Tally => "tally" in l;
-
-/** The four Runs the sibling frames stand on, in the order the page was designed. */
-export type JournalTake = "running" | "failed" | "waiting" | "queued";
-
-interface JournalDef {
-	run: RunHead;
-	action: ReactNode;
-	rows: readonly JournalLine[];
-	detail: ReactNode;
-}
-
-function FanBar({ fan }: { fan: NonNullable<JournalRow["fan"]> }) {
-	const seg = (key: string, n: number, colour: string) =>
-		n === 0 ? null : <span key={key} style={{ flex: n, background: colour }} />;
-	return (
-		<span className="flex h-[3px] w-16 shrink-0 gap-0.5 overflow-hidden rounded-[2px]">
-			{seg("s", fan.succeeded, stateVar.succeeded)}
-			{seg("f", fan.failed, stateVar.failed)}
-			{seg("r", fan.running, stateVar.running)}
-			{seg("q", fan.queued, stateVar.queued)}
+		<span className="block text-[12.5px] leading-none" style={{ color: "var(--faint)" }}>
+			{children}
 		</span>
 	);
 }
 
-/** 14 / 62 / grows / 68 / 18 at gap-4 inside px-4, against a 520px column. */
-const JOURNAL_RAILS = "14px 62px minmax(0,1fr) 68px 18px";
-const JOURNAL_LIST_W = 520;
-
-function DetailLabel({ children }: { children: string }) {
-	return <span className="w-[92px] shrink-0 pt-[1px] text-[12px] leading-[1.5] text-[var(--t3)]">{children}</span>;
-}
-
-function DetailField({ label, children }: { label: string; children: ReactNode }) {
+function DayPill({
+	day,
+	date,
+	on,
+	closed = false,
+	width = 84,
+	height = 68,
+}: {
+	day: string;
+	date: string;
+	on: boolean;
+	closed?: boolean;
+	width?: number;
+	height?: number;
+}) {
 	return (
-		<div className="flex gap-3">
-			<DetailLabel>{label}</DetailLabel>
-			{children}
-		</div>
-	);
-}
-
-function Payload({ children }: { children: string }) {
-	return (
-		<pre
-			className="min-w-0 flex-1 overflow-hidden whitespace-pre rounded-[6px] p-3 font-mono text-[11.5px] leading-[1.55] text-[var(--t1)]"
-			style={{ background: "var(--sunk)" }}
-		>
-			{children}
-		</pre>
-	);
-}
-
-const JOURNAL_TAKES: Record<JournalTake, JournalDef> = {
-	running: {
-		run: {
-			id: "run_8f21c4",
-			version: "v14",
-			trigger: "every6h",
-			startedAt: "06:00:04",
-			state: "running",
-			title: "hris-workspace-sync is 31 items into a fan-out of 37, and one of them failed.",
-			elapsed: "4m 14s",
-			entries: 12,
-		},
-		action: <Btn kind="secondary">Cancel the Run</Btn>,
-		rows: [
-			{ name: "fetch HRIS changes", depth: 0, state: "succeeded", at: "06:00:04", took: "11.9s", attempts: 2 },
-			{ name: "diff against Workspace", depth: 0, state: "succeeded", at: "06:00:16", took: "240ms" },
-			{ name: "classify", depth: 0, state: "succeeded", at: "06:00:16", took: "8.2s", tag: "Agent" },
-			{
-				name: "update ${p.email}",
-				depth: 0,
-				state: "running",
-				at: "06:00:25",
-				took: "3m 53s",
-				tag: "×37",
-				fan: { total: 37, succeeded: 31, failed: 1, running: 2, queued: 3 },
-			},
-			{ name: "update ada@fjord.co", depth: 1, state: "succeeded", at: "06:00:25", took: "420ms" },
-			{ name: "update bo@fjord.co", depth: 1, state: "succeeded", at: "06:00:26", took: "380ms" },
-			{
-				name: "update cleo@fjord.co",
-				depth: 1,
-				state: "failed",
-				at: "06:03:41",
-				took: "9.1s",
-				attempts: 3,
-				picked: true,
-			},
-			{ name: "update dev@fjord.co", depth: 1, state: "running", at: "06:04:16", took: "2.2s" },
-			{ name: "update eve@fjord.co", depth: 1, state: "running", at: "06:04:16", took: "1.9s" },
-			{ tally: true, count: "29", sentence: "more finished, the slowest in 1.2s." },
-		],
-		detail: (
-			<>
-				<div className="flex flex-col gap-3">
-					<div className="flex items-baseline gap-3">
-						<span className="text-[13.5px] font-medium" style={{ color: "var(--st-failed)" }}>
-							Failed at 06:03:52
-						</span>
-						<Note>3 Attempts</Note>
-					</div>
-					<DetailField label="Called">
-						<span className="flex min-w-0 flex-1 items-center gap-2">
-							<Mono className="truncate text-[var(--t1)]">directory.users.update</Mono>
-							<Tag>write</Tag>
-						</span>
-					</DetailField>
-					<DetailField label="Threw">
-						<Mono className="text-[var(--t1)]">StepError</Mono>
-					</DetailField>
-					<DetailField label="Cause">
-						<Mono className="text-[var(--t1)]">RetryableError: 503 Backend Error</Mono>
-					</DetailField>
-					<DetailField label="Response">
-						<span className="flex items-center gap-2">
-							<Mono className="text-[var(--t1)]">503</Mono>
-							<Note>·</Note>
-							<Mono className="text-[var(--t1)]">backendError</Mono>
-						</span>
-					</DetailField>
-				</div>
-
-				<DetailField label="Attempts">
-					<div className="flex min-w-0 flex-1 flex-col gap-1.5">
-						{[
-							{ at: "06:03:41", says: "503 backendError, retrying in 2s", ms: "1.9s" },
-							{ at: "06:03:45", says: "503 backendError, retrying in 6s", ms: "1.9s" },
-							{ at: "06:03:52", says: "503 backendError, retries exhausted", ms: "1.8s" },
-						].map((a) => (
-							<div key={a.at} className="flex items-baseline gap-3">
-								<span className="shrink-0 translate-y-[1px]">
-									<StateMark state="failed" size={9} />
-								</span>
-								<Mono className="w-[86px] shrink-0 tabular-nums text-[var(--t3)]">{a.at}</Mono>
-								<span
-									className="min-w-0 flex-1 text-[13px] leading-[1.5]"
-									style={{ color: "var(--st-failed)" }}
-								>
-									{a.says}
-								</span>
-								<Mono className="shrink-0 tabular-nums text-[var(--t3)]">{a.ms}</Mono>
-							</div>
-						))}
-					</div>
-				</DetailField>
-
-				<DetailField label="Input">
-					<Payload>{`{
-  "email": "cleo@fjord.co",
-  "title": "Head of Design",
-  "department": "Design",
-  "manager": "ida@fjord.co"
-}`}</Payload>
-				</DetailField>
-
-				<DetailField label="Written at">
-					<Mono className="text-[var(--t2)]">index.ts line 63</Mono>
-				</DetailField>
-			</>
-		),
-	},
-	failed: {
-		run: {
-			id: "run_5a0c83",
-			version: "v14",
-			trigger: "changed",
-			startedAt: "03:58:20",
-			state: "failed",
-			title: "hris-workspace-sync stopped at update ines@fjord.co, and nothing caught the error.",
-			elapsed: "1m 12s",
-			entries: 9,
-		},
-		action: <Btn kind="primary">Retry the Run</Btn>,
-		rows: [
-			{ name: "fetch HRIS changes", depth: 0, state: "succeeded", at: "03:58:20", took: "9.4s" },
-			{ name: "diff against Workspace", depth: 0, state: "succeeded", at: "03:58:30", took: "180ms" },
-			{ name: "classify", depth: 0, state: "succeeded", at: "03:58:30", took: "7.1s", tag: "Agent" },
-			{
-				name: "update ${p.email}",
-				depth: 0,
-				state: "failed",
-				at: "03:58:37",
-				took: "54.8s",
-				tag: "×6",
-				fan: { total: 6, succeeded: 5, failed: 1, running: 0, queued: 0 },
-			},
-			{ name: "update alva@fjord.co", depth: 1, state: "succeeded", at: "03:58:37", took: "390ms" },
-			{
-				name: "update ines@fjord.co",
-				depth: 1,
-				state: "failed",
-				at: "03:59:19",
-				took: "12.6s",
-				attempts: 3,
-				picked: true,
-			},
-			{ tally: true, count: "4", sentence: "more finished, the slowest in 0.9s." },
-		],
-		detail: (
-			<>
-				<div className="flex flex-col gap-3">
-					<div className="flex items-baseline gap-3">
-						<span className="text-[13.5px] font-medium" style={{ color: "var(--st-failed)" }}>
-							Failed at 03:59:32
-						</span>
-						<Note>3 Attempts</Note>
-					</div>
-					<DetailField label="Called">
-						<span className="flex min-w-0 flex-1 items-center gap-2">
-							<Mono className="truncate text-[var(--t1)]">directory.users.update</Mono>
-							<Tag>write</Tag>
-						</span>
-					</DetailField>
-					<DetailField label="Threw">
-						<Mono className="text-[var(--t1)]">StepError</Mono>
-					</DetailField>
-					<DetailField label="Cause">
-						<Mono className="text-[var(--t1)]">RetryableError: 403 Rate Limit Exceeded</Mono>
-					</DetailField>
-					<DetailField label="Response">
-						<span className="flex items-center gap-2">
-							<Mono className="text-[var(--t1)]">403</Mono>
-							<Note>·</Note>
-							<Mono className="text-[var(--t1)]">rateLimitExceeded</Mono>
-						</span>
-					</DetailField>
-				</div>
-				<DetailField label="Input">
-					<Payload>{`{
-  "email": "ines@fjord.co",
-  "title": "Finance Lead",
-  "manager": "johan@fjord.co"
-}`}</Payload>
-				</DetailField>
-				<DetailField label="Written at">
-					<Mono className="text-[var(--t2)]">index.ts line 63</Mono>
-				</DetailField>
-			</>
-		),
-	},
-	waiting: {
-		run: {
-			id: "run_2c7b10",
-			version: "v41",
-			trigger: "left",
-			startedAt: "05:58:11",
-			state: "waiting",
-			title: "offboarding is holding at wait.approval, and nothing has been written yet.",
-			elapsed: "6m 7s",
-			entries: 6,
-		},
-		action: <Btn kind="primary">Open the Inbox</Btn>,
-		rows: [
-			{ name: "read the leaver", depth: 0, state: "succeeded", at: "05:58:11", took: "1.4s" },
-			{ name: "find the accounts", depth: 0, state: "succeeded", at: "05:58:13", took: "3.8s" },
-			{ name: "draft the plan", depth: 0, state: "succeeded", at: "05:58:17", took: "12.2s", tag: "Agent" },
-			{ name: "wait.approval", depth: 0, state: "waiting", at: "06:02:05", took: "2m 6s", tag: "Wait", picked: true },
-		],
-		detail: (
-			<>
-				<div className="flex flex-col gap-2.5">
-					<div className="flex items-start gap-2.5">
-						<span className="mt-[3px] shrink-0">
-							<StateMark state="waiting" size={11} />
-						</span>
-						<span className="text-[13.5px] leading-[1.45]" style={{ color: "var(--st-waiting)" }}>
-							Suspend anna@fjord.co in Google Workspace
-						</span>
-					</div>
-					<div className="pl-[23px]">
-						<Note>Expires in 21h 21m. Nothing is written until somebody answers.</Note>
-					</div>
-				</div>
-				<DetailField label="Called">
-					<Mono className="text-[var(--t1)]">google-directory.suspendUser</Mono>
-				</DetailField>
-				<DetailField label="Input">
-					<Payload>{`{
-  "userKey": "anna@fjord.co",
-  "reason": "Left the company on 22 August",
-  "sendNotification": false
-}`}</Payload>
-				</DetailField>
-				<DetailField label="Written at">
-					<Mono className="text-[var(--t2)]">index.ts line 41</Mono>
-				</DetailField>
-			</>
-		),
-	},
-	queued: {
-		run: {
-			id: "run_1ab907",
-			version: "v9",
-			trigger: "received",
-			startedAt: "09:41:12",
-			state: "running",
-			title: "gmail-to-slack is queued at digest behind a Harness Step in fjord-finance.",
-			elapsed: "1h 3m",
-			entries: 5,
-		},
-		action: <Btn kind="secondary">Cancel the Run</Btn>,
-		rows: [
-			{ name: "read the thread", depth: 0, state: "succeeded", at: "09:41:12", took: "2.1s" },
-			{ name: "summarise", depth: 0, state: "succeeded", at: "09:41:15", took: "9.6s", tag: "Agent" },
-			{ name: "digest", depth: 0, state: "queued", at: "09:41:25", took: "1h 2m", tag: "Harness", picked: true },
-		],
-		detail: (
-			<>
-				<div className="flex flex-col gap-2.5">
-					<div className="flex items-start gap-2.5">
-						<span className="mt-[3px] shrink-0">
-							<StateMark state="queued" size={11} />
-						</span>
-						<span className="text-[13.5px] leading-[1.45] text-[var(--t1)]">
-							Queued for the Harness lane, which runs one Step at a time.
-						</span>
-					</div>
-					<div className="flex flex-col gap-1 pl-[23px]">
-						<Note>Waiting since 09:41:25.</Note>
-						<Note>Two Runs ahead of it, both in fjord-finance.</Note>
-						<Note>The lane frees when invoice-digest finishes.</Note>
-					</div>
-				</div>
-				<DetailField label="Called">
-					<Mono className="text-[var(--t1)]">harness.run</Mono>
-				</DetailField>
-				<DetailField label="Written at">
-					<Mono className="text-[var(--t2)]">index.ts line 28</Mono>
-				</DetailField>
-			</>
-		),
-	},
-};
-
-export function JournalScreen({ take = "running" }: { take?: JournalTake }) {
-	const def = JOURNAL_TAKES[take];
-	return (
-		<ChamferShell active="Runs">
-			<RunPageHead run={def.run} tab="journal" action={def.action} />
-
-			<div className="mb-3.5 mt-7 flex shrink-0 items-baseline gap-3">
-				<ChamferHead>Journal</ChamferHead>
-				<Note>Every entry this Run has written.</Note>
-			</div>
-
-			<div className="flex min-h-0 flex-1 gap-3">
-				<div
-					className="flex min-h-0 shrink-0 flex-col overflow-hidden rounded-[8px]"
-					style={{ width: JOURNAL_LIST_W, background: "var(--panel)" }}
-				>
-					<div className="min-h-0 flex-1 overflow-hidden">
-						<div
-							className="grid h-10 items-center gap-4 px-4 text-[12px] text-[var(--t3)]"
-							style={{ background: "var(--sunk)", gridTemplateColumns: JOURNAL_RAILS }}
-						>
-							<span />
-							<span>At</span>
-							<span>Step</span>
-							<span className="text-right">Took</span>
-							<span />
-						</div>
-
-						{def.rows.map((line) =>
-							isTally(line) ? (
-								<div key={line.sentence} className="flex h-11 shrink-0 items-center gap-2 px-4">
-									<Mono className="tabular-nums text-[var(--t3)]">{line.count}</Mono>
-									<span className="truncate text-[13px] text-[var(--t3)]">{line.sentence}</span>
-								</div>
-							) : (
-								<div
-									key={line.name}
-									className="grid h-11 items-center gap-4 px-4"
-									style={{
-										gridTemplateColumns: JOURNAL_RAILS,
-										background: line.picked === true ? "var(--acc-wash)" : "transparent",
-									}}
-								>
-									<StateMark state={line.state} size={11} />
-									<Mono className="tabular-nums text-[var(--t3)]">{line.at}</Mono>
-									<span className="flex min-w-0 items-center gap-2" style={{ paddingLeft: line.depth * 18 }}>
-										<span
-											className="truncate text-[13.5px] font-medium"
-											style={{ color: line.state === "failed" ? stateVar.failed : "var(--t1)" }}
-										>
-											{line.name}
-										</span>
-										{line.tag === undefined ? null : <Tag>{line.tag}</Tag>}
-										{line.fan === undefined ? null : <FanBar fan={line.fan} />}
-										{line.attempts === undefined ? null : (
-											<span className="shrink-0 text-[12px] text-[var(--t3)]">
-												{`${line.attempts} Attempts`}
-											</span>
-										)}
-									</span>
-									<Mono className="text-right tabular-nums text-[var(--t2)]">{line.took}</Mono>
-									<span className="text-[var(--t3)]">
-										{line.picked === true ? (
-											<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-												<path
-													d="M4.75 3 7.75 6l-3 3"
-													stroke="currentColor"
-													strokeWidth="1.4"
-													strokeLinecap="round"
-												/>
-											</svg>
-										) : null}
-									</span>
-								</div>
-							),
-						)}
-					</div>
-
-					<div
-						className="flex h-11 shrink-0 items-center gap-2 px-4"
-						style={{ background: "var(--sunk)" }}
-					>
-						<Mono className="tabular-nums text-[var(--t3)]">{def.run.entries}</Mono>
-						<span className="truncate text-[13px] text-[var(--t3)]">entries so far.</span>
-					</div>
-				</div>
-
-				<div
-					className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-[8px]"
-					style={{ background: "var(--panel)" }}
-				>
-					<div className="flex flex-col gap-3.5 p-5">{def.detail}</div>
-				</div>
-			</div>
-		</ChamferShell>
-	);
-}
-
-/* ---- pt-graph ---- */
-
-interface GraphNode {
-	id: string;
-	label: string;
-	detail: string;
-	x: number;
-	y: number;
-	trigger?: boolean;
-	tag?: string;
-	state?: RunState;
-	ahead?: boolean;
-	picked?: boolean;
-	fan?: NonNullable<JournalRow["fan"]>;
-	attempts?: number;
-}
-
-/** SIZES.down from the shipped graph: 258 by 58, ranks 114 apart, columns 298. */
-const NODE_W = 258;
-const NODE_H = 58;
-
-const GRAPH_NODES: readonly GraphNode[] = [
-	{ id: "t1", label: "every6h", detail: 'cron "0 */6 * * *", tz "Europe/Stockholm"', x: 40, y: 0, trigger: true, tag: "onSchedule" },
-	{ id: "t2", label: "changed", detail: 'fields ["title", "manager"]', x: 338, y: 0, trigger: true, tag: "Connector", ahead: true },
-	{ id: "n1", label: "fetch HRIS changes", detail: "hris.people.list", x: 189, y: 114, tag: "Harness", state: "succeeded", attempts: 2 },
-	{ id: "n2", label: "diff against Workspace", detail: "directory.users.list", x: 189, y: 228, tag: "Harness", state: "succeeded" },
-	{ id: "n3", label: "finish quietly", detail: "slack.chat.postMessage", x: 40, y: 342, tag: "Harness", ahead: true },
-	{ id: "n5", label: "classify", detail: "claude-sonnet-5 · 2 Turns · 1 Tool call", x: 338, y: 342, tag: "Agent", state: "succeeded" },
-	{ id: "n4", label: "output", detail: "{ checked: people.length, updated…", x: 40, y: 456, tag: "Output", ahead: true },
-	{
-		id: "n6",
-		label: "update ${p.email}",
-		detail: "directory.users.update",
-		x: 338,
-		y: 456,
-		tag: "×37",
-		state: "running",
-		picked: true,
-		fan: { total: 37, succeeded: 31, failed: 1, running: 2, queued: 3 },
-	},
-	{ id: "n7", label: "post the summary", detail: "slack.chat.postMessage", x: 338, y: 570, tag: "Harness", ahead: true },
-];
-
-const GRAPH_EDGES: readonly { from: string; to: string; travelled: boolean; label?: string }[] = [
-	{ from: "t1", to: "n1", travelled: true },
-	{ from: "t2", to: "n1", travelled: false },
-	{ from: "n1", to: "n2", travelled: true },
-	{ from: "n2", to: "n3", travelled: false, label: "changed.length === 0" },
-	{ from: "n3", to: "n4", travelled: false },
-	{ from: "n2", to: "n5", travelled: true },
-	{ from: "n5", to: "n6", travelled: true },
-	{ from: "n6", to: "n7", travelled: false },
-];
-
-const nodeAt = (id: string) => GRAPH_NODES.find((n) => n.id === id);
-
-function GraphEdges({ w, h }: { w: number; h: number }) {
-	return (
-		<svg width={w} height={h} className="absolute left-0 top-0 overflow-visible" fill="none" aria-hidden="true">
-			{GRAPH_EDGES.map((e) => {
-				const a = nodeAt(e.from);
-				const b = nodeAt(e.to);
-				if (a === undefined || b === undefined) return null;
-				const ax = a.x + NODE_W / 2;
-				const ay = a.y + NODE_H;
-				const bx = b.x + NODE_W / 2;
-				const by = b.y;
-				const d =
-					Math.abs(ax - bx) < 1
-						? `M${ax},${ay} V${by}`
-						: `M${ax},${ay} V${ay + (by - ay) / 2} H${bx} V${by}`;
-				return (
-					<g
-						key={`${e.from}-${e.to}`}
-						stroke={e.travelled ? "var(--line-lift)" : "var(--line)"}
-						strokeWidth={1.4}
-						strokeLinecap="butt"
-					>
-						<path d={d} strokeDasharray={e.travelled ? undefined : "2 4"} />
-						<path d={`M${bx - 4},${by - 4} L${bx},${by} L${bx + 4},${by - 4}`} strokeLinejoin="round" />
-					</g>
-				);
-			})}
-		</svg>
-	);
-}
-
-function GraphNodeBox({ n }: { n: GraphNode }) {
-	const box = { left: n.x, top: n.y, width: NODE_W, height: NODE_H };
-	if (n.trigger === true) {
-		return (
-			<div
-				className="absolute flex flex-col justify-center gap-1 rounded-[6px] px-3"
-				style={{ ...box, background: n.ahead === true ? "var(--page)" : "var(--panel)" }}
-			>
-				<div className="flex items-center gap-2">
-					<Mono className={n.ahead === true ? "text-[var(--t3)]" : "text-[var(--t1)]"}>{n.label}</Mono>
-					<Tag className="ml-auto">{n.tag ?? ""}</Tag>
-				</div>
-				<Note className="truncate">{n.detail}</Note>
-			</div>
-		);
-	}
-	return (
-		<div
-			className="absolute flex flex-col justify-center gap-1 overflow-hidden rounded-[6px] px-3"
+		<span
+			className="flex shrink-0 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[10px] border transition-colors duration-200"
 			style={{
-				...box,
-				background: n.picked === true ? "var(--acc-wash)" : n.ahead === true ? "var(--page)" : "var(--panel)",
+				width,
+				height,
+				borderColor: on ? "var(--ember)" : "var(--line)",
+				background: on ? "rgba(224,100,43,0.12)" : "transparent",
+				opacity: closed ? 0.34 : 1,
 			}}
 		>
-			{n.picked === true ? (
-				<span className="absolute bottom-0 left-0 top-0 w-[2px]" style={{ background: "var(--acc)" }} />
-			) : null}
-			<div className="flex items-center gap-2">
-				{n.state === undefined ? null : <StateMark state={n.state} size={10} />}
-				<span
-					className="truncate text-[13px] font-medium"
-					style={{ color: n.ahead === true ? "var(--t3)" : n.state === "failed" ? stateVar.failed : "var(--t1)" }}
-				>
-					{n.label}
+			<span className="text-[11.5px] leading-none" style={{ color: on ? "var(--ember)" : "var(--faint)" }}>
+				{day}
+			</span>
+			<span
+				className="disp num text-[19px] leading-none"
+				style={{ fontWeight: 400, color: on ? "var(--cream)" : closed ? "var(--faint)" : "var(--dim)" }}
+			>
+				{closed ? "–" : date}
+			</span>
+		</span>
+	);
+}
+
+function ChoicePill({
+	label,
+	on,
+	width,
+	height = 46,
+}: {
+	label: string;
+	on: boolean;
+	width?: number;
+	height?: number;
+}) {
+	return (
+		<span
+			className="num flex shrink-0 cursor-pointer items-center justify-center rounded-full border text-[14px] leading-none transition-colors duration-200"
+			style={{
+				width,
+				height,
+				borderColor: on ? "var(--ember)" : "var(--line)",
+				background: on ? "rgba(224,100,43,0.12)" : "transparent",
+				color: on ? "var(--cream)" : "var(--dim)",
+			}}
+		>
+			{label}
+		</span>
+	);
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+	return (
+		<div>
+			<Rule />
+			<div className="flex items-baseline justify-between py-3">
+				<span className="text-[13px]" style={{ color: "var(--faint)" }}>
+					{label}
 				</span>
-				<Tag className="ml-auto">{n.tag ?? ""}</Tag>
-			</div>
-			<div className={cn("flex items-baseline gap-2", n.state !== undefined && "pl-[18px]")}>
-				<Note className="truncate">{n.detail}</Note>
-				{n.attempts === undefined ? null : (
-					<span className="shrink-0 text-[11.5px] text-[var(--t3)]">{`${n.attempts} Attempts`}</span>
-				)}
-			</div>
-			{n.fan === undefined ? null : (
-				<span className="ml-[18px]">
-					<FanBar fan={n.fan} />
+				<span className="num text-[14px]" style={{ color: "var(--cream)" }}>
+					{value}
 				</span>
-			)}
+			</div>
 		</div>
 	);
 }
 
-export function GraphScreen() {
-	const run = JOURNAL_TAKES.running.run;
+export function ReserveScreen({ confirmed = false }: { confirmed?: boolean }) {
 	return (
-		<ChamferShell active="Runs">
-			<RunPageHead run={run} tab="graph" action={<Btn kind="secondary">Cancel the Run</Btn>} />
+		<div
+			className="brs relative flex flex-col overflow-hidden"
+			style={{ width: APP_W, height: APP_H, background: "var(--ink)", color: "var(--cream)" }}
+		>
+			<BrasaType />
+			<Hearth />
+			<Grain />
+			<BrasaBar page="hours" />
+			<div className="relative flex min-h-0 flex-1">
+				<div className="relative w-[544px] shrink-0">
+					<Photo
+						src={bokehPhoto}
+						className="h-full w-full"
+						position="50% 46%"
+						scrim="linear-gradient(180deg, rgba(13,9,8,0.30) 0%, rgba(13,9,8,0.20) 40%, rgba(13,9,8,0.92) 100%)"
+						tint="radial-gradient(72% 58% at 42% 34%, rgba(224,100,43,0.24), rgba(13,9,8,0) 62%)"
+					/>
+					<div className="absolute right-12 bottom-12 left-12">
+						<span
+							className="disp block text-[34px] leading-[1.16]"
+							style={{ fontWeight: 300, letterSpacing: "-0.02em" }}
+						>
+							Two sittings
+							<br />
+							a night.
+						</span>
+						<span className="mt-4 block text-[14px] leading-[23px]" style={{ color: "var(--dim)" }}>
+							17:30 and 20:30, Tuesday to Saturday. The room holds twenty-four, so a table booked is a
+							table kept.
+						</span>
+					</div>
+				</div>
 
-			<div className="mb-3.5 mt-7 flex shrink-0 items-baseline gap-3">
-				<ChamferHead>Graph</ChamferHead>
-				<Note>The shape the code has, with this Run laid over it.</Note>
-			</div>
+				<div className="flex min-w-0 flex-1 flex-col px-[76px] py-[54px]">
+					{confirmed ? (
+						<>
+							<Flame className="h-[26px] w-[20px]" style={{ color: "var(--ember)" }} />
+							<h1
+								className="disp mt-6"
+								style={{ fontSize: 52, lineHeight: 1.06, fontWeight: 300, letterSpacing: "-0.028em" }}
+							>
+								Your table
+								<br />
+								is held.
+							</h1>
+							<p className="mt-6 max-w-[440px] text-[15px] leading-[26px]" style={{ color: "var(--dim)" }}>
+								Saturday 13 September at 20:30, for two. Come in from Hökens gata, the door with the
+								lamp over it.
+							</p>
+							<div className="mt-9 max-w-[520px]">
+								<SummaryRow label="Name" value="Vera Lindqvist" />
+								<SummaryRow label="Date" value="Saturday 13 September" />
+								<SummaryRow label="Sitting" value="20:30" />
+								<SummaryRow label="Guests" value="2" />
+								<SummaryRow label="Reference" value="BRS 4180" />
+								<Rule />
+							</div>
+							<div className="mt-9 flex items-center gap-8">
+								<EmberButton className="text-[14px]">Add to calendar</EmberButton>
+								<QuietLink>Change the booking</QuietLink>
+							</div>
+							<span className="mt-auto text-[12.5px]" style={{ color: "var(--faint)" }}>
+								We hold the table fifteen minutes past the sitting.
+							</span>
+						</>
+					) : (
+						<>
+							<h1
+								className="disp"
+								style={{ fontSize: 52, lineHeight: 1.06, fontWeight: 300, letterSpacing: "-0.028em" }}
+							>
+								Book a table
+							</h1>
+							<p className="mt-4 max-w-[420px] text-[15px] leading-[26px]" style={{ color: "var(--dim)" }}>
+								Up to six guests online. Larger tables are arranged in the room.
+							</p>
 
-			<div className="min-h-0 flex-1 overflow-hidden rounded-[8px] px-6 py-6" style={{ background: "var(--sunk)" }}>
-				<div className="relative" style={{ width: 636, height: 628 }}>
-					<GraphEdges w={636} h={628} />
-					{GRAPH_NODES.map((n) => (
-						<GraphNodeBox key={n.id} n={n} />
-					))}
-					<span
-						className="absolute px-1.5 font-mono text-[11.5px] leading-[18px] text-[var(--t3)]"
-						style={{ left: 80, top: 291, background: "var(--sunk)" }}
-					>
-						changed.length === 0
-					</span>
+							<div className="mt-9">
+								<FieldLabel>Date</FieldLabel>
+								<div className="mt-3 flex gap-2.5">
+									{DAYS.map((d) => (
+										<DayPill
+											key={d.date}
+											day={d.day}
+											date={d.date}
+											on={d.date === "13"}
+											closed={d.closed === true}
+										/>
+									))}
+								</div>
+							</div>
+
+							<div className="mt-7 flex gap-12">
+								<div>
+									<FieldLabel>Sitting</FieldLabel>
+									<div className="mt-3 flex gap-2.5">
+										{SITTINGS.map((s) => (
+											<ChoicePill key={s} label={s} on={s === "20:30"} width={104} />
+										))}
+									</div>
+								</div>
+								<div>
+									<FieldLabel>Guests</FieldLabel>
+									<div className="mt-3 flex gap-2.5">
+										{PARTY.map((p) => (
+											<ChoicePill key={p} label={p} on={p === "2"} width={46} />
+										))}
+									</div>
+								</div>
+							</div>
+
+							<div className="mt-7 max-w-[520px]">
+								<FieldLabel>Name</FieldLabel>
+								<div
+									className="mt-3 flex h-[46px] items-center border-b text-[15px]"
+									style={{ borderColor: "var(--line-2)", color: "var(--cream)" }}
+								>
+									Vera Lindqvist
+								</div>
+							</div>
+
+							<div className="mt-9 flex items-center gap-7">
+								<EmberButton className="text-[14px]" height={52}>
+									Confirm the table
+								</EmberButton>
+								<span className="text-[12.5px]" style={{ color: "var(--faint)" }}>
+									We hold the table fifteen minutes past the sitting.
+								</span>
+							</div>
+						</>
+					)}
 				</div>
 			</div>
-		</ChamferShell>
+		</div>
 	);
 }
 
-/* ---- pt-ask: the one card a person answers, and the live frame on this page ---- */
+/* ---- reserve-card: the booking card, and the live frame on this page ---- */
 
-const TEAMS = ["Design", "Engineering", "Operations"] as const;
+const CARD_DAYS: readonly { day: string; date: string }[] = [
+	{ day: "Thu", date: "11" },
+	{ day: "Fri", date: "12" },
+	{ day: "Sat", date: "13" },
+	{ day: "Tue", date: "16" },
+	{ day: "Wed", date: "17" },
+];
+
+const MONTH: Record<string, string> = {
+	"11": "Thursday 11 September",
+	"12": "Friday 12 September",
+	"13": "Saturday 13 September",
+	"16": "Tuesday 16 September",
+	"17": "Wednesday 17 September",
+};
 
 /**
- * The frame in the first section is not a picture of a card, it is the card. The
- * team is a real select, the manager field takes text, and pressing Answer
- * settles the item the way the Run sees it, which is the whole of what "the
+ * The frame in the first section is not a picture of a booking card, it is the
+ * card. The dates pick, the guest count picks, the name field takes text, and
+ * confirming shows the table Brasa is holding, which is the whole of what "the
  * frames run" means and cannot be said with a still.
  */
-export function AskScreen() {
-	const [team, setTeam] = useState<string>("Engineering");
-	const [open, setOpen] = useState(false);
-	const [manager, setManager] = useState("johan@fjord.co");
-	const [notify, setNotify] = useState(true);
-	const [answered, setAnswered] = useState(false);
+export function ReserveCardScreen() {
+	const [date, setDate] = useState("13");
+	const [sitting, setSitting] = useState<string>("20:30");
+	const [guests, setGuests] = useState("2");
+	const [name, setName] = useState("Vera Lindqvist");
+	const [held, setHeld] = useState(false);
 
 	return (
 		<div
-			className="chm flex flex-col overflow-hidden text-[var(--t1)] antialiased"
-			style={{ width: ASK_W, height: ASK_H, background: "var(--panel)" }}
+			className="brs relative flex flex-col overflow-hidden"
+			style={{ width: CARD_W, height: CARD_H, background: "var(--ink)", color: "var(--cream)" }}
 		>
-			<ChamferType />
-			<div className="flex flex-1 flex-col p-5">
-				<div className="flex shrink-0 items-center gap-2.5">
-					<Tag>Ask</Tag>
-					<Mono className="text-[var(--t3)]">run_2ad884</Mono>
-					<span className="ml-auto flex items-center gap-2">
-						{answered ? (
-							<StateMark state="succeeded" size={10} live={false} />
-						) : (
-							<StateMark state="waiting" size={10} />
-						)}
-						<Note>{answered ? "Answered just now" : "23h 48m left"}</Note>
+			<BrasaType />
+			<Hearth
+				style={{
+					background:
+						"radial-gradient(70% 60% at 84% 6%, rgba(224,100,43,0.18), rgba(224,100,43,0) 68%), radial-gradient(60% 50% at 6% 100%, rgba(234,185,108,0.08), rgba(234,185,108,0) 70%)",
+				}}
+			/>
+			<Grain opacity={0.11} />
+
+			<div className="relative flex min-h-0 flex-1 flex-col px-[22px] py-[20px]">
+				<div className="flex shrink-0 items-center justify-between">
+					<span className="flex items-center gap-2.5">
+						<Flame className="h-[15px] w-[12px]" style={{ color: "var(--ember)" }} />
+						<span className="disp text-[17px] leading-none tracking-[0.015em]" style={{ fontWeight: 500 }}>
+							Brasa
+						</span>
+					</span>
+					<span className="text-[11.5px] leading-none" style={{ color: "var(--faint)" }}>
+						{held ? "Confirmed" : "Up to six guests"}
 					</span>
 				</div>
 
-				<h1 className="mt-3 shrink-0 text-[15px] font-semibold leading-[1.35] tracking-[-0.012em] text-[var(--t1)]">
-					Which team should noa@fjord.co join?
-				</h1>
-
-				{answered ? (
-					<div className="mt-4 flex flex-1 flex-col">
-						<p className="text-[12.5px] leading-[1.6] text-[var(--t2)]">
-							hris-workspace-sync picked the answer up and is writing the Google Group now. The Run carries
-							on from sync/turn 2.
-						</p>
-						<div className="mt-4 rounded-[6px] p-3" style={{ background: "var(--sunk)" }}>
-							<div className="flex items-baseline gap-3">
-								<span className="w-[104px] shrink-0 text-[12px] text-[var(--t3)]">Team</span>
-								<Mono className="text-[var(--t1)]">{team}</Mono>
-							</div>
-							<div className="mt-2 flex items-baseline gap-3">
-								<span className="w-[104px] shrink-0 text-[12px] text-[var(--t3)]">Manager</span>
-								<Mono className="truncate text-[var(--t1)]">{manager}</Mono>
-							</div>
-							<div className="mt-2 flex items-baseline gap-3">
-								<span className="w-[104px] shrink-0 text-[12px] text-[var(--t3)]">Post in #general</span>
-								<Mono className="text-[var(--t1)]">{notify ? "true" : "false"}</Mono>
-							</div>
+				{held ? (
+					<div className="mt-4 flex min-h-0 flex-1 flex-col">
+						<span
+							className="disp shrink-0 text-[26px] leading-[1.1]"
+							style={{ fontWeight: 300, letterSpacing: "-0.024em" }}
+						>
+							Your table is held.
+						</span>
+						<span className="mt-2 shrink-0 text-[12.5px] leading-[20px]" style={{ color: "var(--dim)" }}>
+							{MONTH[date]} at {sitting}. The door with the lamp on Hökens gata.
+						</span>
+						<div className="mt-3.5">
+							<SummaryRow label="Name" value={name.trim() === "" ? "No name given" : name} />
+							<SummaryRow label="Sitting" value={sitting} />
+							<SummaryRow label="Guests" value={guests} />
+							<SummaryRow label="Reference" value="BRS 4180" />
+							<Rule />
 						</div>
-						<div className="mt-auto flex justify-end">
-							<Btn kind="quiet" height={32} className="px-3 text-[12.5px]" onClick={() => setAnswered(false)}>
-								Ask it again
-							</Btn>
-						</div>
-					</div>
-				) : (
-					<div className="mt-3 flex flex-1 flex-col">
-						<p className="shrink-0 text-[12.5px] leading-[1.6] text-[var(--t2)]">
-							Personio has Noa Lind starting on 1 September with no department set. Three teams have an
-							open seat, so I cannot pick one from the record.
-						</p>
-
-						<div className="relative mt-4 shrink-0">
-							<div className="text-[12px] leading-none text-[var(--t3)]">Team</div>
-							<button
-								type="button"
-								onClick={() => setOpen((v) => !v)}
-								className="mt-1.5 flex h-9 w-full cursor-pointer items-center justify-between rounded-[6px] px-3 text-[13px] text-[var(--t1)] transition-colors duration-150 hover:bg-[var(--hover)]"
-								style={{ background: "var(--sunk)" }}
-							>
-								<span>{team}</span>
-								<svg
-									viewBox="0 0 12 12"
-									width="12"
-									height="12"
-									fill="none"
-									aria-hidden="true"
-									className={cn("text-[var(--t3)] transition-transform duration-150", open && "rotate-90")}
-								>
-									<path d="M4.75 3 7.75 6l-3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-								</svg>
-							</button>
-							{open ? (
-								<div
-									className="absolute left-0 right-0 top-[62px] z-10 overflow-hidden rounded-[6px] py-1"
-									style={{ background: "var(--panel)", outline: "1px solid var(--line)" }}
-								>
-									{TEAMS.map((t) => (
-										<button
-											key={t}
-											type="button"
-											onClick={() => {
-												setTeam(t);
-												setOpen(false);
-											}}
-											className={cn(
-												"flex h-8 w-full cursor-pointer items-center px-3 text-left text-[13px] transition-colors duration-150 hover:bg-[var(--hover)]",
-												t === team ? "text-[var(--t1)]" : "text-[var(--t2)]",
-											)}
-										>
-											{t}
-										</button>
-									))}
-								</div>
-							) : null}
-						</div>
-
-						<div className="mt-3.5 shrink-0">
-							<div className="text-[12px] leading-none text-[var(--t3)]">Manager</div>
-							<input
-								value={manager}
-								onChange={(e) => setManager(e.target.value)}
-								spellCheck={false}
-								className="mt-1.5 h-9 w-full rounded-[6px] px-3 text-[13px] text-[var(--t1)] outline-none transition-shadow duration-150 focus:shadow-[inset_0_0_0_1px_var(--acc)]"
-								style={{ background: "var(--sunk)" }}
-							/>
-						</div>
-
 						<button
 							type="button"
-							onClick={() => setNotify((v) => !v)}
-							className="mt-3.5 flex shrink-0 cursor-pointer items-center gap-2.5 text-left"
+							onClick={() => setHeld(false)}
+							className="mt-auto cursor-pointer self-start border-b pb-1 text-[12.5px] leading-none transition-colors duration-200"
+							style={{ color: "var(--dim)", borderColor: "var(--line)" }}
 						>
-							<span
-								className="flex h-[18px] w-[30px] shrink-0 items-center rounded-full px-[2px] transition-colors duration-150"
-								style={{ background: notify ? "var(--acc)" : "var(--line-lift)" }}
-							>
-								<span
-									className="block size-[14px] rounded-full transition-transform duration-150"
-									style={{
-										background: "var(--acc-ink)",
-										transform: notify ? "translateX(12px)" : "translateX(0)",
-									}}
-								/>
-							</span>
-							<span className="text-[12.5px] text-[var(--t2)]">Post in #general on the start date</span>
+							Book another table
 						</button>
-
-						<div className="mt-auto flex shrink-0 items-center gap-2 pt-4">
-							<Note>Answering writes the Group and the Slack channels.</Note>
-							<span className="ml-auto flex items-center gap-2">
-								<Btn kind="quiet" height={34} className="px-3 text-[13px]">
-									Deny
-								</Btn>
-								<Btn kind="primary" height={34} className="px-3.5 text-[13px]" onClick={() => setAnswered(true)}>
-									Answer
-								</Btn>
-							</span>
+					</div>
+				) : (
+					<div className="mt-3.5 flex min-h-0 flex-1 flex-col">
+						<div className="flex shrink-0 gap-2">
+							{CARD_DAYS.map((d) => (
+								<button
+									key={d.date}
+									type="button"
+									onClick={() => setDate(d.date)}
+									className="cursor-pointer border-none bg-transparent p-0"
+								>
+									<DayPill day={d.day} date={d.date} on={d.date === date} width={76} height={58} />
+								</button>
+							))}
 						</div>
+
+						<div className="mt-3 flex shrink-0 gap-2">
+							{SITTINGS.map((s) => (
+								<button
+									key={s}
+									type="button"
+									onClick={() => setSitting(s)}
+									className="flex-1 cursor-pointer border-none bg-transparent p-0"
+								>
+									<ChoicePill label={s} on={s === sitting} height={38} width={202} />
+								</button>
+							))}
+						</div>
+
+						<div className="mt-3 flex shrink-0 items-center gap-2.5">
+							<span className="w-[46px] shrink-0 text-[12px] leading-none" style={{ color: "var(--faint)" }}>
+								Guests
+							</span>
+							{PARTY.map((p) => (
+								<button
+									key={p}
+									type="button"
+									onClick={() => setGuests(p)}
+									className="cursor-pointer border-none bg-transparent p-0"
+								>
+									<ChoicePill label={p} on={p === guests} width={38} height={34} />
+								</button>
+							))}
+						</div>
+
+						<input
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+							spellCheck={false}
+							aria-label="Name"
+							placeholder="Your name"
+							className="mt-3.5 h-[38px] w-full shrink-0 border-b bg-transparent text-[14px] outline-none transition-colors duration-200 focus:border-[var(--ember)]"
+							style={{ borderColor: "var(--line-2)", color: "var(--cream)" }}
+						/>
+
+						<EmberButton className="mt-auto text-[13.5px]" height={44} full onClick={() => setHeld(true)}>
+							Confirm the table
+						</EmberButton>
 					</div>
 				)}
+			</div>
+		</div>
+	);
+}
+
+/* ---- book: the same reservation on a phone ---- */
+
+export function PhoneBookScreen() {
+	return (
+		<div
+			className="brs relative flex flex-col overflow-hidden"
+			style={{ width: PHONE_W, height: PHONE_H, background: "var(--ink)", color: "var(--cream)" }}
+		>
+			<BrasaType />
+			<div className="relative h-[286px] shrink-0">
+				<Photo
+					src={candlePhoto}
+					className="h-full w-full"
+					position="50% 48%"
+					scrim="linear-gradient(180deg, rgba(13,9,8,0.42) 0%, rgba(13,9,8,0.18) 46%, var(--ink) 100%)"
+					tint="radial-gradient(46% 40% at 50% 46%, rgba(234,150,60,0.30), rgba(13,9,8,0) 66%)"
+				/>
+				<div className="absolute top-[26px] right-6 left-6 flex items-center justify-between">
+					<span className="flex items-center gap-2.5">
+						<Flame className="h-[16px] w-[13px]" style={{ color: "var(--gold)" }} />
+						<span className="disp text-[19px] leading-none tracking-[0.015em]" style={{ fontWeight: 500 }}>
+							Brasa
+						</span>
+					</span>
+					<span className="text-[12px] leading-none" style={{ color: "var(--dim)" }}>
+						Menu
+					</span>
+				</div>
+				<div className="absolute right-6 bottom-7 left-6">
+					<span
+						className="disp block text-[34px] leading-[1.1]"
+						style={{ fontWeight: 300, letterSpacing: "-0.026em" }}
+					>
+						Book a table
+					</span>
+					<span className="mt-2.5 block text-[13.5px] leading-[21px]" style={{ color: "var(--dim)" }}>
+						Two sittings a night, at 17:30 and at 20:30.
+					</span>
+				</div>
+			</div>
+
+			<div className="relative flex min-h-0 flex-1 flex-col px-6 pt-7 pb-9">
+				<Grain opacity={0.1} />
+				<FieldLabel>Date</FieldLabel>
+				<div className="relative mt-3 flex gap-2.5">
+					{CARD_DAYS.slice(0, 4).map((d) => (
+						<DayPill key={d.date} day={d.day} date={d.date} on={d.date === "13"} width={78} height={72} />
+					))}
+				</div>
+
+				<div className="relative mt-6">
+					<FieldLabel>Sitting</FieldLabel>
+					<div className="mt-3 flex gap-2.5">
+						{SITTINGS.map((s) => (
+							<ChoicePill key={s} label={s} on={s === "20:30"} width={165} height={48} />
+						))}
+					</div>
+				</div>
+
+				<div className="relative mt-6">
+					<FieldLabel>Guests</FieldLabel>
+					<div className="mt-3 flex gap-2.5">
+						{PARTY.map((p) => (
+							<ChoicePill key={p} label={p} on={p === "2"} width={48} height={48} />
+						))}
+					</div>
+				</div>
+
+				<div className="relative mt-6">
+					<FieldLabel>Name</FieldLabel>
+					<div
+						className="mt-3 flex h-[48px] items-center border-b text-[15px]"
+						style={{ borderColor: "var(--line-2)", color: "var(--cream)" }}
+					>
+						Vera Lindqvist
+					</div>
+				</div>
+
+				<EmberButton className="relative mt-auto text-[14.5px]" height={54} full>
+					Confirm the table
+				</EmberButton>
+				<span className="relative mt-4 text-center text-[12px]" style={{ color: "var(--faint)" }}>
+					We hold the table fifteen minutes past the sitting.
+				</span>
 			</div>
 		</div>
 	);
@@ -2129,7 +1821,7 @@ function AppBar({ width }: { width: number }) {
 					<span className="font-semibold text-md text-text leading-sm tracking-tight">spool</span>
 				</span>
 				<nav className="relative flex items-center gap-unit">
-					{["chamfer", "spool"].map((tab, i) => (
+					{["brasa", "spool"].map((tab, i) => (
 						<span
 							key={tab}
 							className={cn(
@@ -2179,20 +1871,25 @@ interface RailPage {
 
 const RAIL_PAGES: readonly RailPage[] = [
 	{
-		name: "runs",
+		name: "brasa",
 		open: true,
 		active: true,
-		total: 14,
+		total: 10,
 		frames: [
-			{ name: "pt-graph" },
-			{ name: "pt-journal" },
-			{ name: "pt-journal--failed", unseen: "new" },
-			{ name: "pt-journal--waiting" },
-			{ name: "pt-runs" },
+			{ name: "book" },
+			{ name: "home" },
+			{ name: "home--candlelit", unseen: "new" },
+			{ name: "home--classic" },
+			{ name: "home--editorial" },
+			{ name: "home--playful" },
+			{ name: "menu" },
+			{ name: "reserve" },
+			{ name: "reserve--confirmed" },
+			{ name: "reserve-card" },
 		],
 	},
-	{ name: "home", frames: [], total: 3 },
-	{ name: "inbox", frames: [], total: 12 },
+	{ name: "emails", frames: [], total: 4 },
+	{ name: "print", frames: [], total: 2 },
 ];
 
 function PagesRail({ height, selected }: { height: number; selected: string }) {
@@ -2351,12 +2048,12 @@ function CanvasTools() {
 /* ---------- the hero: the window, cropped like a screenshot ---------- */
 
 /**
- * The camera sits at 24%, which is where five 1440 by 900 frames stand in one
- * field: the walk across the top and the two journal siblings under it. The
- * graph is the third seat in the walk, so it is the one that runs off the right
- * edge, and how much of it a visitor sees depends on how wide the plate is. A
- * canvas that ends at the plate edge is a diagram; one that runs off it is a
- * screenshot.
+ * The camera sits at 24%, which is where the walk stands in one field: home,
+ * reserve and the state after it across the top, the menu and the phone under
+ * them. The confirmation is the third seat in the walk, so it is the one that
+ * runs off the right edge, and how much of it a visitor sees depends on how wide
+ * the plate is. A canvas that ends at the plate edge is a diagram; one that runs
+ * off it is a screenshot.
  */
 const HERO_K = 0.24;
 const HERO_W = APP_W * HERO_K;
@@ -2364,10 +2061,10 @@ const HERO_H = APP_H * HERO_K;
 const HERO_GAP = 42;
 
 const HOME = { x: 36, y: 58 };
-const RUNS = { x: 36 + HERO_W + HERO_GAP, y: 58 };
-const GRAPH = { x: 36 + (HERO_W + HERO_GAP) * 2, y: 58 };
-const JOURNAL = { x: 140, y: 58 + HERO_H + 62 };
-const JOURNAL_FAILED = { x: 140 + HERO_W + HERO_GAP, y: 58 + HERO_H + 62 };
+const RESERVE = { x: 36 + HERO_W + HERO_GAP, y: 58 };
+const CONFIRMED = { x: 36 + (HERO_W + HERO_GAP) * 2, y: 58 };
+const MENU = { x: 140, y: 58 + HERO_H + 62 };
+const BOOK = { x: 140 + HERO_W + HERO_GAP, y: 58 + HERO_H + 62 };
 
 function CanvasField() {
 	const mid = HERO_H / 2;
@@ -2379,41 +2076,33 @@ function CanvasField() {
 			<ThreadArrow
 				x1={HOME.x + HERO_W}
 				y1={HOME.y + mid}
-				x2={RUNS.x}
-				y2={RUNS.y + mid}
+				x2={RESERVE.x}
+				y2={RESERVE.y + mid}
 				w={FIELD_W}
 				h={FIELD_H}
 			/>
 			<ThreadArrow
-				x1={RUNS.x + HERO_W}
-				y1={RUNS.y + mid}
-				x2={GRAPH.x}
-				y2={GRAPH.y + mid}
+				x1={RESERVE.x + HERO_W}
+				y1={RESERVE.y + mid}
+				x2={CONFIRMED.x}
+				y2={CONFIRMED.y + mid}
 				w={FIELD_W}
 				h={FIELD_H}
 			/>
-			<FieldFrame name="pt-home" x={HOME.x} y={HOME.y} dw={APP_W} dh={APP_H} k={HERO_K}>
+			<FieldFrame name="home" x={HOME.x} y={HOME.y} dw={APP_W} dh={APP_H} k={HERO_K}>
 				<HomeScreen />
 			</FieldFrame>
-			<FieldFrame name="pt-runs" x={RUNS.x} y={RUNS.y} dw={APP_W} dh={APP_H} k={HERO_K} selected>
-				<RunsScreen />
+			<FieldFrame name="reserve" x={RESERVE.x} y={RESERVE.y} dw={APP_W} dh={APP_H} k={HERO_K} selected>
+				<ReserveScreen />
 			</FieldFrame>
-			<FieldFrame name="pt-graph" x={GRAPH.x} y={GRAPH.y} dw={APP_W} dh={APP_H} k={HERO_K}>
-				<GraphScreen />
+			<FieldFrame name="reserve--confirmed" x={CONFIRMED.x} y={CONFIRMED.y} dw={APP_W} dh={APP_H} k={HERO_K}>
+				<ReserveScreen confirmed />
 			</FieldFrame>
-			<FieldFrame name="pt-journal" x={JOURNAL.x} y={JOURNAL.y} dw={APP_W} dh={APP_H} k={HERO_K}>
-				<JournalScreen />
+			<FieldFrame name="menu" x={MENU.x} y={MENU.y} dw={APP_W} dh={APP_H} k={HERO_K}>
+				<MenuScreen />
 			</FieldFrame>
-			<FieldFrame
-				name="pt-journal--failed"
-				x={JOURNAL_FAILED.x}
-				y={JOURNAL_FAILED.y}
-				dw={APP_W}
-				dh={APP_H}
-				k={HERO_K}
-				unseen="new"
-			>
-				<JournalScreen take="failed" />
+			<FieldFrame name="book" x={BOOK.x} y={BOOK.y} dw={PHONE_W} dh={PHONE_H} k={HERO_K}>
+				<PhoneBookScreen />
 			</FieldFrame>
 			<CanvasTools />
 		</div>
@@ -2429,7 +2118,7 @@ export function CanvasPlate({ w, h, scale = 1 }: { w: number; h: number; scale?:
 			>
 				<CanvasField />
 				<AppBar width={STAGE_W} />
-				<PagesRail height={FIELD_H} selected="pt-runs" />
+				<PagesRail height={FIELD_H} selected="reserve" />
 				<DockStrip left={STAGE_W - STRIP_W} top={BAR_H} height={FIELD_H} />
 			</div>
 		</div>
@@ -2439,20 +2128,20 @@ export function CanvasPlate({ w, h, scale = 1 }: { w: number; h: number; scale?:
 /* ---------- section one: the running frame ---------- */
 
 /** label + document + the 14px gap and the size chip under it */
-const SELECTED_H = LABEL_H + LABEL_GAP + ASK_H + 30;
+const SELECTED_H = LABEL_H + LABEL_GAP + CARD_H + 30;
 
 export function LivePlate({ w, h }: { w: number; h: number }) {
 	return (
 		<div className="relative overflow-hidden bg-canvas" style={{ width: w, height: h }}>
 			<FieldFrame
-				name="pt-ask"
-				x={(w - ASK_W) / 2}
+				name="reserve-card"
+				x={(w - CARD_W) / 2}
 				y={(h - SELECTED_H) / 2 + LABEL_H + LABEL_GAP}
-				dw={ASK_W}
-				dh={ASK_H}
+				dw={CARD_W}
+				dh={CARD_H}
 				selected
 			>
-				<AskScreen />
+				<ReserveCardScreen />
 			</FieldFrame>
 		</div>
 	);
@@ -2460,11 +2149,11 @@ export function LivePlate({ w, h }: { w: number; h: number }) {
 
 /* ---------- section two: four takes at once ---------- */
 
-const TAKES: readonly { name: string; take: JournalTake; kept?: boolean }[] = [
-	{ name: "pt-journal", take: "running" },
-	{ name: "pt-journal--failed", take: "failed", kept: true },
-	{ name: "pt-journal--waiting", take: "waiting" },
-	{ name: "pt-journal--queued", take: "queued" },
+const TAKES: readonly { name: string; Screen: () => ReactNode; kept?: boolean }[] = [
+	{ name: "home--candlelit", Screen: HomeCandlelit, kept: true },
+	{ name: "home--editorial", Screen: HomeEditorial },
+	{ name: "home--playful", Screen: HomePlayful },
+	{ name: "home--classic", Screen: HomeClassic },
 ];
 
 export function TakesPlate({ w, h, k = 0.172 }: { w: number; h: number; k?: number }) {
@@ -2488,7 +2177,7 @@ export function TakesPlate({ w, h, k = 0.172 }: { w: number; h: number; k?: numb
 					selected={take.kept === true}
 					size={false}
 				>
-					<JournalScreen take={take.take} />
+					<take.Screen />
 				</FieldFrame>
 			))}
 		</div>
@@ -2505,37 +2194,38 @@ interface TreeRow {
 }
 
 const TREE: readonly TreeRow[] = [
-	{ depth: 0, name: "chamfer/", dir: true },
+	{ depth: 0, name: "brasa/", dir: true },
 	{ depth: 1, name: "src/", dir: true },
 	{ depth: 1, name: "design/", dir: true, lit: true },
 	{ depth: 2, name: "frames/", dir: true },
-	{ depth: 3, name: "runs/", dir: true },
-	{ depth: 4, name: "pt-graph/", dir: true },
-	{ depth: 4, name: "pt-journal/", dir: true },
+	{ depth: 3, name: "brasa/", dir: true },
+	{ depth: 4, name: "book/", dir: true },
+	{ depth: 4, name: "home/", dir: true },
+	{ depth: 4, name: "menu/", dir: true },
+	{ depth: 4, name: "reserve/", dir: true },
 	{ depth: 5, name: "frame.tsx", lit: true },
 	{ depth: 5, name: "frame.json" },
-	{ depth: 4, name: "pt-runs/", dir: true },
-	{ depth: 3, name: "home/", dir: true },
+	{ depth: 4, name: "reserve--confirmed/", dir: true },
+	{ depth: 3, name: "emails/", dir: true },
 	{ depth: 2, name: "shared/", dir: true },
-	{ depth: 3, name: "ui/", dir: true },
 	{ depth: 3, name: "tokens.css" },
 	{ depth: 1, name: "package.json" },
 ];
 
-/** pt-journal/frame.tsx, as it would really read: one component, one flow call out. */
+/** brasa/reserve/frame.tsx, as it would really read: one component, one flow call out. */
 const SOURCE: readonly { indent: number; text: string; dim?: boolean }[] = [
 	{ indent: 0, text: 'import { ui } from "spool";', dim: true },
 	{ indent: 0, text: "" },
-	{ indent: 0, text: "export default function Journal() {" },
-	{ indent: 1, text: 'const [step, pick] = useState("update");' },
-	{ indent: 1, text: "const entry = JOURNAL[step];" },
+	{ indent: 0, text: "export default function Reserve() {" },
+	{ indent: 1, text: 'const [sitting, pick] = useState("20:30");' },
+	{ indent: 1, text: "const [guests, setGuests] = useState(2);" },
 	{ indent: 1, text: "return (" },
-	{ indent: 2, text: '<Run head={HRIS} tab="journal">' },
-	{ indent: 3, text: "<Steps rows={JOURNAL} picked={step}" },
+	{ indent: 2, text: '<Page nav="reserve">' },
+	{ indent: 3, text: "<Sittings picked={sitting}" },
 	{ indent: 4, text: "onPick={pick} />" },
-	{ indent: 3, text: "<Detail entry={entry}" },
-	{ indent: 4, text: 'onGraph={() => ui.go("pt-graph")} />' },
-	{ indent: 2, text: "</Run>" },
+	{ indent: 3, text: "<Guests count={guests} onSet={setGuests}" },
+	{ indent: 4, text: 'onDone={() => ui.go("reserve--confirmed")} />' },
+	{ indent: 2, text: "</Page>" },
 	{ indent: 1, text: ");" },
 	{ indent: 0, text: "}" },
 ];
@@ -2543,7 +2233,7 @@ const SOURCE: readonly { indent: number; text: string; dim?: boolean }[] = [
 export function RepoPlate({ w, h }: { w: number; h: number }) {
 	return (
 		<div className="relative flex overflow-hidden bg-canvas" style={{ width: w, height: h }} aria-hidden="true">
-			<div className="w-[196px] shrink-0 border-border border-r py-5 pl-5">
+			<div className="w-[196px] shrink-0 border-border border-r py-4 pl-4">
 				{TREE.map((r) => (
 					<div
 						key={r.depth + r.name}
@@ -2552,7 +2242,7 @@ export function RepoPlate({ w, h }: { w: number; h: number }) {
 							MONO,
 							r.lit === true ? "text-thread" : r.dir === true ? "text-muted" : "text-text/70",
 						)}
-						style={{ paddingLeft: r.depth * 11 }}
+						style={{ paddingLeft: r.depth * 10 }}
 					>
 						{r.dir === true ? (
 							<FolderIcon className="h-[11px] w-[11px] shrink-0" />
@@ -2570,7 +2260,7 @@ export function RepoPlate({ w, h }: { w: number; h: number }) {
 						MONO,
 					)}
 				>
-					design/frames/runs/pt-journal/frame.tsx
+					design/frames/brasa/reserve/frame.tsx
 				</div>
 				<div className="flex-1 px-5 py-4">
 					{SOURCE.map((l, i) => (
@@ -2618,7 +2308,7 @@ export function DirectPlate({ w, h, k = 0.33 }: { w: number; h: number; k?: numb
 		<div className="relative overflow-hidden bg-canvas" style={{ width: w, height: h }} aria-hidden="true">
 			<ThreadArrow x1={-46} y1={y + fh / 2} x2={x} y2={y + fh / 2} w={w} h={h} />
 			<FieldFrame
-				name="pt-journal--failed"
+				name="home--candlelit"
 				x={x}
 				y={y}
 				dw={APP_W}
@@ -2627,7 +2317,7 @@ export function DirectPlate({ w, h, k = 0.33 }: { w: number; h: number; k?: numb
 				selected
 				unseen="new"
 			>
-				<JournalScreen take="failed" />
+				<HomeCandlelit />
 			</FieldFrame>
 			<DockStrip left={w - STRIP_W} top={0} height={h} />
 			<CanvasTools />
