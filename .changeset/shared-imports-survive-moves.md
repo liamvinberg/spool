@@ -1,5 +1,0 @@
----
-"spool.page": minor
----
-
-Moving a frame into a page no longer breaks it. An import written `../../shared/lib/utils` counts the folders between the frame and design/, and a move changes the count — so dragging frames into a freshly made page left every one of them failing to compile. Two changes close that. Imports of shared/ can now be written by their design-relative path — `import { cn } from "shared/lib/utils"` — which resolves from any frame at any depth, so a move never touches it; the skill teaches this form. And when spool itself moves or copies a folder — a drag in the rail, a page move, a duplicate onto another page — any `../` import reaching out of that folder is re-aimed as the folder lands, a stylesheet's `@import` and `url()` included: onto the shared/ form where the target sits in shared/, onto a recomputed relative path otherwise. Only import positions are read, so a `../` the frame shows or comments on stays the author's text. A folder moved outside spool still surfaces the compile error with the hand-to-agent prompt, but frames written in the new form no longer care where they sit.
