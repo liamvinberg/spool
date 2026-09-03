@@ -6,7 +6,7 @@ import { cn } from "shared/lib/utils";
 import type { Connector, Plan, PlayEntry, Queued, Question, RowState, ShotRef, TurnPhase } from "shared/lib/spool/turn-play";
 import { ChevronIcon, CloseIcon } from "shared/ui/spool/icons";
 import { Lightbox } from "shared/ui/spool/lightbox";
-import { type Arrival, Caret, Said, closedText } from "shared/ui/spool/say";
+import { type Arrival, Caret, Paragraphs, Said, closedText } from "shared/ui/spool/say";
 import { ThreadStrip } from "shared/ui/spool/thread-strip";
 
 /**
@@ -335,7 +335,7 @@ export type AskMode = "log" | "composer" | "shelf";
  *          an inline `show all`. The obvious answer, drawn so it can lose on
  *          purpose rather than by never being tried.
  */
-export type SayMode = "raw" | "read" | "lede" | "lines";
+export type SayMode = "raw" | "read" | "lede" | "lines" | "paragraph" | "sentence" | "ghost";
 
 /**
  * Where a message typed into a running turn stands before it has happened (#170).
@@ -1107,6 +1107,23 @@ function Prose({ entry, mode }: { entry: Extract<PlayEntry, { kind: "prose" }>; 
 	// a line at a time. At two lines that is right. At 3,372 characters it means the
 	// rail goes from empty to full in one frame and then fills in with text for the
 	// next twenty seconds, which is the thing this ticket is about.
+	/*
+	 * A unit at a time, drawn on the real turn (explore/agent/say). It reads what landed
+	 * rather than the drain's edge, because a unit is whole when the wire says so, and a
+	 * last paragraph that waited for the drain landed after the next tool row did.
+	 */
+	if (mode === "paragraph" || mode === "sentence" || mode === "ghost") {
+		const landed = entry.landed ?? entry.shown;
+		return (
+			<Paragraphs
+				text={landed}
+				finished={landed.length >= entry.full.length}
+				mode={mode === "paragraph" ? "whole" : mode}
+				caret={<Caret />}
+			/>
+		);
+	}
+
 	if (mode === "raw")
 		return (
 			<p className="relative text-base text-text/90 leading-base">

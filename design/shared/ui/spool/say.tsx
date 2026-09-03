@@ -1,5 +1,5 @@
 import { motion, useReducedMotion } from "motion/react";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { closedText } from "shared/lib/spool/say-markers";
 import { cn } from "shared/lib/utils";
 
@@ -438,6 +438,174 @@ export function Said({
 					</p>
 				);
 			})}
+		</div>
+	);
+}
+
+/* ---------- a unit at a time ----------
+ * The take that stops showing the stream. Text still arriving cannot be read, so drawing it
+ * is motion the reader waits out anyway; a unit is held until it is whole and then arrives
+ * the way a row does, a box opening to its height over 260ms with the words rising into it.
+ *
+ *   whole      the unit is the paragraph. Whole once the next paragraph has begun, or the
+ *              message has ended. A caret alone between paragraphs says more is coming.
+ *   sentence   the unit is the sentence, inside prose paragraphs only: a fence or a list
+ *              item stays a paragraph. Finer grain, less wait, the same rule.
+ *   ghost      the arriving paragraph is drawn as it streams but dimmed to shape, and comes
+ *              up to full strength when it is whole. Something to look at, nothing to read.
+ *
+ * A fence is never split: blank lines inside one are its own, and a half fence renders as a
+ * swallowed message. Blank lines are counted against open fences before a break is honoured.
+ */
+export type UnitMode = "whole" | "sentence" | "ghost";
+
+const OPEN_MS = 0.34;
+
+/** paragraphs of `text`, with fences kept whole */
+function paragraphsOf(text: string): string[] {
+	const out: string[] = [];
+	let held = "";
+	let fenced = false;
+	for (const part of text.split(/\n\n+/)) {
+		const ticks = (part.match(/```/g) ?? []).length;
+		if (fenced) {
+			held += `\n\n${part}`;
+			if (ticks % 2 === 1) {
+				fenced = false;
+				out.push(held);
+				held = "";
+			}
+			continue;
+		}
+		if (ticks % 2 === 1) {
+			fenced = true;
+			held = part;
+			continue;
+		}
+		out.push(part);
+	}
+	if (held !== "") out.push(held);
+	return out;
+}
+
+/** a prose paragraph split at sentence ends; anything with structure is left as one unit */
+function sentencesOf(paragraph: string): string[] {
+	if (paragraph.startsWith("```") || /^\s*([-*]|\d+\.)\s/.test(paragraph) || paragraph.startsWith(">")) return [paragraph];
+	return paragraph.split(/(?<=[.!?])\s+(?=[A-Z0-9"'`*])/);
+}
+
+/** the least two units are apart, so two completing in one delta land as two arrivals */
+const UNIT_GAP_MS = 700;
+/** the caret's own line, which is what the first unit opens out of */
+const CARET_LINE = 20;
+
+export function Paragraphs({
+	text,
+	finished,
+	mode,
+	caret,
+}: {
+	/** what has landed so far, or the whole message once `finished` */
+	text: string;
+	finished: boolean;
+	mode: UnitMode;
+	/** the live marker, at the end of the last whole unit while more is coming */
+	caret?: ReactNode;
+}) {
+	const still = useReducedMotion() === true;
+	/**
+	 * When each unit was let onto the screen, by key. A unit is whole when the wire says so,
+	 * and released at that moment or `UNIT_GAP_MS` after the unit before it, whichever is
+	 * later: the wire delivers two paragraphs in one delta often enough that without the gap
+	 * they land as one block, which is the step this take exists to remove.
+	 */
+	const released = useRef(new Map<string, number>());
+	const [, wake] = useState(0);
+	const now = still ? Number.POSITIVE_INFINITY : performance.now();
+
+	const paragraphs = paragraphsOf(text);
+	const units: { key: string; text: string; whole: boolean; gap: boolean }[] = [];
+	paragraphs.forEach((paragraph, at) => {
+		const lastParagraph = at === paragraphs.length - 1;
+		const pieces = mode === "sentence" ? sentencesOf(paragraph) : [paragraph];
+		pieces.forEach((piece, index) => {
+			const lastPiece = index === pieces.length - 1;
+			units.push({
+				key: `${at}-${index}`,
+				text: piece,
+				// whole once the text after it has begun, which is when its break landed
+				whole: finished || !lastParagraph || !lastPiece,
+				gap: index === 0 && at > 0,
+			});
+		});
+	});
+
+	let last = 0;
+	for (const at of released.current.values()) last = Math.max(last, at);
+	let next: number | null = null;
+	for (const unit of units) {
+		if (!unit.whole) continue;
+		let at = released.current.get(unit.key);
+		if (at === undefined) {
+			at = still ? 0 : Math.max(now, last + UNIT_GAP_MS);
+			released.current.set(unit.key, at);
+		}
+		last = Math.max(last, at);
+		if (at > now && (next === null || at < next)) next = at;
+	}
+	// wake exactly when the next held unit is due, and not before
+	useEffect(() => {
+		if (next === null) return;
+		const timer = window.setTimeout(() => wake((n) => n + 1), Math.max(0, next - performance.now()));
+		return () => window.clearTimeout(timer);
+	}, [next]);
+
+	const out = (unit: (typeof units)[number]) => unit.whole && (released.current.get(unit.key) ?? Number.POSITIVE_INFINITY) <= now;
+	const shown = mode === "ghost" ? units.filter((unit) => !unit.whole || out(unit)) : units.filter(out);
+	const lastOut = [...shown].reverse().find(out);
+	/** something is still to come: not landed, not whole, or whole and held */
+	const more = !finished || shown.length < units.length;
+	/** the caret stands on a line of its own only until there is a unit to stand at the end of */
+	const alone = more && lastOut === undefined && !(mode === "ghost" && shown.some((unit) => !unit.whole));
+
+	return (
+		<div className="flex flex-col">
+			{shown.map((unit, index) => {
+				const settled = out(unit);
+				// the caret rides the end of the last whole unit, or the ghost's arriving one, so
+				// the message ending removes a glyph and never a line
+				const tail = (mode === "ghost" && !unit.whole) || (more && unit === lastOut && !shown.some((seen) => !seen.whole)) ? caret : undefined;
+				const inner = (
+					<div className={cn(unit.gap ? "pt-2" : index === 0 ? undefined : "pt-1")}>
+						<div className={cn(mode === "ghost" && "transition-opacity duration-300", mode === "ghost" && !settled && "opacity-30")}>
+							<Said text={closedText(unit.text)} caret={tail} />
+						</div>
+					</div>
+				);
+				// a ghost paragraph is already on screen while it arrives, so it has no open to
+				// perform: it only comes up. A whole unit arriving is a row arriving
+				if (still || (mode === "ghost" && !unit.whole)) return <div key={unit.key}>{inner}</div>;
+				return (
+					<motion.div
+						key={unit.key}
+						className="overflow-hidden"
+						// the first unit opens out of the caret's own line rather than out of nothing,
+						// so the line it replaces never reads as the log dropping
+						initial={{ height: index === 0 ? CARET_LINE : 0, opacity: 0 }}
+						animate={{ height: "auto", opacity: 1 }}
+						transition={{ height: { duration: OPEN_MS, ease: ARRIVE }, opacity: { duration: 0.22, ease: "linear" } }}
+					>
+						<motion.div initial={{ y: 6 }} animate={{ y: 0 }} transition={{ duration: 0.34, ease: ARRIVE }}>
+							{inner}
+						</motion.div>
+					</motion.div>
+				);
+			})}
+			{alone && caret !== undefined ? (
+				<div className="flex items-center" style={{ height: CARET_LINE }}>
+					{caret}
+				</div>
+			) : null}
 		</div>
 	);
 }

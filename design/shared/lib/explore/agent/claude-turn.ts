@@ -1682,11 +1682,10 @@ export function railEntries(
 			 * The cue still gates which deltas exist, so a held turn (#145) cannot drain prose
 			 * the clock has not reached; `elapsed` then paces the ones it has.
 			 */
-			const upto = drawnBy(
-				row.chunks.filter((chunk) => turn.at(chunk.cue)),
-				elapsed,
-			);
-			entries.push({ key: row.key, kind: "prose", full: row.text, shown: row.text.slice(0, upto) });
+			const arrived = row.chunks.filter((chunk) => turn.at(chunk.cue));
+			const upto = drawnBy(arrived, elapsed);
+			const landed = arrived[arrived.length - 1]?.upto ?? 0;
+			entries.push({ key: row.key, kind: "prose", full: row.text, shown: row.text.slice(0, upto), landed: row.text.slice(0, landed) });
 			continue;
 		}
 		if (row.kind === "ask") {

@@ -447,7 +447,15 @@ export type PlayEntry =
 			/** thinking sits a shade under the work */
 			readonly quiet?: boolean | undefined;
 	  }
-	| { readonly key: string; readonly kind: "prose"; readonly full: string; readonly shown: string }
+	| {
+			readonly key: string;
+			readonly kind: "prose";
+			readonly full: string;
+			/** what the pace allows on screen */
+			readonly shown: string;
+			/** what the wire has delivered, which runs up to 0.8s ahead of `shown`; a take that draws whole units reads this */
+			readonly landed?: string | undefined;
+	  }
 	/**
 	 * The turn stopping to ask (#145).
 	 *
