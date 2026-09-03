@@ -1,9 +1,10 @@
-import { railEntries, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { railEntries, captureEvents, useTurnScript } from "shared/lib/explore/agent/claude-turn";
 import { useTicker, useTurn } from "shared/lib/spool/turn-play";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { PlayField } from "shared/ui/explore/agent/play-field";
 import { PlayRail } from "shared/ui/spool/play-rail";
 import { SpoolShell } from "shared/ui/spool/shell";
+import claudeInterruptCapture from "shared/captures/claude-interrupt.json";
 
 /**
  * agent-stop — the recommendation. The way out of a turn that is already running.
@@ -104,7 +105,7 @@ const PAGES: readonly PageRow[] = [
 ];
 
 export default function AgentStopFrame() {
-	const capture = useCapture("claude-interrupt");
+	const capture = captureEvents(claudeInterruptCapture);
 	const script = useTurnScript(capture, "stop");
 	const turn = useTurn(script.cues, undefined, script.cut ?? undefined);
 	// the clock stops with the turn: a thought cut at 2.3s reads 2.3s forever rather

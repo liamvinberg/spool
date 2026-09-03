@@ -1,11 +1,12 @@
 import { CAPTURED, useModel } from "shared/lib/spool/agent-model";
-import { railEntries, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { railEntries, captureEvents, useTurnScript } from "shared/lib/explore/agent/claude-turn";
 import { useTicker, useTurn } from "shared/lib/spool/turn-play";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { ModelMenu } from "shared/ui/spool/model-control";
 import { PlayField } from "shared/ui/explore/agent/play-field";
 import { PlayRail } from "shared/ui/spool/play-rail";
 import { SpoolShell } from "shared/ui/spool/shell";
+import claudeTurnCapture from "shared/captures/claude-turn.json";
 
 /**
  * agent-play--model-menu — the same line, made a button.
@@ -69,7 +70,7 @@ const PAGES: readonly PageRow[] = [
 ];
 
 export default function AgentPlayModelMenuFrame() {
-	const capture = useCapture("claude-turn");
+	const capture = captureEvents(claudeTurnCapture);
 	const script = useTurnScript(capture, "plan");
 	const turn = useTurn(script.cues);
 	const elapsed = useTicker(turn.run, script.total);

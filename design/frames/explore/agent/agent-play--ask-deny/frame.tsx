@@ -1,9 +1,10 @@
-import { railEntries, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { railEntries, captureEvents, useTurnScript } from "shared/lib/explore/agent/claude-turn";
 import { useTicker, useTurn } from "shared/lib/spool/turn-play";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { PlayField } from "shared/ui/explore/agent/play-field";
 import { PlayRail } from "shared/ui/spool/play-rail";
 import { SpoolShell } from "shared/ui/spool/shell";
+import claudeMcpCapture from "shared/captures/claude-mcp.json";
 
 /**
  * agent-play--ask-deny — #162's third exit, drawn at last.
@@ -64,7 +65,7 @@ const PAGES: readonly PageRow[] = [
 ];
 
 export default function AgentAskDenyFrame() {
-	const capture = useCapture("claude-mcp");
+	const capture = captureEvents(claudeMcpCapture);
 	const script = useTurnScript(capture, "ask");
 	const held = script.rows.find((row) => row.kind === "ask");
 	const turn = useTurn(script.cues, held?.kind === "ask" ? (held.liveCue ?? undefined) : undefined);

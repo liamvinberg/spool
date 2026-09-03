@@ -1,9 +1,10 @@
-import { planOf, railEntries, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { planOf, railEntries, captureEvents, useTurnScript } from "shared/lib/explore/agent/claude-turn";
 import { useTicker, useTurn } from "shared/lib/spool/turn-play";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { PlayField } from "shared/ui/explore/agent/play-field";
 import { PlayRail } from "shared/ui/spool/play-rail";
 import { SpoolShell } from "shared/ui/spool/shell";
+import claudePlanCapture from "shared/captures/claude-plan.json";
 
 /**
  * agent-play--plan-pinned — the same nine minutes, with the plan out of the log.
@@ -39,7 +40,7 @@ const PAGES: readonly PageRow[] = [
 ];
 
 export default function AgentPlanPinnedFrame() {
-	const capture = useCapture("claude-plan");
+	const capture = captureEvents(claudePlanCapture);
 	const script = useTurnScript(capture, "session");
 	const turn = useTurn(script.cues);
 	const elapsed = useTicker(turn.run, script.total);

@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { contextLine } from "shared/lib/spool/agent-selection";
-import { railEntries, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { railEntries, captureEvents, useTurnScript } from "shared/lib/explore/agent/claude-turn";
 import { enteredFrame } from "shared/lib/explore/agent/pointed-fixtures";
 import { useTicker, useTurn } from "shared/lib/spool/turn-play";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { type Outline, PlayField } from "shared/ui/explore/agent/play-field";
 import { COMPOSER_W, PlayRail } from "shared/ui/spool/play-rail";
 import { SpoolShell } from "shared/ui/spool/shell";
+import claudeTurnCapture from "shared/captures/claude-turn.json";
 
 /**
  * agent-play--entered — the recommendation. The same chip, minus the ✕.
@@ -56,7 +57,7 @@ const PAGES: readonly PageRow[] = [
 ];
 
 export default function AgentPlayEnteredFrame() {
-	const capture = useCapture("claude-turn");
+	const capture = captureEvents(claudeTurnCapture);
 	const script = useTurnScript(capture, "plan");
 	const turn = useTurn(script.cues);
 	const elapsed = useTicker(turn.run, script.total);

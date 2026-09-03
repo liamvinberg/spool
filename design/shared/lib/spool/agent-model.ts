@@ -1,3 +1,4 @@
+import claudeModels from "shared/captures/claude-models.json";
 import { useCallback, useEffect, useState } from "react";
 import type { PlayEntry } from "shared/lib/spool/turn-play";
 
@@ -21,7 +22,7 @@ import type { PlayEntry } from "shared/lib/spool/turn-play";
  * never cuts a release for either, and there is nothing to cache: the reply
  * arrives on a session that is already open.
  *
- * shared/fixtures/claude-models.json is that reply, captured whole.
+ * shared/captures/claude-models.json is that reply, captured whole.
  *
  * **It answers with five choices, not with ten aliases.** `/model`'s usage line
  * accepts `sonnet, opus, haiku, fable, best, sonnet[1m], opus[1m], fable[1m],
@@ -64,22 +65,9 @@ export interface ClaudeModel {
 	readonly supportsAutoMode?: boolean;
 }
 
-/** the mock answers relative URLs out of shared/fixtures, so the reply is one fetch away */
-export function useModels(): readonly ClaudeModel[] | undefined {
-	const [models, setModels] = useState<readonly ClaudeModel[] | undefined>(undefined);
-	useEffect(() => {
-		let live = true;
-		void fetch("/api/claude-models")
-			.then((response) => response.json() as Promise<readonly ClaudeModel[]>)
-			.then((body) => {
-				if (live) setModels(body);
-			})
-			.catch((reason: unknown) => console.error("claude-models did not load", reason));
-		return () => {
-			live = false;
-		};
-	}, []);
-	return models;
+/** the reply is imported whole, so the models are there on first render */
+export function useModels(): readonly ClaudeModel[] {
+	return claudeModels as readonly ClaudeModel[];
 }
 
 export function modelOf(models: readonly ClaudeModel[] | undefined, value: string): ClaudeModel | undefined {

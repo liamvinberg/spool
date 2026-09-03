@@ -1,4 +1,4 @@
-import { railEntries, type Script, type ToolRow, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { railEntries, type Script, type ToolRow, captureEvents, useTurnScript } from "shared/lib/explore/agent/claude-turn";
 import { type ShotRef, type Turn, useTicker, useTurn } from "shared/lib/spool/turn-play";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { PlayRail } from "shared/ui/spool/play-rail";
@@ -7,6 +7,7 @@ import { Ghosted, useGhost } from "./ghost";
 import { KaffePhone, KaffeWide, phoneLayout, wideLayout, WRITES } from "./kaffe-page";
 import { HandField } from "./field";
 import { type Change, changesAt, HandLayer, handOf, writesOn } from "./hand";
+import claudeEditsCapture from "shared/captures/claude-edits.json";
 
 /**
  * agent-hand — how the canvas shows what the agent is doing to a frame.
@@ -104,7 +105,7 @@ const WIDE = "home--wide";
 const SHOT_W = 120;
 
 export default function AgentHandFrame() {
-	const capture = useCapture("claude-edits");
+	const capture = captureEvents(claudeEditsCapture);
 	const script = useTurnScript(capture, "session", "run");
 	const turn = useTurn(script.cues);
 	const elapsed = useTicker(turn.run, script.total);

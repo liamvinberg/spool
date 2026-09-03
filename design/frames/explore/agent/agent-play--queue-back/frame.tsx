@@ -1,11 +1,12 @@
 import { QUEUE_SEED, useQueue } from "shared/lib/explore/agent/agent-queue";
 import { LIVE_ASK, useAutoAsk } from "shared/lib/spool/agent-threads";
-import { railEntries, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { railEntries, captureEvents, useTurnScript } from "shared/lib/explore/agent/claude-turn";
 import { useTicker, useTurn } from "shared/lib/spool/turn-play";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { PlayField } from "shared/ui/explore/agent/play-field";
 import { PlayRail } from "shared/ui/spool/play-rail";
 import { SpoolShell } from "shared/ui/spool/shell";
+import claudePlanCapture from "shared/captures/claude-plan.json";
 
 /**
  * agent-play--queue-back — taking one back into a box that is not empty (#176).
@@ -78,7 +79,7 @@ const PAGES: readonly PageRow[] = [
 const WRITING = "make the header sticky and give the";
 
 export default function AgentQueueBackFrame() {
-	const capture = useCapture("claude-plan");
+	const capture = captureEvents(claudePlanCapture);
 	const script = useTurnScript(capture, "session");
 	const turn = useTurn(script.cues);
 	const elapsed = useTicker(turn.run, script.total);

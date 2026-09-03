@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { type CaptureEvent, useCapture } from "shared/lib/explore/agent/claude-turn";
+import { type CaptureEvent, captureEvents } from "shared/lib/explore/agent/claude-turn";
 import { BEAT_MS, type Beat, type Pace, PaceTake, schedule } from "./pace";
+import claudeFanoutCapture from "shared/captures/claude-fanout.json";
+import claudeMcpCapture from "shared/captures/claude-mcp.json";
 
 /**
  * agent-say-pace — when a character is allowed on screen, which is the question the
@@ -115,8 +117,8 @@ const TAKES: readonly { mode: Pace; label: string; note: string }[] = [
 ];
 
 export function PaceSheet({ spacing }: { spacing: "even" | "jitter" }) {
-	const mcp = useCapture("claude-mcp");
-	const fanout = useCapture("claude-fanout");
+	const mcp = captureEvents(claudeMcpCapture);
+	const fanout = captureEvents(claudeFanoutCapture);
 	const blocks = useMemo(() => [...blocksOf("claude-mcp", mcp), ...blocksOf("claude-fanout", fanout)], [mcp, fanout]);
 	const [pick, setPick] = useState(0);
 	const [run, setRun] = useState(0);

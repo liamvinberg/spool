@@ -2,7 +2,7 @@
 
 This folder is a [spool](https://spool.page) project: live TSX frames on an infinite canvas. Agents author the files, humans arrange and play them.
 
-Run `pnpm dev skill` before working here, this repo's checkout CLI, never the installed `spool`. It is the complete contract: if it isn't in there, spool doesn't do it. Topics: `pnpm dev skill frames|flows|scenarios|mock|styling|verbs`.
+Run `pnpm dev skill` before working here, this repo's checkout CLI, never the installed `spool`. It is the complete contract: if it isn't in there, spool doesn't do it. Topics: `pnpm dev skill frames|flows|scenarios|styling|verbs`.
 
 - A frame is born by writing `frames/<page>/<name>/frame.tsx` default-exporting one React component. No registration, no `spool new`.
 - The one law: never write app-owned files. `canvas.json` and `.spool/` are spool's. Hands write frame source only as span patches, gated, with the same undo surface geometry already has. The one exception writes a file too: a picture swapped onto an `<img>` lands beside the frame and gains its import, because an image is an import and never a URL.

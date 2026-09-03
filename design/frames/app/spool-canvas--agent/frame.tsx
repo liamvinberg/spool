@@ -9,7 +9,7 @@ import {
 	type Slice,
 	railEntries,
 	planOf,
-	useCapture,
+	captureEvents,
 	useFanoutScript,
 	useTurnScript,
 } from "shared/lib/explore/agent/claude-turn";
@@ -21,6 +21,11 @@ import { type BaseFrame, FrameThumb, type Outline, PlayField } from "shared/ui/e
 import { COMPOSER_W, PlayRail } from "shared/ui/spool/play-rail";
 import { SpoolShell } from "shared/ui/spool/shell";
 import { cn } from "shared/lib/utils";
+import claudeEditsCapture from "shared/captures/claude-edits.json";
+import claudeFanoutCapture from "shared/captures/claude-fanout.json";
+import claudeInterruptCapture from "shared/captures/claude-interrupt.json";
+import claudeMcpCapture from "shared/captures/claude-mcp.json";
+import claudePlanCapture from "shared/captures/claude-plan.json";
 
 /**
  * agent-chat — the rail as decided, and the only frame that draws all of it (#180).
@@ -125,7 +130,7 @@ const FANOUT_TAKES = ["cart--empty", "cart--empty-b", "cart--empty-c"] as const;
 
 interface Case {
 	readonly id: string;
-	readonly capture: string;
+	readonly capture: unknown;
 	/** absent on the fan-out, which has its own projection */
 	readonly slice: Slice | null;
 	readonly collapse: Collapse;
@@ -147,7 +152,7 @@ interface Case {
 const CASES: readonly Case[] = [
 	{
 		id: "turn",
-		capture: "claude-edits",
+		capture: claudeEditsCapture,
 		slice: "session",
 		collapse: "run",
 		queued: false,
@@ -156,7 +161,7 @@ const CASES: readonly Case[] = [
 	},
 	{
 		id: "plan",
-		capture: "claude-plan",
+		capture: claudePlanCapture,
 		slice: "session",
 		collapse: "none",
 		queued: false,
@@ -165,7 +170,7 @@ const CASES: readonly Case[] = [
 	},
 	{
 		id: "fanout",
-		capture: "claude-fanout",
+		capture: claudeFanoutCapture,
 		slice: null,
 		collapse: "none",
 		queued: false,
@@ -174,7 +179,7 @@ const CASES: readonly Case[] = [
 	},
 	{
 		id: "foreign",
-		capture: "claude-mcp",
+		capture: claudeMcpCapture,
 		slice: "mcp",
 		collapse: "none",
 		queued: false,
@@ -183,7 +188,7 @@ const CASES: readonly Case[] = [
 	},
 	{
 		id: "message",
-		capture: "claude-mcp",
+		capture: claudeMcpCapture,
 		slice: "say",
 		collapse: "none",
 		queued: false,
@@ -192,7 +197,7 @@ const CASES: readonly Case[] = [
 	},
 	{
 		id: "question",
-		capture: "claude-mcp",
+		capture: claudeMcpCapture,
 		slice: "ask",
 		collapse: "none",
 		queued: false,
@@ -201,7 +206,7 @@ const CASES: readonly Case[] = [
 	},
 	{
 		id: "queued",
-		capture: "claude-plan",
+		capture: claudePlanCapture,
 		slice: "session",
 		collapse: "none",
 		queued: true,
@@ -210,7 +215,7 @@ const CASES: readonly Case[] = [
 	},
 	{
 		id: "stopped",
-		capture: "claude-interrupt",
+		capture: claudeInterruptCapture,
 		slice: "stop",
 		collapse: "none",
 		queued: false,
@@ -241,7 +246,7 @@ export default function AgentChatFrame() {
  * derivation — the case supplies a capture and a slice, and nothing else.
  */
 function Case({ spec }: { spec: Case }) {
-	const capture = useCapture(spec.capture);
+	const capture = captureEvents(spec.capture);
 	const turnScript = useTurnScript(capture, spec.slice ?? "session", spec.collapse);
 	const fanoutScript = useFanoutScript(spec.slice === null ? capture : undefined);
 	const script = spec.slice === null ? fanoutScript : turnScript;

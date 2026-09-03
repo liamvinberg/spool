@@ -135,28 +135,14 @@ export interface CaptureEvent {
 }
 
 /**
- * The mock answers relative URLs out of shared/fixtures, so the capture is one
- * fetch away. The captures themselves are tracked at the repo's own
- * fixtures/captures/ and mirrored into shared/fixtures/captures/ by the checkout
- * entry, because the shipped test suite reads the same bytes this plays and must
- * not reach into the canvas for them. Their provenance is the README there.
+ * A frame imports its capture from shared/captures/ and hands the JSON here for
+ * its type. The captures themselves are tracked at the repo's own
+ * fixtures/captures/ and mirrored into shared/captures/ by the checkout entry,
+ * because the shipped test suite reads the same bytes this plays and must not
+ * reach into the canvas for them. Their provenance is the README there.
  */
-export function useCapture(name: string): readonly CaptureEvent[] | undefined {
-	const [events, setEvents] = useState<readonly CaptureEvent[] | undefined>(undefined);
-	useEffect(() => {
-		let live = true;
-		void fetch(`/api/captures/${name}`)
-			.then((response) => response.json() as Promise<readonly CaptureEvent[]>)
-			.then((body) => {
-				if (live) setEvents(body);
-			})
-			// a missing or malformed fixture must name itself in the frame's console
-			.catch((reason: unknown) => console.error(`capture ${name} did not load`, reason));
-		return () => {
-			live = false;
-		};
-	}, [name]);
-	return events;
+export function captureEvents(events: unknown): readonly CaptureEvent[] {
+	return events as readonly CaptureEvent[];
 }
 
 /* ---------- reading events ---------- */

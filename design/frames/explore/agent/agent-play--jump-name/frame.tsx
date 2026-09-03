@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { railEntries, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { railEntries, captureEvents, useTurnScript } from "shared/lib/explore/agent/claude-turn";
 import { useTicker, useTurn } from "shared/lib/spool/turn-play";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { KaffeHome } from "shared/ui/demo/kaffe-home";
 import { type BaseFrame, PlayField } from "shared/ui/explore/agent/play-field";
 import { PlayRail } from "shared/ui/spool/play-rail";
 import { SpoolShell } from "shared/ui/spool/shell";
+import claudeEditsCapture from "shared/captures/claude-edits.json";
 
 /**
  * agent-play--jump-name — the recommendation. The name is the place; the rest of
@@ -80,7 +81,7 @@ const SITE: readonly BaseFrame[] = [{ name: "home", screen: "menu", render: Kaff
 const OF: Record<string, string> = { cart: "app", menu: "app", receipt: "app", home: "site" };
 
 export default function AgentPlayJumpNameFrame() {
-	const capture = useCapture("claude-edits");
+	const capture = captureEvents(claudeEditsCapture);
 	const script = useTurnScript(capture, "session", "run");
 	const turn = useTurn(script.cues);
 	const elapsed = useTicker(turn.run, script.total);

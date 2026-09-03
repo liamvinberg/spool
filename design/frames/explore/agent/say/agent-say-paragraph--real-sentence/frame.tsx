@@ -1,9 +1,10 @@
-import { railEntries, useCapture, useTurnScript } from "shared/lib/explore/agent/claude-turn";
+import { railEntries, captureEvents, useTurnScript } from "shared/lib/explore/agent/claude-turn";
 import { useTicker, useTurn } from "shared/lib/spool/turn-play";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { PlayField } from "shared/ui/explore/agent/play-field";
 import { PlayRail } from "shared/ui/spool/play-rail";
 import { SpoolShell } from "shared/ui/spool/shell";
+import claudeMcpCapture from "shared/captures/claude-mcp.json";
 
 /**
  * agent-say-paragraph--real-sentence: the unit take on a real turn.
@@ -27,7 +28,7 @@ const PAGES: readonly PageRow[] = [
 ];
 
 export default function Frame() {
-	const capture = useCapture("claude-mcp");
+	const capture = captureEvents(claudeMcpCapture);
 	const script = useTurnScript(capture, "say");
 	const turn = useTurn(script.cues);
 	const elapsed = useTicker(turn.run, script.total);

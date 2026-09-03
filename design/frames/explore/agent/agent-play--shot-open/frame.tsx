@@ -1,10 +1,11 @@
-import { railEntries, useCapture, useFanoutScript } from "shared/lib/explore/agent/claude-turn";
+import { railEntries, captureEvents, useFanoutScript } from "shared/lib/explore/agent/claude-turn";
 import type { ShotRef } from "shared/lib/spool/turn-play";
 import { useTicker, useTurn } from "shared/lib/spool/turn-play";
 import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { type BaseFrame, FrameThumb, PlayField } from "shared/ui/explore/agent/play-field";
 import { PlayRail } from "shared/ui/spool/play-rail";
 import { SpoolShell } from "shared/ui/spool/shell";
+import claudeFanoutCapture from "shared/captures/claude-fanout.json";
 
 /**
  * agent-play--shot-open — the picture behind the disclosure, and a real one.
@@ -44,7 +45,7 @@ const SHOT_W = 120;
 const picture = (shot: ShotRef, width = SHOT_W) => (shot.frame === null ? null : <FrameThumb name={shot.frame} width={width} />);
 
 export default function AgentShotOpenFrame() {
-	const capture = useCapture("claude-fanout");
+	const capture = captureEvents(claudeFanoutCapture);
 	const script = useFanoutScript(capture);
 	const turn = useTurn(script.cues);
 	const elapsed = useTicker(turn.run, script.total);
