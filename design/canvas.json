@@ -549,6 +549,18 @@
 		"explore/picker/picker-list--search": {
 			"x": 13760,
 			"y": 80
+		},
+		"explore/threads": {
+			"x": 15762,
+			"y": 80
+		},
+		"explore/agent/log": {
+			"x": 13080,
+			"y": 1224
+		},
+		"explore/agent/say": {
+			"x": 14428,
+			"y": 1224
 		}
 	}
 }
