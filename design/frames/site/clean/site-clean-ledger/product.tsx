@@ -1532,7 +1532,7 @@ export function ReserveCardScreen() {
 						</span>
 						<div className="mt-3">
 							<SummaryRow label="Name" value={name.trim() === "" ? "No name given" : name} />
-							<SummaryRow label="Date" value={MONTH[date]} />
+							<SummaryRow label="Date" value={MONTH[date] ?? ""} />
 							<SummaryRow label="Sitting" value={sitting} />
 							<SummaryRow label="Guests" value={guests} />
 							<SummaryRow label="Reference" value="BRS 4180" />
