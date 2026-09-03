@@ -1,0 +1,1132 @@
+[
+ {
+  "type": "system",
+  "subtype": "hook_started",
+  "hook_id": "c0ff5abb-2d80-4ba5-a555-60bd547c7523",
+  "hook_name": "SessionStart:startup",
+  "hook_event": "SessionStart"
+ },
+ {
+  "type": "system",
+  "subtype": "hook_started",
+  "hook_id": "2f63ee88-e5fd-4468-b12d-b8fc0834dfde",
+  "hook_name": "SessionStart:startup",
+  "hook_event": "SessionStart"
+ },
+ {
+  "type": "system",
+  "subtype": "hook_response",
+  "hook_id": "c0ff5abb-2d80-4ba5-a555-60bd547c7523",
+  "hook_name": "SessionStart:startup",
+  "hook_event": "SessionStart",
+  "output": "",
+  "stdout": "",
+  "stderr": "",
+  "exit_code": 0,
+  "outcome": "success"
+ },
+ {
+  "type": "system",
+  "subtype": "hook_response",
+  "hook_id": "2f63ee88-e5fd-4468-b12d-b8fc0834dfde",
+  "hook_name": "SessionStart:startup",
+  "hook_event": "SessionStart",
+  "output": "",
+  "stdout": "",
+  "stderr": "",
+  "exit_code": 0,
+  "outcome": "success"
+ },
+ {
+  "type": "system",
+  "subtype": "init",
+  "cwd": "/Users/designer/projects/spool-captures/mock-mcp-project",
+  "tools": [
+   "<33 tools elided>"
+  ],
+  "mcp_servers": [
+   {
+    "name": "plugin:claude-secrets:claude-secrets",
+    "status": "pending"
+   },
+   {
+    "name": "plugin:paper-desktop:paper",
+    "status": "failed"
+   }
+  ],
+  "model": "claude-sonnet-5",
+  "permissionMode": "default",
+  "slash_commands": [
+   "<109 commands elided>"
+  ],
+  "apiKeySource": "none",
+  "claude_code_version": "2.1.220",
+  "output_style": "default",
+  "agents": [
+   "claude",
+   "designer",
+   "Explore",
+   "general-purpose",
+   "paper-designer",
+   "Plan",
+   "statusline-setup"
+  ],
+  "skills": [
+   "<81 skills elided>"
+  ],
+  "plugins": [
+   {
+    "name": "claude-secrets",
+    "path": "/Users/designer/.claude/plugins/cache/claude-secrets/claude-secrets/0.1.0",
+    "source": "claude-secrets@claude-secrets",
+    "version": "0.1.0"
+   },
+   {
+    "name": "paper-desktop",
+    "path": "/Users/designer/.claude/plugins/cache/paper/paper-desktop/0.1.0",
+    "source": "paper-desktop@paper",
+    "version": "0.1.0"
+   }
+  ],
+  "capabilities": [
+   "interrupt_receipt_v1",
+   "interrupt_cancel_queued_v1",
+   "msg_lifecycle_v1"
+  ],
+  "analytics_disabled": false,
+  "product_feedback_disabled": false,
+  "memory_paths": {
+   "auto": "/Users/designer/.claude/projects/-Users-designer-projects-spool-captures-mock-mcp-project/memory/"
+  },
+  "fast_mode_state": "off",
+  "fast_mode_disabled_reason": "sdk_opt_in_required"
+ },
+ {
+  "type": "system",
+  "subtype": "status",
+  "status": "requesting"
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "message_start",
+   "message": {
+    "model": "claude-sonnet-5",
+    "id": "msg_011CdUPKCxRy7yTytqGsdEiq",
+    "type": "message",
+    "role": "assistant",
+    "content": [],
+    "stop_reason": null,
+    "stop_sequence": null,
+    "stop_details": null,
+    "usage": {
+     "input_tokens": 2,
+     "cache_creation_input_tokens": 13828,
+     "cache_read_input_tokens": 25437,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 13828
+     },
+     "output_tokens": 3,
+     "service_tier": "standard",
+     "inference_geo": "not_available"
+    },
+    "diagnostics": null
+   }
+  },
+  "parent_tool_use_id": null,
+  "ttft_ms": 1169
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_start",
+   "index": 0,
+   "content_block": {
+    "type": "thinking",
+    "thinking": "",
+    "signature": ""
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "system",
+  "subtype": "thinking_tokens",
+  "estimated_tokens": 50,
+  "estimated_tokens_delta": 50
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "thinking_delta",
+    "thinking": "",
+    "estimated_tokens": 50
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "system",
+  "subtype": "thinking_tokens",
+  "estimated_tokens": 150,
+  "estimated_tokens_delta": 100
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "thinking_delta",
+    "thinking": "",
+    "estimated_tokens": 100
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "system",
+  "subtype": "thinking_tokens",
+  "estimated_tokens": 300,
+  "estimated_tokens_delta": 150
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "thinking_delta",
+    "thinking": "",
+    "estimated_tokens": 150
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "system",
+  "subtype": "thinking_tokens",
+  "estimated_tokens": 450,
+  "estimated_tokens_delta": 150
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "thinking_delta",
+    "thinking": "",
+    "estimated_tokens": 150
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "system",
+  "subtype": "thinking_tokens",
+  "estimated_tokens": 600,
+  "estimated_tokens_delta": 150
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "thinking_delta",
+    "thinking": "",
+    "estimated_tokens": 150
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "system",
+  "subtype": "thinking_tokens",
+  "estimated_tokens": 700,
+  "estimated_tokens_delta": 100
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "thinking_delta",
+    "thinking": "",
+    "estimated_tokens": 100
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "system",
+  "subtype": "thinking_tokens",
+  "estimated_tokens": 800,
+  "estimated_tokens_delta": 100
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "thinking_delta",
+    "thinking": "",
+    "estimated_tokens": 100
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "system",
+  "subtype": "thinking_tokens",
+  "estimated_tokens": 900,
+  "estimated_tokens_delta": 100
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "thinking_delta",
+    "thinking": "",
+    "estimated_tokens": 100
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "system",
+  "subtype": "thinking_tokens",
+  "estimated_tokens": 1050,
+  "estimated_tokens_delta": 150
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "thinking_delta",
+    "thinking": "",
+    "estimated_tokens": 150
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "signature_delta",
+    "signature": "<elided>"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "assistant",
+  "message": {
+   "model": "claude-sonnet-5",
+   "id": "msg_011CdUPKCxRy7yTytqGsdEiq",
+   "type": "message",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "",
+     "signature": "<elided>"
+    }
+   ],
+   "stop_reason": null,
+   "stop_sequence": null,
+   "stop_details": null,
+   "usage": {
+    "input_tokens": 2,
+    "cache_creation_input_tokens": 13828,
+    "cache_read_input_tokens": 25437,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 13828
+    },
+    "output_tokens": 3,
+    "service_tier": "standard",
+    "inference_geo": "not_available"
+   },
+   "diagnostics": null,
+   "context_management": null
+  },
+  "parent_tool_use_id": null,
+  "timestamp": "2026-07-28T11:35:22.616Z",
+  "request_id": "req_011CdUPKBf3zMZ9iuqraWqpF"
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_stop",
+   "index": 0
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_start",
+   "index": 1,
+   "content_block": {
+    "type": "tool_use",
+    "id": "toolu_013qbA8p9DDYSCnyajKqaV48",
+    "name": "Bash",
+    "input": {},
+    "caller": {
+     "type": "direct"
+    }
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": ""
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "{\"command\": \"ls -la /Users/li"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "amvinberg/projects/spool-captures/mock-m"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "cp-project && echo \\\"---design---\\\" && find design -type f 2>/dev/null"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "\", \"description\": \"List"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": " project root and design folder contents"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "\"}"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "assistant",
+  "message": {
+   "model": "claude-sonnet-5",
+   "id": "msg_011CdUPKCxRy7yTytqGsdEiq",
+   "type": "message",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_013qbA8p9DDYSCnyajKqaV48",
+     "name": "Bash",
+     "input": {
+      "command": "ls -la /Users/designer/projects/spool-captures/mock-mcp-project && echo \"---design---\" && find design -type f 2>/dev/null",
+      "description": "List project root and design folder contents"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ],
+   "stop_reason": null,
+   "stop_sequence": null,
+   "stop_details": null,
+   "usage": {
+    "input_tokens": 2,
+    "cache_creation_input_tokens": 13828,
+    "cache_read_input_tokens": 25437,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 13828
+    },
+    "output_tokens": 3,
+    "service_tier": "standard",
+    "inference_geo": "not_available"
+   },
+   "diagnostics": null,
+   "context_management": null
+  },
+  "parent_tool_use_id": null,
+  "timestamp": "2026-07-28T11:35:23.729Z",
+  "request_id": "req_011CdUPKBf3zMZ9iuqraWqpF"
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_stop",
+   "index": 1
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_start",
+   "index": 2,
+   "content_block": {
+    "type": "tool_use",
+    "id": "toolu_01XnkC84utvscyQ2nG6L1duX",
+    "name": "Read",
+    "input": {},
+    "caller": {
+     "type": "direct"
+    }
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 2,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": ""
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 2,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "{\"file_path\": \"/Users/designer/projects/spool-captures/mock-mcp-project/probe.txt"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 2,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "\"}"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "assistant",
+  "message": {
+   "model": "claude-sonnet-5",
+   "id": "msg_011CdUPKCxRy7yTytqGsdEiq",
+   "type": "message",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01XnkC84utvscyQ2nG6L1duX",
+     "name": "Read",
+     "input": {
+      "file_path": "/Users/designer/projects/spool-captures/mock-mcp-project/probe.txt"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ],
+   "stop_reason": null,
+   "stop_sequence": null,
+   "stop_details": null,
+   "usage": {
+    "input_tokens": 2,
+    "cache_creation_input_tokens": 13828,
+    "cache_read_input_tokens": 25437,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 13828
+    },
+    "output_tokens": 3,
+    "service_tier": "standard",
+    "inference_geo": "not_available"
+   },
+   "diagnostics": null,
+   "context_management": null
+  },
+  "parent_tool_use_id": null,
+  "timestamp": "2026-07-28T11:35:23.925Z",
+  "request_id": "req_011CdUPKBf3zMZ9iuqraWqpF"
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_stop",
+   "index": 2
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "user",
+  "message": {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_01XnkC84utvscyQ2nG6L1duX",
+     "type": "tool_result",
+     "content": "1\thello"
+    }
+   ]
+  },
+  "parent_tool_use_id": null,
+  "timestamp": "2026-07-28T11:35:24.002Z",
+  "tool_use_result": {
+   "type": "text",
+   "file": {
+    "filePath": "/Users/designer/projects/spool-captures/mock-mcp-project/probe.txt",
+    "content": "hello",
+    "numLines": 1,
+    "startLine": 1,
+    "totalLines": 1
+   }
+  }
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "message_delta",
+   "delta": {
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "stop_details": null
+   },
+   "usage": {
+    "input_tokens": 2,
+    "cache_creation_input_tokens": 13828,
+    "cache_read_input_tokens": 25437,
+    "output_tokens": 1318,
+    "output_tokens_details": {
+     "thinking_tokens": 1110
+    },
+    "iterations": [
+     {
+      "input_tokens": 2,
+      "output_tokens": 1318,
+      "cache_read_input_tokens": 25437,
+      "cache_creation_input_tokens": 13828,
+      "cache_creation": {
+       "ephemeral_5m_input_tokens": 0,
+       "ephemeral_1h_input_tokens": 13828
+      },
+      "type": "message"
+     }
+    ]
+   },
+   "context_management": {
+    "applied_edits": []
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "message_stop"
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "rate_limit_event",
+  "rate_limit_info": {
+   "status": "allowed",
+   "resetsAt": 1785254400,
+   "rateLimitType": "five_hour",
+   "overageStatus": "rejected",
+   "overageDisabledReason": "org_level_disabled",
+   "isUsingOverage": false
+  }
+ },
+ {
+  "type": "user",
+  "message": {
+   "role": "user",
+   "content": [
+    {
+     "tool_use_id": "toolu_013qbA8p9DDYSCnyajKqaV48",
+     "type": "tool_result",
+     "content": "total 4\ndrwxr-xr-x  5 designer staff 160 Jul 28 13:25 .\ndrwxr-xr-x 11 designer staff 352 Jul 28 13:35 ..\ndrwxr-xr-x  9 designer staff 288 Jul 28 13:32 .git\ndrwxr-xr-x  8 designer staff 256 Jul 28 13:24 design\n-rw-r--r--  1 designer staff   5 Jul 28 13:25 probe.txt\n---design---\ndesign/canvas.json\ndesign/.gitignore\ndesign/AGENTS.md\ndes<236 more chars of tool output elided>",
+     "is_error": false
+    }
+   ]
+  },
+  "parent_tool_use_id": null,
+  "timestamp": "2026-07-28T11:35:24.247Z",
+  "tool_use_result": {
+   "stdout": "total 4\ndrwxr-xr-x  5 designer staff 160 Jul 28 13:25 .\ndrwxr-xr-x 11 designer staff 352 Jul 28 13:35 ..\ndrwxr-xr-x  9 designer staff 288 Jul 28 13:32 .git\ndrwxr-xr-x  8 designer staff 256 Jul 28 13:24 design\n-rw-r--r--  1 designer staff   5 Jul 28 13:25 probe.txt\n---design---\ndesign/canvas.json\ndesign/.gitignore\ndesign/AGENTS.md\ndesign/CLAUDE.md\ndesign/shared/tokens.css\ndesign/shared/transitions.css\ndesign/shared/importmap.json\ndesign/shared/fonts.css\ndesign/frames/receipt/frame.tsx\ndesign/shared/scenarios/default.json\ndesign/shared/lib/utils.ts",
+   "stderr": "",
+   "interrupted": false,
+   "isImage": false,
+   "noOutputExpected": false
+  }
+ },
+ {
+  "type": "system",
+  "subtype": "status",
+  "status": "requesting"
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "message_start",
+   "message": {
+    "model": "claude-sonnet-5",
+    "id": "msg_011CdUPLKgmhpNZxhgKvQqPx",
+    "type": "message",
+    "role": "assistant",
+    "content": [],
+    "stop_reason": null,
+    "stop_sequence": null,
+    "stop_details": null,
+    "usage": {
+     "input_tokens": 32,
+     "cache_creation_input_tokens": 1659,
+     "cache_read_input_tokens": 39265,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 1659
+     },
+     "output_tokens": 2,
+     "service_tier": "standard",
+     "inference_geo": "not_available"
+    },
+    "diagnostics": null
+   }
+  },
+  "parent_tool_use_id": null,
+  "ttft_ms": 1054
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_start",
+   "index": 0,
+   "content_block": {
+    "type": "thinking",
+    "thinking": "",
+    "signature": ""
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "system",
+  "subtype": "thinking_tokens",
+  "estimated_tokens": 50,
+  "estimated_tokens_delta": 50
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "thinking_delta",
+    "thinking": "",
+    "estimated_tokens": 50
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "system",
+  "subtype": "thinking_tokens",
+  "estimated_tokens": 111,
+  "estimated_tokens_delta": 61
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "signature_delta",
+    "signature": "<elided>"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "assistant",
+  "message": {
+   "model": "claude-sonnet-5",
+   "id": "msg_011CdUPLKgmhpNZxhgKvQqPx",
+   "type": "message",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "",
+     "signature": "<elided>"
+    }
+   ],
+   "stop_reason": null,
+   "stop_sequence": null,
+   "stop_details": null,
+   "usage": {
+    "input_tokens": 32,
+    "cache_creation_input_tokens": 1659,
+    "cache_read_input_tokens": 39265,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 1659
+    },
+    "output_tokens": 2,
+    "service_tier": "standard",
+    "inference_geo": "not_available"
+   },
+   "diagnostics": null,
+   "context_management": null
+  },
+  "parent_tool_use_id": null,
+  "timestamp": "2026-07-28T11:35:26.440Z",
+  "request_id": "req_011CdUPLJYKQ4sHv8Pp12Prt"
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_stop",
+   "index": 0
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_start",
+   "index": 1,
+   "content_block": {
+    "type": "tool_use",
+    "id": "toolu_01PC9GsJAx9u91J5GdrrAeHv",
+    "name": "Read",
+    "input": {},
+    "caller": {
+     "type": "direct"
+    }
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": ""
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "{\"file_path\": \"/Users/designer/projects/spool-captures/mock-mcp-project/design/CLA"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "UDE.md"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "\"}"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "assistant",
+  "message": {
+   "model": "claude-sonnet-5",
+   "id": "msg_011CdUPLKgmhpNZxhgKvQqPx",
+   "type": "message",
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "toolu_01PC9GsJAx9u91J5GdrrAeHv",
+     "name": "Read",
+     "input": {
+      "file_path": "/Users/designer/projects/spool-captures/mock-mcp-project/design/CLAUDE.md"
+     },
+     "caller": {
+      "type": "direct"
+     }
+    }
+   ],
+   "stop_reason": null,
+   "stop_sequence": null,
+   "stop_details": null,
+   "usage": {
+    "input_tokens": 32,
+    "cache_creation_input_tokens": 1659,
+    "cache_read_input_tokens": 39265,
+    "cache_creation": {
+     "ephemeral_5m_input_tokens": 0,
+     "ephemeral_1h_input_tokens": 1659
+    },
+    "output_tokens": 2,
+    "service_tier": "standard",
+    "inference_geo": "not_available"
+   },
+   "diagnostics": null,
+   "context_management": null
+  },
+  "parent_tool_use_id": null,
+  "timestamp": "2026-07-28T11:35:26.804Z",
+  "request_id": "req_011CdUPLJYKQ4sHv8Pp12Prt"
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_stop",
+   "index": 1
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_start",
+   "index": 2,
+   "content_block": {
+    "type": "tool_use",
+    "id": "toolu_019N3dNe2imyb5yFZXAvrXgu",
+    "name": "Read",
+    "input": {},
+    "caller": {
+     "type": "direct"
+    }
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 2,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": ""
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "stream_event",
+  "event": {
+   "type": "content_block_delta",
+   "index": 2,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "{\"file_path\": \"/Users/designer/projects/sp"
+   }
+  },
+  "parent_tool_use_id": null
+ },
+ {
+  "type": "control_response",
+  "response": {
+   "subtype": "success",
+   "request_id": "drv_1",
+   "response": {
+    "still_queued": []
+   }
+  }
+ },
+ {
+  "type": "user",
+  "message": {
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.\n\nNote: The user's next message may contain a correction or preference. Pay close attention \u2014 if they explain what went wrong or how they'd prefer you to work, consider saving<36 more chars of tool output elided>",
+     "is_error": true,
+     "tool_use_id": "toolu_01PC9GsJAx9u91J5GdrrAeHv"
+    }
+   ]
+  },
+  "parent_tool_use_id": null,
+  "timestamp": "2026-07-28T11:35:26.852Z",
+  "tool_use_result": "User rejected tool use",
+  "tool_result_meta": [
+   {
+    "id": "toolu_01PC9GsJAx9u91J5GdrrAeHv",
+    "non_execution_kind": "user-rejected"
+   }
+  ]
+ },
+ {
+  "type": "user",
+  "message": {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "[Request interrupted by user]"
+    }
+   ]
+  },
+  "parent_tool_use_id": null,
+  "timestamp": "2026-07-28T11:35:26.853Z"
+ },
+ {
+  "is_error": true,
+  "duration_api_ms": 14991,
+  "num_turns": 5,
+  "stop_reason": "tool_use",
+  "total_cost_usd": 0.1103751,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 13828,
+   "cache_read_input_tokens": 25437,
+   "output_tokens": 1318,
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 13828,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "not_available",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 1318,
+     "cache_read_input_tokens": 25437,
+     "cache_creation_input_tokens": 13828,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 13828
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard"
+  },
+  "modelUsage": {
+   "claude-sonnet-5": {
+    "inputTokens": 2,
+    "outputTokens": 1318,
+    "cacheReadInputTokens": 25437,
+    "cacheCreationInputTokens": 13828,
+    "webSearchRequests": 0,
+    "costUSD": 0.1103751,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "canonicalModel": "claude-sonnet-5",
+    "provider": "firstParty"
+   }
+  },
+  "permission_denials": [],
+  "terminal_reason": "aborted_streaming",
+  "fast_mode_state": "off",
+  "fast_mode_disabled_reason": "sdk_opt_in_required",
+  "subtype": "error_during_execution",
+  "errors": [
+   "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"
+  ],
+  "type": "result",
+  "duration_ms": 17910
+ }
+]

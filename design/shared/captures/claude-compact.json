@@ -1,0 +1,289 @@
+[
+ {
+  "type": "system",
+  "subtype": "hook_started",
+  "hook_id": "b5676c20-1abb-4ee5-8b40-717a70ef8052",
+  "hook_name": "SessionStart:fork",
+  "hook_event": "SessionStart"
+ },
+ {
+  "type": "system",
+  "subtype": "hook_started",
+  "hook_id": "a8cfd45c-2e77-4dd3-b9c6-4d3c64a868bd",
+  "hook_name": "SessionStart:fork",
+  "hook_event": "SessionStart"
+ },
+ {
+  "type": "system",
+  "subtype": "hook_response",
+  "hook_id": "b5676c20-1abb-4ee5-8b40-717a70ef8052",
+  "hook_name": "SessionStart:fork",
+  "hook_event": "SessionStart",
+  "output": "",
+  "stdout": "",
+  "stderr": "",
+  "exit_code": 0,
+  "outcome": "success"
+ },
+ {
+  "type": "system",
+  "subtype": "hook_response",
+  "hook_id": "a8cfd45c-2e77-4dd3-b9c6-4d3c64a868bd",
+  "hook_name": "SessionStart:fork",
+  "hook_event": "SessionStart",
+  "output": "",
+  "stdout": "",
+  "stderr": "",
+  "exit_code": 0,
+  "outcome": "success"
+ },
+ {
+  "type": "system",
+  "subtype": "status",
+  "status": "compacting"
+ },
+ {
+  "type": "rate_limit_event",
+  "rate_limit_info": {
+   "status": "allowed",
+   "resetsAt": 1785254400,
+   "rateLimitType": "five_hour",
+   "overageStatus": "rejected",
+   "overageDisabledReason": "org_level_disabled",
+   "isUsingOverage": false
+  }
+ },
+ {
+  "type": "system",
+  "subtype": "hook_started",
+  "hook_id": "32f77a9f-191f-4f51-a8ef-d14f7aab51ec",
+  "hook_name": "SessionStart:compact",
+  "hook_event": "SessionStart"
+ },
+ {
+  "type": "system",
+  "subtype": "hook_started",
+  "hook_id": "c073ddde-6d12-471a-9d6f-95d512fa78f9",
+  "hook_name": "SessionStart:compact",
+  "hook_event": "SessionStart"
+ },
+ {
+  "type": "system",
+  "subtype": "hook_response",
+  "hook_id": "32f77a9f-191f-4f51-a8ef-d14f7aab51ec",
+  "hook_name": "SessionStart:compact",
+  "hook_event": "SessionStart",
+  "output": "",
+  "stdout": "",
+  "stderr": "",
+  "exit_code": 0,
+  "outcome": "success"
+ },
+ {
+  "type": "system",
+  "subtype": "hook_response",
+  "hook_id": "c073ddde-6d12-471a-9d6f-95d512fa78f9",
+  "hook_name": "SessionStart:compact",
+  "hook_event": "SessionStart",
+  "output": "",
+  "stdout": "",
+  "stderr": "",
+  "exit_code": 0,
+  "outcome": "success"
+ },
+ {
+  "type": "system",
+  "subtype": "status",
+  "status": null,
+  "compact_result": "success"
+ },
+ {
+  "type": "system",
+  "subtype": "init",
+  "cwd": "/Users/designer/projects/spool-captures/mock-mcp-project",
+  "tools": [
+   "<33 tools elided>"
+  ],
+  "mcp_servers": [
+   {
+    "name": "plugin:claude-secrets:claude-secrets",
+    "status": "pending"
+   },
+   {
+    "name": "plugin:paper-desktop:paper",
+    "status": "failed"
+   }
+  ],
+  "model": "claude-opus-5[1m]",
+  "permissionMode": "default",
+  "slash_commands": [
+   "<109 commands elided>"
+  ],
+  "apiKeySource": "none",
+  "claude_code_version": "2.1.220",
+  "output_style": "default",
+  "agents": [
+   "claude",
+   "designer",
+   "Explore",
+   "general-purpose",
+   "paper-designer",
+   "Plan",
+   "statusline-setup"
+  ],
+  "skills": [
+   "<81 skills elided>"
+  ],
+  "plugins": [
+   {
+    "name": "claude-secrets",
+    "path": "/Users/designer/.claude/plugins/cache/claude-secrets/claude-secrets/0.1.0",
+    "source": "claude-secrets@claude-secrets",
+    "version": "0.1.0"
+   },
+   {
+    "name": "paper-desktop",
+    "path": "/Users/designer/.claude/plugins/cache/paper/paper-desktop/0.1.0",
+    "source": "paper-desktop@paper",
+    "version": "0.1.0"
+   }
+  ],
+  "capabilities": [
+   "interrupt_receipt_v1",
+   "interrupt_cancel_queued_v1",
+   "msg_lifecycle_v1"
+  ],
+  "analytics_disabled": false,
+  "product_feedback_disabled": false,
+  "memory_paths": {
+   "auto": "/Users/designer/.claude/projects/-Users-designer-projects-spool-captures-mock-mcp-project/memory/"
+  },
+  "fast_mode_state": "off",
+  "fast_mode_disabled_reason": "sdk_opt_in_required"
+ },
+ {
+  "type": "system",
+  "subtype": "compact_boundary",
+  "compact_metadata": {
+   "trigger": "manual",
+   "pre_tokens": 94351,
+   "post_tokens": 7148,
+   "cumulative_dropped_tokens": 87203,
+   "duration_ms": 113698,
+   "pre_compact_discovered_tools": [
+    "DesignSync",
+    "EnterPlanMode",
+    "mcp__claude_ai_Artifacts__import_google_drive_assets",
+    "mcp__claude_ai_Slides__create_presentation_from_template",
+    "mcp__claude_ai_Slides__get_presentation",
+    "mcp__claude_ai_Slides__import_google_drive_asset",
+    "mcp__claude_ai_Google_Drive__copy_file",
+    "mcp__claude_ai_Google_Drive__create_file",
+    "mcp__claude_ai_Google_Drive__download_file_content",
+    "mcp__claude_ai_Google_Drive__get_file_metadata",
+    "mcp__claude_ai_Google_Drive__get_file_permissions",
+    "mcp__claude_ai_Google_Drive__list_recent_files",
+    "mcp__claude_ai_Google_Drive__read_file_content",
+    "mcp__claude_ai_Google_Drive__search_files",
+    "mcp__claude_ai_Notion__notion-create-attachment",
+    "mcp__claude_ai_Notion__notion-create-comment",
+    "mcp__claude_ai_Notion__notion-create-database",
+    "mcp__claude_ai_Notion__notion-create-pages",
+    "mcp__claude_ai_Notion__notion-create-view",
+    "mcp__claude_ai_Notion__notion-download-attachment",
+    "mcp__claude_ai_Notion__notion-duplicate-page",
+    "mcp__claude_ai_Notion__notion-fetch",
+    "mcp__claude_ai_Notion__notion-get-teams",
+    "mcp__claude_ai_Notion__notion-move-pages",
+    "mcp__claude_ai_Notion__notion-search",
+    "mcp__claude_ai_Notion__notion-update-page"
+   ],
+   "preserved_segment": {
+    "head_uuid": "8a6577ca-dc6d-492d-8b7b-1035a2779131",
+    "anchor_uuid": "4132519d-fb0d-49da-875c-06e5b182f24b",
+    "tail_uuid": "a3fb1f68-d289-4a53-be29-7afd951aee2f"
+   },
+   "preserved_messages": {
+    "anchor_uuid": "4132519d-fb0d-49da-875c-06e5b182f24b",
+    "uuids": [
+     "8a6577ca-dc6d-492d-8b7b-1035a2779131",
+     "a3fb1f68-d289-4a53-be29-7afd951aee2f"
+    ],
+    "all_uuids": [
+     "8a6577ca-dc6d-492d-8b7b-1035a2779131",
+     "a3fb1f68-d289-4a53-be29-7afd951aee2f",
+     "63c0433c-0fe6-4ac7-b5e4-d0fb1d7bf8d2",
+     "03be85f7-105f-42d8-9c00-f0979c13ceae"
+    ]
+   }
+  },
+  "logical_parent_uuid": "03be85f7-105f-42d8-9c00-f0979c13ceae"
+ },
+ {
+  "type": "user",
+  "message": {
+   "role": "user",
+   "content": "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\nSummary:\n1. **Primary Request and Intent:**\n\nThe user's single request (verbatim intent, one user turn): this is a spool canvas, run `spool skill` first as \"the complete contract.\" Build a `receipt` frame for a coffee-shop app called **kaffe** \u2014 t<16955 more chars of tool output elided>"
+  },
+  "parent_tool_use_id": null,
+  "timestamp": "2026-07-28T11:38:27.312Z",
+  "isReplay": false,
+  "isSynthetic": true
+ },
+ {
+  "type": "user",
+  "message": {
+   "role": "user",
+   "content": "<local-command-stdout>Compacted </local-command-stdout>"
+  },
+  "parent_tool_use_id": null,
+  "timestamp": "2026-07-28T11:38:27.470Z",
+  "isReplay": true
+ },
+ {
+  "is_error": false,
+  "duration_api_ms": 0,
+  "num_turns": 0,
+  "stop_reason": null,
+  "total_cost_usd": 0.589601,
+  "usage": {
+   "input_tokens": 0,
+   "cache_creation_input_tokens": 0,
+   "cache_read_input_tokens": 0,
+   "output_tokens": 0,
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "",
+   "iterations": [],
+   "speed": "standard"
+  },
+  "modelUsage": {
+   "claude-opus-5[1m]": {
+    "inputTokens": 2075,
+    "outputTokens": 10169,
+    "cacheReadInputTokens": 19877,
+    "cacheCreationInputTokens": 50410,
+    "webSearchRequests": 0,
+    "costUSD": 0.589601,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "canonicalModel": "claude-opus-5",
+    "provider": "firstParty"
+   }
+  },
+  "permission_denials": [],
+  "fast_mode_state": "off",
+  "fast_mode_disabled_reason": "sdk_opt_in_required",
+  "subtype": "success",
+  "result": "",
+  "type": "result",
+  "duration_ms": 113818
+ }
+]
