@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.14.0
+
+### Minor Changes
+
+- a144d9a: Inside the Mac app, the canvas now shows the app's own update in the same pill that offers the npm one: Spool is out, Update, a download that counts up, Restarting. The app checks for a release by itself, ten seconds after it opens and once a day after that, so nobody has to open the menu to find out. When it cannot update itself it says why and hands over the dmg instead.
+- 0265661: The agent's words arrive a paragraph at a time. A paragraph stays off the screen until it is whole and then opens into the log with its words rising into it, and a caret says more is coming. Nothing half-written is drawn any more. Every row in the log opens the same way, from no height to its own, and so does a picture landing under a look and a plan opening, so the log above glides up instead of jumping.
+- bf719bd: The folder picker is one field and a list. The folder you are browsing is printed in front of the caret, every segment of it a press, and it steps aside the moment you type so search can reach every folder under home. The count, the group labels, the jump row and the footer buttons are gone. Enter still opens a project or steps into a folder, and landing on a folder that is not a project offers to initialize it on one line.
+
+  A "+" at the end of the field makes a new project without leaving spool. Press it, or ⌘N, type a name, and Enter creates the folder inside the one you are browsing, scaffolds design/ and opens its tab on the empty canvas.
+
+- 8a4c2b9: The folder picker searches the folder you are standing in. The path stays in front of what you type, so `~/projects/art` finds the folders under projects that answer to art, and each hit says where it sits under that folder. Type `~/` in front to search every folder under home instead.
+
+  The picker no longer says nothing matches while it is still looking. Spool indexes home in the background when it starts and again each time the picker opens, so the first keystroke answers from an index that is already there.
+
+- 1b114ed: Play in the Mac app now opens a window Spool sized and drew. It opens at the frame's authored width, as tall as the frame or as tall as the screen, whichever is smaller, snapped to the right edge of the display the canvas is on. There is no OS title bar: a 30px bar carries back to the canvas, the project and frame with the frame switcher, the window's size, and close, with the traffic lights inset into it. Move or resize that window and it comes back where you left it next time you play, remembered per project and per authored width, so a phone frame never inherits a desktop frame's window. The bar says `restored` once with a `reset` beside it when it does. Playing in a browser tab is unchanged.
+- 53b32b5: Playing in a browser tab now wears the same bar the Mac app's window does: back to the canvas, the project and frame with the frame switcher, the window's size, the exit chord, and close, always at the top. An eye on the bar puts it away for a reader who wants only the prototype; a nub at the top edge is then its trace, resting the cursor there peeks the bar back in, and pressing the nub puts it back on. The choice is remembered. The bar that had to be summoned by resting against the top edge is gone, and with it the hover that kept missing.
+- 6a7b706: Moving a frame into a page no longer breaks it. An import written `../../shared/lib/utils` counts the folders between the frame and design/, and a move changes the count — so dragging frames into a freshly made page left every one of them failing to compile. Two changes close that. Imports of shared/ can now be written by their design-relative path — `import { cn } from "shared/lib/utils"` — which resolves from any frame at any depth, so a move never touches it; the skill teaches this form. And when spool itself moves or copies a folder — a drag in the rail, a page move, a duplicate onto another page — any `../` import reaching out of that folder is re-aimed as the folder lands, a stylesheet's `@import` and `url()` included: onto the shared/ form where the target sits in shared/, onto a recomputed relative path otherwise. Only import positions are read, so a `../` the frame shows or comments on stays the author's text. A folder moved outside spool still surfaces the compile error with the hand-to-agent prompt, but frames written in the new form no longer care where they sit.
+- f67d702: The agent rail names a thread by what you asked. The plate over the log shows the open thread's ask, the marks of threads working or finished elsewhere, and a plus for a new thread. Pressing the ask drops a list of every thread over the log, each with its ask, the frames it wrote and its age, with a close on hover. The column of marks down the rail's edge and its hover flyout are gone, and the dock glyph is the one thing that shuts the panel.
+
+### Patch Changes
+
+- 8b715a9: The agent's questions are asked one at a time. A call that carries two or three of them used to send the first thing you clicked and drop the rest, so the agent got one answer where you had been shown several decisions. Now a pick settles its question, the next one appears, and the whole set goes up together.
+
+  Dismissing a question no longer breaks the session. Spool was refusing with an empty message, which the API rejects, and the failure came back on every message after it rather than just that one.
+
+- fba7425: Right-clicking a frame now offers Copy path instead of Open in editor. It puts the frame's source path on the clipboard, ready to hand to an agent or paste into a terminal, and a line says which path it copied. Right-clicking an element inside a frame copies the file that element actually comes from, which is often a shared component rather than the frame. Open in editor is gone: it tried to guess your editor and mostly failed, and spool has no business choosing one.
+- 4f0586e: A development lane is now its own app rather than a second launch of the daily one. `SPOOL_DIR` gives the Mac app its own Electron state directory, and with it its own single-instance lock: a checkout's window used to ask for the lock the installed Spool was holding, be refused, and raise that app's canvas instead of opening its own. It also says which it is — "Spool Dev" in the Dock, the menu bar and the About panel, and the development blue on the app icon, the menu bar mark and the ribbon mark on the canvas, beside the favicon that already wore it. The mark alone: the accent stays as it was.
+- 78e5ec2: The agent log no longer drops out of live when a picture lands or a row grows under a still scrollbar. Following stays on and the log moves only up to the new end.
+- 5b868a5: `spool upgrade` now restarts a daemon that is behind the cli when there is nothing newer to install. Before, a daemon the Mac app had started from an older bundle stayed on that version after the cli was updated: `spool status` pointed at `spool upgrade`, and `spool upgrade` said it was already the latest and left the daemon alone.
+
 ## 0.13.0
 
 ### Minor Changes
