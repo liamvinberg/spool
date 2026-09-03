@@ -25,6 +25,8 @@ const PAGES_W = 248;
 const STRIP_W = 44;
 const PROPERTIES_W = 300;
 
+export type LitAs = "surface" | "dot" | "name" | "spine";
+
 export interface PageRow {
 	name: string;
 	frames: readonly string[];
@@ -39,6 +41,11 @@ export interface PageRow {
 	mark?: Life | undefined;
 	/** paired with something outside this rail that is pointing at the same page */
 	lit?: boolean | undefined;
+	/**
+	 * How a lit row shows it. `surface` is the shipped finder fill; the others are
+	 * the door question's takes on a hold lighting the library row (spool-cloud#32).
+	 */
+	litAs?: LitAs | undefined;
 	/**
 	 * What stands in the folder's slot. A page spool projects out of what the
 	 * project holds is not a folder of frames, so it does not wear a folder (#189).
@@ -179,15 +186,17 @@ function PageBlock({
 	reached: Map<string, Target>;
 	held: ReadonlySet<string> | null;
 }) {
+	const litAs = page.litAs ?? "surface";
+	const named = page.lit === true && litAs === "name";
 	return (
 		<div className={cn(page.ruled === true && "border-border border-b pb-2 mb-2")}>
 			<div
 				className={cn(
 					"group relative flex h-8 items-center pr-1.5",
-					(page.active === true || page.lit === true) && "bg-surface",
+					(page.active === true || (page.lit === true && litAs === "surface")) && "bg-surface",
 				)}
 			>
-				{page.active === true ? (
+				{page.active === true || (page.lit === true && litAs === "spine") ? (
 					<span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-thread" />
 				) : null}
 				<span className="flex h-8 w-6 shrink-0 items-center justify-center text-muted">
@@ -196,17 +205,17 @@ function PageBlock({
 				<span className="flex h-8 min-w-0 flex-1 items-center gap-2 text-left">
 					{page.face === undefined ? (
 						<FolderIcon
-							className={cn("h-3.5 w-3.5 shrink-0", page.active === true ? "text-thread" : "text-muted")}
+							className={cn("h-3.5 w-3.5 shrink-0", page.active === true || named ? "text-thread" : "text-muted")}
 						/>
 					) : (
-						<span className={cn("shrink-0", page.active === true ? "text-thread" : "text-muted")}>
+						<span className={cn("shrink-0", page.active === true || named ? "text-thread" : "text-muted")}>
 							{page.face}
 						</span>
 					)}
 					<span
 						className={cn(
 							"min-w-0 flex-1 truncate font-mono text-sm leading-sm",
-							page.active === true ? "text-text" : "text-muted",
+							named ? "text-thread" : page.active === true ? "text-text" : "text-muted",
 						)}
 					>
 						{page.name}
@@ -221,7 +230,9 @@ function PageBlock({
 				{page.open === true || !page.frames.some((frame) => reached.has(frame)) ? null : (
 					<WalkTick className="mr-2 h-2 w-2.5 text-thread" />
 				)}
-				{held === null || page.open === true ? null : <HoldDot on={page.frames.some((frame) => held.has(frame))} className="mr-2" />}
+				{held === null || page.open === true ? null : (
+					<HoldDot on={page.frames.some((frame) => held.has(frame)) || (page.lit === true && litAs === "dot")} className="mr-2" />
+				)}
 				<span className="font-mono text-2xs text-muted/60 leading-3">{page.frames.length}</span>
 			</div>
 			{page.open === true ? (

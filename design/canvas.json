@@ -569,6 +569,10 @@
 		"explore/components/door": {
 			"x": 3083,
 			"y": 80
+		},
+		"explore/components/door/lit": {
+			"x": 9200,
+			"y": 80
 		}
 	}
 }

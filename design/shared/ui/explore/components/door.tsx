@@ -3,7 +3,7 @@ import { cn } from "shared/lib/utils";
 import { CARD_H, CARD_W, Scaled, TvarsoCheckout, type VariationId } from "shared/ui/demo/tvarso-checkout";
 import { LibraryFace, TOKEN_COUNT, TVARSO_FILES, TVARSO_PAGES, TVARSO_PARTS } from "shared/ui/demo/tvarso-library";
 import { FrameBody, LAID, RAIL_FRAMES, Rail, Tint } from "shared/ui/explore/components/library-frames";
-import { CanvasChrome, type PageRow } from "shared/ui/spool/canvas-chrome";
+import { CanvasChrome, type LitAs, type PageRow } from "shared/ui/spool/canvas-chrome";
 import { ArrowIcon, FAINT, LABEL, VALUE } from "shared/ui/spool/properties-fields";
 import { SpoolShell } from "shared/ui/spool/shell";
 
@@ -30,13 +30,14 @@ type View = "library" | "booking";
 const LIBRARY_ROW = { name: "library", frames: RAIL_FRAMES, face: <LibraryFace /> } as const;
 
 /** the rail with the library row where the take puts it */
-function pagesFor(where: Where, view: View): readonly PageRow[] {
+function pagesFor(where: Where, view: View, litAs: LitAs): readonly PageRow[] {
 	const onLibrary = view === "library";
 	const library: PageRow = {
 		...LIBRARY_ROW,
 		active: onLibrary,
 		open: onLibrary,
 		lit: !onLibrary,
+		litAs,
 		...(where === "head" ? { ruled: true } : {}),
 		...(where === "foot" ? { foot: true } : {}),
 	};
@@ -52,7 +53,7 @@ function pagesFor(where: Where, view: View): readonly PageRow[] {
 const BUTTON = TVARSO_FILES.flatMap((file) => file.parts).find((part) => part.name === "Button");
 const RENDERS = BUTTON?.used ?? [];
 
-export function DoorCanvas({ where, start }: { where: Where; start: View }) {
+export function DoorCanvas({ where, start, litAs = "surface" }: { where: Where; start: View; litAs?: LitAs }) {
 	const [view, setView] = useState<View>(start);
 
 	useEffect(() => {
@@ -64,7 +65,7 @@ export function DoorCanvas({ where, start }: { where: Where; start: View }) {
 		return () => window.removeEventListener("keydown", onKey);
 	}, [view, start]);
 
-	const pages = pagesFor(where, view);
+	const pages = pagesFor(where, view, litAs);
 	return view === "library" ? <LibraryView pages={pages} /> : <BookingView pages={pages} onDoor={() => setView("library")} />;
 }
 
