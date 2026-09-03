@@ -65,6 +65,13 @@ fi
 # fine for a signature that only has to satisfy this machine; the release path
 # signs inside out, which is @electron/osx-sign's job.
 if [ "$SIGN_IDENTITY" = "-" ]; then
+	# An ad-hoc build cannot update itself: Squirrel.Mac checks the downloaded
+	# bundle's signature against the running one's, and a Developer ID release
+	# never matches an ad-hoc signature, silently. The feed file is what tells
+	# the app it has an updater, so a build that would only ever be refused does
+	# not carry one, and Check for Updates points it at the download instead.
+	# Removed before signing, since signing seals Resources.
+	rm -f "$APP/Contents/Resources/app-update.yml"
 	codesign --force --deep --options runtime --timestamp=none \
 		--entitlements "$ROOT/build/entitlements.mac.plist" --sign - "$APP"
 fi
