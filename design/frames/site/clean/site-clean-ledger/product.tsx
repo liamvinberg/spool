@@ -1528,10 +1528,11 @@ export function ReserveCardScreen() {
 							Your table is held.
 						</span>
 						<span className="mt-2 shrink-0 text-[12.5px] leading-[20px]" style={{ color: "var(--dim)" }}>
-							{MONTH[date]} at {sitting}. The door with the lamp on Hökens gata.
+							The door with the lamp on Hökens gata. We hold it fifteen minutes.
 						</span>
-						<div className="mt-3.5">
+						<div className="mt-3">
 							<SummaryRow label="Name" value={name.trim() === "" ? "No name given" : name} />
+							<SummaryRow label="Date" value={MONTH[date]} />
 							<SummaryRow label="Sitting" value={sitting} />
 							<SummaryRow label="Guests" value={guests} />
 							<SummaryRow label="Reference" value="BRS 4180" />
