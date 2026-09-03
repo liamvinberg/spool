@@ -1115,22 +1115,22 @@ export function MenuScreen() {
 			<Grain />
 			<BrasaBar page="menu" />
 			<div className="relative flex min-h-0 flex-1">
-				<div className="flex min-w-0 flex-1 flex-col py-[52px] pr-14 pl-[72px]">
-					<h1 className="disp" style={{ fontSize: 54, lineHeight: 1.04, fontWeight: 300, letterSpacing: "-0.026em" }}>
+				<div className="flex min-w-0 flex-1 flex-col py-[44px] pr-14 pl-[72px]">
+					<h1 className="disp" style={{ fontSize: 50, lineHeight: 1.04, fontWeight: 300, letterSpacing: "-0.026em" }}>
 						Six courses, written
 						<br />
 						this morning.
 					</h1>
-					<p className="mt-5 max-w-[520px] text-[15px] leading-[26px]" style={{ color: "var(--dim)" }}>
+					<p className="mt-4 max-w-[520px] text-[15px] leading-[26px]" style={{ color: "var(--dim)" }}>
 						One menu for the whole room, 795 kr. It changes when the market and the fire change, which is
 						most days.
 					</p>
 
-					<div className="mt-8">
+					<div className="mt-7">
 						{COURSES.map((c) => (
 							<div key={c.numeral}>
 								<Rule />
-								<div className="flex items-start gap-6 py-[13px]">
+								<div className="flex items-start gap-6 py-[11px]">
 									<span
 										className="disp w-[34px] shrink-0 pt-[3px] text-[13px] leading-none tracking-[0.08em]"
 										style={{ color: "var(--gold)" }}
@@ -1161,10 +1161,10 @@ export function MenuScreen() {
 					</div>
 
 					<p
-						className="ed mt-7 max-w-[560px] text-[26px] leading-[1.34] italic"
+						className="ed mt-6 max-w-[560px] text-[26px] leading-[1.34] italic"
 						style={{ color: "var(--gold)" }}
 					>
-						"The fire is lit at two. Everything after that is timing."
+						“The fire is lit at two. Everything after that is timing.”
 					</p>
 
 					<div className="mt-auto flex items-baseline gap-8 pt-6">
@@ -1429,6 +1429,30 @@ export function ReserveScreen({ confirmed = false }: { confirmed?: boolean }) {
 									We hold the table fifteen minutes past the sitting.
 								</span>
 							</div>
+
+							<div className="mt-auto grid grid-cols-3 gap-10 pt-10">
+								{[
+									{ head: "Six courses", note: "795 kr, written each morning and cooked over wood." },
+									{ head: "One room", note: "Twenty-four seats, two sittings, no second dining room." },
+									{ head: "Thirty days", note: "How far ahead the book opens. Larger tables by the door." },
+								].map((f) => (
+									<div key={f.head}>
+										<Rule />
+										<span
+											className="disp mt-3 block text-[17px] leading-none"
+											style={{ fontWeight: 400 }}
+										>
+											{f.head}
+										</span>
+										<span
+											className="mt-2 block text-[12.5px] leading-[19px]"
+											style={{ color: "var(--faint)" }}
+										>
+											{f.note}
+										</span>
+									</div>
+								))}
+							</div>
 						</>
 					)}
 				</div>
@@ -1532,7 +1556,7 @@ export function ReserveCardScreen() {
 									onClick={() => setDate(d.date)}
 									className="cursor-pointer border-none bg-transparent p-0"
 								>
-									<DayPill day={d.day} date={d.date} on={d.date === date} width={76} height={58} />
+									<DayPill day={d.day} date={d.date} on={d.date === date} width={76} height={62} />
 								</button>
 							))}
 						</div>
@@ -1545,7 +1569,7 @@ export function ReserveCardScreen() {
 									onClick={() => setSitting(s)}
 									className="flex-1 cursor-pointer border-none bg-transparent p-0"
 								>
-									<ChoicePill label={s} on={s === sitting} height={38} width={202} />
+									<ChoicePill label={s} on={s === sitting} height={40} width={202} />
 								</button>
 							))}
 						</div>
@@ -1561,7 +1585,7 @@ export function ReserveCardScreen() {
 									onClick={() => setGuests(p)}
 									className="cursor-pointer border-none bg-transparent p-0"
 								>
-									<ChoicePill label={p} on={p === guests} width={38} height={34} />
+									<ChoicePill label={p} on={p === guests} width={38} height={36} />
 								</button>
 							))}
 						</div>
@@ -1572,7 +1596,7 @@ export function ReserveCardScreen() {
 							spellCheck={false}
 							aria-label="Name"
 							placeholder="Your name"
-							className="mt-4 h-[40px] w-full shrink-0 border-b bg-transparent text-[14px] outline-none transition-colors duration-200 focus:border-[var(--gold)]"
+							className="mt-4 h-[42px] w-full shrink-0 border-b bg-transparent text-[14px] outline-none transition-colors duration-200 focus:border-[var(--gold)]"
 							style={{ borderColor: "var(--line-2)", color: "var(--cream)" }}
 						/>
 
@@ -2119,7 +2143,8 @@ const HOME = { x: 36, y: 58 };
 const RESERVE = { x: 36 + HERO_W + HERO_GAP, y: 58 };
 const CONFIRMED = { x: 36 + (HERO_W + HERO_GAP) * 2, y: 58 };
 const MENU = { x: 140, y: 58 + HERO_H + 62 };
-const BOOK = { x: 140 + HERO_W + HERO_GAP, y: 58 + HERO_H + 62 };
+/** clear of the tool bar the canvas floats at the bottom middle of the field */
+const BOOK = { x: 700, y: 58 + HERO_H + 62 };
 
 function CanvasField() {
 	const mid = HERO_H / 2;
