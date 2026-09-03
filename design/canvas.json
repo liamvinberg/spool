@@ -565,6 +565,10 @@
 		"explore/components/library/library-dock": {
 			"x": 1600,
 			"y": 80
+		},
+		"explore/components/door": {
+			"x": 3083,
+			"y": 80
 		}
 	}
 }
