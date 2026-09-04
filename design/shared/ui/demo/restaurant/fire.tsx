@@ -23,7 +23,17 @@ function Arrow() {
 	return <span aria-hidden="true">↗</span>;
 }
 
-export function FireRestaurant({ take, fire, gathering }: { take: FireTake; fire: string; gathering?: string }) {
+export function FireRestaurant({
+	take,
+	fire,
+	gathering,
+	headline = "Come closer.",
+}: {
+	take: FireTake;
+	fire: string;
+	gathering?: string;
+	headline?: string;
+}) {
 	return (
 		<RestaurantService
 			take="ember"
@@ -56,7 +66,7 @@ export function FireRestaurant({ take, fire, gathering }: { take: FireTake; fire
 								</button>
 							</header>
 							<div className="hf-hearth-intro" id="welcome">
-								<h1>Come closer.</h1>
+								<h1>{headline}</h1>
 								<p>
 									There’s bread to tear, something on the fire,
 									<br />
