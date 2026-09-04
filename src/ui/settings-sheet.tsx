@@ -1,20 +1,27 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { accelLabel } from "../runtime/platform-keys";
 import {
 	APPEARANCES,
 	type Appearance,
-	LIGHT_THEME_TOKENS,
+	DARK_TOKENS,
 	parseSetting,
+	parseThemeKey,
 	type SettingKey,
 	type SettingReading,
 	type SettingScope,
-	THEME_TOKENS,
+	THEME_LOOKS,
+	THEME_TOKEN_NAMES,
+	type ThemeLook,
 	type ThemeToken,
+	themeKey,
+	themeTokens,
 } from "../settings/registry";
+import { matchPreset, PRESETS, parseTheme, printTheme, type ThemeSpec, themeWrites } from "../settings/themes";
 import { cn } from "./cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { RibbonMark } from "./icons";
-import { useSettings, useWriteSetting } from "./settings";
+import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
 
 /**
  * The settings sheet (#282): everything a person is allowed to change, drawn
@@ -38,6 +45,7 @@ export function SettingsSheet({ project, onClose }: { project: string | undefine
 	const [tab, setTab] = useState<SettingsTab>("general");
 	const snapshot = useSettings(project);
 	const write = useWriteSetting(project);
+	const writeMany = useWriteSettings(project);
 
 	useEffect(() => {
 		return attachHotkeyLayer({
@@ -80,7 +88,7 @@ export function SettingsSheet({ project, onClose }: { project: string | undefine
 						{snapshot === undefined ? null : tab === "general" ? (
 							<General project={project} entries={entries} write={write} />
 						) : (
-							<AppearanceTab entries={entries} write={write} />
+							<AppearanceTab entries={entries} write={write} writeMany={writeMany} />
 						)}
 					</div>
 				</div>
@@ -90,6 +98,7 @@ export function SettingsSheet({ project, onClose }: { project: string | undefine
 }
 
 type Write = ReturnType<typeof useWriteSetting>;
+type WriteMany = ReturnType<typeof useWriteSettings>;
 
 function TabRow({ tab, onTab }: { tab: SettingsTab; onTab: (tab: SettingsTab) => void }) {
 	const tabs: readonly { id: SettingsTab; name: string }[] = [
@@ -194,27 +203,70 @@ function SettingRow({ entry, write }: { entry: SettingReading; write: Write }) {
 
 /* --------------------------------------------------------------- appearance -- */
 
-function AppearanceTab({ entries, write }: { entries: readonly SettingReading[]; write: Write }) {
-	const appearance = entries.find((entry) => entry.key === "appearance");
-	const tokens = entries.filter(
-		(entry): entry is SettingReading & { value: string } =>
-			entry.group === "theme" && typeof entry.value === "string",
+/** The look the system is in, live, for `system` to follow. */
+function useSystemLook(): ThemeLook {
+	const query = () => (typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : undefined);
+	return useSyncExternalStore(
+		(listen) => {
+			const media = query();
+			media?.addEventListener("change", listen);
+			return () => media?.removeEventListener("change", listen);
+		},
+		() => (query()?.matches === false ? "light" : "dark"),
+		() => "dark",
 	);
+}
+
+function AppearanceTab({
+	entries,
+	write,
+	writeMany,
+}: {
+	entries: readonly SettingReading[];
+	write: Write;
+	writeMany: WriteMany;
+}) {
+	const appearance = entries.find((entry) => entry.key === "appearance");
 	const look = (appearance?.value as Appearance | undefined) ?? "dark";
-	const moved = tokens.filter((entry) => entry.source === "file");
-	const [customize, setCustomize] = useState(moved.length > 0);
+	const systemLook = useSystemLook();
+	/** the look on screen right now, which is the one an edit should be about */
+	const shown: ThemeLook = look === "system" ? systemLook : look;
+	const [editing, setEditing] = useState<ThemeLook | null>(null);
+	const editLook = editing ?? shown;
+	const tokens = themeTokens(entries, editLook);
+	const themed = entries.filter(
+		(entry): entry is SettingReading & { value: string } => parseThemeKey(entry.key) !== undefined,
+	);
+	const moved = themed.filter((entry) => entry.source === "file");
+	const movedHere = moved.filter((entry) => parseThemeKey(entry.key)?.look === editLook);
+	const [customize, setCustomize] = useState(false);
 	const [reason, setReason] = useState<string | undefined>();
 
-	const colourAt = (token: ThemeToken, scheme: "dark" | "light") => {
-		const entry = tokens.find((candidate) => candidate.key === `theme.${token}`);
-		if (entry?.source === "file") return entry.value;
-		return scheme === "dark" ? THEME_TOKENS[token] : LIGHT_THEME_TOKENS[token];
+	const setLook = async (next: Appearance) => {
+		const written = await write("appearance", next);
+		setReason(written.ok ? undefined : written.reason);
 	};
-	const thread = tokens.find((entry) => entry.key === "theme.thread");
+
+	/**
+	 * A theme into its look. Under a fixed look that is the other one, the look
+	 * follows, since a theme nobody can see was not what was asked for; under
+	 * `system` the theme waits for its look, which is the point of system.
+	 */
+	const apply = async (theme: ThemeSpec) => {
+		const writes: { key: SettingKey; value: string }[] = themeWrites(theme);
+		if (look !== "system" && look !== theme.appearance) writes.push({ key: "appearance", value: theme.appearance });
+		const written = await writeMany(writes);
+		setReason(written.ok ? undefined : written.reason);
+		if (written.ok) setEditing(theme.appearance);
+	};
 
 	const reset = async () => {
-		for (const entry of moved) await write(entry.key, null);
+		const written = await writeMany(moved.map((entry) => ({ key: entry.key, value: null })));
+		setReason(written.ok ? undefined : written.reason);
 	};
+
+	const current = matchPreset(editLook, tokens);
+	const thread = themed.find((entry) => entry.key === themeKey(editLook, "thread"));
 
 	return (
 		<div className="flex flex-col gap-8">
@@ -225,18 +277,52 @@ function AppearanceTab({ entries, write }: { entries: readonly SettingReading[];
 							key={candidate}
 							look={candidate}
 							selected={look === candidate}
-							colourAt={colourAt}
-							onPick={async () => {
-								const written = await write("appearance", candidate);
-								setReason(written.ok ? undefined : written.reason);
-							}}
+							dark={themeTokens(entries, "dark")}
+							light={themeTokens(entries, "light")}
+							onPick={() => void setLook(candidate)}
 						/>
 					))}
 				</div>
 				{reason === undefined ? null : <Reason>{reason}</Reason>}
 				<p className="pt-4 text-muted text-sm leading-sm">
 					{appearance?.says}
-					{look === "system" ? " Follows the system while it changes." : ""}
+					{look === "system" ? ` The system is ${systemLook} now.` : ""}
+				</p>
+			</Band>
+
+			<Band
+				name="Theme"
+				file="~/.spool/config.json"
+				aside={
+					<span className="flex items-center gap-3">
+						<Segmented
+							choices={THEME_LOOKS}
+							value={editLook}
+							label="Theme for"
+							onChange={(next) => setEditing(next as ThemeLook)}
+						/>
+						<ShareTheme
+							theme={{ name: current?.name ?? "Custom", appearance: editLook, tokens }}
+							onPaste={apply}
+						/>
+					</span>
+				}
+			>
+				<div className="grid grid-cols-4 gap-2 pt-3">
+					{PRESETS.filter((preset) => preset.appearance === editLook).map((preset) => (
+						<PresetCard
+							key={preset.name}
+							theme={preset}
+							selected={current?.name === preset.name}
+							onPick={() => void apply(preset)}
+						/>
+					))}
+					{current === undefined ? (
+						<PresetCard theme={{ name: "Custom", appearance: editLook, tokens }} selected onPick={() => {}} />
+					) : null}
+				</div>
+				<p className="pt-4 text-muted text-sm leading-sm">
+					A theme is ten colours for one look. Pick one, or paste one somebody copied out of their spool.
 				</p>
 			</Band>
 
@@ -257,7 +343,8 @@ function AppearanceTab({ entries, write }: { entries: readonly SettingReading[];
 						<Chevron open={customize} />
 						<span className="font-medium text-md text-text leading-md">Customize</span>
 						<span className="font-mono text-2xs text-muted/70 leading-3">
-							{tokens.length + 1} tokens{moved.length === 0 ? "" : ` · ${moved.length} moved`}
+							{editLook} · {THEME_TOKEN_NAMES.length + 1} tokens
+							{movedHere.length === 0 ? "" : ` · ${movedHere.length} moved`}
 						</span>
 					</button>
 					<button
@@ -273,23 +360,25 @@ function AppearanceTab({ entries, write }: { entries: readonly SettingReading[];
 					</button>
 				</div>
 				<p className="max-w-[460px] pt-1.5 pl-[18px] text-muted text-sm leading-sm">
-					The interface’s own colours. The chrome is built on these, so they are the whole of what a theme can
-					move. A moved colour stands in both looks.
+					The interface’s own colours for the {editLook} look. The chrome is built on these, so they are the whole
+					of what a theme can move.
 				</p>
 				{customize ? (
 					<div className="flex flex-col pt-4">
-						{tokens.map((entry) => (
-							<TokenRow key={entry.key} entry={entry} write={write} />
-						))}
+						{themed
+							.filter((entry) => parseThemeKey(entry.key)?.look === editLook)
+							.map((entry) => (
+								<TokenRow key={entry.key} entry={entry} write={write} />
+							))}
 						<div className="flex h-10 items-center gap-4 border-border border-t">
 							<span className="w-[112px] shrink-0 font-mono text-text text-xs leading-xs">mark</span>
 							<span className="min-w-0 flex-1 truncate text-muted text-sm leading-sm">
 								The ribbon in the corner.
 							</span>
 							<span className="shrink-0 font-mono text-2xs text-muted/70 leading-3">follows thread</span>
-							<Swatch value={thread?.value ?? THEME_TOKENS.thread} />
+							<Swatch value={tokens.thread} />
 							<span className="w-[92px] shrink-0 pl-2.5 font-mono text-muted text-xs leading-xs">
-								{thread?.value ?? THEME_TOKENS.thread}
+								{tokens.thread}
 							</span>
 						</div>
 					</div>
@@ -312,12 +401,14 @@ function AppearanceTab({ entries, write }: { entries: readonly SettingReading[];
 function LookCard({
 	look,
 	selected,
-	colourAt,
+	dark,
+	light,
 	onPick,
 }: {
 	look: Appearance;
 	selected: boolean;
-	colourAt: (token: ThemeToken, scheme: "dark" | "light") => string;
+	dark: Record<ThemeToken, string>;
+	light: Record<ThemeToken, string>;
 	onPick: () => void;
 }) {
 	const name = look === "dark" ? "Dark" : look === "light" ? "Light" : "System";
@@ -332,15 +423,12 @@ function LookCard({
 			)}
 		>
 			<span className="relative block h-[84px] w-full overflow-hidden rounded-sm border border-border">
-				<Thumb scheme="dark" colourAt={colourAt} />
-				{look === "dark" ? null : (
-					<span
-						className="absolute inset-0"
-						style={look === "light" ? undefined : { clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }}
-					>
-						<Thumb scheme="light" colourAt={colourAt} />
+				<Thumb tokens={look === "light" ? light : dark} />
+				{look === "system" ? (
+					<span className="absolute inset-0" style={{ clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }}>
+						<Thumb tokens={light} />
 					</span>
-				)}
+				) : null}
 			</span>
 			<span className="flex items-center justify-between px-0.5">
 				<span className="text-base text-text leading-base">{name}</span>
@@ -350,46 +438,167 @@ function LookCard({
 	);
 }
 
-function Thumb({
-	scheme,
-	colourAt,
-}: {
-	scheme: "dark" | "light";
-	colourAt: (token: ThemeToken, scheme: "dark" | "light") => string;
-}) {
-	const at = (token: ThemeToken) => colourAt(token, scheme);
+/** A preset: its name over its own chrome at postage-stamp size. */
+function PresetCard({ theme, selected, onPick }: { theme: ThemeSpec; selected: boolean; onPick: () => void }) {
+	return (
+		<button
+			type="button"
+			aria-pressed={selected}
+			onClick={onPick}
+			className={cn(
+				"flex min-w-0 flex-col gap-2 rounded-md border p-1.5 text-left transition-colors duration-150",
+				selected ? "border-thread" : "border-border hover:border-border-raised",
+			)}
+		>
+			<span className="relative block h-[48px] w-full overflow-hidden rounded-xs border border-border">
+				<Thumb tokens={theme.tokens} small />
+			</span>
+			<span className="flex items-center justify-between gap-2 px-1 pb-0.5">
+				<span className="truncate text-sm text-text leading-sm">{theme.name}</span>
+				{selected ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-thread" /> : null}
+			</span>
+		</button>
+	);
+}
+
+function Thumb({ tokens, small = false }: { tokens: Record<ThemeToken, string>; small?: boolean }) {
+	const at = (token: ThemeToken) => tokens[token];
+	const rail = small ? 22 : 34;
 	return (
 		<span className="absolute inset-0 block" style={{ background: at("bg") }}>
 			<span
-				className="absolute inset-y-0 left-0 w-[34px] border-r"
-				style={{ background: at("surface"), borderColor: at("border") }}
+				className="absolute inset-y-0 left-0 border-r"
+				style={{ width: rail, background: at("surface"), borderColor: at("border") }}
 			/>
-			<span className="absolute top-0 right-0 bottom-0 left-[34px]" style={{ background: at("canvas") }} />
+			<span className="absolute top-0 right-0 bottom-0" style={{ left: rail, background: at("canvas") }} />
 			<span
-				className="absolute top-[16px] left-[48px] h-[28px] w-[36px] rounded-[3px] border"
-				style={{ background: at("surface"), borderColor: at("border-raised") }}
+				className="absolute rounded-[3px] border"
+				style={{
+					top: small ? 9 : 16,
+					left: rail + (small ? 8 : 14),
+					height: small ? 16 : 28,
+					width: small ? 22 : 36,
+					background: at("surface"),
+					borderColor: at("border-raised"),
+				}}
 			/>
 			<span
-				className="absolute top-[42px] left-[104px] h-[28px] w-[36px] rounded-[3px] border"
-				style={{ background: at("surface"), borderColor: at("border-raised") }}
+				className="absolute rounded-[3px] border"
+				style={{
+					top: small ? 24 : 42,
+					left: rail + (small ? 42 : 70),
+					height: small ? 16 : 28,
+					width: small ? 22 : 36,
+					background: at("surface"),
+					borderColor: at("border-raised"),
+				}}
 			/>
 			<svg viewBox="0 0 200 84" className="absolute inset-0 h-full w-full" aria-hidden="true">
 				<path
-					d="M84 30c14 3 12 22 20 26"
+					d={small ? "M60 28c14 3 12 22 24 26" : "M84 30c14 3 12 22 20 26"}
 					fill="none"
 					stroke={at("thread")}
-					strokeWidth="1.5"
+					strokeWidth={small ? 2.2 : 1.5}
 					strokeLinecap="round"
 				/>
 			</svg>
-			<span className="absolute top-[8px] left-[8px]" style={{ color: at("thread") }}>
-				<RibbonMark className="h-3 w-2.5" />
+			<span className="absolute" style={{ top: small ? 5 : 8, left: small ? 5 : 8, color: at("thread") }}>
+				<RibbonMark className={small ? "h-2.5 w-2" : "h-3 w-2.5"} />
 			</span>
-			<span
-				className="absolute top-[9px] left-[22px] h-[6px] w-[8px] rounded-[1px]"
-				style={{ background: at("muted") }}
-			/>
+			{small ? null : (
+				<span
+					className="absolute top-[9px] left-[22px] h-[6px] w-[8px] rounded-[1px]"
+					style={{ background: at("muted") }}
+				/>
+			)}
 		</span>
+	);
+}
+
+/**
+ * A theme out and a theme in, as text. Copy puts the theme on the clipboard;
+ * Paste opens a field for one and applies it once it parses. Text rather than
+ * a file because a theme is three hundred bytes, and the places people trade
+ * them are chats and gists.
+ */
+function ShareTheme({ theme, onPaste }: { theme: ThemeSpec; onPaste: (theme: ThemeSpec) => void }) {
+	const [copied, setCopied] = useState(false);
+	const [pasting, setPasting] = useState(false);
+	const [draft, setDraft] = useState("");
+	const [reason, setReason] = useState<string | undefined>();
+	useEffect(() => {
+		if (!copied) return;
+		const timer = setTimeout(() => setCopied(false), 1400);
+		return () => clearTimeout(timer);
+	}, [copied]);
+
+	const copy = () => {
+		void navigator.clipboard?.writeText(printTheme(theme)).then(() => setCopied(true));
+	};
+	const submit = () => {
+		const parsed = parseTheme(draft);
+		if (!parsed.ok) {
+			setReason(parsed.reason);
+			return;
+		}
+		setReason(undefined);
+		setDraft("");
+		setPasting(false);
+		onPaste(parsed.theme);
+	};
+
+	return (
+		<span className="relative flex items-center gap-1">
+			<TextButton onClick={copy}>{copied ? "Copied" : "Copy"}</TextButton>
+			<TextButton lit={pasting} onClick={() => setPasting(!pasting)}>
+				Paste
+			</TextButton>
+			{pasting ? (
+				<span className="absolute top-8 right-0 z-20 flex w-[360px] animate-menu-in flex-col gap-2 rounded-md border border-border-raised bg-raised p-2">
+					<textarea
+						aria-label="Theme to paste"
+						value={draft}
+						spellCheck={false}
+						placeholder={'{ "name": "…", "appearance": "dark", "tokens": { … } }'}
+						onChange={(event) => setDraft(event.target.value)}
+						onKeyDown={(event) => {
+							if (event.key === "Escape") {
+								event.stopPropagation();
+								setPasting(false);
+							}
+							if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) submit();
+						}}
+						className="h-[120px] w-full resize-none rounded-sm border border-border bg-canvas px-2.5 py-2 font-mono text-text text-xs leading-xs outline-none placeholder:text-muted/50 focus:border-border-raised"
+					/>
+					{reason === undefined ? null : <Reason className="pt-0">{reason}</Reason>}
+					<span className="flex items-center justify-between">
+						<span className="font-mono text-2xs text-muted/70 leading-3">
+							{accelLabel().replace(/\+$/, "")}↵ applies
+						</span>
+						<TextButton lit onClick={submit}>
+							Apply
+						</TextButton>
+					</span>
+				</span>
+			) : null}
+		</span>
+	);
+}
+
+function TextButton({ children, lit = false, onClick }: { children: ReactNode; lit?: boolean; onClick: () => void }) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className={cn(
+				"flex h-6 items-center rounded-sm border px-2 text-xs leading-xs transition-colors duration-150",
+				lit
+					? "border-border-raised bg-raised text-text"
+					: "border-border text-muted hover:border-border-raised hover:text-text",
+			)}
+		>
+			{children}
+		</button>
 	);
 }
 
@@ -399,7 +608,7 @@ function Thumb({
  * both looks, and a picker for any other.
  */
 const ACCENTS: readonly { name: string; hex: string }[] = [
-	{ name: "spool", hex: THEME_TOKENS.thread },
+	{ name: "spool", hex: DARK_TOKENS.thread },
 	{ name: "blue", hex: "#2f6fe0" },
 	{ name: "violet", hex: "#7c5cff" },
 	{ name: "pink", hex: "#e0409a" },
@@ -427,7 +636,7 @@ function AccentRow({ entry, write }: { entry: SettingReading & { value: string }
 							aria-label={accent.name}
 							aria-pressed={lit}
 							title={accent.name}
-							onClick={() => void move(accent.hex === THEME_TOKENS.thread ? null : accent.hex)}
+							onClick={() => void move(accent.hex === entry.fallback ? null : accent.hex)}
 							className={cn(
 								"flex h-6 w-6 items-center justify-center rounded-full border transition-[border-color,transform] duration-150 active:scale-90",
 								lit ? "border-text" : "border-transparent hover:border-border-raised",
