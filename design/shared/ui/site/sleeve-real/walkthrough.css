@@ -1,0 +1,490 @@
+.sw-page {
+	height: 100%;
+	overflow: auto;
+	background: #101110;
+	color: #eeefea;
+	font-family: "Familjen Grotesk", sans-serif;
+	-webkit-font-smoothing: antialiased;
+	color-scheme: dark;
+}
+.sw-page :where(h1, h2, p) {
+	margin: 0;
+}
+.sw-page a {
+	color: inherit;
+	text-decoration: none;
+}
+.sw-page button {
+	cursor: pointer;
+}
+.sw-page :is(button, a, summary):focus-visible {
+	outline: 2px solid #f5391a;
+	outline-offset: 5px;
+}
+.sw-nav,
+.sw-hero,
+.sw-walk,
+.sw-files,
+.sw-faq,
+.sw-footer {
+	width: calc(100% - 96px);
+	max-width: 1600px;
+	margin-inline: auto;
+}
+.sw-nav {
+	display: flex;
+	height: 86px;
+	border-bottom: 1px solid #30312e;
+	align-items: center;
+	justify-content: space-between;
+}
+.sw-wordmark {
+	display: inline-flex;
+	gap: 10px;
+	align-items: center;
+	font-size: 26px;
+	letter-spacing: -1px;
+	font-weight: 600;
+}
+.sw-wordmark svg {
+	width: 20px;
+	height: 29px;
+	color: #f5391a;
+}
+.sw-nav > div {
+	display: flex;
+	align-items: center;
+	gap: 32px;
+	font-size: 14px;
+}
+.sw-nav > div > a:last-child {
+	border: 1px solid #393a36;
+	border-radius: 5px;
+	padding: 9px 20px;
+}
+.sw-hero {
+	display: grid;
+	grid-template-columns: 1.4fr 1fr;
+	gap: 100px;
+	align-items: end;
+	padding-block: 78px 72px;
+}
+.sw-hero h1 {
+	font-size: 88px;
+	line-height: 0.99;
+	font-weight: 500;
+	letter-spacing: -4.5px;
+}
+.sw-hero h1 span {
+	color: #90938c;
+}
+.sw-hero p {
+	font-size: 19px;
+	line-height: 1.55;
+	max-width: 460px;
+	color: #a5a89f;
+}
+.sw-hero > div > button {
+	margin-top: 26px;
+	display: flex;
+	gap: 32px;
+	font-size: 14px;
+	align-items: center;
+	padding-bottom: 8px;
+	border-bottom: 1px solid #5d6158;
+}
+.sw-walk {
+	display: grid;
+	grid-template-columns: 270px minmax(0, 1fr);
+	gap: 50px;
+	border-top: 1px solid #30312e;
+	align-items: start;
+}
+.sw-chapter {
+	min-height: 740px;
+	padding-top: 62px;
+	scroll-margin-top: 30px;
+}
+.sw-chapter-number {
+	font:
+		11px "Fragment Mono",
+		monospace;
+	display: flex;
+	gap: 14px;
+	color: #f5391a;
+	margin-bottom: 42px;
+}
+.sw-chapter-number span {
+	color: #6e736a;
+}
+.sw-chapter h2 {
+	font-size: 33px;
+	line-height: 1.1;
+	font-weight: 500;
+	letter-spacing: -1.1px;
+	margin-bottom: 25px;
+}
+.sw-chapter p {
+	color: #949a8f;
+	font-size: 16px;
+	line-height: 1.65;
+	margin-block: 0 20px;
+}
+.sw-chapter > button {
+	display: flex;
+	gap: 35px;
+	align-items: center;
+	font-size: 13px;
+	margin-top: 34px;
+}
+.sw-chapter:last-child {
+	min-height: 790px;
+}
+.sw-sticky {
+	position: sticky;
+	top: 40px;
+	padding-top: 32px;
+	min-width: 0;
+}
+.sw-caption {
+	display: flex;
+	justify-content: space-between;
+	gap: 20px;
+	margin-top: 16px;
+	color: #8a9083;
+	font-size: 11px;
+}
+.sw-caption > span:last-child {
+	white-space: nowrap;
+	font-family: "Fragment Mono", monospace;
+}
+.sw-stages {
+	display: flex;
+	margin-top: 36px;
+	border-bottom: 1px solid #30312e;
+	gap: 28px;
+}
+.sw-stages button {
+	font-size: 12px;
+	color: #8f9488;
+	padding: 0 0 13px;
+	border-bottom: 1px solid transparent;
+}
+.sw-stages button[aria-current] {
+	color: #eeefea;
+	border-bottom-color: #f5391a;
+}
+.sw-files {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 140px;
+	padding-block: 100px;
+	border-top: 1px solid #30312e;
+}
+.sw-files h2,
+.sw-faq h2 {
+	font-size: 49px;
+	line-height: 1.05;
+	font-weight: 500;
+	letter-spacing: -2px;
+}
+.sw-files p {
+	font-size: 18px;
+	line-height: 1.7;
+	color: #a0a598;
+	margin-bottom: 22px;
+	max-width: 560px;
+}
+.sw-files a {
+	font-size: 14px;
+	display: inline-block;
+	border-bottom: 1px solid #41453c;
+	padding-block: 10px;
+}
+.sw-faq {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 140px;
+	border-top: 1px solid #30312e;
+	padding-block: 95px 115px;
+}
+.sw-faq details {
+	border-bottom: 1px solid #30312e;
+}
+.sw-faq summary {
+	display: flex;
+	justify-content: space-between;
+	gap: 20px;
+	cursor: pointer;
+	list-style: none;
+	padding-block: 23px;
+	font-size: 17px;
+}
+.sw-faq summary::-webkit-details-marker {
+	display: none;
+}
+.sw-faq details[open] summary > span {
+	transform: rotate(45deg);
+}
+.sw-faq details p {
+	font-size: 16px;
+	line-height: 1.65;
+	color: #93998a;
+	padding: 0 25px 24px 0;
+}
+.sw-start {
+	padding: 90px 48px 100px;
+	background: #e9eadd;
+	color: #353d2f;
+	text-align: center;
+}
+.sw-start > svg {
+	color: #f5391a;
+	height: 65px;
+	width: 46px;
+	margin: 0 auto 30px;
+}
+.sw-start h2 {
+	font-size: 88px;
+	line-height: 1;
+	letter-spacing: -4px;
+	font-weight: 500;
+}
+.sw-start p {
+	font-size: 17px;
+	margin-top: 23px;
+}
+.sw-start > div {
+	display: flex;
+	justify-content: center;
+	gap: 16px;
+	margin-top: 33px;
+}
+.sw-start > div > a,
+.sw-start > div > button {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 40px;
+	padding: 14px 20px;
+	border: 1px solid #bac0af;
+	border-radius: 5px;
+	font-size: 14px;
+}
+.sw-start > div > a {
+	color: #f1f1e9;
+	background: #353d2f;
+	border-color: #353d2f;
+}
+.sw-start > div > button {
+	font:
+		11px "Fragment Mono",
+		monospace;
+}
+.sw-start small {
+	display: block;
+	color: #7e8773;
+	margin-top: 28px;
+	font-size: 12px;
+}
+.sw-footer {
+	display: flex;
+	gap: 30px;
+	align-items: center;
+	height: 110px;
+	font-size: 12px;
+	color: #919887;
+}
+.sw-footer .sw-wordmark {
+	color: #eeefea;
+	font-size: 21px;
+}
+.sw-footer > a:first-of-type {
+	margin-left: auto;
+}
+@media (hover: hover) and (pointer: fine) {
+	.sw-nav :is(button, a):hover,
+	.sw-stages button:hover {
+		color: #f5391a;
+	}
+	.sw-start > div > a:hover {
+		background: #46523c;
+	}
+	.sw-chapter > button:hover {
+		color: #f5391a;
+	}
+}
+.sw-nav :is(button, a):active,
+.sw-start > div > :active {
+	transform: scale(0.98);
+}
+@media (max-width: 1100px) {
+	.sw-nav,
+	.sw-hero,
+	.sw-walk,
+	.sw-files,
+	.sw-faq,
+	.sw-footer {
+		width: calc(100% - 48px);
+	}
+	.sw-hero {
+		gap: 50px;
+	}
+	.sw-hero h1 {
+		font-size: 70px;
+	}
+	.sw-walk {
+		grid-template-columns: 220px minmax(0, 1fr);
+		gap: 25px;
+	}
+	.sw-chapter {
+		min-height: 680px;
+	}
+	.sw-chapter:last-child {
+		min-height: 680px;
+	}
+	.sw-sticky {
+		top: 60px;
+	}
+	.sw-stages {
+		gap: 15px;
+		flex-wrap: wrap;
+	}
+	.sw-files,
+	.sw-faq {
+		gap: 60px;
+	}
+	.sw-hero p {
+		font-size: 17px;
+	}
+}
+@media (max-width: 700px) {
+	.sw-nav,
+	.sw-hero,
+	.sw-walk,
+	.sw-files,
+	.sw-faq,
+	.sw-footer {
+		width: calc(100% - 40px);
+	}
+	.sw-nav {
+		height: 70px;
+	}
+	.sw-nav > div {
+		gap: 16px;
+		font-size: 12px;
+	}
+	.sw-nav > div > a {
+		display: none;
+	}
+	.sw-wordmark {
+		font-size: 23px;
+	}
+	.sw-hero {
+		display: block;
+		padding-block: 48px;
+	}
+	.sw-hero h1 {
+		font-size: 54px;
+		letter-spacing: -2.5px;
+	}
+	.sw-hero > div {
+		margin-top: 25px;
+	}
+	.sw-hero p {
+		font-size: 16px;
+	}
+	.sw-hero > div > button {
+		font-size: 13px;
+	}
+	.sw-walk {
+		display: flex;
+		flex-direction: column;
+		gap: 0;
+	}
+	.sw-sticky {
+		order: -1;
+		position: sticky;
+		top: 0;
+		padding: 18px 0;
+		background: #101110;
+		z-index: 2;
+		width: 100%;
+	}
+	.sw-caption {
+		font-size: 9px;
+		gap: 12px;
+		margin-top: 10px;
+	}
+	.sw-stages {
+		gap: 14px;
+		margin-top: 18px;
+	}
+	.sw-stages button {
+		font-size: 10px;
+		padding-bottom: 9px;
+	}
+	.sw-chapter {
+		min-height: 530px;
+		padding-top: 30px;
+	}
+	.sw-chapter:last-child {
+		min-height: 560px;
+	}
+	.sw-chapter-number {
+		margin-bottom: 22px;
+	}
+	.sw-chapter h2 {
+		font-size: 32px;
+	}
+	.sw-chapter p {
+		font-size: 16px;
+	}
+	.sw-files,
+	.sw-faq {
+		display: block;
+		padding-block: 55px;
+	}
+	.sw-files h2,
+	.sw-faq h2 {
+		font-size: 39px;
+		margin-bottom: 30px;
+	}
+	.sw-files p {
+		font-size: 16px;
+	}
+	.sw-start {
+		padding: 55px 20px;
+	}
+	.sw-start h2 {
+		font-size: 59px;
+		letter-spacing: -2.5px;
+	}
+	.sw-start p {
+		font-size: 15px;
+	}
+	.sw-start > div {
+		flex-direction: column;
+		align-items: center;
+		gap: 12px;
+	}
+	.sw-start > div > a,
+	.sw-start > div > button {
+		min-width: 245px;
+	}
+	.sw-footer {
+		gap: 16px;
+		flex-wrap: wrap;
+		height: auto;
+		padding-block: 25px;
+	}
+	.sw-footer > span {
+		font-size: 10px;
+	}
+	.sw-footer > a:first-of-type {
+		margin-left: 0;
+	}
+	.sw-footer > a {
+		font-size: 10px;
+	}
+}
