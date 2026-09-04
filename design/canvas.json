@@ -573,6 +573,34 @@
 		"explore/components/door/lit": {
 			"x": 9200,
 			"y": 80
+		},
+		"explore/explorer/only-pages": {
+			"x": 2760,
+			"y": 80
+		},
+		"explore/explorer/only-pages/only-pages-fit": {
+			"x": 80,
+			"y": 80
+		},
+		"explore/explorer/only-pages/only-pages-lens": {
+			"x": 1600,
+			"y": 80
+		},
+		"explore/explorer/only-pages/only-pages-marks": {
+			"x": 3120,
+			"y": 80
+		},
+		"explore/explorer/only-pages/only-pages-plate": {
+			"x": 4640,
+			"y": 80
+		},
+		"explore/explorer/only-pages/only-pages-shelf": {
+			"x": 6160,
+			"y": 80
+		},
+		"explore/explorer/only-pages/only-pages-today": {
+			"x": 7680,
+			"y": 80
 		}
 	}
 }
