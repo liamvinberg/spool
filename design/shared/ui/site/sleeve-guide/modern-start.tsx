@@ -124,7 +124,10 @@ function PlayStart() {
 					<p>Try it in spool.</p>
 				</div>
 				<div>
-					<Download />
+					<div className="sm-play-install">
+						<Download />
+						<Command command="npm i -g spool.page" />
+					</div>
 					<span className="sm-fine">Free · Apple silicon · macOS 14+</span>
 				</div>
 			</div>

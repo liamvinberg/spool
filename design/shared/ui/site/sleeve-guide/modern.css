@@ -377,7 +377,7 @@
 	margin-top: 34px;
 }
 .sm-page[data-take="play"] .sg-hero-actions .sg-install > button {
-	display: none;
+	display: flex;
 }
 .sm-page[data-take="play"] .sg-hero-actions .sg-install > a {
 	background: #f0442a;
@@ -386,6 +386,17 @@
 }
 .sm-play-start {
 	padding-block: 90px 75px;
+}
+.sm-play-install {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+}
+.sm-play-install > .sm-command {
+	width: auto;
+	border: 1px solid var(--sm-line);
+	border-radius: 6px;
+	padding: 15px 18px;
 }
 .sm-play-top {
 	display: flex;
