@@ -170,16 +170,24 @@ function postPlayerMessage(message: Record<string, unknown>): void {
 	sendPlayerMessage?.(message);
 }
 
+/**
+ * The frame's fault, told to the shell. Reached from the window's own handlers
+ * and from a screen module that would not evaluate — an authored top-level
+ * throw rejects its import rather than reaching `error`, and the shell has to
+ * hear about it either way. The shell decides what it is worth: only a boot or
+ * a walk in flight turns one of these into the player's error screen.
+ */
+function reportRuntimeError(value: unknown): void {
+	const error =
+		value instanceof Error
+			? value.stack || value.message
+			: typeof value === "string"
+				? value
+				: "the authored runtime failed";
+	postPlayerMessage({ spool: "player-runtime-error", error: error.slice(0, 100_000) });
+}
+
 if (play?.shell === true && embedded) {
-	const reportRuntimeError = (value: unknown) => {
-		const error =
-			value instanceof Error
-				? value.stack || value.message
-				: typeof value === "string"
-					? value
-					: "the authored runtime failed";
-		postPlayerMessage({ spool: "player-runtime-error", error: error.slice(0, 100_000) });
-	};
 	addEventListener("error", (event) => {
 		if (thrownByAnExtension(event.filename, event.error)) return;
 		reportRuntimeError(event.error ?? event.message);
@@ -1581,6 +1589,12 @@ function loadScreen(frame: string): Promise<void> {
 				file: `design/frames/${frame}/frame.tsx`,
 				error: `the screen could not be loaded — ${String(error)}. Reload the player.`,
 			});
+			// A module that throws as it evaluates is the author's code failing,
+			// and it failed inside an import, where no `error` event carries it.
+			// Told the same way a throw at any other moment is: the stand-in keeps
+			// this screen's place, and the shell says so when it was the screen
+			// the session was waiting on.
+			reportRuntimeError(error);
 		},
 	);
 	screenLoads.set(frame, load);
