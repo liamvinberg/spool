@@ -101,7 +101,7 @@ function Artboard({
 	);
 }
 
-function ProductCanvas({
+export function ProductCanvas({
 	take,
 	onPlay,
 }: {

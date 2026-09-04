@@ -1,0 +1,275 @@
+.sv-product {
+	width: 1200px;
+	height: 800px;
+	overflow: hidden;
+}
+.sv-catalog .dd-music-main:has(.dd-record-feature) {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	grid-template-rows: 72px 1fr;
+	column-gap: 34px;
+}
+.sv-catalog .dd-music-top {
+	grid-column: 1 / -1;
+}
+.sv-catalog .dd-record-feature {
+	grid-column: 1;
+	grid-row: 2;
+	height: 610px;
+	display: block;
+	border-bottom: 0;
+	border-right: 1px solid #333c3020;
+	padding: 28px 24px 0 4px;
+}
+.sv-catalog .dd-record-feature h1 {
+	font-size: 57px;
+}
+.sv-catalog .dd-record-feature p {
+	font-size: 13px;
+}
+.sv-catalog .dd-record-feature > div > button {
+	font-size: 12px;
+}
+.sv-catalog .dd-record-art {
+	left: 12px;
+	top: 296px;
+	width: 225px;
+	height: 225px;
+}
+.sv-catalog .dd-music-main:has(.dd-record-feature) > .dd-section-heading {
+	display: none;
+}
+.sv-catalog .dd-music-main:has(.dd-record-feature) > .dd-albums {
+	grid-column: 2;
+	grid-row: 2;
+	grid-template-columns: 1fr 1fr;
+	align-content: center;
+	gap: 32px 18px;
+}
+.sv-catalog .dd-music-main:has(.dd-record-feature) > .dd-albums > button {
+	min-width: 0;
+}
+.sv-catalog .dd-music-main:has(.dd-record-feature) > .dd-albums strong {
+	font-size: 14px;
+}
+.sv-catalog .dd-record-feature button span {
+	margin-left: 14px;
+}
+.sv-room {
+	width: 1200px;
+	height: 800px;
+	position: relative;
+	overflow: hidden;
+	background: #eae8dc;
+	color: #343e32;
+	font-family: "Familjen Grotesk", sans-serif;
+}
+.sv-room button {
+	cursor: pointer;
+	text-align: left;
+}
+.sv-room button:focus-visible,
+.sv-room input:focus-visible {
+	outline: 2px solid currentColor;
+	outline-offset: 4px;
+}
+.sv-room svg {
+	width: 18px;
+	height: 18px;
+}
+.sv-room > header {
+	height: 87px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0 45px;
+	border-bottom: 1px solid #37442e25;
+}
+.sv-room-logo {
+	font-size: 28px;
+	font-weight: 600;
+	letter-spacing: -1.3px;
+}
+.sv-room nav {
+	display: flex;
+	gap: 28px;
+	font-size: 13px;
+}
+.sv-room nav button[aria-pressed="true"] {
+	border-bottom: 1px solid;
+	padding-bottom: 5px;
+}
+.sv-room > header > span {
+	font-size: 12px;
+	color: #929681;
+}
+.sv-room > main {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 84px;
+	padding: 53px 65px 0;
+}
+.sv-room-art {
+	position: relative;
+	width: 390px;
+	height: 390px;
+	margin-top: 31px;
+}
+.sv-room-art .dd-cover {
+	position: relative;
+	z-index: 2;
+	transform: rotate(-3deg);
+}
+.sv-record {
+	position: absolute;
+	width: 375px;
+	height: 375px;
+	border-radius: 50%;
+	right: -75px;
+	top: 8px;
+	background: repeating-radial-gradient(#272c23 0 3px, #373d30 4px 5px);
+}
+.sv-record::after {
+	content: "";
+	position: absolute;
+	inset: 35%;
+	border: 36px solid #d1cf9c;
+	background: #655f49;
+	border-radius: 50%;
+}
+.sv-room main > section > span {
+	font-size: 14px;
+	color: #8a917c;
+}
+.sv-room h1 {
+	font:
+		60px / 1.05 Georgia,
+		serif;
+	letter-spacing: -2px;
+	margin: 15px 0;
+}
+.sv-room main p {
+	font-size: 15px;
+	color: #929783;
+}
+.sv-room-actions {
+	display: flex;
+	align-items: center;
+	gap: 25px;
+	margin: 26px 0 30px;
+}
+.sv-room-play {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	padding: 12px 23px;
+	background: #3d4b34;
+	color: #f4f2e5;
+	border-radius: 25px;
+	font-size: 13px;
+}
+.sv-room-save {
+	font-size: 25px;
+}
+.sv-room-tracks button {
+	display: flex;
+	align-items: center;
+	gap: 20px;
+	width: 100%;
+	height: 51px;
+	border-top: 1px solid #37442e25;
+	font-size: 13px;
+}
+.sv-room-tracks button > span:first-child {
+	font-size: 10px;
+	color: #9c9d89;
+	width: 18px;
+}
+.sv-room-tracks small {
+	margin-left: auto;
+	color: #959881;
+	font-size: 11px;
+}
+.sv-room-tracks button[data-active="true"] {
+	color: #79935b;
+}
+.sv-room > footer {
+	position: absolute;
+	left: 45px;
+	right: 45px;
+	bottom: 0;
+	height: 94px;
+	border-top: 1px solid #37442e25;
+	display: flex;
+	align-items: center;
+	gap: 35px;
+	font-size: 12px;
+}
+.sv-room > footer > div:first-child {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	width: 260px;
+}
+.sv-room footer small {
+	display: block;
+	font-size: 10px;
+	color: #929783;
+	margin-top: 5px;
+}
+.sv-room-led {
+	width: 6px;
+	height: 6px;
+	background: #b1b29f;
+	border-radius: 50%;
+}
+.sv-room-led[data-playing="true"] {
+	background: #789455;
+}
+.sv-room-transport {
+	display: flex;
+	align-items: center;
+	gap: 27px;
+}
+.sv-room > footer > input {
+	height: 3px;
+	width: 220px;
+	accent-color: #566c42;
+	cursor: pointer;
+}
+.sv-room > footer > span {
+	margin-left: auto;
+	color: #9b9e8b;
+	font-size: 10px;
+}
+.sv-room-library {
+	padding: 45px;
+}
+.sv-room-library > div {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: 25px;
+	margin-top: 35px;
+}
+.sv-room-library .dd-cover {
+	height: 245px;
+}
+.sv-room-library button > span {
+	display: block;
+	font-size: 16px;
+	margin-top: 15px;
+}
+.sv-room-library small {
+	display: block;
+	font-size: 12px;
+	color: #93977f;
+	margin-top: 5px;
+}
+@media (hover: hover) and (pointer: fine) {
+	.sv-room-tracks button:hover {
+		background: #37442e08;
+	}
+	.sv-room-library button:hover {
+		opacity: 0.85;
+	}
+}
