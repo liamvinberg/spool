@@ -1179,10 +1179,6 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 	const snapshotFirstGeometry = new Promise<void>((resolve) => {
 		snapshotFirstGeometryResolve = resolve;
 	});
-	let firstGeometryCapturedResolve: () => void = () => {};
-	const firstGeometryCaptured = new Promise<void>((resolve) => {
-		firstGeometryCapturedResolve = resolve;
-	});
 	let nextGeometryCapturedResolve: () => void = () => {};
 	const nextGeometryCaptured = new Promise<void>((resolve) => {
 		nextGeometryCapturedResolve = resolve;
@@ -1191,25 +1187,29 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 	const releaseNextGeometry = new Promise<void>((resolve) => {
 		releaseNextGeometryResolve = resolve;
 	});
-	let geometryRequest = 0;
+	// Geometry answers freely until the shell stands on the 500 box, and only the
+	// box after that is held. Writing the frame files wakes the change stream,
+	// every wake asks again, and asking again retires the answer already in
+	// flight — so holding by request number holds whichever request that race
+	// happened to leave last, and the shell keeps the boot snapshot instead.
+	let holdGeometry = false;
 	await page.route(`**/api/p/${project.name}/frames`, async (route) => {
-		geometryRequest++;
-		if (geometryRequest === 1) {
+		if (!holdGeometry) {
 			await snapshotFirstGeometry;
-			const response = await route.fetch();
-			firstGeometryCapturedResolve();
+			await route.continue();
+			return;
+		}
+		const response = await route.fetch();
+		const listing = (await response.json()) as { frames: { name: string; w: number }[] };
+		// A wake left over from the earlier write is not what this waits for: the
+		// held answer is the one carrying the box the PUT below just wrote.
+		if (!listing.frames.some((frame) => frame.name === "start" && frame.w === 600)) {
 			await route.fulfill({ response });
 			return;
 		}
-		if (geometryRequest === 2) {
-			const response = await route.fetch();
-			nextGeometryCapturedResolve();
-			await releaseNextGeometry;
-			await route.fulfill({ response });
-			return;
-		}
+		nextGeometryCapturedResolve();
 		await releaseNextGeometry;
-		await route.continue();
+		await route.fulfill({ response });
 	});
 
 	const navigation = page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
@@ -1218,12 +1218,12 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 	snapshotInnerResolve();
 	await innerCaptured;
 	snapshotFirstGeometryResolve();
-	await firstGeometryCaptured;
 	await page.waitForFunction(() => {
 		const host = document.querySelector<HTMLIFrameElement>("#spool-player");
 		const screen = document.querySelector<HTMLElement>(".spool-screen");
 		return host?.style.opacity === "0" && screen?.style.width === "500px";
 	});
+	holdGeometry = true;
 
 	const update = await fetch(`${project.url}/api/p/${encodeURIComponent(project.name)}/geometry`, {
 		method: "PUT",
