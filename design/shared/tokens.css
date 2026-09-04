@@ -16,6 +16,8 @@
 	--color-text: #f0efed;
 	--color-muted: #8e8c88;
 	--color-thread: #f5391a;
+	/* the ribbon mark alone; a development daemon paints it blue and nothing else */
+	--color-mark: var(--color-thread);
 	--color-on-thread: #ffffff;
 
 	--font-sans: "Familjen Grotesk", system-ui, sans-serif;
