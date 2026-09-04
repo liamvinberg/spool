@@ -1,0 +1,571 @@
+/* Landing-page studies. All overrides stop at the marketing surface. */
+.sm-page {
+	--sm-bg: #101010;
+	--sm-fg: #f5f5f5;
+	--sm-muted: #a0a0a0;
+	--sm-line: #2b2b2b;
+	background: var(--sm-bg);
+	color: var(--sm-fg);
+	font-family: "Instrument Sans", sans-serif;
+}
+.sm-page .sg-width {
+	max-width: 1248px;
+}
+.sm-page .sg-nav {
+	height: 88px;
+	border: 0;
+}
+.sm-page .sg-brand {
+	font-family: "Instrument Sans", sans-serif;
+	letter-spacing: -1px;
+}
+.sm-page .sg-hero {
+	padding-block: 76px 54px;
+}
+.sm-page .sg-hero h1 {
+	font-size: clamp(48px, 5.4vw, 78px);
+	font-weight: 500;
+	letter-spacing: -0.04em;
+	line-height: 1.06;
+	text-wrap: initial;
+}
+.sm-page .sg-hero > p {
+	max-width: 530px;
+	font-size: 18px;
+	line-height: 1.55;
+	color: var(--sm-muted);
+	margin-top: 28px;
+}
+.sm-page .sg-hero-actions {
+	margin-top: 32px;
+}
+.sm-page .sg-install > a {
+	background: var(--sm-fg);
+	color: var(--sm-bg);
+	border-color: var(--sm-fg);
+}
+.sm-page .sg-install > button {
+	border-color: var(--sm-line);
+	color: var(--sm-muted);
+}
+.sm-page .sg-nav nav button {
+	border-color: var(--sm-line);
+}
+.sm-page .sg-hero-app {
+	padding-bottom: 45px;
+}
+.sm-page .sg-caption,
+.sm-page .sg-caption > span:last-child {
+	color: var(--sm-muted);
+	font-size: 11px;
+}
+.sm-page .sg-chapters {
+	background: var(--sm-bg);
+	border-color: var(--sm-line);
+	backdrop-filter: none;
+}
+.sm-page .sg-chapters button {
+	font-size: 12px;
+	color: var(--sm-muted);
+	padding-block: 18px;
+}
+.sm-page .sg-chapters button[aria-current] {
+	color: var(--sm-fg);
+}
+.sm-page .sg-section {
+	padding-block: 110px;
+	border-color: var(--sm-line);
+}
+.sm-page .sg-copy h2,
+.sm-page .sg-section-heading h2 {
+	font-size: clamp(34px, 3.2vw, 46px);
+	line-height: 1.13;
+	font-weight: 500;
+	letter-spacing: -0.045em;
+	text-wrap: initial;
+}
+.sm-page .sg-copy p,
+.sm-page .sg-section-heading p {
+	font-size: 16px;
+	line-height: 1.65;
+	color: var(--sm-muted);
+}
+.sm-page .sg-section-heading {
+	gap: 70px;
+	align-items: center;
+}
+.sm-page .sg-section-heading > div {
+	max-width: 440px;
+}
+.sm-page .sg-try,
+.sm-page .sg-files {
+	grid-template-columns: 310px minmax(0, 1fr);
+	gap: 70px;
+}
+.sm-page .sg-text-button {
+	border-color: var(--sm-line);
+	font-size: 13px;
+}
+.sm-page .sg-variant-top,
+.sm-page .sg-variant-top > span:last-child {
+	color: var(--sm-muted);
+}
+.sm-page .sg-variant-caption h3 {
+	font-size: 16px;
+}
+.sm-page .sg-variant-caption p,
+.sm-page .sg-next-thought {
+	color: var(--sm-muted);
+	font-size: 13px;
+}
+.sm-page .sg-next-thought {
+	margin-top: 32px;
+}
+.sm-page .sg-source-snippet > p,
+.sm-page .sg-source-snippet pre {
+	color: var(--sm-fg);
+}
+.sm-page .sg-source-snippet small,
+.sm-page .sg-source-result > p,
+.sm-page .sg-source-pair > figcaption {
+	color: var(--sm-muted);
+	border-color: var(--sm-line);
+}
+.sm-page .sg-footer {
+	border-color: var(--sm-line);
+	color: var(--sm-muted);
+}
+.sm-page .sg-footer .sg-brand {
+	color: var(--sm-fg);
+}
+
+.sm-start {
+	padding-block: 120px;
+}
+.sm-start h2 {
+	font-size: clamp(56px, 6vw, 88px);
+	font-weight: 500;
+	line-height: 1;
+	letter-spacing: -0.045em;
+}
+.sm-start p {
+	font-size: 18px;
+	line-height: 1.6;
+	color: var(--sm-muted);
+}
+.sm-download {
+	display: inline-flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 35px;
+	padding: 15px 21px;
+	border-radius: 6px;
+	background: var(--sm-fg);
+	color: var(--sm-bg) !important;
+	font-size: 14px;
+	font-weight: 500;
+	min-height: 48px;
+}
+.sm-download,
+.sm-methods button {
+	transition:
+		opacity 150ms ease,
+		transform 150ms var(--sg-ease);
+}
+.sm-start small,
+.sm-fine {
+	display: block;
+	font-size: 12px;
+	line-height: 1.6;
+	color: var(--sm-muted);
+}
+.sm-crisp-start {
+	display: grid;
+	grid-template-columns: 1fr 440px;
+	gap: 100px;
+	align-items: start;
+}
+.sm-start-heading {
+	padding-top: 45px;
+}
+.sm-start-heading p {
+	margin-top: 25px;
+}
+.sm-start-heading > span {
+	display: block;
+	color: var(--sm-muted);
+	font-size: 12px;
+	margin-top: 65px;
+}
+.sm-methods {
+	display: flex;
+	border-bottom: 1px solid var(--sm-line);
+	gap: 28px;
+}
+.sm-methods button {
+	color: var(--sm-muted);
+	font-size: 13px;
+	padding-block: 0 16px;
+	border-bottom: 1px solid transparent;
+	margin-bottom: -1px;
+}
+.sm-methods button[aria-pressed="true"] {
+	color: var(--sm-fg);
+	border-color: var(--sm-fg);
+}
+.sm-method-body {
+	padding-block: 28px;
+	min-height: 235px;
+}
+.sm-method-body h3 {
+	font-size: 21px;
+	font-weight: 500;
+	letter-spacing: -0.035em;
+}
+.sm-method-body p {
+	font-size: 14px;
+	margin-top: 12px;
+	max-width: 340px;
+}
+.sm-method-body .sm-download {
+	margin-top: 25px;
+}
+.sm-method-body small {
+	margin-top: 14px;
+	font-size: 11px;
+}
+.sm-docs {
+	display: flex;
+	gap: 14px;
+	align-items: center;
+	border-top: 1px solid var(--sm-line);
+	padding-top: 20px;
+	font-size: 12px;
+	color: var(--sm-muted) !important;
+}
+.sm-cli {
+	text-align: left;
+}
+.sm-cli > p {
+	font-size: 14px;
+	margin: 0 0 16px;
+}
+.sm-command {
+	width: 100%;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 20px;
+	border-bottom: 1px solid var(--sm-line);
+	padding-block: 15px;
+}
+.sm-command code {
+	font:
+		12px "Fragment Mono",
+		monospace;
+	color: var(--sm-fg);
+}
+.sm-command > span {
+	color: var(--sm-muted);
+	font-size: 11px;
+}
+.sm-cli small {
+	margin-top: 18px;
+	font-size: 11px;
+}
+.sm-details {
+	width: min(100%, 440px);
+	text-align: left;
+}
+.sm-details summary {
+	display: flex;
+	gap: 16px;
+	align-items: center;
+	cursor: pointer;
+	font-size: 12px;
+	color: var(--sm-muted);
+	list-style: none;
+}
+.sm-details summary::-webkit-details-marker {
+	display: none;
+}
+.sm-details[open] summary > svg {
+	transform: rotate(180deg);
+}
+.sm-details .sm-cli {
+	padding-top: 24px;
+}
+
+/* Crisp: an asymmetric intro and a compact installation choice. */
+.sm-page[data-take="crisp"] .sg-hero {
+	display: grid;
+	grid-template-columns: 1.45fr 1fr;
+	column-gap: 75px;
+	align-items: end;
+}
+.sm-page[data-take="crisp"] .sg-hero > p {
+	font-size: 16px;
+	margin: 0 0 5px;
+	max-width: 330px;
+}
+.sm-page[data-take="crisp"] .sg-hero h1 {
+	font-size: clamp(48px, 4.7vw, 68px);
+}
+.sm-page[data-take="crisp"] .sg-hero-actions {
+	grid-column: 1 / -1;
+}
+
+/* Air: centered type, generous space, one download action at the finish. */
+.sm-page[data-take="air"] {
+	--sm-bg: #fafaf8;
+	--sm-fg: #171717;
+	--sm-muted: #686866;
+	--sm-line: #ddddd8;
+	color-scheme: light;
+}
+.sm-page[data-take="air"] .sg-hero {
+	text-align: center;
+	padding-block: 72px 62px;
+}
+.sm-page[data-take="air"] .sg-hero > p {
+	margin-inline: auto;
+}
+.sm-page[data-take="air"] .sg-hero-actions {
+	flex-direction: column;
+	gap: 24px;
+}
+.sm-page[data-take="air"] .sg-hero-actions .sg-install > button {
+	display: none;
+}
+.sm-page[data-take="air"] .sg-text-button {
+	border: 0;
+}
+.sm-page[data-take="air"] .sg-source-snippet pre span {
+	color: #54713a;
+}
+.sm-air-start {
+	text-align: center;
+	padding-block: 130px 100px;
+}
+.sm-air-start > p {
+	margin-top: 28px;
+}
+.sm-air-start > .sm-download {
+	margin-top: 32px;
+}
+.sm-air-start > .sm-fine {
+	margin-top: 17px;
+	font-size: 11px;
+}
+.sm-air-start > .sm-details {
+	margin: 42px auto 0;
+}
+.sm-air-start > .sm-details summary {
+	justify-content: center;
+}
+
+/* Play: larger type and a red punctuation mark, with an editorial closing. */
+.sm-page[data-take="play"] .sg-hero {
+	padding-block: 65px 48px;
+}
+.sm-page[data-take="play"] .sg-hero h1 {
+	font-size: clamp(58px, 7.5vw, 108px);
+	line-height: 0.99;
+}
+.sm-page[data-take="play"] .sg-hero > p {
+	max-width: 470px;
+	margin-top: 34px;
+}
+.sm-page[data-take="play"] .sg-hero-actions .sg-install > button {
+	display: none;
+}
+.sm-page[data-take="play"] .sg-hero-actions .sg-install > a {
+	background: #f0442a;
+	border-color: #f0442a;
+	color: #fff;
+}
+.sm-play-start {
+	padding-block: 90px 75px;
+}
+.sm-play-top {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 35px;
+}
+.sm-play-top h2 {
+	font-size: clamp(90px, 15vw, 216px);
+	letter-spacing: -0.055em;
+}
+.sm-play-top h2 > span {
+	color: #f0442a;
+}
+.sm-play-top > svg {
+	width: 110px;
+	height: 110px;
+	stroke-width: 0.8;
+	color: #f0442a;
+}
+.sm-play-bottom {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 50px;
+	border-top: 1px solid var(--sm-line);
+	margin-top: 48px;
+	padding-top: 36px;
+}
+.sm-play-bottom p {
+	font-size: 20px;
+}
+.sm-play-bottom p + p {
+	color: var(--sm-fg);
+}
+.sm-play-bottom .sm-fine {
+	margin-top: 13px;
+	font-size: 11px;
+}
+.sm-play-start > .sm-details {
+	margin-top: 30px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+	.sm-download:hover {
+		opacity: 0.83;
+	}
+	.sm-page .sg-text-button:hover,
+	.sm-page .sg-nav a:hover,
+	.sm-page .sg-chapters button:hover {
+		color: var(--sm-fg);
+	}
+	.sm-page .sg-install > a:hover {
+		background: var(--sm-fg);
+		opacity: 0.85;
+	}
+}
+.sm-page[data-input="pointer"] .sm-download:active {
+	transform: scale(0.98);
+}
+.sm-page[data-input="keyboard"] .sm-download,
+.sm-page[data-input="keyboard"] .sm-methods button {
+	transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+	.sm-download,
+	.sm-methods button {
+		transition: none;
+	}
+	.sm-page[data-input="pointer"] .sm-download:active {
+		transform: none;
+	}
+}
+@media (max-width: 1000px) {
+	.sm-page[data-take="crisp"] .sg-hero {
+		column-gap: 40px;
+		grid-template-columns: 1fr;
+	}
+	.sm-page[data-take="crisp"] .sg-hero > p {
+		margin-top: 25px;
+		max-width: 460px;
+	}
+	.sm-page .sg-try,
+	.sm-page .sg-files {
+		grid-template-columns: 260px minmax(0, 1fr);
+		gap: 35px;
+	}
+	.sm-page .sg-files {
+		grid-template-columns: 1fr;
+	}
+	.sm-crisp-start {
+		grid-template-columns: 1fr 1fr;
+		gap: 50px;
+	}
+}
+@media (max-width: 760px) {
+	.sm-page .sg-nav {
+		height: 72px;
+	}
+	.sm-page .sg-hero,
+	.sm-page[data-take="air"] .sg-hero,
+	.sm-page[data-take="play"] .sg-hero {
+		padding-block: 45px 35px;
+	}
+	.sm-page .sg-hero h1,
+	.sm-page[data-take="crisp"] .sg-hero h1 {
+		font-size: clamp(39px, 9.3vw, 64px);
+	}
+	.sm-page[data-take="play"] .sg-hero h1 {
+		font-size: clamp(46px, 11.3vw, 80px);
+	}
+	.sm-page .sg-hero > p {
+		font-size: 16px;
+	}
+	.sm-page .sg-hero-actions {
+		gap: 25px;
+	}
+	.sm-page .sg-hero-actions .sg-install > button {
+		display: none;
+	}
+	.sm-page .sg-section {
+		padding-block: 64px;
+	}
+	.sm-page .sg-section-heading > div {
+		max-width: none;
+	}
+	.sm-page .sg-copy h2,
+	.sm-page .sg-section-heading h2 {
+		font-size: 35px;
+	}
+	.sm-page .sg-copy p,
+	.sm-page .sg-section-heading p {
+		font-size: 15px;
+	}
+	.sm-page .sg-variants {
+		gap: 36px;
+	}
+	.sm-start {
+		padding-block: 65px;
+	}
+	.sm-crisp-start {
+		display: block;
+	}
+	.sm-start-heading {
+		padding: 0;
+	}
+	.sm-start-heading > span {
+		margin-top: 18px;
+	}
+	.sm-get {
+		margin-top: 45px;
+	}
+	.sm-start h2 {
+		font-size: 58px;
+	}
+	.sm-air-start h2 {
+		font-size: 48px;
+	}
+	.sm-start p {
+		font-size: 16px;
+	}
+	.sm-method-body p {
+		font-size: 14px;
+	}
+	.sm-play-top h2 {
+		font-size: 82px;
+	}
+	.sm-play-top > svg {
+		width: 40px;
+		height: 40px;
+	}
+	.sm-play-bottom {
+		display: block;
+		margin-top: 30px;
+		padding-top: 25px;
+	}
+	.sm-play-bottom > div + div {
+		margin-top: 24px;
+	}
+	.sm-play-start > .sm-details {
+		margin-top: 32px;
+	}
+}
