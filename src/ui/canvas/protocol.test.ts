@@ -127,6 +127,17 @@ describe("frame zoom protocol", () => {
 	});
 });
 
+describe("frame scroll protocol", () => {
+	it("accepts a chained wheel and rejects malformed ones", () => {
+		const scroll = { spool: "scroll", frame: "host", deltaX: 0, deltaY: 12, deltaMode: 0, shiftKey: false };
+
+		expect(parseFrameMessage(scroll)).toEqual(scroll);
+		expect(parseFrameMessage({ ...scroll, deltaY: "12" })).toBeUndefined();
+		expect(parseFrameMessage({ ...scroll, deltaMode: 3 })).toBeUndefined();
+		expect(parseFrameMessage({ ...scroll, shiftKey: undefined })).toBeUndefined();
+	});
+});
+
 describe("frame modifier protocol", () => {
 	it("accepts either accel key's hold changes and rejects malformed modifier intents", () => {
 		const held = { spool: "modifier", frame: "host", modifier: "Meta", held: true };

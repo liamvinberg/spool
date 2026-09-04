@@ -63,6 +63,20 @@ interface FrameWheelZoomMessage {
 export type FrameZoomMessage = FrameWheelZoomMessage | { spool: "zoom"; frame: string; kind: "in" | "out" };
 
 /**
+ * A plain wheel the entered frame could not scroll with: nothing under the
+ * cursor had room left in that direction, so the shim chains it out to the
+ * canvas as a pan, the way a browser chains a scroll to the parent page.
+ */
+export interface FrameScrollMessage {
+	spool: "scroll";
+	frame: string;
+	deltaX: number;
+	deltaY: number;
+	deltaMode: number;
+	shiftKey: boolean;
+}
+
+/**
  * A frame reporting a modifier key it saw move. The frame does not decide which
  * one is the platform's accel modifier — it names what happened and the canvas
  * applies the rule, so the platform question stays in one place.
@@ -142,6 +156,7 @@ export type FrameMessage =
 	| FrameModifierMessage
 	| FramePanMessage
 	| FrameZoomMessage
+	| FrameScrollMessage
 	| { spool: "picked"; frame: string; id: number; chain: PickedHit[] }
 	| { spool: "measured"; frame: string; id: number; reading: SpacingReading | null }
 	| { spool: "edit-open"; frame: string; id: number; ok: boolean; text: string }
@@ -216,6 +231,13 @@ export function parseFrameMessage(data: unknown): FrameMessage | undefined {
 				finite(m.y) &&
 				finite(m.deltaY) &&
 				(m.deltaMode === 0 || m.deltaMode === 1 || m.deltaMode === 2)
+				? (m as unknown as FrameMessage)
+				: undefined;
+		case "scroll":
+			return finite(m.deltaX) &&
+				finite(m.deltaY) &&
+				(m.deltaMode === 0 || m.deltaMode === 1 || m.deltaMode === 2) &&
+				typeof m.shiftKey === "boolean"
 				? (m as unknown as FrameMessage)
 				: undefined;
 		case "picked":

@@ -3052,6 +3052,25 @@ export function ProjectCanvas({
 					zoomAtPoint(c.x, c.y, message.kind === "in" ? K_STEP : 1 / K_STEP, true);
 					return;
 				}
+				case "scroll": {
+					// a wheel the entered frame had nowhere to scroll: it chains out
+					// to the canvas as the same pan the viewport's own wheel makes
+					if (enteredRef.current !== message.frame) return;
+					const viewport = viewportRef.current;
+					if (viewport === null) return;
+					stopAnimation();
+					setMenu(null);
+					const dx = wheelPixels(message.deltaX, message.deltaMode, viewport.clientHeight);
+					const dy = wheelPixels(message.deltaY, message.deltaMode, viewport.clientHeight);
+					setCamera((c) =>
+						c === null
+							? c
+							: message.shiftKey && dx === 0
+								? { ...c, x: c.x - dy }
+								: { ...c, x: c.x - dx, y: c.y - dy },
+					);
+					return;
+				}
 				case "go":
 				case "back": {
 					const source = event.source as WindowProxy;

@@ -212,6 +212,86 @@ describe("the canvas shim", () => {
 		}
 	});
 
+	it("chains a plain wheel out to the canvas only when nothing in the frame can scroll it", async () => {
+		const shim = await servedShim();
+		const posted: unknown[] = [];
+		const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
+		Object.defineProperty(window, "parent", {
+			configurable: true,
+			value: { postMessage: (message: unknown) => posted.push(message) },
+		});
+		window.__SPOOL__ = { project: "project", frame: "host", projectCapability: "project-capability" };
+		let dispose: (() => void) | undefined;
+		// happy-dom lays nothing out: a scroller is declared by its numbers
+		const list = document.createElement("div");
+		list.style.overflowY = "auto";
+		let scrollTop = 0;
+		Object.defineProperties(list, {
+			scrollHeight: { value: 400 },
+			clientHeight: { value: 100 },
+			scrollTop: { get: () => scrollTop, set: (v: number) => (scrollTop = v) },
+		});
+		document.body.append(list);
+		let clock = 0;
+		const wheel = (target: EventTarget, deltaY: number, gap = 1000) => {
+			clock += gap;
+			const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY });
+			Object.defineProperties(event, { timeStamp: { value: clock }, clientX: { value: 0 }, clientY: { value: 0 } });
+			target.dispatchEvent(event);
+			return event;
+		};
+
+		try {
+			dispose = runShim(shim);
+
+			// an expanded page: nothing scrolls, the canvas takes it
+			const page = wheel(document.body, 10);
+			expect(page.defaultPrevented).toBe(true);
+			expect(posted).toEqual([
+				{ spool: "scroll", frame: "host", deltaX: 0, deltaY: 10, deltaMode: 0, shiftKey: false },
+			]);
+			posted.length = 0;
+
+			// a list with room below keeps a downward wheel
+			const down = wheel(list, 10);
+			expect(down.defaultPrevented).toBe(false);
+			expect(posted).toEqual([]);
+
+			// at the top, an upward wheel has nowhere to go inside: it chains out
+			const up = wheel(list, -10);
+			expect(up.defaultPrevented).toBe(true);
+			expect(posted).toEqual([
+				{ spool: "scroll", frame: "host", deltaX: 0, deltaY: -10, deltaMode: 0, shiftKey: false },
+			]);
+			posted.length = 0;
+
+			// a gesture latches: momentum that runs the list to its end stays there
+			scrollTop = 0;
+			wheel(list, 10);
+			scrollTop = 300;
+			const momentum = wheel(list, 10, 20);
+			expect(momentum.defaultPrevented).toBe(false);
+			expect(posted).toEqual([]);
+			// ...and the next gesture, after a pause, goes to the canvas
+			const next = wheel(list, 10);
+			expect(next.defaultPrevented).toBe(true);
+			expect(posted).toHaveLength(1);
+			posted.length = 0;
+
+			// the prototype's own handler keeps what it claimed
+			list.addEventListener("wheel", (event) => event.preventDefault(), { once: true });
+			scrollTop = 300;
+			const claimed = wheel(list, 10);
+			expect(claimed.defaultPrevented).toBe(true);
+			expect(posted).toEqual([]);
+		} finally {
+			dispose?.();
+			list.remove();
+			delete window.__SPOOL__;
+			if (parentDescriptor !== undefined) Object.defineProperty(window, "parent", parentDescriptor);
+		}
+	});
+
 	it("relays the jump chords and eats the browser's open-file dialog", async () => {
 		const shim = await servedShim();
 		const posted: unknown[] = [];
