@@ -111,6 +111,25 @@ export function PropertiesIcon() {
 	);
 }
 
+/**
+ * The settings door at the foot of the dock (#282). A cog, because that is the
+ * one glyph every person already reads as settings, drawn at the strip's own
+ * weight so it sits with the two above it.
+ */
+export function CogIcon() {
+	return (
+		<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+			<path
+				d="M8 1.9v1.6M8 12.5v1.6M14.1 8h-1.6M3.5 8H1.9M12.3 3.7l-1.1 1.1M4.8 11.2l-1.1 1.1M12.3 12.3l-1.1-1.1M4.8 4.8 3.7 3.7"
+				stroke="currentColor"
+				strokeWidth="1.5"
+				strokeLinecap="round"
+			/>
+			<circle cx="8" cy="8" r="2.6" stroke="currentColor" strokeWidth="1.5" />
+		</svg>
+	);
+}
+
 /** The per-card menu on home. */
 export function DotsIcon() {
 	return (

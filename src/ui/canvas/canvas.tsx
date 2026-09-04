@@ -308,9 +308,12 @@ export function ownsFrameMessage(
 export function ProjectCanvas({
 	project,
 	onChrome,
+	onSettings,
 }: {
 	project: string;
 	onChrome: (chrome: CanvasChrome | null) => void;
+	/** the dock's cog (#282): the sheet is the shell's, so the door only asks */
+	onSettings?: (() => void) | undefined;
 }) {
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const [frames, setFrames] = useState<ProjectedFrame[]>([]);
@@ -4852,6 +4855,7 @@ export function ProjectCanvas({
 			    panel at a time. */}
 			<Dock
 				agentWorking={turn.phase === "playing"}
+				onSettings={onSettings}
 				properties={(width, shut) => (
 					<PropertiesRail
 						project={project}

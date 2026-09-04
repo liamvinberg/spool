@@ -22,6 +22,7 @@ import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { EdgeIcon, RibbonMark } from "./icons";
 import { FolderPicker } from "./picker";
 import { settingsMoved, useSettings } from "./settings";
+import { SettingsSheet } from "./settings-sheet";
 import { type TabProject, TabStrip } from "./tab-strip";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
 
@@ -60,6 +61,7 @@ export function App() {
 	const pendingForgetRef = useRef<TabProject | null>(null);
 	const forgetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const [keysOpen, setKeysOpen] = useState(false);
+	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [toast, setToast] = useState<UpdateToast | null>(null);
 	const toastRef = useRef(toast);
 	toastRef.current = toast;
@@ -338,15 +340,28 @@ export function App() {
 		});
 	}, [undoForget]);
 
-	// ? opens the shortcut sheet over whatever the shell is showing
+	// ? opens the shortcut sheet and ⌘, the settings sheet over whatever the
+	// shell is showing; one of the two at a time, so each puts the other away
+	const openSettings = useCallback(() => {
+		setKeysOpen(false);
+		setSettingsOpen(true);
+	}, []);
+	const closeSettings = useCallback(() => setSettingsOpen(false), []);
 	useEffect(() => {
 		return attachHotkeyLayer({
 			scope: "app",
 			handlers: {
-				"app.help": () => setKeysOpen(true),
+				"app.help": () => {
+					setSettingsOpen(false);
+					setKeysOpen(true);
+				},
+				"app.settings": (event) => {
+					event?.preventDefault();
+					openSettings();
+				},
 			} satisfies Record<HotkeyIdFor<"app">, HotkeyHandler>,
 		});
-	}, []);
+	}, [openSettings]);
 
 	// leaving the page mid-toast: the staged forget still happens
 	useEffect(() => {
@@ -426,7 +441,12 @@ export function App() {
 						onForgetProject={(project) => stageForget(project)}
 					/>
 				) : (
-					<ProjectCanvas key={focusedTab.root} project={focusedTab.name} onChrome={setChrome} />
+					<ProjectCanvas
+						key={focusedTab.root}
+						project={focusedTab.name}
+						onChrome={setChrome}
+						onSettings={openSettings}
+					/>
 				)}
 			</main>
 
@@ -457,6 +477,7 @@ export function App() {
 			)}
 
 			{keysOpen && <HotkeySheet onClose={() => setKeysOpen(false)} />}
+			{settingsOpen && <SettingsSheet project={focusedTab?.name} onClose={closeSettings} />}
 		</div>
 	);
 }

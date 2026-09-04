@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "../cn";
-import { AgentIcon, PropertiesIcon } from "../icons";
+import { hotkeyKey } from "../hotkeys";
+import { AgentIcon, CogIcon, PropertiesIcon } from "../icons";
 import { useRemembered } from "../remembered";
 import { AGENT_WIDTH } from "./agent-rail";
 import {
@@ -61,12 +62,15 @@ const CROSS_MS = 160;
  */
 type DockHeld = DockSurface | "shut";
 
+const settingsFace = () => hotkeyKey("app.settings");
+
 const isHeld = (value: unknown): value is DockHeld => value === "shut" || value === "properties" || value === "agent";
 
 export function Dock({
 	properties,
 	agent,
 	agentWorking,
+	onSettings,
 }: {
 	/**
 	 * Each surface, drawn at the width it will settle at and handed the one act
@@ -78,6 +82,8 @@ export function Dock({
 	agent: (width: number, shut: () => void) => ReactNode;
 	/** a turn is in flight: the shut glyph says so, and says it landed once it has */
 	agentWorking: boolean;
+	/** the cog at the foot of the strip (#282): a door to the settings sheet, not a surface */
+	onSettings?: (() => void) | undefined;
 }) {
 	const [kept, setKept] = useRemembered<DockHeld>("dock.open", "properties", isHeld);
 	const open: DockSurface | null = kept === "shut" ? null : kept;
@@ -224,6 +230,16 @@ export function Dock({
 				>
 					<AgentIcon />
 				</Glyph>
+				<button
+					type="button"
+					data-dock-glyph="settings"
+					aria-label="Settings"
+					title={`Settings ${settingsFace()}`}
+					onClick={onSettings}
+					className="relative mt-auto mb-1.5 flex h-8 w-8 items-center justify-center rounded-sm text-muted/70 transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] hover:text-text active:scale-90 motion-reduce:transition-none"
+				>
+					<CogIcon />
+				</button>
 			</div>
 		</aside>
 	);
