@@ -89,14 +89,14 @@ export const THEME_TOKEN_NAMES = Object.keys(THEME_TOKENS) as readonly ThemeToke
  * what a token shows when nobody moved it.
  */
 export const LIGHT_THEME_TOKENS: Record<ThemeToken, string> = {
-	bg: "#f5f4f2",
-	canvas: "#eae9e6",
-	surface: "#fbfaf9",
+	bg: "#f0efec",
+	canvas: "#e6e5e1",
+	surface: "#ffffff",
 	raised: "#ffffff",
-	border: "#e2e0dc",
-	"border-raised": "#cbc9c3",
+	border: "#dcdad5",
+	"border-raised": "#c2c0ba",
 	text: "#1a1917",
-	muted: "#767370",
+	muted: "#6f6c68",
 	thread: "#f5391a",
 	"on-thread": "#ffffff",
 };

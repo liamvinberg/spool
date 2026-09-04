@@ -18,14 +18,14 @@
 	 * moved lands inline on <html> and beats both. The pairs are mirrored in
 	 * `src/settings/registry.ts`, and a test keeps them in step. */
 	--color-*: initial;
-	--color-bg: light-dark(#f5f4f2, #0e0e0e);
-	--color-canvas: light-dark(#eae9e6, #161616);
-	--color-surface: light-dark(#fbfaf9, #1c1c1c);
+	--color-bg: light-dark(#f0efec, #0e0e0e);
+	--color-canvas: light-dark(#e6e5e1, #161616);
+	--color-surface: light-dark(#ffffff, #1c1c1c);
 	--color-raised: light-dark(#ffffff, #282828);
-	--color-border: light-dark(#e2e0dc, #262626);
-	--color-border-raised: light-dark(#cbc9c3, #363636);
+	--color-border: light-dark(#dcdad5, #262626);
+	--color-border-raised: light-dark(#c2c0ba, #363636);
 	--color-text: light-dark(#1a1917, #f0efed);
-	--color-muted: light-dark(#767370, #8e8c88);
+	--color-muted: light-dark(#6f6c68, #8e8c88);
 	--color-thread: light-dark(#f5391a, #f5391a);
 	/* the ribbon mark alone; a development daemon paints it blue and nothing else */
 	--color-mark: var(--color-thread);
