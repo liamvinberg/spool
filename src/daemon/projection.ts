@@ -2,7 +2,7 @@ import { type Dirent, lstatSync, readdirSync } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Cover } from "../cover";
-import { composePage, medianFrameArea, pageBox, type Rect, type Size } from "../page-box";
+import { composePage, medianFrameArea, pageBox, type Rect, type Size, shelfPages } from "../page-box";
 import { isSafeName, pageHolds, pageName, pageParent, pageSlot, pageUnder, ROOT_PAGE } from "../page-path";
 import { type CanvasPlaces, type Place, readPlaces, writePlaces } from "./canvas-places";
 import { DesignBoundaryError, realDesignDir, resolveDesignPath } from "./design-path";
@@ -374,9 +374,15 @@ function pageObjectsOn(parent: string, pages: readonly string[], frames: readonl
  * each other. So the field a page is placed against holds both: the frames on
  * the parent page, and the pages already standing there.
  *
- * A stored place is left alone whatever it says, including one naming a page
- * that has since gone. Order is deterministic so two daemons reading the same
- * disk fill in the same coordinates.
+ * A field with no frames of its own is the exception (`shelfPages`): its pages
+ * have nothing to be arranged against, so they stand on a shelf the daemon
+ * owns, and a stored place there is overwritten rather than kept. The first
+ * frame written onto that field makes the shelf the arrangement, and from then
+ * on it is a hand's.
+ *
+ * Otherwise a stored place is left alone whatever it says, including one naming
+ * a page that has since gone. Order is deterministic so two daemons reading the
+ * same disk fill in the same coordinates.
  */
 export function placePages(
 	pages: readonly string[],
@@ -391,8 +397,20 @@ export function placePages(
 		const field: Rect[] = frames
 			.filter((frame) => pageSlot(frame) === parent)
 			.map(({ x, y, w, h }) => ({ x, y, w, h }));
+		const held = sorted.filter((each) => pageParent(each) === parent);
+		if (field.length === 0) {
+			const shelf = shelfPages(held.map((page) => pageObjectBox(page, frames)));
+			held.forEach((page, at) => {
+				const place = shelf[at];
+				if (place === undefined) return;
+				const was = places[page];
+				if (was?.x !== place.x || was.y !== place.y) filled = true;
+				places[page] = place;
+			});
+			continue;
+		}
 		for (const { at, box } of pageObjectsOn(parent, sorted, frames, places)) field.push({ ...at, ...box });
-		for (const page of sorted.filter((each) => pageParent(each) === parent && places[each] === undefined)) {
+		for (const page of held.filter((each) => places[each] === undefined)) {
 			const box = pageObjectBox(page, frames);
 			const at = besideField(field);
 			places[page] = at;

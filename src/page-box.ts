@@ -199,3 +199,47 @@ export function fitComposition(
 		dy: (box.h - composition.h * scale) / 2,
 	};
 }
+
+/** The space between two pages on a shelf, and from the field's origin to the first. */
+export const SHELF_GUTTER = 80;
+/** What a shelf aims at: the row width that lands the whole block near this aspect. */
+const SHELF_ASPECT = 1.6;
+
+/**
+ * Where pages stand on a field that holds no frames of its own.
+ *
+ * A place is an arrangement against neighbours, and a page of pages has none:
+ * every coordinate on it would be one the daemon made up and a hand then had to
+ * go looking for. So the pages have no place there. They sit on a shelf, in the
+ * order given, wrapped into rows so the block reads near `SHELF_ASPECT` rather
+ * than as one line, each row top-aligned and as tall as its tallest page. The
+ * first frame written onto the field gives them neighbours, and from then on
+ * they are placed like anything else.
+ *
+ * Pure and deterministic, so the daemon that stores the shelf and the canvas
+ * that draws it agree, and two daemons reading the same disk agree too.
+ */
+export function shelfPages(boxes: readonly Size[]): { x: number; y: number }[] {
+	if (boxes.length === 0) return [];
+	// one line's width and height decide how many rows bring the block near the
+	// target: r rows make it about (line / r) wide and (r * tallest) tall
+	const line = boxes.reduce((total, box) => total + box.w, 0) + SHELF_GUTTER * (boxes.length - 1);
+	const tallest = Math.max(...boxes.map((box) => box.h));
+	const rows = Math.max(1, Math.round(Math.sqrt(line / (tallest * SHELF_ASPECT))));
+	const row = Math.ceil(line / rows);
+	const out: { x: number; y: number }[] = [];
+	let x = SHELF_GUTTER;
+	let y = SHELF_GUTTER;
+	let rowTallest = 0;
+	for (const box of boxes) {
+		if (x > SHELF_GUTTER && x + box.w > SHELF_GUTTER + row) {
+			x = SHELF_GUTTER;
+			y += rowTallest + SHELF_GUTTER;
+			rowTallest = 0;
+		}
+		out.push({ x, y });
+		x += box.w + SHELF_GUTTER;
+		rowTallest = Math.max(rowTallest, box.h);
+	}
+	return out;
+}

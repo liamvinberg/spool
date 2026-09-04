@@ -437,6 +437,18 @@ export function ProjectCanvas({
 	);
 	const pageObjectsRef = useRef(pageObjects);
 	pageObjectsRef.current = pageObjects;
+	/**
+	 * Everything standing on this field, as boxes: the frames and the pages
+	 * (#265). What a fit has to take in, because a page of pages is nothing but
+	 * objects and a camera that only knew frames landed on an empty view.
+	 */
+	const fieldBoxes = useCallback(
+		(): Box[] => [
+			...framesRef.current.map(({ x, y, w, h }) => ({ x, y, w, h })),
+			...pageObjectsRef.current.map(({ x, y, w, h }) => ({ x, y, w, h })),
+		],
+		[],
+	);
 	const placesRef = useRef(places);
 	placesRef.current = places;
 	const selectedPageRef = useRef(selectedPage);
@@ -1174,17 +1186,18 @@ export function ProjectCanvas({
 		});
 	}, [lifecycle.states]);
 
-	// no stored camera: fit the field once both viewport and frames exist
+	// no stored camera: fit the field once both viewport and field exist
 	useLayoutEffect(() => {
 		if (camera !== null || !loaded) return;
 		const viewport = viewportRef.current;
 		if (viewport === null) return;
+		const boxes = fieldBoxes();
 		setCamera(
-			framesRef.current.length === 0
+			boxes.length === 0
 				? { x: 0, y: 0, k: 1 }
-				: fitCamera(boundsOf(framesRef.current), viewport.clientWidth, viewport.clientHeight),
+				: fitCamera(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight),
 		);
-	}, [camera, loaded]);
+	}, [camera, loaded, fieldBoxes]);
 
 	// --- camera ---------------------------------------------------------------
 
@@ -1229,9 +1242,10 @@ export function ProjectCanvas({
 
 	const zoomFit = useCallback(() => {
 		const viewport = viewportRef.current;
-		if (viewport === null || framesRef.current.length === 0) return;
-		animateCamera(fitCamera(boundsOf(framesRef.current), viewport.clientWidth, viewport.clientHeight));
-	}, [animateCamera]);
+		const boxes = fieldBoxes();
+		if (viewport === null || boxes.length === 0) return;
+		animateCamera(fitCamera(boundsOf(boxes), viewport.clientWidth, viewport.clientHeight));
+	}, [animateCamera, fieldBoxes]);
 
 	const resetZoom = useCallback(() => {
 		const cam = cameraRef.current;
@@ -3521,8 +3535,12 @@ export function ProjectCanvas({
 				setSelected([]);
 				setPicked([]);
 				setSelectedPage(page);
+				// a page on a field with no frames of its own stands on a shelf the
+				// daemon lays, so there is nothing for a drag to arrange it against
 				const at = placesRef.current[page];
-				if (at !== undefined) gesture.current = { kind: "page-pending", page, origin: at, start: p };
+				if (at !== undefined && framesRef.current.length > 0) {
+					gesture.current = { kind: "page-pending", page, origin: at, start: p };
+				}
 				return;
 			}
 			setSelectedPage(null);

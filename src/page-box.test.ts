@@ -11,6 +11,8 @@ import {
 	PAGE_ASPECT_LOW,
 	pageBox,
 	type Rect,
+	SHELF_GUTTER,
+	shelfPages,
 } from "./page-box";
 
 /**
@@ -163,5 +165,47 @@ describe("fitting the composition into its box", () => {
 
 	it("has nothing to fit when the page holds nothing", () => {
 		expect(fitComposition(composePage([]), { w: 400, h: 400 })).toEqual({ scale: 1, dx: 0, dy: 0 });
+	});
+});
+
+describe("the shelf a page of pages stands on", () => {
+	it("has nowhere to put nothing", () => {
+		expect(shelfPages([])).toEqual([]);
+	});
+
+	it("starts at the gutter and runs the pages along one line in the order given", () => {
+		const boxes = [
+			{ w: 1000, h: 600 },
+			{ w: 800, h: 500 },
+		];
+		expect(shelfPages(boxes)).toEqual([
+			{ x: SHELF_GUTTER, y: SHELF_GUTTER },
+			{ x: SHELF_GUTTER + 1000 + SHELF_GUTTER, y: SHELF_GUTTER },
+		]);
+	});
+
+	it("wraps twelve pages into rows rather than one line, each row under the tallest of the last", () => {
+		const boxes = Array.from({ length: 12 }, (_, at) => ({ w: 1000, h: at === 0 ? 900 : 600 }));
+		const places = shelfPages(boxes);
+		const rows = new Set(places.map((at) => at.y));
+		expect(rows.size).toBeGreaterThan(1);
+		expect(rows.size).toBeLessThan(12);
+		// the second row clears the first by the tallest page on it, plus the gutter
+		const second = [...rows].sort((a, b) => a - b)[1];
+		expect(second).toBe(SHELF_GUTTER + 900 + SHELF_GUTTER);
+		// the block reads as a block: wider than tall, but nowhere near a hairline
+		const w = Math.max(...places.map((at, i) => at.x + (boxes[i]?.w ?? 0)));
+		const h = Math.max(...places.map((at, i) => at.y + (boxes[i]?.h ?? 0)));
+		expect(w / h).toBeGreaterThan(1);
+		expect(w / h).toBeLessThan(3);
+	});
+
+	it("never breaks a row before its first page, however wide that page is", () => {
+		const places = shelfPages([
+			{ w: 9000, h: 100 },
+			{ w: 100, h: 100 },
+		]);
+		expect(places[0]).toEqual({ x: SHELF_GUTTER, y: SHELF_GUTTER });
+		expect(places[1]?.y).toBe(SHELF_GUTTER + 100 + SHELF_GUTTER);
 	});
 });

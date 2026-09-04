@@ -124,6 +124,54 @@ describe("a page on the field", () => {
 	});
 });
 
+describe("a page holding only pages", () => {
+	// `explore` holds no frames of its own; its two pages stand on a shelf the
+	// daemon laid, which is what the places here say
+	const SHELVED = {
+		pages: ["explore", "explore/agent", "explore/booting"],
+		frames: [frame("home"), frame("one", { page: "explore/agent" }), frame("two", { page: "explore/booting" })],
+		places: { explore: { x: 400, y: 0 }, "explore/agent": { x: 80, y: 80 }, "explore/booting": { x: 2000, y: 80 } },
+	};
+
+	it("arrives with the camera fitted to the objects, which are the whole field", async () => {
+		const host = await mountCanvas(SHELVED, { viewport: 800 });
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="explore page"]')?.click();
+		});
+		await until(() => pageObject(host, "explore/agent") !== null);
+		// nothing stored for this page, so the arrival fit the field, and the
+		// field is two objects the old camera would have left off to the right
+		const transform = camera(host)?.style.transform ?? "";
+		const k = Number(/scale\(([^)]+)\)/.exec(transform)?.[1]);
+		expect(k).toBeGreaterThan(0);
+		expect(k).toBeLessThan(1);
+	});
+
+	it("will not drag what stands on the shelf", async () => {
+		const host = await mountCanvas(SHELVED, { viewport: 800 });
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="explore page"]')?.click();
+		});
+		await until(() => pageObject(host, "explore/agent") !== null);
+		// the arrival fitted the field; press where the object lands on the glass
+		const at = screenAt(host, { x: 90, y: 90 });
+		const before = pageObject(host, "explore/agent")?.style.transform;
+		await drag(host, at, { x: at.x + 200, y: at.y + 200 });
+		expect(pageObject(host, "explore/agent")?.style.transform).toBe(before);
+		expect(written).toEqual([]);
+		// it is still taken by the press: the ring is on it
+		expect(pageObject(host, "explore/agent")?.querySelector("span.border-thread")).not.toBeNull();
+	});
+});
+
+/** where a world point lands on the glass under the camera as it stands */
+function screenAt(host: HTMLElement, world: { x: number; y: number }): { x: number; y: number } {
+	const transform = camera(host)?.style.transform ?? "";
+	const move = /translate\(([^p]+)px, ([^p]+)px\)/.exec(transform);
+	const k = Number(/scale\(([^)]+)\)/.exec(transform)?.[1] ?? 1);
+	return { x: world.x * k + Number(move?.[1] ?? 0), y: world.y * k + Number(move?.[2] ?? 0) };
+}
+
 /** a pointer press and release on the camera layer, in viewport coordinates */
 async function press(host: HTMLElement, at: { x: number; y: number }): Promise<void> {
 	await drag(host, at, at);
@@ -147,12 +195,20 @@ async function drag(host: HTMLElement, from: { x: number; y: number }, to: { x: 
 	});
 }
 
-async function mountCanvas(project: {
-	pages: readonly string[];
-	frames: readonly Projected[];
-	places: Record<string, { x: number; y: number }>;
-}): Promise<HTMLElement> {
+async function mountCanvas(
+	project: {
+		pages: readonly string[];
+		frames: readonly Projected[];
+		places: Record<string, { x: number; y: number }>;
+	},
+	options: { viewport?: number } = {},
+): Promise<HTMLElement> {
 	written.length = 0;
+	if (options.viewport !== undefined) {
+		// happy-dom lays nothing out, and a fit reads the viewport's own box
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(options.viewport);
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(options.viewport);
+	}
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

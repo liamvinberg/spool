@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_FRAME_AREA } from "../page-box";
+import { DEFAULT_FRAME_AREA, SHELF_GUTTER } from "../page-box";
 import { makeTempDir, writeDesignFile, writeFrame, writePageFrame } from "../test-helpers";
 import { writePlaces } from "./canvas-places";
 import { listProjectFrames, pageObjectBox, placePages } from "./projection";
@@ -92,6 +92,42 @@ describe("completing a page that has no place", () => {
 		const { places } = placePages(["explorations", "explorations/chat"], frames, {});
 		// `chat` stands among `explorations`' frames, which start at the origin
 		expect(places["explorations/chat"]).toEqual({ x: 1000 + 80, y: 0 });
+	});
+});
+
+describe("a field with no frames of its own", () => {
+	const frames = [
+		{ name: "one", page: "explore/agent", x: 0, y: 0, w: 1000, h: 600 },
+		{ name: "two", page: "explore/booting", x: 0, y: 0, w: 1000, h: 600 },
+	];
+
+	it("shelves its pages in order from the gutter, whatever was stored", () => {
+		const stored = { "explore/agent": { x: -9000, y: 4000 } };
+		const { places, filled } = placePages(["explore", "explore/agent", "explore/booting"], frames, stored);
+		expect(filled).toBe(true);
+		expect(places["explore/agent"]).toEqual({ x: SHELF_GUTTER, y: SHELF_GUTTER });
+		const booting = places["explore/booting"];
+		if (booting === undefined) throw new Error("booting should be shelved");
+		expect(booting.x).toBe(SHELF_GUTTER + pageObjectBox("explore/agent", frames).w + SHELF_GUTTER);
+		expect(booting.y).toBe(SHELF_GUTTER);
+	});
+
+	it("reports nothing to write when the shelf already stands", () => {
+		const pages = ["explore", "explore/agent", "explore/booting"];
+		const first = placePages(pages, frames, {}).places;
+		expect(placePages(pages, frames, first).filled).toBe(false);
+	});
+
+	it("becomes the arrangement once a frame lands on the field", () => {
+		const pages = ["explore", "explore/agent", "explore/booting"];
+		const shelved = placePages(pages, frames, {}).places;
+		// a frame is written onto `explore`: the shelf is kept, and a hand can move it now
+		const landed = [...frames, { name: "note", page: "explore", x: 5000, y: 0, w: 1000, h: 600 }];
+		const { places, filled } = placePages(pages, landed, shelved);
+		expect(filled).toBe(false);
+		expect(places).toEqual(shelved);
+		const moved = { ...shelved, "explore/agent": { x: -1, y: -1 } };
+		expect(placePages(pages, landed, moved).places["explore/agent"]).toEqual({ x: -1, y: -1 });
 	});
 });
 
