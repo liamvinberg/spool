@@ -190,9 +190,10 @@ describe("the shelf a page of pages stands on", () => {
 		const rows = new Set(places.map((at) => at.y));
 		expect(rows.size).toBeGreaterThan(1);
 		expect(rows.size).toBeLessThan(12);
-		// the second row clears the first by the tallest page on it, plus the gutter
+		// the second row clears the first by the tallest page on it, plus room for
+		// a label that scales with the row rather than with the gutter
 		const second = [...rows].sort((a, b) => a - b)[1];
-		expect(second).toBe(SHELF_GUTTER + 900 + SHELF_GUTTER);
+		expect(second).toBe(SHELF_GUTTER + 900 + Math.round(900 * 0.14));
 		// the block reads as a block: wider than tall, but nowhere near a hairline
 		const w = Math.max(...places.map((at, i) => at.x + (boxes[i]?.w ?? 0)));
 		const h = Math.max(...places.map((at, i) => at.y + (boxes[i]?.h ?? 0)));
@@ -206,6 +207,7 @@ describe("the shelf a page of pages stands on", () => {
 			{ w: 100, h: 100 },
 		]);
 		expect(places[0]).toEqual({ x: SHELF_GUTTER, y: SHELF_GUTTER });
+		// a short row still clears by at least the gutter
 		expect(places[1]?.y).toBe(SHELF_GUTTER + 100 + SHELF_GUTTER);
 	});
 });

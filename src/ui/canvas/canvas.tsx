@@ -1199,6 +1199,23 @@ export function ProjectCanvas({
 		);
 	}, [camera, loaded, fieldBoxes]);
 
+	/**
+	 * A shelf is fitted on every arrival, stored camera or not. A page with no
+	 * frames of its own has nothing on it a hand arranged: the daemon lays its
+	 * pages, and lays them again as pages come and go, so a camera kept from
+	 * last time was aimed at a field that may no longer be there. Once, per
+	 * arrival; what the hand does with the camera after that is its own.
+	 */
+	const arrivedOn = useRef<string | null>(null);
+	useLayoutEffect(() => {
+		if (!loaded || arrivedOn.current === activePage) return;
+		arrivedOn.current = activePage;
+		if (framesRef.current.length > 0 || pageObjectsRef.current.length === 0) return;
+		const viewport = viewportRef.current;
+		if (viewport === null) return;
+		setCamera(fitCamera(boundsOf(fieldBoxes()), viewport.clientWidth, viewport.clientHeight));
+	}, [loaded, activePage, fieldBoxes]);
+
 	// --- camera ---------------------------------------------------------------
 
 	const stopAnimation = useCallback(() => cancelAnimationFrame(animation.current), []);

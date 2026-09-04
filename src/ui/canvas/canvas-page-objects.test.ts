@@ -147,6 +147,19 @@ describe("a page holding only pages", () => {
 		expect(k).toBeLessThan(1);
 	});
 
+	it("fits the shelf on arrival even when a camera was kept for the page", async () => {
+		const host = await mountCanvas(SHELVED, { viewport: 800, cameras: { explore: { x: -9000, y: -9000, k: 1 } } });
+		await act(async () => {
+			host.querySelector<HTMLButtonElement>('button[aria-label="explore page"]')?.click();
+		});
+		await until(() => pageObject(host, "explore/agent") !== null);
+		const transform = camera(host)?.style.transform ?? "";
+		expect(transform).not.toContain("translate(-9000px");
+		const k = Number(/scale\(([^)]+)\)/.exec(transform)?.[1]);
+		expect(k).toBeGreaterThan(0);
+		expect(k).toBeLessThan(1);
+	});
+
 	it("will not drag what stands on the shelf", async () => {
 		const host = await mountCanvas(SHELVED, { viewport: 800 });
 		await act(async () => {
@@ -201,7 +214,7 @@ async function mountCanvas(
 		frames: readonly Projected[];
 		places: Record<string, { x: number; y: number }>;
 	},
-	options: { viewport?: number } = {},
+	options: { viewport?: number; cameras?: Record<string, { x: number; y: number; k: number }> } = {},
 ): Promise<HTMLElement> {
 	written.length = 0;
 	if (options.viewport !== undefined) {
@@ -217,7 +230,9 @@ async function mountCanvas(
 				written.push(JSON.parse(String(init?.body ?? "{}")));
 				return new Response(null, { status: 204 });
 			}
-			if (url.pathname.endsWith("/state")) return Response.json({ camera: { x: 0, y: 0, k: 1 } });
+			if (url.pathname.endsWith("/state")) {
+				return Response.json({ camera: { x: 0, y: 0, k: 1 }, pageCameras: options.cameras ?? {} });
+			}
 			if (url.pathname.endsWith("/frames")) {
 				return Response.json({
 					root: "/project",

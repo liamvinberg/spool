@@ -204,6 +204,14 @@ export function fitComposition(
 export const SHELF_GUTTER = 80;
 /** What a shelf aims at: the row width that lands the whole block near this aspect. */
 const SHELF_ASPECT = 1.6;
+/**
+ * The space under a row, as a share of that row's height. A label rides above
+ * each page at a size that does not zoom, and a shelf is looked at fitted, so
+ * a fixed gutter of world units is a few pixels there and the labels of one
+ * row land on the pages of the row above. Room that scales with the row is
+ * room that survives the fit.
+ */
+const SHELF_ROW_ROOM = 0.14;
 
 /**
  * Where pages stand on a field that holds no frames of its own.
@@ -234,7 +242,7 @@ export function shelfPages(boxes: readonly Size[]): { x: number; y: number }[] {
 	for (const box of boxes) {
 		if (x > SHELF_GUTTER && x + box.w > SHELF_GUTTER + row) {
 			x = SHELF_GUTTER;
-			y += rowTallest + SHELF_GUTTER;
+			y += rowTallest + Math.max(SHELF_GUTTER, Math.round(rowTallest * SHELF_ROW_ROOM));
 			rowTallest = 0;
 		}
 		out.push({ x, y });
