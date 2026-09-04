@@ -1,0 +1,670 @@
+.ds-landing {
+	--lp-bg: #0e0e0e;
+	--lp-ink: #f0efed;
+	--lp-muted: #8e8c88;
+	--lp-line: #262626;
+	--lp-surface: #1c1c1c;
+	--lp-accent: #f5391a;
+	color-scheme: dark;
+}
+.ds-brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 23px;
+	font-weight: 600;
+	letter-spacing: -0.8px;
+}
+.ds-brand svg {
+	width: 18px;
+	height: 25px;
+	color: #f5391a;
+}
+.ds-landing .lp-hero {
+	padding-top: 45px;
+	padding-bottom: 43px;
+}
+.ds-stage {
+	position: relative;
+	width: 100%;
+	overflow: hidden;
+	border: 1px solid #363636;
+	border-radius: 9px;
+}
+.ds-scaled {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 1600px;
+	height: 850px;
+	transform-origin: top left;
+}
+.ds-app {
+	height: 850px;
+	width: 1600px;
+	background: #0e0e0e;
+	color: #f0efed;
+	font-family: "Familjen Grotesk", sans-serif;
+	--color-bg: #0e0e0e;
+	--color-canvas: #161616;
+	--color-surface: #1c1c1c;
+	--color-raised: #282828;
+	--color-border: #262626;
+	--color-border-raised: #363636;
+	--color-text: #f0efed;
+	--color-muted: #8e8c88;
+	--color-thread: #f5391a;
+	--color-on-thread: #fff;
+}
+.ds-app button {
+	cursor: pointer;
+}
+.ds-app button:focus-visible,
+.ds-app textarea:focus-visible {
+	outline: 2px solid #f5391a;
+	outline-offset: 3px;
+}
+.ds-appbar {
+	height: 44px;
+	border-bottom: 1px solid #262626;
+	display: flex;
+	align-items: center;
+	padding: 0 16px;
+	gap: 22px;
+}
+.ds-appbar .ds-brand {
+	gap: 8px;
+	font-size: 14px;
+	letter-spacing: -0.14px;
+}
+.ds-appbar .ds-brand svg {
+	width: 14px;
+	height: 18px;
+}
+.ds-project-tab {
+	font:
+		12px "Fragment Mono",
+		monospace;
+	display: flex;
+	align-items: center;
+	gap: 30px;
+	background: #1c1c1c;
+	border-radius: 5px;
+	height: 28px;
+	padding: 0 12px;
+}
+.ds-project-tab span {
+	color: #8e8c88;
+}
+.ds-bar-actions {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	margin-left: auto;
+	font:
+		11px "Fragment Mono",
+		monospace;
+	color: #8e8c88;
+}
+.ds-bar-actions button {
+	min-width: 24px;
+	height: 28px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+.ds-bar-actions svg {
+	width: 14px;
+	height: 14px;
+}
+.ds-bar-actions [aria-pressed="true"] {
+	color: #f0efed;
+}
+.ds-app-body {
+	height: 806px;
+	display: flex;
+}
+.ds-pages {
+	width: 248px;
+	flex-shrink: 0;
+	border-right: 1px solid #262626;
+	display: flex;
+	flex-direction: column;
+}
+.ds-pages > header {
+	height: 44px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 14px;
+	border-bottom: 1px solid #262626;
+	font-size: 13px;
+	font-weight: 600;
+}
+.ds-pages > header > span {
+	font:
+		11px "Fragment Mono",
+		monospace;
+	color: #8e8c88;
+}
+.ds-pages > header > button {
+	margin-left: auto;
+	color: #8e8c88;
+}
+.ds-pages > header svg {
+	width: 10px;
+	height: 14px;
+}
+.ds-page-row {
+	margin-top: 8px;
+	height: 32px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 13px 0 7px;
+	background: #1c1c1c;
+	position: relative;
+	font:
+		12px "Fragment Mono",
+		monospace;
+}
+.ds-page-row::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 6px;
+	bottom: 6px;
+	width: 2px;
+	background: #f5391a;
+}
+.ds-page-row > span:first-child {
+	color: #8e8c88;
+	width: 12px;
+}
+.ds-page-row svg {
+	width: 14px;
+	height: 14px;
+	color: #f5391a;
+}
+.ds-page-row small {
+	margin-left: auto;
+	font-size: 10px;
+	color: #8e8c88;
+}
+.ds-tree {
+	position: relative;
+	padding-bottom: 4px;
+}
+.ds-tree::before {
+	content: "";
+	position: absolute;
+	left: 18px;
+	top: 0;
+	bottom: 6px;
+	width: 1px;
+	background: #363636;
+}
+.ds-tree > button {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	padding: 0 13px 0 34px;
+	height: 28px;
+	width: 100%;
+	font:
+		11px "Fragment Mono",
+		monospace;
+	color: #8e8c88;
+	position: relative;
+}
+.ds-tree > button::before {
+	content: "";
+	position: absolute;
+	top: 14px;
+	left: 18px;
+	width: 10px;
+	height: 1px;
+	background: #363636;
+}
+.ds-tree svg {
+	width: 14px;
+	height: 14px;
+}
+.ds-tree button[aria-pressed="true"] {
+	background: #1c1c1c;
+	color: #f0efed;
+}
+.ds-tree button[aria-pressed="true"] svg {
+	color: #f5391a;
+}
+.ds-tree button > span:last-child:not(:nth-child(2)) {
+	margin-left: auto;
+	color: #f5391a;
+}
+.ds-pages footer {
+	margin-top: auto;
+	height: 45px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding-left: 15px;
+	border-top: 1px solid #262626;
+	color: #666560;
+	font:
+		10px "Fragment Mono",
+		monospace;
+}
+.ds-pages footer svg {
+	width: 12px;
+	height: 12px;
+}
+.ds-field {
+	position: relative;
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	background: #161616;
+	touch-action: none;
+}
+.ds-field[data-tool="hand"] {
+	cursor: grab;
+}
+.ds-field[data-tool="hand"]:active {
+	cursor: grabbing;
+}
+.ds-field[data-tool="hand"] .ds-frame-hit {
+	pointer-events: none;
+}
+.ds-world {
+	position: absolute;
+	inset: 0;
+	transform-origin: 0 0;
+}
+.ds-connection {
+	position: absolute;
+	left: 0;
+	top: 0;
+	pointer-events: none;
+	overflow: visible;
+	color: #f5391a;
+}
+.ds-connection path:first-child {
+	stroke: currentColor;
+	stroke-width: 1.5;
+	fill: none;
+}
+.ds-frame {
+	position: absolute;
+}
+.ds-label {
+	position: absolute;
+	bottom: 100%;
+	left: 0;
+	width: 100%;
+	height: 28px;
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	font:
+		12px "Fragment Mono",
+		monospace;
+	color: #8e8c88;
+}
+.ds-label .ds-move {
+	cursor: grab;
+	flex: 1;
+	text-align: left;
+	touch-action: none;
+	min-height: 25px;
+}
+.ds-label .ds-move:active {
+	cursor: grabbing;
+}
+.ds-label > button:last-child:not(:first-child) {
+	display: flex;
+	gap: 5px;
+	align-items: center;
+	font-size: 10px;
+	padding: 0 3px;
+}
+.ds-label svg {
+	width: 9px;
+	height: 9px;
+}
+.ds-frame[data-selected="true"] > .ds-label .ds-move {
+	color: #f5391a;
+}
+.ds-artboard {
+	position: relative;
+	overflow: hidden;
+	background: #1c1c1c;
+}
+.ds-frame-hit {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+}
+.ds-frame[data-selected="true"] .ds-frame-hit {
+	outline: 1.5px solid #f5391a;
+	outline-offset: 3px;
+}
+.ds-handle {
+	position: absolute;
+	width: 7px;
+	height: 7px;
+	background: white;
+	border: 1.5px solid #f5391a;
+	pointer-events: none;
+}
+.ds-nw {
+	left: -7px;
+	top: -7px;
+}
+.ds-ne {
+	right: -7px;
+	top: -7px;
+}
+.ds-sw {
+	left: -7px;
+	bottom: -7px;
+}
+.ds-se {
+	right: -7px;
+	bottom: -7px;
+}
+.ds-size {
+	position: absolute;
+	left: 50%;
+	transform: translateX(-50%);
+	top: calc(100% + 12px);
+	background: #f5391a;
+	color: #fff;
+	border-radius: 3px;
+	padding: 4px 8px;
+	font:
+		10px "Fragment Mono",
+		monospace;
+}
+.ds-field-help {
+	position: absolute;
+	bottom: 34px;
+	left: 21px;
+	font:
+		10px "Fragment Mono",
+		monospace;
+	color: #696863;
+	pointer-events: none;
+}
+.ds-dock {
+	width: 44px;
+	flex-shrink: 0;
+	border-left: 1px solid #262626;
+	padding-top: 5px;
+	background: #0e0e0e;
+}
+.ds-dock > button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	margin: 3px;
+	border-radius: 5px;
+	color: #8e8c88;
+}
+.ds-dock svg {
+	width: 17px;
+	height: 17px;
+}
+.ds-dock > button[aria-pressed="true"] {
+	background: #1c1c1c;
+	color: #f0efed;
+}
+.ds-panel {
+	width: 300px;
+	flex-shrink: 0;
+	border-left: 1px solid #262626;
+	position: relative;
+}
+.ds-panel > header {
+	height: 44px;
+	border-bottom: 1px solid #262626;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0 16px;
+	font:
+		11px "Fragment Mono",
+		monospace;
+}
+.ds-panel > header svg {
+	width: 13px;
+	height: 13px;
+}
+.ds-property-name {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 24px 16px;
+	font:
+		12px "Fragment Mono",
+		monospace;
+}
+.ds-property-name svg {
+	width: 14px;
+	height: 14px;
+	color: #f5391a;
+}
+.ds-panel section {
+	padding: 16px;
+	border-top: 1px solid #262626;
+}
+.ds-panel h3 {
+	font-size: 12px;
+	font-weight: 500;
+	margin-bottom: 18px;
+}
+.ds-dimensions {
+	display: flex;
+	gap: 15px;
+	font:
+		11px "Fragment Mono",
+		monospace;
+}
+.ds-dimensions span {
+	border: 1px solid #363636;
+	border-radius: 4px;
+	flex: 1;
+	padding: 8px;
+	color: #8e8c88;
+}
+.ds-dimensions b {
+	margin-left: 12px;
+	color: #f0efed;
+	font-weight: 400;
+}
+.ds-panel label {
+	font:
+		11px "Fragment Mono",
+		monospace;
+	color: #8e8c88;
+}
+.ds-panel textarea {
+	width: 100%;
+	height: 100px;
+	resize: none;
+	display: block;
+	border: 1px solid #363636;
+	border-radius: 5px;
+	margin-top: 11px;
+	padding: 12px;
+	color: #f0efed;
+	font:
+		14px / 1.5 "Familjen Grotesk",
+		sans-serif;
+}
+.ds-text-reset {
+	font:
+		10px "Fragment Mono",
+		monospace;
+	color: #8e8c88;
+	margin-top: 14px;
+}
+.ds-panel > p {
+	color: #666560;
+	font-size: 11px;
+	padding: 16px;
+}
+.ds-agent-message {
+	padding: 25px 19px 0;
+}
+.ds-agent-message > span {
+	font:
+		10px "Fragment Mono",
+		monospace;
+	color: #8e8c88;
+}
+.ds-agent-message > svg {
+	width: 14px;
+	height: 20px;
+	color: #f5391a;
+}
+.ds-agent-message p {
+	font-size: 14px;
+	line-height: 1.6;
+	margin-top: 12px;
+	color: #c2c0bb;
+}
+.ds-agent-message button {
+	font:
+		11px "Fragment Mono",
+		monospace;
+	color: #f5391a;
+	margin-top: 20px;
+}
+.ds-agent-foot {
+	position: absolute;
+	bottom: 25px;
+	left: 20px;
+	color: #666560;
+	font:
+		10px "Fragment Mono",
+		monospace;
+}
+.ds-below {
+	width: calc(100% - 112px);
+	max-width: 1296px;
+	margin: auto;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 120px;
+	padding: 80px 30px;
+	border-bottom: 1px solid #262626;
+}
+.ds-below h2 {
+	font-size: 39px;
+	line-height: 1.1;
+	letter-spacing: -1.4px;
+	font-weight: 500;
+	margin: 0;
+}
+.ds-below p {
+	color: #8e8c88;
+	font-size: 16px;
+	line-height: 1.7;
+	margin-top: 25px;
+}
+.ds-step-list > * {
+	display: flex;
+	align-items: center;
+	gap: 20px;
+	width: 100%;
+	padding: 20px 0;
+	border-bottom: 1px solid #262626;
+	text-align: left;
+}
+.ds-step-list > :first-child {
+	padding-top: 0;
+}
+.ds-step-list > :last-child {
+	border: 0;
+}
+.ds-step-list > * > span:first-child {
+	font:
+		11px "Fragment Mono",
+		monospace;
+	color: #666560;
+}
+.ds-step-list > * > span:last-child {
+	margin-left: auto;
+	color: #8e8c88;
+}
+.ds-step-list small {
+	display: block;
+	font-size: 13px;
+	color: #8e8c88;
+	margin-top: 6px;
+}
+.ds-player {
+	padding: 0;
+	margin: auto;
+	width: min(1200px, calc(100vw - 50px), calc((100vh - 100px) * 1.5));
+	max-height: calc(100vh - 40px);
+	border: 1px solid #363636;
+	border-radius: 7px;
+	background: #0e0e0e;
+	color: #f0efed;
+	overflow: auto;
+}
+.ds-player::backdrop {
+	background: #050505d9;
+	backdrop-filter: blur(7px);
+}
+.ds-player > div > header {
+	height: 42px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0 17px;
+	font:
+		11px "Fragment Mono",
+		monospace;
+}
+.ds-player > div > header > span:nth-child(2) {
+	color: #8e8c88;
+}
+@media (max-width: 1000px) {
+	.ds-below {
+		width: calc(100% - 48px);
+		gap: 40px;
+		padding: 50px 10px;
+	}
+}
+@media (max-width: 700px) {
+	.ds-below {
+		grid-template-columns: 1fr;
+	}
+	.ds-below h2 {
+		font-size: 32px;
+	}
+	.ds-stage {
+		min-height: 300px;
+		overflow: auto;
+	}
+	.ds-scaled {
+		transform: none !important;
+		width: 1600px;
+		zoom: 0.4;
+	}
+	.ds-player {
+		width: calc(100vw - 12px);
+	}
+	.ds-player > div > header > span:nth-child(2) {
+		display: none;
+	}
+	.ds-landing .lp-hero {
+		padding-top: 35px;
+		padding-bottom: 35px;
+	}
+}
