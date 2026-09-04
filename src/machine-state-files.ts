@@ -5,6 +5,8 @@ import { SpoolError } from "./errors";
 export interface RegistryProject {
 	root: string;
 	openedAt: string;
+	/** this machine's local settings for the project (#281), nested by dotted key */
+	settings?: Record<string, unknown>;
 }
 
 export interface Registry {
@@ -67,6 +69,10 @@ function isRegistry(value: unknown): value is Registry {
 	return record.projects.every((project) => {
 		if (typeof project !== "object" || project === null) return false;
 		const candidate = project as Record<string, unknown>;
-		return typeof candidate.root === "string" && typeof candidate.openedAt === "string";
+		if (typeof candidate.root !== "string" || typeof candidate.openedAt !== "string") return false;
+		return (
+			candidate.settings === undefined ||
+			(typeof candidate.settings === "object" && candidate.settings !== null && !Array.isArray(candidate.settings))
+		);
 	});
 }

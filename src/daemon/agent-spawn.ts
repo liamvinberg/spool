@@ -1,4 +1,5 @@
 import type { Attachment } from "../attachment";
+import type { AgentPermissions } from "../settings/registry";
 import { skillText } from "../skill";
 
 /**
@@ -106,6 +107,25 @@ const AGENT_SANDBOX = { enabled: true, excludedCommands: ["spool", "spool *"] } 
  * nothing because nothing was ever going to ask.
  */
 const AGENT_PERMISSION_MODE = "default";
+
+/**
+ * The fence a project has chosen (#281), in the binary's own vocabulary.
+ *
+ * `ask` is the fence as built. `edits` is the binary's accept-edits mode: file
+ * edits go through, everything else still asks. `bypass` is its bypass mode,
+ * chosen by the person who owns the machine for a project they trust, and the
+ * spawn says so in its own framing, because under it the allow rules and the
+ * sandbox decide nothing. The choice never rides the repo: it is read off the
+ * project's registry entry on this machine at every spawn.
+ */
+const PERMISSION_MODES: Record<AgentPermissions, string> = {
+	ask: AGENT_PERMISSION_MODE,
+	edits: "acceptEdits",
+	bypass: "bypassPermissions",
+};
+
+const BYPASS_FRAMING =
+	"Permissions are bypassed for this project on this machine, by the developer's own setting: nothing you do asks first, so say what you are about to do outside design/ before you do it.";
 
 /**
  * Where an approval goes, and the flag the whole of #121 rests on.
@@ -243,6 +263,7 @@ export function planAgentSpawn(
 	 */
 	session: AgentSession | null,
 	ask: AgentAsk = {},
+	permissions: AgentPermissions = "ask",
 ): AgentSpawn {
 	return {
 		command: AGENT_COMMAND,
@@ -261,7 +282,7 @@ export function planAgentSpawn(
 			"--setting-sources",
 			AGENT_SETTING_SOURCES,
 			"--permission-mode",
-			AGENT_PERMISSION_MODE,
+			PERMISSION_MODES[permissions],
 			"--permission-prompt-tool",
 			AGENT_PERMISSION_PROMPT_TOOL,
 			"--settings",
@@ -272,7 +293,7 @@ export function planAgentSpawn(
 			...(ask.value === undefined ? [] : ["--model", ask.value]),
 			...(ask.effort === undefined ? [] : ["--effort", ask.effort]),
 			"--append-system-prompt",
-			agentFraming(),
+			permissions === "bypass" ? `${BYPASS_FRAMING}\n\n${agentFraming()}` : agentFraming(),
 		],
 		cwd: root,
 		env: { ...env },

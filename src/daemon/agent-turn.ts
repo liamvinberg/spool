@@ -1,3 +1,4 @@
+import type { AgentPermissions } from "../settings/registry";
 import { createClaudeAdapter } from "./agent-claude";
 import {
 	type AgentReply,
@@ -56,6 +57,8 @@ export interface AgentTurnOptions {
 	readonly session: AgentSession;
 	/** which machine the thread chose, and how hard it should think (#199) */
 	readonly ask?: AgentAsk;
+	/** the fence this project has on this machine (#281); absent is the fence as built */
+	readonly permissions?: AgentPermissions;
 }
 
 export interface AgentTurn {
@@ -94,7 +97,7 @@ export interface AgentTurn {
 	abandon(): void;
 }
 
-export function startAgentTurn({ executor, root, content, session, ask }: AgentTurnOptions): AgentTurn {
+export function startAgentTurn({ executor, root, content, session, ask, permissions }: AgentTurnOptions): AgentTurn {
 	const adapter = createClaudeAdapter();
 	const queue: AgentEvent[] = [];
 	let waiting: (() => void) | undefined;
@@ -155,7 +158,7 @@ export function startAgentTurn({ executor, root, content, session, ask }: AgentT
 	void (async () => {
 		let started: AgentProcess;
 		try {
-			started = await executor(planAgentSpawn(root, process.env, session, ask));
+			started = await executor(planAgentSpawn(root, process.env, session, ask, permissions));
 		} catch (error) {
 			push({
 				kind: "closed",

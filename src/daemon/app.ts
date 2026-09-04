@@ -17,6 +17,7 @@ import { createProject, initProject } from "../init";
 import { openProject } from "../open";
 import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
+import { themeStyle } from "../settings/registry";
 import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
@@ -101,6 +102,7 @@ import {
 	updateSession,
 	watchMachineState,
 } from "./session";
+import { createSettingsStore } from "./settings";
 import { createShotTaker } from "./shots";
 import { compileClasses, readTheme } from "./theme";
 import {
@@ -585,6 +587,8 @@ export function createDaemonApp({
 		...(onHistoryNotice === undefined ? {} : { notice: onHistoryNotice }),
 		...(historyAllowed === undefined ? {} : { enabled: historyAllowed }),
 	});
+	// #281: every setting, behind one read and one write over the three files
+	const settings = createSettingsStore(spoolDir);
 	/** The home the picker's search indexes, and the registry that marks its projects (#251/#277). */
 	const fsIndex = { home: home ?? homedir(), spoolDir };
 	const registeredRoots = () => readRegistry(spoolDir).projects.map((project) => project.root);
@@ -961,6 +965,47 @@ export function createDaemonApp({
 				machineStateWatch.acknowledgeSession(session);
 				emitAppEvent({ kind: "session" });
 				return c.body(null, 204);
+			},
+		)
+		// #281: the settings registry with its values, for one project or for none.
+		// A project setting asked for without a project reads as its default.
+		.get("/api/settings", (c) => {
+			const name = c.req.query("project");
+			if (name === undefined || name === "") return c.json(settings.read());
+			const project = resolveProject(c, name);
+			if ("response" in project) return project.response;
+			return c.json(settings.read(project.root));
+		})
+		.put(
+			"/api/settings",
+			validator("json", (value, c) => {
+				const { key, project } = (typeof value === "object" && value !== null ? value : {}) as {
+					key?: unknown;
+					project?: unknown;
+				};
+				const raw = (value as { value?: unknown }).value;
+				if (typeof key !== "string" || (project !== undefined && typeof project !== "string")) {
+					return c.text('a setting write must be { "key": string, "value": unknown, "project"?: string }', 400);
+				}
+				return project === undefined ? { key, value: raw } : { key, value: raw, project };
+			}),
+			(c) => {
+				const body = c.req.valid("json");
+				const { key, value } = body;
+				const name = "project" in body ? body.project : undefined;
+				let root: string | undefined;
+				if (name !== undefined) {
+					const project = resolveProject(c, name);
+					if ("response" in project) return project.response;
+					root = project.root;
+				}
+				const written = settings.write(key, value, root);
+				if (!written.ok) return c.text(written.reason, written.status);
+				// history reads its flag off canvas.json at every window, but a project
+				// switched on has to be picked up now rather than at the next arrival
+				if (key === "history") history.keeping(registeredRoots());
+				emitAppEvent({ kind: "settings" });
+				return c.json(written.reading);
 			},
 		)
 		.get("/api/events", (c) => {
@@ -1419,6 +1464,7 @@ export function createDaemonApp({
 				const turn = startAgentTurn({
 					executor: spawnAgent,
 					root: project.root,
+					permissions: settings.agentPermissions(project.root),
 					/*
 					 * The thread, in the binary's own vocabulary for one (#120, #200).
 					 *
@@ -2507,7 +2553,12 @@ export function createDaemonApp({
 		// rather than a class the page has to be told to put on. The player is left
 		// alone: its chrome frames somebody's design, not this canvas.
 		const mark = development === true ? `<style>:root{--color-mark:${SPOOL_DEVELOPMENT_THREAD}}</style>` : "";
-		const head = `${mark}${boot}`;
+		// #281: a themed chrome lands the same way, ahead of first paint, so the
+		// tokens a person moved never flash their defaults. Only moved tokens are
+		// written; the stylesheet keeps the rest.
+		const theme = themeStyle(settings.read().entries);
+		const themed = theme === "" ? "" : `<style>${theme}</style>`;
+		const head = `${mark}${themed}${boot}`;
 		const html = index.body.toString("utf8");
 		return c.body(html.includes("</head>") ? html.replace("</head>", `${head}\n</head>`) : `${head}\n${html}`);
 	}

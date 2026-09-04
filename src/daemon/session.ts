@@ -19,6 +19,8 @@ export type AppEvent =
 	| { kind: "registry" }
 	| { kind: "session" }
 	| { kind: "update"; latest: string }
+	/** a setting moved (#281): every page re-reads, and a theme lands without a reload */
+	| { kind: "settings" }
 	// the checkout rebuilt its UI bundle under the pages already running the old
 	// one. Only `pnpm dev serve --foreground` can say this; a published daemon
 	// serves a bundle that never moves and emits it never.

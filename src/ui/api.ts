@@ -21,6 +21,7 @@ import type { Camera, CanvasState } from "../daemon/project-state";
 import type { FrameCollision, ProjectCard, ProjectedFrame, Projection } from "../daemon/projection";
 import type { SelectionEntry, SelectionPut } from "../daemon/selection";
 import type { CompiledClass, CompiledTheme, ThemeToken } from "../daemon/theme";
+import type { SettingKey, SettingPrimitive, SettingReading, SettingsSnapshot } from "../settings/registry";
 
 declare global {
 	interface Window {
@@ -436,6 +437,34 @@ export async function readRungs(
  * rail draws its rows without menus rather than not at all: a broken stylesheet
  * is the project's own answer, not a reason for the surface to disappear.
  */
+/** Every setting with its value and where it came from (#281), for one project or for none. */
+export async function fetchSettings(project?: string): Promise<SettingsSnapshot | undefined> {
+	try {
+		const res = await client.api.settings.$get({ query: project === undefined ? {} : { project } });
+		if (!res.ok) return undefined;
+		return (await res.json()) as SettingsSnapshot;
+	} catch {
+		return undefined;
+	}
+}
+
+/** One setting moved; the reading back is the file's word, or the reason it refused. */
+export async function putSetting(
+	key: SettingKey,
+	value: SettingPrimitive,
+	project?: string,
+): Promise<{ ok: true; reading: SettingReading } | { ok: false; reason: string }> {
+	try {
+		const res = await client.api.settings.$put({
+			json: project === undefined ? { key, value } : { key, value, project },
+		});
+		if (!res.ok) return { ok: false, reason: await res.text() };
+		return { ok: true, reading: (await res.json()) as SettingReading };
+	} catch (error) {
+		return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+	}
+}
+
 export async function fetchTheme(project: string): Promise<CompiledTheme | undefined> {
 	try {
 		const res = await client.api.p[":project"].theme.$get({ param: { project } });

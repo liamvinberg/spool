@@ -47,6 +47,20 @@ describe("the spawn", () => {
 		expect(flagValue(args, "--permission-mode")).toBe("default");
 	});
 
+	it("passes the project's chosen fence as the binary's own mode, and says so under bypass (#281)", () => {
+		expect(flagValue(planAgentSpawn("/tmp/product", {}, FRESH, {}, "ask").args, "--permission-mode")).toBe("default");
+		expect(flagValue(planAgentSpawn("/tmp/product", {}, FRESH, {}, "edits").args, "--permission-mode")).toBe(
+			"acceptEdits",
+		);
+		const bypass = planAgentSpawn("/tmp/product", {}, FRESH, {}, "bypass").args;
+		expect(flagValue(bypass, "--permission-mode")).toBe("bypassPermissions");
+		// nothing asks under bypass, so the framing is what stands in for the ask
+		expect(flagValue(bypass, "--append-system-prompt")).toContain("Permissions are bypassed");
+		expect(flagValue(planAgentSpawn("/tmp/product", {}, FRESH).args, "--append-system-prompt")).not.toContain(
+			"Permissions are bypassed",
+		);
+	});
+
 	it("wires the permission prompt tool to stdio, which is what makes an ask data", () => {
 		const { args } = planAgentSpawn("/tmp/product", {}, FRESH);
 

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { initProject } from "../init";
@@ -380,6 +380,67 @@ describe("vendor react", () => {
 		expect(etag).not.toBe("");
 		const conditional = await app.request("/vendor/react.js", { headers: { "if-none-match": etag } });
 		expect(conditional.status).toBe(304);
+	});
+});
+
+describe("settings (#281)", () => {
+	it("serves the registry with values, writes one setting to its file, and tells every page", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		const uiDir = makeTempDir();
+		writeFileSync(join(uiDir, "index.html"), "<!doctype html><title>spool</title><div id=app></div>\n");
+		const app = makeApp(spoolDir, { uiDir });
+		const controller = new AbortController();
+		onTestFinished(() => controller.abort());
+		const stream = await app.request("/api/events", { signal: controller.signal });
+		const events = sseReader(stream);
+		await events.next();
+
+		const before = (await (await app.request(`/api/settings?project=${name}`)).json()) as {
+			project: string;
+			entries: { key: string; value: unknown; source: string }[];
+		};
+		expect(before.project).toBe(root);
+		expect(before.entries.find((entry) => entry.key === "history")).toMatchObject({ value: false, source: "file" });
+
+		const written = await app.request("/api/settings", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ key: "history", value: true, project: name }),
+		});
+		expect(written.status).toBe(200);
+		expect(await written.json()).toMatchObject({ key: "history", value: true, source: "file" });
+		expect(JSON.parse(readFileSync(join(root, "design", "canvas.json"), "utf8"))).toMatchObject({ history: true });
+		expect(await events.next()).toEqual({ event: "app", data: { kind: "settings" } });
+
+		const themed = await app.request("/api/settings", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ key: "theme.thread", value: "#2f6fe0" }),
+		});
+		expect(themed.status).toBe(200);
+		expect(JSON.parse(readFileSync(join(spoolDir, "config.json"), "utf8"))).toEqual({ theme: { thread: "#2f6fe0" } });
+		// the theme rides the canvas document ahead of first paint, and never a frame's
+		const index = await app.request("/");
+		expect(await index.text()).toContain("<style>:root{--color-thread:#2f6fe0}</style>");
+	});
+
+	it("refuses what the registry refuses, with the reason", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { name } = makeProject(spoolDir);
+		const app = makeApp(spoolDir);
+		const put = (body: unknown) =>
+			app.request("/api/settings", {
+				method: "PUT",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(body),
+			});
+
+		expect((await put({ key: "nope", value: true })).status).toBe(404);
+		expect((await put({ key: "history", value: "yes", project: name })).status).toBe(400);
+		expect((await put({ key: "history", value: true })).status).toBe(400);
+		expect((await put({ key: "agent.permissions", value: "bypass", project: "missing" })).status).toBe(404);
+		expect((await app.fetch("/api/settings")).status).toBe(401);
 	});
 });
 

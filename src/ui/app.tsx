@@ -21,6 +21,7 @@ import { HotkeySheet } from "./hotkey-sheet";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { EdgeIcon, RibbonMark } from "./icons";
 import { FolderPicker } from "./picker";
+import { settingsMoved, useSettings } from "./settings";
 import { type TabProject, TabStrip } from "./tab-strip";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
 
@@ -44,6 +45,9 @@ const UPDATE_POLL_MS = 1000;
 const UPDATE_DEADLINE_MS = 120_000;
 
 export function App() {
+	// #281: the machine's settings, held from the first paint on so a theme that
+	// moves on another page lands on this one too
+	useSettings();
 	const [projects, setProjects] = useState<ProjectCard[]>([]);
 	const [open, setOpen] = useState<string[]>([]);
 	const openRef = useRef(open);
@@ -152,6 +156,9 @@ export function App() {
 					// dead end an upgrade reaches, without the 401 that rescues it
 					if (event.kind === "ui") return reloadForNewBundle();
 					if (event.kind === "update" && typeof event.latest === "string") offerUpdate(event.latest);
+					// a setting moved somewhere on this machine: every reading is stale,
+					// and a theme has to land on this page without a reload
+					if (event.kind === "settings") return settingsMoved();
 					void refetch();
 				},
 			},

@@ -91,7 +91,9 @@ export type MachineStateMutation =
 	| { kind: "register-and-open-project"; root: string }
 	| { kind: "update-session"; root: string; open: boolean }
 	| { kind: "order-session"; order: readonly string[] }
-	| { kind: "remove-project"; root: string };
+	| { kind: "remove-project"; root: string }
+	/** one local setting on a registered project (#281); `undefined` takes the key out */
+	| { kind: "set-project-setting"; root: string; path: readonly string[]; value: unknown };
 
 export type MachineStateMutationResult<Mutation extends MachineStateMutation> = Mutation extends {
 	kind: "update-session";
@@ -101,7 +103,9 @@ export type MachineStateMutationResult<Mutation extends MachineStateMutation> = 
 		? AppSession
 		: Mutation extends { kind: "remove-project" }
 			? MachineProjectRemoval
-			: undefined;
+			: Mutation extends { kind: "set-project-setting" }
+				? { kind: "written" } | { kind: "unregistered"; root: string }
+				: undefined;
 
 let ownBirth: string | undefined;
 
@@ -160,7 +164,60 @@ function executeMachineStateMutation(spoolDir: string, mutation: MachineStateMut
 			return orderSessionUnlocked(spoolDir, mutation.order);
 		case "remove-project":
 			return removeProjectUnlocked(spoolDir, mutation.root);
+		case "set-project-setting":
+			return setProjectSettingUnlocked(spoolDir, mutation.root, mutation.path, mutation.value);
 	}
+}
+
+function setProjectSettingUnlocked(
+	spoolDir: string,
+	root: string,
+	path: readonly string[],
+	value: unknown,
+): { kind: "written" } | { kind: "unregistered"; root: string } {
+	const registry = readMachineRegistry(spoolDir);
+	const project = registry.projects.find((candidate) => candidate.root === root);
+	if (project === undefined) return { kind: "unregistered", root };
+	const settings = setNested(project.settings ?? {}, path, value);
+	if (Object.keys(settings).length === 0) delete project.settings;
+	else project.settings = settings;
+	writeMachineRegistry(spoolDir, registry);
+	return { kind: "written" };
+}
+
+/** `a.b` set into `{ a: { b } }`, carrying every other key through; `undefined` removes and prunes. */
+export function setNested(
+	held: Record<string, unknown>,
+	path: readonly string[],
+	value: unknown,
+): Record<string, unknown> {
+	const [head, ...rest] = path;
+	if (head === undefined) return held;
+	const next = { ...held };
+	if (rest.length === 0) {
+		if (value === undefined) delete next[head];
+		else next[head] = value;
+		return next;
+	}
+	const inner = next[head];
+	const child = setNested(
+		typeof inner === "object" && inner !== null && !Array.isArray(inner) ? (inner as Record<string, unknown>) : {},
+		rest,
+		value,
+	);
+	if (Object.keys(child).length === 0) delete next[head];
+	else next[head] = child;
+	return next;
+}
+
+/** `a.b` read out of `{ a: { b } }`; anything missing on the way is `undefined`. */
+export function getNested(held: unknown, path: readonly string[]): unknown {
+	let cursor: unknown = held;
+	for (const step of path) {
+		if (typeof cursor !== "object" || cursor === null || Array.isArray(cursor)) return undefined;
+		cursor = (cursor as Record<string, unknown>)[step];
+	}
+	return cursor;
 }
 
 function registerProjectUnlocked(spoolDir: string, root: string, registry = readMachineRegistry(spoolDir)): void {
@@ -282,6 +339,16 @@ function normalizeMachineStateMutation(value: unknown): MachineStateMutation | u
 			if (!hasExactDataKeys(mutation, ["kind", "order"])) return undefined;
 			const order = normalizeRoots(dataValue(mutation, "order"));
 			return order === undefined ? undefined : { kind, order };
+		}
+		case "set-project-setting": {
+			if (!hasExactDataKeys(mutation, ["kind", "path", "root", "value"])) return undefined;
+			const root = dataValue(mutation, "root");
+			const path = normalizeRoots(dataValue(mutation, "path"));
+			const value = dataValue(mutation, "value");
+			if (typeof root !== "string" || path === undefined || path.length === 0) return undefined;
+			// a setting is a primitive or its absence; the registry never holds a shape it did not write
+			if (value !== undefined && typeof value !== "boolean" && typeof value !== "string") return undefined;
+			return { kind, root, path, value };
 		}
 		default:
 			return undefined;
