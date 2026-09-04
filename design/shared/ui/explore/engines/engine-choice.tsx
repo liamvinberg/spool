@@ -356,7 +356,7 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 						<PlayRail
 							key={active}
 							entries={current.entries}
-							phase={locked ? "settled" : "idle"}
+							phase="idle"
 							nav={plate}
 							header={
 								notice ? (
