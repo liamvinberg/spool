@@ -10,7 +10,7 @@ describe("settings store", () => {
 	it("reads every setting at its default, and says so", () => {
 		const store = createSettingsStore(join(makeTempDir(), ".spool"));
 		const { entries } = store.read();
-		expect(entries.map((entry) => entry.key)).toContain("theme.thread");
+		expect(entries.map((entry) => entry.key)).toContain("theme.dark.thread");
 		expect(entries.every((entry) => entry.source === "default")).toBe(true);
 		expect(entries.find((entry) => entry.key === "history")?.value).toBe(false);
 	});
@@ -48,13 +48,24 @@ describe("settings store", () => {
 		writeFileSync(file, '{\n\t"port": 7769,\n\t"history": false\n}\n');
 		const store = createSettingsStore(spoolDir);
 
-		expect(store.write("theme.thread", "#2F6FE0").ok).toBe(true);
+		expect(store.write("theme.dark.thread", "#2F6FE0").ok).toBe(true);
 		expect(store.write("updateCheck", false).ok).toBe(true);
 
-		expect(readJson(file)).toEqual({ port: 7769, history: false, theme: { thread: "#2f6fe0" }, updateCheck: false });
+		expect(readJson(file)).toEqual({
+			port: 7769,
+			history: false,
+			theme: { dark: { thread: "#2f6fe0" } },
+			updateCheck: false,
+		});
 		const entries = store.read(root).entries;
-		expect(entries.find((entry) => entry.key === "theme.thread")).toMatchObject({ value: "#2f6fe0", source: "file" });
-		expect(entries.find((entry) => entry.key === "theme.bg")).toMatchObject({ value: "#0e0e0e", source: "default" });
+		expect(entries.find((entry) => entry.key === "theme.dark.thread")).toMatchObject({
+			value: "#2f6fe0",
+			source: "file",
+		});
+		expect(entries.find((entry) => entry.key === "theme.dark.bg")).toMatchObject({
+			value: "#0e0e0e",
+			source: "default",
+		});
 	});
 
 	it("refuses to write a config.json it cannot read, and reads it as defaults", () => {
@@ -76,7 +87,7 @@ describe("settings store", () => {
 		const { root } = makeProject(spoolDir);
 		const store = createSettingsStore(spoolDir);
 
-		expect(store.write("theme.mark", "#000000", root)).toMatchObject({ ok: false, status: 404 });
+		expect(store.write("theme.dark.mark", "#000000", root)).toMatchObject({ ok: false, status: 404 });
 		expect(store.write("history", "yes", root)).toMatchObject({ ok: false, status: 400 });
 		expect(store.write("history", true)).toMatchObject({ ok: false, status: 400 });
 		expect(store.write("agent.permissions", "bypass", makeTempDir())).toMatchObject({ ok: false, status: 404 });
@@ -85,10 +96,10 @@ describe("settings store", () => {
 	it("reads a hand edit the shape refuses as the default", () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		mkdirSync(spoolDir);
-		writeFileSync(join(spoolDir, "config.json"), '{ "theme": { "thread": "red" } }');
+		writeFileSync(join(spoolDir, "config.json"), '{ "theme": { "dark": { "thread": "red" } } }');
 		const store = createSettingsStore(spoolDir);
 
-		expect(store.read().entries.find((entry) => entry.key === "theme.thread")).toMatchObject({
+		expect(store.read().entries.find((entry) => entry.key === "theme.dark.thread")).toMatchObject({
 			value: "#f5391a",
 			source: "default",
 		});

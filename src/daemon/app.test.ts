@@ -416,23 +416,66 @@ describe("settings (#281)", () => {
 		const themed = await app.request("/api/settings", {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ key: "theme.thread", value: "#2f6fe0" }),
+			body: JSON.stringify({ key: "theme.dark.thread", value: "#2f6fe0" }),
 		});
 		expect(themed.status).toBe(200);
-		expect(JSON.parse(readFileSync(join(spoolDir, "config.json"), "utf8"))).toEqual({ theme: { thread: "#2f6fe0" } });
+		expect(JSON.parse(readFileSync(join(spoolDir, "config.json"), "utf8"))).toEqual({
+			theme: { dark: { thread: "#2f6fe0" } },
+		});
 		// the theme rides the canvas document ahead of first paint, and never a frame's
 		const index = await app.request("/");
-		expect(await index.text()).toContain('<html data-appearance="dark" style="--color-thread:#2f6fe0">');
+		expect(await index.text()).toContain(
+			'<html data-appearance="dark" style="--color-thread:light-dark(#f5391a,#2f6fe0)">',
+		);
+
+		// several at once: every one checked before any lands, and one event for the lot
+		const batch = await app.request("/api/settings", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				writes: [
+					{ key: "theme.light.thread", value: "#8839ef" },
+					{ key: "theme.dark.bg", value: "#11111b" },
+				],
+			}),
+		});
+		expect(batch.status).toBe(200);
+		expect((await batch.json()) as unknown[]).toHaveLength(2);
+		expect(JSON.parse(readFileSync(join(spoolDir, "config.json"), "utf8"))).toEqual({
+			theme: { dark: { thread: "#2f6fe0", bg: "#11111b" }, light: { thread: "#8839ef" } },
+		});
+		const refused = await app.request("/api/settings", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				writes: [
+					{ key: "theme.dark.bg", value: "#000000" },
+					{ key: "theme.dark.text", value: "nope" },
+				],
+			}),
+		});
+		expect(refused.status).toBe(400);
+		expect(JSON.parse(readFileSync(join(spoolDir, "config.json"), "utf8")).theme.dark.bg).toBe("#11111b");
+		await app.request("/api/settings", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				writes: [
+					{ key: "theme.light.thread", value: null },
+					{ key: "theme.dark.bg", value: null },
+				],
+			}),
+		});
 
 		// a write of null takes the key out of the file, so a reset is a removal
 		// rather than a stored copy of the default
 		const unset = await app.request("/api/settings", {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ key: "theme.thread", value: null }),
+			body: JSON.stringify({ key: "theme.dark.thread", value: null }),
 		});
 		expect(unset.status).toBe(200);
-		expect(await unset.json()).toMatchObject({ key: "theme.thread", value: "#f5391a", source: "default" });
+		expect(await unset.json()).toMatchObject({ key: "theme.dark.thread", value: "#f5391a", source: "default" });
 		expect(JSON.parse(readFileSync(join(spoolDir, "config.json"), "utf8"))).toEqual({});
 	});
 

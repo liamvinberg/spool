@@ -36,11 +36,21 @@ export type SettingWrite =
 	| { readonly ok: true; readonly reading: SettingReading }
 	| { readonly ok: false; readonly status: 400 | 404 | 409; readonly reason: string };
 
+export type SettingsWrite =
+	| { readonly ok: true; readonly readings: readonly SettingReading[] }
+	| { readonly ok: false; readonly status: 400 | 404 | 409; readonly reason: string };
+
 export interface SettingsStore {
 	/** every setting, for one project or for none; a project scope without a root reads as its default */
 	read(root?: string): SettingsSnapshot;
 	/** one setting, validated by its entry and written to the one file its scope names */
 	write(key: string, raw: unknown, root?: string): SettingWrite;
+	/**
+	 * several at once, every one checked before any is written, and the ones
+	 * that share a file written in one go: a theme is ten tokens and nobody
+	 * should see nine of them land
+	 */
+	writeMany(writes: readonly { key: string; value: unknown }[], root?: string): SettingsWrite;
 	/** the fence a spawn for this project gets, read from the file at spawn time */
 	agentPermissions(root: string): AgentPermissions;
 }
@@ -84,26 +94,48 @@ export function createSettingsStore(spoolDir: string): SettingsStore {
 		};
 	}
 
-	return {
-		read: (root) => ({ project: root ?? null, entries: SETTING_KEYS.map((key) => reading(key, root)) }),
-		write: (key, raw, root) => {
-			if (!isSettingKey(key)) return { ok: false, status: 404, reason: `no setting named "${key}"` };
-			// null unsets: the key comes out of its file and the entry reads as its
-			// default again, so a reset is a removal rather than a stored copy
-			const parsed = raw === null ? ({ ok: true, value: undefined } as const) : parseSetting(key, raw);
-			if (!parsed.ok) return { ok: false, status: 400, reason: parsed.reason };
-			const path = key.split(".");
-			const scope = SETTINGS[key].scope;
-			if (scope !== "machine" && root === undefined) {
-				return { ok: false, status: 400, reason: `"${key}" is a ${scope} setting and needs a project` };
+	type Checked = { key: SettingKey; value: unknown; path: string[] };
+
+	function check(
+		key: string,
+		raw: unknown,
+		root: string | undefined,
+	): Checked | { status: 400 | 404; reason: string } {
+		if (!isSettingKey(key)) return { status: 404, reason: `no setting named "${key}"` };
+		// null unsets: the key comes out of its file and the entry reads as its
+		// default again, so a reset is a removal rather than a stored copy
+		const parsed = raw === null ? ({ ok: true, value: undefined } as const) : parseSetting(key, raw);
+		if (!parsed.ok) return { status: 400, reason: parsed.reason };
+		const scope = SETTINGS[key].scope;
+		if (scope !== "machine" && root === undefined) {
+			return { status: 400, reason: `"${key}" is a ${scope} setting and needs a project` };
+		}
+		return { key, value: parsed.value, path: key.split(".") };
+	}
+
+	/** the checked writes onto their files; the machine ones as one read-modify-write of config.json */
+	function commit(
+		checked: readonly Checked[],
+		root: string | undefined,
+	): { status: 404 | 409; reason: string } | undefined {
+		const machine = checked.filter((write) => SETTINGS[write.key].scope === "machine");
+		if (machine.length > 0) {
+			const config = readConfig(configFile);
+			if (config.kind === "unreadable") {
+				return { status: 409, reason: `${configFile} is not a JSON object, spool will not overwrite it` };
 			}
-			switch (scope) {
+			let fields = config.fields;
+			for (const write of machine) fields = setNested(fields, write.path, write.value);
+			writeAtomic(configFile, `${JSON.stringify(fields, null, "\t")}\n`);
+		}
+		for (const write of checked) {
+			switch (SETTINGS[write.key].scope) {
 				case "project": {
 					try {
-						writeCanvasField(canvasFile(root as string), key, parsed.value);
+						writeCanvasField(canvasFile(root as string), write.key, write.value);
 					} catch (error) {
-						if (error instanceof CanvasFileError) return { ok: false, status: 409, reason: error.message };
-						return { ok: false, status: 404, reason: `no design/ to write at ${root}` };
+						if (error instanceof CanvasFileError) return { status: 409, reason: error.message };
+						return { status: 404, reason: `no design/ to write at ${root}` };
 					}
 					break;
 				}
@@ -111,29 +143,41 @@ export function createSettingsStore(spoolDir: string): SettingsStore {
 					const result = mutateMachineState(spoolDir, {
 						kind: "set-project-setting",
 						root: root as string,
-						path,
-						value: parsed.value,
+						path: write.path,
+						value: write.value,
 					});
 					if (result.kind === "unregistered") {
-						return { ok: false, status: 404, reason: `not a registered project root: ${result.root}` };
+						return { status: 404, reason: `not a registered project root: ${result.root}` };
 					}
 					break;
 				}
-				case "machine": {
-					const config = readConfig(configFile);
-					if (config.kind === "unreadable") {
-						return {
-							ok: false,
-							status: 409,
-							reason: `${configFile} is not a JSON object, spool will not overwrite it`,
-						};
-					}
-					writeAtomic(configFile, `${JSON.stringify(setNested(config.fields, path, parsed.value), null, "\t")}\n`);
+				case "machine":
 					break;
-				}
 			}
-			return { ok: true, reading: reading(key, root) };
+		}
+		return undefined;
+	}
+
+	function writeMany(writes: readonly { key: string; value: unknown }[], root: string | undefined): SettingsWrite {
+		const checked: Checked[] = [];
+		for (const write of writes) {
+			const result = check(write.key, write.value, root);
+			if ("reason" in result) return { ok: false, ...result };
+			checked.push(result);
+		}
+		const refused = commit(checked, root);
+		if (refused !== undefined) return { ok: false, ...refused };
+		return { ok: true, readings: checked.map((write) => reading(write.key, root)) };
+	}
+
+	return {
+		read: (root) => ({ project: root ?? null, entries: SETTING_KEYS.map((key) => reading(key, root)) }),
+		write: (key, raw, root) => {
+			const written = writeMany([{ key, value: raw }], root);
+			if (!written.ok) return written;
+			return { ok: true, reading: written.readings[0] as SettingReading };
 		},
+		writeMany,
 		agentPermissions: (root) => reading("agent.permissions", root).value,
 	};
 }

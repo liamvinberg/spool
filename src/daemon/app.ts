@@ -979,33 +979,44 @@ export function createDaemonApp({
 		.put(
 			"/api/settings",
 			validator("json", (value, c) => {
-				const { key, project } = (typeof value === "object" && value !== null ? value : {}) as {
+				// one write, or several under `writes`; several are checked as a set
+				// and land as one, which is what a theme of ten tokens needs
+				const shape =
+					'a setting write is { "key", "value", "project"? } or { "writes": [{ "key", "value" }], "project"? }';
+				const body = (typeof value === "object" && value !== null ? value : {}) as {
 					key?: unknown;
+					value?: unknown;
+					writes?: unknown;
 					project?: unknown;
 				};
-				const raw = (value as { value?: unknown }).value;
-				if (typeof key !== "string" || (project !== undefined && typeof project !== "string")) {
-					return c.text('a setting write must be { "key": string, "value": unknown, "project"?: string }', 400);
+				if (body.project !== undefined && typeof body.project !== "string") return c.text(shape, 400);
+				if (Array.isArray(body.writes)) {
+					for (const write of body.writes as unknown[]) {
+						const { key } = (typeof write === "object" && write !== null ? write : {}) as { key?: unknown };
+						if (typeof key !== "string") return c.text(shape, 400);
+					}
+					return body as { writes: { key: string; value: unknown }[]; project?: string };
 				}
-				return project === undefined ? { key, value: raw } : { key, value: raw, project };
+				if (typeof body.key !== "string") return c.text(shape, 400);
+				return body as { key: string; value: unknown; project?: string };
 			}),
 			(c) => {
 				const body = c.req.valid("json");
-				const { key, value } = body;
-				const name = "project" in body ? body.project : undefined;
 				let root: string | undefined;
-				if (name !== undefined) {
-					const project = resolveProject(c, name);
+				if (body.project !== undefined) {
+					const project = resolveProject(c, body.project);
 					if ("response" in project) return project.response;
 					root = project.root;
 				}
-				const written = settings.write(key, value, root);
+				const one = !("writes" in body);
+				const writes = "writes" in body ? body.writes : [{ key: body.key, value: body.value }];
+				const written = settings.writeMany(writes, root);
 				if (!written.ok) return c.text(written.reason, written.status);
 				// history reads its flag off canvas.json at every window, but a project
 				// switched on has to be picked up now rather than at the next arrival
-				if (key === "history") history.keeping(registeredRoots());
+				if (writes.some((write) => write.key === "history")) history.keeping(registeredRoots());
 				emitAppEvent({ kind: "settings" });
-				return c.json(written.reading);
+				return c.json(one ? written.readings[0] : written.readings);
 			},
 		)
 		.get("/api/events", (c) => {

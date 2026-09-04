@@ -448,7 +448,7 @@ export async function fetchSettings(project?: string): Promise<SettingsSnapshot 
 	}
 }
 
-/** One setting moved; the reading back is the file's word, or the reason it refused. */
+/** One setting moved, or unset with `null`; the reading back is the file's word, or the reason it refused. */
 export async function putSetting(
 	key: SettingKey,
 	value: SettingPrimitive | null,
@@ -460,6 +460,22 @@ export async function putSetting(
 		});
 		if (!res.ok) return { ok: false, reason: await res.text() };
 		return { ok: true, reading: (await res.json()) as SettingReading };
+	} catch (error) {
+		return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+/** Several settings moved as one: all of them land or none does, and one event follows. */
+export async function putSettings(
+	writes: readonly { key: SettingKey; value: SettingPrimitive | null }[],
+	project?: string,
+): Promise<{ ok: true; readings: readonly SettingReading[] } | { ok: false; reason: string }> {
+	try {
+		const res = await client.api.settings.$put({
+			json: project === undefined ? { writes: [...writes] } : { writes: [...writes], project },
+		});
+		if (!res.ok) return { ok: false, reason: await res.text() };
+		return { ok: true, readings: (await res.json()) as SettingReading[] };
 	} catch (error) {
 		return { ok: false, reason: error instanceof Error ? error.message : String(error) };
 	}

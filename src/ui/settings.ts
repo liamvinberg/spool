@@ -8,7 +8,7 @@ import {
 	type SettingValue,
 	themeInline,
 } from "../settings/registry";
-import { fetchSettings, putSetting } from "./api";
+import { fetchSettings, putSetting, putSettings } from "./api";
 
 /**
  * The settings the canvas reads, live (#281).
@@ -90,6 +90,18 @@ export function useWriteSetting(project?: string) {
 	return useCallback(
 		(key: SettingKey, value: SettingPrimitive | null) =>
 			putSetting(key, value, project).then((written) => {
+				if (written.ok) settingsMoved();
+				return written;
+			}),
+		[project],
+	);
+}
+
+/** Move several settings as one; a theme is ten tokens and lands as ten or none. */
+export function useWriteSettings(project?: string) {
+	return useCallback(
+		(writes: readonly { key: SettingKey; value: SettingPrimitive | null }[]) =>
+			putSettings(writes, project).then((written) => {
 				if (written.ok) settingsMoved();
 				return written;
 			}),

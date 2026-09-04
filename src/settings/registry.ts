@@ -63,11 +63,16 @@ export type Appearance = (typeof APPEARANCES)[number];
 
 /**
  * The interface's own colours: the tokens in `src/ui/ui.css` the chrome is
- * built on, with the values it ships with in the dark. A test holds the two in
- * step. `mark` is not here because it follows `thread` in the stylesheet, and
- * `on-thread` stays white until a theme asks otherwise.
+ * built on, with the values it ships with, per look. The light is authored,
+ * not inverted: white panels on a grey canvas with edges that show, since a
+ * light chrome has no tonal depth to lean on. A test holds the stylesheet's
+ * light-dark() pairs and these two maps in step. `mark` is not here because it
+ * follows `thread` in the stylesheet.
  */
-export const THEME_TOKENS = {
+export const THEME_LOOKS = ["dark", "light"] as const;
+export type ThemeLook = (typeof THEME_LOOKS)[number];
+
+export const DARK_TOKENS = {
 	bg: "#0e0e0e",
 	canvas: "#161616",
 	surface: "#1c1c1c",
@@ -79,16 +84,10 @@ export const THEME_TOKENS = {
 	thread: "#f5391a",
 	"on-thread": "#ffffff",
 } as const;
-export type ThemeToken = keyof typeof THEME_TOKENS;
-export const THEME_TOKEN_NAMES = Object.keys(THEME_TOKENS) as readonly ThemeToken[];
+export type ThemeToken = keyof typeof DARK_TOKENS;
+export const THEME_TOKEN_NAMES = Object.keys(DARK_TOKENS) as readonly ThemeToken[];
 
-/**
- * The same tokens in the light. Authored, not inverted: the greys keep the
- * dark's warmth and the accent is the same red, since it is the mark's colour
- * before it is anything else. A moved token stands in both looks; the light is
- * what a token shows when nobody moved it.
- */
-export const LIGHT_THEME_TOKENS: Record<ThemeToken, string> = {
+export const LIGHT_TOKENS: Record<ThemeToken, string> = {
 	bg: "#f0efec",
 	canvas: "#e6e5e1",
 	surface: "#ffffff",
@@ -99,6 +98,11 @@ export const LIGHT_THEME_TOKENS: Record<ThemeToken, string> = {
 	muted: "#6f6c68",
 	thread: "#f5391a",
 	"on-thread": "#ffffff",
+};
+
+export const THEME_DEFAULTS: Record<ThemeLook, Record<ThemeToken, string>> = {
+	dark: DARK_TOKENS,
+	light: LIGHT_TOKENS,
 };
 
 const THEME_SAYS: Record<ThemeToken, string> = {
@@ -114,19 +118,33 @@ const THEME_SAYS: Record<ThemeToken, string> = {
 	"on-thread": "Ink on the accent.",
 };
 
+/** `theme.dark.bg`: one entry per token per look, so a preset for one look leaves the other alone. */
+export type ThemeKey = `theme.${ThemeLook}.${ThemeToken}`;
+export const themeKey = (look: ThemeLook, token: ThemeToken): ThemeKey => `theme.${look}.${token}`;
+
+/** The look and token a theme key names, or nothing for any other key. */
+export function parseThemeKey(key: string): { look: ThemeLook; token: ThemeToken } | undefined {
+	const [head, look, token] = key.split(".");
+	if (head !== "theme" || look === undefined || token === undefined) return undefined;
+	if (!THEME_LOOKS.includes(look as ThemeLook) || !Object.hasOwn(DARK_TOKENS, token)) return undefined;
+	return { look: look as ThemeLook, token: token as ThemeToken };
+}
+
 const themeEntries = Object.fromEntries(
-	THEME_TOKEN_NAMES.map((token) => [
-		`theme.${token}`,
-		{
-			scope: "machine",
-			group: "theme",
-			shape: { kind: "colour" },
-			fallback: THEME_TOKENS[token],
-			label: token,
-			says: THEME_SAYS[token],
-		} satisfies SettingEntry<string>,
-	]),
-) as { readonly [Token in ThemeToken as `theme.${Token}`]: SettingEntry<string> };
+	THEME_LOOKS.flatMap((look) =>
+		THEME_TOKEN_NAMES.map((token) => [
+			themeKey(look, token),
+			{
+				scope: "machine",
+				group: "theme",
+				shape: { kind: "colour" },
+				fallback: THEME_DEFAULTS[look][token],
+				label: token,
+				says: THEME_SAYS[token],
+			} satisfies SettingEntry<string>,
+		]),
+	),
+) as { readonly [Key in ThemeKey]: SettingEntry<string> };
 
 export const SETTINGS = {
 	history: {
@@ -229,21 +247,38 @@ export function themeVariable(token: ThemeToken): string {
 	return `--color-${token}`;
 }
 
+/** Every token's value for one look: the file's where somebody moved it, the stylesheet's otherwise. */
+export function themeTokens(entries: readonly SettingReading[], look: ThemeLook): Record<ThemeToken, string> {
+	const tokens = { ...THEME_DEFAULTS[look] };
+	for (const entry of entries) {
+		const named = parseThemeKey(entry.key);
+		if (named === undefined || named.look !== look || typeof entry.value !== "string") continue;
+		tokens[named.token] = entry.value;
+	}
+	return tokens;
+}
+
 /**
  * The theme a snapshot compiles to, as the `style` attribute of `<html>`: the
  * daemon writes it ahead of first paint so a themed chrome never flashes its
  * defaults, and the canvas keeps the same attribute current after. Inline
  * because it has to beat the stylesheet's own light-dark() pick whatever order
- * the sheets load in. Only tokens somebody moved are written; the rest stay
- * the stylesheet's.
+ * the sheets load in, and a light-dark() pair itself so `color-scheme` still
+ * chooses the look. Only tokens somebody moved in either look are written; the
+ * rest stay the stylesheet's.
  */
 export function themeInline(entries: readonly SettingReading[]): string {
-	const moved = entries.filter(
-		(entry): entry is SettingReading & { value: string } =>
-			entry.group === "theme" && entry.source === "file" && typeof entry.value === "string",
-	);
-	const token = (key: string) => key.slice("theme.".length) as ThemeToken;
-	return moved.map((entry) => `${themeVariable(token(entry.key))}:${entry.value}`).join(";");
+	const moved = new Set<ThemeToken>();
+	for (const entry of entries) {
+		const named = parseThemeKey(entry.key);
+		if (named !== undefined && entry.source === "file") moved.add(named.token);
+	}
+	if (moved.size === 0) return "";
+	const dark = themeTokens(entries, "dark");
+	const light = themeTokens(entries, "light");
+	return THEME_TOKEN_NAMES.filter((token) => moved.has(token))
+		.map((token) => `${themeVariable(token)}:light-dark(${light[token]},${dark[token]})`)
+		.join(";");
 }
 
 /** The look a snapshot names, `dark` until the read lands. */
