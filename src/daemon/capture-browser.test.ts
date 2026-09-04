@@ -19,7 +19,7 @@ interface ServedCapture {
 	close(): Promise<void>;
 }
 
-async function serveCapture(): Promise<ServedCapture> {
+async function serveCapture(fonts?: string): Promise<ServedCapture> {
 	let frameDocument = "";
 	let controlDocument = "";
 	const externalRequests: string[] = [];
@@ -99,8 +99,10 @@ async function serveCapture(): Promise<ServedCapture> {
 				height: 80px;
 				background-image: url(data:image/png;base64,${AMBER_PNG});
 			}`,
-		// If this import-only sheet survives, its important green wins visibly.
-		fonts: `@import "/theme.css";
+		// The import is discarded, but the important green must survive it.
+		fonts:
+			fonts ??
+			`@import "/theme.css";
 			main { background-color: #18a957 !important; }`,
 		// A URL import is removed while its ordinary blue rule survives.
 		bundledCss: `@import url("/theme.css");
@@ -466,6 +468,30 @@ async function directWorkerRequest(
 	);
 }
 
+it.each(['"/theme.css"', 'url("/theme.css")'])("preserves layout beside @import %s in a still", async (importValue) => {
+	const served = await serveCapture(`@import ${importValue};
+		main { background-color: #281c15 !important; }
+		.capture-style-probe { display: none; }`);
+	onTestFinished(() => served.close());
+	const browser = await chromium.launch({ channel: "chromium-headless-shell", headless: true });
+	onTestFinished(() => browser.close());
+	const page = await browser.newPage();
+	await page.goto(served.url);
+	const authored = page.frames().find((frame) => new URL(frame.url()).hostname === RENDER_HOST);
+	if (authored === undefined) throw new Error("authored frame did not load");
+	await authored.locator("main").waitFor();
+	expect(await authored.locator("main").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(
+		"rgb(40, 28, 21)",
+	);
+	const captureOrigin = new URL(served.controlOrigin);
+	captureOrigin.hostname = CAPTURE_HOST;
+	const cover = await requestCapture(page, captureOrigin.origin, LIVE_MIN_CSS_PX);
+	const pixels = await readImage(cover.image.url, page);
+	for (const [channel, expected] of [40, 28, 21].entries()) {
+		expect(Math.abs((pixels.center[channel] ?? 0) - expected)).toBeLessThanOrEqual(2);
+	}
+});
+
 it("captures through the isolated worker while preserving output and cleanup", {
 	timeout: 30_000,
 }, async () => {
@@ -516,11 +542,12 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	expect(coverImage.center[2]).toBeGreaterThanOrEqual(20);
 	expect(coverImage.center[2]).toBeLessThanOrEqual(32);
 	expect(coverImage.center[3]).toBe(255);
-	expect(coverImage.bottomRight[0]).toBeGreaterThanOrEqual(28);
-	expect(coverImage.bottomRight[0]).toBeLessThanOrEqual(44);
-	expect(coverImage.bottomRight[1]).toBeGreaterThanOrEqual(108);
-	expect(coverImage.bottomRight[1]).toBeLessThanOrEqual(124);
-	expect(coverImage.bottomRight[2]).toBeGreaterThanOrEqual(247);
+	expect(coverImage.bottomRight[0]).toBeGreaterThanOrEqual(16);
+	expect(coverImage.bottomRight[0]).toBeLessThanOrEqual(32);
+	expect(coverImage.bottomRight[1]).toBeGreaterThanOrEqual(161);
+	expect(coverImage.bottomRight[1]).toBeLessThanOrEqual(177);
+	expect(coverImage.bottomRight[2]).toBeGreaterThanOrEqual(79);
+	expect(coverImage.bottomRight[2]).toBeLessThanOrEqual(95);
 	expect(coverImage.bottomRight[3]).toBe(255);
 	// The two project-asset routes (#101): an svg through <img src>, a raster
 	// through a CSS background. Both must be in the picture, not stripped out.
@@ -558,7 +585,7 @@ it("captures through the isolated worker while preserving output and cleanup", {
 		height: 1200,
 		magic: [137, 80, 78, 71, 13, 10, 26, 10],
 		center: [245, 57, 26, 255],
-		bottomRight: [36, 116, 255, 255],
+		bottomRight: [24, 169, 87, 255],
 		assetSrc: [127, 0, 255, 255],
 		assetCss: [255, 204, 0, 255],
 	});

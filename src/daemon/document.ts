@@ -762,9 +762,8 @@ const canvasShimJs = `(() => {
 	}
 
 	function rewriteCaptureStyle(value) {
-		// replaceSync silently drops @import rules. Only unsafe URL-bearing CSS
-		// takes the rewrite path; import-only styles keep the old removal path.
-		if (!hasUnsafeCaptureUrl(normalizeCaptureCss(value))) return null;
+		// replaceSync drops @import rules in both quoted and url() forms. Keep
+		// the rest of the sheet: a font import must not erase the frame's layout.
 		const sheet = new CSSStyleSheet();
 		try {
 			sheet.replaceSync(value);
