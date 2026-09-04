@@ -120,12 +120,12 @@ export function CogIcon() {
 	return (
 		<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
 			<path
-				d="M8 1.9v1.6M8 12.5v1.6M14.1 8h-1.6M3.5 8H1.9M12.3 3.7l-1.1 1.1M4.8 11.2l-1.1 1.1M12.3 12.3l-1.1-1.1M4.8 4.8 3.7 3.7"
+				d="M13.23 6.66 14.93 7.01v1.98l-1.7.35-.58 1.41.95 1.45-1.4 1.4-1.45-.95-1.41.58-.35 1.7H7.01l-.35-1.7-1.41-.58-1.45.95-1.4-1.4.95-1.45-.58-1.41-1.7-.35V7.01l1.7-.35.58-1.41-.95-1.45 1.4-1.4 1.45.95 1.41-.58.35-1.7h1.98l.35 1.7 1.41.58 1.45-.95 1.4 1.4-.95 1.45.58 1.41Z"
 				stroke="currentColor"
-				strokeWidth="1.5"
-				strokeLinecap="round"
+				strokeWidth="1.4"
+				strokeLinejoin="round"
 			/>
-			<circle cx="8" cy="8" r="2.6" stroke="currentColor" strokeWidth="1.5" />
+			<circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.4" />
 		</svg>
 	);
 }
