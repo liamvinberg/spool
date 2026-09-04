@@ -7,7 +7,7 @@
 			"y": 80
 		},
 		"app": {
-			"x": 3608,
+			"x": 80,
 			"y": 80
 		},
 		"booting": {
@@ -43,7 +43,7 @@
 			"y": 80
 		},
 		"site": {
-			"x": 24280,
+			"x": 8063,
 			"y": 80
 		},
 		"variants": {
@@ -267,7 +267,7 @@
 			"y": 80
 		},
 		"explore": {
-			"x": 26669,
+			"x": 3281,
 			"y": 80
 		},
 		"explore/agent": {
@@ -275,32 +275,32 @@
 			"y": 80
 		},
 		"explore/booting": {
-			"x": 3835,
+			"x": 3805,
 			"y": 80
 		},
 		"explore/components": {
-			"x": 5811,
+			"x": 5781,
 			"y": 80
 		},
 		"explore/directing": {
-			"x": 7349,
-			"y": 80
+			"x": 80,
+			"y": 3218
 		},
 		"explore/explorer": {
-			"x": 8869,
-			"y": 80
+			"x": 1600,
+			"y": 3218
 		},
 		"explore/manipulate": {
-			"x": 10457,
-			"y": 80
+			"x": 3414,
+			"y": 3218
 		},
 		"explore/play-app": {
-			"x": 11877,
-			"y": 80
+			"x": 5843,
+			"y": 3218
 		},
 		"explore/variants": {
-			"x": 13360,
-			"y": 80
+			"x": 80,
+			"y": 6095
 		},
 		"explore/booting/ambient": {
 			"x": 80,
@@ -331,7 +331,7 @@
 			"y": 80
 		},
 		"explore/explorer/real": {
-			"x": 1500,
+			"x": 2983,
 			"y": 80
 		},
 		"explore/manipulate/shared": {
@@ -363,28 +363,28 @@
 			"y": 80
 		},
 		"explore/variants/rail": {
-			"x": 8086,
-			"y": 80
+			"x": 80,
+			"y": 2321
 		},
 		"explore/variants/reveal": {
-			"x": 9261,
-			"y": 80
+			"x": 1255,
+			"y": 2321
 		},
 		"explore/variants/shell": {
-			"x": 10744,
-			"y": 80
+			"x": 2738,
+			"y": 2321
 		},
 		"explore/variants/spread": {
-			"x": 12004,
-			"y": 80
+			"x": 3998,
+			"y": 2321
 		},
 		"explore/variants/throw": {
-			"x": 13352,
-			"y": 80
+			"x": 5346,
+			"y": 2321
 		},
 		"explore/variants/tree": {
-			"x": 14985,
-			"y": 80
+			"x": 80,
+			"y": 4906
 		},
 		"site/brutal": {
 			"x": 80,
@@ -407,59 +407,59 @@
 			"y": 80
 		},
 		"site/field": {
-			"x": 7031,
-			"y": 80
+			"x": 80,
+			"y": 2063
 		},
 		"site/film": {
-			"x": 8291,
-			"y": 80
+			"x": 1340,
+			"y": 2063
 		},
 		"site/firstrun": {
-			"x": 9551,
-			"y": 80
+			"x": 2600,
+			"y": 2063
 		},
 		"site/flows": {
-			"x": 10811,
-			"y": 80
+			"x": 3860,
+			"y": 2063
 		},
 		"site/frames": {
-			"x": 12331,
-			"y": 80
+			"x": 5380,
+			"y": 2063
 		},
 		"site/hub": {
-			"x": 13851,
-			"y": 80
+			"x": 80,
+			"y": 4046
 		},
 		"site/letter": {
-			"x": 15080,
-			"y": 80
+			"x": 1309,
+			"y": 4046
 		},
 		"site/local": {
-			"x": 16340,
-			"y": 80
+			"x": 2569,
+			"y": 4046
 		},
 		"site/mobile": {
-			"x": 17688,
-			"y": 80
+			"x": 3917,
+			"y": 4046
 		},
 		"site/motion": {
-			"x": 18664,
-			"y": 80
+			"x": 4893,
+			"y": 4046
 		},
 		"site/object": {
-			"x": 19924,
-			"y": 80
+			"x": 6153,
+			"y": 4046
 		},
 		"site/terminal": {
-			"x": 21184,
-			"y": 80
+			"x": 80,
+			"y": 6171
 		},
 		"site/type": {
-			"x": 22444,
-			"y": 80
+			"x": 1340,
+			"y": 6171
 		},
 		"system": {
-			"x": 31070,
+			"x": 10452,
 			"y": 80
 		},
 		"explore/new-project": {
@@ -551,8 +551,8 @@
 			"y": 80
 		},
 		"explore/threads": {
-			"x": 15762,
-			"y": 80
+			"x": 7326,
+			"y": 3218
 		},
 		"explore/agent/log": {
 			"x": 13080,
@@ -575,7 +575,7 @@
 			"y": 80
 		},
 		"explore/explorer/only-pages": {
-			"x": 2760,
+			"x": 1500,
 			"y": 80
 		},
 		"explore/explorer/only-pages/only-pages-fit": {
