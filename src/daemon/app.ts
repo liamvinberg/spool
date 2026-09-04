@@ -17,7 +17,7 @@ import { createProject, initProject } from "../init";
 import { openProject } from "../open";
 import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
-import { themeStyle } from "../settings/registry";
+import { appearanceOf, themeInline } from "../settings/registry";
 import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
@@ -2553,14 +2553,29 @@ export function createDaemonApp({
 		// rather than a class the page has to be told to put on. The player is left
 		// alone: its chrome frames somebody's design, not this canvas.
 		const mark = development === true ? `<style>:root{--color-mark:${SPOOL_DEVELOPMENT_THREAD}}</style>` : "";
-		// #281: a themed chrome lands the same way, ahead of first paint, so the
-		// tokens a person moved never flash their defaults. Only moved tokens are
-		// written; the stylesheet keeps the rest.
-		const theme = themeStyle(settings.read().entries);
-		const themed = theme === "" ? "" : `<style>${theme}</style>`;
-		const head = `${mark}${themed}${boot}`;
-		const html = index.body.toString("utf8");
+		// #281, #282: the look and the tokens a person moved land on <html> itself,
+		// ahead of first paint, so a themed chrome never flashes its defaults. The
+		// attribute is the appearance and the inline style is the moved tokens,
+		// which is exactly what the canvas keeps current after boot, so there is
+		// one place for both and no order of stylesheets to get right.
+		const readings = settings.read().entries;
+		const theme = themeInline(readings);
+		const dressed = `data-appearance="${appearanceOf(readings)}"${theme === "" ? "" : ` style="${theme}"`}`;
+		const head = `${mark}${boot}`;
+		const html = dressHtml(index.body.toString("utf8"), dressed);
 		return c.body(html.includes("</head>") ? html.replace("</head>", `${head}\n</head>`) : `${head}\n${html}`);
+	}
+
+	/** The attributes onto the document's <html>, or onto one opened for the purpose. */
+	function dressHtml(html: string, attributes: string): string {
+		const tag = html.match(/<html\b/i);
+		if (tag !== null && tag.index !== undefined) {
+			const at = tag.index + tag[0].length;
+			return `${html.slice(0, at)} ${attributes}${html.slice(at)}`;
+		}
+		const doctype = html.match(/<!doctype[^>]*>/i);
+		const at = doctype === null || doctype.index === undefined ? 0 : doctype.index + doctype[0].length;
+		return `${html.slice(0, at)}<html ${attributes}>${html.slice(at)}`;
 	}
 
 	function protectControlDocument(c: Context): void {

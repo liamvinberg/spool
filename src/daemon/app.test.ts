@@ -422,7 +422,18 @@ describe("settings (#281)", () => {
 		expect(JSON.parse(readFileSync(join(spoolDir, "config.json"), "utf8"))).toEqual({ theme: { thread: "#2f6fe0" } });
 		// the theme rides the canvas document ahead of first paint, and never a frame's
 		const index = await app.request("/");
-		expect(await index.text()).toContain("<style>:root{--color-thread:#2f6fe0}</style>");
+		expect(await index.text()).toContain('<html data-appearance="dark" style="--color-thread:#2f6fe0">');
+
+		// a write of null takes the key out of the file, so a reset is a removal
+		// rather than a stored copy of the default
+		const unset = await app.request("/api/settings", {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ key: "theme.thread", value: null }),
+		});
+		expect(unset.status).toBe(200);
+		expect(await unset.json()).toMatchObject({ key: "theme.thread", value: "#f5391a", source: "default" });
+		expect(JSON.parse(readFileSync(join(spoolDir, "config.json"), "utf8"))).toEqual({});
 	});
 
 	it("refuses what the registry refuses, with the reason", async () => {

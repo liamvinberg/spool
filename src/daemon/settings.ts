@@ -88,7 +88,9 @@ export function createSettingsStore(spoolDir: string): SettingsStore {
 		read: (root) => ({ project: root ?? null, entries: SETTING_KEYS.map((key) => reading(key, root)) }),
 		write: (key, raw, root) => {
 			if (!isSettingKey(key)) return { ok: false, status: 404, reason: `no setting named "${key}"` };
-			const parsed = parseSetting(key, raw);
+			// null unsets: the key comes out of its file and the entry reads as its
+			// default again, so a reset is a removal rather than a stored copy
+			const parsed = raw === null ? ({ ok: true, value: undefined } as const) : parseSetting(key, raw);
 			if (!parsed.ok) return { ok: false, status: 400, reason: parsed.reason };
 			const path = key.split(".");
 			const scope = SETTINGS[key].scope;

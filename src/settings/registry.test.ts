@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseSetting, SETTINGS, THEME_TOKENS, themeStyle } from "./registry";
+import { LIGHT_THEME_TOKENS, parseSetting, SETTINGS, THEME_TOKENS, themeInline } from "./registry";
 
 describe("settings registry", () => {
 	it("mirrors the chrome's colour tokens in ui.css, value for value", () => {
 		const css = readFileSync(join(__dirname, "..", "ui", "ui.css"), "utf8");
-		for (const [token, value] of Object.entries(THEME_TOKENS)) {
-			expect(css, `--color-${token}`).toContain(`--color-${token}: ${value};`);
+		for (const [token, dark] of Object.entries(THEME_TOKENS)) {
+			const light = LIGHT_THEME_TOKENS[token as keyof typeof THEME_TOKENS];
+			expect(css, `--color-${token}`).toContain(`--color-${token}: light-dark(${light}, ${dark});`);
 		}
 	});
 
@@ -28,16 +29,16 @@ describe("settings registry", () => {
 		}
 	});
 
-	it("compiles only the tokens somebody moved into the boot stylesheet", () => {
+	it("compiles only the tokens somebody moved into the inline theme", () => {
 		const entry = (key: "theme.bg" | "theme.thread", value: string, source: "file" | "default") => ({
 			...SETTINGS[key],
 			key,
 			value,
 			source,
 		});
-		expect(themeStyle([entry("theme.bg", "#0e0e0e", "default")])).toBe("");
-		expect(themeStyle([entry("theme.bg", "#0e0e0e", "default"), entry("theme.thread", "#2f6fe0", "file")])).toBe(
-			":root{--color-thread:#2f6fe0}",
+		expect(themeInline([entry("theme.bg", "#0e0e0e", "default")])).toBe("");
+		expect(themeInline([entry("theme.bg", "#0e0e0e", "default"), entry("theme.thread", "#2f6fe0", "file")])).toBe(
+			"--color-thread:#2f6fe0",
 		);
 	});
 });

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
+	appearanceOf,
 	type SettingKey,
 	type SettingPrimitive,
 	type SettingReading,
 	type SettingsSnapshot,
 	type SettingValue,
-	type ThemeToken,
-	themeVariable,
+	themeInline,
 } from "../settings/registry";
 import { fetchSettings, putSetting } from "./api";
 
@@ -82,10 +82,13 @@ export function useSetting<Key extends SettingKey>(key: Key, project?: string): 
 	return entry === undefined ? undefined : (entry.value as SettingValue<Key>);
 }
 
-/** Move one setting. The daemon's event brings the new reading back to every page, this one included. */
+/**
+ * Move one setting, or unset it with `null` so it reads as its default again.
+ * The daemon's event brings the new reading back to every page, this one included.
+ */
 export function useWriteSetting(project?: string) {
 	return useCallback(
-		(key: SettingKey, value: SettingPrimitive) =>
+		(key: SettingKey, value: SettingPrimitive | null) =>
 			putSetting(key, value, project).then((written) => {
 				if (written.ok) settingsMoved();
 				return written;
@@ -95,15 +98,15 @@ export function useWriteSetting(project?: string) {
 }
 
 /**
- * The theme, onto the document. A token at its default is taken off `:root`
- * rather than written back, so the stylesheet's own value shows through and a
- * reset is a removal, never a second copy of the default.
+ * The theme, onto the document: the look as `data-appearance` and the moved
+ * tokens as the inline style, the same two the daemon stamps ahead of first
+ * paint. A token at its default is taken off rather than written back, so the
+ * stylesheet's own light-dark() value shows through and a reset is a removal,
+ * never a second copy of the default.
  */
 export function applyTheme(entries: readonly SettingReading[], root: HTMLElement = document.documentElement): void {
-	for (const entry of entries) {
-		if (entry.group !== "theme" || typeof entry.value !== "string") continue;
-		const token = entry.key.slice("theme.".length) as ThemeToken;
-		if (entry.source === "file") root.style.setProperty(themeVariable(token), entry.value);
-		else root.style.removeProperty(themeVariable(token));
-	}
+	root.setAttribute("data-appearance", appearanceOf(entries));
+	const inline = themeInline(entries);
+	if (inline === "") root.removeAttribute("style");
+	else root.setAttribute("style", inline);
 }

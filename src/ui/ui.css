@@ -13,19 +13,23 @@
 @import "@fontsource/fragment-mono";
 
 @theme {
+	/* every colour is light-dark(light, dark): `color-scheme` on :root picks the
+	 * look (see the appearance rules below the theme), and a token somebody
+	 * moved lands inline on <html> and beats both. The pairs are mirrored in
+	 * `src/settings/registry.ts`, and a test keeps them in step. */
 	--color-*: initial;
-	--color-bg: #0e0e0e;
-	--color-canvas: #161616;
-	--color-surface: #1c1c1c;
-	--color-raised: #282828;
-	--color-border: #262626;
-	--color-border-raised: #363636;
-	--color-text: #f0efed;
-	--color-muted: #8e8c88;
-	--color-thread: #f5391a;
+	--color-bg: light-dark(#f5f4f2, #0e0e0e);
+	--color-canvas: light-dark(#eae9e6, #161616);
+	--color-surface: light-dark(#fbfaf9, #1c1c1c);
+	--color-raised: light-dark(#ffffff, #282828);
+	--color-border: light-dark(#e2e0dc, #262626);
+	--color-border-raised: light-dark(#cbc9c3, #363636);
+	--color-text: light-dark(#1a1917, #f0efed);
+	--color-muted: light-dark(#767370, #8e8c88);
+	--color-thread: light-dark(#f5391a, #f5391a);
 	/* the ribbon mark alone; a development daemon paints it blue and nothing else */
 	--color-mark: var(--color-thread);
-	--color-on-thread: #ffffff;
+	--color-on-thread: light-dark(#ffffff, #ffffff);
 
 	--font-sans: "Familjen Grotesk Variable", system-ui, sans-serif;
 	--font-mono: "Fragment Mono", ui-monospace, SFMono-Regular, monospace;
@@ -605,6 +609,19 @@ body,
 
 html {
 	overscroll-behavior-x: none;
+}
+
+/* the look (#282): one color-scheme on :root is the whole switch, because every
+ * colour token is a light-dark() pair. The daemon stamps the attribute ahead of
+ * first paint from the appearance setting, and the canvas keeps it current. */
+:root {
+	color-scheme: dark;
+}
+:root[data-appearance="light"] {
+	color-scheme: light;
+}
+:root[data-appearance="system"] {
+	color-scheme: light dark;
 }
 
 body {

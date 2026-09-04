@@ -451,7 +451,7 @@ export async function fetchSettings(project?: string): Promise<SettingsSnapshot 
 /** One setting moved; the reading back is the file's word, or the reason it refused. */
 export async function putSetting(
 	key: SettingKey,
-	value: SettingPrimitive,
+	value: SettingPrimitive | null,
 	project?: string,
 ): Promise<{ ok: true; reading: SettingReading } | { ok: false; reason: string }> {
 	try {
