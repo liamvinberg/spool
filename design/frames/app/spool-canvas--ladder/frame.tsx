@@ -4,3 +4,4 @@ import { SelectScreen } from "shared/ui/spool/select-screen";
 export default function SelectDescendFrame() {
 	return <SelectScreen ladder="descend" />;
 }
+// perf-probe

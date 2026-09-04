@@ -90,19 +90,31 @@ function shelfRow(pages: readonly RealPage[]): readonly Placed[] {
 	return tileLayout(pages).map((item) => ({ ...item, x: item.x + GUTTER, y: item.y + GUTTER }));
 }
 
-/** The lens: each page's canvas at a readable width, one section per page, stacked. */
+/**
+ * The lens: each page's canvas at a readable width, under its name, three
+ * sections to a row. The gap leaves room for a label that does not scale.
+ */
 const LENS_W = 1600;
-const LENS_GAP = 120;
+const LENS_H = 1000;
+const LENS_GAP = 260;
+const LENS_ACROSS = 3;
 function lensRows(pages: readonly RealPage[]): readonly Placed[] {
+	const out: Placed[] = [];
 	let y = GUTTER;
-	return pages.map((page) => {
-		const scale = Math.min(LENS_W / page.cw, 520 / page.ch);
+	let rowH = 0;
+	pages.forEach((page, index) => {
+		const col = index % LENS_ACROSS;
+		if (col === 0 && index > 0) {
+			y += rowH + LENS_GAP;
+			rowH = 0;
+		}
+		const scale = Math.min(LENS_W / page.cw, LENS_H / page.ch);
 		const w = Math.round(page.cw * scale);
 		const h = Math.round(page.ch * scale);
-		const placed = { page, x: GUTTER, y, w, h };
-		y += h + LENS_GAP;
-		return placed;
+		out.push({ page, x: GUTTER + col * (LENS_W + LENS_GAP), y, w, h });
+		rowH = Math.max(rowH, h);
 	});
+	return out;
 }
 
 export function OnlyPagesScreen({ take, argues }: { take: OnlyPagesTake; argues: string }) {
@@ -528,7 +540,7 @@ function LensSection({
 				alt={`${at.page.page}: ${at.page.count} frames`}
 				draggable={false}
 				className={cn(
-					"block rounded-[2px] border bg-canvas object-cover opacity-55 transition-opacity group-hover:opacity-100",
+					"block rounded-[2px] border bg-canvas object-cover opacity-70 transition-opacity group-hover:opacity-100",
 					lit ? "border-thread opacity-100" : "border-border",
 				)}
 				style={{ width: at.w, height: at.h }}
