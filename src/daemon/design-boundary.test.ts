@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { compositionOf, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 import { createDaemonApp } from "./app";
 import { PROJECT_HEADER, RENDER_HOST } from "./security";
 
@@ -89,11 +89,12 @@ describe("the design filesystem boundary", () => {
 		);
 		const { render } = renderHarness(spoolDir, root);
 
-		for (const path of [`/p/${name}/frames/entry`, `/play/${name}`]) {
-			const res = await render(path);
-			expect(res.status).toBe(200);
-			expect(await res.text()).toContain("inside-design");
-		}
+		const frame = await render(`/p/${name}/frames/entry`);
+		expect(frame.status).toBe(200);
+		expect(await frame.text()).toContain("inside-design");
+		const player = await render(`/play/${name}`);
+		expect(player.status).toBe(200);
+		expect((await compositionOf({ request: render }, await player.text())).all).toContain("inside-design");
 	});
 
 	for (const kind of ["ts", "json", "css", "tailwind", "symlink"] as const) {

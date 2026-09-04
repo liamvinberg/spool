@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it, onTestFinished, vi } from "vitest";
-import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { compositionOf, makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 
 /**
  * The player session (#24), exercised through the really-served /play/
@@ -99,11 +99,19 @@ async function loadPlayerDocument(harness: Harness, query = "") {
 	expect(configScript, "served player config").toBeDefined();
 	new Function(configScript ?? "")();
 
-	const bootJs = doc.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
-	expect(bootJs, "served boot module").toBeDefined();
-	const bootFile = join(bootDir, `boot-${bootCount++}.js`);
-	writeFileSync(bootFile, bootJs ?? "");
-	await import(bootFile);
+	// The composition is split at every frame and served by name (#24): lay
+	// its modules out on disk the way the chunk route names them, so their
+	// relative imports resolve, and boot from the entry the document imports.
+	const composed = await compositionOf(app, doc);
+	const bootHome = join(bootDir, `boot-${bootCount++}`);
+	for (const [url, js] of composed.modules) {
+		const file = join(bootHome, url.slice(url.indexOf("/-/") + 3));
+		mkdirSync(dirname(file), { recursive: true });
+		writeFileSync(file, js);
+	}
+	await import(join(bootHome, composed.entry.slice(composed.entry.indexOf("/-/") + 3)));
+	// the opening screen is fetched before anything renders
+	await vi.waitFor(() => expect(document.querySelector("#root")?.textContent).not.toBe("booting"));
 
 	return { assign, fetched };
 }

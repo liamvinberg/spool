@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
+import { compositionOf, makeApp, makeProject, makeTempDir, writeDesignFile, writeFrame } from "../test-helpers";
 
 /**
  * The player page (#24), exercised at the serve seam: one light document under
@@ -62,15 +62,49 @@ describe("serving the player", () => {
 		expect(Object.keys(config.frames).sort()).toEqual(["cart", "menu", "pay--done"]);
 		expect(config.frames.menu).toEqual({ w: 1440, h: 900 });
 
-		// one bundle composing every frame's source, booted through the runtime
-		const boot = doc.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1] ?? "";
-		expect(boot).toContain("menu-screen");
-		expect(boot).toContain("cart-screen");
-		expect(boot).toContain("pay-done-screen");
-		expect(boot).toContain("bootPlayer");
+		// one composition holding every frame's source, booted through the
+		// runtime — split at every frame, so the document carries the entry and
+		// the opening screen's modules, and the rest answer at the chunk route
+		const composed = await compositionOf(app, doc);
+		expect(composed.all).toContain("menu-screen");
+		expect(composed.all).toContain("cart-screen");
+		expect(composed.all).toContain("pay-done-screen");
+		expect(composed.modules.get(composed.entry)).toContain("bootPlayer");
+		expect(composed.entry).toMatch(new RegExp(`^/play/${name}/-/play-[A-Z0-9]+\\.js$`));
+		expect(composed.preloads[0]).toBe(composed.entry);
+		const startModule = composed.preloads.find((url) => url.includes("/frames/cart/"));
+		expect(startModule, "the start screen is preloaded").toBeDefined();
+		expect(composed.modules.get(startModule ?? "")).toContain("cart-screen");
+		expect(composed.preloads.some((url) => url.includes("/frames/menu/"))).toBe(false);
 
 		// the frame baseline rides along: compiled utilities, not raw classes
 		expect(doc).toContain(".p-4");
+	});
+
+	it("serves the composition's modules by name, immutable, and 404s the rest", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = scaffold(spoolDir);
+		const app = makeApp(spoolDir);
+
+		// nothing answers before the project has been composed
+		expect((await app.request(`/play/${name}/-/play-NOTYET.js`)).status).toBe(404);
+
+		const composed = await compositionOf(app, await (await app.request(`/play/${name}`)).text());
+		const res = await app.request(composed.entry);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toContain("text/javascript");
+		expect(res.headers.get("cache-control")).toContain("immutable");
+		// the document runs with an opaque origin, so its module fetches are CORS
+		expect(res.headers.get("access-control-allow-origin")).toBe("*");
+		expect((await app.request(`/play/${name}/-/ghost.js`)).status).toBe(404);
+		expect((await app.request("/play/ghost-project/-/play-X.js")).status).toBe(404);
+
+		// a tab served before an edit still finds the modules it was served with
+		writeFrame(root, "menu", menuTsx.replace("menu-screen", "menu-reborn"));
+		const rebuilt = await compositionOf(app, await (await app.request(`/play/${name}`)).text());
+		expect(rebuilt.entry).not.toBe(composed.entry);
+		expect((await app.request(composed.entry)).status).toBe(200);
+		expect(rebuilt.all).toContain("menu-reborn");
 	});
 
 	it("constructs __proto__ as an own frame in both config and compiled components", async () => {
@@ -81,13 +115,15 @@ describe("serving the player", () => {
 
 		const doc = await (await app.request(`/play/${name}?frame=__proto__`)).text();
 		const config = configOf(doc);
-		const boot = doc.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1] ?? "";
+		const composed = await compositionOf(app, doc);
+		const boot = composed.modules.get(composed.entry) ?? "";
 
 		expect(config.start).toBe("__proto__");
 		expect(Object.hasOwn(config.frames, "__proto__")).toBe(true);
 		expect(Object.getOwnPropertyDescriptor(config.frames, "__proto__")?.value).toEqual({ w: 1440, h: 900 });
 		expect(boot).toContain("Object.fromEntries");
 		expect(boot).toContain('["__proto__"');
+		expect(composed.preloads.some((url) => url.includes("/frames/__proto__/"))).toBe(true);
 	});
 
 	it("pins the import map and ships none of the canvas SPA", async () => {
@@ -262,7 +298,7 @@ describe("serving the player", () => {
 		writeFrame(root, "menu", menuTsx.replace("menu-screen", "menu-reborn"));
 		const edited = await app.request(`/play/${name}`);
 		expect(edited.headers.get("x-spool-cache")).toBe("miss");
-		expect(await edited.text()).toContain("menu-reborn");
+		expect((await compositionOf(app, await edited.text())).all).toContain("menu-reborn");
 
 		// a frame born after the first compile joins the bundle
 		writeFrame(root, "receipt", payDoneTsx.replace("pay-done-screen", "receipt-screen"));
@@ -285,13 +321,15 @@ describe("serving the player", () => {
 		expect(res.status).toBe(200);
 		const doc = await res.text();
 		expect(Object.keys(configOf(doc).frames).sort()).toEqual(["broken", "cart", "menu", "pay--done"]);
-		expect(doc).toContain("brokenFrame");
-		expect(doc).toContain("design/frames/broken/frame.tsx");
+		const composed = await compositionOf(app, doc);
+		const boot = composed.modules.get(composed.entry) ?? "";
+		expect(boot).toContain("brokenFrame");
+		expect(boot).toContain("design/frames/broken/frame.tsx");
 		// The error travels with the stub so the screen can show it on arrival.
-		expect(doc).toContain("frames/broken/frame.tsx");
+		expect(boot).toContain("frames/broken/frame.tsx");
 		// The healthy frames are really compiled, not stubbed alongside it.
-		expect(doc).toContain("menu-screen");
-		expect(doc).toContain("cart-screen");
+		expect(composed.all).toContain("menu-screen");
+		expect(composed.all).toContain("cart-screen");
 	});
 
 	it("recompiles a stubbed player until the broken frame is fixed", async () => {
@@ -309,9 +347,27 @@ describe("serving the player", () => {
 		writeFrame(root, "broken", "export default function Broken() { return <p>mended-screen</p>; }\n");
 		const mended = await app.request(`/play/${name}`);
 		expect(mended.status).toBe(200);
-		const doc = await mended.text();
-		expect(doc).toContain("mended-screen");
-		expect(doc).not.toContain("brokenFrame");
+		const composed = await compositionOf(app, await mended.text());
+		expect(composed.all).toContain("mended-screen");
+		expect(composed.all).not.toContain("brokenFrame(");
+	});
+
+	it("serves the control shell before anything is compiled", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = scaffold(spoolDir);
+		writeDesignFile(root, "shared/importmap.json", "{ not json");
+		const app = makeApp(spoolDir);
+
+		// The bar and the frame's name paint at once; the compile, and its
+		// failure, belong to the iframe's own request and report through the
+		// load protocol the shell already listens for.
+		const shell = await app.controlRequest(`/play/${name}?frame=menu`);
+		expect(shell.status).toBe(200);
+		const doc = await shell.text();
+		expect(doc).toContain("bootPlayerShell");
+		expect(doc).toContain("shell=1");
+		expect(doc).not.toContain("failed to compile");
+		expect(shell.headers.get("x-spool-cache")).toBeNull();
 	});
 
 	it("still fails the whole player when nothing frame-shaped is to blame", async () => {
@@ -346,11 +402,12 @@ describe("serving the player", () => {
 		// The rule still refuses to compile the frame that broke it. What changed is
 		// that it no longer takes the frames that kept to it down as well.
 		expect(res.status).toBe(200);
-		const doc = await res.text();
-		expect(doc).toContain("brokenFrame");
-		expect(doc).toContain("props");
-		expect(doc).toContain("design/frames/menu/frame.tsx");
-		expect(doc).toContain("cart-screen");
+		const composed = await compositionOf(app, await res.text());
+		const boot = composed.modules.get(composed.entry) ?? "";
+		expect(boot).toContain("brokenFrame");
+		expect(boot).toContain("props");
+		expect(boot).toContain("design/frames/menu/frame.tsx");
+		expect(composed.all).toContain("cart-screen");
 	});
 });
 

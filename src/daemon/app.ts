@@ -190,6 +190,13 @@ const playParams = z.object({
 const PLAYER_HANDOFF_TTL_MS = 30_000;
 /** Browser handoffs are deliberately short and bounded: issuing the control document is a public GET. */
 const MAX_PLAYER_HANDOFFS = 64;
+/**
+ * How long after the last design/ change a played project is recomposed in
+ * the background. The composition is whole-project, so an edit anywhere
+ * retires it; recomposing once the editor goes quiet means the next play
+ * finds it ready instead of paying the compile behind a blank screen.
+ */
+const PLAYER_WARM_MS = 1_500;
 
 /** A JSON body as fields to read, whatever arrived. */
 const bodyFields = (value: unknown): Record<string, unknown> =>
@@ -425,6 +432,30 @@ export function createDaemonApp({
 		}
 		const selected = selections.get(root).find((entry) => names.includes(entry.frame))?.frame;
 		return { start: frame ?? selected ?? first, projection };
+	}
+	/**
+	 * Projects this daemon has played, kept composed (#24): the first play
+	 * subscribes the root to its own change stream, and every edit that
+	 * retires the composition rebuilds it once the edits go quiet. Never before
+	 * a first play — a project nobody is playing is not worth a watcher.
+	 */
+	const playerWarmers = new Map<string, () => void>();
+	function keepPlayerWarm(root: string): void {
+		if (playerWarmers.has(root)) return;
+		let timer: NodeJS.Timeout | undefined;
+		const unsubscribe = hub.subscribe(root, (event) => {
+			if (event.kind !== "frame" && event.kind !== "shared") return;
+			if (timer !== undefined) clearTimeout(timer);
+			timer = setTimeout(() => {
+				timer = undefined;
+				void playerCompiler.getBundle(root, listProjectFrames(root).frames);
+			}, PLAYER_WARM_MS);
+			timer.unref?.();
+		});
+		playerWarmers.set(root, () => {
+			if (timer !== undefined) clearTimeout(timer);
+			unsubscribe();
+		});
 	}
 	const flowGraph = createFlowGraph();
 	// a shared/ edit wakes the frames whose graph reaches it, not every document
@@ -771,7 +802,7 @@ export function createDaemonApp({
 	}
 
 	function isExecutableRenderPath(path: string): boolean {
-		return /^\/p\/[^/]+\/frames\/[^/]+$/.test(path) || path.startsWith("/play/");
+		return /^\/p\/[^/]+\/frames\/[^/]+$/.test(path) || /^\/play\/[^/]+$/.test(path);
 	}
 
 	function isRenderOnlyPath(path: string): boolean {
@@ -2273,13 +2304,12 @@ export function createDaemonApp({
 				const frames = Object.fromEntries(
 					projection.frames.map((entry) => [entry.name, { w: entry.w, h: entry.h }]),
 				);
-				if (controlRequest) protectControlDocument(c);
-				// Validate before returning the control shell. The render-origin
-				// iframe repeats this request, but the player compiler is content-
-				// cached, so project code is built only once.
-				const compiled = await playerCompiler.getBundle(project.root, projection.frames);
-				if (compiled.kind === "error") return c.html(playerLoadErrorDocument(compiled.message), 500);
 				if (controlRequest) {
+					// The shell goes out before anything is compiled: the bar and the
+					// frame's name paint at once, and the compile is spent behind the
+					// iframe's own request, where the shell can watch it and where a
+					// failure reports through the load protocol like any other.
+					protectControlDocument(c);
 					const requestUrl = new URL(c.req.url);
 					requestUrl.searchParams.set("frame", start);
 					requestUrl.searchParams.set("scenario", playScenario);
@@ -2295,6 +2325,9 @@ export function createDaemonApp({
 						}),
 					);
 				}
+				const compiled = await playerCompiler.getBundle(project.root, projection.frames);
+				if (compiled.kind === "error") return c.html(playerLoadErrorDocument(compiled.message), 500);
+				keepPlayerWarm(project.root);
 				const config = {
 					project: name,
 					projectCapability: projectCapability(project.root),
@@ -2314,6 +2347,22 @@ export function createDaemonApp({
 				return c.html(assemblePlayerDocument(config, compiled.bundle));
 			},
 		)
+		.get("/play/:project/-/*", (c) => {
+			// The composition's modules (#24): named by content, so a name is the
+			// module and may be cached for good. They answer only for a project this
+			// daemon has already composed — the document that imports them is what
+			// composes it — and a name from a bundle since retired still answers for
+			// as long as a tab served with it might walk to it.
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const name = c.req.path.slice(c.req.path.indexOf("/-/") + 3);
+			const chunk = playerCompiler.getChunk(project.root, name);
+			if (chunk === undefined) return c.text("not found", 404);
+			c.header("access-control-allow-origin", "*");
+			c.header("cache-control", "public, max-age=31536000, immutable");
+			c.header("content-type", "text/javascript; charset=utf-8");
+			return c.body(chunk);
+		})
 		.options("/api/p/:project/scenarios/:name", (c) => serveProjectDataPreflight(c))
 		.get("/api/p/:project/scenarios/:name", (c) => {
 			const project = resolveProjectData(c);
@@ -2645,6 +2694,9 @@ export function createDaemonApp({
 			emitAppEvent({ kind: "ui" });
 		},
 		close: () => {
+			for (const stop of playerWarmers.values()) stop();
+			playerWarmers.clear();
+			void playerCompiler.close();
 			machineStateWatch.stop();
 			history.close();
 			liveTurns.close();

@@ -1164,12 +1164,13 @@ it("waits for current geometry when shell and runtime snapshots split", { timeou
 	await cdp.send("Fetch.enable", {
 		patterns: [
 			{
-				urlPattern: `${project.renderUrl}/play/${encodeURIComponent(project.name)}*`,
+				// the document only: its modules live under /-/ and are never held
+				urlPattern: `${project.renderUrl}/play/${encodeURIComponent(project.name)}\\?*`,
 				requestStage: "Response",
 			},
 		],
 	});
-	await page.route(`${project.renderUrl}/play/${encodeURIComponent(project.name)}**`, async (route) => {
+	await page.route(`${project.renderUrl}/play/${encodeURIComponent(project.name)}?*`, async (route) => {
 		innerRequestedResolve();
 		await snapshotInner;
 		await route.continue();
@@ -3058,7 +3059,7 @@ it("shows a frame that breaks between the shell preflight and render load", { ti
 	const releaseInner = new Promise<void>((resolve) => {
 		releaseInnerResolve = resolve;
 	});
-	await page.route(`${project.renderUrl}/play/${encodeURIComponent(project.name)}**`, async (route) => {
+	await page.route(`${project.renderUrl}/play/${encodeURIComponent(project.name)}?*`, async (route) => {
 		innerRequestedResolve();
 		await releaseInner;
 		await route.continue();
@@ -3095,7 +3096,7 @@ it("shows an explicit frame deleted between the shell preflight and render load"
 	const releaseInner = new Promise<void>((resolve) => {
 		releaseInnerResolve = resolve;
 	});
-	await page.route(`${project.renderUrl}/play/${encodeURIComponent(project.name)}**`, async (route) => {
+	await page.route(`${project.renderUrl}/play/${encodeURIComponent(project.name)}?*`, async (route) => {
 		innerRequestedResolve();
 		await releaseInner;
 		await route.continue();

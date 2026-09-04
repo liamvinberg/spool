@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { type BuildContext, type BuildResult, build, context } from "esbuild";
 import {
 	buildDesignEntry,
-	type DesignBundle,
 	describeCompileError,
+	designBuildOptions,
+	designEntryKey,
+	designOutputName,
 	hashInputs,
 	isDesignBoundaryFailure,
 	parseImportMap,
@@ -28,6 +31,11 @@ import { inertWebfonts, inlineLocalFonts, type Webfonts } from "./webfonts";
 
 const STDIN_NAME = "<spool-play>";
 
+/** Where a project's compiled player modules are served, under its play URL. */
+export function playerChunkBase(project: string): string {
+	return `/play/${encodeURIComponent(project)}/-/`;
+}
+
 export interface PlayerConfig {
 	project: string;
 	projectCapability: string;
@@ -41,7 +49,21 @@ export interface PlayerConfig {
 }
 
 export interface PlayerBundle {
-	bootJs: string;
+	/** The composition's entry module, by its served name. */
+	entry: string;
+	/**
+	 * Every module the composition compiled to, by served name: the entry, one
+	 * per frame, and the chunks they share. Names carry a content hash, so a
+	 * name is the module and is cached forever.
+	 */
+	chunks: ReadonlyMap<string, string>;
+	/**
+	 * What each screen needs before it can mount: its own module and every
+	 * static import under it, transitively. The document preloads the start
+	 * screen's list, so the first paint waits on nothing it could have asked for
+	 * sooner.
+	 */
+	screens: ReadonlyMap<string, readonly string[]>;
 	/** Compiled Tailwind for the union of every frame's source closure. */
 	css: string;
 	fonts?: string | undefined;
@@ -75,6 +97,15 @@ interface PlayerCacheEntry {
 }
 
 /**
+ * How many retired bundles keep answering for their modules. A document served
+ * before a rebuild still imports the chunk names it was served with, so a walk
+ * taken in an open tab must find them after the daemon has moved on. Content
+ * hashing keeps most names identical across rebuilds anyway; this covers the
+ * ones that changed.
+ */
+const RETIRED_BUNDLES = 3;
+
+/**
  * Compiles the whole project into its player bundle, content-hash cached like
  * the frame compiler: the frame-folder list rides the hash, so a frame born,
  * renamed, moved between pages, or trashed after the last compile is a miss,
@@ -82,11 +113,31 @@ interface PlayerCacheEntry {
  * enters the cache — a selection change re-assembles the document on the same
  * bundle. The player itself is page-blind: pages shape import paths here and
  * nothing else.
+ *
+ * The composition is split (#24): the entry knows every frame by a dynamic
+ * import, and esbuild cuts each frame and whatever they share into its own
+ * module. Playing one frame ships that frame's modules, and the rest arrive as
+ * the session walks to them — or ahead of it, in the runtime's idle time.
+ * Module identity still holds across the whole composition: a shared store is
+ * one chunk, evaluated once, whichever screens reach it.
  */
 export function createPlayerCompiler(version: string, webfonts: Webfonts = inertWebfonts()) {
 	const cache = new Map<string, PlayerCacheEntry>();
+	/** Bundles a root has served, newest first, so their modules stay answerable. */
+	const served = new Map<string, PlayerBundle[]>();
+	const contexts = new Map<string, PlayerContext>();
+	/** One compile in flight per root: the shell and its iframe ask within the same second. */
+	const inflight = new Map<string, Promise<PlayerCompile>>();
 
-	async function getBundle(root: string, frames: PlayerFrameRef[]): Promise<PlayerCompile> {
+	function getBundle(root: string, frames: PlayerFrameRef[]): Promise<PlayerCompile> {
+		const running = inflight.get(root);
+		if (running !== undefined) return running;
+		const compile = compileOrReuse(root, frames).finally(() => inflight.delete(root));
+		inflight.set(root, compile);
+		return compile;
+	}
+
+	async function compileOrReuse(root: string, frames: PlayerFrameRef[]): Promise<PlayerCompile> {
 		const stamp = frames.map((ref) => frameFolder(ref.name, ref.page)).join("\n");
 		try {
 			// Match frame compilation: one canonical root covers imports, shared
@@ -103,13 +154,15 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 			) {
 				return { kind: "ok", bundle: cached.bundle, cache: "hit" };
 			}
-			const entry = await compilePlayer(version, designDir, frames, stamp, webfonts);
+			const context = await contextFor(root, designDir, frames, stamp);
+			const entry = await compilePlayer(version, designDir, frames, stamp, webfonts, context);
 			// Match the frame compiler: a compile failure is never cached, so the
 			// player recovers the instant the frame does. A stubbed build's inputs
 			// cannot cover the broken frame's own closure, so revalidating against
 			// them would strand the stub after the fix lands.
 			if (entry.broken.length === 0) cache.set(root, entry);
 			else cache.delete(root);
+			retain(root, entry.bundle);
 			return { kind: "ok", bundle: entry.bundle, cache: "miss" };
 		} catch (error) {
 			cache.delete(root);
@@ -117,10 +170,62 @@ export function createPlayerCompiler(version: string, webfonts: Webfonts = inert
 		}
 	}
 
-	return { getBundle };
+	async function contextFor(
+		root: string,
+		designDir: string,
+		frames: PlayerFrameRef[],
+		stamp: string,
+	): Promise<PlayerContext> {
+		const held = contexts.get(root);
+		if (held !== undefined && held.stamp === stamp && held.designDir === designDir) return held;
+		if (held !== undefined) {
+			contexts.delete(root);
+			await held.context.dispose();
+		}
+		const fresh: PlayerContext = {
+			stamp,
+			designDir,
+			context: await context(compositionOptions(designDir, playerEntry(frames, new Map()))),
+		};
+		contexts.set(root, fresh);
+		return fresh;
+	}
+
+	function retain(root: string, bundle: PlayerBundle): void {
+		const kept = (served.get(root) ?? []).filter((other) => other.hash !== bundle.hash);
+		served.set(root, [bundle, ...kept].slice(0, RETIRED_BUNDLES + 1));
+	}
+
+	/** A compiled module by served name, from the current bundle or one lately retired. */
+	function getChunk(root: string, name: string): string | undefined {
+		for (const bundle of served.get(root) ?? []) {
+			const chunk = bundle.chunks.get(name);
+			if (chunk !== undefined) return chunk;
+		}
+		return undefined;
+	}
+
+	/** Whether this root has ever been played by this daemon, and so is worth warming. */
+	function warmed(root: string): boolean {
+		return served.has(root);
+	}
+
+	async function close(): Promise<void> {
+		const open = [...contexts.values()];
+		contexts.clear();
+		await Promise.all(open.map((held) => held.context.dispose()));
+	}
+
+	return { getBundle, getChunk, warmed, close };
 }
 
 export type PlayerCompiler = ReturnType<typeof createPlayerCompiler>;
+
+interface PlayerContext {
+	stamp: string;
+	designDir: string;
+	context: BuildContext;
+}
 
 async function compilePlayer(
 	version: string,
@@ -128,11 +233,12 @@ async function compilePlayer(
 	frames: PlayerFrameRef[],
 	stamp: string,
 	webfonts: Webfonts,
+	context: PlayerContext,
 ): Promise<PlayerCacheEntry> {
 	// the same stamping compile as frame documents (#23): one dialect, one
 	// pipeline, identical semantics whether a frame renders alone or composed
-	const composed = await composePlayer(designDir, frames);
-	const { sourceFiles, bootJs, bundledCss } = composed.bundle;
+	const composed = await composePlayer(designDir, frames, context);
+	const { sourceFiles, bundledCss } = composed.composition;
 
 	const shared = join(designDir, "shared");
 	const { css, stylesheets } = await buildFrameCss(designDir, sourceFiles);
@@ -154,14 +260,24 @@ async function compilePlayer(
 	];
 	const hash = hashInputs(version, stamp, inputs, designDir);
 	const names = frames.map((ref) => ref.name);
+	const { entry, chunks, screens } = composed.composition;
 	return {
 		stamp,
 		inputs,
 		hash,
 		fonts: webfonts.revision(),
 		broken: [...composed.broken.keys()],
-		bundle: { bootJs, css, fonts, bundledCss, transitions, importMap, names, hash },
+		bundle: { entry, chunks, screens, css, fonts, bundledCss, transitions, importMap, names, hash },
 	};
+}
+
+/** The split build of the composition: modules by served name, and what each screen needs. */
+interface Composition {
+	sourceFiles: string[];
+	bundledCss?: string | undefined;
+	entry: string;
+	chunks: Map<string, string>;
+	screens: Map<string, string[]>;
 }
 
 /**
@@ -177,23 +293,18 @@ async function compilePlayer(
 async function composePlayer(
 	designDir: string,
 	frames: PlayerFrameRef[],
-): Promise<{ bundle: DesignBundle; broken: Map<string, string> }> {
+	context: PlayerContext,
+): Promise<{ composition: Composition; broken: Map<string, string> }> {
 	// No image budget here, and none in blameFrames either (#101). The budget
 	// guards a frame document, because the canvas loads a page full of them; the
 	// player is one document, loaded once. Applying it to the composition would
 	// kill the whole player over the sum of frames that each fit their own
 	// document — the exact whole-player failure this function exists to prevent.
-	const build = (broken: Map<string, string>) =>
-		buildDesignEntry({
-			designDir,
-			resolveDir: designDir,
-			sourcefile: STDIN_NAME,
-			contents: playerEntry(frames, broken),
-			label: "the player",
-		});
 	const none = new Map<string, string>();
 	try {
-		return { bundle: await build(none), broken: none };
+		// The healthy build rides the held context: esbuild keeps what it parsed
+		// last time and re-reads only what changed, so an edit costs its own file.
+		return { composition: readComposition(designDir, frames, await context.context.rebuild()), broken: none };
 	} catch (error) {
 		// A design-boundary escape is not an authoring mistake to be shown on one
 		// screen. It fails the player whole and says nothing about what it read.
@@ -202,8 +313,87 @@ async function composePlayer(
 		// Nothing frame-shaped to blame — a broken importmap, a Tailwind failure —
 		// so the player fails whole, as it should.
 		if (broken.size === 0) throw error;
-		return { bundle: await build(broken), broken };
+		// A stubbed build is a one-off: it is never cached, and the context stays
+		// on the whole composition, ready for the fix.
+		const result = await build(compositionOptions(designDir, playerEntry(frames, broken)));
+		return { composition: readComposition(designDir, frames, result), broken };
 	}
+}
+
+/** The composition's esbuild options: the design compile, split at every frame. */
+function compositionOptions(designDir: string, contents: string) {
+	return {
+		...designBuildOptions({
+			designDir,
+			resolveDir: designDir,
+			sourcefile: STDIN_NAME,
+			contents,
+			label: "the player",
+		}),
+		splitting: true as const,
+		entryNames: "play-[hash]",
+		chunkNames: "[dir]/[name]-[hash]",
+	};
+}
+
+/**
+ * Reads a split build into served modules. Every output is a module under the
+ * chunk route; the frame ones are found by the entry point esbuild recorded for
+ * each dynamic import, and a screen's list is that module plus everything it
+ * statically imports, walked to the leaves. Externals — react, the runtime —
+ * come through the import map and are nobody's to preload here.
+ */
+function readComposition(designDir: string, frames: PlayerFrameRef[], result: BuildResult): Composition {
+	const { metafile, outputFiles } = result;
+	if (metafile === undefined || outputFiles === undefined) throw new Error("the player compiled to nothing");
+	const entryKey = designEntryKey({ designDir, resolveDir: designDir, sourcefile: STDIN_NAME });
+	const sourceFiles = Object.keys(metafile.inputs)
+		.filter((input) => input !== entryKey)
+		.map((input) => resolve(designDir, input));
+	const chunks = new Map<string, string>();
+	let bundledCss: string | undefined;
+	for (const file of outputFiles) {
+		const name = designOutputName(designDir, file.path);
+		if (name.endsWith(".css")) {
+			bundledCss = bundledCss === undefined ? file.text : `${bundledCss}\n${file.text}`;
+			continue;
+		}
+		chunks.set(name, file.text);
+	}
+	// metafile paths are relative to absWorkingDir; served names hang off the outdir
+	const outputs = new Map<string, { entryPoint?: string | undefined; imports: readonly string[] }>();
+	let entry: string | undefined;
+	for (const [path, output] of Object.entries(metafile.outputs)) {
+		const name = designOutputName(designDir, resolve(designDir, path));
+		if (!name.endsWith(".js")) continue;
+		const imports = output.imports
+			.filter((edge) => edge.kind === "import-statement" && edge.external !== true)
+			.map((edge) => designOutputName(designDir, resolve(designDir, edge.path)));
+		outputs.set(name, { entryPoint: output.entryPoint, imports });
+		if (output.entryPoint === entryKey) entry = name;
+	}
+	if (entry === undefined) throw new Error("the player compiled to no entry module");
+	const byEntry = new Map<string, string>();
+	for (const [name, output] of outputs) {
+		if (output.entryPoint !== undefined) byEntry.set(output.entryPoint, name);
+	}
+	const closure = (name: string): string[] => {
+		const seen = new Set<string>();
+		const walk = (module: string) => {
+			if (seen.has(module)) return;
+			seen.add(module);
+			for (const imported of outputs.get(module)?.imports ?? []) walk(imported);
+		};
+		walk(name);
+		return [...seen];
+	};
+	const screens = new Map<string, string[]>();
+	for (const ref of frames) {
+		const module = byEntry.get(`${frameFolder(ref.name, ref.page)}/frame.tsx`);
+		// a stubbed frame has no module of its own: its screen is in the entry
+		screens.set(ref.name, module === undefined ? [] : closure(module));
+	}
+	return { sourceFiles, bundledCss, entry, chunks, screens };
 }
 
 /** Compiles each frame alone to find the ones that cannot build, with their errors. */
@@ -230,27 +420,25 @@ async function blameFrames(designDir: string, frames: PlayerFrameRef[]): Promise
 }
 
 /**
- * The composition: every frame imported, handed to the runtime's player boot. A
- * frame that would not compile is not imported at all — it arrives as the runtime
- * stand-in carrying its own error, which is what makes the failure local to it.
+ * The composition: every frame known to the runtime's player boot by a loader
+ * that imports it, so esbuild cuts each into its own module and a screen is
+ * fetched when the session first needs it. A frame that would not compile is
+ * not imported at all — it arrives as the runtime stand-in carrying its own
+ * error, which is what makes the failure local to it.
  */
 function playerEntry(frames: PlayerFrameRef[], broken: Map<string, string>): string {
-	const bindings = frames.map((ref, i) => {
+	const entries = frames.map((ref) => {
 		const folder = frameFolder(ref.name, ref.page);
 		const error = broken.get(ref.name);
 		if (error === undefined) {
-			return { import: `import f${i} from ${JSON.stringify(`./${folder}/frame.tsx`)};`, stub: undefined };
+			return `[${JSON.stringify(ref.name)}, { load: () => import(${JSON.stringify(`./${folder}/frame.tsx`)}) }]`;
 		}
 		const details = { frame: ref.name, file: `design/${folder}/frame.tsx`, error };
-		return { import: undefined, stub: `const f${i} = brokenFrame(${JSON.stringify(details)});` };
+		return `[${JSON.stringify(ref.name)}, brokenFrame(${JSON.stringify(details)})]`;
 	});
-	const imported = bindings.flatMap((binding) => (binding.import === undefined ? [] : [binding.import]));
-	const stubs = bindings.flatMap((binding) => (binding.stub === undefined ? [] : [binding.stub]));
 	const boot = broken.size === 0 ? "bootPlayer" : "bootPlayer, brokenFrame";
-	const entries = frames.map((ref, i) => `[${JSON.stringify(ref.name)}, f${i}]`).join(", ");
 	return `import { ${boot} } from "spool";
-${[...imported, ...stubs].join("\n")}
-bootPlayer(Object.fromEntries([${entries}]));
+bootPlayer(Object.fromEntries([${entries.join(", ")}]));
 `;
 }
 
@@ -265,6 +453,14 @@ export function assemblePlayerDocument(config: PlayerConfig, bundle: PlayerBundl
 		bundle.bundledCss === undefined ? "" : `<style>${escapeInlineStyle(bundle.bundledCss)}</style>\n`;
 	const transitionsBlock =
 		bundle.transitions === undefined ? "" : `<style>${escapeInlineStyle(bundle.transitions)}</style>\n`;
+	const base = playerChunkBase(config.project);
+	// The entry and the first screen's modules are asked for before the parser
+	// reaches the script that imports them: one round of fetches, all in flight
+	// at once, instead of the waterfall a dynamic import would discover.
+	const preload = [bundle.entry, ...(bundle.screens.get(config.start) ?? [])]
+		.map((name) => `<link rel="modulepreload" href="${escapeHtml(base + name)}">`)
+		.join("\n");
+	const entryUrl = JSON.stringify(base + bundle.entry);
 	return `<!doctype html>
 <html lang="en">
 <head>
@@ -278,10 +474,11 @@ export function assemblePlayerDocument(config: PlayerConfig, bundle: PlayerBundl
 ${fontsBlock}${bundledBlock}
 ${config.shell === true ? "" : `<style>${escapeInlineStyle(CHROME_CSS)}</style>`}
 ${transitionsBlock}<script type="importmap">${escapeJsonScript(bundle.importMap)}</script>
+${preload}
 </head>
 <body>
 <div id="root"><div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#8e8c88;font:400 12px/18px ui-monospace,monospace">booting</div></div>
-${config.shell === true ? '<script type="module">import "spool";</script>\n' : ""}<script type="module">${escapeInlineScript(bundle.bootJs)}</script>
+${config.shell === true ? '<script type="module">import "spool";</script>\n' : ""}<script type="module">import ${escapeInlineScript(entryUrl)};</script>
 </body>
 </html>
 `;
@@ -424,6 +621,11 @@ body { margin: 0; background: #0e0e0e; }
 .spool-bar-chevron.is-open { rotate: 180deg; }
 .spool-bar-end { display: flex; align-items: center; gap: 12px; margin-left: auto; }
 .spool-bar-hint { color: #8e8c88; font-size: 10px; white-space: nowrap; }
+/* said while the screen is on its way: the compile and the first fetch happen
+   behind the bar, and a box with nothing in it says nothing */
+.spool-bar-loading { animation: spool-bar-loading 1.2s ease-in-out infinite; }
+@keyframes spool-bar-loading { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .spool-bar-loading { animation: none; } }
 /* the eye and the close: one box each, lit on hover */
 .spool-bar-icon {
 	display: flex;

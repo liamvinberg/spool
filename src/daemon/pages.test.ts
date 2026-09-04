@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
 	COVER_PNG,
+	compositionOf,
 	makeApp,
 	makeProject,
 	makeTempDir,
@@ -321,8 +322,12 @@ describe("page-blind player", () => {
 
 		expect(res.status).toBe(200);
 		const doc = await res.text();
-		expect(doc).toContain("home says hi");
-		expect(doc).toContain("checkout says hi");
+		const composed = await compositionOf(app, doc);
+		expect(composed.all).toContain("home says hi");
+		expect(composed.all).toContain("checkout says hi");
+		// the paged frame's module lives under its page, the flat one under frames/
+		expect([...composed.modules.keys()].some((url) => url.includes("/-/frames/shop/checkout/"))).toBe(true);
+		expect([...composed.modules.keys()].some((url) => url.includes("/-/frames/home/"))).toBe(true);
 		const serialized = doc.match(/__SPOOL_PLAY__ = JSON\.parse\(("(?:\\.|[^"\\])*")\)<\/script>/)?.[1];
 		const config = JSON.parse(JSON.parse(serialized ?? '"{}"')) as {
 			start: string;

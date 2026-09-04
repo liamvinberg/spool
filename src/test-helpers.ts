@@ -131,6 +131,35 @@ export interface SseEvent {
 export class SseTimeout extends Error {}
 
 /** Reads server-sent events off a streaming response, one promise per event. */
+/**
+ * The composition behind a served document: its entry module and every module
+ * reachable from it, fetched through the chunk route the way the browser would.
+ * Assertions about "what was compiled" read this; the document itself carries
+ * only the entry's URL and the first screen's preloads.
+ */
+export async function compositionOf(
+	app: { request(input: string, init?: RequestInit): Promise<Response> | Response },
+	doc: string,
+): Promise<{ entry: string; modules: Map<string, string>; preloads: string[]; all: string }> {
+	const entryUrl = doc.match(/<script type="module">import "([^"]+)";<\/script>/)?.[1];
+	if (entryUrl === undefined) throw new Error("the player document imports no entry module");
+	const preloads = [...doc.matchAll(/<link rel="modulepreload" href="([^"]+)">/g)].map((match) => match[1] ?? "");
+	const modules = new Map<string, string>();
+	const fetchModule = async (url: string): Promise<void> => {
+		if (modules.has(url)) return;
+		const res = await app.request(url);
+		if (res.status !== 200) throw new Error(`${url}: ${res.status}`);
+		const js = await res.text();
+		modules.set(url, js);
+		const base = url.slice(0, url.lastIndexOf("/") + 1);
+		for (const match of js.matchAll(/(?:from|import)\s*\(?\s*"(\.\/[^"]+)"/g)) {
+			await fetchModule(new URL(match[1] ?? "", `http://localhost${base}`).pathname);
+		}
+	};
+	await fetchModule(entryUrl);
+	return { entry: entryUrl, modules, preloads, all: [...modules.values()].join("\n") };
+}
+
 export function sseReader(res: Response) {
 	const reader = (res.body as ReadableStream<Uint8Array>).getReader();
 	const decoder = new TextDecoder();

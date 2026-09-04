@@ -735,6 +735,13 @@ function navigate(target: string, patch?: Record<string, unknown>, transition?: 
 			console.error(`spool: no frame "${target}" to walk to`);
 			return;
 		}
+		// A screen not yet in the document is fetched first and the walk retaken
+		// whole once it is: the patch above lands twice and means the same both
+		// times, and nothing below it happens until the screen can mount.
+		if (!screenLoaded(target)) {
+			void loadScreen(target).then(() => navigate(target, patch, transition));
+			return;
+		}
 		abortClipboardWrites();
 		const from = currentFrame;
 		stack.push(from);
@@ -767,6 +774,10 @@ function back(): void {
 	const target = stack.at(-1);
 	if (target === undefined) return;
 	if (play !== undefined) {
+		if (!screenLoaded(target)) {
+			void loadScreen(target).then(back);
+			return;
+		}
 		stack.pop();
 		abortClipboardWrites();
 		const from = currentFrame;
@@ -802,6 +813,10 @@ function jump(target: string, back: boolean): void {
 	if (deferPlayerAction(() => jump(target, back))) return;
 	if (!Object.hasOwn(play.frames, target)) {
 		console.error(`spool: no frame "${target}" to walk to`);
+		return;
+	}
+	if (!screenLoaded(target)) {
+		void loadScreen(target).then(() => jump(target, back));
 		return;
 	}
 	abortClipboardWrites();
@@ -1528,24 +1543,103 @@ export function brokenFrame(details: { frame: string; file: string; error: strin
 }
 
 /**
- * Boot the /play/ document (#24): called by the served composition with every
- * frame component, after this module's top-level await has seeded the session
- * — the first paint of any screen sees seeded state.
+ * A screen as the composition hands it over: the component itself, or a loader
+ * that imports the module it lives in. The served composition is split at every
+ * frame (#24), so what arrives first is the loader, and the component comes
+ * when the session first needs it — or ahead of that, in idle time.
  */
-export function bootPlayer(frames: Record<string, ComponentType>): void {
+export type ScreenSource = ComponentType | { load(): Promise<{ default: ComponentType }> };
+
+/** The screens the document holds, by frame: what `PlayerDocument` draws from. */
+const screens: Record<string, ComponentType> = Object.create(null);
+const screenLoaders = new Map<string, () => Promise<{ default: ComponentType }>>();
+const screenLoads = new Map<string, Promise<void>>();
+
+function screenLoaded(frame: string): boolean {
+	return Object.hasOwn(screens, frame);
+}
+
+/**
+ * Fetch a screen's module and keep its component. A walk to a screen the
+ * document does not hold yet waits here, and a screen that will not load is
+ * stood in for the way a frame that would not compile is: its own place says
+ * so, and every other screen keeps working.
+ */
+function loadScreen(frame: string): Promise<void> {
+	if (screenLoaded(frame)) return Promise.resolve();
+	const running = screenLoads.get(frame);
+	if (running !== undefined) return running;
+	const loader = screenLoaders.get(frame);
+	if (loader === undefined) return Promise.resolve();
+	const load = loader().then(
+		(module) => {
+			screens[frame] = module.default;
+		},
+		(error: unknown) => {
+			screens[frame] = brokenFrame({
+				frame,
+				file: `design/frames/${frame}/frame.tsx`,
+				error: `the screen could not be loaded — ${String(error)}. Reload the player.`,
+			});
+		},
+	);
+	screenLoads.set(frame, load);
+	void load.finally(() => screenLoads.delete(frame));
+	return load;
+}
+
+/**
+ * The rest of the composition, fetched while nothing else is happening: a walk
+ * to a screen already held is the same-document swap it always was, with no
+ * fetch in front of it. A few at a time, each in its own idle slot, so a heavy
+ * screen keeps its frames while the others arrive behind it.
+ */
+function warmScreens(order: string[]): void {
+	const idle: (callback: () => void) => void =
+		typeof window.requestIdleCallback === "function"
+			? (callback) => window.requestIdleCallback(callback, { timeout: 2000 })
+			: (callback) => window.setTimeout(callback, 50);
+	const pending = order.filter((frame) => !screenLoaded(frame) && screenLoaders.has(frame));
+	const step = () => {
+		const batch = pending.splice(0, 3);
+		if (batch.length === 0) return;
+		void Promise.all(batch.map((frame) => loadScreen(frame))).then(() => idle(step));
+	};
+	idle(step);
+}
+
+/**
+ * Boot the /play/ document (#24): called by the served composition with every
+ * frame, after this module's top-level await has seeded the session — the
+ * first paint of any screen sees seeded state. The opening screen is loaded
+ * before anything renders; the document preloaded its modules, so this is the
+ * evaluation and not a fetch.
+ */
+export function bootPlayer(frames: Record<string, ScreenSource>): void {
 	if (play === undefined) {
 		throw new Error("spool: bootPlayer only runs inside a /play/ document");
 	}
-	const config = play;
+	for (const frame of Object.keys(frames)) {
+		const source = frames[frame] as ScreenSource;
+		if (typeof source === "object" && source !== null && typeof source.load === "function") {
+			screenLoaders.set(frame, () => source.load());
+		} else {
+			screens[frame] = source as ComponentType;
+		}
+	}
+	if (screenLoaded(mountedFrame)) mountPlayer(play);
+	else void loadScreen(mountedFrame).then(() => mountPlayer(play));
+}
+
+function mountPlayer(config: PlayerConfig): void {
 	motionOn = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 	const root = window.document.getElementById("root");
 	if (root === null) throw new Error("spool: the player document has no #root");
 	followGeometry();
-	const screens = frames;
 	playerBooted = true;
 	if (config.shell === true) {
 		const playerRoot = createRoot(root);
-		flushSync(() => playerRoot.render(createElement(PlayerDocument, { frames: screens })));
+		flushSync(() => playerRoot.render(createElement(PlayerDocument)));
 		postPlayerState();
 		requestAnimationFrame(() => {
 			requestAnimationFrame(() => {
@@ -1559,6 +1653,7 @@ export function bootPlayer(frames: Record<string, ComponentType>): void {
 					w: window.innerWidth,
 					h: window.innerHeight,
 				});
+				warmScreens(Object.keys(config.frames));
 			});
 		});
 		return;
@@ -1566,11 +1661,12 @@ export function bootPlayer(frames: Record<string, ComponentType>): void {
 	createRoot(root).render(
 		createElement(Player, { project: config.project, frames: screens, controller: playerController }),
 	);
+	requestAnimationFrame(() => warmScreens(Object.keys(config.frames)));
 }
 
-function PlayerDocument({ frames }: { frames: Record<string, ComponentType> }) {
+function PlayerDocument() {
 	useSyncExternalStore(playerController.subscribe, playerController.version);
-	const Screen = frames[mountedFrame];
+	const Screen = screens[mountedFrame];
 	return Screen === undefined ? null : createElement(Screen, { key: arrival });
 }
 
