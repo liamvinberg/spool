@@ -20,6 +20,9 @@ import { SpoolCanvasScreen } from "shared/ui/spool/canvas-screen";
  * the app it belongs to rather than against a blank screen.
  */
 
+// `--color-*: initial` in tokens.css clears Tailwind's palette, `white` and
+// `black` included, so a `text-white/70` here compiles to nothing and the words
+// come out black on a black desk. The OS greys are written as literals.
 const MENU_H = 26;
 const CANVAS_RECT = { x: 40, y: 52, w: 1060, h: 800 };
 const SETTINGS_RECT = { x: 524, y: 160, w: 760, h: 604 };
@@ -49,7 +52,7 @@ export function SettingsWindowScreen({ seed, argues }: { seed?: SettingsSeed | u
 
 			<MenuBar />
 
-			<p className="pointer-events-none absolute right-7 bottom-6 z-40 max-w-[38ch] text-right text-base text-white/70 leading-base">
+			<p className="pointer-events-none absolute right-7 bottom-6 z-40 max-w-[38ch] text-right text-base text-[rgba(255,255,255,0.7)] leading-base">
 				{argues}
 			</p>
 		</div>
@@ -59,11 +62,13 @@ export function SettingsWindowScreen({ seed, argues }: { seed?: SettingsSeed | u
 function MenuBar() {
 	return (
 		<div
-			className="absolute inset-x-0 top-0 z-50 flex items-center gap-4 bg-black/45 px-4 text-[#E6E6E8] backdrop-blur-md"
+			className="absolute inset-x-0 top-0 z-50 flex items-center gap-4 bg-[rgba(0,0,0,0.45)] px-4 text-[#E6E6E8] backdrop-blur-md"
 			style={{ height: MENU_H }}
 		>
 			<Apple />
-			<span className="rounded-[3px] bg-white/18 px-1.5 py-0.5 font-semibold text-xs leading-none">spool</span>
+			<span className="rounded-[3px] bg-[rgba(255,255,255,0.18)] px-1.5 py-0.5 font-semibold text-xs leading-none">
+				spool
+			</span>
 			{["File", "Edit", "View", "Window", "Help"].map((item) => (
 				<span key={item} className="text-xs leading-none opacity-80">
 					{item}
@@ -81,7 +86,7 @@ function MenuBar() {
 function AppMenu() {
 	return (
 		<div
-			className="absolute z-40 flex w-[236px] flex-col rounded-b-[6px] border border-white/10 bg-[#2A2A2E]/95 p-1.5 text-[#E6E6E8] backdrop-blur-md"
+			className="absolute z-40 flex w-[236px] flex-col rounded-b-[6px] border border-[rgba(255,255,255,0.1)] bg-[#2A2A2E]/95 p-1.5 text-[#E6E6E8] backdrop-blur-md"
 			style={{ top: MENU_H, left: 34 }}
 		>
 			<MenuItem name="About spool" />
@@ -100,17 +105,24 @@ function MenuItem({ name, keys, lit = false }: { name: string; keys?: string; li
 		<span
 			className={cn(
 				"flex h-[22px] items-center justify-between rounded-[4px] px-2 text-xs leading-none",
-				lit ? "bg-[#3C6DF0] text-white" : "",
+				lit ? "bg-[#3C6DF0] text-[#ffffff]" : "",
 			)}
 		>
 			{name}
-			<span className={cn("text-xs leading-none", lit ? "text-white/80" : "text-white/40")}>{keys}</span>
+			<span
+				className={cn(
+					"text-xs leading-none",
+					lit ? "text-[rgba(255,255,255,0.8)]" : "text-[rgba(255,255,255,0.4)]",
+				)}
+			>
+				{keys}
+			</span>
 		</span>
 	);
 }
 
 function MenuRule() {
-	return <span className="my-1 h-px bg-white/12" />;
+	return <span className="my-1 h-px bg-[rgba(255,255,255,0.12)]" />;
 }
 
 function MacWindow({
@@ -128,7 +140,7 @@ function MacWindow({
 		<div
 			className={cn(
 				"absolute flex flex-col overflow-hidden rounded-[10px] border",
-				active ? "z-30 border-white/12" : "z-10 border-white/6",
+				active ? "z-30 border-[rgba(255,255,255,0.12)]" : "z-10 border-[rgba(255,255,255,0.06)]",
 			)}
 			style={{
 				left: rect.x,
