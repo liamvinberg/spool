@@ -85,9 +85,9 @@ export function PageObjectView({
  * transformed box is its own stacking context, so a label kept inside it would
  * be painted over by the next object along.
  *
- * The name spills past a narrow page rather than truncating. A frame's label
- * can be cut because the picture under it still says which frame it is, and a
- * page's picture says no such thing.
+ * The name truncates to the page's own width, the way a frame's label does. A
+ * label wider than what it names runs into the next page along and the row of
+ * them stops being readable at all, which costs more than the tail of one name.
  */
 export function PageObjectLabel({
 	object,
@@ -106,12 +106,12 @@ export function PageObjectLabel({
 			style={{ transform: `translate(${object.x}px, ${object.y}px)`, width: object.w * k }}
 		>
 			<div
-				className="absolute bottom-full left-0 flex origin-bottom-left items-center gap-1.5 whitespace-nowrap pb-2.5"
+				className="absolute bottom-full left-0 flex w-full min-w-0 origin-bottom-left items-center gap-1.5 whitespace-nowrap pb-2.5"
 				style={{ transform: `scale(${1 / k})` }}
 			>
 				<FolderIcon className={`h-3 w-3 shrink-0 ${selected ? "text-thread" : "text-muted"}`} />
 				<span
-					className={`shrink-0 font-mono text-sm leading-4 ${
+					className={`min-w-0 truncate font-mono text-sm leading-4 ${
 						selected ? "text-thread" : hovered ? "text-text" : "text-muted"
 					}`}
 				>
