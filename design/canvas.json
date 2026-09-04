@@ -284,23 +284,23 @@
 		},
 		"explore/directing": {
 			"x": 80,
-			"y": 3218
+			"y": 3566
 		},
 		"explore/explorer": {
 			"x": 1600,
-			"y": 3218
+			"y": 3566
 		},
 		"explore/manipulate": {
 			"x": 3414,
-			"y": 3218
+			"y": 3566
 		},
 		"explore/play-app": {
 			"x": 5843,
-			"y": 3218
+			"y": 3566
 		},
 		"explore/variants": {
 			"x": 80,
-			"y": 6095
+			"y": 6755
 		},
 		"explore/booting/ambient": {
 			"x": 80,
@@ -364,27 +364,27 @@
 		},
 		"explore/variants/rail": {
 			"x": 80,
-			"y": 2321
+			"y": 2544
 		},
 		"explore/variants/reveal": {
 			"x": 1255,
-			"y": 2321
+			"y": 2544
 		},
 		"explore/variants/shell": {
 			"x": 2738,
-			"y": 2321
+			"y": 2544
 		},
 		"explore/variants/spread": {
 			"x": 3998,
-			"y": 2321
+			"y": 2544
 		},
 		"explore/variants/throw": {
 			"x": 5346,
-			"y": 2321
+			"y": 2544
 		},
 		"explore/variants/tree": {
 			"x": 80,
-			"y": 4906
+			"y": 5400
 		},
 		"site/brutal": {
 			"x": 80,
@@ -408,55 +408,55 @@
 		},
 		"site/field": {
 			"x": 80,
-			"y": 2063
+			"y": 2249
 		},
 		"site/film": {
 			"x": 1340,
-			"y": 2063
+			"y": 2249
 		},
 		"site/firstrun": {
 			"x": 2600,
-			"y": 2063
+			"y": 2249
 		},
 		"site/flows": {
 			"x": 3860,
-			"y": 2063
+			"y": 2249
 		},
 		"site/frames": {
 			"x": 5380,
-			"y": 2063
+			"y": 2249
 		},
 		"site/hub": {
 			"x": 80,
-			"y": 4046
+			"y": 4418
 		},
 		"site/letter": {
 			"x": 1309,
-			"y": 4046
+			"y": 4418
 		},
 		"site/local": {
 			"x": 2569,
-			"y": 4046
+			"y": 4418
 		},
 		"site/mobile": {
 			"x": 3917,
-			"y": 4046
+			"y": 4418
 		},
 		"site/motion": {
 			"x": 4893,
-			"y": 4046
+			"y": 4418
 		},
 		"site/object": {
 			"x": 6153,
-			"y": 4046
+			"y": 4418
 		},
 		"site/terminal": {
 			"x": 80,
-			"y": 6171
+			"y": 6749
 		},
 		"site/type": {
 			"x": 1340,
-			"y": 6171
+			"y": 6749
 		},
 		"system": {
 			"x": 10452,
@@ -552,7 +552,7 @@
 		},
 		"explore/threads": {
 			"x": 7326,
-			"y": 3218
+			"y": 3566
 		},
 		"explore/agent/log": {
 			"x": 13080,
