@@ -1024,17 +1024,23 @@ export function bootPlayerShell(config: ShellConfig): void {
 			/>
 		);
 	}
-	createRoot(root).render(
-		createElement(Player, {
+	function Page() {
+		useSyncExternalStore(shell.controller.subscribe, shell.controller.version);
+		const { hidden, loadError } = shell.view();
+		return createElement(Player, {
 			project: config.project,
 			frames: {},
 			controller: shell.controller,
 			host: createElement(Host),
+			// The bar says so while the iframe is held back: the compile and the
+			// first fetch happen behind it, and a blank white box says nothing.
+			loading: hidden && loadError === undefined,
 			// This document is the control origin, so the canvas is one link away.
 			canvasHref: `/p/${encodeURIComponent(config.project)}`,
 			onInset: shell.inset,
-		}),
-	);
+		});
+	}
+	createRoot(root).render(createElement(Page));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -58,6 +58,7 @@ export function Player({
 	frames,
 	controller,
 	host,
+	loading = false,
 	canvasHref,
 	onInset,
 }: {
@@ -66,6 +67,8 @@ export function Player({
 	controller: PlayerController;
 	/** A control-origin native iframe host in the standalone player shell. */
 	host?: ReactNode;
+	/** The screen is still on its way — the shell's iframe has not been revealed yet. */
+	loading?: boolean;
 	/** Where the canvas lives, when this document can reach it. */
 	canvasHref?: string;
 	/**
@@ -135,6 +138,7 @@ export function Player({
 			picking={picking}
 			onPicking={setPicking}
 			onWalk={controller.walk}
+			loading={loading}
 			{...(desk === null
 				? {
 						hidden,
@@ -357,6 +361,7 @@ function TopBar({
 	picking,
 	onPicking,
 	onWalk,
+	loading,
 	desk,
 	hidden,
 	away,
@@ -371,6 +376,8 @@ function TopBar({
 	picking: boolean;
 	onPicking: (picking: boolean) => void;
 	onWalk: (frame: string) => void;
+	/** The frame is being compiled or fetched: said in the bar, since the screen has nothing to show yet. */
+	loading: boolean;
 	/** The app's window, when this is its title bar. */
 	desk?: DeskWindow;
 	/** Tab only: whether the bar is put away, so the eye knows which way it faces. */
@@ -419,6 +426,11 @@ function TopBar({
 				{...(layout.project ? { project } : {})}
 			/>
 			<span className="spool-bar-end">
+				{loading && (
+					<span className="spool-bar-hint spool-bar-loading" role="status">
+						loading
+					</span>
+				)}
 				{restored && desk !== undefined && (
 					<span className="spool-desk-restored">
 						<span className="spool-dash is-lit" />
