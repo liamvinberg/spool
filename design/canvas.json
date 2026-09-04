@@ -43,7 +43,7 @@
 			"y": 80
 		},
 		"site": {
-			"x": 8063,
+			"x": 8126,
 			"y": 80
 		},
 		"variants": {
@@ -283,19 +283,19 @@
 			"y": 80
 		},
 		"explore/directing": {
+			"x": 8722,
+			"y": 80
+		},
+		"explore/explorer": {
 			"x": 80,
 			"y": 3566
 		},
-		"explore/explorer": {
-			"x": 1600,
-			"y": 3566
-		},
 		"explore/manipulate": {
-			"x": 3414,
+			"x": 1894,
 			"y": 3566
 		},
 		"explore/play-app": {
-			"x": 5843,
+			"x": 4323,
 			"y": 3566
 		},
 		"explore/variants": {
@@ -459,7 +459,7 @@
 			"y": 6749
 		},
 		"system": {
-			"x": 10452,
+			"x": 10515,
 			"y": 80
 		},
 		"explore/new-project": {
@@ -551,7 +551,7 @@
 			"y": 80
 		},
 		"explore/threads": {
-			"x": 7326,
+			"x": 8337,
 			"y": 3566
 		},
 		"explore/agent/log": {
@@ -601,6 +601,10 @@
 		"explore/explorer/only-pages/only-pages-today": {
 			"x": 7680,
 			"y": 80
+		},
+		"explore/settings": {
+			"x": 5806,
+			"y": 3566
 		}
 	}
 }
