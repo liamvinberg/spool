@@ -599,7 +599,7 @@ describe("the order store", () => {
 		expect((await app.request(`/api/p/${name}/order`, jsonPut({}))).status).toBe(204);
 
 		// the key is gone and everything init wrote is still there
-		expect(readJson(designFile(root, "canvas.json"))).toEqual({ format: 1, history: true });
+		expect(readJson(designFile(root, "canvas.json"))).toEqual({ format: 1, history: false });
 		expect(await (await app.request(`/api/p/${name}/order`)).json()).toEqual({});
 	});
 
@@ -677,7 +677,7 @@ describe("the explorer's door", () => {
 		expect(existsSync(designFile(root, "frames", "home", "frame.tsx"))).toBe(true);
 		expect(existsSync(designFile(root, "frames", "shop", "checkout", "frame.tsx"))).toBe(true);
 		expect(existsSync(designFile(root, "frames", "admin"))).toBe(false);
-		expect(readJson(designFile(root, "canvas.json"))).toEqual({ format: 1, history: true });
+		expect(readJson(designFile(root, "canvas.json"))).toEqual({ format: 1, history: false });
 	});
 });
 

@@ -276,7 +276,7 @@ describe("skill", () => {
 		expect(text).toContain("the daemon commits design/ for you");
 		expect(text).toContain("never commit design/ yourself and never stage it");
 		expect(text).toContain("spool never pushes");
-		expect(text).toContain("spool init --no-history");
+		expect(text).toContain("spool init --history");
 		expect(text).toContain('`"history": false`');
 		expect(text).toContain("~/.spool/config.json");
 	});

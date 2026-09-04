@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initProject } from "../init";
-import { makeApp, makeProject, makeTempDir, until, writeDesignFile, writeFrame, writePageFrame } from "../test-helpers";
+import { makeApp, makeTempDir, until, writeDesignFile, writeFrame, writePageFrame } from "../test-helpers";
 import { HISTORY_IDLE_MS, type HistoryClock, type HistoryTimer } from "./history";
 
 /**
@@ -347,7 +347,8 @@ describe("the safety gate", () => {
 
 	it("goes quiet with one notice when design/ is not in a git work tree", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
-		const { root } = makeProject(spoolDir);
+		// a project that asked for history, in a folder git has never seen
+		const { root } = initProject(makeTempDir(), spoolDir, { history: true });
 		const clock = testClock();
 		const app = makeApp(spoolDir, { historyClock: clock.clock });
 
