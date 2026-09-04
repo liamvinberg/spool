@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.16.0
+
+### Minor Changes
+
+- 545b903: Breaking: a new project starts with history off. `spool init` no longer commits your design/ for you unless you ask with `spool init --history`, and the old `--no-history` flag is gone. An existing project keeps whatever its canvas.json says.
+- 1549af5: Added the settings sheet. Press the cog at the foot of the right rail, or `⌘,`, to open it. General holds history, agent permissions and update checks, each under the file it writes to. Appearance holds the look, with dark, light, and follow the system, and a theme for each look: pick one of the presets (Catppuccin, Nord, Dracula, Tokyo Night, One Dark, Gruvbox, Solarized, Rosé Pine, GitHub, Mono, and spool's own), copy the current theme as text to share it, or paste one somebody sent. Under that, an accent picker and every colour the chrome is built on, each with its own picker and hex field. A change shows on the canvas as you make it, and Reset to spool's takes every moved colour back out of the file. `PUT /api/settings` now also takes `{ "writes": [...] }` so a theme lands as one write. Nothing chosen here reaches inside a frame.
+- 90f9c78: spool has settings. Every setting is declared once, lives in one file, and is read and written through `GET /api/settings` and `PUT /api/settings`. `history` stays in design/canvas.json. `updateCheck` and the interface's colour tokens live in `~/.spool/config.json`, which spool now writes when you move a setting, changing only that key. A new `agent.permissions` setting (`ask`, `edits` or `bypass`) sets how the agent is fenced for a project on your machine; it is kept beside the project's registry entry and never in the repo. A themed colour lands on the canvas ahead of first paint and never reaches a frame. The sheet that shows all this is next.
+- 7c7ab24: Scrolling inside an entered frame now moves the canvas when the frame has nothing left to scroll. A fully expanded page pans the canvas under the wheel, and a scrolling list inside a frame still scrolls the list until it reaches its end. Each wheel gesture sticks with whichever one it started on.
+
+### Patch Changes
+
+- d03779d: Agent chat keeps following the newest text as long messages stream. Scroll up to pause following, then return to the bottom or press live to resume. Paragraph animations stay intact.
+- 7f78339: A page that holds only pages no longer opens on an empty field. Its pages stand on a shelf the daemon lays, in rail order, wrapped into rows, and the camera fits them on arrival; they cannot be dragged there, since there is nothing on the page to arrange them against. The first frame written onto the page keeps the shelf as the arrangement and hands it to the hand from then on. Zoom to fit now counts pages as well as frames, on every page.
+- 994a15a: Play opens fast. The played tab shows its bar and the frame's name at once, with a loading readout until the frame is ready. The player no longer ships every frame in the project in one document: each frame is compiled to its own module and fetched when the session first walks to it, with the rest fetched in idle time so walks stay instant. A project that has been played is recomposed in the background after edits, so the next play finds it ready.
+- 1dc3159: Fixed thumbnails losing their layout and colors when a stylesheet includes a font import.
+
 ## 0.15.0
 
 ### Minor Changes
