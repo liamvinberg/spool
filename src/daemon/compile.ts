@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
-import { build, formatMessagesSync, type Plugin } from "esbuild";
+import { type BuildOptions, build, formatMessagesSync, type Plugin } from "esbuild";
 import { isSafeName } from "../page-path";
 import { ASSET_FILTER, ASSET_MEDIA_TYPES, IMAGE_BUDGET_BYTES, kilobytes } from "./assets";
 import {
@@ -121,14 +121,7 @@ export interface DesignBundle {
 	bundledCss?: string | undefined;
 }
 
-/**
- * The one design/ compile (#16), shared by frame documents and the player
- * composition (#24): stamping JSX, the shared/ui boundary, packages external
- * to the import map. jsxDev routes element creation through spool's stamping
- * runtime (#23) — every intrinsic element carries its exact source location
- * for the picker, while React itself stays the pinned production build.
- */
-export async function buildDesignEntry(options: {
+export interface DesignEntryOptions {
 	designDir: string;
 	/** Where the entry's relative imports resolve from. */
 	resolveDir: string;
@@ -144,9 +137,19 @@ export async function buildDesignEntry(options: {
 	 * document is the exact whole-player failure `composePlayer` exists to stop.
 	 */
 	imageBudget?: number | undefined;
-}): Promise<DesignBundle> {
+}
+
+/**
+ * The one design/ compile (#16), as esbuild options: stamping JSX, the
+ * shared/ui boundary, packages external to the import map. jsxDev routes
+ * element creation through spool's stamping runtime (#23) — every intrinsic
+ * element carries its exact source location for the picker, while React
+ * itself stays the pinned production build. A frame document builds these
+ * once; the player keeps them in a context and rebuilds incrementally.
+ */
+export function designBuildOptions(options: DesignEntryOptions): BuildOptions & { metafile: true; write: false } {
 	const { designDir, resolveDir, sourcefile, contents, label, imageBudget } = options;
-	const result = await build({
+	return {
 		stdin: { contents, resolveDir, loader: "js", sourcefile },
 		bundle: true,
 		format: "esm",
@@ -167,19 +170,33 @@ export async function buildDesignEntry(options: {
 			spoolAssetPlugin(designDir, label, imageBudget),
 		],
 		logLevel: "silent",
-	});
+	};
+}
 
+/** The esbuild input key of a stdin entry, as `metafile.inputs` spells it. */
+export function designEntryKey(options: Pick<DesignEntryOptions, "designDir" | "resolveDir" | "sourcefile">): string {
 	// esbuild keys the stdin entry by its sourcefile resolved against resolveDir
 	// and written relative to absWorkingDir, so a frame's entry lands under its
 	// own folder and never as the bare name passed in. Comparing to the bare name
 	// only ever matched when resolveDir was designDir, which left every frame's
 	// closure carrying a path no file answers to (#124).
-	const bootKey = relative(designDir, resolve(resolveDir, sourcefile));
+	return relative(options.designDir, resolve(options.resolveDir, options.sourcefile));
+}
+
+/** A compiled output's served name: its path under the virtual outdir. */
+export function designOutputName(designDir: string, path: string): string {
+	return relative(join(designDir, VIRTUAL_OUTDIR), path).split(sep).join("/");
+}
+
+/** The design/ compile (#16) of one entry into one module: frame documents, and blame. */
+export async function buildDesignEntry(options: DesignEntryOptions): Promise<DesignBundle> {
+	const result = await build(designBuildOptions(options));
+	const bootKey = designEntryKey(options);
 	const sourceFiles = Object.keys(result.metafile.inputs)
 		.filter((input) => input !== bootKey)
-		.map((input) => resolve(designDir, input));
+		.map((input) => resolve(options.designDir, input));
 	const bootJs = result.outputFiles.find((file) => file.path.endsWith(".js"))?.text;
-	if (bootJs === undefined) throw new Error(`${label} compiled to no module`);
+	if (bootJs === undefined) throw new Error(`${options.label} compiled to no module`);
 	const bundledCss = result.outputFiles.find((file) => file.path.endsWith(".css"))?.text;
 	return { sourceFiles, bootJs, bundledCss };
 }
