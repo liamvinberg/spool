@@ -6,7 +6,7 @@ Run `pnpm dev skill` before working here, this repo's checkout CLI, never the in
 
 - A frame is born by writing `frames/<page>/<name>/frame.tsx` default-exporting one React component. No registration, no `spool new`.
 - The one law: never write app-owned files. `canvas.json` and `.spool/` are spool's. Hands write frame source only as span patches, gated, with the same undo surface geometry already has. The one exception writes a file too: a picture swapped onto an `<img>` lands beside the frame and gains its import, because an image is an import and never a URL.
-- History is on. The daemon commits everything under `design/` once the folder has been quiet for 45 seconds, so the tree is never left dirty. That save is a safety net with a generic message; finished work still gets its own commit, atomic, lowercase, terse, before handoff.
+- History is off here. The daemon never commits `design/` for this project, so every change under it is yours to commit: atomic, lowercase, terse, before handoff.
 - This file is orientation, not a ledger. A decision's story lives in its ticket and a component's behavior in its file. Keep the tables below to pointers and never append session summaries here.
 
 ## The shape

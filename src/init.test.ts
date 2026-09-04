@@ -54,18 +54,18 @@ describe("initProject", () => {
 		]);
 	});
 
-	it("stamps the format version in canvas.json, and turns history on (#158)", () => {
+	it("stamps the format version in canvas.json, and leaves history off (#158)", () => {
 		const root = makeTempDir();
 		initProject(root, join(makeTempDir(), ".spool"));
 
-		expect(JSON.parse(readDesign(root, "canvas.json"))).toEqual({ format: 1, history: true });
+		expect(JSON.parse(readDesign(root, "canvas.json"))).toEqual({ format: 1, history: false });
 	});
 
-	it("writes the flag off when the caller opted out", () => {
+	it("writes the flag on when the caller opted in", () => {
 		const root = makeTempDir();
-		initProject(root, join(makeTempDir(), ".spool"), { history: false });
+		initProject(root, join(makeTempDir(), ".spool"), { history: true });
 
-		expect(JSON.parse(readDesign(root, "canvas.json"))).toEqual({ format: 1, history: false });
+		expect(JSON.parse(readDesign(root, "canvas.json"))).toEqual({ format: 1, history: true });
 	});
 
 	it("writes both signposts", () => {

@@ -8,9 +8,9 @@ import { scaffoldDirs, scaffoldFiles } from "./templates";
 
 export interface InitOptions {
 	/**
-	 * Whether the new project keeps history (#158). On unless the caller says
-	 * otherwise: a project born now is a project spool can save for, and init
-	 * says so out loud rather than starting quietly.
+	 * Whether the new project keeps history (#158). Off unless the caller asks:
+	 * an automatic save between an agent's own commits is noise in a log a team
+	 * reads, so a project opts in, and init says which way it went out loud.
 	 */
 	history?: boolean;
 }
@@ -33,7 +33,7 @@ export function initProject(targetDir: string, spoolDir: string, options: InitOp
 	for (const dir of scaffoldDirs) {
 		mkdirSync(join(design, dir), { recursive: true });
 	}
-	for (const [rel, content] of Object.entries(scaffoldFiles(options.history ?? true))) {
+	for (const [rel, content] of Object.entries(scaffoldFiles(options.history ?? false))) {
 		const file = join(design, rel);
 		mkdirSync(dirname(file), { recursive: true });
 		writeFileSync(file, content);

@@ -58,12 +58,13 @@ program
 	.command("init")
 	.description("scaffold design/, register the project, and open its tab")
 	.argument("[path]", "product root", ".")
-	.option("--no-history", "start the project without history — spool never commits its design/")
+	.option("--history", "start the project with history — spool commits its design/ once the canvas goes quiet", false)
 	.action((path: string, options: { history: boolean }) => {
 		const { root } = initProject(path, spoolDir, { history: options.history });
 		process.stdout.write(`initialized spool project at ${root}\n`);
-		// #78: history is on by default and never silent. One line, no prompt —
-		// init stays something a script can run.
+		// #78: history is never silent. One line, no prompt — init stays something
+		// a script can run. Off by default: the save is a safety net, and a team
+		// that wants its agents committing their own work opts in.
 		process.stdout.write(
 			options.history
 				? `history is on: spool commits design/ for you once the canvas goes quiet — set "history": false in design/canvas.json to turn it off\n`

@@ -315,24 +315,24 @@ describe("spool cli", { timeout: 30_000 }, () => {
 
 		expect(result.status).toBe(0);
 		expect(result.stdout).toContain(`initialized spool project at ${realpathSync(target)}`);
-		// #78: history is never silent, and the line says how to take it back
-		expect(result.stdout).toContain("history is on");
-		expect(result.stdout).toContain('"history": false');
+		// #78: history is never silent, and the line says how to turn it on
+		expect(result.stdout).toContain("history is off");
+		expect(result.stdout).toContain('"history": true');
 		expect(result.stdout).toContain("design/ is a spool canvas");
-		expect(JSON.parse(readFileSync(join(target, "design", "canvas.json"), "utf8")).history).toBe(true);
+		expect(JSON.parse(readFileSync(join(target, "design", "canvas.json"), "utf8")).history).toBe(false);
 		const registry = JSON.parse(readFileSync(join(home, ".spool", "registry.json"), "utf8"));
 		expect(registry.projects[0].root).toBe(realpathSync(target));
 	});
 
-	it("init --no-history starts a project spool never commits for", () => {
+	it("init --history starts a project spool commits for", () => {
 		const home = makeTempDir();
 		const target = makeTempDir();
 
-		const result = spool(["init", "--no-history", target], home);
+		const result = spool(["init", "--history", target], home);
 
 		expect(result.status).toBe(0);
-		expect(result.stdout).toContain("history is off");
-		expect(JSON.parse(readFileSync(join(target, "design", "canvas.json"), "utf8")).history).toBe(false);
+		expect(result.stdout).toContain("history is on");
+		expect(JSON.parse(readFileSync(join(target, "design", "canvas.json"), "utf8")).history).toBe(true);
 	});
 
 	it("open resolves by walk-up from the cwd", () => {
