@@ -18,7 +18,17 @@ import { formatCombo } from "./hotkey-combos";
  * only knows what exists, never what is currently possible.
  */
 
-export type HotkeyScope = "dialog" | "finder" | "picker" | "help" | "toast" | "sidebar" | "canvas" | "home" | "app";
+export type HotkeyScope =
+	| "dialog"
+	| "finder"
+	| "picker"
+	| "help"
+	| "settings"
+	| "toast"
+	| "sidebar"
+	| "canvas"
+	| "home"
+	| "app";
 
 /**
  * Most modal first; dispatch stops at the first exclusive scope that is up.
@@ -35,6 +45,7 @@ export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 	"picker",
 	"toast",
 	"help",
+	"settings",
 	"sidebar",
 	"canvas",
 	"home",
@@ -42,7 +53,7 @@ export const SCOPE_PRIORITY: readonly HotkeyScope[] = [
 ];
 
 /** Scopes that own the keyboard outright while they are up. */
-export const EXCLUSIVE_SCOPES: ReadonlySet<HotkeyScope> = new Set(["dialog", "finder", "picker", "help"]);
+export const EXCLUSIVE_SCOPES: ReadonlySet<HotkeyScope> = new Set(["dialog", "finder", "picker", "help", "settings"]);
 
 export const HOTKEY_GROUPS = [
 	"Frames",
@@ -54,6 +65,7 @@ export const HOTKEY_GROUPS = [
 	"Pages",
 	"Undo",
 	"Home",
+	"Settings",
 	"Help",
 ] as const;
 
@@ -427,6 +439,10 @@ export const HOTKEYS = [
 	// --- Home -------------------------------------------------------------------
 	{ id: "home.search", scope: "home", group: "Home", label: "Search your projects", keys: ["slash"] },
 	{ id: "home.close-menu", scope: "home", group: "Home", label: "", keys: ["escape"], listed: false },
+
+	// --- Settings ---------------------------------------------------------------
+	{ id: "app.settings", scope: "app", group: "Settings", label: "Open settings", keys: ["accel+comma"] },
+	{ id: "settings.close", scope: "settings", group: "Settings", label: "", keys: ["escape"], listed: false },
 
 	// --- Help -------------------------------------------------------------------
 	{ id: "app.help", scope: "app", group: "Help", label: "Show this sheet", keys: ["question"] },
