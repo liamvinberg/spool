@@ -1,49 +1,60 @@
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
+import { type ClaudeModel, type Effort, useModels } from "shared/lib/spool/agent-model";
 import type { PlayEntry } from "shared/lib/spool/turn-play";
 import { cn } from "shared/lib/utils";
 import { FrameThumb } from "shared/ui/explore/agent/play-field";
 import { CanvasChrome } from "shared/ui/spool/canvas-chrome";
+import { MenuItem } from "shared/ui/spool/context-menu";
 import { ChevronIcon, PlusIcon } from "shared/ui/spool/icons";
+import { ModelMenu, ModelRow } from "shared/ui/spool/model-control";
 import { PlayRail } from "shared/ui/spool/play-rail";
 import { SpoolShell } from "shared/ui/spool/shell";
+import { ThreadMark } from "shared/ui/spool/thread-mark";
 
-/** Throwaway engine-placement proposals for spool-cloud's rail prototype.
- * Three separate frames: footer, nameplate, or the new-thread action.
- * Accounts are already connected in this first comparison. All interaction is
- * local fixture state; sending never starts an engine or spends model credits.
- * Model names are specimen data, not a claim about a connected account's offer.
+/** Throwaway engine-placement proposals. Accounts are connected fixture state.
+ * Engine selections reuse ModelRow; new-thread actions reuse MenuItem; the model
+ * and effort control is ModelMenu itself. No account or engine is called.
  */
 export type EngineTake = "foot" | "plate" | "start";
 export type ChoiceState = "new" | "choosing" | "thread";
 type Engine = "spool" | "claude";
-type Model = { name: string; levels: readonly string[] };
 type Thread = {
 	id: number;
 	engine: Engine;
 	name: string;
 	entries: readonly PlayEntry[];
-	model: number;
-	effort: string;
+	model: string;
+	effort: Effort;
 	draft: string;
 	started: boolean;
 };
 
 const ENGINES: readonly Engine[] = ["spool", "claude"];
 const NAMES: Record<Engine, string> = { spool: "spool", claude: "Claude Code" };
-const MODELS: Record<Engine, readonly Model[]> = {
-	spool: [
-		{ name: "GPT-5.4", levels: ["low", "medium", "high", "xhigh"] },
-		{ name: "GPT-5.4 mini", levels: ["low", "medium", "high", "xhigh"] },
-	],
-	claude: [
-		{ name: "Default (recommended)", levels: ["low", "medium", "high", "xhigh", "max"] },
-		{ name: "Sonnet", levels: ["low", "medium", "high", "xhigh", "max"] },
-		{ name: "Haiku", levels: [] },
-	],
+const DESCRIPTIONS: Record<Engine, string> = {
+	spool: "Built into spool. Uses your connected accounts.",
+	claude: "Uses Claude Code’s login on this machine.",
 };
+// Specimen offers for layout. Claude uses the design system's captured offer.
+const BUNDLED_MODELS: readonly ClaudeModel[] = [
+	{
+		value: "gpt-5.4",
+		resolvedModel: "gpt-5.4",
+		displayName: "GPT-5.4",
+		description: "Uses your ChatGPT account.",
+		supportsEffort: true,
+		supportedEffortLevels: ["low", "medium", "high", "xhigh"],
+	},
+	{
+		value: "gpt-5.4-mini",
+		resolvedModel: "gpt-5.4-mini",
+		displayName: "GPT-5.4 mini",
+		description: "Uses your ChatGPT account.",
+		supportsEffort: true,
+		supportedEffortLevels: ["low", "medium", "high", "xhigh"],
+	},
+];
 const QUIET = "font-mono text-2xs leading-3";
-const BUTTON =
-	"flex min-w-0 items-center gap-1 rounded-xs text-muted/70 transition-colors duration-150 hover:text-text focus-visible:outline focus-visible:outline-1 focus-visible:outline-muted";
 const REPLY = "The confirmation sits in the middle. The order number and email note stay underneath.";
 const HISTORY: readonly PlayEntry[] = [
 	{ key: "ask", kind: "user", text: "Make the receipt easier to read.", context: "receipt" },
@@ -78,10 +89,20 @@ const HISTORY: readonly PlayEntry[] = [
 ];
 
 function makeThread(id: number, engine: Engine): Thread {
-	return { id, engine, name: "New thread", entries: [], model: 0, effort: "high", draft: "", started: false };
+	return {
+		id,
+		engine,
+		name: "new thread",
+		entries: [],
+		model: engine === "spool" ? "gpt-5.4" : "default",
+		effort: "high",
+		draft: "",
+		started: false,
+	};
 }
 
 export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?: ChoiceState }) {
+	const claudeModels = useModels();
 	const existing: Thread = {
 		...makeThread(1, "claude"),
 		name: "Make the receipt easier to read.",
@@ -93,25 +114,29 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 	);
 	const [active, setActive] = useState(state === "thread" ? 1 : 2);
 	const [remembered, setRemembered] = useState<Engine>(state === "thread" ? "claude" : "spool");
-	const [menu, setMenu] = useState<"engine" | "model" | "threads" | null>(state === "choosing" ? "engine" : null);
-	const [notice, setNotice] = useState("");
+	const [menu, setMenu] = useState<"engine" | "threads" | null>(state === "choosing" ? "engine" : null);
+	const [over, setOver] = useState<Engine | null>(null);
 	const current = threads.find((thread) => thread.id === active) ?? existing;
-	const model = MODELS[current.engine][current.model] ?? MODELS[current.engine][0];
+	const models = current.engine === "spool" ? BUNDLED_MODELS : claudeModels;
 	const locked = current.started;
 	const patch = (values: Partial<Thread>) =>
 		setThreads((all) => all.map((thread) => (thread.id === active ? { ...thread, ...values } : thread)));
+	const show = (next: typeof menu) => {
+		setOver(null);
+		setMenu(next);
+	};
+	const toggle = (next: typeof menu) => show(menu === next ? null : next);
 	const start = (engine: Engine) => {
 		const id = Math.max(...threads.map((thread) => thread.id)) + 1;
 		setThreads((all) => [...all, makeThread(id, engine)]);
 		setActive(id);
-		setMenu(null);
-		setNotice("");
+		show(null);
 	};
 	const choose = (engine: Engine) => {
 		setRemembered(engine);
 		if (take === "start" || locked) start(engine);
-		else patch({ engine, model: 0, effort: "high" });
-		setMenu(null);
+		else patch({ engine, model: engine === "spool" ? "gpt-5.4" : "default", effort: "high" });
+		show(null);
 	};
 	const send = (text: string) => {
 		patch({
@@ -124,57 +149,70 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 				{ key: `note-${current.entries.length}`, kind: "note", text: `sent with ${NAMES[current.engine]}` },
 			],
 		});
-		setMenu(null);
+		show(null);
 	};
-	const toggle = (next: typeof menu) => setMenu(menu === next ? null : next);
-	const engineTrigger = (
+	const freshAction = take === "start" || locked;
+	const currentEngine = freshAction ? remembered : current.engine;
+	const help =
+		over === null
+			? freshAction
+				? `New threads use ${NAMES[remembered]}.`
+				: DESCRIPTIONS[current.engine]
+			: DESCRIPTIONS[over];
+	const engineTrigger = locked ? (
+		<span data-engine-fixed="" title="This thread keeps its engine." className={cn(QUIET, "truncate text-muted/45")}>
+			{NAMES[current.engine]}
+		</span>
+	) : (
 		<button
 			type="button"
 			data-engine-trigger=""
-			aria-label={locked ? "About this thread's engine" : "Choose an engine"}
+			aria-label="Choose an engine"
 			aria-expanded={menu === "engine"}
 			onClick={() => toggle("engine")}
-			className={cn(QUIET, BUTTON)}
+			className={cn(
+				QUIET,
+				"flex min-w-0 items-center gap-1 transition-colors duration-150",
+				menu === "engine" ? "text-muted" : "text-muted/45 hover:text-muted",
+			)}
 		>
-			<span>{NAMES[current.engine]}</span>
-			{locked ? <Lock /> : <ChevronIcon className="h-2 w-2" open={menu === "engine"} />}
+			<span className="truncate">{NAMES[current.engine]}</span>
+			<ChevronIcon className="h-2 w-2 shrink-0" open={menu === "engine"} />
 		</button>
 	);
 	const picker = (
-		<div data-engine-menu="" className="overflow-hidden rounded-md border border-border-raised bg-bg p-1">
-			{locked && take !== "start" ? (
-				<p className="px-2.5 pt-2 pb-3 text-base leading-base text-muted">
-					This thread uses {NAMES[current.engine]}. Choose an engine for a new thread.
-				</p>
-			) : null}
+		<div
+			data-engine-menu=""
+			role={freshAction ? "menu" : undefined}
+			className={cn(
+				"rounded-md border border-border-raised bg-raised",
+				freshAction ? "flex flex-col p-unit" : "p-1.5",
+			)}
+			onMouseLeave={() => setOver(null)}
+		>
 			{ENGINES.map((engine) => (
-				<button
+				<div
 					key={engine}
-					type="button"
 					data-engine-choice={engine}
-					onClick={() => choose(engine)}
-					className="flex w-full items-start gap-2.5 rounded-sm px-2.5 py-2.5 text-left transition-colors duration-150 hover:bg-surface focus-visible:bg-surface focus-visible:outline-none"
+					className="flex flex-col"
+					onMouseEnter={() => setOver(engine)}
+					onFocusCapture={() => setOver(engine)}
 				>
-					<span className="flex min-w-0 flex-1 flex-col gap-1">
-						<span className="text-base text-text leading-base">
-							{take === "start" || locked ? `New thread with ${NAMES[engine]}` : NAMES[engine]}
-						</span>
-						<span className="text-sm text-muted leading-sm">
-							{engine === "spool"
-								? "Built into spool. Uses your connected accounts."
-								: "Uses Claude Code and its login on this machine."}
-						</span>
-					</span>
-					{engine === (locked || take === "start" ? remembered : current.engine) ? (
-						<span aria-label="Selected" className="pt-1 text-xs text-muted">
-							✓
-						</span>
-					) : null}
-				</button>
+					{freshAction ? (
+						<MenuItem label={`New thread with ${NAMES[engine]}`} onClick={() => choose(engine)} />
+					) : (
+						<ModelRow label={NAMES[engine]} on={currentEngine === engine} onPick={() => choose(engine)} />
+					)}
+				</div>
 			))}
-			<div className="mx-2.5 mt-1 border-border border-t pt-2.5 pb-2 text-sm text-muted leading-sm">
-				Your choice is remembered for new threads in this project on this machine.
-			</div>
+			<p
+				className={cn(QUIET, "relative pt-1.5 pb-0.5 text-muted/40 leading-[1.5]", freshAction ? "mx-3" : "mx-1.5")}
+			>
+				<span className="invisible" aria-hidden="true">
+					Built into spool. Uses your connected accounts.
+				</span>
+				<span className="absolute inset-x-0 top-1.5">{help}</span>
+			</p>
 		</div>
 	);
 	const newThread = () => (take === "start" ? toggle("engine") : start(remembered));
@@ -190,52 +228,67 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 					className="-ml-1.5 flex h-7 min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150 hover:bg-surface"
 				>
 					<span
-						className={cn("min-w-0 flex-1 truncate text-sm leading-4", locked ? "text-text" : "text-muted/70")}
+						className={cn("min-w-0 flex-1 truncate text-sm leading-4", locked ? "text-text" : "text-muted/60")}
 					>
 						{current.name}
 					</span>
 					{take === "start" ? (
-						<span className={cn(QUIET, "shrink-0 text-muted/70")}>{NAMES[current.engine]}</span>
+						<span className={cn(QUIET, "shrink-0 text-muted/45")}>{NAMES[current.engine]}</span>
 					) : null}
-					<ChevronIcon open={menu === "threads"} className="h-2.5 w-2.5 shrink-0 text-muted/60" />
+					<ChevronIcon open={menu === "threads"} className="h-2.5 w-2.5 shrink-0 text-muted/45" />
 				</button>
 				<button
 					type="button"
 					data-new-thread=""
 					aria-label="New thread"
+					title={`New thread with ${NAMES[remembered]}`}
 					onClick={newThread}
-					className="-mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/65 transition-colors duration-150 hover:text-text"
+					className="-mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-150 hover:text-text"
 				>
-					<PlusIcon />
+					<PlusIcon className="h-2.5 w-2.5" />
 				</button>
 			</div>
 			{take === "plate" ? (
-				<div className="flex h-9 items-center justify-between border-border border-b px-3.5">
-					{engineTrigger}
-					<span className="text-sm text-muted/60">{locked ? "this thread" : "for this new thread"}</span>
-				</div>
+				<div className="flex h-[34px] items-center border-border border-b px-3.5">{engineTrigger}</div>
 			) : null}
 			{menu === "engine" && take !== "foot" ? (
-				<div className="absolute top-full right-2 left-2 mt-2">{picker}</div>
+				<div
+					className={cn(
+						"absolute top-full mt-1 animate-menu-in",
+						take === "start" ? "right-1.5 w-[248px]" : "left-3.5 w-[300px]",
+					)}
+				>
+					{picker}
+				</div>
 			) : null}
 			{menu === "threads" ? (
-				<div className="absolute top-full right-0 left-0 max-h-80 overflow-auto border-border border-b bg-bg py-1">
+				<div
+					data-thread-menu=""
+					className="absolute top-full right-0 left-0 max-h-80 animate-agent-menu-in overflow-auto border-border border-b bg-bg p-1.5"
+				>
 					{threads.map((thread) => (
 						<button
 							type="button"
 							key={thread.id}
+							data-open-thread={thread.name}
+							aria-current={thread.id === active ? "true" : undefined}
 							onClick={() => {
 								setActive(thread.id);
-								setMenu(null);
-								setNotice("");
+								show(null);
 							}}
 							className={cn(
-								"flex w-full flex-col gap-1 px-3.5 py-3 text-left hover:bg-surface",
-								thread.id === active && "bg-surface",
+								"relative flex w-full items-start gap-2.5 rounded-sm px-2 py-2 text-left transition-colors duration-150",
+								thread.id === active ? "bg-surface/70" : "hover:bg-surface/40",
 							)}
 						>
-							<span className="text-base leading-base">{thread.name}</span>
-							<span className={cn(QUIET, "text-muted")}>{NAMES[thread.engine]}</span>
+							{thread.id === active ? (
+								<span className="absolute inset-y-0 left-0 w-[2px] rounded-full bg-thread" />
+							) : null}
+							<ThreadMark life="read" className="mt-px" />
+							<span className="flex min-w-0 flex-1 flex-col gap-1">
+								<span className="line-clamp-3 text-sm leading-4 text-text/85">{thread.name}</span>
+								<span className={cn(QUIET, "text-muted/55")}>{NAMES[thread.engine]}</span>
+							</span>
 						</button>
 					))}
 				</div>
@@ -243,80 +296,32 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 		</div>
 	);
 	const footer = (
-		<div className="relative flex min-w-0 flex-1 items-center gap-3">
+		<div className="relative flex min-w-0 flex-1 items-center gap-2.5">
 			{take === "foot" ? (
 				<>
 					{engineTrigger}
-					<span className="h-2.5 border-border-raised border-l" />
+					<span className="text-muted/30">·</span>
 				</>
 			) : null}
-			<button
-				type="button"
-				data-model-trigger=""
-				aria-label="Choose a model"
-				aria-expanded={menu === "model"}
-				onClick={() => toggle("model")}
-				className={cn(QUIET, BUTTON)}
-			>
-				<span className="truncate">
-					{model?.name}
-					{model?.levels.length ? ` · ${current.effort}` : ""}
-				</span>
-				<ChevronIcon className="h-2 w-2 shrink-0" open={menu === "model"} />
-			</button>
+			{/* The shipped menu anchors to the footer, not to a shrinking model name.
+			 * Scope that geometry here while using the existing component unchanged. */}
+			<span data-model-control="" className="flex min-w-0 [&>span]:static [&>span>div]:max-w-full">
+				<ModelMenu
+					key={`${active}:${current.engine}:${menu ?? "none"}`}
+					models={models}
+					state={{ engine: current.engine, value: current.model, effort: current.effort }}
+					onPick={(next) => {
+						const value = next.value ?? current.model;
+						const levels = models.find((model) => model.value === value)?.supportedEffortLevels ?? [];
+						const effort =
+							next.effort ?? (levels.includes(current.effort) ? current.effort : (levels[0] ?? "high"));
+						patch({ model: value, effort });
+					}}
+				/>
+			</span>
 			{menu === "engine" && take === "foot" ? (
-				<div className="absolute bottom-full left-0 z-30 mb-2 w-[360px] max-w-full">{picker}</div>
-			) : null}
-			{menu === "model" ? (
-				<div
-					data-model-menu=""
-					className="absolute bottom-full left-0 z-30 mb-2 w-[300px] max-w-full rounded-md border border-border-raised bg-bg p-1"
-				>
-					{MODELS[current.engine].map((row, index) => (
-						<button
-							type="button"
-							key={row.name}
-							data-model-choice={row.name}
-							onClick={() => {
-								patch({
-									model: index,
-									effort: row.levels.includes(current.effort) ? current.effort : (row.levels[0] ?? ""),
-								});
-								setMenu(null);
-							}}
-							className="flex w-full items-center justify-between rounded-sm px-2.5 py-2.5 text-left text-base leading-base hover:bg-surface"
-						>
-							{row.name}
-							{current.model === index ? <span className="text-muted">✓</span> : null}
-						</button>
-					))}
-					{model?.levels.length ? (
-						<div className="mx-2.5 mt-1 border-border border-t py-2.5">
-							<span className={cn(QUIET, "text-muted")}>effort</span>
-							<div className="mt-2 flex flex-wrap gap-1">
-								{model.levels.map((level) => (
-									<button
-										type="button"
-										key={level}
-										aria-pressed={level === current.effort}
-										onClick={() => patch({ effort: level })}
-										className={cn(
-											QUIET,
-											"rounded-xs px-2 py-1.5 hover:bg-surface",
-											level === current.effort ? "bg-raised text-text" : "text-muted",
-										)}
-									>
-										{level}
-									</button>
-								))}
-							</div>
-						</div>
-					) : null}
-					<p className="mx-2.5 border-border border-t pt-2.5 pb-2 text-sm text-muted leading-sm">
-						{current.engine === "spool"
-							? "Uses your ChatGPT account."
-							: "Uses Claude Code’s login on this machine."}
-					</p>
+				<div className="absolute bottom-full left-0 z-30 mb-2 w-[300px] max-w-full animate-agent-menu-in">
+					{picker}
 				</div>
 			) : null}
 		</div>
@@ -340,7 +345,7 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 						onKeyDownCapture={(event) => {
 							if (event.key === "Escape" && menu !== null) {
 								event.stopPropagation();
-								setMenu(null);
+								show(null);
 							}
 						}}
 					>
@@ -350,7 +355,7 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 								aria-label="Close menu"
 								tabIndex={-1}
 								className="absolute inset-0 z-20 cursor-default"
-								onClick={() => setMenu(null)}
+								onClick={() => show(null)}
 							/>
 						) : null}
 						<PlayRail
@@ -358,19 +363,11 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 							entries={current.entries}
 							phase="idle"
 							nav={plate}
-							header={
-								notice ? (
-									<div role="status" className="border-border border-b px-3.5 py-2 text-sm text-muted">
-										{notice}
-									</div>
-								) : undefined
-							}
 							say="read"
 							ask="log"
 							shot="line"
 							jump="name"
 							have={["receipt"]}
-							onJump={() => setNotice("receipt is selected on the canvas")}
 							model={footer}
 							run={active}
 							draft={current.draft}
@@ -414,14 +411,5 @@ function CanvasFrame({ name, selected = false }: { name: string; selected?: bool
 				<FrameThumb name={name} width={240} />
 			</div>
 		</div>
-	);
-}
-
-function Lock(): ReactNode {
-	return (
-		<svg aria-hidden="true" viewBox="0 0 12 12" fill="none" className="ml-0.5 h-2.5 w-2.5 text-muted/65">
-			<rect x="3" y="5" width="6" height="5" rx="1" stroke="currentColor" />
-			<path d="M4.25 5V3.75a1.75 1.75 0 0 1 3.5 0V5" stroke="currentColor" />
-		</svg>
 	);
 }

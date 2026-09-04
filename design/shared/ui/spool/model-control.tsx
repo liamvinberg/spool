@@ -224,7 +224,7 @@ function Picker({
 							<>
 								<Group label="engine" />
 								{ENGINES.map((entry) => (
-									<Row
+									<ModelRow
 										key={entry.id}
 										label={entry.label}
 										note={entry.note}
@@ -258,7 +258,7 @@ function Picker({
 						 * sentences being the same sentence.
 						 */}
 						{(models ?? []).map((model) => (
-							<Row
+							<ModelRow
 								key={model.value}
 								label={model.displayName}
 								on={state.value === model.value}
@@ -273,7 +273,7 @@ function Picker({
 								    model above it, not a second decision */}
 								<Group label="effort" />
 								{levels.map((level) => (
-									<Row
+									<ModelRow
 										key={level}
 										label={level}
 										on={state.effort === level}
@@ -321,7 +321,7 @@ function Picker({
  * only the engine list has, and which sits at the end rather than underneath
  * because it qualifies the row instead of describing it.
  */
-function Row({
+export function ModelRow({
 	label,
 	says,
 	note,
