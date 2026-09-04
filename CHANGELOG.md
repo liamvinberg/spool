@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.15.0
+
+### Minor Changes
+
+- 0cc0d75: Breaking: the fake backend is gone. A frame's relative `fetch` no longer answers out of `shared/fixtures/`, scenarios no longer carry a `mock` object, and `spool init` no longer scaffolds a fixtures folder. Across every project the canvas had been used on, no fixture was ever written and no scenario ever declared a route: what an app knows lives in `ui.state`, seeded by the scenario and written by the frame. A scenario is now `{ "state": { ... } }`; a file still carrying an empty `mock` key keeps loading, its `mock` ignored.
+- 16feef7: Breaking: terminal frames are gone. `term.tsx` is no longer a frame entry, `spool/term` no longer resolves, and the map no longer reads `term.go` sites; a folder holding only a `term.tsx` now reads as a page. Execution had been disabled since the isolation boundary, and four terminal frames were ever written across every project the canvas has been used on. Frames have one kind, `frame.tsx`, and the xterm runtime, the terminal font, and the session store leave the package with it.
+- 2f28ef5: Frames on one canvas page now share one session. A write to `ui.state` in one frame re-renders every frame beside it, and a frame booting onto a page where something was already written joins that state, so two frames side by side prototype two clients of one app: click in one, watch the other. The canvas is the bus and its memory; the page's session lives as long as the tab. The player is unchanged, and a frame's scenario seed is never shared, only what the app wrote after it.
+
+### Patch Changes
+
+- 0217849: The Mac app no longer adopts a daemon that is behind it. The daemon is what draws the canvas, so an app that had just updated was showing the older Spool whenever the cli had started the daemon first. Now a daemon behind the bundle is stopped on launch and the bundled one takes its place, the way `spool upgrade` does it from the terminal. Equal versions are adopted as before, and a newer daemon is never downgraded.
+- cd2e293: A frame name with `--` in it no longer renders as one dash in the name tab, the rail and the player chip. The mono face joined the two hyphens into a ligature, and now it does not.
+- a8ecc8a: The agent rail's log now leaves live follow only on a gesture: a wheel, a finger, a key, or a scrollbar drag. A picture landing, a row folding or the browser moving the box on its own no longer drops the reader out of the stream.
+
 ## 0.14.0
 
 ### Minor Changes
