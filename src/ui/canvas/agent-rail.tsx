@@ -73,9 +73,6 @@ import { useStillness } from "./stillness";
  */
 export const AGENT_WIDTH = 420;
 
-/** clear of the top fade, so an anchored first line is not dimmed by it */
-const TOP_INSET = 10;
-
 /** the mark's own width and the gap beside it, so a disclosure lines up under the verb */
 const INDENT = 14 + 10;
 
@@ -886,13 +883,10 @@ function PlanStrip({ plan }: { plan: AgentPlan }) {
  * worse than one that does not follow at all.
  *
  * Leaving is an act and so is coming back. Any input that could carry the reader away
- * from where following holds — a wheel, a finger, the scrolling keys, a scrollbar
- * drag — ends the following before the scroll it causes ever lands. It resumes only
- * where resuming moves nothing: the chip over the log's foot, the reader's own words
- * going out, or the end of the log when the end is the follow point. Proximity alone
- * re-arms nothing, because against an entry taller than the box the follow point is
- * that entry's first line, and a rule that re-armed near the bottom warped whoever
- * reached the end back up by the entry's whole overflow, again on every attempt. */
+ * from the end — a wheel, a finger, the scrolling keys, a scrollbar drag — ends the
+ * following before the scroll it causes ever lands. It resumes only where resuming
+ * moves nothing: the chip over the log's foot, the reader's own words going out, or
+ * the reader arriving back at the end themselves. */
 
 /** the keys that scroll a focused log, and which way they carry the reader */
 const SCROLL_KEYS: Record<string, -1 | 1 | undefined> = {
@@ -906,27 +900,16 @@ const SCROLL_KEYS: Record<string, -1 | 1 | undefined> = {
 };
 
 /**
- * Where the log scrolls to while it is following the live end.
+ * Where the log scrolls to while it is following the live end: the end, always.
  *
- * What it anchors is the *top* of the live entry rather than the bottom of the log. A
- * 3,372-character message is over a thousand pixels against a transcript of about five
- * hundred, and following its end drives its first line — where the verdict is — out of
- * view before it has been read, at 171 characters a second for twenty seconds.
- *
- * `tail` is how far the last entry's top sits below the box's own, or null when the log
- * is empty. One clamp covers both cases and nothing measures an entry's height: the
- * scroll that puts that entry's first line at the top is at most
- * `scrollHeight - entryHeight`, so it falls below the maximum scroll exactly when the
- * entry is taller than the box. A short entry therefore keeps ordinary follow-the-end,
- * and a tall one pins its own first line and fills downward for as long as it is the
- * thing being written.
+ * It once anchored the first line of a message taller than the box instead, so a long
+ * verdict was not driven out of view as it streamed. That read as the log falling out
+ * of live, with nothing to say it had: the newest words filled in below the fold while
+ * the scrollbar sat still and no chip offered a way down. A reader who has not scrolled
+ * is at the live end, and the live end is the newest word.
  */
-export function followTo(
-	box: { readonly scrollTop: number; readonly scrollHeight: number; readonly clientHeight: number },
-	tail: number | null,
-): number {
-	const end = box.scrollHeight - box.clientHeight;
-	return Math.max(0, Math.min(tail === null ? end : box.scrollTop + tail - TOP_INSET, end));
+export function followTo(box: { readonly scrollHeight: number; readonly clientHeight: number }): number {
+	return Math.max(0, box.scrollHeight - box.clientHeight);
 }
 
 function Transcript({
@@ -980,13 +963,7 @@ function Transcript({
 	const touched = useRef<number | null>(null);
 
 	/** where following would put the box right now */
-	const aim = (box: HTMLElement) => {
-		const tail = box.firstElementChild?.lastElementChild;
-		return followTo(
-			box,
-			tail instanceof HTMLElement ? tail.getBoundingClientRect().top - box.getBoundingClientRect().top : null,
-		);
-	};
+	const aim = (box: HTMLElement) => followTo(box);
 	/** the log scrolling itself, held in `wrote` so the event it causes reads as its own */
 	const carry = (box: HTMLElement, to: number) => {
 		if (Math.abs(box.scrollTop - to) < 1) return;
@@ -1001,16 +978,8 @@ function Transcript({
 	 */
 	const pressed = useRef(false);
 	const pin = (box: HTMLElement) => carry(box, aim(box));
-	/**
-	 * Whether the chip has anything to name: the reader is off the follow point *and*
-	 * there is log below them. The second half is what the first half cannot say. The
-	 * follow point of a last entry taller than the box is that entry's first line, so a
-	 * reader who has read all the way down sits an entry's overflow from it and was
-	 * being offered a way back to something they had already passed — a chip drawn at
-	 * the true bottom, pointing down, that scrolled up when pressed.
-	 */
-	const adrift = (box: HTMLElement) =>
-		box.scrollTop < box.scrollHeight - box.clientHeight - 1 && Math.abs(box.scrollTop - aim(box)) >= 1;
+	/** whether the chip has anything to name: there is log below the reader */
+	const adrift = (box: HTMLElement) => box.scrollTop < aim(box) - 1;
 	/** the reader took the wheel: following ends now, before the scroll it causes lands */
 	const leave = () => {
 		setFollow(false);
@@ -1095,26 +1064,21 @@ function Transcript({
 						pin(box);
 						return;
 					}
-					const to = aim(box);
-					const end = box.scrollHeight - box.clientHeight;
-					const off = Math.abs(box.scrollTop - to) >= 1;
-					// a scrollbar drag that moved the box off the follow point: the reader
+					const off = adrift(box);
+					// a scrollbar drag that moved the box off the end: the reader
 					if (follow && off) leave();
-					// the end re-arms follow only when the end is where following would sit
-					// anyway, so re-entering moves nothing
-					else if (!follow && !off && to >= end - 1) setFollow(true);
+					// the reader arriving back at the end re-arms follow, and re-entering
+					// there moves nothing
+					else if (!follow && !off) setFollow(true);
 					// last, so it overrides the optimistic `away` that leaving sets before it
 					// can see where the scroll landed
-					setAway(off && box.scrollTop < end - 1);
+					setAway(off);
 				}}
 				onPointerDown={() => {
 					pressed.current = true;
 				}}
 				onWheel={(event) => {
-					if (!follow || event.deltaY === 0) return;
-					const box = event.currentTarget;
-					const room = box.scrollHeight - box.clientHeight - box.scrollTop;
-					if (event.deltaY < 0 ? box.scrollTop > 0 : room >= 1) leave();
+					if (follow && event.deltaY < 0 && event.currentTarget.scrollTop > 0) leave();
 				}}
 				onTouchStart={(event) => {
 					touched.current = event.touches[0]?.clientY ?? null;
@@ -1125,18 +1089,13 @@ function Transcript({
 					if (at === undefined) return;
 					touched.current = at;
 					if (!follow || from === null || at === from) return;
-					const box = event.currentTarget;
-					const room = box.scrollHeight - box.clientHeight - box.scrollTop;
 					// a finger pulling down drags earlier words back into view: scrolling up
-					if (at > from ? box.scrollTop > 0 : room >= 1) leave();
+					if (at > from && event.currentTarget.scrollTop > 0) leave();
 				}}
 				onKeyDown={(event) => {
 					if (!follow || event.target !== event.currentTarget) return;
 					const way = SCROLL_KEYS[event.key === " " && event.shiftKey ? "PageUp" : event.key];
-					if (way === undefined) return;
-					const box = event.currentTarget;
-					const room = box.scrollHeight - box.clientHeight - box.scrollTop;
-					if (way < 0 ? box.scrollTop > 0 : room >= 1) leave();
+					if (way === -1 && event.currentTarget.scrollTop > 0) leave();
 				}}
 				// scroll anchoring off: Chrome would otherwise re-aim the box on its own every
 				// frame a row or a paragraph opens under it, and the two would fight over one
@@ -1154,13 +1113,9 @@ function Transcript({
 				</div>
 			</div>
 			<span className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-bg to-transparent" />
-			{/* the way back, drawn only while there is log below the reader that following
-			    would have shown them. It names what is below — live while the turn is
-			    writing, latest once it settles — and pressing it returns to where following
-			    holds, which for a tall live entry is its first line rather than its newest
-			    word. When the reader is already past that line, inside the entry, the
-			    press carries them to the end instead: the arrow points down and the one
-			    thing it may never do is scroll up. */}
+			{/* the way back, drawn only while there is log below the reader. It names what
+			    is below — live while the turn is writing, latest once it settles — and
+			    pressing it returns to the end and follows from there. */}
 			{follow || !away ? null : (
 				<button
 					type="button"
@@ -1168,15 +1123,9 @@ function Transcript({
 					onClick={() => {
 						const box = view.current;
 						if (box === null) return;
-						const to = aim(box);
-						const end = box.scrollHeight - box.clientHeight;
-						const target = to > box.scrollTop ? to : end;
 						setAway(false);
-						// following resumes only where it holds what the press landed on;
-						// re-arming at the end of a tall entry warps the reader back up by the
-						// entry's overflow on the next write
-						if (to >= target - 1) setFollow(true);
-						carry(box, target);
+						setFollow(true);
+						carry(box, aim(box));
 					}}
 					className="absolute bottom-3 left-1/2 flex h-6 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-bg px-2.5 font-mono text-2xs text-muted leading-3 transition-colors duration-150 hover:bg-surface hover:text-text"
 				>

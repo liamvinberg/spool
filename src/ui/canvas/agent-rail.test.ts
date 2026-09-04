@@ -953,9 +953,8 @@ describe("one turn", () => {
 /* ---------- a message that is a document ----------
  * The one-line rule settles this without argument: a message has no call to outlive. So
  * it is rendered whole and nothing is clamped, and the thing that makes it long is the
- * thing that makes it skimmable. What the log does about the size of it is where the top
- * anchor comes in — following the end of a 3,372-character message drives the verdict in
- * its first line out of view before anyone has read it. */
+ * thing that makes it skimmable. The log follows the newest words until the reader
+ * scrolls up to read earlier ones. */
 
 describe("a long message", () => {
 	it("renders as markdown, whole, and clamps nothing", async () => {
@@ -1025,7 +1024,7 @@ describe("a long message", () => {
 	 * The geometry is handed in because happy-dom lays nothing out, and the arithmetic it
 	 * feeds is `followTo`'s own — asserted directly below this.
 	 */
-	it("anchors the top of a live entry taller than the box, and the end of one that fits", async () => {
+	it("follows every paragraph as a live message grows taller than the box", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await send(canvas.host, "check the copy");
@@ -1044,41 +1043,28 @@ describe("a long message", () => {
 			tail.getBoundingClientRect = () => ({ top }) as DOMRect;
 		};
 
-		// 1,400px of message in a 500px box, its first line 100px down: the first line wins.
-		// What moves the box is the size watcher on the log's body, which is what a browser
-		// fires once the message has laid out at that height
-		geometry(1400, 100);
-		await canvas.grew();
-		expect(log.scrollTop).toBe(90);
-
-		// and an entry that fits keeps ordinary follow-the-end
-		geometry(520, 400);
-		await canvas.grew();
-		expect(log.scrollTop).toBe(20);
+		// Start with a message that fits, then let successive paragraphs open past the
+		// viewport. No reader input occurs between the size notifications.
+		for (const height of [520, 800, 1400, 1800]) {
+			geometry(height, 100 - log.scrollTop);
+			await canvas.grew();
+			expect(log.scrollTop).toBe(height - 500);
+			expect(canvas.host.querySelector("[data-agent-live]")).toBeNull();
+		}
 	});
 });
 
-/**
- * The clamp itself, which is the whole of the anchoring rule and needs no layout.
- *
- * `tail` is how far the last entry's top sits below the box's own top edge.
- */
 describe("what the log scrolls to", () => {
-	it("follows the end while the last entry fits the box", () => {
-		expect(followTo({ scrollTop: 0, scrollHeight: 520, clientHeight: 500 }, 400)).toBe(20);
+	it("follows the end", () => {
+		expect(followTo({ scrollHeight: 520, clientHeight: 500 })).toBe(20);
 	});
 
-	/** 1,400px of content in 500px of box: the scroll that pins the first line is below the end */
-	it("pins the first line of an entry taller than the box", () => {
-		expect(followTo({ scrollTop: 0, scrollHeight: 1400, clientHeight: 500 }, 100)).toBe(90);
-	});
-
-	it("follows the end when the log holds nothing to anchor", () => {
-		expect(followTo({ scrollTop: 0, scrollHeight: 520, clientHeight: 500 }, null)).toBe(20);
+	it("follows the end of a message taller than the box", () => {
+		expect(followTo({ scrollHeight: 1400, clientHeight: 500 })).toBe(900);
 	});
 
 	it("never scrolls above the top of the log", () => {
-		expect(followTo({ scrollTop: 0, scrollHeight: 100, clientHeight: 500 }, 0)).toBe(0);
+		expect(followTo({ scrollHeight: 100, clientHeight: 500 })).toBe(0);
 	});
 });
 
@@ -1148,10 +1134,8 @@ describe("what an entry redraws for", () => {
 });
 
 /**
- * The machine around the clamp: when following ends, what never re-arms it, and the
- * ways back. The geometry is handed in as above, except the tail's rect moves with the
- * scroll the way a real one does, because everything under test is positional — where
- * following would sit against where the reader is.
+ * Reader input pauses following; arriving back at the end resumes it. Geometry is
+ * supplied because happy-dom does not lay out the transcript.
  */
 describe("when the reader takes the wheel", () => {
 	async function pinned() {
@@ -1171,10 +1155,10 @@ describe("when the reader takes the wheel", () => {
 			log.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
 			tail.getBoundingClientRect = () => ({ top: top - log.scrollTop }) as DOMRect;
 		};
-		// 1,400px of live entry in a 500px box, its first line held at 90
+		// 1,400px of content in a 500px box, held at the live end
 		geometry(1400, 100);
 		await canvas.grew();
-		expect(log.scrollTop).toBe(90);
+		expect(log.scrollTop).toBe(900);
 		return { canvas, log, geometry };
 	}
 
@@ -1202,23 +1186,76 @@ describe("when the reader takes the wheel", () => {
 		expect(log.scrollTop).toBe(40);
 	});
 
-	/**
-	 * The one from the field. A reader wheels down through a tall live entry and reaches
-	 * its end; the follow point is the entry's first line, 810px up, and a rule that
-	 * re-armed follow near the bottom warped them back there on every attempt. The end
-	 * of a tall entry re-arms nothing now.
-	 */
-	it("reaching the end of a tall live entry does not warp back to its first line", async () => {
-		const { canvas, log } = await pinned();
-		await wheel(log, 53);
-		await scrolled(log, 620);
-		await scrolled(log, 900);
-		canvas.turn.push(say(" and the rest of it"));
-		await settle(250);
-		expect(log.scrollTop).toBe(900);
+	it.each(["wheel", "touch", "key"])("%s toward newer text keeps following during growth", async (input) => {
+		const { canvas, log, geometry } = await pinned();
+		// Content has grown, but its resize notification has not arrived yet. Scrolling
+		// toward the new bottom must not be mistaken for leaving to read earlier text.
+		geometry(1600, 100);
+		await act(async () => {
+			if (input === "wheel") {
+				log.dispatchEvent(new WheelEvent("wheel", { deltaY: 53, bubbles: true }));
+			} else if (input === "key") {
+				log.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+			} else {
+				log.dispatchEvent(
+					new TouchEvent("touchstart", {
+						touches: [new Touch({ identifier: 0, target: log, clientY: 100 })],
+						bubbles: true,
+					}),
+				);
+				log.dispatchEvent(
+					new TouchEvent("touchmove", {
+						touches: [new Touch({ identifier: 0, target: log, clientY: 50 })],
+						bubbles: true,
+					}),
+				);
+			}
+		});
+		await scrolled(log, 950);
+		await canvas.grew();
+		expect(log.scrollTop).toBe(1100);
+		expect(chip(canvas.host)).toBeNull();
 	});
 
-	it("the end re-arms follow when the end is where following would sit", async () => {
+	it.each(["touch", "key"])("%s toward earlier text pauses following through growth", async (input) => {
+		const { canvas, log, geometry } = await pinned();
+		await act(async () => {
+			if (input === "key") {
+				log.dispatchEvent(new KeyboardEvent("keydown", { key: "PageUp", bubbles: true }));
+			} else {
+				log.dispatchEvent(
+					new TouchEvent("touchstart", {
+						touches: [new Touch({ identifier: 0, target: log, clientY: 50 })],
+						bubbles: true,
+					}),
+				);
+				log.dispatchEvent(
+					new TouchEvent("touchmove", {
+						touches: [new Touch({ identifier: 0, target: log, clientY: 100 })],
+						bubbles: true,
+					}),
+				);
+			}
+		});
+		await scrolled(log, 620);
+		geometry(1600, 100);
+		await canvas.grew();
+		expect(log.scrollTop).toBe(620);
+		expect(chip(canvas.host)).not.toBeNull();
+	});
+
+	it("reaching the end of a tall message resumes following new paragraphs", async () => {
+		const { canvas, log, geometry } = await pinned();
+		await wheel(log, -53);
+		await scrolled(log, 620);
+		await scrolled(log, 900);
+		geometry(1600, 100);
+		await canvas.grew();
+		expect(log.scrollTop).toBe(1100);
+		expect(chip(canvas.host)).toBeNull();
+	});
+
+	it("the end re-arms follow for a short message", async () => {
 		const { canvas, log, geometry } = await pinned();
 		// the same entry, now short of the box: its top 400px into a 700px scroll, so
 		// the follow point is the plain end at 200
@@ -1244,21 +1281,16 @@ describe("when the reader takes the wheel", () => {
 		await act(async () => {
 			chip(canvas.host)?.click();
 		});
-		expect(log.scrollTop).toBe(90);
+		expect(log.scrollTop).toBe(900);
 		await until(() => chip(canvas.host) === null);
 		canvas.turn.push(say(" and the rest of it"));
 		await settle(150);
-		expect(log.scrollTop).toBe(90);
+		expect(log.scrollTop).toBe(900);
 	});
 
-	/**
-	 * The other half of the same field report. The reader who reaches the end of a tall
-	 * entry is away from the follow point by the entry's whole overflow, so the chip
-	 * drew at the true bottom — a way back to something already read, pointing down.
-	 */
 	it("the end of a tall entry draws no chip, because nothing is below it", async () => {
 		const { canvas, log } = await pinned();
-		await wheel(log, 53);
+		await wheel(log, -53);
 		await scrolled(log, 400);
 		await until(() => chip(canvas.host) !== null);
 		await scrolled(log, 900);
@@ -1266,10 +1298,8 @@ describe("when the reader takes the wheel", () => {
 	});
 
 	it("a press from inside a tall entry carries the reader to the end, never back up", async () => {
-		const { canvas, log } = await pinned();
-		await wheel(log, 53);
-		// past the follow point at 90 and short of the end at 900: the arrow points down
-		// and the follow point is behind them
+		const { canvas, log, geometry } = await pinned();
+		await wheel(log, -53);
 		await scrolled(log, 400);
 		await until(() => chip(canvas.host) !== null);
 		await act(async () => {
@@ -1277,10 +1307,10 @@ describe("when the reader takes the wheel", () => {
 		});
 		expect(log.scrollTop).toBe(900);
 		await until(() => chip(canvas.host) === null);
-		// and following did not re-arm, so the next write leaves them where they are
-		canvas.turn.push(say(" and the rest of it"));
-		await settle(150);
-		expect(log.scrollTop).toBe(900);
+		// Following resumed, so another paragraph carries them to the new end.
+		geometry(1600, 100);
+		await canvas.grew();
+		expect(log.scrollTop).toBe(1100);
 	});
 
 	it("the chip says latest once the turn has settled", async () => {
