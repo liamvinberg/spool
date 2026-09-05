@@ -6,6 +6,7 @@ import { FrameThumb } from "shared/ui/explore/agent/play-field";
 import { AccountDialog, type AccountLook } from "shared/ui/explore/engines/account-dialog";
 import { EngineFooter } from "shared/ui/explore/engines/engine-footer";
 import { ModelSettings, useModelScope } from "shared/ui/explore/engines/model-shortlist";
+import { ModelBrowser, type ModelTake } from "shared/ui/explore/engines/model-variants";
 import {
 	LoginPanel,
 	type LoginSeed,
@@ -121,18 +122,25 @@ export function EngineChoice({
 	state = "new",
 	login: loginSpec,
 	modelScope,
+	modelTake = "settings",
 }: {
 	take: EngineTake;
 	state?: ChoiceState;
 	login?: { take: LoginTake; seed: LoginSeed; look?: AccountLook };
-	modelScope?: "picker" | "search" | "settings";
+	modelScope?: "picker" | "search" | "settings" | "all";
+	modelTake?: ModelTake;
 }) {
 	const claudeModels = useModels();
 	const login = useLoginPrototype(loginSpec?.seed, loginSpec === undefined);
 	const loginTake = loginSpec?.take ?? "dialog";
 	const loginLook = loginSpec === undefined ? "list" : loginSpec.look;
-	const scope = useModelScope(modelScope === "search" ? "astra" : "");
-	const [settingsOpen, setSettingsOpen] = useState(modelScope === "settings");
+	const scope = useModelScope(
+		modelScope === "search" ? (modelTake === "settings" ? "astra" : "GPT-5.4") : "",
+		modelScope === "all",
+	);
+	const [settingsOpen, setSettingsOpen] = useState(
+		modelScope === "settings" || (modelTake === "browser" && modelScope === "search"),
+	);
 	const existing: Thread = {
 		...makeThread(1, loginSpec === undefined ? "claude" : "spool"),
 		model: loginSpec === undefined ? "default" : "chatgpt/gpt-5.4",
@@ -155,7 +163,12 @@ export function EngineChoice({
 	const [active, setActive] = useState(state === "thread" ? 1 : 2);
 	const [remembered, setRemembered] = useState<Engine>(state === "thread" ? existing.engine : "spool");
 	const [menu, setMenu] = useState<"engine" | "threads" | null>(
-		state === "choosing" || modelScope === "picker" || modelScope === "search" ? "engine" : null,
+		state === "choosing" ||
+			modelScope === "picker" ||
+			modelScope === "all" ||
+			(modelScope === "search" && modelTake !== "browser")
+			? "engine"
+			: null,
 	);
 	const [over, setOver] = useState<Engine | null>(null);
 	const current = threads.find((thread) => thread.id === active) ?? existing;
@@ -382,6 +395,13 @@ export function EngineChoice({
 			) : null}
 		</div>
 	);
+	const pickModel = (model: string) => {
+		scope.setQuery("");
+		const levels = models.find((entry) => entry.value === model)?.supportedEffortLevels ?? [];
+		patch({ model, effort: levels.includes(current.effort) ? current.effort : (levels[0] ?? "high") });
+		setSettingsOpen(false);
+		show(null);
+	};
 	const footer =
 		take === "combined" ? (
 			<EngineFooter
@@ -391,6 +411,7 @@ export function EngineChoice({
 				effort={current.effort}
 				models={models}
 				scope={modelScope !== undefined && current.engine === "spool" ? scope : undefined}
+				modelTake={modelTake}
 				onManage={() => {
 					show(null);
 					login.close();
@@ -407,15 +428,7 @@ export function EngineChoice({
 					choose(engine);
 					if (!locked) setMenu("engine");
 				}}
-				onModel={(model) => {
-					scope.setQuery("");
-					const levels = models.find((entry) => entry.value === model)?.supportedEffortLevels ?? [];
-					patch({
-						model,
-						effort: levels.includes(current.effort) ? current.effort : (levels[0] ?? "high"),
-					});
-					show(null);
-				}}
+				onModel={pickModel}
 				onEffort={(effort) => patch({ effort })}
 				onConnect={() => {
 					show(null);
@@ -562,7 +575,23 @@ export function EngineChoice({
 				{take === "combined" && (loginSpec !== undefined || login.view !== null) ? (
 					<LoginSimulation login={login} />
 				) : null}
-				{settingsOpen ? (
+				{settingsOpen && modelTake === "browser" ? (
+					<ModelBrowser
+						scope={scope}
+						model={modelValue}
+						onPick={pickModel}
+						onClose={() => {
+							setSettingsOpen(false);
+							scope.setQuery("");
+							show("engine");
+						}}
+						onConnect={() => {
+							setSettingsOpen(false);
+							show(null);
+							login.open();
+						}}
+					/>
+				) : settingsOpen ? (
 					<ModelSettings
 						scope={scope}
 						onClose={() => {

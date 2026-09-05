@@ -37,18 +37,21 @@ const OFFERS: readonly ScopedModel[] = CONNECTIONS.flatMap((connection) =>
 	),
 );
 
-export function useModelScope(search = "") {
+export function useModelScope(search = "", all = false) {
 	const [shown, setShown] = useState<readonly string[]>([
 		"chatgpt/Astra",
 		"anthropic/Opus 5",
 		"google/Gemini 3.1 Pro",
 	]);
 	const [query, setQuery] = useState(search);
+	const [list, setList] = useState<"favorites" | "all">(all ? "all" : "favorites");
 	return {
 		models: OFFERS,
 		shown,
 		query,
 		setQuery,
+		list,
+		setList,
 		setVisible: (value: string, visible: boolean) =>
 			setShown((all) => (visible ? [...new Set([...all, value])] : all.filter((id) => id !== value))),
 	};
