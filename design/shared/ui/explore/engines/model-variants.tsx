@@ -110,15 +110,10 @@ export function FavoriteOptions({
 					</p>
 				) : null}
 			</div>
-			{!all && !scope.shown.includes(model) ? (
-				<p className="px-1.5 pt-1 text-sm text-muted leading-sm">Your current model stays until you switch.</p>
-			) : null}
 			{take === "favorites" ? (
 				!all && scope.query.trim() ? (
 					<MenuItem label="Search all models…" onClick={() => scope.setList("all")} />
-				) : (
-					<p className="px-1.5 py-2 text-sm text-muted leading-sm">Star the models you use most.</p>
-				)
+				) : null
 			) : (
 				<MenuItem label="Browse models…" onClick={onBrowse} />
 			)}

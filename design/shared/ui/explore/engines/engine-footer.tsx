@@ -162,12 +162,14 @@ export function EngineFooter({
 							))}
 						</>
 					) : null}
-					<p className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted/40 leading-[1.5]")}>
-						<span className="invisible" aria-hidden="true">
-							{longest}
-						</span>
-						<span className="absolute inset-x-1.5 top-1.5">{over ?? description}</span>
-					</p>
+					{scope !== undefined && modelTake === "favorites" ? null : (
+						<p className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted/40 leading-[1.5]")}>
+							<span className="invisible" aria-hidden="true">
+								{longest}
+							</span>
+							<span className="absolute inset-x-1.5 top-1.5">{over ?? description}</span>
+						</p>
+					)}
 					{engine === "spool" ? (
 						<>
 							<span className="my-1 block h-px bg-border" />
