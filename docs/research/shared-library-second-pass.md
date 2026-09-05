@@ -1,5 +1,7 @@
 # Shared editing and a page of primitives
 
+**Later pass:** [Visual properties over live source](visual-properties-mapping.md) explores Figma-like controls and direct padding/gap gestures in six working frames. It replaces this document's utility-list recommendation with a compact visual inspector plus contextual canvas handles. The library findings below remain relevant.
+
 Research and prototype review, 2026-09-05. Recommendation for review, not a replacement for the accepted tickets.
 
 **Keep shared editing. Build a small, real component library as part of authoring a project. Start its visible home as an ordinary spool page of working examples. Defer the automatic page of every exported component.**
@@ -23,7 +25,7 @@ Three additional frames stand on `explore/components/reconsider/properties`:
 | Take | What changes | Tradeoff |
 | --- | --- | --- |
 | `properties-fields` | Only properties actually used by the selected element appear, grouped into compact sections. Each field shows the Tailwind class it represents. | Most familiar, but repeating a property name beside a readable utility can still feel like extra furniture. |
-| `properties-utilities` | A direct list of the element's utilities. Pressing one opens its values, colour swatches where applicable, hover previews, an arbitrary-value input, and removal. | **Current recommendation.** Least duplication and closest to Tailwind. Someone who does not know utility names needs the descriptions and search. |
+| `properties-utilities` | A direct list of the element's utilities. Pressing one opens its values, colour swatches where applicable, hover previews, an arbitrary-value input, and removal. | Earlier recommendation, superseded by the visual-properties pass. Least duplication and closest to Tailwind. Someone who does not know utility names needs the descriptions and search. |
 | `properties-nearby` | The same utility editor floats over the canvas instead of occupying the dock. | The lightest permanent chrome, but can cover the design. Its placement is fixed in this prototype, not a proven selection-following layout. |
 
 These takes use the same application frames, example destination, classes, and operations. Select Button or Card, edit a value, change scope, add a class, remove one, undo, or visit examples. The footer can reveal the complete current className. The fields in the earlier library takes are now historical comparison material; they are not the recommended rail design.
