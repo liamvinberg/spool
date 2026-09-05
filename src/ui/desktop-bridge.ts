@@ -13,9 +13,11 @@
 
 export type AppUpdate =
 	| { kind: "offer"; version: string }
+	| { kind: "checking"; version: string }
 	| { kind: "downloading"; version: string; percent: number }
+	| { kind: "preparing"; version: string }
 	| { kind: "restarting"; version: string }
-	| { kind: "failed"; version: string; message: string };
+	| { kind: "failed"; version: string; message: string; retryable: boolean };
 
 export interface DesktopBridge {
 	version: string;
@@ -35,12 +37,19 @@ export function isAppUpdate(value: unknown): value is AppUpdate | null {
 	if (typeof update.version !== "string") return false;
 	switch (update.kind) {
 		case "offer":
+		case "checking":
+		case "preparing":
 		case "restarting":
 			return true;
 		case "downloading":
-			return typeof update.percent === "number";
+			return (
+				typeof update.percent === "number" &&
+				Number.isFinite(update.percent) &&
+				update.percent >= 0 &&
+				update.percent <= 100
+			);
 		case "failed":
-			return typeof update.message === "string";
+			return typeof update.message === "string" && typeof update.retryable === "boolean";
 		default:
 			return false;
 	}

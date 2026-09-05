@@ -245,6 +245,7 @@ jobs:
             "$dmg" \
             "$RUNNER_TEMP/dist/Spool.dmg" \
             "$RUNNER_TEMP/dist/Spool-$version-arm64-mac.zip" \
+            "$RUNNER_TEMP/dist/Spool-$version-arm64-mac.zip.blockmap" \
             "$RUNNER_TEMP/dist/latest-mac.yml" \
             --clobber
           gh release edit "$TAG" --draft=false --latest

@@ -32,6 +32,7 @@ import {
 	checkCachePath,
 	checkForUpdate,
 	DOWNLOAD_URL,
+	type InstallProgress,
 	installUpdate,
 	lastUpdaterError,
 	latestRelease,
@@ -623,9 +624,17 @@ function updateItem(): MenuItemConstructorOptions {
 		}
 		case "downloading":
 			return { label: `Downloading ${update.version}… ${update.percent}%`, enabled: false };
+		case "checking":
+			return { label: "Checking for updates…", enabled: false };
+		case "preparing":
+			return { label: `Preparing Spool ${update.version}…`, enabled: false };
 		case "restarting":
 			return { label: `Restarting into ${update.version}…`, enabled: false };
 		case "failed":
+			if (update.retryable) {
+				const { version: target } = update;
+				return { label: `Retry update to ${target}…`, click: () => void downloadAndRelaunch(target) };
+			}
 			return { label: `Download Spool ${update.version}…`, click: () => void shell.openExternal(DOWNLOAD_URL) };
 	}
 }
@@ -646,9 +655,10 @@ function installTray(): void {
  */
 type AppUpdate =
 	| { kind: "offer"; version: string }
-	| { kind: "downloading"; version: string; percent: number }
+	| { kind: "checking"; version: string }
+	| InstallProgress
 	| { kind: "restarting"; version: string }
-	| { kind: "failed"; version: string; message: string };
+	| { kind: "failed"; version: string; message: string; retryable: boolean };
 
 let update: AppUpdate | null = null;
 /** A check or a download in flight, so a second click does not stack one. */
@@ -660,7 +670,13 @@ let nextCheck: NodeJS.Timeout | undefined;
 function setUpdate(next: AppUpdate | null): void {
 	update = next;
 	window?.webContents.send("spool:app-update-changed", next);
-	window?.setProgressBar(next?.kind === "downloading" ? next.percent / 100 : -1);
+	window?.setProgressBar(
+		next?.kind === "downloading"
+			? next.percent / 100
+			: next?.kind === "checking" || next?.kind === "preparing"
+				? 2
+				: -1,
+	);
 	tray?.setContextMenu(buildTrayMenu());
 }
 
@@ -678,12 +694,12 @@ function installUpdateChannels(): void {
 	});
 	ipcMain.on("spool:app-update-install", (event) => {
 		if (window === undefined || event.sender.id !== window.webContents.id) return;
-		if (update?.kind !== "offer") return;
+		if (update?.kind !== "offer" && !(update?.kind === "failed" && update.retryable)) return;
 		void downloadAndRelaunch(update.version);
 	});
 	ipcMain.on("spool:app-update-dismiss", (event) => {
 		if (window === undefined || event.sender.id !== window.webContents.id) return;
-		if (update?.kind === "downloading" || update?.kind === "restarting") return;
+		if (busy) return;
 		setUpdate(null);
 	});
 }
@@ -906,7 +922,7 @@ async function downloadAndRelaunch(target: string): Promise<void> {
 	const refusal = whyNotInstallable();
 	if (refusal !== undefined) {
 		log("updates", "FAIL", refusal);
-		setUpdate({ kind: "failed", version: target, message: refusal });
+		setUpdate({ kind: "failed", version: target, message: refusal, retryable: false });
 		tell(
 			"Spool cannot update itself from here.",
 			`${refusal}\n\nDownload starts the dmg, which is the other way onto ${target}.`,
@@ -915,48 +931,55 @@ async function downloadAndRelaunch(target: string): Promise<void> {
 		return;
 	}
 	busy = true;
-	setUpdate({ kind: "downloading", version: target, percent: 0 });
+	setUpdate({ kind: "checking", version: target });
 	try {
-		await installUpdate(
+		target = await installUpdate(
 			(line) => log("updates", line),
-			(percent) => setUpdate({ kind: "downloading", version: target, percent }),
+			(state) => {
+				target = state.version;
+				setUpdate(state);
+			},
 		);
 	} catch (error) {
 		busy = false;
 		const detail = error instanceof UpdateCheckError ? error.message : String(error);
 		log("updates", "FAIL", detail);
-		setUpdate({ kind: "failed", version: target, message: detail });
+		setUpdate({
+			kind: "failed",
+			version: target,
+			message: detail,
+			retryable: error instanceof UpdateCheckError && error.retryable,
+		});
 		return;
 	}
-	busy = false;
-
 	// Squirrel replaces the app on quit and relaunches it. The daemon this app
 	// started is stopped here, on purpose, before the updater owns the exit:
 	// will-quit's own preventDefault path would fight it.
 	setUpdate({ kind: "restarting", version: target });
 	shuttingDown = true;
-	await shutdown();
-	log("updates", "relaunching");
-	fallback("Updating Spool", `Spool ${target} is being swapped in, and the app reopens by itself.`);
-
-	// Squirrel has already said yes, so the quit that follows is immediate. A
-	// Spool still running after this clock is one whose exit was refused by
-	// something in this process, and it has to say so and put its daemon back.
-	const deadline = setTimeout(() => {
-		shuttingDown = false;
-		const detail = lastUpdaterError() ?? "The updater staged the new version but the app did not quit into it.";
-		log("updates", "FAIL", "no relaunch", detail);
-		setUpdate({ kind: "failed", version: target, message: detail });
-		void openCanvas();
-	}, RELAUNCH_DEADLINE_MS);
-
+	let deadline: NodeJS.Timeout | undefined;
 	try {
+		await shutdown();
+		log("updates", "relaunching");
+		fallback("Updating Spool", `Spool ${target} is being swapped in, and the app reopens by itself.`);
+		// macOS has verified the bundle. This covers an exit refused by the app.
+		deadline = setTimeout(() => {
+			busy = false;
+			shuttingDown = false;
+			const detail =
+				lastUpdaterError() ??
+				"The update is ready, but Spool did not restart. Quit and reopen Spool to finish updating.";
+			log("updates", "FAIL", "no relaunch", detail);
+			setUpdate({ kind: "failed", version: target, message: detail, retryable: false });
+			void openCanvas();
+		}, RELAUNCH_DEADLINE_MS);
 		relaunchIntoUpdate();
 	} catch (error) {
+		busy = false;
 		clearTimeout(deadline);
 		shuttingDown = false;
 		log("updates", "FAIL", String(error));
-		setUpdate({ kind: "failed", version: target, message: String(error) });
+		setUpdate({ kind: "failed", version: target, message: String(error), retryable: false });
 		void openCanvas();
 	}
 }

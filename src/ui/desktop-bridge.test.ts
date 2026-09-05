@@ -24,12 +24,17 @@ describe("desktopBridge", () => {
 });
 
 describe("isAppUpdate", () => {
-	it("accepts the four states and nothing to say, and refuses the rest", () => {
+	it("accepts the update stages and nothing to say, and refuses the rest", () => {
 		expect(isAppUpdate(null)).toBe(true);
 		expect(isAppUpdate({ kind: "offer", version: "0.15.0" })).toBe(true);
 		expect(isAppUpdate({ kind: "downloading", version: "0.15.0", percent: 40 })).toBe(true);
 		expect(isAppUpdate({ kind: "restarting", version: "0.15.0" })).toBe(true);
-		expect(isAppUpdate({ kind: "failed", version: "0.15.0", message: "no" })).toBe(true);
+		expect(isAppUpdate({ kind: "failed", version: "0.15.0", message: "no", retryable: true })).toBe(true);
+		expect(isAppUpdate({ kind: "checking", version: "0.15.0" })).toBe(true);
+		expect(isAppUpdate({ kind: "preparing", version: "0.15.0" })).toBe(true);
+		for (const percent of [Number.NaN, Number.POSITIVE_INFINITY, -1, 101]) {
+			expect(isAppUpdate({ kind: "downloading", version: "0.15.0", percent })).toBe(false);
+		}
 		expect(isAppUpdate({ kind: "downloading", version: "0.15.0" })).toBe(false);
 		expect(isAppUpdate({ kind: "failed", version: "0.15.0" })).toBe(false);
 		expect(isAppUpdate({ kind: "done", version: "0.15.0" })).toBe(false);

@@ -11,6 +11,7 @@ files:
   - dist/**/*
   - "!dist/**/*.test.js"
   - "!dist/smoke.js"
+  - "!dist/update-feed.js"
   - assets/**/*
   - package.json
 # The published spool package, installed by scripts/bundle-cli.sh. Outside the

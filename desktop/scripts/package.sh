@@ -80,18 +80,8 @@ fi
 # stapled app, so what an update installs is exactly what a download gets.
 ZIP="$OUT/Spool-$VERSION-arm64-mac.zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
-ZIP_SHA512="$(/usr/bin/openssl dgst -sha512 -binary "$ZIP" | /usr/bin/base64)"
-ZIP_SIZE="$(/usr/bin/stat -f %z "$ZIP")"
-cat > "$OUT/latest-mac.yml" <<YAML
-version: $VERSION
-files:
-  - url: Spool-$VERSION-arm64-mac.zip
-    sha512: $ZIP_SHA512
-    size: $ZIP_SIZE
-path: Spool-$VERSION-arm64-mac.zip
-sha512: $ZIP_SHA512
-releaseDate: '$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'
-YAML
+# The blockmap and feed must describe this final archive, after stapling.
+node "$ROOT/dist/update-feed.js" "$ZIP" "$VERSION"
 
 # The drag gesture the window is for. hdiutil keeps the link as a link.
 ln -s /Applications "$STAGE/Applications"

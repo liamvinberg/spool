@@ -31,7 +31,7 @@ export type UpdateToast =
 /** Whether the pill is mid-flight, with nothing a hand should do to it. */
 export function updateToastBusy(toast: UpdateToast): boolean {
 	if (toast.kind === "updating") return true;
-	return toast.kind === "app" && (toast.update.kind === "downloading" || toast.update.kind === "restarting");
+	return toast.kind === "app" && toast.update.kind !== "offer" && toast.update.kind !== "failed";
 }
 
 export function UpdateToastPill({
@@ -116,9 +116,17 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 				</>
 			);
 		case "restarting":
+		case "checking":
+		case "preparing":
 			return (
 				<>
-					<span className="text-base text-muted leading-base">Restarting into Spool {update.version}…</span>
+					<span className="text-base text-muted leading-base">
+						{update.kind === "checking"
+							? "Checking for updates…"
+							: update.kind === "preparing"
+								? `Preparing Spool ${update.version}…`
+								: `Restarting into Spool ${update.version}…`}
+					</span>
 					<span className="absolute bottom-0 left-0 h-px w-1/3 animate-toast-sweep bg-thread" />
 				</>
 			);
@@ -127,6 +135,15 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 				<>
 					<span className="max-w-[56ch] text-base text-text leading-base">{update.message}</span>
 					<span className="h-4 w-px bg-border-raised" />
+					{update.retryable && (
+						<button
+							type="button"
+							className="whitespace-nowrap font-medium text-base text-thread leading-base"
+							onClick={onUpdate}
+						>
+							Retry
+						</button>
+					)}
 					<a
 						href={DOWNLOAD_URL}
 						target="_blank"

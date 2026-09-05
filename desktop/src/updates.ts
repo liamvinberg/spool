@@ -34,7 +34,14 @@ export interface Release {
 	page: string;
 }
 
-export class UpdateCheckError extends Error {}
+export class UpdateCheckError extends Error {
+	constructor(
+		message: string,
+		readonly retryable = true,
+	) {
+		super(message);
+	}
+}
 
 /** The GitHub API's answer, for a copy with no feed to read. */
 export async function latestRelease(timeoutMs = 10_000): Promise<Release> {
@@ -166,6 +173,7 @@ export interface Squirrel {
 }
 
 let configured: Updater | undefined;
+let configuring: Promise<Updater> | undefined;
 /** The last thing the updater said went wrong, for the message a person reads. */
 let lastError: string | undefined;
 
@@ -174,8 +182,12 @@ let lastError: string | undefined;
  * so that a second check does not stack a second copy of each, and so that the
  * `error` listener exists before anything can emit one.
  */
-async function updater(report: (line: string) => void): Promise<Updater> {
-	if (configured !== undefined) return configured;
+function updater(report: (line: string) => void): Promise<Updater> {
+	configuring ??= configureUpdater(report);
+	return configuring;
+}
+
+async function configureUpdater(report: (line: string) => void): Promise<Updater> {
 	const module = await import("electron-updater");
 	const instance = (module.default ?? module).autoUpdater;
 
@@ -198,6 +210,7 @@ async function updater(report: (line: string) => void): Promise<Updater> {
 	// Load-bearing, see above: this is what makes Squirrel fetch the zip.
 	instance.autoInstallOnAppQuit = true;
 	instance.autoRunAppAfterInstall = true;
+	instance.disableDifferentialDownload = false;
 
 	configured = instance;
 	return instance;
@@ -207,12 +220,15 @@ async function updater(report: (line: string) => void): Promise<Updater> {
  * Ask the feed what the newest release is. Resolves the version it names and
  * whether that is newer than this copy; throws when the feed cannot be read.
  */
-export async function checkForUpdate(report: (line: string) => void): Promise<{ latest: string; newer: boolean }> {
+export async function checkForUpdate(
+	report: (line: string) => void,
+	timeoutMs = 30_000,
+): Promise<{ latest: string; newer: boolean }> {
 	lastError = undefined;
 	const instance = await updater(report);
 	let found: Awaited<ReturnType<Updater["checkForUpdates"]>>;
 	try {
-		found = await instance.checkForUpdates();
+		found = await withDeadline(instance.checkForUpdates(), timeoutMs, "Checking for updates timed out. Try again.");
 	} catch (error) {
 		throw new UpdateCheckError(lastError ?? String(error));
 	}
@@ -225,12 +241,36 @@ export async function checkForUpdate(report: (line: string) => void): Promise<{ 
 export interface InstallOptions {
 	/** Electron's own autoUpdater, which is where Squirrel speaks. Tests hand in a stand-in. */
 	squirrel?: () => Squirrel;
-	/** How long Squirrel gets to unpack and verify before this gives up on it. */
+	/** Covers the local handoff as well as unpacking and signature verification. */
 	readyTimeoutMs?: number;
+	checkTimeoutMs?: number;
+	downloadIdleTimeoutMs?: number;
 }
 
 /** Long enough for Squirrel to unpack and verify a bundle on a slow disk. */
 const READY_TIMEOUT_MS = 90_000;
+
+export type InstallProgress =
+	| { kind: "downloading"; version: string; percent: number }
+	| { kind: "preparing"; version: string };
+
+let installing = false;
+let restartRequired = false;
+let stagedVersion: string | undefined;
+
+async function withDeadline<T>(work: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+	let clock: NodeJS.Timeout | undefined;
+	try {
+		return await Promise.race([
+			work,
+			new Promise<never>((_, reject) => {
+				clock = setTimeout(() => reject(new UpdateCheckError(message)), timeoutMs);
+			}),
+		]);
+	} finally {
+		clearTimeout(clock);
+	}
+}
 
 function electronSquirrel(): Squirrel {
 	const { autoUpdater } = require("electron") as typeof import("electron");
@@ -243,34 +283,120 @@ function electronSquirrel(): Squirrel {
  * a caller does before that point is safe to do: a refusal arrives here as the
  * rejection, with the daemon and the window untouched.
  *
- * `progress` is called with a whole percent, and only when it changes, so a
- * caller can put it on screen without filtering.
+ * The library's update-downloaded event starts preparation, before Squirrel
+ * fetches the local archive. Only Squirrel's own event permits a restart.
  */
 export async function installUpdate(
 	report: (line: string) => void,
-	progress: (percent: number) => void,
+	progress: (state: InstallProgress) => void,
 	options: InstallOptions = {},
-): Promise<void> {
+): Promise<string> {
+	if (installing) throw new UpdateCheckError("An update is already in progress.");
+	if (restartRequired) throw new UpdateCheckError("Restart Spool before trying the update again.", false);
+	if (stagedVersion !== undefined) return stagedVersion;
+	installing = true;
+	try {
+		return await downloadAndPrepare(report, progress, options);
+	} catch (error) {
+		throw error instanceof UpdateCheckError ? error : new UpdateCheckError(lastError ?? String(error));
+	} finally {
+		installing = false;
+	}
+}
+
+async function downloadAndPrepare(
+	report: (line: string) => void,
+	progress: (state: InstallProgress) => void,
+	options: InstallOptions,
+): Promise<string> {
 	lastError = undefined;
 	const instance = await updater(report);
 	const squirrel = (options.squirrel ?? electronSquirrel)();
+	const started = performance.now();
+	const elapsed = () => `${Math.round(performance.now() - started)}ms`;
+	report("checking for update");
+	const found = await withDeadline(
+		instance.checkForUpdates(),
+		options.checkTimeoutMs ?? 30_000,
+		"Checking for updates timed out. Try again.",
+	);
+	if (found === null) {
+		throw new UpdateCheckError("This copy of Spool was not packaged as a release.", false);
+	}
+	if (!found.isUpdateAvailable) {
+		throw new UpdateCheckError(
+			`The release feed names ${found.updateInfo.version}, which is not newer than this copy.`,
+		);
+	}
+	const module = await import("electron-updater");
+	const { CancellationToken } = module.default ?? module;
+	const token = new CancellationToken();
+	const version = found.updateInfo.version;
+	report(`checked version=${version} elapsed=${elapsed()}`);
+	let preparing = false;
+	let stopped = false;
+	let transferred = 0;
+	let logged = -10;
+	let clock: NodeJS.Timeout | undefined;
+	let expire: (error: Error) => void = () => {};
+	const expired = new Promise<never>((_, reject) => {
+		expire = reject;
+	});
+	const armDeadline = (ms: number, message: string): void => {
+		clearTimeout(clock);
+		clock = setTimeout(() => expire(new UpdateCheckError(message)), ms);
+	};
+	const watchDownload = (): void =>
+		armDeadline(
+			options.downloadIdleTimeoutMs ?? 120_000,
+			"The update download stopped making progress. Check your connection and try again.",
+		);
 
-	let shown = -1;
-	const onProgress = (info: { percent: number }): void => {
-		const percent = Math.min(100, Math.max(0, Math.round(info.percent)));
+	let shown = 0;
+	const onProgress = (info: { percent: number; transferred: number; total: number; bytesPerSecond: number }): void => {
+		if (stopped || preparing) return;
+		if (Number.isFinite(info.transferred) && info.transferred !== transferred) {
+			transferred = info.transferred;
+			watchDownload();
+		}
+		if (!Number.isFinite(info.percent)) return;
+		// Completion comes from the verified archive event, never rounding 99.6 up.
+		const percent = Math.min(99, Math.max(0, Math.floor(info.percent)));
+		if (percent >= logged + 10) {
+			logged = percent;
+			report(
+				`download percent=${percent} bytes=${transferred}/${info.total} bytesPerSecond=${info.bytesPerSecond} elapsed=${elapsed()}`,
+			);
+		}
 		if (percent === shown) return;
 		shown = percent;
-		progress(percent);
+		progress({ kind: "downloading", version, percent });
 	};
 	instance.on("download-progress", onProgress);
+	const onDownloaded = (): void => {
+		if (preparing) return;
+		preparing = true;
+		if (stopped) {
+			restartRequired = true;
+			return;
+		}
+		report(`preparing version=${version} elapsed=${elapsed()}`);
+		armDeadline(
+			options.readyTimeoutMs ?? READY_TIMEOUT_MS,
+			"macOS did not finish preparing the update. Restart Spool and try again.",
+		);
+		progress({ kind: "preparing", version });
+	};
+	instance.on("update-downloaded", onDownloaded);
 
 	// Listened for before the download starts, not after it resolves: Squirrel's
 	// verdict follows its fetch, and a listener attached late is a verdict missed.
 	let onReady: () => void = () => {};
 	let onRefused: (error: Error) => void = () => {};
-	let clock: NodeJS.Timeout | undefined;
 	const ready = new Promise<void>((resolve, reject) => {
-		onReady = () => resolve();
+		onReady = () => {
+			if (preparing) resolve();
+		};
 		onRefused = (error) => reject(new UpdateCheckError(error.message));
 		squirrel.on("update-downloaded", onReady);
 		squirrel.on("error", onRefused);
@@ -279,42 +405,51 @@ export async function installUpdate(
 	// only keeps an early one from being an unhandled rejection meanwhile.
 	ready.catch(() => {});
 
+	let download: Promise<string[]> | undefined;
 	try {
-		const found = await instance.checkForUpdates();
-		if (found === null) {
-			throw new UpdateCheckError("This copy of Spool cannot update itself: it was not packaged as a release.");
-		}
-		if (!found.isUpdateAvailable) {
-			throw new UpdateCheckError(
-				`The release feed still names ${found.updateInfo.version}, which is not newer than this copy.`,
-			);
-		}
-		report(`downloading ${found.updateInfo.version}`);
-		await instance.downloadUpdate();
-		report("fetched by squirrel, waiting for it to verify");
-		await Promise.race([
-			ready,
-			new Promise<never>((_, reject) => {
-				clock = setTimeout(
-					() =>
-						reject(
-							new UpdateCheckError(
-								"macOS took the download but never said whether it accepts it. This usually means Spool is not in Applications, or the copy running is not the one installed there.",
-							),
-						),
-					options.readyTimeoutMs ?? READY_TIMEOUT_MS,
-				);
-			}),
-		]);
-		report("staged");
+		watchDownload();
+		progress({ kind: "downloading", version, percent: 0 });
+		download = instance.downloadUpdate(token);
+		await Promise.race([Promise.all([download, ready]), expired]);
+		stagedVersion = version;
+		report(`staged version=${version} elapsed=${elapsed()}`);
+		return version;
 	} catch (error) {
+		stopped = true;
+		clearTimeout(clock);
+		if (preparing) {
+			// Squirrel has no cancellation API. A late verdict must not finish a
+			// new attempt, so retrying this native handoff requires a fresh app.
+			restartRequired = true;
+		} else {
+			token.cancel();
+			if (download !== undefined) {
+				try {
+					await withDeadline(
+						download.catch(() => {}),
+						5_000,
+						"Download cancellation timed out.",
+					);
+				} catch {
+					restartRequired = true;
+				}
+			}
+		}
 		// The message on the rejection is often `Error: net::ERR_…` with nothing
 		// in it; the one the updater emitted usually says which step failed.
 		const detail = error instanceof UpdateCheckError ? error.message : (lastError ?? String(error));
-		throw new UpdateCheckError(detail);
+		report(
+			`failed version=${version} phase=${preparing ? "preparing" : "downloading"} elapsed=${elapsed()} ${detail}`,
+		);
+		throw new UpdateCheckError(
+			restartRequired && !detail.includes("Restart Spool") ? `${detail} Restart Spool before trying again.` : detail,
+			!restartRequired,
+		);
 	} finally {
-		if (clock !== undefined) clearTimeout(clock);
+		stopped = true;
+		clearTimeout(clock);
 		instance.removeListener("download-progress", onProgress);
+		instance.removeListener("update-downloaded", onDownloaded);
 		squirrel.removeListener("update-downloaded", onReady);
 		squirrel.removeListener("error", onRefused);
 	}
@@ -328,7 +463,8 @@ export async function installUpdate(
  * has to race this against a clock.
  */
 export function relaunchIntoUpdate(): void {
-	if (configured === undefined) throw new Error("relaunchIntoUpdate before installUpdate");
+	if (configured === undefined || stagedVersion === undefined)
+		throw new Error("The update has not been verified by macOS.");
 	configured.quitAndInstall();
 }
 

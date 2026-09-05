@@ -1,203 +1,360 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
-import type { AppUpdater } from "electron-updater";
+import { beforeEach, test } from "node:test";
+import type { CancellationToken as Token } from "electron-updater";
+import type { InstallProgress } from "./updates";
 
-// The updater, without Electron under it.
-//
-// electron-updater is stood in for through the require cache, which a dynamic
-// import of a CommonJS module still goes through, so the module under test is
-// the real one and only its dependency is the fake. Squirrel is a bare emitter
-// handed in through the seam. What is worth pinning here is the wiring rather
-// than the download: every one of these assertions is a mistake this code has
-// already made once, and each of them fails silently in a packaged app, where
-// there is no console to find out from.
-
-/** Electron's autoUpdater, as far as this module can tell. */
+const require_ = createRequire(__filename);
+const { CancellationToken } = require_("electron-updater") as typeof import("electron-updater");
 const squirrel = new EventEmitter();
-/** What Squirrel does once it has fetched the zip: nothing, accept, or refuse. */
-let verdict: "ready" | "refused" | "silent" = "ready";
+const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+const silent = () => {};
 
+// Only the network and macOS are stood in for. The module under test is the
+// real one; each test gets a fresh instance, as a new app process would.
 class FakeUpdater extends EventEmitter {
 	autoDownload = true;
 	autoInstallOnAppQuit = false;
 	autoRunAppAfterInstall = false;
+	disableDifferentialDownload = true;
 	logger: unknown = null;
 	quitAndInstallCalls = 0;
-	found: { isUpdateAvailable: boolean; updateInfo: { version: string } } | null = {
-		isUpdateAvailable: true,
-		updateInfo: { version: "0.12.0" },
-	};
 	downloaded = 0;
-	/** Set to make downloadUpdate fail the way the real one does: emit, then reject. */
-	downloadFailure: string | undefined;
+	found: { isUpdateAvailable: boolean; updateInfo: { version: string } } | null = null;
+	check = async () => this.found;
+	download: (token: Token) => Promise<string[]> = async () => [];
 
-	checkForUpdates(): Promise<unknown> {
-		return Promise.resolve(this.found);
+	checkForUpdates() {
+		return this.check();
 	}
-
-	downloadUpdate(): Promise<string[]> {
-		this.downloaded += 1;
-		if (this.downloadFailure !== undefined) {
-			this.emit("error", new Error(this.downloadFailure));
-			return Promise.reject(new Error("Error: net::ERR_FAILED"));
-		}
-		for (const percent of [0.4, 12.2, 12.4, 99.6]) this.emit("download-progress", { percent });
-		// The real one resolves when Squirrel has fetched the zip; Squirrel's own
-		// verdict comes a beat later, on Electron's emitter, not this one.
-		setImmediate(() => {
-			if (verdict === "ready") squirrel.emit("update-downloaded");
-			if (verdict === "refused") {
-				const error = new Error("Code signature at URL file:///… did not pass validation");
-				// electron-updater forwards Squirrel's error onto itself too.
-				this.emit("error", error);
-				squirrel.emit("error", error);
-			}
-		});
-		return Promise.resolve(["/tmp/update.zip"]);
+	downloadUpdate(token: Token) {
+		this.downloaded++;
+		return this.download(token);
 	}
-
-	quitAndInstall(): void {
-		this.quitAndInstallCalls += 1;
+	quitAndInstall() {
+		this.quitAndInstallCalls++;
 	}
 }
-
 const fake = new FakeUpdater();
-const require_ = createRequire(__filename);
 require_.cache[require_.resolve("electron-updater")] = {
-	exports: { autoUpdater: fake as unknown as AppUpdater },
+	exports: { autoUpdater: fake, CancellationToken },
 } as NodeJS.Module;
-
-const {
-	checkForUpdate,
-	installUpdate,
-	lastUpdaterError,
-	nextCheckDelay,
-	readCheckCache,
-	relaunchIntoUpdate,
-	UpdateCheckError,
-	CHECK_INTERVAL_MS,
-	FIRST_CHECK_DELAY_MS,
-} = require_("./updates") as typeof import("./updates");
-
-function silent(): void {}
+let api: typeof import("./updates");
 const options = { squirrel: () => squirrel };
 
-test("the download is staged with Squirrel, and its progress is whole percents that changed", async () => {
-	const percents: number[] = [];
-	await installUpdate(silent, (percent) => percents.push(percent), options);
+function downloaded(): void {
+	fake.emit("update-downloaded", { version: fake.found?.updateInfo.version });
+}
+function bytes(transferred: number, total = 1_000_000): void {
+	fake.emit("download-progress", {
+		percent: (transferred / total) * 100,
+		transferred,
+		total,
+		bytesPerSecond: 100_000,
+	});
+}
 
-	// The one that matters most. Squirrel is never handed the zip directly:
-	// electron-updater serves it over loopback, and this flag is what makes
-	// Squirrel ask for it. With it off, downloadUpdate resolves having installed
-	// nothing and the relaunch has nothing to relaunch into.
+beforeEach(() => {
+	fake.removeAllListeners();
+	squirrel.removeAllListeners();
+	fake.downloaded = 0;
+	fake.quitAndInstallCalls = 0;
+	fake.found = { isUpdateAvailable: true, updateInfo: { version: "0.12.0" } };
+	fake.check = async () => fake.found;
+	fake.download = async () => {
+		for (const transferred of [4_000, 122_000, 124_000, 996_000]) bytes(transferred);
+		downloaded();
+		setImmediate(() => squirrel.emit("update-downloaded"));
+		return ["/tmp/update.zip"];
+	};
+	delete require_.cache[require_.resolve("./updates")];
+	api = require_("./updates") as typeof import("./updates");
+});
+
+test("download progress never rounds up to completion and preparation waits for macOS", async () => {
+	const states: InstallProgress[] = [];
+	assert.equal(await api.installUpdate(silent, (state) => states.push(state), options), "0.12.0");
+	assert.deepEqual(states, [
+		{ kind: "downloading", version: "0.12.0", percent: 0 },
+		{ kind: "downloading", version: "0.12.0", percent: 12 },
+		{ kind: "downloading", version: "0.12.0", percent: 99 },
+		{ kind: "preparing", version: "0.12.0" },
+	]);
+	assert.equal(fake.autoDownload, false);
 	assert.equal(fake.autoInstallOnAppQuit, true);
 	assert.equal(fake.autoRunAppAfterInstall, true);
-	// Downloading is consented to in a dialog, not begun while it is read.
-	assert.equal(fake.autoDownload, false);
+	assert.equal(fake.disableDifferentialDownload, false);
 	assert.notEqual(fake.logger, null);
-
-	assert.deepEqual(percents, [0, 12, 100]);
-	// No listener is left behind for the next check to double up on.
 	assert.equal(fake.listenerCount("download-progress"), 0);
+	assert.equal(fake.listenerCount("update-downloaded"), 0);
 	assert.equal(squirrel.listenerCount("update-downloaded"), 0);
 	assert.equal(squirrel.listenerCount("error"), 0);
+	assert.equal(fake.listenerCount("error"), 1);
 });
 
-test("an error event is always listened for, because an unheard one throws out of the main process", () => {
-	assert.ok(fake.listenerCount("error") > 0);
+test("the verified version is the one the feed actually downloaded", async () => {
+	fake.found = { isUpdateAvailable: true, updateInfo: { version: "0.13.0" } };
+	assert.equal(await api.installUpdate(silent, silent, options), "0.13.0");
 });
 
-test("a failure is reported as the reason the updater gave, not the bare rejection", async () => {
-	fake.downloadFailure = "sha512 checksum mismatch";
-	try {
-		await installUpdate(silent, silent, options);
-		assert.fail("a failed download resolved");
-	} catch (error) {
-		assert.ok(error instanceof UpdateCheckError);
-		assert.match(error.message, /sha512 checksum mismatch/);
-	}
-	assert.equal(lastUpdaterError(), "sha512 checksum mismatch");
-	assert.equal(fake.listenerCount("download-progress"), 0);
-	assert.equal(squirrel.listenerCount("error"), 0);
-	fake.downloadFailure = undefined;
-});
-
-test("Squirrel refusing the bundle is the rejection, with its reason, before anything is stopped", async () => {
-	// The silent case this used to be: the zip downloaded, the daemon stopped,
-	// the window blanked, and macOS had already refused the signature.
-	verdict = "refused";
-	try {
-		await installUpdate(silent, silent, options);
-		assert.fail("a refused bundle resolved");
-	} catch (error) {
-		assert.ok(error instanceof UpdateCheckError);
-		assert.match(error.message, /Code signature/);
-	}
-	verdict = "ready";
-	assert.equal(squirrel.listenerCount("update-downloaded"), 0);
-});
-
-test("a Squirrel that says nothing is given a deadline, not forever", async () => {
-	verdict = "silent";
-	await assert.rejects(
-		() => installUpdate(silent, silent, { ...options, readyTimeoutMs: 20 }),
-		/never said whether it accepts it/,
+test("a cached archive without download progress still enters preparation", async () => {
+	fake.download = async () => {
+		downloaded();
+		squirrel.emit("update-downloaded");
+		return ["/tmp/cached.zip"];
+	};
+	const states: InstallProgress[] = [];
+	await api.installUpdate(silent, (state) => states.push(state), options);
+	assert.deepEqual(
+		states.map((state) => state.kind),
+		["downloading", "preparing"],
 	);
-	verdict = "ready";
 });
 
-test("a feed that names nothing newer is refused rather than downloaded", async () => {
-	const before = fake.downloaded;
+test("fetching the archive does not permit relaunch before macOS has verified it", async () => {
+	fake.download = async () => {
+		downloaded();
+		return ["/tmp/update.zip"];
+	};
+	let settled = false;
+	const work = api.installUpdate(silent, silent, options).then(() => {
+		settled = true;
+	});
+	await turn();
+	assert.equal(settled, false);
+	assert.throws(() => api.relaunchIntoUpdate(), /not been verified/);
+	squirrel.emit("update-downloaded");
+	await work;
+	assert.equal(settled, true);
+});
+
+test("a failed download retains the useful error and can be retried", async () => {
+	const succeeds = fake.download;
+	fake.download = async () => {
+		fake.emit("error", new Error("sha512 checksum mismatch"));
+		throw new Error("net::ERR_FAILED");
+	};
+	await assert.rejects(api.installUpdate(silent, silent, options), (error: unknown) => {
+		assert.ok(error instanceof api.UpdateCheckError);
+		assert.match(error.message, /sha512 checksum mismatch/);
+		assert.equal(error.retryable, true);
+		return true;
+	});
+	assert.equal(api.lastUpdaterError(), "sha512 checksum mismatch");
+	fake.download = succeeds;
+	await api.installUpdate(silent, silent, options);
+	assert.equal(fake.downloaded, 2);
+});
+
+test("a native refusal is reported without permitting another native handoff", async () => {
+	fake.download = async () => {
+		downloaded();
+		squirrel.emit("error", new Error("Code signature did not pass validation"));
+		return ["/tmp/update.zip"];
+	};
+	await assert.rejects(api.installUpdate(silent, silent, options), (error: unknown) => {
+		assert.ok(error instanceof api.UpdateCheckError);
+		assert.match(error.message, /Code signature/);
+		assert.equal(error.retryable, false);
+		return true;
+	});
+	await assert.rejects(api.installUpdate(silent, silent, options), /Restart Spool/);
+	assert.equal(fake.downloaded, 1);
+	assert.equal(fake.quitAndInstallCalls, 0);
+});
+
+test("the preparation deadline includes a Squirrel that never fetches the local archive", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	fake.download = () => {
+		downloaded();
+		return new Promise(() => {});
+	};
+	const work = api.installUpdate(silent, silent, { ...options, readyTimeoutMs: 90 });
+	const rejected = assert.rejects(work, /macOS did not finish preparing/);
+	await turn();
+	t.mock.timers.tick(90);
+	await rejected;
+	// A late native success cannot settle a second attempt or relaunch the app.
+	squirrel.emit("update-downloaded");
+	await assert.rejects(api.installUpdate(silent, silent, options), /Restart Spool/);
+	assert.equal(fake.downloaded, 1);
+	assert.equal(fake.quitAndInstallCalls, 0);
+	assert.equal(squirrel.listenerCount("update-downloaded"), 0);
+});
+
+test("a download with no arriving bytes is cancelled, and retry waits for cancellation", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let cancelled = false;
+	const succeeds = fake.download;
+	fake.download = (token) =>
+		token.createPromise((_resolve, _reject, onCancel) => {
+			onCancel(() => {
+				cancelled = true;
+			});
+		});
+	const work = api.installUpdate(silent, silent, { ...options, downloadIdleTimeoutMs: 120 });
+	const rejected = assert.rejects(work, /stopped making progress/);
+	await turn();
+	t.mock.timers.tick(120);
+	await rejected;
+	assert.equal(cancelled, true);
+	fake.download = succeeds;
+	await api.installUpdate(silent, silent, options);
+});
+
+test("arriving bytes below one percent keep a slow download alive", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let finish = () => {};
+	fake.download = () =>
+		new Promise((resolve) => {
+			finish = () => resolve(["/tmp/update.zip"]);
+		});
+	const work = api.installUpdate(silent, silent, { ...options, downloadIdleTimeoutMs: 120 });
+	await turn();
+	for (let count = 1; count <= 5; count++) {
+		t.mock.timers.tick(100);
+		bytes(count);
+	}
+	downloaded();
+	finish();
+	squirrel.emit("update-downloaded");
+	await work;
+});
+
+test("an uncancellable transfer blocks retry even if it later completes", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let finish = () => {};
+	fake.download = () =>
+		new Promise((resolve) => {
+			finish = () => resolve(["/tmp/update.zip"]);
+		});
+	const work = api.installUpdate(silent, silent, { ...options, downloadIdleTimeoutMs: 120 });
+	const rejected = assert.rejects(work, (error: unknown) => {
+		assert.ok(error instanceof api.UpdateCheckError);
+		assert.equal(error.retryable, false);
+		assert.match(error.message, /Restart Spool/);
+		return true;
+	});
+	await turn();
+	t.mock.timers.tick(120);
+	await turn();
+	t.mock.timers.tick(5_000);
+	await rejected;
+	finish();
+	await assert.rejects(api.installUpdate(silent, silent, options), /Restart Spool/);
+});
+
+test("a handoff that races cancellation cannot make retry available", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	fake.download = (token) =>
+		token.createPromise((_resolve, _reject, onCancel) => {
+			onCancel(() => downloaded());
+		});
+	const states: InstallProgress[] = [];
+	const work = api.installUpdate(silent, (state) => states.push(state), { ...options, downloadIdleTimeoutMs: 120 });
+	const rejected = assert.rejects(work, (error: unknown) => {
+		assert.ok(error instanceof api.UpdateCheckError);
+		assert.equal(error.retryable, false);
+		return true;
+	});
+	await turn();
+	t.mock.timers.tick(120);
+	await rejected;
+	assert.equal(
+		states.some((state) => state.kind === "preparing"),
+		false,
+	);
+	await assert.rejects(api.installUpdate(silent, silent, options), /Restart Spool/);
+});
+
+test("repeated progress with no new bytes does not hide a stalled download", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	fake.download = (token) => token.createPromise(() => {});
+	const work = api.installUpdate(silent, silent, { ...options, downloadIdleTimeoutMs: 120 });
+	const rejected = assert.rejects(work, /stopped making progress/);
+	await turn();
+	bytes(1);
+	t.mock.timers.tick(100);
+	bytes(1);
+	t.mock.timers.tick(20);
+	await rejected;
+});
+
+test("a stalled check has a deadline and its late answer never starts a download", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let finish = () => {};
+	fake.check = () =>
+		new Promise((resolve) => {
+			finish = () => resolve(fake.found);
+		});
+	const work = api.installUpdate(silent, silent, { ...options, checkTimeoutMs: 30 });
+	const rejected = assert.rejects(work, /Checking for updates timed out/);
+	await turn();
+	t.mock.timers.tick(30);
+	await rejected;
+	finish();
+	await turn();
+	assert.equal(fake.downloaded, 0);
+});
+
+test("parallel install calls never start a second download", async () => {
+	const first = api.installUpdate(silent, silent, options);
+	await assert.rejects(api.installUpdate(silent, silent, options), /already in progress/);
+	await first;
+	assert.equal(fake.downloaded, 1);
+});
+
+test("a feed with no update is refused without downloading", async () => {
 	fake.found = { isUpdateAvailable: false, updateInfo: { version: "0.11.0" } };
-	await assert.rejects(() => installUpdate(silent, silent, options), UpdateCheckError);
-	assert.equal(fake.downloaded, before);
-
-	// null is what an unpackaged copy gets back, and it is not the same news.
+	await assert.rejects(api.installUpdate(silent, silent, options), /not newer/);
 	fake.found = null;
-	await assert.rejects(() => installUpdate(silent, silent, options), /not packaged as a release/);
-	fake.found = { isUpdateAvailable: true, updateInfo: { version: "0.12.0" } };
+	await assert.rejects(api.installUpdate(silent, silent, options), /not packaged/);
+	assert.equal(fake.downloaded, 0);
 });
 
-test("a check names the feed's version and whether it is newer, and downloads nothing", async () => {
-	const before = fake.downloaded;
-	assert.deepEqual(await checkForUpdate(silent), { latest: "0.12.0", newer: true });
-	fake.found = { isUpdateAvailable: false, updateInfo: { version: "0.12.0" } };
-	assert.deepEqual(await checkForUpdate(silent), { latest: "0.12.0", newer: false });
-	fake.found = { isUpdateAvailable: true, updateInfo: { version: "0.12.0" } };
-	assert.equal(fake.downloaded, before);
+test("checks report the feed's version without downloading and configure listeners once", async () => {
+	const checks = await Promise.all([api.checkForUpdate(silent), api.checkForUpdate(silent)]);
+	assert.deepEqual(checks, [
+		{ latest: "0.12.0", newer: true },
+		{ latest: "0.12.0", newer: true },
+	]);
+	assert.equal(fake.listenerCount("error"), 1);
+	assert.equal(fake.downloaded, 0);
 });
 
-test("the relaunch goes to the updater that did the download", async () => {
-	await installUpdate(silent, silent, options);
-	relaunchIntoUpdate();
+test("the relaunch uses the same updater that staged the archive", async () => {
+	await api.installUpdate(silent, silent, options);
+	api.relaunchIntoUpdate();
 	assert.equal(fake.quitAndInstallCalls, 1);
 });
 
-test("the cadence: a launch inside the day never re-asks, one after it asks soon", () => {
+test("the cadence honours the last check and treats invalid timestamps as absent", () => {
 	const now = Date.parse("2026-09-03T12:00:00Z");
-	assert.equal(nextCheckDelay(undefined, now), FIRST_CHECK_DELAY_MS);
-	assert.equal(nextCheckDelay({ latest: "0.13.0", checkedAt: "not a date" }, now), FIRST_CHECK_DELAY_MS);
-	const hourAgo = { latest: "0.13.0", checkedAt: new Date(now - 60 * 60 * 1000).toISOString() };
-	assert.equal(nextCheckDelay(hourAgo, now), CHECK_INTERVAL_MS - 60 * 60 * 1000);
-	const twoDaysAgo = { latest: "0.13.0", checkedAt: new Date(now - 2 * CHECK_INTERVAL_MS).toISOString() };
-	assert.equal(nextCheckDelay(twoDaysAgo, now), FIRST_CHECK_DELAY_MS);
+	assert.equal(api.nextCheckDelay(undefined, now), api.FIRST_CHECK_DELAY_MS);
+	assert.equal(api.nextCheckDelay({ latest: "0.13.0", checkedAt: "not a date" }, now), api.FIRST_CHECK_DELAY_MS);
+	assert.equal(
+		api.nextCheckDelay({ latest: "0.13.0", checkedAt: new Date(now - 3_600_000).toISOString() }, now),
+		api.CHECK_INTERVAL_MS - 3_600_000,
+	);
+	assert.equal(
+		api.nextCheckDelay({ latest: "0.13.0", checkedAt: new Date(now - 2 * api.CHECK_INTERVAL_MS).toISOString() }, now),
+		api.FIRST_CHECK_DELAY_MS,
+	);
 });
 
-test("the cache is machine-written ephemera: anything unreadable is absent", () => {
+test("an unreadable check cache is absent", (t) => {
 	const directory = mkdtempSync(join(tmpdir(), "spool-app-update-"));
-	assert.equal(readCheckCache(directory), undefined);
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	assert.equal(api.readCheckCache(directory), undefined);
 	writeFileSync(join(directory, "app-update.json"), "{not json");
-	assert.equal(readCheckCache(directory), undefined);
+	assert.equal(api.readCheckCache(directory), undefined);
 	writeFileSync(join(directory, "app-update.json"), JSON.stringify({ latest: 1, checkedAt: "x" }));
-	assert.equal(readCheckCache(directory), undefined);
-	writeFileSync(
-		join(directory, "app-update.json"),
-		JSON.stringify({ latest: "0.13.0", checkedAt: "2026-09-03T00:00:00Z" }),
-	);
-	assert.deepEqual(readCheckCache(directory), { latest: "0.13.0", checkedAt: "2026-09-03T00:00:00Z" });
+	assert.equal(api.readCheckCache(directory), undefined);
+	const cache = { latest: "0.13.0", checkedAt: "2026-09-03T00:00:00Z" };
+	writeFileSync(join(directory, "app-update.json"), JSON.stringify(cache));
+	assert.deepEqual(api.readCheckCache(directory), cache);
 });
