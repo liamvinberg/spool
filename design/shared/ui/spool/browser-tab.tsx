@@ -17,11 +17,22 @@ import { cn } from "shared/lib/utils";
 
 export const CHROME_H = 78;
 
-export function PlayedTab({ title, url, children }: { title: string; url: string; children: ReactNode }) {
+export function PlayedTab({
+	title,
+	url,
+	sibling = "spool",
+	children,
+}: {
+	title: string;
+	url: string;
+	/** the tab you came from — spool's canvas, unless the visitor arrived from somewhere else */
+	sibling?: string;
+	children: ReactNode;
+}) {
 	return (
 		<div className="flex h-full w-full flex-col overflow-hidden bg-[#17171A] font-sans antialiased [font-synthesis:none]">
 			<div className="flex h-[38px] shrink-0 items-end gap-1 px-2">
-				<Tab label="spool" />
+				<Tab label={sibling} />
 				<Tab label={title} active />
 				<span className="mb-[9px] ml-1.5 text-[#6E6E73] text-md leading-none">+</span>
 			</div>
