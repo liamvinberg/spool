@@ -42,7 +42,7 @@ interface SpoolCanvasScreenProps {
 
 export function SpoolCanvasScreen({ variant, homeTarget, playTarget }: SpoolCanvasScreenProps) {
 	return (
-		<SpoolShell activeTab="kaffe" tabs={["kaffe", "spool"]} homeTarget={homeTarget} zoom="72%">
+		<SpoolShell activeTab="spool" tabs={["spool"]} homeTarget={homeTarget} zoom="72%">
 			<CanvasChrome
 				pages={PAGES}
 				selected="cart"

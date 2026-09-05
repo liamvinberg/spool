@@ -5,12 +5,12 @@ export type CoffeeScreenName = "menu" | "cart" | "receipt";
 export type CoffeeScreenScale = "canvas" | "design" | "full";
 
 interface CoffeeScreenProps {
-	actionLabel?: string;
-	className?: string;
-	goTo?: string;
-	scale?: CoffeeScreenScale;
+	actionLabel?: string | undefined;
+	className?: string | undefined;
+	goTo?: string | undefined;
+	scale?: CoffeeScreenScale | undefined;
 	screen: CoffeeScreenName;
-	viewTransitionName?: string;
+	viewTransitionName?: string | undefined;
 }
 
 const products = [
@@ -80,7 +80,7 @@ function CoffeeMenu({
 							full ? "text-[22px] leading-7" : design ? "text-[15px] leading-[18px]" : "text-[16px] leading-5",
 						)}
 					>
-						kaffe
+						Menu
 					</h1>
 					<p
 						className={cn(
@@ -291,7 +291,7 @@ function CoffeeReceipt({
 	);
 }
 
-function CoffeeAction({ children, className, goTo }: { children: React.ReactNode; className: string; goTo?: string }) {
+function CoffeeAction({ children, className, goTo }: { children: React.ReactNode; className: string; goTo?: string | undefined }) {
 	if (goTo === undefined) return <div className={className}>{children}</div>;
 	return (
 		<button type="button" data-go={goTo} className={className}>

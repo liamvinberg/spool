@@ -31,7 +31,7 @@ interface SpoolShellProps {
 export function SpoolShell({
 	children,
 	activeTab,
-	tabs = ["spool", "kaffe"],
+	tabs = ["spool"],
 	homeTarget,
 	canvasControls = true,
 	zoom = "72%",

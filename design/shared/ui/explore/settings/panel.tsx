@@ -112,7 +112,7 @@ export function useSettings(seed: SettingsSeed = {}): Settings {
 	};
 }
 
-export const PROJECTS = ["spool", "kaffe", "tidemark", "notaker"] as const;
+export const PROJECTS = ["spool", "tidemark", "notaker"] as const;
 
 export function SettingsPanel({
 	settings,
