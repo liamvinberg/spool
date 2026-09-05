@@ -1,0 +1,96 @@
+import { useState } from "react";
+
+const GAP = 32;
+
+function Button({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 active:bg-blue-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+    >
+      {children}
+    </button>
+  );
+}
+
+// Synthetic blue checker pattern rendered as an inline SVG data URL
+const CHECKER_SRC = `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">
+    <rect width="64" height="64" fill="#1e40af"/>
+    <rect width="32" height="32" fill="#3b82f6"/>
+    <rect x="32" y="32" width="32" height="32" fill="#3b82f6"/>
+  </svg>`
+)}`;
+
+export default function App() {
+  const [note, setNote] = useState("");
+  const [savedNote, setSavedNote] = useState<string | null>(null);
+  const [count, setCount] = useState(0);
+
+  function handleSave() {
+    setSavedNote(note);
+    setCount((c) => c + 1);
+  }
+
+  return (
+    <div
+      className="min-h-full bg-gray-100 flex items-start justify-center"
+      style={{ padding: GAP }}
+    >
+      <div
+        className="bg-white rounded-lg shadow-md w-full max-w-sm overflow-hidden"
+      >
+        {/* Checker image */}
+        <img
+          src={CHECKER_SRC}
+          alt="Blue checker pattern"
+          className="w-full h-36 object-cover"
+          style={{ imageRendering: "pixelated" }}
+        />
+
+        <div style={{ padding: GAP, display: "flex", flexDirection: "column", gap: GAP / 2 }}>
+          {/* Long wrapping title */}
+          <h2 className="font-semibold text-gray-900 leading-snug text-xl">
+            The Long-Term Effects of Ambient Information Architecture on
+            Distributed Cognition and Personal Knowledge Management Systems
+          </h2>
+
+          {/* Note input */}
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Your note
+            </span>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+              placeholder="Add a note about this article…"
+              className="border border-gray-300 rounded px-3 py-2 text-sm text-gray-800 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+
+          {/* Save row */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-500">
+              Saved notes: <strong className="text-gray-800">{count}</strong>
+            </span>
+            <Button onClick={handleSave}>Save</Button>
+          </div>
+
+          {/* Saved note display */}
+          {savedNote !== null && (
+            <div className="bg-blue-50 border border-blue-100 rounded px-3 py-2 text-sm text-blue-800">
+              {savedNote || <em className="text-blue-400">Empty note saved.</em>}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

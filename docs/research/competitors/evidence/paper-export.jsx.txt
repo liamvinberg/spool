@@ -1,0 +1,30 @@
+(
+    <div style={{ backgroundColor: '#FFFFFF', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', fontSynthesis: 'none', gap: 'var(--spacing-card)', height: '600px', MozOsxFontSmoothing: 'grayscale', overflow: 'clip', overflowWrap: 'anywhere', padding: 'var(--spacing-card)', WebkitFontSmoothing: 'antialiased', width: '320px' }}>
+      <div style={{ boxSizing: 'border-box', color: '#151515', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '24px', fontWeight: 600, lineHeight: '29px' }}>
+        Reading list
+      </div>
+      <div style={{ backgroundColor: '#F3F4F6', borderRadius: '8px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 'var(--spacing-card)', paddingBlock: 'var(--spacing-card)', paddingInline: '20px', width: '100%' }}>
+        <div style={{ backgroundImage: 'url(https://app.paper.design/file-assets/01M1REZ9JVNPPED2C43HH299MH/2K7TJXGBZAG42FQHGDW1VS4TCC.png)', backgroundPosition: '50%', backgroundSize: 'cover', boxSizing: 'border-box', flexShrink: '0', height: '100px', width: '100%' }} />
+        <div style={{ boxSizing: 'border-box', color: '#151515', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '16px', lineHeight: '20px' }}>
+          A longer story about making time for the books you want to read
+        </div>
+        <div style={{ backgroundColor: 'var(--color-accent)', borderRadius: '8px', boxSizing: 'border-box', display: 'flex', paddingBlock: '12px', paddingInline: '24px', width: 'fit-content' }}>
+          <div style={{ boxSizing: 'border-box', color: '#FFFFFF', display: 'flex', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '16px', lineHeight: '20px' }}>
+            Save
+          </div>
+        </div>
+      </div>
+      <div style={{ backgroundColor: 'var(--color-accent)', borderRadius: '8px', boxSizing: 'border-box', display: 'flex', paddingBlock: '12px', paddingInline: '16px', width: 'fit-content' }}>
+        <div style={{ boxSizing: 'border-box', color: '#FFFFFF', display: 'flex', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '16px', lineHeight: '20px' }}>
+          Save
+        </div>
+      </div>
+      <div style={{ alignItems: 'center', backgroundColor: '#F3F4F6', boxSizing: 'border-box', display: 'flex', flexShrink: '0', height: '40px', padding: '8px', width: '100%' }}>
+        <div style={{ boxSizing: 'border-box', height: 'fit-content', overflow: 'clip', width: '100%' }}>
+          <div style={{ boxSizing: 'border-box', color: '#151515', display: '-webkit-box', fontFamily: '"Inter", system-ui, sans-serif', fontSize: '16px', lineHeight: '20px', overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: '1' }}>
+            Type here
+          </div>
+        </div>
+      </div>
+    </div>
+  )

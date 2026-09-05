@@ -1,0 +1,139 @@
+{
+  "version": "2.17",
+  "children": [
+    {
+      "type": "frame",
+      "id": "bi8Au",
+      "x": 0,
+      "y": 0,
+      "name": "Reading list",
+      "clip": true,
+      "width": 320,
+      "height": 600,
+      "fill": "#FFFFFF",
+      "layout": "vertical",
+      "gap": "$spacing",
+      "padding": "$spacing",
+      "children": [
+        {
+          "type": "text",
+          "id": "jdHZp",
+          "name": "Title",
+          "fill": "#151515",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Reading list",
+          "fontFamily": "Inter",
+          "fontSize": 24,
+          "fontWeight": "600"
+        },
+        {
+          "type": "frame",
+          "id": "l6qQF",
+          "name": "Responsive card",
+          "width": "fill_container",
+          "fill": "#F3F4F6",
+          "cornerRadius": 8,
+          "layout": "vertical",
+          "gap": "$spacing",
+          "padding": "$spacing",
+          "children": [
+            {
+              "type": "rectangle",
+              "id": "JQii2",
+              "name": "Image placeholder",
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "sample.png",
+                "mode": "fill"
+              },
+              "width": "fill_container",
+              "height": 100
+            },
+            {
+              "type": "text",
+              "id": "qj1by",
+              "name": "Card title",
+              "fill": "#151515",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "longer story about making time for the books you want to read",
+              "fontFamily": "Inter",
+              "fontSize": 16,
+              "fontWeight": "normal"
+            },
+            {
+              "id": "soKca",
+              "type": "ref",
+              "ref": "EJ6tf",
+              "name": "Save instance"
+            }
+          ]
+        },
+        {
+          "id": "BzV47",
+          "type": "ref",
+          "ref": "EJ6tf",
+          "name": "Second instance",
+          "descendants": {
+            "rXqRg": {
+              "content": "Keep reading"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "EJ6tf",
+      "x": 0,
+      "y": -100,
+      "name": "Button definition",
+      "reusable": true,
+      "fill": "$accent",
+      "cornerRadius": 8,
+      "padding": [
+        12,
+        24
+      ],
+      "children": [
+        {
+          "type": "text",
+          "id": "rXqRg",
+          "name": "Button label",
+          "fill": "#FFFFFF",
+          "content": "Save",
+          "fontFamily": "Inter",
+          "fontSize": 16,
+          "fontWeight": "normal"
+        }
+      ]
+    },
+    {
+      "type": "script",
+      "id": "N80OX",
+      "x": 470,
+      "y": 0,
+      "name": "Runtime probe",
+      "width": 320,
+      "height": 120,
+      "scriptUri": "pen-runtime.js",
+      "inputs": {
+        "count": 3,
+        "label": "Saved"
+      }
+    }
+  ],
+  "variables": {
+    "spacing": {
+      "type": "number",
+      "value": 24
+    },
+    "accent": {
+      "type": "color",
+      "value": "#2457E6"
+    }
+  },
+  "fileToken": "f8ad73ac-fffe-4872-97ca-53cc38307881"
+}
