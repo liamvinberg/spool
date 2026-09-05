@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.16.1
+
+### Patch Changes
+
+- e2dec95: Mac updates can download only the parts that changed when a previous update is cached. Progress now separates downloading from preparing the update, and stalled downloads can be retried without leaving the canvas.
+- 21b7ebd: The Mac app now puts its window controls inside Spool's header, removing the separate title bar. Open Project and Settings are available in the Mac menus, and View zoom commands now move the canvas without resizing the interface.
+- 10704d6: Home now stays visible beside the window controls while project tabs scroll. Long project names truncate, the selected tab stays in view, and the open-project button remains reachable.
+
 ## 0.16.0
 
 ### Minor Changes
