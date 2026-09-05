@@ -393,6 +393,8 @@ export function PlayRail({
 	phase,
 	nav,
 	header,
+	afterLog,
+	disabled = false,
 	plan = null,
 	connectors,
 	shot = "well",
@@ -444,6 +446,9 @@ export function PlayRail({
 	 * proposal's own chrome, above the log and below the tab it belongs to.
 	 */
 	header?: ReactNode | undefined;
+	/** An exploration's recovery or approval surface inside the transcript. */
+	afterLog?: ReactNode | undefined;
+	disabled?: boolean;
 	/** the plan, lifted out of the transcript into a header of its own */
 	plan?: Plan | null;
 	/** the whole MCP estate, standing on the same shelf; absent draws no estate at all */
@@ -518,7 +523,7 @@ export function PlayRail({
 	onSend: (text: string) => void;
 	onReplay: () => void;
 	/** lets a turn held at a question carry on, once one has been given (#145) */
-	onAnswer?: (() => void) | undefined;
+	onAnswer?: ((text: string) => void) | undefined;
 }) {
 	const field = useRef<HTMLTextAreaElement>(null);
 	const reach = (event: { target: EventTarget | null }) => {
@@ -538,7 +543,7 @@ export function PlayRail({
 	// options do, and either one releases the turn.
 	const answer = (text: string) => {
 		setPicked(text);
-		onAnswer?.();
+		onAnswer?.(text);
 	};
 	// a stop is only ever offered against a turn in flight: a settled one has nothing
 	// to interrupt, and a parked one is #162's dismiss rather than an `interrupt`
@@ -589,11 +594,12 @@ export function PlayRail({
 				onReach={reach}
 				queued={queue === "tail" ? pending : []}
 				onUnqueue={onUnqueue}
-				tail={cutting && stop === "edge" ? <StopButton where="edge" onStop={halt} /> : undefined}
+				tail={afterLog ?? (cutting && stop === "edge" ? <StopButton where="edge" onStop={halt} /> : undefined)}
 			/>
 			{queue === "band" && pending.length > 0 ? <QueueBand queued={pending} onUnqueue={onUnqueue} /> : null}
 			{queue === "strip" && pending.length > 0 ? <QueueStrip queued={pending} onUnqueue={onUnqueue} /> : null}
 			<Composer
+				disabled={disabled}
 				field={field}
 				strip={stripOf(selection, COMPOSER_W, entered)}
 				queued={queue === "box" ? pending : []}
@@ -1941,6 +1947,7 @@ const MIN_H = 60;
 const MAX_H = 160;
 
 function Composer({
+	disabled,
 	field,
 	strip,
 	queued,
@@ -1962,6 +1969,7 @@ function Composer({
 	onReplay,
 	onReach,
 }: {
+	disabled: boolean;
 	field: RefObject<HTMLTextAreaElement | null>;
 	strip: Strip;
 	/** the queue standing in the composer, which is empty in every placement but `box` (#170) */
@@ -2031,6 +2039,7 @@ function Composer({
 				<SelectionStrip strip={strip} lit={lit} onLight={onLight} onDrop={onDrop} />
 				<div className="flex items-end gap-2">
 				<textarea
+					disabled={disabled}
 					ref={field}
 					value={value}
 					rows={3}
@@ -2065,7 +2074,7 @@ function Composer({
 						else if (answering) onPick(text);
 						else onSend(text);
 					}}
-					className="w-full resize-none bg-transparent text-base text-text leading-base outline-none placeholder:text-muted/50"
+					className="w-full resize-none bg-transparent text-base text-text leading-base outline-none placeholder:text-muted/50 disabled:text-muted/40"
 					style={{ height: MIN_H }}
 				/>
 					{stop === "field" ? <StopButton where="field" onStop={onStop} /> : null}

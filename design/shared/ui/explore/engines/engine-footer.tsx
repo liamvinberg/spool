@@ -27,6 +27,8 @@ export function EngineFooter({
 	scope,
 	onManage,
 	modelTake = "settings",
+	claudeState = "ready",
+	notice,
 }: {
 	engine: Engine;
 	model: string;
@@ -42,6 +44,8 @@ export function EngineFooter({
 	scope?: ModelScope | undefined;
 	onManage?: (() => void) | undefined;
 	modelTake?: ModelTake;
+	claudeState?: "ready" | "missing" | "signed-out";
+	notice?: string | undefined;
 }) {
 	const [over, setOver] = useState<string | null>(null);
 	const current = models.find((entry) => entry.value === model);
@@ -93,6 +97,13 @@ export function EngineFooter({
 							) : (
 								<ModelRow
 									label={NAMES[entry]}
+									note={
+										entry === "claude" && claudeState !== "ready"
+											? claudeState === "missing"
+												? "not installed"
+												: "sign in"
+											: undefined
+									}
 									on={engine === entry}
 									onPick={() => {
 										if (!started) onEngine(entry);
@@ -162,6 +173,9 @@ export function EngineFooter({
 							))}
 						</>
 					) : null}
+					{notice === undefined ? null : (
+						<p className="px-1.5 py-2 font-mono text-2xs text-muted leading-4">{notice}</p>
+					)}
 					{scope !== undefined && modelTake === "favorites" ? null : (
 						<p className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted/40 leading-[1.5]")}>
 							<span className="invisible" aria-hidden="true">
