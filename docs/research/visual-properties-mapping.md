@@ -4,6 +4,10 @@ Research date: 2026-09-05. Source inspection at `9b978fa`, with the working tree
 
 **Start with the [combined working prototype](http://127.0.0.1:7769/play/spool?frame=properties-combined).** Compare the [compact inspector](http://127.0.0.1:7769/play/spool?frame=visual-inspector), [contextual panel](http://127.0.0.1:7769/play/spool?frame=visual-context), [persistent handles](http://127.0.0.1:7769/play/spool?frame=gesture-inset), and [focused handles](http://127.0.0.1:7769/play/spool?frame=gesture-context). The [browser-layout lab](http://127.0.0.1:7769/play/spool?frame=mapping-cases) makes four mapping problems tangible. These are local Spool frames; their edits reset on reload.
 
+**Workflow follow-up:** [Small edits in Figma](figma-editing-workflows.md) examines the documented editing sequences and Figma's reports of user feedback. It identifies additional work before treating this prototype as a settled interaction: direct numeric input at spacing handles, deliberate modifier-key choices, visible sizing mode plus measured size, and the complete nested-selection path. In particular, this prototype's Alt-for-exact shortcut differs from Figma's opposite-side padding shortcut. These remain design comparisons, not an approved replacement for the shipped editor.
+
+**V1 scope and foundation:** the current recommendation is an editor for adjusting existing, agent-authored UI. The inspector's categories are provisional and should respond to the selected element's properties. The [foundation audit](properties-foundation-audit.md) distinguishes reusable implementation from gaps that could make future extensions expensive. Building a general design-from-scratch environment is outside this first step.
+
 Spool should present visual properties and direct spacing gestures, backed by a temporary interpretation of the selected element. Keep source code authoritative and the browser responsible for layout. The temporary model should connect a property to its editable source, active conditions, and observed result. It does not need to become a second persistent document.
 
 The strongest initial surface is **layout direction, alignment, width/height behavior, padding, gap, typography, fill, border, and radius**. The implementation already contains much of the writing machinery. The work is to make the reading contextual and the interaction truthful, rather than exposing one row per utility family. Exact names and control arrangement remain a prototype decision for Liam.
@@ -204,3 +208,28 @@ No ticket was rewritten or reopened in this pass. The prototype is the reviewabl
 - Existing source checks passed: 89 tests across `hand-resize.test.ts`, `properties-rows.test.ts`, and `class-write.test.ts`; `pnpm typecheck`; and `pnpm check` (439 files). The design project check still reports 65 pre-existing diagnostics elsewhere, with zero in `properties-map`.
 
 These checks support the feasibility and internal consistency of the exploration. They do not settle the preferred visual treatment or replace testing the production source writer against the full CSS and React cases described above.
+
+## V1 coverage without a permanent wall of controls
+
+The existing source model contains **145 property entries**, grouped into position (11), size (11), layout (42), appearance (30), stroke (26), text (20), fill (3), and source (2). These are property mappings, not a count of all possible Tailwind class strings. The inventory was read directly from `ROWS` during this follow-up. It is evidence that the editor already has reusable translation rules; the prototype's small fixture model should not replace them. [Property inventory](../../src/ui/canvas/properties-rows.ts#L415)
+
+The proposed UI groups may change without changing those property identities or source operations. This is how a later grouping decision remains a UI change. The source writer should not need to know whether a border control appears in Appearance or in its own section.
+
+| Selected thing | Useful first controls | Details that should remain reachable or appear when relevant |
+| --- | --- | --- |
+| Container | Width/height behavior, layout direction, alignment, gap, padding, fill, border, radius | Wrapping, per-side values, min/max limits, grid tracks, margins, clipping, placement and effects. Active constraints should explain the observed result. |
+| Text | Content where literal, type size, weight, line height, alignment and color | Its sizing behavior, truncation and wrapping; authored padding or positioning must still be discoverable. |
+| Button or similar control | Size, internal spacing, appearance; literal label where owned | A nested icon or shared definition has its own selection and source target. HTML tag alone does not prove which component properties are editable. |
+| Image | Existing image replacement, size, fit and position where supported | The file reference and accessible description are content properties. Frame size and an image's crop are different operations. |
+| Shared component occurrence | The same applicable property controls plus an honest edit target | A literal call-site prop, shared definition, and JSX deletion can have different owners. Component identity does not imply one global editing policy. |
+| Complex, inherited, or unsupported source | The properties that can be read and safely changed | Existing values with an explanation of their origin or limitation. A missing editor must not be presented as a missing style. |
+
+This is coverage planning, not a promise to expose all of these controls in the first release. Three rules keep it small:
+
+1. Show a useful initial set based on the selected element and its actual layout. Preserve stable names and ordering among the relevant groups.
+2. Keep applied properties visible or discoverable, especially those that explain layout constraints. Put optional detail near its related controls. Avoid making people hunt through a general class list to understand why a width will not change.
+3. Allow a supported property to be added to an existing element even when its class is absent. Adding padding or a border to a plain div is still a small edit. Showing only already-authored classes would be unnecessarily limiting.
+
+A background image on a div is a useful future extension example. It belongs to that element's appearance, but it also involves asset identity and a source expression. It should have a clear place in the property model and an owned source operation when implemented. It need not force a new persistent node type or a general layer editor, and it need not occupy space in every v1 inspector. For v1, I recommend ordinary fill/border/radius edits and supported image replacement first; adding or replacing CSS background assets remains an explicit scope decision.
+
+The foundation is complete enough to extend when a new control can supply a property intent and use the common reading, preview, source-write, reconciliation, and undo path. That is a more useful check than whether every CSS property already has a visible widget. The [code audit](properties-foundation-audit.md) identifies the concrete work needed to reach that point without discarding existing behavior.
