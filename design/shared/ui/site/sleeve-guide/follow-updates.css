@@ -1,0 +1,53 @@
+.sm-updates {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 80px;
+	border-top: 1px solid var(--sm-line);
+	padding-block: 48px 52px;
+}
+.sm-updates h2 {
+	font-size: 27px;
+	font-weight: 500;
+	letter-spacing: -0.035em;
+	line-height: 1.2;
+}
+.sm-updates p {
+	max-width: 570px;
+	margin-top: 12px;
+	font-size: 16px;
+	line-height: 1.65;
+	color: var(--sm-muted);
+}
+.sm-updates .sm-follow {
+	display: inline-flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 28px;
+	min-height: 44px;
+	font-size: 14px;
+	font-weight: 500;
+	color: var(--sm-fg);
+	border-bottom: 1px solid #626262;
+	white-space: nowrap;
+	transition: border-color 160ms ease, color 160ms ease;
+}
+.sm-follow:focus-visible {
+	outline: 2px solid #f0442a;
+	outline-offset: 5px;
+}
+@media (hover: hover) and (pointer: fine) {
+	.sm-updates .sm-follow:hover {
+		border-color: #f0442a;
+		color: #fff;
+	}
+}
+@media (max-width: 700px) {
+	.sm-updates { display: block; padding-block: 34px 40px; }
+	.sm-updates h2 { font-size: 25px; }
+	.sm-updates p { font-size: 15px; }
+	.sm-updates .sm-follow { margin-top: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+	.sm-updates .sm-follow { transition: none; }
+}

@@ -4,6 +4,7 @@ import { AppSurface } from "shared/ui/site/sleeve-real/app";
 import { SpoolMark } from "shared/ui/spool/mark";
 import { ModernStart, type ModernTake } from "./modern-start";
 import { GuideIcon } from "./icons";
+import { FollowUpdates } from "./follow-updates";
 import "./guide.css";
 import "./modern.css";
 
@@ -344,6 +345,7 @@ export function SleeveModern({ take }: { take: ModernTake }) {
 					<Source />
 				</section>
 				<ModernStart take={take} />
+				{take === "play" ? <FollowUpdates /> : null}
 			</main>
 			<footer className="sg-footer sg-width">
 				<Brand />
