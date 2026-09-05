@@ -325,6 +325,7 @@ export function ModelRow({
 	label,
 	says,
 	note,
+	via,
 	on,
 	dead = false,
 	onOver,
@@ -333,6 +334,8 @@ export function ModelRow({
 	label: string;
 	says?: string | undefined;
 	note?: string | undefined;
+	/** Account identity stays readable; `note` is the reason an option is unavailable. */
+	via?: string | undefined;
 	on: boolean;
 	dead?: boolean;
 	/** the row reports the cursor; the menu owns the one slot that answers it (#186) */
@@ -352,6 +355,7 @@ export function ModelRow({
 		>
 			<span className="flex w-full min-w-0 items-center gap-2">
 				<span className="min-w-0 flex-1 truncate font-mono text-xs leading-4">{label}</span>
+				{via === undefined ? null : <span className={cn(QUIET, "shrink-0 text-muted")}>{via}</span>}
 				{note === undefined ? null : <span className={cn(QUIET, "shrink-0 text-muted/30")}>{note}</span>}
 			</span>
 			{says === undefined ? null : (

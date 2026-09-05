@@ -5,6 +5,7 @@ import { cn } from "shared/lib/utils";
 import { FrameThumb } from "shared/ui/explore/agent/play-field";
 import { AccountDialog, type AccountLook } from "shared/ui/explore/engines/account-dialog";
 import { EngineFooter } from "shared/ui/explore/engines/engine-footer";
+import { ModelSettings, useModelScope } from "shared/ui/explore/engines/model-shortlist";
 import {
 	LoginPanel,
 	type LoginSeed,
@@ -119,14 +120,18 @@ export function EngineChoice({
 	take,
 	state = "new",
 	login: loginSpec,
+	modelScope,
 }: {
 	take: EngineTake;
 	state?: ChoiceState;
 	login?: { take: LoginTake; seed: LoginSeed; look?: AccountLook };
+	modelScope?: "picker" | "search" | "settings";
 }) {
 	const claudeModels = useModels();
 	const login = useLoginPrototype(loginSpec?.seed, loginSpec === undefined);
 	const loginTake = loginSpec?.take ?? "popover";
+	const scope = useModelScope(modelScope === "search" ? "astra" : "");
+	const [settingsOpen, setSettingsOpen] = useState(modelScope === "settings");
 	const existing: Thread = {
 		...makeThread(1, loginSpec === undefined ? "claude" : "spool"),
 		model: loginSpec === undefined ? "default" : "chatgpt/gpt-5.4",
@@ -148,7 +153,9 @@ export function EngineChoice({
 	);
 	const [active, setActive] = useState(state === "thread" ? 1 : 2);
 	const [remembered, setRemembered] = useState<Engine>(state === "thread" ? existing.engine : "spool");
-	const [menu, setMenu] = useState<"engine" | "threads" | null>(state === "choosing" ? "engine" : null);
+	const [menu, setMenu] = useState<"engine" | "threads" | null>(
+		state === "choosing" || modelScope === "picker" || modelScope === "search" ? "engine" : null,
+	);
 	const [over, setOver] = useState<Engine | null>(null);
 	const current = threads.find((thread) => thread.id === active) ?? existing;
 	const bundled =
@@ -175,7 +182,7 @@ export function EngineChoice({
 					];
 				})
 			: BUNDLED_MODELS;
-	const models = current.engine === "spool" ? bundled : claudeModels;
+	const models = current.engine === "spool" ? (modelScope === undefined ? bundled : scope.models) : claudeModels;
 	const modelValue =
 		(current.started && current.model.includes("/")) || models.some((model) => model.value === current.model)
 			? current.model
@@ -382,10 +389,17 @@ export function EngineChoice({
 				model={modelValue}
 				effort={current.effort}
 				models={models}
+				scope={modelScope !== undefined && current.engine === "spool" ? scope : undefined}
+				onManage={() => {
+					show(null);
+					login.close();
+					setSettingsOpen(true);
+				}}
 				started={locked}
 				open={menu === "engine"}
 				onToggle={() => {
 					login.close();
+					scope.setQuery("");
 					toggle("engine");
 				}}
 				onEngine={(engine) => {
@@ -393,6 +407,7 @@ export function EngineChoice({
 					if (!locked) setMenu("engine");
 				}}
 				onModel={(model) => {
+					scope.setQuery("");
 					const levels = models.find((entry) => entry.value === model)?.supportedEffortLevels ?? [];
 					patch({
 						model,
@@ -545,6 +560,16 @@ export function EngineChoice({
 				) : null}
 				{take === "combined" && (loginSpec !== undefined || login.view !== null) ? (
 					<LoginSimulation login={login} />
+				) : null}
+				{settingsOpen ? (
+					<ModelSettings
+						scope={scope}
+						onClose={() => {
+							setSettingsOpen(false);
+							scope.setQuery("");
+							show("engine");
+						}}
+					/>
 				) : null}
 			</CanvasChrome>
 		</SpoolShell>

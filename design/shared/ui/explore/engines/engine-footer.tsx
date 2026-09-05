@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { type ClaudeModel, EFFORT_SAYS, type Effort } from "shared/lib/spool/agent-model";
 import { cn } from "shared/lib/utils";
+import { type ModelScope, ModelSearch, modelMatches } from "shared/ui/explore/engines/model-shortlist";
 import { MenuItem } from "shared/ui/spool/context-menu";
 import { ChevronIcon } from "shared/ui/spool/icons";
 import { ModelRow } from "shared/ui/spool/model-control";
@@ -22,6 +23,8 @@ export function EngineFooter({
 	onModel,
 	onEffort,
 	onConnect,
+	scope,
+	onManage,
 }: {
 	engine: Engine;
 	model: string;
@@ -34,10 +37,21 @@ export function EngineFooter({
 	onModel: (model: string) => void;
 	onEffort: (effort: Effort) => void;
 	onConnect: () => void;
+	scope?: ModelScope | undefined;
+	onManage?: (() => void) | undefined;
 }) {
 	const [over, setOver] = useState<string | null>(null);
 	const current = models.find((entry) => entry.value === model);
 	const levels = current?.supportedEffortLevels ?? [];
+	const searching = Boolean(scope?.query.trim());
+	const visible =
+		scope === undefined
+			? models
+			: scope.models.filter((entry) =>
+					searching
+						? modelMatches(entry, scope.query)
+						: scope.shown.includes(entry.value) || entry.value === model,
+				);
 	const description = current?.description ?? "Connect an account to see its models.";
 	const longest = [
 		description,
@@ -85,16 +99,35 @@ export function EngineFooter({
 						</div>
 					))}
 					<span className="my-1 block h-px bg-border" />
-					{models.map((entry) => (
-						<ModelRow
-							key={entry.value}
-							label={entry.displayName}
-							on={entry.value === model}
-							onOver={() => setOver(entry.description)}
-							onPick={() => onModel(entry.value)}
-						/>
-					))}
-					{levels.length > 0 ? (
+					{scope === undefined ? null : (
+						<div className="py-1">
+							<ModelSearch query={scope.query} onChange={scope.setQuery} label="Search all connected models" />
+						</div>
+					)}
+					<div className={cn(scope !== undefined && "max-h-[216px] overflow-y-auto")}>
+						{visible.map((entry) => (
+							<div key={entry.value} data-model-offer={entry.value}>
+								<ModelRow
+									label={entry.displayName}
+									via={scope?.models.find((candidate) => candidate.value === entry.value)?.connection}
+									on={entry.value === model}
+									onOver={() => setOver(entry.description)}
+									onPick={() => onModel(entry.value)}
+								/>
+							</div>
+						))}
+						{scope !== undefined && visible.length === 0 ? (
+							<p className="px-1.5 py-3 text-base text-muted leading-base">No matching models.</p>
+						) : null}
+					</div>
+					{scope !== undefined ? (
+						<p className={cn(QUIET, "px-1.5 py-1.5 text-muted/50")}>
+							{searching
+								? `${visible.length} matches across connected accounts`
+								: `${scope.shown.length} shown${scope.shown.includes(model) ? "" : " · current model kept visible"}`}
+						</p>
+					) : null}
+					{levels.length > 0 && !searching ? (
 						<>
 							<span className="my-1 block h-px bg-border" />
 							<span className={cn(QUIET, "block px-1.5 pt-1 pb-1.5 text-muted/35")}>effort</span>
@@ -119,6 +152,7 @@ export function EngineFooter({
 						<>
 							<span className="my-1 block h-px bg-border" />
 							<MenuItem label="Connect account…" onClick={onConnect} />
+							{scope === undefined ? null : <MenuItem label="Choose visible models…" onClick={onManage} />}
 						</>
 					) : null}
 				</div>
