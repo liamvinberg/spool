@@ -13,6 +13,14 @@ export function RibbonMark({ className }: { className?: string }) {
 	);
 }
 
+export function HomeIcon() {
+	return (
+		<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+			<path d="M2.5 7 8 2l5.5 5v6.5h-4v-4h-3v4h-4Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+		</svg>
+	);
+}
+
 export function PlayIcon() {
 	return (
 		<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">

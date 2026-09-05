@@ -13,6 +13,7 @@ import {
 	subscribeSse,
 } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
+import { cn } from "./cn";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow } from "./desktop-window";
 import { ForgetToast } from "./forget-toast";
@@ -20,7 +21,7 @@ import { Home } from "./home";
 import { attachHotkeyLayer, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
-import { EdgeIcon, RibbonMark } from "./icons";
+import { EdgeIcon, HomeIcon } from "./icons";
 import { FolderPicker } from "./picker";
 import { settingsMoved, useSettings } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
@@ -28,7 +29,7 @@ import { type TabProject, TabStrip } from "./tab-strip";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
 
 /**
- * The shell (#4/#12/#13): one top bar — brand lockup as the home door, one
+ * The shell (#4/#12/#13): one top bar with a pinned Home button, one
  * tab per open project (focus-not-duplicate, machine session restored), "+"
  * as the picker — and the focused view below. Routerless: / and /p/<name>
  * only; the path is read once at boot and replaceState'd on focus.
@@ -411,16 +412,22 @@ export function App() {
 
 	return (
 		<div className="flex h-full flex-col bg-bg">
-			<header className="app-header relative z-20 flex h-11 shrink-0 items-center justify-between border-border border-b bg-bg px-4">
-				<div className="flex h-full items-center gap-5">
+			<header className="app-header relative z-20 flex h-11 shrink-0 items-center justify-between gap-4 border-border border-b bg-bg px-4">
+				<div className="flex h-full min-w-0 flex-1 items-center gap-2">
 					<button
 						type="button"
-						className="flex items-center gap-2"
+						className={cn(
+							"flex h-[26px] shrink-0 items-center gap-2 rounded-md border px-2 text-base leading-none",
+							focusedTab === undefined
+								? "border-border-raised bg-raised font-medium text-text"
+								: "border-transparent text-muted hover:bg-surface hover:text-text",
+						)}
 						onClick={() => focusProject(null)}
+						aria-current={focusedTab === undefined ? "page" : undefined}
 						title="Home"
 					>
-						<RibbonMark className="h-[18px] w-3.5" />
-						<span className="font-semibold text-md text-text tracking-tight leading-sm">spool</span>
+						<HomeIcon />
+						<span>Home</span>
 					</button>
 
 					<TabStrip
@@ -434,7 +441,7 @@ export function App() {
 				</div>
 
 				{focusedTab !== undefined && chrome !== null && (
-					<div className="flex h-full items-center gap-4">
+					<div className="flex h-full shrink-0 items-center gap-4">
 						{/* Play lives on the selection now (#13/#24), where the frame it
 						    would open is the frame you are looking at. A header button
 						    could only ever guess, and its guess with nothing selected was

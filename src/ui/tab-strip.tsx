@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { cn } from "./cn";
 import { CloseIcon, PlusIcon } from "./icons";
 
 /**
@@ -39,6 +40,8 @@ interface DragLive {
 	root: string;
 	from: number;
 	startX: number;
+	lastX: number;
+	startScrollLeft: number;
 	active: boolean;
 	/** every tab's box as the press found it, which is what a shift is measured against */
 	boxes: readonly TabBox[];
@@ -74,7 +77,7 @@ export function TabStrip({
 	/** the "+" door: open a project folder */
 	onPick: () => void;
 }) {
-	const strip = useRef<HTMLElement | null>(null);
+	const strip = useRef<HTMLDivElement | null>(null);
 	const live = useRef<DragLive | null>(null);
 	/** a press that became a drag must not also read as a click on the tab it left */
 	const justDragged = useRef(false);
@@ -87,6 +90,20 @@ export function TabStrip({
 
 	const tabsRef = useRef(tabs);
 	tabsRef.current = tabs;
+
+	useLayoutEffect(() => {
+		const element = strip.current;
+		if (element === null) return;
+		const activeTab = element.children.item(tabs.findIndex((tab) => tab.root === focused));
+		const reveal = () => {
+			if (live.current !== null || landing.current !== null) return;
+			activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
+		};
+		reveal();
+		const observer = new ResizeObserver(reveal);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, [focused, tabs]);
 
 	/**
 	 * The last frame of a drag: the list becomes the arrangement, and nothing moves.
@@ -150,15 +167,25 @@ export function TabStrip({
 	}, []);
 
 	useEffect(() => {
+		const element = strip.current;
+		const move = (current: DragLive) => {
+			// Keep the held tab under the pointer when the trackpad scrolls the strip.
+			const travelled = current.lastX - current.startX + (element?.scrollLeft ?? 0) - current.startScrollLeft;
+			current.shown = placed(current, travelled);
+			setDrag(current.shown);
+		};
 		const onMove = (event: PointerEvent) => {
 			const current = live.current;
 			if (current === null || event.pointerId !== current.pointerId) return;
+			current.lastX = event.clientX;
 			const travelled = event.clientX - current.startX;
 			if (!current.active && Math.abs(travelled) > SLOP) current.active = true;
 			if (!current.active) return;
 			event.preventDefault();
-			current.shown = placed(current, travelled);
-			setDrag(current.shown);
+			move(current);
+		};
+		const onScroll = () => {
+			if (live.current?.active) move(live.current);
 		};
 		const onUp = (event: PointerEvent) => {
 			if (live.current?.pointerId === event.pointerId) stopDrag(true);
@@ -167,10 +194,12 @@ export function TabStrip({
 		window.addEventListener("pointermove", onMove, { passive: false });
 		window.addEventListener("pointerup", onUp);
 		window.addEventListener("pointercancel", onCancel);
+		element?.addEventListener("scroll", onScroll);
 		return () => {
 			window.removeEventListener("pointermove", onMove);
 			window.removeEventListener("pointerup", onUp);
 			window.removeEventListener("pointercancel", onCancel);
+			element?.removeEventListener("scroll", onScroll);
 		};
 	}, [stopDrag]);
 
@@ -196,6 +225,8 @@ export function TabStrip({
 			root,
 			from,
 			startX: event.clientX,
+			lastX: event.clientX,
+			startScrollLeft: strip.current?.scrollLeft ?? 0,
 			active: false,
 			boxes,
 			shown: null,
@@ -203,55 +234,68 @@ export function TabStrip({
 	}
 
 	return (
-		<nav ref={strip} className="relative flex items-center gap-unit">
-			{tabs.map((tab, index) => {
-				const active = focused === tab.root;
-				const lifted = drag?.root === tab.root;
-				return (
-					<div
-						key={tab.root}
-						data-tab=""
-						className={`group flex h-[26px] touch-none items-center rounded-md ${
-							active ? "border border-border-raised bg-raised" : ""
-						} ${lifted ? "z-10" : ""}`}
-						style={{
-							transform: `translateX(${shiftOf(drag, index)}px)`,
-							// under the pointer nothing is animated, because the pointer is the
-							// animation; the frame the order changes in is silent for the same
-							// reason, and everything else travels on the house curve
-							transition:
-								quiet || (lifted && drag?.settling === false) ? "none" : `transform ${SETTLE_MS}ms ${CURVE}`,
-						}}
-						onPointerDown={(event) => pressTab(event, tab.root, index)}
-					>
-						<button
-							type="button"
-							className={`h-full pl-3 text-base leading-none ${
-								active ? "pr-1 font-medium text-text" : "pr-1 text-muted hover:text-text"
-							} ${lifted ? "cursor-grabbing" : ""}`}
-							onClick={() => {
-								if (justDragged.current) return;
-								onFocus(tab.root);
+		<nav aria-label="Open projects" className="flex min-w-0 items-center gap-unit">
+			<div
+				ref={strip}
+				className="project-tabs-scroll relative flex min-w-0 items-center gap-unit overflow-x-auto py-1"
+			>
+				{tabs.map((tab, index) => {
+					const active = focused === tab.root;
+					const lifted = drag?.root === tab.root;
+					return (
+						<div
+							key={tab.root}
+							data-tab=""
+							className={cn(
+								"group flex h-[26px] max-w-[180px] shrink-0 touch-none items-center rounded-md border",
+								active ? "border-border-raised bg-raised" : "border-transparent hover:bg-surface",
+								lifted && "z-10",
+							)}
+							style={{
+								transform: `translateX(${shiftOf(drag, index)}px)`,
+								// under the pointer nothing is animated, because the pointer is the
+								// animation; the frame the order changes in is silent for the same
+								// reason, and everything else travels on the house curve
+								transition:
+									quiet || (lifted && drag?.settling === false) ? "none" : `transform ${SETTLE_MS}ms ${CURVE}`,
 							}}
-							title={tab.root}
+							onPointerDown={(event) => pressTab(event, tab.root, index)}
 						>
-							{tab.name}
-						</button>
-						<button
-							type="button"
-							className="flex h-full w-5 items-center justify-center pr-1 text-muted opacity-0 hover:text-text group-hover:opacity-100"
-							onPointerDown={(event) => event.stopPropagation()}
-							onClick={() => onClose(tab.root)}
-							title="Close tab"
-						>
-							<CloseIcon />
-						</button>
-					</div>
-				);
-			})}
+							<button
+								type="button"
+								className={cn(
+									"h-full min-w-0 truncate pr-1 pl-3 text-base leading-none",
+									active ? "font-medium text-text" : "text-muted hover:text-text",
+									lifted && "cursor-grabbing",
+								)}
+								aria-current={active ? "page" : undefined}
+								onClick={() => {
+									if (justDragged.current) return;
+									onFocus(tab.root);
+								}}
+								title={tab.root}
+							>
+								{tab.name}
+							</button>
+							<button
+								type="button"
+								className={cn(
+									"flex h-full w-5 shrink-0 items-center justify-center pr-1 text-muted hover:text-text group-focus-within:opacity-100 group-hover:opacity-100",
+									!active && "opacity-0",
+								)}
+								onPointerDown={(event) => event.stopPropagation()}
+								onClick={() => onClose(tab.root)}
+								title="Close tab"
+							>
+								<CloseIcon />
+							</button>
+						</div>
+					);
+				})}
+			</div>
 			<button
 				type="button"
-				className="flex h-[26px] w-[26px] items-center justify-center rounded-sm text-muted hover:bg-surface"
+				className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface"
 				onClick={onPick}
 				title="Open a project folder"
 			>

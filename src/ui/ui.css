@@ -611,6 +611,10 @@ html {
 	overscroll-behavior-x: none;
 }
 
+.project-tabs-scroll {
+	scrollbar-width: none;
+}
+
 /* The Mac window keeps its real traffic lights inside this 44px header. Only
  * empty header space drags the window; tabs retain their own drag gesture. */
 :root[data-desktop] .app-header {

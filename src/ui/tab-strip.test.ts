@@ -78,6 +78,32 @@ describe("the tab strip", () => {
 		expect(tabOf(host, 1)?.style.transform).toBe("translateX(0px)");
 	});
 
+	it("keeps the dragged tab under the pointer when the strip scrolls", async () => {
+		const onReorder = vi.fn();
+		const { host } = await render({ onReorder });
+		place(host);
+		const scroller = host.querySelector<HTMLElement>(".project-tabs-scroll");
+		if (scroller === null) throw new Error("missing tab scroller");
+		scroller.scrollLeft = 40;
+
+		await act(async () => {
+			tabOf(host, 0)?.dispatchEvent(
+				new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 4, clientX: 50 }),
+			);
+			window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 4, clientX: 70 }));
+			scroller.scrollLeft = 150;
+			scroller.dispatchEvent(new Event("scroll"));
+		});
+		expect(tabOf(host, 0)?.style.transform).toBe("translateX(130px)");
+		expect(tabOf(host, 1)?.style.transform).toBe("translateX(-110px)");
+
+		await act(async () => {
+			window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 4, clientX: 70 }));
+			await new Promise((resolve) => setTimeout(resolve, 260));
+		});
+		expect(onReorder).toHaveBeenCalledWith(["/w/beta", "/w/alpha", "/w/gamma"]);
+	});
+
 	it("focuses the project on a press that never travelled", async () => {
 		const onFocus = vi.fn();
 		const { host } = await render({ onFocus });
