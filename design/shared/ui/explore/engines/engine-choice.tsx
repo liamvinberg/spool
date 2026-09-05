@@ -129,7 +129,8 @@ export function EngineChoice({
 }) {
 	const claudeModels = useModels();
 	const login = useLoginPrototype(loginSpec?.seed, loginSpec === undefined);
-	const loginTake = loginSpec?.take ?? "popover";
+	const loginTake = loginSpec?.take ?? "dialog";
+	const loginLook = loginSpec === undefined ? "list" : loginSpec.look;
 	const scope = useModelScope(modelScope === "search" ? "astra" : "");
 	const [settingsOpen, setSettingsOpen] = useState(modelScope === "settings");
 	const existing: Thread = {
@@ -541,8 +542,8 @@ export function EngineChoice({
 					<CanvasFrame name="cart" />
 					<CanvasFrame name="receipt" selected />
 				</div>
-				{take === "combined" && login.view !== null && loginTake === "dialog" && loginSpec?.look !== undefined ? (
-					<AccountDialog login={login} look={loginSpec.look} />
+				{take === "combined" && login.view !== null && loginTake === "dialog" && loginLook !== undefined ? (
+					<AccountDialog login={login} look={loginLook} />
 				) : take === "combined" && login.view !== null && loginTake === "dialog" ? (
 					<div
 						className="absolute inset-0 z-50 flex items-center justify-center bg-bg/55"
