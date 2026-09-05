@@ -1,0 +1,121 @@
+.visual-properties {
+	font-size: 12px;
+}
+.visual-properties button,
+.visual-properties input,
+.visual-properties select {
+	outline: none;
+}
+.visual-properties button:focus-visible,
+.visual-properties input:focus-visible,
+.visual-properties select:focus-visible {
+	outline: 1px solid var(--color-thread);
+	outline-offset: 2px;
+}
+.visual-properties button {
+	cursor: pointer;
+}
+.visual-properties button:disabled {
+	cursor: default;
+}
+.visual-properties input[type="number"] {
+	appearance: textfield;
+	-moz-appearance: textfield;
+}
+.visual-properties input::-webkit-inner-spin-button,
+.visual-properties input::-webkit-outer-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+.visual-properties input[type="color"] {
+	padding: 0;
+	border: 0;
+	background: none;
+	cursor: pointer;
+}
+.visual-properties input[type="color"]::-webkit-color-swatch-wrapper {
+	padding: 0;
+}
+.visual-properties input[type="color"]::-webkit-color-swatch {
+	border: 1px solid var(--color-border-raised);
+	border-radius: 3px;
+}
+.visual-properties select {
+	appearance: none;
+	cursor: pointer;
+}
+.visual-field {
+	display: flex;
+	align-items: center;
+	height: 30px;
+	min-width: 0;
+	gap: 8px;
+	border: 1px solid transparent;
+	border-radius: 4px;
+	background: var(--color-surface);
+	padding: 0 9px;
+}
+.visual-field:hover {
+	border-color: var(--color-border-raised);
+}
+.visual-field:focus-within {
+	border-color: var(--color-thread);
+}
+.visual-field input {
+	width: 100%;
+	min-width: 0;
+	background: transparent;
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+.visual-segment {
+	display: flex;
+	gap: 2px;
+	padding: 2px;
+	border-radius: 4px;
+	background: var(--color-surface);
+}
+.visual-segment button {
+	flex: 1;
+	height: 27px;
+	min-width: 0;
+	border-radius: 3px;
+	color: var(--color-muted);
+}
+.visual-segment button[aria-pressed="true"] {
+	background: var(--color-raised);
+	color: var(--color-text);
+}
+.visual-segment button:hover {
+	color: var(--color-text);
+}
+.visual-section {
+	border-top: 1px solid var(--color-border);
+	padding: 15px 16px 16px;
+}
+.visual-section h3 {
+	margin-bottom: 12px;
+	font-size: 12px;
+	font-weight: 550;
+}
+.visual-context-row {
+	display: flex;
+	width: 100%;
+	min-height: 43px;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	text-align: left;
+}
+.visual-context-row:hover {
+	color: var(--color-text);
+}
+.visual-context-row:hover .visual-row-arrow {
+	opacity: 1;
+	transform: translateX(0);
+}
+.visual-row-arrow {
+	opacity: 0;
+	transform: translateX(-3px);
+	transition: 140ms ease;
+}

@@ -1,0 +1,222 @@
+.pm-gesture-document {
+	position: relative;
+	color: #eceae5;
+	font-family: var(--font-sans);
+}
+.pm-gesture-document button {
+	font: inherit;
+}
+.pm-gesture-handle {
+	position: absolute;
+	z-index: 4;
+	touch-action: none;
+	user-select: none;
+	border: 0;
+	padding: 0;
+	background: transparent;
+	pointer-events: auto;
+}
+.pm-gesture-handle:focus-visible {
+	outline: 2px solid var(--color-text);
+	outline-offset: 2px;
+}
+.pm-gesture-edge {
+	width: 18px;
+	height: 42px;
+	right: -10px;
+	top: calc(50% - 21px);
+	cursor: ew-resize;
+}
+.pm-gesture-edge::after {
+	content: "";
+	position: absolute;
+	inset: 13px 6px;
+	border: 1px solid var(--color-thread);
+	background: var(--color-bg);
+}
+.pm-gesture-inset {
+	cursor: ns-resize;
+	height: 22px;
+	width: 52px;
+	left: calc(50% - 26px);
+}
+.pm-gesture-inset::after {
+	content: "";
+	position: absolute;
+	top: calc(50% - 2px);
+	left: 10px;
+	right: 10px;
+	height: 4px;
+	border-radius: 2px;
+	background: var(--color-thread);
+}
+.pm-gesture-inset[data-axis="x"] {
+	width: 22px;
+	height: 52px;
+	top: calc(50% - 26px);
+	left: auto;
+	cursor: ew-resize;
+}
+.pm-gesture-inset[data-axis="x"]::after {
+	left: calc(50% - 2px);
+	top: 10px;
+	bottom: 10px;
+	right: auto;
+	height: auto;
+	width: 4px;
+}
+.pm-gesture-band {
+	position: absolute;
+	pointer-events: none;
+	background: color-mix(in srgb, var(--color-thread) 8%, transparent);
+}
+.pm-gesture-band[data-active="true"] {
+	background: color-mix(in srgb, var(--color-thread) 18%, transparent);
+}
+.pm-gesture-measure {
+	position: absolute;
+	pointer-events: none;
+	color: var(--color-thread);
+	font: 10px var(--font-mono);
+	white-space: nowrap;
+}
+.pm-gesture-tip {
+	position: absolute;
+	z-index: 5;
+	bottom: calc(100% + 13px);
+	left: 0;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 7px 9px;
+	border: 1px solid var(--color-border);
+	background: var(--color-bg);
+	color: var(--color-text);
+	font: 11px var(--font-mono);
+	white-space: nowrap;
+}
+.pm-gesture-tip code {
+	color: var(--color-thread);
+}
+.pm-gesture-gap {
+	height: 24px;
+	width: 70px;
+	left: calc(50% - 35px);
+	cursor: ns-resize;
+}
+.pm-gesture-gap::after {
+	content: "";
+	position: absolute;
+	inset: 7px 25px;
+	border-top: 1px solid var(--color-thread);
+	border-bottom: 1px solid var(--color-thread);
+}
+.pm-gesture-gap[data-axis="x"] {
+	width: 24px;
+	height: 70px;
+	top: calc(50% - 35px);
+	cursor: ew-resize;
+}
+.pm-gesture-gap[data-axis="x"]::after {
+	inset: 25px 7px;
+	border: 0;
+	border-left: 1px solid var(--color-thread);
+	border-right: 1px solid var(--color-thread);
+}
+.pm-gesture-box {
+	position: relative;
+	height: 152px;
+	margin-top: 13px;
+	border: 1px solid var(--color-border);
+}
+.pm-gesture-box::after {
+	content: "";
+	position: absolute;
+	inset: 39px 62px;
+	border: 1px dashed var(--color-muted);
+	pointer-events: none;
+}
+.pm-gesture-box button {
+	position: absolute;
+	z-index: 1;
+	width: 42px;
+	height: 27px;
+	border: 1px solid transparent;
+	border-radius: 3px;
+	color: var(--color-text);
+	font: 12px var(--font-mono);
+	cursor: ns-resize;
+	touch-action: none;
+}
+.pm-gesture-box button[data-lit="true"] {
+	border-color: var(--color-thread);
+	background: color-mix(in srgb, var(--color-thread) 9%, transparent);
+	color: var(--color-thread);
+}
+.pm-gesture-box button[data-edge="top"] {
+	top: 7px;
+	left: calc(50% - 21px);
+}
+.pm-gesture-box button[data-edge="right"] {
+	right: 9px;
+	top: calc(50% - 13px);
+	cursor: ew-resize;
+}
+.pm-gesture-box button[data-edge="bottom"] {
+	bottom: 7px;
+	left: calc(50% - 21px);
+}
+.pm-gesture-box button[data-edge="left"] {
+	left: 9px;
+	top: calc(50% - 13px);
+	cursor: ew-resize;
+}
+.pm-gesture-box-center {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font: 10px var(--font-mono);
+	color: var(--color-muted);
+	pointer-events: none;
+}
+.pm-gesture-stops {
+	display: flex;
+	width: 100%;
+	gap: 4px;
+	margin: 15px 0 8px;
+}
+.pm-gesture-stops button {
+	flex: 1;
+	padding: 7px 0;
+	font: 10px var(--font-mono);
+	color: var(--color-muted);
+	border-top: 1px solid var(--color-border);
+	cursor: pointer;
+}
+.pm-gesture-stops button[data-active="true"] {
+	color: var(--color-thread);
+	border-color: var(--color-thread);
+}
+.pm-gesture-context-ruler {
+	position: absolute;
+	pointer-events: none;
+	border-left: 1px solid var(--color-thread);
+	width: 1px;
+}
+.pm-gesture-context-ruler::before,
+.pm-gesture-context-ruler::after {
+	content: "";
+	position: absolute;
+	height: 1px;
+	width: 7px;
+	background: var(--color-thread);
+	left: -4px;
+}
+.pm-gesture-context-ruler::before {
+	top: 0;
+}
+.pm-gesture-context-ruler::after {
+	bottom: 0;
+}

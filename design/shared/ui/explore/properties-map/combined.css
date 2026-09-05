@@ -1,0 +1,16 @@
+.pm-combined [data-gesture-overlay] .pm-gesture-band,
+.pm-combined [data-gesture-overlay] .pm-gesture-context-ruler,
+.pm-combined [data-gesture-overlay] .pm-gesture-tip,
+.pm-combined [data-gesture-overlay] .pm-gesture-measure {
+	opacity: 0;
+}
+.pm-combined [data-gesture-overlay]:has([data-gesture]:hover) .pm-gesture-band,
+.pm-combined [data-gesture-overlay]:has([data-gesture]:hover) .pm-gesture-context-ruler,
+.pm-combined [data-gesture-overlay]:has([data-gesture]:hover) .pm-gesture-tip,
+.pm-combined [data-gesture-overlay]:has([data-gesture]:hover) .pm-gesture-measure,
+.pm-combined [data-gesture-overlay][data-active]:not([data-active=""]) .pm-gesture-band,
+.pm-combined [data-gesture-overlay][data-active]:not([data-active=""]) .pm-gesture-context-ruler,
+.pm-combined [data-gesture-overlay][data-active]:not([data-active=""]) .pm-gesture-tip,
+.pm-combined [data-gesture-overlay][data-active]:not([data-active=""]) .pm-gesture-measure {
+	opacity: 1;
+}
