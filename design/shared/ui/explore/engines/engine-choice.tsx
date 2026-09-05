@@ -3,6 +3,7 @@ import { type ClaudeModel, type Effort, useModels } from "shared/lib/spool/agent
 import type { PlayEntry } from "shared/lib/spool/turn-play";
 import { cn } from "shared/lib/utils";
 import { FrameThumb } from "shared/ui/explore/agent/play-field";
+import { AccountDialog, type AccountLook } from "shared/ui/explore/engines/account-dialog";
 import { EngineFooter } from "shared/ui/explore/engines/engine-footer";
 import {
 	LoginPanel,
@@ -121,7 +122,7 @@ export function EngineChoice({
 }: {
 	take: EngineTake;
 	state?: ChoiceState;
-	login?: { take: LoginTake; seed: LoginSeed };
+	login?: { take: LoginTake; seed: LoginSeed; look?: AccountLook };
 }) {
 	const claudeModels = useModels();
 	const login = useLoginPrototype(loginSpec?.seed, loginSpec === undefined);
@@ -525,7 +526,9 @@ export function EngineChoice({
 					<CanvasFrame name="cart" />
 					<CanvasFrame name="receipt" selected />
 				</div>
-				{take === "combined" && login.view !== null && loginTake === "dialog" ? (
+				{take === "combined" && login.view !== null && loginTake === "dialog" && loginSpec?.look !== undefined ? (
+					<AccountDialog login={login} look={loginSpec.look} />
+				) : take === "combined" && login.view !== null && loginTake === "dialog" ? (
 					<div
 						className="absolute inset-0 z-50 flex items-center justify-center bg-bg/55"
 						role="dialog"

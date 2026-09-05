@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { cn } from "shared/lib/utils";
 import { LoginButton, type LoginStep, LoginStepView } from "shared/ui/explore/engines/login-steps";
 import { MenuItem } from "shared/ui/spool/context-menu";
@@ -141,7 +141,20 @@ export function useLoginPrototype(seed: LoginSeed = "idle", configured = true) {
 export type LoginPrototype = ReturnType<typeof useLoginPrototype>;
 
 /** The same login content in three surfaces. Layout is the live decision. */
-export function LoginPanel({ login, take }: { login: LoginPrototype; take: LoginTake }) {
+export function LoginPanel({
+	login,
+	take,
+	appearance = "export",
+	choices,
+	back = false,
+}: {
+	login: LoginPrototype;
+	take: LoginTake;
+	appearance?: "export" | "sheet" | "inset";
+	choices?: ReactNode;
+	back?: boolean;
+}) {
+	const [actionTarget, setActionTarget] = useState<HTMLSpanElement | null>(null);
 	const { view } = login;
 	if (view === null) return null;
 	const title =
@@ -160,42 +173,77 @@ export function LoginPanel({ login, take }: { login: LoginPrototype; take: Login
 			aria-label={title}
 			className={cn(
 				"flex min-w-0 flex-col",
-				take === "rail" ? "border-border border-b bg-bg" : "rounded-lg border border-border-raised bg-raised",
+				appearance !== "export"
+					? "h-full"
+					: take === "rail"
+						? "border-border border-b bg-bg"
+						: "rounded-lg border border-border-raised bg-raised",
 			)}
 		>
-			<div className="flex items-center justify-between gap-3 border-border-raised border-b px-5 py-4">
-				<h2 className="font-medium text-md text-text leading-md">{title}</h2>
-				<button
-					type="button"
-					aria-label="Close account connection"
-					onClick={login.close}
-					className="-mr-1 flex h-5 w-5 items-center justify-center rounded-sm text-muted/60 hover:text-text"
+			<div
+				className={cn(
+					"flex shrink-0 items-center justify-between gap-3",
+					appearance === "sheet"
+						? "h-12 border-border border-b px-6"
+						: appearance === "inset"
+							? "px-5 pt-5 pb-2"
+							: "border-border-raised border-b px-5 py-4",
+				)}
+			>
+				<h2
+					className={cn(
+						"text-text",
+						appearance === "sheet"
+							? "font-semibold text-md tracking-tight leading-md"
+							: "font-medium text-md leading-md",
+					)}
 				>
-					<svg viewBox="0 0 12 12" className="h-2.5 w-2.5" aria-hidden="true">
-						<path d="m3 3 6 6M9 3 3 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-					</svg>
-				</button>
+					{title}
+				</h2>
+				{appearance === "sheet" ? (
+					<button
+						type="button"
+						onClick={login.close}
+						aria-label="Close account connection"
+						className="font-mono text-2xs text-muted leading-3 hover:text-text"
+					>
+						esc closes
+					</button>
+				) : appearance === "inset" ? null : (
+					<button
+						type="button"
+						aria-label="Close account connection"
+						onClick={login.close}
+						className="-mr-1 flex h-5 w-5 items-center justify-center rounded-sm text-muted/60 hover:text-text"
+					>
+						<svg viewBox="0 0 12 12" className="h-2.5 w-2.5" aria-hidden="true">
+							<path d="m3 3 6 6M9 3 3 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+						</svg>
+					</button>
+				)}
 			</div>
 			{view.kind === "providers" ? (
-				<>
-					<p className="px-5 pt-4 pb-2 text-base text-muted leading-base">Use a subscription or an API key.</p>
-					<div className="flex flex-col px-2 pb-3">
-						{LOGIN_PROVIDERS.map((provider, index) => (
-							<div key={provider.id}>
-								{index === 2 ? <div className="mx-3 my-2 h-px bg-border-raised" /> : null}
-								<MenuItem
-									label={
-										login.accounts.includes(provider.id) ? `${provider.label} · connected` : provider.label
-									}
-									disabled={login.accounts.includes(provider.id)}
-									onClick={() => login.begin(provider)}
-								/>
-							</div>
-						))}
-					</div>
-				</>
+				(choices ?? (
+					<>
+						<p className="px-5 pt-4 pb-2 text-base text-muted leading-base">Use a subscription or an API key.</p>
+						<div className="flex flex-col px-2 pb-3">
+							{LOGIN_PROVIDERS.map((provider, index) => (
+								<div key={provider.id} className="flex flex-col">
+									{index === 2 ? <div className="mx-3 my-2 h-px bg-border-raised" /> : null}
+									<MenuItem
+										label={
+											login.accounts.includes(provider.id) ? `${provider.label} · connected` : provider.label
+										}
+										disabled={login.accounts.includes(provider.id)}
+										onClick={() => login.begin(provider)}
+									/>
+								</div>
+							))}
+						</div>
+					</>
+				))
 			) : (
-				<div className="px-5 py-4">
+				<div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
 					{view.kind === "step" ? (
 						<LoginStepView
 							key={view.provider.id}
@@ -203,6 +251,7 @@ export function LoginPanel({ login, take }: { login: LoginPrototype; take: Login
 							opened={login.opened}
 							onOpen={login.openBrowser}
 							onAnswer={login.complete}
+							actionTarget={back || appearance !== "export" ? actionTarget : null}
 						/>
 					) : (
 						<p role="status" className="text-base text-muted leading-base">
@@ -216,9 +265,22 @@ export function LoginPanel({ login, take }: { login: LoginPrototype; take: Login
 				</div>
 			)}
 			{view.kind !== "providers" ? (
-				<div className="flex items-center justify-end gap-2 border-border-raised border-t px-4 py-3">
+				<div
+					className={cn(
+						"flex shrink-0 items-center justify-end gap-2 border-t px-4 py-3",
+						appearance === "export" ? "border-border-raised" : "border-border",
+					)}
+				>
+					{back && view.kind !== "connected" ? (
+						<span className="mr-auto">
+							<LoginButton onClick={login.open}>Back</LoginButton>
+						</span>
+					) : null}
 					{view.kind === "step" ? (
-						<LoginButton onClick={login.cancel}>Cancel</LoginButton>
+						<>
+							<LoginButton onClick={login.cancel}>Cancel</LoginButton>
+							<span ref={setActionTarget} data-login-action="" />
+						</>
 					) : view.kind === "connected" ? (
 						<LoginButton primary onClick={login.close}>
 							Done

@@ -1,4 +1,5 @@
 import { type ReactNode, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "shared/lib/utils";
 import { MenuItem } from "shared/ui/spool/context-menu";
 import { ModelRow } from "shared/ui/spool/model-control";
@@ -67,26 +68,29 @@ export function LoginStepView({
 	opened = false,
 	onOpen,
 	onAnswer,
+	actionTarget = null,
 }: {
 	step: LoginStep;
 	opened?: boolean;
 	onOpen: () => void;
 	onAnswer: (answer: string) => void;
+	actionTarget?: HTMLElement | null;
 }) {
 	if (step.type === "auth_url")
 		return (
 			<div className="flex flex-col gap-4">
 				<p className="text-base text-muted leading-base">{step.instructions}</p>
 				<span className="truncate font-mono text-xs text-muted/60 leading-xs">{new URL(step.url).host}</span>
-				<div className="flex">
+				<Action target={actionTarget}>
 					<LoginButton primary onClick={onOpen}>
 						{opened ? "Open browser again" : "Open browser"}
 					</LoginButton>
-				</div>
+				</Action>
 				{opened ? <ProgressLine>waiting for sign-in</ProgressLine> : null}
 			</div>
 		);
-	if (step.type === "device_code") return <DeviceStep step={step} opened={opened} onOpen={onOpen} />;
+	if (step.type === "device_code")
+		return <DeviceStep step={step} opened={opened} onOpen={onOpen} actionTarget={actionTarget} />;
 	if (step.type === "progress") return <ProgressLine>{step.message}</ProgressLine>;
 	if (step.type === "info")
 		return (
@@ -97,17 +101,21 @@ export function LoginStepView({
 				))}
 			</div>
 		);
-	return <PromptStep key={`${step.type}:${step.message}`} step={step} onAnswer={onAnswer} />;
+	return (
+		<PromptStep key={`${step.type}:${step.message}`} step={step} onAnswer={onAnswer} actionTarget={actionTarget} />
+	);
 }
 
 function DeviceStep({
 	step,
 	opened,
 	onOpen,
+	actionTarget,
 }: {
 	step: Extract<LoginStep, { type: "device_code" }>;
 	opened: boolean;
 	onOpen: () => void;
+	actionTarget: HTMLElement | null;
 }) {
 	const [copied, setCopied] = useState(false);
 	return (
@@ -131,11 +139,11 @@ function DeviceStep({
 				</button>
 			</div>
 			<span className="font-mono text-xs text-muted/60 leading-xs">{new URL(step.verificationUri).host}</span>
-			<div className="flex">
+			<Action target={actionTarget}>
 				<LoginButton primary onClick={onOpen}>
 					{opened ? "Open browser again" : "Open browser"}
 				</LoginButton>
-			</div>
+			</Action>
 			<ProgressLine>waiting for sign-in</ProgressLine>
 		</div>
 	);
@@ -144,9 +152,11 @@ function DeviceStep({
 function PromptStep({
 	step,
 	onAnswer,
+	actionTarget,
 }: {
 	step: Extract<LoginStep, { type: "text" | "secret" | "manual_code" | "select" }>;
 	onAnswer: (answer: string) => void;
+	actionTarget: HTMLElement | null;
 }) {
 	const [value, setValue] = useState("");
 	const answer = () => {
@@ -191,11 +201,16 @@ function PromptStep({
 					className="h-8 w-full min-w-0 rounded-sm border border-border-raised bg-surface px-2.5 font-mono text-xs text-text outline-none placeholder:text-muted/40 focus:border-muted"
 				/>
 			</label>
-			<div className="flex">
+			<Action target={actionTarget}>
 				<LoginButton primary onClick={answer} disabled={!value.trim()}>
 					{step.type === "secret" ? "Connect" : "Continue"}
 				</LoginButton>
-			</div>
+			</Action>
 		</div>
 	);
+}
+
+/** Keep a step's input state with its action while the dialog owns placement. */
+function Action({ target, children }: { target: HTMLElement | null; children: ReactNode }) {
+	return target === null ? <div className="flex">{children}</div> : createPortal(children, target);
 }
