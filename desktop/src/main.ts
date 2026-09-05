@@ -86,6 +86,9 @@ const NAME = LANE ? "Spool Dev" : "Spool";
 /** Held only so the tray item is not collected out from under the menu bar. */
 let tray: Tray | undefined;
 let window: BrowserWindow | undefined;
+let canvasReady = false;
+let canvasActive = false;
+let pendingCanvasCommand: CanvasCommand | undefined;
 /** The daemon this app started, if it started one. */
 let startedPid: number | undefined;
 /** The daemon this window is pointed at, for telling its popups from the web. */
@@ -140,6 +143,8 @@ function escapeHtml(text: string): string {
 }
 
 function createWindow(): BrowserWindow {
+	canvasReady = false;
+	canvasActive = false;
 	const created = new BrowserWindow({
 		width: 1440,
 		height: 900,
@@ -147,12 +152,29 @@ function createWindow(): BrowserWindow {
 		minHeight: 480,
 		title: NAME,
 		backgroundColor: "#0e0e0e",
+		titleBarStyle: "hiddenInset",
+		trafficLightPosition: { x: 14, y: 16 },
 		webPreferences: { spellcheck: false, preload: join(__dirname, "canvas-preload.js") },
 	});
 
 	guard(created);
+	const fullscreen = () => created.webContents.send("spool:canvas-fullscreen", created.isFullScreen());
+	created.on("enter-full-screen", fullscreen);
+	created.on("leave-full-screen", fullscreen);
+	created.on("focus", updateCanvasMenu);
+	created.on("blur", updateCanvasMenu);
+	created.webContents.on("did-start-navigation", (details) => {
+		if (!details.isMainFrame || details.isSameDocument) return;
+		canvasReady = false;
+		canvasActive = false;
+		updateCanvasMenu();
+	});
 	created.on("closed", () => {
-		if (created === window) window = undefined;
+		if (created !== window) return;
+		window = undefined;
+		canvasReady = false;
+		canvasActive = false;
+		updateCanvasMenu();
 	});
 
 	return created;
@@ -496,12 +518,76 @@ function installPlayChannels(): void {
 
 // MARK: - Menus
 
+/** Mirrored by the page's DesktopCommand; no raw IPC is exposed to the page. */
+export type CanvasCommand =
+	| "app.open-project"
+	| "app.settings"
+	| "app.help"
+	| "canvas.zoom-in"
+	| "canvas.zoom-out"
+	| "canvas.zoom-reset"
+	| "canvas.fit-all"
+	| "canvas.fit-selection";
+
+function sendCanvasCommand(command: CanvasCommand): void {
+	if (command.startsWith("canvas.")) {
+		if (canvasReady && canvasActive && window?.isFocused()) window.webContents.send("spool:canvas-command", command);
+		return;
+	}
+	if (window === undefined) {
+		pendingCanvasCommand = command;
+		void openCanvas();
+		return;
+	}
+	window.show();
+	window.focus();
+	if (canvasReady) window.webContents.send("spool:canvas-command", command);
+	else pendingCanvasCommand = command;
+}
+
+const CANVAS_ZOOM_COMMANDS = [
+	["canvas.zoom-in", "Zoom In"],
+	["canvas.zoom-out", "Zoom Out"],
+	["canvas.zoom-reset", "Actual Size"],
+	["canvas.fit-all", "Zoom to Fit"],
+	["canvas.fit-selection", "Zoom to Selection"],
+] as const satisfies readonly (readonly [CanvasCommand, string])[];
+
+function updateCanvasMenu(): void {
+	const menu = Menu.getApplicationMenu();
+	for (const [command] of CANVAS_ZOOM_COMMANDS) {
+		const item = menu?.getMenuItemById(command);
+		if (item != null) item.enabled = canvasReady && canvasActive && window?.isFocused() === true;
+	}
+}
+
+function installCanvasChannels(): void {
+	ipcMain.on("spool:canvas-fullscreen", (event) => {
+		event.returnValue = window?.isFullScreen() ?? false;
+	});
+	ipcMain.on("spool:canvas-active", (event, active: unknown) => {
+		if (window === undefined || event.sender !== window.webContents || event.senderFrame !== event.sender.mainFrame)
+			return;
+		if (typeof active !== "boolean") return;
+		canvasReady = true;
+		canvasActive = active;
+		updateCanvasMenu();
+		if (pendingCanvasCommand !== undefined) {
+			const command = pendingCanvasCommand;
+			pendingCanvasCommand = undefined;
+			sendCanvasCommand(command);
+		}
+	});
+}
+
 export function buildAppMenu(): Menu {
 	const template: MenuItemConstructorOptions[] = [
 		{
 			role: "appMenu",
 			submenu: [
 				{ role: "about" },
+				{ type: "separator" },
+				{ label: "Settings…", accelerator: "CmdOrCtrl+,", click: () => sendCanvasCommand("app.settings") },
 				{ type: "separator" },
 				{ label: "Check for Updates…", click: () => void checkForUpdates() },
 				{ type: "separator" },
@@ -517,7 +603,8 @@ export function buildAppMenu(): Menu {
 		{
 			label: "File",
 			submenu: [
-				{ label: "Open Canvas", accelerator: "CmdOrCtrl+N", click: () => void openCanvas() },
+				{ label: "Open Canvas", click: () => void openCanvas() },
+				{ label: "Open Project…", accelerator: "CmdOrCtrl+O", click: () => sendCanvasCommand("app.open-project") },
 				{ type: "separator" },
 				// Closing the window leaves the app running in the menu bar, which
 				// is the whole reason Cmd+W and Cmd+Q are different keys here.
@@ -528,21 +615,26 @@ export function buildAppMenu(): Menu {
 		{
 			label: "View",
 			submenu: [
-				{ role: "reload" },
-				{ role: "forceReload" },
-				{ role: "toggleDevTools" },
-				{ type: "separator" },
-				{ role: "resetZoom" },
-				{ role: "zoomIn" },
-				{ role: "zoomOut" },
+				// Canvas shortcuts stay in the page, where an entered prototype can
+				// own its keys. These menu clicks call the same camera commands.
+				...CANVAS_ZOOM_COMMANDS.map(([command, label]) => ({
+					id: command,
+					label,
+					enabled: false,
+					click: () => sendCanvasCommand(command),
+				})),
 				{ type: "separator" },
 				{ role: "togglefullscreen" },
+				{ type: "separator" },
+				{ label: "Developer", submenu: [{ role: "reload" }, { role: "forceReload" }, { role: "toggleDevTools" }] },
 			],
 		},
 		{ role: "windowMenu" },
 		{
 			role: "help",
 			submenu: [
+				{ label: "Keyboard Shortcuts", click: () => sendCanvasCommand("app.help") },
+				{ type: "separator" },
 				{ label: "spool.page", click: () => void shell.openExternal("https://spool.page") },
 				{ label: "Releases", click: () => void shell.openExternal(RELEASES_PAGE) },
 			],
@@ -1039,6 +1131,7 @@ export function boot(): void {
 	openLog(DIRECTORY);
 	installPlayChannels();
 	installUpdateChannels();
+	installCanvasChannels();
 	app.setAboutPanelOptions({ applicationName: NAME, applicationVersion: version(), credits: "MIT" });
 
 	app.on("window-all-closed", () => {

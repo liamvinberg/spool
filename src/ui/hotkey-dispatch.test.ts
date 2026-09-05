@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { attachHotkeyLayer, dispatchHotkeyEvent, runHotkey } from "./hotkey-dispatch";
+import { attachHotkeyLayer, dispatchHotkeyEvent, runHotkey, runMenuHotkey } from "./hotkey-dispatch";
 
 const detachers: Array<() => void> = [];
 
@@ -105,5 +105,24 @@ describe("hotkey dispatch", () => {
 		detach();
 		window.dispatchEvent(key({ key: "t" }));
 		expect(toggle).not.toHaveBeenCalled();
+	});
+
+	it("routes menu zoom to the canvas without manufacturing a keyboard event", () => {
+		const zoom = vi.fn();
+		attach({ scope: "canvas", handlers: { "canvas.zoom-in": zoom } });
+		expect(runMenuHotkey("canvas.zoom-in")).toBe(true);
+		expect(zoom).toHaveBeenCalledExactlyOnceWith();
+	});
+
+	it("keeps native menu commands behind the same modal boundary as keyboard shortcuts", () => {
+		const zoom = vi.fn();
+		let exporting = true;
+		attach({ scope: "dialog", active: () => exporting, handlers: {} });
+		attach({ scope: "canvas", handlers: { "canvas.zoom-in": zoom } });
+		expect(runMenuHotkey("canvas.zoom-in")).toBe(false);
+		expect(zoom).not.toHaveBeenCalled();
+		exporting = false;
+		expect(runMenuHotkey("canvas.zoom-in")).toBe(true);
+		expect(zoom).toHaveBeenCalledTimes(1);
 	});
 });

@@ -112,6 +112,22 @@ export function runHotkey(id: HotkeyId, event?: KeyboardEvent): boolean {
 	return false;
 }
 
+/** A menu click uses the same handlers, but cannot reach behind a modal surface. */
+export function runMenuHotkey(id: HotkeyId): boolean {
+	for (const scope of SCOPE_PRIORITY) {
+		const up = activeLayers(scope);
+		for (const layer of up) {
+			const handler = layer.handlers[id];
+			if (handler !== undefined) {
+				handler();
+				return true;
+			}
+		}
+		if (up.length > 0 && EXCLUSIVE_SCOPES.has(scope)) return false;
+	}
+	return false;
+}
+
 function onWindowKeyDown(event: KeyboardEvent): void {
 	dispatchHotkeyEvent(event);
 }

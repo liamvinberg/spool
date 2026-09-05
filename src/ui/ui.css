@@ -611,6 +611,22 @@ html {
 	overscroll-behavior-x: none;
 }
 
+/* The Mac window keeps its real traffic lights inside this 44px header. Only
+ * empty header space drags the window; tabs retain their own drag gesture. */
+:root[data-desktop] .app-header {
+	app-region: drag;
+	user-select: none;
+	padding-left: 96px;
+}
+
+:root[data-desktop] .app-header :is(button, nav) {
+	app-region: no-drag;
+}
+
+:root[data-desktop][data-window-fullscreen="true"] .app-header {
+	padding-left: 16px;
+}
+
 /* the look (#282): one color-scheme on :root is the whole switch, because every
  * colour token is a light-dark() pair. The daemon stamps the attribute ahead of
  * first paint from the appearance setting, and the canvas keeps it current. */

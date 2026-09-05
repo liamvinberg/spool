@@ -14,9 +14,10 @@ import {
 } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { desktopBridge } from "./desktop-bridge";
+import { desktopWindow } from "./desktop-window";
 import { ForgetToast } from "./forget-toast";
 import { Home } from "./home";
-import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
+import { attachHotkeyLayer, type HotkeyHandler, runMenuHotkey } from "./hotkey-dispatch";
 import { HotkeySheet } from "./hotkey-sheet";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { EdgeIcon, RibbonMark } from "./icons";
@@ -68,6 +69,7 @@ export function App() {
 	const dismissedLatest = useRef<string | null>(null);
 	/** The Mac app around this window, if there is one; a tab has none. */
 	const bridge = useMemo(() => desktopBridge(), []);
+	const appWindow = useMemo(() => desktopWindow(), []);
 
 	const byRoot = useMemo(() => new Map(projects.map((p) => [p.root, p])), [projects]);
 	const tabs: TabProject[] = useMemo(
@@ -363,6 +365,35 @@ export function App() {
 		});
 	}, [openSettings]);
 
+	useEffect(() => {
+		return appWindow?.onCommand((command) => {
+			switch (command) {
+				case "app.open-project":
+					setSettingsOpen(false);
+					setKeysOpen(false);
+					setPicking(true);
+					break;
+				case "app.settings":
+					setPicking(false);
+					openSettings();
+					break;
+				case "app.help":
+					setPicking(false);
+					setSettingsOpen(false);
+					setKeysOpen(true);
+					break;
+				default:
+					runMenuHotkey(command);
+			}
+		});
+	}, [appWindow, openSettings]);
+
+	const canvasActive = focusedTab !== undefined && chrome !== null && !picking && !keysOpen && !settingsOpen;
+	useEffect(() => {
+		appWindow?.setCanvasActive(canvasActive);
+		return () => appWindow?.setCanvasActive(false);
+	}, [appWindow, canvasActive]);
+
 	// leaving the page mid-toast: the staged forget still happens
 	useEffect(() => {
 		const flush = () => {
@@ -380,7 +411,7 @@ export function App() {
 
 	return (
 		<div className="flex h-full flex-col bg-bg">
-			<header className="relative z-20 flex h-11 shrink-0 items-center justify-between border-border border-b bg-bg px-4">
+			<header className="app-header relative z-20 flex h-11 shrink-0 items-center justify-between border-border border-b bg-bg px-4">
 				<div className="flex h-full items-center gap-5">
 					<button
 						type="button"
