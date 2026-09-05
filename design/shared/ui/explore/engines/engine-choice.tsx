@@ -3,6 +3,14 @@ import { type ClaudeModel, type Effort, useModels } from "shared/lib/spool/agent
 import type { PlayEntry } from "shared/lib/spool/turn-play";
 import { cn } from "shared/lib/utils";
 import { FrameThumb } from "shared/ui/explore/agent/play-field";
+import { EngineFooter } from "shared/ui/explore/engines/engine-footer";
+import {
+	LoginPanel,
+	type LoginSeed,
+	LoginSimulation,
+	type LoginTake,
+	useLoginPrototype,
+} from "shared/ui/explore/engines/login-flow";
 import { CanvasChrome } from "shared/ui/spool/canvas-chrome";
 import { MenuItem } from "shared/ui/spool/context-menu";
 import { ChevronIcon, PlusIcon } from "shared/ui/spool/icons";
@@ -15,7 +23,7 @@ import { ThreadMark } from "shared/ui/spool/thread-mark";
  * Engine selections reuse ModelRow; new-thread actions reuse MenuItem; the model
  * and effort control is ModelMenu itself. No account or engine is called.
  */
-export type EngineTake = "foot" | "plate" | "start";
+export type EngineTake = "foot" | "plate" | "start" | "combined";
 export type ChoiceState = "new" | "choosing" | "thread";
 type Engine = "spool" | "claude";
 type Thread = {
@@ -57,7 +65,12 @@ const BUNDLED_MODELS: readonly ClaudeModel[] = [
 const QUIET = "font-mono text-2xs leading-3";
 const REPLY = "The confirmation sits in the middle. The order number and email note stay underneath.";
 const HISTORY: readonly PlayEntry[] = [
-	{ key: "ask", kind: "user", text: "Make the receipt easier to read.", context: "receipt" },
+	{
+		key: "ask",
+		kind: "user",
+		text: "Make the receipt easier to read.",
+		context: "receipt",
+	},
 	{
 		key: "read",
 		kind: "line",
@@ -101,23 +114,71 @@ function makeThread(id: number, engine: Engine): Thread {
 	};
 }
 
-export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?: ChoiceState }) {
+export function EngineChoice({
+	take,
+	state = "new",
+	login: loginSpec,
+}: {
+	take: EngineTake;
+	state?: ChoiceState;
+	login?: { take: LoginTake; seed: LoginSeed };
+}) {
 	const claudeModels = useModels();
+	const login = useLoginPrototype(loginSpec?.seed, loginSpec === undefined);
+	const loginTake = loginSpec?.take ?? "popover";
 	const existing: Thread = {
-		...makeThread(1, "claude"),
+		...makeThread(1, loginSpec === undefined ? "claude" : "spool"),
+		model: loginSpec === undefined ? "default" : "chatgpt/gpt-5.4",
 		name: "Make the receipt easier to read.",
 		entries: HISTORY,
 		started: true,
+		draft: loginSpec === undefined ? "" : "Give the receipt a little more breathing room.",
 	};
 	const [threads, setThreads] = useState<readonly Thread[]>(
-		state === "thread" ? [existing] : [existing, makeThread(2, "spool")],
+		state === "thread"
+			? [existing]
+			: [
+					existing,
+					{
+						...makeThread(2, "spool"),
+						draft: loginSpec === undefined ? "" : "Make the receipt easier to read.",
+					},
+				],
 	);
 	const [active, setActive] = useState(state === "thread" ? 1 : 2);
-	const [remembered, setRemembered] = useState<Engine>(state === "thread" ? "claude" : "spool");
+	const [remembered, setRemembered] = useState<Engine>(state === "thread" ? existing.engine : "spool");
 	const [menu, setMenu] = useState<"engine" | "threads" | null>(state === "choosing" ? "engine" : null);
 	const [over, setOver] = useState<Engine | null>(null);
 	const current = threads.find((thread) => thread.id === active) ?? existing;
-	const models = current.engine === "spool" ? BUNDLED_MODELS : claudeModels;
+	const bundled =
+		take === "combined"
+			? login.accounts.flatMap((account) => {
+					// Layout specimens, not a maintained model catalog. The host supplies offers.
+					if (account === "chatgpt" || account === "openai")
+						return BUNDLED_MODELS.map((model) => ({
+							...model,
+							value: `${account}/${model.value}`,
+							description: account === "chatgpt" ? model.description : "Uses your OpenAI API key.",
+						}));
+					const name =
+						account === "anthropic" ? "Claude Sonnet 4.6" : account === "google" ? "Gemini 3.1 Pro" : "Grok 4";
+					return [
+						{
+							value: `${account}/model`,
+							resolvedModel: `${account}/model`,
+							displayName: name,
+							description: `Uses your ${account === "grok" ? "Grok account" : `${account} API key`}.`,
+							supportsEffort: false,
+							supportedEffortLevels: [],
+						} satisfies ClaudeModel,
+					];
+				})
+			: BUNDLED_MODELS;
+	const models = current.engine === "spool" ? bundled : claudeModels;
+	const modelValue =
+		(current.started && current.model.includes("/")) || models.some((model) => model.value === current.model)
+			? current.model
+			: (models[0]?.value ?? current.model);
 	const locked = current.started;
 	const patch = (values: Partial<Thread>) =>
 		setThreads((all) => all.map((thread) => (thread.id === active ? { ...thread, ...values } : thread)));
@@ -127,6 +188,7 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 	};
 	const toggle = (next: typeof menu) => show(menu === next ? null : next);
 	const start = (engine: Engine) => {
+		login.close();
 		const id = Math.max(...threads.map((thread) => thread.id)) + 1;
 		setThreads((all) => [...all, makeThread(id, engine)]);
 		setActive(id);
@@ -135,18 +197,34 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 	const choose = (engine: Engine) => {
 		setRemembered(engine);
 		if (take === "start" || locked) start(engine);
-		else patch({ engine, model: engine === "spool" ? "gpt-5.4" : "default", effort: "high" });
+		else
+			patch({
+				engine,
+				model: engine === "spool" ? "gpt-5.4" : "default",
+				effort: "high",
+			});
 		show(null);
 	};
 	const send = (text: string) => {
+		if (take === "combined" && current.engine === "spool" && !models.some((model) => model.value === modelValue)) {
+			patch({ draft: text });
+			login.open();
+			show(null);
+			return;
+		}
 		patch({
 			started: true,
+			model: modelValue,
 			name: current.started ? current.name : text,
 			draft: "",
 			entries: [
 				...current.entries,
 				{ key: `user-${current.entries.length}`, kind: "user", text },
-				{ key: `note-${current.entries.length}`, kind: "note", text: `sent with ${NAMES[current.engine]}` },
+				{
+					key: `note-${current.entries.length}`,
+					kind: "note",
+					text: `sent with ${NAMES[current.engine]}`,
+				},
 			],
 		});
 		show(null);
@@ -251,7 +329,7 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 			{take === "plate" ? (
 				<div className="flex h-[34px] items-center border-border border-b px-3.5">{engineTrigger}</div>
 			) : null}
-			{menu === "engine" && take !== "foot" ? (
+			{menu === "engine" && (take === "plate" || take === "start") ? (
 				<div
 					className={cn(
 						"absolute top-full mt-1 animate-menu-in",
@@ -295,42 +373,83 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 			) : null}
 		</div>
 	);
-	const footer = (
-		<div className="relative flex min-w-0 flex-1 items-center gap-2.5">
-			{take === "foot" ? (
-				<>
-					{engineTrigger}
-					<span className="text-muted/30">·</span>
-				</>
-			) : null}
-			{/* The shipped menu anchors to the footer, not to a shrinking model name.
-			 * Scope that geometry here while using the existing component unchanged. */}
-			<span data-model-control="" className="flex min-w-0 [&>span]:static [&>span>div]:max-w-full">
-				<ModelMenu
-					key={`${active}:${current.engine}:${menu ?? "none"}`}
-					models={models}
-					state={{ engine: current.engine, value: current.model, effort: current.effort }}
-					onPick={(next) => {
-						const value = next.value ?? current.model;
-						const levels = models.find((model) => model.value === value)?.supportedEffortLevels ?? [];
-						const effort =
-							next.effort ?? (levels.includes(current.effort) ? current.effort : (levels[0] ?? "high"));
-						patch({ model: value, effort });
-					}}
-				/>
-			</span>
-			{menu === "engine" && take === "foot" ? (
-				<div className="absolute bottom-full left-0 z-30 mb-2 w-[300px] max-w-full animate-agent-menu-in">
-					{picker}
-				</div>
-			) : null}
-		</div>
-	);
+	const footer =
+		take === "combined" ? (
+			<EngineFooter
+				key={`${active}:${current.engine}`}
+				engine={current.engine}
+				model={modelValue}
+				effort={current.effort}
+				models={models}
+				started={locked}
+				open={menu === "engine"}
+				onToggle={() => {
+					login.close();
+					toggle("engine");
+				}}
+				onEngine={(engine) => {
+					choose(engine);
+					if (!locked) setMenu("engine");
+				}}
+				onModel={(model) => {
+					const levels = models.find((entry) => entry.value === model)?.supportedEffortLevels ?? [];
+					patch({
+						model,
+						effort: levels.includes(current.effort) ? current.effort : (levels[0] ?? "high"),
+					});
+					show(null);
+				}}
+				onEffort={(effort) => patch({ effort })}
+				onConnect={() => {
+					show(null);
+					login.open();
+				}}
+			/>
+		) : (
+			<div className="relative flex min-w-0 flex-1 items-center gap-2.5">
+				{take === "foot" ? (
+					<>
+						{engineTrigger}
+						<span className="text-muted/30">·</span>
+					</>
+				) : null}
+				{/* The shipped menu anchors to the footer, not to a shrinking model name.
+				 * Scope that geometry here while using the existing component unchanged. */}
+				<span data-model-control="" className="flex min-w-0 [&>span]:static [&>span>div]:max-w-full">
+					<ModelMenu
+						key={`${active}:${current.engine}:${menu ?? "none"}`}
+						models={models}
+						state={{
+							engine: current.engine,
+							value: current.model,
+							effort: current.effort,
+						}}
+						onPick={(next) => {
+							const value = next.value ?? current.model;
+							const levels = models.find((model) => model.value === value)?.supportedEffortLevels ?? [];
+							const effort =
+								next.effort ?? (levels.includes(current.effort) ? current.effort : (levels[0] ?? "high"));
+							patch({ model: value, effort });
+						}}
+					/>
+				</span>
+				{menu === "engine" && take === "foot" ? (
+					<div className="absolute bottom-full left-0 z-30 mb-2 w-[300px] max-w-full animate-agent-menu-in">
+						{picker}
+					</div>
+				) : null}
+			</div>
+		);
 	return (
 		<SpoolShell activeTab="kaffe" zoom="64%">
 			<CanvasChrome
 				pages={[
-					{ name: "app", frames: ["cart", "menu", "receipt"], active: true, open: true },
+					{
+						name: "app",
+						frames: ["cart", "menu", "receipt"],
+						active: true,
+						open: true,
+					},
 					{ name: "site", frames: [] },
 				]}
 				selected="receipt"
@@ -341,11 +460,16 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 						data-engine-prototype={take}
 						data-active-engine={current.engine}
 						data-thread-started={locked}
+						data-model={modelValue}
 						className="relative flex h-full min-w-0 flex-col"
 						onKeyDownCapture={(event) => {
 							if (event.key === "Escape" && menu !== null) {
 								event.stopPropagation();
 								show(null);
+							}
+							if (event.key === "Escape" && login.view !== null) {
+								event.stopPropagation();
+								login.close();
 							}
 						}}
 					>
@@ -363,6 +487,11 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 							entries={current.entries}
 							phase="idle"
 							nav={plate}
+							header={
+								take === "combined" && loginTake === "rail" ? (
+									<LoginPanel login={login} take={loginTake} />
+								) : undefined
+							}
 							say="read"
 							ask="log"
 							shot="line"
@@ -384,6 +513,11 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 								},
 							]}
 						/>
+						{take === "combined" && login.view !== null && loginTake === "popover" ? (
+							<div className="absolute right-3.5 bottom-[42px] left-3.5 z-40 animate-agent-menu-in">
+								<LoginPanel login={login} take={loginTake} />
+							</div>
+						) : null}
 					</div>
 				}
 			>
@@ -391,6 +525,24 @@ export function EngineChoice({ take, state = "new" }: { take: EngineTake; state?
 					<CanvasFrame name="cart" />
 					<CanvasFrame name="receipt" selected />
 				</div>
+				{take === "combined" && login.view !== null && loginTake === "dialog" ? (
+					<div
+						className="absolute inset-0 z-50 flex items-center justify-center bg-bg/55"
+						role="dialog"
+						aria-modal="true"
+						aria-label="Connect an account"
+						onKeyDown={(event) => {
+							if (event.key === "Escape") login.close();
+						}}
+					>
+						<div className="w-[380px]">
+							<LoginPanel login={login} take={loginTake} />
+						</div>
+					</div>
+				) : null}
+				{take === "combined" && (loginSpec !== undefined || login.view !== null) ? (
+					<LoginSimulation login={login} />
+				) : null}
 			</CanvasChrome>
 		</SpoolShell>
 	);
