@@ -10,7 +10,7 @@ import { SpoolShell } from "shared/ui/spool/shell";
  * contextual editing, authored examples on an ordinary page, projected exports.
  * Changes are in memory. The source addresses and usage index are fixtures.
  * Shared primitives really propagate through one context; no source writer or
- * crop extraction is implemented. See docs/research/shared-library-second-pass.md.
+ * crop extraction is implemented.
  */
 type Take = "context" | "examples" | "catalog";
 type Place = "booking" | "system" | "library" | "account";

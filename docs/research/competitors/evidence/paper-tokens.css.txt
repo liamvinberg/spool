@@ -1,4 +1,0 @@
-:root {
-  --color-accent: #2457E6;
-  --spacing-card: 32px;
-}

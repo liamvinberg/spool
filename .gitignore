@@ -10,6 +10,5 @@ dist/
 design/shared/captures/
 
 # Maintainer-local agent context. Never ships.
-.claude/local.md
 .claude/settings.local.json
 .codex/
