@@ -313,7 +313,7 @@
 	inset: 0;
 	white-space: nowrap;
 	transition:
-		opacity 140ms var(--ct-ease),
+		opacity 70ms var(--ct-ease),
 		transform 180ms var(--ct-ease);
 }
 .ct-word-ready {
@@ -334,6 +334,9 @@
 .ct-copy[data-status="copied"] .ct-word-done {
 	opacity: 1;
 	transform: translateY(0);
+	transition:
+		opacity 130ms var(--ct-ease) 70ms,
+		transform 180ms var(--ct-ease);
 }
 .ct-copy-icon {
 	min-width: 36px;
@@ -406,6 +409,10 @@
 	opacity: 1;
 	transform: translate(-50%, 0);
 	transition-delay: 0ms;
+}
+.ct-tool[aria-expanded="true"] > .ct-tooltip {
+	opacity: 0;
+	transition: none;
 }
 .ct-dock-anchor {
 	position: absolute;
