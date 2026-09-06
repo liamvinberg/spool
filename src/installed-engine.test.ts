@@ -347,8 +347,8 @@ it("completes a deterministic journey through the clean installed host and deliv
 	await expect.poll(() => dialog.textContent()).toContain("OpenAI connected");
 	await dialog.getByRole("button", { name: "Done", exact: true }).click();
 	expect(await field.inputValue()).toBe("retain canceled draft");
-	await rail.getByRole("button", { name: "Choose engine and model" }).click();
-	await page.getByRole("button", { name: "All models", exact: true }).click();
+	await rail.getByRole("button", { name: "Choose model" }).click();
+	await page.getByRole("button", { name: "Find a model…", exact: true }).click();
 	await page.locator('[data-agent-model-row="Installed cached model"]').waitFor();
 	expect(await page.locator('[data-agent-model-row="Rejected endpoint"]').count()).toBe(0);
 	await page.locator('[data-agent-model-row="Installed cached model"]').click();
@@ -523,7 +523,8 @@ try {
 	await settled();
 	expect(calls()).toContain("Put it beside the image.");
 	// A fresh conversation inherits no runtime grants. Opening its menu grants nothing.
-	await rail.getByRole("button", { name: "New thread", exact: true }).click();
+	await rail.getByRole("button", { name: "New chat", exact: true }).click();
+	await rail.getByRole("button", { name: "New chat with spool" }).click();
 	await send([bash("printf bypass > bypass", { unsandboxed: true })]);
 	await open.waitFor();
 	await rail.locator("[data-permission-trigger]").click();
@@ -571,8 +572,8 @@ try {
 	hostPid = childHost(daemonPid) ?? 0;
 	await attachTransport(hostPid);
 	expect(calls()).toBe(beforeRestart);
-	await rail.getByRole("button", { name: "Choose engine and model" }).click();
-	await page.getByRole("button", { name: "All models", exact: true }).click();
+	await rail.getByRole("button", { name: "Choose model" }).click();
+	await page.getByRole("button", { name: "Find a model…", exact: true }).click();
 	await page.locator('[data-agent-model-row="Installed cached model"]').waitFor();
 	await page.keyboard.press("Escape");
 	await field.fill("Continue after the stopped host.");
@@ -723,8 +724,8 @@ try {
 	expect(hostPid).not.toBe(previousHost);
 	const reopenedRuntime = await attachTransport(hostPid);
 	if (appPath) expect(reopenedRuntime).toMatchObject({ executable: realpathSync(executable), electron: "43.4.1" });
-	await reopened.locator("[data-agent-rail]").getByRole("button", { name: "Choose engine and model" }).click();
-	await reopened.getByRole("button", { name: "All models", exact: true }).click();
+	await reopened.locator("[data-agent-rail]").getByRole("button", { name: "Choose model" }).click();
+	await reopened.getByRole("button", { name: "Find a model…", exact: true }).click();
 	await reopened.locator('[data-agent-model-row="Installed refreshed model"]').waitFor();
 	await reopened.keyboard.press("Escape");
 	expect(calls()).toBe(beforeReopen);

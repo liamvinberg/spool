@@ -1,14 +1,15 @@
 import { createContext, memo, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
+import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { AgentLimit } from "../../daemon/agent-events";
-import { fetchAgentInstalled, type SelectionEntry } from "../api";
+import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
-import { AgentAccountDialog } from "./agent-account";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
-import { limitReadout, resetsIn } from "./agent-limit";
-import { type AgentModelDeck, menuLongest, menuSays } from "./agent-model";
+import { AgentChoice } from "./agent-choice";
+import type { AgentModelDeck } from "./agent-model";
+import { AgentModelPicker } from "./agent-model-picker";
 import { type PermissionDeck, PermissionMenu } from "./agent-permissions";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
@@ -24,9 +25,7 @@ import {
 	duration,
 	type RowState,
 } from "./agent-transcript";
-import { MenuItem } from "./context-menu";
 import { ageOf } from "./frame-find";
-import { favoriteModels, ModelFavorite, ModelSearch, useModelFavorites } from "./model-favorites";
 import { ChevronIcon, PanelCaret } from "./sidebar";
 import { useStillness } from "./stillness";
 
@@ -148,7 +147,7 @@ export interface Threads {
 	/** the ✕ in the flyout: it leaves the column, and neither the session nor the picture goes */
 	readonly onClose: (id: string) => void;
 	/** the plus that leads the column */
-	readonly onNew: () => void;
+	readonly onNew: (engine?: AgentEngineId) => void;
 }
 
 /**
@@ -249,7 +248,7 @@ export function AgentRail({
 }) {
 	/** how many sends this rail has watched go out, which is the log's cue to follow again */
 	const [spoke, setSpoke] = useState(0);
-	const [footerMenu, setFooterMenu] = useState<"models" | "permissions" | null>(null);
+	const [footerMenu, setFooterMenu] = useState<"models" | "permissions" | "agent" | "new" | null>(null);
 	/** the clock read when the thread list was dropped over the log, or null while it is shut */
 	const [listing, setListing] = useState<number | null>(null);
 	/**
@@ -361,7 +360,20 @@ export function AgentRail({
 						<div className="flex h-full min-w-[200px] flex-col">
 							{/* the plate leads the shelf, because it says which thread everything under it
 					    belongs to, and it is where the others are reached from */}
-							<ThreadPlate threads={threads} listing={listing} onList={setListing} />
+							<ThreadPlate
+								threads={threads}
+								model={model}
+								listing={listing}
+								onList={(at) => {
+									setFooterMenu(null);
+									setListing(at);
+								}}
+								menu={footerMenu === "agent" || footerMenu === "new" ? footerMenu : null}
+								onMenu={(menu) => {
+									setListing(null);
+									setFooterMenu(menu);
+								}}
+							/>
 							{/* the list drops over the shelf and the log together, so it hangs off the plate
 					    whatever the shelf is carrying */}
 							<div className="relative flex min-h-0 flex-1 flex-col">
@@ -375,6 +387,7 @@ export function AgentRail({
 									afterLog={
 										model.engine === undefined || !(install.missing || login.out || login.recovery) ? null : (
 											<RecoveryView
+												onNew={threads.onNew}
 												install={install}
 												login={login}
 												model={model}
@@ -468,49 +481,61 @@ export function AgentRail({
  */
 function ThreadPlate({
 	threads,
+	model,
+	menu,
+	onMenu,
 	listing,
 	onList,
 }: {
 	threads: Threads;
+	model: AgentModelDeck;
+	menu: "agent" | "new" | null;
+	onMenu: (menu: "agent" | "new" | null) => void;
 	listing: number | null;
 	onList: (at: number | null) => void;
 }) {
 	const { list, open, onNew } = threads;
+	const newTrigger = useRef<HTMLButtonElement>(null);
 	const name = list.find((thread) => thread.id === open)?.name ?? UNSAID;
 	const elsewhere = list.filter((thread) => thread.id !== open && thread.life !== "read");
 	const listed = listing !== null;
 	return (
-		<div data-agent-plate="" className="flex h-[34px] shrink-0 items-center gap-1 border-border border-b px-3.5">
-			<button
-				type="button"
-				data-agent-plate-ask=""
-				aria-expanded={listed}
-				onClick={() => onList(listed ? null : Date.now())}
-				className="-ml-1.5 flex h-7 min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150 hover:bg-surface"
-			>
-				<span className={cn("min-w-0 flex-1 truncate type-label", name === UNSAID ? "text-muted" : "text-text")}>
-					{name}
-				</span>
-				{elsewhere.length === 0 ? null : (
-					<span data-agent-elsewhere="" className="flex shrink-0 items-center gap-1">
-						{elsewhere.map((thread) => (
-							<ThreadMark key={thread.id} life={thread.life} />
-						))}
+		<div className="relative z-40 shrink-0 border-border border-b bg-bg">
+			<div data-agent-plate="" className="flex h-11 items-center gap-1 px-3.5">
+				<button
+					type="button"
+					data-agent-plate-ask=""
+					aria-expanded={listed}
+					onClick={() => onList(listed ? null : Date.now())}
+					className="-ml-1.5 flex h-7 min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150 hover:bg-surface"
+				>
+					<span className={cn("min-w-0 flex-1 truncate type-label", name === UNSAID ? "text-muted" : "text-text")}>
+						{name === UNSAID ? "New chat" : name}
 					</span>
-				)}
-				<ChevronIcon open={listed} className="h-2.5 w-2.5 shrink-0 text-muted/45" />
-			</button>
-			<button
-				type="button"
-				aria-label="New thread"
-				onClick={() => {
-					onList(null);
-					onNew();
-				}}
-				className="-mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-150 hover:text-text"
-			>
-				<PlusIcon />
-			</button>
+					{elsewhere.length === 0 ? null : (
+						<span data-agent-elsewhere="" className="flex shrink-0 items-center gap-1">
+							{elsewhere.map((thread) => (
+								<ThreadMark key={thread.id} life={thread.life} />
+							))}
+						</span>
+					)}
+					<ChevronIcon open={listed} className="h-2.5 w-2.5 shrink-0 text-muted/45" />
+				</button>
+				<button
+					type="button"
+					ref={newTrigger}
+					aria-label="New chat"
+					aria-expanded={menu === "new"}
+					onClick={() => {
+						onList(null);
+						onMenu(menu === "new" ? null : "new");
+					}}
+					className="-mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-150 hover:text-text"
+				>
+					<PlusIcon />
+				</button>
+			</div>
+			<AgentChoice model={model} menu={menu} onMenu={onMenu} onNew={onNew} newTrigger={newTrigger} />
 		</div>
 	);
 }
@@ -2085,8 +2110,8 @@ function Composer({
 	onAnswer,
 }: {
 	permissions: PermissionDeck | undefined;
-	menu: "models" | "permissions" | null;
-	onMenu: (menu: "models" | "permissions" | null) => void;
+	menu: "models" | "permissions" | "agent" | "new" | null;
+	onMenu: (menu: "models" | "permissions" | "agent" | "new" | null) => void;
 	phase: TurnPhase;
 	/** how long the request now out has been silent, which is all the stroke reads (#231) */
 	waited: number;
@@ -2134,6 +2159,7 @@ function Composer({
 }) {
 	const field = useRef<HTMLTextAreaElement>(null);
 	const permissionTrigger = useRef<HTMLButtonElement>(null);
+	const preparing = useRef(false);
 	/*
 	 * A stop is offered against every turn that is still a process (#165, #180, #234).
 	 *
@@ -2158,16 +2184,24 @@ function Composer({
 		if (element !== null) resize(element);
 	}, [draft]);
 
-	const take = (text: string) => {
-		if (!running() && model.engine === "spool" && model.offer.models.length === 0) {
-			model.connect?.();
-			return false;
-		}
+	const take = async (text: string) => {
+		if (preparing.current) return false;
 		// captured here rather than read later: the chips that were up are the bytes
 		// that went out, and the line under the words has to say so afterwards. For a
 		// message the queue holds that is the whole contract, because it fires against a
 		// canvas the hands have moved on from
 		const sent: AgentSent = { context: contextOf(strip), attached, selection: pointing.entries };
+		if (!running() && model.engine === "spool") {
+			preparing.current = true;
+			const offer = model.loading ? await model.ready?.() : model.offer;
+			preparing.current = false;
+			// Changing chats or editing the draft while it loads cancels this pending press.
+			if (!offer || field.current?.value !== draft) return false;
+			if (offer.models.length === 0) {
+				model.connect?.();
+				return false;
+			}
+		}
 		/*
 		 * Asked of the turn itself rather than of the last render (#234).
 		 *
@@ -2269,7 +2303,9 @@ function Composer({
 							return;
 						}
 						const box = event.currentTarget;
-						if (take(text)) box.style.height = `${MIN_H}px`;
+						void take(text).then((took) => {
+							if (took) box.style.height = `${MIN_H}px`;
+						});
 					}}
 					className="w-full resize-none bg-transparent text-text outline-none placeholder:text-muted type-body"
 					style={{ height: MIN_H }}
@@ -2286,6 +2322,7 @@ function Composer({
 						model={model}
 						limit={limit}
 						open={menu === "models"}
+						interrupted={menu !== null && menu !== "models"}
 						onOpen={(next) => onMenu(next ? "models" : null)}
 					/>
 					{cutting ? <StopButton onStop={onStop} /> : null}
@@ -2342,445 +2379,17 @@ function Composer({
 	);
 }
 
-/* ---------- which machine is answering (#118, #122, #184, #186, #199) ----------
- * The readout, made a button. Five rows, because `list_models` offered five: no
- * grouping, no width switch and no policy section, because the reply already resolved
- * all of that and every one of those would have been spool inventing structure it
- * would then have to keep in sync.
- *
- * Nothing in here knows what a model is called. The names, the sentences and the
- * effort levels all arrive from the binary at runtime, and a press is a shortcut for
- * `/model haiku` rather than a second source of truth — so the readout follows the
- * reply and never the press, which is what keeps it from ever being wrong.
- *
- * None of it takes the thread accent. Chip and outline are one object out on the
- * canvas and they are the only colour on screen, so a control about which machine is
- * answering stays colourless like everything else the agent does. */
-
-/** the footer's own voice, so the line reads as one line */
 const QUIET = "type-detail";
 
-/**
- * How wide the panel wants to be, which is not always what it gets.
- *
- * 300 is what the menu was drawn at and what the sentence slot's reserve is measured
- * against. It is not a width that always fits: the rail drags down to 200, which leaves
- * 171px of composer, so the panel is clamped to the row it hangs off and gives way like
- * everything else in this footer. Wanting more than there is and being cut to fit is the
- * same act the model name makes one line below.
- */
-const MENU_W = 300;
-
-function ModelMenu({
-	model,
-	limit,
-	open,
-	onOpen,
-}: {
+function ModelMenu(props: {
 	model: AgentModelDeck;
 	limit: AgentLimit | null;
 	open: boolean;
 	onOpen: (open: boolean) => void;
+	interrupted: boolean;
 }) {
-	const recoveryActions = useContext(RecoveryActions);
-	const [claudeInstalled, setClaudeInstalled] = useState<boolean | null>(null);
-	useEffect(() => {
-		if (!recoveryActions?.modelRequest) return;
-		setAll(true);
-	}, [recoveryActions?.modelRequest]);
-	useEffect(() => {
-		let gone = false;
-		if (open && model.project)
-			void fetchAgentInstalled(model.project, "claude").then((installed) => {
-				if (!gone) setClaudeInstalled(installed);
-			});
-		return () => {
-			gone = true;
-		};
-	}, [open, model.project]);
-	const trigger = useRef<HTMLButtonElement>(null);
-	const panel = useRef<HTMLDivElement>(null);
-	/**
-	 * What the one slot is describing, which is one piece of state rather than two.
-	 *
-	 * A model's value and an effort level cannot collide — the levels are a closed set
-	 * the binary names and a model value is an alias like `opus[1m]` — so the slot that
-	 * answers both is one slot.
-	 */
-	const [over, setOver] = useState<string | null>(null);
-	const { offer, levels } = model;
-	const favorites = useModelFavorites(model.project ?? "", model.engine ?? "claude");
-	const [all, setAll] = useState(false);
-	const [query, setQuery] = useState("");
-	const compact = model.engine === "spool";
-	const visible = compact
-		? favoriteModels(offer.models, offer.current.value, favorites.values, all, query)
-		: offer.models;
-	const pin = offer.current.pin;
-	const name =
-		offer.models.find((entry) => entry.value === offer.current.value)?.displayName ??
-		offer.current.name ??
-		offer.current.resolved ??
-		"Connect account";
-	const readout =
-		model.engine === undefined ? model.readout : `${model.engine === "spool" ? "spool" : "Claude Code"} · ${name}`;
-	const says =
-		model.engine === "spool"
-			? (offer.models.find((entry) => entry.value === (over ?? offer.current.value))?.description ?? "")
-			: menuSays(offer, over);
-	const longest =
-		model.engine === "spool"
-			? offer.models.reduce(
-					(longest, entry) => (entry.description.length > longest.length ? entry.description : longest),
-					"",
-				)
-			: menuLongest(offer);
-	useEffect(() => {
-		if (open) panel.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-	}, [open]);
-	// read at draw time rather than held: the reset is a clock time inside a day and a
-	// weekday past that, so what it says depends on when it is being read
-	const recovery = recoveryActions?.login.recovery;
-	const reset = resetsIn(recovery?.resetsAt, Date.now());
-	const usage =
-		recovery?.kind === "limit"
-			? `${recovery.account} limit reached${reset ? ` · resets ${reset}` : ""}`
-			: limit === null
-				? null
-				: limitReadout(limit, Date.now());
-
-	const show = (next: boolean) => {
-		onOpen(next);
-		setOver(null);
-		// the answer is the installed binary's, so opening asks again rather than drawing
-		// whatever was true when the rail mounted
-		if (next) model.refresh();
-		else trigger.current?.focus();
-	};
-
-	return (
-		// no `relative` of its own: the panel is positioned against the footer row, so its
-		// width is clamped to the composer rather than to however long the name happens to be
-		<span data-agent-model={model.readout} className="flex min-w-0 flex-1">
-			{model.accountOpen && model.project !== undefined ? (
-				<AgentAccountDialog
-					project={model.project}
-					onClose={() => model.closeAccount?.()}
-					onConnected={model.refresh}
-					renewal={recoveryActions?.login.recovery?.kind === "login" ? recoveryActions.login.recovery : undefined}
-					onAuthenticated={(provider, method) => {
-						const held = recoveryActions?.login.recovery;
-						if (held?.kind === "login" && (!held.offer || held.offer.startsWith(`spool/${provider}/${method}/`)))
-							recoveryActions?.login.retry?.();
-					}}
-				/>
-			) : null}
-			{open ? (
-				<button
-					type="button"
-					aria-label="close the model menu"
-					className="fixed inset-0 z-10 cursor-default"
-					onClick={() => show(false)}
-				/>
-			) : null}
-			<button
-				type="button"
-				ref={trigger}
-				aria-label={model.engine === undefined ? "model" : "Choose engine and model"}
-				title={readout}
-				aria-expanded={open}
-				onClick={() => show(!open)}
-				onKeyDown={(event) => {
-					if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-						event.preventDefault();
-						show(true);
-					}
-				}}
-				className={cn(
-					QUIET,
-					"relative z-30 flex min-w-0 items-center gap-1 transition-colors duration-150",
-					open ? "text-muted" : "text-muted/45 hover:text-muted",
-				)}
-			>
-				{/*
-				 * It truncates, and it never shortens.
-				 *
-				 * The name is the binary's own `displayName`, uncased and unshortened, because
-				 * the moment spool rewrites it spool owns it — and the captured reply is what
-				 * gives that rule teeth. Five rows come back and none of them is `Opus`: there
-				 * is `Default (recommended)` and there is `Opus (1M context)`, both resolving to
-				 * the same model, and the parenthetical is the only thing telling them apart,
-				 * while `/model opus` is accepted and resolves to Opus *without* the 1M window.
-				 * So `Opus · high` here would not be a short name for this machine, it would be
-				 * the correct name of a different one under a transcript this one wrote.
-				 *
-				 * An ellipsis is not that. `Opus (1M cont…` is visibly cut and reads as cut, the
-				 * whole string stays in the DOM, and the full name is one press up in the menu.
-				 */}
-				<span className="min-w-0 truncate">{readout}</span>
-				<ChevronIcon open={open} className="h-2 w-2 shrink-0" />
-			</button>
-			{open ? (
-				// biome-ignore lint/a11y/noStaticElementInteractions: leaving the panel only puts the slot back to describing the model that is set, and a keyboard reader never has a pointed row for it to return from
-				<div
-					ref={panel}
-					data-agent-model-menu=""
-					data-combined-menu={model.engine === undefined ? undefined : ""}
-					onKeyDown={(event) => {
-						if (event.key === "Escape" || event.key === "Tab") {
-							event.preventDefault();
-							event.stopPropagation();
-							show(false);
-							trigger.current?.focus();
-						}
-						if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-							event.preventDefault();
-							const controls = [
-								...(panel.current?.querySelectorAll<HTMLElement>("button:not(:disabled), input") ?? []),
-							];
-							const at =
-								document.activeElement instanceof HTMLElement ? controls.indexOf(document.activeElement) : -1;
-							controls[(at + (event.key === "ArrowDown" ? 1 : controls.length - 1)) % controls.length]?.focus();
-						}
-					}}
-					style={{ width: MENU_W }}
-					// `max-w-full` against the footer row, which is the composer's own width: the
-					// rail drags to a 200 floor with 171px of box, and a fixed 300 would be cut off
-					// by the rail's own `overflow-hidden` rather than fitting inside it
-					className="absolute bottom-full left-0 z-20 mb-2 max-w-full animate-agent-menu-in origin-bottom-left rounded-md border border-border-raised bg-raised p-1.5"
-					onMouseLeave={() => setOver(null)}
-				>
-					{/*
-					 * The window, in here rather than beside the trigger (#122, #184).
-					 *
-					 * #122 chose the footer on one line of the binary's own advice: the remedy for
-					 * running out is a model switch, every time, so the fact should sit next to the
-					 * lever instead of writing out `try /model sonnet`. That argument survives the
-					 * move and is the reason for it — the lever is not the trigger, it is this
-					 * list, and the fact is now inside it.
-					 *
-					 * What forced it is width. The rail is drag-resizable 200–480; at 420 the line
-					 * clipped to `resets…`, and the reset time is half of what the readout is for,
-					 * since ninety-two per cent of a week is a different fact depending on whether
-					 * it comes back Wednesday or in an hour. In here it renders whole at every rail
-					 * width.
-					 *
-					 * It is a fact and not a row, so it takes no row shape and cannot be hovered
-					 * into the sentence slot. It is absent outright until the binary warns — below
-					 * that the payload carries no utilization at all, so there is no gauge to draw.
-					 */}
-					{usage === null || compact ? null : (
-						<>
-							<span
-								data-agent-usage=""
-								className={cn(
-									QUIET,
-									"block px-1.5 pt-1 pb-1.5",
-									// brightness rather than hue: reached comes forward without becoming a
-									// second accent, and a warning stays a peer of the rows below it
-									limit?.status === "rejected" ? "text-text" : "text-muted",
-								)}
-							>
-								{usage}
-							</span>
-							<MenuRule />
-						</>
-					)}
-					{/*
-					 * One line per row, and one sentence for the whole menu (#186).
-					 *
-					 * A row is its name and nothing else, and the slot at the bottom describes
-					 * whatever the cursor is on — a model or an effort level, the same slot either
-					 * way. That kills four complaints with one move. The list stops repeating
-					 * itself, which it did literally: `Default (recommended)` and `Opus (1M
-					 * context)` resolve to the same model and so carried the same sentence, word
-					 * for word, on adjacent rows. Rows stop being ragged, since a description
-					 * wrapped to one line or two depending on where the sentence fell and gave
-					 * five rows five heights. And effort stops being a second shape.
-					 *
-					 * It is not a new idea: the effort row already worked this way and was the only
-					 * part of the menu nobody objected to.
-					 */}
-					{model.engine === undefined ? null : (
-						<>
-							{(["spool", "claude"] as const).map((engine) => (
-								<div key={engine} data-combined-engine={engine}>
-									{model.started && engine !== model.engine ? (
-										<MenuItem
-											label={`New thread with ${engine === "spool" ? "spool" : "Claude Code"}`}
-											onClick={() => {
-												model.onEngine?.(engine);
-												show(false);
-											}}
-										/>
-									) : (
-										<MenuRow
-											label={engine === "spool" ? "spool" : "Claude Code"}
-											via={engine === "claude" && claudeInstalled === false ? "not installed" : undefined}
-											on={engine === model.engine}
-											onOver={() => setOver(null)}
-											onPick={() => {
-												model.onEngine?.(engine);
-												show(false);
-											}}
-										/>
-									)}
-								</div>
-							))}
-							<MenuRule />
-						</>
-					)}
-					{compact ? <ModelSearch query={query} all={all} onQuery={setQuery} onAll={setAll} /> : null}
-					<div className={cn("max-h-[216px] overflow-y-auto", compact && "mt-1")}>
-						{visible.map((entry) => (
-							<div key={entry.value} data-model-offer={entry.value} className="flex items-center gap-0.5">
-								<MenuRow
-									label={entry.displayName}
-									via={entry.connection}
-									on={offer.current.value === entry.value}
-									onOver={() => setOver(entry.value)}
-									onPick={() => {
-										model.choose({ value: entry.value });
-										show(false);
-									}}
-								/>
-								{compact ? (
-									<ModelFavorite
-										model={entry}
-										on={favorites.values.includes(entry.value)}
-										toggle={() => favorites.toggle(entry.value)}
-									/>
-								) : null}
-							</div>
-						))}
-						{compact && visible.length === 0 ? (
-							<p className="px-1.5 py-3 text-base text-muted leading-base">
-								{all ? "No matching models." : "No matching favorites."}
-							</p>
-						) : null}
-					</div>
-					{compact && !all && query.trim() ? (
-						<MenuItem label="Search all models…" onClick={() => setAll(true)} />
-					) : null}
-					{levels.length === 0 || (compact && query.trim()) ? null : (
-						// the block reports the pointer as well as its rows do, because a row the
-						// environment killed reports nothing: a disabled control fires no mouse event,
-						// so the one row you would hover to ask why it is dead had no way to answer
-						// biome-ignore lint/a11y/noStaticElementInteractions: pointing at the block only picks which sentence the one slot shows, and a keyboard reader has no pointer to point with
-						<span onMouseEnter={pin === null ? undefined : () => setOver(pin)}>
-							<MenuRule />
-							{/* effort keeps the menu open on a press: it is a refinement of the model
-							    above it rather than a second decision */}
-							<MenuGroup label="effort" />
-							{levels.map((level) => (
-								<MenuRow
-									key={level}
-									label={level}
-									on={offer.current.effort === level}
-									dead={pin !== null && pin !== level}
-									onOver={() => setOver(level)}
-									onPick={() => model.choose({ effort: level })}
-								/>
-							))}
-						</span>
-					)}
-					{/*
-					 * The slot, reserving the tallest thing it can ever say.
-					 *
-					 * Everything it can say is the binary's own words and they are wildly uneven:
-					 * `max` runs 165 characters against `xhigh`'s 76 and `low`'s 57, and the model
-					 * sentences are longer again. Sized to the longest with the live one drawn over
-					 * it, because the panel opens upward — a line that grew as the cursor crossed a
-					 * row would move the menu's own top edge, and a pointer must never move what it
-					 * is pointing at.
-					 *
-					 * It sits outside the effort block, because a model with no effort levels still
-					 * has a description: haiku reports no levels at all and the control is then
-					 * absent rather than greyed. Its sentence is not.
-					 */}
-
-					{compact ? null : (
-						<p data-agent-model-says={says} className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted")}>
-							<span className="invisible" aria-hidden="true">
-								{longest}
-							</span>
-							<span className="absolute inset-x-1.5 top-1.5">{says}</span>
-						</p>
-					)}
-					{compact && usage !== null ? (
-						<p data-agent-usage="" className="px-1.5 py-2 font-mono text-2xs text-muted leading-4">
-							{usage}
-						</p>
-					) : null}
-					{model.engine === "spool" ? (
-						<>
-							<MenuRule />
-							<MenuItem
-								label="Connect account…"
-								onClick={() => {
-									show(false);
-									model.connect?.();
-								}}
-							/>
-						</>
-					) : null}
-				</div>
-			) : null}
-		</span>
-	);
-}
-
-/**
- * One row: the name, and nothing else on the line.
- *
- * `dead` is the effort the environment holds — measured, an exported
- * `CLAUDE_CODE_EFFORT_LEVEL` refuses an in-session change and names itself in the
- * refusal, so a level nobody can pick is drawn as one nobody can pick rather than as
- * one that silently does nothing.
- */
-function MenuRow({
-	label,
-	via,
-	on,
-	dead = false,
-	onOver,
-	onPick,
-}: {
-	label: string;
-	via?: string | undefined;
-	on: boolean;
-	dead?: boolean;
-	/** the row reports the cursor; the menu owns the one slot that answers it (#186) */
-	onOver: () => void;
-	onPick: () => void;
-}) {
-	return (
-		<button
-			type="button"
-			data-agent-model-row={label}
-			disabled={dead}
-			aria-current={on}
-			onMouseEnter={onOver}
-			onClick={onPick}
-			className={cn(
-				"flex w-full min-w-0 rounded-xs px-1.5 py-1 text-left transition-colors duration-150",
-				dead ? "text-muted/30" : on ? "bg-surface text-text" : "text-text/70 hover:bg-surface/60",
-			)}
-		>
-			<span className="flex w-full min-w-0 items-center gap-2">
-				<span className="min-w-0 flex-1 truncate type-value">{label}</span>
-				{via === undefined ? null : <span className={cn(QUIET, "shrink-0 text-muted")}>{via}</span>}
-			</span>
-		</button>
-	);
-}
-
-function MenuGroup({ label }: { label: string }) {
-	return <span className={cn(QUIET, "block px-1.5 pt-1 pb-1.5 text-muted")}>{label}</span>;
-}
-
-function MenuRule() {
-	return <span className="my-1 block h-px bg-border" />;
+	const recovery = useContext(RecoveryActions);
+	return <AgentModelPicker {...props} login={recovery?.login} modelRequest={recovery?.modelRequest} />;
 }
 
 /**
@@ -3170,11 +2779,13 @@ function RecoveryView({
 	login,
 	model,
 	onModels,
+	onNew,
 }: {
 	install: InstallDeck;
 	login: LoginDeck;
 	model: AgentModelDeck;
 	onModels: () => void;
+	onNew: Threads["onNew"];
 }) {
 	const recovery = login.recovery;
 	const claude = model.engine === "claude";
@@ -3213,7 +2824,7 @@ function RecoveryView({
 					>
 						{install.checking || login.checking ? "checking…" : "check again"}
 					</button>
-					<button type="button" className={action} onClick={() => model.onEngine?.("spool")}>
+					<button type="button" className={action} onClick={() => onNew("spool")}>
 						new thread with spool
 					</button>
 				</div>

@@ -238,7 +238,7 @@ export interface AgentDeck {
 	/** the ✕ on a row: it leaves the list, and neither the session nor the picture goes */
 	readonly onClose: (id: string) => void;
 	/** the plus on the plate */
-	readonly onNew: () => void;
+	readonly onNew: (engine?: AgentEngineId) => void;
 }
 
 /**
@@ -1221,7 +1221,14 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 		[project, start, redraw, handBack],
 	);
 
-	const onNew = useCallback(() => setOpen(start().id), [start]);
+	const onNew = useCallback(
+		(engine?: AgentEngineId) => {
+			const next = start();
+			if (engine !== undefined) next.engine = engine;
+			setOpen(next.id);
+		},
+		[start],
+	);
 
 	/**
 	 * One line in the log for a moment that happened between two turns (#201).
@@ -1293,11 +1300,20 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 	return {
 		engine: here.engine,
 		chooseEngine: (engine) => {
-			if (engine === here.engine) return;
-			preference.current = engine;
-			const next = start();
-			next.engine = engine;
-			setOpen(next.id);
+			const current = threads.current.get(open);
+			// Only the blank chat this choice was opened for can change its agent.
+			if (
+				openRef.current !== open ||
+				current === undefined ||
+				current.engine === engine ||
+				current.restored ||
+				current.streaming ||
+				current.before.length > 0 ||
+				current.events.length > 0
+			)
+				return;
+			current.engine = engine;
+			redraw();
 		},
 		threads: column,
 		open,

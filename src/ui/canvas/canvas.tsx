@@ -474,15 +474,22 @@ export function ProjectCanvas({
 	// to know about it: a frame the turn writes lands as an ordinary `change` event,
 	// so the canvas repaints while the transcript is still arriving.
 	const [preferredEngine, setPreferredEngine] = useState<AgentEngineId>("spool");
+	const enginePreferenceVersion = useRef(0);
 	useEffect(() => {
 		let live = true;
+		const version = ++enginePreferenceVersion.current;
 		void fetchEnginePreference(project).then((engine) => {
-			if (live) setPreferredEngine(engine);
+			if (live && version === enginePreferenceVersion.current) setPreferredEngine(engine);
 		});
 		return () => {
 			live = false;
 		};
 	}, [project]);
+	const rememberEngine = (engine: AgentEngineId) => {
+		enginePreferenceVersion.current += 1;
+		setPreferredEngine(engine);
+		void putSetting("agent.engine", engine, project);
+	};
 	const deck = useAgentThreads(project, preferredEngine);
 	const turn = deck.turn;
 	const permissions = useAgentPermissions(project, deck.open, deck.engine, turn.phase);
@@ -498,12 +505,8 @@ export function ProjectCanvas({
 		...offeredModel,
 		started: turn.entries.length > 0,
 		onEngine: (engine: AgentEngineId) => {
-			void putSetting("agent.engine", engine, project).then((result) => {
-				if (result.ok) {
-					setPreferredEngine(engine);
-					deck.chooseEngine(engine);
-				}
-			});
+			deck.chooseEngine(engine);
+			rememberEngine(engine);
 		},
 	};
 	/**
@@ -4925,7 +4928,11 @@ export function ProjectCanvas({
 							finished: deck.finished,
 							onOpen: deck.onOpen,
 							onClose: deck.onClose,
-							onNew: deck.onNew,
+							onNew: (engine) => {
+								// Typing immediately after + belongs to the new chat, even while settings save.
+								deck.onNew(engine);
+								if (engine !== undefined) rememberEngine(engine);
+							},
 						}}
 						install={install}
 						login={deck.login}

@@ -114,19 +114,13 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	await shot("limits-rail-known");
 	expect(await rail.locator('[data-recovery="limit"]').textContent()).toContain("Try again at");
 	await rail.getByRole("button", { name: "choose model", exact: true }).click();
-	const modelMenu = rail.locator("[data-agent-model-menu]");
+	const modelMenu = rail.locator("[data-agent-model-menu]:not([inert] *)");
 	await modelMenu.waitFor({ state: "visible" });
 	const usage = modelMenu.locator("[data-agent-usage]");
 	await expect.poll(() => usage.textContent()).toContain("OpenAI API key limit reached · resets");
-	await modelMenu.getByRole("button", { name: "high", exact: true }).waitFor({ state: "visible" });
-	await modelMenu.evaluate(async (element) => {
-		await Promise.all(element.getAnimations().map((animation) => animation.finished));
-	});
 	const usageBox = await usage.boundingBox();
-	const effortBox = await modelMenu.getByRole("button", { name: "high", exact: true }).boundingBox();
-	const connectBox = await modelMenu.getByRole("menuitem", { name: "Connect account…", exact: true }).boundingBox();
-	expect(usageBox?.y).toBeGreaterThanOrEqual((effortBox?.y ?? Infinity) + (effortBox?.height ?? 0));
-	expect((usageBox?.y ?? Infinity) + (usageBox?.height ?? 0)).toBeLessThan(connectBox?.y ?? 0);
+	const connectBox = await modelMenu.getByRole("button", { name: "Connect account…", exact: true }).boundingBox();
+	expect(usageBox?.y).toBeGreaterThanOrEqual((connectBox?.y ?? Infinity) + (connectBox?.height ?? 0));
 	await shot("limits-rail-models");
 	// Recovery and permission controls share one footer menu without consuming
 	// the held request or changing the independently saved next draft.
@@ -142,6 +136,8 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	await modelMenu.waitFor({ state: "visible" });
 	await expect.poll(() => usage.textContent()).toContain("OpenAI API key limit reached · resets");
 	expect(await permissionMenu.count()).toBe(0);
+	await modelMenu.press("Escape");
+	await modelMenu.getByRole("button", { name: "Find a model…", exact: true }).waitFor();
 	await modelMenu.press("Escape");
 	await modelMenu.waitFor({ state: "hidden" });
 	failure("429 Rate limit reached");
@@ -193,7 +189,8 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	expect(after[0]?.engine).toBe("spool");
 	expect(after[0]?.session).toEqual(before[0]?.session);
 
-	await rail.getByRole("button", { name: "Choose engine and model", exact: true }).click();
+	await rail.getByRole("button", { name: "Choose model", exact: true }).click();
+	await rail.getByRole("button", { name: "Find a model…", exact: true }).click();
 	await rail.locator('[data-model-offer="spool/openai/api_key/spool-test"] [data-agent-model-row]').click();
 	failure("401 Unauthorized renewed-secret");
 	await field.press("Enter");
@@ -299,7 +296,7 @@ it("keeps Claude setup and login in its own thread through failed checks and exp
 	await page.locator('[data-dock-glyph="agent"]').click();
 	const rail = page.locator("[data-agent-rail]");
 	const field = rail.locator("textarea");
-	const trigger = rail.getByRole("button", { name: "Choose engine and model", exact: true });
+	const trigger = rail.getByRole("button", { name: "Choose agent for this new chat", exact: true });
 	const shot = async (name: string) => {
 		if (process.env.SPOOL_TEST_SHOTS) {
 			mkdirSync(process.env.SPOOL_TEST_SHOTS, { recursive: true });
@@ -307,9 +304,9 @@ it("keeps Claude setup and login in its own thread through failed checks and exp
 		}
 	};
 	await trigger.click();
-	await expect.poll(() => rail.locator('[data-combined-engine="claude"]').textContent()).toContain("not installed");
+	await expect.poll(() => rail.locator('[data-agent-engine="claude"]').textContent()).toContain("Not installed");
 	await shot("claude-rail-choice");
-	await rail.locator('[data-combined-engine="claude"] button').click();
+	await rail.locator('[data-agent-engine="claude"]').click();
 	await rail.locator('[data-recovery="claude"]').waitFor();
 	await shot("claude-rail-missing");
 	expect(await rail.getByRole("link", { name: "Install Claude Code" }).getAttribute("href")).toBe(

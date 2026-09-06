@@ -7,7 +7,7 @@ import { AccountDialog } from "shared/ui/explore/engines/account-dialog";
 import { EngineFooter } from "shared/ui/explore/engines/engine-footer";
 import { LoginSimulation, useLoginPrototype } from "shared/ui/explore/engines/login-flow";
 import { useModelScope } from "shared/ui/explore/engines/model-shortlist";
-import type { PermissionMode } from "shared/ui/explore/engines/permission-menu";
+import type { PermissionMode } from "shared/ui/spool/permission-menu";
 import { CanvasChrome } from "shared/ui/spool/canvas-chrome";
 import { MenuItem } from "shared/ui/spool/context-menu";
 import { ChevronIcon, PlusIcon } from "shared/ui/spool/icons";

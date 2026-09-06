@@ -59,7 +59,7 @@ it("connects through the rendered canvas, preserves image and queued selection, 
 	await page.locator('[data-dock-glyph="agent"]').click();
 	const field = page.locator("[data-agent-rail] textarea");
 	await expect
-		.poll(() => page.getByRole("button", { name: "Choose engine and model" }).textContent())
+		.poll(() => page.getByRole("button", { name: "Choose agent for this new chat" }).textContent())
 		.toContain("spool");
 	await field.fill("keep this draft");
 	await field.press("Enter");
@@ -81,11 +81,13 @@ it("connects through the rendered canvas, preserves image and queued selection, 
 	await shot("login-list-connected");
 	await dialog.getByRole("button", { name: "Done", exact: true }).click();
 	expect(await field.inputValue()).toBe("keep this draft");
-	await page.getByRole("button", { name: "Choose engine and model" }).click();
-	await page.getByRole("button", { name: "All models", exact: true }).click();
-	await expect.poll(() => page.locator("[data-combined-menu]").textContent()).toContain("Test image model");
+	await page.getByRole("button", { name: "Choose model" }).click();
+	await page.getByRole("button", { name: "Find a model…", exact: true }).click();
+	await expect
+		.poll(() => page.locator("[data-combined-menu]:not([inert] *)").textContent())
+		.toContain("Test image model");
 	await shot("engine-combined-choosing");
-	await page.locator('[data-agent-model-row="Test image model"]').click();
+	await page.locator('[data-agent-model-row="Test image model"]:not([inert] *)').click();
 	const frameBox = await page.locator('iframe[title="home"]').boundingBox();
 	if (frameBox === null) throw new Error("Missing frame");
 	await page.mouse.click(frameBox.x + 30, frameBox.y + 30);
@@ -147,18 +149,19 @@ it("connects through the rendered canvas, preserves image and queued selection, 
 	expect(readThreads(project.spoolDir, project.root)[0]?.session).toEqual(stored.session);
 	await shot("engine-combined-thread");
 	expect(await page.locator("[data-agent-rail]").textContent()).not.toContain("fixture-key");
-	await page.getByRole("button", { name: "Choose engine and model" }).click();
-	await shot("engine-combined-thread-choosing");
-	await page.getByRole("menuitem", { name: "New thread with Claude Code" }).click();
+	await page.getByRole("button", { name: "New chat", exact: true }).click();
+	await shot("engine-new-chat-choosing");
+	await page.getByRole("button", { name: "New chat with Claude Code" }).click();
 	await expect
-		.poll(() => page.getByRole("button", { name: "Choose engine and model" }).textContent())
+		.poll(() => page.getByRole("button", { name: "Choose agent for this new chat" }).textContent())
 		.toContain("Claude Code");
 	expect(readThreads(project.spoolDir, project.root)[0]?.session).toEqual(stored.session);
 	await page.reload();
 	await expect.poll(() => page.locator("[data-agent-rail]").textContent()).toContain("Saved reply 2.");
-	await page.getByRole("button", { name: "New thread", exact: true }).click();
+	await page.getByRole("button", { name: "New chat", exact: true }).click();
+	await page.getByRole("button", { name: "New chat with Claude Code" }).click();
 	await expect
-		.poll(() => page.getByRole("button", { name: "Choose engine and model" }).textContent())
+		.poll(() => page.getByRole("button", { name: "Choose agent for this new chat" }).textContent())
 		.toContain("Claude Code");
 	expect(calls()).toHaveLength(2);
 });

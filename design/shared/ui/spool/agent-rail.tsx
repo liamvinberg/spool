@@ -104,7 +104,7 @@ const AS_ROW: Record<ToolState | "error", RowState> = {
 	error: "failed",
 };
 
-export function StateMark({ state, className }: { state: ToolState | "error" | RowState; className?: string }) {
+export function StateMark({ state, className }: { state: ToolState | "error" | RowState; className?: string | undefined }) {
 	const row: RowState = state in AS_ROW ? AS_ROW[state as ToolState | "error"] : (state as RowState);
 	const turning = row === "running";
 	const ringed = turning || row === "pending";

@@ -3102,7 +3102,10 @@ const closeThread = async (host: HTMLElement, name: string) => {
 	await press(host.querySelector(`[data-agent-thread-close="${name}"]`));
 };
 
-const newThread = (host: HTMLElement) => press(host.querySelector('[aria-label="New thread"]'));
+const newThread = async (host: HTMLElement, engine = "claude") => {
+	await press(host.querySelector('[aria-label="New chat"]'));
+	await press(host.querySelector(`[data-agent-engine="${engine}"]`));
+};
 
 /** the words in the log, which is how a test says whose transcript is on screen */
 const log = (host: HTMLElement) => host.querySelector("[data-agent-log]")?.textContent ?? "";
@@ -3185,11 +3188,11 @@ describe("the thread plate", () => {
 		const canvas = mount();
 		await canvas.render();
 
-		expect(nameplate(canvas.host)).toBe("new thread");
+		expect(nameplate(canvas.host)).toBe("New chat");
 		expect(threadList(canvas.host)).toBeNull();
 		expect(plateAsk(canvas.host)?.getAttribute("aria-expanded")).toBe("false");
 		// the plate ends on the plus: the way to a new thread is on the line that names this one
-		expect(plate(canvas.host)?.querySelector('button[aria-label="New thread"]')).not.toBeNull();
+		expect(plate(canvas.host)?.querySelector('button[aria-label="New chat"]')).not.toBeNull();
 		// and nothing else moves in the panel while nothing is moving elsewhere
 		expect(elsewhere(canvas.host)).toEqual([]);
 	});
@@ -3204,7 +3207,7 @@ describe("the thread plate", () => {
 		expect(await cells(canvas.host)).toHaveLength(count);
 		expect(await cells(canvas.host)).toContain(`ask ${count - 1}`);
 		expect(await cells(canvas.host)).toContain("ask 0");
-		expect(plate(canvas.host)?.className).toContain("h-[34px]");
+		expect(plate(canvas.host)?.className).toContain("h-11");
 		expect(rail(canvas.host)?.style.width).toBe("420px");
 	});
 
@@ -3354,7 +3357,7 @@ describe("the thread plate", () => {
 
 		// the list goes with the press, because the thread it was about has changed
 		expect(threadList(canvas.host)).toBeNull();
-		expect(nameplate(canvas.host)).toBe("new thread");
+		expect(nameplate(canvas.host)).toBe("New chat");
 		expect(await cells(canvas.host)).toEqual(["new thread", "tighten the header"]);
 	});
 
@@ -3857,22 +3860,18 @@ describe("what the composer keeps", () => {
  * shipped, and a press is a shortcut for `/model haiku` rather than a second source of
  * truth — so what moves the readout is the reply and never the press. */
 
-const modelTrigger = (host: HTMLElement) =>
-	host.querySelector<HTMLButtonElement>('[aria-label="Choose engine and model"]');
+const modelTrigger = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('[aria-label="Choose model"]');
 
-const modelMenu = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-model-menu]");
+const modelMenu = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-model-menu]:not([inert] *)");
 
 /** every row in the menu, in the order the reply listed them */
 const modelRows = (host: HTMLElement) =>
-	[...host.querySelectorAll<HTMLButtonElement>("[data-agent-model-row]")]
-		.filter((row) => row.closest("[data-combined-engine]") === null)
-		.map((row) => row.getAttribute("data-agent-model-row") ?? "");
+	[...host.querySelectorAll<HTMLButtonElement>("[data-agent-model-row]")].map(
+		(row) => row.getAttribute("data-agent-model-row") ?? "",
+	);
 
 const modelRow = (host: HTMLElement, label: string) =>
 	host.querySelector<HTMLButtonElement>(`[data-agent-model-row="${label}"]`);
-
-/** the one slot, and what it is saying about whatever the cursor is on */
-const menuSlot = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-model-says]");
 
 const usageLine = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-usage]")?.textContent ?? null;
 
@@ -3907,16 +3906,14 @@ async function resizeRail(host: HTMLElement, width: number) {
 	});
 }
 
-async function hover(target: HTMLElement | null) {
-	if (target === null) throw new Error("nothing to point at");
-	await act(async () => {
-		target.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-		target.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
-	});
+async function modelAction(host: HTMLElement, label: string) {
+	const button = [...host.querySelectorAll<HTMLButtonElement>("[data-agent-model-menu] button")].find(
+		(entry) => entry.getAttribute("aria-label") === label || entry.textContent === label,
+	);
+	if (!button) throw new Error(`Missing ${label}`);
+	await act(async () => button.click());
+	await settle(50);
 }
-
-/** the effort rows and the rule above them, which answer the pointer as one block */
-const effortBlock = (host: HTMLElement) => modelRow(host, "max")?.parentElement ?? null;
 
 /** the 18px line the model and the stop share, which is what the menu is measured against */
 const footerRow = (host: HTMLElement) => modelTrigger(host)?.parentElement?.parentElement ?? null;
@@ -3936,6 +3933,49 @@ const warned: AgentEvent = {
 };
 
 describe("the model menu", () => {
+	it("changes a new chat's agent without replacing its draft, image or thread", async () => {
+		const canvas = mount();
+		await canvas.render();
+		await until(() => canvas.offered.asked.length > 0);
+		const thread = canvas.offered.asked[0];
+		const composer = field(canvas.host);
+		if (!composer) throw new Error("Missing composer");
+		await act(async () => type(composer, "keep this draft"));
+		await drop(canvas.host, shot());
+		await settle(50);
+		await press(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]'));
+		await press(canvas.host.querySelector('[data-agent-engine="spool"]'));
+		await settle(50);
+		expect(field(canvas.host)?.value).toBe("keep this draft");
+		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe("spool");
+		await send(canvas.host, "keep this draft");
+		await settle(50);
+		expect(canvas.turn.streams[0]?.thread).toBe(thread);
+		expect(canvas.turn.attachments[0]?.media).toBe("image/png");
+		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')).toBeNull();
+		expect(canvas.host.querySelector("[data-fixed-agent]")?.textContent).toBe("spool");
+	});
+
+	it("keeps a started chat's agent and draft when the plus opens another agent", async () => {
+		const canvas = mount();
+		canvas.stored.served = [
+			storedThread({ id: ONE, ask: "original chat", engine: "spool", draft: "original draft" }),
+		];
+		await canvas.render();
+		await settle();
+		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')).toBeNull();
+		await newThread(canvas.host, "claude");
+		await settle(50);
+		expect(field(canvas.host)?.value).toBe("");
+		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe(
+			"Claude Code",
+		);
+		await openCell(canvas.host, "original chat");
+		await settle(50);
+		expect(field(canvas.host)?.value).toBe("original draft");
+		expect(canvas.host.querySelector("[data-fixed-agent]")?.textContent).toBe("spool");
+	});
+
 	it("organizes spool favorites in place and waits for the accepted account-scoped model before changing the footer", async () => {
 		const canvas = mount();
 		canvas.stored.served = [storedThread({ id: ONE, ask: "saved thread", engine: "spool", draft: "keep my draft" })];
@@ -3964,7 +4004,7 @@ describe("the model menu", () => {
 		};
 		await canvas.render();
 		await openModelMenu(canvas);
-		expect(menuSlot(canvas.host)).toBeNull();
+		expect(canvas.host.querySelector("[data-agent-engine]")).toBeNull();
 		const click = async (label: string) => {
 			const button = [...canvas.host.querySelectorAll<HTMLButtonElement>("button")].find(
 				(button) => button.textContent === label || button.getAttribute("aria-label") === label,
@@ -3973,9 +4013,9 @@ describe("the model menu", () => {
 			await act(async () => button.click());
 		};
 		await click("Favorite Opus through OpenAI API key");
-		await click("All models");
+		await click("Find a model…");
 		await click("Favorite Opus through Google API key");
-		await click("Favorites");
+		await click("Back to your models");
 		await click("Unfavorite Opus through OpenAI API key");
 		expect(canvas.host.querySelectorAll("[data-model-offer]")).toHaveLength(2);
 		expect(canvas.offered.chose).toHaveLength(0);
@@ -4011,54 +4051,32 @@ describe("the model menu", () => {
 			"Fable",
 			"Sonnet",
 			"Haiku",
-			"low",
-			"medium",
-			"high",
-			"xhigh",
-			"max",
 		]);
 		// and it asks again on the way open, because the answer is the installed CLI's
 		expect(modelMenu(canvas.host)).not.toBeNull();
 	});
 
-	it("draws one line per row, and one slot for whatever the cursor is on", async () => {
+	it("keeps model descriptions available without repeating them in the list", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await openModelMenu(canvas);
-
-		// the row is its name and nothing else, so the description cannot be printed twice
-		// — which it was, word for word, on the two rows that resolve to the same model
-		expect(modelRow(canvas.host, "Opus (1M context)")?.textContent).toBe("Opus (1M context)");
-		expect(modelRow(canvas.host, "Default (recommended)")?.textContent).toBe("Default (recommended)");
-		// with nothing pointed at, the slot describes the model that is set
-		expect(menuSlot(canvas.host)?.getAttribute("data-agent-model-says")).toBe(
-			"Opus 5 with 1M context · Best for everyday, complex tasks",
-		);
-
-		await hover(modelRow(canvas.host, "Sonnet"));
-		expect(menuSlot(canvas.host)?.getAttribute("data-agent-model-says")).toBe(
-			"Sonnet 5 · Efficient for routine tasks",
-		);
-		// one slot for both vocabularies, because a model value and a level cannot collide
-		await hover(modelRow(canvas.host, "max"));
-		expect(menuSlot(canvas.host)?.getAttribute("data-agent-model-says")).toContain("Maximum capability");
+		const row = modelRow(canvas.host, "Sonnet");
+		expect(row?.title).toBe("Sonnet 5 · Efficient for routine tasks");
+		expect(row?.textContent).not.toContain("Efficient for routine tasks");
+		expect(canvas.host.querySelector("[data-fixed-agent]")).toBeNull();
+		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')).not.toBeNull();
 	});
 
-	it("reserves the tallest sentence, so nothing reflows under the pointer", async () => {
+	it("opens supported effort levels on their own page and restores focus on back", async () => {
 		const canvas = mount();
 		await canvas.render();
 		await openModelMenu(canvas);
-		const slot = menuSlot(canvas.host);
-		if (slot === null) throw new Error("no slot");
-
-		// the panel opens upward, so a slot that grew would move its own top edge. What is
-		// reserved is the longest thing it can ever say, which is `max` at 165 characters
-		const reserved = slot.querySelector("[aria-hidden]")?.textContent ?? "";
-		expect(reserved).toContain("Use sparingly for the hardest tasks.");
-		await hover(modelRow(canvas.host, "low"));
-		expect(slot.querySelector("[aria-hidden]")?.textContent).toBe(reserved);
-		// and it is never empty: something is always set, so something is always described
-		expect(slot.getAttribute("data-agent-model-says")).not.toBe("");
+		await modelAction(canvas.host, "Change effort");
+		expect(modelRows(canvas.host)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+		expect(document.activeElement).toBe(modelRow(canvas.host, "high"));
+		await modelAction(canvas.host, "Back to models");
+		expect(modelRows(canvas.host)).toContain("Sonnet");
+		expect(document.activeElement?.getAttribute("aria-label")).toBe("Change effort");
 	});
 
 	it("shows no effort control at all on a model that reports no levels", async () => {
@@ -4095,7 +4113,7 @@ describe("the model menu", () => {
 		await settle(50);
 
 		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Sonnet");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet");
 		// the menu closes on a model, because that was the decision
 		expect(modelMenu(canvas.host)).toBeNull();
 		// and it went to the thread that is open, because that is what the answer is about
@@ -4134,13 +4152,13 @@ describe("the model menu", () => {
 		// the reply is a spawn away — about a second on a cold binary — and nothing on
 		// screen waits for it. The level rides across because sonnet offers it
 		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Sonnet");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet");
 
 		canvas.offered.hold = null;
 		answer();
 		await settle(50);
 		// and what stays is the report, which here says the same thing the finger did
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Sonnet");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet");
 	});
 
 	it("takes the effort with it the moment a model reporting none is pressed", async () => {
@@ -4182,14 +4200,14 @@ describe("the model menu", () => {
 
 		await act(async () => modelRow(canvas.host, "Sonnet")?.click());
 		await settle(50);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Sonnet");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet");
 
 		canvas.offered.hold = null;
 		answer();
 		await settle(50);
 
 		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Opus (1M context)");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context)");
 	});
 
 	it("keeps the menu open on an effort level, because it refines the model above it", async () => {
@@ -4197,12 +4215,13 @@ describe("the model menu", () => {
 		await canvas.render();
 		await openModelMenu(canvas);
 
+		await modelAction(canvas.host, "Change effort");
 		await act(async () => modelRow(canvas.host, "xhigh")?.click());
 		await settle(50);
 
 		expect(canvas.offered.chose.map((one) => one.effort)).toEqual(["xhigh"]);
 		expect(modelMenu(canvas.host)).not.toBeNull();
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Opus (1M context)");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context)");
 	});
 
 	it("says which variable holds the effort, and offers no level it cannot move", async () => {
@@ -4214,27 +4233,13 @@ describe("the model menu", () => {
 		await canvas.render();
 		await openModelMenu(canvas);
 
-		// measured, an exported CLAUDE_CODE_EFFORT_LEVEL refuses an in-session change and
-		// names itself in the refusal — so the environment outranks anything spool draws,
-		// and it says so where the rows it killed are rather than over every row. The block
-		// answers, not the row: a disabled control fires no mouse event at all
-		await hover(effortBlock(canvas.host));
-		expect(menuSlot(canvas.host)?.getAttribute("data-agent-model-says")).toBe(
-			"CLAUDE_CODE_EFFORT_LEVEL=max is set in the environment",
-		);
-		await hover(modelRow(canvas.host, "max"));
-		expect(menuSlot(canvas.host)?.getAttribute("data-agent-model-says")).toBe(
-			"CLAUDE_CODE_EFFORT_LEVEL=max is set in the environment",
-		);
-		// and a model row still describes its model, so no sentence in the reply becomes
-		// unreadable on a machine that happens to export the variable
-		await hover(modelRow(canvas.host, "Sonnet"));
-		expect(menuSlot(canvas.host)?.getAttribute("data-agent-model-says")).toBe(
-			"Sonnet 5 · Efficient for routine tasks",
+		await modelAction(canvas.host, "Change effort");
+		expect(modelMenu(canvas.host)?.querySelector('[role="status"]')?.textContent).toContain(
+			"CLAUDE_CODE_EFFORT_LEVEL=max",
 		);
 		expect(modelRow(canvas.host, "low")?.disabled).toBe(true);
 		expect(modelRow(canvas.host, "max")?.disabled).toBe(false);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Opus (1M context)");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context)");
 	});
 });
 
@@ -4247,7 +4252,7 @@ describe("the footer the model hangs off", () => {
 		if (footer === null) throw new Error("no footer");
 
 		// The effective permission mode stays rightmost; model text gives way first.
-		expect(footer.textContent).toBe("Claude Code · Opus (1M context)stop⎋ask");
+		expect(footer.textContent).toBe("Opus (1M context)stop⎋ask");
 		expect(footer.textContent).not.toContain("weekly limit");
 		expect(footer.textContent).not.toContain("enter to");
 	});
@@ -4264,7 +4269,7 @@ describe("the footer the model hangs off", () => {
 			// `Opus (1M context)` cut to `Opus` would be the correct name of a *different*
 			// machine — `/model opus` resolves without the 1M window — so the string stays
 			// whole in the DOM and the layout is what gives way
-			expect(name?.textContent).toBe("Claude Code · Opus (1M context)");
+			expect(name?.textContent).toBe("Opus (1M context)");
 			expect(name?.className).toContain("truncate");
 			// and the model is the only thing that gives way: a cut name is still readable
 			// and half a stop button is not
@@ -4322,20 +4327,10 @@ describe("the usage window", () => {
 			// week is a different fact depending on whether it comes back Wednesday or in
 			// an hour. In the footer at 420 it clipped to `resets…`
 			expect(usageLine(canvas.host)).toMatch(/^weekly limit 92% · resets [a-z]{3}$/);
-			/*
-			 * And the panel fits inside the rail rather than being cut off by it.
-			 *
-			 * Asserted as the mechanism rather than measured, because this environment has no
-			 * layout: what makes it fit is that it wants 300 and is clamped to the row it hangs
-			 * off, and that the row is the composer's own width rather than the trigger's. The
-			 * rail drags to a 200 floor with 171px of box and is `overflow-hidden`, so a fixed
-			 * 300 anchored to the trigger has its right edge guillotined below 315.
-			 */
-			const panel = modelMenu(canvas.host);
-			expect(panel?.style.width).toBe("300px");
+			const panel = canvas.host.querySelector<HTMLElement>("[data-resize-popover]");
+			expect(panel?.className).toContain("w-[320px]");
 			expect(panel?.className).toContain("max-w-full");
-			expect(panel?.parentElement?.className).not.toContain("relative");
-			expect(footerRow(canvas.host)?.contains(panel as Node)).toBe(true);
+			expect(footerRow(canvas.host)?.contains(panel)).toBe(true);
 			await act(async () => modelTrigger(canvas.host)?.click());
 		}
 	});

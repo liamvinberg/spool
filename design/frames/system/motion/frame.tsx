@@ -1,3 +1,4 @@
+import { ResizePopoverSpecimen } from "shared/ui/spool/resize-popover-specimen";
 import { type ReactNode, useEffect, useState } from "react";
 import { cn } from "shared/lib/utils";
 import { BootCurtain } from "shared/ui/spool/boot-screen";
@@ -69,6 +70,21 @@ export default function Motion() {
 			>
 				<Takes declared={declared} takes={HAND} />
 			</Section>
+			<Section
+				name="Menus that change height"
+				says="ResizePopover keeps its bottom edge beside the control. Open Effort and go back: the surface resizes in 180ms and its pages crossfade in 100ms. Keyboard navigation and reduced motion are immediate."
+			>
+				<div className="flex flex-wrap gap-6">
+					<div className="flex flex-col gap-3">
+						<ResizePopoverSpecimen />
+						<span className="text-muted type-detail">Pointer · 180ms · cubic-bezier(0.23,1,0.32,1)</span>
+					</div>
+					<div className="flex flex-col gap-3">
+						<ResizePopoverSpecimen still />
+						<span className="text-muted type-detail">Reduced motion · immediate</span>
+					</div>
+				</div>
+			</Section>
 		</Sheet>
 	);
 }
@@ -121,10 +137,7 @@ function TakeRow({ take, declared }: { take: Take; declared: string }) {
 					{take.live}
 				</span>
 				<span
-					className={cn(
-						"absolute right-3 bottom-2 opacity-0 transition-opacity group-hover:opacity-100",
-						MONO,
-					)}
+					className={cn("absolute right-3 bottom-2 opacity-0 transition-opacity group-hover:opacity-100", MONO)}
 				>
 					press to replay
 				</span>
@@ -223,16 +236,19 @@ function Composer({ className, style }: { className?: string; style?: React.CSSP
 		<span className="relative block h-[52px] w-[300px] overflow-hidden rounded-md border border-border-raised bg-surface">
 			<span className="absolute top-0 left-0 h-px w-full bg-border-raised" />
 			<span className={cn("absolute top-0 left-0 h-px w-full origin-left bg-thread", className)} style={style} />
-			<span className="flex h-full items-center px-3 font-mono text-sm text-muted/50 leading-4">
-				write a frame
-			</span>
+			<span className="flex h-full items-center px-3 font-mono text-sm text-muted/50 leading-4">write a frame</span>
 		</span>
 	);
 }
 
 function Thread({ className }: { className?: string }) {
 	return (
-		<svg viewBox="0 0 120 60" className={cn("h-[60px] w-[120px] text-thread", className)} fill="none" aria-hidden="true">
+		<svg
+			viewBox="0 0 120 60"
+			className={cn("h-[60px] w-[120px] text-thread", className)}
+			fill="none"
+			aria-hidden="true"
+		>
 			<path
 				d="M4 56C4 30 40 30 60 30S116 30 116 6"
 				stroke="currentColor"
@@ -378,7 +394,11 @@ const BOOT: readonly Take[] = [
 	{
 		token: "boot-out",
 		what: "the curtain fading across the frames rather than holding them back",
-		live: <span className="animate-boot-out block"><Curtain /></span>,
+		live: (
+			<span className="animate-boot-out block">
+				<Curtain />
+			</span>
+		),
 		still: <span className={MONO}>drawn nowhere</span>,
 		reduced: "display: none, because the fade is what takes the curtain off the canvas",
 	},
@@ -408,7 +428,9 @@ const AGENT: readonly Take[] = [
 				))}
 			</span>
 		),
-		still: <span className="w-[300px] text-base text-text leading-base">Reading the cart frame and its two imports</span>,
+		still: (
+			<span className="w-[300px] text-base text-text leading-base">Reading the cart frame and its two imports</span>
+		),
 		reduced: "nothing at all: every word is already there",
 	},
 	{
@@ -421,9 +443,7 @@ const AGENT: readonly Take[] = [
 				</span>
 			</span>
 		),
-		still: (
-			<span className="w-[300px] font-mono text-sm text-muted leading-4">search · 4 files</span>
-		),
+		still: <span className="w-[300px] font-mono text-sm text-muted leading-4">search · 4 files</span>,
 		reduced: "nothing at all",
 	},
 	{
@@ -456,7 +476,7 @@ const AGENT: readonly Take[] = [
 	},
 	{
 		token: "agent-menu-in",
-		what: "the model menu, which opens upward off an 18px line",
+		what: "the permissions menu, which opens upward off the footer",
 		live: <MenuBox className="animate-agent-menu-in" />,
 		still: <MenuBox />,
 		reduced: "nothing at all",
@@ -481,9 +501,7 @@ const HAND: readonly Take[] = [
 	{
 		token: "hand-plate",
 		what: "the block that was written, marked out fast, held, and drained",
-		live: (
-			<span className="block h-10 w-[240px] origin-center animate-hand-plate rounded-xs bg-thread" />
-		),
+		live: <span className="block h-10 w-[240px] origin-center animate-hand-plate rounded-xs bg-thread" />,
 		still: <span className="block h-10 w-[240px] rounded-xs bg-thread/15" />,
 		reduced: "struck at once, held, gone: it keeps its life and loses its gesture",
 	},
@@ -536,8 +554,8 @@ function Curves() {
 				<div className="flex flex-col gap-1">
 					<span className={NAME}>300ms · the column's edge</span>
 					<span className={MONO}>
-						press the lit glyph. The edge travels and the surface inside it is laid out at the width it
-						will settle at, so no rail ever re-lays on the way in.
+						press the lit glyph. The edge travels and the surface inside it is laid out at the width it will
+						settle at, so no rail ever re-lays on the way in.
 					</span>
 				</div>
 			</div>
@@ -587,7 +605,9 @@ function Curves() {
 				</div>
 				<div className="flex flex-col gap-1">
 					<span className={NAME}>140ms · the press</span>
-					<span className={MONO}>active:scale-90. The glyph gives under the finger, and colour arrives over the same span.</span>
+					<span className={MONO}>
+						active:scale-90. The glyph gives under the finger, and colour arrives over the same span.
+					</span>
 				</div>
 			</div>
 		</div>

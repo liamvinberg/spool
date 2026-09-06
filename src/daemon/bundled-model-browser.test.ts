@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright-core";
+import { chromium, type Page } from "playwright-core";
 import { build } from "vite";
 import { expect, it, onTestFinished } from "vitest";
 import { makeTempDir, serveProject, writeDesignFile, writeFrame } from "../test-helpers";
@@ -63,7 +63,7 @@ it("chooses account-scoped favorites through the served canvas and keeps the exa
 	await page.goto(`${project.url}/p/${encodeURIComponent(project.name)}`);
 	await page.locator('[data-dock-glyph="agent"]').click();
 	const field = page.locator("[data-agent-rail] textarea");
-	const trigger = page.getByRole("button", { name: "Choose engine and model" });
+	const trigger = page.getByRole("button", { name: "Choose model" });
 	await expect.poll(() => trigger.textContent(), { timeout: 15_000 }).toContain("Test image model");
 	await field.fill("first completed turn");
 	await field.press("Enter");
@@ -74,33 +74,39 @@ it("chooses account-scoped favorites through the served canvas and keeps the exa
 	if (!thread) throw new Error("Missing thread");
 	await field.fill("keep my next draft");
 	await trigger.click();
-	const menu = page.locator("[data-combined-menu]");
+	const menu = page.locator("[data-combined-menu]:not([inert] *)");
 	const offers = menu.locator("[data-model-offer]");
 	const openai = menu.locator('[data-model-offer="spool/openai/api_key/spool-test"]');
 	const google = menu.locator('[data-model-offer="spool/google/api_key/spool-test"]');
 	await expect.poll(() => offers.count()).toBe(1);
+	await page.waitForTimeout(220);
+	for (let trial = 0; trial < 3; trial += 1) {
+		await anchoredResize(page, "Change effort");
+		await anchoredResize(page, "Back to models");
+	}
 	await openai.getByRole("button", { name: "Favorite Test image model through OpenAI API key", exact: true }).click();
 	await shot("models-favorites-420");
-	await menu.getByRole("button", { name: "All models", exact: true }).click();
+	await menu.getByRole("button", { name: "Find a model…", exact: true }).click();
 	await expect.poll(() => offers.count()).toBe(4);
 	expect(await menu.textContent()).not.toContain("Text only model");
 	await google.getByRole("button", { name: "Favorite Test image model through Google API key", exact: true }).click();
 	await shot("models-favorites-all-420");
-	await menu.getByRole("button", { name: "Favorites", exact: true }).click();
+	await menu.getByRole("button", { name: "Back to your models", exact: true }).click();
 	await expect.poll(() => offers.count()).toBe(2);
+	await menu.getByRole("button", { name: "Find a model…", exact: true }).click();
 	const search = menu.getByRole("searchbox");
-	await search.fill("quick");
+	await search.fill("missing model");
 	await expect.poll(() => offers.count()).toBe(0);
-	expect(await menu.textContent()).toContain("No matching favorites.");
-	expect(await menu.locator('[data-agent-model-row="high"]').count()).toBe(0);
-	await shot("models-favorites-search-420");
-	await menu.getByRole("menuitem", { name: "Search all models…", exact: true }).click();
-	expect(await search.inputValue()).toBe("quick");
+	expect(await menu.textContent()).toContain("No models match");
+	await menu.getByRole("button", { name: "Clear search", exact: true }).click();
+	await expect.poll(() => offers.count()).toBe(4);
+	await search.fill("quick");
 	await expect.poll(() => offers.count()).toBe(2);
+	await shot("models-search-420");
 	await search.fill("google");
 	await expect.poll(() => offers.count()).toBe(2);
 	await search.fill("");
-	await menu.getByRole("button", { name: "Favorites", exact: true }).click();
+	await menu.getByRole("button", { name: "Back to your models", exact: true }).click();
 	await openai
 		.getByRole("button", { name: "Unfavorite Test image model through OpenAI API key", exact: true })
 		.click();
@@ -112,15 +118,20 @@ it("chooses account-scoped favorites through the served canvas and keeps the exa
 	await trigger.click();
 	await expect.poll(() => offers.count()).toBe(1);
 	expect(await google.locator("[data-agent-model-row]").getAttribute("aria-current")).toBe("true");
+	await menu.getByRole("button", { name: "Change effort" }).click();
 	await menu.locator('[data-agent-model-row="low"]').click();
+	await shot("models-effort-420");
 	await expect.poll(() => menu.locator('[data-agent-model-row="low"]').getAttribute("aria-current")).toBe("true");
 	expect(await menu.locator('[data-agent-model-row="max"]').count()).toBe(0);
-	await menu.getByRole("button", { name: "All models", exact: true }).click();
+	await menu.getByRole("button", { name: "Back to models", exact: true }).click();
+	await menu.getByRole("button", { name: "Find a model…", exact: true }).click();
 	await menu.locator('[data-model-offer="spool/google/api_key/quick-image"] [data-agent-model-row]').click();
 	await expect.poll(() => trigger.textContent()).toContain("Quick image model");
 	await trigger.click();
 	expect(await menu.locator('[data-agent-model-row="low"]').count()).toBe(0);
-	await menu.getByRole("menuitem", { name: "Connect account…", exact: true }).click();
+	expect(await menu.getByRole("button", { name: "Change effort" }).count()).toBe(0);
+	await menu.getByRole("button", { name: "Find a model…", exact: true }).click();
+	await menu.getByRole("button", { name: "Connect account…", exact: true }).click();
 	const dialog = page.getByRole("dialog", { name: "Connect an account" });
 	await dialog.waitFor();
 	await dialog.getByRole("menuitem", { name: "Google API key · connected", exact: true }).click();
@@ -128,7 +139,7 @@ it("chooses account-scoped favorites through the served canvas and keeps the exa
 	await expect.poll(() => dialog.textContent()).not.toContain("Google API key · connected");
 	await dialog.press("Escape");
 	await trigger.click();
-	await menu.getByRole("button", { name: "All models", exact: true }).click();
+	await menu.getByRole("button", { name: "Find a model…", exact: true }).click();
 	await expect.poll(() => offers.count()).toBe(2);
 	expect(await offers.allTextContents()).not.toEqual(
 		expect.arrayContaining([expect.stringContaining("Google API key")]),
@@ -154,9 +165,9 @@ it("chooses account-scoped favorites through the served canvas and keeps the exa
 				.getAttribute("aria-current"),
 		)
 		.toBe("true");
-	await menu.getByRole("button", { name: "All models", exact: true }).click();
+	await menu.getByRole("button", { name: "Find a model…", exact: true }).click();
 	await openai.getByRole("button", { name: "Favorite Test image model through OpenAI API key", exact: true }).click();
-	await menu.getByRole("button", { name: "Favorites", exact: true }).click();
+	await menu.getByRole("button", { name: "Back to your models", exact: true }).click();
 	await page.evaluate(() => localStorage.setItem("spool.rail.agent.width", "280"));
 	await page.reload();
 	await trigger.click();
@@ -170,9 +181,48 @@ it("chooses account-scoped favorites through the served canvas and keeps the exa
 	expect(Math.round(railBox.width)).toBe(280);
 	expect(menuBox.x).toBeGreaterThanOrEqual(railBox.x);
 	expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(railBox.x + railBox.width);
+	await menu.getByRole("button", { name: "Find a model…", exact: true }).click();
 	await menu.getByRole("searchbox").focus();
 	await page.keyboard.press("ArrowDown");
 	expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("BUTTON");
 	await page.keyboard.press("Escape");
+	expect(
+		await menu
+			.getByRole("button", { name: "Find a model…", exact: true })
+			.evaluate((node) => node === document.activeElement),
+	).toBe(true);
+	await page.keyboard.press("Escape");
 	expect(await trigger.evaluate((node) => node === document.activeElement)).toBe(true);
 });
+
+/** Measure every rendered frame, including the first paint after the page changes. */
+async function anchoredResize(page: Page, label: string) {
+	const trace = await page.evaluate(async (action) => {
+		const popover = document.querySelector("[data-resize-popover]");
+		const surface = popover?.querySelector<HTMLElement>(".overflow-hidden");
+		const button = popover?.querySelector<HTMLButtonElement>(`[aria-label="${action}"]:not([inert] *)`);
+		if (!surface || !button) throw new Error("Missing resize surface or action");
+		const start = surface.getBoundingClientRect();
+		const samples: { bottom: number; height: number; scale: number }[] = [];
+		const until = performance.now() + 280;
+		button.click();
+		await new Promise<void>((resolve) => {
+			const sample = () => {
+				const box = surface.getBoundingClientRect();
+				const text = surface.querySelector<HTMLElement>("button:not([inert] *)");
+				samples.push({
+					bottom: box.bottom,
+					height: box.height,
+					scale: text ? text.getBoundingClientRect().height / text.offsetHeight : 1,
+				});
+				if (performance.now() < until) requestAnimationFrame(sample);
+				else resolve();
+			};
+			requestAnimationFrame(sample);
+		});
+		return { bottom: start.bottom, height: start.height, samples };
+	}, label);
+	expect(Math.abs((trace.samples.at(-1)?.height ?? 0) - trace.height)).toBeGreaterThan(20);
+	expect(Math.max(...trace.samples.map((sample) => Math.abs(sample.bottom - trace.bottom)))).toBeLessThan(2);
+	expect(Math.max(...trace.samples.map((sample) => Math.abs(sample.scale - 1)))).toBeLessThan(0.03);
+}

@@ -59,7 +59,7 @@ it("renders every generic provider interaction through the shared host and keeps
 	await page.locator('[data-dock-glyph="agent"]').click();
 	const field = page.locator("[data-agent-rail] textarea");
 	await expect
-		.poll(() => page.getByRole("button", { name: "Choose engine and model" }).textContent())
+		.poll(() => page.getByRole("button", { name: "Choose agent for this new chat" }).textContent())
 		.toContain("spool");
 
 	await field.fill("keep my model and draft");
@@ -127,8 +127,9 @@ it("renders every generic provider interaction through the shared host and keeps
 		/private-authorization-code|private-verification-secret|fixture-access-secret|fixture-refresh-secret/,
 	);
 	await field.fill("retain this next draft");
-	await page.getByRole("button", { name: "Choose engine and model" }).click();
-	await page.getByRole("menuitem", { name: "Connect account…", exact: true }).click();
+	await page.getByRole("button", { name: "Choose model" }).click();
+	await page.getByRole("button", { name: "Find a model…", exact: true }).click();
+	await page.getByRole("button", { name: "Connect account…", exact: true }).click();
 	await dialog.getByRole("menuitem", { name: "Sign in with Grok", exact: true }).click();
 	await dialog.getByRole("button", { name: "Device code", exact: true }).click();
 	await dialog.getByText("SPOOL-4826", { exact: true }).waitFor();
@@ -157,7 +158,7 @@ it("renders every generic provider interaction through the shared host and keeps
 	await expect.poll(() => dialog.count()).toBe(0);
 	expect(
 		await page
-			.getByRole("button", { name: "Choose engine and model" })
+			.getByRole("button", { name: "Choose model" })
 			.evaluate((element) => element === document.activeElement),
 	).toBe(true);
 	expect(await field.inputValue()).toBe("retain this next draft");

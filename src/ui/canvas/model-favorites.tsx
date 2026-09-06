@@ -1,7 +1,6 @@
 import { useState } from "react";
 import type { AgentModel } from "../../daemon/agent-offer";
 import { cn } from "../cn";
-import { SearchIcon } from "../icons";
 import { keep, recall } from "../remembered";
 
 const isFavorites = (value: unknown): value is string[] =>
@@ -40,51 +39,6 @@ export function favoriteModels(
 	);
 }
 
-export function ModelSearch({
-	query,
-	all,
-	onQuery,
-	onAll,
-}: {
-	query: string;
-	all: boolean;
-	onQuery: (value: string) => void;
-	onAll: (all: boolean) => void;
-}) {
-	const label = all ? "Search all models" : "Search favorites";
-	return (
-		<>
-			<div className="flex gap-3 px-1.5 pt-1 pb-2">
-				{[false, true].map((value) => (
-					<button
-						type="button"
-						key={String(value)}
-						aria-pressed={all === value}
-						onClick={() => onAll(value)}
-						className={cn(
-							"border-b pb-1 text-base leading-base",
-							all === value ? "border-text/65 text-text" : "border-transparent text-muted hover:text-text",
-						)}
-					>
-						{value ? "All models" : "Favorites"}
-					</button>
-				))}
-			</div>
-			<label className="flex h-8 min-w-0 items-center gap-2 rounded-sm border border-border-raised bg-bg px-2.5 text-muted focus-within:border-muted/45">
-				<SearchIcon className="h-3 w-3 shrink-0" />
-				<input
-					type="search"
-					value={query}
-					onChange={(event) => onQuery(event.target.value)}
-					aria-label={label}
-					placeholder={label}
-					className="min-w-0 flex-1 bg-transparent text-base text-text leading-base outline-none placeholder:text-muted/50"
-				/>
-			</label>
-		</>
-	);
-}
-
 export function ModelFavorite({ model, on, toggle }: { model: AgentModel; on: boolean; toggle: () => void }) {
 	return (
 		<button
@@ -94,8 +48,8 @@ export function ModelFavorite({ model, on, toggle }: { model: AgentModel; on: bo
 			title={on ? "Remove from favorites" : "Add to favorites"}
 			onClick={toggle}
 			className={cn(
-				"flex h-7 w-7 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-surface hover:text-text",
-				on ? "text-text/75" : "text-muted/45",
+				"mr-1 flex h-8 w-7 shrink-0 items-center justify-center rounded-sm transition-colors hover:text-text focus-visible:opacity-100",
+				on ? "text-muted/65" : "text-muted/35 opacity-0 group-hover:opacity-100",
 			)}
 		>
 			<svg

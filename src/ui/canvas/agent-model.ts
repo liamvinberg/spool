@@ -61,28 +61,6 @@ export function offerOf(body: unknown): AgentOffer | null {
 }
 
 /**
- * The effort levels the CLI describes, in its own words.
- *
- * The one table here spool carries rather than reads, and it is quoted rather than
- * written: `list_models` sends each model's *levels* but none of their descriptions,
- * and the only place the binary spells one out is the reply to `/effort <level>` —
- * which means setting it. So each was probed once, for zero turns and zero tokens, and
- * copied down verbatim. A level spool has never heard of gets no sentence rather than
- * a guessed one, and the menu draws whatever the model said it supports either way.
- *
- * `auto` is absent twice over: it has no description, and no model offers it in
- * `supportedEffortLevels` even though `/effort auto` is accepted. It stays reachable by
- * typing and out of the control.
- */
-export const EFFORT_SAYS: Readonly<Record<string, string>> = {
-	low: "Quick, straightforward implementation with minimal overhead",
-	medium: "Balanced approach with standard implementation and testing",
-	high: "Comprehensive implementation with extensive testing and documentation",
-	xhigh: "Deeper reasoning than high, just below maximum (Fable 5, Opus 4.7+, Sonnet 5)",
-	max: "Maximum capability with deepest reasoning. May use excessive tokens resulting in long response times or overthinking. Use sparingly for the hardest tasks.",
-};
-
-/**
  * The footer's one line: `Opus (1M context) · high`.
  *
  * The name truncates and never shortens, and the captured reply is what gives that
@@ -120,53 +98,6 @@ export function modelReadout(offer: AgentOffer): string {
  */
 export function effortLevels(offer: AgentOffer): readonly string[] {
 	return modelOf(offer.models, offer.current.value)?.supportedEffortLevels ?? [];
-}
-
-/**
- * The one sentence the menu is showing, for whatever the cursor is on (#186).
- *
- * `over` is one piece of state rather than two, because the slot is one slot: a model's
- * value and an effort level cannot collide, since the levels are a closed set the
- * binary names and a model value is an alias like `opus[1m]`. With nothing hovered it
- * describes the model that is set, which is the one thing the menu is already asserting
- * by highlighting a row — so the slot is never empty and never has to reserve for empty.
- *
- * A held effort level answers for the effort rows and for nothing else. It is the reason
- * they are dead, so it belongs where they are; said for every row it would stop the slot
- * describing what the cursor is on, and on a machine with the variable exported no
- * model's own sentence would ever be readable.
- */
-export function menuSays(offer: AgentOffer, over: string | null): string {
-	const asked = over ?? offer.current.value;
-	if (asked === null) return "";
-	const pin = offer.current.pin;
-	// the block answers as well as its rows, because the rows it killed cannot report a
-	// pointer at all: a disabled control fires no mouse event, so the one row anybody
-	// hovers to ask "why can I not press this" would have had nothing to say
-	if (pin !== null && (asked === pin || effortLevels(offer).includes(asked))) return pinSays(pin);
-	return EFFORT_SAYS[asked] ?? modelOf(offer.models, asked)?.description ?? "";
-}
-
-export function pinSays(pin: string): string {
-	return `CLAUDE_CODE_EFFORT_LEVEL=${pin} is set in the environment`;
-}
-
-/**
- * The tallest sentence this menu can be made to say, which is what it reserves room for.
- *
- * Everything it can say is the binary's own words and they are wildly uneven: `max`
- * runs 165 characters against `xhigh`'s 76 and `low`'s 57, and the model sentences are
- * longer again. With a bare minimum height the line grows by three as the cursor
- * crosses a row — and the menu opens upward, so growing moves its *top* edge and shoves
- * the list out of the frame. A pointer must never move what it is pointing at.
- */
-export function menuLongest(offer: AgentOffer): string {
-	const said = [
-		...offer.models.map((model) => model.description),
-		...effortLevels(offer).map((level) => EFFORT_SAYS[level] ?? ""),
-		...(offer.current.pin === null ? [] : [pinSays(offer.current.pin)]),
-	];
-	return said.reduce((tallest, sentence) => (sentence.length > tallest.length ? sentence : tallest), "");
 }
 
 /**
@@ -211,6 +142,10 @@ export interface AgentModelDeck {
 	readonly accountOpen?: boolean;
 	readonly closeAccount?: () => void;
 	readonly offer: AgentOffer;
+	/** The current chat has not received its own model offer yet. */
+	readonly loading?: boolean;
+	/** Await this chat's offer without treating an unanswered request as signed out. */
+	readonly ready?: () => Promise<AgentOffer | null>;
 	/** the readout, and the trigger's own label */
 	readonly readout: string;
 	/** the levels the current model offers; empty means no control at all */
@@ -247,34 +182,46 @@ export interface AgentModelDeck {
  */
 export function useAgentModel(project: string, thread: string, engine?: AgentEngineId): AgentModelDeck {
 	const [accountOpen, setAccountOpen] = useState(false);
-	const [reported, setReported] = useState<AgentOffer>(NO_OFFER);
+	const owner = JSON.stringify([project, thread, engine]);
+	const activeOwner = useRef(owner);
+	activeOwner.current = owner;
+	const pending = useRef<{ owner: string; reply: Promise<AgentOffer | null> } | null>(null);
+	const [reported, setReported] = useState<{ owner: string; offer: AgentOffer } | null>(null);
 	/** the press no answer has come back for yet, and the thread it was made about */
-	const [pressed, setPressed] = useState<{ thread: string; ask: AgentAsk } | null>(null);
+	const [pressed, setPressed] = useState<{ owner: string; ask: AgentAsk } | null>(null);
 	/** climbs per ask, which is what re-asks the binary when the menu opens */
 	const [asked, setAsked] = useState(0);
 	/** climbs per press, so a probe that was already in flight cannot land on a newer one */
 	const presses = useRef(0);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: changing the owner retires outstanding choices even before its next offer arrives.
+	useEffect(() => {
+		presses.current += 1;
+		setPressed(null);
+	}, [owner]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `asked` is not read in here, it is the trigger — climbing it is what re-asks the binary
 	useEffect(() => {
 		// a thread with no id yet is the deck before it has minted one, and there is nothing
 		// to ask about it
 		if (thread === "") {
-			setReported(NO_OFFER);
+			setReported(null);
 			return;
 		}
 		let live = true;
 		const at = presses.current;
-		void agentModelOffer(project, thread, engine).then((answered) => {
-			const read = offerOf(answered);
+		const reply = agentModelOffer(project, thread, engine)
+			.then(offerOf)
+			.catch(() => null);
+		pending.current = { owner, reply };
+		void reply.then((read) => {
 			// dropped where the rail moved on, and where a press went out after this ask did:
 			// an answer to the older question knows nothing about the newer choice
-			if (live && at === presses.current && read !== null) setReported(read);
+			if (live && at === presses.current && read !== null) setReported({ owner, offer: read });
 		});
 		return () => {
 			live = false;
 		};
-	}, [project, thread, asked, engine]);
+	}, [project, thread, asked, engine, owner]);
 
 	const choose = useCallback(
 		(next: AgentAsk) => {
@@ -284,7 +231,7 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 			// the press is drawn at once, because the reply is a spawn away and a control that
 			// answers a second after the finger reads as broken. It is a claim and not a
 			// record: what the binary reports is still the only thing that stays
-			setPressed((held) => ({ thread, ask: held?.thread === thread ? { ...held.ask, ...next } : next }));
+			setPressed((held) => ({ owner, ask: held?.owner === owner ? { ...held.ask, ...next } : next }));
 			void chooseAgentModel(project, thread, next, engine)
 				.then((answered) => offerOf(answered))
 				// a door that failed answers nothing, which is the same as an answer with nothing
@@ -292,20 +239,19 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 				.catch(() => null)
 				.then((read) => {
 					// a newer press owns the readout, and its own reply is what will clear it
-					if (at !== presses.current) return;
-					if (read !== null) setReported(read);
+					if (at !== presses.current || activeOwner.current !== owner) return;
+					if (read !== null) setReported({ owner, offer: read });
 					setPressed(null);
 				});
 		},
-		[project, thread, engine],
+		[project, thread, engine, owner],
 	);
 
 	// the press only ever answers for the thread it was made about, so a rail that moved
 	// on draws the report it has rather than the last thread's finger
+	const current = reported?.owner === owner ? reported.offer : NO_OFFER;
 	const offer =
-		engine === "spool" || pressed === null || pressed.thread !== thread
-			? reported
-			: pressedOffer(reported, pressed.ask);
+		engine === "spool" || pressed === null || pressed.owner !== owner ? current : pressedOffer(current, pressed.ask);
 
 	return {
 		...(engine === undefined ? {} : { engine }),
@@ -314,6 +260,12 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 		connect: () => setAccountOpen(true),
 		closeAccount: () => setAccountOpen(false),
 		offer,
+		loading: reported?.owner !== owner,
+		ready: async () => {
+			const at = presses.current;
+			const read = pending.current?.owner === owner ? await pending.current.reply : null;
+			return activeOwner.current === owner && at === presses.current ? read : null;
+		},
 		readout: modelReadout(offer),
 		levels: effortLevels(offer),
 		choose,

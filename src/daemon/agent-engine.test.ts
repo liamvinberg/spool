@@ -24,6 +24,7 @@ const picture: ThreadPut = {
 /** Independent engines speak only the shared contract, with no Claude wire interpreter. */
 function fakeEngine(id: AgentEngineId) {
 	const starts: EngineTurnOptions[] = [];
+	const offers: Parameters<AgentEngine["offer"]>[0][] = [];
 	const replies: AgentReply[] = [];
 	let stopped = 0;
 	let abandoned = 0;
@@ -38,7 +39,10 @@ function fakeEngine(id: AgentEngineId) {
 		authentication: { kind: "external", command: "fixture login" },
 		installed: () => available,
 		account: async () => ({ signedIn: true, account: `${id}@example.test` }),
-		offer: async () => offer,
+		offer: async (options) => {
+			offers.push(options);
+			return offer;
+		},
 		choice: (result) => ({ value: result.current.value ?? id }),
 		continuable: async () => sessionPresent,
 		start: (options) => {
@@ -73,6 +77,7 @@ function fakeEngine(id: AgentEngineId) {
 	return {
 		engine,
 		starts,
+		offers,
 		replies,
 		get stopped() {
 			return stopped;
@@ -106,6 +111,25 @@ function setup(engines: readonly AgentEngine[]) {
 }
 
 describe("engine ownership through the daemon", () => {
+	it("keeps each agent's model choices separate before a chat's first message", async () => {
+		const claude = fakeEngine("claude");
+		const spool = fakeEngine("spool");
+		const { app, path, send } = setup([claude.engine, spool.engine]);
+		await send(`threads/${ONE}/model?engine=claude`, { value: "claude" });
+		await app.request(`${path}/threads/${ONE}/models?engine=spool`);
+		expect(spool.offers.at(-1)?.ask).toEqual({});
+		await send(`threads/${ONE}/model?engine=spool`, { value: "spool" });
+		await app.request(`${path}/threads/${ONE}/models?engine=claude`);
+		expect(claude.offers.at(-1)?.ask).toEqual({ value: "claude" });
+		const view = agentReader(
+			await send("turn", { thread: ONE, turn: "one", engine: "spool", said: [{ prompt: "first message" }] }),
+		);
+		await view.next();
+		expect(spool.starts[0]?.ask).toEqual({ value: "spool" });
+		await send("interrupt", { turn: "one" });
+		await view.cancel();
+	});
+
 	it("routes independent turns, offers, accounts, answers and Stop while replay survives a departing viewer", async () => {
 		const claude = fakeEngine("claude");
 		const spool = fakeEngine("spool");

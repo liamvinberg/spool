@@ -697,12 +697,13 @@ export function createDaemonApp({
 	 * Per thread rather than per project, because which machine is answering is a fact
 	 * about a conversation: a project runs one thread on Opus and another on Haiku, and a
 	 * project-wide ask would carry the open thread's choice into the one you switched to.
+	 * Each agent has its own choice while the draft can still switch agents.
 	 * It dies with the daemon, because a preference nobody has said is durable is not a
 	 * file to write — a restarted thread reads its model off the next turn's own report.
 	 * It dies with the thread too: a conversation that was closed is not one anything is
 	 * going to spawn for again, and a map only ever written to is a map that only grows.
 	 */
-	const agentAsks = new Map<string, AgentAsk>();
+	const agentAsks = new Map<string, Partial<Record<AgentEngineId, AgentAsk>>>();
 	const askKey = (root: string, thread: string) => `${root}\x00${thread}`;
 
 	function resolveProject(c: Context, name: string): { root: string } | { response: Response } {
@@ -1755,7 +1756,7 @@ export function createDaemonApp({
 						selection: selectionBlock(one.selection ?? selections.get(project.root)),
 						...(one.attachment === undefined ? {} : { attachment: one.attachment }),
 					})),
-					ask: agentAsks.get(askKey(project.root, thread)) ?? {},
+					ask: agentAsks.get(askKey(project.root, thread))?.[selected.engine.id] ?? {},
 				});
 				const held = liveTurns.hold({
 					root: project.root,
@@ -2024,7 +2025,7 @@ export function createDaemonApp({
 					await selected.engine.offer({
 						root: project.root,
 						session: selected.session,
-						ask: agentAsks.get(askKey(project.root, thread)) ?? {},
+						ask: agentAsks.get(askKey(project.root, thread))?.[selected.engine.id] ?? {},
 						signal: c.req.raw.signal,
 					}),
 				);
@@ -2076,9 +2077,9 @@ export function createDaemonApp({
 				}
 				const wanted = c.req.valid("json");
 				const key = askKey(project.root, thread);
-				const held = agentAsks.get(key) ?? {};
 				const selected = engineFor(c, project.root, thread);
 				if ("response" in selected) return selected.response;
+				const held = agentAsks.get(key)?.[selected.engine.id] ?? {};
 				const offer = await selected.engine.offer({
 					session: selected.session,
 					root: project.root,
@@ -2090,7 +2091,10 @@ export function createDaemonApp({
 					lookupProjectByName(spoolDir, c.req.param("project")).kind !== "found"
 				)
 					return c.text("Project changed while choosing a model.", 409);
-				agentAsks.set(key, selected.engine.choice(offer, wanted, held));
+				agentAsks.set(key, {
+					...agentAsks.get(key),
+					[selected.engine.id]: selected.engine.choice(offer, wanted, held),
+				});
 				return c.json(offer);
 			},
 		)

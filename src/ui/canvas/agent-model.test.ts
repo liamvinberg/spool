@@ -1,16 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { type AgentOffer, modelsOf } from "../../daemon/agent-offer";
 import { readModelsReply } from "../../test-helpers";
-import {
-	EFFORT_SAYS,
-	effortLevels,
-	menuLongest,
-	menuSays,
-	modelReadout,
-	NO_OFFER,
-	offerOf,
-	pressedOffer,
-} from "./agent-model";
+import { effortLevels, modelReadout, NO_OFFER, offerOf, pressedOffer } from "./agent-model";
 
 /**
  * The readout and the menu's one sentence (#118, #184, #186, #199).
@@ -78,67 +69,6 @@ describe("the levels", () => {
 		expect(effortLevels(OFFERED)).toEqual(["low", "medium", "high", "xhigh", "max"]);
 		// so the control is absent rather than present and inert, which makes it a fact
 		expect(effortLevels(on({ value: "haiku" }))).toEqual([]);
-	});
-
-	it("carry the binary's own sentence, and `auto` carries none", () => {
-		expect(EFFORT_SAYS.xhigh).toBe("Deeper reasoning than high, just below maximum (Fable 5, Opus 4.7+, Sonnet 5)");
-		expect(EFFORT_SAYS.max).toContain("Use sparingly for the hardest tasks.");
-		// `/effort auto` is accepted and no model offers it, so it stays reachable by
-		// typing and out of the control — including out of the sentences
-		expect(EFFORT_SAYS.auto).toBeUndefined();
-	});
-});
-
-describe("the one sentence", () => {
-	it("describes whatever the cursor is on, out of one slot", () => {
-		// a model value and an effort level cannot collide: the levels are a closed set
-		// the binary names and a model value is an alias like `opus[1m]`
-		expect(menuSays(OFFERED, "haiku")).toBe("Haiku 4.5 · Fastest for quick answers");
-		expect(menuSays(OFFERED, "low")).toBe(EFFORT_SAYS.low);
-	});
-
-	it("is never empty, because something is always set", () => {
-		// with nothing pointed at it describes the model that is set, which is the one
-		// thing the menu is already asserting by highlighting a row
-		expect(menuSays(OFFERED, null)).toBe("Opus 5 with 1M context · Best for everyday, complex tasks");
-		// a row spool has no sentence for says nothing rather than something guessed
-		expect(menuSays(OFFERED, "ultra")).toBe("");
-	});
-
-	it("says which variable holds the effort, where the effort is", () => {
-		const pinned = on({ pin: "max" });
-
-		// measured, an exported CLAUDE_CODE_EFFORT_LEVEL refuses an in-session change and
-		// names itself in the refusal, so the environment outranks anything spool draws —
-		// and it is the reason those rows are dead, so it answers for them
-		expect(menuSays(pinned, "low")).toBe("CLAUDE_CODE_EFFORT_LEVEL=max is set in the environment");
-		// and for nothing else: said for every row it would stop the slot describing what
-		// the cursor is on, so on a machine with the variable set no model's own sentence
-		// would ever be readable
-		expect(menuSays(pinned, "haiku")).toBe("Haiku 4.5 · Fastest for quick answers");
-		expect(menuSays(pinned, null)).toBe("Opus 5 with 1M context · Best for everyday, complex tasks");
-	});
-
-	it("reserves the tallest thing it can ever be made to say", () => {
-		// the panel opens upward, so a slot that grew as the cursor crossed a row would
-		// move the menu's own top edge — and `max` runs 165 characters against `low`'s 57
-		expect(menuLongest(OFFERED)).toBe(EFFORT_SAYS.max);
-		// a model with no levels has no level sentences to reserve against, so the tallest
-		// is the longest model sentence in the reply — which is why the slot sits outside
-		// the effort block rather than inside it
-		expect(menuLongest(on({ value: "haiku" }))).toBe(
-			"Fable 5 · Most capable for your hardest and longest-running tasks",
-		);
-	});
-
-	it("reserves at least as much as every sentence it could be asked for", () => {
-		// the property rather than the winner: whatever the cursor lands on has to fit in
-		// what was reserved, or the pointer moves the thing it is pointing at
-		for (const offer of [OFFERED, on({ value: "haiku" }), on({ pin: "max" }), on({ value: "haiku", pin: "max" })]) {
-			const reserved = menuLongest(offer).length;
-			const asked = [null, ...offer.models.map((model) => model.value), ...effortLevels(offer)];
-			for (const over of asked) expect(menuSays(offer, over).length).toBeLessThanOrEqual(reserved);
-		}
 	});
 });
 

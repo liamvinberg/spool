@@ -57,7 +57,7 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	const rail = page.locator("[data-agent-rail]");
 	const field = rail.locator("textarea");
 	const trigger = rail.locator("[data-permission-trigger]");
-	const model = rail.getByRole("button", { name: "Choose engine and model", exact: true });
+	const model = rail.getByRole("button", { name: "Choose model", exact: true });
 	const menu = rail.getByRole("menu", { name: "Agent permissions", exact: true });
 	const open = rail.locator('[data-agent-ask="open"]');
 	const stop = rail.getByRole("button", { name: /stop.*⎋/ });
@@ -99,8 +99,27 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 		expect(e.x + e.width).toBeLessThan(t.x);
 		// The rotating chevron temporarily extends beyond its settled 8px box.
 		await expect.poll(() => trigger.evaluate((node) => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
-		expect(await model.getAttribute("title")).toContain(" · ");
+		expect(await model.getAttribute("title")).toContain((await model.textContent()) ?? "");
 	};
+	// Switching the agent before sending preserves the draft and refreshes account-scoped offers.
+	await expect.poll(() => model.textContent()).toContain("Test image model");
+	await field.fill("Unsent draft follows the agent choice.");
+	const agent = rail.getByRole("button", { name: "Choose agent for this new chat", exact: true });
+	await agent.click();
+	await rail.locator('[data-agent-engine="claude"]').click();
+	await expect.poll(() => model.textContent()).toContain("Default (recommended)");
+	await model.click();
+	await rail.locator('[data-agent-model-row="Default (recommended)"]:not([inert] *)').click();
+	await agent.click();
+	await rail.locator('[data-agent-engine="spool"]').click();
+	await expect.poll(() => model.textContent()).toContain("Test image model");
+	await model.click();
+	const models = rail.getByRole("dialog", { name: "Model picker", exact: true });
+	await expect.poll(() => models.textContent()).toContain("OpenAI API key");
+	expect(await models.textContent()).not.toContain("Default (recommended)");
+	expect(await field.inputValue()).toBe("Unsent draft follows the agent choice.");
+	await page.keyboard.press("Escape");
+
 	await says("ask");
 	// An unrelated file grant must survive the project mode changes below.
 	await send(
@@ -125,7 +144,7 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	expect(await trigger.evaluate((node) => node === document.activeElement)).toBe(true);
 	await model.click();
 	await trigger.click();
-	expect(await rail.locator("[data-agent-model-menu]").count()).toBe(0);
+	expect(await rail.locator("[data-agent-model-menu]:not([inert] *)").count()).toBe(0);
 	await model.click();
 	expect(await menu.count()).toBe(0);
 	await page.keyboard.press("Escape");
@@ -191,9 +210,9 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	await expect.poll(() => stop.count()).toBe(0);
 	expect(await open.count()).toBe(0);
 	// Claude follows the same UI through its real adapter and deterministic wire peer.
-	await model.click();
-	await rail.getByRole("menuitem", { name: "New thread with Claude Code", exact: true }).click();
-	await expect.poll(() => model.getAttribute("title")).toContain("Claude Code · Default (recommended)");
+	await rail.getByRole("button", { name: "New chat", exact: true }).click();
+	await rail.getByRole("button", { name: "New chat with Claude Code", exact: false }).click();
+	await expect.poll(() => model.getAttribute("title")).toContain("Default (recommended)");
 	await send("Permission journey");
 	await expect.poll(() => open.count()).toBe(3);
 	await field.fill("Claude next draft.");

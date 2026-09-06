@@ -3,7 +3,7 @@ import { type ClaudeModel, EFFORT_SAYS, type Effort } from "shared/lib/spool/age
 import { cn } from "shared/lib/utils";
 import { type ModelScope, ModelSearch, modelMatches } from "shared/ui/explore/engines/model-shortlist";
 import { FavoriteOptions, type ModelTake } from "shared/ui/explore/engines/model-variants";
-import { PermissionMenu, type PermissionMode } from "shared/ui/explore/engines/permission-menu";
+import { PermissionMenu, type PermissionMode } from "shared/ui/spool/permission-menu";
 import { MenuItem } from "shared/ui/spool/context-menu";
 import { ChevronIcon } from "shared/ui/spool/icons";
 import { ModelRow } from "shared/ui/spool/model-control";

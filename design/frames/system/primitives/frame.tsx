@@ -1,3 +1,4 @@
+import { ResizePopoverSpecimen } from "shared/ui/spool/resize-popover-specimen";
 import { useState } from "react";
 import { cn } from "shared/lib/utils";
 import { StateMark } from "shared/ui/spool/agent-rail";
@@ -102,7 +103,10 @@ export default function Primitives() {
 			title="Primitives"
 			says="One specimen per component in shared/ui/spool, drawn by the component itself. Every state a component has runs across its row: rest, hover, pressed, lit, working, unread, refused, empty."
 		>
-			<Section name="Marks" says="The four smallest things in the app, and the only ones that carry state on their own.">
+			<Section
+				name="Marks"
+				says="The four smallest things in the app, and the only ones that carry state on their own."
+			>
 				<Across>
 					<Spec name="mark.tsx" says="SpoolMark" width={120} align="center">
 						<SpoolMark className="h-[34px] w-[27px] text-thread" />
@@ -156,7 +160,10 @@ export default function Primitives() {
 				</div>
 			</Section>
 
-			<Section name="The shell" says="The bar, the rail, the column and the tool bar, each with the states it actually wears.">
+			<Section
+				name="The shell"
+				says="The bar, the rail, the column and the tool bar, each with the states it actually wears."
+			>
 				<Across>
 					<Spec name="tab-strip.tsx" says="one focused, one not, and the door" width={320}>
 						<TabStrip
@@ -354,9 +361,7 @@ export default function Primitives() {
 					</Field>
 					<Field says="collision-notice.tsx: the strip at the top of the field" width={640} height={200}>
 						<NoticeStrip>
-							<CollisionNotice
-								collisions={[{ name: "cart", paths: ["frames/app/cart", "frames/site/cart"] }]}
-							/>
+							<CollisionNotice collisions={[{ name: "cart", paths: ["frames/app/cart", "frames/site/cart"] }]} />
 						</NoticeStrip>
 					</Field>
 					<Field says="hand-notice.tsx: uncaught, failed, clamped" width={1300} height={200}>
@@ -400,7 +405,12 @@ export default function Primitives() {
 					<Field says="hotkey-sheet.tsx: rendered straight from the register" width={900} height={470} still>
 						<HotkeySheet groups={HOTKEYS} />
 					</Field>
-					<Field says="browser-tab.tsx: PlayedTab, the window a played frame opens in" width={900} height={300} plain>
+					<Field
+						says="browser-tab.tsx: PlayedTab, the window a played frame opens in"
+						width={900}
+						height={300}
+						plain
+					>
 						<PlayedTab title="cart" url="localhost:7766/play/cart">
 							<div className="flex h-full items-center justify-center bg-[#ffffff]">
 								<span className="font-sans text-[#111] text-base">kaffe, in kaffe's own voice</span>
@@ -439,6 +449,21 @@ export default function Primitives() {
 					<Gap name="shell.tsx" says="the bar, whole" />
 					<Gap name="real-pages.ts" says="data, not a component" />
 					<Gap name="explore/play-app/desk.tsx" says="EdgeBar: revealed by dwell" />
+				</div>
+			</Section>
+			<Section
+				name="Menus that change height"
+				says="ResizePopover keeps its bottom edge beside the control. Open Effort and go back: the surface resizes in 180ms and its pages crossfade in 100ms. Keyboard navigation and reduced motion are immediate."
+			>
+				<div className="flex flex-wrap gap-6">
+					<div className="flex flex-col gap-3">
+						<ResizePopoverSpecimen />
+						<span className="text-muted type-detail">Pointer · 180ms · cubic-bezier(0.23,1,0.32,1)</span>
+					</div>
+					<div className="flex flex-col gap-3">
+						<ResizePopoverSpecimen still />
+						<span className="text-muted type-detail">Reduced motion · immediate</span>
+					</div>
 				</div>
 			</Section>
 		</Sheet>
@@ -592,9 +617,7 @@ function RailRows() {
 					>
 						<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
 						<span className="flex min-w-0 flex-1 items-center gap-2 pl-[34px]">
-							<FrameIcon
-								className={cn("h-3.5 w-3.5 shrink-0", frame.selected ? "text-thread" : "text-muted")}
-							/>
+							<FrameIcon className={cn("h-3.5 w-3.5 shrink-0", frame.selected ? "text-thread" : "text-muted")} />
 							<span
 								className={cn(
 									"min-w-0 flex-1 truncate font-mono text-xs leading-xs",
