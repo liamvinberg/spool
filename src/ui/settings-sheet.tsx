@@ -150,9 +150,9 @@ function General({
 	return (
 		<div className="flex flex-col gap-8">
 			{BANDS.map((band) => {
+				if (band.scope !== "machine" && project === undefined) return null;
 				const rows = general.filter((entry) => entry.scope === band.scope);
 				if (rows.length === 0) return null;
-				const needsProject = band.scope !== "machine" && project === undefined;
 				return (
 					<Band
 						key={band.scope}
@@ -164,13 +164,9 @@ function General({
 							) : undefined
 						}
 					>
-						{needsProject ? (
-							<p className="border-border border-t pt-3.5 text-muted type-label">
-								Open a project to change these.
-							</p>
-						) : (
-							rows.map((entry) => <SettingRow key={entry.key} entry={entry} write={write} />)
-						)}
+						{rows.map((entry) => (
+							<SettingRow key={entry.key} entry={entry} write={write} />
+						))}
 					</Band>
 				);
 			})}
