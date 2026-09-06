@@ -1,0 +1,73 @@
+.confirm-dialog {
+	width: min(440px, calc(100vw - 32px));
+	max-height: calc(100dvh - 32px);
+	margin: auto;
+	padding: 24px;
+	overflow: auto;
+	border: 1px solid var(--color-border-raised);
+	border-radius: 8px;
+	background: var(--color-surface);
+	color: var(--color-text);
+}
+
+.confirm-dialog::backdrop {
+	background: color-mix(in srgb, var(--color-bg) 70%, transparent);
+}
+
+.confirm-dialog h2 {
+	margin: 0 0 8px;
+	font-size: 16px;
+	font-weight: 500;
+}
+
+.confirm-dialog p {
+	margin: 0 0 20px;
+	color: var(--color-muted);
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.confirm-dialog fieldset {
+	min-width: 0;
+	padding: 0;
+	border: 0;
+}
+
+.confirm-dialog label {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	font-size: 13px;
+}
+
+.confirm-dialog input {
+	min-width: 0;
+	padding: 9px 10px;
+	border: 1px solid var(--color-border-raised);
+	border-radius: 4px;
+	background: var(--color-bg);
+}
+
+.confirm-dialog input:focus-visible {
+	outline: 1px solid var(--color-thread);
+	outline-offset: 1px;
+}
+
+.confirm-dialog code {
+	display: block;
+	margin: 12px 0 20px;
+	overflow-wrap: anywhere;
+	color: var(--color-muted);
+	font-size: 11px;
+}
+
+.confirm-dialog [role="alert"] {
+	color: var(--color-thread);
+}
+
+.confirm-dialog-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 24px;
+}

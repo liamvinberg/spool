@@ -31,6 +31,7 @@ const project = (name: string, openedAt: string): ProjectCard => ({
 const actions = () => ({
 	onOpenProject: vi.fn(),
 	onForgetProject: vi.fn(),
+	onRenameProject: vi.fn(),
 	onStart: vi.fn(),
 	onFolder: vi.fn(),
 	onChangeLocation: vi.fn(),
@@ -77,6 +78,28 @@ it("sorts real projects, opens a selected root, and retains removal actions", ()
 	expect(callbacks.onForgetProject).toHaveBeenCalledWith(beta);
 });
 
+it("offers rename for a project that already has frames", () => {
+	const callbacks = actions();
+	const existing = { ...project("coffee", "2026-09-01T00:00:00Z"), frameCount: 4 };
+	const host = mount(createElement(Home, { projects: [existing], ...callbacks }));
+	act(() => host.querySelector<HTMLButtonElement>('[aria-label="Manage coffee"]')?.click());
+	act(() => button(host, "Rename…").click());
+	expect(callbacks.onRenameProject).toHaveBeenCalledExactlyOnceWith(existing);
+	expect(host.textContent).not.toContain("Rename…");
+});
+
+function button(host: HTMLElement, label: string): HTMLButtonElement {
+	const found = Array.from(host.querySelectorAll("button")).find((node) => node.textContent === label);
+	if (!found) throw new Error(`Missing button: ${label}`);
+	return found;
+}
+
+function type(input: HTMLInputElement | null, value: string) {
+	if (!input) throw new Error("Missing input");
+	Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+	input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 describe("project picker modes", () => {
 	function disk() {
 		vi.stubGlobal(
@@ -90,7 +113,7 @@ describe("project picker modes", () => {
 			),
 		);
 	}
-	it("focuses start choices and moves to the real naming field from the keyboard", async () => {
+	it("focuses start choices and opens the folder browser from the keyboard", async () => {
 		disk();
 		const host = mount(
 			createElement(FolderPicker, { initial: "start", onOpened: vi.fn(), onClose: vi.fn(), onStart: vi.fn() }),
@@ -104,7 +127,8 @@ describe("project picker modes", () => {
 		act(() => {
 			if (document.activeElement instanceof HTMLButtonElement) document.activeElement.click();
 		});
-		expect(host.querySelector('[aria-label="Project name"]')).toBe(document.activeElement);
+		expect(host.querySelector('[aria-label="Search folders"]')).toBe(document.activeElement);
+		expect(host.querySelector('[aria-label="Project name"]')).toBeNull();
 	});
 	it("selects a parent without opening or initializing it", async () => {
 		disk();
@@ -121,6 +145,44 @@ describe("project picker modes", () => {
 		expect(onLocation).toHaveBeenCalledWith("/Users/test");
 		expect(onOpened).not.toHaveBeenCalled();
 		expect(onClose).toHaveBeenCalledOnce();
+	});
+	it("browses before naming, preserves the draft when changing folders, and creates only at the confirmed destination", async () => {
+		const writes: unknown[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+				if (url.pathname === "/api/fs/list") {
+					const path = url.searchParams.get("path") ?? "/Users/test";
+					return Response.json({
+						path,
+						parent: "/Users/test",
+						dirs: path === "/Users/test" ? [{ name: "known", path: "/Users/test/known", isProject: true }] : [],
+					});
+				}
+				writes.push(JSON.parse(String(init?.body)));
+				return Response.json({ root: "/Users/test/known/coffee", name: "coffee" });
+			}),
+		);
+		const onOpened = vi.fn();
+		const host = mount(createElement(FolderPicker, { initial: "new", onOpened, onClose: vi.fn() }));
+		await act(async () => {});
+		expect(host.querySelector('[aria-label="Project name"]')).toBeNull();
+		await act(async () => host.querySelector<HTMLButtonElement>("[data-at='0']")?.click());
+		expect(writes).toEqual([]);
+		expect(host.querySelector(".pj-location-footer code")?.textContent).toBe("~/known");
+		act(() => button(host, "Use this folder").click());
+		act(() => type(host.querySelector('[aria-label="Project name"]'), " coffee "));
+		act(() => button(host, "Change folder").click());
+		expect(writes).toEqual([]);
+		act(() => button(host, "Use this folder").click());
+		expect(host.querySelector<HTMLInputElement>('[aria-label="Project name"]')?.value).toBe(" coffee ");
+		await act(async () => {
+			button(host, "Create project").click();
+			button(host, "Create project").click();
+		});
+		expect(writes).toEqual([{ path: "/Users/test/known", name: "coffee" }]);
+		expect(onOpened).toHaveBeenCalledExactlyOnceWith({ root: "/Users/test/known/coffee", name: "coffee" });
 	});
 });
 

@@ -14,6 +14,7 @@ import type { Cover } from "../cover";
 import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
 import { createProject, initProject, startProject } from "../init";
+import { mutateMachineState } from "../machine-state";
 import { openProject } from "../open";
 import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
@@ -602,7 +603,7 @@ export function createDaemonApp({
 	const emitAppEvent = (event: AppEvent) => {
 		// a project that arrived or left changes who keeps history, and an arrival
 		// brings whatever design/ churn the daemon was not up for
-		if (event.kind === "registry") history.keeping(registeredRoots());
+		if (event.kind === "registry" || event.kind === "project-renamed") history.keeping(registeredRoots());
 		for (const listener of appListeners) listener(event);
 	};
 	// the catch-up batch: whatever design/ is already dirty is a batch pending
@@ -1109,6 +1110,30 @@ export function createDaemonApp({
 				return c.json({ error: error.message }, 409);
 			}
 		})
+		.post(
+			"/api/projects/rename",
+			validator("json", (value, c) => {
+				const parsed = z.object({ root: z.string(), name: z.string() }).safeParse(value);
+				return parsed.success ? parsed.data : c.json({ error: "Expected a project root and name." }, 400);
+			}),
+			(c) => {
+				const { root, name } = c.req.valid("json");
+				if ([...liveTurns.of(root)].some((turn) => turn.running)) {
+					return c.json({ error: "Let the agent finish or stop its turn before renaming this project." }, 409);
+				}
+				try {
+					const result = mutateMachineState(spoolDir, { kind: "rename-project", root, name });
+					if (result.root !== root) hub.forget(root);
+					machineStateWatch.acknowledgeRegistry(result.registry);
+					machineStateWatch.acknowledgeSession(result.session);
+					emitAppEvent({ kind: "project-renamed", from: root, root: result.root, name: result.name });
+					return c.json({ root: result.root, name: result.name });
+				} catch (error) {
+					if (!(error instanceof SpoolError)) throw error;
+					return c.json({ error: error.message }, 409);
+				}
+			},
+		)
 		.post("/api/projects/create", validator("json", requestedNewProject), (c) => {
 			try {
 				const { path, name } = c.req.valid("json");

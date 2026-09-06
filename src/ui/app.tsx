@@ -10,6 +10,7 @@ import {
 	putSession,
 	putSessionOrder,
 	reloadForNewBundle,
+	renameProject,
 	startProject,
 	subscribeSse,
 } from "./api";
@@ -23,6 +24,7 @@ import { HotkeySheet } from "./hotkey-sheet";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { EdgeIcon, HomeIcon } from "./icons";
 import { FolderPicker, type ProjectPickerMode } from "./picker";
+import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings, useWriteSetting } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
 import { type TabProject, TabStrip } from "./tab-strip";
@@ -64,6 +66,14 @@ export function App() {
 	const writeSetting = useWriteSetting();
 	const [starting, setStarting] = useState(false);
 	const startingRef = useRef(false);
+	const [namingRoot, setNamingRoot] = useState<string | null>(null);
+	const [renameRequest, setRenameRequest] = useState<{
+		project: TabProject;
+		initialName: string;
+		resolve: (name: string | null) => void;
+	} | null>(null);
+	const requestRename = (project: TabProject, initialName = project.name) =>
+		new Promise<string | null>((resolve) => setRenameRequest({ project, initialName, resolve }));
 	const [startNotice, setStartNotice] = useState<string | null>(null);
 	const [chrome, setChrome] = useState<CanvasChrome | null>(null);
 	const [pendingForget, setPendingForget] = useState<TabProject | null>(null);
@@ -86,8 +96,21 @@ export function App() {
 	);
 	const focusedTab = tabs.find((tab) => tab.root === focused);
 
+	const projectRevision = useRef(0);
+	const remapProject = useCallback((from: string, renamed: TabProject) => {
+		projectRevision.current += 1;
+		setProjects((cards) => cards.map((card) => (card.root === from ? { ...card, ...renamed } : card)));
+		setOpen((roots) => roots.map((root) => (root === from ? renamed.root : root)));
+		setFocused((root) => (root === from ? renamed.root : root));
+		if (window.location.pathname === `/p/${encodeURIComponent(basename(from))}`) {
+			window.history.replaceState(null, "", `/p/${encodeURIComponent(renamed.name)}`);
+		}
+	}, []);
+
 	const refetch = useCallback(async () => {
+		const revision = ++projectRevision.current;
 		const [cards, session] = await Promise.all([fetchProjects(), fetchSession()]);
+		if (revision !== projectRevision.current) return;
 		setProjects(cards);
 		setProjectsLoaded(true);
 		setOpen(session);
@@ -115,8 +138,12 @@ export function App() {
 			setOpen(session);
 			setFocused((current) => current ?? pathFocus(session));
 			setBooted(true);
-			setProjects(await fetchProjects());
-			setProjectsLoaded(true);
+			const revision = projectRevision.current;
+			const cards = await fetchProjects();
+			if (revision === projectRevision.current) {
+				setProjects(cards);
+				setProjectsLoaded(true);
+			}
 		})();
 	}, []);
 
@@ -165,7 +192,13 @@ export function App() {
 					if (typeof latest === "string") offerUpdate(latest);
 				},
 				app: (data) => {
-					const event = data as { kind?: unknown; latest?: unknown };
+					const event = data as {
+						kind?: unknown;
+						latest?: unknown;
+						from?: unknown;
+						root?: unknown;
+						name?: unknown;
+					};
 					// the checkout rebuilt the bundle this page is running: the same
 					// dead end an upgrade reaches, without the 401 that rescues it
 					if (event.kind === "ui") return reloadForNewBundle();
@@ -173,6 +206,14 @@ export function App() {
 					// a setting moved somewhere on this machine: every reading is stale,
 					// and a theme has to land on this page without a reload
 					if (event.kind === "settings") return settingsMoved();
+					if (
+						event.kind === "project-renamed" &&
+						typeof event.from === "string" &&
+						typeof event.root === "string" &&
+						typeof event.name === "string"
+					) {
+						remapProject(event.from, { root: event.root, name: event.name });
+					}
 					void refetch();
 				},
 			},
@@ -180,7 +221,7 @@ export function App() {
 			// or forgotten in a shell across that gap left no other trace here
 			{ onReconnect: () => void refetch() },
 		);
-	}, [refetch, offerUpdate]);
+	}, [refetch, offerUpdate, remapProject]);
 
 	const startUpgrade = useCallback(async () => {
 		setToast({ kind: "updating", stage: "installing" });
@@ -407,6 +448,7 @@ export function App() {
 			const outcome = await startProject();
 			if (outcome.kind === "opened") {
 				setPicking(false);
+				setNamingRoot(outcome.root);
 				openTab(outcome);
 			} else if (outcome.kind === "error") setStartNotice(outcome.message);
 		} finally {
@@ -415,7 +457,8 @@ export function App() {
 		}
 	};
 
-	const canvasActive = focusedTab !== undefined && chrome !== null && !picking && !keysOpen && !settingsOpen;
+	const canvasActive =
+		focusedTab !== undefined && chrome !== null && !picking && !keysOpen && !settingsOpen && renameRequest === null;
 	useEffect(() => {
 		appWindow?.setCanvasActive(canvasActive);
 		return () => appWindow?.setCanvasActive(false);
@@ -507,6 +550,7 @@ export function App() {
 						forgetting={pendingForget?.root ?? null}
 						onOpenProject={(project) => openTab(project)}
 						onForgetProject={(project) => stageForget(project)}
+						onRenameProject={(project) => void requestRename(project)}
 					/>
 				) : (
 					<ProjectCanvas
@@ -515,6 +559,10 @@ export function App() {
 						root={focusedTab.root}
 						onChrome={setChrome}
 						onSettings={openSettings}
+						onFolder={() => setPicking("folder")}
+						focusName={namingRoot === focusedTab.root}
+						onNameFocused={() => setNamingRoot(null)}
+						onRename={(name) => requestRename(focusedTab, name)}
 					/>
 				)}
 			</main>
@@ -550,6 +598,23 @@ export function App() {
 						onClose={() => setPicking(false)}
 					/>
 				</div>
+			)}
+
+			{renameRequest !== null && (
+				<RenameProjectDialog
+					project={renameRequest.project}
+					initialName={renameRequest.initialName}
+					onRename={async (name) => {
+						const renamed = await renameProject(renameRequest.project.root, name);
+						remapProject(renameRequest.project.root, renamed);
+						renameRequest.resolve(renamed.name);
+						void refetch();
+					}}
+					onClose={() => {
+						renameRequest.resolve(null);
+						setRenameRequest(null);
+					}}
+				/>
 			)}
 
 			{keysOpen && <HotkeySheet onClose={() => setKeysOpen(false)} />}

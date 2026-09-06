@@ -46,10 +46,9 @@ import {
 	subscribeSse,
 	swapAsset,
 } from "../api";
-import { EmptyState } from "../empty-state";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
-import { RibbonMark } from "../icons";
+import { ProjectEmpty } from "../project-empty";
 import { type ArmedWrite, rangeKeyOf, useAgentHand } from "./agent-hand";
 import { AgentHandLayer } from "./agent-hand-layer";
 import { useAgentModel } from "./agent-model";
@@ -315,9 +314,17 @@ export function ProjectCanvas({
 	root,
 	onChrome,
 	onSettings,
+	onRename,
+	onFolder,
+	focusName,
+	onNameFocused,
 }: {
 	project: string;
 	root?: string;
+	focusName?: boolean | undefined;
+	onNameFocused?: (() => void) | undefined;
+	onRename?: ((name: string) => Promise<string | null>) | undefined;
+	onFolder?: (() => void) | undefined;
 	onChrome: (chrome: CanvasChrome | null) => void;
 	/** the dock's cog (#282): the sheet is the shell's, so the door only asks */
 	onSettings?: (() => void) | undefined;
@@ -330,8 +337,6 @@ export function ProjectCanvas({
 	// frame-local boxes of navigation-site elements, as each frame's shim answers
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
-	const [pathCopied, setPathCopied] = useState(false);
-	const [copyFailed, setCopyFailed] = useState(false);
 	const [camera, setCamera] = useState<Camera | null>(null);
 	const [tool, setTool] = useState<CanvasTool>("select");
 	const [selected, setSelected] = useState<string[]>([]);
@@ -4841,47 +4846,14 @@ export function ProjectCanvas({
 				    with no frames in it were the same picture. */}
 				<BootCurtain ready={loaded} />
 				{projectEmpty && (
-					<div
-						data-canvas-empty=""
-						className="pointer-events-none absolute inset-0 flex items-center justify-center pb-20"
-					>
-						<EmptyState
-							icon={<RibbonMark />}
-							title="Your canvas is ready."
-							description="Ask your agent here, or open this project with Claude Code or Codex and tell it what you’d like to design."
-							className="max-w-[520px] px-8"
-							actions={
-								root === undefined ? undefined : (
-									<div
-										className="pointer-events-auto flex flex-wrap items-center justify-center gap-3"
-										onPointerDown={(event) => event.stopPropagation()}
-									>
-										<code className="max-w-full select-text break-all font-mono text-xs text-muted">
-											{root}
-										</code>
-										<button
-											type="button"
-											className="rounded-md border border-border-raised bg-surface px-3 py-2 text-sm hover:bg-raised"
-											onClick={() => {
-												void navigator.clipboard
-													.writeText(root)
-													.then(() => {
-														setPathCopied(true);
-														setCopyFailed(false);
-													})
-													.catch(() => setCopyFailed(true));
-											}}
-										>
-											{pathCopied ? "Copied" : "Copy project path"}
-										</button>
-										{copyFailed && (
-											<span role="alert" className="text-xs text-muted">
-												Could not copy. Select the path and copy it manually.
-											</span>
-										)}
-									</div>
-								)
-							}
+					<div data-canvas-empty="" className="pointer-events-none absolute inset-0">
+						<ProjectEmpty
+							project={project}
+							root={root}
+							onRename={onRename}
+							onFolder={onFolder}
+							focusName={focusName}
+							onNameFocused={onNameFocused}
 						/>
 					</div>
 				)}

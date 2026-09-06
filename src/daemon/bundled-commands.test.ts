@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import type { Context } from "@earendil-works/pi-ai";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { makeTempDir, writeFrame } from "../test-helpers";
@@ -37,7 +38,37 @@ async function setup() {
 	return { root, directory, runtime, contexts };
 }
 
+// Linux commands see namespace-local PIDs. Find the fixture child by its exact
+// unique argv item in the host's /proc before asserting that Stop retired it.
+function childPid(file: string, marker: string): number | undefined {
+	if (!existsSync(file)) return undefined;
+	if (process.platform !== "linux") return Number(readFileSync(file, "utf8"));
+	for (const entry of readdirSync("/proc")) {
+		if (!/^\d+$/.test(entry)) continue;
+		try {
+			if (readFileSync(`/proc/${entry}/cmdline`, "utf8").split("\0").includes(marker)) return Number(entry);
+		} catch {
+			/* A process may exit between listing and reading. */
+		}
+	}
+	return undefined;
+}
+
+function childAlive(pid: number): boolean {
+	try {
+		// An orphan awaiting reaping cannot execute or retain live sandbox work.
+		if (process.platform === "linux" && /^State:\s+Z/m.test(readFileSync(`/proc/${pid}/status`, "utf8")))
+			return false;
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 it("runs real sandboxed native commands quietly, denies outside and symlink writes and protected reads", async () => {
+	const cleanup = vi.spyOn(SandboxManager, "cleanupAfterCommand");
+	onTestFinished(() => cleanup.mockRestore());
 	const { root, directory, runtime, contexts } = await setup();
 	mkdirSync(join(root, "outside"));
 	symlinkSync(join(root, "outside"), join(root, "design", "escape"));
@@ -63,6 +94,8 @@ it("runs real sandboxed native commands quietly, denies outside and symlink writ
 		},
 	);
 	expect(events.filter((event) => event.kind === "asking")).toEqual([]);
+	// Seven shell commands and the one-time startup probe each release their sandbox.
+	expect(cleanup).toHaveBeenCalledTimes(8);
 	expect(readFileSync(join(root, "design/ok"), "utf8")).toBe("edited");
 	expect(existsSync(join(root, "outside/no"))).toBe(false);
 	const results = events.filter((event) => event.kind === "result");
@@ -163,27 +196,21 @@ it("Stop settles pending approval and kills the actual command's stubborn child"
 	);
 	await pending;
 	expect(existsSync(join(root, "outside"))).toBe(false);
+	const marker = `spool-child-${randomUUID()}`;
 	const running = runtime.turn(
 		"running",
 		options(root, [
-			command("bash -c 'trap \"\" TERM; echo $$ > design/child.pid; while true; do sleep 1; done' & wait"),
+			command(`bash -c 'trap "" TERM; echo $$ > design/child.pid; while true; do sleep 1; done' ${marker} & wait`),
 		]),
 		() => {},
 	);
-	await expect.poll(() => existsSync(join(root, "design/child.pid")), { timeout: 10_000 }).toBe(true);
-	const pid = Number(readFileSync(join(root, "design/child.pid"), "utf8"));
+	await expect.poll(() => childPid(join(root, "design/child.pid"), marker), { timeout: 10_000 }).toBeDefined();
+	const pid = childPid(join(root, "design/child.pid"), marker);
+	if (pid === undefined) throw new Error("Missing actual fixture child PID");
 	await runtime.request({ kind: "stop", turn: "running" });
 	await running;
-	await expect
-		.poll(() => {
-			try {
-				process.kill(pid, 0);
-				return true;
-			} catch {
-				return false;
-			}
-		})
-		.toBe(false);
+	expect(existsSync(join(root, "design/canvas.json"))).toBe(false);
+	await expect.poll(() => childAlive(pid)).toBe(false);
 }, 20_000);
 
 it("never gives shell syntax, other packages, writes, extra flags or arbitrary scripts the trusted route", () => {
@@ -248,10 +275,85 @@ it("keeps file and command grants distinct, limits once, checks nonexistent prot
 	expect(readFileSync(join(root, "outside/b"), "utf8")).toBe("command");
 	expect(existsSync(join(root, "outside/c"))).toBe(false);
 	expect(existsSync(join(root, "design/.spool/no"))).toBe(false);
-	expect(existsSync(join(root, "design/canvas.json"))).toBe(false);
 	const results = events.filter((event) => event.kind === "result");
 	expect(results.map((event) => event.failed)).toEqual([false, false, true, true, true, false]);
+	const canvas = join(root, "design/canvas.json");
+	const bytes = existsSync(canvas) ? readFileSync(canvas) : undefined;
+	expect(bytes?.toString() ?? "", `protected path bytes: ${bytes?.toString("hex") ?? "absent"}`).not.toContain(
+		"denied",
+	);
+	expect(existsSync(join(root, "design/canvas.json"))).toBe(false);
 	const full = /full output: (.+)\]/.exec(results.at(-1)?.text ?? "")?.[1];
 	if (!full) throw new Error("Missing complete output path");
 	expect(readFileSync(full, "utf8")).toBe(`start${"x".repeat(210000)}end`);
 }, 30_000);
+
+it("keeps a running sandbox's deny mounts through another command's cleanup and restores absent paths after the last exit", async () => {
+	const { root, runtime } = await setup();
+	const events: AgentEvent[] = [];
+	const run = (id: string, calls: ReturnType<typeof command>[]) =>
+		runtime.turn(id, options(root, calls), (event) => {
+			events.push(event);
+			if (event.kind === "asking")
+				void runtime.request({ kind: "answer", turn: id, request: event.request, reply: { kind: "deny" } });
+		});
+	const held = run("held", [
+		command(
+			"touch design/ready; while [ ! -e design/release ]; do sleep 0.05; done; printf denied > design/canvas.json",
+		),
+	]);
+	try {
+		await expect.poll(() => existsSync(join(root, "design/ready")), { timeout: 10_000 }).toBe(true);
+		await run("overlap", [command("printf denied > design/canvas.json")]);
+		const canvas = join(root, "design/canvas.json");
+		// Linux retains its empty host mount point while the other command owns it.
+		// macOS has no host mount point; both platforms must forbid content.
+		if (process.platform === "linux") expect(readFileSync(canvas).length).toBe(0);
+		else expect(existsSync(canvas)).toBe(false);
+		writeFileSync(join(root, "design/release"), "release");
+		await held;
+		expect(events.filter((event) => event.kind === "asking")).toEqual([]);
+		expect(events.filter((event) => event.kind === "result").map((event) => event.failed)).toEqual([true, true]);
+		expect(existsSync(canvas)).toBe(false);
+		expect(existsSync(join(root, "design/.spool"))).toBe(false);
+		// Cleanup must preserve user-owned protected files, including empty files.
+		for (const content of ["original user content", ""]) {
+			writeFileSync(canvas, content);
+			await run(`existing-${content.length}`, [command("printf denied > design/canvas.json")]);
+			expect(readFileSync(canvas, "utf8")).toBe(content);
+			expect(events.filter((event) => event.kind === "result").at(-1)).toMatchObject({ failed: true });
+		}
+	} finally {
+		await runtime.request({ kind: "stop", turn: "held" });
+		await held;
+	}
+}, 30_000);
+
+it("cleans actual sandbox mounts after a timeout and retires the command's child", async () => {
+	const { root, runtime } = await setup();
+	const events: AgentEvent[] = [];
+	const marker = `spool-child-${randomUUID()}`;
+	const running = runtime.turn(
+		"timeout",
+		options(root, [
+			command(`bash -c 'trap "" TERM; echo $$ > design/timed.pid; while true; do sleep 1; done' ${marker} & wait`, {
+				timeout: 2,
+			}),
+		]),
+		(event) => {
+			events.push(event);
+			if (event.kind === "asking")
+				void runtime.request({ kind: "answer", turn: "timeout", request: event.request, reply: { kind: "deny" } });
+		},
+	);
+	await expect.poll(() => childPid(join(root, "design/timed.pid"), marker), { timeout: 10_000 }).toBeDefined();
+	const pid = childPid(join(root, "design/timed.pid"), marker);
+	if (pid === undefined) throw new Error("Missing actual fixture child PID");
+	await running;
+	expect(events.filter((event) => event.kind === "asking")).toEqual([]);
+	expect(events.filter((event) => event.kind === "result")).toMatchObject([
+		{ failed: true, text: "Command timed out" },
+	]);
+	expect(existsSync(join(root, "design/canvas.json"))).toBe(false);
+	await expect.poll(() => childAlive(pid)).toBe(false);
+}, 20_000);
