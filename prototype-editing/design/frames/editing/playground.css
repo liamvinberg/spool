@@ -87,8 +87,7 @@
 	outline-offset: 4px;
 }
 .ep-document [contenteditable="plaintext-only"] {
-	outline: 2px solid var(--color-thread);
-	outline-offset: 4px;
+	outline: none;
 	cursor: text;
 	user-select: text;
 }
@@ -109,64 +108,64 @@
 	border: 1px solid var(--color-thread);
 	pointer-events: none;
 }
-.ep-selection-name {
+.ep-hover {
 	position: absolute;
-	left: -1px;
-	bottom: calc(100% + 3px);
-	font: 10px var(--font-mono);
-	color: var(--color-thread);
-	background: var(--color-bg);
-	padding: 2px 4px;
-	white-space: nowrap;
+	border: 1px solid color-mix(in srgb, var(--color-thread) 55%, transparent);
 }
-.ep-handle {
+.ep-resize {
 	position: absolute;
-	background: var(--color-thread);
+	width: 22px;
+	height: 22px;
 	pointer-events: auto;
 	touch-action: none;
-	border: 1px solid #151515;
-	border-radius: 3px;
 }
-.ep-handle[data-edge="0"],
-.ep-handle[data-edge="2"] {
-	left: calc(50% - 13px);
-	width: 26px;
-	height: 7px;
-	cursor: ns-resize;
+.ep-resize::after {
+	content: "";
+	position: absolute;
+	inset: 8px;
+	background: var(--color-bg);
+	border: 1px solid var(--color-thread);
 }
-.ep-handle[data-edge="1"],
-.ep-handle[data-edge="3"] {
-	top: calc(50% - 13px);
-	width: 7px;
-	height: 26px;
+.ep-resize:hover::after,
+.ep-resize[data-dragging]::after {
+	background: var(--color-thread);
+}
+.ep-resize[data-axis="width"] {
+	right: -12px;
+	top: calc(50% - 11px);
 	cursor: ew-resize;
 }
-.ep-handle[data-edge="0"] {
-	top: -4px;
+.ep-resize[data-axis="height"] {
+	bottom: -12px;
+	left: calc(50% - 11px);
+	cursor: ns-resize;
 }
-.ep-handle[data-edge="2"] {
-	bottom: -4px;
+.ep-resize[data-axis="size"] {
+	right: -12px;
+	bottom: -12px;
+	cursor: nwse-resize;
 }
-.ep-handle[data-edge="1"] {
-	right: -4px;
-}
-.ep-handle[data-edge="3"] {
-	left: -4px;
-}
-.ep-handle > span {
-	display: none;
+.ep-padding-preview {
 	position: absolute;
-	left: 12px;
-	top: 12px;
-	padding: 3px;
-	color: var(--color-text);
-	background: var(--color-bg);
-	font: 10px var(--font-mono);
-	white-space: nowrap;
+	background: color-mix(in srgb, var(--color-thread) 16%, transparent);
 }
-.ep-handle:hover > span,
-.ep-handle:focus-visible > span {
-	display: block;
+.ep-measurements {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	overflow: visible;
+}
+.ep-measurements line {
+	stroke: var(--color-thread);
+	stroke-width: 1;
+}
+.ep-measurements rect {
+	fill: var(--color-thread);
+}
+.ep-measurements text {
+	fill: var(--color-on-thread);
+	font: 10px var(--font-mono);
 }
 .ep-rail {
 	min-height: 0;
@@ -351,4 +350,114 @@
 .ep-document [data-edit-node] {
 	transition: none !important;
 	animation: none !important;
+}
+
+.ep-color-trigger {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	min-width: 0;
+	padding: 3px 4px;
+	font: 11px var(--font-mono);
+	text-align: left;
+}
+.ep-color-trigger > span:nth-child(2) {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.ep-color-kind {
+	margin-left: auto;
+	color: var(--color-muted);
+	font-size: 9px;
+}
+.ep-color-trigger:hover {
+	background: var(--color-surface);
+}
+.ep-color-menu {
+	position: fixed;
+	z-index: 50;
+	width: 264px;
+	min-width: 0;
+	max-height: min(440px, calc(100dvh - 24px));
+	overflow: auto;
+	overscroll-behavior: contain;
+	margin: 0;
+	background: var(--color-bg);
+	border-radius: 4px;
+	border: 1px solid var(--color-border);
+	padding: 8px 10px;
+}
+.ep-token-search {
+	width: 100%;
+	border: 1px solid var(--color-border);
+	padding: 6px;
+	font-size: 11px;
+	background: var(--color-surface);
+}
+.ep-color-options {
+	margin-top: 10px;
+}
+.ep-color-options p {
+	margin: 0 0 4px;
+	font-size: 11px;
+	color: var(--color-muted);
+}
+.ep-color-options button {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	width: 100%;
+	padding: 5px 3px;
+	text-align: left;
+	font: 10px var(--font-mono);
+}
+.ep-color-options button > span:last-child {
+	margin-left: auto;
+	color: var(--color-muted);
+}
+.ep-color-options button:hover,
+.ep-color-options button[aria-pressed="true"] {
+	background: var(--color-surface);
+}
+.ep-custom-color {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	align-items: end;
+	border-top: 1px solid var(--color-border);
+	margin-top: 10px;
+	padding-top: 10px;
+}
+.ep-custom-color label {
+	flex: 1;
+	min-width: 0;
+	font-size: 11px;
+	color: var(--color-muted);
+}
+.ep-custom-color label input {
+	display: block;
+	width: 100%;
+	padding: 5px;
+	margin-top: 5px;
+	border: 1px solid var(--color-border);
+	color: var(--color-text);
+	font: 11px var(--font-mono);
+	background: transparent;
+}
+.ep-custom-color input[type="color"] {
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	background: none;
+}
+.ep-unlink {
+	padding: 4px 0;
+	font-size: 11px;
+}
+.ep-color-error {
+	color: var(--color-thread);
+	font-size: 11px;
 }

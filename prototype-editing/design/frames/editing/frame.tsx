@@ -1,7 +1,9 @@
-import { memo, type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { SleeveModern } from "shared/landing/ui/site/sleeve-guide/modern";
 import { cn } from "shared/lib/utils";
 import { BOX, Row, Section, VALUE } from "shared/ui/spool/properties-fields";
+import { ColorField } from "./color-field";
+import { Selection } from "./selection";
 import "./playground.css";
 
 // A throwaway DOM editing journey over the current SleeveModern landing.
@@ -17,6 +19,7 @@ const OPTIONAL = [
 	"letter-spacing",
 	"border-width",
 	"min-height",
+	"max-width",
 	"margin-top",
 	"margin-right",
 	"margin-bottom",
@@ -58,8 +61,12 @@ export default function EditingPlayground() {
 	const [revision, setRevision] = useState(0);
 	const [reach, setReach] = useState(false);
 	const [uses, setUses] = useState(false);
-	const [hint, setHint] = useState("Select anything. Double-click text to edit.");
-	const [rect, setRect] = useState({ left: 0, top: 0, width: 0, height: 0 });
+	const [hint, setHint] = useState("Select anything. Double-click text to edit. Option + hover measures spacing.");
+	const [hovered, setHovered] = useState<HTMLElement | null>(null);
+	const [measuring, setMeasuring] = useState(false);
+	const [padding, setPadding] = useState<string | null>(null);
+	const paint = useRef<number | null>(null);
+	const pointer = useRef<{ x: number; y: number } | null>(null);
 	const base = useRef<Snapshot>([]);
 	const past = useRef<Transaction[]>([]);
 	const future = useRef<Transaction[]>([]);
@@ -67,7 +74,13 @@ export default function EditingPlayground() {
 	const cancelled = useRef(false);
 	const inline = useRef<HTMLElement | null>(null);
 	const active = useRef<HTMLElement | null>(null);
-	const refresh = () => setRevision((v) => v + 1);
+	const refresh = () => {
+		if (paint.current !== null) return;
+		paint.current = requestAnimationFrame(() => {
+			paint.current = null;
+			setRevision((v) => v + 1);
+		});
+	};
 	const begin = (label: string) => {
 		if (!pending.current && root.current) pending.current = { before: snapshot(root.current), label };
 	};
@@ -102,6 +115,8 @@ export default function EditingPlayground() {
 		stopInline();
 		active.current = node;
 		setSelected(node);
+		setHovered(null);
+		setPadding(null);
 		setUses(false);
 		setReach(false);
 		if (reveal) node.scrollIntoView({ block: "center", behavior: "instant" });
@@ -135,7 +150,8 @@ export default function EditingPlayground() {
 		css(property, value);
 		finish();
 	};
-	const value = (property: string) => (selected ? getComputedStyle(selected).getPropertyValue(property) : "");
+	const computed = selected ? getComputedStyle(selected) : null;
+	const value = (property: string) => computed?.getPropertyValue(property) ?? "";
 	const original = (property: string) => selected?.style.getPropertyValue(property) !== "";
 	const numeric = (property: string) => Number.parseFloat(value(property)) || 0;
 	const live = useRef({ cancel, history, finish, stopInline });
@@ -181,6 +197,12 @@ export default function EditingPlayground() {
 			setSelected(first);
 		}
 		const key = (event: KeyboardEvent) => {
+			if (
+				event.key === "Alt" &&
+				!inline.current &&
+				!(event.target instanceof HTMLElement && event.target.closest("input,textarea,select"))
+			)
+				setMeasuring(true);
 			if (event.key === "Escape") {
 				if (!pending.current && !inline.current) return;
 				event.preventDefault();
@@ -199,30 +221,23 @@ export default function EditingPlayground() {
 			}
 			if (event.key === "Enter" && target instanceof HTMLElement && page.contains(target)) event.preventDefault();
 		};
+		const keyUp = (event: KeyboardEvent) => {
+			if (event.key === "Alt") setMeasuring(false);
+		};
+		const blur = () => {
+			setMeasuring(false);
+			setHovered(null);
+		};
 		window.addEventListener("keydown", key, true);
-		return () => window.removeEventListener("keydown", key, true);
-	}, []);
-
-	useLayoutEffect(() => {
-		if (!selected || !stage.current) return;
-		const update = () => {
-			const a = selected.getBoundingClientRect();
-			const b = stage.current?.getBoundingClientRect();
-			if (b) setRect({ left: a.left - b.left, top: a.top - b.top, width: a.width, height: a.height });
-		};
-		update();
-		const observer = new ResizeObserver(update);
-		observer.observe(selected);
-		observer.observe(stage.current);
-		stage.current.addEventListener("scroll", update, { passive: true });
-		window.addEventListener("resize", update);
-		const viewport = stage.current;
+		window.addEventListener("keyup", keyUp);
+		window.addEventListener("blur", blur);
 		return () => {
-			observer.disconnect();
-			viewport.removeEventListener("scroll", update);
-			window.removeEventListener("resize", update);
+			window.removeEventListener("keydown", key, true);
+			window.removeEventListener("keyup", keyUp);
+			window.removeEventListener("blur", blur);
+			if (paint.current !== null) cancelAnimationFrame(paint.current);
 		};
-	}, [selected, revision]);
+	}, []);
 
 	useEffect(() => {
 		for (const node of root.current?.querySelectorAll<HTMLElement>("[data-shared=download]") ?? []) {
@@ -251,7 +266,9 @@ export default function EditingPlayground() {
 		const selection = window.getSelection();
 		selection?.removeAllRanges();
 		selection?.addRange(range);
-		setHint("Type here. Click away to keep it. Escape cancels.");
+		setHovered(null);
+		setMeasuring(false);
+		setHint("Type here. Double-click a word to select it. Escape cancels.");
 	};
 	const resolve = (target: EventTarget) => {
 		if (!(target instanceof HTMLElement || target instanceof SVGElement)) return null;
@@ -263,7 +280,8 @@ export default function EditingPlayground() {
 	const visibleOptional = OPTIONAL.filter(
 		(property) =>
 			selected?.style.getPropertyValue(property) ||
-			(["gap", "letter-spacing"].includes(property) && numeric(property) !== 0),
+			(["gap", "letter-spacing"].includes(property) && numeric(property) !== 0) ||
+			(property === "max-width" && value(property) !== "none"),
 	);
 	const numberRow = (
 		property: string,
@@ -289,6 +307,7 @@ export default function EditingPlayground() {
 			onFinish={finish}
 			cancelled={cancelled}
 			onHint={setHint}
+			onInspect={(on) => setPadding(on && NUMBERS.includes(property) ? property : null)}
 		/>
 	);
 	const menu = (property: string, options: string[]) => (
@@ -337,7 +356,24 @@ export default function EditingPlayground() {
 			</header>
 			<div className="ep-workspace">
 				<div className="ep-stage-wrap">
-					<div className="ep-stage" ref={stage}>
+					<div
+						className="ep-stage"
+						ref={stage}
+						onPointerMove={(e) => {
+							pointer.current = { x: e.clientX, y: e.clientY };
+							if (!e.buttons && !inline.current) setHovered(resolve(e.target));
+						}}
+						onPointerLeave={() => {
+							pointer.current = null;
+							setHovered(null);
+						}}
+						onScroll={() => {
+							if (pointer.current && !inline.current) {
+								const target = document.elementFromPoint(pointer.current.x, pointer.current.y);
+								setHovered(target ? resolve(target) : null);
+							}
+						}}
+					>
 						<div
 							ref={root}
 							className="ep-document"
@@ -359,18 +395,22 @@ export default function EditingPlayground() {
 								e.preventDefault();
 								e.stopPropagation();
 								const node = resolve(e.target);
-								if (node) choose(node);
+								if (node && !e.altKey) choose(node);
 							}}
 							onDoubleClickCapture={(e) => {
+								if (inline.current?.contains(e.target instanceof Node ? e.target : null)) {
+									e.stopPropagation();
+									return;
+								}
 								e.preventDefault();
 								e.stopPropagation();
 								const node = resolve(e.target);
-								if (node) startInline(node);
+								if (node && !e.altKey) startInline(node);
 							}}
 							onKeyDownCapture={(e) => {
 								if (inline.current) {
 									e.stopPropagation();
-									if (e.key === "Enter" && !e.shiftKey) {
+									if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
 										e.preventDefault();
 										stopInline();
 									}
@@ -394,29 +434,26 @@ export default function EditingPlayground() {
 							<Landing />
 						</div>
 					</div>
-					{selected && (
-						<div className="ep-overlays" aria-hidden={undefined}>
-							<div className="ep-outline" style={rect}>
-								<span className="ep-selection-name">{name(selected)}</span>
-								{NUMBERS.map((property, i) => (
-									<PaddingHandle
-										key={property}
-										edge={i}
-										property={property}
-										value={numeric(property)}
-										onBegin={() => {
-											cancelled.current = false;
-											begin(property);
-										}}
-										onChange={(v) => css(property, `${v}px`)}
-										onFinish={finish}
-										cancelled={cancelled}
-										onHint={setHint}
-									/>
-								))}
-							</div>
-						</div>
-					)}
+					<Selection
+						selected={selected}
+						hovered={hovered}
+						measuring={measuring}
+						editing={inline.current !== null}
+						stage={stage}
+						revision={revision}
+						padding={padding}
+						onBegin={() => {
+							stopInline();
+							cancelled.current = false;
+							setHovered(null);
+							begin("resize");
+						}}
+						onChange={css}
+						onFinish={finish}
+						onCancel={cancel}
+						cancelled={cancelled}
+						onHint={setHint}
+					/>
 				</div>
 				<aside className="ep-rail" aria-label="Properties">
 					<nav className="ep-crumbs" aria-label="Selection breadcrumb">
@@ -498,38 +535,40 @@ export default function EditingPlayground() {
 										{menu("align-items", ["normal", "stretch", "flex-start", "center", "flex-end"])}
 									</>
 								)}
-								{numberRow(
-									"width",
-									"px",
-									0,
-									Number.POSITIVE_INFINITY,
-									<select
-										aria-label="width mode"
-										className="ep-select ep-width-mode"
-										value={
-											selected?.style.width === "100%"
-												? "fill"
-												: selected?.style.width && selected.style.width !== "auto"
-													? "fixed"
-													: "auto"
-										}
-										onChange={(e) =>
-											apply(
-												"width",
-												e.target.value === "fill"
-													? "100%"
-													: e.target.value === "auto"
-														? "auto"
-														: `${Math.round(selected?.getBoundingClientRect().width ?? 0)}px`,
-											)
-										}
-									>
-										<option value="auto">auto</option>
-										<option value="fill">fill</option>
-										<option value="fixed">fixed</option>
-									</select>,
+								{["width", "height"].map((axis) =>
+									numberRow(
+										axis,
+										"px",
+										0,
+										Number.POSITIVE_INFINITY,
+										<select
+											aria-label={`${axis} mode`}
+											className="ep-select ep-width-mode"
+											value={
+												selected?.style.getPropertyValue(axis) === "100%"
+													? "fill"
+													: selected?.style.getPropertyValue(axis) &&
+															selected.style.getPropertyValue(axis) !== "auto"
+														? "fixed"
+														: "auto"
+											}
+											onChange={(e) =>
+												apply(
+													axis,
+													e.target.value === "fill"
+														? "100%"
+														: e.target.value === "auto"
+															? "auto"
+															: `${numeric(axis)}px`,
+												)
+											}
+										>
+											<option value="auto">auto</option>
+											{axis === "width" && <option value="fill">fill</option>}
+											<option value="fixed">fixed</option>
+										</select>,
+									),
 								)}
-								{numberRow("height")}
 								{NUMBERS.map((property) => numberRow(property))}
 								{visibleOptional
 									.filter((property) => property !== "letter-spacing")
@@ -547,22 +586,22 @@ export default function EditingPlayground() {
 							<Section name="Appearance">
 								{numberRow("border-radius")}
 								{numberRow("opacity", "", 0, 1)}
-								{["color", "background-color"].map((property) => (
-									<TextControl
-										key={property}
-										name={property}
-										value={value(property)}
-										swatch
-										onBegin={() => {
-											cancelled.current = false;
-											begin(property);
-										}}
-										onChange={(v) => {
-											if (CSS.supports(property, v)) css(property, v);
-										}}
-										onFinish={finish}
-									/>
-								))}
+								{selected &&
+									["color", "background-color"].map((property) => (
+										<ColorField
+											key={property}
+											node={selected}
+											name={property}
+											value={value(property)}
+											onBegin={() => {
+												cancelled.current = false;
+												begin(property);
+											}}
+											onChange={(v) => css(property, v)}
+											onApply={(v) => apply(property, v)}
+											onFinish={finish}
+										/>
+									))}
 							</Section>
 							<div className="ep-add">
 								<select
@@ -589,7 +628,8 @@ export default function EditingPlayground() {
 							</div>
 						</div>
 						<p className="ep-note">
-							Images, tokens, responsive rules and source expressions are unavailable in this playground.
+							Color tokens can be applied here. Source writes, other token bindings and responsive rules are
+							still outside this playground.
 						</p>
 					</div>
 					<div className="ep-hint" role="status">
@@ -614,6 +654,7 @@ function NumberControl({
 	onFinish,
 	cancelled,
 	onHint,
+	onInspect,
 }: {
 	after?: React.ReactNode;
 	name: string;
@@ -627,6 +668,7 @@ function NumberControl({
 	onFinish: () => void;
 	cancelled: React.RefObject<boolean>;
 	onHint: (value: string) => void;
+	onInspect: (on: boolean) => void;
 }) {
 	const [draft, setDraft] = useState<string | null>(null);
 	const hold = useRef(false);
@@ -650,7 +692,11 @@ function NumberControl({
 			onPointerMoveCapture={(e) => {
 				shift.current = e.shiftKey;
 			}}
-			onPointerEnter={() => onHint(`${name} · drag label · ↑↓ ${step} · Shift ${step * 10}`)}
+			onPointerEnter={() => {
+				onHint(`${name} · drag label · ↑↓ ${step} · Shift ${step * 10}`);
+				onInspect(true);
+			}}
+			onPointerLeave={() => onInspect(false)}
 		>
 			<Row
 				name={name}
@@ -660,7 +706,10 @@ function NumberControl({
 						onBegin();
 						hold.current = true;
 					}
-					if (!cancelled.current) onChange(bounded(current.current + units * step * (shift.current ? 10 : 1)));
+					if (!cancelled.current) {
+						current.current = bounded(current.current + units * step * (shift.current ? 10 : 1));
+						onChange(current.current);
+					}
 				}}
 				onScrubEnd={() => {
 					hold.current = false;
@@ -742,7 +791,7 @@ function TextControl({
 		},
 		onKeyDown: (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
 			e.stopPropagation();
-			if (e.key === "Enter" && !e.shiftKey) {
+			if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
 				e.preventDefault();
 				e.currentTarget.blur();
 			}
@@ -755,83 +804,5 @@ function TextControl({
 				{multiline ? <textarea {...common} rows={3} /> : <input {...common} />}
 			</label>
 		</Row>
-	);
-}
-function PaddingHandle({
-	edge,
-	property,
-	value,
-	onBegin,
-	onChange,
-	onFinish,
-	cancelled,
-	onHint,
-}: {
-	edge: number;
-	property: string;
-	value: number;
-	onBegin: () => void;
-	onChange: (n: number) => void;
-	onFinish: () => void;
-	cancelled: React.RefObject<boolean>;
-	onHint: (s: string) => void;
-}) {
-	const held = useRef<{ x: number; y: number; value: number; moved: boolean } | null>(null);
-	const down = (e: ReactPointerEvent<HTMLButtonElement>) => {
-		e.preventDefault();
-		e.stopPropagation();
-		if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement)
-			document.activeElement.blur();
-		onBegin();
-		held.current = { x: e.clientX, y: e.clientY, value, moved: false };
-		e.currentTarget.setPointerCapture(e.pointerId);
-	};
-	return (
-		<button
-			type="button"
-			className="ep-handle"
-			data-edge={edge}
-			aria-label={`Drag ${property}`}
-			onPointerEnter={() => onHint(`${property} · pull outward to increase · Escape cancels`)}
-			onPointerDown={down}
-			onPointerMove={(e) => {
-				const h = held.current;
-				if (!h || cancelled.current) return;
-				const delta =
-					edge === 0
-						? h.y - e.clientY
-						: edge === 1
-							? e.clientX - h.x
-							: edge === 2
-								? e.clientY - h.y
-								: h.x - e.clientX;
-				if (Math.abs(delta) > 2) h.moved = true;
-				if (h.moved) onChange(Math.max(0, Math.round(h.value + delta * (e.shiftKey ? 10 : 1))));
-			}}
-			onPointerUp={(e) => {
-				const h = held.current;
-				held.current = null;
-				e.currentTarget.releasePointerCapture(e.pointerId);
-				onFinish();
-				if (h && !h.moved && !cancelled.current)
-					document.querySelector<HTMLInputElement>(`input[aria-label="${property}"]`)?.focus();
-			}}
-			onPointerCancel={() => {
-				held.current = null;
-				onFinish();
-			}}
-			onKeyDown={(e) => {
-				if (e.key === "ArrowUp" || e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === "ArrowLeft") {
-					e.preventDefault();
-					onBegin();
-					onChange(
-						Math.max(0, value + (e.key === "ArrowUp" || e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 10 : 1)),
-					);
-					onFinish();
-				}
-			}}
-		>
-			<span>{value}px</span>
-		</button>
 	);
 }
