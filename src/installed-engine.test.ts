@@ -311,11 +311,16 @@ it("completes a deterministic journey through the clean installed host and deliv
 		? await electron.firstWindow()
 		: await browser?.newPage({ viewport: { width: 1400, height: 900 } });
 	if (!page) throw new Error("Missing delivered canvas");
+	let observedPage = page;
 	if (electron) await page.waitForURL((address) => address.protocol === "http:", { timeout: 30_000 });
 	await page.goto(`${url}/p/${basename(project)}`);
 	onTestFinished(async () => {
-		if (!page.isClosed())
-			console.info("last canvas", page.url(), (await page.locator("body").textContent())?.slice(0, 1200));
+		if (!observedPage.isClosed())
+			console.info(
+				"last canvas",
+				observedPage.url(),
+				(await observedPage.locator("body").textContent())?.slice(0, 1200),
+			);
 	});
 	await page.locator('[data-dock-glyph="agent"]').click();
 	await expect.poll(() => childHost(daemonPid), { timeout: 15_000 }).toBeDefined();
@@ -658,9 +663,15 @@ try {
 	expect(daemonPid).not.toBe(previousDaemon);
 	const reopened = electron ? await electron.firstWindow() : await browser?.newPage();
 	if (!reopened) throw new Error("Missing reopened installed canvas");
+	observedPage = reopened;
 	if (electron) await reopened.waitForURL((address) => address.protocol === "http:", { timeout: 30_000 });
 	await reopened.goto(`${url}/p/${basename(project)}`);
-	await reopened.locator('[data-dock-glyph="agent"]').click();
+	const agentGlyph = reopened.locator('[data-dock-glyph="agent"]');
+	await agentGlyph.waitFor();
+	const dockWasOpen = (await agentGlyph.getAttribute("aria-pressed")) === "true";
+	// Electron restores this profile's dock state; a fresh browser context does not.
+	if (electron) expect(dockWasOpen).toBe(true);
+	if (!dockWasOpen) await agentGlyph.click();
 	await expect.poll(() => childHost(daemonPid), { timeout: 15_000 }).toBeDefined();
 	hostPid = childHost(daemonPid) ?? 0;
 	expect(hostPid).not.toBe(previousHost);
@@ -675,7 +686,7 @@ try {
 	expect(readFileSync(join(project, "outside.txt"), "utf8")).toBe("reused file grant");
 	expect(readFileSync(join(claudeConfig, "settings.json"), "utf8")).toBe('{"fixture":"preserve this configuration"}');
 	expect(existsSync(join(prefix, "unexpected-harness"))).toBe(false);
-	evidence.reopen = { previousDaemon, previousHost, daemonPid, hostPid, runtime: reopenedRuntime };
+	evidence.reopen = { previousDaemon, previousHost, daemonPid, hostPid, dockWasOpen, runtime: reopenedRuntime };
 	if (process.env.SPOOL_TEST_SHOTS) {
 		mkdirSync(process.env.SPOOL_TEST_SHOTS, { recursive: true });
 		await reopened.screenshot({
