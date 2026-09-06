@@ -57,7 +57,7 @@ export function CanvasTools({ tool, onTool }: { tool: CanvasTool; onTool: (tool:
 							onClick={() => onTool(meta.id)}
 							className={cn(
 								"group relative flex h-9 w-9 items-center justify-center rounded-md",
-								active ? "bg-raised text-text" : "text-muted hover:bg-surface hover:text-text",
+								active ? "bg-control text-text" : "text-muted hover:bg-surface hover:text-text",
 							)}
 						>
 							<meta.Icon className="h-[18px] w-[18px]" />

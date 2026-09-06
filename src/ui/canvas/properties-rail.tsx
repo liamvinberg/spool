@@ -702,7 +702,7 @@ function Crumb({
 			<button
 				type="button"
 				onClick={onPress}
-				className={cn(FACE, last ? "text-thread" : "text-muted hover:text-text")}
+				className={cn(FACE, last ? "text-thread-strong" : "text-muted hover:text-text")}
 			>
 				{name}
 			</button>
@@ -796,10 +796,10 @@ function ScopeBar({
 							{...(when === undefined ? {} : { title: when })}
 							onClick={() => onScope(candidate)}
 							className={cn(
-								"h-5 shrink-0 rounded-xs border px-1.5 focus:outline-none focus-visible:bg-raised",
+								"h-5 shrink-0 rounded-xs border px-1.5 focus:outline-none focus-visible:bg-control",
 								LABEL,
 								ok ? "cursor-pointer" : "cursor-default",
-								on ? "border-border-raised bg-raised text-text" : "border-transparent text-muted/60",
+								on ? "border-border-raised bg-control text-text" : "border-transparent text-muted/60",
 								ok && !on && "hover:border-border hover:text-text",
 								!ok && "text-muted/35",
 								!ok && on && "bg-surface",
@@ -851,7 +851,7 @@ function ScopeBar({
 								onAdd([variant.prefix]);
 							}}
 							className={cn(
-								"flex w-full cursor-pointer items-center gap-3 whitespace-nowrap px-2.5 py-1 text-left text-muted hover:bg-raised hover:text-text",
+								"flex w-full cursor-pointer items-center gap-3 whitespace-nowrap px-2.5 py-1 text-left text-muted hover:bg-control hover:text-text",
 								VALUE,
 							)}
 						>
@@ -1104,7 +1104,7 @@ function AssetField({
  */
 /** the ink each reading takes: the thread for what the hands wrote, quiet for the rest */
 const INK: Readonly<Record<TokenState, string>> = {
-	spliced: "text-thread",
+	spliced: "text-thread-strong",
 	"in-scope": "text-muted",
 	"out-of-scope": "text-muted/40",
 };

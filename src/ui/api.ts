@@ -108,20 +108,10 @@ export async function fetchProjects(): Promise<ProjectCard[]> {
 /** Home's remove: the registry forgets this root, the folder stays put. */
 export async function postForgetProject(root: string): Promise<boolean> {
 	try {
-		return (await client.api.projects.forget.$post({ json: { root } })).ok;
+		return (await client.api.projects.forget.$post({ json: { root } }, { init: { keepalive: true } })).ok;
 	} catch {
 		return false;
 	}
-}
-
-/** The page is going away mid-toast — the staged forget still has to land. */
-export function beaconForgetProject(root: string): void {
-	void controlFetch("/api/projects/forget", {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ root }),
-		keepalive: true,
-	});
 }
 
 export async function fetchSession(): Promise<string[]> {
@@ -208,6 +198,11 @@ export async function renameProject(root: string, name: string): Promise<{ root:
 	const res = await client.api.projects.rename.$post({ json: { root, name } });
 	if (!res.ok) throw new Error(await errorText(res));
 	return (await res.json()) as { root: string; name: string };
+}
+
+export async function trashProject(root: string): Promise<void> {
+	const res = await client.api.projects.trash.$post({ json: { root } });
+	if (!res.ok) throw new Error(await errorText(res));
 }
 
 export type UpgradeStart = { ok: true } | { ok: false; error: string };

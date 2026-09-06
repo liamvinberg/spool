@@ -28,7 +28,7 @@ export function CollisionNotice({ collisions }: { collisions: FrameCollision[] }
 		<>
 			{collisions.map((collision) => (
 				<div key={collision.name} className={NOTICE_PILL}>
-					<span className="text-thread">two frames named "{collision.name}"</span>
+					<span className="text-thread-strong">two frames named "{collision.name}"</span>
 					<span className="text-muted">: {collision.paths.join(" · ")}</span>
 				</div>
 			))}

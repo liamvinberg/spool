@@ -487,7 +487,7 @@ function chips(host: HTMLElement): string[] {
 /** the tokens on the source line drawn as the hands' own rather than the file's */
 function splicedTokens(host: HTMLElement): string[] {
 	const line = rail(host)?.querySelector("[data-properties-source]");
-	return [...(line?.querySelectorAll(".text-thread") ?? [])].map((token) => (token.textContent ?? "").trim());
+	return [...(line?.querySelectorAll(".text-thread-strong") ?? [])].map((token) => (token.textContent ?? "").trim());
 }
 
 /** the CSS name at the left of one row */

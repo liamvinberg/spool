@@ -1624,13 +1624,13 @@ export function CanvasSidebar({
 						<div ref={overlayRef} className="pointer-events-none fixed top-0 left-0 z-50 will-change-transform">
 							<div className="flex h-8 w-fit max-w-[190px] items-center gap-2 rounded-sm border border-border-raised bg-raised px-2.5">
 								{kit.kind === "page" ? (
-									<FolderIcon className="h-3.5 w-3.5 shrink-0 text-thread" />
+									<FolderIcon className="h-3.5 w-3.5 shrink-0 text-thread-strong" />
 								) : (
-									<FrameIcon className="h-3.5 w-3.5 shrink-0 text-thread" />
+									<FrameIcon className="h-3.5 w-3.5 shrink-0 text-thread-strong" />
 								)}
 								<span className="min-w-0 truncate text-text type-value">{kit.label}</span>
 								{kit.names.length > 1 ? (
-									<span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-thread px-1 text-on-thread type-detail">
+									<span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-thread-strong px-1 text-on-thread type-detail">
 										{kit.names.length}
 									</span>
 								) : null}
@@ -1885,7 +1885,9 @@ function TreeRow({
 									onDoubleClick={onRename}
 									className="flex h-full min-w-0 flex-1 items-center gap-2 pr-3 text-left"
 								>
-									<FolderIcon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-thread" : "text-muted")} />
+									<FolderIcon
+										className={cn("h-3.5 w-3.5 shrink-0", active ? "text-thread-strong" : "text-muted")}
+									/>
 									<span
 										className={cn(
 											"min-w-0 flex-1 truncate type-value",
@@ -1949,7 +1951,9 @@ function TreeRow({
 								className="flex h-full w-full min-w-0 items-center gap-2 pr-3 text-left"
 								style={{ paddingLeft: contentX(row.depth) }}
 							>
-								<FrameIcon className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-thread" : "text-muted")} />
+								<FrameIcon
+									className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-thread-strong" : "text-muted")}
+								/>
 								<span
 									className={cn(
 										// the name runs to the row's edge; the menu that fades in over
@@ -2083,7 +2087,7 @@ function RenameField({
 				)}
 			/>
 			{state.error === null ? null : (
-				<span role="alert" className="pointer-events-none absolute right-1.5 text-thread type-detail">
+				<span role="alert" className="pointer-events-none absolute right-1.5 text-thread-strong type-detail">
 					{state.error}
 				</span>
 			)}
@@ -2148,7 +2152,7 @@ function SpringArc() {
 	return (
 		<svg
 			viewBox="0 0 20 20"
-			className="pointer-events-none absolute h-5 w-5 text-thread"
+			className="pointer-events-none absolute h-5 w-5 text-thread-strong"
 			fill="none"
 			aria-hidden="true"
 		>

@@ -109,10 +109,10 @@ export function PageObjectLabel({
 				className="absolute bottom-full left-0 flex w-full min-w-0 origin-bottom-left items-center gap-1.5 whitespace-nowrap pb-2.5"
 				style={{ transform: `scale(${1 / k})` }}
 			>
-				<FolderIcon className={`h-3 w-3 shrink-0 ${selected ? "text-thread" : "text-muted"}`} />
+				<FolderIcon className={`h-3 w-3 shrink-0 ${selected ? "text-thread-strong" : "text-muted"}`} />
 				<span
 					className={`min-w-0 truncate type-value ${
-						selected ? "text-thread" : hovered ? "text-text" : "text-muted"
+						selected ? "text-thread-strong" : hovered ? "text-text" : "text-muted"
 					}`}
 				>
 					{object.name}

@@ -1,22 +1,34 @@
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { ProjectCard } from "./api";
 import { EmptyFramesIcon, EmptyState } from "./empty-state";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
-import type { HotkeyIdFor } from "./hotkeys";
-import { ArrowRightIcon, CloseIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark, SearchIcon } from "./icons";
+import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
+import {
+	ArrowRightIcon,
+	CloseIcon,
+	CogIcon,
+	DotsIcon,
+	FolderIcon,
+	FrameIcon,
+	PlusIcon,
+	RibbonMark,
+	SearchIcon,
+} from "./icons";
 import { ProjectLocation } from "./project-location";
+import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
 import "./home.css";
 
 export function Home({
 	projects,
 	loading = false,
-	forgetting = null,
 	onOpenProject,
 	onForgetProject,
+	onTrashProject,
 	onRenameProject,
 	onStart,
 	onFolder,
+	onSettings,
 	onChangeLocation,
 	location,
 	starting = false,
@@ -24,12 +36,13 @@ export function Home({
 }: {
 	projects: ProjectCard[];
 	loading?: boolean;
-	forgetting?: string | null;
 	onOpenProject: (project: { root: string; name: string }) => void;
 	onForgetProject: (project: { root: string; name: string }) => void;
+	onTrashProject: (project: { root: string; name: string }) => void;
 	onRenameProject: (project: { root: string; name: string }) => void;
 	onStart: () => void;
 	onFolder: () => void;
+	onSettings: () => void;
 	onChangeLocation: () => void;
 	location: string;
 	starting?: boolean;
@@ -39,9 +52,8 @@ export function Home({
 	const [sort, setSort] = useState("Recent");
 	const [menuRoot, setMenuRoot] = useState<string | null>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
-	const registered = projects.filter((project) => project.root !== forgetting);
 	const needle = query.trim().toLowerCase();
-	const visible = registered
+	const visible = projects
 		.filter((project) => project.name.toLowerCase().includes(needle) || project.root.toLowerCase().includes(needle))
 		.sort((a, b) =>
 			sort === "Name" ? a.name.localeCompare(b.name) : Date.parse(b.openedAt) - Date.parse(a.openedAt),
@@ -69,22 +81,29 @@ export function Home({
 						<span>spool</span>
 					</div>
 					<nav aria-label="Home sections">
-						<button type="button" aria-current="page" onClick={() => setQuery("")}>
-							<FrameIcon />
-							<span>Projects</span>
-						</button>
+						<NavigationButton icon={<FrameIcon />} active onClick={() => setQuery("")}>
+							Projects
+						</NavigationButton>
 					</nav>
 					<div className="pj-navigation-foot">
-						<button type="button" onClick={onFolder}>
-							<FolderIcon />
-							<span>Open a folder</span>
-						</button>
+						<nav aria-label="Home actions">
+							<NavigationButton icon={<FolderIcon />} onClick={onFolder}>
+								Open a folder
+							</NavigationButton>
+							<NavigationButton
+								icon={<CogIcon />}
+								onClick={onSettings}
+								title={`Settings ${hotkeyKey("app.settings")}`}
+							>
+								Settings
+							</NavigationButton>
+						</nav>
 						<span>On this Mac</span>
 					</div>
 				</aside>
 				{loading ? (
 					<main aria-busy="true" />
-				) : registered.length === 0 && needle === "" ? (
+				) : projects.length === 0 && needle === "" ? (
 					<main className="pj-welcome-main">
 						<EmptyState
 							className="pj-welcome"
@@ -159,7 +178,7 @@ export function Home({
 							</div>
 						</header>
 						{notice && (
-							<p role="alert" className="mb-4 text-thread type-label">
+							<p role="alert" className="mb-4 text-thread-strong type-label">
 								{notice}{" "}
 								<button type="button" className="underline" onClick={onChangeLocation}>
 									Change save location…
@@ -205,6 +224,7 @@ export function Home({
 										onCloseMenu={() => setMenuRoot(null)}
 										onOpen={() => onOpenProject(project)}
 										onForget={() => onForgetProject(project)}
+										onTrash={() => onTrashProject(project)}
 										onRename={() => onRenameProject(project)}
 									/>
 								))}
@@ -232,6 +252,7 @@ function ProjectTile({
 	onCloseMenu,
 	onOpen,
 	onForget,
+	onTrash,
 	onRename,
 }: {
 	project: ProjectCard;
@@ -240,6 +261,7 @@ function ProjectTile({
 	onCloseMenu: () => void;
 	onOpen: () => void;
 	onForget: () => void;
+	onTrash: () => void;
 	onRename: () => void;
 }) {
 	const manageRef = useRef<HTMLButtonElement>(null);
@@ -310,10 +332,19 @@ function ProjectTile({
 					/>
 					<div className="mx-2 my-unit h-px bg-border-raised" />
 					<MenuItem
-						label="Remove from spool"
+						label="Hide from Spool"
 						onClick={() => {
 							onCloseMenu();
 							withViewTransition(onForget);
+						}}
+					/>
+					<MenuItem
+						label={`Move to ${systemTrashName()}…`}
+						danger
+						onClick={() => {
+							manageRef.current?.focus();
+							onCloseMenu();
+							onTrash();
 						}}
 					/>
 				</div>
@@ -322,11 +353,39 @@ function ProjectTile({
 	);
 }
 
-function MenuItem({ label, onClick }: { label: string; onClick: () => void }) {
+function NavigationButton({
+	icon,
+	children,
+	onClick,
+	active = false,
+	title,
+}: {
+	icon: ReactNode;
+	children: ReactNode;
+	onClick: () => void;
+	active?: boolean;
+	title?: string;
+}) {
+	return (
+		<button
+			type="button"
+			className="pj-navigation-item"
+			aria-current={active ? "page" : undefined}
+			onClick={onClick}
+			title={title}
+		>
+			{icon}
+			<span>{children}</span>
+		</button>
+	);
+}
+
+function MenuItem({ label, onClick, danger = false }: { label: string; onClick: () => void; danger?: boolean }) {
 	return (
 		<button
 			type="button"
 			className="flex h-[30px] items-center rounded-sm px-3 text-left text-text hover:bg-surface type-control"
+			style={danger ? { color: "light-dark(#bb2614, #ff604b)" } : undefined}
 			onClick={onClick}
 		>
 			{label}

@@ -150,9 +150,9 @@ function General({
 	return (
 		<div className="flex flex-col gap-8">
 			{BANDS.map((band) => {
+				if (band.scope !== "machine" && project === undefined) return null;
 				const rows = general.filter((entry) => entry.scope === band.scope);
 				if (rows.length === 0) return null;
-				const needsProject = band.scope !== "machine" && project === undefined;
 				return (
 					<Band
 						key={band.scope}
@@ -164,13 +164,9 @@ function General({
 							) : undefined
 						}
 					>
-						{needsProject ? (
-							<p className="border-border border-t pt-3.5 text-muted type-label">
-								Open a project to change these.
-							</p>
-						) : (
-							rows.map((entry) => <SettingRow key={entry.key} entry={entry} write={write} />)
-						)}
+						{rows.map((entry) => (
+							<SettingRow key={entry.key} entry={entry} write={write} />
+						))}
 					</Band>
 				);
 			})}
@@ -374,7 +370,7 @@ function AppearanceTab({
 						onClick={() => void reset()}
 						className={cn(
 							"shrink-0 transition-colors duration-150 type-label",
-							moved.length === 0 ? "text-muted/40" : "text-thread hover:text-text",
+							moved.length === 0 ? "text-muted/40" : "text-thread-strong hover:text-text",
 						)}
 					>
 						Reset to spool’s
@@ -608,7 +604,7 @@ function TextButton({ children, lit = false, onClick }: { children: ReactNode; l
 			className={cn(
 				"flex h-6 items-center rounded-sm border px-2 transition-colors duration-150 type-label",
 				lit
-					? "border-border-raised bg-raised text-text"
+					? "border-border-raised bg-control text-text"
 					: "border-border text-muted hover:border-border-raised hover:text-text",
 			)}
 		>
@@ -759,7 +755,7 @@ function Segmented({
 						onClick={() => onChange(choice)}
 						className={cn(
 							"flex items-center rounded-[5px] px-2.5 transition-colors duration-150 type-value",
-							lit ? "bg-raised text-text" : "text-muted hover:text-text",
+							lit ? "bg-control text-text" : "text-muted hover:text-text",
 						)}
 					>
 						{choice}
@@ -928,7 +924,7 @@ function Row({
 /** The daemon's refusal, in its own words, under the row that asked. */
 function Reason({ children, className }: { children: ReactNode; className?: string }) {
 	return (
-		<span role="alert" className={cn("pt-2 text-thread type-detail", className)}>
+		<span role="alert" className={cn("pt-2 text-thread-strong type-detail", className)}>
 			{children}
 		</span>
 	);

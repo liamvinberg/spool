@@ -37,27 +37,24 @@ export function updateToastBusy(toast: UpdateToast): boolean {
 export function UpdateToastPill({
 	toast,
 	aboveCanvasTools = false,
-	stacked = false,
 	onUpdate,
 	onDismiss,
 }: {
 	toast: UpdateToast;
 	aboveCanvasTools?: boolean;
-	/** another toast holds the bottom slot — sit above it rather than on it */
-	stacked?: boolean;
 	onUpdate: () => void;
 	onDismiss: () => void;
 }) {
 	return (
 		<div
 			className={`-translate-x-1/2 fixed left-1/2 z-20 flex items-center gap-4 overflow-hidden rounded-md border border-border-raised bg-raised px-3.5 py-2.5 ${
-				aboveCanvasTools ? "bottom-[120px]" : stacked ? "bottom-[72px]" : "bottom-6"
+				aboveCanvasTools ? "bottom-[120px]" : "bottom-6"
 			}`}
 		>
 			{toast.kind === "offer" && (
 				<>
 					<span className="text-text type-control">Update available — v{toast.latest}</span>
-					<button type="button" className="font-medium text-thread type-control" onClick={onUpdate}>
+					<button type="button" className="font-medium text-thread-strong type-control" onClick={onUpdate}>
 						Update
 					</button>
 				</>
@@ -98,7 +95,7 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 			return (
 				<>
 					<span className="text-text type-control">Spool {update.version} is out</span>
-					<button type="button" className="font-medium text-thread type-control" onClick={onUpdate}>
+					<button type="button" className="font-medium text-thread-strong type-control" onClick={onUpdate}>
 						Update
 					</button>
 				</>
@@ -138,7 +135,7 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 					{update.retryable && (
 						<button
 							type="button"
-							className="whitespace-nowrap font-medium text-thread type-control"
+							className="whitespace-nowrap font-medium text-thread-strong type-control"
 							onClick={onUpdate}
 						>
 							Retry
@@ -148,7 +145,7 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 						href={DOWNLOAD_URL}
 						target="_blank"
 						rel="noreferrer"
-						className="whitespace-nowrap font-medium text-thread type-control"
+						className="whitespace-nowrap font-medium text-thread-strong type-control"
 					>
 						Download Spool.dmg
 					</a>
