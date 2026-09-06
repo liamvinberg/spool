@@ -1,0 +1,43 @@
+.dl-product-session {
+	width: 1200px;
+	height: 800px;
+}
+
+/* Each visible copy is independent. Only the copy being played supplies transition names. */
+.dl-page .op-print,
+.dl-page .op-header {
+	view-transition-name: none;
+}
+.dl-page [data-offprint-transition="true"] {
+	view-transition-name: offprint-demo-screen;
+}
+.dl-page [data-offprint-transition="true"] .op-print {
+	view-transition-name: offprint-demo-poster;
+}
+.dl-page [data-offprint-transition="true"] .op-header {
+	view-transition-name: offprint-demo-header;
+}
+html:active-view-transition-type(offprint-demo)::view-transition-old(root),
+html:active-view-transition-type(offprint-demo)::view-transition-new(root) {
+	animation: none;
+}
+::view-transition-group(offprint-demo-screen),
+::view-transition-group(offprint-demo-poster),
+::view-transition-group(offprint-demo-header) {
+	animation-duration: 240ms;
+	animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+::view-transition-old(offprint-demo-screen) {
+	animation-duration: 80ms;
+}
+::view-transition-new(offprint-demo-screen) {
+	animation-duration: 160ms;
+}
+::view-transition-old(offprint-demo-poster) {
+	display: none;
+}
+::view-transition-new(offprint-demo-poster) {
+	animation: none;
+	height: 100%;
+	object-fit: fill;
+}

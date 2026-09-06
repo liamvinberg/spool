@@ -18,6 +18,15 @@
 	animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
+::view-transition-old(offprint-poster) {
+	display: none;
+}
+::view-transition-new(offprint-poster) {
+	animation: none;
+	height: 100%;
+	object-fit: fill;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	::view-transition-group(elsewhere-coast),
 	::view-transition-group(elsewhere-header),
