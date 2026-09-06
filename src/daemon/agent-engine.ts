@@ -1,3 +1,4 @@
+import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import type { Attachment } from "../attachment";
 import type { AgentPermissions } from "../settings/registry";
 import type { AgentAsk, AgentOffer } from "./agent-offer";
@@ -63,7 +64,19 @@ export interface AgentEngine {
 }
 
 /** Non-secret login progress. Submitted secrets belong to the engine, never the rail. */
+export type AgentAuthStep =
+	| AuthEvent
+	| Omit<Extract<AuthPrompt, { type: "text" | "secret" | "manual_code" }>, "signal">
+	| Omit<Extract<AuthPrompt, { type: "select" }>, "signal">;
+
 export type AgentLoginProgress =
+	| {
+			readonly kind: "step";
+			readonly id: string;
+			readonly revision: number;
+			readonly step: AgentAuthStep;
+			readonly browser?: Extract<AuthEvent, { type: "auth_url" }>;
+	  }
 	| { readonly kind: "connected" }
 	| { readonly kind: "cancelled" }
 	| { readonly kind: "error"; readonly message: string }
@@ -88,7 +101,8 @@ export type AgentAuthentication =
 	| {
 			readonly kind: "managed";
 			start(provider: string, method: string): Promise<AgentLoginProgress>;
-			input(id: string, value: string): Promise<AgentLoginProgress>;
+			poll(id: string): Promise<AgentLoginProgress>;
+			input(id: string, value: string, revision?: number): Promise<AgentLoginProgress>;
 			cancel(id: string): Promise<void>;
 			logout(provider: string): Promise<void>;
 	  };

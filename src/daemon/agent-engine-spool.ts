@@ -176,7 +176,6 @@ export function createSpoolEngine(
 	directory: string,
 	client = new BundledHostClient(join(directory, "bundled")),
 ): AgentEngine {
-	const pending = new Set<string>();
 	return {
 		id: "spool",
 		installed: () => true,
@@ -192,24 +191,18 @@ export function createSpoolEngine(
 		close: () => client.close(),
 		authentication: {
 			kind: "managed",
-			start: async (provider, method): Promise<AgentLoginProgress> => {
-				if (provider !== "openai" || method !== "api_key")
-					return { kind: "error", message: "Unsupported connection" };
-				const id = randomUUID();
-				pending.add(id);
-				return { kind: "input", id, label: "OpenAI API key", secret: true };
-			},
-			input: async (id, value) => {
-				if (!pending.delete(id)) return { kind: "cancelled" };
-				try {
-					await client.request({ kind: "connect", provider: "openai", key: value });
-					return { kind: "connected" };
-				} catch {
-					return { kind: "error", message: "Could not save the connection. Try again." };
-				}
-			},
+			start: async (provider, method) =>
+				(await client.request({ kind: "login", provider, method })) as AgentLoginProgress,
+			poll: async (id) => (await client.request({ kind: "login-poll", id })) as AgentLoginProgress,
+			input: async (id, value, revision) =>
+				(await client.request({
+					kind: "login-input",
+					id,
+					value,
+					...(revision === undefined ? {} : { revision }),
+				})) as AgentLoginProgress,
 			cancel: async (id) => {
-				pending.delete(id);
+				await client.request({ kind: "login-cancel", id });
 			},
 			logout: async (provider) => {
 				await client.request({ kind: "disconnect", provider });

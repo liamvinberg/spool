@@ -45,7 +45,8 @@ describe("owned bundled credentials", () => {
 		await Promise.resolve();
 		const logout = store.delete("openai");
 		release?.();
-		await Promise.all([pending, logout]);
+		await expect(pending).rejects.toThrow("Connection changed");
+		await logout;
 		expect(await store.read("openai")).toBeUndefined();
 		await store.modify("openai", async () => ({ type: "api_key", key: "saved" }));
 		fail = true;

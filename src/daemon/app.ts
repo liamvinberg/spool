@@ -1413,7 +1413,13 @@ export function createDaemonApp({
 				const body = z
 					.discriminatedUnion("action", [
 						z.object({ action: z.literal("start"), provider: z.string(), method: z.string() }),
-						z.object({ action: z.literal("input"), id: z.string(), value: z.string().max(16384) }),
+						z.object({
+							action: z.literal("input"),
+							id: z.string(),
+							value: z.string().max(16384),
+							revision: z.number().int().optional(),
+						}),
+						z.object({ action: z.literal("poll"), id: z.string() }),
 						z.object({ action: z.literal("cancel"), id: z.string() }),
 						z.object({ action: z.literal("disconnect"), provider: z.string() }),
 					])
@@ -1430,7 +1436,9 @@ export function createDaemonApp({
 					case "start":
 						return c.json(await auth.start(operation.provider, operation.method));
 					case "input":
-						return c.json(await auth.input(operation.id, operation.value));
+						return c.json(await auth.input(operation.id, operation.value, operation.revision));
+					case "poll":
+						return c.json(await auth.poll(operation.id));
 					case "cancel":
 						await auth.cancel(operation.id);
 						return c.json({ kind: "cancelled" as const });

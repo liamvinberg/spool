@@ -1461,7 +1461,8 @@ export async function accountOperation(
 	project: string,
 	operation:
 		| { action: "start"; provider: string; method: string }
-		| { action: "input"; id: string; value: string }
+		| { action: "input"; id: string; value: string; revision?: number }
+		| { action: "poll"; id: string }
 		| { action: "cancel"; id: string }
 		| { action: "disconnect"; provider: string },
 ): Promise<AgentLoginProgress> {

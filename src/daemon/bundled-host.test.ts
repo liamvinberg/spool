@@ -38,7 +38,7 @@ it("starts one lazy real host, stops on host failure and reopens the exact saved
 	expect(children).toHaveLength(0);
 	if (engine.authentication.kind !== "managed") throw new Error("Expected managed auth");
 	const step = await engine.authentication.start("openai", "api_key");
-	if (step.kind !== "input") throw new Error("Expected key input");
+	if (step.kind !== "step") throw new Error("Expected key input");
 	expect(await engine.authentication.input(step.id, "fixture-key")).toEqual({ kind: "connected" });
 	expect(children).toHaveLength(1);
 	const options = {
@@ -88,5 +88,5 @@ it("does not pass ambient accounts, executable settings or provider variables to
 	expect(environment.HOME).not.toBe(process.env.HOME);
 	const engine = createSpoolEngine(makeTempDir());
 	onTestFinished(() => engine.close?.());
-	expect(await engine.account(makeTempDir())).toEqual({ signedIn: false, account: null });
+	expect(await engine.account(makeTempDir())).toMatchObject({ signedIn: false, account: null });
 });

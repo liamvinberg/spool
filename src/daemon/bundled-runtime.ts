@@ -13,6 +13,8 @@ import {
 import type { EngineOfferOptions, EngineTurnOptions } from "./agent-engine";
 import type { AgentEvent } from "./agent-events";
 import type { AgentOffer } from "./agent-offer";
+import { BundledAuth } from "./bundled-auth";
+import { BUNDLED_CONNECTIONS, connectionLabel } from "./bundled-connections";
 import type { BundledReply, BundledRequest } from "./bundled-protocol";
 import { bundledResources } from "./bundled-resources";
 import { BundledCredentialStore, privateDirectory, writePrivate } from "./bundled-store";
@@ -26,6 +28,7 @@ interface HeldSession {
 
 /** Lives only in the host. Tests may supply a deterministic native provider runtime. */
 export class BundledRuntime {
+	private readonly auth: BundledAuth;
 	private readonly sessions = new Map<string, HeldSession>();
 	private readonly active = new Map<string, { session: string; stopped: boolean }>();
 	private readonly reserved = new Set<string>();
@@ -37,6 +40,10 @@ export class BundledRuntime {
 		private readonly idleMs = 60_000,
 	) {
 		privateDirectory(join(directory, "sessions"));
+		this.auth = new BundledAuth(models, credentials);
+		const anthropic = models.getProvider("anthropic");
+		if (anthropic?.auth.apiKey)
+			models.registerNativeProvider({ ...anthropic, auth: { apiKey: anthropic.auth.apiKey } });
 	}
 	static async create(directory: string): Promise<BundledRuntime> {
 		const credentials = new BundledCredentialStore(directory);
@@ -75,11 +82,18 @@ export class BundledRuntime {
 	}
 	private async available(): Promise<readonly Model<Api>[]> {
 		// The launch allowlist is explicit. A model cannot make another connection available.
-		if ((await this.credentials.read("openai")) === undefined) return [];
-		return this.models.getModels("openai").filter((model) => model.input.includes("image"));
+		const connections = await this.credentials.list();
+		return connections.flatMap((connection) =>
+			BUNDLED_CONNECTIONS.some((item) => item.provider === connection.providerId && item.method === connection.type)
+				? this.models.getModels(connection.providerId).filter((model) => model.input.includes("image"))
+				: [],
+		);
 	}
 	async offer(options: Omit<EngineOfferOptions, "signal">): Promise<AgentOffer> {
 		const models = await this.available();
+		const connections = await this.credentials.list();
+		const label = (provider: string) =>
+			connectionLabel(provider, connections.find((item) => item.providerId === provider)?.type ?? "");
 		const saved = this.manager(options.root, options.session.id).buildSessionContext();
 		const wanted =
 			(models.some((model) => `${model.provider}/${model.id}` === options.choose?.value)
@@ -103,8 +117,8 @@ export class BundledRuntime {
 				value: `${model.provider}/${model.id}`,
 				resolvedModel: model.id,
 				displayName: model.name,
-				description: "Uses your OpenAI API key.",
-				connection: "OpenAI API key",
+				description: `Uses your ${label(model.provider)} connection.`,
+				connection: label(model.provider),
 				supportsEffort: model.reasoning,
 				supportedEffortLevels: model.reasoning
 					? getSupportedThinkingLevels(model).filter((level) => level !== "off")
@@ -121,19 +135,45 @@ export class BundledRuntime {
 	}
 	async request(request: BundledRequest): Promise<BundledReply> {
 		switch (request.kind) {
-			case "account":
+			case "account": {
+				const connections = (await this.credentials.list())
+					.filter((connection) =>
+						BUNDLED_CONNECTIONS.some(
+							(item) => item.provider === connection.providerId && item.method === connection.type,
+						),
+					)
+					.map((connection) => ({
+						provider: connection.providerId,
+						method: connection.type,
+						label: connectionLabel(connection.providerId, connection.type),
+					}));
 				return {
-					signedIn: (await this.credentials.read("openai")) !== undefined,
-					account: (await this.credentials.read("openai")) === undefined ? null : "OpenAI API key",
+					signedIn: connections.length > 0,
+					account: connections.map((connection) => connection.label).join(", ") || null,
+					connections,
 				};
+			}
+			case "login":
+				return this.auth.start(request.provider, request.method);
+			case "login-poll":
+				return this.auth.poll(request.id);
+			case "login-input":
+				return this.auth.input(request.id, request.value, request.revision);
+			case "login-cancel":
+				this.auth.cancel(request.id);
+				return null;
 			case "connect":
-				if (request.provider !== "openai" || !request.key.trim() || request.key.length > 16_384)
-					throw new Error("Enter an OpenAI API key");
-				await this.credentials.modify("openai", async () => ({ type: "api_key", key: request.key.trim() }));
+				if (
+					!BUNDLED_CONNECTIONS.some((item) => item.provider === request.provider && item.method === "api_key") ||
+					!request.key.trim() ||
+					request.key.length > 16_384
+				)
+					throw new Error("Enter an API key");
+				this.credentials.invalidate(request.provider);
+				await this.credentials.modify(request.provider, async () => ({ type: "api_key", key: request.key.trim() }));
 				return null;
 			case "disconnect":
-				if (request.provider !== "openai") throw new Error("Unsupported connection");
-				await this.credentials.delete(request.provider);
+				await this.auth.logout(request.provider);
 				return null;
 			case "offer":
 				return this.offer(request.options);
@@ -168,7 +208,7 @@ export class BundledRuntime {
 			const model = (await this.available()).find(
 				(candidate) => `${candidate.provider}/${candidate.id}` === offer.current.value,
 			);
-			if (model === undefined) throw new Error("Connect an OpenAI account and choose an available model");
+			if (model === undefined) throw new Error("Connect an account and choose an available model");
 			held = this.sessions.get(ref);
 			if (held?.idle !== undefined) clearTimeout(held.idle);
 			if (held === undefined) {
@@ -216,7 +256,8 @@ export class BundledRuntime {
 						if (event.message.stopReason === "aborted") ending = "stopped";
 						if (event.message.stopReason === "error") {
 							ending = "failed";
-							reason = event.message.errorMessage ?? "Provider request failed";
+							event.message.errorMessage = "The provider request failed. Check your connection and try again.";
+							reason = event.message.errorMessage;
 						}
 					}
 					// pi notifies subscribers just before appending this message to its manager.
@@ -298,6 +339,7 @@ export class BundledRuntime {
 		}
 	}
 	async close(): Promise<void> {
+		this.auth.close();
 		for (const held of this.sessions.values()) {
 			if (held.idle !== undefined) clearTimeout(held.idle);
 			await held.session.abort();

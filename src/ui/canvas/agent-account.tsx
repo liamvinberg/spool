@@ -1,8 +1,11 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AgentLoginProgress } from "../../daemon/agent-engine";
+import type { AgentLogin } from "../../daemon/agent-preflight";
+import { BUNDLED_CONNECTIONS } from "../../daemon/bundled-connections";
 import { accountOperation, fetchAgentLogin } from "../api";
 import { cn } from "../cn";
+import { LoginStepView } from "./agent-auth-step";
 import { MenuItem } from "./context-menu";
 
 /** The compact account surface; secrets live only in its input until submitted. */
@@ -16,9 +19,11 @@ export function AgentAccountDialog({
 	onConnected: () => void;
 }) {
 	const [view, setView] = useState<AgentLoginProgress | null>(null);
-	const [connected, setConnected] = useState(false);
-	const [value, setValue] = useState("");
-	const [saving, setSaving] = useState(false);
+	const [connections, setConnections] = useState<NonNullable<AgentLogin["connections"]>>([]);
+	const [selected, setSelected] = useState<(typeof BUNDLED_CONNECTIONS)[number]>(BUNDLED_CONNECTIONS[0]);
+	const [opened, setOpened] = useState(false);
+	const [manual, setManual] = useState(false);
+	const [actionTarget, setActionTarget] = useState<HTMLSpanElement | null>(null);
 	const ref = useRef<HTMLDivElement>(null);
 	const active = useRef<string | undefined>(undefined);
 	const generation = useRef(0);
@@ -26,54 +31,108 @@ export function AgentAccountDialog({
 		view === null
 			? "Connect an account"
 			: view.kind === "connected"
-				? "OpenAI connected"
+				? `${selected.name} connected`
 				: view.kind === "cancelled"
 					? "Sign-in canceled"
-					: "Connect OpenAI";
+					: `Connect ${selected.name}`;
+	const refresh = useCallback(() => {
+		void fetchAgentLogin(project, "spool").then((account) => setConnections(account?.connections ?? []));
+	}, [project]);
+	const accept = useCallback(
+		(result: AgentLoginProgress) => {
+			active.current = "id" in result ? result.id : undefined;
+			setView((previous) => {
+				if (
+					previous?.kind === "step" &&
+					result.kind === "step" &&
+					previous.id === result.id &&
+					previous.revision > result.revision
+				)
+					return previous;
+				return JSON.stringify(previous) === JSON.stringify(result) ? previous : result;
+			});
+			if (result.kind === "connected") {
+				refresh();
+				onConnected();
+			}
+		},
+		[refresh, onConnected],
+	);
 	useEffect(() => {
 		const previous = document.activeElement;
 		ref.current?.focus();
-		void fetchAgentLogin(project, "spool").then((account) => setConnected(account?.signedIn === true));
+		refresh();
 		return () => {
 			generation.current += 1;
 			if (active.current !== undefined) void accountOperation(project, { action: "cancel", id: active.current });
-			if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+			const target =
+				previous instanceof HTMLElement && previous !== document.body && previous.isConnected
+					? previous
+					: document.querySelector<HTMLElement>('[data-agent-rail] button[aria-label="Choose engine and model"]');
+			target?.focus();
 		};
-	}, [project]);
+	}, [project, refresh]);
 	useEffect(() => {
-		if (view?.kind === "input") ref.current?.querySelector("input")?.focus();
-		else ref.current?.focus();
-	}, [view]);
+		if (view?.kind === "step" || manual) ref.current?.querySelector("input")?.focus();
+		if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
+	}, [view, manual]);
+	useEffect(() => {
+		if (view?.kind !== "step") return;
+		let cancelled = false;
+		const at = generation.current;
+		const timer = setInterval(() => {
+			void accountOperation(project, { action: "poll", id: view.id }).then((result) => {
+				if (!cancelled && at === generation.current && active.current === view.id) accept(result);
+			});
+		}, 250);
+		return () => {
+			cancelled = true;
+			clearInterval(timer);
+		};
+	}, [project, view, accept]);
 	const cancel = () => {
 		generation.current += 1;
 		if (active.current !== undefined) void accountOperation(project, { action: "cancel", id: active.current });
 		active.current = undefined;
-		setValue("");
 		setView({ kind: "cancelled" });
 	};
-	const begin = async () => {
-		const at = ++generation.current;
-		const result = await accountOperation(project, { action: "start", provider: "openai", method: "api_key" });
+	const begin = async (connection = selected) => {
+		cancel();
+		setSelected(connection);
+		setOpened(false);
+		setManual(false);
+		const at = generation.current;
+		const result = await accountOperation(project, {
+			action: "start",
+			provider: connection.provider,
+			method: connection.method,
+		});
 		if (at !== generation.current) {
 			if ("id" in result) void accountOperation(project, { action: "cancel", id: result.id });
 			return;
 		}
-		active.current = "id" in result ? result.id : undefined;
-		setView(result);
+		accept(result);
 	};
-	const submit = async () => {
-		if (view?.kind !== "input" || !value.trim() || saving) return;
+	const submit = async (value: string) => {
+		if (view?.kind !== "step") return;
 		const at = generation.current;
-		setSaving(true);
-		const result = await accountOperation(project, { action: "input", id: view.id, value });
-		setValue("");
-		setSaving(false);
-		active.current = undefined;
-		if (at !== generation.current) return;
-		setView(result);
-		if (result.kind === "connected") {
-			setConnected(true);
-			onConnected();
+		const result = await accountOperation(project, { action: "input", id: view.id, revision: view.revision, value });
+		if (at === generation.current) accept(result);
+	};
+	const step = view?.kind === "step" ? (view.browser && !manual ? view.browser : view.step) : undefined;
+	const open = (target?: string) => {
+		const url =
+			target ??
+			(step?.type === "auth_url"
+				? step.url
+				: step?.type === "device_code"
+					? step.verificationUri
+					: step?.type === "info"
+						? step.links?.[0]?.url
+						: undefined);
+		if (url && /^https?:\/\//i.test(url)) {
+			window.open(url, "_blank", "noopener,noreferrer");
+			setOpened(true);
 		}
 	};
 	return createPortal(
@@ -85,7 +144,6 @@ export function AgentAccountDialog({
 					aria-label="Dismiss account dialog"
 					className="absolute inset-0 cursor-default"
 					onClick={onClose}
-					disabled={saving}
 				/>
 			</div>
 			<div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-8">
@@ -100,7 +158,7 @@ export function AgentAccountDialog({
 					onKeyDown={(event) => {
 						if (event.key === "Escape") {
 							event.stopPropagation();
-							if (!saving) onClose();
+							onClose();
 						}
 						if (event.key !== "Tab") return;
 						const controls = [
@@ -128,7 +186,6 @@ export function AgentAccountDialog({
 								type="button"
 								aria-label="Close account connection"
 								onClick={onClose}
-								disabled={saving}
 								className="-mr-1 flex h-5 w-5 items-center justify-center rounded-sm text-muted/60 hover:text-text"
 							>
 								<svg viewBox="0 0 12 12" className="h-2.5 w-2.5" aria-hidden="true">
@@ -139,42 +196,55 @@ export function AgentAccountDialog({
 						{view === null ? (
 							<>
 								<p className="px-5 pt-4 pb-2 text-base text-muted leading-base">
-									Connect an account with its API key.
+									Use a subscription or an API key.
 								</p>
 								<div className="flex flex-col px-2 pb-3">
-									<MenuItem
-										label={connected ? "OpenAI API key · connected" : "OpenAI API key"}
-										onClick={() => {
-											if (connected) setView({ kind: "connected" });
-											else void begin();
-										}}
-									/>
+									{BUNDLED_CONNECTIONS.map((connection, index) => {
+										const connected = connections.some(
+											(item) => item.provider === connection.provider && item.method === connection.method,
+										);
+										return (
+											<div key={`${connection.provider}/${connection.method}`} className="flex flex-col">
+												{index === 2 ? <div className="mx-3 my-2 h-px bg-border-raised" /> : null}
+												<MenuItem
+													label={connected ? `${connection.label} · connected` : connection.label}
+													onClick={() => {
+														if (connected) {
+															setSelected(connection);
+															setView({ kind: "connected" });
+														} else void begin(connection);
+													}}
+												/>
+											</div>
+										);
+									})}
 								</div>
 							</>
 						) : (
 							<>
 								<div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-									{view.kind === "input" ? (
-										<label className="flex flex-col gap-2 text-base text-muted leading-base">
-											{view.label}
-											<input
-												type="password"
-												value={value}
-												disabled={saving}
-												onChange={(event) => setValue(event.target.value)}
-												onKeyDown={(event) => {
-													if (event.key === "Enter") {
-														event.preventDefault();
-														event.stopPropagation();
-														void submit();
-													}
+									{step ? (
+										<>
+											<LoginStepView
+												key={view.kind === "step" ? `${view.id}/${view.revision}/${manual}` : ""}
+												step={step}
+												opened={opened}
+												onOpen={open}
+												onAnswer={(value) => {
+													void submit(value);
 												}}
-												placeholder="Paste your API key"
-												autoComplete="off"
-												spellCheck={false}
-												className="h-8 w-full min-w-0 rounded-sm border border-border-raised bg-surface px-2.5 font-mono text-xs text-text outline-none placeholder:text-muted/40 focus:border-muted"
+												actionTarget={actionTarget}
 											/>
-										</label>
+											{view.kind === "step" && view.browser ? (
+												<button
+													type="button"
+													className="mt-3 text-sm text-muted hover:text-text"
+													onClick={() => setManual(!manual)}
+												>
+													{manual ? "Back to browser sign-in" : "Paste a code instead"}
+												</button>
+											) : null}
+										</>
 									) : (
 										<p role="status" className="text-base text-muted leading-base">
 											{view.kind === "connected"
@@ -193,11 +263,11 @@ export function AgentAccountDialog({
 													onClick={() => {
 														void accountOperation(project, {
 															action: "disconnect",
-															provider: "openai",
+															provider: selected.provider,
 														}).then((result) => {
 															if (result.kind === "error") setView(result);
 															else {
-																setConnected(false);
+																refresh();
 																setView(null);
 																onConnected();
 															}
@@ -215,7 +285,6 @@ export function AgentAccountDialog({
 										<>
 											<span className="mr-auto">
 												<AccountButton
-													disabled={saving}
 													onClick={() => {
 														cancel();
 														setView(null);
@@ -224,20 +293,10 @@ export function AgentAccountDialog({
 													Back
 												</AccountButton>
 											</span>
-											{view.kind === "input" ? (
+											{view.kind === "step" ? (
 												<>
-													<AccountButton disabled={saving} onClick={cancel}>
-														Cancel
-													</AccountButton>
-													<AccountButton
-														primary
-														disabled={saving || !value.trim()}
-														onClick={() => {
-															void submit();
-														}}
-													>
-														{saving ? "Connecting…" : "Connect"}
-													</AccountButton>
+													<AccountButton onClick={cancel}>Cancel</AccountButton>
+													<span ref={setActionTarget} data-login-action="" />
 												</>
 											) : (
 												<>

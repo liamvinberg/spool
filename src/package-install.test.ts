@@ -67,7 +67,7 @@ child.on("exit", () => clearTimeout(timeout));
 child.send({ id: "probe", request: { kind: "account" } });
 `;
 		expect(run(process.execPath, ["--input-type=module", "--eval", bundledProbe], consumer)).toBe(
-			'{"signedIn":false,"account":null}',
+			'{"signedIn":false,"account":null,"connections":[]}',
 		);
 
 		const clipboardProject = makeTempDir();

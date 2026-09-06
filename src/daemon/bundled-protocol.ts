@@ -1,17 +1,21 @@
-import type { EngineOfferOptions, EngineTurnOptions } from "./agent-engine";
+import type { AgentLoginProgress, EngineOfferOptions, EngineTurnOptions } from "./agent-engine";
 import type { AgentEvent } from "./agent-events";
 import type { AgentOffer } from "./agent-offer";
 import type { AgentLogin } from "./agent-preflight";
 
 export type BundledRequest =
 	| { kind: "account" }
+	| { kind: "login"; provider: string; method: string }
+	| { kind: "login-poll"; id: string }
+	| { kind: "login-input"; id: string; value: string; revision?: number }
+	| { kind: "login-cancel"; id: string }
 	| { kind: "connect"; provider: string; key: string }
 	| { kind: "disconnect"; provider: string }
 	| { kind: "offer"; options: Omit<EngineOfferOptions, "signal"> }
 	| { kind: "turn"; options: EngineTurnOptions }
 	| { kind: "stop"; turn: string }
 	| { kind: "close" };
-export type BundledReply = AgentLogin | AgentOffer | null;
+export type BundledReply = AgentLogin | AgentOffer | AgentLoginProgress | null;
 export type HostInput = { id: string; request: BundledRequest };
 export type HostOutput =
 	| { kind: "reply"; id: string; value: BundledReply }

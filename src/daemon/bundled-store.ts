@@ -49,6 +49,10 @@ export class BundledCredentialStore implements CredentialStore {
 	private readonly path: string;
 	private held: Record<string, Credential>;
 	private pending: Promise<unknown> = Promise.resolve();
+	private readonly generations = new Map<string, number>();
+	invalidate(provider: string): void {
+		this.generations.set(provider, (this.generations.get(provider) ?? 0) + 1);
+	}
 	constructor(
 		directory: string,
 		private readonly persist = writePrivate,
@@ -78,9 +82,15 @@ export class BundledCredentialStore implements CredentialStore {
 		fn: (current: Credential | undefined) => Promise<Credential | undefined>,
 		options?: AuthOperationOptions,
 	): Promise<Credential | undefined> {
+		const generation = this.generations.get(provider);
+		const current = () => {
+			if (generation !== this.generations.get(provider)) throw new Error("Connection changed during authorization");
+		};
 		return this.serialize(async () => {
 			options?.signal?.throwIfAborted();
+			current();
 			const next = await fn(structuredClone(this.held[provider]));
+			current();
 			options?.signal?.throwIfAborted();
 			if (next === undefined) return structuredClone(this.held[provider]);
 			const updated = { ...this.held, [provider]: structuredClone(next) };
@@ -90,6 +100,7 @@ export class BundledCredentialStore implements CredentialStore {
 		});
 	}
 	delete(provider: string, options?: AuthOperationOptions): Promise<void> {
+		this.invalidate(provider);
 		return this.serialize(async () => {
 			options?.signal?.throwIfAborted();
 			const updated = { ...this.held };
