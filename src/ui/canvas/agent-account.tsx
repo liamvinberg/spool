@@ -235,13 +235,13 @@ export function AgentAccountDialog({
 												}}
 												actionTarget={actionTarget}
 											/>
-											{view.kind === "step" && view.browser ? (
+											{view.kind === "step" && view.browser && !manual ? (
 												<button
 													type="button"
 													className="mt-3 text-sm text-muted hover:text-text"
-													onClick={() => setManual(!manual)}
+													onClick={() => setManual(true)}
 												>
-													{manual ? "Back to browser sign-in" : "Paste a code instead"}
+													Paste a code instead
 												</button>
 											) : null}
 										</>
@@ -286,8 +286,11 @@ export function AgentAccountDialog({
 											<span className="mr-auto">
 												<AccountButton
 													onClick={() => {
-														cancel();
-														setView(null);
+														if (view.kind === "step" && view.browser && manual) setManual(false);
+														else {
+															cancel();
+															setView(null);
+														}
 													}}
 												>
 													Back

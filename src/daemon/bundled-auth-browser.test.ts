@@ -88,6 +88,11 @@ it("renders every generic provider interaction through the shared host and keeps
 	await dialog.getByRole("button", { name: "Paste a code instead" }).click();
 	await dialog.locator("input").waitFor();
 	await shot("login-list-manual");
+	expect(await dialog.getByRole("button", { name: "Back to browser sign-in" }).count()).toBe(0);
+	await dialog.getByRole("button", { name: "Back", exact: true }).click();
+	await dialog.getByRole("button", { name: "Open browser again", exact: true }).waitFor();
+	await dialog.getByRole("button", { name: "Paste a code instead" }).click();
+	await dialog.locator("input").waitFor();
 	await dialog.locator("input").fill("private-authorization-code");
 	await dialog.getByRole("button", { name: "Continue", exact: true }).click();
 	await dialog.getByLabel("Account name", { exact: true }).waitFor();
