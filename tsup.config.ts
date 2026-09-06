@@ -7,7 +7,11 @@ import { buildBundledOAuth } from "./src/daemon/bundled-oauth-build";
 // would race the other's write — the build script clears dist/ up front
 export default defineConfig([
 	{
-		entry: { cli: "src/cli.ts", "bundled-host": "src/daemon/bundled-host.ts" },
+		entry: {
+			cli: "src/cli.ts",
+			"bundled-host": "src/daemon/bundled-host.ts",
+			"bundled-command-process": "src/daemon/bundled-command-process.ts",
+		},
 		format: "esm",
 		target: "node22",
 		onSuccess: async () => {
