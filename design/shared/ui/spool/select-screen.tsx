@@ -152,7 +152,7 @@ export function SelectScreen({ ladder: name }: { ladder: LadderName }) {
 				<Still left={664} top={172} name="receipt" />
 
 				<div className="absolute top-[190px] left-[288px] flex flex-col gap-1.5">
-					<div className="flex w-[300px] items-center gap-1.5 font-mono text-sm leading-4">
+					<div className="flex w-[300px] items-center gap-1.5 type-value">
 						<button
 							type="button"
 							onClick={(event) => {
@@ -174,7 +174,7 @@ export function SelectScreen({ ladder: name }: { ladder: LadderName }) {
 							<button
 								type="button"
 								onClick={() => setLive(false)}
-								className="ml-auto cursor-pointer font-mono text-2xs text-muted leading-3 hover:text-text"
+								className="ml-auto cursor-pointer text-muted hover:text-text type-detail"
 							>
 								live · esc exits
 							</button>
@@ -231,7 +231,7 @@ function lastOf(path: Path): string | null {
 /** The rung after the last one, said out loud, because nothing on screen says it. */
 function RunTag() {
 	return (
-		<span className="pointer-events-none absolute top-2 right-2 rounded-xs bg-thread px-1.5 py-[2px] font-mono text-2xs text-on-thread leading-3">
+		<span className="pointer-events-none absolute top-2 right-2 rounded-xs bg-thread px-1.5 py-[2px] text-on-thread type-detail">
 			run
 		</span>
 	);
@@ -263,7 +263,7 @@ function FrameSelection() {
 function Still({ left, top, name }: { left: number; top: number; name: string }) {
 	return (
 		<div className="absolute flex flex-col gap-1.5" style={{ left, top }}>
-			<span className="font-mono text-muted text-sm leading-4">{name}</span>
+			<span className="text-muted type-value">{name}</span>
 			<div className="h-[430px] w-[200px] overflow-hidden rounded-[8px] border border-border bg-bg">
 				<div className="flex h-full flex-col gap-2 p-3">
 					<span className="h-3 w-14 rounded-full bg-surface" />
@@ -296,24 +296,24 @@ function LadderRail({
 	return (
 		<div className="flex h-full min-h-0 flex-col">
 			<div className="flex h-11 shrink-0 items-center gap-2 border-border border-b px-4">
-				<span className="font-mono text-sm text-text leading-sm">{ladder.name}</span>
-				<span className="ml-auto font-mono text-2xs text-muted/55 leading-3">ladder</span>
+				<span className="text-text type-value">{ladder.name}</span>
+				<span className="ml-auto text-muted type-detail">ladder</span>
 			</div>
 
 			<div className="flex flex-col gap-2 border-border border-b px-4 py-3.5">
-				<p className="text-base text-text leading-base">{ladder.claim}</p>
-				<p className="text-base text-muted leading-base">{ladder.cost}</p>
+				<p className="text-text type-control">{ladder.claim}</p>
+				<p className="text-muted type-control">{ladder.cost}</p>
 			</div>
 
 			<div className="flex flex-col gap-2 border-border border-b px-4 py-3.5">
-				<span className="font-mono text-2xs text-muted/55 leading-3">selection</span>
-				<span className="truncate font-mono text-sm text-text leading-sm">{readout(selection, live)}</span>
+				<span className="text-muted type-detail">selection</span>
+				<span className="truncate text-text type-value">{readout(selection, live)}</span>
 				<div className="flex items-center gap-2">
-					<span className="font-mono text-2xs text-muted/55 leading-3">{rung(selection, live)}</span>
+					<span className="text-muted type-detail">{rung(selection, live)}</span>
 					<button
 						type="button"
 						onClick={onAscend}
-						className="ml-auto cursor-pointer rounded-xs border border-border-raised px-1.5 py-[2px] font-mono text-2xs text-muted leading-3 hover:text-text"
+						className="ml-auto cursor-pointer rounded-xs border border-border-raised px-1.5 py-[2px] text-muted hover:text-text type-detail"
 					>
 						esc
 					</button>
@@ -322,7 +322,7 @@ function LadderRail({
 						onClick={onAccel}
 						aria-pressed={accel}
 						className={cn(
-							"cursor-pointer rounded-xs border px-1.5 py-[2px] font-mono text-2xs leading-3",
+							"cursor-pointer rounded-xs border px-1.5 py-[2px] type-detail",
 							accel ? "border-thread bg-thread text-on-thread" : "border-border-raised text-muted hover:text-text",
 						)}
 					>
@@ -332,12 +332,12 @@ function LadderRail({
 			</div>
 
 			<div className="flex min-h-0 flex-1 flex-col gap-1.5 px-4 py-3.5">
-				<span className="font-mono text-2xs text-muted/55 leading-3">bindings</span>
+				<span className="text-muted type-detail">bindings</span>
 				{ladder.bindings.map((binding) => (
 					<div key={binding.keys} className="flex items-baseline gap-3">
 						<span
 							className={cn(
-								"w-[88px] shrink-0 font-mono text-2xs leading-4",
+								"w-[88px] shrink-0 type-detail",
 								binding.changed === true ? "text-thread" : "text-muted",
 							)}
 						>
@@ -345,8 +345,8 @@ function LadderRail({
 						</span>
 						<span
 							className={cn(
-								"min-w-0 font-mono text-2xs leading-4",
-								binding.changed === true ? "text-text" : "text-muted/70",
+								"min-w-0 type-detail",
+								binding.changed === true ? "text-text" : "text-muted",
 							)}
 						>
 							{binding.does}
@@ -355,7 +355,7 @@ function LadderRail({
 				))}
 			</div>
 
-			<p className="border-border border-t px-4 py-3 text-base text-muted leading-base">
+			<p className="border-border border-t px-4 py-3 text-muted type-control">
 				⌥ stands in for ⌘ here, and the two chips press what the keyboard cannot reach. A live frame owns every plain
 				key, so spool keeps ⌘ and Esc, and a frame inside one only gets what is left.
 			</p>

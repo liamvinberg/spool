@@ -1,0 +1,91 @@
+/* The app's type primitives and roles. The design copy is checked for parity. */
+@theme {
+	--font-sans: "Instrument Sans Variable", system-ui, sans-serif;
+	--font-mono: "Fragment Mono", ui-monospace, SFMono-Regular, monospace;
+	--font-mono--font-feature-settings: "calt" 0;
+
+	--text-2xs: 10px;
+	--text-xs: 11px;
+	--text-sm: 12px;
+	--text-base: 13px;
+	--text-md: 14px;
+	--text-lg: 18px;
+	--text-page: 28px;
+	--text-mark: 25px;
+	--text-preview: 7px;
+
+	--font-weight-regular: 400;
+	--font-weight-medium: 500;
+	--font-weight-semibold: 600;
+	--tracking-tight: -0.01em;
+	--tracking-normal: 0em;
+	--leading-xs: 16px;
+	--leading-sm: 18px;
+	--leading-base: 20px;
+	--leading-md: 22px;
+	--leading-lg: 26px;
+	--leading-page: 36px;
+}
+
+/* Plain CSS consumes the same complete roles as the classes below.
+ * Colour stays semantic (text, muted, thread), so states can change it without
+ * replacing a text role. Mono never synthesizes a weight or coding ligature. */
+:root {
+	--type-control: var(--font-weight-regular) var(--text-base) / var(--leading-base) var(--font-sans);
+	--type-body: var(--font-weight-regular) var(--text-md) / var(--leading-md) var(--font-sans);
+	--type-label: var(--font-weight-regular) var(--text-sm) / var(--leading-sm) var(--font-sans);
+	--type-caption: var(--font-weight-regular) var(--text-xs) / var(--leading-xs) var(--font-sans);
+	--type-detail: var(--font-weight-regular) var(--text-xs) / var(--leading-xs) var(--font-mono);
+	--type-value: var(--font-weight-regular) var(--text-sm) / var(--leading-sm) var(--font-mono);
+	--type-code-input: var(--font-weight-regular) var(--text-md) / var(--leading-md) var(--font-mono);
+	--type-title: var(--font-weight-medium) var(--text-md) / var(--leading-md) var(--font-sans);
+	--type-heading: var(--font-weight-medium) var(--text-lg) / var(--leading-lg) var(--font-sans);
+	--type-page: var(--font-weight-medium) var(--text-page) / var(--leading-page) var(--font-sans);
+	--type-mark: var(--font-weight-regular) var(--text-mark) / var(--leading-page) var(--font-sans);
+	/* Text inside a miniature preview is part of the picture, not a control. */
+	--type-preview: var(--font-weight-regular) var(--text-preview) / 1 var(--font-mono);
+}
+
+/* Emphasis and state utilities may override a role without replacing it. */
+@layer components {
+	.type-control {
+		font: var(--type-control);
+	}
+	.type-body {
+		font: var(--type-body);
+		overflow-wrap: anywhere;
+	}
+	.type-label {
+		font: var(--type-label);
+	}
+	.type-caption {
+		font: var(--type-caption);
+	}
+	.type-detail {
+		font: var(--type-detail);
+		font-feature-settings: var(--font-mono--font-feature-settings);
+	}
+	.type-value {
+		font: var(--type-value);
+		font-feature-settings: var(--font-mono--font-feature-settings);
+	}
+	.type-code-input {
+		font: var(--type-code-input);
+		font-feature-settings: var(--font-mono--font-feature-settings);
+	}
+	.type-title {
+		font: var(--type-title);
+	}
+	.type-heading {
+		font: var(--type-heading);
+		letter-spacing: var(--tracking-tight);
+	}
+	.type-page {
+		font: var(--type-page);
+		letter-spacing: var(--tracking-tight);
+	}
+	.type-preview {
+		font: var(--type-preview);
+		font-feature-settings: var(--font-mono--font-feature-settings);
+	}
+}

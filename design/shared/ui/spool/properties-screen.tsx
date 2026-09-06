@@ -329,11 +329,11 @@ export function PropertiesScreen() {
 						<button
 							type="button"
 							onClick={() => setSelection({ id: "screen", key: "screen" })}
-							className="flex h-4 items-center gap-1.5 font-mono text-sm leading-4"
+							className="flex h-4 items-center gap-1.5 type-value"
 							style={{ width: state.frame.w }}
 						>
 							<span className={cn(selection?.id === "screen" ? "text-thread" : "text-muted")}>{FRAME}</span>
-							<span className="ml-auto font-mono text-2xs text-muted/55 leading-3">
+							<span className="ml-auto text-muted type-detail">
 								{state.frame.w} × {state.frame.h}
 							</span>
 						</button>
@@ -422,14 +422,14 @@ function Overlay({
 						style={{ left: ring.x, top: ring.y, width: ring.w, height: ring.h }}
 					/>
 					{anyOk ? null : (
-						<span className="absolute rounded-xs bg-raised px-1.5 py-[2px] font-mono text-2xs text-muted leading-3" style={{ left: selected.x + selected.w - 54, top: selected.y - 20 }}>
+						<span className="absolute rounded-xs bg-raised px-1.5 py-[2px] text-muted type-detail" style={{ left: selected.x + selected.w - 54, top: selected.y - 20 }}>
 							read-only
 						</span>
 					)}
 					<Handles pick={selection} ring={ring} wOk={wOk} hOk={hOk} rotateOk={rotateOk} onKnob={onKnob} onRotate={onRotate} onKnobMove={onKnobMove} onKnobUp={onKnobUp} />
 					{drag === null ? null : (
 						<span
-							className="absolute whitespace-nowrap rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3"
+							className="absolute whitespace-nowrap rounded-xs bg-thread px-2 py-[3px] text-on-thread type-detail"
 							style={{
 								left: ring.x + ring.w + 12,
 								top: drag.kind === "rotate" ? ring.y - 20 : ring.y + ring.h + 10,
@@ -539,7 +539,7 @@ function Handles({
 function Still({ left, top, name }: { left: number; top: number; name: string }) {
 	return (
 		<div className="absolute flex flex-col gap-1.5" style={{ left, top }}>
-			<span className="font-mono text-muted text-sm leading-4">{name}</span>
+			<span className="text-muted type-value">{name}</span>
 			<div className="h-[430px] w-[200px] overflow-hidden rounded-[8px] border border-border bg-bg">
 				<div className="flex h-full flex-col gap-2 p-3">
 					<span className="h-3 w-14 rounded-full bg-surface" />

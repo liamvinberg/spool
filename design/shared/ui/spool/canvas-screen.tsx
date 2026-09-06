@@ -100,8 +100,8 @@ function CanvasFrame({
 	const mark = UNSEEN[screen];
 	return (
 		<div className="absolute flex flex-col gap-1.5" style={{ left, top }}>
-			<div className="flex w-[240px] min-w-0 items-center gap-1.5 font-mono text-sm leading-4">
-				{paused ? <span className="shrink-0 text-2xs text-muted leading-3">▸</span> : null}
+			<div className="flex w-[240px] min-w-0 items-center gap-1.5 type-value">
+				{paused ? <span className="shrink-0 text-muted type-caption">▸</span> : null}
 				{/* the mark rides the label because the label is the one thing on the field
 				    that does not scale: a disc on the frame itself shrinks with the zoom, and
 				    zoomed out is when you most need to know which of these is new */}
@@ -121,7 +121,7 @@ function CanvasFrame({
 						type="button"
 						data-go={playTarget}
 						aria-label={`Play ${screen}`}
-						className="ml-auto flex shrink-0 cursor-pointer items-center gap-1 rounded-xs px-1 font-mono text-2xs text-muted leading-3 transition-colors hover:text-thread"
+						className="ml-auto flex shrink-0 cursor-pointer items-center gap-1 rounded-xs px-1 text-muted transition-colors hover:text-thread type-detail"
 					>
 						<svg viewBox="0 0 10 10" className="h-2 w-2" fill="currentColor" aria-hidden="true">
 							<path d="M2 1.2 8.4 5 2 8.8Z" />
@@ -153,7 +153,7 @@ function FrameSelection() {
 					className={cn("absolute h-2 w-2 rounded-[1.5px] border-[1.5px] border-thread bg-on-thread", position)}
 				/>
 			))}
-			<div className="absolute top-[534px] left-[88px] rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3">
+			<div className="absolute top-[534px] left-[88px] rounded-xs bg-thread px-2 py-[3px] text-on-thread type-detail">
 				390 × 844
 			</div>
 		</>

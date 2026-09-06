@@ -118,7 +118,7 @@ export function SpoolFindScreen({
 function Miniature({ plate }: { plate: Plate }) {
 	return (
 		<div className="absolute flex flex-col gap-1" style={{ left: plate.x + CAMERA.x, top: plate.y + CAMERA.y }}>
-			<span className="truncate font-mono text-2xs text-muted/45 leading-3" style={{ width: plate.w }}>
+			<span className="truncate text-muted type-detail" style={{ width: plate.w }}>
 				{plate.name}
 			</span>
 			<div

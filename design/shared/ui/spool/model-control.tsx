@@ -31,7 +31,7 @@ import { ChevronIcon } from "shared/ui/spool/icons";
 const ARRIVE = [0.22, 0.61, 0.36, 1] as const;
 
 /** the footer's own voice, so the line reads as one line */
-const QUIET = "font-mono text-2xs leading-3";
+const QUIET = "type-detail";
 
 /**
  * The readout. A fact, not a control.
@@ -41,7 +41,7 @@ const QUIET = "font-mono text-2xs leading-3";
  * and this line then says what it changed to.
  */
 export function ModelLine({ state, models }: { state: ModelState; models: readonly ClaudeModel[] | undefined }) {
-	return <span className={cn(QUIET, "text-muted/45")}>{readout(state, models)}</span>;
+	return <span className={cn(QUIET, "text-muted")}>{readout(state, models)}</span>;
 }
 
 /**
@@ -212,7 +212,7 @@ function Picker({
 										"block px-1.5 pt-1 pb-1.5",
 										// brightness rather than hue, the same step the footer line made:
 										// reached comes forward without becoming a second accent
-										limit?.status === "rejected" ? "text-text/70" : "text-muted/45",
+										limit?.status === "rejected" ? "text-text" : "text-muted",
 									)}
 								>
 									{usage}
@@ -301,7 +301,7 @@ function Picker({
 						 * all, and #118 settled that the control is then absent rather than greyed.
 						 * Its sentence is not.
 						 */}
-						<p className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted/40 leading-[1.5]")}>
+						<p className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted leading-[1.5]")}>
 							<span className="invisible" aria-hidden="true">
 								{longest}
 							</span>
@@ -354,19 +354,19 @@ export function ModelRow({
 			)}
 		>
 			<span className="flex w-full min-w-0 items-center gap-2">
-				<span className="min-w-0 flex-1 truncate font-mono text-xs leading-4">{label}</span>
+				<span className="min-w-0 flex-1 truncate type-value">{label}</span>
 				{via === undefined ? null : <span className={cn(QUIET, "shrink-0 text-muted")}>{via}</span>}
-				{note === undefined ? null : <span className={cn(QUIET, "shrink-0 text-muted/30")}>{note}</span>}
+				{note === undefined ? null : <span className={cn(QUIET, "shrink-0 text-muted")}>{note}</span>}
 			</span>
 			{says === undefined ? null : (
-				<span className={cn(QUIET, "line-clamp-2 w-full text-muted/40 leading-[1.5]")}>{says}</span>
+				<span className={cn(QUIET, "line-clamp-2 w-full text-muted leading-[1.5]")}>{says}</span>
 			)}
 		</button>
 	);
 }
 
 function Group({ label }: { label: string }) {
-	return <span className={cn(QUIET, "block px-1.5 pt-1 pb-1.5 text-muted/35")}>{label}</span>;
+	return <span className={cn(QUIET, "block px-1.5 pt-1 pb-1.5 text-muted")}>{label}</span>;
 }
 
 function Rule() {

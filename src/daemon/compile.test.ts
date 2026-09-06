@@ -1,8 +1,47 @@
+import { symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir, writeDesignFile } from "../test-helpers";
 import { buildDesignEntry } from "./compile";
 import { realDesignDir } from "./design-path";
+
+describe.each(["glsl", "wgsl"])(".%s source imports", (extension) => {
+	it.each(["./effect", "shared/shaders/effect"])("imports %s as the complete source string", async (specifier) => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		const relativeFile = `${specifier.replace(/^\.\//, "")}.${extension}`;
+		const source = '// source stays text: "quoted", \\paths, λ\nvoid main() {}\n';
+		writeDesignFile(root, relativeFile, source);
+		const designDir = realDesignDir(root);
+		const { bootJs, sourceFiles } = await buildDesignEntry({
+			designDir,
+			resolveDir: designDir,
+			sourcefile: "<spool-boot>",
+			contents: `export { default as source } from "${specifier}.${extension}";`,
+			label: "shader source",
+		});
+
+		const bundled = await import(`data:text/javascript;base64,${Buffer.from(bootJs).toString("base64")}`);
+		expect(bundled.source).toBe(source);
+		expect(sourceFiles).toContain(join(designDir, relativeFile));
+	});
+
+	it.each(["relative", "symlink"])("rejects a %s import outside design/", async (kind) => {
+		const { root } = makeProject(join(makeTempDir(), ".spool"));
+		const designDir = realDesignDir(root);
+		const outside = join(root, `outside.${extension}`);
+		writeFileSync(outside, "private shader source");
+		if (kind === "symlink") symlinkSync(outside, join(designDir, `outside.${extension}`));
+		await expect(
+			buildDesignEntry({
+				designDir,
+				resolveDir: designDir,
+				sourcefile: "<spool-boot>",
+				contents: `export { default } from "${kind === "relative" ? ".." : "."}/outside.${extension}";`,
+				label: "shader source",
+			}),
+		).rejects.toThrow("design boundary");
+	});
+});
 
 /**
  * The bundle closure a document is cached against. The virtual boot entry is

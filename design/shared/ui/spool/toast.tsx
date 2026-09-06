@@ -17,7 +17,7 @@ export function Toast({ notice }: { notice: Notice }) {
 	return (
 		<div
 			role={notice.kind === "error" ? "alert" : "status"}
-			className="-translate-x-1/2 absolute bottom-[120px] left-1/2 z-30 rounded-md border border-border-raised bg-raised px-3.5 py-2.5 text-base leading-base"
+			className="-translate-x-1/2 absolute bottom-[120px] left-1/2 z-30 rounded-md border border-border-raised bg-raised px-3.5 py-2.5 type-control"
 		>
 			<span className={notice.kind === "error" ? "text-thread" : "text-text"}>{notice.message}</span>
 		</div>

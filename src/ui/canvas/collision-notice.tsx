@@ -17,7 +17,7 @@ export function NoticeStrip({ children }: { children: React.ReactNode }) {
 }
 
 /** The shape every notice in the strip wears: one mono line on a raised pill. */
-export const NOTICE_PILL = "rounded-md border border-border-raised bg-raised px-3 py-1.5 font-mono text-2xs leading-3";
+export const NOTICE_PILL = "rounded-md border border-border-raised bg-raised px-3 py-1.5 type-detail";
 
 /**
  * Two folders claiming one frame name (#39): identity is ambiguous, so the

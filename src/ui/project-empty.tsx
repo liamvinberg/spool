@@ -89,7 +89,7 @@ export function ProjectEmpty({
 							<ArrowRightIcon />
 						</button>
 						{copyFailed && (
-							<span role="alert" className="text-xs text-muted">
+							<span role="alert" className="text-muted type-label">
 								Could not copy. Select the path and copy it manually.
 							</span>
 						)}

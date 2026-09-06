@@ -266,13 +266,13 @@ function WalkTag({ placed, k, onOpen }: { placed: PlacedWalk; k: number; onOpen:
 			onPointerDown={(event) => event.stopPropagation()}
 			onDoubleClick={(event) => event.stopPropagation()}
 			onClick={() => onOpen(walk.target)}
-			className="absolute flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xs bg-canvas px-1.5 font-mono text-2xs leading-3 transition-colors duration-150 hover:bg-surface"
+			className="absolute flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xs bg-canvas px-1.5 transition-colors duration-150 hover:bg-surface type-detail"
 			style={tagBox(placed, k)}
 		>
 			<EdgeMark certain={walk.certainty === "will"} />
-			<span className="text-text/85">{walk.target}</span>
-			<span className="text-muted/40">·</span>
-			<span className="text-muted/70">{walk.page}</span>
+			<span className="text-text">{walk.target}</span>
+			<span className="text-muted">·</span>
+			<span className="text-muted">{walk.page}</span>
 		</button>
 	);
 }

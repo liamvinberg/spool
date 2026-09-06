@@ -44,8 +44,8 @@ export function HotkeySheet({ onClose }: { onClose: () => void }) {
 					className="pointer-events-auto flex max-h-[calc(100%-128px)] w-[760px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-border-raised bg-surface"
 				>
 					<header className="flex h-12 shrink-0 items-center justify-between border-border border-b px-6">
-						<span className="font-semibold text-md text-text tracking-tight leading-md">Shortcuts</span>
-						<span className="font-mono text-2xs text-muted leading-3">esc closes</span>
+						<span className="font-semibold text-text tracking-tight type-title">Shortcuts</span>
+						<span className="text-muted type-detail">esc closes</span>
 					</header>
 					<div className="overflow-y-auto px-6 py-5">
 						<div className="columns-2 gap-x-12">
@@ -54,7 +54,7 @@ export function HotkeySheet({ onClose }: { onClose: () => void }) {
 								if (rows.length === 0) return null;
 								return (
 									<section key={group} className="mb-5 break-inside-avoid">
-										<h3 className="mb-1.5 text-muted text-sm leading-sm">{group}</h3>
+										<h3 className="mb-1.5 text-muted type-label">{group}</h3>
 										{rows.map((entry) => (
 											<Row key={entry.id} entry={entry} />
 										))}
@@ -73,19 +73,17 @@ function Row({ entry }: { entry: HotkeyEntry }) {
 	const { keys, gesture } = hotkeyChips(entry);
 	return (
 		<div className="flex h-7 items-center justify-between gap-4">
-			<span className="truncate text-base text-text leading-base">{entry.label}</span>
+			<span className="truncate text-text type-control">{entry.label}</span>
 			<span className="flex shrink-0 items-center gap-1.5">
 				{keys.map((face) => (
 					<kbd
 						key={face}
-						className="flex h-5 min-w-5 items-center justify-center rounded-xs border border-border-raised bg-raised px-1.5 font-mono text-2xs text-muted leading-none"
+						className="flex h-5 min-w-5 items-center justify-center rounded-xs border border-border-raised bg-raised px-1.5 text-muted type-detail"
 					>
 						{face}
 					</kbd>
 				))}
-				{gesture === undefined ? null : (
-					<span className="font-mono text-2xs text-muted/70 leading-3">{gesture}</span>
-				)}
+				{gesture === undefined ? null : <span className="text-muted type-detail">{gesture}</span>}
 			</span>
 		</div>
 	);

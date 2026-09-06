@@ -210,10 +210,10 @@ export function Name({ name, matched, className }: { name: string; matched: read
 /** the chip a recognised folder wears, verbatim lowercase because the machine prints it */
 export function ProjectChip({ dir, dim = false }: { dir: Dir; dim?: boolean }) {
 	return (
-		<span className={cn("flex shrink-0 items-center gap-1.5 font-mono text-2xs leading-3", dim && "opacity-70")}>
+		<span className={cn("flex shrink-0 items-center gap-1.5 type-detail", dim && "opacity-70")}>
 			<span className="text-thread">spool</span>
 			{dir.frames === undefined ? null : (
-				<span className="text-muted/55">{dir.frames === 0 ? "no frames yet" : `${dir.frames} frames`}</span>
+				<span className="text-muted">{dir.frames === 0 ? "no frames yet" : `${dir.frames} frames`}</span>
 			)}
 		</span>
 	);
@@ -222,7 +222,7 @@ export function ProjectChip({ dir, dim = false }: { dir: Dir; dim?: boolean }) {
 /** where a result sits, which is the only thing a deep list has to add to a name */
 export function Where({ dir, className }: { dir: Dir; className?: string }) {
 	return (
-		<span className={cn("truncate font-mono text-2xs text-muted/55 leading-3", className)}>{whereIs(dir)}</span>
+		<span className={cn("truncate text-muted type-detail", className)}>{whereIs(dir)}</span>
 	);
 }
 
@@ -251,7 +251,7 @@ export function Field({
 				onChange={(event) => picker.setQuery(event.target.value)}
 				onKeyDown={picker.onKeyDown}
 				aria-label="Search folders"
-				className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none placeholder:text-muted/45"
+				className="min-w-0 flex-1 bg-transparent text-text caret-thread outline-none placeholder:text-muted type-code-input"
 			/>
 			{picker.query === "" ? null : (
 				<button
@@ -273,7 +273,7 @@ export function Field({
 /** what the list is showing, in the register the machine prints */
 export function Readout({ picker, className }: { picker: Picker; className?: string }) {
 	return (
-		<span className={cn("shrink-0 font-mono text-2xs text-muted/55 leading-3", className)}>
+		<span className={cn("shrink-0 text-muted type-detail", className)}>
 			{picker.searching
 				? `${picker.rows.length} of ${picker.total} folders under ~`
 				: `${picker.rows.length} ${picker.rows.length === 1 ? "folder" : "folders"}`}
@@ -291,7 +291,7 @@ export function JumpRow({ picker, className }: { picker: Picker; className?: str
 					type="button"
 					onClick={() => picker.browse(target.path)}
 					className={cn(
-						"flex h-6 shrink-0 items-center rounded-sm border px-2 font-mono text-2xs leading-3 transition-colors",
+						"flex h-6 shrink-0 items-center rounded-sm border px-2 transition-colors type-detail",
 						picker.path === target.path
 							? "border-border-raised bg-raised text-text"
 							: "border-transparent bg-surface text-muted hover:border-border-raised hover:text-text",
@@ -314,13 +314,13 @@ export function Crumbs({ picker, className }: { picker: Picker; className?: stri
 				const last = index === parts.length - 1;
 				return (
 					<span key={to} className="flex min-w-0 items-center gap-1">
-						{index === 0 ? null : <span className="shrink-0 font-mono text-2xs text-muted/35 leading-3">/</span>}
+						{index === 0 ? null : <span className="shrink-0 text-muted type-detail">/</span>}
 						<button
 							type="button"
 							onClick={() => picker.browse(to)}
 							disabled={last}
 							className={cn(
-								"truncate font-mono text-xs leading-xs transition-colors",
+								"truncate transition-colors type-value",
 								last ? "text-text" : "text-muted hover:text-text",
 							)}
 						>
@@ -350,7 +350,7 @@ export function UpButton({ picker }: { picker: Picker }) {
 /** what the picker did, said once and then gone: the frame cannot actually leave */
 export function LandedLine({ landed }: { landed: Landing }) {
 	return (
-		<span className="flex min-w-0 items-center gap-2 font-mono text-2xs leading-3">
+		<span className="flex min-w-0 items-center gap-2 type-detail">
 			<CheckIcon className="h-3 w-3 shrink-0 text-thread" />
 			<span className="truncate text-muted">
 				{landed.kind === "opened" ? "opening " : "no canvas.json — initialize design/ in "}
@@ -362,7 +362,7 @@ export function LandedLine({ landed }: { landed: Landing }) {
 
 export function Hints({ hints, className }: { hints: readonly string[]; className?: string }) {
 	return (
-		<div className={cn("flex items-center gap-5 font-mono text-2xs text-muted/70 leading-3", className)}>
+		<div className={cn("flex items-center gap-5 text-muted type-detail", className)}>
 			{hints.map((hint) => (
 				<span key={hint}>{hint}</span>
 			))}
@@ -373,7 +373,7 @@ export function Hints({ hints, className }: { hints: readonly string[]; classNam
 /** an empty answer, worded so it says which of the two empties it is */
 export function Nothing({ picker }: { picker: Picker }) {
 	return (
-		<div className="flex h-[34px] items-center gap-2 px-4 font-mono text-muted/60 text-sm leading-sm">
+		<div className="flex h-[34px] items-center gap-2 px-4 text-muted type-value">
 			<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
 			{picker.searching ? "nothing under ~ answers to that" : "no folders here"}
 		</div>

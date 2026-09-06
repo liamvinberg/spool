@@ -15,7 +15,7 @@ import { cn } from "shared/lib/utils";
  */
 
 /** the footer's own voice, so the line reads as one line */
-const QUIET = "font-mono text-2xs leading-3";
+const QUIET = "type-detail";
 
 const ARRIVE = [0.22, 0.61, 0.36, 1] as const;
 
@@ -113,7 +113,7 @@ export function LimitStrip({
 			    out of a warning about the weekly limit is not a tighter design. Two
 			    rows is what this costs, and the strip should be honest about it */}
 			<div className="flex flex-col items-start gap-1.5 px-3.5 py-2.5">
-				<span className={cn(QUIET, "text-text/70 leading-4")}>{limitSentence(info, now)}</span>
+				<span className={cn(QUIET, "text-text leading-4")}>{limitSentence(info, now)}</span>
 				{lever === null || onLever === undefined ? null : (
 					<button
 						type="button"

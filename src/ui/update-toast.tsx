@@ -56,15 +56,15 @@ export function UpdateToastPill({
 		>
 			{toast.kind === "offer" && (
 				<>
-					<span className="text-base text-text leading-base">Update available — v{toast.latest}</span>
-					<button type="button" className="font-medium text-base text-thread leading-base" onClick={onUpdate}>
+					<span className="text-text type-control">Update available — v{toast.latest}</span>
+					<button type="button" className="font-medium text-thread type-control" onClick={onUpdate}>
 						Update
 					</button>
 				</>
 			)}
 			{toast.kind === "updating" && (
 				<>
-					<span className="text-base text-muted leading-base">
+					<span className="text-muted type-control">
 						{toast.stage === "installing" ? "Installing update…" : "Restarting…"}
 					</span>
 					<span className="absolute bottom-0 left-0 h-px w-1/3 animate-toast-sweep bg-thread" />
@@ -72,9 +72,9 @@ export function UpdateToastPill({
 			)}
 			{toast.kind === "failed" && (
 				<>
-					<span className="text-base text-text leading-base">{toast.message ?? "Update failed"}</span>
+					<span className="text-text type-control">{toast.message ?? "Update failed"}</span>
 					<span className="h-4 w-px bg-border-raised" />
-					<span className="font-mono text-muted text-xs leading-xs">spool upgrade</span>
+					<span className="text-muted type-value">spool upgrade</span>
 				</>
 			)}
 			{toast.kind === "app" && <AppUpdateBody update={toast.update} onUpdate={onUpdate} />}
@@ -97,8 +97,8 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 		case "offer":
 			return (
 				<>
-					<span className="text-base text-text leading-base">Spool {update.version} is out</span>
-					<button type="button" className="font-medium text-base text-thread leading-base" onClick={onUpdate}>
+					<span className="text-text type-control">Spool {update.version} is out</span>
+					<button type="button" className="font-medium text-thread type-control" onClick={onUpdate}>
 						Update
 					</button>
 				</>
@@ -106,7 +106,7 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 		case "downloading":
 			return (
 				<>
-					<span className="text-base text-muted leading-base">
+					<span className="text-muted type-control">
 						Downloading Spool {update.version} · {update.percent}%
 					</span>
 					<span
@@ -120,7 +120,7 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 		case "preparing":
 			return (
 				<>
-					<span className="text-base text-muted leading-base">
+					<span className="text-muted type-control">
 						{update.kind === "checking"
 							? "Checking for updates…"
 							: update.kind === "preparing"
@@ -133,12 +133,12 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 		case "failed":
 			return (
 				<>
-					<span className="max-w-[56ch] text-base text-text leading-base">{update.message}</span>
+					<span className="max-w-[56ch] text-text type-control">{update.message}</span>
 					<span className="h-4 w-px bg-border-raised" />
 					{update.retryable && (
 						<button
 							type="button"
-							className="whitespace-nowrap font-medium text-base text-thread leading-base"
+							className="whitespace-nowrap font-medium text-thread type-control"
 							onClick={onUpdate}
 						>
 							Retry
@@ -148,7 +148,7 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 						href={DOWNLOAD_URL}
 						target="_blank"
 						rel="noreferrer"
-						className="whitespace-nowrap font-medium text-base text-thread leading-base"
+						className="whitespace-nowrap font-medium text-thread type-control"
 					>
 						Download Spool.dmg
 					</a>

@@ -235,9 +235,9 @@ function SessionStrip({ usage, working, wide }: { usage: string; working: boolea
 		>
 			<span className="flex items-center gap-2">
 				<StateMark state={working ? "running" : "completed"} />
-				<span className="font-mono text-2xs text-muted leading-3">claude code</span>
+				<span className="text-muted type-detail">claude code</span>
 			</span>
-			<span className="font-mono text-2xs text-muted/60 leading-3">{usage}</span>
+			<span className="text-muted type-detail">{usage}</span>
 		</div>
 	);
 }
@@ -263,9 +263,9 @@ function UserTurn({ event }: { event: Extract<AgentEvent, { kind: "user" }> }) {
 	return (
 		<div className="relative flex flex-col gap-1.5 pl-3">
 			<span className="absolute top-0.5 bottom-0.5 left-0 w-[2px] rounded-full bg-thread" />
-			<p className="text-base text-text leading-base">{event.text}</p>
+			<p className="text-text type-body">{event.text}</p>
 			{event.context === undefined ? null : (
-				<span className="truncate font-mono text-2xs text-muted/60 leading-3">
+				<span className="truncate text-muted type-detail">
 					{`${event.context.frame} · ${event.context.element} · ${event.context.lines}`}
 				</span>
 			)}
@@ -276,7 +276,7 @@ function UserTurn({ event }: { event: Extract<AgentEvent, { kind: "user" }> }) {
 function AssistantTurn({ event }: { event: Extract<AgentEvent, { kind: "assistant" }> }) {
 	const still = useReducedMotion() === true;
 	return (
-		<p className="text-base text-text/90 leading-base">
+		<p className="text-text type-body">
 			{event.text}
 			{event.streaming === true ? (
 				<motion.span
@@ -294,7 +294,7 @@ function ActivityRow({ text }: { text: string }) {
 	return (
 		<div className="flex items-center gap-2">
 			<StateMark state="activity" />
-			<span className="font-mono text-2xs text-muted/70 leading-3">{text}</span>
+			<span className="text-muted type-detail">{text}</span>
 		</div>
 	);
 }
@@ -303,9 +303,9 @@ function ActivityRow({ text }: { text: string }) {
 function Compaction({ event }: { event: Extract<AgentEvent, { kind: "compaction" }> }) {
 	return (
 		<div className="flex items-center gap-2.5">
-			<span className="font-mono text-2xs text-muted/60 leading-3">{event.text}</span>
+			<span className="text-muted type-detail">{event.text}</span>
 			<span className="h-px min-w-2 flex-1 bg-border" />
-			<span className="font-mono text-2xs text-muted/45 leading-3">{event.usage}</span>
+			<span className="text-muted type-detail">{event.usage}</span>
 		</div>
 	);
 }
@@ -333,7 +333,7 @@ export function CellShell({ wide, children }: { wide: boolean; children: React.R
 export function ToolName({ name }: { name: string }) {
 	return (
 		<span
-			className="shrink-0 font-mono text-2xs text-muted leading-4"
+			className="shrink-0 text-muted type-detail"
 			style={{ minWidth: TOOL_W }}
 		>
 			{name}
@@ -349,14 +349,14 @@ export function ToolCell({ event, wide }: { event: Extract<AgentEvent, { kind: "
 			<div className="flex min-w-0 flex-1 flex-col gap-1">
 				<div className="flex min-w-0 items-baseline gap-2">
 					<ToolName name={event.tool} />
-					<span className="min-w-0 flex-1 truncate font-mono text-text/85 text-xs leading-4">{event.label}</span>
+					<span className="min-w-0 flex-1 truncate text-text type-value">{event.label}</span>
 					{event.diff === undefined ? (
 						event.meta === undefined || wide ? null : (
-							<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3">{event.meta}</span>
+							<span className="shrink-0 text-muted type-detail">{event.meta}</span>
 						)
 					) : (
-						<span className="shrink-0 font-mono text-2xs leading-3">
-							<span className="text-text/80">+{event.diff.added}</span>{" "}
+						<span className="shrink-0 type-detail">
+							<span className="text-text">+{event.diff.added}</span>{" "}
 							<span className="text-muted">-{event.diff.removed}</span>
 						</span>
 					)}
@@ -364,11 +364,11 @@ export function ToolCell({ event, wide }: { event: Extract<AgentEvent, { kind: "
 				{!wide ? null : event.repainted !== undefined ? (
 					<span className="flex items-center gap-1.5" style={{ paddingLeft: TOOL_W + 8 }}>
 						<span className="h-1 w-1 shrink-0 rounded-full bg-thread" />
-						<span className="truncate font-mono text-2xs text-muted leading-3">{event.repainted} repainted</span>
+						<span className="truncate text-muted type-detail">{event.repainted} repainted</span>
 					</span>
 				) : detail === undefined ? null : (
 					<span
-						className="truncate font-mono text-2xs text-muted/55 leading-3"
+						className="truncate text-muted type-detail"
 						style={{ paddingLeft: TOOL_W + 8 }}
 					>
 						{detail}
@@ -386,14 +386,14 @@ function ErrorRow({ event, wide }: { event: Extract<AgentEvent, { kind: "error" 
 			<div className="flex min-w-0 flex-1 flex-col gap-1">
 				<div className="flex min-w-0 items-baseline gap-2">
 					<ToolName name={event.tool} />
-					<span className="min-w-0 flex-1 truncate font-mono text-muted text-xs leading-4">{event.label}</span>
+					<span className="min-w-0 flex-1 truncate text-muted type-value">{event.label}</span>
 					{wide ? null : (
-						<span className="shrink-0 font-mono text-2xs text-thread/80 leading-3">{event.message}</span>
+						<span className="shrink-0 text-thread/80 type-detail">{event.message}</span>
 					)}
 				</div>
 				{wide ? (
 					<span
-						className="truncate font-mono text-2xs text-thread/80 leading-3"
+						className="truncate text-thread/80 type-detail"
 						style={{ paddingLeft: TOOL_W + 8 }}
 					>
 						{event.message}
@@ -417,8 +417,8 @@ export function TaskCell({ event, wide }: { event: Extract<AgentEvent, { kind: "
 			<div className="flex min-w-0 flex-1 flex-col gap-1">
 				<div className="flex min-w-0 items-baseline gap-2">
 					<ToolName name="task" />
-					<span className="min-w-0 flex-1 truncate font-mono text-text/85 text-xs leading-4">{event.label}</span>
-					<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3">{event.runs.length} frames</span>
+					<span className="min-w-0 flex-1 truncate text-text type-value">{event.label}</span>
+					<span className="shrink-0 text-muted type-detail">{event.runs.length} frames</span>
 				</div>
 				{wide ? (
 					<div className="relative flex flex-col pt-0.5" style={{ paddingLeft: TOOL_W + 8 }}>
@@ -429,7 +429,7 @@ export function TaskCell({ event, wide }: { event: Extract<AgentEvent, { kind: "
 						{event.runs.map((run) => (
 							<span key={run.name} className="flex h-[18px] items-center gap-2 pl-2.5">
 								<StateMark state={run.state} className="h-2.5 w-2.5" />
-								<span className="truncate font-mono text-2xs text-muted leading-3">{run.name}</span>
+								<span className="truncate text-muted type-detail">{run.name}</span>
 							</span>
 						))}
 					</div>
@@ -451,13 +451,13 @@ export function Approval({ event, wide }: { event: Extract<AgentEvent, { kind: "
 			<span className="absolute inset-y-0 left-0 w-[2px] bg-thread" />
 			<div className="flex flex-col gap-2.5 py-2.5">
 				<div className="flex items-baseline gap-2">
-					<span className="font-mono text-2xs text-thread leading-3">approval needed</span>
-					<span className="ml-auto font-mono text-2xs text-muted/60 leading-3">{event.tool}</span>
+					<span className="text-thread type-detail">approval needed</span>
+					<span className="ml-auto text-muted type-detail">{event.tool}</span>
 				</div>
 				<span
 					className={cn(
-						"truncate rounded-xs bg-bg px-2 py-1.5 font-mono text-text text-xs leading-4",
-						wide ? null : "text-2xs",
+						"truncate rounded-xs bg-bg px-2 py-1.5 text-text type-value",
+						wide ? null : "type-caption",
 					)}
 				>
 					{event.command}
@@ -473,7 +473,7 @@ export function Approval({ event, wide }: { event: Extract<AgentEvent, { kind: "
 
 function RailButton({ children }: { children: React.ReactNode }) {
 	return (
-		<span className="flex h-[26px] items-center rounded-sm border border-border-raised bg-raised px-3 font-medium text-sm text-text leading-none">
+		<span className="flex h-[26px] items-center rounded-sm border border-border-raised bg-raised px-3 font-medium text-text type-label">
 			{children}
 		</span>
 	);
@@ -495,7 +495,7 @@ function Composer({
 			{context === undefined ? null : <ContextChip context={context} />}
 			<Field focused={!working} />
 			<div className="flex h-5 items-center justify-between">
-				<span className="font-mono text-2xs text-muted/50 leading-3">⏎ to send</span>
+				<span className="text-muted type-detail">⏎ to send</span>
 				{working ? <StopButton /> : null}
 			</div>
 		</div>
@@ -512,14 +512,14 @@ function ContextChip({ context }: { context: AgentContext }) {
 	return (
 		<span className="flex h-6 w-fit max-w-full items-center gap-2 overflow-hidden rounded-sm border border-border-raised bg-surface pr-1 pl-2">
 			<span className="h-3 w-[2px] shrink-0 rounded-full bg-thread" />
-			<span className="min-w-0 truncate font-mono text-xs leading-4">
+			<span className="min-w-0 truncate type-value">
 				<span className="text-text">{context.frame}</span>
-				<span className="text-muted/45"> · </span>
-				<span className="text-text/80">{context.element}</span>
-				<span className="text-muted/45"> · </span>
+				<span className="text-muted"> · </span>
+				<span className="text-text">{context.element}</span>
+				<span className="text-muted"> · </span>
 				<span className="text-muted">{context.lines}</span>
 			</span>
-			<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/60">
+			<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted">
 				<CloseIcon className="h-2 w-2" />
 			</span>
 		</span>
@@ -542,7 +542,7 @@ function Field({ focused }: { focused: boolean }) {
 					transition={still ? undefined : BREATHE}
 				/>
 			) : null}
-			<span className={cn("truncate text-base text-muted/70 leading-base", focused && "pl-1.5")}>
+			<span className={cn("truncate text-muted type-body", focused && "pl-1.5")}>
 				say what to change
 			</span>
 		</span>
@@ -554,8 +554,8 @@ function StopButton() {
 	return (
 		<span className="flex h-6 items-center gap-2 rounded-sm border border-border-raised bg-raised pr-2 pl-2">
 			<span className="h-2 w-2 shrink-0 rounded-[1px] bg-text" />
-			<span className="font-mono text-2xs text-text leading-3">stop</span>
-			<span className="font-mono text-2xs text-muted/60 leading-3">⎋</span>
+			<span className="text-text type-detail">stop</span>
+			<span className="text-muted type-detail">⎋</span>
 		</span>
 	);
 }
