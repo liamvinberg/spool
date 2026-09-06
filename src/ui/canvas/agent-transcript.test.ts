@@ -2017,6 +2017,24 @@ describe("the writes a turn lands (#214)", () => {
 		expect(writes).toEqual([{ key: "c1", path, find: ["<p>warm</p>", "<p>cold</p>"] }]);
 	});
 
+	it("keeps every disjoint pair on a landed multi-edit and none on a denied one", () => {
+		const path = `${ROOT}/design/frames/home/frame.tsx`;
+		const call = called("pairs", "MultiEdit", {
+			file_path: path,
+			edits: [
+				{ old_string: "old title", new_string: "new title" },
+				{ old_string: "old body", new_string: "new body" },
+			],
+		});
+		expect(transcriptOf([{ text: "change both" }], stamp([ready, call, result("pairs")])).writes).toEqual([
+			{ key: "pairs:0", path, find: ["new title", "old title"] },
+			{ key: "pairs:1", path, find: ["new body", "old body"] },
+		]);
+		expect(
+			transcriptOf([{ text: "change both" }], stamp([ready, call, result("pairs", { failed: true })])).writes,
+		).toEqual([]);
+	});
+
 	it("takes a Write whole, since there was nothing there to replace", () => {
 		const path = `${ROOT}/design/frames/home/frame.tsx`;
 		const { writes } = transcriptOf(
@@ -2051,7 +2069,7 @@ describe("the writes a turn lands (#214)", () => {
 		expect(cut.writes).toEqual([]);
 	});
 
-	it("says nothing about the two write tools whose arguments name no one block", () => {
+	it("carries no locator for an empty edit list", () => {
 		const path = `${ROOT}/design/frames/home/frame.tsx`;
 		const { writes, entries } = transcriptOf(
 			[{ text: "warm it up" }],

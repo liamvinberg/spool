@@ -141,6 +141,21 @@ export function writeOf(id: string, tool: string, input: CallInput): AgentWrite 
 	return find.length === 0 ? null : { key: id, path, find };
 }
 
+/** Every disjoint replacement has its own canvas locator. */
+export function writesOf(id: string, tool: string, input: CallInput): readonly AgentWrite[] {
+	if (tool !== "MultiEdit") {
+		const write = writeOf(id, tool, input);
+		return write === null ? [] : [write];
+	}
+	if (typeof input !== "object" || input === null || !("edits" in input) || !Array.isArray(input.edits)) return [];
+	const path = readField(input, "file_path", true);
+	return input.edits.flatMap((pair: unknown, index: number) => {
+		if (typeof pair !== "object" || pair === null) return [];
+		const write = writeOf(`${id}:${index}`, "Edit", { ...pair, file_path: path });
+		return write === null ? [] : [write];
+	});
+}
+
 /**
  * Whether this call gets a row of its own.
  *

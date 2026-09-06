@@ -1,4 +1,4 @@
-import { memo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentLimit } from "../../daemon/agent-events";
@@ -161,9 +161,12 @@ interface Holding {
 	readonly attached: Attachment | null;
 }
 
+const PermissionAction = createContext<(() => void) | undefined>(undefined);
+
 export function AgentRail({
 	width,
 	onCollapse,
+	onPermissions,
 	entries,
 	plan,
 	phase,
@@ -195,6 +198,7 @@ export function AgentRail({
 	 * measures its chip strip against it.
 	 */
 	width: number;
+	onPermissions?: (() => void) | undefined;
 	/** the carets inside the rail: they shut the column, which is the dock's state */
 	onCollapse: () => void;
 	entries: readonly AgentEntry[];
@@ -320,93 +324,95 @@ export function AgentRail({
 	);
 	const waited = outstanding === undefined ? 0 : Math.max(0, elapsed - outstanding.at);
 	return (
-		<section
-			aria-label="Agent"
-			data-agent-rail=""
-			style={{ width }}
-			className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
-		>
-			{install.missing && model.engine === undefined ? (
-				/*
-				 * There is nothing to spawn, and spool knew it before anybody typed (#201).
-				 *
-				 * The wall takes the transcript's place and the composer stays, dead. The rest of
-				 * the shelf goes with the transcript: a plan belongs to a turn, and a thread is a
-				 * conversation you cannot continue on a machine with no agent on it.
-				 */
-				<div className="flex h-full min-w-[200px] flex-col">
-					<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-						<InstallWall install={install} />
-						{/* the wall has no plate and no glyph to lean on, so here alone the caret floats */}
-						<CollapseCaret onCollapse={onCollapse} className="absolute top-2 right-2 z-10" />
+		<PermissionAction value={onPermissions}>
+			<section
+				aria-label="Agent"
+				data-agent-rail=""
+				style={{ width }}
+				className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
+			>
+				{install.missing && model.engine === undefined ? (
+					/*
+					 * There is nothing to spawn, and spool knew it before anybody typed (#201).
+					 *
+					 * The wall takes the transcript's place and the composer stays, dead. The rest of
+					 * the shelf goes with the transcript: a plan belongs to a turn, and a thread is a
+					 * conversation you cannot continue on a machine with no agent on it.
+					 */
+					<div className="flex h-full min-w-[200px] flex-col">
+						<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+							<InstallWall install={install} />
+							{/* the wall has no plate and no glyph to lean on, so here alone the caret floats */}
+							<CollapseCaret onCollapse={onCollapse} className="absolute top-2 right-2 z-10" />
+						</div>
+						<DeadComposer />
 					</div>
-					<DeadComposer />
-				</div>
-			) : (
-				/*
-				 * The rail is one panel, and the plate over it is where the other conversations
-				 * live (#205). The panel is everything one conversation is; the list the plate
-				 * drops is every conversation there is, and a press on it changes only the panel.
-				 */
-				<div className="flex h-full min-w-[200px] flex-col">
-					{/* the plate leads the shelf, because it says which thread everything under it
+				) : (
+					/*
+					 * The rail is one panel, and the plate over it is where the other conversations
+					 * live (#205). The panel is everything one conversation is; the list the plate
+					 * drops is every conversation there is, and a press on it changes only the panel.
+					 */
+					<div className="flex h-full min-w-[200px] flex-col">
+						{/* the plate leads the shelf, because it says which thread everything under it
 					    belongs to, and it is where the others are reached from */}
-					<ThreadPlate threads={threads} listing={listing} onList={setListing} />
-					{/* the list drops over the shelf and the log together, so it hangs off the plate
+						<ThreadPlate threads={threads} listing={listing} onList={setListing} />
+						{/* the list drops over the shelf and the log together, so it hangs off the plate
 					    whatever the shelf is carrying */}
-					<div className="relative flex min-h-0 flex-1 flex-col">
-						{/* the standing half of being signed out, on the shelf the plan would take —
+						<div className="relative flex min-h-0 flex-1 flex-col">
+							{/* the standing half of being signed out, on the shelf the plan would take —
 						    and they never want it at once, because a plan belongs to a turn that is
 						    running and this exists precisely because none can (#201) */}
-						{install.missing ? <InstallWall install={install} /> : null}
-						{login.out ? <LoginStrip login={login} /> : null}
-						{plan === null ? null : <PlanStrip plan={plan} />}
-						<Transcript
-							entries={entries}
-							live={phase === "playing"}
-							spoke={spoke}
-							elapsed={elapsed}
-							jump={jump}
-							onAnswer={onAnswer}
-						/>
-						{listing === null ? null : (
-							<ThreadDrop threads={threads} now={listing} onDone={() => setListing(null)} />
-						)}
-					</div>
-					{/* the strip is measured against the composer's own inner width: the same three
+							{install.missing ? <InstallWall install={install} /> : null}
+							{login.out ? <LoginStrip login={login} /> : null}
+							{plan === null ? null : <PlanStrip plan={plan} />}
+							<Transcript
+								entries={entries}
+								live={phase === "playing"}
+								spoke={spoke}
+								elapsed={elapsed}
+								jump={jump}
+								onAnswer={onAnswer}
+							/>
+							{listing === null ? null : (
+								<ThreadDrop threads={threads} now={listing} onDone={() => setListing(null)} />
+							)}
+						</div>
+						{/* the strip is measured against the composer's own inner width: the same three
 					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
 					    rather than one width */}
-					<Composer
-						phase={phase}
-						waited={waited}
-						finished={threads.finished}
-						answering={asking?.kind === "ask" ? asking.request : null}
-						strip={stripOf(pointing.entries, composerWidth(width), pointing.inside)}
-						pointing={pointing}
-						draft={holding.draft}
-						onDraft={writeDraft}
-						attached={holding.attached}
-						onAttach={(attached) => write((was) => ({ ...was, attached }))}
-						queued={queued}
-						model={model}
-						limit={limit}
-						onSend={(text, sent) => {
-							if (install.missing) return false;
-							const took = onSend(text, sent);
-							// the log follows the live edge again because something was said, so a press
-							// that said nothing must not move it
-							if (took) setSpoke((count) => count + 1);
-							return took;
-						}}
-						running={running}
-						onQueue={onQueue}
-						onUnqueue={onUnqueue}
-						onStop={onStop}
-						onAnswer={onAnswer}
-					/>
-				</div>
-			)}
-		</section>
+						<Composer
+							phase={phase}
+							waited={waited}
+							finished={threads.finished}
+							answering={asking?.kind === "ask" ? asking.request : null}
+							strip={stripOf(pointing.entries, composerWidth(width), pointing.inside)}
+							pointing={pointing}
+							draft={holding.draft}
+							onDraft={writeDraft}
+							attached={holding.attached}
+							onAttach={(attached) => write((was) => ({ ...was, attached }))}
+							queued={queued}
+							model={model}
+							limit={limit}
+							onSend={(text, sent) => {
+								if (install.missing) return false;
+								const took = onSend(text, sent);
+								// the log follows the live edge again because something was said, so a press
+								// that said nothing must not move it
+								if (took) setSpoke((count) => count + 1);
+								return took;
+							}}
+							running={running}
+							onQueue={onQueue}
+							onUnqueue={onUnqueue}
+							onStop={onStop}
+							onAnswer={onAnswer}
+						/>
+					</div>
+				)}
+			</section>
+		</PermissionAction>
 	);
 }
 
@@ -1609,6 +1615,7 @@ function Ask({
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
 	const request = entry.request;
+	const permissions = useContext(PermissionAction);
 	const open = entry.state === "open" && request !== null;
 	const answer = (reply: AgentReply) => {
 		if (request !== null) onAnswer(request, reply);
@@ -1664,7 +1671,7 @@ function Ask({
 						</div>
 					);
 				})
-			) : entry.asked === null ? null : (
+			) : entry.asked === null || (entry.access !== undefined && !open) ? null : (
 				// nothing where the agent wrote nothing: the row above already named the call,
 				// and a block that repeated it would be the rail saying one thing twice
 				<p className="text-base text-text/90 leading-base">
@@ -1674,8 +1681,19 @@ function Ask({
 			)}
 			{entry.state === "answered" ? <Answered words={entry.words} /> : null}
 			{entry.state === "dropped" ? <AskOutcome state="failed" text="nobody answered" /> : null}
-			{entry.state === "allowed" ? <AskOutcome state="done" text="allowed" /> : null}
-			{entry.state === "always" ? <AskOutcome state="done" text="allowed for this thread" /> : null}
+			{entry.state === "allowed" ? (
+				<AskOutcome state="done" text={entry.access === undefined ? "allowed" : "allowed once"} />
+			) : null}
+			{entry.state === "always" ? (
+				<AskOutcome
+					state="done"
+					text={
+						entry.access === undefined
+							? "allowed for this thread"
+							: `edits in ${entry.access.scope} allowed for this thread`
+					}
+				/>
+			) : null}
 			{/* a deny and a dismiss are one wire and two acts: for an approval the person
 			    answered no, and for a question they refused to answer at all */}
 			{entry.state === "denied" ? (
@@ -1695,29 +1713,49 @@ function Ask({
 				</button>
 			) : null}
 			{open && !entry.question ? (
-				<div className="flex flex-col gap-1.5">
-					<AskAction label="allow" onPick={() => answer({ kind: "allow" })} />
+				<div className={entry.access === undefined ? "flex flex-col gap-1.5" : "flex flex-wrap gap-1.5"}>
+					<AskAction
+						compact={entry.access !== undefined}
+						label={entry.access === undefined ? "allow" : "allow once"}
+						onPick={() => answer({ kind: "allow" })}
+					/>
 					{/* absent rather than dead where the request suggested no rule: spool never
 					    composes one of its own to fill the gap. Where it is offered it lasts the
 					    thread and is written to no file, because the complaint is repetition */}
 					{entry.always ? (
-						<AskAction label="always, for this thread" onPick={() => answer({ kind: "always" })} />
+						<AskAction
+							compact={entry.access !== undefined}
+							label={entry.access === undefined ? "always, for this thread" : "for this thread"}
+							onPick={() => answer({ kind: "always" })}
+						/>
 					) : null}
-					<AskAction label="deny" onPick={() => answer({ kind: "deny" })} />
+					<AskAction compact={entry.access !== undefined} label="deny" onPick={() => answer({ kind: "deny" })} />
 				</div>
+			) : null}
+			{open && entry.access !== undefined && permissions !== undefined ? (
+				<button
+					type="button"
+					onClick={permissions}
+					className="w-fit py-1 font-mono text-2xs text-muted leading-4 transition-colors hover:text-text"
+				>
+					change permissions…
+				</button>
 			) : null}
 		</div>
 	);
 }
 
 /** one of spool's own answers to an approval, in the same row an option gets */
-function AskAction({ label, onPick }: { label: string; onPick: () => void }) {
+function AskAction({ label, onPick, compact = false }: { label: string; onPick: () => void; compact?: boolean }) {
 	return (
 		<button
 			type="button"
 			data-agent-option={label}
 			onClick={onPick}
-			className="w-full rounded-md border border-border-raised bg-surface px-3 py-2 text-left transition-colors duration-150 hover:border-muted/45"
+			className={cn(
+				"rounded-md border border-border-raised bg-surface px-3 py-2 text-left transition-colors duration-150 hover:border-muted/45",
+				!compact && "w-full",
+			)}
 		>
 			<span className="font-mono text-sm text-text leading-4">{label}</span>
 		</button>

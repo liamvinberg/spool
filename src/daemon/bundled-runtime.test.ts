@@ -74,8 +74,8 @@ it("continues exact SDK sessions with images and context, independent threads, a
 	const first = options(root);
 	const events: AgentEvent[] = [];
 	await runtime.turn("first", first, (event) => events.push(event));
-	expect(events.find((event) => event.kind === "ended")).toMatchObject({ ending: "done" });
-	expect(contexts[0]?.tools).toEqual([]);
+	expect(events.find((event) => event.kind === "ended")).toMatchObject({ ending: "done", reason: null });
+	expect(contexts[0]?.tools?.map((tool) => tool.name)).toEqual(["read", "write", "edit"]);
 	expect(JSON.stringify(contexts[0])).toContain("aGVsbG8=");
 	expect(JSON.stringify(contexts[0])).toContain("first frame");
 	expect(contexts[0]?.systemPrompt).toContain("Project instruction as text");

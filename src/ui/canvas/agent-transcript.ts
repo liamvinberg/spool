@@ -13,7 +13,7 @@ import {
 	readProse,
 	taskMoved,
 	taskWritten,
-	writeOf,
+	writesOf,
 } from "./agent-nouns";
 import { LOGIN_REMEDY, NO_KEY, signedOut } from "./agent-preflight";
 
@@ -310,6 +310,7 @@ export type AgentEntry =
 	| {
 			readonly key: string;
 			readonly kind: "ask";
+			readonly access?: { readonly scope: string; readonly path: string };
 			/** the control request an answer names; null until the request itself lands */
 			readonly request: string | null;
 			/** the agent's own question rather than an approval to run something */
@@ -439,6 +440,7 @@ interface Prose {
 
 /** a waiting request, from the call that opens it to whatever ends it */
 interface Ask {
+	access?: { readonly scope: string; readonly path: string };
 	readonly key: string;
 	request: string | null;
 	question: boolean;
@@ -506,7 +508,7 @@ interface Block {
 	/** the last name spool had for it, which is what an empty search's row is built from */
 	named: CallName | null;
 	/** the block this call is about to change, held until its result says it landed (#214) */
-	wrote: AgentWrite | null;
+	wrote: readonly AgentWrite[];
 	/** it joined the open run, so the count is the whole of what it adds */
 	joined: boolean;
 	/** the whole call has landed, so a stray fragment cannot take its arguments back */
@@ -898,7 +900,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			fragments: "",
 			row: null,
 			named: null,
-			wrote: null,
+			wrote: [],
 			joined: false,
 			settled: false,
 		};
@@ -1069,7 +1071,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 						: { server: event.foreign.server ?? null, tool: event.foreign.tool ?? null, raw: event.tool };
 				// the strings this write is made of, held rather than published: what the
 				// canvas can locate is a change that landed, and only the result says so (#214)
-				block.wrote = foreign === null ? writeOf(event.id, event.tool, event.input) : null;
+				block.wrote = foreign === null ? writesOf(event.id, event.tool, event.input) : [];
 				nameRow(block, event.input, true, foreign);
 				break;
 			}
@@ -1093,6 +1095,10 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				ask.request = event.request;
 				ask.state = "open";
 				ask.always = event.suggestions.length > 0;
+				if (event.access !== undefined) {
+					ask.access = event.access;
+					if (above !== null) above.subject = event.access.path;
+				}
 				/*
 				 * The agent's own written sentence, which is the whole of what an approval gives
 				 * somebody to decide on — and nothing where it wrote none.
@@ -1140,8 +1146,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				 * A failed one publishes nothing: a call that was denied, stopped or errored
 				 * changed no pixels, and a mark for it would be pointing at nothing.
 				 */
-				if (block.wrote !== null && !event.failed) writes.push(block.wrote);
-				block.wrote = null;
+				if (!event.failed) writes.push(...block.wrote);
+				block.wrote = [];
 				/*
 				 * A search that loaded no tool is the only place a connector nobody has signed
 				 * in to is visible at all: it offers no failing tool, it offers no tool. So the
@@ -1397,8 +1403,25 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			// a call that opened and never said what it was asking is not a question yet,
 			// but a request that arrived always draws: its controls are the block even
 			// where the row above already said everything there was to say
-			if (ask !== undefined && (ask.request !== null || ask.asked !== null || ask.questions.length > 0))
-				entries.push({ ...ask, kind: "ask" });
+			if (ask !== undefined && (ask.request !== null || ask.asked !== null || ask.questions.length > 0)) {
+				if (ask.access !== undefined && !unanswered(ask)) {
+					const row = entries.at(-1)?.kind === "row" ? entries.pop() : undefined;
+					entries.push({
+						key: ask.key,
+						kind: "note",
+						rule: false,
+						text:
+							ask.state === "always"
+								? `edits in ${ask.access.scope} allowed for this thread`
+								: ask.state === "allowed"
+									? "allowed once"
+									: ask.state === "denied"
+										? "denied"
+										: "action stopped",
+					});
+					if (row !== undefined) entries.push(row);
+				} else entries.push({ ...ask, kind: "ask" });
+			}
 			continue;
 		}
 		const block = prose.get(slot.key);
