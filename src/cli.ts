@@ -498,7 +498,7 @@ try {
 	const args = process.argv.slice(2);
 	if (args.length === 0) await openCanvas({ noOpen: false });
 	else if (args.length === 1 && args[0] === NO_OPEN) await openCanvas({ noOpen: true });
-	else await program.parseAsync();
+	else await program.parseAsync(process.argv, { from: "node" });
 } catch (error) {
 	if (error instanceof SpoolError) {
 		// a version skew refuses exactly like a bad token; name it here rather

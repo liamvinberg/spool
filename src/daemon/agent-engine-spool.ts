@@ -25,6 +25,9 @@ export function bundledEnvironment(directory: string): NodeJS.ProcessEnv {
 	for (const name of ["PATH", "SystemRoot", "WINDIR", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"]) {
 		if (process.env[name] !== undefined) env[name] = process.env[name];
 	}
+	// A packaged daemon forks Electron's executable. Without Node mode this
+	// starts another app instead of the IPC host. Never copy ambient Node flags.
+	if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = "1";
 	return env;
 }
 

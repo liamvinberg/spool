@@ -52,6 +52,11 @@ jobs:
       - run: pnpm exec playwright-core install --with-deps chromium-headless-shell
       - run: pnpm typecheck
       - run: pnpm test
+        env:
+          SPOOL_TEST_EVIDENCE_DIR: ${{ runner.temp }}/spool-delivery
+      - name: record installed npm runtime evidence
+        if: always()
+        run: cat "$RUNNER_TEMP/spool-delivery/installed-npm.json"
       - run: pnpm check
       - run: pnpm build
 
@@ -73,6 +78,8 @@ jobs:
       - run: pnpm exec playwright-core install chromium-headless-shell
       - run: pnpm typecheck
       - run: pnpm test
+        env:
+          SPOOL_TEST_EVIDENCE_DIR: ${{ runner.temp }}/spool-delivery
       - run: pnpm check
       - run: pnpm build
       # The Mac app's own checks. `desktop/` is its own pnpm root and is not in
@@ -84,3 +91,40 @@ jobs:
       - run: pnpm --dir desktop typecheck
       - run: pnpm --dir desktop test
       - run: pnpm --dir desktop smoke
+      - name: verify the built Mac app with deterministic provider replies
+        env:
+          SPOOL_TEST_EVIDENCE_DIR: ${{ runner.temp }}/spool-delivery
+        run: |
+          pnpm pack --out /tmp/spool-delivery.tgz
+          SPOOL_TARBALL=/tmp/spool-delivery.tgz desktop/scripts/build.sh
+          SPOOL_TEST_APP="$PWD/desktop/release/mac-arm64/Spool.app" pnpm exec vitest run src/installed-engine.test.ts --maxWorkers=1
+      - name: record installed Mac runtime evidence
+        if: always()
+        run: cat "$RUNNER_TEMP/spool-delivery/installed-npm.json" "$RUNNER_TEMP/spool-delivery/installed-app.json"
+
+  restricted-linux-recovery:
+    # This role requires the actual observed kernel refusal. A successful probe,
+    # missing helper, or unrelated error fails instead of silently skipping it.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+      - run: pnpm exec playwright-core install --with-deps chromium-headless-shell
+      - name: record the actual restricted host
+        run: |
+          uname -srmo
+          dpkg-query -W bubblewrap socat ripgrep libseccomp2
+      - name: verify unavailable isolation and explicit recovery through the installed host
+        env:
+          SPOOL_TEST_EVIDENCE_DIR: ${{ runner.temp }}/spool-delivery
+        run: SPOOL_TEST_RESTRICTED=1 pnpm exec vitest run src/installed-engine.test.ts --maxWorkers=1
+      - name: record restricted host evidence
+        if: always()
+        run: cat "$RUNNER_TEMP/spool-delivery/installed-restricted.json"

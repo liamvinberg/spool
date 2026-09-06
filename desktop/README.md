@@ -15,6 +15,11 @@ nothing forks.
 
 Apple silicon, macOS 14 or later.
 
+The bundled spool engine and its provider SDK run inside the app's Node runtime.
+No separate Node or agent CLI installation is required. Account connections,
+Linux/WSL CLI requirements and the limits of command isolation are covered in
+[agent requirements and permissions](../docs/agents.md).
+
 ## Do not also run `spool autostart`
 
 `spool autostart` installs a launchd job that starts the daemon at login. The app

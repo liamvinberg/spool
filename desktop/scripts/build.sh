@@ -21,12 +21,14 @@ cd "$ROOT"
 VERSION="${VERSION:-$("$ROOT/scripts/version.sh")}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
-# Stop any running copy so the bundle can be replaced cleanly, and so the daemon
-# it owns is stopped by its own supervisor rather than orphaned by an rm.
-if pgrep -x Spool > /dev/null 2>&1; then
-	osascript -e 'quit app id "page.spool.mac"' > /dev/null 2>&1 || pkill -x Spool || true
-	sleep 1
-fi
+# Only this output bundle can block replacing the build. Installed copies and
+# other checkout lanes have their own supervisors and must remain untouched.
+while IFS= read -r executable; do
+	if [ "$executable" = "$ROOT/release/mac-arm64/Spool.app/Contents/MacOS/Spool" ]; then
+		echo "Quit the Spool build at $ROOT/release/mac-arm64/Spool.app before rebuilding." >&2
+		exit 1
+	fi
+done < <(ps -axo comm=)
 
 rm -rf dist release
 ./node_modules/.bin/tsc
