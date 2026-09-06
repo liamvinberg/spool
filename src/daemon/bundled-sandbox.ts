@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync, writeSync } from "node:fs";
-import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
+import { SandboxManager, SandboxRuntimeConfigSchema } from "@anthropic-ai/sandbox-runtime";
 
 // One immutable host configuration. Every command supplies its own filesystem policy.
 let ready: Promise<void> | undefined;
@@ -21,11 +21,13 @@ export async function sandboxCommand(
 			if (dependencies.errors.length) throw new Error([...dependencies.errors, ...dependencies.warnings].join("\n"));
 			stage = "initialization";
 			await SandboxManager.initialize(
-				{
+				SandboxRuntimeConfigSchema.parse({
 					filesystem: { allowWrite: [], denyRead: [], denyWrite: [] },
-					network: { allowedDomains: ["*"], deniedDomains: [] },
-				},
-				undefined,
+					network: { allowedDomains: [], deniedDomains: [] },
+				}),
+				// Ordinary outbound access is quiet. The supported callback allows
+				// destinations through the proxy without weakening filesystem isolation.
+				async () => true,
 				false,
 			);
 			// A helper can exist while the kernel refuses its isolation primitives. Probe
