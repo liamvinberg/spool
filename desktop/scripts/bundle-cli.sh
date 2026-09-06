@@ -36,7 +36,7 @@ CLI_OUT="${CLI_OUT:-$ROOT/build/cli}"
 VERSION="${VERSION:-$("$ROOT/scripts/version.sh")}"
 
 STAMP="spool.page $VERSION"
-if [ -f "$CLI_OUT/RUNTIME.txt" ] && grep -qxF "$STAMP" "$CLI_OUT/RUNTIME.txt"; then
+if [ -z "${SPOOL_TARBALL:-}" ] && [ -f "$CLI_OUT/RUNTIME.txt" ] && grep -qxF "$STAMP" "$CLI_OUT/RUNTIME.txt"; then
 	echo "cli already staged: $STAMP"
 	exit 0
 fi

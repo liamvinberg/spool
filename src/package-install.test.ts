@@ -20,6 +20,8 @@ describe("packed install", () => {
 		const packageRoot = makeTempDir();
 		for (const file of [
 			"package.json",
+			"LICENSE.md",
+			"THIRD_PARTY_NOTICES.md",
 			"tsup.config.ts",
 			"vite.config.ts",
 			"tsconfig.json",
