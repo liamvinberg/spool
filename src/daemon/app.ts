@@ -17,7 +17,7 @@ import { createProject, initProject, startProject } from "../init";
 import { openProject } from "../open";
 import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
-import { appearanceOf, themeInline } from "../settings/registry";
+import { appearanceOf, parseSetting, themeInline } from "../settings/registry";
 import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
 import { type AgentEngine, type AgentEngineId, isAgentEngineId } from "./agent-engine";
@@ -650,6 +650,8 @@ export function createDaemonApp({
 			agentEngines ?? [createClaudeEngine(agentExecutor ?? claudeExecutor(), agentLook), createSpoolEngine(spoolDir)]
 		).map((engine) => [engine.id, engine]),
 	);
+
+	const permissionChanges = new Set<string>();
 
 	function engineFor(c: Context, root: string, thread?: string, requested: unknown = c.req.query("engine")) {
 		if (thread !== undefined && !isThreadId(thread))
@@ -1647,6 +1649,56 @@ export function createDaemonApp({
 				// picture on disk is the whole of what the rail can draw for one of them
 				if (held === undefined) return c.text(`no turn to read in thread "${thread}"`, 404);
 				return attachTurn(c, held, c.req.valid("query").from);
+			},
+		)
+		.get("/api/p/:project/agent/threads/:thread/permissions", (c) => {
+			const project = resolveProject(c, c.req.param("project"));
+			if ("response" in project) return project.response;
+			const thread = c.req.param("thread");
+			const selected = engineFor(c, project.root, thread);
+			if ("response" in selected) return selected.response;
+			const held = liveTurns.get(project.root, thread);
+			return c.json({
+				mode: held?.running
+					? (held.permissions?.applied ?? settings.agentPermissions(project.root))
+					: settings.agentPermissions(project.root),
+			});
+		})
+		.put(
+			"/api/p/:project/agent/threads/:thread/permissions",
+			validator("json", (value, c) => {
+				const body = (typeof value === "object" && value !== null ? value : {}) as { mode?: unknown };
+				const parsed = parseSetting("agent.permissions", body.mode);
+				return parsed.ok ? { mode: parsed.value } : c.text(parsed.reason, 400);
+			}),
+			async (c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const thread = c.req.param("thread");
+				const selected = engineFor(c, project.root, thread);
+				if ("response" in selected) return selected.response;
+				if (permissionChanges.has(project.root))
+					return c.text("A permission change is already being applied.", 409);
+				permissionChanges.add(project.root);
+				try {
+					const held = liveTurns.get(project.root, thread);
+					const { mode } = c.req.valid("json");
+					if (held?.running) {
+						if (!held.permissions) return c.text("This engine cannot change permissions during a turn.", 409);
+						try {
+							const applied = await held.permissions.apply(mode);
+							if (applied !== mode) return c.text("The engine did not apply the requested permissions.", 409);
+						} catch (error) {
+							return c.text(error instanceof Error ? error.message : "Permissions were not applied.", 409);
+						}
+					}
+					const written = settings.write("agent.permissions", mode, project.root);
+					if (!written.ok) return c.text(written.reason, written.status);
+					emitAppEvent({ kind: "settings" });
+					return c.json({ mode });
+				} finally {
+					permissionChanges.delete(project.root);
+				}
 			},
 		)
 		.post(

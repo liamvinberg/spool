@@ -9,6 +9,7 @@ import { AgentAccountDialog } from "./agent-account";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
 import { limitReadout } from "./agent-limit";
 import { type AgentModelDeck, menuLongest, menuSays } from "./agent-model";
+import { type PermissionDeck, PermissionMenu } from "./agent-permissions";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
 import { Caret, Paragraphs } from "./agent-said";
@@ -167,7 +168,7 @@ const PermissionAction = createContext<(() => void) | undefined>(undefined);
 export function AgentRail({
 	width,
 	onCollapse,
-	onPermissions,
+	permissions,
 	entries,
 	plan,
 	phase,
@@ -199,7 +200,7 @@ export function AgentRail({
 	 * measures its chip strip against it.
 	 */
 	width: number;
-	onPermissions?: (() => void) | undefined;
+	permissions?: PermissionDeck;
 	/** the carets inside the rail: they shut the column, which is the dock's state */
 	onCollapse: () => void;
 	entries: readonly AgentEntry[];
@@ -248,6 +249,7 @@ export function AgentRail({
 }) {
 	/** how many sends this rail has watched go out, which is the log's cue to follow again */
 	const [spoke, setSpoke] = useState(0);
+	const [footerMenu, setFooterMenu] = useState<"models" | "permissions" | null>(null);
 	/** the clock read when the thread list was dropped over the log, or null while it is shut */
 	const [listing, setListing] = useState<number | null>(null);
 	/**
@@ -325,7 +327,7 @@ export function AgentRail({
 	);
 	const waited = outstanding === undefined ? 0 : Math.max(0, elapsed - outstanding.at);
 	return (
-		<PermissionAction value={onPermissions}>
+		<PermissionAction value={permissions === undefined ? undefined : () => setFooterMenu("permissions")}>
 			<section
 				aria-label="Agent"
 				data-agent-rail=""
@@ -383,6 +385,9 @@ export function AgentRail({
 					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
 					    rather than one width */}
 						<Composer
+							permissions={permissions}
+							menu={footerMenu}
+							onMenu={setFooterMenu}
 							phase={phase}
 							waited={waited}
 							finished={threads.finished}
@@ -1693,9 +1698,7 @@ function Ask({
 			) : null}
 			{entry.state === "answered" ? <Answered words={entry.words} /> : null}
 			{entry.state === "dropped" ? <AskOutcome state="failed" text="nobody answered" /> : null}
-			{entry.state === "allowed" ? (
-				<AskOutcome state="done" text={entry.access === undefined ? "allowed" : "allowed once"} />
-			) : null}
+			{entry.state === "allowed" ? <AskOutcome state="done" text="allowed once" /> : null}
 			{entry.state === "always" ? (
 				<AskOutcome
 					state="done"
@@ -1729,26 +1732,18 @@ function Ask({
 				</button>
 			) : null}
 			{open && !entry.question ? (
-				<div className={entry.access === undefined ? "flex flex-col gap-1.5" : "flex flex-wrap gap-1.5"}>
-					<AskAction
-						compact={entry.access !== undefined}
-						label={entry.access === undefined ? "allow" : "allow once"}
-						onPick={() => answer({ kind: "allow" })}
-					/>
+				<div className="flex flex-wrap gap-1.5">
+					<AskAction compact label="allow once" onPick={() => answer({ kind: "allow" })} />
 					{/* absent rather than dead where the request suggested no rule: spool never
 					    composes one of its own to fill the gap. Where it is offered it lasts the
 					    thread and is written to no file, because the complaint is repetition */}
 					{entry.always ? (
-						<AskAction
-							compact={entry.access !== undefined}
-							label={entry.access === undefined ? "always, for this thread" : "for this thread"}
-							onPick={() => answer({ kind: "always" })}
-						/>
+						<AskAction compact label="for this thread" onPick={() => answer({ kind: "always" })} />
 					) : null}
-					<AskAction compact={entry.access !== undefined} label="deny" onPick={() => answer({ kind: "deny" })} />
+					<AskAction compact label="deny" onPick={() => answer({ kind: "deny" })} />
 				</div>
 			) : null}
-			{open && entry.access !== undefined && permissions !== undefined ? (
+			{open && !entry.question && permissions !== undefined ? (
 				<button
 					type="button"
 					onClick={permissions}
@@ -2064,6 +2059,9 @@ function fieldSays(answering: string | null, finished: boolean): string {
 }
 
 function Composer({
+	permissions,
+	menu,
+	onMenu,
 	phase,
 	waited,
 	finished,
@@ -2084,6 +2082,9 @@ function Composer({
 	onStop,
 	onAnswer,
 }: {
+	permissions: PermissionDeck | undefined;
+	menu: "models" | "permissions" | null;
+	onMenu: (menu: "models" | "permissions" | null) => void;
 	phase: TurnPhase;
 	/** how long the request now out has been silent, which is all the stroke reads (#231) */
 	waited: number;
@@ -2130,6 +2131,7 @@ function Composer({
 	onAnswer: (request: string, reply: AgentReply) => void;
 }) {
 	const field = useRef<HTMLTextAreaElement>(null);
+	const permissionTrigger = useRef<HTMLButtonElement>(null);
 	/*
 	 * A stop is offered against every turn that is still a process (#165, #180, #234).
 	 *
@@ -2271,28 +2273,68 @@ function Composer({
 					style={{ height: MIN_H }}
 				/>
 			</div>
-			{/*
-			 * The footer holds the model and the stop, and nothing else (#184).
-			 *
-			 * 243 wanted at every width — the model's 160, the stop's 73 and the gap between
-			 * them — with no threshold and no ladder across the rail's whole 200–480 range.
-			 * The three occupants #118, #122 and #165 each put here wanted 432 against 391 of
-			 * box at 420, which wrapped the model to 24px inside an 18px line and elided the
-			 * limit's reset time; the limit went to the menu on #122's own reasoning, and the
-			 * send hint went because which machine is answering outranks a keyboard hint you
-			 * learn once. #200's own word about a finished thread went with it, into the
-			 * placeholder of the field it is a fact about.
-			 *
-			 * The model is the one thing here allowed to give way, and it truncates rather
-			 * than shortening. The stop is `shrink-0`, because a cut name is still readable
-			 * and half a stop button is not.
-			 */}
-			{/* the row is what the menu above it is measured against, not the trigger: a panel
-			    anchored to a trigger that shrinks with its own text would move with the text,
-			    and it has to be clamped to the composer's width rather than to a word's */}
-			<div className="relative flex h-[18px] items-center justify-between gap-2.5">
-				<ModelMenu model={model} limit={limit} />
-				{cutting ? <StopButton onStop={onStop} /> : null}
+			{permissions?.reason ? (
+				<p role="status" className="text-2xs text-muted leading-4">
+					{permissions.reason}
+				</p>
+			) : null}
+			<div className="relative flex h-[18px] min-w-0 items-center justify-between gap-2.5">
+				<div className="relative flex min-w-0 flex-1 items-center gap-4">
+					<ModelMenu
+						model={model}
+						limit={limit}
+						open={menu === "models"}
+						onOpen={(next) => onMenu(next ? "models" : null)}
+					/>
+					{cutting ? <StopButton onStop={onStop} /> : null}
+					{permissions === undefined ? null : (
+						<button
+							ref={permissionTrigger}
+							type="button"
+							data-permission-trigger=""
+							aria-label={`Agent permissions: ${permissions.mode}`}
+							aria-haspopup="menu"
+							aria-expanded={menu === "permissions"}
+							title={`Agent permissions: ${permissions.mode}`}
+							aria-busy={permissions.pending}
+							onClick={() => onMenu(menu === "permissions" ? null : "permissions")}
+							onKeyDown={(event) => {
+								if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+									event.preventDefault();
+									onMenu("permissions");
+								}
+							}}
+							className={cn(
+								QUIET,
+								"relative z-30 flex shrink-0 items-center gap-1 py-1 text-muted hover:text-text",
+							)}
+						>
+							{permissions.mode}
+							<ChevronIcon open={menu === "permissions"} className="h-2 w-2 shrink-0" />
+						</button>
+					)}
+					{permissions !== undefined && menu === "permissions" ? (
+						<>
+							<button
+								type="button"
+								tabIndex={-1}
+								aria-label="close the permission menu"
+								className="fixed inset-0 z-10 cursor-default"
+								onClick={() => onMenu(null)}
+							/>
+							<PermissionMenu
+								mode={permissions.mode}
+								engine={model.engine ?? "claude"}
+								trigger={permissionTrigger}
+								onChange={(next) => {
+									onMenu(null);
+									permissions.choose(next);
+								}}
+								onClose={() => onMenu(null)}
+							/>
+						</>
+					) : null}
+				</div>
 			</div>
 		</div>
 	);
@@ -2327,8 +2369,17 @@ const QUIET = "font-mono text-2xs leading-3";
  */
 const MENU_W = 300;
 
-function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit | null }) {
-	const [open, setOpen] = useState(false);
+function ModelMenu({
+	model,
+	limit,
+	open,
+	onOpen,
+}: {
+	model: AgentModelDeck;
+	limit: AgentLimit | null;
+	open: boolean;
+	onOpen: (open: boolean) => void;
+}) {
 	const trigger = useRef<HTMLButtonElement>(null);
 	const panel = useRef<HTMLDivElement>(null);
 	/**
@@ -2374,7 +2425,7 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 	const usage = limit === null ? null : limitReadout(limit, Date.now());
 
 	const show = (next: boolean) => {
-		setOpen(next);
+		onOpen(next);
 		setOver(null);
 		// the answer is the installed binary's, so opening asks again rather than drawing
 		// whatever was true when the rail mounted
@@ -2385,7 +2436,7 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 	return (
 		// no `relative` of its own: the panel is positioned against the footer row, so its
 		// width is clamped to the composer rather than to however long the name happens to be
-		<span data-agent-model={model.readout} className="flex min-w-0">
+		<span data-agent-model={model.readout} className="flex min-w-0 flex-1">
 			{model.accountOpen && model.project !== undefined ? (
 				<AgentAccountDialog
 					project={model.project}
@@ -2408,9 +2459,15 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 				title={readout}
 				aria-expanded={open}
 				onClick={() => show(!open)}
+				onKeyDown={(event) => {
+					if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+						event.preventDefault();
+						show(true);
+					}
+				}}
 				className={cn(
 					QUIET,
-					"flex min-w-0 items-center gap-1 transition-colors duration-150",
+					"relative z-30 flex min-w-0 items-center gap-1 transition-colors duration-150",
 					open ? "text-muted" : "text-muted/45 hover:text-muted",
 				)}
 			>
@@ -2439,7 +2496,8 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 					data-agent-model-menu=""
 					data-combined-menu={model.engine === undefined ? undefined : ""}
 					onKeyDown={(event) => {
-						if (event.key === "Escape") {
+						if (event.key === "Escape" || event.key === "Tab") {
+							event.preventDefault();
 							event.stopPropagation();
 							show(false);
 							trigger.current?.focus();

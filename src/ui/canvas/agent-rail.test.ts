@@ -329,6 +329,7 @@ function mount({ still = false }: { still?: boolean } = {}) {
 				offered.offer = offered.reply(offered.offer, wanted);
 				return Response.json(offered.offer);
 			}
+			if (url.pathname.endsWith("/permissions")) return Response.json({ mode: "ask" });
 			if (url.pathname.includes("/agent/threads/")) {
 				const thread = url.pathname.split("/agent/threads/")[1]?.replace(/\/close$/, "") ?? "";
 				if (url.pathname.endsWith("/close")) stored.closed.push(thread);
@@ -2616,10 +2617,10 @@ describe("an approval in the log", () => {
 		// the row above already says what the call is, so the block says why — and every
 		// one of the three is an answer, so all three are rows
 		expect(canvas.host.querySelector("[data-agent-ask]")?.textContent).toContain("which restarts the daemon");
-		expect(options(canvas.host)).toEqual(["allow", "always, for this thread", "deny"]);
+		expect(options(canvas.host)).toEqual(["allow once", "for this thread", "deny"]);
 		expect(canvas.host.querySelector("[data-agent-dismiss]")).toBeNull();
 
-		const always = canvas.host.querySelector<HTMLButtonElement>('[data-agent-option="always, for this thread"]');
+		const always = canvas.host.querySelector<HTMLButtonElement>('[data-agent-option="for this thread"]');
 		await act(async () => always?.click());
 		expect(canvas.turn.answers.at(-1)).toEqual({ request: "req-a", reply: { kind: "always" } });
 	});
@@ -2633,7 +2634,7 @@ describe("an approval in the log", () => {
 		await until(() => options(canvas.host).length > 0);
 
 		// absent rather than dead: spool never composes a rule of its own to fill it
-		expect(options(canvas.host)).toEqual(["allow", "deny"]);
+		expect(options(canvas.host)).toEqual(["allow once", "deny"]);
 	});
 
 	it("is never answered by typing, because no sentence answers may I run this", async () => {
@@ -4254,16 +4255,15 @@ describe("the model menu", () => {
 });
 
 describe("the footer the model hangs off", () => {
-	it("holds the model and the stop and nothing else", async () => {
+	it("holds the model, stop and right-hand permission mode", async () => {
 		const canvas = mount();
 		await running(canvas);
 		await until(() => modelTrigger(canvas.host)?.textContent?.includes("Opus") === true);
 		const footer = footerRow(canvas.host);
 		if (footer === null) throw new Error("no footer");
 
-		// 243 wanted at every width: the model, the gap and the stop. The limit went to
-		// the menu and the send hint went with it (#184)
-		expect(footer.textContent).toBe("Claude Code · Opus (1M context)stop⎋");
+		// The effective permission mode stays rightmost; model text gives way first.
+		expect(footer.textContent).toBe("Claude Code · Opus (1M context)stop⎋ask");
 		expect(footer.textContent).not.toContain("weekly limit");
 		expect(footer.textContent).not.toContain("enter to");
 	});

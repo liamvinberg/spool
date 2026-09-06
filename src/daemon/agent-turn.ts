@@ -11,7 +11,7 @@ import {
 } from "./agent-control";
 import type { AgentAsking, AgentEvent } from "./agent-events";
 import type { AgentExecutor, AgentProcess } from "./agent-exec";
-import { type AgentAsk, type AgentSession, agentPromptLine, planAgentSpawn } from "./agent-spawn";
+import { type AgentAsk, type AgentSession, agentPromptLine, PERMISSION_MODES, planAgentSpawn } from "./agent-spawn";
 
 /**
  * One turn: spawn the developer's agent, send what the human said, and hand back
@@ -109,6 +109,49 @@ export function startAgentTurn({ executor, root, content, session, ask, permissi
 	let finished = false;
 	let stopped = false;
 	let proc: AgentProcess | undefined;
+	let applied = permissions ?? "ask";
+	let changing:
+		| {
+				id: string;
+				mode: AgentPermissions;
+				resolve: (mode: AgentPermissions) => void;
+				reject: (error: Error) => void;
+		  }
+		| undefined;
+	let changeCount = 0;
+	function rejectChange(reason: string): void {
+		const pending = changing;
+		if (!pending) return;
+		changing = undefined;
+		pending.reject(new Error(reason));
+	}
+	function readPermissionReply(line: string): void {
+		if (!changing) return;
+		let wire: { type?: unknown; response?: { request_id?: unknown; subtype?: unknown; error?: unknown } };
+		try {
+			wire = JSON.parse(line);
+		} catch {
+			return;
+		}
+		if (wire?.type !== "control_response" || wire.response?.request_id !== changing.id) return;
+		if (wire.response.subtype !== "success") {
+			rejectChange(
+				typeof wire.response.error === "string" ? wire.response.error : "Claude Code did not apply permissions.",
+			);
+			return;
+		}
+		const pending = changing;
+		changing = undefined;
+		applied = pending.mode;
+		// The CLI has accepted its mode. Release only matching requests already
+		// held by our can_use_tool channel; design questions never take an allow.
+		for (const held of asking.values()) {
+			if (held.interaction || applied === "ask") continue;
+			if (applied === "edits" && !["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(held.tool)) continue;
+			answer(held.request, { kind: "allow" });
+		}
+		pending.resolve(applied);
+	}
 	/**
 	 * The requests nobody has answered yet, by the id an answer names.
 	 *
@@ -155,6 +198,7 @@ export function startAgentTurn({ executor, root, content, session, ask, permissi
 
 	function finish(): void {
 		if (finished) return;
+		rejectChange("The Claude Code turn ended before permissions were applied.");
 		finished = true;
 		waiting?.();
 		waiting = undefined;
@@ -180,6 +224,7 @@ export function startAgentTurn({ executor, root, content, session, ask, permissi
 			return;
 		}
 		started.onLine((line) => {
+			readPermissionReply(line);
 			for (const event of adapter.read(line)) {
 				// a connector's own question never reaches anybody: it is declined where it
 				// arrives, on the protocol's own word for it, and the log says nothing
@@ -191,6 +236,10 @@ export function startAgentTurn({ executor, root, content, session, ask, permissi
 				// the turn is parked from here until somebody answers. Nothing is scheduled
 				// and nothing expires: the binary's own away-from-keyboard timeout would
 				// submit whatever was already picked, and spool submits nothing at all
+				if (event.kind === "ready") {
+					const mode = Object.entries(PERMISSION_MODES).find(([, wire]) => wire === event.permissionMode)?.[0];
+					if (mode === "ask" || mode === "edits" || mode === "bypass") applied = mode;
+				}
 				if (event.kind === "asking") asking.set(event.request, event);
 				push(event);
 				// the turn is over: no more input is coming, so stdin closes and the
@@ -198,6 +247,7 @@ export function startAgentTurn({ executor, root, content, session, ask, permissi
 				if (event.kind === "ended" && event.parent === null) {
 					// a request the turn ended under is a request nobody can answer now, and a
 					// stale one would take an answer meant for the next turn
+					rejectChange("The Claude Code turn ended before permissions were applied.");
 					asking.clear();
 					started.end();
 					// left to go, and not left forever: a binary still up long after its own
@@ -233,20 +283,42 @@ export function startAgentTurn({ executor, root, content, session, ask, permissi
 		}
 	}
 
+	function answer(request: string, reply: AgentReply): boolean {
+		const held = asking.get(request);
+		// an answer in the wrong vocabulary is refused rather than translated: the
+		// channel is shared and the two things riding it take different answers
+		if (held === undefined || proc === undefined || !answerFits(held, reply)) return false;
+		asking.delete(request);
+		proc.write(controlResponseLine(request, answerPayload(held, reply)));
+		// the log's only trace of the answer, because it went up stdin rather than
+		// down the stream the transcript is folded from
+		push({ kind: "answered", request, answer: reply.kind, words: wordsOf(reply), parent: held.parent });
+		return true;
+	}
+
 	return {
 		events: { [Symbol.asyncIterator]: () => events() },
-		answer: (request, reply) => {
-			const held = asking.get(request);
-			// an answer in the wrong vocabulary is refused rather than translated: the
-			// channel is shared and the two things riding it take different answers
-			if (held === undefined || proc === undefined || !answerFits(held, reply)) return false;
-			asking.delete(request);
-			proc.write(controlResponseLine(request, answerPayload(held, reply)));
-			// the log's only trace of the answer, because it went up stdin rather than
-			// down the stream the transcript is folded from
-			push({ kind: "answered", request, answer: reply.kind, words: wordsOf(reply), parent: held.parent });
-			return true;
+		permissions: {
+			get applied() {
+				return applied;
+			},
+			apply: (mode) => {
+				if (finished || stopped || !proc || leaving)
+					return Promise.reject(new Error("Claude Code is not ready to change permissions."));
+				if (changing) return Promise.reject(new Error("A permission change is already waiting for Claude Code."));
+				const target = proc;
+				return new Promise<AgentPermissions>((resolve, reject) => {
+					const id = `spool-permissions-${++changeCount}`;
+					// A timeout cannot establish rejection: a late acknowledgement could
+					// still apply. The reply or the turn's end settles this operation.
+					changing = { id, mode, resolve, reject };
+					target.write(
+						`${JSON.stringify({ type: "control_request", request_id: id, request: { subtype: "set_permission_mode", mode: PERMISSION_MODES[mode] } })}\n`,
+					);
+				});
+			},
 		},
+		answer,
 		interrupt: () => {
 			// a turn that is over is nothing to stop, and a turn given up is over — `abandon`
 			// finishes it. One still spawning is not, so the press is taken now and spent

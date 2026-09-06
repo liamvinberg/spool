@@ -51,6 +51,7 @@ export interface AgentHeld {
 	readonly running: boolean;
 	/** how much has arrived, which is what a fresh viewer is told it is replaying */
 	readonly logged: number;
+	readonly permissions: AgentTurn["permissions"];
 	answer(request: string, reply: AgentReply): boolean;
 	interrupt(): boolean;
 	/** the blunt one: the daemon is closing, or this thread is being talked to again */
@@ -140,6 +141,9 @@ export function holdAgentTurn({ root, thread, id, turn, onEnded }: AgentHoldOpti
 		},
 		get logged() {
 			return log.length;
+		},
+		get permissions() {
+			return turn.permissions;
 		},
 		answer: (request, reply) => turn.answer(request, reply),
 		interrupt: () => turn.interrupt(),
