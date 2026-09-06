@@ -183,6 +183,7 @@ it("completes a deterministic journey through the clean installed host and deliv
 		"dist/cli.js",
 		"dist/bundled-host.js",
 		"dist/bundled-oauth-native.js",
+		"dist/bundled-command-process.js",
 		"dist/ui/index.html",
 		"dist/frame-runtime.js",
 		"dist/spool-public.d.ts",
@@ -220,6 +221,7 @@ it("completes a deterministic journey through the clean installed host and deliv
 		join(install, "dist/cli.js"),
 		join(install, "dist/bundled-host.js"),
 		join(install, "dist/bundled-oauth-native.js"),
+		join(install, "dist/bundled-command-process.js"),
 		...Object.keys(manifest.dependencies)
 			.filter((name) => name.includes("pi-") || name.includes("sandbox-runtime") || name === "typebox")
 			.map((name) => join(packageRoot(name), "package.json")),
