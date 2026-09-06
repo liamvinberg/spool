@@ -8,6 +8,7 @@ import {
 	useState,
 } from "react";
 import { compiles } from "shared/lib/spool/properties-families";
+import { beginScrub } from "shared/lib/spool/scrub";
 import { cn } from "shared/lib/utils";
 
 /**
@@ -46,31 +47,29 @@ export function Row({
 	/** the label reads in thread colour when the value under it is not the file's */
 	changed?: boolean;
 	/** a numeric row: dragging the label steps the value by the units crossed */
-	onScrub?: ((units: number) => void) | undefined;
+	onScrub?: ((units: number, shift: boolean) => void) | undefined;
 	/** the pointer let go: whatever the scrub was making is done being made */
-	onScrubEnd?: (() => void) | undefined;
+	onScrubEnd?: ((cancelled: boolean) => void) | undefined;
 	children: ReactNode;
 }) {
-	const scrub = useRef<{ from: number; sent: number } | null>(null);
+	const scrub = useRef<(() => void) | null>(null);
+	const latest = useRef({ onScrub, onScrubEnd });
+	latest.current = { onScrub, onScrubEnd };
+	useEffect(() => () => scrub.current?.(), []);
 	const down = (event: ReactPointerEvent<HTMLSpanElement>) => {
-		if (onScrub === undefined || !ok) return;
+		if (onScrub === undefined || !ok || event.button !== 0) return;
 		event.preventDefault();
-		event.currentTarget.setPointerCapture(event.pointerId);
-		scrub.current = { from: event.clientX, sent: 0 };
-	};
-	const move = (event: ReactPointerEvent<HTMLSpanElement>) => {
-		const held = scrub.current;
-		if (held === null || onScrub === undefined) return;
-		const units = Math.round((event.clientX - held.from) / 4);
-		if (units === held.sent) return;
-		onScrub(units - held.sent);
-		held.sent = units;
-	};
-	const up = (event: ReactPointerEvent<HTMLSpanElement>) => {
-		if (scrub.current === null) return;
-		event.currentTarget.releasePointerCapture(event.pointerId);
-		scrub.current = null;
-		onScrubEnd?.();
+		event.stopPropagation();
+		scrub.current?.();
+		scrub.current = beginScrub(
+			event.currentTarget,
+			event.nativeEvent,
+			(units, shift) => latest.current.onScrub?.(units, shift),
+			(cancelled) => {
+				scrub.current = null;
+				latest.current.onScrubEnd?.(cancelled);
+			},
+		);
 	};
 	const long = name.length > 14;
 	return (
@@ -83,9 +82,6 @@ export function Row({
 		>
 			<span
 				onPointerDown={down}
-				onPointerMove={move}
-				onPointerUp={up}
-				onPointerCancel={up}
 				className={cn(
 					tall ? "self-start pt-1.5 leading-3.5" : long ? "break-words leading-3.5" : "truncate",
 					LABEL,

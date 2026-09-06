@@ -121,6 +121,7 @@ export default function EditingPlayground() {
 	};
 	const cancel = () => {
 		cancelled.current = true;
+		if (document.pointerLockElement) document.exitPointerLock();
 		keyGesture.current = false;
 		if (pending.current) restore(pending.current.before);
 		pending.current = null;
@@ -463,6 +464,7 @@ export default function EditingPlayground() {
 				}}
 				onChange={(v) => css(property, `${v}${unit}`)}
 				onFinish={finish}
+				onCancel={cancel}
 				cancelled={cancelled}
 				onHint={setHint}
 				onInspect={(on) => setPadding(on && NUMBERS.includes(property) ? property : null)}
@@ -852,6 +854,7 @@ function NumberControl({
 	onBegin,
 	onChange,
 	onFinish,
+	onCancel,
 	cancelled,
 	onHint,
 	onInspect,
@@ -866,13 +869,13 @@ function NumberControl({
 	onBegin: () => void;
 	onChange: (value: number) => void;
 	onFinish: () => void;
+	onCancel: () => void;
 	cancelled: React.RefObject<boolean>;
 	onHint: (value: string) => void;
 	onInspect: (on: boolean) => void;
 }) {
 	const [draft, setDraft] = useState<string | null>(null);
 	const hold = useRef(false);
-	const shift = useRef(false);
 	const current = useRef(value);
 	current.current = value;
 	const bounded = (v: number) => Math.min(max, Math.max(min, v));
@@ -889,9 +892,6 @@ function NumberControl({
 					setDraft(null);
 				}
 			}}
-			onPointerMoveCapture={(e) => {
-				shift.current = e.shiftKey;
-			}}
 			onPointerEnter={() => {
 				onHint(`${name} · drag label · ↑↓ ${step} · Shift ${step * 10}`);
 				onInspect(true);
@@ -901,19 +901,20 @@ function NumberControl({
 			<Row
 				name={name}
 				changed={changed}
-				onScrub={(units) => {
+				onScrub={(units, shift) => {
 					if (!hold.current) {
 						onBegin();
 						hold.current = true;
 					}
 					if (!cancelled.current) {
-						current.current = bounded(current.current + units * step * (shift.current ? 10 : 1));
+						current.current = bounded(current.current + units * step * (shift ? 10 : 1));
 						onChange(current.current);
 					}
 				}}
-				onScrubEnd={() => {
+				onScrubEnd={(cancelled) => {
 					hold.current = false;
-					onFinish();
+					if (cancelled) onCancel();
+					else onFinish();
 				}}
 			>
 				<label className={cn("ep-input", BOX, VALUE, changed && "text-thread")}>
