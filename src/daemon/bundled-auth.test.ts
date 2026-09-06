@@ -289,7 +289,7 @@ it("does not render or persist credential-bearing provider errors", async () => 
 			root: makeTempDir(),
 			session: { id },
 			said: [{ prompt: "hello", selection: "" }],
-			ask: { value: "openai/spool-test" },
+			ask: { value: "spool/openai/api_key/spool-test" },
 			permissions: "ask",
 		},
 		(event) => events.push(event),

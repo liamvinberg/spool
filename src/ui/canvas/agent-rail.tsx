@@ -25,6 +25,7 @@ import {
 } from "./agent-transcript";
 import { MenuItem } from "./context-menu";
 import { ageOf } from "./frame-find";
+import { favoriteModels, ModelFavorite, ModelSearch, useModelFavorites } from "./model-favorites";
 import { ChevronIcon, PanelCaret } from "./sidebar";
 import { useStillness } from "./stillness";
 
@@ -2286,6 +2287,13 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 	 */
 	const [over, setOver] = useState<string | null>(null);
 	const { offer, levels } = model;
+	const favorites = useModelFavorites(model.project ?? "", model.engine ?? "claude");
+	const [all, setAll] = useState(false);
+	const [query, setQuery] = useState("");
+	const compact = model.engine === "spool";
+	const visible = compact
+		? favoriteModels(offer.models, offer.current.value, favorites.values, all, query)
+		: offer.models;
 	const pin = offer.current.pin;
 	const name =
 		offer.models.find((entry) => entry.value === offer.current.value)?.displayName ??
@@ -2318,6 +2326,7 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 		// the answer is the installed binary's, so opening asks again rather than drawing
 		// whatever was true when the rail mounted
 		if (next) model.refresh();
+		else trigger.current?.focus();
 	};
 
 	return (
@@ -2385,12 +2394,10 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 						if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 							event.preventDefault();
 							const controls = [
-								...(panel.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []),
+								...(panel.current?.querySelectorAll<HTMLElement>("button:not(:disabled), input") ?? []),
 							];
 							const at =
-								document.activeElement instanceof HTMLButtonElement
-									? controls.indexOf(document.activeElement)
-									: -1;
+								document.activeElement instanceof HTMLElement ? controls.indexOf(document.activeElement) : -1;
 							controls[(at + (event.key === "ArrowDown" ? 1 : controls.length - 1)) % controls.length]?.focus();
 						}
 					}}
@@ -2480,22 +2487,39 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 							<MenuRule />
 						</>
 					)}
-					<div className="max-h-[216px] overflow-y-auto">
-						{offer.models.map((entry) => (
-							<MenuRow
-								key={entry.value}
-								label={entry.displayName}
-								via={entry.connection}
-								on={offer.current.value === entry.value}
-								onOver={() => setOver(entry.value)}
-								onPick={() => {
-									model.choose({ value: entry.value });
-									show(false);
-								}}
-							/>
+					{compact ? <ModelSearch query={query} all={all} onQuery={setQuery} onAll={setAll} /> : null}
+					<div className={cn("max-h-[216px] overflow-y-auto", compact && "mt-1")}>
+						{visible.map((entry) => (
+							<div key={entry.value} data-model-offer={entry.value} className="flex items-center gap-0.5">
+								<MenuRow
+									label={entry.displayName}
+									via={entry.connection}
+									on={offer.current.value === entry.value}
+									onOver={() => setOver(entry.value)}
+									onPick={() => {
+										model.choose({ value: entry.value });
+										show(false);
+									}}
+								/>
+								{compact ? (
+									<ModelFavorite
+										model={entry}
+										on={favorites.values.includes(entry.value)}
+										toggle={() => favorites.toggle(entry.value)}
+									/>
+								) : null}
+							</div>
 						))}
+						{compact && visible.length === 0 ? (
+							<p className="px-1.5 py-3 text-base text-muted leading-base">
+								{all ? "No matching models." : "No matching favorites."}
+							</p>
+						) : null}
 					</div>
-					{levels.length === 0 ? null : (
+					{compact && !all && query.trim() ? (
+						<MenuItem label="Search all models…" onClick={() => setAll(true)} />
+					) : null}
+					{levels.length === 0 || (compact && query.trim()) ? null : (
 						// the block reports the pointer as well as its rows do, because a row the
 						// environment killed reports nothing: a disabled control fires no mouse event,
 						// so the one row you would hover to ask why it is dead had no way to answer
@@ -2534,15 +2558,17 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 					{/* `leading-[1.5]` over the footer's own `leading-3`: this is the one thing in
 					    here that wraps, and 12px lines on a 10px face is a line for reading along
 					    rather than a paragraph to read */}
-					<p
-						data-agent-model-says={says}
-						className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted/40 leading-[1.5]")}
-					>
-						<span className="invisible" aria-hidden="true">
-							{longest}
-						</span>
-						<span className="absolute inset-x-1.5 top-1.5">{says}</span>
-					</p>
+					{compact ? null : (
+						<p
+							data-agent-model-says={says}
+							className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted/40 leading-[1.5]")}
+						>
+							<span className="invisible" aria-hidden="true">
+								{longest}
+							</span>
+							<span className="absolute inset-x-1.5 top-1.5">{says}</span>
+						</p>
+					)}
 					{model.engine === "spool" ? (
 						<>
 							<MenuRule />

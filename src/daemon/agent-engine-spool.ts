@@ -21,7 +21,6 @@ export function bundledEnvironment(directory: string): NodeJS.ProcessEnv {
 		XDG_CONFIG_HOME: home,
 		PI_CODING_AGENT_DIR: directory,
 		SPOOL_BUNDLED_STATE: directory,
-		PI_OFFLINE: "1",
 	};
 	for (const name of ["PATH", "SystemRoot", "WINDIR", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"]) {
 		if (process.env[name] !== undefined) env[name] = process.env[name];
