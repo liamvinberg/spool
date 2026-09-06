@@ -274,6 +274,8 @@ describe("offline design checking", () => {
 		["gif", "frames/home/hero.gif"],
 		["svg", "shared/assets/logo.svg"],
 		["txt", "frames/home/copy.txt"],
+		["glsl", "frames/home/effect.glsl"],
+		["wgsl", "shared/shaders/effect.wgsl"],
 	] as const)("types an imported %s asset as the string a frame receives", (_kind, file) => {
 		const root = makeTempDir();
 		markProject(root);
@@ -291,6 +293,8 @@ describe("offline design checking", () => {
 	it.each([
 		["asset", "frames/home/hero.png", "./hero.png"],
 		["text file", "frames/home/copy.txt", "./copy.txt"],
+		["GLSL shader", "frames/home/effect.glsl", "./effect.glsl"],
+		["WGSL shader", "shared/shaders/effect.wgsl", "shared/shaders/effect.wgsl"],
 	] as const)("holds an imported %s to being a string and nothing looser", (_kind, file, specifier) => {
 		const root = makeTempDir();
 		markProject(root);
@@ -304,13 +308,13 @@ describe("offline design checking", () => {
 		expect(result[0]).toContain("Type 'string' is not assignable to type 'number'");
 	});
 
-	it("still reports an asset import that resolves to nothing", () => {
+	it.each(["png", "glsl", "wgsl"])("reports a missing .%s import", (extension) => {
 		const root = makeTempDir();
 		markProject(root);
-		writeFrame(root, "home", 'import hero from "./hero.png";\nvoid hero;\n');
+		writeFrame(root, "home", `import hero from "./hero.${extension}";\nvoid hero;\n`);
 
 		expect(messages(root)).toEqual([
-			"design/frames/home/frame.tsx:1:18 TS2307: Cannot find module './hero.png' or its corresponding type declarations.",
+			`design/frames/home/frame.tsx:1:18 TS2307: Cannot find module './hero.${extension}' or its corresponding type declarations.`,
 		]);
 	});
 

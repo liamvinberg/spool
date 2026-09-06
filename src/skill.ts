@@ -96,7 +96,7 @@ Static assets: import the file and use the value. The compiler bakes it into the
   <img src={hero} />
   <div style={{ backgroundImage: \`url(\${logo})\` }} />
 
-Kinds: .png, .jpg, .jpeg, .webp, .gif, .svg; a .json import parses into an object and a .txt import is the file's text. Put an asset beside the frame that uses it; move it to shared/assets/ when a second frame does. It must be an import and never a URL string: the import is what puts the file in the frame's closure, so editing it reissues the document and its cover. One document carries at most 512 KB of images — that is base64, so roughly 385 KB of real file — and the compile fails naming the file when it doesn't fit; nothing is downscaled. Video and audio are not supported. Remote image URLs still work in a live frame, but nothing fetched ever appears in a still.`,
+Kinds: .png, .jpg, .jpeg, .webp, .gif, .svg; a .json import parses into an object and .txt, .glsl, and .wgsl imports are the file's text (topic: shaders). Put an asset beside the frame that uses it; move it to shared/assets/ when a second frame does. It must be an import and never a URL string: the import is what puts the file in the frame's closure, so editing it reissues the document and its cover. One document carries at most 512 KB of images — that is base64, so roughly 385 KB of real file — and the compile fails naming the file when it doesn't fit; nothing is downscaled. Video and audio are not supported. Remote image URLs still work in a live frame, but nothing fetched ever appears in a still.`,
 
 	flows: () => `Navigation is walking: a session stands in one frame and walks to another by name.
 
@@ -159,7 +159,12 @@ The document's baseline: preflight (the same zero a product starts from), tokens
 Choose the rendering path for the effect:
   - GLSL: shader text passed to browser WebGL or Three.js WebGLRenderer/ShaderMaterial.
   - WebGPU: native shader text is WGSL. Three.js WebGPURenderer uses node materials and TSL, its JavaScript shader expressions, which can target WebGPU or its WebGL 2 fallback. ShaderMaterial is for WebGLRenderer; port custom GLSL to TSL when using WebGPURenderer.
-Keep GLSL/WGSL in exported strings in .ts files, or import .txt as text. Direct .glsl and .wgsl imports have no loader; ?raw does not supply one. TSL is ordinary imported JavaScript. Use custom shader code when the brief needs it; examples are starting points, not a fixed effect catalog.
+Import .glsl and .wgsl directly as source strings, without ?raw or a wrapper .ts file:
+
+  import fragment from "./effect.glsl";
+  import compute from "shared/shaders/effect.wgsl";
+
+Editing an imported shader refreshes affected canvas frames. Reload an open player to pick up source edits. spool check types these imports as strings; the browser's graphics API validates the shader language. Spool does not expand shader #include directives. TSL is ordinary imported JavaScript. Use custom shader code when the brief needs it; examples are starting points, not a fixed effect catalog.
 
 Three.js is project-chosen. Merge matching, pinned versions into shared/importmap.json. A tested TSL pair:
   "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.webgpu.js"
