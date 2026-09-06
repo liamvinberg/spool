@@ -3,11 +3,13 @@ import { useId, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
 import { SpoolCanvasScreen } from "shared/ui/spool/canvas-screen";
 import { SpoolHomeScreen } from "shared/ui/spool/home-screen";
+import { FolderIcon } from "shared/ui/spool/icons";
 import "./header-study.css";
 
 export type HeaderTake = "toolbar" | "line" | "attached" | "sidebar" | "browser";
 export type HeaderState = "project" | "home" | "crowded";
 export type HeaderWidth = "content" | "equal" | "shrink";
+export type HeaderNavigation = "plain" | "folders" | "dashboard";
 
 const PROJECTS = ["spool", "grepp", "origin-edits", "kaffe", "inwall", "tidemark", "kvitt", "solar", "mento", "aria", "components", "an unusually long project name"];
 const BROWSER_PROJECTS = ["spool", "notaker v2", "inwall v2", "aria", "competitor study 2026-09-05", "kaffe", "kvitt", "solar", "mento", "origin-edits", "components", "components and interaction patterns"];
@@ -23,9 +25,14 @@ const WIDTHS = {
 	equal: { title: "Equal", note: "Every project gets the same space, even when its name is short." },
 	shrink: { title: "Shrink", note: "Tabs narrow together as more projects open." },
 };
+const NAVIGATION = {
+	plain: { title: "Home + names", note: "One header across the window. Project names carry the tabs." },
+	folders: { title: "Home + folders", note: "A folder marks each project. The sidebar starts below the header." },
+	dashboard: { title: "Dashboard + names", note: "The same destination, named Dashboard. Project tabs stay plain." },
+};
 
 /** Copies the app canvas into a Mac window; only the header is under study. */
-export function HeaderStudy({ take, state = "project", width = "equal" }: { take: HeaderTake; state?: HeaderState; width?: HeaderWidth }) {
+export function HeaderStudy({ take, state = "project", width = "equal", navigation }: { take: HeaderTake; state?: HeaderState; width?: HeaderWidth; navigation?: HeaderNavigation }) {
 	const projects = take === "browser" ? BROWSER_PROJECTS : PROJECTS;
 	const [tabs, setTabs] = useState(() => projects.slice(0, state === "crowded" ? projects.length : take === "browser" ? 5 : 3));
 	const [active, setActive] = useState<string | null>(state === "home" ? null : state === "crowded" ? projects[8] ?? null : "spool");
@@ -37,7 +44,9 @@ export function HeaderStudy({ take, state = "project", width = "equal" }: { take
 	const group = useId();
 	const reduced = useReducedMotion();
 	const spec = TAKES[take];
-	const caption = take === "browser" ? WIDTHS[width] : spec;
+	const caption = navigation === undefined ? take === "browser" ? WIDTHS[width] : spec : NAVIGATION[navigation];
+	const homeLabel = navigation === "dashboard" ? "Dashboard" : "Home";
+	const homeGrid = navigation === undefined ? take === "attached" || take === "browser" : navigation === "dashboard";
 	const duration = reduced || keyboard ? 0 : spec.duration;
 
 	useLayoutEffect(() => {
@@ -67,7 +76,7 @@ export function HeaderStudy({ take, state = "project", width = "equal" }: { take
 
 	return (
 		<MotionConfig reducedMotion="user" transition={{ duration, ease: [0.23, 1, 0.32, 1] }}>
-			<div className="header-study flex h-full flex-col bg-[#101011] p-6 font-sans text-text antialiased" data-take={take} data-width={width}>
+			<div className="header-study flex h-full flex-col bg-[#101011] p-6 font-sans text-text antialiased" data-take={take} data-width={width} data-navigation={navigation}>
 				<div className="study-window flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[#39393b]">
 					<header
 						className="study-header"
@@ -86,9 +95,9 @@ export function HeaderStudy({ take, state = "project", width = "equal" }: { take
 					>
 						<div className="study-home-zone">
 							<div className="study-lights" aria-hidden="true"><i /><i /><i /></div>
-							<button type="button" className="study-home" title="Home" aria-label="Home" aria-current={active === null ? "page" : undefined} onClick={() => setActive(null)}>
-								{take !== "line" && <HomeGlyph grid={take === "attached" || take === "browser"} />}
-								{(take === "line" || take === "sidebar" || take === "browser") && <span>Home</span>}
+							<button type="button" className="study-home" title={homeLabel} aria-label={homeLabel} aria-current={active === null ? "page" : undefined} onClick={() => setActive(null)}>
+								{take !== "line" && <HomeGlyph grid={homeGrid} />}
+								{(take === "line" || take === "sidebar" || take === "browser") && <span>{homeLabel}</span>}
 							</button>
 						</div>
 						<LayoutGroup id={group}>
@@ -103,7 +112,7 @@ export function HeaderStudy({ take, state = "project", width = "equal" }: { take
 										>
 											{active === name && <motion.div className="study-selection" layoutId="selection" transition={{ duration, ease: [0.23, 1, 0.32, 1] }} />}
 											<button type="button" className="study-tab-label" aria-current={active === name ? "page" : undefined} title={name} onClick={() => { if (!dragged.current) setActive(name); }}>
-												{(take === "attached" || take === "browser") && <FileGlyph />}
+												{navigation === "folders" ? <FolderIcon className="h-3.5 w-3.5" /> : navigation === undefined && (take === "attached" || take === "browser") ? <FileGlyph /> : null}
 												<span>{name}</span>
 											</button>
 											<button type="button" className="study-close" aria-label={`Close ${name}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => close(name)}><CrossGlyph /></button>
