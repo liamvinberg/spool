@@ -1,0 +1,8 @@
+{
+	"name": "spool-editing-playground",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "tsx ../src/dev.ts"
+	}
+}

@@ -1,0 +1,354 @@
+.ep-app {
+	height: 100dvh;
+	overflow: hidden;
+	color: var(--color-text);
+	background: var(--color-bg);
+	font-family: var(--font-sans);
+	font-size: 13px;
+}
+.ep-toolbar {
+	height: 44px;
+	display: flex;
+	align-items: center;
+	gap: 24px;
+	border-bottom: 1px solid var(--color-border);
+	padding: 0 14px;
+}
+.ep-title {
+	font-size: 18px;
+	display: flex;
+	align-items: center;
+	gap: 16px;
+}
+.ep-title > span {
+	font-size: 13px;
+	color: var(--color-muted);
+}
+.ep-boundary {
+	font-size: 11px;
+	color: var(--color-muted);
+	margin-left: auto;
+}
+.ep-toolbar > div {
+	display: flex;
+	gap: 4px;
+}
+.ep-toolbar button {
+	padding: 4px 7px;
+	border-radius: 3px;
+}
+.ep-toolbar button:hover:not(:disabled),
+.ep-crumbs button:hover,
+.ep-selection button:hover {
+	background: var(--color-surface);
+}
+.ep-toolbar button:disabled {
+	opacity: 0.3;
+}
+.ep-workspace {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 278px;
+	height: calc(100% - 44px);
+}
+.ep-stage-wrap {
+	min-width: 0;
+	position: relative;
+	overflow: hidden;
+}
+.ep-stage {
+	height: 100%;
+	overflow: auto;
+	overscroll-behavior: contain;
+	scrollbar-color: #444 #171717;
+}
+.ep-document {
+	min-height: 100%;
+}
+.ep-document .sg-page.sm-page {
+	height: auto;
+	overflow: clip;
+	min-height: 100%;
+}
+.ep-document .sr-app {
+	--color-mark: var(--color-thread);
+}
+.ep-document [data-preview] {
+	position: relative;
+	cursor: default;
+}
+.ep-document [data-preview]::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: 30;
+}
+.ep-document [data-reach] {
+	outline: 1px dashed var(--color-thread);
+	outline-offset: 4px;
+}
+.ep-document [contenteditable="plaintext-only"] {
+	outline: 2px solid var(--color-thread);
+	outline-offset: 4px;
+	cursor: text;
+	user-select: text;
+}
+.ep-document :is(a, button) {
+	cursor: default;
+}
+.ep-document section[id] {
+	scroll-margin-top: 24px;
+}
+.ep-overlays {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	pointer-events: none;
+}
+.ep-outline {
+	position: absolute;
+	border: 1px solid var(--color-thread);
+	pointer-events: none;
+}
+.ep-selection-name {
+	position: absolute;
+	left: -1px;
+	bottom: calc(100% + 3px);
+	font: 10px var(--font-mono);
+	color: var(--color-thread);
+	background: var(--color-bg);
+	padding: 2px 4px;
+	white-space: nowrap;
+}
+.ep-handle {
+	position: absolute;
+	background: var(--color-thread);
+	pointer-events: auto;
+	touch-action: none;
+	border: 1px solid #151515;
+	border-radius: 3px;
+}
+.ep-handle[data-edge="0"],
+.ep-handle[data-edge="2"] {
+	left: calc(50% - 13px);
+	width: 26px;
+	height: 7px;
+	cursor: ns-resize;
+}
+.ep-handle[data-edge="1"],
+.ep-handle[data-edge="3"] {
+	top: calc(50% - 13px);
+	width: 7px;
+	height: 26px;
+	cursor: ew-resize;
+}
+.ep-handle[data-edge="0"] {
+	top: -4px;
+}
+.ep-handle[data-edge="2"] {
+	bottom: -4px;
+}
+.ep-handle[data-edge="1"] {
+	right: -4px;
+}
+.ep-handle[data-edge="3"] {
+	left: -4px;
+}
+.ep-handle > span {
+	display: none;
+	position: absolute;
+	left: 12px;
+	top: 12px;
+	padding: 3px;
+	color: var(--color-text);
+	background: var(--color-bg);
+	font: 10px var(--font-mono);
+	white-space: nowrap;
+}
+.ep-handle:hover > span,
+.ep-handle:focus-visible > span {
+	display: block;
+}
+.ep-rail {
+	min-height: 0;
+	border-left: 1px solid var(--color-border);
+	display: flex;
+	flex-direction: column;
+	background: var(--color-bg);
+}
+.ep-crumbs {
+	display: flex;
+	flex-wrap: wrap;
+	padding: 8px 8px 3px;
+	gap: 2px;
+}
+.ep-crumbs button {
+	color: var(--color-muted);
+	font: 10px var(--font-mono);
+	padding: 2px;
+}
+.ep-crumbs span {
+	opacity: 0.4;
+	margin-left: 5px;
+}
+.ep-selection {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 5px 10px 10px;
+}
+.ep-selection strong {
+	font-size: 14px;
+	font-weight: 500;
+}
+.ep-selection button,
+.ep-origin {
+	font: 10px var(--font-mono);
+	color: var(--color-thread);
+}
+.ep-origin {
+	padding: 0 10px 10px;
+}
+.ep-origin span {
+	color: var(--color-muted);
+}
+.ep-uses {
+	padding: 0 10px 8px;
+}
+.ep-uses button {
+	display: flex;
+	justify-content: space-between;
+	width: 100%;
+	padding: 6px 0;
+	font-size: 12px;
+}
+.ep-uses span {
+	color: var(--color-muted);
+	font-size: 10px;
+}
+.ep-fields {
+	overflow: auto;
+	flex: 1;
+	min-height: 0;
+	scrollbar-width: thin;
+}
+.ep-input {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	width: 100%;
+	padding: 2px 4px;
+}
+.ep-input input,
+.ep-input textarea {
+	width: 100%;
+	min-width: 0;
+	outline: none;
+	background: transparent;
+	font: inherit;
+	resize: vertical;
+}
+.ep-input > span:not(.ep-swatch) {
+	color: var(--color-muted);
+	font-size: 9px;
+}
+.ep-swatch {
+	width: 10px;
+	height: 10px;
+	flex-shrink: 0;
+	border: 1px solid #777;
+}
+.ep-select {
+	width: 100%;
+	min-width: 0;
+	font: 11px var(--font-mono);
+	background: transparent;
+	outline: none;
+	padding: 3px;
+}
+.ep-select option,
+.ep-add option {
+	background: var(--color-bg);
+}
+.ep-add {
+	padding: 8px 10px;
+	border-bottom: 1px solid var(--color-border);
+}
+.ep-add select {
+	font: 11px var(--font-mono);
+	background: transparent;
+	width: 100%;
+	color: var(--color-muted);
+	outline: none;
+}
+.ep-note {
+	margin: 0;
+	padding: 10px;
+	font-size: 11px;
+	line-height: 1.45;
+	color: var(--color-muted);
+}
+.ep-hint {
+	min-height: 42px;
+	padding: 9px 10px;
+	border-top: 1px solid var(--color-border);
+	font: 10px / 1.5 var(--font-mono);
+	color: var(--color-muted);
+}
+.ep-app :is(button, input, textarea, select):focus-visible {
+	outline: 1px solid var(--color-thread);
+	outline-offset: 2px;
+}
+@media (max-width: 1050px) {
+	.ep-workspace {
+		grid-template-columns: minmax(0, 1fr) 252px;
+	}
+	.ep-boundary {
+		display: none;
+	}
+	.ep-toolbar > div {
+		margin-left: auto;
+	}
+	.ep-document .sg-width {
+		width: calc(100% - 64px);
+	}
+	.ep-document .sg-hero h1 {
+		font-size: 64px;
+	}
+	.ep-document .sg-hero-actions {
+		flex-wrap: wrap;
+		gap: 22px;
+	}
+	.ep-document .sg-install {
+		flex-wrap: wrap;
+	}
+	.ep-document .sg-nav nav {
+		gap: 12px;
+	}
+}
+@media (max-width: 700px) {
+	.ep-title > span {
+		display: none;
+	}
+	.ep-workspace {
+		grid-template-columns: minmax(0, 1fr) 230px;
+	}
+	.ep-document .sg-width {
+		width: calc(100% - 32px);
+	}
+	.ep-document .sg-hero h1 {
+		font-size: 44px;
+	}
+}
+
+.ep-width-mode {
+	width: 54px;
+	flex: 0 0 54px;
+	padding-inline: 0;
+}
+
+/* The editor previews each value immediately, including overrides of the copied page. */
+.ep-document [data-edit-node] {
+	transition: none !important;
+	animation: none !important;
+}
