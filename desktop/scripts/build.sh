@@ -15,7 +15,7 @@ set -euo pipefail
 #
 # The app lands at release/mac-arm64/Spool.app.
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$ROOT"
 
 VERSION="${VERSION:-$("$ROOT/scripts/version.sh")}"
