@@ -242,6 +242,13 @@ export default function EditingPlayground() {
 				}
 			}
 		}
+		// Preserve the rendered page and element identities, but remove navigation
+		// affordances from this editing-only fixture, including context-menu actions.
+		for (const link of page.querySelectorAll("a,area")) {
+			link.removeAttribute("href");
+			link.removeAttribute("download");
+			link.removeAttribute("target");
+		}
 		base.current = snapshot(page);
 		const first = page.querySelector<HTMLElement>("h1");
 		if (first) {
@@ -288,11 +295,11 @@ export default function EditingPlayground() {
 			setHovered(null);
 		};
 		window.addEventListener("keydown", key, true);
-		window.addEventListener("keyup", keyUp);
+		window.addEventListener("keyup", keyUp, true);
 		window.addEventListener("blur", blur);
 		return () => {
 			window.removeEventListener("keydown", key, true);
-			window.removeEventListener("keyup", keyUp);
+			window.removeEventListener("keyup", keyUp, true);
 			window.removeEventListener("blur", blur);
 			if (paint.current !== null) cancelAnimationFrame(paint.current);
 		};
@@ -566,14 +573,22 @@ export default function EditingPlayground() {
 								if (inline.current) refresh();
 							}}
 							onPointerDownCapture={(e) => {
-								if (!inline.current?.contains(e.target instanceof Node ? e.target : null)) e.stopPropagation();
+								e.stopPropagation();
+								if (!inline.current?.contains(e.target instanceof Node ? e.target : null)) e.preventDefault();
+							}}
+							onPointerUpCapture={(e) => e.stopPropagation()}
+							onMouseDownCapture={(e) => e.stopPropagation()}
+							onMouseUpCapture={(e) => e.stopPropagation()}
+							onDragStartCapture={(e) => {
+								e.preventDefault();
+								e.stopPropagation();
 							}}
 							onClickCapture={(e) => {
+								e.preventDefault();
 								if (inline.current?.contains(e.target instanceof Node ? e.target : null)) {
 									e.stopPropagation();
 									return;
 								}
-								e.preventDefault();
 								e.stopPropagation();
 								const node = resolve(e.target);
 								if (node && !e.altKey) choose(node);
@@ -604,6 +619,7 @@ export default function EditingPlayground() {
 									if (node) choose(node);
 								}
 							}}
+							onKeyUpCapture={(e) => e.stopPropagation()}
 							onBlurCapture={(e) => {
 								if (e.target === inline.current) stopInline();
 							}}
