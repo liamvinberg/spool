@@ -51,9 +51,12 @@ bounded, not a complete shorthand or cascade implementation.
 Reads retain canonical paths and hashes for callers, definitions and imported
 stylesheets, missing import-resolution candidates, the toolchain lockfile, and
 discovered opening/enclosing ranges. Stylesheet revisions are checked against the
-bytes returned by the actual loader. Changes invalidate the whole proof. These
+bytes returned by the actual loader. Byte/path changes invalidate the whole proof. These
 hashes and ranges supply no history of replacements and no continuity across a
 source edit; semantic rebasing and atomic write ordering require separate proof.
+An executed counterexample replaces a file with identical bytes without detection
+by this reader. Production needs server-owned epochs and operation provenance to
+retire such proofs, even when a compile cache would keep the same content hash.
 
 Ordinary rerenders and keyed reorder retain the tested mounted identity. Remount,
 recompile, changed call ancestry and replacement by a cloned DOM node invalidate

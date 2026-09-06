@@ -194,6 +194,7 @@ async function propertyRead(
 				conditions: string[];
 				active: boolean;
 				declaration: string;
+				authoredDeclaration: string;
 				value: string;
 				important: boolean;
 			};
@@ -251,7 +252,28 @@ async function propertyRead(
 					)
 						throw new Error("unproved CSS grouping/condition");
 					if ("style" in rule && rule.style instanceof CSSStyleDeclaration) {
-						for (const name of rule.style)
+						const style = rule.style;
+						for (const name of style) {
+							const shorthand = [
+								"padding-inline",
+								"padding-block",
+								"padding",
+								"margin-inline",
+								"margin-block",
+								"margin",
+								"gap",
+								"border-top",
+								"border-width",
+								"border",
+								"border-radius",
+								"font",
+								"background",
+							].find(
+								(candidate) =>
+									(name.startsWith(`${candidate}-`) || (name.endsWith("-gap") && candidate === "gap")) &&
+									style.getPropertyValue(candidate) !== "",
+							);
+							const authored = rule.style.getPropertyValue(name) === "" ? (shorthand ?? name) : name;
 							if (!onlyProperty || affects(name))
 								rows.push({
 									selector,
@@ -259,9 +281,11 @@ async function propertyRead(
 									conditions: nextConditions,
 									active: nextActive,
 									declaration: name,
-									value: rule.style.getPropertyValue(name),
+									authoredDeclaration: authored,
+									value: rule.style.getPropertyValue(authored),
 									important: rule.style.getPropertyPriority(name) === "important",
 								});
+						}
 					}
 					if ("cssRules" in rule)
 						rows.push(
@@ -305,6 +329,7 @@ async function propertyRead(
 			const same = (a: Rule, b: Rule) =>
 				a.selector === b.selector &&
 				a.declaration === b.declaration &&
+				a.authoredDeclaration === b.authoredDeclaration &&
 				a.value === b.value &&
 				JSON.stringify(a.conditions) === JSON.stringify(b.conditions) &&
 				a.important === b.important;
@@ -331,6 +356,7 @@ async function propertyRead(
 			if (!/^(?:wide:)?(?:hover:)?$/.test(scope))
 				throw new Error("scope is outside the demonstrated base/wide/hover forms");
 			const owner = owned[0] ?? null;
+			if (owner?.value === "") throw new Error("browser did not expose the authored declaration value");
 			const ownerCandidate = candidates.find((candidate) => candidate.token === owner?.token);
 			const ownerSheet = new CSSStyleSheet();
 			ownerSheet.replaceSync(ownerCandidate?.css ?? "");

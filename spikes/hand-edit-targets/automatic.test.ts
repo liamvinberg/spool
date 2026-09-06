@@ -1,4 +1,4 @@
-import { readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Browser, chromium } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -177,6 +177,10 @@ describe("automatic mounted selection to source", () => {
 		const pick = await select(mounted, "section span");
 		const rebuilt = await mount(browser, root, "first");
 		expect(await stillSelected(rebuilt, pick)).toBe(false);
+		const definition = join(root, "design/shared/ui/button.tsx");
+		writeFileSync(`${definition}.replacement`, readFileSync(definition));
+		renameSync(`${definition}.replacement`, definition);
+		expect(await stillSelected(mounted, pick)).toBe(true); // counterexample: equal bytes are not continuity
 		writeDesignFile(root, "frames/first/alias.tsx", "export default function Frame(){return <p>Alias</p>}");
 		const sources = new Sources(root);
 		sources.read("frames/first/alias.tsx");
@@ -190,6 +194,8 @@ describe("automatic mounted selection to source", () => {
 			unchangedCallerDefinitionChangeRefused: true,
 			recompileInvalidates: true,
 			canonicalRoleRechecked: true,
+			byteIdenticalReplacement:
+				"not detected by hashes; requires server-owned epoch/operation provenance, never commit authority",
 		};
 		await mounted.page.close();
 		await rebuilt.page.close();
@@ -255,6 +261,9 @@ describe("automatic mounted selection to source", () => {
 		const shared = supported(await property("button", "padding-left"));
 		expect(shared.target.role).toBe("definition");
 		expect(shared.property?.owner?.token).toBe("px-4");
+		expect(shared.property?.reference).toBe("--spacing");
+		expect(shared.property?.owner?.authoredDeclaration).toBe("padding-inline");
+		expect(shared.property?.owner?.value).toBe("calc(var(--spacing) * 4)");
 		expect(shared.property?.ownerCandidateDeclarations.map((declaration) => declaration.declaration)).toEqual([
 			"padding-inline-start",
 			"padding-inline-end",
