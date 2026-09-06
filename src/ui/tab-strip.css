@@ -119,7 +119,22 @@
 	cursor: pointer;
 }
 
+.project-tabs-plus::before {
+	content: "";
+	position: absolute;
+	inset: 3px 4px;
+	border-radius: 5px;
+	pointer-events: none;
+}
+
+.project-tabs-plus svg {
+	position: relative;
+}
+
+.project-tabs-plus:hover::before {
+	background: light-dark(#00000006, #ffffff06);
+}
+
 .project-tabs-plus:hover {
-	background: light-dark(#00000008, #ffffff08);
 	color: var(--color-text);
 }
