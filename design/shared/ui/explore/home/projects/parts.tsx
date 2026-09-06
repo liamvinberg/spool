@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { cn } from "shared/lib/utils";
 import { DotsIcon, FolderIcon, FrameIcon, PlusIcon } from "shared/ui/spool/icons";
+import { EmptyFramesIcon, EmptyState } from "shared/ui/spool/empty-state";
 import { SpoolMark } from "shared/ui/spool/mark";
 import { CanvasArtwork, ProjectArtwork } from "../artwork";
 import type { HomeProject } from "../data";
@@ -29,7 +30,9 @@ export type ProjectsState =
 	| "start"
 	| "scratch"
 	| "returned"
-	| "folder";
+	| "folder"
+	| "location"
+	| "location-changed";
 export interface ProjectActions {
 	query: string;
 	setQuery: (value: string) => void;
@@ -174,20 +177,17 @@ export function ProjectCover({
 
 export function ProjectEmpty({ actions }: { actions: ProjectActions }) {
 	return (
-		<div className="pj-empty">
-			<div className="pj-empty-drawing" aria-hidden="true">
-				<i />
-				<i />
-				<span>+</span>
-			</div>
-			<h2>{actions.query ? `Nothing matches “${actions.query}”` : "Your projects start here."}</h2>
-			<p>
-				{actions.query
+		<EmptyState
+			className="pj-empty"
+			icon={<EmptyFramesIcon />}
+			title={actions.query ? `Nothing matches “${actions.query}”` : "Your projects start here."}
+			description={
+				actions.query
 					? "Try a project name or part of its path."
-					: "Create a project, or open a folder you already have."}
-			</p>
-			<div>
-				{actions.query ? (
+					: "Create a project, or open a folder you already have."
+			}
+			actions={
+				actions.query ? (
 					<Action onClick={() => actions.setQuery("")}>Clear search</Action>
 				) : (
 					<>
@@ -200,9 +200,9 @@ export function ProjectEmpty({ actions }: { actions: ProjectActions }) {
 							<Arrow />
 						</Action>
 					</>
-				)}
-			</div>
-		</div>
+				)
+			}
+		/>
 	);
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { HOME, shortPath } from "shared/lib/spool/picker-disk";
 import { CanvasChrome } from "shared/ui/spool/canvas-chrome";
+import { EmptyState } from "shared/ui/spool/empty-state";
 import { FolderIcon, PlusIcon, SearchIcon } from "shared/ui/spool/icons";
 import { SpoolMark } from "shared/ui/spool/mark";
 import { Empty, MinRow, PathPrefix } from "shared/ui/spool/picker-field";
@@ -10,7 +11,7 @@ import { type HomeProject, projects } from "../data";
 import { Action, Arrow } from "../parts";
 import { type ProjectActions, ProjectNavigation } from "./parts";
 
-export type ProjectPickerMode = "new" | "folder" | "start";
+export type ProjectPickerMode = "new" | "folder" | "start" | "location";
 
 /** The shipped field and rows, with local callbacks standing in for filesystem writes. */
 export function ProjectPicker({
@@ -19,15 +20,24 @@ export function ProjectPicker({
 	onOpen,
 	onCreate,
 	onScratch,
+	projectLocation,
+	onChangeLocation,
+	onLocation,
 }: {
 	initial: ProjectPickerMode;
 	onClose: () => void;
 	onOpen: (project: HomeProject) => void;
 	onCreate: (name: string, parent: string) => void;
 	onScratch: () => void;
+	projectLocation: string;
+	onChangeLocation: () => void;
+	onLocation: (path: string) => void;
 }) {
 	const [mode, setMode] = useState(initial);
-	const np = useNewProject({ path: `${HOME}/personal/projects`, naming: initial === "new" });
+	const np = useNewProject({
+		path: initial === "location" ? HOME : `${HOME}/personal/projects`,
+		naming: initial === "new",
+	});
 	const { picker } = np;
 	const dialog = useRef<HTMLDialogElement>(null);
 	useEffect(() => {
@@ -35,7 +45,7 @@ export function ProjectPicker({
 		if (initial !== "start") dialog.current?.querySelector<HTMLInputElement>("input")?.focus();
 	}, [initial]);
 	useEffect(() => {
-		if (picker.landed?.kind !== "opened") return;
+		if (mode === "location" || picker.landed?.kind !== "opened") return;
 		const known = projects.find((project) => project.name === picker.landed?.name);
 		onOpen(
 			known ?? {
@@ -47,7 +57,7 @@ export function ProjectPicker({
 				group: "Personal",
 			},
 		);
-	}, [picker.landed, onOpen]);
+	}, [mode, picker.landed, onOpen]);
 	const browse = () => {
 		setMode("folder");
 		requestAnimationFrame(() => picker.inputRef.current?.focus());
@@ -60,7 +70,15 @@ export function ProjectPicker({
 		<dialog
 			ref={dialog}
 			className="pj-native-picker"
-			aria-label={mode === "start" ? "New project" : np.naming ? "Name the new project" : "Open a folder"}
+			aria-label={
+				mode === "location"
+					? "Save projects in"
+					: mode === "start"
+						? "New project"
+						: np.naming
+							? "Name the new project"
+							: "Open a folder"
+			}
 			onCancel={(event) => {
 				event.preventDefault();
 				onClose();
@@ -77,7 +95,13 @@ export function ProjectPicker({
 					onClose();
 			}}
 			onKeyDownCapture={(event) => {
-				if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+				if (mode === "location" && event.key === "Enter" && event.target instanceof HTMLInputElement) {
+					event.preventDefault();
+					event.stopPropagation();
+					if (picker.picked) picker.browse(picker.picked.dir.path);
+					return;
+				}
+				if (mode !== "location" && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
 					event.preventDefault();
 					event.stopPropagation();
 					name();
@@ -103,32 +127,35 @@ export function ProjectPicker({
 			}}
 		>
 			{mode === "start" ? (
-				<div className="pj-start-choices">
-					<button type="button" onClick={onScratch}>
-						<PlusIcon />
-						<span>
-							<strong>Start designing</strong>
-							<small>A blank project, saved on this Mac.</small>
-						</span>
-						<Arrow />
-					</button>
-					<button type="button" onClick={name}>
-						<FolderIcon />
-						<span>
-							<strong>New project in a folder</strong>
-							<small>Choose where your project lives.</small>
-						</span>
-						<Arrow />
-					</button>
-					<button type="button" onClick={browse}>
-						<FolderIcon />
-						<span>
-							<strong>Open a folder</strong>
-							<small>Use a project or codebase you already have.</small>
-						</span>
-						<Arrow />
-					</button>
-				</div>
+				<>
+					<div className="pj-start-choices">
+						<button type="button" onClick={onScratch}>
+							<PlusIcon />
+							<span>
+								<strong>Start designing</strong>
+								<small>A blank project, saved on this Mac.</small>
+							</span>
+							<Arrow />
+						</button>
+						<button type="button" onClick={name}>
+							<FolderIcon />
+							<span>
+								<strong>New project in a folder</strong>
+								<small>Choose where your project lives.</small>
+							</span>
+							<Arrow />
+						</button>
+						<button type="button" onClick={browse}>
+							<FolderIcon />
+							<span>
+								<strong>Open a folder</strong>
+								<small>Use a project or codebase you already have.</small>
+							</span>
+							<Arrow />
+						</button>
+					</div>
+					<ProjectLocation path={projectLocation} onChange={onChangeLocation} />
+				</>
 			) : np.naming ? (
 				<>
 					<NamingField np={np} />
@@ -149,15 +176,17 @@ export function ProjectPicker({
 							onKeyDown={picker.onKeyDown}
 							className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none"
 						/>
-						<button
-							type="button"
-							onClick={name}
-							title="new project ⌘N"
-							aria-label="New project"
-							className="ml-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-100 hover:bg-raised hover:text-text"
-						>
-							<PlusIcon className="h-2.5 w-2.5" />
-						</button>
+						{mode !== "location" && (
+							<button
+								type="button"
+								onClick={name}
+								title="new project ⌘N"
+								aria-label="New project"
+								className="ml-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-100 hover:bg-raised hover:text-text"
+							>
+								<PlusIcon className="h-2.5 w-2.5" />
+							</button>
+						)}
 					</div>
 					<ListBox picker={picker} min={0} max={408}>
 						{picker.rows.length === 0 ? <Empty picker={picker} /> : null}
@@ -169,52 +198,93 @@ export function ProjectPicker({
 								picked={index === picker.at}
 								searching={picker.searching}
 								onPoint={() => picker.point(index)}
-								onEnter={() => picker.enter(index)}
+								onEnter={() => (mode === "location" ? picker.browse(row.dir.path) : picker.enter(index))}
 							/>
 						))}
 						{picker.landed?.kind === "init" ? <InitLine /> : null}
 					</ListBox>
+					{mode === "location" && (
+						<div className="pj-location-footer">
+							<code>{shortPath(picker.path)}</code>
+							<Action onClick={onClose}>Cancel</Action>
+							<Action primary onClick={() => onLocation(shortPath(picker.path))}>
+								Use this folder
+							</Action>
+						</div>
+					)}
 				</>
 			)}
 		</dialog>
 	);
 }
 
-export function WelcomeProjects({ actions }: { actions: ProjectActions }) {
+export function ProjectLocation({ path, onChange }: { path: string; onChange: () => void }) {
+	return (
+		<div className="pj-project-location">
+			<span>Save projects in</span>
+			<span className="pj-location-path" title={path}>
+				{path
+					.replace(/^~(?=\/|$)/, "Home")
+					.split("/")
+					.join(" / ")}
+			</span>
+			<button type="button" onClick={onChange}>
+				Change…
+			</button>
+		</div>
+	);
+}
+
+export function WelcomeProjects({
+	actions,
+	location,
+	onChangeLocation,
+}: {
+	actions: ProjectActions;
+	location: string;
+	onChangeLocation: () => void;
+}) {
 	return (
 		<div className="pj-layout">
 			<ProjectNavigation actions={actions} />
 			<main className="pj-welcome-main">
-				<div className="pj-welcome">
-					<h1>Start with an idea.</h1>
-					<p>Your next project can start here, or in a folder you already have.</p>
-					<div className="pj-welcome-options">
-						<button type="button" onClick={actions.create}>
-							<PlusIcon />
-							<strong>
-								Start designing
-								<Arrow />
-							</strong>
-							<small>
-								Open a blank canvas.
-								<br />
-								spool saves the project on your Mac.
-							</small>
-						</button>
-						<button type="button" onClick={actions.folder}>
-							<FolderIcon />
-							<strong>
-								Open a folder
-								<Arrow />
-							</strong>
-							<small>
-								Bring your codebase.
-								<br />
-								Keep the design beside your code.
-							</small>
-						</button>
-					</div>
-				</div>
+				<EmptyState
+					className="pj-welcome"
+					heading="h1"
+					align="start"
+					title="Start with an idea."
+					description="Your next project can start here, or in a folder you already have."
+					actions={
+						<>
+							<button type="button" onClick={actions.create}>
+								<PlusIcon />
+								<strong>
+									Start designing
+									<Arrow />
+								</strong>
+								<small>
+									Open a blank canvas.
+									<br />
+									spool saves the project on your Mac.
+								</small>
+							</button>
+							<button type="button" onClick={actions.folder}>
+								<FolderIcon />
+								<strong>
+									Open a folder
+									<Arrow />
+								</strong>
+								<small>
+									Bring your codebase.
+									<br />
+									Keep the design beside your code.
+								</small>
+							</button>
+						</>
+					}
+				>
+					<ProjectLocation path={location} onChange={onChangeLocation} />
+				</EmptyState>
 			</main>
 		</div>
 	);
@@ -235,11 +305,32 @@ export function ScratchCanvas({
 }) {
 	const [copied, setCopied] = useState(false);
 	const [draft, setDraft] = useState(name);
-	const path =
-		location ?? (managed ? `~/.spool/projects/${name}` : `${shortPath(`${HOME}/personal/projects`)}/${name}`);
+	const path = location ?? (managed ? `~/spool/${name}` : `${shortPath(`${HOME}/personal/projects`)}/${name}`);
 	return (
 		<CanvasChrome pages={[{ name: "frames", frames: [], active: true, open: true }]} rail={null}>
-			<div className="pj-scratch">
+			<EmptyState
+				className="pj-scratch"
+				heading="h1"
+				icon={<SpoolMark />}
+				title="Your canvas is ready."
+				description="Open this project with your agent and tell it what you’d like to design."
+				actions={
+					<>
+						<code>{path}</code>
+						<Action
+							onClick={() => {
+								void navigator.clipboard
+									.writeText(path)
+									.then(() => setCopied(true))
+									.catch(() => setCopied(false));
+							}}
+						>
+							{copied ? "Copied" : "Copy project path"}
+							<Arrow />
+						</Action>
+					</>
+				}
+			>
 				<div className="pj-scratch-title">
 					<input
 						aria-label="Rename project"
@@ -258,27 +349,11 @@ export function ScratchCanvas({
 					/>
 					<span>saved on this mac</span>
 				</div>
-				<SpoolMark />
-				<h1>Your canvas is ready.</h1>
-				<p>Open this project with your agent and tell it what you’d like to design.</p>
-				<div className="pj-scratch-location">
-					<code>{path}</code>
-					<Action
-						onClick={() => {
-							void navigator.clipboard
-								.writeText(path)
-								.then(() => setCopied(true))
-								.catch(() => setCopied(false));
-						}}
-					>
-						{copied ? "Copied" : "Copy project path"}
-						<Arrow />
-					</Action>
-				</div>
+
 				<button type="button" onClick={onFolder}>
 					Open an existing project folder
 				</button>
-			</div>
+			</EmptyState>
 		</CanvasChrome>
 	);
 }

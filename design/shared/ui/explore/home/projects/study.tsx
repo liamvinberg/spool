@@ -80,6 +80,7 @@ export function ProjectsStudy({ take, state = "home" }: { take: ProjectsTake; st
 		seededScratch ? [scratch, ...seedItems.filter((item) => item.name !== scratch.name)] : seedItems,
 	);
 	const [managed, setManaged] = useState<readonly string[]>(seededScratch ? [scratch.name] : []);
+	const [projectLocation, setProjectLocation] = useState(state === "location-changed" ? "~/Documents" : "~/spool");
 	const [locations, setLocations] = useState<Readonly<Record<string, string>>>({});
 	const [query, setQuery] = useState(state === "filtered" ? "kaffe" : "");
 	const [sort, setSort] = useState<"Recent" | "Name">("Recent");
@@ -97,7 +98,15 @@ export function ProjectsStudy({ take, state = "home" }: { take: ProjectsTake; st
 		seededScratch && state !== "returned" ? scratch.name : undefined,
 	);
 	const [picker, setPicker] = useState<ProjectPickerMode | null>(
-		state === "create" ? "new" : state === "folder" ? "folder" : state === "start" ? "start" : null,
+		state === "location"
+			? "location"
+			: state === "create"
+				? "new"
+				: state === "folder"
+					? "folder"
+					: state === "start"
+						? "start"
+						: null,
 	);
 	const [menu, setMenu] = useState<{ project: HomeProject; x: number; y: number } | null>(null);
 	const [removed, setRemoved] = useState<readonly string[]>([]);
@@ -140,7 +149,7 @@ export function ProjectsStudy({ take, state = "home" }: { take: ProjectsTake; st
 		let name = "untitled";
 		let index = 2;
 		while (items.some((item) => item.name === name)) name = `untitled-${index++}`;
-		create(name, true);
+		create(name, true, projectLocation);
 	}
 	useEffect(() => {
 		if (menu) menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
@@ -271,7 +280,11 @@ export function ProjectsStudy({ take, state = "home" }: { take: ProjectsTake; st
 							</div>
 						)
 					) : firstLaunch && !items.length ? (
-						<WelcomeProjects actions={actions} />
+						<WelcomeProjects
+							actions={actions}
+							location={projectLocation}
+							onChangeLocation={() => setPicker("location")}
+						/>
 					) : (
 						<Layout actions={actions} />
 					)}
@@ -321,7 +334,14 @@ export function ProjectsStudy({ take, state = "home" }: { take: ProjectsTake; st
 			{undo && <ForgetToast key={undo.name} name={undo.name} windowMs={6000} onUndo={restore} />}
 			{picker && (
 				<ProjectPicker
+					key={picker}
 					initial={picker}
+					projectLocation={projectLocation}
+					onChangeLocation={() => setPicker("location")}
+					onLocation={(path) => {
+						setProjectLocation(path);
+						setPicker(null);
+					}}
 					onClose={() => setPicker(null)}
 					onScratch={startScratch}
 					onOpen={(project) => {
