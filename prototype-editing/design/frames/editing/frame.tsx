@@ -4,13 +4,20 @@ import { cn } from "shared/lib/utils";
 import { BOX, Row, Section, VALUE } from "shared/ui/spool/properties-fields";
 import { ColorField } from "./color-field";
 import { Selection } from "./selection";
+import { useViewport } from "./viewport";
 import "./playground.css";
 
 // A throwaway DOM editing journey over the current SleeveModern landing.
 // The copied page is frozen under this editor. Only in-memory DOM styles and
 // literal text change; shared reach is the two authored download uses.
 const Landing = memo(SleeveModern);
-type Snapshot = { node: HTMLElement; style: string; html: string | null }[];
+type Snapshot = {
+	node: HTMLElement;
+	style: string;
+	html: string | null;
+	parent: Node | null;
+	next: ChildNode | null;
+}[];
 type Transaction = { before: Snapshot; label: string };
 const GROUPS = ".sr-app, .sg-product, .sg-source-pair";
 const NUMBERS = ["padding-top", "padding-right", "padding-bottom", "padding-left"];
@@ -41,27 +48,40 @@ function snapshot(root: HTMLElement): Snapshot {
 	return [...root.querySelectorAll<HTMLElement>("[data-edit-node]")].map((node) => ({
 		node,
 		style: node.style.cssText,
+		parent: node.parentNode,
+		next: node.nextSibling,
 		html: literal(node) === node ? node.innerHTML : null,
 	}));
 }
 function restore(s: Snapshot) {
+	for (const entry of [...s].reverse()) {
+		if (entry.parent && (entry.node.parentNode !== entry.parent || entry.node.nextSibling !== entry.next))
+			entry.parent.insertBefore(entry.node, entry.next?.parentNode === entry.parent ? entry.next : null);
+	}
 	for (const entry of s) {
 		entry.node.style.cssText = entry.style;
 		if (entry.html !== null && entry.node.innerHTML !== entry.html) entry.node.innerHTML = entry.html;
 	}
 }
 function same(a: Snapshot, b: Snapshot) {
-	return a.every((v, i) => v.style === b[i]?.style && v.html === b[i]?.html);
+	return a.every(
+		(v, i) => v.style === b[i]?.style && v.html === b[i]?.html && v.parent === b[i]?.parent && v.next === b[i]?.next,
+	);
 }
 
 export default function EditingPlayground() {
 	const root = useRef<HTMLDivElement>(null);
 	const stage = useRef<HTMLDivElement>(null);
+	const viewport = useViewport(stage, root);
+	const keyboard = useRef<(event: KeyboardEvent) => void>(() => {});
+	const keyGesture = useRef(false);
 	const [selected, setSelected] = useState<HTMLElement | null>(null);
 	const [revision, setRevision] = useState(0);
 	const [reach, setReach] = useState(false);
 	const [uses, setUses] = useState(false);
-	const [hint, setHint] = useState("Select anything. Double-click text to edit. Option + hover measures spacing.");
+	const [hint, setHint] = useState(
+		"Select anything. Double-click text to edit. Option + hover measures spacing. Shift 2 zooms to selection. Space pans.",
+	);
 	const [hovered, setHovered] = useState<HTMLElement | null>(null);
 	const [measuring, setMeasuring] = useState(false);
 	const [padding, setPadding] = useState<string | null>(null);
@@ -81,6 +101,12 @@ export default function EditingPlayground() {
 			setRevision((v) => v + 1);
 		});
 	};
+	useLayoutEffect(() => {
+		void viewport.width;
+		void viewport.zoom;
+		// Read the rail after React applies the page's new viewport geometry.
+		setRevision((v) => v + 1);
+	}, [viewport.width, viewport.zoom]);
 	const begin = (label: string) => {
 		if (!pending.current && root.current) pending.current = { before: snapshot(root.current), label };
 	};
@@ -95,6 +121,7 @@ export default function EditingPlayground() {
 	};
 	const cancel = () => {
 		cancelled.current = true;
+		keyGesture.current = false;
 		if (pending.current) restore(pending.current.before);
 		pending.current = null;
 		const editing = inline.current;
@@ -106,6 +133,7 @@ export default function EditingPlayground() {
 		refresh();
 	};
 	const stopInline = () => {
+		keyGesture.current = false;
 		const editing = inline.current;
 		inline.current = null;
 		if (editing) editing.contentEditable = "false";
@@ -115,10 +143,17 @@ export default function EditingPlayground() {
 		stopInline();
 		active.current = node;
 		setSelected(node);
+		const box = node.getBoundingClientRect();
+		setHint(
+			Math.min(box.width, box.height) < 24
+				? "Small selection · Shift 2 zooms in to reveal resize handles"
+				: "Arrows follow layout · Cmd/Ctrl + arrows resize · Shift 2 zooms to selection",
+		);
 		setHovered(null);
 		setPadding(null);
 		setUses(false);
 		setReach(false);
+		stage.current?.focus({ preventScroll: true });
 		if (reveal) node.scrollIntoView({ block: "center", behavior: "instant" });
 	};
 	const history = (redo: boolean) => {
@@ -145,6 +180,23 @@ export default function EditingPlayground() {
 		for (const node of targets()) node.style.setProperty(property, value, "important");
 		refresh();
 	};
+	const restoreProperty = (property: string) => {
+		if (cancelled.current) return;
+		for (const node of targets()) {
+			const saved = pending.current?.before.find((entry) => entry.node === node);
+			if (!saved) continue;
+			const style = document.createElement("div").style;
+			style.cssText = saved.style;
+			node.style.setProperty(property, style.getPropertyValue(property), style.getPropertyPriority(property));
+		}
+		refresh();
+	};
+	const localCss = (property: string, value: string) => {
+		if (cancelled.current || !selected) return;
+		begin(property);
+		selected.style.setProperty(property, value, "important");
+		refresh();
+	};
 	const apply = (property: string, value: string) => {
 		cancelled.current = false;
 		css(property, value);
@@ -154,8 +206,8 @@ export default function EditingPlayground() {
 	const value = (property: string) => computed?.getPropertyValue(property) ?? "";
 	const original = (property: string) => selected?.style.getPropertyValue(property) !== "";
 	const numeric = (property: string) => Number.parseFloat(value(property)) || 0;
-	const live = useRef({ cancel, history, finish, stopInline });
-	live.current = { cancel, history, finish, stopInline };
+	const live = useRef({ cancel, history, finish, stopInline, viewport });
+	live.current = { cancel, history, finish, stopInline, viewport };
 
 	useLayoutEffect(() => {
 		const page = root.current;
@@ -204,11 +256,12 @@ export default function EditingPlayground() {
 			)
 				setMeasuring(true);
 			if (event.key === "Escape") {
+				if (live.current.viewport.keyDown(event)) return;
 				if (!pending.current && !inline.current) return;
 				event.preventDefault();
 				event.stopImmediatePropagation();
 				live.current.cancel();
-				if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+				stage.current?.focus({ preventScroll: true });
 				return;
 			}
 			const target = event.target;
@@ -219,12 +272,18 @@ export default function EditingPlayground() {
 				event.stopImmediatePropagation();
 				live.current.history(event.shiftKey);
 			}
-			if (event.key === "Enter" && target instanceof HTMLElement && page.contains(target)) event.preventDefault();
+			keyboard.current(event);
 		};
 		const keyUp = (event: KeyboardEvent) => {
+			live.current.viewport.keyUp(event);
+			if (event.key.startsWith("Arrow") && keyGesture.current) {
+				keyGesture.current = false;
+				live.current.finish();
+			}
 			if (event.key === "Alt") setMeasuring(false);
 		};
 		const blur = () => {
+			if (keyGesture.current) live.current.cancel();
 			setMeasuring(false);
 			setHovered(null);
 		};
@@ -270,6 +329,91 @@ export default function EditingPlayground() {
 		setMeasuring(false);
 		setHint("Type here. Double-click a word to select it. Escape cancels.");
 	};
+	keyboard.current = (event) => {
+		const target = event.target;
+		if (!(target instanceof HTMLElement) || !(target === stage.current || root.current?.contains(target))) return;
+		if (event.isComposing) return;
+		if (event.shiftKey && event.code === "Digit2") {
+			event.preventDefault();
+			viewport.fitSelection(selected);
+			return;
+		}
+		if (viewport.keyDown(event)) return;
+		if (!selected || inline.current || viewport.panning) return;
+		if (event.key === "Enter") {
+			event.preventDefault();
+			if (event.shiftKey) {
+				const parent = selected.parentElement?.closest<HTMLElement>("[data-edit-node]");
+				if (parent) choose(parent);
+			} else if (literal(selected)) startInline(selected);
+			return;
+		}
+		if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key) || event.altKey) return;
+		event.preventDefault();
+		event.stopImmediatePropagation();
+		if (event.repeat && cancelled.current) return;
+		const resize = event.metaKey || event.ctrlKey;
+		const horizontal = event.key === "ArrowLeft" || event.key === "ArrowRight";
+		const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
+		const step = (forward ? 1 : -1) * (event.shiftKey ? 10 : 1);
+		const style = getComputedStyle(selected);
+		if (resize && ["inline", "contents", "none"].includes(style.display)) {
+			setHint("This element takes its size from its content. Resize its container.");
+			return;
+		}
+		if (!keyGesture.current) {
+			cancelled.current = false;
+			begin(resize ? "keyboard resize" : "keyboard move");
+			keyGesture.current = true;
+		}
+		if (resize) {
+			const property = horizontal ? "width" : "height";
+			css(property, `${Math.max(1, Number.parseFloat(style.getPropertyValue(property)) + step)}px`);
+			setHint("Resize · 1px · Shift 10px · Escape cancels this key press");
+			return;
+		}
+		if (style.position === "absolute" || style.position === "fixed") {
+			const start = horizontal ? "left" : "top";
+			const end = horizontal ? "right" : "bottom";
+			const from = Number.parseFloat(style.getPropertyValue(start));
+			const to = Number.parseFloat(style.getPropertyValue(end));
+			if (Number.isFinite(from)) localCss(start, `${from + step}px`);
+			if (Number.isFinite(to)) localCss(end, `${to - step}px`);
+			if (!Number.isFinite(from) && !Number.isFinite(to))
+				localCss(start, `${(horizontal ? selected.offsetLeft : selected.offsetTop) + step}px`);
+			setHint("Move · 1px · Shift 10px · Escape cancels this key press");
+			return;
+		}
+		const parent = selected.parentElement;
+		if (!parent) return;
+		const layout = getComputedStyle(parent);
+		const flex = layout.display === "flex" || layout.display === "inline-flex";
+		const row = flex && layout.flexDirection.startsWith("row");
+		const siblings = [...parent.children].filter(
+			(n): n is HTMLElement =>
+				n instanceof HTMLElement &&
+				n.dataset.editNode !== undefined &&
+				!["absolute", "fixed"].includes(getComputedStyle(n).position),
+		);
+		if (
+			layout.display.includes("grid") ||
+			horizontal !== row ||
+			siblings.some((n) => getComputedStyle(n).order !== "0")
+		) {
+			setHint("Parent layout controls this position. Use layout alignment or spacing.");
+			return;
+		}
+		const reversed = flex && layout.flexDirection.endsWith("reverse") !== (row && layout.direction === "rtl");
+		const delta = forward !== reversed ? 1 : -1;
+		const neighbor = siblings[siblings.indexOf(selected) + delta];
+		if (neighbor) {
+			parent.insertBefore(selected, delta > 0 ? neighbor.nextSibling : neighbor);
+			selected.scrollIntoView({ block: "nearest", inline: "nearest" });
+			refresh();
+		}
+		setHint("Reorder in parent layout · move free elements by 1px · Escape cancels this key press");
+	};
+
 	const resolve = (target: EventTarget) => {
 		if (!(target instanceof HTMLElement || target instanceof SVGElement)) return null;
 		const element = target.closest<HTMLElement>("[data-edit-node]");
@@ -289,27 +433,34 @@ export default function EditingPlayground() {
 		min = 0,
 		max = Number.POSITIVE_INFINITY,
 		after?: React.ReactNode,
-	) => (
-		<NumberControl
-			key={property}
-			after={after}
-			name={property}
-			value={numeric(property)}
-			unit={unit}
-			min={min}
-			max={max}
-			changed={original(property)}
-			onBegin={() => {
-				cancelled.current = false;
-				begin(property);
-			}}
-			onChange={(v) => css(property, `${v}${unit}`)}
-			onFinish={finish}
-			cancelled={cancelled}
-			onHint={setHint}
-			onInspect={(on) => setPadding(on && NUMBERS.includes(property) ? property : null)}
-		/>
-	);
+	) =>
+		property === "max-width" && !value(property).endsWith("px") ? (
+			<Row key={property} name={property}>
+				<span className="ep-select" title="Constraint from the page">
+					{value(property)}
+				</span>
+			</Row>
+		) : (
+			<NumberControl
+				key={property}
+				after={after}
+				name={property}
+				value={numeric(property)}
+				unit={unit}
+				min={min}
+				max={max}
+				changed={original(property)}
+				onBegin={() => {
+					cancelled.current = false;
+					begin(property);
+				}}
+				onChange={(v) => css(property, `${v}${unit}`)}
+				onFinish={finish}
+				cancelled={cancelled}
+				onHint={setHint}
+				onInspect={(on) => setPadding(on && NUMBERS.includes(property) ? property : null)}
+			/>
+		);
 	const menu = (property: string, options: string[]) => (
 		<Row name={property} changed={original(property)}>
 			<select
@@ -332,6 +483,30 @@ export default function EditingPlayground() {
 					spool <span>Editing playground</span>
 				</span>
 				<span className="ep-boundary">Edits stay here · reload resets</span>
+				<div className="ep-zoom" role="toolbar" aria-label="Canvas zoom">
+					<button type="button" aria-label="Zoom out" onClick={() => viewport.zoomBy(1 / 1.25)}>
+						−
+					</button>
+					<button
+						type="button"
+						aria-label="Actual size"
+						title="Actual size · Shift 0"
+						onClick={viewport.actualSize}
+					>
+						{Math.round(viewport.zoom * 100)}%
+					</button>
+					<button type="button" aria-label="Zoom in" onClick={() => viewport.zoomBy(1.25)}>
+						+
+					</button>
+					<button
+						type="button"
+						aria-label="Zoom to selection"
+						title="Zoom to selection · Shift 2"
+						onClick={() => viewport.fitSelection(selected)}
+					>
+						Fit selection
+					</button>
+				</div>
 				<div>
 					<button type="button" aria-label="Undo" disabled={!past.current.length} onClick={() => history(false)}>
 						Undo
@@ -359,9 +534,14 @@ export default function EditingPlayground() {
 					<div
 						className="ep-stage"
 						ref={stage}
+						// biome-ignore lint/a11y/noNoninteractiveTabindex: This canvas receives selection-scoped editing shortcuts.
+						tabIndex={0}
+						role="application"
+						aria-label="Editing canvas"
+						data-panning={viewport.panning || undefined}
 						onPointerMove={(e) => {
 							pointer.current = { x: e.clientX, y: e.clientY };
-							if (!e.buttons && !inline.current) setHovered(resolve(e.target));
+							if (!e.buttons && !inline.current && !viewport.panning) setHovered(resolve(e.target));
 						}}
 						onPointerLeave={() => {
 							pointer.current = null;
@@ -377,6 +557,7 @@ export default function EditingPlayground() {
 						<div
 							ref={root}
 							className="ep-document"
+							style={{ width: viewport.width || undefined, zoom: viewport.zoom }}
 							onAuxClickCapture={(e) => {
 								e.preventDefault();
 								e.stopPropagation();
@@ -436,6 +617,9 @@ export default function EditingPlayground() {
 					</div>
 					<Selection
 						selected={selected}
+						zoom={viewport.zoom}
+						onPosition={localCss}
+						onRestore={restoreProperty}
 						hovered={hovered}
 						measuring={measuring}
 						editing={inline.current !== null}

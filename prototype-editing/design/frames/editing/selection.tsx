@@ -1,7 +1,18 @@
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ResizeEdge, resizeBox } from "./resize";
 
 type Box = { left: number; top: number; width: number; height: number };
 type Line = { x1: number; y1: number; x2: number; y2: number };
+const HANDLES: { edge: ResizeEdge; name: string }[] = [
+	{ edge: "nw", name: "top left" },
+	{ edge: "n", name: "top" },
+	{ edge: "ne", name: "top right" },
+	{ edge: "e", name: "right" },
+	{ edge: "se", name: "bottom right" },
+	{ edge: "s", name: "bottom" },
+	{ edge: "sw", name: "bottom left" },
+	{ edge: "w", name: "left" },
+];
 const ZERO: Box = { left: 0, top: 0, width: 0, height: 0 };
 const right = (b: Box) => b.left + b.width;
 const bottom = (b: Box) => b.top + b.height;
@@ -74,6 +85,9 @@ export function Selection({
 	padding,
 	onBegin,
 	onChange,
+	onPosition,
+	onRestore,
+	zoom,
 	onFinish,
 	onCancel,
 	cancelled,
@@ -88,12 +102,16 @@ export function Selection({
 	padding: string | null;
 	onBegin: () => void;
 	onChange: (property: string, value: string) => void;
+	onPosition: (property: string, value: string) => void;
+	onRestore: (property: string) => void;
+	zoom: number;
 	onFinish: () => void;
 	onCancel: () => void;
 	cancelled: RefObject<boolean>;
 	onHint: (s: string) => void;
 }) {
 	const [boxes, setBoxes] = useState({ selected: ZERO, hover: ZERO });
+	const [activeEdge, setActiveEdge] = useState<ResizeEdge | null>(null);
 	const update = useRef<() => void>(() => {});
 	const hover = hovered === selected && measuring ? (selected?.parentElement ?? null) : hovered;
 	useLayoutEffect(() => {
@@ -133,12 +151,14 @@ export function Selection({
 	}, [selected, hover, stage]);
 	useLayoutEffect(() => {
 		void revision;
+		void zoom;
 		update.current();
-	}, [revision]);
+	}, [revision, zoom]);
 	if (!selected) return null;
-	const lines = measuring && hover && hover !== selected && !editing ? distances(boxes.selected, boxes.hover) : [];
+	const lines =
+		measuring && !activeEdge && hover && hover !== selected && !editing ? distances(boxes.selected, boxes.hover) : [];
 	const style = padding ? getComputedStyle(selected) : null;
-	const inset = style && padding ? Number.parseFloat(style.getPropertyValue(padding)) || 0 : 0;
+	const inset = style && padding ? (Number.parseFloat(style.getPropertyValue(padding)) || 0) * zoom : 0;
 	const paddingStyle =
 		padding === "padding-top"
 			? { top: 0, left: 0, right: 0, height: inset }
@@ -148,22 +168,43 @@ export function Selection({
 					? { top: 0, bottom: 0, left: 0, width: inset }
 					: { top: 0, bottom: 0, right: 0, width: inset };
 	return (
-		<div className="ep-overlays" data-measuring={measuring || undefined}>
-			{hover && hover !== selected && !editing && <div className="ep-hover" style={boxes.hover} />}
+		<div className="ep-overlays" data-measuring={(measuring && !activeEdge) || undefined}>
+			{hover && hover !== selected && !editing && !activeEdge && <div className="ep-hover" style={boxes.hover} />}
 			<div className="ep-outline" data-editing={editing || undefined} style={boxes.selected}>
 				{padding && inset > 0 && <div className="ep-padding-preview" style={paddingStyle} />}
 				{!editing &&
-					!measuring &&
 					!["inline", "none", "contents"].includes(getComputedStyle(selected).display) &&
-					["width", "height", "size"].map((axis) => (
+					HANDLES.filter(({ edge }) => {
+						if (activeEdge === edge) return true;
+						if (Math.min(boxes.selected.width, boxes.selected.height) < 24) return false;
+						return (
+							edge.length === 2 ||
+							(edge === "n" || edge === "s" ? boxes.selected.width : boxes.selected.height) >= 72
+						);
+					}).map(({ edge, name }) => (
 						<ResizeHandle
-							key={axis}
-							axis={axis}
+							key={edge}
+							edge={edge}
+							name={name}
 							selected={selected}
-							onBegin={onBegin}
+							zoom={zoom}
+							onBegin={() => {
+								setActiveEdge(edge);
+								onBegin();
+							}}
 							onChange={onChange}
-							onFinish={onFinish}
-							onCancel={onCancel}
+							onPosition={onPosition}
+							onRestore={onRestore}
+							onFinish={(pointer) => {
+								setActiveEdge(null);
+								onFinish();
+								if (pointer) stage.current?.focus({ preventScroll: true });
+							}}
+							onCancel={() => {
+								setActiveEdge(null);
+								onCancel();
+								stage.current?.focus({ preventScroll: true });
+							}}
 							cancelled={cancelled}
 							onHint={onHint}
 						/>
@@ -173,7 +214,7 @@ export function Selection({
 				<svg className="ep-measurements" role="img" aria-label="Distances between element boxes">
 					{lines.map((line, i) => {
 						const horizontal = line.y1 === line.y2;
-						const value = Number(Math.hypot(line.x2 - line.x1, line.y2 - line.y1).toFixed(1));
+						const value = Number((Math.hypot(line.x2 - line.x1, line.y2 - line.y1) / zoom).toFixed(1));
 						const x = (line.x1 + line.x2) / 2;
 						const y = (line.y1 + line.y2) / 2;
 						const label = `${value}`;
@@ -216,54 +257,148 @@ export function Selection({
 }
 
 function ResizeHandle({
-	axis,
+	edge,
+	name,
 	selected,
+	zoom,
 	onBegin,
 	onChange,
+	onPosition,
+	onRestore,
 	onFinish,
 	onCancel,
 	cancelled,
 	onHint,
 }: {
-	axis: string;
+	edge: ResizeEdge;
+	name: string;
 	selected: HTMLElement;
+	zoom: number;
 	onBegin: () => void;
 	onChange: (p: string, v: string) => void;
-	onFinish: () => void;
+	onPosition: (p: string, v: string) => void;
+	onRestore: (p: string) => void;
+	onFinish: (pointer: boolean) => void;
 	onCancel: () => void;
 	cancelled: RefObject<boolean>;
 	onHint: (s: string) => void;
 }) {
-	const held = useRef<{ x: number; y: number; width: number; height: number; moved: boolean } | null>(null);
-	const [dragging, setDragging] = useState(false);
-	const cancel = useRef(onCancel);
-	cancel.current = onCancel;
-	useEffect(() => {
-		const blur = () => {
-			if (!held.current) return;
-			held.current = null;
-			setDragging(false);
-			cancel.current();
-		};
-		window.addEventListener("blur", blur);
-		return () => window.removeEventListener("blur", blur);
-	}, []);
 	const read = () => {
 		const style = getComputedStyle(selected);
-		return { width: Number.parseFloat(style.width), height: Number.parseFloat(style.height) };
+		const px = (p: string) => Number.parseFloat(style.getPropertyValue(p)) || 0;
+		const inset = (p: string, fallback: number) => {
+			const value = Number.parseFloat(style.getPropertyValue(p));
+			return Number.isFinite(value) ? value : fallback;
+		};
+		const limit = (p: string, extra: number, fallback: number) => {
+			const value = style.getPropertyValue(p);
+			return value.endsWith("px") ? Number.parseFloat(value) + extra : fallback;
+		};
+		const box = selected.getBoundingClientRect();
+		const extraWidth =
+			style.boxSizing === "border-box"
+				? 0
+				: px("padding-left") + px("padding-right") + px("border-left-width") + px("border-right-width");
+		const extraHeight =
+			style.boxSizing === "border-box"
+				? 0
+				: px("padding-top") + px("padding-bottom") + px("border-top-width") + px("border-bottom-width");
+		return {
+			width: box.width / zoom,
+			height: box.height / zoom,
+			extraWidth,
+			extraHeight,
+			free: style.position === "absolute" || style.position === "fixed",
+			left: inset("left", selected.offsetLeft),
+			top: inset("top", selected.offsetTop),
+			limits: {
+				minWidth: limit("min-width", extraWidth, extraWidth),
+				minHeight: limit("min-height", extraHeight, extraHeight),
+				maxWidth: limit("max-width", extraWidth, Infinity),
+				maxHeight: limit("max-height", extraHeight, Infinity),
+			},
+		};
 	};
+	type Held = ReturnType<typeof read> & {
+		x: number;
+		y: number;
+		lastX: number;
+		lastY: number;
+		moved: boolean;
+		proportional: boolean;
+	};
+	const held = useRef<Held | null>(null);
+	const [dragging, setDragging] = useState(false);
+	const apply = (h: Held, dx: number, dy: number, alt: boolean, shift: boolean) => {
+		if (cancelled.current) return;
+		const box = resizeBox(h, edge, dx, dy, alt && h.free, shift, h.limits);
+		if (h.proportional && !shift && edge.length === 1) onRestore(edge === "n" || edge === "s" ? "width" : "height");
+		h.proportional = shift;
+		if (edge.includes("w") || edge.includes("e") || shift)
+			onChange("width", `${Math.max(0, box.width - h.extraWidth)}px`);
+		if (edge.includes("n") || edge.includes("s") || shift)
+			onChange("height", `${Math.max(0, box.height - h.extraHeight)}px`);
+		if (h.free) {
+			onPosition("left", `${h.left + box.shiftX}px`);
+			onPosition("right", "auto");
+			onPosition("top", `${h.top + box.shiftY}px`);
+			onPosition("bottom", "auto");
+		}
+		onHint(
+			h.free
+				? `${Math.round(box.width)} × ${Math.round(box.height)} · ${alt ? "from center" : "opposite edge held"}${shift ? " · proportions locked" : ""}`
+				: `${Math.round(box.width)} × ${Math.round(box.height)} · parent layout positions this element${shift ? " · proportions locked" : ""}`,
+		);
+	};
+	const latest = useRef({ onCancel, apply });
+	latest.current = { onCancel, apply };
+	useEffect(() => {
+		const blur = () => {
+			if (held.current) {
+				held.current = null;
+				setDragging(false);
+				latest.current.onCancel();
+			}
+		};
+		const modifier = (event: KeyboardEvent) => {
+			const h = held.current;
+			if (!h?.moved || (event.key !== "Alt" && event.key !== "Shift")) return;
+			latest.current.apply(h, (h.lastX - h.x) / zoom, (h.lastY - h.y) / zoom, event.altKey, event.shiftKey);
+		};
+		const camera = (event: Event) => {
+			if (held.current && event.target instanceof Element && event.target.matches(".ep-stage")) blur();
+		};
+		window.addEventListener("scroll", camera, true);
+		window.addEventListener("blur", blur);
+		window.addEventListener("keydown", modifier);
+		window.addEventListener("keyup", modifier);
+		return () => {
+			window.removeEventListener("scroll", camera, true);
+			window.removeEventListener("blur", blur);
+			if (held.current) blur();
+			window.removeEventListener("keydown", modifier);
+			window.removeEventListener("keyup", modifier);
+		};
+	}, [zoom]);
+	const start = (x: number, y: number): Held => ({
+		x,
+		y,
+		lastX: x,
+		lastY: y,
+		...read(),
+		moved: false,
+		proportional: false,
+	});
 	return (
 		<button
 			type="button"
 			className="ep-resize"
-			data-axis={axis}
+			data-edge={edge}
 			data-dragging={dragging || undefined}
-			aria-label={`Resize ${axis}`}
-			title={axis === "size" ? "Resize width and height" : `Resize ${axis}`}
+			aria-label={`Resize ${name}`}
+			title={`Resize ${name}`}
 			onPointerEnter={() =>
-				onHint(
-					`${axis === "size" ? "Width and height" : axis} · drag to resize in page flow · Shift snaps to 10px · Escape cancels`,
-				)
+				onHint("Resize · Shift keeps proportions · Option centers free elements · Escape cancels")
 			}
 			onPointerDown={(e) => {
 				if (e.button !== 0) return;
@@ -271,30 +406,32 @@ function ResizeHandle({
 				e.stopPropagation();
 				if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 				onBegin();
-				held.current = { x: e.clientX, y: e.clientY, ...read(), moved: false };
+				held.current = start(e.clientX, e.clientY);
 				e.currentTarget.setPointerCapture(e.pointerId);
 			}}
 			onPointerMove={(e) => {
 				const h = held.current;
 				if (!h || cancelled.current) return;
+				h.lastX = e.clientX;
+				h.lastY = e.clientY;
 				const dx = e.clientX - h.x;
 				const dy = e.clientY - h.y;
 				if (!h.moved && Math.hypot(dx, dy) < 3) return;
 				h.moved = true;
 				setDragging(true);
-				const snap = (v: number) => Math.max(1, e.shiftKey ? Math.round(v / 10) * 10 : Math.round(v * 10) / 10);
-				if (axis !== "height") onChange("width", `${snap(h.width + dx)}px`);
-				if (axis !== "width") onChange("height", `${snap(h.height + dy)}px`);
+				apply(h, dx / zoom, dy / zoom, e.altKey, e.shiftKey);
 			}}
 			onPointerUp={(e) => {
 				const h = held.current;
 				held.current = null;
 				setDragging(false);
 				if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-				onFinish();
+				onFinish(true);
 				if (h && !h.moved && !cancelled.current)
 					document
-						.querySelector<HTMLInputElement>(`input[aria-label="${axis === "size" ? "width" : axis}"]`)
+						.querySelector<HTMLInputElement>(
+							`input[aria-label="${edge === "n" || edge === "s" ? "height" : "width"}"]`,
+						)
 						?.focus();
 			}}
 			onLostPointerCapture={() => {
@@ -312,15 +449,17 @@ function ResizeHandle({
 			onKeyDown={(e) => {
 				if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) return;
 				e.preventDefault();
-				const property =
-					axis === "size" ? (e.key === "ArrowUp" || e.key === "ArrowDown" ? "height" : "width") : axis;
-				const size = read();
+				e.stopPropagation();
 				onBegin();
-				onChange(
-					property,
-					`${Math.max(1, (property === "width" ? size.width : size.height) + (e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 10 : 1))}px`,
+				const step = e.shiftKey ? 10 : 1;
+				apply(
+					start(0, 0),
+					e.key === "ArrowRight" ? step : e.key === "ArrowLeft" ? -step : 0,
+					e.key === "ArrowDown" ? step : e.key === "ArrowUp" ? -step : 0,
+					e.altKey,
+					false,
 				);
-				onFinish();
+				onFinish(false);
 			}}
 		/>
 	);

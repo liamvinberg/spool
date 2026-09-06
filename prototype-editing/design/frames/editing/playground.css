@@ -56,6 +56,8 @@
 	overflow: hidden;
 }
 .ep-stage {
+	position: relative;
+	z-index: 0;
 	height: 100%;
 	overflow: auto;
 	overscroll-behavior: contain;
@@ -63,6 +65,7 @@
 }
 .ep-document {
 	min-height: 100%;
+	margin-inline: auto;
 }
 .ep-document .sg-page.sm-page {
 	height: auto;
@@ -99,6 +102,7 @@
 }
 .ep-overlays {
 	position: absolute;
+	z-index: 1;
 	inset: 0;
 	overflow: hidden;
 	pointer-events: none;
@@ -130,20 +134,72 @@
 .ep-resize[data-dragging]::after {
 	background: var(--color-thread);
 }
-.ep-resize[data-axis="width"] {
+.ep-resize[data-edge="nw"] {
+	left: -12px;
+	top: -12px;
+	cursor: nwse-resize;
+}
+.ep-resize[data-edge="ne"] {
 	right: -12px;
-	top: calc(50% - 11px);
-	cursor: ew-resize;
+	top: -12px;
+	cursor: nesw-resize;
 }
-.ep-resize[data-axis="height"] {
+.ep-resize[data-edge="sw"] {
+	left: -12px;
 	bottom: -12px;
-	left: calc(50% - 11px);
-	cursor: ns-resize;
+	cursor: nesw-resize;
 }
-.ep-resize[data-axis="size"] {
+.ep-resize[data-edge="se"] {
 	right: -12px;
 	bottom: -12px;
 	cursor: nwse-resize;
+}
+.ep-resize[data-edge="n"],
+.ep-resize[data-edge="s"] {
+	left: 11px;
+	right: 11px;
+	width: auto;
+	height: 10px;
+	cursor: ns-resize;
+}
+.ep-resize[data-edge="n"] {
+	top: -6px;
+}
+.ep-resize[data-edge="s"] {
+	bottom: -6px;
+}
+.ep-resize[data-edge="e"],
+.ep-resize[data-edge="w"] {
+	top: 11px;
+	bottom: 11px;
+	height: auto;
+	width: 10px;
+	cursor: ew-resize;
+}
+.ep-resize[data-edge="e"] {
+	right: -6px;
+}
+.ep-resize[data-edge="w"] {
+	left: -6px;
+}
+.ep-resize[data-edge="n"]::after,
+.ep-resize[data-edge="s"]::after {
+	inset: 2px auto auto calc(50% - 3px);
+	width: 6px;
+	height: 6px;
+	opacity: 0;
+}
+.ep-resize[data-edge="e"]::after,
+.ep-resize[data-edge="w"]::after {
+	inset: calc(50% - 3px) auto auto 2px;
+	width: 6px;
+	height: 6px;
+	opacity: 0;
+}
+.ep-resize:hover::after,
+.ep-resize:focus-visible::after,
+.ep-resize[data-dragging]::after {
+	opacity: 1;
 }
 .ep-padding-preview {
 	position: absolute;
@@ -460,4 +516,28 @@
 .ep-color-error {
 	color: var(--color-thread);
 	font-size: 11px;
+}
+
+.ep-stage {
+	outline: none;
+}
+.ep-stage[data-panning] {
+	cursor: grab;
+	user-select: none;
+}
+.ep-stage[data-panning] .ep-document {
+	pointer-events: none;
+}
+.ep-stage-wrap:has(.ep-stage[data-panning]) .ep-overlays {
+	visibility: hidden;
+}
+.ep-zoom {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+.ep-zoom [aria-label="Actual size"] {
+	min-width: 38px;
+	text-align: center;
+	font: 10px var(--font-mono);
 }
