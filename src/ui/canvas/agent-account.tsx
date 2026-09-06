@@ -1,11 +1,11 @@
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AgentLoginProgress } from "../../daemon/agent-engine";
 import type { AgentRecovery } from "../../daemon/agent-events";
 import type { AgentLogin } from "../../daemon/agent-preflight";
 import { BUNDLED_CONNECTIONS } from "../../daemon/bundled-connections";
 import { accountOperation, fetchAgentLogin } from "../api";
-import { cn } from "../cn";
+import { AccountButton } from "./agent-account-button";
 import { LoginStepView } from "./agent-auth-step";
 import { MenuItem } from "./context-menu";
 
@@ -337,30 +337,5 @@ export function AgentAccountDialog({
 			</div>
 		</>,
 		document.body,
-	);
-}
-function AccountButton({
-	children,
-	onClick,
-	primary = false,
-	disabled = false,
-}: {
-	children: ReactNode;
-	onClick: () => void;
-	primary?: boolean;
-	disabled?: boolean;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			disabled={disabled}
-			className={cn(
-				"flex h-8 items-center justify-center rounded-sm px-3 text-base leading-none disabled:opacity-50",
-				primary ? "bg-thread px-4 font-medium text-on-thread" : "text-muted hover:text-text",
-			)}
-		>
-			{children}
-		</button>
 	);
 }
