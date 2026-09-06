@@ -63,6 +63,23 @@
 .header-study[data-take="sidebar"] .study-tab { width: 160px; height: 30px; }
 .header-study[data-take="sidebar"] .study-selection { background: #303033; border-radius: 6px; }
 
+.header-study[data-take="browser"] .study-header { position: relative; height: 44px; background: var(--color-bg); color: var(--color-muted); border-bottom: 0; }
+.header-study[data-take="browser"] .study-header::after { content: ""; position: absolute; inset: auto 0 0; height: 1px; background: var(--color-border); pointer-events: none; }
+.header-study[data-take="browser"] .study-home-zone { width: 248px; margin-right: 8px; padding-right: 12px; border-right: 1px solid var(--color-border); }
+.header-study[data-take="browser"] .study-home { justify-content: flex-start; gap: 9px; color: var(--color-muted); }
+.header-study[data-take="browser"] .study-home:is(:hover, [aria-current]) { color: var(--color-text); }
+.header-study[data-take="browser"] .study-tabs { z-index: 1; align-items: flex-end; gap: 2px; padding: 0 2px; }
+.header-study[data-take="browser"] .study-tab { width: 176px; height: 35px; border-radius: 8px 8px 0 0; }
+.header-study[data-take="browser"] .study-selection { border-radius: 8px 8px 0 0; background: var(--color-canvas); border: 1px solid var(--color-border); border-bottom: 0; }
+.header-study[data-take="browser"] .study-tab-label { color: var(--color-muted); padding-left: 12px; gap: 8px; }
+.header-study[data-take="browser"] .study-tab.is-active .study-tab-label { color: var(--color-text); }
+.header-study[data-take="browser"] .study-tab-label svg { width: 13px; }
+.header-study[data-take="browser"] .study-plus { margin-top: 6px; }
+.header-study[data-take="browser"][data-width="content"] .study-tab { width: max-content; min-width: 112px; max-width: 228px; }
+.header-study[data-take="browser"][data-width="content"] .study-tab-label { flex: 0 1 auto; padding-right: 10px; }
+.header-study[data-take="browser"][data-width="content"] .study-close { margin-left: auto; }
+.header-study[data-take="browser"][data-width="shrink"] .study-tab { flex: 0 1 196px; min-width: 112px; max-width: 196px; }
+
 @media (prefers-reduced-motion: reduce) {
 	.header-study .study-home:active { transform: none; }
 }

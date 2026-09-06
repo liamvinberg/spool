@@ -5,33 +5,52 @@ import { SpoolCanvasScreen } from "shared/ui/spool/canvas-screen";
 import { SpoolHomeScreen } from "shared/ui/spool/home-screen";
 import "./header-study.css";
 
-export type HeaderTake = "toolbar" | "line" | "attached" | "sidebar";
+export type HeaderTake = "toolbar" | "line" | "attached" | "sidebar" | "browser";
 export type HeaderState = "project" | "home" | "crowded";
+export type HeaderWidth = "content" | "equal" | "shrink";
 
 const PROJECTS = ["spool", "grepp", "origin-edits", "kaffe", "inwall", "tidemark", "kvitt", "solar", "mento", "aria", "components", "an unusually long project name"];
+const BROWSER_PROJECTS = ["spool", "notaker v2", "inwall v2", "aria", "competitor study 2026-09-05", "kaffe", "kvitt", "solar", "mento", "origin-edits", "components", "components and interaction patterns"];
 const TAKES = {
 	toolbar: { title: "Toolbar", note: "Home is a tool. A soft surface follows the selected project.", duration: 0.22 },
 	line: { title: "Underline", note: "Plain Home, quiet tabs. One line moves between projects.", duration: 0.18 },
 	attached: { title: "Joined", note: "Home stands apart. The selected tab joins the canvas below.", duration: 0.24 },
 	sidebar: { title: "Sidebar", note: "Home belongs to the navigation column. Projects start at the canvas.", duration: 0.22 },
+	browser: { title: "Browser", note: "Home belongs to navigation. The project tabs join the canvas.", duration: 0.2 },
+};
+const WIDTHS = {
+	content: { title: "By name", note: "Short names take less room. Long names stop growing." },
+	equal: { title: "Equal", note: "Every project gets the same space, even when its name is short." },
+	shrink: { title: "Shrink", note: "Tabs narrow together as more projects open." },
 };
 
 /** Copies the app canvas into a Mac window; only the header is under study. */
-export function HeaderStudy({ take, state = "project" }: { take: HeaderTake; state?: HeaderState }) {
-	const [tabs, setTabs] = useState(() => PROJECTS.slice(0, state === "crowded" ? PROJECTS.length : 3));
-	const [active, setActive] = useState<string | null>(state === "home" ? null : state === "crowded" ? PROJECTS[8] ?? null : "spool");
+export function HeaderStudy({ take, state = "project", width = "equal" }: { take: HeaderTake; state?: HeaderState; width?: HeaderWidth }) {
+	const projects = take === "browser" ? BROWSER_PROJECTS : PROJECTS;
+	const [tabs, setTabs] = useState(() => projects.slice(0, state === "crowded" ? projects.length : take === "browser" ? 5 : 3));
+	const [active, setActive] = useState<string | null>(state === "home" ? null : state === "crowded" ? projects[8] ?? null : "spool");
 	const [keyboard, setKeyboard] = useState(false);
 	const scroller = useRef<HTMLDivElement>(null);
 	const dragged = useRef(false);
-	const next = useRef(PROJECTS.length);
+	const dragging = useRef(false);
+	const next = useRef(projects.length);
 	const group = useId();
 	const reduced = useReducedMotion();
 	const spec = TAKES[take];
+	const caption = take === "browser" ? WIDTHS[width] : spec;
 	const duration = reduced || keyboard ? 0 : spec.duration;
 
 	useLayoutEffect(() => {
-		const current = scroller.current?.querySelector<HTMLElement>("[aria-current='page']");
-		if (active !== null) current?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+		const element = scroller.current;
+		if (element === null) return;
+		const reveal = () => {
+			if (active === null || dragging.current) return;
+			element.querySelector("[aria-current='page']")?.closest(".study-tab")?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+		};
+		reveal();
+		const observer = new ResizeObserver(reveal);
+		observer.observe(element);
+		return () => observer.disconnect();
 	}, [active]);
 
 	function close(name: string) {
@@ -41,14 +60,14 @@ export function HeaderStudy({ take, state = "project" }: { take: HeaderTake; sta
 	}
 
 	function open() {
-		const candidate = PROJECTS.find((name) => !tabs.includes(name)) ?? `untitled-${++next.current}`;
+		const candidate = projects.find((name) => !tabs.includes(name)) ?? `untitled-${++next.current}`;
 		setTabs((current) => [...current, candidate]);
 		setActive(candidate);
 	}
 
 	return (
 		<MotionConfig reducedMotion="user" transition={{ duration, ease: [0.23, 1, 0.32, 1] }}>
-			<div className="header-study flex h-full flex-col bg-[#101011] p-6 font-sans text-text antialiased" data-take={take}>
+			<div className="header-study flex h-full flex-col bg-[#101011] p-6 font-sans text-text antialiased" data-take={take} data-width={width}>
 				<div className="study-window flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[#39393b]">
 					<header
 						className="study-header"
@@ -68,8 +87,8 @@ export function HeaderStudy({ take, state = "project" }: { take: HeaderTake; sta
 						<div className="study-home-zone">
 							<div className="study-lights" aria-hidden="true"><i /><i /><i /></div>
 							<button type="button" className="study-home" title="Home" aria-label="Home" aria-current={active === null ? "page" : undefined} onClick={() => setActive(null)}>
-								{take !== "line" && <HomeGlyph grid={take === "attached"} />}
-								{(take === "line" || take === "sidebar") && <span>Home</span>}
+								{take !== "line" && <HomeGlyph grid={take === "attached" || take === "browser"} />}
+								{(take === "line" || take === "sidebar" || take === "browser") && <span>Home</span>}
 							</button>
 						</div>
 						<LayoutGroup id={group}>
@@ -79,12 +98,12 @@ export function HeaderStudy({ take, state = "project" }: { take: HeaderTake; sta
 										<Reorder.Item
 											as="div" key={name} value={name} layout="position" className={cn("study-tab", active === name && "is-active")}
 											initial={{ opacity: 0, scale: reduced ? 1 : 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: reduced ? 1 : 0.96 }}
-											onPointerDown={() => { dragged.current = false; }} onDragStart={() => { dragged.current = true; }}
+											onPointerDown={() => { dragged.current = false; }} onDragStart={() => { dragged.current = true; dragging.current = true; }} onDragEnd={() => { dragging.current = false; }}
 											whileDrag={{ zIndex: 10 }} dragElastic={0.05} dragMomentum={false}
 										>
 											{active === name && <motion.div className="study-selection" layoutId="selection" transition={{ duration, ease: [0.23, 1, 0.32, 1] }} />}
 											<button type="button" className="study-tab-label" aria-current={active === name ? "page" : undefined} title={name} onClick={() => { if (!dragged.current) setActive(name); }}>
-												{take === "attached" && <FileGlyph />}
+												{(take === "attached" || take === "browser") && <FileGlyph />}
 												<span>{name}</span>
 											</button>
 											<button type="button" className="study-close" aria-label={`Close ${name}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => close(name)}><CrossGlyph /></button>
@@ -102,7 +121,7 @@ export function HeaderStudy({ take, state = "project" }: { take: HeaderTake; sta
 					</div>
 				</div>
 				<div className="flex shrink-0 items-baseline justify-between gap-5 pt-4">
-					<p className="text-[13px] text-muted"><span className="mr-3 font-medium text-text">{spec.title}</span>{spec.note}</p>
+					<p className="text-[13px] text-muted"><span className="mr-3 font-medium text-text">{caption.title}</span>{caption.note}</p>
 					<p className="shrink-0 text-[12px] text-muted">Click, drag, close, or add a tab.</p>
 				</div>
 			</div>
