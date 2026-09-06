@@ -281,7 +281,7 @@ function Glyph({
 			onClick={onPress}
 			className={cn(
 				"relative flex h-8 w-8 items-center justify-center rounded-sm transition-[background-color,color,transform] duration-[140ms] ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-90 motion-reduce:transition-none",
-				lit ? "bg-raised text-text" : "text-muted/70 hover:text-text",
+				lit ? "bg-control text-text" : "text-muted/70 hover:text-text",
 			)}
 		>
 			{children}

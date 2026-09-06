@@ -309,7 +309,7 @@ export function SelectionOverlay({
 								);
 							})}
 							<div
-								className="absolute flex items-center justify-center rounded-xs bg-thread px-2 py-[3px]"
+								className="absolute flex items-center justify-center rounded-xs bg-thread-strong px-2 py-[3px]"
 								style={{ left: rect.x + rect.w / 2, top: rect.y + rect.h + 14, transform: "translateX(-50%)" }}
 							>
 								<span className="text-on-thread type-detail">
@@ -398,7 +398,7 @@ export function SelectionOverlay({
 						>
 							{refused.refusal.says}
 							{refused.refusal.expression !== undefined && (
-								<span className="text-thread"> {refused.refusal.expression}</span>
+								<span className="text-thread-strong"> {refused.refusal.expression}</span>
 							)}
 						</div>
 					);
@@ -501,7 +501,7 @@ function ElementHandleSet({ ring, handles }: { ring: Box; handles: ElementHandle
 			{handles.says === null ? null : (
 				<div
 					data-element-readout=""
-					className="absolute whitespace-nowrap rounded-xs bg-thread px-2 py-[3px] text-on-thread type-detail"
+					className="absolute whitespace-nowrap rounded-xs bg-thread-strong px-2 py-[3px] text-on-thread type-detail"
 					style={{
 						left: ring.x + ring.w + 12,
 						top: handles.turning ? ring.y - 20 : ring.y + ring.h + 10,
@@ -557,7 +557,7 @@ function MeasureOverlay({
 						: { left: at + 12, top: mid, transform: "translateY(-50%)" }
 				}
 			>
-				<span className="rounded-xs bg-thread px-2 py-[3px] text-on-thread type-detail">
+				<span className="rounded-xs bg-thread-strong px-2 py-[3px] text-on-thread type-detail">
 					{round(spacing.distance)}
 				</span>
 				<div className="flex flex-col gap-0.5 rounded-md border border-border-raised bg-raised px-2 py-1 type-detail">
@@ -618,7 +618,7 @@ function MeasurePart({ part }: { part: SpacingPart }) {
 			<span className={`w-9 shrink-0 text-right ${dimmed ? "text-muted" : "text-text"}`}>
 				{dimmed ? "—" : round(part.px)}
 			</span>
-			<span className={dimmed ? "text-muted" : part.token === undefined ? "text-muted" : "text-thread"}>
+			<span className={dimmed ? "text-muted" : part.token === undefined ? "text-muted" : "text-thread-strong"}>
 				{part.token ?? (part.kind === "residual" ? "residual" : "no class")}
 			</span>
 			{part.owner === undefined ? null : (

@@ -57,7 +57,7 @@ export function UpdateToastPill({
 			{toast.kind === "offer" && (
 				<>
 					<span className="text-text type-control">Update available — v{toast.latest}</span>
-					<button type="button" className="font-medium text-thread type-control" onClick={onUpdate}>
+					<button type="button" className="font-medium text-thread-strong type-control" onClick={onUpdate}>
 						Update
 					</button>
 				</>
@@ -98,7 +98,7 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 			return (
 				<>
 					<span className="text-text type-control">Spool {update.version} is out</span>
-					<button type="button" className="font-medium text-thread type-control" onClick={onUpdate}>
+					<button type="button" className="font-medium text-thread-strong type-control" onClick={onUpdate}>
 						Update
 					</button>
 				</>
@@ -138,7 +138,7 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 					{update.retryable && (
 						<button
 							type="button"
-							className="whitespace-nowrap font-medium text-thread type-control"
+							className="whitespace-nowrap font-medium text-thread-strong type-control"
 							onClick={onUpdate}
 						>
 							Retry
@@ -148,7 +148,7 @@ function AppUpdateBody({ update, onUpdate }: { update: AppUpdate; onUpdate: () =
 						href={DOWNLOAD_URL}
 						target="_blank"
 						rel="noreferrer"
-						className="whitespace-nowrap font-medium text-thread type-control"
+						className="whitespace-nowrap font-medium text-thread-strong type-control"
 					>
 						Download Spool.dmg
 					</a>

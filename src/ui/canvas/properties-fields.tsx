@@ -117,7 +117,7 @@ export function Row({
 					tall ? "self-start pt-1.5 " : long ? "break-words " : "truncate",
 					LABEL,
 					"select-none",
-					changed ? "text-thread" : "text-muted",
+					changed ? "text-thread-strong" : "text-muted",
 					onScrub !== undefined && ok && "cursor-ew-resize hover:text-text",
 				)}
 			>
@@ -208,7 +208,7 @@ export function NumField({
 				className={cn(
 					"min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted",
 					VALUE,
-					changed ? "text-thread" : faint ? "text-muted" : "text-text",
+					changed ? "text-thread-strong" : faint ? "text-muted" : "text-text",
 				)}
 			/>
 			{readout === undefined || readout === null ? null : <span className={cn("shrink-0", FAINT)}>{readout}</span>}
@@ -488,7 +488,11 @@ export function Menu({
 				{current.swatch === undefined ? null : <SwatchChip color={current.swatch} />}
 				<span
 					data-menu-value=""
-					className={cn("min-w-0 truncate", VALUE, changed ? "text-thread" : faint ? "text-muted" : "text-text")}
+					className={cn(
+						"min-w-0 truncate",
+						VALUE,
+						changed ? "text-thread-strong" : faint ? "text-muted" : "text-text",
+					)}
 				>
 					{current.name}
 				</span>
@@ -564,7 +568,9 @@ export function Menu({
 										) : (
 											<SwatchChip color={option.swatch} />
 										)}
-										<span className={cn("min-w-0 truncate", VALUE, worn ? "text-thread" : "text-text")}>
+										<span
+											className={cn("min-w-0 truncate", VALUE, worn ? "text-thread-strong" : "text-text")}
+										>
 											{option.name}
 										</span>
 										{option.value === undefined || option.value === "" ? null : (
@@ -633,9 +639,9 @@ export function IconField({
 						disabled={!ok}
 						onClick={() => onPick(option.token)}
 						className={cn(
-							"flex h-5 w-6 items-center justify-center rounded-[3px] focus:outline-none focus-visible:bg-raised",
+							"flex h-5 w-6 items-center justify-center rounded-[3px] focus:outline-none focus-visible:bg-control",
 							ok ? "cursor-pointer" : "cursor-default",
-							on && ok && "bg-raised text-text",
+							on && ok && "bg-control text-text",
 							on && !ok && "text-muted/40",
 							!on && (ok ? "text-muted/70 hover:text-text" : "text-muted/25"),
 						)}
@@ -671,10 +677,10 @@ export function Chip({
 			disabled={!ok}
 			onClick={() => onChange(!on)}
 			className={cn(
-				"h-5 shrink-0 rounded-xs border px-1.5 focus:outline-none focus-visible:bg-raised",
+				"h-5 shrink-0 rounded-xs border px-1.5 focus:outline-none focus-visible:bg-control",
 				LABEL,
 				ok ? "cursor-pointer" : "cursor-default",
-				on ? "border-border-raised bg-raised text-text" : "border-transparent text-muted/60",
+				on ? "border-border-raised bg-control text-text" : "border-transparent text-muted/60",
 				ok && !on && "hover:border-border hover:text-text",
 				!ok && "text-muted/35",
 				!ok && on && "bg-surface",
@@ -696,8 +702,8 @@ export function Fold({ open, ok, onToggle }: { open: boolean; ok: boolean; onTog
 			aria-expanded={open}
 			onClick={onToggle}
 			className={cn(
-				"ml-auto flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-[3px] focus:outline-none focus-visible:bg-raised",
-				open ? "bg-raised text-text" : "text-muted/60 hover:text-text",
+				"ml-auto flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-[3px] focus:outline-none focus-visible:bg-control",
+				open ? "bg-control text-text" : "text-muted/60 hover:text-text",
 			)}
 		>
 			<svg
@@ -756,7 +762,7 @@ export function PlaceField({
 							onClick={() => onPick(`items-${cross}`, `justify-${main}`)}
 							className={cn(
 								"flex items-center justify-center rounded-[2px]",
-								ok ? "cursor-pointer hover:bg-raised" : "cursor-default",
+								ok ? "cursor-pointer hover:bg-control" : "cursor-default",
 							)}
 						>
 							<span

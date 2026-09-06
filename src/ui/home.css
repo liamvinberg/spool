@@ -211,7 +211,7 @@
 	width: 14px;
 }
 .pj-start-choices > button:hover {
-	background: var(--color-raised);
+	background: var(--color-control);
 }
 .pj-welcome-main {
 	display: flex;
@@ -275,7 +275,7 @@
 	color: var(--color-muted);
 }
 .pj-welcome > :where(.spool-empty-actions) > button:hover {
-	background: var(--color-raised);
+	background: var(--color-control);
 	border-color: var(--color-muted);
 }
 .pj-project-location {
@@ -460,7 +460,7 @@
 		color: var(--color-text);
 	}
 	.home-action:not(.home-action-primary):hover {
-		background: var(--color-raised);
+		background: var(--color-control);
 	}
 }
 @media (max-width: 1050px) {

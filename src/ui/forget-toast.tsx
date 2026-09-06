@@ -17,7 +17,7 @@ export function ForgetToast({ name, windowMs, onUndo }: { name: string; windowMs
 			</span>
 			<span className="text-muted type-value">files stay on disk</span>
 			<span className="h-4 w-px bg-border-raised" />
-			<button type="button" className="font-medium text-thread type-control" onClick={onUndo}>
+			<button type="button" className="font-medium text-thread-strong type-control" onClick={onUndo}>
 				Undo
 			</button>
 			<span className="text-muted type-value">{UNDO_CHORD}</span>

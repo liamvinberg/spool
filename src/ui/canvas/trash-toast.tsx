@@ -29,7 +29,7 @@ export function TrashToast({
 			onPointerDown={(event) => event.stopPropagation()}
 		>
 			<span className="text-text type-control">Moved {subjectOf(frames, page)} to Trash</span>
-			<button type="button" className="font-medium text-thread type-control" onClick={onUndo}>
+			<button type="button" className="font-medium text-thread-strong type-control" onClick={onUndo}>
 				Undo
 			</button>
 			<span className="text-muted type-value">{UNDO_CHORD}</span>

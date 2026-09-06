@@ -159,7 +159,7 @@ export function Home({
 							</div>
 						</header>
 						{notice && (
-							<p role="alert" className="mb-4 text-thread type-label">
+							<p role="alert" className="mb-4 text-thread-strong type-label">
 								{notice}{" "}
 								<button type="button" className="underline" onClick={onChangeLocation}>
 									Change save location…

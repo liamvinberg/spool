@@ -124,7 +124,7 @@ export function ExportDialog({
 				</div>
 
 				{error === undefined ? null : (
-					<p role="alert" className="px-5 pb-3 text-thread type-control">
+					<p role="alert" className="px-5 pb-3 text-thread-strong type-control">
 						{error}
 					</p>
 				)}
@@ -142,7 +142,7 @@ export function ExportDialog({
 						ref={primaryRef}
 						type="button"
 						disabled={exporting}
-						className="flex h-8 min-w-[74px] items-center justify-center rounded-sm bg-thread px-4 font-medium text-on-thread disabled:opacity-70 type-control"
+						className="flex h-8 min-w-[74px] items-center justify-center rounded-sm bg-thread-strong px-4 font-medium text-on-thread disabled:opacity-70 type-control"
 						onClick={() => onExport(format)}
 					>
 						{exporting ? "Exporting…" : "Export"}

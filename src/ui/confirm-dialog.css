@@ -61,7 +61,7 @@
 }
 
 .confirm-dialog [role="alert"] {
-	color: var(--color-thread);
+	color: var(--color-thread-strong);
 }
 
 .confirm-dialog-actions {

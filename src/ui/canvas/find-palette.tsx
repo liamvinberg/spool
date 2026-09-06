@@ -32,7 +32,7 @@ import { UnseenMark } from "./unseen-mark";
 
 const TONE: Record<Weight, string> = {
 	runup: "text-muted/40",
-	hit: "text-thread",
+	hit: "text-thread-strong",
 	plain: "text-text",
 };
 
@@ -262,7 +262,7 @@ function FindRow({
 			onClick={onLand}
 			className={cn(
 				"relative flex w-full items-center gap-5 px-4 text-left transition-colors duration-100",
-				picked && "bg-raised",
+				picked && "bg-control",
 			)}
 			style={{ height: ROW }}
 		>

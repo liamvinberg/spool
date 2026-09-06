@@ -16,7 +16,7 @@
 	--color-*: initial;
 	--color-bg: light-dark(#f0efec, #0e0e0e);
 	--color-canvas: light-dark(#e6e5e1, #161616);
-	--color-surface: light-dark(#ffffff, #1c1c1c);
+	--color-surface: light-dark(#faf9f6, #1c1c1c);
 	--color-raised: light-dark(#ffffff, #282828);
 	--color-border: light-dark(#dcdad5, #262626);
 	--color-border-raised: light-dark(#c2c0ba, #363636);
@@ -405,6 +405,14 @@
 			transform: translateY(-8px);
 		}
 	}
+}
+
+/* Interaction fills sit on several surfaces, so light mode uses a tint of the
+ * theme's ink. Text and labelled accent fills need more contrast than a thread
+ * stroke. Both roles follow custom palettes and retain their dark-mode values. */
+@theme inline {
+	--color-control: light-dark(color-mix(in srgb, var(--color-text) 6%, transparent), var(--color-raised));
+	--color-thread-strong: light-dark(color-mix(in srgb, var(--color-thread) 78%, #000000), var(--color-thread));
 }
 
 /* the ask on a thread row fades out under the close on hover (#205). A mask image cannot

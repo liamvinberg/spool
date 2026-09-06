@@ -2206,7 +2206,7 @@ describe("the chip strip", () => {
 
 		await clickHome(canvas.host);
 		await until(() => chips(canvas.host).includes("home"));
-		expect(canvas.host.querySelector('[data-frame-label="home"] .text-thread')).not.toBeNull();
+		expect(canvas.host.querySelector('[data-frame-label="home"] .text-thread-strong')).not.toBeNull();
 
 		const drop = chipDrop(canvas.host, "home");
 		expect(drop).not.toBeNull();
@@ -2214,7 +2214,7 @@ describe("the chip strip", () => {
 
 		// the strip and the canvas never disagree: the ring goes with the chip, and
 		// what the daemon is told goes with both
-		expect(canvas.host.querySelector('[data-frame-label="home"] .text-thread')).toBeNull();
+		expect(canvas.host.querySelector('[data-frame-label="home"] .text-thread-strong')).toBeNull();
 		await until(() => chips(canvas.host).length === 0);
 		await until(() => canvas.pointed.puts.at(-1)?.frames?.length === 0);
 	});

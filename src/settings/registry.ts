@@ -65,7 +65,7 @@ export type Appearance = (typeof APPEARANCES)[number];
 /**
  * The interface's own colours: the tokens in `src/ui/ui.css` the chrome is
  * built on, with the values it ships with, per look. The light is authored,
- * not inverted: white panels on a grey canvas with edges that show, since a
+ * not inverted: off-white panels on a grey canvas with edges that show, since a
  * light chrome has no tonal depth to lean on. A test holds the stylesheet's
  * light-dark() pairs and these two maps in step. `mark` is not here because it
  * follows `thread` in the stylesheet.
@@ -91,7 +91,7 @@ export const THEME_TOKEN_NAMES = Object.keys(DARK_TOKENS) as readonly ThemeToken
 export const LIGHT_TOKENS: Record<ThemeToken, string> = {
 	bg: "#f0efec",
 	canvas: "#e6e5e1",
-	surface: "#ffffff",
+	surface: "#faf9f6",
 	raised: "#ffffff",
 	border: "#dcdad5",
 	"border-raised": "#c2c0ba",
