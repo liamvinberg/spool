@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "shared/lib/utils";
 import { CloseIcon } from "shared/ui/spool/icons";
 import { SpoolShell } from "shared/ui/spool/shell";
-import { CanvasArtwork, ProjectArtwork } from "./artwork";
+import { CanvasArtwork, ProjectArtwork } from "shared/ui/demo/home-artwork";
 import { BrowserHome, DeskHome, LibraryHome, SearchHome, StartHome, WorkbenchHome } from "./dashboard-layouts";
 import {
 	categories,
@@ -13,7 +13,7 @@ import {
 	projects,
 	type RegistryItem,
 	registry,
-} from "./data";
+} from "shared/ui/demo/home-data";
 import { Action, Arrow, Heading, type HomeActions, RegistryTile, Search } from "./parts";
 import { CoversHome, IndexHome, QuietHome, ResumeHome, ShelfHome, SpacesHome } from "./project-layouts";
 import "./home-study.css";

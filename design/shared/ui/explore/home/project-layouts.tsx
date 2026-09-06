@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { cn } from "shared/lib/utils";
-import { CanvasArtwork, ProjectArtwork } from "./artwork";
-import { projects, registry } from "./data";
+import { CanvasArtwork, ProjectArtwork } from "shared/ui/demo/home-artwork";
+import { projects, registry } from "shared/ui/demo/home-data";
 import {
 	Action,
 	Arrow,

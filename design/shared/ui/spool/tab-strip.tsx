@@ -336,7 +336,7 @@ export function TabStrip({
 						type="button"
 						className="project-tabs-plus"
 						onClick={onPick}
-						title="Open a project folder"
+						title="New project"
 					>
 						<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
 							<path d="M6 1.5v9M1.5 6h9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />

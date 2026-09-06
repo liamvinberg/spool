@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { HOME, shortPath } from "shared/lib/spool/picker-disk";
-import { CanvasChrome } from "shared/ui/spool/canvas-chrome";
-import { EmptyState } from "shared/ui/spool/empty-state";
 import { FolderIcon, PlusIcon, SearchIcon } from "shared/ui/spool/icons";
-import { SpoolMark } from "shared/ui/spool/mark";
 import { Empty, MinRow, PathPrefix } from "shared/ui/spool/picker-field";
 import { InitLine, NameLine, NamingField, useNewProject } from "shared/ui/spool/picker-new";
 import { ListBox } from "shared/ui/spool/picker-parts";
-import { type HomeProject, projects } from "../data";
-import { Action, Arrow } from "../parts";
-import { type ProjectActions, ProjectNavigation } from "./parts";
+import { type HomeProject, projects } from "shared/ui/demo/home-data";
+import { Arrow } from "./home";
+import { ProjectLocation } from "./project-location";
+import "./project-picker.css";
 
 export type ProjectPickerMode = "new" | "folder" | "start" | "location";
 
@@ -218,142 +216,6 @@ export function ProjectPicker({
 	);
 }
 
-export function ProjectLocation({ path, onChange }: { path: string; onChange: () => void }) {
-	return (
-		<div className="pj-project-location">
-			<span>Save projects in</span>
-			<span className="pj-location-path" title={path}>
-				{path
-					.replace(/^~(?=\/|$)/, "Home")
-					.split("/")
-					.join(" / ")}
-			</span>
-			<button type="button" onClick={onChange}>
-				Change…
-			</button>
-		</div>
-	);
-}
-
-export function WelcomeProjects({
-	actions,
-	location,
-	onChangeLocation,
-}: {
-	actions: ProjectActions;
-	location: string;
-	onChangeLocation: () => void;
-}) {
-	return (
-		<div className="pj-layout">
-			<ProjectNavigation actions={actions} />
-			<main className="pj-welcome-main">
-				<EmptyState
-					className="pj-welcome"
-					heading="h1"
-					align="start"
-					title="Start with an idea."
-					description="Your next project can start here, or in a folder you already have."
-					actions={
-						<>
-							<button type="button" onClick={actions.create}>
-								<PlusIcon />
-								<strong>
-									Start designing
-									<Arrow />
-								</strong>
-								<small>
-									Open a blank canvas.
-									<br />
-									spool saves the project on your Mac.
-								</small>
-							</button>
-							<button type="button" onClick={actions.folder}>
-								<FolderIcon />
-								<strong>
-									Open a folder
-									<Arrow />
-								</strong>
-								<small>
-									Bring your codebase.
-									<br />
-									Keep the design beside your code.
-								</small>
-							</button>
-						</>
-					}
-				>
-					<ProjectLocation path={location} onChange={onChangeLocation} />
-				</EmptyState>
-			</main>
-		</div>
-	);
-}
-
-export function ScratchCanvas({
-	name,
-	managed,
-	location,
-	onRename,
-	onFolder,
-}: {
-	name: string;
-	managed: boolean;
-	location?: string | undefined;
-	onRename: (name: string) => boolean;
-	onFolder: () => void;
-}) {
-	const [copied, setCopied] = useState(false);
-	const [draft, setDraft] = useState(name);
-	const path = location ?? (managed ? `~/spool/${name}` : `${shortPath(`${HOME}/personal/projects`)}/${name}`);
-	return (
-		<CanvasChrome pages={[{ name: "frames", frames: [], active: true, open: true }]} rail={null}>
-			<EmptyState
-				className="pj-scratch"
-				heading="h1"
-				icon={<SpoolMark />}
-				title="Your canvas is ready."
-				description="Open this project with your agent and tell it what you’d like to design."
-				actions={
-					<>
-						<code>{path}</code>
-						<Action
-							onClick={() => {
-								void navigator.clipboard
-									.writeText(path)
-									.then(() => setCopied(true))
-									.catch(() => setCopied(false));
-							}}
-						>
-							{copied ? "Copied" : "Copy project path"}
-							<Arrow />
-						</Action>
-					</>
-				}
-			>
-				<div className="pj-scratch-title">
-					<input
-						aria-label="Rename project"
-						value={draft}
-						onChange={(event) => setDraft(event.target.value)}
-						onBlur={() => {
-							if (!draft.trim() || !onRename(draft.trim())) setDraft(name);
-						}}
-						onKeyDown={(event) => {
-							if (event.key === "Enter") event.currentTarget.blur();
-							if (event.key === "Escape") {
-								event.preventDefault();
-								setDraft(name);
-							}
-						}}
-					/>
-					<span>saved on this mac</span>
-				</div>
-
-				<button type="button" onClick={onFolder}>
-					Open an existing project folder
-				</button>
-			</EmptyState>
-		</CanvasChrome>
-	);
+function Action({ children, primary = false, onClick }: { children: React.ReactNode; primary?: boolean; onClick: () => void }) {
+	return <button type="button" className={`home-action ${primary ? "home-action-primary" : ""}`} onClick={onClick}>{children}</button>;
 }

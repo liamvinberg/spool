@@ -1,5 +1,6 @@
 import { cn } from "shared/lib/utils";
-import type { Artwork } from "./data";
+import type { Artwork } from "./home-data";
+import "./home-artwork.css";
 
 /** Small, authored demo products. The home chrome stays in spool's own tokens. */
 export function ProjectArtwork({ kind, className }: { kind: Artwork; className?: string }) {
