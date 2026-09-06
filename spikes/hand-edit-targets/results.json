@@ -1,0 +1,168 @@
+{
+	"runtime": {
+		"first": 7,
+		"second": 1,
+		"unused": 0,
+		"firstInputs": ["shared/ui/button.tsx", "shared/ui/shell.tsx", "frames/first/frame.tsx"],
+		"unusedInputs": ["frames/unused/frame.tsx"],
+		"callSitesOnDOM": false
+	},
+	"ancestry": {
+		"nestedDepth": 2,
+		"multipleRoots": "one call, two hosts",
+		"absentRoot": "no selectable host",
+		"keyedReorder": "same mounted occurrence",
+		"unkeyedReorder": "same occurrence can carry different data",
+		"persistence": "none; remount/navigation/source revision must invalidate"
+	},
+	"dependencies": {
+		"aliasReach": "unknown (alias omitted)",
+		"relativeReach": ["first", "second", "unused"],
+		"firstButtonJSXSites": [
+			{
+				"line": 9,
+				"conditional": false,
+				"repeated": false
+			},
+			{
+				"line": 10,
+				"conditional": false,
+				"repeated": false
+			},
+			{
+				"line": 16,
+				"conditional": true,
+				"repeated": false
+			},
+			{
+				"line": 17,
+				"conditional": false,
+				"repeated": true
+			},
+			{
+				"line": 18,
+				"conditional": false,
+				"repeated": true
+			}
+		],
+		"nestedButtonJSXSites": [
+			{
+				"line": 2,
+				"conditional": false,
+				"repeated": false
+			}
+		],
+		"importedButUnusedExportSites": 0,
+		"afterRemovingImport": ["first", "unused"],
+		"claim": "files reached, not export uses or rendered counts"
+	},
+	"targets": {
+		"definition": "all 8 committed Button hosts changed classes",
+		"callSite": "only Mac label changed",
+		"nested": "two direct parameter reads demonstrated",
+		"transformed": "refused",
+		"shippedSharedGate": "still refuses"
+	},
+	"cascade": {
+		"inheritance": "9 8 7",
+		"explicitToken": "18 52 86",
+		"conditionalAlias": "171 205 239 without changing reference",
+		"competingCSS": "37px despite p-4",
+		"inline": "30px; writer refuses",
+		"authoredRem": "1.5rem = 30px at root 20px",
+		"namedSpacing": "10px",
+		"base": "20px",
+		"wide": "40px",
+		"hover": "60px",
+		"compiledThemeStep": 4,
+		"actualSpacingStep": "5px",
+		"winnerResolver": "not implemented"
+	},
+	"tokens": {
+		"compiled": [
+			{
+				"ok": true,
+				"token": "bg-brand",
+				"css": ".bg-brand {\n  background-color: var(--brand);\n}"
+			},
+			{
+				"ok": true,
+				"token": "gap-x-rhythm",
+				"css": ".gap-x-rhythm {\n  column-gap: var(--space-step);\n}"
+			},
+			{
+				"ok": true,
+				"token": "gap-x-4",
+				"css": ".gap-x-4 {\n  column-gap: calc(var(--spacing) * 4);\n}"
+			},
+			{
+				"ok": true,
+				"token": "rounded-panel",
+				"css": ".rounded-panel {\n  border-radius: var(--radius-panel);\n}"
+			},
+			{
+				"ok": true,
+				"token": "text-red-500",
+				"css": ".text-red-500 {\n  color: var(--color-red-500);\n}"
+			},
+			{
+				"ok": true,
+				"token": "text-lg",
+				"css": ".text-lg {\n  font-size: var(--text-lg);\n  line-height: var(--tw-leading, var(--text-lg--line-height));\n}"
+			},
+			{
+				"ok": true,
+				"token": "font-semibold",
+				"css": ".font-semibold {\n  --tw-font-weight: var(--font-weight-semibold);\n  font-weight: var(--font-weight-semibold);\n}\n@property --tw-font-weight {\n  syntax: \"*\";\n  inherits: false;\n}"
+			},
+			{
+				"ok": true,
+				"token": "leading-tight",
+				"css": ".leading-tight {\n  --tw-leading: var(--leading-tight);\n  line-height: var(--leading-tight);\n}\n@property --tw-leading {\n  syntax: \"*\";\n  inherits: false;\n}"
+			},
+			{
+				"ok": true,
+				"token": "tracking-wide",
+				"css": ".tracking-wide {\n  --tw-tracking: var(--tracking-wide);\n  letter-spacing: var(--tracking-wide);\n}\n@property --tw-tracking {\n  syntax: \"*\";\n  inherits: false;\n}"
+			}
+		],
+		"themeHasNamedSpacingList": false,
+		"result": "<div className=\"p-[1.5rem] w-1/2 hover:p-12 gap-x-rhythm gap-y-4 wide:p-10\" />",
+		"tokenDefinitionsUnchanged": true,
+		"projectAliasValue": "var(--brand)"
+	},
+	"generated": {
+		"mapStyle": "template target; repeated",
+		"mapRootDelete": "refused",
+		"innerDelete": "all template children",
+		"helperRepeatedElsewhere": "mapped=false is not proof of single use",
+		"expression": "preserved"
+	},
+	"structure": {
+		"callSiteDeletion": "Mac only; definition preserved",
+		"reorder": "adjacent authored siblings only",
+		"inverse": "exact snapshot only",
+		"staleOffset": "old Mac location now identifies Windows; revision is mandatory"
+	},
+	"boundary": {
+		"accepted": [
+			"shared/ui/button.tsx",
+			"frames/second/frame.tsx",
+			"frames/first/shared.tsx",
+			"custom/components.tsx"
+		],
+		"rejected": [
+			"canvas.json",
+			".spool/hidden.tsx",
+			"frames/first/frame.json",
+			"frames/first/meta.tsx",
+			"frames/first/external.tsx",
+			"frames/first/dependency.tsx"
+		],
+		"existingMetadataAlias": "ok",
+		"existingRevertFrameJson": "accepted",
+		"existingSharedRevert": "refused",
+		"externalEscape": "error",
+		"performed": "planning/gates only; no writes to forbidden files"
+	}
+}
