@@ -38,6 +38,65 @@ async function setup() {
 	return { root, directory, runtime, contexts };
 }
 
+it("refuses unsupported and nested bare Spool invocations without reaching another installation", async () => {
+	const { root, runtime } = await setup();
+	const bin = makeTempDir();
+	const marker = join(root, "wrong-installation");
+	writeFileSync(join(bin, "spool"), `#!/bin/sh\nprintf wrong >> '${marker}'\n`, { mode: 0o755 });
+	vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+	onTestFinished(() => {
+		vi.unstubAllEnvs();
+	});
+	const events: AgentEvent[] = [];
+	await runtime.turn(
+		"wrong-installation",
+		{
+			...options(root, [
+				command("spool logs home && spool url home"),
+				command("spool open ."),
+				command("printf side-effect > compound-effect; spool status"),
+				command("env spool status"),
+				command("'spool' status"),
+				command("bash -c 'spool status'"),
+				command("printf unused | spool status"),
+			]),
+			permissions: "bypass",
+		},
+		(event) => events.push(event),
+	);
+	expect(existsSync(marker)).toBe(false);
+	expect(readFileSync(join(root, "compound-effect"), "utf8")).toBe("side-effect");
+	expect(events.filter((event) => event.kind === "asking")).toEqual([]);
+	const results = events.filter((event) => event.kind === "result");
+	expect(results).toHaveLength(7);
+	for (const result of results)
+		expect(result).toMatchObject({ failed: true, text: expect.stringContaining("one Spool command per tool call") });
+});
+
+it("keeps Spool words in ordinary shell arguments and file paths usable", async () => {
+	const { root, runtime } = await setup();
+	const events: AgentEvent[] = [];
+	await runtime.turn(
+		"literal-arguments",
+		{
+			...options(root, [
+				command("printf '%s' spool"),
+				command("printf '%s' 'help: spool logs home; spool url home'"),
+				command("printf '%s' /tmp/spool/file"),
+				command("printf '%s' 'spool status'"),
+			]),
+			permissions: "bypass",
+		},
+		(event) => events.push(event),
+	);
+	expect(events.filter((event) => event.kind === "result").map((event) => event.failed)).toEqual([
+		false,
+		false,
+		false,
+		false,
+	]);
+});
+
 // Linux commands see namespace-local PIDs. Find the fixture child by its exact
 // unique argv item in the host's /proc before asserting that Stop retired it.
 function childPid(file: string, marker: string): number | undefined {

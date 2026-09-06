@@ -67,6 +67,15 @@ function setup(emit: (event: AgentEvent) => void = () => {}) {
 	return { root, policy, turn, run };
 }
 
+it("keeps the shell refusal executable private and removes it with its command session", () => {
+	const { policy } = setup();
+	expect(fs.statSync(policy.scratch).mode & 0o777).toBe(0o700);
+	expect(fs.statSync(join(policy.scratch, "bin")).mode & 0o777).toBe(0o700);
+	expect(fs.statSync(join(policy.scratch, "bin/spool")).mode & 0o777).toBe(0o500);
+	policy.close();
+	expect(fs.existsSync(policy.scratch)).toBe(false);
+});
+
 it.each(["async spawn", "sync spawn", "log open", "log write", "log close", "result processing", "stop before spawn"])(
 	"releases a prepared command once after %s failure",
 	async (failure) => {

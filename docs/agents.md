@@ -17,6 +17,11 @@ Playwright package; `spool skill verbs` gives the package location and browser
 setup command for that installation. The Mac app includes Chromium for its
 canvas and player windows.
 
+The bundled agent runs supported Spool verification commands from this
+installation, one command per tool call. Other bare `spool` shell invocations
+are refused instead of using another installed version. This routing guard does
+not change the access granted to other shell commands.
+
 Restricted shell commands require working OS isolation. macOS uses its built-in
 sandbox. Linux and WSL need `bash`, `bubblewrap`, `socat`, `ripgrep`, and the shared
 libraries used by those helpers and the bundled seccomp executable. The kernel

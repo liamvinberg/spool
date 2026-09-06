@@ -514,6 +514,18 @@ try {
 		.click();
 	await expect.poll(() => existsSync(join(project, "bypass"))).toBe(true);
 	await settled();
+	await send([
+		bash("spool logs home && spool url home"),
+		bash("spool open ."),
+		bash("env spool status"),
+		bash("bash -c 'spool status'"),
+		bash("printf kept > permitted-before-refusal; spool status"),
+	]);
+	await settled();
+	expect(calls()).toContain("one Spool command per tool call");
+	expect(existsSync(join(prefix, "unexpected-harness"))).toBe(false);
+	expect(readFileSync(join(project, "permitted-before-refusal"), "utf8")).toBe("kept");
+	expect(await open.count()).toBe(0);
 	await send([question]);
 	await open.waitFor();
 	await page.getByRole("button", { name: /stop.*⎋/ }).click();

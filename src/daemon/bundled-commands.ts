@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,7 @@ import type { AgentPermissions } from "../settings/registry";
 import { shotFile, shotTileFile } from "../verify";
 import type { AgentReply } from "./agent-control";
 import type { AgentEvent, AgentImage } from "./agent-events";
-import { trustedCommand } from "./bundled-command-route";
+import { SPOOL_COMMAND_GUIDANCE, trustedCommand } from "./bundled-command-route";
 import { type BundledFilePolicy, canonicalFile, inside } from "./bundled-files";
 import { runCommand, sandboxCommand } from "./bundled-sandbox";
 
@@ -17,7 +17,14 @@ export class BundledCommandPolicy {
 	readonly scratch = canonicalFile(mkdtempSync(join(tmpdir(), "spool-command-")));
 	readonly grants = new Set<string>();
 	unrestricted = false;
-	constructor(readonly files: BundledFilePolicy) {}
+	constructor(readonly files: BundledFilePolicy) {
+		// Generic shell lookup must fail here, never discover another Spool on PATH.
+		const bin = join(this.scratch, "bin");
+		mkdirSync(bin, { mode: 0o700 });
+		writeFileSync(join(bin, "spool"), `#!/bin/sh\nprintf '%s\\n' '${SPOOL_COMMAND_GUIDANCE}' >&2\nexit 126\n`, {
+			mode: 0o500,
+		});
+	}
 	close(): void {
 		rmSync(this.scratch, { recursive: true, force: true });
 	}
@@ -25,8 +32,14 @@ export class BundledCommandPolicy {
 
 /** Allowlisted process necessities only, including when access is explicitly unrestricted. */
 export function commandEnvironment(scratch: string): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { HOME: userInfo().homedir, TMPDIR: scratch, TMP: scratch, TEMP: scratch };
-	for (const key of ["PATH", "SystemRoot", "WINDIR", "LANG", "LC_ALL"])
+	const env: NodeJS.ProcessEnv = {
+		HOME: userInfo().homedir,
+		TMPDIR: scratch,
+		TMP: scratch,
+		TEMP: scratch,
+		PATH: `${join(scratch, "bin")}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+	};
+	for (const key of ["SystemRoot", "WINDIR", "LANG", "LC_ALL"])
 		if (process.env[key] !== undefined) env[key] = process.env[key];
 	return env;
 }
@@ -144,7 +157,7 @@ export class BundledCommandTurn {
 			label: "Run command",
 			parameters,
 			description:
-				"Run shell commands with writes restricted to design/, dedicated scratch and runtime temp paths. Reads and outbound web access are quiet. Request additional writable_paths explicitly. Use unsandboxed for broader browser/system access. A failed command is never rerun automatically. Exact spool verification commands are trusted and return all shot images. Isolation is tool-process filesystem containment, not complete network/application API isolation; explicitly unrestricted commands have your account's filesystem access.",
+				"Run shell commands with writes restricted to design/, dedicated scratch and runtime temp paths. Reads and outbound web access are quiet. Request additional writable_paths explicitly. Use unsandboxed for broader browser/system access. A failed command is never rerun automatically. Use one exact spool verification command per call; these are trusted and return all shot images. Other bare spool invocations are refused, including in compound or nested shell commands. Isolation is tool-process filesystem containment, not complete network/application API isolation; explicitly unrestricted commands have your account's filesystem access.",
 			execute: async (id, raw, signal) => {
 				const input = raw as Input;
 				const controller = new AbortController();
@@ -159,6 +172,7 @@ export class BundledCommandTurn {
 				try {
 					const { files, scratch } = this.policy;
 					const trusted = trustedCommand(input.command);
+					if (!trusted && /^spool(?:\s|$)/.test(input.command.trim())) throw new Error(SPOOL_COMMAND_GUIDANCE);
 					let argv: string[] = ["/bin/bash", "--noprofile", "--norc", "-c", input.command];
 					let env = commandEnvironment(scratch);
 					if (trusted) {

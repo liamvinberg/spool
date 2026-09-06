@@ -25,3 +25,6 @@ export function trustedCommand(command: string): string[] | undefined {
 	}
 	return [verb, ...args];
 }
+
+export const SPOOL_COMMAND_GUIDANCE =
+	"Use one Spool command per tool call: spool skill, shot, logs, url, selection, flows or status, with supported arguments. Bare spool invocations in shell programs are refused. Use spool url to inspect a frame in the player.";
