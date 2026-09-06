@@ -205,7 +205,7 @@ describe("skill", () => {
 
 	it("refuses an unknown topic, listing the real ones", () => {
 		expect(() => skillText("vibes")).toThrowError(SpoolError);
-		expect(() => skillText("vibes")).toThrowError(/frames, flows, scenarios, styling, verbs/);
+		expect(() => skillText("vibes")).toThrowError(/frames, flows, scenarios, styling, shaders, verbs/);
 	});
 
 	it("opens with the completeness contract and carries the fixed laws verbatim", () => {
