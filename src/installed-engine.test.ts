@@ -132,6 +132,9 @@ it("completes a deterministic journey through the clean installed host and deliv
 		restricted,
 	};
 	const prefix = makeTempDir();
+	const claudeConfig = join(prefix, ".claude");
+	mkdirSync(claudeConfig);
+	writeFileSync(join(claudeConfig, "settings.json"), '{"fixture":"preserve this configuration"}');
 	const state = join(makeTempDir(), "instance");
 	mkdirSync(state);
 	const project = realpathSync(makeTempDir());
@@ -598,9 +601,6 @@ try {
 		draft: "Legacy draft",
 	};
 	writeFileSync(join(legacyDirectory, `${legacyId}.json`), JSON.stringify(legacy));
-	const claudeConfig = join(prefix, ".claude");
-	mkdirSync(claudeConfig, { recursive: true });
-	writeFileSync(join(claudeConfig, "settings.json"), '{"fixture":"preserve this configuration"}');
 	const histories = (await fetch(`${url}/api/p/${basename(project)}/agent/threads`, {
 		headers: { "X-Spool-Control": daemon.controlToken },
 	}).then((response) => response.json())) as { threads: unknown[] };
@@ -610,9 +610,53 @@ try {
 	expect(readFileSync(join(claudeConfig, "settings.json"), "utf8")).toBe('{"fixture":"preserve this configuration"}');
 	expect(existsSync(join(prefix, "unexpected-harness"))).toBe(false);
 	expect(installedHashes()).toEqual(beforeHashes);
+	// Reopening this installation retires its old children and reads saved work without replay.
+	const previousDaemon = daemonPid;
+	const previousHost = hostPid;
+	const beforeReopen = calls();
+	expect(alive(previousDaemon)).toBe(true);
+	expect(alive(previousHost)).toBe(true);
+	await electron?.close();
+	daemonChild?.kill("SIGTERM");
+	await expect.poll(() => alive(previousDaemon), { timeout: 15_000 }).toBe(false);
+	await expect.poll(() => alive(previousHost), { timeout: 15_000 }).toBe(false);
+	if (appPath) electron = await _electron.launch({ executablePath: executable, env, timeout: 30_000 });
+	else daemonChild = spawn(executable, [cli, "serve", "--foreground"], { cwd: project, env, stdio: "ignore" });
+	await expect
+		.poll(
+			async () =>
+				fetch(`${url}/api/health`).then(
+					(response) => response.ok,
+					() => false,
+				),
+			{ timeout: 30_000 },
+		)
+		.toBe(true);
+	daemonPid = (JSON.parse(readFileSync(join(state, "daemon.json"), "utf8")) as { pid: number }).pid;
+	expect(daemonPid).not.toBe(previousDaemon);
+	const reopened = electron ? await electron.firstWindow() : await browser?.newPage();
+	if (!reopened) throw new Error("Missing reopened installed canvas");
+	if (electron) await reopened.waitForURL((address) => address.protocol === "http:", { timeout: 30_000 });
+	await reopened.goto(`${url}/p/${basename(project)}`);
+	await reopened.locator('[data-dock-glyph="agent"]').click();
+	await expect.poll(() => childHost(daemonPid), { timeout: 15_000 }).toBeDefined();
+	hostPid = childHost(daemonPid) ?? 0;
+	expect(hostPid).not.toBe(previousHost);
+	const reopenedRuntime = await attachTransport(hostPid);
+	if (appPath) expect(reopenedRuntime).toMatchObject({ executable: realpathSync(executable), electron: "43.4.1" });
+	await reopened.locator("[data-agent-rail]").getByRole("button", { name: "Choose engine and model" }).click();
+	await reopened.getByRole("button", { name: "All models", exact: true }).click();
+	await reopened.locator('[data-agent-model-row="Installed refreshed model"]').waitFor();
+	await reopened.keyboard.press("Escape");
+	expect(calls()).toBe(beforeReopen);
+	expect(readFileSync(join(project, "crash-effect"), "utf8")).toBe("effect");
+	expect(readFileSync(join(project, "outside.txt"), "utf8")).toBe("reused file grant");
+	expect(readFileSync(join(claudeConfig, "settings.json"), "utf8")).toBe('{"fixture":"preserve this configuration"}');
+	expect(existsSync(join(prefix, "unexpected-harness"))).toBe(false);
+	evidence.reopen = { previousDaemon, previousHost, daemonPid, hostPid, runtime: reopenedRuntime };
 	if (process.env.SPOOL_TEST_SHOTS) {
 		mkdirSync(process.env.SPOOL_TEST_SHOTS, { recursive: true });
-		await page.screenshot({
+		await reopened.screenshot({
 			path: join(process.env.SPOOL_TEST_SHOTS, appPath ? "installed-app.png" : "installed-npm.png"),
 		});
 	}
