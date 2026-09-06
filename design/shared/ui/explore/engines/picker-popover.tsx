@@ -33,7 +33,9 @@ export function PickerPopover({
 					transition={{ duration: still ? 0 : 0.18, ease: EASE }}
 				>
 					<motion.div
-						layout={still ? false : "size"}
+						// Height changes also move the top of this bottom-anchored surface.
+						// Size-only layout animation leaves that move out and lifts its bottom edge.
+						layout={!still}
 						className="overflow-hidden border border-border-raised bg-surface"
 						style={{ borderRadius: 8, originY: 1 }}
 						transition={{ layout: { duration: still ? 0 : 0.18, ease: EASE } }}
