@@ -17,6 +17,7 @@ import { BundledAuth } from "./bundled-auth";
 import { BUNDLED_CONNECTIONS, connectionLabel } from "./bundled-connections";
 import { BundledFilePolicy, BundledFileTurn } from "./bundled-files";
 import type { BundledReply, BundledRequest } from "./bundled-protocol";
+import { BundledQuestionTurn } from "./bundled-questions";
 import { bundledResources } from "./bundled-resources";
 import { BundledCredentialStore, privateDirectory, writePrivate } from "./bundled-store";
 
@@ -25,6 +26,7 @@ interface HeldSession {
 	manager: SessionManager;
 	session: AgentSession;
 	files: BundledFileTurn;
+	questions: BundledQuestionTurn;
 	idle?: ReturnType<typeof setTimeout>;
 }
 
@@ -180,12 +182,14 @@ export class BundledRuntime {
 				return null;
 			case "offer":
 				return this.offer(request.options);
-			case "answer":
+			case "answer": {
+				const held = this.sessions.get(this.active.get(request.turn)?.session ?? "");
 				return (
-					this.sessions
-						.get(this.active.get(request.turn)?.session ?? "")
-						?.files.answer(request.request, request.reply) ?? false
+					held?.questions.answer(request.request, request.reply) ||
+					held?.files.answer(request.request, request.reply) ||
+					false
 				);
+			}
 			case "permissions": {
 				const held = this.sessions.get(this.active.get(request.turn)?.session ?? "");
 				if (!held) throw new Error("Turn is not ready");
@@ -197,6 +201,7 @@ export class BundledRuntime {
 				if (active !== undefined) {
 					active.stopped = true;
 					this.sessions.get(active.session)?.files.stop();
+					this.sessions.get(active.session)?.questions.stop();
 					await this.sessions.get(active.session)?.session.abort();
 				}
 				return null;
@@ -233,6 +238,7 @@ export class BundledRuntime {
 				const policy = this.policies.get(ref) ?? new BundledFilePolicy(options.root, this.directory);
 				this.policies.set(ref, policy);
 				const files = new BundledFileTurn(policy, options.permissions, emit);
+				const questions = new BundledQuestionTurn(emit);
 				const { session } = await createAgentSession({
 					cwd: options.root,
 					agentDir: this.directory,
@@ -246,14 +252,15 @@ export class BundledRuntime {
 						images: { autoResize: false },
 					}),
 					noTools: "builtin",
-					tools: ["read", "write", "edit"],
-					customTools: files.tools(),
+					tools: ["read", "write", "edit", "ask_person"],
+					customTools: [...files.tools(), questions.tool()],
 					thinkingLevel: (offer.current.effort ?? "off") as ThinkingLevel,
 				});
-				held = { root: options.root, session, manager, files };
+				held = { root: options.root, session, manager, files, questions };
 				this.sessions.set(ref, held);
 			} else {
 				held.files.begin(options.permissions, emit);
+				held.questions.begin(emit);
 				await held.session.setModel(model);
 				held.session.setThinkingLevel((offer.current.effort ?? "off") as ThinkingLevel);
 			}
@@ -300,7 +307,7 @@ export class BundledRuntime {
 				version: "0.85.1",
 				permissionMode: options.permissions,
 				apiKeySource: "spool",
-				capabilities: ["read", "write", "edit"],
+				capabilities: ["read", "write", "edit", "ask_person"],
 				parent: null,
 			});
 			emit({ kind: "waiting", parent: null });
@@ -336,6 +343,7 @@ export class BundledRuntime {
 			reason = error instanceof Error ? error.message : "Bundled turn failed";
 		} finally {
 			held?.files.stop();
+			held?.questions.stop();
 			unsubscribe?.();
 			this.active.delete(id);
 			this.reserved.delete(ref);
@@ -367,6 +375,7 @@ export class BundledRuntime {
 		for (const held of this.sessions.values()) {
 			if (held.idle !== undefined) clearTimeout(held.idle);
 			held.files.stop();
+			held.questions.stop();
 			await held.session.abort();
 			this.save(held.manager);
 			held.session.dispose();

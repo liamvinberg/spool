@@ -3,13 +3,12 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { answerFits } from "./agent-control";
 import type { AgentEngine, AgentLoginProgress } from "./agent-engine";
 import type { AgentAsking, AgentEvent } from "./agent-events";
 import type { AgentOffer } from "./agent-offer";
 import type { AgentLogin } from "./agent-preflight";
 import type { AgentTurn } from "./agent-turn";
-import type { BundledReply, BundledRequest, HostOutput } from "./bundled-protocol";
+import { type BundledReply, type BundledRequest, bundledAnswerFits, type HostOutput } from "./bundled-protocol";
 import { privateDirectory } from "./bundled-store";
 
 /** Only OS necessities enter the host; provider variables and user config roots stay out. */
@@ -161,7 +160,7 @@ export class BundledHostClient {
 			},
 			answer: (request, reply) => {
 				const held = asking.get(request);
-				if (!held || !answerFits(held, reply)) return false;
+				if (!held || !bundledAnswerFits(held, reply)) return false;
 				asking.delete(request);
 				void this.request({ kind: "answer", turn: id, request, reply }).catch(() => stop());
 				return true;
