@@ -675,7 +675,7 @@ function NumberControl({
 						aria-valuemin={Number.isFinite(min) ? min : undefined}
 						aria-valuemax={Number.isFinite(max) ? max : undefined}
 						inputMode="decimal"
-						value={draft ?? String(Math.round(value * 100) / 100)}
+						value={draft ?? String(value)}
 						onFocus={(e) => {
 							onBegin();
 							e.target.select();
