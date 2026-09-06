@@ -206,6 +206,31 @@ describe("the agent's words arriving", () => {
 		expect(shown(host)).toEqual(["one", "two", "three"]);
 	});
 
+	it("releases later paragraphs when time passes between render and timer setup", () => {
+		clock();
+		const { host, redraw } = draw(paragraphs("", false));
+		const current = performance.now.bind(performance);
+		// Rendering and effect setup are separate clock reads. The timer API
+		// truncates the resulting fractional delay to a whole millisecond.
+		const now = vi
+			.spyOn(performance, "now")
+			.mockReturnValueOnce(current())
+			.mockImplementation(() => current() + 0.25);
+		onTestFinished(() => {
+			now.mockRestore();
+		});
+		redraw(paragraphs("one\n\ntwo\n\nthree\n\nfour", false));
+		const first = host.querySelector("[data-agent-paragraph]");
+		expect(shown(host)).toEqual(["one"]);
+		wait(UNIT_GAP_MS - 1);
+		expect(shown(host)).toEqual(["one"]);
+		wait(1);
+		expect(shown(host)).toEqual(["one", "two"]);
+		wait(UNIT_GAP_MS);
+		expect(shown(host)).toEqual(["one", "two", "three"]);
+		expect(host.querySelector("[data-agent-paragraph]")).toBe(first);
+	});
+
 	it("keeps a fence whole while it arrives", () => {
 		clock();
 		const { host, redraw } = draw(paragraphs("", false));

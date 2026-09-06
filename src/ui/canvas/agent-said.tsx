@@ -297,7 +297,10 @@ export function Paragraphs({
 	// wake exactly when the next held paragraph is due, and not before
 	useEffect(() => {
 		if (next === null) return;
-		const timer = window.setTimeout(() => wake((count) => count + 1), Math.max(0, next - performance.now()));
+		const timer = window.setTimeout(
+			() => wake((count) => count + 1),
+			Math.max(0, Math.ceil(next - performance.now())),
+		);
 		return () => window.clearTimeout(timer);
 	}, [next]);
 
