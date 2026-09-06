@@ -1,46 +1,57 @@
-# spool
+[![spool. A canvas for working things out. Sleeve on the spool canvas.](https://raw.githubusercontent.com/liamvinberg/spool/main/docs/assets/spool.png)](https://spool.page)
 
-A canvas where the frames are alive.
+[Website and live demo](https://spool.page) · [Download for Mac](https://github.com/liamvinberg/spool/releases/latest/download/Spool.dmg) · [Contributing](CONTRIBUTING.md)
 
-Agent-authored TSX frames on an infinite canvas: arrange them spatially, link them into walkable flows, and feel an app (interactions, motion, state, real inputs) before it exists. Code is the document; the canvas is a projection of it. A design space is just a `design/` folder inside your product repo: local-first, git-tracked, no cloud.
+Design websites, apps, and presentations with your agent. Try them live. Keep what works.
 
-Home: [spool.page](https://spool.page). Pre-1.0: published, dogfooded daily, and still moving.
+Free and open source. Runs locally. Pre-1.0, actively developed and used every day.
 
-## Install
+## Get spool
+
+### Mac app
+
+[Download Spool for Mac](https://github.com/liamvinberg/spool/releases/latest/download/Spool.dmg)
+
+Apple silicon, macOS 14 or later. Includes everything you need and updates itself.
+
+### Command line
 
 ```sh
 npm i -g spool.page
-```
-
-If your npm setup blocks dependency install scripts, use the hardened form below. It permits only esbuild's required install script.
-
-```sh
-npm i -g spool.page --allow-scripts=esbuild
-```
-
-Node 22+, and the canvas wants Chrome (WebKit renders transformed iframes blurry). macOS and Linux; on Windows, use WSL. `spool autostart` is launchd-backed, so it is macOS-only.
-
-Or skip Node: [Spool.dmg](https://github.com/liamvinberg/spool/releases/latest/download/Spool.dmg) is the same canvas as a Mac app, Apple silicon, macOS 14 or later. It carries its own copy of `spool.page`, shares the daemon with the CLI, and updates itself.
-
-```sh
 cd your-product
-spool             # open your canvas in the browser; --no-open just prints its address
-spool init        # scaffold design/, register the project, and open its tab
-spool open        # or: register an existing project and open its tab
-spool remove      # forget the exact registered root; project files stay untouched
-spool serve       # daemon at http://localhost:7766 — any spool command starts it too
-spool autostart   # start at login (launchd); spool autostart off removes it
+spool init
 ```
 
-Open the canvas in Chrome (install as app for the dock icon), or open [local.spool.page](https://local.spool.page), which listens for the daemon on your own machine and takes you there. Nothing you work on reaches it — it is a door, not a host.
+Node 22+. macOS and Linux; on Windows, use WSL. Open the canvas in Chrome.
 
-Frames are authored by your agent: `spool skill` prints the complete contract, verify verbs (`spool shot <frame>` and friends) included, and `spool init` writes the signposts that point agents at it.
+If your npm setup blocks dependency install scripts, use `npm i -g spool.page --allow-scripts=esbuild` to permit esbuild’s required install script.
+
+## Work with your agent
+
+Ask your agent to run `spool skill`, then describe what you want to make. Your agent writes TSX frames into your project’s `design/` folder, and spool shows the result on the canvas.
+
+- **Try it live.** Click buttons, fill in forms, and walk through flows between frames.
+- **Compare directions.** Put variations side by side, then keep the parts that work.
+- **Keep your files.** Frames and shared components live in your project. Use Git to track changes.
+
+## Commands
+
+```sh
+spool             # open your canvas in the browser
+spool init        # create design/, register the project, and open its tab
+spool open        # register an existing project and open its tab
+spool remove      # forget the registered root; project files stay untouched
+spool serve       # start the daemon; any spool command starts it too
+spool autostart   # start at login on macOS; spool autostart off removes it
+```
+
+`spool --no-open` prints the canvas address. The released daemon uses `http://localhost:7766` by default. [local.spool.page](https://local.spool.page) finds the daemon on your machine and takes you there.
 
 ## Develop
 
 ```sh
 pnpm install
-pnpm dev <command>   # the checkout cli — own state dir (~/.spool-dev), own port (7767)
+pnpm dev <command>   # the checkout cli. own state dir (~/.spool-dev), own port (7767)
 ```
 
 Real projects run the released version; a checkout daemon serves beside it on its own port and state dir (the `dev` script sets `SPOOL_DIR` and `SPOOL_PORT`). Shipping: changesets on main feed the release PR; merging it is the one human gate, and the publish workflow re-runs the gates, then npm trusted publishing releases `spool.page`.
