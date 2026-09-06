@@ -6,7 +6,7 @@ import { ProjectEmpty } from "./project-empty";
 
 describe("empty project title", () => {
 	it("commits once on Enter, trims the name, and cancels Escape without a rename", async () => {
-		const rename = vi.fn<(name: string) => Promise<void>>().mockResolvedValue();
+		const rename = vi.fn<(name: string) => Promise<string | null>>().mockResolvedValue("coffee");
 		const input = mount(rename);
 		await act(async () => {
 			input.focus();
@@ -25,7 +25,7 @@ describe("empty project title", () => {
 
 	it("keeps the current name and explains a refused folder rename", async () => {
 		const rename = vi
-			.fn<(name: string) => Promise<void>>()
+			.fn<(name: string) => Promise<string | null>>()
 			.mockRejectedValue(new Error("That folder already exists."));
 		const input = mount(rename);
 		await act(async () => {
@@ -36,9 +36,32 @@ describe("empty project title", () => {
 		expect(input.value).toBe("untitled");
 		expect(document.querySelector('[role="alert"]')?.textContent).toBe("That folder already exists.");
 	});
+
+	it("restores the saved name when the confirmation is cancelled", async () => {
+		const input = mount(vi.fn().mockResolvedValue(null));
+		await act(async () => {
+			input.focus();
+			input.value = "coffee";
+			input.blur();
+		});
+		expect(input.value).toBe("untitled");
+	});
+
+	it("selects the name only when asked for a newly created project", () => {
+		const focused = vi.fn();
+		const input = mount(vi.fn().mockResolvedValue(null), true, focused);
+		expect(document.activeElement).toBe(input);
+		expect(input.selectionStart).toBe(0);
+		expect(input.selectionEnd).toBe("untitled".length);
+		expect(focused).toHaveBeenCalledOnce();
+	});
 });
 
-function mount(onRename: (name: string) => Promise<void>): HTMLInputElement {
+function mount(
+	onRename: (name: string) => Promise<string | null>,
+	focusName = false,
+	onNameFocused = vi.fn(),
+): HTMLInputElement {
 	const host = document.createElement("div");
 	document.body.append(host);
 	const root = createRoot(host);
@@ -46,7 +69,17 @@ function mount(onRename: (name: string) => Promise<void>): HTMLInputElement {
 		act(() => root.unmount());
 		host.remove();
 	});
-	act(() => root.render(createElement(ProjectEmpty, { project: "untitled", root: "/tmp/untitled", onRename })));
+	act(() =>
+		root.render(
+			createElement(ProjectEmpty, {
+				project: "untitled",
+				root: "/tmp/untitled",
+				onRename,
+				focusName,
+				onNameFocused,
+			}),
+		),
+	);
 	const input = host.querySelector("input");
 	if (!input) throw new Error("Missing project name");
 	return input;

@@ -24,6 +24,7 @@ import { HotkeySheet } from "./hotkey-sheet";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { EdgeIcon, HomeIcon } from "./icons";
 import { FolderPicker, type ProjectPickerMode } from "./picker";
+import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings, useWriteSetting } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
 import { type TabProject, TabStrip } from "./tab-strip";
@@ -65,6 +66,14 @@ export function App() {
 	const writeSetting = useWriteSetting();
 	const [starting, setStarting] = useState(false);
 	const startingRef = useRef(false);
+	const [namingRoot, setNamingRoot] = useState<string | null>(null);
+	const [renameRequest, setRenameRequest] = useState<{
+		project: TabProject;
+		initialName: string;
+		resolve: (name: string | null) => void;
+	} | null>(null);
+	const requestRename = (project: TabProject, initialName = project.name) =>
+		new Promise<string | null>((resolve) => setRenameRequest({ project, initialName, resolve }));
 	const [startNotice, setStartNotice] = useState<string | null>(null);
 	const [chrome, setChrome] = useState<CanvasChrome | null>(null);
 	const [pendingForget, setPendingForget] = useState<TabProject | null>(null);
@@ -439,6 +448,7 @@ export function App() {
 			const outcome = await startProject();
 			if (outcome.kind === "opened") {
 				setPicking(false);
+				setNamingRoot(outcome.root);
 				openTab(outcome);
 			} else if (outcome.kind === "error") setStartNotice(outcome.message);
 		} finally {
@@ -447,7 +457,8 @@ export function App() {
 		}
 	};
 
-	const canvasActive = focusedTab !== undefined && chrome !== null && !picking && !keysOpen && !settingsOpen;
+	const canvasActive =
+		focusedTab !== undefined && chrome !== null && !picking && !keysOpen && !settingsOpen && renameRequest === null;
 	useEffect(() => {
 		appWindow?.setCanvasActive(canvasActive);
 		return () => appWindow?.setCanvasActive(false);
@@ -539,6 +550,7 @@ export function App() {
 						forgetting={pendingForget?.root ?? null}
 						onOpenProject={(project) => openTab(project)}
 						onForgetProject={(project) => stageForget(project)}
+						onRenameProject={(project) => void requestRename(project)}
 					/>
 				) : (
 					<ProjectCanvas
@@ -548,11 +560,9 @@ export function App() {
 						onChrome={setChrome}
 						onSettings={openSettings}
 						onFolder={() => setPicking("folder")}
-						onRename={async (name) => {
-							const renamed = await renameProject(focusedTab.root, name);
-							remapProject(focusedTab.root, renamed);
-							void refetch();
-						}}
+						focusName={namingRoot === focusedTab.root}
+						onNameFocused={() => setNamingRoot(null)}
+						onRename={(name) => requestRename(focusedTab, name)}
 					/>
 				)}
 			</main>
@@ -588,6 +598,23 @@ export function App() {
 						onClose={() => setPicking(false)}
 					/>
 				</div>
+			)}
+
+			{renameRequest !== null && (
+				<RenameProjectDialog
+					project={renameRequest.project}
+					initialName={renameRequest.initialName}
+					onRename={async (name) => {
+						const renamed = await renameProject(renameRequest.project.root, name);
+						remapProject(renameRequest.project.root, renamed);
+						renameRequest.resolve(renamed.name);
+						void refetch();
+					}}
+					onClose={() => {
+						renameRequest.resolve(null);
+						setRenameRequest(null);
+					}}
+				/>
 			)}
 
 			{keysOpen && <HotkeySheet onClose={() => setKeysOpen(false)} />}

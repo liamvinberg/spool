@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EmptyState } from "./empty-state";
 import { ArrowRightIcon, RibbonMark } from "./icons";
 import "./project-empty.css";
@@ -9,12 +9,23 @@ export function ProjectEmpty({
 	root,
 	onRename,
 	onFolder,
+	focusName = false,
+	onNameFocused,
 }: {
 	project: string;
+	focusName?: boolean | undefined;
+	onNameFocused?: (() => void) | undefined;
 	root?: string | undefined;
-	onRename?: ((name: string) => Promise<void>) | undefined;
+	onRename?: ((name: string) => Promise<string | null>) | undefined;
 	onFolder?: (() => void) | undefined;
 }) {
+	const inputRef = useRef<HTMLInputElement>(null);
+	useEffect(() => {
+		if (!focusName) return;
+		inputRef.current?.focus();
+		inputRef.current?.select();
+		onNameFocused?.();
+	}, [focusName, onNameFocused]);
 	const [draft, setDraft] = useState(project);
 	const [renaming, setRenaming] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
@@ -37,8 +48,8 @@ export function ProjectEmpty({
 		setRenaming(true);
 		setNotice(null);
 		try {
-			await onRename(name);
-			setDraft(name);
+			const renamed = await onRename(name);
+			setDraft(renamed ?? project);
 			setCopied(false);
 		} catch (error) {
 			setDraft(project);
@@ -88,6 +99,7 @@ export function ProjectEmpty({
 		>
 			<div className="project-empty-title">
 				<input
+					ref={inputRef}
 					aria-label="Rename project"
 					value={draft}
 					readOnly={renaming || onRename === undefined}

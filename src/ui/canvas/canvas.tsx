@@ -312,10 +312,14 @@ export function ProjectCanvas({
 	onSettings,
 	onRename,
 	onFolder,
+	focusName,
+	onNameFocused,
 }: {
 	project: string;
 	root?: string;
-	onRename?: ((name: string) => Promise<void>) | undefined;
+	focusName?: boolean | undefined;
+	onNameFocused?: (() => void) | undefined;
+	onRename?: ((name: string) => Promise<string | null>) | undefined;
 	onFolder?: (() => void) | undefined;
 	onChrome: (chrome: CanvasChrome | null) => void;
 	/** the dock's cog (#282): the sheet is the shell's, so the door only asks */
@@ -4816,7 +4820,14 @@ export function ProjectCanvas({
 				<BootCurtain ready={loaded} />
 				{projectEmpty && (
 					<div data-canvas-empty="" className="pointer-events-none absolute inset-0">
-						<ProjectEmpty project={project} root={root} onRename={onRename} onFolder={onFolder} />
+						<ProjectEmpty
+							project={project}
+							root={root}
+							onRename={onRename}
+							onFolder={onFolder}
+							focusName={focusName}
+							onNameFocused={onNameFocused}
+						/>
 					</div>
 				)}
 				{/* one page nobody has written into (#265), which is a different fact

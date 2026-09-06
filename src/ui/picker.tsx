@@ -89,7 +89,7 @@ export function FolderPicker({
 	const [at, setAt] = useState(0);
 	const [offerInit, setOfferInit] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
-	const [naming, setNaming] = useState(initial === "new");
+	const [naming, setNaming] = useState(false);
 	const [name, setName] = useState("");
 	const [busy, setBusy] = useState(false);
 	const dialogRef = useRef<HTMLDialogElement>(null);
@@ -97,15 +97,25 @@ export function FolderPicker({
 	const nameRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 
+	const [browsing, setBrowsing] = useState(false);
+	const browseRevision = useRef(0);
 	const browse = useCallback(async (path?: string) => {
+		const revision = ++browseRevision.current;
+		setBrowsing(true);
 		setOfferInit(false);
 		setNotice(null);
 		setQuery("");
 		setFound(null);
 		setAt(0);
-		const listing = await browseDirectory(path);
-		if (listing === undefined) return;
+		const listing = await browseDirectory(path).catch(() => undefined);
+		if (revision !== browseRevision.current) return;
+		setBrowsing(false);
+		if (listing === undefined) {
+			setNotice("Could not open this folder. Choose another folder or try again.");
+			return;
+		}
 		setListing(listing);
+		inputRef.current?.focus();
 		// the first browse is home, and home is what every path on screen is printed against
 		if (path === undefined) {
 			setHome(listing.path);
@@ -194,7 +204,7 @@ export function FolderPicker({
 			const row = flat[index];
 			if (row === undefined) return;
 			setAt(index);
-			if (mode !== "location" && row.isProject) void openAt(row.path);
+			if (mode === "folder" && row.isProject) void openAt(row.path);
 			else void browse(row.path);
 		},
 		[flat, openAt, browse, mode],
@@ -218,7 +228,7 @@ export function FolderPicker({
 	};
 
 	const beginNaming = () => {
-		if (listing === null || mode === "location") return;
+		if (listing === null || browsing || mode === "location") return;
 		setMode("new");
 		setOfferInit(false);
 		setNotice(null);
@@ -227,18 +237,23 @@ export function FolderPicker({
 
 	const stopNaming = () => {
 		setNaming(false);
-		setName("");
+		setNotice(null);
 	};
 
+	const creating = useRef(false);
 	const create = async () => {
 		const typed = name.trim();
-		if (listing === null || busy || typed === "") return;
+		if (listing === null || browsing || creating.current || typed === "") return;
+		creating.current = true;
 		setBusy(true);
 		try {
 			const outcome = await createProjectAt(listing.path, typed);
 			if (outcome.kind === "opened") onOpened({ root: outcome.root, name: outcome.name });
 			else if (outcome.kind === "error") setNotice(outcome.message);
+		} catch {
+			setNotice("Could not create the project. Reconnect and try again.");
 		} finally {
+			creating.current = false;
 			setBusy(false);
 		}
 	};
@@ -247,12 +262,15 @@ export function FolderPicker({
 		return attachHotkeyLayer({
 			scope: "picker",
 			handlers: {
-				"picker.close": () => onClose(),
+				"picker.close": () => {
+					if (!busy) onClose();
+				},
 			} satisfies Record<HotkeyIdFor<"picker">, HotkeyHandler>,
 		});
-	}, [onClose]);
+	}, [onClose, busy]);
 
 	const onKeyDown = (event: React.KeyboardEvent) => {
+		if (event.nativeEvent.isComposing) return;
 		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
 			// the "+" from the keyboard: a key born in the field never reaches the hotkey layer
 			event.preventDefault();
@@ -266,7 +284,7 @@ export function FolderPicker({
 		} else if (event.key === "Enter") {
 			event.preventDefault();
 			if (offerInit) void initHere();
-			else if (picked === undefined && !searching && mode !== "location") void openAt(listing?.path ?? "");
+			else if (picked === undefined && !searching && mode === "folder") void openAt(listing?.path ?? "");
 			else enter(at);
 		} else if (event.key === "ArrowRight") {
 			// the one thing Enter cannot say: go *into* a project rather than open it
@@ -288,6 +306,7 @@ export function FolderPicker({
 	};
 
 	const onNameKeyDown = (event: React.KeyboardEvent) => {
+		if (busy || event.nativeEvent.isComposing) return;
 		if (event.key === "Enter") {
 			event.preventDefault();
 			void create();
@@ -301,23 +320,49 @@ export function FolderPicker({
 
 	return (
 		<div className="absolute inset-0 z-20 flex justify-center px-8" style={{ paddingTop: "18vh" }}>
-			<button type="button" aria-label="Close" className="absolute inset-0 bg-bg/70" onClick={onClose} />
+			<button
+				type="button"
+				aria-label="Close"
+				className="absolute inset-0 bg-bg/70"
+				disabled={busy}
+				onClick={onClose}
+			/>
 			<dialog
 				ref={dialogRef}
 				open
 				onKeyDown={(event) => {
+					if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+					if (event.key === "Escape") {
+						event.preventDefault();
+						event.stopPropagation();
+						if (busy) return;
+						if (naming) stopNaming();
+						else onClose();
+						return;
+					}
+					if (event.key === "Tab") {
+						const controls = Array.from(
+							event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled)"),
+						).filter((control) => !control.closest("[hidden]"));
+						const focused = document.activeElement;
+						const index = focused instanceof HTMLElement ? controls.indexOf(focused) : -1;
+						event.preventDefault();
+						controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length]?.focus();
+						return;
+					}
 					if (mode !== "start") return;
 					const buttons = Array.from(
 						event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"),
 					).filter((button) => !button.closest("[hidden]"));
 					const focused = document.activeElement;
 					const index = focused instanceof HTMLButtonElement ? buttons.indexOf(focused) : -1;
-					if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Tab") {
+					if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 						event.preventDefault();
-						const delta = event.key === "ArrowUp" || (event.key === "Tab" && event.shiftKey) ? -1 : 1;
+						const delta = event.key === "ArrowUp" ? -1 : 1;
 						buttons[(index + delta + buttons.length) % buttons.length]?.focus();
 					}
 				}}
+				aria-modal="true"
 				aria-label={
 					mode === "start"
 						? "New project"
@@ -325,15 +370,10 @@ export function FolderPicker({
 							? "Save projects in"
 							: naming
 								? "Name the new project"
-								: "Open a folder"
+								: mode === "new"
+									? "Choose a project folder"
+									: "Open a folder"
 				}
-				// a caret that never leaves: clicking the panel is never clicking away from the field
-				onMouseDown={(event) => {
-					if (mode === "start") return;
-					const field = naming ? nameRef.current : inputRef.current;
-					if (event.target !== field) event.preventDefault();
-					field?.focus();
-				}}
 				className="pj-native-picker relative m-0 flex h-fit max-h-[70vh] w-[520px] flex-col overflow-hidden rounded-lg border border-border-raised bg-surface p-0 text-text"
 			>
 				{mode === "start" ? (
@@ -347,7 +387,7 @@ export function FolderPicker({
 								</span>
 								<ArrowRightIcon className="home-arrow" />
 							</button>
-							<button type="button" onClick={beginNaming} disabled={listing === null}>
+							<button type="button" onClick={() => setMode("new")}>
 								<FolderIcon />
 								<span>
 									<strong>New project in a folder</strong>
@@ -382,6 +422,7 @@ export function FolderPicker({
 							autoComplete="off"
 							placeholder="name"
 							aria-label="Project name"
+							disabled={busy}
 							onChange={(event) => {
 								setName(event.target.value);
 								setNotice(null);
@@ -409,7 +450,7 @@ export function FolderPicker({
 							onKeyDown={onKeyDown}
 							className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none"
 						/>
-						{mode !== "location" && (
+						{mode === "folder" && (
 							<button
 								type="button"
 								onClick={beginNaming}
@@ -437,11 +478,7 @@ export function FolderPicker({
 									<span className="text-text">{name.trim()}</span>
 								</span>
 								<span className="flex-1" />
-								{notice === null ? (
-									<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">↵ creates</span>
-								) : (
-									<span className="shrink-0 truncate font-mono text-2xs text-thread leading-3">{notice}</span>
-								)}
+								<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">↵ creates</span>
 							</div>
 						) : (
 							<>
@@ -501,6 +538,29 @@ export function FolderPicker({
 						<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface via-surface/80 to-transparent" />
 					) : null}
 				</div>
+				{naming && notice !== null && (
+					<p role="alert" className="px-4 pt-2 text-sm text-thread">
+						{notice}
+					</p>
+				)}
+				{mode === "new" && (
+					<div className="pj-location-footer">
+						<code title={listing?.path}>
+							{listing === null || home === null ? "" : shortPath(listing.path, home)}
+						</code>
+						<button type="button" className="home-action" disabled={busy} onClick={naming ? stopNaming : onClose}>
+							{naming ? "Change folder" : "Cancel"}
+						</button>
+						<button
+							type="button"
+							className="home-action home-action-primary"
+							disabled={listing === null || browsing || busy || (naming && name.trim() === "")}
+							onClick={naming ? () => void create() : beginNaming}
+						>
+							{naming ? (busy ? "Creating…" : "Create project") : "Use this folder"}
+						</button>
+					</div>
+				)}
 				{mode === "location" && (
 					<div className="pj-location-footer">
 						<code>{listing === null || home === null ? "" : shortPath(listing.path, home)}</code>
@@ -510,7 +570,7 @@ export function FolderPicker({
 						<button
 							type="button"
 							className="home-action home-action-primary"
-							disabled={listing === null || busy}
+							disabled={listing === null || browsing || busy}
 							onClick={() => {
 								if (listing === null || busy || onLocation === undefined) return;
 								setBusy(true);
