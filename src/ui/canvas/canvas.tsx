@@ -3129,6 +3129,8 @@ export function ProjectCanvas({
 		const el = viewportRef.current;
 		if (el === null) return;
 		const onWheel = (event: WheelEvent) => {
+			// Leave the finder's native list scrolling alone before cancelling the wheel.
+			if (findingRef.current) return;
 			event.preventDefault();
 			stopAnimation();
 			setMenu(null);
@@ -3450,7 +3452,7 @@ export function ProjectCanvas({
 	};
 
 	const onPointerDown = (event: React.PointerEvent) => {
-		if (exportDialogRef.current !== null) return;
+		if (findingRef.current || exportDialogRef.current !== null) return;
 		const cam = cameraRef.current;
 		if (cam === null || event.button === 2) return;
 		stopAnimation();
