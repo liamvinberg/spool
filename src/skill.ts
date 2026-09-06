@@ -156,7 +156,7 @@ The document's baseline: preflight (the same zero a product starts from), tokens
 	shaders:
 		() => `Shaders run inside an ordinary TSX frame's <canvas>. Put reusable effects in shared/ui/, with props for their inputs, so the component can move into the product. Frame and library imports follow the frames topic.
 
-Choose the interaction from the brief before choosing its inputs: what the person does, what changes in the scene, and what happens when input stops. Ambient effects can run without input. Share rendering setup where useful; each effect keeps the behavior its concept needs. Verify that behavior in the live frame.
+Choose the interaction from the brief before choosing its inputs: what the person does, what changes in the scene, and what happens when input stops. Ambient effects can run without input. Share rendering setup where useful; each effect keeps the behavior its concept needs. Verify that behavior and its response timing in the live frame. If interaction feels sluggish, measure shader draws per animation callback and input-to-shader delay separately.
 
 Choose the rendering path for the effect:
   - GLSL: shader text passed to browser WebGL or Three.js WebGLRenderer/ShaderMaterial.
