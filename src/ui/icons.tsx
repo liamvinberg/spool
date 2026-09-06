@@ -15,8 +15,13 @@ export function RibbonMark({ className }: { className?: string }) {
 
 export function HomeIcon() {
 	return (
-		<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<path d="M2.5 7 8 2l5.5 5v6.5h-4v-4h-3v4h-4Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+		<svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+			<path
+				d="m3.5 8 6.5-5.5L16.5 8v9h-5v-5h-3v5h-5Z"
+				stroke="currentColor"
+				strokeWidth="1.45"
+				strokeLinejoin="round"
+			/>
 		</svg>
 	);
 }

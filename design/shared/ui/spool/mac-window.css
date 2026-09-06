@@ -1,0 +1,7 @@
+.mac-window > div > .app-header { padding-left: 96px; }
+.mac-window-lights { position: absolute; z-index: 30; top: 16px; left: 14px; display: flex; gap: 8px; pointer-events: none; }
+.mac-window-lights i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+.mac-window-lights i:nth-child(2) { background: #febc2e; }
+.mac-window-lights i:nth-child(3) { background: #28c840; }
+.mac-window-body > div { height: 100%; }
+.mac-window-body > div > .app-header { display: none; }

@@ -13,7 +13,6 @@ import {
 	subscribeSse,
 } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
-import { cn } from "./cn";
 import { desktopBridge } from "./desktop-bridge";
 import { desktopWindow } from "./desktop-window";
 import { ForgetToast } from "./forget-toast";
@@ -27,6 +26,7 @@ import { settingsMoved, useSettings } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
 import { type TabProject, TabStrip } from "./tab-strip";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
+import "./app-header.css";
 
 /**
  * The shell (#4/#12/#13): one top bar with a pinned Home button, one
@@ -412,23 +412,20 @@ export function App() {
 
 	return (
 		<div className="flex h-full flex-col bg-bg">
-			<header className="app-header relative z-20 flex h-11 shrink-0 items-center justify-between gap-4 border-border border-b bg-bg px-4">
-				<div className="flex h-full min-w-0 flex-1 items-center gap-2">
-					<button
-						type="button"
-						className={cn(
-							"flex h-[26px] shrink-0 items-center gap-2 rounded-md border px-2 text-base leading-none",
-							focusedTab === undefined
-								? "border-border-raised bg-raised font-medium text-text"
-								: "border-transparent text-muted hover:bg-surface hover:text-text",
-						)}
-						onClick={() => focusProject(null)}
-						aria-current={focusedTab === undefined ? "page" : undefined}
-						title="Home"
-					>
-						<HomeIcon />
-						<span>Home</span>
-					</button>
+			<header className="app-header relative z-20 flex h-11 shrink-0 items-center justify-between gap-[18px] bg-bg px-4">
+				<div className="flex h-full min-w-0 flex-1 items-center">
+					<div className="app-home-zone">
+						<button
+							type="button"
+							className="app-home"
+							onClick={() => focusProject(null)}
+							aria-current={focusedTab === undefined ? "page" : undefined}
+							title="Home"
+						>
+							<HomeIcon />
+							<span>Home</span>
+						</button>
+					</div>
 
 					<TabStrip
 						tabs={tabs}

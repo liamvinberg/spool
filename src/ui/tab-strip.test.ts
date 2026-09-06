@@ -60,6 +60,33 @@ describe("the tab strip", () => {
 			host.querySelectorAll("button")[0]?.click();
 		});
 		expect(onFocus).not.toHaveBeenCalled();
+
+		// Keyboard activation remains available after a pointer drag.
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+			host.querySelectorAll("button")[0]?.click();
+		});
+		expect(onFocus).toHaveBeenCalledWith("/w/alpha");
+	});
+
+	it.each(["dragging", "settling"])("does not overwrite a changed session while %s", async (phase) => {
+		const onReorder = vi.fn();
+		const { host, rerender } = await render({ onReorder });
+		place(host);
+		await act(async () => {
+			tabOf(host, 0)?.dispatchEvent(
+				new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 5, clientX: 50 }),
+			);
+			window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 5, clientX: 170 }));
+			if (phase === "settling") window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 5, clientX: 170 }));
+		});
+		// Same number of tabs, different identities: length alone cannot detect this.
+		await rerender({ tabs: [...tabs.slice(0, 2), { root: "/w/delta", name: "delta" }] });
+		await act(async () => {
+			if (phase === "dragging") window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 5, clientX: 170 }));
+			await new Promise((resolve) => setTimeout(resolve, 260));
+		});
+		expect(onReorder).not.toHaveBeenCalled();
 	});
 
 	it("leaves the order alone when the drag never reaches the next tab", async () => {
@@ -137,18 +164,21 @@ async function render(props: Partial<Parameters<typeof TabStrip>[0]> = {}) {
 	document.body.append(host);
 	const root = createRoot(host);
 	mounted.push({ root, host });
-	await act(async () => {
-		root.render(
-			createElement(TabStrip, {
-				tabs,
-				focused: "/w/alpha",
-				onFocus: () => {},
-				onClose: () => {},
-				onReorder: () => {},
-				onPick: () => {},
-				...props,
-			}),
-		);
-	});
-	return { host };
+	const rerender = async (next: Partial<Parameters<typeof TabStrip>[0]> = {}) =>
+		act(async () => {
+			root.render(
+				createElement(TabStrip, {
+					tabs,
+					focused: "/w/alpha",
+					onFocus: () => {},
+					onClose: () => {},
+					onReorder: () => {},
+					onPick: () => {},
+					...props,
+					...next,
+				}),
+			);
+		});
+	await rerender();
+	return { host, rerender };
 }
