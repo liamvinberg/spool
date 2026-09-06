@@ -3,3 +3,40 @@
  * Crossfade is the default. For morphs, give elements a shared
  * view-transition-name in their frames and style ::view-transition-* here.
  */
+
+/* The landing-demo studies keep their photograph, map and poster in place between screens. */
+::view-transition-group(elsewhere-coast),
+::view-transition-group(elsewhere-header),
+::view-transition-group(common-map),
+::view-transition-group(common-header),
+::view-transition-group(common-photo-0),
+::view-transition-group(common-photo-1),
+::view-transition-group(common-photo-2),
+::view-transition-group(offprint-poster),
+::view-transition-group(offprint-header) {
+	animation-duration: 240ms;
+	animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+::view-transition-old(offprint-poster) {
+	display: none;
+}
+::view-transition-new(offprint-poster) {
+	animation: none;
+	height: 100%;
+	object-fit: fill;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	::view-transition-group(elsewhere-coast),
+	::view-transition-group(elsewhere-header),
+	::view-transition-group(common-map),
+	::view-transition-group(common-header),
+	::view-transition-group(common-photo-0),
+	::view-transition-group(common-photo-1),
+	::view-transition-group(common-photo-2),
+	::view-transition-group(offprint-poster),
+	::view-transition-group(offprint-header) {
+		animation-duration: 0s;
+	}
+}

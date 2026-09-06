@@ -1,0 +1,15 @@
+/* Fit the authored canvas before hydration. tan(atan2()) is the unitless ratio
+ * of the container width to the authored width, supported across browsers. */
+.sr-app[data-app-surface],
+.dl-page .sg-product {
+	container-type: inline-size;
+}
+.sr-app[data-app-surface] > .sr-app-stage {
+	transform: scale(tan(atan2(100cqw, 1600px)));
+}
+.dl-page .sg-product {
+	aspect-ratio: 3 / 2;
+}
+.dl-page .sg-product-inner {
+	transform: scale(tan(atan2(100cqw, 1200px)));
+}

@@ -1,125 +1,216 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProjectCard } from "./api";
+import { EmptyFramesIcon, EmptyState } from "./empty-state";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import type { HotkeyIdFor } from "./hotkeys";
-import { CloseIcon, DotsIcon, SearchIcon } from "./icons";
+import { ArrowRightIcon, CloseIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark, SearchIcon } from "./icons";
+import { ProjectLocation } from "./project-location";
 import { Thumbnail } from "./thumbnail";
-
-/**
- * Home (#13 screens v1): registry cards from the thumbnail caches. The brand
- * lockup in the bar is the door here; the bar's "+" opens the folder picker.
- * A card's own menu forgets the project — hover-revealed, because the registry
- * is the thing you manage least often on a screen that is mostly a door.
- */
+import "./home.css";
 
 export function Home({
 	projects,
+	loading = false,
 	forgetting = null,
 	onOpenProject,
 	onForgetProject,
+	onStart,
+	onFolder,
+	onChangeLocation,
+	location,
+	starting = false,
+	notice,
 }: {
 	projects: ProjectCard[];
-	/** root staged for removal: hidden here, still in the registry until the toast closes */
+	loading?: boolean;
 	forgetting?: string | null;
 	onOpenProject: (project: { root: string; name: string }) => void;
 	onForgetProject: (project: { root: string; name: string }) => void;
+	onStart: () => void;
+	onFolder: () => void;
+	onChangeLocation: () => void;
+	location: string;
+	starting?: boolean;
+	notice?: string | null;
 }) {
 	const [query, setQuery] = useState("");
+	const [sort, setSort] = useState("Recent");
 	const [menuRoot, setMenuRoot] = useState<string | null>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
-
 	const registered = projects.filter((project) => project.root !== forgetting);
 	const needle = query.trim().toLowerCase();
-	const visible =
-		needle === ""
-			? registered
-			: registered.filter(
-					(project) => project.name.toLowerCase().includes(needle) || project.root.toLowerCase().includes(needle),
-				);
-
-	useEffect(() => {
-		return attachHotkeyLayer({
-			scope: "home",
-			handlers: {
-				"home.close-menu": () => setMenuRoot(null),
-				// "/" is the filter's door; dispatch already leaves typing alone
-				"home.search": (event) => {
-					event?.preventDefault();
-					searchRef.current?.focus();
-				},
-			} satisfies Record<HotkeyIdFor<"home">, HotkeyHandler>,
-		});
-	}, []);
-
+	const visible = registered
+		.filter((project) => project.name.toLowerCase().includes(needle) || project.root.toLowerCase().includes(needle))
+		.sort((a, b) =>
+			sort === "Name" ? a.name.localeCompare(b.name) : Date.parse(b.openedAt) - Date.parse(a.openedAt),
+		);
+	useEffect(
+		() =>
+			attachHotkeyLayer({
+				scope: "home",
+				handlers: {
+					"home.close-menu": () => setMenuRoot(null),
+					"home.search": (event) => {
+						event?.preventDefault();
+						searchRef.current?.focus();
+					},
+				} satisfies Record<HotkeyIdFor<"home">, HotkeyHandler>,
+			}),
+		[],
+	);
 	return (
-		<div className="h-full overflow-y-auto bg-bg">
-			<div className="flex flex-col gap-6 px-16 py-12">
-				<div className="flex w-full items-center justify-between">
-					<h1 className="font-semibold text-lg text-text tracking-tight leading-lg">Projects</h1>
-					<div className="flex items-center gap-3.5">
-						{projects.length > 0 && (
-							<label className="flex h-7 w-[224px] items-center gap-2 rounded-md border border-border bg-surface px-2.5 focus-within:border-border-raised">
-								<SearchIcon className="shrink-0 text-muted" />
-								<input
-									ref={searchRef}
-									type="text"
-									value={query}
-									onChange={(event) => setQuery(event.target.value)}
-									placeholder="Search projects"
-									aria-label="Search projects"
-									className="w-full bg-transparent font-mono text-text text-xs leading-xs outline-none placeholder:text-muted"
-								/>
-								{query === "" ? (
-									<span className="shrink-0 font-mono text-2xs text-muted leading-none">/</span>
-								) : (
-									<button
-										type="button"
-										className="flex shrink-0 items-center text-muted hover:text-text"
-										onClick={() => setQuery("")}
-										title="Clear search"
-									>
-										<CloseIcon />
+		<div className="pj-body h-full bg-bg text-text">
+			<div className="pj-layout">
+				<aside className="pj-navigation">
+					<div className="pj-wordmark">
+						<RibbonMark className="pj-logo" />
+						<span>spool</span>
+					</div>
+					<nav aria-label="Home sections">
+						<button type="button" aria-current="page" onClick={() => setQuery("")}>
+							<FrameIcon />
+							<span>Projects</span>
+						</button>
+					</nav>
+					<div className="pj-navigation-foot">
+						<button type="button" onClick={onFolder}>
+							<FolderIcon />
+							<span>Open a folder</span>
+						</button>
+						<span>On this Mac</span>
+					</div>
+				</aside>
+				{loading ? (
+					<main aria-busy="true" />
+				) : registered.length === 0 && needle === "" ? (
+					<main className="pj-welcome-main">
+						<EmptyState
+							className="pj-welcome"
+							heading="h1"
+							align="start"
+							title="Start with an idea."
+							description="Your next project can start here, or in a folder you already have."
+							actions={
+								<>
+									<button type="button" onClick={onStart} disabled={starting}>
+										<PlusIcon />
+										<strong>
+											{starting ? "Starting…" : "Start designing"}
+											<ArrowRightIcon className="home-arrow" />
+										</strong>
+										<small>
+											Open a blank canvas.
+											<br />
+											spool saves the project on your Mac.
+										</small>
 									</button>
-								)}
-							</label>
-						)}
-						<span className="font-mono text-muted text-xs leading-xs">
-							{needle === "" ? `${registered.length} registered` : `${visible.length} of ${registered.length}`}
-						</span>
-					</div>
-				</div>
-
-				{projects.length === 0 ? (
-					<div className="flex flex-col gap-3 py-12">
-						<p className="font-medium text-base text-text">No projects yet.</p>
-						<p className="font-mono text-muted text-sm">
-							Run `spool init` in a product root, or press + above to pick a folder.
-						</p>
-					</div>
-				) : visible.length === 0 && needle !== "" ? (
-					<div className="flex flex-col gap-2 py-12">
-						<p className="font-medium text-base text-text leading-base">Nothing matches “{query}”</p>
-						<p className="font-mono text-muted text-sm leading-xs">Try part of a project name or its path.</p>
-					</div>
+									<button type="button" onClick={onFolder}>
+										<FolderIcon />
+										<strong>
+											Open a folder
+											<ArrowRightIcon className="home-arrow" />
+										</strong>
+										<small>
+											Bring your codebase.
+											<br />
+											Keep the design beside your code.
+										</small>
+									</button>
+								</>
+							}
+						>
+							<ProjectLocation path={location} onChange={onChangeLocation} />
+							{notice && <p role="alert">{notice}</p>}
+						</EmptyState>
+					</main>
 				) : (
-					<div className="grid grid-cols-[repeat(auto-fill,minmax(360px,1fr))] gap-6">
-						{visible.map((project) => (
-							<ProjectTile
-								key={project.root}
-								project={project}
-								menuOpen={menuRoot === project.root}
-								onToggleMenu={() => setMenuRoot((current) => (current === project.root ? null : project.root))}
-								onCloseMenu={() => setMenuRoot(null)}
-								onOpen={() => onOpenProject({ root: project.root, name: project.name })}
-								onForget={() => onForgetProject({ root: project.root, name: project.name })}
+					<main className="pj-main">
+						<header className="pj-heading">
+							<h1>Projects</h1>
+							<div>
+								<label className="home-search">
+									<SearchIcon />
+									<input
+										ref={searchRef}
+										value={query}
+										onChange={(event) => setQuery(event.target.value)}
+										placeholder="Search projects"
+										aria-label="Search projects"
+									/>
+									{query ? (
+										<button type="button" title="Clear search" onClick={() => setQuery("")}>
+											<CloseIcon />
+										</button>
+									) : (
+										<kbd>/</kbd>
+									)}
+								</label>
+								<button
+									type="button"
+									className="home-action home-action-primary"
+									disabled={starting}
+									onClick={onStart}
+								>
+									<PlusIcon />
+									{starting ? "Starting…" : "New project"}
+								</button>
+							</div>
+						</header>
+						{notice && (
+							<p role="alert" className="mb-4 text-thread text-sm">
+								{notice}{" "}
+								<button type="button" className="underline" onClick={onChangeLocation}>
+									Change save location…
+								</button>
+							</p>
+						)}
+						<div className="pj-toolbar">
+							<span>
+								{visible.length} {visible.length === 1 ? "project" : "projects"}
+							</span>
+							<label>
+								Sort by
+								<select
+									aria-label="Sort projects"
+									value={sort}
+									onChange={(event) => setSort(event.target.value)}
+								>
+									<option>Recent</option>
+									<option>Name</option>
+								</select>
+							</label>
+						</div>
+						{visible.length === 0 ? (
+							<EmptyState
+								className="pj-empty"
+								icon={<EmptyFramesIcon />}
+								title={`Nothing matches “${query}”`}
+								description="Try a project name or part of its path."
+								actions={
+									<button type="button" className="home-action" onClick={() => setQuery("")}>
+										Clear search
+									</button>
+								}
 							/>
-						))}
-					</div>
+						) : (
+							<div className="pj-covers-grid">
+								{visible.map((project) => (
+									<ProjectTile
+										key={project.root}
+										project={project}
+										menuOpen={menuRoot === project.root}
+										onToggleMenu={() => setMenuRoot(menuRoot === project.root ? null : project.root)}
+										onCloseMenu={() => setMenuRoot(null)}
+										onOpen={() => onOpenProject(project)}
+										onForget={() => onForgetProject(project)}
+									/>
+								))}
+							</div>
+						)}
+					</main>
 				)}
 			</div>
-
 			{menuRoot !== null && (
-				// a click anywhere else closes the menu, and never opens a project
 				<button
 					type="button"
 					className="fixed inset-0 z-10 cursor-default"
@@ -146,73 +237,48 @@ function ProjectTile({
 	onOpen: () => void;
 	onForget: () => void;
 }) {
+	const cover = project.covers[0];
 	return (
-		<div
-			// the card is its own stacking context (view-transition-name), so an open
-			// menu needs the whole card lifted over the click-away layer, not just itself
-			className={`group relative flex flex-col gap-3.5 rounded-lg border bg-surface p-4 transition-colors ${
-				menuOpen ? "z-20 border-border-raised" : "border-border hover:border-border-raised"
-			}`}
-			// named so a removal morphs the grid instead of snapping it (view transitions)
+		<article
+			className={`pj-project-cover ${menuOpen ? "z-20" : ""}`}
 			style={{ viewTransitionName: transitionName(project.root) }}
 		>
-			<button
-				type="button"
-				className="absolute inset-0 rounded-lg"
-				aria-label={`Open ${project.name}`}
-				onClick={onOpen}
-			/>
-
-			<div className="pointer-events-none relative grid grid-cols-3 gap-2.5">
-				{[0, 1, 2].map((slot) => {
-					const cover = project.covers[slot];
-					return (
-						<div
-							key={`${project.root}-slot-${slot}`}
-							className="aspect-[123/150] overflow-hidden rounded-md border border-border bg-canvas"
-						>
-							{cover !== undefined && (
-								<Thumbnail
-									project={project.name}
-									frame={cover.frame}
-									cover={cover.cover}
-									alt={cover.frame}
-									draggable={false}
-									className="h-full w-full object-cover object-top"
-								/>
-							)}
-						</div>
-					);
-				})}
-			</div>
-
-			<div className="pointer-events-none relative flex flex-col gap-[3px]">
-				<div className="flex items-baseline justify-between gap-4">
-					<span className="min-w-0 truncate font-semibold text-md text-text tracking-tight leading-sm">
-						{project.name}
-					</span>
-					<span className="shrink-0 font-mono text-muted text-xs leading-xs">
-						{project.frameCount} {project.frameCount === 1 ? "frame" : "frames"} ·{" "}
-						{relativeTime(project.openedAt)}
+			<button type="button" className="pj-cover-button" aria-label={`Open ${project.name}`} onClick={onOpen}>
+				<div className="pj-cover-art">
+					{cover && (
+						<Thumbnail
+							project={project.name}
+							frame={cover.frame}
+							cover={cover.cover}
+							alt={cover.frame}
+							draggable={false}
+							className="h-full w-full object-cover object-top"
+						/>
+					)}
+					<span className="pj-cover-enter">
+						<ArrowRightIcon className="home-arrow" />
 					</span>
 				</div>
-				<span className="truncate font-mono text-muted text-xs leading-xs">{shortPath(project.root)}</span>
-			</div>
-
-			{/* the trigger sits over a cover, so it carries a chip to stay legible on a light thumbnail */}
+				<div className="pj-cover-caption">
+					<strong className="truncate">{project.name}</strong>
+					<span>
+						{project.frameCount
+							? `${project.frameCount} ${project.frameCount === 1 ? "frame" : "frames"}`
+							: "no frames yet"}
+					</span>
+				</div>
+				<span className="pj-opened-time">{relativeTime(project.openedAt)}</span>
+			</button>
 			<button
 				type="button"
-				className={`absolute top-3 right-3 z-20 flex h-6 w-6 items-center justify-center rounded-sm border border-border-raised bg-raised transition-opacity focus-visible:opacity-100 ${
-					menuOpen ? "text-text opacity-100" : "text-muted opacity-0 hover:text-text group-hover:opacity-100"
-				}`}
+				className={`pj-manage ${menuOpen ? "is-open" : ""}`}
 				aria-label={`Manage ${project.name}`}
 				onClick={onToggleMenu}
 			>
 				<DotsIcon />
 			</button>
-
 			{menuOpen && (
-				<div className="absolute top-11 right-3 z-20 flex w-[196px] animate-menu-in origin-top-right flex-col rounded-md border border-border-raised bg-raised p-unit">
+				<div className="absolute right-0 top-full z-20 flex w-[196px] animate-menu-in origin-top-right flex-col rounded-md border border-border-raised bg-raised p-unit">
 					<MenuItem
 						label="Open"
 						onClick={() => {
@@ -227,7 +293,7 @@ function ProjectTile({
 							void navigator.clipboard?.writeText(project.root);
 						}}
 					/>
-					<div className="mx-auto my-unit h-px w-[172px] bg-border-raised" />
+					<div className="mx-2 my-unit h-px bg-border-raised" />
 					<MenuItem
 						label="Remove from spool"
 						onClick={() => {
@@ -237,7 +303,7 @@ function ProjectTile({
 					/>
 				</div>
 			)}
-		</div>
+		</article>
 	);
 }
 
@@ -271,12 +337,6 @@ function withViewTransition(mutate: () => void): void {
 /** view-transition-name takes a custom-ident: a path is neither unique-safe nor legal as-is. */
 function transitionName(root: string): string {
 	return `card-${root.replace(/[^a-zA-Z0-9]+/g, "-")}`;
-}
-
-function shortPath(root: string): string {
-	// the daemon is per-machine; a homedir prefix reads better shortened
-	const match = root.match(/^\/(?:Users|home)\/[^/]+(\/.*)?$/);
-	return match === null ? root : `~${match[1] ?? ""}`;
 }
 
 export function relativeTime(iso: string): string {

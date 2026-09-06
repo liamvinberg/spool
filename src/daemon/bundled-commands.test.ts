@@ -191,6 +191,7 @@ it("never gives shell syntax, other packages, writes, extra flags or arbitrary s
 		"spool shot home",
 		"spool logs home --scenario error",
 		"spool skill verbs",
+		"spool skill shaders",
 		"spool url home --raw",
 		"spool shot home --viewport 600x400 --at 0",
 		"spool status",

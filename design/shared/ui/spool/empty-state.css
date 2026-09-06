@@ -1,0 +1,63 @@
+.spool-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	text-align: center;
+}
+.spool-empty-start {
+	align-items: flex-start;
+	text-align: left;
+}
+.spool-empty > h1,
+.spool-empty > h2 {
+	font-size: 24px;
+	font-weight: 400;
+	letter-spacing: -0.4px;
+}
+.spool-empty > p {
+	margin-top: 13px;
+	font-size: 13px;
+	line-height: 1.6;
+	color: var(--color-muted);
+}
+.spool-empty-actions {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin-top: 25px;
+}
+.spool-empty > svg {
+	width: 32px;
+	height: 32px;
+	margin-bottom: 36px;
+	color: var(--color-muted);
+}
+.spool-empty-frames {
+	position: relative;
+	width: 87px;
+	height: 70px;
+	margin: 0 0 36px;
+}
+.spool-empty-frames > i,
+.spool-empty-frames > span {
+	position: absolute;
+	display: grid;
+	place-items: center;
+	inset: 0;
+	border: 1px solid var(--color-border-raised);
+	border-radius: 8px;
+	background: var(--color-bg);
+}
+.spool-empty-frames > i:first-child {
+	transform: rotate(-10deg) translate(-13px, -2px);
+}
+.spool-empty-frames > i:nth-child(2) {
+	transform: rotate(10deg) translate(13px, 0);
+}
+.spool-empty-frames > span {
+	color: var(--color-muted);
+	font-size: 28px;
+}

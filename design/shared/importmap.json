@@ -4,6 +4,8 @@
 		"clsx": "https://esm.sh/clsx@2.1.1",
 		"motion": "https://esm.sh/motion@12.42.2?external=react,react-dom",
 		"motion/react": "https://esm.sh/motion@12.42.2/react?external=react,react-dom",
-		"tailwind-merge": "https://esm.sh/tailwind-merge@3.6.0"
+		"tailwind-merge": "https://esm.sh/tailwind-merge@3.6.0",
+		"three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.webgpu.js",
+		"three/tsl": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.tsl.js"
 	}
 }

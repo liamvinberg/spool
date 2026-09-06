@@ -234,3 +234,20 @@ export function HandIcon({ className }: CanvasToolIconProps) {
 		</svg>
 	);
 }
+
+export function FrameIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 14 14" className={className} fill="none" aria-hidden="true">
+			<path d="M3 1.75h5l3 3v7.5H3z" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round" />
+			<path d="M8 1.75v3h3" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round" />
+		</svg>
+	);
+}
+
+export function ArrowRightIcon({ className }: { className?: string }) {
+	return (
+		<svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" aria-hidden="true">
+			<path d="M3 8h10M9 4l4 4-4 4" />
+		</svg>
+	);
+}

@@ -7,7 +7,7 @@ export function trustedCommand(command: string): string[] | undefined {
 	if (["selection", "flows", "status"].includes(verb)) return args.length === 0 ? [verb] : undefined;
 	if (verb === "skill")
 		return args.length === 0 ||
-			(args.length === 1 && ["frames", "flows", "scenarios", "styling", "verbs"].includes(args[0] ?? ""))
+			(args.length === 1 && ["frames", "flows", "scenarios", "styling", "shaders", "verbs"].includes(args[0] ?? ""))
 			? [verb, ...args]
 			: undefined;
 	if (!["shot", "logs", "url"].includes(verb) || !name(args[0])) return;

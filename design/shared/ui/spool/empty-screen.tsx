@@ -1,4 +1,6 @@
 import { CanvasChrome } from "shared/ui/spool/canvas-chrome";
+import { useState } from "react";
+import { EmptyState } from "shared/ui/spool/empty-state";
 import { SpoolMark } from "shared/ui/spool/mark";
 import { SpoolShell } from "shared/ui/spool/shell";
 
@@ -14,19 +16,20 @@ interface SpoolEmptyScreenProps {
 	project?: string | undefined;
 }
 
-export function SpoolEmptyScreen({ homeTarget, project = "spool-cloud" }: SpoolEmptyScreenProps) {
+export function SpoolEmptyScreen({ homeTarget, project = "untitled" }: SpoolEmptyScreenProps) {
+	const [copied, setCopied] = useState(false);
+	const path = `~/spool/${project}`;
 	return (
 		<SpoolShell activeTab={project} tabs={[project]} homeTarget={homeTarget} zoom="100%">
-			<CanvasChrome pages={[{ name: "frames", frames: [], active: true, open: true }]}>
+			<CanvasChrome pages={[]} tool="none">
 				<div className="flex h-full flex-col items-center justify-center pb-20">
-					<div className="flex flex-col items-center gap-3">
-						<SpoolMark className="h-7 w-[22px] text-thread opacity-40" />
-						<h1 className="font-medium text-base leading-base">No frames yet.</h1>
-						<p className="font-mono text-muted text-sm leading-sm">
-							An agent births a frame by writing frames/&lt;name&gt;/frame.tsx
-						</p>
-						<p className="font-mono text-muted text-xs leading-xs">spool skill · spool url</p>
-					</div>
+					<EmptyState icon={<SpoolMark className="text-thread" />} title="Your canvas is ready."
+						description="Ask your agent here, or open this project with Claude Code or Codex and tell it what you’d like to design."
+						className="max-w-[520px] px-8" actions={<div className="flex flex-wrap items-center justify-center gap-3">
+							<code className="max-w-full select-text break-all font-mono text-xs text-muted">{path}</code>
+							<button type="button" className="rounded-md border border-border-raised bg-surface px-3 py-2 text-sm hover:bg-raised"
+								onClick={() => void navigator.clipboard.writeText(path).then(() => setCopied(true))}>{copied ? "Copied" : "Copy project path"}</button>
+						</div>} />
 				</div>
 			</CanvasChrome>
 		</SpoolShell>

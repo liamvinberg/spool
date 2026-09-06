@@ -53,13 +53,20 @@
 	position: relative;
 	display: flex;
 	align-items: center;
-	flex: 0 1 auto;
+	flex: 1 1 auto;
 	min-width: 0;
 	height: 100%;
-	padding: 0 10px 0 12px;
+	padding: 0 38px 0 12px;
 	font-size: 13px;
 	color: var(--color-muted);
 	cursor: default;
+}
+
+/* The button covers the selection's bottom edge as well as the tab's box. */
+.project-tab-label::after {
+	content: "";
+	position: absolute;
+	inset: 0 0 -4px;
 }
 
 .project-tab-label span {
@@ -77,15 +84,14 @@
 }
 
 .project-tab-close {
-	position: relative;
+	position: absolute;
+	right: 4px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	flex-shrink: 0;
 	width: 24px;
 	height: 24px;
-	margin-right: 4px;
-	margin-left: auto;
 	border-radius: 5px;
 	color: var(--color-muted);
 	opacity: 0;

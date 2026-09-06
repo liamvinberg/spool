@@ -64,6 +64,7 @@ it("uses this package and instance for real shots, logs and Playwright interacti
 		bash("spool selection"),
 		bash("spool flows"),
 		bash("spool url home"),
+		bash("spool skill shaders"),
 	]);
 	expect(events.filter((event) => event.kind === "asking")).toHaveLength(0);
 	const results = events.filter((event) => event.kind === "result");
@@ -77,6 +78,7 @@ it("uses this package and instance for real shots, logs and Playwright interacti
 	expect(results[5]?.text).toContain("Unexpected end of file");
 	expect(results[7]?.text).toContain(project.url);
 	expect(results[10]?.text).toContain(`/play/${project.name}?frame=home`);
+	expect(results[11]?.text).toContain("WebGPURenderer");
 	const modelShot = contexts
 		.at(-1)
 		?.messages.find((message) => message.role === "toolResult" && message.toolCallId === shot?.id);

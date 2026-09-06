@@ -142,7 +142,9 @@ async function serveCapture(fonts?: string): Promise<ServedCapture> {
 }
 
 /** A frame with a single WebGL canvas, cleared to solid red once and never redrawn — the #174 repro shape. */
-async function serveWebglCapture(): Promise<{ controlOrigin: string; url: string; close(): Promise<void> }> {
+async function serveWebglCapture(
+	positioning: "inline" | "class" | "id",
+): Promise<{ controlOrigin: string; url: string; close(): Promise<void> }> {
 	let frameDocument = "";
 	let controlDocument = "";
 	const server = createServer((request, response) => {
@@ -181,19 +183,22 @@ async function serveWebglCapture(): Promise<{ controlOrigin: string; url: string
 	if (address === null || typeof address === "string") throw new Error("capture test server did not bind");
 	const controlOrigin = `http://127.0.0.1:${address.port}`;
 	const renderOrigin = `http://${RENDER_HOST}:${address.port}`;
+	const canvasStyle = "position: absolute; left: 25%; top: 25%; width: 50%; height: 50%";
+	const canvasAttribute =
+		positioning === "inline" ? `style="${canvasStyle}"` : positioning === "class" ? 'class="shader"' : 'id="shader"';
 	frameDocument = assembleFrameDocument({
 		project: "capture-test-webgl",
 		frame: "capture",
 		projectCapability: "capture-test-webgl",
 		controlOrigin,
-		css: "",
+		css: `.shader, #shader { ${canvasStyle} }`,
 		importMap: { imports: {} },
 		// No preserveDrawingBuffer here — the shim is what's expected to add it
 		// (#174). Left to the spec, the drawing buffer clears once the browser is
 		// done compositing it, so an unpatched self-capture reads this back black.
 		bootJs: `
-			document.getElementById("root").innerHTML = '<canvas id="gl" width="800" height="600" style="position: absolute; inset: 0; width: 100%; height: 100%"></canvas>';
-			const gl = document.getElementById("gl").getContext("webgl");
+			document.getElementById("root").innerHTML = '<canvas width="800" height="600" ${canvasAttribute}></canvas>';
+			const gl = document.querySelector("canvas").getContext("webgl");
 			gl.clearColor(1, 0, 0, 1);
 			gl.clear(gl.COLOR_BUFFER_BIT);
 		`,
@@ -708,55 +713,64 @@ it("captures through the isolated worker while preserving output and cleanup", {
 	});
 });
 
-it("captures a WebGL canvas as its cleared color, not black (#174)", {
-	timeout: 30_000,
-}, async () => {
-	const served = await serveWebglCapture();
-	onTestFinished(() => served.close());
-	const captureOrigin = new URL(served.controlOrigin);
-	captureOrigin.hostname = CAPTURE_HOST;
+it.each(["inline", "class", "id"] as const)(
+	"captures a WebGL canvas with %s positioning and its cleared color",
+	{
+		timeout: 30_000,
+	},
+	async (positioning) => {
+		const served = await serveWebglCapture(positioning);
+		onTestFinished(() => served.close());
+		const captureOrigin = new URL(served.controlOrigin);
+		captureOrigin.hostname = CAPTURE_HOST;
 
-	// The one test here that needs a GL context rather than a 2D one, so it is the one
-	// that says which GL: left to the runner, a headless shell with no usable backend
-	// hands back a null context, the clear never happens, and the capture comes back the
-	// page's own white — which reads as the shim failing and is nothing of the sort.
-	// SwiftShader is software, so the answer is the same on every machine.
-	const browser = await chromium.launch({
-		channel: "chromium-headless-shell",
-		headless: true,
-		args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
-	});
-	onTestFinished(() => browser.close());
-	const context = await browser.newContext({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 2 });
-	onTestFinished(() => context.close());
-	const page = await context.newPage();
-	await page.goto(served.url);
-	const authored = page.frames().find((frame) => new URL(frame.url()).hostname === RENDER_HOST);
-	if (authored === undefined) throw new Error("authored frame did not load");
-	await authored.locator("canvas").waitFor();
-	// and it says so before reading pixels: a missing context is a fact about the runner,
-	// and it must not arrive dressed as a colour assertion about the shim
-	expect(
-		await authored
-			.locator("canvas")
-			.evaluate((element) => (element as HTMLCanvasElement).getContext("webgl") !== null),
-	).toBe(true);
-	// The clear happens synchronously in the boot module, but the compositor
-	// paints it asynchronously; wait out a couple of frames so the drawing
-	// buffer has actually been presented at least once before capturing it,
-	// otherwise this races the paint independently of the shim's fix.
-	await authored.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+		// The one test here that needs a GL context rather than a 2D one, so it is the one
+		// that says which GL: left to the runner, a headless shell with no usable backend
+		// hands back a null context, the clear never happens, and the capture comes back the
+		// page's own white — which reads as the shim failing and is nothing of the sort.
+		// SwiftShader is software, so the answer is the same on every machine.
+		const browser = await chromium.launch({
+			channel: "chromium-headless-shell",
+			headless: true,
+			args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
+		});
+		onTestFinished(() => browser.close());
+		const context = await browser.newContext({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 2 });
+		onTestFinished(() => context.close());
+		const page = await context.newPage();
+		await page.goto(served.url);
+		const authored = page.frames().find((frame) => new URL(frame.url()).hostname === RENDER_HOST);
+		if (authored === undefined) throw new Error("authored frame did not load");
+		await authored.locator("canvas").waitFor();
+		// and it says so before reading pixels: a missing context is a fact about the runner,
+		// and it must not arrive dressed as a colour assertion about the shim
+		expect(
+			await authored
+				.locator("canvas")
+				.evaluate((element) => (element as HTMLCanvasElement).getContext("webgl") !== null),
+		).toBe(true);
+		// The clear happens synchronously in the boot module, but the compositor
+		// paints it asynchronously; wait out a couple of frames so the drawing
+		// buffer has actually been presented at least once before capturing it,
+		// otherwise this races the paint independently of the shim's fix.
+		await authored.evaluate(
+			() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+		);
 
-	const cover = await requestCapture(page, captureOrigin.origin, LIVE_MIN_CSS_PX);
-	expect(cover.resultReplies).toBe(1);
-	const coverImage = await readImage(cover.image.url, page);
-	expect(coverImage.type).toBe("image/jpeg");
-	// The shim's getContext wrap (#174) forces preserveDrawingBuffer on webgl
-	// contexts, so the self-capture reads back the red gl.clear() rather than
-	// whatever the drawing buffer holds once the browser is done compositing —
-	// nominally black. JPEG's lossy encoding gets an approximate assertion.
-	expect(coverImage.center[0]).toBeGreaterThanOrEqual(230);
-	expect(coverImage.center[1]).toBeLessThanOrEqual(25);
-	expect(coverImage.center[2]).toBeLessThanOrEqual(25);
-	expect(coverImage.center[3]).toBe(255);
-});
+		const cover = await requestCapture(page, captureOrigin.origin, LIVE_MIN_CSS_PX);
+		expect(cover.resultReplies).toBe(1);
+		const coverImage = await readImage(cover.image.url, page);
+		expect(coverImage.type).toBe("image/jpeg");
+		// The shim's getContext wrap (#174) forces preserveDrawingBuffer on webgl
+		// contexts, so the self-capture reads back the red gl.clear() rather than
+		// whatever the drawing buffer holds once the browser is done compositing —
+		// nominally black. JPEG's lossy encoding gets an approximate assertion.
+		expect(coverImage.center[0]).toBeGreaterThanOrEqual(230);
+		expect(coverImage.center[1]).toBeLessThanOrEqual(25);
+		expect(coverImage.center[2]).toBeLessThanOrEqual(25);
+		expect(coverImage.center[3]).toBe(255);
+		// The live canvas sits in the middle half of the frame. Dropping its class
+		// or id moves the replacement image into normal flow at the top left.
+		expect(coverImage.assetSrc.slice(0, 3)).toEqual([255, 255, 255]);
+	},
+);

@@ -883,6 +883,12 @@ const canvasShimJs = `(() => {
 			if (!d || !d.parentNode) continue;
 			const img = document.createElement("img");
 			img.setAttribute("src", canvasUrls[i]);
+			// Keep the class and id selectors that position the live canvas,
+			// just as its inline style is kept below.
+			for (const attribute of ["class", "id"]) {
+				const value = d.getAttribute(attribute);
+				if (value !== null) img.setAttribute(attribute, value);
+			}
 			img.setAttribute(
 				"style",
 				snapshot.style + ";width:" + snapshot.width + "px;height:" + snapshot.height + "px"

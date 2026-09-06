@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeProject, makeTempDir } from "../test-helpers";
@@ -103,5 +103,28 @@ describe("settings store", () => {
 			value: "#f5391a",
 			source: "default",
 		});
+	});
+});
+
+describe("project save location", () => {
+	it("defaults to the visible spool folder without creating it, and persists a chosen parent", () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const parent = join(makeTempDir(), "future-projects");
+		const store = createSettingsStore(spoolDir);
+		expect(store.read().entries.find((entry) => entry.key === "projects.location")).toMatchObject({
+			value: "~/spool",
+			source: "default",
+		});
+		expect(store.write("projects.location", parent).ok).toBe(true);
+		expect(existsSync(parent)).toBe(false);
+		expect(
+			createSettingsStore(spoolDir)
+				.read()
+				.entries.find((entry) => entry.key === "projects.location"),
+		).toMatchObject({ value: parent, source: "file" });
+		for (const invalid of ["relative/folder", "", 42, "/tmp/a\0b", "~someone/folder"])
+			expect(store.write("projects.location", invalid).ok).toBe(false);
+		expect(store.write("projects.location", null).ok).toBe(true);
+		expect(store.read().entries.find((entry) => entry.key === "projects.location")?.value).toBe("~/spool");
 	});
 });

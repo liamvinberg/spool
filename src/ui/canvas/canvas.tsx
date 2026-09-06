@@ -46,6 +46,7 @@ import {
 	subscribeSse,
 	swapAsset,
 } from "../api";
+import { EmptyState } from "../empty-state";
 import { attachHotkeyLayer, type HotkeyHandler, runHotkey } from "../hotkey-dispatch";
 import type { HotkeyIdFor } from "../hotkeys";
 import { RibbonMark } from "../icons";
@@ -310,10 +311,12 @@ export function ownsFrameMessage(
 
 export function ProjectCanvas({
 	project,
+	root,
 	onChrome,
 	onSettings,
 }: {
 	project: string;
+	root?: string;
 	onChrome: (chrome: CanvasChrome | null) => void;
 	/** the dock's cog (#282): the sheet is the shell's, so the door only asks */
 	onSettings?: (() => void) | undefined;
@@ -326,6 +329,8 @@ export function ProjectCanvas({
 	// frame-local boxes of navigation-site elements, as each frame's shim answers
 	const [siteBoxes, setSiteBoxes] = useState<SiteBoxesByFrame>({});
 	const [loaded, setLoaded] = useState(false);
+	const [pathCopied, setPathCopied] = useState(false);
+	const [copyFailed, setCopyFailed] = useState(false);
 	const [camera, setCamera] = useState<Camera | null>(null);
 	const [tool, setTool] = useState<CanvasTool>("select");
 	const [selected, setSelected] = useState<string[]>([]);
@@ -3154,6 +3159,8 @@ export function ProjectCanvas({
 		const el = viewportRef.current;
 		if (el === null) return;
 		const onWheel = (event: WheelEvent) => {
+			// Leave the finder's native list scrolling alone before cancelling the wheel.
+			if (findingRef.current) return;
 			event.preventDefault();
 			stopAnimation();
 			setMenu(null);
@@ -3475,7 +3482,7 @@ export function ProjectCanvas({
 	};
 
 	const onPointerDown = (event: React.PointerEvent) => {
-		if (exportDialogRef.current !== null) return;
+		if (findingRef.current || exportDialogRef.current !== null) return;
 		const cam = cameraRef.current;
 		if (cam === null || event.button === 2) return;
 		stopAnimation();
@@ -4825,10 +4832,8 @@ export function ProjectCanvas({
 				{pendingTrash !== null && (
 					<TrashToast frames={pendingTrash.frames} page={pendingTrash.page} onUndo={undoTrash} />
 				)}
-				{/* agent-first, buttonless (#13): the canvas never pretends hands author
-				    frames. It says so over the canvas surface rather than in place of the
-				    whole row, because the agent that writes the first frame is asked for
-				    it in the rail beside this notice. */}
+				{/* The agent rail stays available beside an empty canvas. The path also
+				    lets somebody use an agent in their own terminal. */}
 				{/* the wait before the projection lands (#244): the field used to render
 				    nothing at all until the daemon answered, so a slow reply and a project
 				    with no frames in it were the same picture. */}
@@ -4836,14 +4841,46 @@ export function ProjectCanvas({
 				{projectEmpty && (
 					<div
 						data-canvas-empty=""
-						className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 pb-20"
+						className="pointer-events-none absolute inset-0 flex items-center justify-center pb-20"
 					>
-						<RibbonMark className="h-7 w-[22px] opacity-40" />
-						<p className="font-medium text-base text-text leading-base">No frames yet.</p>
-						<p className="font-mono text-muted text-sm leading-sm">
-							An agent births a frame by writing frames/&lt;name&gt;/frame.tsx
-						</p>
-						<p className="font-mono text-muted text-xs leading-xs">spool skill · spool url</p>
+						<EmptyState
+							icon={<RibbonMark />}
+							title="Your canvas is ready."
+							description="Ask your agent here, or open this project with Claude Code or Codex and tell it what you’d like to design."
+							className="max-w-[520px] px-8"
+							actions={
+								root === undefined ? undefined : (
+									<div
+										className="pointer-events-auto flex flex-wrap items-center justify-center gap-3"
+										onPointerDown={(event) => event.stopPropagation()}
+									>
+										<code className="max-w-full select-text break-all font-mono text-xs text-muted">
+											{root}
+										</code>
+										<button
+											type="button"
+											className="rounded-md border border-border-raised bg-surface px-3 py-2 text-sm hover:bg-raised"
+											onClick={() => {
+												void navigator.clipboard
+													.writeText(root)
+													.then(() => {
+														setPathCopied(true);
+														setCopyFailed(false);
+													})
+													.catch(() => setCopyFailed(true));
+											}}
+										>
+											{pathCopied ? "Copied" : "Copy project path"}
+										</button>
+										{copyFailed && (
+											<span role="alert" className="text-xs text-muted">
+												Could not copy. Select the path and copy it manually.
+											</span>
+										)}
+									</div>
+								)
+							}
+						/>
 					</div>
 				)}
 				{/* one page nobody has written into (#265), which is a different fact

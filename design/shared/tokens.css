@@ -356,7 +356,7 @@
 	@keyframes toast-in {
 		from {
 			opacity: 0;
-			transform: translate(-50%, 12px);
+			transform: translateY(12px);
 		}
 	}
 

@@ -52,6 +52,27 @@ describe("canvas boot", () => {
 		expect(host.querySelector('iframe[title="home"]')).not.toBeNull();
 	});
 
+	it("copies the real root without handing the pointer to the canvas", async () => {
+		stubEmptyProject();
+		const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+		const host = mountCanvas("/tmp/my-project");
+		await flush();
+		const viewport = host.querySelector<HTMLElement>('[aria-label="test canvas"]');
+		const capture = vi.fn();
+		if (viewport) viewport.setPointerCapture = capture;
+		const button = Array.from(host.querySelectorAll("button")).find(
+			(candidate) => candidate.textContent === "Copy project path",
+		);
+		expect(button).toBeDefined();
+		await act(async () => {
+			button?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1 }));
+			button?.click();
+		});
+		expect(capture).not.toHaveBeenCalled();
+		expect(copy).toHaveBeenCalledWith("/tmp/my-project");
+		expect(button?.textContent).toBe("Copied");
+	});
+
 	it("keeps the pages rail standing over an empty project", async () => {
 		stubEmptyProject();
 		const host = mountCanvas();
@@ -118,7 +139,7 @@ function stubFetch(answer: (url: URL) => Promise<Response | undefined>): void {
 	);
 }
 
-function mountCanvas(): HTMLElement {
+function mountCanvas(projectRoot?: string): HTMLElement {
 	vi.stubGlobal(
 		"EventSource",
 		class {
@@ -142,7 +163,13 @@ function mountCanvas(): HTMLElement {
 		vi.restoreAllMocks();
 	});
 	act(() => {
-		root.render(createElement(ProjectCanvas, { project: "test", onChrome: () => {} }));
+		root.render(
+			createElement(ProjectCanvas, {
+				project: "test",
+				...(projectRoot === undefined ? {} : { root: projectRoot }),
+				onChrome: () => {},
+			}),
+		);
 	});
 	return host;
 }
