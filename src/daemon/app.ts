@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, sep } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
@@ -465,7 +465,8 @@ export function createDaemonApp({
 	const hub = createChangeHub({ framesUsing: (root, path) => flowGraph.framesUsing(root, path) });
 	// what Liam points at, per project — daemon memory only, dies with it (#3)
 	const selections = createSelectionStore();
-	const trashImpl = moveToTrash ?? (async (paths: string[]) => void (await trash(paths)));
+	const trashImpl = moveToTrash ?? (async (paths: string[]) => void (await trash(paths, { glob: false })));
+	const trashingProjects = new Set<string>();
 
 	/**
 	 * What the write lane needs of the project: who renders a shared file, which
@@ -686,6 +687,9 @@ export function createDaemonApp({
 					409,
 				),
 			};
+		}
+		if (trashingProjects.has(lookup.root)) {
+			return { response: c.json({ error: "This project is moving to the trash." }, 409) };
 		}
 		return { root: lookup.root };
 	}
@@ -1094,6 +1098,7 @@ export function createDaemonApp({
 			}),
 			(c) => {
 				const { root, name } = c.req.valid("json");
+				if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
 				if ([...liveTurns.of(root)].some((turn) => turn.running)) {
 					return c.json({ error: "Let the agent finish or stop its turn before renaming this project." }, 409);
 				}
@@ -1147,6 +1152,69 @@ export function createDaemonApp({
 					return c.json({ error: `not a registered project root: ${root}` }, 404);
 				}
 				return c.body(null, 204);
+			},
+		)
+		.post(
+			"/api/projects/trash",
+			validator("json", (value, c) => {
+				const parsed = z.object({ root: z.string().min(1) }).safeParse(value);
+				return parsed.success ? parsed.data : c.json({ error: "Expected a project root." }, 400);
+			}),
+			async (c) => {
+				const { root } = c.req.valid("json");
+				const roots = registeredRoots();
+				if (!roots.includes(root)) return c.json({ error: "This project is no longer registered." }, 404);
+				if (trashingProjects.has(root)) return c.json({ error: "This project is moving to the trash." }, 409);
+				if ([...liveTurns.of(root)].some((turn) => turn.running)) {
+					return c.json({ error: "Let the agent finish or stop its turn before trashing this project." }, 409);
+				}
+				const stateRoot = realpathSync(spoolDir);
+				if (
+					root === resolve(root, "..") ||
+					roots.some((held) => held.startsWith(`${root}${sep}`)) ||
+					stateRoot === root ||
+					stateRoot.startsWith(`${root}${sep}`)
+				) {
+					return c.json(
+						{ error: "This folder contains another Spool project or its app data. Hide it instead." },
+						409,
+					);
+				}
+				trashingProjects.add(root);
+				let moved = false;
+				try {
+					if (!lstatSync(root).isDirectory() || realpathSync(root) !== root) {
+						return c.json(
+							{ error: "The project folder has changed. Open its folder again before trashing it." },
+							409,
+						);
+					}
+					await trashImpl([root]);
+					moved = true;
+					const result = forgetResolvedProject(spoolDir, root);
+					hub.forget(root);
+					if (result.removed) {
+						machineStateWatch.acknowledgeRegistry(result.registry);
+						emitAppEvent({ kind: "registry" });
+					}
+					if (result.sessionChanged) {
+						machineStateWatch.acknowledgeSession(result.session);
+						emitAppEvent({ kind: "session" });
+					}
+					return c.body(null, 204);
+				} catch (error) {
+					const detail = error instanceof Error ? error.message : String(error);
+					return c.json(
+						{
+							error: moved
+								? `The folder moved to the trash, but Spool could not remove it from the list. Hide it instead. ${detail}`
+								: `Could not trash the project: ${detail}`,
+						},
+						409,
+					);
+				} finally {
+					trashingProjects.delete(root);
+				}
 			},
 		)
 		.get("/api/projects", async (c) => {

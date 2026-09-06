@@ -13,6 +13,7 @@ import {
 	renameProject,
 	startProject,
 	subscribeSse,
+	trashProject,
 } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
 import { desktopBridge } from "./desktop-bridge";
@@ -28,6 +29,7 @@ import { RenameProjectDialog } from "./rename-project-dialog";
 import { settingsMoved, useSetting, useSettings, useWriteSetting } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
 import { type TabProject, TabStrip } from "./tab-strip";
+import { TrashProjectDialog } from "./trash-project-dialog";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
 import "./app-header.css";
 
@@ -67,6 +69,7 @@ export function App() {
 	const [starting, setStarting] = useState(false);
 	const startingRef = useRef(false);
 	const [namingRoot, setNamingRoot] = useState<string | null>(null);
+	const [trashRequest, setTrashRequest] = useState<TabProject | null>(null);
 	const [renameRequest, setRenameRequest] = useState<{
 		project: TabProject;
 		initialName: string;
@@ -458,7 +461,13 @@ export function App() {
 	};
 
 	const canvasActive =
-		focusedTab !== undefined && chrome !== null && !picking && !keysOpen && !settingsOpen && renameRequest === null;
+		focusedTab !== undefined &&
+		chrome !== null &&
+		!picking &&
+		!keysOpen &&
+		!settingsOpen &&
+		renameRequest === null &&
+		trashRequest === null;
 	useEffect(() => {
 		appWindow?.setCanvasActive(canvasActive);
 		return () => appWindow?.setCanvasActive(false);
@@ -550,6 +559,7 @@ export function App() {
 						forgetting={pendingForget?.root ?? null}
 						onOpenProject={(project) => openTab(project)}
 						onForgetProject={(project) => stageForget(project)}
+						onTrashProject={setTrashRequest}
 						onRenameProject={(project) => void requestRename(project)}
 					/>
 				) : (
@@ -614,6 +624,21 @@ export function App() {
 						renameRequest.resolve(null);
 						setRenameRequest(null);
 					}}
+				/>
+			)}
+
+			{trashRequest !== null && (
+				<TrashProjectDialog
+					project={trashRequest}
+					onTrash={async () => {
+						await trashProject(trashRequest.root);
+						projectRevision.current += 1;
+						setProjects((cards) => cards.filter((card) => card.root !== trashRequest.root));
+						setOpen((roots) => roots.filter((root) => root !== trashRequest.root));
+						if (focused === trashRequest.root) focusProject(null);
+						void refetch();
+					}}
+					onClose={() => setTrashRequest(null)}
 				/>
 			)}
 

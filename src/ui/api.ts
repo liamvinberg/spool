@@ -209,6 +209,11 @@ export async function renameProject(root: string, name: string): Promise<{ root:
 	return (await res.json()) as { root: string; name: string };
 }
 
+export async function trashProject(root: string): Promise<void> {
+	const res = await client.api.projects.trash.$post({ json: { root } });
+	if (!res.ok) throw new Error(await errorText(res));
+}
+
 export type UpgradeStart = { ok: true } | { ok: false; error: string };
 
 /** The toast door (#30): ask the daemon to spawn the upgrader and stand back. */

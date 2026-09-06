@@ -17,6 +17,7 @@
 .confirm-dialog h2 {
 	margin: 0 0 8px;
 	font: var(--type-title);
+	overflow-wrap: anywhere;
 }
 
 .confirm-dialog p {
@@ -69,4 +70,9 @@
 	justify-content: flex-end;
 	gap: 8px;
 	margin-top: 24px;
+}
+
+.confirm-dialog .home-action-danger {
+	background: #c52a18;
+	color: #ffffff;
 }

@@ -5,6 +5,7 @@ import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import type { HotkeyIdFor } from "./hotkeys";
 import { ArrowRightIcon, CloseIcon, DotsIcon, FolderIcon, FrameIcon, PlusIcon, RibbonMark, SearchIcon } from "./icons";
 import { ProjectLocation } from "./project-location";
+import { systemTrashName } from "./system-trash";
 import { Thumbnail } from "./thumbnail";
 import "./home.css";
 
@@ -14,6 +15,7 @@ export function Home({
 	forgetting = null,
 	onOpenProject,
 	onForgetProject,
+	onTrashProject,
 	onRenameProject,
 	onStart,
 	onFolder,
@@ -27,6 +29,7 @@ export function Home({
 	forgetting?: string | null;
 	onOpenProject: (project: { root: string; name: string }) => void;
 	onForgetProject: (project: { root: string; name: string }) => void;
+	onTrashProject: (project: { root: string; name: string }) => void;
 	onRenameProject: (project: { root: string; name: string }) => void;
 	onStart: () => void;
 	onFolder: () => void;
@@ -205,6 +208,7 @@ export function Home({
 										onCloseMenu={() => setMenuRoot(null)}
 										onOpen={() => onOpenProject(project)}
 										onForget={() => onForgetProject(project)}
+										onTrash={() => onTrashProject(project)}
 										onRename={() => onRenameProject(project)}
 									/>
 								))}
@@ -232,6 +236,7 @@ function ProjectTile({
 	onCloseMenu,
 	onOpen,
 	onForget,
+	onTrash,
 	onRename,
 }: {
 	project: ProjectCard;
@@ -240,6 +245,7 @@ function ProjectTile({
 	onCloseMenu: () => void;
 	onOpen: () => void;
 	onForget: () => void;
+	onTrash: () => void;
 	onRename: () => void;
 }) {
 	const manageRef = useRef<HTMLButtonElement>(null);
@@ -310,10 +316,19 @@ function ProjectTile({
 					/>
 					<div className="mx-2 my-unit h-px bg-border-raised" />
 					<MenuItem
-						label="Remove from spool"
+						label="Hide from Spool"
 						onClick={() => {
 							onCloseMenu();
 							withViewTransition(onForget);
+						}}
+					/>
+					<MenuItem
+						label={`Move to ${systemTrashName()}…`}
+						danger
+						onClick={() => {
+							manageRef.current?.focus();
+							onCloseMenu();
+							onTrash();
 						}}
 					/>
 				</div>
@@ -322,11 +337,12 @@ function ProjectTile({
 	);
 }
 
-function MenuItem({ label, onClick }: { label: string; onClick: () => void }) {
+function MenuItem({ label, onClick, danger = false }: { label: string; onClick: () => void; danger?: boolean }) {
 	return (
 		<button
 			type="button"
 			className="flex h-[30px] items-center rounded-sm px-3 text-left text-text hover:bg-surface type-control"
+			style={danger ? { color: "light-dark(#bb2614, #ff604b)" } : undefined}
 			onClick={onClick}
 		>
 			{label}

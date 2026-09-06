@@ -13,7 +13,7 @@ export function ForgetToast({ name, windowMs, onUndo }: { name: string; windowMs
 	return (
 		<div className="-translate-x-1/2 fixed bottom-6 left-1/2 z-30 flex animate-toast-in items-center gap-3.5 overflow-hidden rounded-md border border-border-raised bg-raised py-2.5 pr-3.5 pl-4">
 			<span className="text-text type-control">
-				Removed <span className="font-medium">{name}</span>
+				Hidden <span className="font-medium">{name}</span>
 			</span>
 			<span className="text-muted type-value">files stay on disk</span>
 			<span className="h-4 w-px bg-border-raised" />
