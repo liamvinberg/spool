@@ -52,6 +52,7 @@ export interface EngineTurnOptions {
 export interface AgentEngine {
 	readonly id: AgentEngineId;
 	readonly authentication: AgentAuthentication;
+	close?(): void;
 	installed(): boolean;
 	account(root: string, signal?: AbortSignal): Promise<AgentLogin>;
 	offer(options: EngineOfferOptions): Promise<AgentOffer>;

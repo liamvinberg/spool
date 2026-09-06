@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { makeTempDir, markProject, writeDesignFile, writeFrame } from "./test-helpers";
@@ -49,6 +49,26 @@ describe("packed install", () => {
 		const anchor = JSON.parse(encodedAnchor ?? '""') as string;
 		expect(anchor).toContain("spool.page");
 		expect(JSON.parse(readFileSync(anchor, "utf8"))).toMatchObject({ name: "spool.page" });
+		const hostState = makeTempDir();
+		const host = join(dirname(anchor), "dist", "bundled-host.js");
+		expect(existsSync(host)).toBe(true);
+		const bundledProbe = `
+import { fork } from "node:child_process";
+const child = fork(${JSON.stringify(host)}, [], {
+	env: { HOME: ${JSON.stringify(hostState)}, SPOOL_BUNDLED_STATE: ${JSON.stringify(hostState)}, PI_OFFLINE: "1" },
+	execArgv: [], stdio: ["ignore", "ignore", "ignore", "ipc"]
+});
+const timeout = setTimeout(() => child.kill("SIGKILL"), 10000);
+child.on("message", (message) => {
+	process.stdout.write(JSON.stringify(message.value));
+	child.kill();
+});
+child.on("exit", () => clearTimeout(timeout));
+child.send({ id: "probe", request: { kind: "account" } });
+`;
+		expect(run(process.execPath, ["--input-type=module", "--eval", bundledProbe], consumer)).toBe(
+			'{"signedIn":false,"account":null}',
+		);
 
 		const clipboardProject = makeTempDir();
 		markProject(clipboardProject);

@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { serve } from "@hono/node-server";
 import { PortBusyError, SpoolError } from "../errors";
+import type { AgentEngine } from "./agent-engine";
 import type { AgentExecutor } from "./agent-exec";
 import type { Look } from "./agent-preflight";
 import { createDaemonApp } from "./app";
@@ -22,6 +23,7 @@ export interface ServeDaemonOptions {
 	history?: boolean | undefined;
 	/** A stand-in for the agent binary, so a browser test can drive a whole turn. */
 	agentExecutor?: AgentExecutor | undefined;
+	agentEngines?: readonly AgentEngine[] | undefined;
 	/** A stand-in for the `which` behind the install wall, so that turn has a composer. */
 	agentLook?: Look | undefined;
 }
@@ -52,6 +54,7 @@ export function serveDaemon({
 	experiments,
 	history,
 	agentExecutor,
+	agentEngines,
 	agentLook,
 }: ServeDaemonOptions): Promise<RunningDaemon> {
 	assertLoopbackHost(host);
@@ -65,6 +68,7 @@ export function serveDaemon({
 		experiments,
 		history,
 		...(agentExecutor === undefined ? {} : { agentExecutor }),
+		...(agentEngines === undefined ? {} : { agentEngines }),
 		...(agentLook === undefined ? {} : { agentLook }),
 	});
 

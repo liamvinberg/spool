@@ -1,5 +1,7 @@
 allowBuilds:
   esbuild: true
+  "@google/genai": false
+  protobufjs: false
 minimumReleaseAgeExclude:
   - '@biomejs/biome@2.5.5'
   - '@biomejs/cli-darwin-arm64@2.5.5'

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeAtomic } from "../atomic-write";
@@ -243,7 +243,7 @@ export function putThread(spoolDir: string, root: string, id: string, put: Threa
 		id,
 		...put,
 		engine: had?.engine ?? put.engine ?? "claude",
-		session: had?.session ?? { id },
+		session: had?.session ?? { id: put.engine === "spool" ? randomUUID() : id },
 		// a thread the hands are sending into is a thread that is running again, so a new
 		// turn is what clears the mark a restart left on it
 		stopped: false,

@@ -147,6 +147,14 @@ const themeEntries = Object.fromEntries(
 ) as { readonly [Key in ThemeKey]: SettingEntry<string> };
 
 export const SETTINGS = {
+	"agent.engine": {
+		scope: "local",
+		group: "agent",
+		shape: { kind: "choice", choices: ["spool", "claude"] },
+		fallback: "spool",
+		label: "Agent engine",
+		says: "The engine for new threads in this project on this machine.",
+	},
 	history: {
 		scope: "project",
 		group: "general",

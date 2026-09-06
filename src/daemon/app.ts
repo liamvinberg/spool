@@ -22,6 +22,7 @@ import { requestUpgrade } from "../upgrade";
 import { parseAgentReply } from "./agent-control";
 import { type AgentEngine, type AgentEngineId, isAgentEngineId } from "./agent-engine";
 import { createClaudeEngine } from "./agent-engine-claude";
+import { createSpoolEngine } from "./agent-engine-spool";
 import { type AgentExecutor, claudeExecutor } from "./agent-exec";
 import { type AgentHeld, createAgentTurns } from "./agent-live";
 import { type AgentAsk, isEffortShaped, isModelShaped } from "./agent-offer";
@@ -645,10 +646,9 @@ export function createDaemonApp({
 	// for it. Project code never reaches this — it is a control-plane route
 	// behind the control token, the same boundary #41 drew.
 	const engines = new Map<AgentEngineId, AgentEngine>(
-		(agentEngines ?? [createClaudeEngine(agentExecutor ?? claudeExecutor(), agentLook)]).map((engine) => [
-			engine.id,
-			engine,
-		]),
+		(
+			agentEngines ?? [createClaudeEngine(agentExecutor ?? claudeExecutor(), agentLook), createSpoolEngine(spoolDir)]
+		).map((engine) => [engine.id, engine]),
 	);
 
 	function engineFor(c: Context, root: string, thread?: string, requested: unknown = c.req.query("engine")) {
@@ -1397,23 +1397,78 @@ export function createDaemonApp({
 		 * and the login costs a process inside somebody else's product, so it is only ever
 		 * opened by a hand on `check again`.
 		 */
-		.get("/api/p/:project/agent/installed", (c) => {
+
+		.get("/api/p/:project/agent/engines", (c) => {
 			const project = resolveProject(c, c.req.param("project"));
 			if ("response" in project) return project.response;
-			const selected = engineFor(c, project.root, c.req.query("thread"));
-			if ("response" in selected) return selected.response;
-			return c.json({ installed: selected.engine.installed() });
+			return c.json({
+				preferred:
+					settings.read(project.root).entries.find((entry) => entry.key === "agent.engine")?.value ?? "spool",
+				engines: [...engines.values()].map((engine) => ({ id: engine.id, installed: engine.installed() })),
+			});
 		})
-		.get("/api/p/:project/agent/login", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			// the probe is this request's process and nobody else's, so it goes when the
-			// request does: a page navigated off mid-check would otherwise leave a whole
-			// binary running for the length of its own timeout with nobody to hear it
-			const selected = engineFor(c, project.root, c.req.query("thread"));
-			if ("response" in selected) return selected.response;
-			return c.json(await selected.engine.account(project.root, c.req.raw.signal));
-		})
+		.post(
+			"/api/p/:project/agent/account",
+			validator("json", (value, c) => {
+				const body = z
+					.discriminatedUnion("action", [
+						z.object({ action: z.literal("start"), provider: z.string(), method: z.string() }),
+						z.object({ action: z.literal("input"), id: z.string(), value: z.string().max(16384) }),
+						z.object({ action: z.literal("cancel"), id: z.string() }),
+						z.object({ action: z.literal("disconnect"), provider: z.string() }),
+					])
+					.safeParse(value);
+				return body.success ? body.data : c.text("Invalid account operation", 400);
+			}),
+			async (c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const auth = engines.get("spool")?.authentication;
+				if (auth?.kind !== "managed") return c.text("Bundled accounts are unavailable", 503);
+				const operation = c.req.valid("json");
+				switch (operation.action) {
+					case "start":
+						return c.json(await auth.start(operation.provider, operation.method));
+					case "input":
+						return c.json(await auth.input(operation.id, operation.value));
+					case "cancel":
+						await auth.cancel(operation.id);
+						return c.json({ kind: "cancelled" as const });
+					case "disconnect":
+						await auth.logout(operation.provider);
+						return c.json({ kind: "cancelled" as const });
+				}
+			},
+		)
+		.get(
+			"/api/p/:project/agent/installed",
+			validator("query", (value) =>
+				z.object({ engine: z.string().optional(), thread: z.string().optional() }).parse(value),
+			),
+			(c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const selected = engineFor(c, project.root, c.req.query("thread"));
+				if ("response" in selected) return selected.response;
+				return c.json({ installed: selected.engine.installed() });
+			},
+		)
+		.get(
+			"/api/p/:project/agent/login",
+			validator("query", (value) =>
+				z.object({ engine: z.string().optional(), thread: z.string().optional() }).parse(value),
+			),
+			async (c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				// the probe is this request's process and nobody else's, so it goes when the
+				// request does: a page navigated off mid-check would otherwise leave a whole
+				// binary running for the length of its own timeout with nobody to hear it
+				const selected = engineFor(c, project.root, c.req.query("thread"));
+				if ("response" in selected) return selected.response;
+				return c.json(await selected.engine.account(project.root, c.req.raw.signal));
+			},
+		)
 		.post(
 			"/api/p/:project/agent/turn",
 			validator("json", (value, c) => {
@@ -1519,7 +1574,7 @@ export function createDaemonApp({
 				}
 				const turn = selected.engine.start({
 					root: project.root,
-					session: selected.session,
+					session: readThread(spoolDir, project.root, thread)?.session ?? selected.session,
 					permissions: settings.agentPermissions(project.root),
 					said: said.map((one) => ({
 						prompt: one.prompt,
@@ -1729,26 +1784,31 @@ export function createDaemonApp({
 		 * conversation: the rows are the binary's and the same for all of them, and which of
 		 * those rows is answering is not.
 		 */
-		.get("/api/p/:project/agent/threads/:thread/models", async (c) => {
-			const project = resolveProject(c, c.req.param("project"));
-			if ("response" in project) return project.response;
-			const thread = c.req.param("thread");
-			if (!isThreadId(thread)) {
-				return c.text("a thread is named by the uuid its session runs under", 400);
-			}
-			const selected = engineFor(c, project.root, thread);
-			if ("response" in selected) return selected.response;
-			return c.json(
-				await selected.engine.offer({
-					root: project.root,
-					session: selected.session,
-					ask: agentAsks.get(askKey(project.root, thread)) ?? {},
-					signal: c.req.raw.signal,
-				}),
-			);
-		})
+		.get(
+			"/api/p/:project/agent/threads/:thread/models",
+			validator("query", (value) => z.object({ engine: z.string().optional() }).parse(value)),
+			async (c) => {
+				const project = resolveProject(c, c.req.param("project"));
+				if ("response" in project) return project.response;
+				const thread = c.req.param("thread");
+				if (!isThreadId(thread)) {
+					return c.text("a thread is named by the uuid its session runs under", 400);
+				}
+				const selected = engineFor(c, project.root, thread);
+				if ("response" in selected) return selected.response;
+				return c.json(
+					await selected.engine.offer({
+						root: project.root,
+						session: selected.session,
+						ask: agentAsks.get(askKey(project.root, thread)) ?? {},
+						signal: c.req.raw.signal,
+					}),
+				);
+			},
+		)
 		.post(
 			"/api/p/:project/agent/threads/:thread/model",
+			validator("query", (value) => z.object({ engine: z.string().optional() }).parse(value)),
 			validator("json", (value, c) => {
 				const body = (typeof value === "object" && value !== null ? value : {}) as {
 					value?: unknown;
@@ -2818,6 +2878,7 @@ export function createDaemonApp({
 			machineStateWatch.stop();
 			history.close();
 			liveTurns.close();
+			for (const engine of engines.values()) engine.close?.();
 			agentAsks.clear();
 			hub.close();
 			updateChecker.stop();

@@ -127,7 +127,7 @@ describe("engine ownership through the daemon", () => {
 		expect(claude.abandoned).toBe(0);
 		expect((await send("turn", { thread: ONE, said: [{ prompt: "duplicate" }] })).status).toBe(409);
 		expect(spool.starts[0]).toMatchObject({
-			session: { id: TWO },
+			session: (await threads()).find((thread) => thread.id === TWO)?.session,
 			said: [{ prompt: "two", selection: "", attachment: { data: "aGk=" } }],
 			permissions: "ask",
 		});

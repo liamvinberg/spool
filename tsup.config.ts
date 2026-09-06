@@ -4,7 +4,7 @@ import { defineConfig } from "tsup";
 // would race the other's write — the build script clears dist/ up front
 export default defineConfig([
 	{
-		entry: ["src/cli.ts"],
+		entry: { cli: "src/cli.ts", "bundled-host": "src/daemon/bundled-host.ts" },
 		format: "esm",
 		target: "node22",
 	},

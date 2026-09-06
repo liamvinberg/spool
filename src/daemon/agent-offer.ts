@@ -48,6 +48,7 @@ export interface AgentModel {
 	readonly resolvedModel: string;
 	readonly displayName: string;
 	readonly description: string;
+	readonly connection?: string;
 	readonly supportsEffort?: boolean;
 	readonly supportedEffortLevels?: readonly string[];
 }
@@ -167,6 +168,7 @@ export function modelsOf(response: unknown): readonly AgentModel[] {
 			// value, which is what `/model` takes and so is still the machine's own word
 			displayName: string(entry.displayName) ?? value,
 			description: string(entry.description) ?? "",
+			...some("connection", string(entry.connection)),
 			...some("supportsEffort", bool(entry.supportsEffort)),
 			...some("supportedEffortLevels", levels),
 			...some("supportsFastMode", bool(entry.supportsFastMode)),
