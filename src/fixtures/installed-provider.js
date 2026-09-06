@@ -71,5 +71,10 @@
 			headers: { "content-type": "text/event-stream" },
 		});
 	};
-	return { pid: process.pid, executable: process.execPath, electron: process.versions.electron ?? null };
+	return {
+		pid: process.pid,
+		executable: process.execPath,
+		node: process.version,
+		electron: process.versions.electron ?? null,
+	};
 })();

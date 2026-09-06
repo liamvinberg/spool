@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { basename, join } from "node:path";
@@ -182,6 +182,7 @@ it("completes a deterministic journey through the clean installed host and deliv
 	for (const asset of [
 		"dist/cli.js",
 		"dist/bundled-host.js",
+		"dist/bundled-oauth-native.js",
 		"dist/ui/index.html",
 		"dist/frame-runtime.js",
 		"dist/spool-public.d.ts",
@@ -189,6 +190,13 @@ it("completes a deterministic journey through the clean installed host and deliv
 		"THIRD_PARTY_NOTICES.md",
 	])
 		expect(existsSync(join(install, asset)), asset).toBe(true);
+	for (const face of ["latin-wght-normal", "latin-wght-italic", "latin-ext-wght-normal", "latin-ext-wght-italic"])
+		expect(
+			readdirSync(join(install, "dist/ui/assets")).some(
+				(asset) => asset.startsWith(`instrument-sans-${face}-`) && asset.endsWith(".woff2"),
+			),
+			face,
+		).toBe(true);
 	const requireFromInstall = createRequire(join(install, "package.json"));
 	const packageRoot = (name: string) => {
 		const directory = requireFromInstall.resolve
@@ -206,10 +214,12 @@ it("completes a deterministic journey through the clean installed host and deliv
 	])
 		expect(existsSync(join(sandbox, asset)), asset).toBe(true);
 	expect(readFileSync(join(install, "THIRD_PARTY_NOTICES.md"), "utf8")).toContain("Copyright (c) 2025 Mario Zechner");
+	expect(readFileSync(join(install, "THIRD_PARTY_NOTICES.md"), "utf8")).toContain("Instrument Sans Project Authors");
 	expect(readFileSync(join(packageRoot("typebox"), "license"), "utf8")).toContain("Haydn Paterson");
 	const pinnedPaths = [
 		join(install, "dist/cli.js"),
 		join(install, "dist/bundled-host.js"),
+		join(install, "dist/bundled-oauth-native.js"),
 		...Object.keys(manifest.dependencies)
 			.filter((name) => name.includes("pi-") || name.includes("sandbox-runtime") || name === "typebox")
 			.map((name) => join(packageRoot(name), "package.json")),
