@@ -4,6 +4,7 @@ export function trustedCommand(command: string): string[] | undefined {
 	const [binary, verb, ...args] = command.trim().split(/ +/);
 	if (binary !== "spool" || !verb) return;
 	const name = (value: string | undefined) => value !== undefined && /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/.test(value);
+	if (verb === "check") return args.length <= 1 && !args[0]?.startsWith("-") ? [verb, ...args] : undefined;
 	if (["selection", "flows", "status"].includes(verb)) return args.length === 0 ? [verb] : undefined;
 	if (verb === "skill")
 		return args.length === 0 ||
@@ -27,4 +28,4 @@ export function trustedCommand(command: string): string[] | undefined {
 }
 
 export const SPOOL_COMMAND_GUIDANCE =
-	"Use one Spool command per tool call: spool skill, shot, logs, url, selection, flows or status, with supported arguments. Bare spool invocations in shell programs are refused. Use spool url to inspect a frame in the player.";
+	"Use one Spool command per tool call: spool skill, check, shot, logs, url, selection, flows or status, with supported arguments. Bare spool invocations in shell programs are refused. Use spool url to inspect a frame in the player.";

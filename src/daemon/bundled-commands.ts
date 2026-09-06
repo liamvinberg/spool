@@ -46,7 +46,7 @@ export function commandEnvironment(scratch: string): NodeJS.ProcessEnv {
 const parameters = Type.Object({
 	command: Type.String({
 		description:
-			"Shell command. Exact spool skill/shot/logs/url/selection/flows/status invocations use this installed package directly.",
+			"Shell command. Exact spool skill/check/shot/logs/url/selection/flows/status invocations use this installed package directly.",
 	}),
 	description: Type.Optional(Type.String({ description: "Short purpose shown in the rail." })),
 	writable_paths: Type.Optional(

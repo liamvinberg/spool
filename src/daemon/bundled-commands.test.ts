@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import type { Context } from "@earendil-works/pi-ai";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { makeTempDir, writeFrame } from "../test-helpers";
+import { makeTempDir, markProject, writeFrame } from "../test-helpers";
 import type { EngineTurnOptions } from "./agent-engine";
 import type { AgentEvent } from "./agent-events";
 import { trustedCommand } from "./bundled-command-route";
@@ -37,6 +37,49 @@ async function setup() {
 	onTestFinished(() => runtime.close());
 	return { root, directory, runtime, contexts };
 }
+
+it("type-checks frames offline with this package and returns diagnostics to the model", async () => {
+	const { root, directory, runtime, contexts } = await setup();
+	markProject(root);
+	writeFrame(root, "home", "const label: string = 42; export default () => <h1>{label}</h1>");
+	const bin = makeTempDir();
+	const marker = join(root, "wrong-installation");
+	writeFileSync(join(bin, "spool"), `#!/bin/sh\nprintf wrong >> '${marker}'\n`, { mode: 0o755 });
+	vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+	onTestFinished(() => {
+		vi.unstubAllEnvs();
+	});
+	const events: AgentEvent[] = [];
+	await runtime.turn(
+		"check",
+		options(root, [
+			command("spool check"),
+			command(`spool check ${root}`),
+			{
+				name: "write",
+				arguments: { path: "design/frames/home/frame.tsx", content: "export default () => <h1>Fixed</h1>" },
+			},
+			command("spool check ."),
+		]),
+		(event) => events.push(event),
+	);
+	expect(events.filter((event) => event.kind === "asking")).toEqual([]);
+	expect(existsSync(marker)).toBe(false);
+	expect(existsSync(join(directory, "../daemon.json"))).toBe(false);
+	const results = events.filter((event) => event.kind === "result");
+	expect(results.map((event) => event.failed)).toEqual([true, true, false, false]);
+	for (const result of results.slice(0, 2)) {
+		expect(result.text).toContain("design/frames/home/frame.tsx");
+		expect(result.text).toContain("TS2322");
+		expect(result.text).toContain("Command exited with code 1");
+	}
+	const modelResults = contexts.at(-1)?.messages.filter((message) => message.role === "toolResult");
+	expect(modelResults?.[0]).toMatchObject({
+		isError: true,
+		content: [{ type: "text", text: expect.stringContaining("TS2322") }],
+	});
+	expect(modelResults?.at(-1)).toMatchObject({ isError: false, details: { exitCode: 0 } });
+});
 
 it("refuses unsupported and nested bare Spool invocations without reaching another installation", async () => {
 	const { root, runtime } = await setup();
@@ -274,6 +317,9 @@ it("Stop settles pending approval and kills the actual command's stubborn child"
 
 it("never gives shell syntax, other packages, writes, extra flags or arbitrary scripts the trusted route", () => {
 	for (const command of [
+		"spool check",
+		"spool check .",
+		"spool check /tmp/project",
 		"spool shot home",
 		"spool logs home --scenario error",
 		"spool skill verbs",
@@ -286,6 +332,9 @@ it("never gives shell syntax, other packages, writes, extra flags or arbitrary s
 	])
 		expect(trustedCommand(command), command).toBeDefined();
 	for (const command of [
+		"spool check --help",
+		"spool check . other",
+		"spool check; touch outside",
 		"spool *",
 		"spool shot home; touch outside",
 		"spool shot $(cat secret)",
