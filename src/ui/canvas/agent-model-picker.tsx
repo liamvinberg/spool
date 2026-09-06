@@ -35,7 +35,7 @@ export function AgentModelPicker({
 	const trigger = useRef<HTMLButtonElement>(null);
 	const panel = useRef<HTMLDivElement>(null);
 	const returnFocus = useRef<"search" | "effort" | null>(null);
-	const favorites = useModelFavorites(model.project ?? "", model.engine ?? "claude");
+	const favorites = useModelFavorites(model.engine ?? "claude");
 	const { offer, levels } = model;
 	const bundled = model.engine === "spool";
 	const current = offer.models.find((entry) => entry.value === offer.current.value);

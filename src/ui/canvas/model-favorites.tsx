@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AgentModel } from "../../daemon/agent-offer";
 import { cn } from "../cn";
 import { keep, recall } from "../remembered";
@@ -6,19 +6,38 @@ import { keep, recall } from "../remembered";
 const isFavorites = (value: unknown): value is string[] =>
 	Array.isArray(value) && value.every((entry) => typeof entry === "string");
 
-export function useModelFavorites(project: string, engine: string) {
-	const key = `models.favorites.${encodeURIComponent(project)}.${engine}`;
+const listeners = new Set<(key: string, values: string[]) => void>();
+
+export function useModelFavorites(engine: string) {
+	const key = `models.favorites.${engine}`;
 	const [stored, setStored] = useState<{ key: string; values: string[] }>(() => ({
 		key,
 		values: recall(key, isFavorites) ?? [],
 	}));
 	const values = stored.key === key ? stored.values : (recall(key, isFavorites) ?? []);
+	useEffect(() => {
+		const changed = (changedKey: string, values: string[]) => {
+			if (changedKey === key) setStored({ key, values });
+		};
+		const fromStorage = (event: StorageEvent) => {
+			if (event.key === null || event.key === `spool.${key}`) changed(key, recall(key, isFavorites) ?? []);
+		};
+		changed(key, recall(key, isFavorites) ?? []);
+		listeners.add(changed);
+		window.addEventListener("storage", fromStorage);
+		return () => {
+			listeners.delete(changed);
+			window.removeEventListener("storage", fromStorage);
+		};
+	}, [key]);
 	return {
 		values,
 		toggle: (value: string) => {
-			const next = values.includes(value) ? values.filter((entry) => entry !== value) : [...values, value];
+			const current = recall(key, isFavorites) ?? values;
+			const next = current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value];
 			keep(key, next);
 			setStored({ key, values: next });
+			for (const listener of listeners) listener(key, next);
 		},
 	};
 }
