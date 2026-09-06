@@ -1,7 +1,9 @@
-import { spawn } from "node:child_process";
+import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync, writeSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { SandboxManager, SandboxRuntimeConfigSchema } from "@anthropic-ai/sandbox-runtime";
+import type { CommandResult, CommandStart } from "./bundled-command-process";
 
 // One immutable host configuration. Every command supplies its own filesystem policy.
 let ready: Promise<void> | undefined;
@@ -70,7 +72,7 @@ export async function sandboxCommand(
 	};
 }
 
-/** Commands own a process group, including browser children. Completion retires that group too. */
+/** A separate owner retires the command group even if this host disappears. */
 export async function runCommand(
 	argv: string[],
 	cwd: string,
@@ -86,9 +88,21 @@ export async function runCommand(
 		const outputFd = outputFile === undefined ? undefined : openSync(outputFile, "wx", 0o600);
 		let total = 0;
 		let outputError: unknown;
-		let child: ReturnType<typeof spawn>;
+		let child: ReturnType<typeof fork>;
 		try {
-			child = spawn(executable, argv.slice(1), { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+			const source = import.meta.url.endsWith(".ts");
+			child = fork(
+				fileURLToPath(
+					new URL(source ? "./bundled-command-process.ts" : "./bundled-command-process.js", import.meta.url),
+				),
+				[],
+				{
+					cwd,
+					env: { PATH: process.env.PATH, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
+					execArgv: source ? ["--import", import.meta.resolve("tsx")] : [],
+					stdio: ["ignore", "pipe", "pipe", "ipc"],
+				},
+			);
 		} catch (error) {
 			if (outputFd !== undefined) closeSync(outputFd);
 			throw error;
@@ -96,20 +110,13 @@ export async function runCommand(
 		let spawnError: Error | undefined;
 		let text = "";
 		let stdout = "";
-		let stopped = false;
-		const kill = () => {
-			if (child.pid === undefined) return;
-			try {
-				process.kill(-child.pid, "SIGKILL");
-			} catch {
-				child.kill("SIGKILL");
-			}
-		};
+		let result: CommandResult | undefined;
+		let spawned = false;
+		let stopRequested = false;
 		const stop = () => {
-			stopped = true;
-			kill();
+			stopRequested = true;
+			if (spawned && child.connected) child.send({ kind: "stop" }, () => {});
 		};
-		const timer = setTimeout(stop, timeout * 1000);
 		signal.addEventListener("abort", stop, { once: true });
 		const collect = (data: Buffer, output: boolean) => {
 			// Bounded results prevent an accidental endless producer exhausting the host.
@@ -133,11 +140,12 @@ export async function runCommand(
 		// release sandbox ownership and all per-process resources together.
 		child.on("error", (error) => {
 			spawnError = error;
-			kill();
+			if (spawned && child.connected) child.disconnect();
 		});
-		child.on("exit", kill);
-		child.on("close", (code) => {
-			clearTimeout(timer);
+		child.on("message", (message: CommandResult) => {
+			result = message;
+		});
+		child.on("close", () => {
 			if (outputFd !== undefined) {
 				try {
 					closeSync(outputFd);
@@ -149,8 +157,25 @@ export async function runCommand(
 			signal.removeEventListener("abort", stop);
 			if (spawnError) reject(spawnError);
 			else if (outputError !== undefined) reject(new Error("Could not save command output", { cause: outputError }));
-			else if (stopped) reject(new Error(signal.aborted ? "Command stopped" : "Command timed out"));
-			else resolve({ code, text, stdout });
+			else if (result?.error) reject(new Error(result.error));
+			else if (signal.aborted || result?.stopped)
+				reject(new Error(signal.aborted ? "Command stopped" : "Command timed out"));
+			else if (result === undefined) reject(new Error("The command process stopped unexpectedly"));
+			else resolve({ code: result.code, text, stdout });
+		});
+		child.on("spawn", () => {
+			spawned = true;
+			if (signal.aborted || stopRequested) {
+				stop();
+				return;
+			}
+			const request: CommandStart = { kind: "start", argv, cwd, env, timeout };
+			child.send(request, (error) => {
+				if (error) {
+					spawnError = error;
+					if (child.connected) child.disconnect();
+				}
+			});
 		});
 	});
 }

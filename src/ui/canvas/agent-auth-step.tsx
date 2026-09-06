@@ -1,34 +1,8 @@
 import { type ReactNode, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AgentAuthStep as LoginStep } from "../../daemon/agent-engine";
-import { cn } from "../cn";
+import { AccountButton } from "./agent-account-button";
 import { MenuItem } from "./context-menu";
-
-export function LoginButton({
-	children,
-	onClick,
-	primary = false,
-	disabled = false,
-}: {
-	children: ReactNode;
-	onClick?: () => void;
-	primary?: boolean;
-	disabled?: boolean;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			disabled={disabled}
-			className={cn(
-				"flex h-8 items-center justify-center rounded-sm px-3 text-base leading-none disabled:opacity-50",
-				primary ? "bg-thread px-4 font-medium text-on-thread" : "text-muted hover:text-text",
-			)}
-		>
-			{children}
-		</button>
-	);
-}
 
 export function ProgressLine({ children }: { children: ReactNode }) {
 	return (
@@ -60,9 +34,9 @@ export function LoginStepView({
 				</p>
 				<span className="truncate font-mono text-xs text-muted/60 leading-xs">{new URL(step.url).host}</span>
 				<Action target={actionTarget}>
-					<LoginButton primary onClick={() => onOpen()}>
+					<AccountButton primary onClick={() => onOpen()}>
 						{opened ? "Open browser again" : "Open browser"}
-					</LoginButton>
+					</AccountButton>
 				</Action>
 				{opened ? <ProgressLine>waiting for sign-in</ProgressLine> : null}
 			</div>
@@ -118,9 +92,9 @@ function DeviceStep({
 			</div>
 			<span className="font-mono text-xs text-muted/60 leading-xs">{new URL(step.verificationUri).host}</span>
 			<Action target={actionTarget}>
-				<LoginButton primary onClick={() => onOpen()}>
+				<AccountButton primary onClick={() => onOpen()}>
 					{opened ? "Open browser again" : "Open browser"}
-				</LoginButton>
+				</AccountButton>
 			</Action>
 			<ProgressLine>waiting for sign-in</ProgressLine>
 		</div>
@@ -186,9 +160,9 @@ function PromptStep({
 				/>
 			</label>
 			<Action target={actionTarget}>
-				<LoginButton primary onClick={answer} disabled={!value.trim()}>
+				<AccountButton primary onClick={answer} disabled={!value.trim()}>
 					{step.type === "secret" ? "Connect" : "Continue"}
-				</LoginButton>
+				</AccountButton>
 			</Action>
 		</div>
 	);
