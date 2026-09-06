@@ -11,7 +11,10 @@ jobs:
     # Linux: the suite is portable, and macOS bills at roughly ten times the
     # rate. The four darwin-only tests self-skip here; `darwin-gates` and the
     # release gate in publish.yml are where they run.
-    runs-on: ubuntu-latest
+    # Exercise full containment on a kernel permitting the runtime's required
+    # user/network namespaces. Ubuntu 24.04 refused loopback setup; actual
+    # restricted-kernel recovery will have a separate job.
+    runs-on: ubuntu-22.04
     timeout-minutes: 15
     concurrency:
       group: ci-${{ github.ref }}
