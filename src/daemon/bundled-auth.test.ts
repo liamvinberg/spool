@@ -21,10 +21,10 @@ function deferred<T>() {
 	return { promise, resolve };
 }
 
-it("uses pi key login for all four launch key providers, with one connection per provider and no readback", async () => {
+it("uses pi key login for every key provider, with one connection per provider and no readback", async () => {
 	const runtime = await deterministicBundledRuntime(makeTempDir());
 	onTestFinished(() => runtime.close());
-	for (const provider of ["openai", "anthropic", "google", "xai"]) {
+	for (const provider of ["openai", "anthropic", "google", "xai", "openrouter"]) {
 		const step = await runtime.request({ kind: "login", provider, method: "api_key" });
 		if (!step || typeof step !== "object" || !("kind" in step) || step.kind !== "step")
 			throw new Error("Missing login prompt");
@@ -50,7 +50,10 @@ it("uses pi key login for all four launch key providers, with one connection per
 	]);
 	const account = await runtime.request({ kind: "account" });
 	expect(JSON.stringify(account)).not.toContain("private-key");
-	expect(await runtime.credentials.list()).toHaveLength(4);
+	expect(await runtime.credentials.list()).toHaveLength(5);
+	expect(account).toMatchObject({
+		connections: expect.arrayContaining([{ provider: "openrouter", method: "api_key", label: "OpenRouter API key" }]),
+	});
 	expect(await runtime.request({ kind: "login", provider: "anthropic", method: "oauth" })).toMatchObject({
 		kind: "error",
 	});

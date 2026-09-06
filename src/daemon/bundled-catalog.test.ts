@@ -9,10 +9,10 @@ import { BundledCatalog } from "./bundled-catalog";
 import { BundledRuntime } from "./bundled-runtime";
 import { BundledCredentialStore, writePrivate } from "./bundled-store";
 
-async function fixture() {
+async function fixture(provider = "openai") {
 	const directory = makeTempDir();
 	const credentials = new BundledCredentialStore(directory);
-	await credentials.modify("openai", async () => ({ type: "api_key", key: "fixture-key" }));
+	await credentials.modify(provider, async () => ({ type: "api_key", key: "fixture-key" }));
 	let body: unknown = [];
 	let status = 200;
 	let delay = false;
@@ -20,6 +20,7 @@ async function fixture() {
 	let aborted = false;
 	const server = createServer((request, response) => {
 		requests++;
+		expect(request.url).toBe(`/api/models/providers/${provider}`);
 		expect(request.headers.authorization).toBeUndefined();
 		expect(request.headers["user-agent"]).toContain("pi/");
 		if (delay) {
@@ -84,6 +85,38 @@ async function fixture() {
 		aborted: () => aborted,
 	};
 }
+
+it("refreshes and restores OpenRouter models with slashed ids and both native transports", async () => {
+	const f = await fixture("openrouter");
+	const { catalog, models, runtime } = await f.open();
+	const completions = models.getModels("openrouter").find((model) => model.api === "openai-completions");
+	const messages = models.getModels("openrouter").find((model) => model.api === "anthropic-messages");
+	if (!completions || !messages) throw new Error("Missing OpenRouter transports");
+	f.body([
+		{ ...completions, id: "new-vendor/new-model", name: "New vendor: New model" },
+		{ ...messages, id: "anthropic/new-model", name: "Anthropic: New model" },
+		{ ...completions, id: "text-only/model", input: ["text"] },
+		{ ...completions, id: "unsafe/model", baseUrl: "https://untrusted.invalid" },
+	]);
+	await catalog.refresh(models);
+	expect(f.requests()).toBe(1);
+	const options = { root: makeTempDir(), session: { id: randomUUID() }, ask: {} };
+	const chosen = await runtime.offer({
+		...options,
+		choose: { value: "spool/openrouter/api_key/new-vendor/new-model" },
+	});
+	expect(chosen.current.resolved).toBe("new-vendor/new-model");
+	expect(chosen.models.find((model) => model.resolvedModel === "anthropic/new-model")).toMatchObject({
+		connection: "OpenRouter API key",
+	});
+	for (const id of ["text-only/model", "unsafe/model"]) expect(models.getModel("openrouter", id)).toBeUndefined();
+	const restored = await f.open();
+	expect((await restored.runtime.offer(options)).current).toEqual(chosen.current);
+	expect(restored.models.getModel("openrouter", "anthropic/new-model")?.api).toBe("anthropic-messages");
+	expect(f.requests()).toBe(1);
+	await restored.runtime.request({ kind: "disconnect", provider: "openrouter" });
+	expect((await restored.runtime.offer(options)).models).toEqual([]);
+});
 
 it("refreshes only compatible model data through the real SDK and restores durable offers offline", async () => {
 	const f = await fixture();

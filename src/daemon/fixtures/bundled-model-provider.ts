@@ -24,5 +24,9 @@ export async function deterministicModelRuntime(directory: string): Promise<Bund
 			streamSimple: configuration.streamSimple,
 		});
 	}
+	const openrouter = runtime.models.getProvider("openrouter");
+	if (!openrouter) throw new Error("Missing OpenRouter provider");
+	// Keep the entire real catalog for the picker simulation; only replies are deterministic.
+	runtime.models.registerNativeProvider({ ...openrouter, streamSimple: configuration.streamSimple });
 	return runtime;
 }

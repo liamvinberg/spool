@@ -193,6 +193,60 @@ it("chooses account-scoped favorites through the served canvas and keeps the exa
 	).toBe(true);
 	await page.keyboard.press("Escape");
 	expect(await trigger.evaluate((node) => node === document.activeElement)).toBe(true);
+
+	await trigger.click();
+	await menu.getByRole("button", { name: "Find a model…", exact: true }).click();
+	await menu.getByRole("button", { name: "Connect account…", exact: true }).click();
+	await dialog.getByRole("menuitem", { name: "OpenRouter API key", exact: true }).click();
+	const key = dialog.getByLabel("OpenRouter API key", { exact: true });
+	await key.waitFor();
+	expect(await key.getAttribute("type")).toBe("password");
+	await shot("openrouter-connect");
+	await key.fill("fixture-openrouter-private-key");
+	await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+	await dialog.getByRole("button", { name: "Done", exact: true }).click();
+	await trigger.click();
+	await expect.poll(() => offers.count()).toBe(1);
+	await menu.getByRole("button", { name: "Find a model…", exact: true }).click();
+	const routed = menu.locator('[data-model-offer^="spool/openrouter/api_key/"]');
+	await expect.poll(() => routed.count()).toBeGreaterThan(200);
+	await menu.getByRole("searchbox").fill("openrouter");
+	await expect.poll(() => offers.count()).toBeGreaterThan(200);
+	await shot("openrouter-catalog-280");
+	await menu.getByRole("searchbox").fill("kimi");
+	await expect.poll(() => offers.count()).toBeGreaterThan(0);
+	expect(await offers.count()).toBeLessThan(20);
+	const chosen = offers.first();
+	const chosenValue = await chosen.getAttribute("data-model-offer");
+	if (!chosenValue) throw new Error("Missing OpenRouter choice");
+	await chosen.getByRole("button", { name: /^Favorite / }).click();
+	await shot("openrouter-search-280");
+	await chosen.locator("[data-agent-model-row]").click();
+	await trigger.click();
+	await expect.poll(() => offers.count()).toBe(2);
+	await shot("openrouter-favorites-280");
+	await page.keyboard.press("Escape");
+	await field.fill("hello through OpenRouter");
+	await field.press("Enter");
+	await expect.poll(() => page.locator("[data-agent-rail]").textContent()).toContain("Saved reply 3.");
+	await page.reload();
+	await trigger.click();
+	await expect.poll(() => offers.count()).toBe(2);
+	expect(
+		await menu.locator(`[data-model-offer="${chosenValue}"] [data-agent-model-row]`).getAttribute("aria-current"),
+	).toBe("true");
+	expect(readFileSync(join(directory, "sessions", `${thread.session.id}.jsonl`), "utf8")).not.toContain(
+		"fixture-openrouter-private-key",
+	);
+	await menu.getByRole("button", { name: "Find a model…", exact: true }).click();
+	await menu.getByRole("button", { name: "Connect account…", exact: true }).click();
+	await dialog.getByRole("menuitem", { name: "OpenRouter API key · connected", exact: true }).click();
+	await dialog.getByRole("button", { name: "Disconnect", exact: true }).click();
+	await dialog.getByRole("menuitem", { name: "OpenRouter API key", exact: true }).waitFor();
+	await dialog.press("Escape");
+	await trigger.click();
+	await menu.getByRole("button", { name: "Find a model…", exact: true }).click();
+	await expect.poll(() => routed.count()).toBe(0);
 });
 
 /** Measure every rendered frame, including the first paint after the page changes. */

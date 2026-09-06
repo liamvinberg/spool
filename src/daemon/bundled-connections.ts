@@ -1,7 +1,7 @@
 export const BUNDLED_CONNECTIONS = [
 	{ provider: "openai-codex", method: "oauth", name: "ChatGPT", label: "Sign in with ChatGPT" },
 	{ provider: "xai", method: "oauth", name: "Grok", label: "Sign in with Grok" },
-	...(["OpenAI", "Anthropic", "Google", "xAI"] as const).map((name) => ({
+	...(["OpenAI", "Anthropic", "Google", "xAI", "OpenRouter"] as const).map((name) => ({
 		provider: name.toLowerCase(),
 		method: "api_key" as const,
 		name,
