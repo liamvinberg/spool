@@ -3,6 +3,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"dev": "tsx ../src/dev.ts"
+		"dev": "tsx ../src/dev.ts",
+		"export": "node export.mjs"
 	}
 }
