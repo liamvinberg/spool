@@ -29,6 +29,23 @@ jobs:
       # Real Linux filesystem isolation tests require the runtime's userspace helpers.
       # No kernel policy changes or privileged helper installation happen in the product.
       - run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+      - name: inspect Linux sandbox prerequisites
+        run: |
+          uname -srmo
+          dpkg-query -W bubblewrap socat ripgrep libseccomp2
+          for helper in bwrap socat rg; do
+            command -v "$helper"
+            ldd "$(command -v "$helper")" || true
+          done
+          ldd node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64/apply-seccomp || true
+          for setting in /proc/sys/kernel/unprivileged_userns_clone /proc/sys/kernel/apparmor_restrict_unprivileged_userns /proc/sys/user/max_user_namespaces /proc/self/attr/current; do
+            if [ -r "$setting" ]; then
+              printf '%s: ' "$setting"
+              cat "$setting"
+            fi
+          done
+      - name: prove actual command sandbox startup
+        run: pnpm exec vitest run src/daemon/bundled-sandbox.test.ts --maxWorkers=2
       - run: pnpm exec playwright-core install --with-deps chromium-headless-shell
       - run: pnpm typecheck
       - run: pnpm test

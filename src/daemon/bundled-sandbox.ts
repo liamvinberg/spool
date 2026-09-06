@@ -12,29 +12,40 @@ export async function sandboxCommand(
 	signal: AbortSignal,
 ) {
 	ready ??= (async () => {
-		if (!SandboxManager.isSupportedPlatform() || process.platform === "win32")
-			throw new Error("Command isolation is unavailable");
-		const dependencies = await SandboxManager.checkDependenciesAsync();
-		if (dependencies.errors.length) throw new Error("Command isolation is unavailable");
-		await SandboxManager.initialize(
-			{
-				filesystem: { allowWrite: [], denyRead: [], denyWrite: [] },
-				network: { allowedDomains: ["*"], deniedDomains: [] },
-			},
-			undefined,
-			false,
-		);
-		// A helper can exist while the kernel refuses its isolation primitives. Probe
-		// before the user's command, whose partial effects must never be retried.
-		const probe = await SandboxManager.wrapWithSandboxArgv("true", "/bin/bash");
-		const result = await runCommand(
-			probe.argv,
-			process.cwd(),
-			{ PATH: process.env.PATH, ...probe.env },
-			new AbortController().signal,
-			10,
-		);
-		if (result.code !== 0) throw new Error("Command isolation is unavailable");
+		let stage = "platform";
+		try {
+			if (!SandboxManager.isSupportedPlatform() || process.platform === "win32")
+				throw new Error(`Unsupported platform: ${process.platform}/${process.arch}`);
+			stage = "dependencies";
+			const dependencies = await SandboxManager.checkDependenciesAsync();
+			if (dependencies.errors.length) throw new Error([...dependencies.errors, ...dependencies.warnings].join("\n"));
+			stage = "initialization";
+			await SandboxManager.initialize(
+				{
+					filesystem: { allowWrite: [], denyRead: [], denyWrite: [] },
+					network: { allowedDomains: ["*"], deniedDomains: [] },
+				},
+				undefined,
+				false,
+			);
+			// A helper can exist while the kernel refuses its isolation primitives. Probe
+			// before the user's command, whose partial effects must never be retried.
+			stage = "probe wrapping";
+			const probe = await SandboxManager.wrapWithSandboxArgv("true", "/bin/bash");
+			stage = "probe execution";
+			const result = await runCommand(
+				probe.argv,
+				process.cwd(),
+				{ PATH: process.env.PATH, ...probe.env },
+				new AbortController().signal,
+				10,
+			);
+			// Only the fixed startup probe's bounded output belongs in diagnostics.
+			// Never record a user's command, its environment, or the generated sandbox argv.
+			if (result.code !== 0) throw new Error(`Startup probe exited ${result.code}: ${result.text.slice(-4096)}`);
+		} catch (error) {
+			throw new Error(`Command isolation is unavailable (${stage})`, { cause: error });
+		}
 	})();
 	await ready;
 	return SandboxManager.wrapWithSandboxArgv(command, "/bin/bash", { filesystem }, signal, root, {
