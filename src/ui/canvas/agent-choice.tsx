@@ -1,5 +1,4 @@
-import { type RefObject, useEffect, useRef, useState } from "react";
-import type { AgentEngineId } from "../../daemon/agent-engine";
+import { useEffect, useRef, useState } from "react";
 import { fetchAgentInstalled } from "../api";
 import { cn } from "../cn";
 import type { AgentModelDeck } from "./agent-model";
@@ -9,23 +8,19 @@ const NAMES = { spool: "spool", claude: "Claude Code" };
 
 export function AgentChoice({
 	model,
-	menu,
-	onMenu,
-	onNew,
-	newTrigger,
+	open,
+	onOpen,
 }: {
 	model: AgentModelDeck;
-	menu: "agent" | "new" | null;
-	onMenu: (menu: "agent" | "new" | null) => void;
-	onNew: (engine?: AgentEngineId) => void;
-	newTrigger: RefObject<HTMLButtonElement | null>;
+	open: boolean;
+	onOpen: (open: boolean) => void;
 }) {
 	const [installed, setInstalled] = useState<boolean | null>(null);
 	const trigger = useRef<HTMLButtonElement>(null);
 	const panel = useRef<HTMLDivElement>(null);
 	const engine = model.engine ?? "claude";
 	useEffect(() => {
-		if (menu === null) return;
+		if (!open) return;
 		let active = true;
 		panel.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
 		if (model.project)
@@ -35,10 +30,10 @@ export function AgentChoice({
 		return () => {
 			active = false;
 		};
-	}, [menu, model.project]);
+	}, [open, model.project]);
 	const close = () => {
-		onMenu(null);
-		(menu === "new" ? newTrigger : trigger).current?.focus({ preventScroll: true });
+		onOpen(false);
+		trigger.current?.focus({ preventScroll: true });
 	};
 	return (
 		<>
@@ -67,17 +62,17 @@ export function AgentChoice({
 						type="button"
 						ref={trigger}
 						aria-label="Choose agent for this new chat"
-						aria-expanded={menu === "agent"}
-						onClick={() => onMenu(menu === "agent" ? null : "agent")}
+						aria-expanded={open}
+						onClick={() => onOpen(!open)}
 						className="relative z-30 flex items-center gap-1.5 text-muted type-detail hover:text-text"
 					>
 						{NAMES[engine]}
-						<ChevronIcon open={menu === "agent"} className="h-2 w-2" />
+						<ChevronIcon open={open} className="h-2 w-2" />
 					</button>
 				)}
 				{!model.started ? <span className="text-muted/65 type-caption">For this new chat</span> : null}
 			</div>
-			{menu !== null ? (
+			{open ? (
 				<>
 					<button
 						type="button"
@@ -89,7 +84,7 @@ export function AgentChoice({
 					<div
 						ref={panel}
 						role="dialog"
-						aria-label={menu === "new" ? "Start a new chat" : "Choose an agent"}
+						aria-label="Choose an agent"
 						className="absolute top-full right-3 left-3 z-40 mt-1 overflow-hidden rounded-md border border-border-raised bg-surface p-1.5"
 						onKeyDown={(event) => {
 							if (event.key === "Escape" || event.key === "Tab") {
@@ -116,18 +111,15 @@ export function AgentChoice({
 								key={value}
 								data-agent-engine={value}
 								onClick={() => {
-									if (menu === "new") onNew(value);
-									else if (!model.started) model.onEngine?.(value);
+									if (!model.started) model.onEngine?.(value);
 									close();
 								}}
 								className={cn(
 									"flex w-full flex-col gap-1 rounded-sm px-2 py-2.5 text-left hover:bg-raised",
-									menu === "agent" && engine === value && "bg-raised/50",
+									engine === value && "bg-raised/50",
 								)}
 							>
-								<span className="text-text type-control">
-									{menu === "new" ? `New chat with ${NAMES[value]}` : NAMES[value]}
-								</span>
+								<span className="text-text type-control">{NAMES[value]}</span>
 								<span className="text-muted type-caption">
 									{value === "spool"
 										? "Uses your connected accounts."

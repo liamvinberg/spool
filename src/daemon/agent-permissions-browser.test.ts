@@ -211,7 +211,8 @@ it("uses both engine footers in the served canvas, waits for acknowledged modes 
 	expect(await open.count()).toBe(0);
 	// Claude follows the same UI through its real adapter and deterministic wire peer.
 	await rail.getByRole("button", { name: "New chat", exact: true }).click();
-	await rail.getByRole("button", { name: "New chat with Claude Code", exact: false }).click();
+	await rail.getByRole("button", { name: "Choose agent for this new chat" }).click();
+	await rail.locator('[data-agent-engine="claude"]').click();
 	await expect.poll(() => model.getAttribute("title")).toContain("Default (recommended)");
 	await send("Permission journey");
 	await expect.poll(() => open.count()).toBe(3);

@@ -64,7 +64,7 @@ it("connects through the rendered canvas, preserves image and queued selection, 
 	await field.fill("keep this draft");
 	await field.press("Enter");
 	const dialog = page.getByRole("dialog", { name: "Connect an account" });
-	await expect.poll(() => dialog.count()).toBe(1);
+	await expect.poll(() => dialog.count(), { timeout: 15_000 }).toBe(1);
 	expect(Math.round((await dialog.boundingBox())?.width ?? 0)).toBe(380);
 	await shot("login-list-idle");
 	await dialog.getByRole("menuitem", { name: "OpenAI API key", exact: true }).click();
@@ -150,8 +150,10 @@ it("connects through the rendered canvas, preserves image and queued selection, 
 	await shot("engine-combined-thread");
 	expect(await page.locator("[data-agent-rail]").textContent()).not.toContain("fixture-key");
 	await page.getByRole("button", { name: "New chat", exact: true }).click();
-	await shot("engine-new-chat-choosing");
-	await page.getByRole("button", { name: "New chat with Claude Code" }).click();
+	expect(await page.locator("[data-agent-engine]").count()).toBe(0);
+	await shot("engine-new-chat-ready");
+	await page.getByRole("button", { name: "Choose agent for this new chat" }).click();
+	await page.locator('[data-agent-engine="claude"]').click();
 	await expect
 		.poll(() => page.getByRole("button", { name: "Choose agent for this new chat" }).textContent())
 		.toContain("Claude Code");
@@ -159,7 +161,7 @@ it("connects through the rendered canvas, preserves image and queued selection, 
 	await page.reload();
 	await expect.poll(() => page.locator("[data-agent-rail]").textContent()).toContain("Saved reply 2.");
 	await page.getByRole("button", { name: "New chat", exact: true }).click();
-	await page.getByRole("button", { name: "New chat with Claude Code" }).click();
+	expect(await page.locator("[data-agent-engine]").count()).toBe(0);
 	await expect
 		.poll(() => page.getByRole("button", { name: "Choose agent for this new chat" }).textContent())
 		.toContain("Claude Code");

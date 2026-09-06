@@ -3102,9 +3102,8 @@ const closeThread = async (host: HTMLElement, name: string) => {
 	await press(host.querySelector(`[data-agent-thread-close="${name}"]`));
 };
 
-const newThread = async (host: HTMLElement, engine = "claude") => {
+const newThread = async (host: HTMLElement) => {
 	await press(host.querySelector('[aria-label="New chat"]'));
-	await press(host.querySelector(`[data-agent-engine="${engine}"]`));
 };
 
 /** the words in the log, which is how a test says whose transcript is on screen */
@@ -3956,7 +3955,7 @@ describe("the model menu", () => {
 		expect(canvas.host.querySelector("[data-fixed-agent]")?.textContent).toBe("spool");
 	});
 
-	it("keeps a started chat's agent and draft when the plus opens another agent", async () => {
+	it("starts immediately with the last chosen agent and preserves the older chat's draft", async () => {
 		const canvas = mount();
 		canvas.stored.served = [
 			storedThread({ id: ONE, ask: "original chat", engine: "spool", draft: "original draft" }),
@@ -3964,12 +3963,19 @@ describe("the model menu", () => {
 		await canvas.render();
 		await settle();
 		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')).toBeNull();
-		await newThread(canvas.host, "claude");
+		await newThread(canvas.host);
 		await settle(50);
+		expect(canvas.host.querySelector("[data-agent-engine]")).toBeNull();
 		expect(field(canvas.host)?.value).toBe("");
+		expect(document.activeElement).toBe(field(canvas.host));
 		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe(
 			"Claude Code",
 		);
+		await press(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]'));
+		await press(canvas.host.querySelector('[data-agent-engine="spool"]'));
+		await newThread(canvas.host);
+		expect(canvas.host.querySelector("[data-agent-engine]")).toBeNull();
+		expect(canvas.host.querySelector('[aria-label="Choose agent for this new chat"]')?.textContent).toBe("spool");
 		await openCell(canvas.host, "original chat");
 		await settle(50);
 		expect(field(canvas.host)?.value).toBe("original draft");

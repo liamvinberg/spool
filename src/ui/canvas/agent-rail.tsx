@@ -248,7 +248,7 @@ export function AgentRail({
 }) {
 	/** how many sends this rail has watched go out, which is the log's cue to follow again */
 	const [spoke, setSpoke] = useState(0);
-	const [footerMenu, setFooterMenu] = useState<"models" | "permissions" | "agent" | "new" | null>(null);
+	const [footerMenu, setFooterMenu] = useState<"models" | "permissions" | "agent" | null>(null);
 	/** the clock read when the thread list was dropped over the log, or null while it is shut */
 	const [listing, setListing] = useState<number | null>(null);
 	/**
@@ -368,7 +368,7 @@ export function AgentRail({
 									setFooterMenu(null);
 									setListing(at);
 								}}
-								menu={footerMenu === "agent" || footerMenu === "new" ? footerMenu : null}
+								menu={footerMenu === "agent" ? footerMenu : null}
 								onMenu={(menu) => {
 									setListing(null);
 									setFooterMenu(menu);
@@ -489,13 +489,12 @@ function ThreadPlate({
 }: {
 	threads: Threads;
 	model: AgentModelDeck;
-	menu: "agent" | "new" | null;
-	onMenu: (menu: "agent" | "new" | null) => void;
+	menu: "agent" | null;
+	onMenu: (menu: "agent" | null) => void;
 	listing: number | null;
 	onList: (at: number | null) => void;
 }) {
 	const { list, open, onNew } = threads;
-	const newTrigger = useRef<HTMLButtonElement>(null);
 	const name = list.find((thread) => thread.id === open)?.name ?? UNSAID;
 	const elsewhere = list.filter((thread) => thread.id !== open && thread.life !== "read");
 	const listed = listing !== null;
@@ -523,19 +522,22 @@ function ThreadPlate({
 				</button>
 				<button
 					type="button"
-					ref={newTrigger}
 					aria-label="New chat"
-					aria-expanded={menu === "new"}
-					onClick={() => {
+					onClick={(event) => {
 						onList(null);
-						onMenu(menu === "new" ? null : "new");
+						onMenu(null);
+						onNew();
+						event.currentTarget
+							.closest("[data-agent-rail]")
+							?.querySelector("textarea")
+							?.focus({ preventScroll: true });
 					}}
 					className="-mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-150 hover:text-text"
 				>
 					<PlusIcon />
 				</button>
 			</div>
-			<AgentChoice model={model} menu={menu} onMenu={onMenu} onNew={onNew} newTrigger={newTrigger} />
+			<AgentChoice model={model} open={menu === "agent"} onOpen={(open) => onMenu(open ? "agent" : null)} />
 		</div>
 	);
 }
@@ -2110,8 +2112,8 @@ function Composer({
 	onAnswer,
 }: {
 	permissions: PermissionDeck | undefined;
-	menu: "models" | "permissions" | "agent" | "new" | null;
-	onMenu: (menu: "models" | "permissions" | "agent" | "new" | null) => void;
+	menu: "models" | "permissions" | "agent" | null;
+	onMenu: (menu: "models" | "permissions" | "agent" | null) => void;
 	phase: TurnPhase;
 	/** how long the request now out has been silent, which is all the stroke reads (#231) */
 	waited: number;

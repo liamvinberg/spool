@@ -13,7 +13,7 @@ import { SpoolShell } from "shared/ui/spool/shell";
 // Layout fixtures for the shipped model picker. State stays local to each frame.
 type Seed = "new" | "thread" | "search" | "effort" | "claude" | "permissions";
 type Engine = "spool" | "claude";
-type Panel = "models" | "effort" | "agent" | "new" | "permissions" | null;
+type Panel = "models" | "effort" | "agent" | "permissions" | null;
 interface Offer {
 	id: string;
 	name: string;
@@ -385,8 +385,10 @@ export function ModelPickerDemo({
 				<button
 					type="button"
 					aria-label="New chat"
-					aria-expanded={panel === "new"}
-					onClick={() => toggle("new")}
+					onClick={() => {
+						chooseEngine(engine, true);
+						root.current?.querySelector("textarea")?.focus({ preventScroll: true });
+					}}
 					className="flex h-6 w-6 items-center justify-center text-muted hover:text-text"
 				>
 					<PlusIcon className="h-3 w-3" />
@@ -416,21 +418,21 @@ export function ModelPickerDemo({
 				)}
 				{!started ? <span className="text-muted/65 type-caption">For this new chat</span> : null}
 			</div>
-			{panel === "agent" || panel === "new" ? (
+			{panel === "agent" ? (
 				<div
 					role="dialog"
-					aria-label={panel === "new" ? "Start a new chat" : "Choose an agent"}
+					aria-label="Choose an agent"
 					className="absolute top-full right-3 left-3 z-40 mt-1 overflow-hidden rounded-md border border-border-raised bg-surface p-1.5"
 				>
 					{(["spool", "claude"] as const).map((value) => (
 						<button
 							type="button"
 							key={value}
-							onClick={() => chooseEngine(value, panel === "new")}
+							onClick={() => chooseEngine(value, false)}
 							className="flex w-full flex-col gap-1 rounded-sm px-2 py-2.5 text-left hover:bg-raised"
 						>
 							<span className="text-text type-control">
-								{panel === "new" ? `New chat with ${NAMES[value]}` : NAMES[value]}
+								{NAMES[value]}
 							</span>
 							<span className="text-muted type-caption">
 								{value === "spool" ? "Uses your connected accounts." : "Uses Claude Code on this Mac."}
@@ -488,7 +490,7 @@ export function ModelPickerDemo({
 				/>
 			) : null}
 
-			{panel !== "permissions" && panel !== "agent" && panel !== "new" ? (
+			{panel !== "permissions" && panel !== "agent" ? (
 				<ResizePopover
 					open={panel === "models" || panel === "effort"}
 					view={panel === "effort" ? "effort" : searching ? "search" : "models"}
