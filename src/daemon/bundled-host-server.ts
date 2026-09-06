@@ -1,5 +1,6 @@
 import type { HostInput, HostOutput } from "./bundled-protocol";
 import type { BundledRuntime } from "./bundled-runtime";
+import { closeBundledSandbox } from "./bundled-sandbox";
 
 export function serveBundledHost(runtime: BundledRuntime): void {
 	const send = (message: HostOutput) => {
@@ -25,6 +26,6 @@ export function serveBundledHost(runtime: BundledRuntime): void {
 		);
 	});
 	process.on("disconnect", () => {
-		void runtime.close().finally(() => process.exit());
+		void runtime.close().finally(() => closeBundledSandbox().finally(() => process.exit()));
 	});
 }

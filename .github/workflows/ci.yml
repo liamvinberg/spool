@@ -26,6 +26,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # --with-deps: the browser tests launch headless-shell, and the runner
       # image does not carry every shared library it links against.
+      # Real Linux filesystem isolation tests require the runtime's userspace helpers.
+      # No kernel policy changes or privileged helper installation happen in the product.
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
       - run: pnpm exec playwright-core install --with-deps chromium-headless-shell
       - run: pnpm typecheck
       - run: pnpm test

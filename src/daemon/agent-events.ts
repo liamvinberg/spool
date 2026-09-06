@@ -195,7 +195,13 @@ export type AgentGrant = Readonly<Record<string, unknown>>;
  */
 export interface AgentAsking extends AgentEventBase {
 	readonly kind: "asking";
-	readonly access?: { readonly scope: string; readonly path: string };
+	readonly access?: {
+		readonly scope: string;
+		readonly path: string;
+		readonly kind?: "command";
+		readonly command?: string;
+		readonly unavailable?: boolean;
+	};
 	/** the control request's own id, which is what an answer names */
 	readonly request: string;
 	/** the call it is about, which is the row already in the log */
