@@ -8,6 +8,11 @@ separate source targets. The production lane still refuses shared definitions.
 These probes demonstrate ingredients for a resolver, not a complete resolver or
 approval to ship the experimental React runtime.
 
+The later [automatic read probe](automatic.md) starts at a selected mounted
+element and verifies bounded source bindings. It also reproduces a React
+composition defect in this experimental runtime. The original results below
+remain evidence for the earlier, manually paired mechanisms.
+
 ## Reproduce
 
 Use the checkout's Node 22+ and pnpm dependencies, including its pinned
