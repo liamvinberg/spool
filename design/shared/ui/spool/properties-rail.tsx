@@ -197,7 +197,7 @@ export function Rail({ reading, acts, head }: { reading: Reading | null; acts: A
 		<div className="flex h-full min-h-0 flex-col bg-bg">
 			{reading === null ? (
 				<div className="flex h-9 shrink-0 items-center border-border border-b px-2.5">
-					<span className={cn("text-muted/50", VALUE)}>no selection</span>
+					<span className={cn("text-muted", VALUE)}>no selection</span>
 				</div>
 			) : (
 				<Panel key={reading.element.id} reading={reading} acts={acts} head={head} />
@@ -284,7 +284,7 @@ function Head({ reading, acts, head }: { reading: Reading; acts: Acts; head?: Re
 								>
 									{element.name}
 								</button>
-								{last ? null : <span className="text-muted/30">/</span>}
+								{last ? null : <span className="text-muted">/</span>}
 							</span>
 						);
 					})}
@@ -1084,7 +1084,7 @@ function AppearanceSection({ view }: { view: View }) {
 			) : (
 				<div className="flex h-7 items-center px-1.5">
 					<button type="button" disabled={!verdict.ok} onClick={() => setMore(true)} className={cn("flex h-6 cursor-pointer items-center gap-1.5 rounded-xs px-1.5 hover:bg-surface", FAINT, verdict.ok ? "hover:text-text" : "cursor-default")}>
-						<span className="text-sm leading-none">+</span>
+						<span className="type-label">+</span>
 						<span className={LABEL}>filter, transform, transition</span>
 					</button>
 				</div>
@@ -1480,12 +1480,11 @@ function SourceSection({ view }: { view: View }) {
 					{element.computed !== undefined ? (
 						<span className="text-muted">{element.computed}</span>
 					) : list.length === 0 ? (
-						<span className="text-muted/50">null</span>
+						<span className="text-muted">null</span>
 					) : (
 						list.map((token, index) => {
 							const anatomy = anatomyOf(token);
-							const inScopeNow = view.scope.length === 0 || (anatomy.variants.length > 0 && scopeKey(anatomy.variants) === scopeKey(view.scope));
-							const colour = reading.original.has(token) ? (inScopeNow ? "text-muted" : "text-muted/40") : "text-thread";
+							const colour = reading.original.has(token) ? "text-muted" : "text-thread";
 							return (
 								<span key={`${token}-${index}`}>
 									{verdict.ok ? (

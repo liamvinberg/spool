@@ -142,7 +142,7 @@ export function FindPalette({
 			>
 				<label className="flex h-12 shrink-0 items-center gap-3 border-border border-b px-4">
 					{/* the summon key, left as the prompt: the field says which key opened it */}
-					<span className="shrink-0 font-mono text-md text-muted/60 leading-md">/</span>
+					<span className="shrink-0 text-muted type-code-input">/</span>
 					<input
 						ref={inputRef}
 						value={query}
@@ -168,18 +168,18 @@ export function FindPalette({
 								event.preventDefault();
 							}
 						}}
-						className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none placeholder:text-muted/40"
+						className="min-w-0 flex-1 bg-transparent text-text caret-thread outline-none placeholder:text-muted type-code-input"
 						aria-label="Find a frame"
 					/>
 					{/* an order you did not ask for has to say what it is; an order you typed does not */}
-					<span className="flex shrink-0 items-center gap-2 font-mono text-2xs leading-3">
+					<span className="flex shrink-0 items-center gap-2 type-detail">
 						{unseen === undefined || Object.keys(unseen).length === 0 ? null : (
-							<span className="flex items-center gap-1 text-text/80">
+							<span className="flex items-center gap-1 text-text">
 								<UnseenMark mark="new" className="-mr-1" />
 								{Object.keys(unseen).length} unseen
 							</span>
 						)}
-						<span className="text-muted/50">
+						<span className="text-muted">
 							{empty ? `${FRAMES.length} frames, newest first` : `${hits.length} of ${FRAMES.length}`}
 						</span>
 					</span>
@@ -194,7 +194,7 @@ export function FindPalette({
 						style={{ height: Math.min(Math.max(hits.length, 1), VISIBLE) * ROW + 12 + (hits.length > VISIBLE ? 15 : 0) }}
 					>
 						{hits.length === 0 ? (
-							<div className="flex h-[30px] items-center px-4 font-mono text-muted/60 text-sm leading-sm">
+							<div className="flex h-[30px] items-center px-4 text-muted type-value">
 								nothing answers to that
 							</div>
 						) : (
@@ -221,7 +221,7 @@ export function FindPalette({
 					) : null}
 				</div>
 
-				<div className="flex h-9 shrink-0 items-center gap-5 border-border border-t px-4 font-mono text-2xs text-muted leading-3">
+				<div className="flex h-9 shrink-0 items-center gap-5 border-border border-t px-4 text-muted type-detail">
 					<span>{"↑↓ moves"}</span>
 					<span>{"↵ lands there"}</span>
 					<span>esc closes</span>
@@ -293,11 +293,11 @@ function Row({
 			{/* what the row is, then where it is: two different questions, so two groups */}
 			<span className="flex shrink-0 items-center gap-3">
 				{age ? (
-					<span className="w-[26px] text-right font-mono text-2xs text-muted/40 leading-3">{hit.row.age}</span>
+					<span className="w-[26px] text-right text-muted type-detail">{hit.row.age}</span>
 				) : null}
 				<span className="flex w-[74px] items-center gap-1.5">
 					<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
-					<span className="truncate font-mono text-2xs text-muted/55 leading-3">{hit.row.page}</span>
+					<span className="truncate text-muted type-detail">{hit.row.page}</span>
 				</span>
 			</span>
 		</button>
@@ -307,7 +307,7 @@ function Row({
 /** the name, whole and in place. Only brightness moves. */
 function Dim({ name, weights }: { name: string; weights: readonly Weight[] }) {
 	return (
-		<span className="min-w-0 flex-1 truncate font-mono text-sm leading-sm">
+		<span className="min-w-0 flex-1 truncate type-value">
 			<Ink name={name} weights={weights} from={0} to={name.length} tone={TONE} />
 		</span>
 	);
@@ -318,10 +318,10 @@ function Tail({ name, weights }: { name: string; weights: readonly Weight[] }) {
 	const { base, variant, at } = splitVariant(name);
 	return (
 		<>
-			<span className="min-w-0 flex-1 truncate font-mono text-sm leading-sm">
+			<span className="min-w-0 flex-1 truncate type-value">
 				<Ink name={name} weights={weights} from={variant === null ? 0 : at} to={name.length} tone={TONE} />
 			</span>
-			<span className="w-[100px] shrink-0 truncate text-right font-mono text-sm leading-sm">
+			<span className="w-[100px] shrink-0 truncate text-right type-value">
 				{/* a frame that is nobody's variant has no base to demote, and says so by being blank */}
 				{variant === null ? null : <Ink name={name} weights={weights} from={0} to={base.length} tone={DEMOTED} />}
 			</span>
@@ -352,7 +352,7 @@ function Split({
 	const offset = Math.max(depth - segments.length, 0);
 	const priorOffset = Math.max(depth - prior.length, 0);
 	return (
-		<span className="flex min-w-0 flex-1 items-center gap-[1ch] overflow-hidden font-mono text-sm leading-sm">
+		<span className="flex min-w-0 flex-1 items-center gap-[1ch] overflow-hidden type-value">
 			{segments.map((segment, index) => {
 				const seam = segments[index + 1]?.gap ?? "";
 				const width = grid?.widths[offset + index];

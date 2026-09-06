@@ -22,13 +22,13 @@ export const ASSET_EXTENSIONS: ReadonlySet<string> = new Set(Object.keys(ASSET_M
 /** Esbuild's plugin filter, and the checker's own read of the same list. */
 export const ASSET_FILTER = /\.(?:gif|jpe?g|png|svg|webp)$/i;
 
-/**
- * The kinds esbuild's own default loaders already answer, which spool never
- * overrides: `.txt` arrives as the file's text. It has no loader here and no
- * media type because it needs neither — but TypeScript resolves `.json` and
- * nothing else, so the checker is one reader that still has to be told.
- */
-export const TEXT_EXTENSIONS: ReadonlySet<string> = new Set([".txt"]);
+/** Text assets arrive as source strings in the compiler and offline checker. */
+export const TEXT_LOADERS = {
+	".txt": "text",
+	".glsl": "text",
+	".wgsl": "text",
+} as const;
+export const TEXT_EXTENSIONS: ReadonlySet<string> = new Set(Object.keys(TEXT_LOADERS));
 
 /**
  * The media-type alternation the capture predicates allow, interpolated into

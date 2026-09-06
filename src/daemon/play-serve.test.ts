@@ -44,6 +44,23 @@ function configOf(doc: string): {
 }
 
 describe("serving the player", () => {
+	it.each(["glsl", "wgsl"])("rebuilds the player when an imported .%s shader changes", async (extension) => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const { root, name } = makeProject(spoolDir);
+		const shaderFile = `shared/shaders/effect.${extension}`;
+		writeDesignFile(root, shaderFile, "// first shader\n");
+		writeFrame(root, "entry", `import source from "${shaderFile}"; export default () => <pre>{source}</pre>;`);
+		const app = makeApp(spoolDir);
+		const first = await compositionOf(app, await (await app.request(`/play/${name}`)).text());
+		expect(first.all).toContain("first shader");
+
+		writeDesignFile(root, shaderFile, "// second shader\n");
+		const second = await compositionOf(app, await (await app.request(`/play/${name}`)).text());
+		expect(second.all).toContain("second shader");
+		expect(second.all).not.toContain("first shader");
+		expect(second.entry).not.toBe(first.entry);
+	});
+
 	it("composes every frame into one document starting at the first frame", async () => {
 		const spoolDir = join(makeTempDir(), ".spool");
 		const { name } = scaffold(spoolDir);

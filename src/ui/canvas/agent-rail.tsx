@@ -488,12 +488,7 @@ function ThreadPlate({
 				onClick={() => onList(listed ? null : Date.now())}
 				className="-ml-1.5 flex h-7 min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 text-left transition-colors duration-150 hover:bg-surface"
 			>
-				<span
-					className={cn(
-						"min-w-0 flex-1 truncate text-sm leading-4",
-						name === UNSAID ? "text-muted/60" : "text-text",
-					)}
-				>
+				<span className={cn("min-w-0 flex-1 truncate type-label", name === UNSAID ? "text-muted" : "text-text")}>
 					{name}
 				</span>
 				{elsewhere.length === 0 ? null : (
@@ -612,14 +607,10 @@ function ThreadRow({
 				) : null}
 				<ThreadMark life={thread.life} className="mt-px" />
 				<span className="flex min-w-0 flex-1 flex-col gap-1">
-					<span
-						className={cn("agent-thread-ask line-clamp-3 text-sm leading-4", on ? "text-text" : "text-text/85")}
-					>
-						{thread.name}
-					</span>
+					<span className={cn("agent-thread-ask line-clamp-3 type-label", "text-text")}>{thread.name}</span>
 					<span className="flex items-center gap-2">
-						<span className="min-w-0 flex-1 truncate font-mono text-2xs text-muted/55 leading-3">{line}</span>
-						<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">{ageOf(thread.at, now)}</span>
+						<span className="min-w-0 flex-1 truncate text-muted type-detail">{line}</span>
+						<span className="shrink-0 text-muted type-detail">{ageOf(thread.at, now)}</span>
 					</span>
 				</span>
 			</button>
@@ -748,7 +739,7 @@ function Quiet({ busy, onClick }: { busy: boolean; onClick: () => void }) {
 			type="button"
 			data-agent-check=""
 			onClick={onClick}
-			className="-mr-1.5 flex h-6 shrink-0 items-center gap-2 rounded-sm px-1.5 font-mono text-2xs text-text/70 leading-3 transition-colors duration-150 hover:bg-surface hover:text-text"
+			className="-mr-1.5 flex h-6 shrink-0 items-center gap-2 rounded-sm px-1.5 text-text transition-colors duration-150 hover:bg-surface hover:text-text type-detail"
 		>
 			{busy ? (
 				<svg
@@ -787,19 +778,19 @@ function InstallWall({ install }: { install: InstallDeck }) {
 	return (
 		<div data-agent-wall="" className="flex min-h-0 flex-1 flex-col justify-center px-3.5">
 			<div className="animate-agent-entry flex flex-col gap-3">
-				<p className="text-base text-text leading-base">Claude Code is not installed</p>
-				<p className="text-base text-muted leading-base">
+				<p className="text-text type-body">Claude Code is not installed</p>
+				<p className="text-muted type-body">
 					Install Claude Code to continue with this engine, or start a new thread with spool.
 				</p>
 				<div className="flex flex-col gap-1.5 pt-1">
 					<div className="flex items-center justify-between">
-						<span className="font-mono text-2xs text-muted/45 leading-4">{DOCS}</span>
+						<span className="text-muted type-detail">{DOCS}</span>
 						<Quiet busy={install.checking} onClick={install.look} />
 					</div>
 					{/* the check is allowed to fail forever, and a press that leaves no mark reads
 					    as a broken button — so it leaves one line, in the composer's own mono */}
 					{install.foundNothing ? (
-						<span data-agent-looked="" className="animate-agent-entry font-mono text-2xs text-muted/45 leading-4">
+						<span data-agent-looked="" className="animate-agent-entry text-muted type-detail">
 							still nothing on your PATH
 						</span>
 					) : null}
@@ -814,7 +805,7 @@ function DeadComposer() {
 	return (
 		<div data-agent-dead="" className="flex shrink-0 flex-col gap-2.5 border-border border-t p-3.5">
 			<div className="flex flex-col rounded-md border border-border/70 bg-surface/40 px-3 py-2.5">
-				<span className="text-base text-muted/25 leading-base" style={{ height: MIN_H }}>
+				<span className="text-muted type-body" style={{ height: MIN_H }}>
 					say what to change
 				</span>
 			</div>
@@ -842,7 +833,7 @@ function DeadComposer() {
 function LoginStrip({ login }: { login: LoginDeck }) {
 	return (
 		<div data-agent-login="" className="flex h-[34px] shrink-0 items-center border-border border-b px-3.5">
-			<span className="min-w-0 flex-1 truncate font-mono text-muted text-sm leading-4">signed out</span>
+			<span className="min-w-0 flex-1 truncate text-muted type-value">signed out</span>
 			<Quiet busy={login.checking} onClick={login.check} />
 		</div>
 	);
@@ -878,14 +869,14 @@ function PlanStrip({ plan }: { plan: AgentPlan }) {
 				onClick={() => setOpen(!open)}
 				className="flex h-[34px] w-full shrink-0 items-center gap-2.5 px-3.5 text-left transition-colors duration-150 hover:bg-surface"
 			>
-				<span className="shrink-0 font-mono text-muted text-sm leading-4">plan</span>
-				<span className="shrink-0 font-mono text-muted/60 text-sm tabular-nums leading-4">
+				<span className="shrink-0 text-muted type-value">plan</span>
+				<span className="shrink-0 text-muted tabular-nums type-value">
 					{plan.done}/{plan.total}
 				</span>
 				{/* nothing is running between a task landing and the agent saying which is next,
 				    and the strip says nothing rather than holding the last thing it said */}
 				{plan.running === null ? null : (
-					<span className="min-w-0 flex-1 truncate font-mono text-sm text-text/85 leading-4">{plan.running}</span>
+					<span className="min-w-0 flex-1 truncate text-text type-value">{plan.running}</span>
 				)}
 				<ChevronIcon open={open} className="ml-auto h-2.5 w-2.5 shrink-0 text-muted/35" />
 			</button>
@@ -898,7 +889,7 @@ function PlanStrip({ plan }: { plan: AgentPlan }) {
 						{plan.tasks.map((task) => (
 							<span key={task.key} className="flex h-[22px] items-center gap-2 pl-2.5">
 								<StateMark state={task.state} className="h-3 w-3" />
-								<span className="truncate font-mono text-2xs text-muted leading-3">{task.name}</span>
+								<span className="truncate text-muted type-detail">{task.name}</span>
 							</span>
 						))}
 					</div>
@@ -1161,7 +1152,7 @@ function Transcript({
 						setFollow(true);
 						carry(box, aim(box));
 					}}
-					className="absolute bottom-3 left-1/2 flex h-6 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-bg px-2.5 font-mono text-2xs text-muted leading-3 transition-colors duration-150 hover:bg-surface hover:text-text"
+					className="absolute bottom-3 left-1/2 flex h-6 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-bg px-2.5 text-muted transition-colors duration-150 hover:bg-surface hover:text-text type-detail"
 				>
 					<span aria-hidden="true">↓</span>
 					{live ? "live" : "latest"}
@@ -1261,12 +1252,12 @@ const Entry = memo(function Entry({ entry, elapsed, jump, onAnswer }: EntryDrawn
 		return (
 			<div className="relative flex flex-col gap-1.5 pl-3.5">
 				<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
-				<p className="whitespace-pre-wrap text-base text-text leading-base">{entry.text}</p>
+				<p className="whitespace-pre-wrap text-text type-body">{entry.text}</p>
 				{/* the same 120px thumbnail a call's own picture gets, because it is the same
 				    act of looking: a picture in the log, at a size that says what it is */}
 				{entry.attached === null ? null : <Shot shot={entry.attached} of={null} quiet={true} />}
 				{entry.context === null ? null : (
-					<span data-agent-context="" className="truncate font-mono text-2xs text-muted/55 leading-3">
+					<span data-agent-context="" className="truncate text-muted type-detail">
 						{entry.context}
 					</span>
 				)}
@@ -1282,7 +1273,7 @@ const Entry = memo(function Entry({ entry, elapsed, jump, onAnswer }: EntryDrawn
 					<span className="h-px flex-1 bg-border" />
 					{/* min-w-0, because a label that refuses to shrink pushes the row past the
 					    rail and the log must never scroll sideways */}
-					<span className="min-w-0 truncate font-mono text-2xs text-muted/60 leading-3">{entry.text}</span>
+					<span className="min-w-0 truncate text-muted type-detail">{entry.text}</span>
 					<span className="h-px flex-1 bg-border" />
 				</div>
 			);
@@ -1292,10 +1283,8 @@ const Entry = memo(function Entry({ entry, elapsed, jump, onAnswer }: EntryDrawn
 		// do, and under it the sentence you need once (#201)
 		return (
 			<div data-agent-aside="" className="flex flex-col gap-0.5">
-				{entry.said === undefined ? null : (
-					<p className="font-mono text-2xs text-text/70 leading-4">{entry.said}</p>
-				)}
-				<p className="whitespace-pre-wrap font-mono text-2xs text-muted/55 leading-4">{entry.text}</p>
+				{entry.said === undefined ? null : <p className="text-text type-detail">{entry.said}</p>}
+				<p className="whitespace-pre-wrap text-muted type-detail">{entry.text}</p>
 			</div>
 		);
 	}
@@ -1379,10 +1368,10 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 		entry.subject === null ? null : (
 			<span
 				className={cn(
-					"min-w-0 truncate font-mono text-sm leading-4",
+					"min-w-0 truncate type-value",
 					// struck through and dimmed, in the words the canvas already uses for a name
 					// nothing answers to
-					gone ? "text-muted/45 line-through" : "text-text/85",
+					gone ? "text-muted line-through" : "text-text",
 					// the only mark the name carries, and only while the cursor is on its row: a
 					// dotted rule is the lightest thing that says this word is a place
 					goes && over && "underline decoration-dotted decoration-thread/60 underline-offset-[3px]",
@@ -1395,7 +1384,7 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 		<>
 			<StateMark state={entry.state} />
 			<span className="flex min-w-0 items-baseline gap-1.5">
-				<span className="shrink-0 font-mono text-muted text-sm leading-4">{entry.verb}</span>
+				<span className="shrink-0 text-muted type-value">{entry.verb}</span>
 				{goes ? (
 					// biome-ignore lint/a11y/useSemanticElements: this row is the disclosure's button, and a button cannot contain an anchor
 					<span
@@ -1422,12 +1411,7 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 					name
 				)}
 				{entry.count > 1 ? (
-					<span
-						className={cn(
-							"shrink-0 font-mono text-sm tabular-nums leading-4",
-							gone ? "text-muted/45" : "text-text/85",
-						)}
-					>
+					<span className={cn("shrink-0 tabular-nums type-detail", gone ? "text-muted" : "text-text")}>
 						×{entry.count}
 					</span>
 				) : null}
@@ -1474,7 +1458,7 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 							<Shot key={slice.id} shot={slice} of={entry.frame ?? entry.detail} quiet />
 						))}
 						{shot === null && entry.detail !== null ? (
-							<span data-agent-detail="" className="block truncate font-mono text-2xs text-muted/55 leading-4">
+							<span data-agent-detail="" className="block truncate text-muted type-detail">
 								{entry.detail}
 							</span>
 						) : null}
@@ -1526,7 +1510,7 @@ function Step({ text }: { text: string | null }) {
 	// the padding is on the words rather than on the box they sit in, because the ones
 	// leaving are laid over the ones arriving and two boxes only line up if they are made
 	// the same way
-	const words = "block truncate pt-0.5 pb-1 font-mono text-2xs text-muted/55 leading-4";
+	const words = "block truncate pt-0.5 pb-1 text-muted type-detail";
 	return (
 		<div
 			className="grid animate-agent-step transition-[grid-template-rows] duration-[170ms] ease-out motion-reduce:transition-none"
@@ -1595,11 +1579,11 @@ function Wait({ entry, elapsed }: { entry: Extract<AgentEntry, { kind: "wait" }>
 	return (
 		<div data-agent-wait={entry.state} className="-mx-1.5 flex h-[26px] w-fit items-center gap-2.5 rounded-sm px-1.5">
 			<StateMark state={entry.state} />
-			<span className="shrink-0 font-mono text-muted/70 text-sm leading-4">thinking</span>
+			<span className="shrink-0 text-muted type-value">thinking</span>
 			{took === "" ? null : (
 				// `tabular-nums` so a tenth ticking over changes no width, which is what keeps
 				// the one moving thing in the log from moving anything else
-				<span className="shrink-0 font-mono text-muted/60 text-sm tabular-nums leading-4">{took}</span>
+				<span className="shrink-0 text-muted tabular-nums type-value">{took}</span>
 			)}
 		</div>
 	);
@@ -1678,7 +1662,7 @@ function Ask({
 					if (open && chosen === undefined && index !== live) return null;
 					return (
 						<div key={question.question} className="flex flex-col gap-1.5">
-							<p className="text-base text-text/90 leading-base">{question.question}</p>
+							<p className="text-text type-body">{question.question}</p>
 							{/* a settled pick keeps its sentence and lands in the person's own shape,
 							    which is where the whole answer lands once the last one is in */}
 							{open && chosen !== undefined ? <Answered words={chosen} /> : null}
@@ -1692,9 +1676,9 @@ function Ask({
 											onClick={() => pick(question.question, option.label)}
 											className="flex flex-col gap-1 rounded-md border border-border-raised bg-surface px-3 py-2.5 text-left transition-colors duration-150 hover:border-muted/45"
 										>
-											<span className="text-base text-text leading-base">{option.label}</span>
+											<span className="text-text type-body">{option.label}</span>
 											{option.description === "" ? null : (
-												<span className="text-2xs text-muted/70 leading-4">{option.description}</span>
+												<span className="text-muted type-caption">{option.description}</span>
 											)}
 										</button>
 									))}
@@ -1706,7 +1690,7 @@ function Ask({
 			) : entry.asked === null || (entry.access !== undefined && !open) ? null : (
 				// nothing where the agent wrote nothing: the row above already named the call,
 				// and a block that repeated it would be the rail saying one thing twice
-				<p className="text-base text-text/90 leading-base">
+				<p className="text-text type-body">
 					{entry.asked}
 					{entry.state === "arriving" ? <Caret /> : null}
 				</p>
@@ -1744,7 +1728,7 @@ function Ask({
 					type="button"
 					data-agent-dismiss=""
 					onClick={() => answer({ kind: "deny" })}
-					className="w-fit font-mono text-2xs text-muted/45 leading-3 transition-colors duration-150 hover:text-muted"
+					className="w-fit text-muted transition-colors duration-150 hover:text-muted type-detail"
 				>
 					dismiss
 				</button>
@@ -1786,7 +1770,7 @@ function AskAction({ label, onPick, compact = false }: { label: string; onPick: 
 				!compact && "w-full",
 			)}
 		>
-			<span className="font-mono text-sm text-text leading-4">{label}</span>
+			<span className="text-text type-value">{label}</span>
 		</button>
 	);
 }
@@ -1803,7 +1787,7 @@ function Answered({ words }: { words: string | null }) {
 	return (
 		<div className="relative flex flex-col gap-1.5 pl-3.5">
 			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
-			<p className="whitespace-pre-wrap text-base text-text leading-base">{words}</p>
+			<p className="whitespace-pre-wrap text-text type-body">{words}</p>
 		</div>
 	);
 }
@@ -1813,7 +1797,7 @@ function AskOutcome({ state, text }: { state: RowState; text: string }) {
 	return (
 		<div className="flex items-center gap-2.5">
 			<StateMark state={state} />
-			<span className="font-mono text-2xs text-muted/55 leading-3">{text}</span>
+			<span className="text-muted type-detail">{text}</span>
 		</div>
 	);
 }
@@ -2287,7 +2271,7 @@ function Composer({
 						const box = event.currentTarget;
 						if (take(text)) box.style.height = `${MIN_H}px`;
 					}}
-					className="w-full resize-none bg-transparent text-base text-text leading-base outline-none placeholder:text-muted/50"
+					className="w-full resize-none bg-transparent text-text outline-none placeholder:text-muted type-body"
 					style={{ height: MIN_H }}
 				/>
 			</div>
@@ -2374,7 +2358,7 @@ function Composer({
  * answering stays colourless like everything else the agent does. */
 
 /** the footer's own voice, so the line reads as one line */
-const QUIET = "font-mono text-2xs leading-3";
+const QUIET = "type-detail";
 
 /**
  * How wide the panel wants to be, which is not always what it gets.
@@ -2594,7 +2578,7 @@ function ModelMenu({
 									"block px-1.5 pt-1 pb-1.5",
 									// brightness rather than hue: reached comes forward without becoming a
 									// second accent, and a warning stays a peer of the rows below it
-									limit?.status === "rejected" ? "text-text/70" : "text-muted/45",
+									limit?.status === "rejected" ? "text-text" : "text-muted",
 								)}
 							>
 								{usage}
@@ -2714,14 +2698,9 @@ function ModelMenu({
 					 * has a description: haiku reports no levels at all and the control is then
 					 * absent rather than greyed. Its sentence is not.
 					 */}
-					{/* `leading-[1.5]` over the footer's own `leading-3`: this is the one thing in
-					    here that wraps, and 12px lines on a 10px face is a line for reading along
-					    rather than a paragraph to read */}
+
 					{compact ? null : (
-						<p
-							data-agent-model-says={says}
-							className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted/40 leading-[1.5]")}
-						>
+						<p data-agent-model-says={says} className={cn(QUIET, "relative px-1.5 pt-1.5 pb-0.5 text-muted")}>
 							<span className="invisible" aria-hidden="true">
 								{longest}
 							</span>
@@ -2789,7 +2768,7 @@ function MenuRow({
 			)}
 		>
 			<span className="flex w-full min-w-0 items-center gap-2">
-				<span className="min-w-0 flex-1 truncate font-mono text-xs leading-4">{label}</span>
+				<span className="min-w-0 flex-1 truncate type-value">{label}</span>
 				{via === undefined ? null : <span className={cn(QUIET, "shrink-0 text-muted")}>{via}</span>}
 			</span>
 		</button>
@@ -2797,7 +2776,7 @@ function MenuRow({
 }
 
 function MenuGroup({ label }: { label: string }) {
-	return <span className={cn(QUIET, "block px-1.5 pt-1 pb-1.5 text-muted/35")}>{label}</span>;
+	return <span className={cn(QUIET, "block px-1.5 pt-1 pb-1.5 text-muted")}>{label}</span>;
 }
 
 function MenuRule() {
@@ -2828,8 +2807,8 @@ function StopButton({ onStop }: { onStop: () => void }) {
 			className="flex h-[18px] w-fit shrink-0 items-center gap-2 rounded-sm border border-border-raised bg-raised px-2 transition-colors duration-150 hover:border-muted/45"
 		>
 			<span className="h-2 w-2 shrink-0 rounded-[1px] bg-text" />
-			<span className="font-mono text-2xs text-text leading-3">stop</span>
-			<span className="font-mono text-2xs text-muted/60 leading-3">⎋</span>
+			<span className="text-text type-detail">stop</span>
+			<span className="text-muted type-detail">⎋</span>
 		</button>
 	);
 }
@@ -2897,9 +2876,9 @@ function QueuedRow({ message, onDrop }: { message: AgentQueued; onDrop: () => vo
 	return (
 		<div data-agent-queued="" className="group relative flex shrink-0 animate-agent-entry flex-col gap-1 pl-3.5">
 			<span className="absolute top-[3px] bottom-[3px] left-0 w-[2px] rounded-full bg-border-raised" />
-			<p className="whitespace-pre-wrap text-base text-text/45 leading-base">{message.text}</p>
+			<p className="whitespace-pre-wrap text-muted type-body">{message.text}</p>
 			<span className="flex h-3.5 items-center gap-1.5">
-				<span className="font-mono text-2xs text-muted/55 leading-3">queued</span>
+				<span className="text-muted type-detail">queued</span>
 				{/* no plate behind it, unlike the composer chip's own ✕: in a dimmed row a
 				    filled box is the brightest thing on the line, and the row is what is
 				    being read */}
@@ -3104,10 +3083,8 @@ function SelectionStrip({ strip, pointing }: { strip: Strip; pointing: Pointing 
 										pointing.lit === chip.id ? "bg-thread" : "bg-thread/40",
 									)}
 								/>
-								<span className="min-w-0 flex-1 truncate font-mono text-text/80 text-xs leading-4">
-									{chip.label}
-								</span>
-								<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/0 group-hover:text-muted/60">
+								<span className="min-w-0 flex-1 truncate text-text type-value">{chip.label}</span>
+								<span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-muted/0 group-hover:text-muted">
 									<CloseIcon />
 								</span>
 							</button>
@@ -3141,7 +3118,7 @@ function Chip({
 	const body = (
 		<>
 			<span className={cn("h-3 w-[2px] shrink-0 rounded-full", lit ? "bg-thread" : "bg-thread/55")} />
-			<span className="min-w-0 truncate font-mono text-text/85 text-xs leading-4">{words.label}</span>
+			<span className="min-w-0 truncate text-text type-value">{words.label}</span>
 			{onOpen === undefined ? null : (
 				<ChevronIcon open={open ?? false} className="h-2.5 w-2.5 shrink-0 text-muted/40" />
 			)}

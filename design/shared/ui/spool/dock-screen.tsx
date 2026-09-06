@@ -347,11 +347,11 @@ export function DockScreen({
 							<button
 								type="button"
 								onClick={() => setSelection({ id: "screen", key: "screen" })}
-								className="flex h-4 items-center gap-1.5 font-mono text-sm leading-4"
+								className="flex h-4 items-center gap-1.5 type-value"
 								style={{ width: state.frame.w }}
 							>
 								<span className={cn(selection?.id === "screen" ? "text-thread" : "text-muted")}>{FRAME}</span>
-								<span className="ml-auto font-mono text-2xs text-muted/55 leading-3">
+								<span className="ml-auto text-muted type-detail">
 									{state.frame.w} × {state.frame.h}
 								</span>
 							</button>
@@ -376,7 +376,7 @@ export function DockScreen({
 						<Floating agent={agent} life={agentLife} onRead={onRead} />
 					) : null}
 					{argues === undefined ? null : (
-						<p className="pointer-events-none absolute right-6 bottom-6 max-w-[42ch] text-right text-base text-muted leading-base">
+						<p className="pointer-events-none absolute right-6 bottom-6 max-w-[42ch] text-right text-muted type-control">
 							{argues}
 						</p>
 					)}
@@ -701,10 +701,10 @@ function Swap({
 				<div className="flex h-full flex-col">{surface === "agent" ? agent : properties}</div>
 			</div>
 			<div className="flex h-8 shrink-0 items-center gap-2 border-border border-t px-3">
-				<span className="shrink-0 text-muted/70">
+				<span className="shrink-0 text-muted">
 					{surface === "agent" ? <AgentIcon className="h-3.5 w-3.5" /> : <PropertiesIcon className="h-3.5 w-3.5" />}
 				</span>
-				<span className="min-w-0 truncate font-mono text-2xs text-muted/70 leading-3">
+				<span className="min-w-0 truncate text-muted type-detail">
 					{surface === "agent"
 						? working
 							? "agent · working on cart"
@@ -715,7 +715,7 @@ function Swap({
 					type="button"
 					onClick={() => setPinned((held) => (held === null ? surface : null))}
 					className={cn(
-						"ml-auto shrink-0 rounded-xs px-1.5 py-0.5 font-mono text-2xs leading-3",
+						"ml-auto shrink-0 rounded-xs px-1.5 py-0.5 type-detail",
 						pinned === null ? "text-muted/50 hover:text-muted" : "bg-surface text-text",
 					)}
 				>
@@ -750,7 +750,7 @@ function Floating({ agent, life, onRead }: { agent: ReactNode; life: Life; onRea
 				className="absolute top-5 right-5 z-20 flex h-9 items-center gap-2 rounded-lg border border-border-raised bg-bg/90 pr-3 pl-2.5 backdrop-blur"
 			>
 				<AgentIcon className="h-4 w-4 text-muted" />
-				<span className="font-mono text-muted text-xs leading-3">agent</span>
+				<span className="text-muted type-value">agent</span>
 				{life.working ? <StateMark state="running" /> : life.unread ? <Dot /> : null}
 			</button>
 		);
@@ -781,12 +781,12 @@ function Floating({ agent, life, onRead }: { agent: ReactNode; life: Life; onRea
 				className="flex h-9 shrink-0 cursor-grab touch-none items-center gap-2 border-border border-b px-3"
 			>
 				<AgentIcon className="h-3.5 w-3.5 text-muted" />
-				<span className="font-mono text-muted text-xs leading-3">agent</span>
+				<span className="text-muted type-value">agent</span>
 				{life.working ? <StateMark state="running" className="ml-1" /> : null}
 				<button
 					type="button"
 					onClick={() => setOpen(false)}
-					className="ml-auto font-mono text-2xs text-muted/50 leading-3 hover:text-muted"
+					className="ml-auto text-muted hover:text-muted type-detail"
 				>
 					close
 				</button>
@@ -885,8 +885,8 @@ function Dot({ className, eased = true }: { className?: string | undefined; ease
 function SectionHead({ icon, name, mark }: { icon: ReactNode; name: string; mark?: ReactNode }) {
 	return (
 		<div className="flex h-7 shrink-0 items-center gap-2 border-border border-b px-3">
-			<span className="text-muted/70">{icon}</span>
-			<span className="font-mono text-2xs text-muted leading-3">{name}</span>
+			<span className="text-muted">{icon}</span>
+			<span className="text-muted type-detail">{name}</span>
 			{mark === undefined ? null : <span className="ml-auto">{mark}</span>}
 		</div>
 	);
@@ -899,10 +899,10 @@ function PagesRail() {
 		<aside className="flex w-[248px] shrink-0 flex-col border-border border-r bg-bg">
 			<div className="flex h-11 shrink-0 items-center justify-between border-border border-b pr-2 pl-3.5">
 				<div className="flex items-baseline gap-2">
-					<h1 className="font-semibold text-base leading-base">Pages</h1>
-					<span className="font-mono text-muted text-xs leading-xs">{PAGES.length}</span>
+					<h1 className="font-semibold type-control">Pages</h1>
+					<span className="text-muted type-value">{PAGES.length}</span>
 				</div>
-				<span className="flex h-7 w-7 items-center justify-center rounded-sm text-muted/60">
+				<span className="flex h-7 w-7 items-center justify-center rounded-sm text-muted">
 					<PanelCaret dir="left" className="h-3.5 w-2.5" />
 				</span>
 			</div>
@@ -921,13 +921,13 @@ function PagesRail() {
 							/>
 							<span
 								className={cn(
-									"ml-2 min-w-0 flex-1 truncate font-mono text-sm leading-sm",
+									"ml-2 min-w-0 flex-1 truncate type-value",
 									page.active === true ? "text-text" : "text-muted",
 								)}
 							>
 								{page.name}
 							</span>
-							<span className="font-mono text-2xs text-muted/60 leading-3">{page.frames.length}</span>
+							<span className="text-muted type-detail">{page.frames.length}</span>
 						</div>
 						{page.open === true ? (
 							<div className="relative pb-0.5">
@@ -937,7 +937,7 @@ function PagesRail() {
 										<span className="absolute top-1/2 left-[18px] h-px w-2.5 bg-border-raised" />
 										<span
 											className={cn(
-												"min-w-0 truncate pl-[34px] font-mono text-sm leading-sm",
+												"min-w-0 truncate pl-[34px] type-value",
 												frame === FRAME ? "text-text" : "text-muted",
 											)}
 										>
@@ -1012,7 +1012,7 @@ function Rings({
 function Still({ left, top, name }: { left: number; top: number; name: string }) {
 	return (
 		<div className="absolute flex flex-col gap-1.5" style={{ left, top }}>
-			<span className="font-mono text-muted text-sm leading-4">{name}</span>
+			<span className="text-muted type-value">{name}</span>
 			<div className="h-[430px] w-[200px] overflow-hidden rounded-[8px] border border-border bg-bg">
 				<div className="flex h-full flex-col gap-2 p-3">
 					<span className="h-3 w-14 rounded-full bg-surface" />

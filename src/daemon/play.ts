@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { type BuildContext, type BuildResult, build, context } from "esbuild";
@@ -477,19 +478,35 @@ ${transitionsBlock}<script type="importmap">${escapeJsonScript(bundle.importMap)
 ${preload}
 </head>
 <body>
-<div id="root"><div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#8e8c88;font:400 12px/18px ui-monospace,monospace">booting</div></div>
+<div id="root"><div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#94918d;font:400 12px/18px ui-monospace,monospace">booting</div></div>
 ${config.shell === true ? '<script type="module">import "spool";</script>\n' : ""}<script type="module">import ${escapeInlineScript(entryUrl)};</script>
 </body>
 </html>
 `;
 }
 
-/** The chrome's one font: the slate, the readouts, and the rail are mono (#13 law 3). */
+const requireFont = createRequire(import.meta.url);
+const SANS_FILES = [
+	"instrument-sans-latin-wght-normal.woff2",
+	"instrument-sans-latin-ext-wght-normal.woff2",
+	"instrument-sans-latin-wght-italic.woff2",
+	"instrument-sans-latin-ext-wght-italic.woff2",
+];
+
+/** Player chrome carries its fonts; it never borrows the prototype's font. */
 const CHROME_FONT_FILES: Record<string, string> = {
 	"fragment-mono-latin-400-normal.woff2": createRequire(import.meta.url).resolve(
 		"@fontsource/fragment-mono/files/fragment-mono-latin-400-normal.woff2",
 	),
+	...Object.fromEntries(
+		SANS_FILES.map((name) => [name, requireFont.resolve(`@fontsource-variable/instrument-sans/files/${name}`)]),
+	),
 };
+
+const SANS_CSS = ["wght.css", "wght-italic.css"]
+	.map((name) => readFileSync(requireFont.resolve(`@fontsource-variable/instrument-sans/${name}`), "utf8"))
+	.join("\n")
+	.replaceAll("./files/", "/vendor/fonts/");
 
 export function chromeFontFile(name: string): string | undefined {
 	return CHROME_FONT_FILES[name];
@@ -507,6 +524,7 @@ export function playerChromeCss(fontBase = "/vendor/fonts/"): string {
 }
 
 const CHROME_CSS = `:root { color-scheme: dark; }
+${SANS_CSS}
 @font-face {
 	font-family: "Fragment Mono";
 	font-style: normal;
@@ -573,7 +591,7 @@ body { margin: 0; background: #0e0e0e; }
 	background: #282828;
 	border-bottom: 1px solid #363636;
 	color: #f0efed;
-	font: 400 12px/1 "Fragment Mono", ui-monospace, monospace;
+	font: 400 12px/18px "Fragment Mono", ui-monospace, monospace;
 	-webkit-font-smoothing: antialiased;
 	font-synthesis: none;
 }
@@ -593,9 +611,9 @@ body { margin: 0; background: #0e0e0e; }
 	border-radius: 4px;
 	background: none;
 	border: 0;
-	color: #8e8c88;
+	color: #94918d;
 	font: inherit;
-	font-size: 10px;
+	font-size: 11px;
 	text-decoration: none;
 	cursor: pointer;
 }
@@ -615,12 +633,12 @@ body { margin: 0; background: #0e0e0e; }
 	cursor: pointer;
 }
 .spool-bar-frame:hover { background: #1c1c1c; }
-.spool-bar-project { color: #8e8c88; }
+.spool-bar-project { color: #94918d; }
 .spool-bar-name { white-space: nowrap; }
-.spool-bar-chevron { color: #8e8c88; transition: rotate 150ms ease; }
+.spool-bar-chevron { color: #94918d; transition: rotate 150ms ease; }
 .spool-bar-chevron.is-open { rotate: 180deg; }
 .spool-bar-end { display: flex; align-items: center; gap: 12px; margin-left: auto; }
-.spool-bar-hint { color: #8e8c88; font-size: 10px; white-space: nowrap; }
+.spool-bar-hint { color: #94918d; font-size: 11px; white-space: nowrap; }
 /* said while the screen is on its way: the compile and the first fetch happen
    behind the bar, and a box with nothing in it says nothing */
 .spool-bar-loading { animation: spool-bar-loading 1.2s ease-in-out infinite; }
@@ -639,7 +657,7 @@ body { margin: 0; background: #0e0e0e; }
 	background: none;
 	border: 0;
 	border-radius: 4px;
-	color: #8e8c88;
+	color: #94918d;
 	cursor: pointer;
 }
 .spool-bar-icon:hover { background: #1c1c1c; color: #f0efed; }
@@ -698,7 +716,7 @@ body { margin: 0; background: #0e0e0e; }
 	background: none;
 	border: 0;
 	border-radius: 4px;
-	color: #8e8c88;
+	color: #94918d;
 	font: inherit;
 	text-align: left;
 	cursor: pointer;
@@ -707,15 +725,15 @@ body { margin: 0; background: #0e0e0e; }
 .spool-picker-row.is-here { color: #f0efed; }
 .spool-dash { flex: none; width: 8px; height: 2px; background: transparent; }
 .spool-picker-row.is-here .spool-dash { background: #f5391a; }
-.spool-picker-foot { display: block; padding: 8px 14px; border-top: 1px solid #262626; color: #8e8c88; font-size: 10px; }
-.spool-desk-restored { display: flex; align-items: center; gap: 8px; color: #8e8c88; font-size: 10px; }
+.spool-picker-foot { display: block; padding: 8px 14px; border-top: 1px solid #262626; color: #94918d; font-size: 11px; }
+.spool-desk-restored { display: flex; align-items: center; gap: 8px; color: #94918d; font-size: 11px; }
 .spool-dash.is-lit { background: #f5391a; }
 .spool-desk-reset {
 	margin: 0;
 	padding: 0;
 	background: none;
 	border: 0;
-	color: #8e8c88;
+	color: #94918d;
 	font: inherit;
 	text-decoration: underline;
 	text-underline-offset: 2px;

@@ -301,8 +301,8 @@ it("reads the base's value faint under a variant, and writes the variant's own",
 
 	// nothing under `hover:` sets padding: the base's value stands, quietly
 	expect(shows(rail, "padding")).toBe("4");
-	expect(fieldIn(rail, "padding")?.className).toContain("text-muted/55");
-	expect(fieldIn(rail, "background-color")?.className ?? "").not.toContain("text-muted/55");
+	expect(fieldIn(rail, "padding")?.classList.contains("text-muted")).toBe(true);
+	expect(fieldIn(rail, "background-color")?.classList.contains("text-muted")).toBe(false);
 
 	await type(rail, "padding", "8");
 	expect(rail.wrote()).toEqual([{ token: "p-8" }]);
@@ -425,7 +425,7 @@ function shows(rail: Rail, row: string): string {
 
 /** The faint half at the right of the row: what the token measures. */
 function asideOf(rail: Rail, row: string): string {
-	const faint = rowOf(rail, row)?.querySelectorAll(".text-muted\\/50");
+	const faint = rowOf(rail, row)?.querySelectorAll("span.text-muted.type-detail");
 	return faint?.[faint.length - 1]?.textContent ?? "";
 }
 

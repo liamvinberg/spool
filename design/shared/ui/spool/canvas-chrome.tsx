@@ -152,10 +152,10 @@ function PagesRail({
 		<aside className="flex shrink-0 flex-col border-border border-r bg-bg" style={{ width: PAGES_W }}>
 			<div className="flex h-11 shrink-0 items-center justify-between border-border border-b pr-2 pl-3.5">
 				<div className="flex items-baseline gap-2">
-					<h1 className="font-semibold text-base leading-base">Pages</h1>
-					<span className="font-mono text-muted text-xs leading-xs">{pages.length}</span>
+					<h1 className="font-semibold type-control">Pages</h1>
+					<span className="text-muted type-value">{pages.length}</span>
 				</div>
-				<span className="flex h-7 w-7 items-center justify-center rounded-sm text-muted/60">
+				<span className="flex h-7 w-7 items-center justify-center rounded-sm text-muted">
 					<PanelCaret dir="left" className="h-3.5 w-2.5" />
 				</span>
 			</div>
@@ -214,7 +214,7 @@ function PageBlock({
 					)}
 					<span
 						className={cn(
-							"min-w-0 flex-1 truncate font-mono text-sm leading-sm",
+							"min-w-0 flex-1 truncate type-value",
 							named ? "text-thread" : page.active === true ? "text-text" : "text-muted",
 						)}
 					>
@@ -233,7 +233,7 @@ function PageBlock({
 				{held === null || page.open === true ? null : (
 					<HoldDot on={page.frames.some((frame) => held.has(frame)) || (page.lit === true && litAs === "dot")} className="mr-2" />
 				)}
-				<span className="font-mono text-2xs text-muted/60 leading-3">{page.frames.length}</span>
+				<span className="text-muted type-detail">{page.frames.length}</span>
 			</div>
 			{page.open === true ? (
 				<div className="relative pb-0.5">
@@ -253,12 +253,12 @@ function PageBlock({
 									/>
 									<span
 										className={cn(
-											"min-w-0 flex-1 truncate font-mono text-xs leading-xs",
+											"min-w-0 flex-1 truncate type-value",
 											frame === selected || page.unseen?.[frame] !== undefined
 												? "text-text"
 												: target === undefined
 													? "text-muted"
-													: "text-text/85",
+													: "text-text",
 										)}
 									>
 										{frame}
@@ -339,8 +339,8 @@ export function RailTabs({ tabs, active }: { tabs: readonly string[]; active: st
 					<span
 						key={candidate}
 						className={cn(
-							"relative flex h-full items-center font-mono text-xs leading-xs",
-							active === candidate ? "text-text" : "text-muted/60",
+							"relative flex h-full items-center type-value",
+							active === candidate ? "text-text" : "text-muted",
 						)}
 					>
 						{candidate}
@@ -348,7 +348,7 @@ export function RailTabs({ tabs, active }: { tabs: readonly string[]; active: st
 					</span>
 				))}
 			</div>
-			<span className="flex h-11 w-7 shrink-0 items-center justify-center text-muted/60">
+			<span className="flex h-11 w-7 shrink-0 items-center justify-center text-muted">
 				<PanelCaret dir="right" className="h-3.5 w-2.5" />
 			</span>
 		</div>
@@ -375,13 +375,13 @@ function FrameHeld({ name }: { name?: string | undefined }) {
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-bg">
 			<div className="flex h-9 shrink-0 items-center border-border border-b px-2.5">
-				<span className={cn(name === undefined ? "text-muted/50" : "text-text", VALUE)}>
+				<span className={cn(name === undefined ? "text-muted" : "text-text", VALUE)}>
 					{name ?? "no selection"}
 				</span>
 			</div>
 			{name === undefined ? (
 				<div className="flex h-9 items-center px-2.5">
-					<span className={cn("text-muted/50", VALUE)}>select a frame</span>
+					<span className={cn("text-muted", VALUE)}>select a frame</span>
 				</div>
 			) : (
 				<div className="min-h-0 flex-1 overflow-y-auto [&>div:first-child]:border-t-0">

@@ -81,8 +81,8 @@ export function SettingsSheet({ project, onClose }: { project: string | undefine
 					className="pointer-events-auto flex max-h-[calc(100%-128px)] min-h-[560px] w-[760px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-border-raised bg-surface"
 				>
 					<header className="flex h-12 shrink-0 items-center justify-between border-border border-b px-6">
-						<span className="font-semibold text-md text-text tracking-tight leading-md">Settings</span>
-						<span className="font-mono text-2xs text-muted leading-3">esc closes</span>
+						<span className="font-semibold text-text tracking-tight type-title">Settings</span>
+						<span className="text-muted type-detail">esc closes</span>
 					</header>
 					<TabRow tab={tab} onTab={setTab} />
 					<div className="min-h-0 flex-1 overflow-y-auto px-6 pt-5 pb-8">
@@ -116,7 +116,7 @@ function TabRow({ tab, onTab }: { tab: SettingsTab; onTab: (tab: SettingsTab) =>
 					aria-selected={tab === candidate.id}
 					onClick={() => onTab(candidate.id)}
 					className={cn(
-						"relative flex items-center text-base leading-base transition-colors duration-150",
+						"relative flex items-center transition-colors duration-150 type-control",
 						tab === candidate.id ? "text-text" : "text-muted hover:text-text",
 					)}
 				>
@@ -160,12 +160,12 @@ function General({
 						file={band.file}
 						aside={
 							band.scope === "project" && project !== undefined ? (
-								<span className="font-mono text-muted text-xs leading-xs">{project}</span>
+								<span className="text-muted type-value">{project}</span>
 							) : undefined
 						}
 					>
 						{needsProject ? (
-							<p className="border-border border-t pt-3.5 text-muted text-sm leading-sm">
+							<p className="border-border border-t pt-3.5 text-muted type-label">
 								Open a project to change these.
 							</p>
 						) : (
@@ -174,7 +174,7 @@ function General({
 					</Band>
 				);
 			})}
-			<p className="border-border border-t pt-5 text-muted text-sm leading-sm">
+			<p className="border-border border-t pt-5 text-muted type-label">
 				spool writes a file when something here moves, only the key that moved. Every other key in it is left the
 				way you typed it.
 			</p>
@@ -196,7 +196,7 @@ function SettingRow({ entry, write }: { entry: SettingReading; write: Write }) {
 				<>
 					<button
 						type="button"
-						className="max-w-64 truncate rounded-md border border-border-raised px-3 py-2 font-mono text-xs"
+						className="max-w-64 truncate rounded-md border border-border-raised px-3 py-2 type-value"
 						onClick={() => setPicking(true)}
 						title={String(entry.value)}
 					>
@@ -305,7 +305,7 @@ function AppearanceTab({
 					))}
 				</div>
 				{reason === undefined ? null : <Reason>{reason}</Reason>}
-				<p className="pt-4 text-muted text-sm leading-sm">
+				<p className="pt-4 text-muted type-label">
 					{appearance?.says}
 					{look === "system" ? ` The system is ${systemLook} now.` : ""}
 				</p>
@@ -342,7 +342,7 @@ function AppearanceTab({
 						<PresetCard theme={{ name: "Custom", appearance: editLook, tokens }} selected onPick={() => {}} />
 					) : null}
 				</div>
-				<p className="pt-4 text-muted text-sm leading-sm">
+				<p className="pt-4 text-muted type-label">
 					A theme is ten colours for one look. Pick one, or paste one somebody copied out of their spool.
 				</p>
 			</Band>
@@ -362,8 +362,8 @@ function AppearanceTab({
 						className="flex items-center gap-2 text-left"
 					>
 						<Chevron open={customize} />
-						<span className="font-medium text-md text-text leading-md">Customize</span>
-						<span className="font-mono text-2xs text-muted/70 leading-3">
+						<span className="font-medium text-text type-title">Customize</span>
+						<span className="text-muted type-detail">
 							{editLook} · {THEME_TOKEN_NAMES.length + 1} tokens
 							{movedHere.length === 0 ? "" : ` · ${movedHere.length} moved`}
 						</span>
@@ -373,14 +373,14 @@ function AppearanceTab({
 						disabled={moved.length === 0}
 						onClick={() => void reset()}
 						className={cn(
-							"shrink-0 text-sm leading-sm transition-colors duration-150",
+							"shrink-0 transition-colors duration-150 type-label",
 							moved.length === 0 ? "text-muted/40" : "text-thread hover:text-text",
 						)}
 					>
 						Reset to spool’s
 					</button>
 				</div>
-				<p className="max-w-[460px] pt-1.5 pl-[18px] text-muted text-sm leading-sm">
+				<p className="max-w-[460px] pt-1.5 pl-[18px] text-muted type-label">
 					The interface’s own colours for the {editLook} look. The chrome is built on these, so they are the whole
 					of what a theme can move.
 				</p>
@@ -392,21 +392,17 @@ function AppearanceTab({
 								<TokenRow key={entry.key} entry={entry} write={write} />
 							))}
 						<div className="flex h-10 items-center gap-4 border-border border-t">
-							<span className="w-[112px] shrink-0 font-mono text-text text-xs leading-xs">mark</span>
-							<span className="min-w-0 flex-1 truncate text-muted text-sm leading-sm">
-								The ribbon in the corner.
-							</span>
-							<span className="shrink-0 font-mono text-2xs text-muted/70 leading-3">follows thread</span>
+							<span className="w-[112px] shrink-0 text-text type-value">mark</span>
+							<span className="min-w-0 flex-1 truncate text-muted type-label">The ribbon in the corner.</span>
+							<span className="shrink-0 text-muted type-detail">follows thread</span>
 							<Swatch value={tokens.thread} />
-							<span className="w-[92px] shrink-0 pl-2.5 font-mono text-muted text-xs leading-xs">
-								{tokens.thread}
-							</span>
+							<span className="w-[92px] shrink-0 pl-2.5 text-muted type-value">{tokens.thread}</span>
 						</div>
 					</div>
 				) : null}
 			</section>
 
-			<p className="border-border border-t pt-5 text-muted text-sm leading-sm">
+			<p className="border-border border-t pt-5 text-muted type-label">
 				A theme dresses spool’s chrome. Your frames render in documents of their own, on their own tokens.css, and
 				nothing chosen here reaches inside one.
 			</p>
@@ -452,7 +448,7 @@ function LookCard({
 				) : null}
 			</span>
 			<span className="flex items-center justify-between px-0.5">
-				<span className="text-base text-text leading-base">{name}</span>
+				<span className="text-text type-control">{name}</span>
 				{selected ? <span className="h-1.5 w-1.5 rounded-full bg-thread" /> : null}
 			</span>
 		</button>
@@ -475,7 +471,7 @@ function PresetCard({ theme, selected, onPick }: { theme: ThemeSpec; selected: b
 				<Thumb tokens={theme.tokens} small />
 			</span>
 			<span className="flex items-center justify-between gap-2 px-1 pb-0.5">
-				<span className="truncate text-sm text-text leading-sm">{theme.name}</span>
+				<span className="truncate text-text type-label">{theme.name}</span>
 				{selected ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-thread" /> : null}
 			</span>
 		</button>
@@ -589,13 +585,11 @@ function ShareTheme({ theme, onPaste }: { theme: ThemeSpec; onPaste: (theme: The
 							}
 							if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) submit();
 						}}
-						className="h-[120px] w-full resize-none rounded-sm border border-border bg-canvas px-2.5 py-2 font-mono text-text text-xs leading-xs outline-none placeholder:text-muted/50 focus:border-border-raised"
+						className="h-[120px] w-full resize-none rounded-sm border border-border bg-canvas px-2.5 py-2 text-text outline-none placeholder:text-muted focus:border-border-raised type-value"
 					/>
 					{reason === undefined ? null : <Reason className="pt-0">{reason}</Reason>}
 					<span className="flex items-center justify-between">
-						<span className="font-mono text-2xs text-muted/70 leading-3">
-							{accelLabel().replace(/\+$/, "")}↵ applies
-						</span>
+						<span className="text-muted type-detail">{accelLabel().replace(/\+$/, "")}↵ applies</span>
 						<TextButton lit onClick={submit}>
 							Apply
 						</TextButton>
@@ -612,7 +606,7 @@ function TextButton({ children, lit = false, onClick }: { children: ReactNode; l
 			type="button"
 			onClick={onClick}
 			className={cn(
-				"flex h-6 items-center rounded-sm border px-2 text-xs leading-xs transition-colors duration-150",
+				"flex h-6 items-center rounded-sm border px-2 transition-colors duration-150 type-label",
 				lit
 					? "border-border-raised bg-raised text-text"
 					: "border-border text-muted hover:border-border-raised hover:text-text",
@@ -691,13 +685,13 @@ function TokenRow({ entry, write }: { entry: SettingReading & { value: string };
 	return (
 		<div data-token={entry.key} className="flex flex-col border-border border-t">
 			<div className="group flex h-10 items-center gap-4">
-				<span className="w-[112px] shrink-0 font-mono text-text text-xs leading-xs">{entry.label}</span>
-				<span className="min-w-0 flex-1 truncate text-muted text-sm leading-sm">{entry.says}</span>
+				<span className="w-[112px] shrink-0 text-text type-value">{entry.label}</span>
+				<span className="min-w-0 flex-1 truncate text-muted type-label">{entry.says}</span>
 				{moved ? (
 					<button
 						type="button"
 						onClick={() => void move(null)}
-						className="shrink-0 font-mono text-2xs text-muted/70 leading-3 opacity-0 transition-opacity duration-150 hover:text-text group-hover:opacity-100 focus-visible:opacity-100"
+						className="shrink-0 text-muted opacity-0 transition-opacity duration-150 hover:text-text group-hover:opacity-100 focus-visible:opacity-100 type-detail"
 					>
 						reset
 					</button>
@@ -764,7 +758,7 @@ function Segmented({
 						aria-pressed={lit}
 						onClick={() => onChange(choice)}
 						className={cn(
-							"flex items-center rounded-[5px] px-2.5 font-mono text-xs leading-xs transition-colors duration-150",
+							"flex items-center rounded-[5px] px-2.5 transition-colors duration-150 type-value",
 							lit ? "bg-raised text-text" : "text-muted hover:text-text",
 						)}
 					>
@@ -858,7 +852,7 @@ function ColourControl({
 							event.currentTarget.blur();
 						}
 					}}
-					className="w-full bg-transparent font-mono text-text text-xs leading-xs outline-none"
+					className="w-full bg-transparent text-text outline-none type-value"
 				/>
 			</span>
 		</span>
@@ -896,8 +890,8 @@ function Band({
 		<section className="flex flex-col">
 			<div className="flex h-6 items-center justify-between gap-6">
 				<span className="flex items-baseline gap-2.5">
-					<span className="font-medium text-md text-text leading-md">{name}</span>
-					<span className="font-mono text-2xs text-muted/70 leading-3">{file}</span>
+					<span className="font-medium text-text type-title">{name}</span>
+					<span className="text-muted type-detail">{file}</span>
 				</span>
 				{aside}
 			</div>
@@ -921,8 +915,8 @@ function Row({
 		<div className="flex flex-col border-border border-t py-3.5">
 			<div className="flex items-start justify-between gap-10">
 				<span className="flex min-w-0 flex-col gap-1">
-					<span className="text-base text-text leading-base">{label}</span>
-					<span className="max-w-[440px] text-muted text-sm leading-sm">{says}</span>
+					<span className="text-text type-control">{label}</span>
+					<span className="max-w-[440px] text-muted type-label">{says}</span>
 				</span>
 				<span className="flex shrink-0 items-center gap-2 pt-0.5">{children}</span>
 			</div>
@@ -934,7 +928,7 @@ function Row({
 /** The daemon's refusal, in its own words, under the row that asked. */
 function Reason({ children, className }: { children: ReactNode; className?: string }) {
 	return (
-		<span role="alert" className={cn("pt-2 font-mono text-2xs text-thread leading-3", className)}>
+		<span role="alert" className={cn("pt-2 text-thread type-detail", className)}>
 			{children}
 		</span>
 	);

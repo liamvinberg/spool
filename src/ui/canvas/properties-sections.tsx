@@ -1386,7 +1386,7 @@ function AppearanceSection({ view }: { view: View }) {
 							FAINT,
 						)}
 					>
-						<span className="text-sm leading-none">+</span>
+						<span className="type-label">+</span>
 						<span className={LABEL}>filter, transform, transition</span>
 					</button>
 				</div>

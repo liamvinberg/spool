@@ -1,5 +1,9 @@
-/*
- * spool tokens: src/ui/ui.css's @theme, verbatim, so a frame wears the shipped
+@import "./typography.css";
+
+/* The app's dark palette and motion, with its type definitions imported above.
+ * Typography is copied from src/ui/typography.css and checked for exact parity.
+ * Demo products and the site may define their own identity on their surfaces. */
+/* @theme, verbatim, so a frame wears the shipped
  * chrome's colours, type scale, radii and motion and every utility falls out
  * (--color-surface -> bg-surface, --animate-unseen-in -> animate-unseen-in).
  * The only edit is the sans family name, which fonts.css loads from Google
@@ -14,39 +18,11 @@
 	--color-border: #262626;
 	--color-border-raised: #363636;
 	--color-text: #f0efed;
-	--color-muted: #8e8c88;
+	--color-muted: #94918d;
 	--color-thread: #f5391a;
 	/* the ribbon mark alone; a development daemon paints it blue and nothing else */
 	--color-mark: var(--color-thread);
 	--color-on-thread: #ffffff;
-
-	--font-sans: "Familjen Grotesk", system-ui, sans-serif;
-	--font-mono: "Fragment Mono", ui-monospace, SFMono-Regular, monospace;
-	/* Fragment Mono ships coding ligatures under `calt`, so `--` set in the mono
-	 * face became one dash and a variant name (checkout--empty) read as an em
-	 * dash (#272). Names are not code: the contextual alternates are off on
-	 * every font-mono utility. */
-	--font-mono--font-feature-settings: "calt" 0;
-
-	--text-2xs: 10px;
-	--text-xs: 11px;
-	--text-sm: 12px;
-	--text-base: 13px;
-	--text-md: 14px;
-	--text-lg: 18px;
-
-	--font-weight-regular: 400;
-	--font-weight-medium: 500;
-	--font-weight-semibold: 600;
-
-	--tracking-tight: -0.01em;
-	--tracking-normal: 0em;
-
-	--leading-xs: 16px;
-	--leading-sm: 18px;
-	--leading-base: 20px;
-	--leading-md: 22px;
-	--leading-lg: 26px;
 
 	--breakpoint-app: 1280px;
 	--container-artboard: 1360px;

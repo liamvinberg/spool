@@ -12,8 +12,7 @@
 	opacity: 0.85;
 }
 .project-empty > p {
-	font-size: 14px;
-	line-height: 1.7;
+	font: var(--type-body);
 	max-width: 340px;
 }
 .project-empty > .spool-empty-actions {
@@ -26,8 +25,8 @@
 .project-empty > .spool-empty-actions > code {
 	max-width: 100%;
 	color: var(--color-muted);
-	font-family: var(--font-mono);
-	font-size: 11px;
+	font: var(--type-detail);
+	font-feature-settings: var(--font-mono--font-feature-settings);
 	overflow-wrap: anywhere;
 	user-select: text;
 	pointer-events: auto;
@@ -42,7 +41,7 @@
 	border: 1px solid var(--color-border-raised);
 	border-radius: 7px;
 	color: var(--color-text);
-	font-size: 13px;
+	font: var(--type-control);
 	pointer-events: auto;
 }
 .project-empty-copy:hover {
@@ -69,7 +68,7 @@
 	color: var(--color-text);
 	background: transparent;
 	outline: none;
-	font-size: 14px;
+	font: var(--type-body);
 	padding: 3px;
 	margin-left: -3px;
 	border-radius: 3px;
@@ -80,19 +79,19 @@
 }
 .project-empty-title > span {
 	color: var(--color-muted);
-	font-family: var(--font-mono);
-	font-size: 9px;
+	font: var(--type-detail);
+	font-feature-settings: var(--font-mono--font-feature-settings);
 }
 .project-empty-title > p {
 	max-width: 360px;
 	color: var(--color-text);
-	font-size: 12px;
+	font: var(--type-label);
 }
 .project-empty-folder {
 	position: absolute;
 	bottom: 91px;
 	color: var(--color-muted);
-	font-size: 12px;
+	font: var(--type-label);
 	pointer-events: auto;
 }
 .project-empty-folder:hover {

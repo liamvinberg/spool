@@ -44,15 +44,15 @@ export function UpdateToastPill({
 		>
 			{toast.kind === "offer" && (
 				<>
-					<span className="text-base text-text leading-base">Update available — v{toast.latest}</span>
-					<button type="button" className="font-medium text-base text-thread leading-base" onClick={onUpdate}>
+					<span className="text-text type-control">Update available — v{toast.latest}</span>
+					<button type="button" className="font-medium text-thread type-control" onClick={onUpdate}>
 						Update
 					</button>
 				</>
 			)}
 			{toast.kind === "updating" && (
 				<>
-					<span className="text-base text-muted leading-base">
+					<span className="text-muted type-control">
 						{toast.stage === "installing" ? "Installing update…" : "Restarting…"}
 					</span>
 					<span className="absolute bottom-0 left-0 h-px w-1/3 animate-toast-sweep bg-thread" />
@@ -60,9 +60,9 @@ export function UpdateToastPill({
 			)}
 			{toast.kind === "failed" && (
 				<>
-					<span className="text-base text-text leading-base">{toast.message ?? "Update failed"}</span>
+					<span className="text-text type-control">{toast.message ?? "Update failed"}</span>
 					<span className="h-4 w-px bg-border-raised" />
-					<span className="font-mono text-muted text-xs leading-xs">spool upgrade</span>
+					<span className="text-muted type-value">spool upgrade</span>
 				</>
 			)}
 			{toast.kind !== "updating" && (

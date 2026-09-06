@@ -16,15 +16,13 @@
 
 .confirm-dialog h2 {
 	margin: 0 0 8px;
-	font-size: 16px;
-	font-weight: 500;
+	font: var(--type-title);
 }
 
 .confirm-dialog p {
 	margin: 0 0 20px;
 	color: var(--color-muted);
-	font-size: 13px;
-	line-height: 1.5;
+	font: var(--type-body);
 }
 
 .confirm-dialog fieldset {
@@ -37,7 +35,7 @@
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-	font-size: 13px;
+	font: var(--type-control);
 }
 
 .confirm-dialog input {
@@ -58,7 +56,8 @@
 	margin: 12px 0 20px;
 	overflow-wrap: anywhere;
 	color: var(--color-muted);
-	font-size: 11px;
+	font: var(--type-detail);
+	font-feature-settings: var(--font-mono--font-feature-settings);
 }
 
 .confirm-dialog [role="alert"] {

@@ -8,7 +8,7 @@
 	border-radius: 7px;
 	padding: 0 13px;
 	border: 1px solid var(--color-border-raised);
-	font-size: 13px;
+	font: var(--type-control);
 	white-space: nowrap;
 	color: var(--color-text);
 }
@@ -42,16 +42,15 @@
 	min-width: 0;
 	outline: none;
 	background: none;
-	font-size: 13px;
+	font: var(--type-control);
 	color: var(--color-text);
 }
 .home-search input::placeholder {
 	color: var(--color-muted);
 }
 .home-search kbd {
-	font-family: var(--font-mono);
-	font-size: 10px;
-	opacity: 0.7;
+	font: var(--type-detail);
+	font-feature-settings: var(--font-mono--font-feature-settings);
 }
 .home-search button {
 	display: flex;
@@ -71,11 +70,11 @@
 	margin-bottom: 24px;
 	height: 23px;
 	color: var(--color-muted);
-	font-size: 11px;
+	font: var(--type-caption);
 }
 .pj-toolbar > span {
-	font-family: var(--font-mono);
-	font-size: 10px;
+	font: var(--type-detail);
+	font-feature-settings: var(--font-mono--font-feature-settings);
 }
 .pj-toolbar > label {
 	display: flex;
@@ -86,7 +85,7 @@
 	padding: 3px 2px 3px 5px;
 	color: var(--color-text);
 	background: transparent;
-	font-size: 11px;
+	font: var(--type-caption);
 	cursor: pointer;
 }
 .pj-toolbar option {
@@ -121,14 +120,14 @@
 	gap: 9px;
 }
 .pj-cover-caption strong {
-	font-size: 15px;
+	font: var(--type-title);
 	font-weight: 500;
 }
 .pj-cover-caption > span,
 .pj-opened-time {
 	color: var(--color-muted);
-	font-size: 10px;
-	font-family: var(--font-mono);
+	font: var(--type-detail);
+	font-feature-settings: var(--font-mono--font-feature-settings);
 }
 .pj-opened-time {
 	display: block;
@@ -202,12 +201,11 @@
 	flex: 1;
 }
 .pj-start-choices strong {
-	font-weight: 400;
-	font-size: 15px;
+	font: var(--type-title);
 }
 .pj-start-choices small {
 	color: var(--color-muted);
-	font-size: 12px;
+	font: var(--type-label);
 }
 .pj-start-choices > button > .home-arrow {
 	width: 14px;
@@ -226,14 +224,14 @@
 	margin-top: -50px;
 }
 .pj-welcome h1 {
-	font-size: 34px;
-	font-weight: 400;
-	letter-spacing: -1px;
+	font: var(--type-page);
+	font-weight: var(--font-weight-medium);
+	letter-spacing: var(--tracking-tight);
 }
 .pj-welcome > p {
 	margin-top: 14px;
 	color: var(--color-muted);
-	font-size: 15px;
+	font: var(--type-body);
 }
 .pj-welcome > .spool-empty-actions {
 	display: grid;
@@ -268,13 +266,12 @@
 	width: 100%;
 	align-items: center;
 	justify-content: space-between;
-	font-size: 18px;
+	font: var(--type-heading);
 	font-weight: 400;
 }
 .pj-welcome > .spool-empty-actions small {
 	margin-top: 10px;
-	font-size: 13px;
-	line-height: 1.6;
+	font: var(--type-control);
 	color: var(--color-muted);
 }
 .pj-welcome > :where(.spool-empty-actions) > button:hover {
@@ -287,7 +284,7 @@
 	gap: 10px;
 	margin-top: 24px;
 	color: var(--color-muted);
-	font-size: 12px;
+	font: var(--type-label);
 }
 .pj-location-path {
 	color: var(--color-text);
@@ -319,7 +316,8 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 10px;
+	font: var(--type-detail);
+	font-feature-settings: var(--font-mono--font-feature-settings);
 	color: var(--color-muted);
 }
 
@@ -356,7 +354,7 @@
 	display: flex;
 	align-items: center;
 	height: 32px;
-	font-size: 25px;
+	font: var(--type-mark);
 	letter-spacing: -1px;
 	padding: 0 13px;
 	margin-bottom: 30px;
@@ -372,7 +370,7 @@
 	color: var(--color-text);
 	background: var(--color-surface);
 	text-align: left;
-	font-size: 13px;
+	font: var(--type-control);
 }
 .pj-navigation :where(nav) > button > svg {
 	width: 16px;
@@ -392,13 +390,13 @@
 	padding: 9px 12px;
 	color: var(--color-muted);
 	border-radius: 6px;
-	font-size: 12px;
+	font: var(--type-label);
 }
 .pj-navigation-foot > span {
 	padding-left: 12px;
 	color: var(--color-muted);
-	font-size: 10px;
-	font-family: var(--font-mono);
+	font: var(--type-detail);
+	font-feature-settings: var(--font-mono--font-feature-settings);
 }
 .pj-main {
 	min-width: 0;
@@ -412,9 +410,9 @@
 	margin-bottom: 31px;
 }
 .pj-heading > h1 {
-	font-size: 27px;
-	font-weight: 500;
-	letter-spacing: -0.6px;
+	font: var(--type-page);
+	font-weight: var(--font-weight-medium);
+	letter-spacing: var(--tracking-tight);
 }
 .pj-heading > div {
 	display: flex;

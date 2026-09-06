@@ -48,7 +48,7 @@ export function NewProjectPlus({ seed }: { seed?: NewSeed | undefined }) {
 					aria-label="Search folders"
 					onChange={(event) => picker.setQuery(event.target.value)}
 					onKeyDown={picker.onKeyDown}
-					className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none"
+					className="min-w-0 flex-1 bg-transparent text-text caret-thread outline-none type-code-input"
 				/>
 				<button
 					type="button"
