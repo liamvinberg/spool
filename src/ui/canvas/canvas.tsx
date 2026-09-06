@@ -4901,6 +4901,7 @@ export function ProjectCanvas({
 				)}
 				agent={(width, shut) => (
 					<AgentRail
+						onPermissions={onSettings}
 						width={width}
 						onCollapse={shut}
 						entries={turn.entries}

@@ -31,7 +31,18 @@ export async function deterministicBundledRuntime(
 			},
 		],
 		streamSimple: (model, context, options) => {
-			seen?.(context);
+			seen?.({
+				...context,
+				...(context.tools === undefined
+					? {}
+					: {
+							tools: context.tools.map(({ name, description, parameters }) => ({
+								name,
+								description,
+								parameters,
+							})),
+						}),
+			});
 			appendFileSync(join(directory, "provider-calls.jsonl"), `${JSON.stringify(context)}\n`, { mode: 0o600 });
 			const stream = createAssistantMessageEventStream();
 			const message: AssistantMessage = {
@@ -52,6 +63,38 @@ export async function deterministicBundledRuntime(
 				},
 			};
 			const users = context.messages.filter((entry) => entry.role === "user");
+			const lastUser = users.at(-1);
+			const prompt =
+				typeof lastUser?.content === "string"
+					? lastUser.content
+					: (lastUser?.content
+							.filter((part) => part.type === "text")
+							.map((part) => part.text)
+							.join("\n") ?? "");
+			const scriptAt = prompt.indexOf("file tools: ");
+			const script: { name: string; arguments: Record<string, unknown> }[] =
+				scriptAt < 0 ? [] : JSON.parse(prompt.slice(scriptAt + "file tools: ".length));
+			const afterUser = context.messages.slice(
+				context.messages.lastIndexOf(lastUser as NonNullable<typeof lastUser>) + 1,
+			);
+			const step = script[afterUser.filter((entry) => entry.role === "toolResult").length];
+			if (step !== undefined) {
+				queueMicrotask(() => {
+					message.content = [
+						{
+							type: "toolCall",
+							id: `file-${users.length}-${afterUser.length}`,
+							name: step.name,
+							arguments: step.arguments,
+						},
+					];
+					message.stopReason = "toolUse";
+					stream.push({ type: "start", partial: message });
+					stream.push({ type: "done", reason: "toolUse", message });
+					stream.end(message);
+				});
+				return stream;
+			}
 			const text = `Saved reply ${users.length}.\n\nStill working.`;
 			queueMicrotask(() => {
 				stream.push({ type: "start", partial: message });

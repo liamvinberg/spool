@@ -5,6 +5,7 @@ import { createAssistantMessageEventStream, type OAuthCredential, Type } from "@
 import { createAgentSession, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { expect, it, onTestFinished } from "vitest";
 import { makeTempDir } from "../test-helpers";
+import { BundledFilePolicy } from "./bundled-files";
 import { bundledResources } from "./bundled-resources";
 import { BundledRuntime } from "./bundled-runtime";
 import { BundledCredentialStore, writePrivate } from "./bundled-store";
@@ -25,7 +26,8 @@ it("uses pi key login for all four launch key providers, with one connection per
 	onTestFinished(() => runtime.close());
 	for (const provider of ["openai", "anthropic", "google", "xai"]) {
 		const step = await runtime.request({ kind: "login", provider, method: "api_key" });
-		if (!step || !("kind" in step) || step.kind !== "step") throw new Error("Missing login prompt");
+		if (!step || typeof step !== "object" || !("kind" in step) || step.kind !== "step")
+			throw new Error("Missing login prompt");
 		expect(step.step.type).toBe("secret");
 		expect(await runtime.request({ kind: "login-input", id: step.id, value: `${provider}-private-key` })).toEqual({
 			kind: "connected",
@@ -38,7 +40,7 @@ it("uses pi key login for all four launch key providers, with one connection per
 		{ providerId: "xai", type: "oauth" },
 	]);
 	const replacement = await runtime.request({ kind: "login", provider: "xai", method: "api_key" });
-	if (!replacement || !("kind" in replacement) || replacement.kind !== "step")
+	if (!replacement || typeof replacement !== "object" || !("kind" in replacement) || replacement.kind !== "step")
 		throw new Error("Missing replacement prompt");
 	expect(await runtime.request({ kind: "login-input", id: replacement.id, value: "replacement-private-key" })).toEqual(
 		{ kind: "connected" },
@@ -60,7 +62,8 @@ it("discards late login and refresh rotations on cancel, replacement and logout"
 	const login = deferred<OAuthCredential>();
 	deterministicAuth(runtime.models, { login: () => login.promise });
 	const pending = await runtime.request({ kind: "login", provider: "xai", method: "oauth" });
-	if (!pending || !("kind" in pending) || pending.kind !== "step") throw new Error("Missing login");
+	if (!pending || typeof pending !== "object" || !("kind" in pending) || pending.kind !== "step")
+		throw new Error("Missing login");
 	await runtime.request({ kind: "login-cancel", id: pending.id });
 	login.resolve({ ...expired, access: "late-login", expires: Date.now() + 3600000 });
 	await new Promise((resolve) => setTimeout(resolve, 30));
@@ -86,7 +89,8 @@ it("discards late login and refresh rotations on cancel, replacement and logout"
 			expect(await runtime.credentials.read("xai")).toBeUndefined();
 		} else {
 			const next = await runtime.request({ kind: "login", provider: "xai", method: "oauth" });
-			if (!next || !("kind" in next) || next.kind !== "step") throw new Error("Missing login");
+			if (!next || typeof next !== "object" || !("kind" in next) || next.kind !== "step")
+				throw new Error("Missing login");
 			await runtime.request({ kind: "login-cancel", id: next.id });
 			refresh.resolve({ ...expired, access: "stale-rotation", expires: Date.now() + 3600000 });
 		}
@@ -117,7 +121,8 @@ it("surfaces failed login and rotated-token persistence without using an unsaved
 	await expect(models.getAuth("xai")).rejects.toThrow();
 	expect(await store.read("xai")).toEqual(expired);
 	const step = await runtime.request({ kind: "login", provider: "openai", method: "api_key" });
-	if (!step || !("kind" in step) || step.kind !== "step") throw new Error("Missing prompt");
+	if (!step || typeof step !== "object" || !("kind" in step) || step.kind !== "step")
+		throw new Error("Missing prompt");
 	const result = await runtime.request({ kind: "login-input", id: step.id, value: "unsaved-secret" });
 	expect(result).toMatchObject({ kind: "error" });
 	expect(JSON.stringify(result)).not.toMatch(/private-token|unsaved-secret/);
@@ -182,7 +187,7 @@ it("refreshes once for concurrent consumers and again inside a real SDK tool loo
 		modelRuntime: runtime.models,
 		model,
 		sessionManager: SessionManager.inMemory(root, { id: randomUUID() }),
-		resourceLoader: bundledResources(root),
+		resourceLoader: bundledResources(root, new BundledFilePolicy(root, runtime.directory)),
 		settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
 		noTools: "all",
 		tools: ["expire"],
@@ -230,16 +235,19 @@ it("handles browser callback cancellation of manual input and rejects stale prom
 		},
 	});
 	const start = await runtime.request({ kind: "login", provider: "xai", method: "oauth" });
-	if (!start || !("kind" in start) || start.kind !== "step") throw new Error("Missing info");
+	if (!start || typeof start !== "object" || !("kind" in start) || start.kind !== "step")
+		throw new Error("Missing info");
 	expect(start.step.type).toBe("info");
 	await new Promise((resolve) => setTimeout(resolve, 60));
 	const manual = await runtime.request({ kind: "login-poll", id: start.id });
-	if (!manual || !("kind" in manual) || manual.kind !== "step") throw new Error("Missing prompt");
+	if (!manual || typeof manual !== "object" || !("kind" in manual) || manual.kind !== "step")
+		throw new Error("Missing prompt");
 	callback.abort();
 	await runtime.request({ kind: "login-input", id: start.id, revision: manual.revision, value: "personal" });
 	expect(selection).toBe("");
 	const choice = await runtime.request({ kind: "login-poll", id: start.id });
-	if (!choice || !("kind" in choice) || choice.kind !== "step") throw new Error("Missing choice");
+	if (!choice || typeof choice !== "object" || !("kind" in choice) || choice.kind !== "step")
+		throw new Error("Missing choice");
 	expect(choice.step.type).toBe("select");
 	expect(
 		await runtime.request({ kind: "login-input", id: start.id, revision: choice.revision, value: "personal" }),

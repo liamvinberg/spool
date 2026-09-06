@@ -15,6 +15,7 @@ import type { AgentEvent } from "./agent-events";
 import type { AgentOffer } from "./agent-offer";
 import { BundledAuth } from "./bundled-auth";
 import { BUNDLED_CONNECTIONS, connectionLabel } from "./bundled-connections";
+import { BundledFilePolicy, BundledFileTurn } from "./bundled-files";
 import type { BundledReply, BundledRequest } from "./bundled-protocol";
 import { bundledResources } from "./bundled-resources";
 import { BundledCredentialStore, privateDirectory, writePrivate } from "./bundled-store";
@@ -23,6 +24,7 @@ interface HeldSession {
 	root: string;
 	manager: SessionManager;
 	session: AgentSession;
+	files: BundledFileTurn;
 	idle?: ReturnType<typeof setTimeout>;
 }
 
@@ -31,6 +33,7 @@ export class BundledRuntime {
 	private readonly auth: BundledAuth;
 	private readonly sessions = new Map<string, HeldSession>();
 	private readonly active = new Map<string, { session: string; stopped: boolean }>();
+	private readonly policies = new Map<string, BundledFilePolicy>();
 	private readonly reserved = new Set<string>();
 	constructor(
 		readonly directory: string,
@@ -177,10 +180,23 @@ export class BundledRuntime {
 				return null;
 			case "offer":
 				return this.offer(request.options);
+			case "answer":
+				return (
+					this.sessions
+						.get(this.active.get(request.turn)?.session ?? "")
+						?.files.answer(request.request, request.reply) ?? false
+				);
+			case "permissions": {
+				const held = this.sessions.get(this.active.get(request.turn)?.session ?? "");
+				if (!held) throw new Error("Turn is not ready");
+				held.files.apply(request.mode);
+				return request.mode;
+			}
 			case "stop": {
 				const active = this.active.get(request.turn);
 				if (active !== undefined) {
 					active.stopped = true;
+					this.sessions.get(active.session)?.files.stop();
 					await this.sessions.get(active.session)?.session.abort();
 				}
 				return null;
@@ -214,25 +230,30 @@ export class BundledRuntime {
 			if (held === undefined) {
 				const manager = this.manager(options.root, ref);
 				this.save(manager);
+				const policy = this.policies.get(ref) ?? new BundledFilePolicy(options.root, this.directory);
+				this.policies.set(ref, policy);
+				const files = new BundledFileTurn(policy, options.permissions, emit);
 				const { session } = await createAgentSession({
 					cwd: options.root,
 					agentDir: this.directory,
 					modelRuntime: this.models,
 					model,
 					sessionManager: manager,
-					resourceLoader: bundledResources(options.root),
+					resourceLoader: bundledResources(options.root, policy),
 					settingsManager: SettingsManager.inMemory({
 						compaction: { enabled: false },
 						retry: { enabled: false, provider: { maxRetries: 0 } },
 						images: { autoResize: false },
 					}),
-					noTools: "all",
-					tools: [],
+					noTools: "builtin",
+					tools: ["read", "write", "edit"],
+					customTools: files.tools(),
 					thinkingLevel: (offer.current.effort ?? "off") as ThinkingLevel,
 				});
-				held = { root: options.root, session, manager };
+				held = { root: options.root, session, manager, files };
 				this.sessions.set(ref, held);
 			} else {
+				held.files.begin(options.permissions, emit);
 				await held.session.setModel(model);
 				held.session.setThinkingLevel((offer.current.effort ?? "off") as ThinkingLevel);
 			}
@@ -279,7 +300,7 @@ export class BundledRuntime {
 				version: "0.85.1",
 				permissionMode: options.permissions,
 				apiKeySource: "spool",
-				capabilities: [],
+				capabilities: ["read", "write", "edit"],
 				parent: null,
 			});
 			emit({ kind: "waiting", parent: null });
@@ -307,12 +328,14 @@ export class BundledRuntime {
 						),
 					},
 				);
+			if (running.stopped) ending = "stopped";
 			if (saveError !== undefined) throw new Error("Could not save this bundled conversation", { cause: saveError });
 			this.save(manager);
 		} catch (error) {
 			ending = running.stopped ? "stopped" : "failed";
 			reason = error instanceof Error ? error.message : "Bundled turn failed";
 		} finally {
+			held?.files.stop();
 			unsubscribe?.();
 			this.active.delete(id);
 			this.reserved.delete(ref);
@@ -340,12 +363,15 @@ export class BundledRuntime {
 	}
 	async close(): Promise<void> {
 		this.auth.close();
+		for (const active of this.active.values()) active.stopped = true;
 		for (const held of this.sessions.values()) {
 			if (held.idle !== undefined) clearTimeout(held.idle);
+			held.files.stop();
 			await held.session.abort();
 			this.save(held.manager);
 			held.session.dispose();
 		}
 		this.sessions.clear();
+		this.policies.clear();
 	}
 }

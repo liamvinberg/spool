@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { answerFits } from "./agent-control";
 import type { AgentEngine, AgentLoginProgress } from "./agent-engine";
-import type { AgentEvent } from "./agent-events";
+import type { AgentAsking, AgentEvent } from "./agent-events";
 import type { AgentOffer } from "./agent-offer";
 import type { AgentLogin } from "./agent-preflight";
 import type { AgentTurn } from "./agent-turn";
@@ -109,11 +110,16 @@ export class BundledHostClient {
 		const queue: AgentEvent[] = [];
 		let wake: (() => void) | undefined;
 		let finished = false;
+		const asking = new Map<string, AgentAsking>();
+		let applied = request.options.permissions;
 		const emit = (event: AgentEvent) => {
 			if (finished) return;
+			if (event.kind === "asking") asking.set(event.request, event);
+			if (event.kind === "answered") asking.delete(event.request);
 			queue.push(event);
 			if (event.kind === "closed") {
 				finished = true;
+				asking.clear();
 				this.turns.delete(id);
 			}
 			wake?.();
@@ -153,7 +159,24 @@ export class BundledHostClient {
 					}
 				},
 			},
-			answer: () => false,
+			answer: (request, reply) => {
+				const held = asking.get(request);
+				if (!held || !answerFits(held, reply)) return false;
+				asking.delete(request);
+				void this.request({ kind: "answer", turn: id, request, reply }).catch(() => stop());
+				return true;
+			},
+			permissions: {
+				get applied() {
+					return applied;
+				},
+				apply: async (mode) => {
+					const result = await this.request({ kind: "permissions", turn: id, mode });
+					if (result !== mode) throw new Error("Permission mode was not applied");
+					applied = mode;
+					return applied;
+				},
+			},
 			interrupt: stop,
 			abandon: () => {
 				stop();
