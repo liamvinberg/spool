@@ -1446,6 +1446,9 @@ function Row({ entry, jump }: { entry: AgentRow; jump: FrameJump }) {
 						{shot === null ? null : (
 							<Shot shot={shot} of={entry.frame ?? entry.detail} quiet={entry.frame === entry.subject} />
 						)}
+						{entry.slices?.map((slice) => (
+							<Shot key={slice.id} shot={slice} of={entry.frame ?? entry.detail} quiet />
+						))}
 						{shot === null && entry.detail !== null ? (
 							<span data-agent-detail="" className="block truncate font-mono text-2xs text-muted/55 leading-4">
 								{entry.detail}
@@ -1635,6 +1638,11 @@ function Ask({
 	};
 	return (
 		<div data-agent-ask={entry.state} className="flex flex-col gap-3">
+			{open && entry.access?.unavailable ? (
+				<p className="text-base text-text leading-base">
+					spool can’t restrict commands to design/ on this computer.
+				</p>
+			) : null}
 			{/* the sentences, drawn where the agent's sentences are drawn. A question still
 			    arriving shows a caret, because it is typing itself in the way every tool
 			    call's subject does */}
@@ -1679,6 +1687,9 @@ function Ask({
 					{entry.state === "arriving" ? <Caret /> : null}
 				</p>
 			)}
+			{open && entry.access?.command ? (
+				<code className="break-words font-mono text-xs text-muted leading-4">{entry.access.command}</code>
+			) : null}
 			{entry.state === "answered" ? <Answered words={entry.words} /> : null}
 			{entry.state === "dropped" ? <AskOutcome state="failed" text="nobody answered" /> : null}
 			{entry.state === "allowed" ? (
@@ -1690,7 +1701,11 @@ function Ask({
 					text={
 						entry.access === undefined
 							? "allowed for this thread"
-							: `edits in ${entry.access.scope} allowed for this thread`
+							: entry.access.kind === "command"
+								? entry.access.scope === "commands"
+									? "commands allowed for this thread"
+									: `commands in ${entry.access.scope} allowed for this thread`
+								: `edits in ${entry.access.scope} allowed for this thread`
 					}
 				/>
 			) : null}

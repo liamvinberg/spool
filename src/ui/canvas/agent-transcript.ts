@@ -159,6 +159,8 @@ export interface AgentRow {
 	readonly step: string | null;
 	/** the picture this call handed back, which is the payload of its line (#117) */
 	readonly shot: AgentShot | null;
+	/** Additional top-to-bottom slices; old saved rows carry only shot. */
+	readonly slices?: readonly (AgentShot & { readonly id: string })[];
 	readonly foreign: RowForeign | null;
 	/** the delegating call this row came from, or null on the human's own thread */
 	readonly parent: string | null;
@@ -310,7 +312,13 @@ export type AgentEntry =
 	| {
 			readonly key: string;
 			readonly kind: "ask";
-			readonly access?: { readonly scope: string; readonly path: string };
+			readonly access?: {
+				readonly scope: string;
+				readonly path: string;
+				readonly kind?: "command";
+				readonly command?: string;
+				readonly unavailable?: boolean;
+			};
 			/** the control request an answer names; null until the request itself lands */
 			readonly request: string | null;
 			/** the agent's own question rather than an approval to run something */
@@ -440,7 +448,13 @@ interface Prose {
 
 /** a waiting request, from the call that opens it to whatever ends it */
 interface Ask {
-	access?: { readonly scope: string; readonly path: string };
+	access?: {
+		readonly scope: string;
+		readonly path: string;
+		readonly kind?: "command";
+		readonly command?: string;
+		readonly unavailable?: boolean;
+	};
 	readonly key: string;
 	request: string | null;
 	question: boolean;
@@ -464,6 +478,7 @@ interface Row {
 	detail: string | null;
 	step: string | null;
 	shot: AgentShot | null;
+	slices?: readonly (AgentShot & { readonly id: string })[];
 	foreign: RowForeign | null;
 	parent: string | null;
 }
@@ -1187,16 +1202,15 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				 * developer's own press back to them as an instruction to stop and wait.
 				 */
 				if (state === "failed" && event.text.trim() !== "") block.row.detail = event.text.trim();
-				/*
-				 * The picture the call handed back, which goes one field down rather than onto
-				 * the line: roughly 150 KB of base64 per screenshot, and the row above it
-				 * already said `look`.
-				 *
-				 * The first of them, because every image result in all seven captures carries
-				 * exactly one — a `spool shot` writes one PNG and the agent reads that one back.
-				 */
 				const picture = event.images[0];
-				if (picture !== undefined) block.row.shot = { media: picture.media, data: picture.data };
+				if (picture !== undefined) {
+					block.row.shot = picture;
+					if (event.images.length > 1)
+						block.row.slices = event.images
+							.slice(1)
+							.map((image, index) => ({ ...image, id: `${event.id}-${index + 1}` }));
+					if (block.row.verb === "shot") block.row.verb = "look";
+				}
 				break;
 			}
 			case "task-started":
@@ -1412,7 +1426,11 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 						rule: false,
 						text:
 							ask.state === "always"
-								? `edits in ${ask.access.scope} allowed for this thread`
+								? ask.access.kind === "command"
+									? ask.access.scope === "commands"
+										? "commands allowed for this thread"
+										: `commands in ${ask.access.scope} allowed for this thread`
+									: `edits in ${ask.access.scope} allowed for this thread`
 								: ask.state === "allowed"
 									? "allowed once"
 									: ask.state === "denied"

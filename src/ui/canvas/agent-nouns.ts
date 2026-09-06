@@ -383,10 +383,11 @@ export function nameCall(call: {
 		const verb = spool[1] ?? "run";
 		// a redirection is shell rather than subject: `spool shot home 2>&1` looked at home
 		const subject = (spool[2] ?? "").split(/\s*\d*>/)[0]?.trim() ?? "";
-		const frame = TAKES_FRAME.has(verb) && /^[\w-]+$/.test(subject) ? subject : null;
+		const target = subject.split(/\s+/)[0] ?? "";
+		const frame = TAKES_FRAME.has(verb) && /^[\w-]+$/.test(target) ? target : null;
 		// `spool skill` and `spool selection` take no argument at all, so the verb is the
 		// whole row rather than a verb with an empty slot after it
-		return { ...plain, verb, subject: subject === "" ? null : subject, frame, detail: command };
+		return { ...plain, verb, subject: frame ?? (subject === "" ? null : subject), frame, detail: command };
 	}
 
 	if (tool === "Agent") return { ...plain, verb: "delegate", subject: readField(input, "description", whole) };

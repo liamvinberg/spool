@@ -38,7 +38,7 @@ export function canonicalFile(path: string, depth = 0): string {
 	}
 	return current;
 }
-function inside(path: string, directory: string): boolean {
+export function inside(path: string, directory: string): boolean {
 	const part = relative(directory, path);
 	return part === "" || (!isAbsolute(part) && part !== ".." && !part.startsWith(`..${sep}`));
 }
@@ -52,7 +52,16 @@ export class BundledFilePolicy {
 	path(path: string): string {
 		const target = canonicalFile(isAbsolute(path) ? path : `${this.root}${sep}${path}`);
 		// Instance credentials, sessions and control state are never model input or output.
-		const protectedPaths = [
+		const protectedPaths = this.protectedPaths();
+		const controlLock =
+			dirname(target) === canonicalFile(dirname(this.directory)) &&
+			/^machine-state\.lock(?:$|\.)/.test(basename(target));
+		if (controlLock || protectedPaths.some((one) => inside(target, canonicalFile(one))))
+			throw new Error("Spool control and credential files are protected");
+		return target;
+	}
+	protectedPaths(): string[] {
+		return [
 			this.directory,
 			join(dirname(this.directory), "config.json"),
 			join(dirname(this.directory), "daemon.json"),
@@ -61,14 +70,9 @@ export class BundledFilePolicy {
 			join(dirname(this.directory), "daemon.log"),
 			join(this.root, "design/.spool"),
 			join(this.root, "design/canvas.json"),
-		];
-		const controlLock =
-			dirname(target) === canonicalFile(dirname(this.directory)) &&
-			/^machine-state\.lock(?:$|\.)/.test(basename(target));
-		if (controlLock || protectedPaths.some((one) => inside(target, canonicalFile(one))))
-			throw new Error("Spool control and credential files are protected");
-		return target;
+		].map((path) => canonicalFile(path));
 	}
+
 	quiet(target: string, mode: AgentPermissions): boolean {
 		return (
 			mode !== "ask" ||
