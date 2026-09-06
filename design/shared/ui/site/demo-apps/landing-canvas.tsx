@@ -1,4 +1,5 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import "./landing-fit.css";
+import { type ReactNode, useEffect, useState } from "react";
 import { CAPTURED, type ModelState, useModels } from "shared/lib/spool/agent-model";
 import { cn } from "shared/lib/utils";
 import { DemoProduct, DEMO_TAKES, type DemoTake } from "./landing-product";
@@ -50,32 +51,21 @@ function LandingShell({ children }: { children: ReactNode }) {
  * This never starts an agent, writes a frame or persists application state.
  */
 export function OffprintSurface({ view = "agent", className = "" }: { view?: AppView; className?: string }) {
-	const container = useRef<HTMLDivElement>(null);
-	const [scale, setScale] = useState(1);
 	const [dock, setDock] = useState<AppView>(view);
 	const [selected, setSelected] = useState<DemoTake | null>("workshops");
 	const [entered, setEntered] = useState<DemoTake | null>(null);
 	const [tool, setTool] = useState<CanvasTool>("select");
 	const [geometry, setGeometry] = useState(POSITIONS);
 	useEffect(() => setDock(view), [view]);
-	useEffect(() => {
-		const element = container.current;
-		if (element === null) return;
-		const resize = () => setScale(element.clientWidth / 1600);
-		resize();
-		const observer = new ResizeObserver(resize);
-		observer.observe(element);
-		return () => observer.disconnect();
-	}, []);
+
 	const pick = (take: DemoTake) => {
 		setSelected(take);
 		setEntered(null);
 	};
 	return (
-		<div ref={container} className={cn("sr-app", className)} data-app-surface="" data-view={dock}>
+		<div className={cn("sr-app", className)} data-app-surface="" data-view={dock}>
 			<div
 				className="sr-app-stage"
-				style={{ transform: `scale(${scale})` }}
 				onKeyDown={(event) => {
 					if (event.key === "Escape") setEntered(null);
 				}}
@@ -171,7 +161,11 @@ export function OffprintSurface({ view = "agent", className = "" }: { view?: App
 											dock === surface ? "bg-raised text-text" : "text-muted/70 hover:text-text",
 										)}
 									>
-										{surface === "agent" ? <AgentIcon className="h-4 w-4" /> : <PropertiesIcon className="h-4 w-4" />}
+										{surface === "agent" ? (
+											<AgentIcon className="h-4 w-4" />
+										) : (
+											<PropertiesIcon className="h-4 w-4" />
+										)}
 									</button>
 								))}
 								<button
@@ -336,10 +330,12 @@ function SettledAgent({
 							<ToolRow verb="check" subject="3 frames" detail="Type check passed." />
 						</div>
 						<p className="text-base text-text leading-base">
-							The workshop, booking, and ticket are on the canvas. The poster carries through the flow, and your chosen
-							time and seats stay with you.
+							The workshop, booking, and ticket are on the canvas. The poster carries through the flow, and your
+							chosen time and seats stay with you.
 						</p>
-						<p className="text-base text-text leading-base">Select a frame to compare it, or press play to try it.</p>
+						<p className="text-base text-text leading-base">
+							Select a frame to compare it, or press play to try it.
+						</p>
 					</div>
 				)}
 			</div>

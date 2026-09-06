@@ -1,0 +1,67 @@
+.dl-page {
+	--dl-arrival-time: 360ms;
+	--dl-arrival-distance: 8px;
+}
+
+/* CSS owns the first arrival, so delayed hydration cannot replay it. */
+.dl-page .sg-nav .sg-brand,
+.dl-page .sg-hero h1,
+.dl-page .sg-hero > p,
+.dl-page .sg-hero-actions {
+	animation: dl-arrive var(--dl-arrival-time) var(--sg-ease) backwards;
+}
+.dl-page .sg-nav .sg-brand {
+	animation-duration: 240ms;
+}
+.dl-page .sg-hero > p {
+	animation-delay: 40ms;
+}
+.dl-page .sg-hero-actions {
+	animation-delay: 80ms;
+}
+.dl-page .sg-hero-app {
+	animation: dl-canvas-arrive 420ms var(--sg-ease) 110ms backwards;
+}
+.dl-page [data-arrival="waiting"] {
+	opacity: 0;
+	transform: translateY(var(--dl-arrival-distance));
+}
+.dl-page [data-arrival="shown"] {
+	animation: dl-arrive var(--dl-arrival-time) var(--sg-ease) backwards;
+}
+.dl-page .sg-hero :focus-within,
+.dl-page .sg-hero-app:focus-within {
+	animation: none;
+}
+@keyframes dl-arrive {
+	from {
+		opacity: 0;
+		transform: translateY(var(--dl-arrival-distance));
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+@keyframes dl-canvas-arrive {
+	from {
+		opacity: 0;
+		transform: translateY(12px) scale(0.992);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.dl-page .sg-nav .sg-brand,
+	.dl-page .sg-hero h1,
+	.dl-page .sg-hero > p,
+	.dl-page .sg-hero-actions,
+	.dl-page .sg-hero-app,
+	.dl-page [data-arrival] {
+		animation: none;
+		opacity: 1;
+		transform: none;
+	}
+}

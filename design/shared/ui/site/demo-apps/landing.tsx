@@ -1,3 +1,4 @@
+import { useLandingArrival } from "./landing-arrival";
 import { useEffect, useRef, useState } from "react";
 import { DemoProduct, DEMO_TAKES, DEMO_NAMES, type DemoTake } from "./landing-product";
 import { OffprintSurface } from "./landing-canvas";
@@ -56,20 +57,9 @@ function Install() {
 }
 
 function Product({ take, live = false }: { take: Example; live?: boolean }) {
-	const ref = useRef<HTMLDivElement>(null);
-	const [width, setWidth] = useState(720);
-	useEffect(() => {
-		const node = ref.current;
-		if (!node) return;
-		const observer = new ResizeObserver(([entry]) => {
-			if (entry) setWidth(entry.contentRect.width);
-		});
-		observer.observe(node);
-		return () => observer.disconnect();
-	}, []);
 	return (
-		<div className="sg-product" ref={ref} style={{ height: (width * 2) / 3 }}>
-			<div className="sg-product-inner" inert={!live} style={{ transform: `scale(${width / 1200})` }}>
+		<div className="sg-product">
+			<div className="sg-product-inner" inert={!live}>
 				<DemoProduct take={take} />
 			</div>
 		</div>
@@ -104,6 +94,7 @@ function Source() {
 // Landing-page prototype using the current hero and layout, with Offprint as the single demo.
 export function OffprintLanding({ take }: { take: ModernTake }) {
 	const root = useRef<HTMLDivElement>(null);
+	useLandingArrival(root);
 	const dialog = useRef<HTMLDialogElement>(null);
 	const [active, setActive] = useState("try");
 	const [playing, setPlaying] = useState<Example>("workshops");
@@ -117,6 +108,7 @@ export function OffprintLanding({ take }: { take: ModernTake }) {
 		if (node && page)
 			page.scrollTo({
 				top: page.scrollTop + node.getBoundingClientRect().top - page.getBoundingClientRect().top - 100,
+				behavior: canAnimate() ? "smooth" : "instant",
 			});
 	};
 	useEffect(() => {
@@ -184,7 +176,11 @@ export function OffprintLanding({ take }: { take: ModernTake }) {
 			}}
 		>
 			<header className="sg-nav sg-width">
-				<button type="button" aria-label="spool home" onClick={() => root.current?.scrollTo({ top: 0 })}>
+				<button
+					type="button"
+					aria-label="spool home"
+					onClick={() => root.current?.scrollTo({ top: 0, behavior: canAnimate() ? "smooth" : "instant" })}
+				>
 					<Brand />
 				</button>
 				<nav aria-label="Website navigation">
@@ -245,7 +241,8 @@ export function OffprintLanding({ take }: { take: ModernTake }) {
 						</h2>
 						<p>Find a workshop. Bring a friend. Get your ticket.</p>
 						<p>
-							Frames are live. Click through a flow, test an interaction, or step through a presentation as you design.
+							Frames are live. Click through a flow, test an interaction, or step through a presentation as you
+							design.
 						</p>
 						<p>Start with “Find your seat”.</p>
 						<button className="sg-text-button" type="button" onClick={() => open("workshops")}>
@@ -335,8 +332,8 @@ export function OffprintLanding({ take }: { take: ModernTake }) {
 						</h2>
 						<p>Each frame is a TSX file. Your agent edits it, and spool shows the result.</p>
 						<p>
-							The files live in your project’s design/ folder. Share components between frames and use Git to keep track
-							of changes.
+							The files live in your project’s design/ folder. Share components between frames and use Git to
+							keep track of changes.
 						</p>
 						<p>Take it wherever you want next.</p>
 						<a className="sg-text-button" href={`${REPO}#readme`}>
