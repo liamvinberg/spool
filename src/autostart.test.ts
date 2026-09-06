@@ -66,11 +66,13 @@ describe("launchAgentPlist", () => {
 		expect(plist).not.toContain("a & b");
 	});
 
-	it.runIf(process.platform === "darwin")("is a valid property list by plutil", () => {
-		const lint = spawnSync("plutil", ["-lint", "-"], { input: launchAgentPlist(spec), encoding: "utf8" });
+	describe("macOS only", () => {
+		it.runIf(process.platform === "darwin")("is a valid property list by plutil", () => {
+			const lint = spawnSync("plutil", ["-lint", "-"], { input: launchAgentPlist(spec), encoding: "utf8" });
 
-		expect(lint.stdout).toContain("OK");
-		expect(lint.status).toBe(0);
+			expect(lint.stdout).toContain("OK");
+			expect(lint.status).toBe(0);
+		});
 	});
 });
 

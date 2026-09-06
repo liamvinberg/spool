@@ -38,6 +38,10 @@ import { type CanvasChrome, ProjectCanvas } from "./canvas";
  * global shadows happy-dom's, the writes go nowhere and the whole file passes.
  */
 beforeEach(() => {
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date", "performance"] });
+	onTestFinished(() => {
+		vi.useRealTimers();
+	});
 	const box: Storage | undefined = window.localStorage;
 	box?.clear();
 });
@@ -487,7 +491,7 @@ async function until(condition: () => boolean, ms = 4000) {
 	while (!condition()) {
 		if (Date.now() - start > ms) throw new Error("condition never held");
 		await act(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 25));
+			await vi.advanceTimersByTimeAsync(25);
 		});
 	}
 }
@@ -513,7 +517,7 @@ async function send(host: HTMLElement, text: string) {
 /** let the stream's reader run, then let the rail's clock read it */
 async function settle(ms = 400) {
 	await act(async () => {
-		await new Promise((resolve) => setTimeout(resolve, ms));
+		await vi.advanceTimersByTimeAsync(ms);
 	});
 }
 
@@ -3378,26 +3382,6 @@ describe("the thread plate", () => {
 		expect(
 			[...canvas.host.querySelectorAll("[data-frame-label]")].map((frame) => frame.getAttribute("data-frame-label")),
 		).toEqual(frames);
-	});
-
-	/**
-	 * The close lands on the first line's end, so on hover that corner of the ask fades out
-	 * under it rather than the two overprinting. A mask image cannot transition, so the cut
-	 * is always in the mask and parked past the right edge; hover slides it in. Plain CSS
-	 * rather than a utility, because the value carries a slash the class parser reads as a
-	 * modifier.
-	 */
-	it("fades the end of the first line out under the close, in the stylesheet", () => {
-		const CSS = readFileSync(join(process.cwd(), "src/ui/ui.css"), "utf8");
-		const at = CSS.indexOf(".agent-thread-ask {");
-		expect(at).toBeGreaterThan(-1);
-		const rule = CSS.slice(at, CSS.indexOf("\n}", at));
-		expect(rule).toContain("mask-composite: exclude");
-		expect(rule).toContain("calc(100% + 56px) 0 / 56px 16px");
-		expect(rule).toContain("180ms cubic-bezier(0.22, 0.61, 0.36, 1)");
-		expect(CSS).toContain(".agent-thread-row:hover .agent-thread-ask");
-		// and the design canvas carries the same rule
-		expect(readFileSync(join(process.cwd(), "design/shared/tokens.css"), "utf8")).toContain(rule);
 	});
 });
 

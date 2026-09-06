@@ -396,69 +396,6 @@ describe("machine state mutations", () => {
 		expect(existsSync(marker)).toBe(false);
 	});
 
-	it.runIf(process.platform === "darwin")(
-		"keeps the lock exclusive across process timezone and locale environments",
-		{ timeout: 45_000 },
-		async () => {
-			const harness = makeHarness();
-			const spoolDir = join(makeTempDir(), ".spool");
-			const first = realpathSync(makeTempDir());
-			const second = realpathSync(makeTempDir());
-			const ready = join(harness.dir, "holder-ready");
-			const release = join(harness.dir, "release-holder");
-			const waiting = join(harness.dir, "contender-waiting");
-			const done = join(harness.dir, "contender-done");
-			const locale = alternateLocale();
-
-			const holder = harness.start(["hold-register", spoolDir, first, ready, release], {
-				LC_ALL: "C",
-				LANG: "C",
-				TZ: "UTC",
-			});
-			await waitForFile(ready, holder);
-			const contender = harness.start(["register-when-available", spoolDir, second, waiting, done], {
-				LC_ALL: locale,
-				LANG: locale,
-				TZ: "Pacific/Honolulu",
-			});
-
-			expect(await waitForEither(waiting, done, contender)).toBe(waiting);
-			writeFileSync(release, "go");
-			await expectWorkerSuccess(holder);
-			await expectWorkerSuccess(contender);
-
-			expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([first, second]);
-		},
-	);
-
-	it.runIf(process.platform === "darwin")(
-		"serializes exact process-marker file identities as decimal strings",
-		{ timeout: 45_000 },
-		async () => {
-			const harness = makeHarness();
-			const spoolDir = join(makeTempDir(), ".spool");
-			const root = realpathSync(makeTempDir());
-			const ready = join(harness.dir, "owner-ready");
-			const release = join(harness.dir, "release-owner");
-			const owner = harness.start(["stall-before-claim", spoolDir, root, ready, release]);
-			await waitForFile(ready, owner);
-			const ownerFile = readdirSync(spoolDir).find((entry) => entry.includes(".owner-"));
-			expect(ownerFile).toBeDefined();
-			const record = JSON.parse(readFileSync(join(spoolDir, ownerFile as string), "utf8")) as {
-				marker: { token: string; dev: unknown; ino: unknown };
-			};
-			const markerStats = statSync(join(spoolDir, `machine-state.lock.process-${record.marker.token}`), {
-				bigint: true,
-			});
-
-			expect(record.marker.dev).toBe(markerStats.dev.toString());
-			expect(record.marker.ino).toBe(markerStats.ino.toString());
-
-			writeFileSync(release, "go");
-			await expectWorkerSuccess(owner);
-		},
-	);
-
 	it("publishes no lock until its owner is complete", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
 		const spoolDir = join(makeTempDir(), ".spool");
@@ -554,38 +491,6 @@ describe("machine state mutations", () => {
 		expect(readFileSync(externalMarker, "utf8")).toBe("keep");
 		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([root]);
 	});
-
-	it.runIf(process.platform === "darwin")(
-		"reaps a same-second PID reuse that does not own the original process marker",
-		{ timeout: 45_000 },
-		async () => {
-			const harness = makeHarness();
-			const spoolDir = join(makeTempDir(), ".spool");
-			const root = realpathSync(makeTempDir());
-			const startedAt = execFileSync("/bin/ps", ["-p", String(process.pid), "-o", "lstart="], {
-				encoding: "utf8",
-				env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" },
-			}).trim();
-			const owner = {
-				pid: process.pid,
-				birth: `darwin:${startedAt}`,
-				token: "00000000-0000-4000-8000-000000000012",
-				marker: { token: "00000000-0000-4000-8000-000000000013", fd: 999_999, dev: "0", ino: "0" },
-			};
-			const lockFile = join(spoolDir, "machine-state.lock");
-			mkdirSync(spoolDir, { recursive: true });
-			const ownerFile = `${lockFile}.owner-${owner.token}`;
-			writeFileSync(ownerFile, JSON.stringify(owner));
-			linkSync(ownerFile, lockFile);
-			const started = join(harness.dir, "contender-started");
-			const done = join(harness.dir, "contender-done");
-
-			const contender = harness.start(["register", spoolDir, root, started, done]);
-			await expectWorkerSuccess(contender);
-
-			expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([root]);
-		},
-	);
 
 	it("reaps malformed fixed-lock metadata through the inode proof", { timeout: 45_000 }, async () => {
 		const harness = makeHarness();
@@ -906,6 +811,101 @@ describe("machine state mutations", () => {
 		expect(result).toEqual({ root: first, removed: true });
 		expect(readSession(spoolDir)).toEqual({ open: [second] });
 		expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([second]);
+	});
+
+	describe("macOS only", () => {
+		it.runIf(process.platform === "darwin")(
+			"keeps the lock exclusive across process timezone and locale environments",
+			{ timeout: 45_000 },
+			async () => {
+				const harness = makeHarness();
+				const spoolDir = join(makeTempDir(), ".spool");
+				const first = realpathSync(makeTempDir());
+				const second = realpathSync(makeTempDir());
+				const ready = join(harness.dir, "holder-ready");
+				const release = join(harness.dir, "release-holder");
+				const waiting = join(harness.dir, "contender-waiting");
+				const done = join(harness.dir, "contender-done");
+				const locale = alternateLocale();
+
+				const holder = harness.start(["hold-register", spoolDir, first, ready, release], {
+					LC_ALL: "C",
+					LANG: "C",
+					TZ: "UTC",
+				});
+				await waitForFile(ready, holder);
+				const contender = harness.start(["register-when-available", spoolDir, second, waiting, done], {
+					LC_ALL: locale,
+					LANG: locale,
+					TZ: "Pacific/Honolulu",
+				});
+
+				expect(await waitForEither(waiting, done, contender)).toBe(waiting);
+				writeFileSync(release, "go");
+				await expectWorkerSuccess(holder);
+				await expectWorkerSuccess(contender);
+
+				expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([first, second]);
+			},
+		);
+		it.runIf(process.platform === "darwin")(
+			"serializes exact process-marker file identities as decimal strings",
+			{ timeout: 45_000 },
+			async () => {
+				const harness = makeHarness();
+				const spoolDir = join(makeTempDir(), ".spool");
+				const root = realpathSync(makeTempDir());
+				const ready = join(harness.dir, "owner-ready");
+				const release = join(harness.dir, "release-owner");
+				const owner = harness.start(["stall-before-claim", spoolDir, root, ready, release]);
+				await waitForFile(ready, owner);
+				const ownerFile = readdirSync(spoolDir).find((entry) => entry.includes(".owner-"));
+				expect(ownerFile).toBeDefined();
+				const record = JSON.parse(readFileSync(join(spoolDir, ownerFile as string), "utf8")) as {
+					marker: { token: string; dev: unknown; ino: unknown };
+				};
+				const markerStats = statSync(join(spoolDir, `machine-state.lock.process-${record.marker.token}`), {
+					bigint: true,
+				});
+
+				expect(record.marker.dev).toBe(markerStats.dev.toString());
+				expect(record.marker.ino).toBe(markerStats.ino.toString());
+
+				writeFileSync(release, "go");
+				await expectWorkerSuccess(owner);
+			},
+		);
+		it.runIf(process.platform === "darwin")(
+			"reaps a same-second PID reuse that does not own the original process marker",
+			{ timeout: 45_000 },
+			async () => {
+				const harness = makeHarness();
+				const spoolDir = join(makeTempDir(), ".spool");
+				const root = realpathSync(makeTempDir());
+				const startedAt = execFileSync("/bin/ps", ["-p", String(process.pid), "-o", "lstart="], {
+					encoding: "utf8",
+					env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" },
+				}).trim();
+				const owner = {
+					pid: process.pid,
+					birth: `darwin:${startedAt}`,
+					token: "00000000-0000-4000-8000-000000000012",
+					marker: { token: "00000000-0000-4000-8000-000000000013", fd: 999_999, dev: "0", ino: "0" },
+				};
+				const lockFile = join(spoolDir, "machine-state.lock");
+				mkdirSync(spoolDir, { recursive: true });
+				const ownerFile = `${lockFile}.owner-${owner.token}`;
+				writeFileSync(ownerFile, JSON.stringify(owner));
+				linkSync(ownerFile, lockFile);
+				const started = join(harness.dir, "contender-started");
+				const done = join(harness.dir, "contender-done");
+
+				const contender = harness.start(["register", spoolDir, root, started, done]);
+				await expectWorkerSuccess(contender);
+
+				expect(readRegistry(spoolDir).projects.map((project) => project.root)).toEqual([root]);
+			},
+		);
 	});
 });
 

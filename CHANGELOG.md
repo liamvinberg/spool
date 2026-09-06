@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.17.0
+
+### Minor Changes
+
+- c29fbc1: Start designing from Home with a blank project saved in ~/spool, or choose another folder and keep it for future projects. Home now shows a single large preview per project with search and sorting, and empty canvases show the project path with a copy button.
+- 532abab: Move a project folder to your operating system's trash from the home menu, with a confirmation showing the full folder path. Use Hide from Spool to keep the folder on disk and remove it from the list.
+- 0d889ba: Added `spool skill shaders` with guidance for WebGL, WebGPU and Three.js effects, including choosing interactions to fit the brief, imports, animation cleanup and checking both rendered output and interaction timing.
+- 6190d23: Import `.glsl` and `.wgsl` files directly as shader source strings. Shader edits update affected frame renders and the next player load. `spool check` types the imports as strings.
+
+### Patch Changes
+
+- dd3ece7: Fixed canvas backgrounds moving out of place in saved previews when their layout uses CSS classes or IDs.
+- e2dec95: Mac updates can download only the parts that changed when a previous update is cached. Progress now separates downloading from preparing the update, and stalled downloads can be retried without leaving the canvas.
+- e3bc293: Restored the empty canvas's editable project name and placed the copy button below the project path. Renaming updates the folder and open tab together.
+- 63fb8ee: Fixed the frame finder so its list scrolls and rows respond to clicks without moving the canvas underneath.
+- ff93084: Home's sidebar now has matching rows for Projects, Open a folder, and Settings. Home shows only machine settings; project settings appear inside a project. Hiding a project now saves immediately without an undo toast, and the card no longer flashes back while the change saves.
+- 724cf92: Softened the default light theme's panels and made selected controls, accent text, and button labels easier to read. Dark themes keep their existing colours.
+- 21b7ebd: The Mac app now puts its window controls inside Spool's header, removing the separate title bar. Open Project and Settings are available in the Mac menus, and View zoom commands now move the canvas without resizing the interface.
+- 10704d6: Home now stays visible beside the window controls while project tabs scroll. Long project names truncate, the selected tab stays in view, and the open-project button remains reachable.
+- 53a060f: Refined the app header with a pinned Home button, plain project names and tabs that join the canvas. Tabs animate when switching, opening, closing and rearranging. Long names truncate while Home and a smaller open-project button stay visible.
+- 371ce52: Projects can be renamed from the Home menu, with confirmation before their folder changes. New blank projects select their name for editing. Creating a project in a chosen folder now opens the folder browser before asking for a name, with a destination preview and an explicit Create project button.
+- 0dc9698: Fixed project tabs ignoring clicks in the empty space beside their names and around their edges.
+- be79672: Fixed the project removal toast sliding sideways as it appears. It now rises gently from the bottom.
+- 5d7eb0e: Spool now uses Instrument Sans with consistent text styles across Home, the canvas and app controls. Messages have more room to read, and supporting labels are clearer in both themes.
+
 ## 0.16.0
 
 ### Minor Changes

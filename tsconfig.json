@@ -19,6 +19,14 @@
 		"allowImportingTsExtensions": true,
 		"skipLibCheck": true
 	},
-	"include": ["src", "bench", "desktop/scripts", "tsup.config.ts", "vitest.config.ts", "vite.config.ts"],
+	"include": [
+		".github/scripts",
+		"src",
+		"bench",
+		"desktop/scripts",
+		"tsup.config.ts",
+		"vitest.config.ts",
+		"vite.config.ts"
+	],
 	"exclude": ["bench/evidence", "src/runtime", "src/ui"]
 }
