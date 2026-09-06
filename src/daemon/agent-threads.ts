@@ -291,7 +291,7 @@ export function writeThread(spoolDir: string, root: string, thread: StoredThread
  * and deletes neither the agent's session nor spool's picture, on #120's grounds: spool
  * does not throw away a readable record because a tab was put away.
  */
-export function readThreads(spoolDir: string, root: string): StoredThread[] {
+export function readThreads(spoolDir: string, root: string, includeClosed = false): StoredThread[] {
 	let names: string[];
 	try {
 		names = readdirSync(threadsDir(spoolDir, root));
@@ -302,7 +302,7 @@ export function readThreads(spoolDir: string, root: string): StoredThread[] {
 	for (const name of names) {
 		if (!name.endsWith(".json")) continue;
 		const thread = readThread(spoolDir, root, name.slice(0, -".json".length));
-		if (thread !== undefined && !thread.closed) threads.push(thread);
+		if (thread !== undefined && (includeClosed || !thread.closed)) threads.push(thread);
 	}
 	return threads.sort((one, two) => one.at - two.at);
 }

@@ -1,7 +1,8 @@
 import { existsSync, lstatSync, mkdirSync, renameSync, rmdirSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { writeAtomic } from "./atomic-write";
-import { threadsDir } from "./daemon/agent-threads";
+import { readThreads, threadsDir } from "./daemon/agent-threads";
+import { applyRelocation } from "./daemon/bundled-relocation";
 import { SpoolError } from "./errors";
 import { type AppSession, type Registry, readMachineRegistry, readMachineSession } from "./machine-state-files";
 import { isSafeName } from "./page-path";
@@ -14,7 +15,12 @@ export interface ProjectRename {
 }
 
 /** Only the closed machine-state operation calls this, with its cross-process lock held. */
-export function renameProjectUnlocked(spoolDir: string, root: string, requestedName: string): ProjectRename {
+export function renameProjectUnlocked(
+	spoolDir: string,
+	root: string,
+	requestedName: string,
+	bundled?: string,
+): ProjectRename {
 	const name = requestedName.trim();
 	if (!isSafeName(name) || [...name].some((character) => character.charCodeAt(0) < 32)) {
 		throw new SpoolError("Use a folder name without slashes or a leading dot.");
@@ -44,8 +50,14 @@ export function renameProjectUnlocked(spoolDir: string, root: string, requestedN
 		projects: registry.projects.map((project) => (project.root === root ? { ...project, root: target } : project)),
 	};
 	const nextSession = { open: session.open.map((held) => (held === root ? target : held)) };
+	const sessions = readThreads(spoolDir, root, true)
+		.filter((thread) => thread.engine === "spool")
+		.map((thread) => thread.session.id);
+	if (sessions.length && bundled === undefined)
+		throw new SpoolError("The bundled engine must prepare this project rename.");
 	const restore: (() => void)[] = [];
 	try {
+		if (bundled !== undefined) applyRelocation(join(spoolDir, "bundled"), bundled, root, target, sessions, restore);
 		moveIntoVacantFolder(root, target);
 		restore.push(() => moveIntoVacantFolder(target, root));
 		if (existsSync(oldThreads)) {

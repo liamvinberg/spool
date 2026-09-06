@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import type { StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
@@ -19,9 +19,10 @@ import { BundledAuth } from "./bundled-auth";
 import { BundledCatalog } from "./bundled-catalog";
 import { BundledCommandPolicy, BundledCommandTurn } from "./bundled-commands";
 import { BUNDLED_CONNECTIONS, connectionLabel } from "./bundled-connections";
-import { BundledFilePolicy, BundledFileTurn } from "./bundled-files";
+import { BundledFilePolicy, BundledFileTurn, inside } from "./bundled-files";
 import type { BundledReply, BundledRequest } from "./bundled-protocol";
 import { BundledQuestionTurn } from "./bundled-questions";
+import { prepareRelocation, relocationPath } from "./bundled-relocation";
 import { bundledResources } from "./bundled-resources";
 import { BundledCredentialStore, privateDirectory, writePrivate } from "./bundled-store";
 
@@ -43,6 +44,7 @@ export class BundledRuntime {
 	private readonly policies = new Map<string, BundledFilePolicy>();
 	private readonly commandPolicies = new Map<string, BundledCommandPolicy>();
 	private readonly reserved = new Set<string>();
+	private readonly renames = new Map<string, { root: string; target: string; sessions: readonly string[] }>();
 	constructor(
 		readonly directory: string,
 		readonly credentials: BundledCredentialStore,
@@ -79,6 +81,12 @@ export class BundledRuntime {
 		return join(this.directory, "sessions", `${id}.jsonl`);
 	}
 	private manager(root: string, id: string): SessionManager {
+		if (
+			[...this.renames.values()].some(
+				(rename) => rename.sessions.includes(id) || rename.root === root || rename.target === root,
+			)
+		)
+			throw new Error("Project rename is in progress");
 		const held = this.sessions.get(id);
 		if (held !== undefined) {
 			if (held.root !== root) throw new Error("Session belongs to another project");
@@ -185,6 +193,47 @@ export class BundledRuntime {
 	}
 	async request(request: BundledRequest): Promise<BundledReply> {
 		switch (request.kind) {
+			case "rename-prepare": {
+				const ids = request.sessions.map((session) => session.id);
+				for (const id of ids) {
+					if (this.reserved.has(id)) throw new Error("Let the agent finish before renaming this project");
+					const manager = this.manager(request.root, id);
+					if (this.sessions.has(id)) this.save(manager);
+				}
+				const token = prepareRelocation(this.directory, request.root, request.target, ids);
+				this.renames.set(token, { root: request.root, target: request.target, sessions: ids });
+				for (const id of ids) {
+					const held = this.sessions.get(id);
+					if (!held) continue;
+					clearTimeout(held.idle);
+					held.session.dispose();
+					this.sessions.delete(id);
+				}
+				return token;
+			}
+			case "rename-finish": {
+				const rename = this.renames.get(request.token);
+				if (!rename) return null;
+				if (request.committed)
+					for (const id of rename.sessions) {
+						this.policies.get(id)?.relocate(rename.target);
+						const grants = this.commandPolicies.get(id)?.grants;
+						if (grants) {
+							const moved = [...grants].map((scope) =>
+								inside(scope, rename.root) ? join(rename.target, relative(rename.root, scope)) : scope,
+							);
+							grants.clear();
+							for (const scope of moved) grants.add(scope);
+						}
+					}
+				this.renames.delete(request.token);
+				try {
+					rmSync(relocationPath(this.directory, request.token), { force: true });
+				} catch {
+					/* An unused staging file does not affect the committed conversation. */
+				}
+				return null;
+			}
 			case "account": {
 				const connections = (await this.credentials.list())
 					.filter((connection) =>

@@ -55,6 +55,14 @@ export interface AgentEngine {
 	readonly id: AgentEngineId;
 	readonly authentication: AgentAuthentication;
 	close?(): void;
+	prepareRename?(
+		root: string,
+		target: string,
+		sessions: readonly AgentSessionRef[],
+	): Promise<{
+		token: string;
+		finish(committed: boolean): Promise<void>;
+	}>;
 	installed(): boolean;
 	account(root: string, signal?: AbortSignal): Promise<AgentLogin>;
 	offer(options: EngineOfferOptions): Promise<AgentOffer>;

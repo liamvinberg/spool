@@ -1,5 +1,6 @@
 import { type ChildProcess, fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -186,6 +187,32 @@ export class BundledHostClient {
 			},
 		};
 	}
+	async prepareRename(root: string, target: string, sessions: readonly { id: string }[]) {
+		const child = this.host();
+		const token = await this.request({ kind: "rename-prepare", root, target, sessions });
+		if (typeof token !== "string") throw new Error("The engine did not prepare the project rename");
+		return {
+			token,
+			finish: async (committed: boolean) => {
+				// A replacement host has no reserved sessions or runtime grants to move.
+				if (this.child !== child) return;
+				try {
+					await this.request({ kind: "rename-finish", token, committed });
+				} catch {
+					// Durable state already committed or rolled back inside the machine-state lock.
+					// Retire only the original host if it could not release its reservation.
+					if (this.child === child) await this.restart();
+				}
+			},
+		};
+	}
+	async restart(): Promise<void> {
+		const child = this.child;
+		if (!child) return;
+		const exited = once(child, "exit");
+		child.kill();
+		await exited;
+	}
 	close(): void {
 		const child = this.child;
 		if (child === undefined) return;
@@ -203,6 +230,7 @@ export function createSpoolEngine(
 	return {
 		id: "spool",
 		installed: () => true,
+		prepareRename: (root, target, sessions) => client.prepareRename(root, target, sessions),
 		account: async () => (await client.request({ kind: "account" })) as AgentLogin,
 		offer: async ({ signal: _signal, ...options }) =>
 			(await client.request({ kind: "offer", options })) as AgentOffer,

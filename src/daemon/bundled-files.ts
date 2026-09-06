@@ -45,10 +45,24 @@ export function inside(path: string, directory: string): boolean {
 
 export class BundledFilePolicy {
 	private readonly grants = new Set<string>();
+	private grantRoot: string;
 	constructor(
-		readonly root: string,
+		public root: string,
 		readonly directory: string,
-	) {}
+	) {
+		this.grantRoot = canonicalFile(root);
+	}
+	relocate(target: string): void {
+		const previous = this.grantRoot;
+		const next = target;
+		const grants = [...this.grants].map((scope) =>
+			inside(scope, previous) ? join(next, relative(previous, scope)) : scope,
+		);
+		this.grants.clear();
+		for (const scope of grants) this.grants.add(scope);
+		this.root = target;
+		this.grantRoot = next;
+	}
 	path(path: string): string {
 		const target = canonicalFile(isAbsolute(path) ? path : `${this.root}${sep}${path}`);
 		// Instance credentials, sessions and control state are never model input or output.
