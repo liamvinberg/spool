@@ -49,7 +49,7 @@ export function MenuItem({
 			type="button"
 			role="menuitem"
 			disabled={disabled}
-			className={`flex h-[30px] shrink-0 items-center justify-between gap-3 rounded-sm px-3 text-left text-base leading-[14px] ${
+			className={`flex h-[30px] shrink-0 items-center justify-between gap-3 rounded-sm px-3 text-left type-control ${
 				disabled ? "text-muted/40" : "text-text hover:bg-surface"
 			}`}
 			onClick={onClick}
@@ -57,9 +57,7 @@ export function MenuItem({
 			<span className="truncate">{label}</span>
 			{/* the UI face, not the mono the tooltips wear: it has no ⇧ or ⌫, and
 			    the fallback draws them at metrics that read as smudges */}
-			{keys === undefined ? null : (
-				<span className={`shrink-0 text-sm ${disabled ? "text-muted/30" : "text-muted"}`}>{keys}</span>
-			)}
+			{keys === undefined ? null : <span className="shrink-0 type-label text-muted">{keys}</span>}
 		</button>
 	);
 }

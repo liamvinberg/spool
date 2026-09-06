@@ -4838,10 +4838,8 @@ export function ProjectCanvas({
 						data-page-empty={activePage}
 						className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 pb-20"
 					>
-						<p className="font-mono text-muted text-sm leading-sm">no frames yet</p>
-						<p className="font-mono text-muted/60 text-xs leading-xs">
-							an agent writes frames/{activePage}/&lt;name&gt;/frame.tsx
-						</p>
+						<p className="text-muted type-value">no frames yet</p>
+						<p className="text-muted type-detail">an agent writes frames/{activePage}/&lt;name&gt;/frame.tsx</p>
 					</div>
 				)}
 				{/* nothing to arrange, nothing to walk: the tools arrive with the first frame */}

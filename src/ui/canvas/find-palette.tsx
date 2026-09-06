@@ -135,7 +135,7 @@ export function FindPalette({
 				>
 					<label className="flex h-12 shrink-0 items-center gap-3 border-border border-b px-4">
 						{/* the summon key, left as the prompt: the field says which key opened it */}
-						<span className="shrink-0 font-mono text-md text-muted/60 leading-md">/</span>
+						<span className="shrink-0 text-muted type-code-input">/</span>
 						<input
 							ref={inputRef}
 							value={query}
@@ -161,17 +161,17 @@ export function FindPalette({
 									onClose();
 								}
 							}}
-							className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none placeholder:text-muted/40"
+							className="min-w-0 flex-1 bg-transparent text-text caret-thread outline-none placeholder:text-muted type-code-input"
 							aria-label="Find a frame"
 						/>
-						<span className="flex shrink-0 items-center gap-2 font-mono text-2xs leading-3">
+						<span className="flex shrink-0 items-center gap-2 type-detail">
 							{unseen.size === 0 ? null : (
-								<span className="flex items-center gap-1 text-text/80">
+								<span className="flex items-center gap-1 text-text">
 									<UnseenMark mark="new" className="-mr-1" />
 									{unseen.size} unseen
 								</span>
 							)}
-							<span className="text-muted/50">
+							<span className="text-muted">
 								{empty ? `${fresh.length} frames, newest first` : `${hits.length} of ${fresh.length}`}
 							</span>
 						</span>
@@ -190,7 +190,7 @@ export function FindPalette({
 							}}
 						>
 							{hits.length === 0 ? (
-								<div className="flex h-[30px] items-center px-4 font-mono text-muted/60 text-sm leading-sm">
+								<div className="flex h-[30px] items-center px-4 text-muted type-value">
 									nothing answers to that
 								</div>
 							) : (
@@ -216,7 +216,7 @@ export function FindPalette({
 						) : null}
 					</div>
 
-					<div className="flex h-9 shrink-0 items-center gap-5 border-border border-t px-4 font-mono text-2xs text-muted leading-3">
+					<div className="flex h-9 shrink-0 items-center gap-5 border-border border-t px-4 text-muted type-detail">
 						<span>{"↑↓ moves"}</span>
 						<span>{"↵ lands there"}</span>
 						<span>esc closes</span>
@@ -275,7 +275,7 @@ function FindRow({
 				)
 			) : null}
 			{/* the name, whole and in place. Only brightness moves. */}
-			<span className="min-w-0 flex-1 truncate font-mono text-sm leading-sm">
+			<span className="min-w-0 flex-1 truncate type-value">
 				{runsIn(name, weights).map((run) => (
 					<span key={run.at} className={TONE[run.weight]}>
 						{run.text}
@@ -284,12 +284,10 @@ function FindRow({
 			</span>
 			{/* what the row is, then where it is: two different questions, so two groups */}
 			<span className="flex shrink-0 items-center gap-3">
-				{age === undefined ? null : (
-					<span className="w-[26px] text-right font-mono text-2xs text-muted/40 leading-3">{age}</span>
-				)}
+				{age === undefined ? null : <span className="w-[26px] text-right text-muted type-detail">{age}</span>}
 				<span className="flex w-[74px] items-center gap-1.5">
 					<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
-					<span className="truncate font-mono text-2xs text-muted/55 leading-3">{page}</span>
+					<span className="truncate text-muted type-detail">{page}</span>
 				</span>
 			</span>
 		</button>

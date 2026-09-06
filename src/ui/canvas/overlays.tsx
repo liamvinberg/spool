@@ -312,7 +312,7 @@ export function SelectionOverlay({
 								className="absolute flex items-center justify-center rounded-xs bg-thread px-2 py-[3px]"
 								style={{ left: rect.x + rect.w / 2, top: rect.y + rect.h + 14, transform: "translateX(-50%)" }}
 							>
-								<span className="font-mono text-2xs text-on-thread leading-3">
+								<span className="text-on-thread type-detail">
 									{`${Math.round(single.w)} × ${Math.round(single.h)}`}
 								</span>
 							</div>
@@ -393,7 +393,7 @@ export function SelectionOverlay({
 					return (
 						<div
 							data-hand-refusal={refused.refusal.code}
-							className="absolute max-w-[280px] truncate rounded-md border border-border-raised bg-raised px-2 py-1 font-mono text-2xs text-muted leading-3"
+							className="absolute max-w-[280px] truncate rounded-md border border-border-raised bg-raised px-2 py-1 text-muted type-detail"
 							style={{ left: box.x - 2, top: box.y + box.h + 8 }}
 						>
 							{refused.refusal.says}
@@ -501,7 +501,7 @@ function ElementHandleSet({ ring, handles }: { ring: Box; handles: ElementHandle
 			{handles.says === null ? null : (
 				<div
 					data-element-readout=""
-					className="absolute whitespace-nowrap rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3"
+					className="absolute whitespace-nowrap rounded-xs bg-thread px-2 py-[3px] text-on-thread type-detail"
 					style={{
 						left: ring.x + ring.w + 12,
 						top: handles.turning ? ring.y - 20 : ring.y + ring.h + 10,
@@ -557,10 +557,10 @@ function MeasureOverlay({
 						: { left: at + 12, top: mid, transform: "translateY(-50%)" }
 				}
 			>
-				<span className="rounded-xs bg-thread px-2 py-[3px] font-mono text-2xs text-on-thread leading-3">
+				<span className="rounded-xs bg-thread px-2 py-[3px] text-on-thread type-detail">
 					{round(spacing.distance)}
 				</span>
-				<div className="flex flex-col gap-0.5 rounded-md border border-border-raised bg-raised px-2 py-1 font-mono text-2xs leading-4">
+				<div className="flex flex-col gap-0.5 rounded-md border border-border-raised bg-raised px-2 py-1 type-detail">
 					{spacing.parts.map((part, index) => (
 						<MeasurePart key={`${part.kind}-${part.token ?? index}`} part={part} />
 					))}
@@ -615,10 +615,10 @@ function MeasurePart({ part }: { part: SpacingPart }) {
 	const dimmed = part.collapsed === true;
 	return (
 		<div data-measure-part={part.kind} className="flex items-baseline gap-2 whitespace-nowrap">
-			<span className={`w-9 shrink-0 text-right ${dimmed ? "text-muted/50" : "text-text"}`}>
+			<span className={`w-9 shrink-0 text-right ${dimmed ? "text-muted" : "text-text"}`}>
 				{dimmed ? "—" : round(part.px)}
 			</span>
-			<span className={dimmed ? "text-muted/50" : part.token === undefined ? "text-muted" : "text-thread"}>
+			<span className={dimmed ? "text-muted" : part.token === undefined ? "text-muted" : "text-thread"}>
 				{part.token ?? (part.kind === "residual" ? "residual" : "no class")}
 			</span>
 			{part.owner === undefined ? null : (
@@ -627,7 +627,7 @@ function MeasurePart({ part }: { part: SpacingPart }) {
 					{part.owner.tag}
 				</span>
 			)}
-			{dimmed ? <span className="text-muted/50">collapsed</span> : null}
+			{dimmed ? <span className="text-muted">collapsed</span> : null}
 		</div>
 	);
 }

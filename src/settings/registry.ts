@@ -81,7 +81,7 @@ export const DARK_TOKENS = {
 	border: "#262626",
 	"border-raised": "#363636",
 	text: "#f0efed",
-	muted: "#8e8c88",
+	muted: "#94918d",
 	thread: "#f5391a",
 	"on-thread": "#ffffff",
 } as const;
@@ -96,7 +96,7 @@ export const LIGHT_TOKENS: Record<ThemeToken, string> = {
 	border: "#dcdad5",
 	"border-raised": "#c2c0ba",
 	text: "#1a1917",
-	muted: "#6f6c68",
+	muted: "#696662",
 	thread: "#f5391a",
 	"on-thread": "#ffffff",
 };

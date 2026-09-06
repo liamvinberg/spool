@@ -11,14 +11,13 @@
 }
 .spool-empty > h1,
 .spool-empty > h2 {
-	font-size: 24px;
-	font-weight: 400;
-	letter-spacing: -0.4px;
+	font: var(--type-page);
+	font-weight: var(--font-weight-medium);
+	letter-spacing: var(--tracking-tight);
 }
 .spool-empty > p {
 	margin-top: 13px;
-	font-size: 13px;
-	line-height: 1.6;
+	font: var(--type-control);
 	color: var(--color-muted);
 }
 .spool-empty-actions {
@@ -59,5 +58,5 @@
 }
 .spool-empty-frames > span {
 	color: var(--color-muted);
-	font-size: 28px;
+	font: var(--type-page);
 }

@@ -78,11 +78,11 @@ export function MinRow({
 		>
 			{picked ? <span className="absolute top-1 bottom-1 left-0 w-[2px] rounded-full bg-thread" /> : null}
 			<FolderIcon className={cn("h-3 w-3 shrink-0", row.dir.isProject ? "text-thread/70" : "text-muted/30")} />
-			<Name name={row.dir.name} matched={row.matched} className="min-w-0 shrink truncate text-base leading-base" />
+			<Name name={row.dir.name} matched={row.matched} className="min-w-0 shrink truncate type-control" />
 			<span className="flex-1" />
 			{searching ? <Where dir={row.dir} className="min-w-0 shrink" /> : null}
 			{row.dir.frames === undefined ? null : (
-				<span className="shrink-0 font-mono text-2xs text-muted/55 leading-3">{row.dir.frames}</span>
+				<span className="shrink-0 text-muted type-detail">{row.dir.frames}</span>
 			)}
 		</button>
 	);
@@ -90,7 +90,7 @@ export function MinRow({
 
 export function Empty({ picker }: { picker: Picker }) {
 	return (
-		<div className="flex h-[34px] items-center gap-3 px-4 font-mono text-muted/45 text-sm leading-sm">
+		<div className="flex h-[34px] items-center gap-3 px-4 text-muted type-value">
 			<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
 			{picker.searching ? "nothing under ~ answers to that" : "no folders here"}
 		</div>
@@ -110,7 +110,7 @@ export function Empty({ picker }: { picker: Picker }) {
 export function PathPrefix({ picker }: { picker: Picker }) {
 	const parts = shortPath(picker.path).split("/");
 	return (
-		<span className="flex shrink-0 items-center font-mono text-md leading-md">
+		<span className="flex shrink-0 items-center type-code-input">
 			{parts.map((part, index) => {
 				const to = index === 0 ? HOME : `${HOME}/${parts.slice(1, index + 1).join("/")}`;
 				return (
@@ -152,7 +152,7 @@ export function PickerField({ seed }: { seed?: Seed | undefined }) {
 					aria-label="Search folders"
 					onChange={(event) => picker.setQuery(event.target.value)}
 					onKeyDown={picker.onKeyDown}
-					className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none"
+					className="min-w-0 flex-1 bg-transparent text-text caret-thread outline-none type-code-input"
 				/>
 			</label>
 
@@ -177,7 +177,7 @@ export function PickerField({ seed }: { seed?: Seed | undefined }) {
 						className="flex w-full items-center gap-3 px-4 text-left transition-colors duration-100 hover:bg-raised"
 					>
 						<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
-						<span className="truncate text-base text-muted leading-base">initialize design/ here</span>
+						<span className="truncate text-muted type-control">initialize design/ here</span>
 					</button>
 				)}
 			</ListBox>

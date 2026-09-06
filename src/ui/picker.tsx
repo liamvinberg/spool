@@ -405,7 +405,7 @@ export function FolderPicker({
 							</button>
 						</div>
 						{startNotice && (
-							<p role="alert" className="px-5 pb-4 text-sm text-thread">
+							<p role="alert" className="px-5 pb-4 text-thread type-label">
 								{startNotice}
 							</p>
 						)}
@@ -428,7 +428,7 @@ export function FolderPicker({
 								setNotice(null);
 							}}
 							onKeyDown={onNameKeyDown}
-							className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none placeholder:text-muted/35"
+							className="min-w-0 flex-1 bg-transparent text-text caret-thread outline-none placeholder:text-muted type-code-input"
 						/>
 					</label>
 				) : (
@@ -448,7 +448,7 @@ export function FolderPicker({
 								setNotice(null);
 							}}
 							onKeyDown={onKeyDown}
-							className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none"
+							className="min-w-0 flex-1 bg-transparent text-text caret-thread outline-none type-code-input"
 						/>
 						{mode === "folder" && (
 							<button
@@ -471,19 +471,19 @@ export function FolderPicker({
 							<div style={{ height: ROW }} className="relative flex w-full items-center gap-3 bg-raised px-4">
 								<span className="absolute top-1 bottom-1 left-0 w-[2px] rounded-full bg-thread" />
 								<FolderIcon className="h-3 w-3 shrink-0 text-thread/70" />
-								<span className="min-w-0 truncate font-mono text-md leading-md">
-									<span className="text-muted/45">
+								<span className="min-w-0 truncate type-code-input">
+									<span className="text-muted">
 										{home === null || listing === null ? "" : `${shortPath(listing.path, home)}/`}
 									</span>
 									<span className="text-text">{name.trim()}</span>
 								</span>
 								<span className="flex-1" />
-								<span className="shrink-0 font-mono text-2xs text-muted/45 leading-3">↵ creates</span>
+								<span className="shrink-0 text-muted type-detail">↵ creates</span>
 							</div>
 						) : (
 							<>
 								{flat.length === 0 && !offerInit && notice === null && (
-									<div className="flex h-[34px] items-center gap-3 px-4 font-mono text-muted/45 text-sm leading-sm">
+									<div className="flex h-[34px] items-center gap-3 px-4 text-muted type-value">
 										<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
 										{pending
 											? `searching ${scope === null || home === null ? "~" : shortPath(scope, home)}…`
@@ -505,29 +505,26 @@ export function FolderPicker({
 								))}
 								{/* the wire carries the best rows, not every one: a list that stops has to say so */}
 								{answered !== null && answered.answered > flat.length ? (
-									<div className="flex h-7 items-center px-4 font-mono text-2xs text-muted/45 leading-3">
+									<div className="flex h-7 items-center px-4 text-muted type-detail">
 										{`the best ${flat.length} of ${answered.answered} — type more to narrow it`}
 									</div>
 								) : null}
 								{notice !== null ? (
 									<div
-										className="flex items-center gap-2.5 px-4 font-mono text-2xs text-thread leading-3"
+										className="flex items-center gap-2.5 px-4 text-thread type-detail"
 										style={{ height: ROW }}
 									>
 										<FolderIcon className="h-3 w-3 shrink-0 text-thread/50" />
 										<span className="truncate">{notice}</span>
 									</div>
 								) : offerInit ? (
-									<div
-										className="flex items-center gap-2.5 px-4 font-mono text-2xs leading-3"
-										style={{ height: ROW }}
-									>
+									<div className="flex items-center gap-2.5 px-4 type-detail" style={{ height: ROW }}>
 										<FolderIcon className="h-3 w-3 shrink-0 text-muted/30" />
-										<span className="shrink-0 text-muted/55">not a spool project</span>
-										<span className="text-muted/25">·</span>
+										<span className="shrink-0 text-muted">not a spool project</span>
+										<span className="text-muted">·</span>
 										<span className="shrink-0 text-muted">↵ initializes design/ here</span>
-										<span className="text-muted/25">·</span>
-										<span className="shrink-0 text-muted/55">esc goes back</span>
+										<span className="text-muted">·</span>
+										<span className="shrink-0 text-muted">esc goes back</span>
 									</div>
 								) : null}
 							</>
@@ -599,7 +596,7 @@ export function FolderPicker({
  */
 function Prefix({ crumbs, onPress }: { crumbs: ReturnType<typeof crumbsOf>; onPress?: (path: string) => void }) {
 	return (
-		<span className="flex shrink-0 items-center font-mono text-md text-muted/45 leading-md">
+		<span className="flex shrink-0 items-center text-muted type-code-input">
 			{crumbs.map((crumb) => {
 				const text = crumb.label === "/" ? "/" : `${crumb.label}/`;
 				return onPress === undefined ? (
@@ -652,7 +649,7 @@ function Row({
 			{picked ? <span className="absolute top-1 bottom-1 left-0 w-[2px] rounded-full bg-thread" /> : null}
 			{/* the glyph, thread-coloured on a project: the whole chip, and cheaper to spot than a word */}
 			<FolderIcon className={cn("h-3 w-3 shrink-0", row.isProject ? "text-thread/70" : "text-muted/30")} />
-			<span className="min-w-0 shrink truncate text-base leading-base">
+			<span className="min-w-0 shrink truncate type-control">
 				{row.matched.length === 0
 					? row.name
 					: runsIn(row.name, weights).map((run) => (
@@ -662,12 +659,8 @@ function Row({
 						))}
 			</span>
 			<span className="flex-1" />
-			{place === "" ? null : (
-				<span className="min-w-0 shrink truncate font-mono text-2xs text-muted/55 leading-3">{place}</span>
-			)}
-			{row.frames === undefined ? null : (
-				<span className="shrink-0 font-mono text-2xs text-muted/55 leading-3">{row.frames}</span>
-			)}
+			{place === "" ? null : <span className="min-w-0 shrink truncate text-muted type-detail">{place}</span>}
+			{row.frames === undefined ? null : <span className="shrink-0 text-muted type-detail">{row.frames}</span>}
 		</button>
 	);
 }

@@ -153,7 +153,7 @@ export function Home({
 							</div>
 						</header>
 						{notice && (
-							<p role="alert" className="mb-4 text-thread text-sm">
+							<p role="alert" className="mb-4 text-thread type-label">
 								{notice}{" "}
 								<button type="button" className="underline" onClick={onChangeLocation}>
 									Change save location…
@@ -315,7 +315,7 @@ function MenuItem({ label, onClick }: { label: string; onClick: () => void }) {
 	return (
 		<button
 			type="button"
-			className="flex h-[30px] items-center rounded-sm px-3 text-left text-base text-text leading-[14px] hover:bg-surface"
+			className="flex h-[30px] items-center rounded-sm px-3 text-left text-text hover:bg-surface type-control"
 			onClick={onClick}
 		>
 			{label}

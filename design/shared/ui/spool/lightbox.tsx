@@ -77,9 +77,9 @@ export function Lightbox({
 					>
 						{children}
 					</motion.div>
-					<span className="flex shrink-0 items-center gap-2.5 font-mono text-2xs leading-3">
-						{caption === undefined ? null : <span className="truncate text-muted/55">{caption}</span>}
-						<span className="text-muted/35">esc</span>
+					<span className="flex shrink-0 items-center gap-2.5 type-detail">
+						{caption === undefined ? null : <span className="truncate text-muted">{caption}</span>}
+						<span className="text-muted">esc</span>
 					</span>
 				</motion.div>
 			) : null}

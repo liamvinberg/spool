@@ -1479,10 +1479,10 @@ export function CanvasSidebar({
 				<div className="flex h-full min-w-[200px] flex-col">
 					<div className="flex h-11 shrink-0 items-center justify-between border-border border-b pr-2 pl-3.5">
 						<div className="flex items-baseline gap-2">
-							<h1 className="font-semibold text-base leading-base">Pages</h1>
+							<h1 className="font-semibold type-control">Pages</h1>
 							{/* a count of nothing is a number saying nothing: zero reads as absence */}
 							{orderedPages.length === 0 ? null : (
-								<span className="font-mono text-muted text-xs leading-xs">{orderedPages.length}</span>
+								<span className="text-muted type-detail">{orderedPages.length}</span>
 							)}
 						</div>
 						<div className="flex items-center">
@@ -1611,9 +1611,9 @@ export function CanvasSidebar({
 						</div>
 					</div>
 
-					<div className="flex h-9 shrink-0 items-center justify-between border-border border-t px-3.5 font-mono text-2xs text-muted leading-3">
+					<div className="flex h-9 shrink-0 items-center justify-between border-border border-t px-3.5 text-muted type-detail">
 						<span>folder switches page</span>
-						{clipboard.length > 0 ? <span className="text-muted/50">{clipboard.length} copied</span> : null}
+						{clipboard.length > 0 ? <span className="text-muted">{clipboard.length} copied</span> : null}
 					</div>
 				</div>
 			)}
@@ -1628,9 +1628,9 @@ export function CanvasSidebar({
 								) : (
 									<FrameIcon className="h-3.5 w-3.5 shrink-0 text-thread" />
 								)}
-								<span className="min-w-0 truncate font-mono text-sm text-text leading-sm">{kit.label}</span>
+								<span className="min-w-0 truncate text-text type-value">{kit.label}</span>
 								{kit.names.length > 1 ? (
-									<span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-thread px-1 font-mono text-2xs text-on-thread leading-3">
+									<span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-thread px-1 text-on-thread type-detail">
 										{kit.names.length}
 									</span>
 								) : null}
@@ -1779,7 +1779,6 @@ function NewPageRow({ row, rename }: { row: BornRow; rename: RenameHandle }) {
 					<FolderIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
 					<RenameField
 						state={rename.state}
-						size="page"
 						onDraft={rename.onDraft}
 						onCommit={rename.onCommit}
 						onCancel={rename.onCancel}
@@ -1889,7 +1888,7 @@ function TreeRow({
 									<FolderIcon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-thread" : "text-muted")} />
 									<span
 										className={cn(
-											"min-w-0 flex-1 truncate font-mono text-sm leading-sm",
+											"min-w-0 flex-1 truncate type-value",
 											// as on a frame row: the menu fades in over the tail of the
 											// name, and takes that last stretch of it with it
 											"group-hover/row:[mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)]",
@@ -1906,7 +1905,7 @@ function TreeRow({
 								    the rows under it are the count, and a total beside them reads
 								    as a second, wrong number */}
 								{row.open ? null : (
-									<span className="shrink-0 font-mono text-2xs text-muted/60 leading-3 transition-opacity group-hover/row:opacity-0">
+									<span className="shrink-0 text-muted transition-opacity group-hover/row:opacity-0 type-detail">
 										{row.count}
 									</span>
 								)}
@@ -1916,7 +1915,6 @@ function TreeRow({
 								<FolderIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
 								<RenameField
 									state={rename.state}
-									size="page"
 									onDraft={rename.onDraft}
 									onCommit={rename.onCommit}
 									onCancel={rename.onCancel}
@@ -1956,7 +1954,7 @@ function TreeRow({
 									className={cn(
 										// the name runs to the row's edge; the menu that fades in over
 										// its tail takes the last stretch of it with it
-										"min-w-0 flex-1 truncate font-mono text-xs leading-xs",
+										"min-w-0 flex-1 truncate type-value",
 										"group-hover/row:[mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)]",
 										selected || cursored || mark !== undefined ? "text-text" : "text-muted",
 									)}
@@ -1975,7 +1973,6 @@ function TreeRow({
 								<FrameIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
 								<RenameField
 									state={rename.state}
-									size="frame"
 									onDraft={rename.onDraft}
 									onCommit={rename.onCommit}
 									onCancel={rename.onCancel}
@@ -2022,13 +2019,11 @@ function RowMenuButton({ label, onMenu }: { label: string; onMenu: (event: React
  */
 function RenameField({
 	state,
-	size,
 	onDraft,
 	onCommit,
 	onCancel,
 }: {
 	state: RenameState;
-	size: "page" | "frame";
 	onDraft: (draft: string) => void;
 	onCommit: () => void;
 	onCancel: () => void;
@@ -2083,15 +2078,12 @@ function RenameField({
 					onCancel();
 				}}
 				className={cn(
-					"-my-px min-w-0 flex-1 rounded-xs bg-bg px-1 font-mono text-text caret-thread outline-1 outline-thread/70",
-					size === "page" ? "text-sm leading-sm" : "text-xs leading-xs",
+					"-my-px min-w-0 flex-1 rounded-xs bg-bg px-1 text-text caret-thread outline-1 outline-thread/70",
+					"type-value",
 				)}
 			/>
 			{state.error === null ? null : (
-				<span
-					role="alert"
-					className="pointer-events-none absolute right-1.5 font-mono text-2xs text-thread leading-3"
-				>
+				<span role="alert" className="pointer-events-none absolute right-1.5 text-thread type-detail">
 					{state.error}
 				</span>
 			)}

@@ -26,10 +26,10 @@ import { cn } from "../cn";
  * shape of your own code.
  */
 
-/** the rail's own type scale: a label, a value, an aside */
-export const LABEL = "font-mono text-2xs leading-3";
-export const VALUE = "font-mono text-sm leading-4";
-export const FAINT = "font-mono text-2xs text-muted/50 leading-3";
+/** Shared app roles for the rail's labels, values and asides */
+export const LABEL = "type-detail";
+export const VALUE = "type-value";
+export const FAINT = "text-muted type-detail";
 export const BOX =
 	"rounded-xs border border-transparent hover:border-border hover:bg-surface focus-within:border-border-raised focus-within:bg-surface";
 
@@ -48,7 +48,7 @@ export function Section({
 	return (
 		<div className="border-border-raised border-t">
 			<div className="flex h-6 items-center gap-2 px-2.5">
-				<span className={cn("shrink-0 text-muted/70", LABEL)}>{name}</span>
+				<span className={cn("shrink-0 text-muted", LABEL)}>{name}</span>
 				{reason === undefined ? null : <span className={cn("ml-auto min-w-0 truncate", FAINT)}>{reason}</span>}
 			</div>
 			{children}
@@ -114,10 +114,10 @@ export function Row({
 				onPointerUp={up}
 				onPointerCancel={up}
 				className={cn(
-					tall ? "self-start pt-1.5 leading-3.5" : long ? "break-words leading-3.5" : "truncate",
+					tall ? "self-start pt-1.5 " : long ? "break-words " : "truncate",
 					LABEL,
 					"select-none",
-					changed ? "text-thread" : ok ? "text-muted" : "text-muted/40",
+					changed ? "text-thread" : "text-muted",
 					onScrub !== undefined && ok && "cursor-ew-resize hover:text-text",
 				)}
 			>
@@ -167,7 +167,7 @@ export function NumField({
 	if (!ok) {
 		return (
 			<span className={cn("flex min-w-0 flex-1 items-center gap-1 px-1", className)}>
-				<span className={cn("min-w-0 flex-1 truncate text-muted/40", VALUE)}>
+				<span className={cn("min-w-0 flex-1 truncate text-muted", VALUE)}>
 					{value === "" ? (placeholder ?? "") : value}
 				</span>
 				{readout === undefined || readout === null ? null : (
@@ -206,9 +206,9 @@ export function NumField({
 					}
 				}}
 				className={cn(
-					"min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted/40",
+					"min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted",
 					VALUE,
-					changed ? "text-thread" : faint ? "text-muted/55" : "text-text",
+					changed ? "text-thread" : faint ? "text-muted" : "text-text",
 				)}
 			/>
 			{readout === undefined || readout === null ? null : <span className={cn("shrink-0", FAINT)}>{readout}</span>}
@@ -243,7 +243,7 @@ export function TextField({
 	if (!ok) {
 		return (
 			<span className={cn("flex min-w-0 flex-1 items-center px-1", className)}>
-				<span data-text-value="" className={cn("min-w-0 flex-1 truncate text-muted/40", VALUE)}>
+				<span data-text-value="" className={cn("min-w-0 flex-1 truncate text-muted", VALUE)}>
 					{value === "" ? (placeholder ?? "") : value}
 				</span>
 			</span>
@@ -273,7 +273,7 @@ export function TextField({
 						event.currentTarget.blur();
 					}
 				}}
-				className={cn("min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted/40", VALUE)}
+				className={cn("min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted", VALUE)}
 			/>
 		</label>
 	);
@@ -410,7 +410,7 @@ export function Menu({
 		return (
 			<span className={cn("flex min-w-0 flex-1 items-center gap-1.5 px-1", className)}>
 				{current.swatch === undefined ? null : <SwatchChip color={current.swatch} />}
-				<span data-menu-value="" className={cn("min-w-0 flex-1 truncate text-muted/40", VALUE)}>
+				<span data-menu-value="" className={cn("min-w-0 flex-1 truncate text-muted", VALUE)}>
 					{current.name}
 				</span>
 				{current.value === undefined || current.value === "" ? null : (
@@ -488,11 +488,7 @@ export function Menu({
 				{current.swatch === undefined ? null : <SwatchChip color={current.swatch} />}
 				<span
 					data-menu-value=""
-					className={cn(
-						"min-w-0 truncate",
-						VALUE,
-						changed ? "text-thread" : faint ? "text-muted/55" : "text-text",
-					)}
+					className={cn("min-w-0 truncate", VALUE, changed ? "text-thread" : faint ? "text-muted" : "text-text")}
 				>
 					{current.name}
 				</span>
@@ -521,7 +517,7 @@ export function Menu({
 									setCursor(0);
 								}}
 								className={cn(
-									"min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted/40",
+									"min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted",
 									VALUE,
 								)}
 							/>
@@ -883,7 +879,7 @@ export function AddField({
 					className,
 				)}
 			>
-				<span className="text-base leading-none">+</span>
+				<span className="type-control">+</span>
 				<span className={LABEL}>class</span>
 			</button>
 			{open ? (
@@ -893,7 +889,7 @@ export function AddField({
 					className="fixed z-50 flex flex-col overflow-hidden rounded-sm border border-border-raised bg-raised"
 				>
 					<div className="flex h-[30px] shrink-0 items-center gap-1.5 border-border-raised border-b px-2">
-						<span className="text-muted/50 text-sm leading-none">+</span>
+						<span className="text-muted type-label">+</span>
 						<input
 							ref={inputRef}
 							value={typed}
@@ -917,7 +913,7 @@ export function AddField({
 								if (event.key === "Enter") pick(list[index]);
 							}}
 							className={cn(
-								"min-w-0 flex-1 bg-transparent text-text caret-thread outline-none placeholder:text-muted/40",
+								"min-w-0 flex-1 bg-transparent text-text caret-thread outline-none placeholder:text-muted",
 								VALUE,
 							)}
 						/>

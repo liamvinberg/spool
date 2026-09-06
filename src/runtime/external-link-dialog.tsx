@@ -130,7 +130,7 @@ const EXTERNAL_LINK_DIALOG_CSS = `
 		box-sizing: border-box;
 		container-type: inline-size;
 		background: #111110;
-		font-family: "Familjen Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+		font-family: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
 		color: #f2f0eb;
 		pointer-events: auto;
 	}
@@ -254,7 +254,7 @@ const EXTERNAL_LINK_DIALOG_CSS = `
 
 	.spool-external-destination span {
 		font-family: "Fragment Mono", ui-monospace, monospace;
-		font-size: 10px;
+		font-size: 11px;
 		line-height: 1;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;

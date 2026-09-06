@@ -74,9 +74,7 @@ export function Shot({
 			</button>
 			{/* which frame, and that is one word: `image/png` is a fact about a file and the
 			    row above already said `look` */}
-			{quiet || of === null ? null : (
-				<span className="truncate font-mono text-2xs text-muted/45 leading-4">{of}</span>
-			)}
+			{quiet || of === null ? null : <span className="truncate text-muted type-detail">{of}</span>}
 			<Lightbox open={big} onClose={() => setBig(false)} caption={of}>
 				<img src={src} alt={of ?? "screenshot"} width={BIG_W} className="block h-auto max-w-full" />
 			</Lightbox>
@@ -151,9 +149,9 @@ export function Lightbox({
 			>
 				{children}
 			</div>
-			<span className="relative flex shrink-0 items-center gap-2.5 font-mono text-2xs leading-3">
-				{caption === null ? null : <span className="truncate text-muted/55">{caption}</span>}
-				<span className="text-muted/35">esc</span>
+			<span className="relative flex shrink-0 items-center gap-2.5 type-detail">
+				{caption === null ? null : <span className="truncate text-muted">{caption}</span>}
+				<span className="text-muted">esc</span>
 			</span>
 		</div>
 	);

@@ -69,10 +69,10 @@ export function ExportDialog({
 				onKeyDown={trapFocus}
 			>
 				<div className="flex items-center justify-between border-border-raised border-b px-5 py-4">
-					<h2 id="export-dialog-title" className="font-medium text-md leading-md">
+					<h2 id="export-dialog-title" className="font-medium type-title">
 						Export {count} frames
 					</h2>
-					<span className="font-mono text-muted text-xs leading-xs">{count} selected</span>
+					<span className="text-muted type-value">{count} selected</span>
 				</div>
 
 				<div className="flex gap-2 border-border-raised border-b px-5 py-4">
@@ -82,25 +82,25 @@ export function ExportDialog({
 							className="relative h-[70px] w-[40px] shrink-0 overflow-hidden rounded-xs border border-border-raised bg-surface"
 						>
 							{frame.still === undefined ? (
-								<span className="absolute inset-0 flex items-center justify-center font-mono text-[7px] text-muted">
+								<span className="absolute inset-0 flex items-center justify-center text-muted type-preview">
 									{frame.name}
 								</span>
 							) : (
 								<img src={frame.still} alt="" className="h-full w-full object-cover object-top" />
 							)}
-							<span className="absolute top-0.5 right-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-bg/75 px-0.5 font-mono text-[7px] text-text leading-none">
+							<span className="absolute top-0.5 right-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-bg/75 px-0.5 text-text type-preview">
 								{index + 1}
 							</span>
 						</div>
 					))}
 					{count > visiblePreviews.length ? (
-						<div className="flex h-[70px] w-[40px] shrink-0 items-center justify-center rounded-xs border border-border-raised bg-surface font-mono text-xs text-muted">
+						<div className="flex h-[70px] w-[40px] shrink-0 items-center justify-center rounded-xs border border-border-raised bg-surface text-muted type-value">
 							+{count - visiblePreviews.length}
 						</div>
 					) : null}
 					<div className="ml-2 flex min-w-0 flex-1 flex-col justify-center">
-						<span className="truncate text-base leading-base">{frames.map((frame) => frame.name).join(", ")}</span>
-						<span className="text-muted text-xs leading-xs">Canvas order, left to right</span>
+						<span className="truncate type-control">{frames.map((frame) => frame.name).join(", ")}</span>
+						<span className="text-muted type-label">Canvas order, left to right</span>
 					</div>
 				</div>
 
@@ -122,7 +122,7 @@ export function ExportDialog({
 				</div>
 
 				{error === undefined ? null : (
-					<p role="alert" className="px-5 pb-3 text-base text-thread leading-base">
+					<p role="alert" className="px-5 pb-3 text-thread type-control">
 						{error}
 					</p>
 				)}
@@ -131,7 +131,7 @@ export function ExportDialog({
 					<button
 						type="button"
 						disabled={exporting}
-						className="flex h-8 items-center rounded-sm px-3 text-base text-muted leading-none disabled:opacity-50"
+						className="flex h-8 items-center rounded-sm px-3 text-muted disabled:opacity-50 type-control"
 						onClick={onCancel}
 					>
 						Cancel
@@ -140,7 +140,7 @@ export function ExportDialog({
 						ref={primaryRef}
 						type="button"
 						disabled={exporting}
-						className="flex h-8 min-w-[74px] items-center justify-center rounded-sm bg-thread px-4 font-medium text-base text-on-thread leading-none disabled:opacity-70"
+						className="flex h-8 min-w-[74px] items-center justify-center rounded-sm bg-thread px-4 font-medium text-on-thread disabled:opacity-70 type-control"
 						onClick={() => onExport?.(format)}
 					>
 						{exporting ? "Exporting…" : "Export"}
@@ -189,8 +189,8 @@ function FormatOption({
 				{checked ? <span className="h-2 w-2 rounded-full bg-thread" /> : null}
 			</span>
 			<span className="flex min-w-0 flex-1 flex-col">
-				<span className="text-base leading-[16px]">{label}</span>
-				<span className="text-muted text-xs leading-[15px]">{description}</span>
+				<span className="type-control">{label}</span>
+				<span className="text-muted type-label">{description}</span>
 			</span>
 		</label>
 	);

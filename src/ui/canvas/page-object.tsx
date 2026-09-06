@@ -111,13 +111,13 @@ export function PageObjectLabel({
 			>
 				<FolderIcon className={`h-3 w-3 shrink-0 ${selected ? "text-thread" : "text-muted"}`} />
 				<span
-					className={`min-w-0 truncate font-mono text-sm leading-4 ${
+					className={`min-w-0 truncate type-value ${
 						selected ? "text-thread" : hovered ? "text-text" : "text-muted"
 					}`}
 				>
 					{object.name}
 				</span>
-				<span className="shrink-0 pl-1 font-mono text-2xs text-muted leading-3">{object.count}</span>
+				<span className="shrink-0 pl-1 text-muted type-detail">{object.count}</span>
 			</div>
 		</div>
 	);
