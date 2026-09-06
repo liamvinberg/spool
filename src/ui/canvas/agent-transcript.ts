@@ -15,7 +15,6 @@ import {
 	taskWritten,
 	writesOf,
 } from "./agent-nouns";
-import { LOGIN_REMEDY, NO_KEY, signedOut } from "./agent-preflight";
 
 /**
  * The transcript, projected from the event union the daemon streams (#191, #192,
@@ -668,6 +667,7 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 	let last = 0;
 	let over = false;
 	let ended = false;
+	let recovering = false;
 	/** the last usage window the binary said anything about, so a crossing can be seen */
 	let limit: AgentLimit | null = null;
 
@@ -1310,11 +1310,13 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 			case "ended": {
 				over = true;
 				ended = true;
+				recovering = Boolean(event.recovery);
 				finish();
 				if (event.ending === "stopped") notes.push({ key: "end", kind: "note", text: "stopped" });
 				// the wire's own word for a failure, because spool is not the authority on
 				// why somebody else's process gave up
-				if (event.ending === "failed") notes.push({ key: "end", kind: "note", text: event.reason ?? "failed" });
+				if (event.ending === "failed" && !recovering)
+					notes.push({ key: "end", kind: "note", text: event.reason ?? "failed" });
 				break;
 			}
 			case "closed": {
@@ -1324,21 +1326,8 @@ export function transcriptOf(said: readonly AgentWords[], seen: readonly Stamped
 				// the one thing the rail must never swallow, because it is why nothing came
 				// back. The runner's own message is quoted verbatim — a missing binary
 				// reaches here as `spawn claude ENOENT` and spool does not improve on it.
-				if (event.message !== undefined) {
+				if (event.message !== undefined && !recovering) {
 					notes.push({ key: "closed", kind: "note", text: event.message });
-					/*
-					 * The one sentence spool adds to a refusal it did not write (#201).
-					 *
-					 * The words above are the binary's own and stay that way. What it cannot say
-					 * from here is what to do about it: its own remedy is `/login`, a slash command
-					 * inside an interactive session, and spool spawns print mode. So the remedy is
-					 * spool's, the promise about keys rides under it where somebody deciding what to
-					 * do will read it once, and neither of them is a boundary — nothing below them
-					 * is untrue, they are a thing to go and do.
-					 */
-					if (signedOut(event.message)) {
-						notes.push({ key: "closed-fix", kind: "note", rule: false, said: LOGIN_REMEDY, text: NO_KEY });
-					}
 				} else if (!ended) {
 					notes.push({
 						key: "closed",

@@ -1,6 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
@@ -11,8 +12,9 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type { EngineOfferOptions, EngineTurnOptions } from "./agent-engine";
-import type { AgentEvent } from "./agent-events";
+import type { AgentEvent, AgentRecovery } from "./agent-events";
 import type { AgentOffer } from "./agent-offer";
+import { providerRecovery, retryAfterReset } from "./agent-recovery";
 import { BundledAuth } from "./bundled-auth";
 import { BundledCatalog } from "./bundled-catalog";
 import { BUNDLED_CONNECTIONS, connectionLabel } from "./bundled-connections";
@@ -46,6 +48,7 @@ export class BundledRuntime {
 	) {
 		privateDirectory(join(directory, "sessions"));
 		privateDirectory(join(directory, "offers"));
+		privateDirectory(join(directory, "recovery"));
 		this.auth = new BundledAuth(models, credentials);
 		const anthropic = models.getProvider("anthropic");
 		if (anthropic?.auth.apiKey)
@@ -255,13 +258,48 @@ export class BundledRuntime {
 		this.active.set(id, running);
 		let held: HeldSession | undefined;
 		let unsubscribe: (() => void) | undefined;
+		let streamBefore: StreamFn | undefined;
+		let responseRecovery: AgentRecovery | undefined;
 		let saveError: unknown;
 		let ending: "done" | "failed" | "stopped" = "done";
 		let reason: string | null = null;
+		let recovery: AgentRecovery | undefined;
+		let account = "Selected account";
+		let selectedOffer = options.ask.value;
+		let entered = false;
+		let beforeUsers = 0;
+		let providerActive = false;
+		let said = options.said;
+		const recoveryPath = join(this.directory, "recovery", `${ref}.json`);
 		try {
+			this.path(ref);
+			const userCount = this.manager(options.root, ref)
+				.buildSessionContext()
+				.messages.filter((message) => message.role === "user").length;
+			beforeUsers = userCount;
+			if (options.recovery !== undefined) {
+				const pending = existsSync(recoveryPath) ? JSON.parse(readFileSync(recoveryPath, "utf8")) : null;
+				if (pending?.token !== options.recovery || pending.root !== options.root)
+					throw new Error("This recovery has already been continued");
+				said = pending.said;
+				beforeUsers = pending.beforeUsers ?? userCount;
+				entered = pending.entered === true || userCount > beforeUsers;
+			} else if (existsSync(recoveryPath)) {
+				throw new Error("Continue the pending request before sending another message");
+			}
 			const offer = await this.offer({ ...options, ask: options.ask });
+			selectedOffer = offer.current.value ?? undefined;
+			account =
+				offer.models.find((entry) => entry.value === selectedOffer)?.connection ??
+				BUNDLED_CONNECTIONS.find((connection) =>
+					selectedOffer?.startsWith(`spool/${connection.provider}/${connection.method}/`),
+				)?.label ??
+				"Selected account";
 			const model = (await this.available()).find((candidate) => candidate.value === offer.current.value)?.model;
-			if (model === undefined) throw new Error("Connect an account and choose an available model");
+			if (model === undefined) {
+				recovery = { kind: "login", account, scope: "account", ...(selectedOffer ? { offer: selectedOffer } : {}) };
+				throw new Error("Connect an account and choose an available model");
+			}
 			held = this.sessions.get(ref);
 			if (held?.idle !== undefined) clearTimeout(held.idle);
 			if (held === undefined) {
@@ -296,6 +334,38 @@ export class BundledRuntime {
 			}
 			const session = held.session;
 			const manager = held.manager;
+			streamBefore = session.agent.streamFunction;
+			const stream = streamBefore;
+			session.agent.streamFunction = (model, context, settings) => {
+				responseRecovery = undefined;
+				return stream(model, context, {
+					...settings,
+					fetch: async (input, init) => {
+						const response = await (settings?.fetch ?? globalThis.fetch)(input, init);
+						if (!response.ok) {
+							// Read only the failed response clone. The SDK still owns and consumes its body.
+							// In particular, Codex otherwise rounds resets_at into a prose minute estimate.
+							try {
+								responseRecovery = providerRecovery(
+									`${response.status} ${await response.clone().text()}`,
+									account,
+									selectedOffer,
+								);
+							} catch {
+								responseRecovery = providerRecovery(String(response.status), account, selectedOffer);
+							}
+							const reset = retryAfterReset(response.headers.get("retry-after"), Date.now());
+							if (
+								responseRecovery?.kind === "limit" &&
+								responseRecovery.resetsAt === undefined &&
+								reset !== undefined
+							)
+								responseRecovery = { ...responseRecovery, resetsAt: reset };
+						}
+						return response;
+					},
+				});
+			};
 			this.save(manager);
 			unsubscribe = session.subscribe((event) => {
 				if (event.type === "message_start" && event.message.role === "assistant")
@@ -308,13 +378,23 @@ export class BundledRuntime {
 						parent: null,
 					});
 				if (event.type === "message_end") {
+					if (event.message.role === "user") entered = true;
 					if (event.message.role === "assistant") {
-						for (const block of event.message.content)
+						for (const block of event.message.stopReason === "error" ? [] : event.message.content)
 							if (block.type === "text") emit({ kind: "said", text: block.text, parent: null });
 						if (event.message.stopReason === "aborted") ending = "stopped";
 						if (event.message.stopReason === "error") {
 							ending = "failed";
-							event.message.errorMessage = "The provider request failed. Check your connection and try again.";
+							recovery =
+								responseRecovery ?? providerRecovery(event.message.errorMessage ?? "", account, selectedOffer);
+							event.message.errorMessage =
+								recovery?.kind === "login"
+									? `Sign in to ${account} to continue.`
+									: recovery?.kind === "limit"
+										? `${account} rate limit reached.`
+										: "The provider request failed. Check your connection and try again.";
+							event.message.diagnostics = [];
+							event.message.content = [];
 							reason = event.message.errorMessage;
 						}
 					}
@@ -342,17 +422,28 @@ export class BundledRuntime {
 			});
 			emit({ kind: "waiting", parent: null });
 			if (running.stopped) ending = "stopped";
-			else
+			else if (options.recovery !== undefined && entered) {
+				// pi's retry does this too: retain completed tool results and omit failed assistant messages.
+				const messages = session.agent.state.messages.filter(
+					(message) => message.role !== "assistant" || message.stopReason !== "error",
+				);
+				const last = messages.at(-1);
+				if (!last || last.role === "assistant") throw new Error("There is no pending model request to continue");
+				session.agent.state.messages = messages;
+				providerActive = true;
+				await session.agent.continue();
+			} else {
+				providerActive = true;
 				await session.prompt(
-					options.said
+					said
 						.map(
 							(message, index) =>
-								`${options.said.length > 1 ? `Message ${index + 1}:\n` : ""}${message.selection ? `${message.selection}\n\n` : ""}${message.prompt}`,
+								`${said.length > 1 ? `Message ${index + 1}:\n` : ""}${message.selection ? `${message.selection}\n\n` : ""}${message.prompt}`,
 						)
 						.join("\n\n"),
 					{
 						expandPromptTemplates: false,
-						images: options.said.flatMap((message) =>
+						images: said.flatMap((message) =>
 							message.attachment === undefined
 								? []
 								: [
@@ -365,14 +456,26 @@ export class BundledRuntime {
 						),
 					},
 				);
+			}
 			if (running.stopped) ending = "stopped";
 			if (saveError !== undefined) throw new Error("Could not save this bundled conversation", { cause: saveError });
 			this.save(manager);
+			if (ending === "done" || ending === "stopped") rmSync(recoveryPath, { force: true });
 		} catch (error) {
 			ending = running.stopped ? "stopped" : "failed";
-			reason = error instanceof Error ? error.message : "Bundled turn failed";
+			const words = error instanceof Error ? error.message : "Bundled turn failed";
+			recovery ??= responseRecovery ?? providerRecovery(words, account, selectedOffer);
+			reason =
+				recovery?.kind === "login"
+					? `Sign in to ${account} to continue.`
+					: recovery?.kind === "limit"
+						? `${account} rate limit reached.`
+						: providerActive
+							? "The provider request failed. Check your connection and try again."
+							: words;
 		} finally {
 			held?.files.stop();
+			if (held && streamBefore) held.session.agent.streamFunction = streamBefore;
 			unsubscribe?.();
 			this.active.delete(id);
 			this.reserved.delete(ref);
@@ -389,7 +492,17 @@ export class BundledRuntime {
 				}, this.idleMs);
 				idle.idle.unref();
 			}
-			emit({ kind: "ended", ending, reason, stopReason: reason, parent: null });
+			if (recovery !== undefined && ending === "failed") {
+				const token = randomUUID();
+				try {
+					this.persist(recoveryPath, JSON.stringify({ root: options.root, token, said, entered, beforeUsers }));
+					recovery = { ...recovery, token };
+				} catch {
+					recovery = undefined;
+					reason = "Could not save the pending request";
+				}
+			}
+			emit({ kind: "ended", ending, reason, stopReason: reason, ...(recovery ? { recovery } : {}), parent: null });
 			emit({
 				kind: "closed",
 				code: ending === "failed" ? 1 : 0,

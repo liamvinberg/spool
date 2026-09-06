@@ -309,7 +309,17 @@ export interface AgentCompacted extends AgentEventBase {
  * word for it, kept so an interrupted turn stays distinguishable from a clean
  * one without spool having to be the authority on why.
  */
+export interface AgentRecovery {
+	readonly kind: "login" | "limit";
+	readonly account: string;
+	readonly offer?: string;
+	readonly scope: "account" | "model" | "unknown";
+	readonly resetsAt?: number;
+	readonly token?: string;
+}
+
 export interface AgentEnded extends AgentEventBase {
+	readonly recovery?: AgentRecovery;
 	readonly kind: "ended";
 	readonly ending: AgentEnding;
 	readonly reason: string | null;
@@ -321,6 +331,7 @@ export interface AgentEnded extends AgentEventBase {
 
 /** The process is gone. Emitted by the runner rather than by any adapter. */
 export interface AgentClosed extends AgentEventBase {
+	readonly recovery?: AgentRecovery;
 	readonly kind: "closed";
 	readonly code: number | null;
 	readonly message?: string;

@@ -17,12 +17,23 @@ export function createClaudeEngine(executor: AgentExecutor, look?: Look): AgentE
 		offer: ({ session: _session, ...options }) => askAgentOffer({ executor, env: process.env, ...options }),
 		choice: askFrom,
 		continuable: (root, session) => sessionExists(root, session.id, process.env),
-		start: ({ root, session, said, ask, permissions }) =>
+		start: ({ root, session, said, ask, permissions, recovery }) =>
 			startAgentTurn({
 				executor,
 				root,
 				session: { id: session.id, resume: sessionExists(root, session.id, process.env) },
-				content: agentPromptContent(said),
+				content: agentPromptContent(
+					recovery === "claude-continue"
+						? [
+								{
+									prompt:
+										"Continue the pending request from the completed tool results. Do not repeat completed actions.",
+									selection: "",
+								},
+							]
+						: said,
+				),
+				continuing: recovery === "claude-continue",
 				ask,
 				permissions,
 			}),

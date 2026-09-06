@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentEngineId } from "../../daemon/agent-engine";
-import type { AgentLimit } from "../../daemon/agent-events";
+import type { AgentLimit, AgentRecovery } from "../../daemon/agent-events";
 import type { ServedThread } from "../../daemon/agent-threads";
 import {
 	type AgentAttached,
@@ -296,6 +296,8 @@ interface Live {
 	 * queue rather than spool minting new names for words it already had.
 	 */
 	said: readonly AgentQueued[];
+	recovery: AgentRecovery | null;
+	pending: readonly AgentQueued[];
 	/**
 	 * Climbs whenever what the fold reads has moved, which is what dates the fold.
 	 *
@@ -372,6 +374,8 @@ function born(id: string, over: Partial<Live> = {}): Live {
 		started: 0,
 		abandon: null,
 		said: [],
+		recovery: null,
+		pending: [],
 		rev: 0,
 		folded: null,
 		ticked: 0,
@@ -412,7 +416,8 @@ function restored(stored: ServedThread): Live {
 	 * turn itself is refolded from the log rather than taken off disk, so it is never drawn
 	 * twice.
 	 */
-	const before = stored.live ? entries.slice(0, stored.kept) : stored.stopped ? cutPicture(entries) : entries;
+	const live = stored.live && (!stored.recovery || stored.life === "running");
+	const before = live ? entries.slice(0, stored.kept) : stored.stopped ? cutPicture(entries) : entries;
 	return born(stored.id, {
 		engine: stored.engine,
 		before,
@@ -427,6 +432,8 @@ function restored(stored: ServedThread): Live {
 		// and the ones in the box that never left it, which are the same promise one keystroke
 		// further back (#234)
 		draft: stored.draft,
+		pending: drawableQueue(stored.pending ?? []),
+		recovery: stored.recovery ?? null,
 	});
 }
 
@@ -627,6 +634,8 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				plan: planOf(thread, shown),
 				queued: thread.holding,
 				draft: thread.draft,
+				pending: thread.pending,
+				recovery: thread.recovery,
 			});
 		},
 		[project],
@@ -691,6 +700,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 	const run = useCallback(
 		(thread: Live, opening: { saying: readonly AgentQueued[]; carried: boolean } | { attach: true }) => {
 			const attaching = "attach" in opening;
+			const recovery = !attaching && opening.carried ? thread.recovery : null;
 			if (!attaching && opening.saying.length === 0) return;
 			thread.abandon?.();
 			// the conversation keeps what it has already drawn: a turn replaces the events it
@@ -715,6 +725,9 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			thread.parked = { total: 0, since: null };
 			thread.waitingOn = new Map();
 			thread.said = attaching ? [] : opening.saying;
+			if (!attaching) {
+				thread.pending = opening.saying;
+			}
 			thread.streaming = true;
 			thread.run += 1;
 			thread.ms = 0;
@@ -755,6 +768,11 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				// the standing window, lifted out of the turn: it was true before this one
 				// started and it will still be true after it ends (#122)
 				if (event.kind === "limit") setLimit(event.limit);
+				if ((event.kind === "ended" || event.kind === "closed") && event.recovery) thread.recovery = event.recovery;
+				if (event.kind === "ended" && event.ending === "done") {
+					thread.recovery = null;
+					thread.pending = [];
+				}
 				// the clock stops on the request and starts again on whatever released it: an
 				// answer, the call's own result where nobody answered, or the turn ending under
 				// it. The same three the transcript settles a waiting block on
@@ -822,6 +840,15 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 						push({ kind: "closed", code: null, message: STOPPED, parent: null });
 					}
 					thread.streaming = false;
+					if (!thread.recovery && thread.engine === "claude" && bounced(shownOf(thread).entries))
+						thread.recovery = {
+							kind: "login",
+							account: "Claude Code",
+							scope: "account",
+							token: thread.events.some(({ event }) => event.kind === "result" && !event.nonExecution)
+								? "claude-continue"
+								: "claude-retry",
+						};
 					thread.at = Date.now();
 					// it landed while nobody was looking at it, and a look is the only thing that
 					// clears that (#161) — so the flag is set here and read nowhere else
@@ -853,10 +880,12 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 							(event.kind === "ended" && event.ending === "failed") ||
 							(event.kind === "closed" && event.code !== 0),
 					);
-					if (ending.kind !== "cut" && !stopped && !(thread.engine === "spool" && failed)) fireRef.current(thread);
+					if (ending.kind !== "cut" && !stopped && !thread.recovery && !(thread.engine === "spool" && failed))
+						fireRef.current(thread);
 					redraw();
 				},
 			};
+			if (!attaching) save(thread);
 			thread.abandon = followAgentTurn(
 				project,
 				attaching
@@ -866,6 +895,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 								thread: thread.id,
 								engine: thread.engine,
 								turn: thread.named,
+								...(recovery?.token === undefined ? {} : { recovery: recovery.token }),
 								saying: opening.saying.map((words) => ({
 									prompt: words.text,
 									selection: words.selection,
@@ -896,7 +926,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 	const fire = useCallback(
 		(thread: Live) => {
 			const firing = thread.holding;
-			if (firing.length === 0) return;
+			if (firing.length === 0 || thread.recovery) return;
 			thread.holding = [];
 			save(thread);
 			run(thread, { saying: firing, carried: false });
@@ -930,7 +960,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 				 * the list opens on, because they were all still working while the page was
 				 * away — which is the same promise #192 made about looking at another thread.
 				 */
-				if (one.live) {
+				if (one.live && (!thread.recovery || one.life === "running")) {
 					run(thread, { attach: true });
 					continue;
 				}
@@ -1128,7 +1158,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			const thread = threads.current.get(openRef.current);
 			// nowhere to put them: the threads this project has are still on their way, and
 			// words the rail cannot take are words the box has to keep (#234)
-			if (thread === undefined) return false;
+			if (thread === undefined || thread.recovery) return false;
 			if (thread.restored && !thread.continuable) {
 				const fresh = start();
 				setOpen(fresh.id);
@@ -1224,6 +1254,7 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 	 * thread's strip in a state nobody asked it for.
 	 */
 	const [checkingOn, setCheckingOn] = useState<string | null>(null);
+	const checkingRef = useRef<string | null>(null);
 	/**
 	 * Ask again, and run what was already said (#201).
 	 *
@@ -1238,14 +1269,16 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 	 * no mark reads as a broken button.
 	 */
 	const check = useCallback(() => {
-		if (checkingOn !== null) return;
+		if (checkingRef.current !== null) return;
 		// the thread the press was made on, held across the ask: a check answered after
 		// somebody switched away must not leave its line, or its re-send, in another
 		// conversation's log
 		const thread = threads.current.get(openRef.current);
 		if (thread === undefined) return;
+		checkingRef.current = thread.id;
 		setCheckingOn(thread.id);
 		void fetchAgentLogin(project, thread.engine, thread.id).then((login) => {
+			checkingRef.current = null;
 			setCheckingOn(null);
 			if (login?.signedIn !== true) {
 				note(thread, STILL_OUT, false);
@@ -1253,9 +1286,9 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 			}
 			note(thread, signedInAs(login.account));
 			// the held prompt is the words the bounce was about, which the thread still has
-			if (thread.said.length > 0) send(thread, thread.said, true);
+			if (thread.pending.length > 0 && !thread.streaming) send(thread, thread.pending, true);
 		});
-	}, [project, checkingOn, note, send]);
+	}, [project, note, send]);
 
 	return {
 		engine: here.engine,
@@ -1271,7 +1304,15 @@ export function useAgentThreads(project: string, preferred: AgentEngineId = "cla
 		finished: here.restored && !here.continuable,
 		// the standing fact, off the turn that ran: it goes the instant a turn does not
 		// bounce, and comes back on the refusal of one that does
-		login: { out: bounced(seen.entries), checking: checkingOn === open, check },
+		login: {
+			out: !here.streaming && (here.recovery?.kind === "login" || bounced(seen.entries)),
+			recovery: here.streaming ? null : here.recovery,
+			checking: checkingOn === open,
+			check,
+			retry: () => {
+				if (!here.streaming && here.recovery && here.pending.length) send(here, here.pending, true);
+			},
+		},
 		onOpen,
 		onClose,
 		onNew,
@@ -1383,6 +1424,6 @@ function lifeFor(thread: Live, open: string, shown: { entries: readonly AgentEnt
 		phase,
 		open: thread.id === open,
 		unread: thread.unread,
-		stuck: stuck(phase, shown.entries),
+		stuck: (!thread.streaming && Boolean(thread.recovery)) || stuck(phase, shown.entries),
 	});
 }

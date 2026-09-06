@@ -2,12 +2,12 @@ import { createContext, memo, type ReactNode, useContext, useEffect, useMemo, us
 import { ATTACHMENT_MEDIA, type Attachment, isSendableAttachment } from "../../attachment";
 import type { AgentReply } from "../../daemon/agent-control";
 import type { AgentLimit } from "../../daemon/agent-events";
-import type { SelectionEntry } from "../api";
+import { fetchAgentInstalled, type SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
 import { AgentAccountDialog } from "./agent-account";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
-import { limitReadout } from "./agent-limit";
+import { limitReadout, resetsIn } from "./agent-limit";
 import { type AgentModelDeck, menuLongest, menuSays } from "./agent-model";
 import type { InstallDeck, LoginDeck } from "./agent-preflight";
 import { type AgentHandback, type AgentQueued, handedBack, handedBackReference } from "./agent-queue";
@@ -323,97 +323,109 @@ export function AgentRail({
 		(entry): entry is Extract<AgentEntry, { kind: "wait" }> =>
 			entry.kind === "wait" && entry.state === "running" && entry.ms === null,
 	);
+	const [modelRequest, requestModel] = useState(0);
 	const waited = outstanding === undefined ? 0 : Math.max(0, elapsed - outstanding.at);
 	return (
-		<PermissionAction value={onPermissions}>
-			<section
-				aria-label="Agent"
-				data-agent-rail=""
-				style={{ width }}
-				className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
-			>
-				{install.missing && model.engine === undefined ? (
-					/*
-					 * There is nothing to spawn, and spool knew it before anybody typed (#201).
-					 *
-					 * The wall takes the transcript's place and the composer stays, dead. The rest of
-					 * the shelf goes with the transcript: a plan belongs to a turn, and a thread is a
-					 * conversation you cannot continue on a machine with no agent on it.
-					 */
-					<div className="flex h-full min-w-[200px] flex-col">
-						<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-							<InstallWall install={install} />
-							{/* the wall has no plate and no glyph to lean on, so here alone the caret floats */}
-							<CollapseCaret onCollapse={onCollapse} className="absolute top-2 right-2 z-10" />
+		<RecoveryActions value={{ login, modelRequest }}>
+			<PermissionAction value={onPermissions}>
+				<section
+					aria-label="Agent"
+					data-agent-rail=""
+					style={{ width }}
+					className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
+				>
+					{install.missing && model.engine === undefined ? (
+						/*
+						 * There is nothing to spawn, and spool knew it before anybody typed (#201).
+						 *
+						 * The wall takes the transcript's place and the composer stays, dead. The rest of
+						 * the shelf goes with the transcript: a plan belongs to a turn, and a thread is a
+						 * conversation you cannot continue on a machine with no agent on it.
+						 */
+						<div className="flex h-full min-w-[200px] flex-col">
+							<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+								<InstallWall install={install} />
+								{/* the wall has no plate and no glyph to lean on, so here alone the caret floats */}
+								<CollapseCaret onCollapse={onCollapse} className="absolute top-2 right-2 z-10" />
+							</div>
+							<DeadComposer />
 						</div>
-						<DeadComposer />
-					</div>
-				) : (
-					/*
-					 * The rail is one panel, and the plate over it is where the other conversations
-					 * live (#205). The panel is everything one conversation is; the list the plate
-					 * drops is every conversation there is, and a press on it changes only the panel.
-					 */
-					<div className="flex h-full min-w-[200px] flex-col">
-						{/* the plate leads the shelf, because it says which thread everything under it
+					) : (
+						/*
+						 * The rail is one panel, and the plate over it is where the other conversations
+						 * live (#205). The panel is everything one conversation is; the list the plate
+						 * drops is every conversation there is, and a press on it changes only the panel.
+						 */
+						<div className="flex h-full min-w-[200px] flex-col">
+							{/* the plate leads the shelf, because it says which thread everything under it
 					    belongs to, and it is where the others are reached from */}
-						<ThreadPlate threads={threads} listing={listing} onList={setListing} />
-						{/* the list drops over the shelf and the log together, so it hangs off the plate
+							<ThreadPlate threads={threads} listing={listing} onList={setListing} />
+							{/* the list drops over the shelf and the log together, so it hangs off the plate
 					    whatever the shelf is carrying */}
-						<div className="relative flex min-h-0 flex-1 flex-col">
-							{/* the standing half of being signed out, on the shelf the plan would take —
+							<div className="relative flex min-h-0 flex-1 flex-col">
+								{/* the standing half of being signed out, on the shelf the plan would take —
 						    and they never want it at once, because a plan belongs to a turn that is
 						    running and this exists precisely because none can (#201) */}
-							{install.missing ? <InstallWall install={install} /> : null}
-							{login.out ? <LoginStrip login={login} /> : null}
-							{plan === null ? null : <PlanStrip plan={plan} />}
-							<Transcript
-								entries={entries}
-								live={phase === "playing"}
-								spoke={spoke}
-								elapsed={elapsed}
-								jump={jump}
-								onAnswer={onAnswer}
-							/>
-							{listing === null ? null : (
-								<ThreadDrop threads={threads} now={listing} onDone={() => setListing(null)} />
-							)}
-						</div>
-						{/* the strip is measured against the composer's own inner width: the same three
+								{model.engine === undefined && login.out ? <LoginStrip login={login} /> : null}
+								{plan === null ? null : <PlanStrip plan={plan} />}
+								<Transcript
+									entries={entries}
+									afterLog={
+										model.engine === undefined || !(install.missing || login.out || login.recovery) ? null : (
+											<RecoveryView
+												install={install}
+												login={login}
+												model={model}
+												onModels={() => requestModel((value) => value + 1)}
+											/>
+										)
+									}
+									live={phase === "playing"}
+									spoke={spoke}
+									elapsed={elapsed}
+									jump={jump}
+									onAnswer={onAnswer}
+								/>
+								{listing === null ? null : (
+									<ThreadDrop threads={threads} now={listing} onDone={() => setListing(null)} />
+								)}
+							</div>
+							{/* the strip is measured against the composer's own inner width: the same three
 					    chips fit at 420 and are a count at the 200 floor, because the rule is one line
 					    rather than one width */}
-						<Composer
-							phase={phase}
-							waited={waited}
-							finished={threads.finished}
-							answering={asking?.kind === "ask" ? asking.request : null}
-							strip={stripOf(pointing.entries, composerWidth(width), pointing.inside)}
-							pointing={pointing}
-							draft={holding.draft}
-							onDraft={writeDraft}
-							attached={holding.attached}
-							onAttach={(attached) => write((was) => ({ ...was, attached }))}
-							queued={queued}
-							model={model}
-							limit={limit}
-							onSend={(text, sent) => {
-								if (install.missing) return false;
-								const took = onSend(text, sent);
-								// the log follows the live edge again because something was said, so a press
-								// that said nothing must not move it
-								if (took) setSpoke((count) => count + 1);
-								return took;
-							}}
-							running={running}
-							onQueue={onQueue}
-							onUnqueue={onUnqueue}
-							onStop={onStop}
-							onAnswer={onAnswer}
-						/>
-					</div>
-				)}
-			</section>
-		</PermissionAction>
+							<Composer
+								phase={phase}
+								waited={waited}
+								finished={threads.finished}
+								answering={asking?.kind === "ask" ? asking.request : null}
+								strip={stripOf(pointing.entries, composerWidth(width), pointing.inside)}
+								pointing={pointing}
+								draft={holding.draft}
+								onDraft={writeDraft}
+								attached={holding.attached}
+								onAttach={(attached) => write((was) => ({ ...was, attached }))}
+								queued={queued}
+								model={model}
+								limit={limit}
+								onSend={(text, sent) => {
+									if (install.missing || login.recovery) return false;
+									const took = onSend(text, sent);
+									// the log follows the live edge again because something was said, so a press
+									// that said nothing must not move it
+									if (took) setSpoke((count) => count + 1);
+									return took;
+								}}
+								running={running}
+								onQueue={onQueue}
+								onUnqueue={onUnqueue}
+								onStop={onStop}
+								onAnswer={onAnswer}
+							/>
+						</div>
+					)}
+				</section>
+			</PermissionAction>
+		</RecoveryActions>
 	);
 }
 
@@ -924,6 +936,7 @@ export function followTo(box: { readonly scrollHeight: number; readonly clientHe
 }
 
 function Transcript({
+	afterLog,
 	entries,
 	live,
 	spoke,
@@ -931,6 +944,7 @@ function Transcript({
 	jump,
 	onAnswer,
 }: {
+	afterLog?: ReactNode;
 	entries: readonly AgentEntry[];
 	/** whether the turn is still writing, which is the word the chip picks for what is below */
 	live: boolean;
@@ -1121,6 +1135,7 @@ function Transcript({
 							<Entry entry={entry} elapsed={elapsed} jump={jump} onAnswer={onAnswer} />
 						</Arrive>
 					))}
+					{afterLog ? <div className="mt-5">{afterLog}</div> : null}
 				</div>
 			</div>
 			<span className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-bg to-transparent" />
@@ -2313,7 +2328,24 @@ const QUIET = "font-mono text-2xs leading-3";
 const MENU_W = 300;
 
 function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit | null }) {
+	const recoveryActions = useContext(RecoveryActions);
+	const [claudeInstalled, setClaudeInstalled] = useState<boolean | null>(null);
+	useEffect(() => {
+		if (!recoveryActions?.modelRequest) return;
+		setOpen(true);
+		setAll(true);
+	}, [recoveryActions?.modelRequest]);
 	const [open, setOpen] = useState(false);
+	useEffect(() => {
+		let gone = false;
+		if (open && model.project)
+			void fetchAgentInstalled(model.project, "claude").then((installed) => {
+				if (!gone) setClaudeInstalled(installed);
+			});
+		return () => {
+			gone = true;
+		};
+	}, [open, model.project]);
 	const trigger = useRef<HTMLButtonElement>(null);
 	const panel = useRef<HTMLDivElement>(null);
 	/**
@@ -2356,7 +2388,14 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 	}, [open]);
 	// read at draw time rather than held: the reset is a clock time inside a day and a
 	// weekday past that, so what it says depends on when it is being read
-	const usage = limit === null ? null : limitReadout(limit, Date.now());
+	const recovery = recoveryActions?.login.recovery;
+	const reset = resetsIn(recovery?.resetsAt, Date.now());
+	const usage =
+		recovery?.kind === "limit"
+			? `${recovery.account} limit reached${reset ? ` · resets ${reset}` : ""}`
+			: limit === null
+				? null
+				: limitReadout(limit, Date.now());
 
 	const show = (next: boolean) => {
 		setOpen(next);
@@ -2376,6 +2415,12 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 					project={model.project}
 					onClose={() => model.closeAccount?.()}
 					onConnected={model.refresh}
+					renewal={recoveryActions?.login.recovery?.kind === "login" ? recoveryActions.login.recovery : undefined}
+					onAuthenticated={(provider, method) => {
+						const held = recoveryActions?.login.recovery;
+						if (held?.kind === "login" && (!held.offer || held.offer.startsWith(`spool/${provider}/${method}/`)))
+							recoveryActions?.login.retry?.();
+					}}
 				/>
 			) : null}
 			{open ? (
@@ -2512,6 +2557,7 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 									) : (
 										<MenuRow
 											label={engine === "spool" ? "spool" : "Claude Code"}
+											via={engine === "claude" && claudeInstalled === false ? "not installed" : undefined}
 											on={engine === model.engine}
 											onOver={() => setOver(null)}
 											onPick={() => {
@@ -3057,5 +3103,108 @@ function Chip({
 				</button>
 			)}
 		</span>
+	);
+}
+
+const RecoveryActions = createContext<{ login: LoginDeck; modelRequest: number } | null>(null);
+
+function RecoveryView({
+	install,
+	login,
+	model,
+	onModels,
+}: {
+	install: InstallDeck;
+	login: LoginDeck;
+	model: AgentModelDeck;
+	onModels: () => void;
+}) {
+	const recovery = login.recovery;
+	const claude = model.engine === "claude";
+	const action = "font-mono text-2xs leading-3 text-muted hover:text-text disabled:opacity-50";
+	const changed = recovery?.offer && model.offer.current.value !== recovery.offer;
+	const originalAccount = recovery?.offer?.split("/").slice(0, 3).join("/");
+	const sameAccount = claude || model.offer.current.value?.startsWith(`${originalAccount}/`);
+	if (claude && (install.missing || login.out))
+		return (
+			<div data-recovery="claude" className="flex flex-col gap-3">
+				<p className="text-base text-text leading-base">
+					{install.missing ? "Claude Code isn’t installed." : "Sign in to Claude Code to continue."}
+				</p>
+				{install.missing ? (
+					<a
+						href="https://code.claude.com/docs/en/quickstart"
+						target="_blank"
+						rel="noreferrer"
+						className="w-fit text-base text-muted underline underline-offset-4 hover:text-text"
+					>
+						Install Claude Code
+					</a>
+				) : (
+					<p className="text-base text-muted leading-base">
+						Run <code className="font-mono text-xs">claude</code> in a terminal, then{" "}
+						<code className="font-mono text-xs">/login</code>.
+					</p>
+				)}
+				<div className="flex flex-wrap items-center gap-3">
+					<button
+						type="button"
+						data-agent-check=""
+						className={action}
+						disabled={install.checking || login.checking}
+						onClick={install.missing ? install.look : login.check}
+					>
+						{install.checking || login.checking ? "checking…" : "check again"}
+					</button>
+					<button type="button" className={action} onClick={() => model.onEngine?.("spool")}>
+						new thread with spool
+					</button>
+				</div>
+				{install.foundNothing ? (
+					<p data-agent-looked="" className="font-mono text-2xs text-muted">
+						Claude Code is still not installed.
+					</p>
+				) : null}
+			</div>
+		);
+	if (!recovery) return null;
+	if (changed && (!sameAccount || recovery.scope === "model"))
+		return (
+			<button type="button" className={action} onClick={login.retry}>
+				continue with this model
+			</button>
+		);
+	if (recovery.kind === "login")
+		return (
+			<div data-recovery="login" className="flex flex-col gap-3">
+				<p className="text-base text-text leading-base">Sign in to {recovery.account} to continue.</p>
+				<button type="button" className={`${action} w-fit`} onClick={model.connect}>
+					sign in again
+				</button>
+			</div>
+		);
+	const reset =
+		recovery.resetsAt === undefined
+			? null
+			: new Date(recovery.resetsAt * 1000).toLocaleTimeString("en-GB", {
+					hour: "2-digit",
+					minute: "2-digit",
+					...(recovery.resetsAt * 1000 - Date.now() >= 24 * 3600 * 1000
+						? ({ day: "numeric", month: "short" } as const)
+						: {}),
+				});
+	return (
+		<div data-recovery="limit" className="flex flex-col gap-3">
+			<p className="text-base text-text leading-base">{recovery.account} rate limit reached.</p>
+			{reset === null ? null : <p className="text-base text-muted leading-base">Try again at {reset}.</p>}
+			<div className="flex items-center gap-3">
+				<button type="button" className={action} onClick={login.retry}>
+					retry
+				</button>
+				<button type="button" className={action} onClick={onModels}>
+					choose model
+				</button>
+			</div>
+		</div>
 	);
 }

@@ -4407,10 +4407,10 @@ describe("the usage window", () => {
  * and it is a strip over a log that still works. */
 
 /** the wall, in the transcript's place */
-const wall = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-wall]");
+const wall = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-recovery="claude"]');
 
 /** the standing half of being signed out, on the shelf */
-const outStrip = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-login]");
+const outStrip = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-recovery="claude"]');
 
 /** the one control either of these states offers, pressed and given time to answer */
 async function checkAgain(within: HTMLElement | null) {
@@ -4437,10 +4437,10 @@ describe("no agent on this machine", () => {
 		await canvas.render();
 		await settle(50);
 
-		expect(wall(canvas.host)?.textContent).toContain("Claude Code is not installed");
+		expect(wall(canvas.host)?.textContent).toContain("Claude Code isn’t installed.");
 		expect(canvas.host.querySelector("[data-agent-log]")).not.toBeNull();
 		// the docs root is the binary's own, and the sentence about why is spool's
-		expect(wall(canvas.host)?.textContent).toContain("code.claude.com/docs");
+		expect(wall(canvas.host)?.querySelector("a")?.href).toBe("https://code.claude.com/docs/en/quickstart");
 		// nothing was sent, and nothing was asked about a login either: this state is
 		// answered by looking, and looking is free
 		expect(canvas.turn.prompts).toEqual([]);
@@ -4475,10 +4475,10 @@ describe("no agent on this machine", () => {
 		expect(canvas.host.querySelector("[data-agent-looked]")).toBeNull();
 
 		await checkAgain(wall(canvas.host));
-		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("still nothing on your PATH");
+		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("Claude Code is still not installed.");
 
 		await checkAgain(wall(canvas.host));
-		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("still nothing on your PATH");
+		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("Claude Code is still not installed.");
 		expect(canvas.preflight.looks).toBeGreaterThanOrEqual(3);
 		// and the wall is still the whole of the rail's body
 		expect(field(canvas.host)).not.toBeNull();
@@ -4552,15 +4552,16 @@ describe("signed out", () => {
 		// the binary's own words, verbatim, and one sentence of spool's under them saying
 		// what to do about it from here
 		expect(rail(canvas.host)?.textContent).toContain("Not logged in · Please run /login");
-		expect(rail(canvas.host)?.textContent).toContain("run `claude` in a terminal, then /login");
-		expect(rail(canvas.host)?.textContent).toContain("spool uses that login; it never asks for a key");
-		expect(outStrip(canvas.host)?.textContent).toContain("signed out");
+		expect(rail(canvas.host)?.textContent).toContain("Run claude in a terminal, then /login.");
+		expect(rail(canvas.host)?.textContent).not.toContain("never asks for a key");
+		expect(outStrip(canvas.host)?.textContent).toContain("Sign in to Claude Code to continue.");
 		// nothing local knows any better than the last spawn did, so the composer stays live
 		// and the next send is a send: it would answer wrong the moment somebody signs in
 		// without telling it
 		expect(field(canvas.host)?.placeholder).toBe("say what to change");
 		await send(canvas.host, "again then");
-		expect(canvas.turn.prompts).toEqual(["shoot home", "again then"]);
+		expect(canvas.turn.prompts).toEqual(["shoot home"]);
+		expect(field(canvas.host)?.value).toBe("again then");
 	});
 
 	it("holds the prompt, and checking again runs it with no second copy of it", async () => {
