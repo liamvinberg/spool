@@ -18,6 +18,7 @@ import { writeAtomic } from "./atomic-write";
 import { SpoolError } from "./errors";
 import { parseLinuxProcessBirth, parsePlatformProcessBirth } from "./machine-process-identity";
 import { type AppSession, type Registry, readMachineRegistry, readMachineSession } from "./machine-state-files";
+import { type ProjectRename, renameProjectUnlocked } from "./rename-project";
 
 const LOCK_FILE = "machine-state.lock";
 const WAIT_MS = 10;
@@ -92,6 +93,7 @@ export type MachineStateMutation =
 	| { kind: "update-session"; root: string; open: boolean }
 	| { kind: "order-session"; order: readonly string[] }
 	| { kind: "remove-project"; root: string }
+	| { kind: "rename-project"; root: string; name: string }
 	/** one local setting on a registered project (#281); `undefined` takes the key out */
 	| { kind: "set-project-setting"; root: string; path: readonly string[]; value: unknown };
 
@@ -103,9 +105,11 @@ export type MachineStateMutationResult<Mutation extends MachineStateMutation> = 
 		? AppSession
 		: Mutation extends { kind: "remove-project" }
 			? MachineProjectRemoval
-			: Mutation extends { kind: "set-project-setting" }
-				? { kind: "written" } | { kind: "unregistered"; root: string }
-				: undefined;
+			: Mutation extends { kind: "rename-project" }
+				? ProjectRename
+				: Mutation extends { kind: "set-project-setting" }
+					? { kind: "written" } | { kind: "unregistered"; root: string }
+					: undefined;
 
 let ownBirth: string | undefined;
 
@@ -164,6 +168,8 @@ function executeMachineStateMutation(spoolDir: string, mutation: MachineStateMut
 			return orderSessionUnlocked(spoolDir, mutation.order);
 		case "remove-project":
 			return removeProjectUnlocked(spoolDir, mutation.root);
+		case "rename-project":
+			return renameProjectUnlocked(spoolDir, mutation.root, mutation.name);
 		case "set-project-setting":
 			return setProjectSettingUnlocked(spoolDir, mutation.root, mutation.path, mutation.value);
 	}
@@ -334,6 +340,12 @@ function normalizeMachineStateMutation(value: unknown): MachineStateMutation | u
 			const root = dataValue(mutation, "root");
 			const open = dataValue(mutation, "open");
 			return typeof root === "string" && typeof open === "boolean" ? { kind, root, open } : undefined;
+		}
+		case "rename-project": {
+			if (!hasExactDataKeys(mutation, ["kind", "name", "root"])) return undefined;
+			const root = dataValue(mutation, "root");
+			const name = dataValue(mutation, "name");
+			return typeof root === "string" && typeof name === "string" ? { kind, root, name } : undefined;
 		}
 		case "order-session": {
 			if (!hasExactDataKeys(mutation, ["kind", "order"])) return undefined;

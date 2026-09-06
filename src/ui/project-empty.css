@@ -1,0 +1,100 @@
+.project-empty {
+	position: relative;
+	height: 100%;
+	width: 100%;
+	padding: 40px 30px 95px;
+}
+.project-empty > svg {
+	width: 30px;
+	height: 38px;
+	color: var(--color-thread);
+	margin-bottom: 24px;
+	opacity: 0.85;
+}
+.project-empty > p {
+	font-size: 14px;
+	line-height: 1.7;
+	max-width: 340px;
+}
+.project-empty > .spool-empty-actions {
+	flex-direction: column;
+	flex-wrap: nowrap;
+	max-width: 100%;
+	margin-top: 26px;
+	gap: 15px;
+}
+.project-empty > .spool-empty-actions > code {
+	max-width: 100%;
+	color: var(--color-muted);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	overflow-wrap: anywhere;
+	user-select: text;
+	pointer-events: auto;
+}
+.project-empty-copy {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 9px;
+	min-height: 34px;
+	padding: 0 13px;
+	border: 1px solid var(--color-border-raised);
+	border-radius: 7px;
+	color: var(--color-text);
+	font-size: 13px;
+	pointer-events: auto;
+}
+.project-empty-copy:hover {
+	background: var(--color-raised);
+}
+.project-empty-copy > svg {
+	width: 14px;
+	height: 14px;
+}
+.project-empty-title {
+	position: absolute;
+	top: 21px;
+	left: 27px;
+	right: 27px;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 7px;
+	text-align: left;
+}
+.project-empty-title > input {
+	width: 210px;
+	max-width: 100%;
+	color: var(--color-text);
+	background: transparent;
+	outline: none;
+	font-size: 14px;
+	padding: 3px;
+	margin-left: -3px;
+	border-radius: 3px;
+	pointer-events: auto;
+}
+.project-empty-title > input:focus {
+	background: var(--color-raised);
+}
+.project-empty-title > span {
+	color: var(--color-muted);
+	font-family: var(--font-mono);
+	font-size: 9px;
+}
+.project-empty-title > p {
+	max-width: 360px;
+	color: var(--color-text);
+	font-size: 12px;
+}
+.project-empty-folder {
+	position: absolute;
+	bottom: 91px;
+	color: var(--color-muted);
+	font-size: 12px;
+	pointer-events: auto;
+}
+.project-empty-folder:hover {
+	color: var(--color-text);
+}

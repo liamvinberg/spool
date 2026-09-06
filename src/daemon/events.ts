@@ -169,6 +169,12 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 		roots.clear();
 	}
 
+	/** A moved project leaves no watcher behind for the next folder at its old path. */
+	function forget(root: string): void {
+		roots.get(root)?.stop();
+		roots.delete(root);
+	}
+
 	/**
 	 * Daemon-originated events (thumbnail writes) ride the same stream as fs
 	 * changes — .spool is invisible to the watcher by design, so the store
@@ -180,7 +186,7 @@ export function createChangeHub(deps: ChangeHubDeps = { framesUsing: () => undef
 		for (const emit of entry.listeners) emit(event);
 	}
 
-	return { subscribe, publish, close };
+	return { subscribe, publish, forget, close };
 }
 
 export type ChangeHub = ReturnType<typeof createChangeHub>;

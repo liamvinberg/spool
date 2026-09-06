@@ -14,6 +14,7 @@ export function Home({
 	forgetting = null,
 	onOpenProject,
 	onForgetProject,
+	onRenameProject,
 	onStart,
 	onFolder,
 	onChangeLocation,
@@ -26,6 +27,7 @@ export function Home({
 	forgetting?: string | null;
 	onOpenProject: (project: { root: string; name: string }) => void;
 	onForgetProject: (project: { root: string; name: string }) => void;
+	onRenameProject: (project: { root: string; name: string }) => void;
 	onStart: () => void;
 	onFolder: () => void;
 	onChangeLocation: () => void;
@@ -203,6 +205,7 @@ export function Home({
 										onCloseMenu={() => setMenuRoot(null)}
 										onOpen={() => onOpenProject(project)}
 										onForget={() => onForgetProject(project)}
+										onRename={() => onRenameProject(project)}
 									/>
 								))}
 							</div>
@@ -229,6 +232,7 @@ function ProjectTile({
 	onCloseMenu,
 	onOpen,
 	onForget,
+	onRename,
 }: {
 	project: ProjectCard;
 	menuOpen: boolean;
@@ -236,7 +240,9 @@ function ProjectTile({
 	onCloseMenu: () => void;
 	onOpen: () => void;
 	onForget: () => void;
+	onRename: () => void;
 }) {
+	const manageRef = useRef<HTMLButtonElement>(null);
 	const cover = project.covers[0];
 	return (
 		<article
@@ -271,6 +277,7 @@ function ProjectTile({
 			</button>
 			<button
 				type="button"
+				ref={manageRef}
 				className={`pj-manage ${menuOpen ? "is-open" : ""}`}
 				aria-label={`Manage ${project.name}`}
 				onClick={onToggleMenu}
@@ -284,6 +291,14 @@ function ProjectTile({
 						onClick={() => {
 							onCloseMenu();
 							onOpen();
+						}}
+					/>
+					<MenuItem
+						label="Rename…"
+						onClick={() => {
+							manageRef.current?.focus();
+							onCloseMenu();
+							onRename();
 						}}
 					/>
 					<MenuItem

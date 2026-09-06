@@ -57,6 +57,19 @@ function project(): string {
 }
 
 describe("what a changed path means", () => {
+	it("starts a fresh watch when a renamed project's old path is reused", () => {
+		const root = project();
+		const hub = createChangeHub();
+		onTestFinished(() => hub.close());
+		const leaveOld = hub.subscribe(root, () => {});
+		hub.forget(root);
+		expect(watcher.close).toHaveBeenCalledTimes(1);
+		hub.subscribe(root, () => {});
+		leaveOld();
+		expect(tree.watchTree).toHaveBeenCalledTimes(2);
+		expect(watcher.close).toHaveBeenCalledTimes(1);
+	});
+
 	/** every event one batch of paths produced, once the debounce has run */
 	async function landed(root: string, paths: string[]): Promise<ChangeEvent[]> {
 		const hub = createChangeHub();
