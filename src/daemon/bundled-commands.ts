@@ -154,6 +154,7 @@ export class BundledCommandTurn {
 				this.active.add(controller);
 				let executed = false;
 				let recorded = false;
+				let cleanup: (() => void) | undefined;
 				this.emit({ kind: "called", id, tool: "Bash", input, parent: null });
 				try {
 					const { files, scratch } = this.policy;
@@ -203,6 +204,7 @@ export class BundledCommandTurn {
 									},
 									controller.signal,
 								);
+								cleanup = wrapped.cleanup;
 								argv = wrapped.argv;
 								env = { ...env, ...wrapped.env };
 							} catch {
@@ -255,6 +257,7 @@ export class BundledCommandTurn {
 						});
 					throw error;
 				} finally {
+					cleanup?.();
 					signal?.removeEventListener("abort", abort);
 					this.active.delete(controller);
 				}
