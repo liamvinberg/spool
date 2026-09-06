@@ -16,8 +16,8 @@ export function ConsentStudy({ placement }: { placement: "strip" | "corner" }) {
 					<div>
 						<p>Help improve spool?</p>
 						<p>
-							With your permission, PostHog measures visits and download clicks, and reports website errors. It
-							uses browser storage. Both are optional.{" "}
+							Allow visit statistics, session recordings and error reports? Recordings mask text and inputs.
+							Uses browser storage. All are optional. Change your choice anytime.{" "}
 							<button type="button" className="consent-study-link" onClick={() => setCustomize(true)}>
 								Privacy &amp; cookies
 							</button>
@@ -32,6 +32,9 @@ export function ConsentStudy({ placement }: { placement: "strip" | "corner" }) {
 							<label>
 								<input type="checkbox" /> Error reports
 							</label>
+							<label>
+								<input type="checkbox" /> Session recordings
+							</label>
 						</fieldset>
 					)}
 					<div className="consent-study-actions">
@@ -39,7 +42,7 @@ export function ConsentStudy({ placement }: { placement: "strip" | "corner" }) {
 							Reject optional
 						</button>
 						<button type="button" onClick={() => setVisible(false)}>
-							{customize ? "Save choice" : "Allow both"}
+							{customize ? "Save choice" : "Allow all"}
 						</button>
 						{!customize && (
 							<button type="button" className="consent-study-link" onClick={() => setCustomize(true)}>
