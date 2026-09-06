@@ -105,7 +105,8 @@ it("answers the accepted question in the served rail, preserves draft/history on
 	await send("Ask about the order number");
 	await open.waitFor();
 	await field.fill("Next draft while waiting under bypass.");
-	await expect.poll(() => stored()?.draft).toBe("Next draft while waiting under bypass.");
+	// Persistence is throttled for two seconds; include its flush and local I/O.
+	await expect.poll(() => stored()?.draft, { timeout: 5_000 }).toBe("Next draft while waiting under bypass.");
 	const before = calls().length;
 	await shot("access-design-bypass");
 	await page.reload();
