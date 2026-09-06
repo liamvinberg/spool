@@ -1,7 +1,10 @@
+import { useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { PlayEntry } from "shared/lib/spool/turn-play";
 import { cn } from "shared/lib/utils";
 import { CoffeeScreen } from "shared/ui/demo/coffee-screens";
+import { PermissionMenu, type PermissionMode } from "shared/ui/explore/engines/permission-menu";
+import { PickerPopover } from "shared/ui/explore/engines/picker-popover";
 import { CanvasChrome } from "shared/ui/spool/canvas-chrome";
 import { ChevronIcon, PlusIcon, SearchIcon } from "shared/ui/spool/icons";
 import { PlayRail } from "shared/ui/spool/play-rail";
@@ -10,9 +13,10 @@ import { SpoolShell } from "shared/ui/spool/shell";
 // A new exploration of EngineChoice's shell and first-send boundary. All state
 // is local. Names and capabilities below are layout fixtures, not a live catalog.
 type Take = "compact" | "short" | "inline";
-type Seed = "new" | "thread" | "search" | "effort" | "claude";
+type Seed = "new" | "thread" | "search" | "effort" | "claude" | "permissions";
 type Engine = "spool" | "claude";
-type Panel = "models" | "effort" | "agent" | "new" | null;
+type Panel = "models" | "effort" | "agent" | "new" | "permissions" | null;
+type EffortTake = "page" | "buttons";
 interface Offer {
 	id: string;
 	name: string;
@@ -39,7 +43,7 @@ const CLAUDE: readonly Offer[] = [
 const NAMES = { spool: "spool", claude: "Claude Code" };
 const TAKES = {
 	compact: { name: "Search first", note: "One search across every model. Effort opens only when you need it." },
-	short: { name: "A short list", note: "Your usual models first. Search and effort each have their own place." },
+	short: { name: "A short list", note: "Models and effort on the left. Permissions on the right." },
 	inline: { name: "In the rail", note: "Choosing a model uses the chat rail. No floating menu." },
 };
 const HISTORY: readonly PlayEntry[] = [
@@ -63,13 +67,39 @@ const HISTORY: readonly PlayEntry[] = [
 const CONTROL =
 	"flex items-center gap-1.5 text-muted type-detail transition-colors hover:text-text focus-visible:outline focus-visible:outline-1 focus-visible:outline-muted";
 
-export function LeanPicker({ take, seed = "new", narrow = false }: { take: Take; seed?: Seed; narrow?: boolean }) {
+export function LeanPicker({
+	take,
+	seed = "new",
+	narrow = false,
+	effortTake = "page",
+	threeLevels = false,
+	effortStudy = false,
+}: {
+	take: Take;
+	seed?: Seed;
+	narrow?: boolean;
+	effortTake?: EffortTake;
+	threeLevels?: boolean;
+	effortStudy?: boolean;
+}) {
+	const reduced = useReducedMotion() === true;
+	const [keyboard, setKeyboard] = useState(false);
+	const still = reduced || keyboard;
 	const [started, setStarted] = useState(seed !== "new");
 	const [engine, setEngine] = useState<Engine>(seed === "claude" ? "claude" : "spool");
-	const [modelId, setModelId] = useState(seed === "claude" ? "claude/default" : "chatgpt/astra");
+	const [modelId, setModelId] = useState(
+		seed === "claude" ? "claude/default" : threeLevels ? "anthropic/sonnet" : "chatgpt/astra",
+	);
 	const [effort, setEffort] = useState("medium");
 	const [favorites, setFavorites] = useState(["chatgpt/astra", "anthropic/opus", "anthropic/sonnet"]);
-	const [panel, setPanel] = useState<Panel>(seed === "effort" && take !== "compact" ? "effort" : "models");
+	const [panel, setPanel] = useState<Panel>(
+		seed === "permissions"
+			? "permissions"
+			: seed === "effort" && take !== "compact" && effortTake !== "buttons"
+				? "effort"
+				: "models",
+	);
+	const [permission, setPermission] = useState<PermissionMode>("ask");
 	const [query, setQuery] = useState(seed === "search" ? "astra" : "");
 	const [searching, setSearching] = useState(seed === "search");
 	const [all, setAll] = useState(false);
@@ -79,6 +109,8 @@ export function LeanPicker({ take, seed = "new", narrow = false }: { take: Take;
 	const [run, setRun] = useState(1);
 	const root = useRef<HTMLDivElement>(null);
 	const modelTrigger = useRef<HTMLButtonElement>(null);
+	const permissionTrigger = useRef<HTMLButtonElement>(null);
+	const effortTrigger = useRef<HTMLButtonElement>(null);
 	const offers = engine === "claude" ? CLAUDE : OFFERS;
 	const model = offers.find((offer) => offer.id === modelId) ?? offers[0]!;
 	const hasSearch = take !== "short" || searching;
@@ -93,7 +125,13 @@ export function LeanPicker({ take, seed = "new", narrow = false }: { take: Take;
 	useEffect(() => {
 		if (panel === "models" && hasSearch)
 			root.current?.querySelector<HTMLInputElement>('[aria-label="Search models"]')?.focus();
-	}, [panel, hasSearch]);
+		else if (panel === "effort" && take === "short")
+			root.current?.querySelector<HTMLButtonElement>('[aria-label="Effort levels"] [aria-pressed="true"]')?.focus();
+	}, [panel, hasSearch, take]);
+	const backToModels = () => {
+		setPanel("models");
+		requestAnimationFrame(() => effortTrigger.current?.focus());
+	};
 	const toggle = (next: Panel) => {
 		setQuery("");
 		setSearching(false);
@@ -145,10 +183,27 @@ export function LeanPicker({ take, seed = "new", narrow = false }: { take: Take;
 					aria-pressed={effort === level}
 					onClick={() => {
 						setEffort(level);
-						if (take !== "compact") close();
+						if (take === "inline") close();
+					}}
+					onKeyDown={(event) => {
+						if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+						event.preventDefault();
+						const options = [
+							...(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("button") ?? []),
+						];
+						const index = options.indexOf(event.currentTarget);
+						const step =
+							event.key === "ArrowDown" ? 3 : event.key === "ArrowUp" ? -3 : event.key === "ArrowRight" ? 1 : -1;
+						const next =
+							event.key === "Home"
+								? 0
+								: event.key === "End"
+									? options.length - 1
+									: (index + step + options.length) % options.length;
+						options[next]?.focus();
 					}}
 					className={cn(
-						"h-8 rounded-sm type-detail transition-colors hover:bg-raised",
+						"h-8 rounded-sm type-detail transition-colors duration-150 hover:bg-raised focus-visible:outline focus-visible:outline-1 focus-visible:outline-muted motion-reduce:transition-none",
 						effort === level ? "bg-raised text-text" : "text-muted",
 					)}
 				>
@@ -295,7 +350,7 @@ export function LeanPicker({ take, seed = "new", narrow = false }: { take: Take;
 			data-lean-menu={take}
 			className={cn(
 				"overflow-hidden border-border-raised bg-surface",
-				take === "inline" ? "border-b" : "rounded-md border",
+				take === "inline" ? "border-b" : take === "short" ? "" : "rounded-md border",
 			)}
 		>
 			{hasSearch ? searchField : null}
@@ -337,11 +392,59 @@ export function LeanPicker({ take, seed = "new", narrow = false }: { take: Take;
 					{expandedEffort ? effortOptions : null}
 				</div>
 			) : null}
+			{take === "short" && !searching && model.levels.length > 0 ? (
+				<div className="border-border-raised border-t">
+					{effortTake === "page" ? (
+						<button
+							type="button"
+							ref={effortTrigger}
+							aria-label="Change effort"
+							onClick={() => setPanel("effort")}
+							className="flex h-10 w-full items-center justify-between px-3 text-muted hover:text-text type-control"
+						>
+							<span>Effort</span>
+							<span className="flex items-center gap-2 type-detail">
+								{effort}
+								<ChevronIcon open={false} className="h-2 w-2" />
+							</span>
+						</button>
+					) : (
+						<>
+							<div className="flex h-8 items-center px-3 pt-2 text-muted type-control">Effort</div>
+							{effortOptions}
+						</>
+					)}
+				</div>
+			) : null}
 			{take === "inline" && query ? (
 				<p className="border-border-raised border-t px-3 py-2 text-muted type-caption">
 					Searching every connected model.
 				</p>
 			) : null}
+		</section>
+	);
+	const effortPage = (
+		<section aria-label="Choose effort" data-effort-page="">
+			<div className="flex h-11 items-center gap-2 border-border-raised border-b px-2 text-muted type-control">
+				<button
+					type="button"
+					aria-label="Back to models"
+					onClick={backToModels}
+					className="flex h-7 w-7 items-center justify-center rounded-sm hover:bg-raised hover:text-text"
+				>
+					←
+				</button>
+				<span className="flex-1">Effort</span>
+				<button
+					type="button"
+					aria-label="Close effort"
+					onClick={close}
+					className="flex h-7 w-7 items-center justify-center rounded-sm hover:bg-raised hover:text-text"
+				>
+					×
+				</button>
+			</div>
+			{effortOptions}
 		</section>
 	);
 	const nav = (
@@ -418,8 +521,9 @@ export function LeanPicker({ take, seed = "new", narrow = false }: { take: Take;
 				type="button"
 				ref={modelTrigger}
 				aria-label="Choose model"
-				aria-expanded={panel === "models"}
-				onClick={() => toggle("models")}
+				aria-expanded={panel === "models" || (take === "short" && panel === "effort")}
+				onClick={() => (panel === "effort" && take === "short" ? close() : toggle("models"))}
+				title={`${model.name}${model.levels.length > 0 ? ` · ${effort}` : ""}`}
 				className={cn(CONTROL, "relative z-30 min-w-0")}
 			>
 				<span data-chosen-model="" className="truncate">
@@ -427,7 +531,34 @@ export function LeanPicker({ take, seed = "new", narrow = false }: { take: Take;
 				</span>
 				<ChevronIcon open={panel === "models"} className="h-2 w-2 shrink-0" />
 			</button>
-			{take !== "compact" && model.levels.length > 0 ? (
+			{take === "short" ? (
+				<button
+					type="button"
+					ref={permissionTrigger}
+					data-permission-trigger=""
+					aria-label={`Agent permissions: ${permission}`}
+					aria-haspopup="menu"
+					aria-expanded={panel === "permissions"}
+					onClick={() => toggle("permissions")}
+					className={cn(CONTROL, "relative z-30 shrink-0")}
+				>
+					{permission}
+					<ChevronIcon open={panel === "permissions"} className="h-2 w-2" />
+				</button>
+			) : null}
+			{take === "short" && panel === "permissions" ? (
+				<PermissionMenu
+					mode={permission}
+					engine={engine}
+					trigger={permissionTrigger}
+					onChange={(next) => {
+						setPermission(next);
+						setPanel(null);
+					}}
+					onClose={() => setPanel(null)}
+				/>
+			) : null}
+			{take === "inline" && model.levels.length > 0 ? (
 				<button
 					type="button"
 					aria-label="Change effort"
@@ -439,10 +570,19 @@ export function LeanPicker({ take, seed = "new", narrow = false }: { take: Take;
 					<ChevronIcon open={panel === "effort"} className="h-2 w-2" />
 				</button>
 			) : null}
-			{panel === "models" && take !== "inline" ? (
+			{take === "short" && panel !== "permissions" && panel !== "agent" && panel !== "new" ? (
+				<PickerPopover
+					open={panel === "models" || panel === "effort"}
+					view={panel === "effort" ? "effort" : searching ? "search" : "models"}
+					still={still}
+				>
+					{panel === "effort" ? effortPage : picker}
+				</PickerPopover>
+			) : null}
+			{panel === "models" && take === "compact" ? (
 				<div className="absolute bottom-full left-0 z-30 mb-2 w-[320px] max-w-full">{picker}</div>
 			) : null}
-			{panel === "effort" ? (
+			{panel === "effort" && take === "inline" ? (
 				<section
 					aria-label="Choose effort"
 					className="absolute right-0 bottom-full z-30 mb-2 w-[264px] max-w-full overflow-hidden rounded-md border border-border-raised bg-surface"
@@ -464,11 +604,15 @@ export function LeanPicker({ take, seed = "new", narrow = false }: { take: Take;
 			data-picker-take={take}
 			data-started={started}
 			data-engine={engine}
+			data-effort-take={take === "short" ? effortTake : undefined}
 			className="flex h-full flex-col bg-bg text-text"
+			onPointerDownCapture={() => setKeyboard(false)}
+			onKeyDownCapture={() => setKeyboard(true)}
 			onKeyDown={(event) => {
 				if (event.key === "Escape" && panel !== null) {
 					event.stopPropagation();
-					close();
+					if (panel === "effort" && take === "short") backToModels();
+					else close();
 				}
 			}}
 		>
@@ -551,8 +695,16 @@ export function LeanPicker({ take, seed = "new", narrow = false }: { take: Take;
 				</SpoolShell>
 			</div>
 			<div className="flex h-12 shrink-0 items-center gap-5 border-border border-t px-5">
-				<span className="text-text type-control">{TAKES[take].name}</span>
-				<span className="text-muted type-label">{TAKES[take].note}</span>
+				<span className="text-text type-control">
+					{effortStudy ? (effortTake === "page" ? "Effort in one step" : "Effort underneath") : TAKES[take].name}
+				</span>
+				<span className="text-muted type-label">
+					{effortStudy
+						? effortTake === "page"
+							? "A quiet row opens the effort buttons inside this picker."
+							: "Effort buttons stay visible underneath your models."
+						: TAKES[take].note}
+				</span>
 				<span className="ml-auto text-muted type-detail">
 					{narrow
 						? "300px rail"
