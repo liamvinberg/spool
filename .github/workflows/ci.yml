@@ -7,14 +7,35 @@ on:
   workflow_dispatch:
 
 jobs:
-  gates:
-    # Linux: the suite is portable, and macOS bills at roughly ten times the
-    # rate. The four darwin-only tests self-skip here; `darwin-gates` and the
-    # release gate in publish.yml are where they run.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.scope.outputs.full }}
+      design: ${{ steps.scope.outputs.design }}
+      desktop: ${{ steps.scope.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - id: scope
+        run: node --experimental-strip-types .github/scripts/ci-scope.ts
+
+  tests:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     concurrency:
-      group: ci-${{ github.ref }}
+      group: ci-tests-${{ github.ref }}-${{ matrix.shard }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v6
@@ -27,15 +48,47 @@ jobs:
       # --with-deps: the browser tests launch headless-shell, and the runner
       # image does not carry every shared library it links against.
       - run: pnpm exec playwright-core install --with-deps chromium-headless-shell
+      - run: pnpm exec vitest run --shard=${{ matrix.shard }}/3 --reporter=default --reporter=json --outputFile=${{ runner.temp }}/tests.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: tests-${{ matrix.shard }}
+          path: ${{ runner.temp }}/tests.json
+          retention-days: 7
+
+  quality:
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
-      - run: pnpm test
       - run: pnpm check
       - run: pnpm build
 
+  gates:
+    # Publishing requires this full-validation job to have actually succeeded.
+    needs: [changes, tests, quality]
+    if: ${{ !cancelled() && needs.changes.outputs.full == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require all test shards and code checks
+        env:
+          TESTS: ${{ needs.tests.result }}
+          QUALITY: ${{ needs.quality.result }}
+        run: test "$TESTS" = success && test "$QUALITY" = success
+
   darwin-gates:
     # The darwin-only coverage (launchd plist validation, machine state) on
-    # demand. Every release already reruns the full suite on macOS before it
-    # publishes, so this is for checking a change between releases.
+    # demand. Publishing checks the macOS-only cases after full Linux CI.
     if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     timeout-minutes: 15
@@ -61,3 +114,47 @@ jobs:
       - run: pnpm --dir desktop typecheck
       - run: pnpm --dir desktop test
       - run: pnpm --dir desktop smoke
+
+  design:
+    needs: changes
+    if: needs.changes.outputs.design == 'true' && needs.changes.outputs.full != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run src/ui/design-parity.test.ts
+
+  desktop:
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true' && github.event_name != 'workflow_dispatch'
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm --dir desktop install --frozen-lockfile
+      - run: pnpm --dir desktop typecheck
+      - run: pnpm --dir desktop test
+      - run: pnpm --dir desktop smoke
+
+  ci:
+    needs: [changes, tests, quality, gates, design, desktop, darwin-gates]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require every selected check to pass
+        env:
+          JOBS: ${{ toJSON(needs) }}
+        run: |
+          node -e 'const jobs = JSON.parse(process.env.JOBS); for (const [name, job] of Object.entries(jobs)) { console.log(`${name}: ${job.result}`); if (job.result !== "success" && job.result !== "skipped") process.exitCode = 1; }'

@@ -74,9 +74,41 @@ jobs:
           gh pr edit "$pr" --title "release: spool.page $version"
           gh pr view "$pr" --json body -q .body | sed -n '/^# Releases/,$p' | gh pr edit "$pr" --body-file -
 
-  publish:
+  validate:
     needs: release
     if: ${{ !cancelled() && github.repository == 'liamvinberg/spool' && (needs.release.outputs.published == 'true' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.revision.outputs.sha }}
+    steps:
+      # Keep the validation script from this workflow revision, including when
+      # recovering an older tag which predates the script.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - id: revision
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release.outputs.tag }}
+        run: |
+          sha=$(git rev-parse --verify --end-of-options "${TAG}^{commit}")
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Require full CI on the release commit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SHA: ${{ steps.revision.outputs.sha }}
+        run: node --experimental-strip-types .github/scripts/wait-for-ci.ts "$RELEASE_SHA"
+
+  publish:
+    needs: [release, validate]
+    if: ${{ !cancelled() && needs.validate.result == 'success' && github.repository == 'liamvinberg/spool' && (needs.release.outputs.published == 'true' || github.event_name == 'workflow_dispatch') }}
     # macOS: the release gate reruns the darwin-only coverage ci.yml skips.
     runs-on: macos-latest
     timeout-minutes: 20
@@ -86,7 +118,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release.outputs.tag }}
+          ref: ${{ needs.validate.outputs.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
@@ -95,14 +127,9 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
-      # The darwin-only coverage, which is the whole reason this gate is on macOS: five
-      # tests the linux job skips, in three files. It used to run all 150, and that is
-      # what kept releases from going out — four consecutive attempts each failed on a
-      # different timing-sensitive browser test, none of them darwin-specific, while
-      # 2,284 of 2,287 passed every time. The rest of the suite is linux's to prove and
-      # it does, on the same commit, on every push; what belongs here is only what linux
-      # cannot run. Merge a release on a green main and this gate is the last mile.
-      - run: pnpm vitest run src/autostart.test.ts src/cli.test.ts src/machine-state.test.ts
+      # Full Linux CI has passed on this exact commit. Only the platform cases
+      # remain here; the same files run as part of the full suite on macOS.
+      - run: pnpm exec vitest run src/autostart.test.ts src/cli.test.ts src/machine-state.test.ts -t "macOS only"
       - run: pnpm check
       # trusted publishing needs npm >= 11.5.1; node 22 ships npm 10
       - run: npm install -g npm@11
@@ -119,8 +146,8 @@ jobs:
   # publish step to have succeeded on that rerun, only for the version to be on
   # npm, which by then it is.
   dmg:
-    needs: [release, publish]
-    if: ${{ !cancelled() && github.repository == 'liamvinberg/spool' && (needs.release.outputs.published == 'true' || github.event_name == 'workflow_dispatch') }}
+    needs: [release, validate, publish]
+    if: ${{ !cancelled() && needs.validate.result == 'success' && github.repository == 'liamvinberg/spool' && (needs.release.outputs.published == 'true' || github.event_name == 'workflow_dispatch') }}
     # Pinned rather than macos-latest: this is the only job that signs and
     # notarizes, and moving Xcode under it unannounced is not worth the surprise
     # on a release day.
@@ -133,7 +160,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release.outputs.tag }}
+          ref: ${{ needs.validate.outputs.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: "22"

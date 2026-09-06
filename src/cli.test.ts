@@ -619,13 +619,6 @@ describe("spool cli", { timeout: 30_000 }, () => {
 		expect(result.stderr).toContain('"on" or "off"');
 	});
 
-	it.runIf(process.platform === "darwin")("autostart refuses a dogfood-split environment", () => {
-		const result = spool(["autostart"], makeTempDir(), undefined, { SPOOL_DIR: makeTempDir() });
-
-		expect(result.status).toBe(1);
-		expect(result.stderr).toContain("unset SPOOL_DIR");
-	});
-
 	it("upgrade refuses the checkout, pointing at git (#30)", () => {
 		const result = spool(["upgrade"], makeTempDir());
 
@@ -664,5 +657,14 @@ describe("spool cli", { timeout: 30_000 }, () => {
 
 		expect(result.status).toBe(0);
 		expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+	});
+
+	describe("macOS only", () => {
+		it.runIf(process.platform === "darwin")("autostart refuses a dogfood-split environment", () => {
+			const result = spool(["autostart"], makeTempDir(), undefined, { SPOOL_DIR: makeTempDir() });
+
+			expect(result.status).toBe(1);
+			expect(result.stderr).toContain("unset SPOOL_DIR");
+		});
 	});
 });
