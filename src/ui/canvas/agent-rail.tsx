@@ -2510,7 +2510,7 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 					 * into the sentence slot. It is absent outright until the binary warns — below
 					 * that the payload carries no utilization at all, so there is no gauge to draw.
 					 */}
-					{usage === null ? null : (
+					{usage === null || compact ? null : (
 						<>
 							<span
 								data-agent-usage=""
@@ -2653,6 +2653,11 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 							<span className="absolute inset-x-1.5 top-1.5">{says}</span>
 						</p>
 					)}
+					{compact && usage !== null ? (
+						<p data-agent-usage="" className="px-1.5 py-2 font-mono text-2xs text-muted leading-4">
+							{usage}
+						</p>
+					) : null}
 					{model.engine === "spool" ? (
 						<>
 							<MenuRule />

@@ -113,12 +113,30 @@ it("recovers a completed real edit through renewal and rate limits in the served
 	await rail.locator('[data-recovery="limit"]').waitFor();
 	await shot("limits-rail-known");
 	expect(await rail.locator('[data-recovery="limit"]').textContent()).toContain("Try again at");
+	await rail.getByRole("button", { name: "choose model", exact: true }).click();
+	const modelMenu = rail.locator("[data-agent-model-menu]");
+	await modelMenu.waitFor({ state: "visible" });
+	const usage = modelMenu.locator("[data-agent-usage]");
+	await expect.poll(() => usage.textContent()).toContain("OpenAI API key limit reached · resets");
+	await modelMenu.getByRole("button", { name: "high", exact: true }).waitFor({ state: "visible" });
+	await modelMenu.evaluate(async (element) => {
+		await Promise.all(element.getAnimations().map((animation) => animation.finished));
+	});
+	const usageBox = await usage.boundingBox();
+	const effortBox = await modelMenu.getByRole("button", { name: "high", exact: true }).boundingBox();
+	const connectBox = await modelMenu.getByRole("menuitem", { name: "Connect account…", exact: true }).boundingBox();
+	expect(usageBox?.y).toBeGreaterThanOrEqual((effortBox?.y ?? Infinity) + (effortBox?.height ?? 0));
+	expect((usageBox?.y ?? Infinity) + (usageBox?.height ?? 0)).toBeLessThan(connectBox?.y ?? 0);
+	await shot("limits-rail-models");
+	await modelMenu.press("Escape");
+	await modelMenu.waitFor({ state: "hidden" });
 	failure("429 Rate limit reached");
 	await rail.getByRole("button", { name: "retry", exact: true }).click();
 	await expect.poll(() => rail.locator('[data-recovery="limit"]').textContent()).not.toContain("Try again at");
 	await shot("limits-rail-unknown");
 	await rail.getByRole("button", { name: "choose model", exact: true }).click();
-	await shot("limits-rail-models");
+	await modelMenu.waitFor({ state: "visible" });
+	await expect.poll(() => usage.textContent()).toBe("OpenAI API key limit reached");
 	await rail
 		.locator("[data-agent-model-menu] button")
 		.filter({ hasText: "Second image model" })
@@ -137,8 +155,12 @@ it("recovers a completed real edit through renewal and rate limits in the served
 		.filter({ hasText: "Anthropic API key" })
 		.first()
 		.click();
-	await rail.getByRole("button", { name: "continue with this model", exact: true }).waitFor();
+	await rail.getByRole("button", { name: "continue with this model", exact: true }).waitFor({ state: "visible" });
+	await modelMenu.waitFor({ state: "hidden" });
+	await expect.poll(() => rail.locator("[data-agent-model]").textContent()).toContain("Test image model");
+	expect(await field.inputValue()).toBe("Keep the total aligned with the items.");
 	expect(calls()).toHaveLength(1);
+	await shot("limits-rail-continue");
 	await rail.getByRole("button", { name: "continue with this model", exact: true }).click();
 	await expect.poll(() => rail.textContent()).toContain("Saved reply 1.");
 	expect(await field.inputValue()).toBe("Keep the total aligned with the items.");
