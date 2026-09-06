@@ -20,6 +20,7 @@ import { BundledCatalog } from "./bundled-catalog";
 import { BundledCommandPolicy, BundledCommandTurn } from "./bundled-commands";
 import { BUNDLED_CONNECTIONS, connectionLabel } from "./bundled-connections";
 import { BundledFilePolicy, BundledFileTurn } from "./bundled-files";
+import { bundledChatGPTOAuth } from "./bundled-oauth";
 import type { BundledReply, BundledRequest } from "./bundled-protocol";
 import { BundledQuestionTurn } from "./bundled-questions";
 import { bundledResources } from "./bundled-resources";
@@ -69,6 +70,9 @@ export class BundledRuntime {
 			refreshOnCreate: false,
 			allowModelNetwork: false,
 		});
+		const chatGPT = models.getProvider("openai-codex");
+		if (!chatGPT) throw new Error("The bundled ChatGPT provider is missing");
+		models.registerNativeProvider({ ...chatGPT, auth: { ...chatGPT.auth, oauth: await bundledChatGPTOAuth() } });
 		catalog.install(models);
 		await catalog.restore(models);
 		return new BundledRuntime(directory, credentials, models, writePrivate, 60_000, catalog);
