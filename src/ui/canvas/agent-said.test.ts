@@ -231,6 +231,31 @@ describe("the agent's words arriving", () => {
 		expect(host.querySelector("[data-agent-paragraph]")).toBe(first);
 	});
 
+	it("keeps waiting for a paragraph when its timer wakes before the deadline", () => {
+		clock();
+		const { host, redraw } = draw(paragraphs("", false));
+		const schedule = globalThis.setTimeout.bind(globalThis);
+		// Native timers may wake just before the performance clock reaches the
+		// deadline. Deliver that first wake without another stream update.
+		const timer = vi
+			.spyOn(window, "setTimeout")
+			.mockImplementationOnce((callback, delay, ...args) =>
+				schedule(callback, Math.max(0, (delay ?? 0) - 1), ...args),
+			);
+		onTestFinished(() => {
+			timer.mockRestore();
+		});
+		redraw(paragraphs("one\n\ntwo", true));
+		const first = host.querySelector("[data-agent-paragraph]");
+		expect(shown(host)).toEqual(["one"]);
+		wait(UNIT_GAP_MS - 1);
+		expect(shown(host)).toEqual(["one"]);
+		wait(1);
+		expect(shown(host)).toEqual(["one", "two"]);
+		expect(host.querySelector("[data-agent-paragraph]")).toBe(first);
+		expect(host.querySelector("[data-agent-caret]")).toBeNull();
+	});
+
 	it("keeps a fence whole while it arrives", () => {
 		clock();
 		const { host, redraw } = draw(paragraphs("", false));

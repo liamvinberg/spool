@@ -294,13 +294,21 @@ export function Paragraphs({
 		});
 	}
 	mounted.current = true;
-	// wake exactly when the next held paragraph is due, and not before
+	// A timer can wake before the performance clock reaches its deadline. Keep
+	// waiting for that paragraph, even after the stream has stopped redrawing.
 	useEffect(() => {
 		if (next === null) return;
-		const timer = window.setTimeout(
-			() => wake((count) => count + 1),
-			Math.max(0, Math.ceil(next - performance.now())),
-		);
+		const deadline = next;
+		let timer: number;
+		const arrive = () => {
+			const remaining = deadline - performance.now();
+			if (remaining > 0) {
+				timer = window.setTimeout(arrive, Math.ceil(remaining));
+				return;
+			}
+			wake((count) => count + 1);
+		};
+		timer = window.setTimeout(arrive, Math.max(0, Math.ceil(deadline - performance.now())));
 		return () => window.clearTimeout(timer);
 	}, [next]);
 
