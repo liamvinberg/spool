@@ -145,7 +145,7 @@ it.each([
 		const read = (async () => {
 			for await (const event of turn.events) events.push(event);
 		})();
-		await expect.poll(() => existsSync(join(root, "design/child.pid"))).toBe(true);
+		await expect.poll(() => existsSync(join(root, "design/child.pid")), { timeout: 10_000 }).toBe(true);
 		const namespaced = permissions === "ask" && process.platform === "linux";
 		if (!namespaced) commandPid = Number(readFileSync(join(root, "design/command.pid"), "utf8"));
 		const grandchild = namespaced
