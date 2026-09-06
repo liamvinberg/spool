@@ -31,6 +31,7 @@ export type RecoverySeed =
 	| "denied"
 	| "quiet"
 	| "question"
+	| "edits"
 	| "bypass"
 	| "settings";
 type Engine = "spool" | "claude";
@@ -104,7 +105,19 @@ const EMPTY: Omit<Thread, "id" | "engine"> = {
 const QUIET = "font-mono text-2xs leading-3";
 const textNote = (text: string, count: number): PlayEntry => ({ key: `note-${count}`, kind: "note", text });
 
-export function EngineRecovery({ seed, buttons = "stack" }: { seed: RecoverySeed; buttons?: "stack" | "row" }) {
+export function EngineRecovery({
+	seed,
+	buttons = "row",
+	permissionFooter = false,
+	railWidth = 420,
+	initialModel,
+}: {
+	seed: RecoverySeed;
+	buttons?: "stack" | "row";
+	permissionFooter?: boolean;
+	railWidth?: number;
+	initialModel?: string;
+}) {
 	const isClaude = seed.startsWith("claude-") && seed !== "claude-choice";
 	const isLimit = seed.startsWith("limit");
 	const initialRequest: Access | null =
@@ -117,7 +130,7 @@ export function EngineRecovery({ seed, buttons = "stack" }: { seed: RecoverySeed
 		...EMPTY,
 		id: 1,
 		engine: isClaude ? "claude" : "spool",
-		model: isClaude ? "default" : "chatgpt/Astra",
+		model: isClaude ? "default" : (initialModel ?? "chatgpt/Astra"),
 		started: seed !== "claude-first" && seed !== "claude-choice",
 		entries: seed === "claude-first" || seed === "claude-choice" ? [] : HISTORY,
 		draft: seed === "claude-login" || isLimit ? "Keep the total aligned with the items." : ASK,
@@ -160,7 +173,7 @@ export function EngineRecovery({ seed, buttons = "stack" }: { seed: RecoverySeed
 	);
 	const [checking, setChecking] = useState(false);
 	const [providerReady, setProviderReady] = useState(false);
-	const [mode, setMode] = useState<Mode>(seed === "bypass" ? "bypass" : "ask");
+	const [mode, setMode] = useState<Mode>(seed === "bypass" ? "bypass" : seed === "edits" ? "edits" : "ask");
 	const [settingsOpen, setSettingsOpen] = useState(seed === "settings");
 	const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	useEffect(
@@ -347,6 +360,17 @@ export function EngineRecovery({ seed, buttons = "stack" }: { seed: RecoverySeed
 			notice={note}
 			scope={current.engine === "spool" ? scope : undefined}
 			modelTake="favorites"
+			permissions={
+				permissionFooter && current.engine === "spool"
+					? {
+							mode,
+							onOpen: () => {
+								setMenu(null);
+								setSettingsOpen(true);
+							},
+						}
+					: undefined
+			}
 			onManage={() => {}}
 			onModel={(model) => {
 				const levels = models.find((entry) => entry.value === model)?.supportedEffortLevels ?? [];
@@ -435,7 +459,7 @@ export function EngineRecovery({ seed, buttons = "stack" }: { seed: RecoverySeed
 					{ name: "site", frames: [] },
 				]}
 				selected="receipt"
-				railWidth={420}
+				railWidth={railWidth}
 				railLabel="agent"
 				rail={
 					<div
@@ -700,7 +724,7 @@ function AccessPrompt({
 					</button>
 				))}
 			</div>
-			<QuietAction onClick={onSettings}>agent permissions…</QuietAction>
+			<QuietAction onClick={onSettings}>bypass approvals in settings…</QuietAction>
 		</div>
 	);
 }
@@ -716,7 +740,11 @@ function PermissionSettings({
 }) {
 	const ref = useRef<HTMLDivElement>(null);
 	useEffect(() => {
+		const previous = document.activeElement;
 		ref.current?.focus();
+		return () => {
+			if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+		};
 	}, []);
 	return (
 		<div

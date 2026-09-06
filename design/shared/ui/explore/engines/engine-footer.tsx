@@ -29,6 +29,7 @@ export function EngineFooter({
 	modelTake = "settings",
 	claudeState = "ready",
 	notice,
+	permissions,
 }: {
 	engine: Engine;
 	model: string;
@@ -46,6 +47,7 @@ export function EngineFooter({
 	modelTake?: ModelTake;
 	claudeState?: "ready" | "missing" | "signed-out";
 	notice?: string | undefined;
+	permissions?: { mode: "ask" | "edits" | "bypass"; onOpen: () => void } | undefined;
 }) {
 	const [over, setOver] = useState<string | null>(null);
 	const current = models.find((entry) => entry.value === model);
@@ -66,16 +68,18 @@ export function EngineFooter({
 		...levels.map((level) => EFFORT_SAYS[level] ?? ""),
 	].reduce((a, b) => (a.length > b.length ? a : b), "");
 	return (
-		<div className="relative flex min-w-0 flex-1">
+		<div className="relative flex min-w-0 flex-1 items-center gap-4">
 			<button
 				type="button"
 				data-combined-trigger=""
 				aria-label="Choose engine and model"
 				aria-expanded={open}
+				title={`${NAMES[engine]} · ${current?.displayName ?? "Connect account"}`}
 				onClick={onToggle}
 				className={cn(
 					QUIET,
 					"relative z-30 flex min-w-0 items-center gap-1 transition-colors duration-150",
+					permissions !== undefined && "flex-1",
 					open ? "text-muted" : "text-muted/45 hover:text-muted",
 				)}
 			>
@@ -84,6 +88,19 @@ export function EngineFooter({
 				</span>
 				<ChevronIcon open={open} className="h-2 w-2 shrink-0" />
 			</button>
+			{permissions === undefined ? null : (
+				<button
+					type="button"
+					data-permission-trigger=""
+					aria-label={`Agent permissions: ${permissions.mode}. Open settings`}
+					title={`Agent permissions: ${permissions.mode}. Change in settings.`}
+					onClick={permissions.onOpen}
+					className={cn(QUIET, "relative z-30 flex shrink-0 items-center gap-1 py-1 text-muted hover:text-text")}
+				>
+					{permissions.mode}
+					<ChevronIcon open={false} className="h-2 w-2 shrink-0" />
+				</button>
+			)}
 			{open ? (
 				<div
 					data-combined-menu=""
