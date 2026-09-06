@@ -2328,17 +2328,23 @@ it("runs a queued walk after a pending transition settles", { timeout: 60_000 },
 	const project = await serveProject();
 	writeFrame(
 		project.root,
-		"start",
-		'export default function Start() { return <main id="start"><button id="to-target" data-go="target">target</button></main>; }\n',
+		"origin",
+		'export default function Origin() { return <main id="origin"><button id="to-target" data-go="target">target</button></main>; }\n',
 	);
 	writeFrame(project.root, "target", 'export default function Target() { return <main id="target">target</main>; }\n');
-	writeDesignFile(project.root, "frames/start/frame.json", '{ "x": 0, "y": 0, "w": 390, "h": 844 }\n');
-	writeDesignFile(project.root, "frames/target/frame.json", '{ "x": 400, "y": 0, "w": 390, "h": 844 }\n');
+	writeFrame(project.root, "start", 'export default function Start() { return <main id="start">start</main>; }\n');
+	for (const [index, frame] of ["origin", "target", "start"].entries()) {
+		writeDesignFile(
+			project.root,
+			`frames/${frame}/frame.json`,
+			JSON.stringify({ x: index * 400, y: 0, w: 390, h: 844 }),
+		);
+	}
 
 	const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 	onTestFinished(() => page.close());
 	await installPlayerTransitionGate(page);
-	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=start`);
+	await page.goto(`${project.url}/play/${encodeURIComponent(project.name)}?frame=origin`);
 	const inner = page.frameLocator("#spool-player");
 	await inner.locator("#to-target").waitFor();
 	await page.evaluate(() => {
@@ -2361,10 +2367,13 @@ it("runs a queued walk after a pending transition settles", { timeout: 60_000 },
 	// far past MAX_PENDING_CONTROLLER_COMMANDS: the oldest are dropped, and
 	// whatever survives still drains once the transition settles
 	await summonEdgeBar(page);
+	await expect.poll(() => page.locator(".spool-bar-name").textContent()).toBe("origin");
 	await page.locator("#spool-switcher").click();
 	await page.evaluate(() => {
-		const row = document.querySelector<HTMLButtonElement>(".spool-picker-row");
-		if (row === null) throw new Error("missing switcher row");
+		const row = [...document.querySelectorAll<HTMLButtonElement>(".spool-picker-row")].find(
+			(row) => row.textContent === "start",
+		);
+		if (row === undefined || row.classList.contains("is-here")) throw new Error("missing queued destination");
 		for (let index = 0; index < 40; index++) row.click();
 	});
 	await page.evaluate(() => {
@@ -2375,6 +2384,8 @@ it("runs a queued walk after a pending transition settles", { timeout: 60_000 },
 		).__spoolTransitionGate.release();
 	});
 
+	// Neither the initial frame nor the held destination contains #start, so
+	// only a drained walk can satisfy this after release.
 	await inner.locator("#start").waitFor({ timeout: 5_000 });
 	await expect.poll(() => page.locator(".spool-bar-name").textContent()).toBe("start");
 });
