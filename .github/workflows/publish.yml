@@ -98,7 +98,7 @@ jobs:
         env:
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release.outputs.tag }}
         run: |
-          sha=$(git rev-parse --verify --end-of-options "${TAG}^{commit}")
+          sha=$(git rev-parse --verify --end-of-options "refs/tags/${TAG}^{commit}")
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Require full CI on the release commit
         env:
@@ -129,7 +129,9 @@ jobs:
       - run: pnpm typecheck
       # Full Linux CI has passed on this exact commit. Only the platform cases
       # remain here; the same files run as part of the full suite on macOS.
-      - run: pnpm exec vitest run src/autostart.test.ts src/cli.test.ts src/machine-state.test.ts -t "macOS only"
+      - run: pnpm exec vitest run src/autostart.test.ts src/cli.test.ts src/machine-state.test.ts
+        env:
+          SPOOL_TEST_DARWIN: "1"
       - run: pnpm check
       # trusted publishing needs npm >= 11.5.1; node 22 ships npm 10
       - run: npm install -g npm@11

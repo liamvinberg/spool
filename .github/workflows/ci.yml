@@ -55,6 +55,7 @@ jobs:
           name: tests-${{ matrix.shard }}
           path: ${{ runner.temp }}/tests.json
           retention-days: 7
+          overwrite: true
 
   quality:
     needs: changes
