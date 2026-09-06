@@ -7,6 +7,7 @@ export const BUNDLED_CONNECTIONS = [
 		name,
 		label: `${name} API key`,
 	})),
+	{ provider: "fireworks", method: "api_key", name: "Fireworks AI", label: "Fireworks AI API key" },
 ] as const;
 
 export function connectionLabel(provider: string, method: string): string {
