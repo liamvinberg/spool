@@ -2,6 +2,7 @@ import { hc } from "hono/client";
 import type { Attachment } from "../attachment";
 import type { Cover } from "../cover";
 import type { AgentReply } from "../daemon/agent-control";
+import { type AgentEngineId, type AgentLoginProgress, isAgentEngineId } from "../daemon/agent-engine";
 import type { AgentEvent } from "../daemon/agent-events";
 import type { AgentAsk } from "../daemon/agent-offer";
 import type { AgentLogin } from "../daemon/agent-preflight";
@@ -1113,7 +1114,12 @@ async function readTurn(
 /** the POST that says something, which is opened once for a turn and never again */
 function sayTurn(
 	project: string,
-	said: { readonly thread: string; readonly turn: string; readonly saying: readonly AgentSaying[] },
+	said: {
+		readonly thread: string;
+		readonly turn: string;
+		readonly saying: readonly AgentSaying[];
+		readonly engine?: AgentEngineId;
+	},
 	signal: AbortSignal,
 ): Promise<Response> {
 	// `init` is spread over what the client built, so `headers` here would replace its own
@@ -1123,6 +1129,7 @@ function sayTurn(
 			param: { project },
 			json: {
 				thread: said.thread,
+				...(said.engine === undefined ? {} : { engine: said.engine }),
 				turn: said.turn,
 				said: said.saying.map((one) => ({
 					prompt: one.prompt,
@@ -1180,6 +1187,7 @@ export function followAgentTurn(
 					readonly thread: string;
 					/** what the rail calls this turn, which is the address its stop names (#165) */
 					readonly turn: string;
+					readonly engine?: AgentEngineId;
 					/** one message, or the several a queue fired as one turn (#170) */
 					readonly saying: readonly AgentSaying[];
 				};
@@ -1354,9 +1362,16 @@ export async function closeAgentThread(project: string, thread: string): Promise
  * machine with no agent on it: only a look that came back and found nothing draws a wall,
  * because a wall is spool saying it looked.
  */
-export async function fetchAgentInstalled(project: string): Promise<boolean | null> {
+export async function fetchAgentInstalled(
+	project: string,
+	engine?: AgentEngineId,
+	thread?: string,
+): Promise<boolean | null> {
 	try {
-		const res = await client.api.p[":project"].agent.installed.$get({ param: { project } });
+		const res = await client.api.p[":project"].agent.installed.$get({
+			param: { project },
+			query: { ...(engine === undefined ? {} : { engine }), ...(thread ? { thread } : {}) },
+		});
 		if (!res.ok) return null;
 		const { installed } = (await res.json()) as { installed?: unknown };
 		return typeof installed === "boolean" ? installed : null;
@@ -1372,9 +1387,16 @@ export async function fetchAgentInstalled(project: string): Promise<boolean | nu
  * `check again`: never at boot and never before a send. Null where the door said nothing,
  * which the strip reads as the answer it already had.
  */
-export async function fetchAgentLogin(project: string): Promise<AgentLogin | null> {
+export async function fetchAgentLogin(
+	project: string,
+	engine?: AgentEngineId,
+	thread?: string,
+): Promise<AgentLogin | null> {
 	try {
-		const res = await client.api.p[":project"].agent.login.$get({ param: { project } });
+		const res = await client.api.p[":project"].agent.login.$get({
+			param: { project },
+			query: { ...(engine === undefined ? {} : { engine }), ...(thread ? { thread } : {}) },
+		});
 		if (!res.ok) return null;
 		const login = (await res.json()) as { signedIn?: unknown; account?: unknown };
 		if (typeof login.signedIn !== "boolean") return null;
@@ -1396,8 +1418,11 @@ export async function fetchAgentLogin(project: string): Promise<AgentLogin | nul
  * rows rather than the rail its render. Undefined where the door said no, which is not
  * the same fact as a machine with nothing to pick — the footer keeps what it had.
  */
-export async function agentModelOffer(project: string, thread: string): Promise<unknown> {
-	const res = await client.api.p[":project"].agent.threads[":thread"].models.$get({ param: { project, thread } });
+export async function agentModelOffer(project: string, thread: string, engine?: AgentEngineId): Promise<unknown> {
+	const res = await client.api.p[":project"].agent.threads[":thread"].models.$get({
+		param: { project, thread },
+		query: engine === undefined ? {} : { engine },
+	});
 	return res.ok ? await res.json() : undefined;
 }
 
@@ -1409,10 +1434,43 @@ export async function agentModelOffer(project: string, thread: string): Promise<
  * than the press, is what moves the readout. An alias it will not take leaves the
  * report where it was, which is what the footer then says.
  */
-export async function chooseAgentModel(project: string, thread: string, next: AgentAsk): Promise<unknown> {
+export async function chooseAgentModel(
+	project: string,
+	thread: string,
+	next: AgentAsk,
+	engine?: AgentEngineId,
+): Promise<unknown> {
 	const res = await client.api.p[":project"].agent.threads[":thread"].model.$post({
 		param: { project, thread },
 		json: next,
+		query: engine === undefined ? {} : { engine },
 	});
 	return res.ok ? await res.json() : undefined;
+}
+
+export async function fetchEnginePreference(project: string): Promise<AgentEngineId> {
+	try {
+		const res = await client.api.p[":project"].agent.engines.$get({ param: { project } });
+		const value = (await res.json()) as { preferred?: unknown };
+		return isAgentEngineId(value.preferred) ? value.preferred : "spool";
+	} catch {
+		return "spool";
+	}
+}
+export async function accountOperation(
+	project: string,
+	operation:
+		| { action: "start"; provider: string; method: string }
+		| { action: "input"; id: string; value: string }
+		| { action: "cancel"; id: string }
+		| { action: "disconnect"; provider: string },
+): Promise<AgentLoginProgress> {
+	try {
+		const response = await client.api.p[":project"].agent.account.$post({ param: { project }, json: operation });
+		return response.ok
+			? ((await response.json()) as AgentLoginProgress)
+			: { kind: "error", message: "Could not connect the account. Try again." };
+	} catch {
+		return { kind: "error", message: "Could not reach the bundled engine. Try again." };
+	}
 }

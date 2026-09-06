@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentReply } from "../../daemon/agent-control";
+import type { AgentEngineId } from "../../daemon/agent-engine";
 import type { AgentLimit } from "../../daemon/agent-events";
 import type { ServedThread } from "../../daemon/agent-threads";
 import {
@@ -216,6 +217,8 @@ export interface AgentTurn {
  * is the list of them and the fact that the others are still running.
  */
 export interface AgentDeck {
+	readonly engine: AgentEngineId;
+	readonly chooseEngine: (engine: AgentEngineId) => void;
 	readonly threads: readonly Thread[];
 	readonly open: string;
 	readonly turn: AgentTurn;
@@ -248,6 +251,7 @@ export interface AgentDeck {
  * act.
  */
 interface Live {
+	engine: AgentEngineId;
 	readonly id: string;
 	/** everything this thread's earlier turns drew, which is the conversation so far */
 	before: readonly AgentEntry[];
@@ -354,6 +358,7 @@ interface Live {
 function born(id: string, over: Partial<Live> = {}): Live {
 	return {
 		id,
+		engine: "claude",
 		before: [],
 		after: [],
 		noted: 0,
@@ -409,6 +414,7 @@ function restored(stored: ServedThread): Live {
 	 */
 	const before = stored.live ? entries.slice(0, stored.kept) : stored.stopped ? cutPicture(entries) : entries;
 	return born(stored.id, {
+		engine: stored.engine,
 		before,
 		heldPlan: (stored.plan ?? null) as AgentPlan | null,
 		restored: true,
@@ -534,7 +540,7 @@ function archive(entries: readonly AgentEntry[], token: string): AgentEntry[] {
 	return settledPicture(entries).map((entry) => ({ ...entry, key: `${token}:${entry.key}` }));
 }
 
-export function useAgentThreads(project: string): AgentDeck {
+export function useAgentThreads(project: string, preferred: AgentEngineId = "claude"): AgentDeck {
 	const still = useStillness();
 	const threads = useRef(new Map<string, Live>());
 	const [open, setOpen] = useState("");
@@ -580,9 +586,11 @@ export function useAgentThreads(project: string): AgentDeck {
 	 * turn, and resumes it on every turn after — so the picture and the conversation are
 	 * addressed by the same string and the id wins whenever they disagree.
 	 */
+	const preference = useRef(preferred);
+	preference.current = preferred;
 	const start = useCallback((): Live => {
 		const id = crypto.randomUUID();
-		const thread = born(id);
+		const thread = born(id, { engine: preference.current });
 		threads.current.set(id, thread);
 		return thread;
 	}, []);
@@ -606,6 +614,7 @@ export function useAgentThreads(project: string): AgentDeck {
 			if (entries.length === 0) return;
 			thread.saved = Date.now();
 			void putAgentThread(project, thread.id, {
+				engine: thread.engine,
 				ask: askOf(entries),
 				life: storedLife(lifeFor(thread, openRef.current, shown)),
 				at: thread.at,
@@ -839,7 +848,12 @@ export function useAgentThreads(project: string): AgentDeck {
 					 */
 					const stopped = thread.stopping;
 					thread.stopping = false;
-					if (ending.kind !== "cut" && !stopped) fireRef.current(thread);
+					const failed = thread.events.some(
+						({ event }) =>
+							(event.kind === "ended" && event.ending === "failed") ||
+							(event.kind === "closed" && event.code !== 0),
+					);
+					if (ending.kind !== "cut" && !stopped && !(thread.engine === "spool" && failed)) fireRef.current(thread);
 					redraw();
 				},
 			};
@@ -850,6 +864,7 @@ export function useAgentThreads(project: string): AgentDeck {
 					: {
 							say: {
 								thread: thread.id,
+								engine: thread.engine,
 								turn: thread.named,
 								saying: opening.saying.map((words) => ({
 									prompt: words.text,
@@ -928,7 +943,7 @@ export function useAgentThreads(project: string): AgentDeck {
 				 * that ever fired one was a stream closing — and the next thing typed went out
 				 * ahead of them, which is the one order the queue exists to keep.
 				 */
-				fire(thread);
+				if (!(thread.engine === "spool" && one.stopped)) fire(thread);
 			}
 			// the row opens on something either way, so this only ever runs before it has:
 			// a project with nothing stored gets one fresh thread, which is what the rail
@@ -1029,6 +1044,19 @@ export function useAgentThreads(project: string): AgentDeck {
 	}, []);
 
 	const here = threads.current.get(open) ?? born(open);
+	useEffect(() => {
+		const current = threads.current.get(openRef.current);
+		if (
+			current !== undefined &&
+			!current.restored &&
+			!current.streaming &&
+			current.before.length === 0 &&
+			current.events.length === 0
+		) {
+			current.engine = preferred;
+			redraw();
+		}
+	}, [preferred, redraw]);
 	const seen = shownOf(here);
 	const phase = phaseOf(here, seen);
 	const entries = entriesOf(here, seen);
@@ -1217,7 +1245,7 @@ export function useAgentThreads(project: string): AgentDeck {
 		const thread = threads.current.get(openRef.current);
 		if (thread === undefined) return;
 		setCheckingOn(thread.id);
-		void fetchAgentLogin(project).then((login) => {
+		void fetchAgentLogin(project, thread.engine, thread.id).then((login) => {
 			setCheckingOn(null);
 			if (login?.signedIn !== true) {
 				note(thread, STILL_OUT, false);
@@ -1230,6 +1258,14 @@ export function useAgentThreads(project: string): AgentDeck {
 	}, [project, checkingOn, note, send]);
 
 	return {
+		engine: here.engine,
+		chooseEngine: (engine) => {
+			if (engine === here.engine) return;
+			preference.current = engine;
+			const next = start();
+			next.engine = engine;
+			setOpen(next.id);
+		},
 		threads: column,
 		open,
 		finished: here.restored && !here.continuable,

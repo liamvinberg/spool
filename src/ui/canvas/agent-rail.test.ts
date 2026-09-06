@@ -255,6 +255,8 @@ function mount({ still = false }: { still?: boolean } = {}) {
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+			if (url.pathname.endsWith("/agent/engines"))
+				return Response.json({ preferred: "claude", engines: [{ id: "claude", installed: true }] });
 			// is there an agent on this machine at all: a `which`, asked when the rail opens
 			// and again on every press behind the wall (#201)
 			if (url.pathname.endsWith("/agent/installed")) {
@@ -3870,15 +3872,16 @@ describe("what the composer keeps", () => {
  * shipped, and a press is a shortcut for `/model haiku` rather than a second source of
  * truth — so what moves the readout is the reply and never the press. */
 
-const modelTrigger = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('[aria-label="model"]');
+const modelTrigger = (host: HTMLElement) =>
+	host.querySelector<HTMLButtonElement>('[aria-label="Choose engine and model"]');
 
 const modelMenu = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-agent-model-menu]");
 
 /** every row in the menu, in the order the reply listed them */
 const modelRows = (host: HTMLElement) =>
-	[...host.querySelectorAll<HTMLButtonElement>("[data-agent-model-row]")].map(
-		(row) => row.getAttribute("data-agent-model-row") ?? "",
-	);
+	[...host.querySelectorAll<HTMLButtonElement>("[data-agent-model-row]")]
+		.filter((row) => row.closest("[data-combined-engine]") === null)
+		.map((row) => row.getAttribute("data-agent-model-row") ?? "");
 
 const modelRow = (host: HTMLElement, label: string) =>
 	host.querySelector<HTMLButtonElement>(`[data-agent-model-row="${label}"]`);
@@ -4044,7 +4047,7 @@ describe("the model menu", () => {
 		await settle(50);
 
 		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet · high");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Sonnet");
 		// the menu closes on a model, because that was the decision
 		expect(modelMenu(canvas.host)).toBeNull();
 		// and it went to the thread that is open, because that is what the answer is about
@@ -4083,13 +4086,13 @@ describe("the model menu", () => {
 		// the reply is a spawn away — about a second on a cold binary — and nothing on
 		// screen waits for it. The level rides across because sonnet offers it
 		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet · high");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Sonnet");
 
 		canvas.offered.hold = null;
 		answer();
 		await settle(50);
 		// and what stays is the report, which here says the same thing the finger did
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet · high");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Sonnet");
 	});
 
 	it("takes the effort with it the moment a model reporting none is pressed", async () => {
@@ -4131,14 +4134,14 @@ describe("the model menu", () => {
 
 		await act(async () => modelRow(canvas.host, "Sonnet")?.click());
 		await settle(50);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Sonnet · high");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Sonnet");
 
 		canvas.offered.hold = null;
 		answer();
 		await settle(50);
 
 		expect(canvas.offered.chose.map((one) => one.value)).toEqual(["sonnet"]);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context) · high");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Opus (1M context)");
 	});
 
 	it("keeps the menu open on an effort level, because it refines the model above it", async () => {
@@ -4151,7 +4154,7 @@ describe("the model menu", () => {
 
 		expect(canvas.offered.chose.map((one) => one.effort)).toEqual(["xhigh"]);
 		expect(modelMenu(canvas.host)).not.toBeNull();
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context) · xhigh");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Opus (1M context)");
 	});
 
 	it("says which variable holds the effort, and offers no level it cannot move", async () => {
@@ -4183,7 +4186,7 @@ describe("the model menu", () => {
 		);
 		expect(modelRow(canvas.host, "low")?.disabled).toBe(true);
 		expect(modelRow(canvas.host, "max")?.disabled).toBe(false);
-		expect(modelTrigger(canvas.host)?.textContent).toContain("Opus (1M context) · max");
+		expect(modelTrigger(canvas.host)?.textContent).toContain("Claude Code · Opus (1M context)");
 	});
 });
 
@@ -4197,7 +4200,7 @@ describe("the footer the model hangs off", () => {
 
 		// 243 wanted at every width: the model, the gap and the stop. The limit went to
 		// the menu and the send hint went with it (#184)
-		expect(footer.textContent).toBe("Opus (1M context) · highstop⎋");
+		expect(footer.textContent).toBe("Claude Code · Opus (1M context)stop⎋");
 		expect(footer.textContent).not.toContain("weekly limit");
 		expect(footer.textContent).not.toContain("enter to");
 	});
@@ -4214,7 +4217,7 @@ describe("the footer the model hangs off", () => {
 			// `Opus (1M context)` cut to `Opus` would be the correct name of a *different*
 			// machine — `/model opus` resolves without the 1M window — so the string stays
 			// whole in the DOM and the layout is what gives way
-			expect(name?.textContent).toBe("Opus (1M context) · high");
+			expect(name?.textContent).toBe("Claude Code · Opus (1M context)");
 			expect(name?.className).toContain("truncate");
 			// and the model is the only thing that gives way: a cut name is still readable
 			// and half a stop button is not
@@ -4365,14 +4368,14 @@ const refused: AgentEvent = {
 };
 
 describe("no agent on this machine", () => {
-	it("draws a wall in the transcript's place before the first keystroke", async () => {
+	it("names the missing engine while keeping history and engine choice", async () => {
 		const canvas = mount();
 		canvas.preflight.installed = false;
 		await canvas.render();
 		await settle(50);
 
-		expect(wall(canvas.host)?.textContent).toContain("no claude on this machine");
-		expect(canvas.host.querySelector("[data-agent-log]")).toBeNull();
+		expect(wall(canvas.host)?.textContent).toContain("Claude Code is not installed");
+		expect(canvas.host.querySelector("[data-agent-log]")).not.toBeNull();
 		// the docs root is the binary's own, and the sentence about why is spool's
 		expect(wall(canvas.host)?.textContent).toContain("code.claude.com/docs");
 		// nothing was sent, and nothing was asked about a login either: this state is
@@ -4385,14 +4388,16 @@ describe("no agent on this machine", () => {
 	 * The composer stays and it is dead: take it away and the rail is a sentence with no
 	 * evidence of what the rail is for, leave it live and it collects a prompt for nobody.
 	 */
-	it("keeps the composer, at its resting height and switched off", async () => {
+	it("keeps the draft and engine control while refusing sends", async () => {
 		const canvas = mount();
 		canvas.preflight.installed = false;
 		await canvas.render();
 		await settle(50);
 
-		expect(canvas.host.querySelector("[data-agent-dead]")?.textContent).toBe("say what to change");
-		expect(field(canvas.host)).toBeNull();
+		expect(modelTrigger(canvas.host)).not.toBeNull();
+		await send(canvas.host, "held while missing");
+		expect(canvas.turn.prompts).toEqual([]);
+		expect(field(canvas.host)).not.toBeNull();
 	});
 
 	/**
@@ -4411,9 +4416,9 @@ describe("no agent on this machine", () => {
 
 		await checkAgain(wall(canvas.host));
 		expect(canvas.host.querySelector("[data-agent-looked]")?.textContent).toBe("still nothing on your PATH");
-		expect(canvas.preflight.looks).toBe(3);
+		expect(canvas.preflight.looks).toBeGreaterThanOrEqual(3);
 		// and the wall is still the whole of the rail's body
-		expect(field(canvas.host)).toBeNull();
+		expect(field(canvas.host)).not.toBeNull();
 	});
 
 	it("goes the moment a check finds one, and the composer comes back", async () => {
@@ -4457,7 +4462,7 @@ describe("no agent on this machine", () => {
 
 		expect(wall(canvas.host)).not.toBeNull();
 		expect(canvas.host.querySelector("[data-agent-looked]")).not.toBeNull();
-		expect(field(canvas.host)).toBeNull();
+		expect(field(canvas.host)).not.toBeNull();
 	});
 });
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { AgentEngineId } from "../../daemon/agent-engine";
 import { type AgentAsk, type AgentOffer, modelOf, modelsOf } from "../../daemon/agent-offer";
 import { agentModelOffer, chooseAgentModel } from "../api";
 
@@ -202,6 +203,13 @@ export function pressedOffer(offer: AgentOffer, press: AgentAsk): AgentOffer {
 }
 
 export interface AgentModelDeck {
+	readonly engine?: AgentEngineId;
+	readonly project?: string;
+	readonly onEngine?: (engine: AgentEngineId) => void;
+	readonly started?: boolean;
+	readonly connect?: () => void;
+	readonly accountOpen?: boolean;
+	readonly closeAccount?: () => void;
 	readonly offer: AgentOffer;
 	/** the readout, and the trigger's own label */
 	readonly readout: string;
@@ -237,7 +245,8 @@ export interface AgentModelDeck {
  * arrives as nothing, which is the door failing, and which leaves the last true report on
  * screen rather than a claim nobody can now check.
  */
-export function useAgentModel(project: string, thread: string): AgentModelDeck {
+export function useAgentModel(project: string, thread: string, engine?: AgentEngineId): AgentModelDeck {
+	const [accountOpen, setAccountOpen] = useState(false);
 	const [reported, setReported] = useState<AgentOffer>(NO_OFFER);
 	/** the press no answer has come back for yet, and the thread it was made about */
 	const [pressed, setPressed] = useState<{ thread: string; ask: AgentAsk } | null>(null);
@@ -256,7 +265,7 @@ export function useAgentModel(project: string, thread: string): AgentModelDeck {
 		}
 		let live = true;
 		const at = presses.current;
-		void agentModelOffer(project, thread).then((answered) => {
+		void agentModelOffer(project, thread, engine).then((answered) => {
 			const read = offerOf(answered);
 			// dropped where the rail moved on, and where a press went out after this ask did:
 			// an answer to the older question knows nothing about the newer choice
@@ -265,7 +274,7 @@ export function useAgentModel(project: string, thread: string): AgentModelDeck {
 		return () => {
 			live = false;
 		};
-	}, [project, thread, asked]);
+	}, [project, thread, asked, engine]);
 
 	const choose = useCallback(
 		(next: AgentAsk) => {
@@ -276,7 +285,7 @@ export function useAgentModel(project: string, thread: string): AgentModelDeck {
 			// answers a second after the finger reads as broken. It is a claim and not a
 			// record: what the binary reports is still the only thing that stays
 			setPressed((held) => ({ thread, ask: held?.thread === thread ? { ...held.ask, ...next } : next }));
-			void chooseAgentModel(project, thread, next)
+			void chooseAgentModel(project, thread, next, engine)
 				.then((answered) => offerOf(answered))
 				// a door that failed answers nothing, which is the same as an answer with nothing
 				// in it here: the claim comes off the screen either way
@@ -288,7 +297,7 @@ export function useAgentModel(project: string, thread: string): AgentModelDeck {
 					setPressed(null);
 				});
 		},
-		[project, thread],
+		[project, thread, engine],
 	);
 
 	// the press only ever answers for the thread it was made about, so a rail that moved
@@ -296,6 +305,11 @@ export function useAgentModel(project: string, thread: string): AgentModelDeck {
 	const offer = pressed === null || pressed.thread !== thread ? reported : pressedOffer(reported, pressed.ask);
 
 	return {
+		...(engine === undefined ? {} : { engine }),
+		project,
+		accountOpen,
+		connect: () => setAccountOpen(true),
+		closeAccount: () => setAccountOpen(false),
 		offer,
 		readout: modelReadout(offer),
 		levels: effortLevels(offer),

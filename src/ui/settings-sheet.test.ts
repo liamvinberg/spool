@@ -72,10 +72,11 @@ it("draws every general entry as a row from the registry, in bands named by file
 	const text = dialog?.textContent ?? "";
 	for (const key of Object.keys(SETTINGS) as SettingKey[]) {
 		const entry = SETTINGS[key];
-		if (entry.group === "theme" || entry.group === "appearance") continue;
+		if (entry.group === "theme" || entry.group === "appearance" || key === "agent.engine") continue;
 		expect(text).toContain(entry.label);
 		expect(text).toContain(entry.says);
 	}
+	expect(text).not.toContain(SETTINGS["agent.engine"].label);
 	expect(text).toContain("design/canvas.json");
 	expect(text).toContain("~/.spool/registry.json");
 	expect(text).toContain("~/.spool/config.json");

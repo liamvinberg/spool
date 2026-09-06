@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { AgentEngineId } from "../../daemon/agent-engine";
 import { fetchAgentInstalled } from "../api";
 
 /**
@@ -114,33 +115,33 @@ export interface InstallDeck {
  * exactly as it found it, rather than putting a wall over a working agent or taking one
  * down on a machine that still has nothing on it.
  */
-export function useAgentInstall(project: string): InstallDeck {
+export function useAgentInstall(project: string, engine?: AgentEngineId, thread?: string): InstallDeck {
 	const [missing, setMissing] = useState(false);
 	const [checking, setChecking] = useState(false);
 	const [foundNothing, setFoundNothing] = useState(false);
 
 	useEffect(() => {
 		let gone = false;
-		void fetchAgentInstalled(project).then((there) => {
+		void fetchAgentInstalled(project, engine, thread).then((there) => {
 			if (!gone && there !== null) setMissing(!there);
 		});
 		return () => {
 			gone = true;
 		};
-	}, [project]);
+	}, [project, engine, thread]);
 
 	const look = useCallback(() => {
 		if (checking) return;
 		setChecking(true);
 		setFoundNothing(false);
-		void fetchAgentInstalled(project).then((there) => {
+		void fetchAgentInstalled(project, engine, thread).then((there) => {
 			setChecking(false);
 			if (there !== null) setMissing(!there);
 			// the press left a mark whenever it did not turn one up, which includes a door
 			// that could not answer: what it says is that there is still nothing to talk to
 			setFoundNothing(there !== true);
 		});
-	}, [project, checking]);
+	}, [project, checking, engine, thread]);
 
 	return { missing, checking, foundNothing, look };
 }

@@ -5,6 +5,7 @@ import type { AgentLimit } from "../../daemon/agent-events";
 import type { SelectionEntry } from "../api";
 import { cn } from "../cn";
 import { CloseIcon, PlusIcon } from "../icons";
+import { AgentAccountDialog } from "./agent-account";
 import { type Chip as ChipWords, composerWidth, contextOf, type Strip, stripOf, WHOLE_SELECTION } from "./agent-chips";
 import { limitReadout } from "./agent-limit";
 import { type AgentModelDeck, menuLongest, menuSays } from "./agent-model";
@@ -22,6 +23,7 @@ import {
 	duration,
 	type RowState,
 } from "./agent-transcript";
+import { MenuItem } from "./context-menu";
 import { ageOf } from "./frame-find";
 import { ChevronIcon, PanelCaret } from "./sidebar";
 import { useStillness } from "./stillness";
@@ -324,7 +326,7 @@ export function AgentRail({
 			style={{ width }}
 			className="flex h-full min-w-[200px] flex-col overflow-hidden border-border border-l bg-bg"
 		>
-			{install.missing ? (
+			{install.missing && model.engine === undefined ? (
 				/*
 				 * There is nothing to spawn, and spool knew it before anybody typed (#201).
 				 *
@@ -356,6 +358,7 @@ export function AgentRail({
 						{/* the standing half of being signed out, on the shelf the plan would take —
 						    and they never want it at once, because a plan belongs to a turn that is
 						    running and this exists precisely because none can (#201) */}
+						{install.missing ? <InstallWall install={install} /> : null}
 						{login.out ? <LoginStrip login={login} /> : null}
 						{plan === null ? null : <PlanStrip plan={plan} />}
 						<Transcript
@@ -388,6 +391,7 @@ export function AgentRail({
 						model={model}
 						limit={limit}
 						onSend={(text, sent) => {
+							if (install.missing) return false;
 							const took = onSend(text, sent);
 							// the log follows the live edge again because something was said, so a press
 							// that said nothing must not move it
@@ -756,9 +760,9 @@ function InstallWall({ install }: { install: InstallDeck }) {
 	return (
 		<div data-agent-wall="" className="flex min-h-0 flex-1 flex-col justify-center px-3.5">
 			<div className="animate-agent-entry flex flex-col gap-3">
-				<p className="text-base text-text leading-base">no claude on this machine</p>
+				<p className="text-base text-text leading-base">Claude Code is not installed</p>
 				<p className="text-base text-muted leading-base">
-					Spool runs the agent you already have, with the login you already made. There is nothing here to run yet.
+					Install Claude Code to continue with this engine, or start a new thread with spool.
 				</p>
 				<div className="flex flex-col gap-1.5 pt-1">
 					<div className="flex items-center justify-between">
@@ -2097,6 +2101,10 @@ function Composer({
 	}, [draft]);
 
 	const take = (text: string) => {
+		if (!running() && model.engine === "spool" && model.offer.models.length === 0) {
+			model.connect?.();
+			return false;
+		}
 		// captured here rather than read later: the chips that were up are the bytes
 		// that went out, and the line under the words has to say so afterwards. For a
 		// message the queue holds that is the whole contract, because it fires against a
@@ -2267,6 +2275,8 @@ const MENU_W = 300;
 
 function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit | null }) {
 	const [open, setOpen] = useState(false);
+	const trigger = useRef<HTMLButtonElement>(null);
+	const panel = useRef<HTMLDivElement>(null);
 	/**
 	 * What the one slot is describing, which is one piece of state rather than two.
 	 *
@@ -2277,8 +2287,27 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 	const [over, setOver] = useState<string | null>(null);
 	const { offer, levels } = model;
 	const pin = offer.current.pin;
-	const says = menuSays(offer, over);
-	const longest = menuLongest(offer);
+	const name =
+		offer.models.find((entry) => entry.value === offer.current.value)?.displayName ??
+		offer.current.name ??
+		offer.current.resolved ??
+		"Connect account";
+	const readout =
+		model.engine === undefined ? model.readout : `${model.engine === "spool" ? "spool" : "Claude Code"} · ${name}`;
+	const says =
+		model.engine === "spool"
+			? (offer.models.find((entry) => entry.value === (over ?? offer.current.value))?.description ?? "")
+			: menuSays(offer, over);
+	const longest =
+		model.engine === "spool"
+			? offer.models.reduce(
+					(longest, entry) => (entry.description.length > longest.length ? entry.description : longest),
+					"",
+				)
+			: menuLongest(offer);
+	useEffect(() => {
+		if (open) panel.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+	}, [open]);
 	// read at draw time rather than held: the reset is a clock time inside a day and a
 	// weekday past that, so what it says depends on when it is being read
 	const usage = limit === null ? null : limitReadout(limit, Date.now());
@@ -2295,6 +2324,13 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 		// no `relative` of its own: the panel is positioned against the footer row, so its
 		// width is clamped to the composer rather than to however long the name happens to be
 		<span data-agent-model={model.readout} className="flex min-w-0">
+			{model.accountOpen && model.project !== undefined ? (
+				<AgentAccountDialog
+					project={model.project}
+					onClose={() => model.closeAccount?.()}
+					onConnected={model.refresh}
+				/>
+			) : null}
 			{open ? (
 				<button
 					type="button"
@@ -2305,7 +2341,9 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 			) : null}
 			<button
 				type="button"
-				aria-label="model"
+				ref={trigger}
+				aria-label={model.engine === undefined ? "model" : "Choose engine and model"}
+				title={readout}
 				aria-expanded={open}
 				onClick={() => show(!open)}
 				className={cn(
@@ -2329,13 +2367,33 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 				 * An ellipsis is not that. `Opus (1M cont…` is visibly cut and reads as cut, the
 				 * whole string stays in the DOM, and the full name is one press up in the menu.
 				 */}
-				<span className="min-w-0 truncate">{model.readout}</span>
+				<span className="min-w-0 truncate">{readout}</span>
 				<ChevronIcon open={open} className="h-2 w-2 shrink-0" />
 			</button>
 			{open ? (
 				// biome-ignore lint/a11y/noStaticElementInteractions: leaving the panel only puts the slot back to describing the model that is set, and a keyboard reader never has a pointed row for it to return from
 				<div
+					ref={panel}
 					data-agent-model-menu=""
+					data-combined-menu={model.engine === undefined ? undefined : ""}
+					onKeyDown={(event) => {
+						if (event.key === "Escape") {
+							event.stopPropagation();
+							show(false);
+							trigger.current?.focus();
+						}
+						if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+							event.preventDefault();
+							const controls = [
+								...(panel.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []),
+							];
+							const at =
+								document.activeElement instanceof HTMLButtonElement
+									? controls.indexOf(document.activeElement)
+									: -1;
+							controls[(at + (event.key === "ArrowDown" ? 1 : controls.length - 1)) % controls.length]?.focus();
+						}
+					}}
 					style={{ width: MENU_W }}
 					// `max-w-full` against the footer row, which is the composer's own width: the
 					// rail drags to a 200 floor with 171px of box, and a fixed 300 would be cut off
@@ -2394,18 +2452,49 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 					 * It is not a new idea: the effort row already worked this way and was the only
 					 * part of the menu nobody objected to.
 					 */}
-					{offer.models.map((entry) => (
-						<MenuRow
-							key={entry.value}
-							label={entry.displayName}
-							on={offer.current.value === entry.value}
-							onOver={() => setOver(entry.value)}
-							onPick={() => {
-								model.choose({ value: entry.value });
-								show(false);
-							}}
-						/>
-					))}
+					{model.engine === undefined ? null : (
+						<>
+							{(["spool", "claude"] as const).map((engine) => (
+								<div key={engine} data-combined-engine={engine}>
+									{model.started && engine !== model.engine ? (
+										<MenuItem
+											label={`New thread with ${engine === "spool" ? "spool" : "Claude Code"}`}
+											onClick={() => {
+												model.onEngine?.(engine);
+												show(false);
+											}}
+										/>
+									) : (
+										<MenuRow
+											label={engine === "spool" ? "spool" : "Claude Code"}
+											on={engine === model.engine}
+											onOver={() => setOver(null)}
+											onPick={() => {
+												model.onEngine?.(engine);
+												show(false);
+											}}
+										/>
+									)}
+								</div>
+							))}
+							<MenuRule />
+						</>
+					)}
+					<div className="max-h-[216px] overflow-y-auto">
+						{offer.models.map((entry) => (
+							<MenuRow
+								key={entry.value}
+								label={entry.displayName}
+								via={entry.connection}
+								on={offer.current.value === entry.value}
+								onOver={() => setOver(entry.value)}
+								onPick={() => {
+									model.choose({ value: entry.value });
+									show(false);
+								}}
+							/>
+						))}
+					</div>
 					{levels.length === 0 ? null : (
 						// the block reports the pointer as well as its rows do, because a row the
 						// environment killed reports nothing: a disabled control fires no mouse event,
@@ -2454,6 +2543,18 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
 						</span>
 						<span className="absolute inset-x-1.5 top-1.5">{says}</span>
 					</p>
+					{model.engine === "spool" ? (
+						<>
+							<MenuRule />
+							<MenuItem
+								label="Connect account…"
+								onClick={() => {
+									show(false);
+									model.connect?.();
+								}}
+							/>
+						</>
+					) : null}
 				</div>
 			) : null}
 		</span>
@@ -2470,12 +2571,14 @@ function ModelMenu({ model, limit }: { model: AgentModelDeck; limit: AgentLimit 
  */
 function MenuRow({
 	label,
+	via,
 	on,
 	dead = false,
 	onOver,
 	onPick,
 }: {
 	label: string;
+	via?: string | undefined;
 	on: boolean;
 	dead?: boolean;
 	/** the row reports the cursor; the menu owns the one slot that answers it (#186) */
@@ -2495,7 +2598,10 @@ function MenuRow({
 				dead ? "text-muted/30" : on ? "bg-surface text-text" : "text-text/70 hover:bg-surface/60",
 			)}
 		>
-			<span className="min-w-0 truncate font-mono text-xs leading-4">{label}</span>
+			<span className="flex w-full min-w-0 items-center gap-2">
+				<span className="min-w-0 flex-1 truncate font-mono text-xs leading-4">{label}</span>
+				{via === undefined ? null : <span className={cn(QUIET, "shrink-0 text-muted")}>{via}</span>}
+			</span>
 		</button>
 	);
 }
