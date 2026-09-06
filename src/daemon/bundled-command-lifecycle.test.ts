@@ -76,51 +76,56 @@ it("keeps the shell refusal executable private and removes it with its command s
 	expect(fs.existsSync(policy.scratch)).toBe(false);
 });
 
-it.each(["async spawn", "sync spawn", "log open", "log write", "log close", "result processing", "stop before spawn"])(
-	"releases a prepared command once after %s failure",
-	async (failure) => {
-		let warmed = false;
-		const { root, policy, turn, run } = setup((event) => {
-			if (warmed && failure === "result processing" && event.kind === "result")
-				throw new Error("fixture result failure");
+it.each([
+	"async spawn",
+	"sync helper fork",
+	"log open",
+	"log write",
+	"log close",
+	"result processing",
+	"stop before spawn",
+])("releases a prepared command once after %s failure", async (failure) => {
+	let warmed = false;
+	const { root, policy, turn, run } = setup((event) => {
+		if (warmed && failure === "result processing" && event.kind === "result")
+			throw new Error("fixture result failure");
+	});
+	await run();
+	warmed = true;
+	expect(SandboxManager.cleanupAfterCommand).toHaveBeenCalledTimes(2);
+	vi.mocked(SandboxManager.cleanupAfterCommand).mockClear();
+	const realClose = fs.closeSync;
+	const close = vi.spyOn(fs, "closeSync");
+	if (failure === "async spawn") {
+		vi.mocked(SandboxManager.wrapWithSandboxArgv).mockResolvedValueOnce({
+			argv: [join(root, "absent-executable")],
+			env: {},
 		});
-		await run();
-		warmed = true;
-		expect(SandboxManager.cleanupAfterCommand).toHaveBeenCalledTimes(2);
-		vi.mocked(SandboxManager.cleanupAfterCommand).mockClear();
-		const realClose = fs.closeSync;
-		const close = vi.spyOn(fs, "closeSync");
-		if (failure === "async spawn") {
-			vi.mocked(SandboxManager.wrapWithSandboxArgv).mockResolvedValueOnce({
-				argv: [join(root, "absent-executable")],
-				env: {},
-			});
-		} else if (failure === "sync spawn") {
-			vi.spyOn(childProcess, "spawn").mockImplementationOnce(() => {
-				throw new Error("fixture spawn failure");
-			});
-		} else if (failure === "log open") {
-			policy.close();
-		} else if (failure === "log write") {
-			vi.spyOn(fs, "writeSync").mockImplementationOnce(() => {
-				throw new Error("fixture output failure");
-			});
-		} else if (failure === "log close") {
-			close.mockImplementationOnce((fd) => {
-				realClose(fd);
-				throw new Error("fixture close failure");
-			});
-		} else if (failure === "stop before spawn") {
-			vi.mocked(SandboxManager.wrapWithSandboxArgv).mockImplementationOnce(async () => {
-				turn.stop();
-				return { argv: ["/bin/true"], env: {} };
-			});
-		}
-		await expect(run("printf output")).rejects.toThrow();
-		expect(SandboxManager.cleanupAfterCommand).toHaveBeenCalledTimes(1);
-		if (!["log open", "stop before spawn"].includes(failure)) expect(close).toHaveBeenCalledTimes(1);
-	},
-);
+	} else if (failure === "sync helper fork") {
+		vi.spyOn(childProcess, "fork").mockImplementationOnce(() => {
+			throw new Error("fixture helper fork failure");
+		});
+	} else if (failure === "log open") {
+		policy.close();
+	} else if (failure === "log write") {
+		vi.spyOn(fs, "writeSync").mockImplementationOnce(() => {
+			throw new Error("fixture output failure");
+		});
+	} else if (failure === "log close") {
+		close.mockImplementationOnce((fd) => {
+			realClose(fd);
+			throw new Error("fixture close failure");
+		});
+	} else if (failure === "stop before spawn") {
+		vi.mocked(SandboxManager.wrapWithSandboxArgv).mockImplementationOnce(async () => {
+			turn.stop();
+			return { argv: ["/bin/true"], env: {} };
+		});
+	}
+	await expect(run("printf output")).rejects.toThrow();
+	expect(SandboxManager.cleanupAfterCommand).toHaveBeenCalledTimes(1);
+	if (!["log open", "stop before spawn"].includes(failure)) expect(close).toHaveBeenCalledTimes(1);
+});
 
 it("does not release a wrapper that failed or a directly approved command", async () => {
 	const { turn, run } = setup((event) => {
