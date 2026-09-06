@@ -618,7 +618,9 @@ describe("what the queue survives", () => {
 
 		land();
 		await settle(120);
-		expect(canvas.latest().send("go")).toBe(true);
+		await act(async () => {
+			expect(canvas.latest().send("go")).toBe(true);
+		});
 	});
 
 	/**
