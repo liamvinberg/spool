@@ -13,8 +13,9 @@ import {
 import { cn } from "./cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import type { HotkeyIdFor } from "./hotkeys";
-import { FolderIcon, PlusIcon, SearchIcon } from "./icons";
+import { ArrowRightIcon, FolderIcon, PlusIcon, SearchIcon } from "./icons";
 import { askOf, browseRows, crumbsOf, shortPath, within } from "./picker-model";
+import { ProjectLocation } from "./project-location";
 
 /**
  * The "+" folder picker (#4/#22/#251/#242/#277): one field, a list under it.
@@ -56,13 +57,28 @@ const TONE: Record<Weight, string> = {
 	plain: "text-text",
 };
 
+export type ProjectPickerMode = "start" | "new" | "folder" | "location";
+
 export function FolderPicker({
 	onOpened,
 	onClose,
+	initial = "folder",
+	onStart,
+	onLocation,
+	location = "~/spool",
+	starting = false,
+	startNotice,
 }: {
 	onOpened: (project: { root: string; name: string }) => void;
 	onClose: () => void;
+	initial?: ProjectPickerMode;
+	onStart?: () => void;
+	onLocation?: (path: string) => Promise<{ ok: boolean; reason?: string }>;
+	location?: string;
+	starting?: boolean;
+	startNotice?: string | null;
 }) {
+	const [mode, setMode] = useState(initial);
 	const [listing, setListing] = useState<FsListing | null>(null);
 	const [home, setHome] = useState<string | null>(null);
 	/** home's one level, kept from the first browse: what `~/` alone shows without another round trip */
@@ -73,9 +89,10 @@ export function FolderPicker({
 	const [at, setAt] = useState(0);
 	const [offerInit, setOfferInit] = useState(false);
 	const [notice, setNotice] = useState<string | null>(null);
-	const [naming, setNaming] = useState(false);
+	const [naming, setNaming] = useState(initial === "new");
 	const [name, setName] = useState("");
 	const [busy, setBusy] = useState(false);
+	const dialogRef = useRef<HTMLDialogElement>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const nameRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
@@ -142,9 +159,13 @@ export function FolderPicker({
 
 	// the field being typed into wins: declared after the picker's own focus
 	useEffect(() => {
+		if (mode === "start") {
+			dialogRef.current?.querySelector<HTMLButtonElement>(".pj-start-choices button")?.focus();
+			return;
+		}
 		if (naming) nameRef.current?.focus();
 		else inputRef.current?.focus();
-	}, [naming]);
+	}, [naming, mode]);
 
 	// the pick has to stay on screen: a deep search is more list than dialog
 	useEffect(() => {
@@ -173,10 +194,10 @@ export function FolderPicker({
 			const row = flat[index];
 			if (row === undefined) return;
 			setAt(index);
-			if (row.isProject) void openAt(row.path);
+			if (mode !== "location" && row.isProject) void openAt(row.path);
 			else void browse(row.path);
 		},
-		[flat, openAt, browse],
+		[flat, openAt, browse, mode],
 	);
 
 	const up = useCallback(() => {
@@ -197,7 +218,8 @@ export function FolderPicker({
 	};
 
 	const beginNaming = () => {
-		if (listing === null) return;
+		if (listing === null || mode === "location") return;
+		setMode("new");
 		setOfferInit(false);
 		setNotice(null);
 		setNaming(true);
@@ -244,7 +266,7 @@ export function FolderPicker({
 		} else if (event.key === "Enter") {
 			event.preventDefault();
 			if (offerInit) void initHere();
-			else if (picked === undefined && !searching) void openAt(listing?.path ?? "");
+			else if (picked === undefined && !searching && mode !== "location") void openAt(listing?.path ?? "");
 			else enter(at);
 		} else if (event.key === "ArrowRight") {
 			// the one thing Enter cannot say: go *into* a project rather than open it
@@ -281,17 +303,75 @@ export function FolderPicker({
 		<div className="absolute inset-0 z-20 flex justify-center px-8" style={{ paddingTop: "18vh" }}>
 			<button type="button" aria-label="Close" className="absolute inset-0 bg-bg/70" onClick={onClose} />
 			<dialog
+				ref={dialogRef}
 				open
-				aria-label={naming ? "Name the new project" : "Open a folder"}
+				onKeyDown={(event) => {
+					if (mode !== "start") return;
+					const buttons = Array.from(
+						event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"),
+					).filter((button) => !button.closest("[hidden]"));
+					const focused = document.activeElement;
+					const index = focused instanceof HTMLButtonElement ? buttons.indexOf(focused) : -1;
+					if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Tab") {
+						event.preventDefault();
+						const delta = event.key === "ArrowUp" || (event.key === "Tab" && event.shiftKey) ? -1 : 1;
+						buttons[(index + delta + buttons.length) % buttons.length]?.focus();
+					}
+				}}
+				aria-label={
+					mode === "start"
+						? "New project"
+						: mode === "location"
+							? "Save projects in"
+							: naming
+								? "Name the new project"
+								: "Open a folder"
+				}
 				// a caret that never leaves: clicking the panel is never clicking away from the field
 				onMouseDown={(event) => {
+					if (mode === "start") return;
 					const field = naming ? nameRef.current : inputRef.current;
 					if (event.target !== field) event.preventDefault();
 					field?.focus();
 				}}
-				className="relative m-0 flex h-fit max-h-[70vh] w-[520px] flex-col overflow-hidden rounded-lg border border-border-raised bg-surface p-0 text-text"
+				className="pj-native-picker relative m-0 flex h-fit max-h-[70vh] w-[520px] flex-col overflow-hidden rounded-lg border border-border-raised bg-surface p-0 text-text"
 			>
-				{naming ? (
+				{mode === "start" ? (
+					<>
+						<div className="pj-start-choices">
+							<button type="button" onClick={onStart} disabled={starting}>
+								<PlusIcon />
+								<span>
+									<strong>{starting ? "Starting…" : "Start designing"}</strong>
+									<small>A blank project, saved on this Mac.</small>
+								</span>
+								<ArrowRightIcon className="home-arrow" />
+							</button>
+							<button type="button" onClick={beginNaming} disabled={listing === null}>
+								<FolderIcon />
+								<span>
+									<strong>New project in a folder</strong>
+									<small>Choose where your project lives.</small>
+								</span>
+								<ArrowRightIcon className="home-arrow" />
+							</button>
+							<button type="button" onClick={() => setMode("folder")}>
+								<FolderIcon />
+								<span>
+									<strong>Open a folder</strong>
+									<small>Use a project or codebase you already have.</small>
+								</span>
+								<ArrowRightIcon className="home-arrow" />
+							</button>
+						</div>
+						{startNotice && (
+							<p role="alert" className="px-5 pb-4 text-sm text-thread">
+								{startNotice}
+							</p>
+						)}
+						<ProjectLocation path={location} onChange={() => setMode("location")} />
+					</>
+				) : naming ? (
 					<label className="flex h-[52px] shrink-0 items-center px-4">
 						<FolderIcon className="mr-2 h-3 w-3 shrink-0 text-thread" />
 						<Prefix crumbs={crumbs} />
@@ -329,20 +409,22 @@ export function FolderPicker({
 							onKeyDown={onKeyDown}
 							className="min-w-0 flex-1 bg-transparent font-mono text-md text-text leading-md caret-thread outline-none"
 						/>
-						<button
-							type="button"
-							onClick={beginNaming}
-							disabled={listing === null}
-							title="new project ⌘N"
-							aria-label="New project"
-							className="ml-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-100 hover:bg-raised hover:text-text disabled:opacity-30 disabled:hover:bg-transparent"
-						>
-							<PlusIcon />
-						</button>
+						{mode !== "location" && (
+							<button
+								type="button"
+								onClick={beginNaming}
+								disabled={listing === null}
+								title="new project ⌘N"
+								aria-label="New project"
+								className="ml-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-muted/45 transition-colors duration-100 hover:bg-raised hover:text-text disabled:opacity-30 disabled:hover:bg-transparent"
+							>
+								<PlusIcon />
+							</button>
+						)}
 					</div>
 				)}
 
-				<div className="relative">
+				<div className="relative" hidden={mode === "start"}>
 					<div ref={listRef} className="overflow-y-auto py-1.5" style={{ maxHeight: LIST_MAX }}>
 						{naming ? (
 							<div style={{ height: ROW }} className="relative flex w-full items-center gap-3 bg-raised px-4">
@@ -419,6 +501,32 @@ export function FolderPicker({
 						<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-surface via-surface/80 to-transparent" />
 					) : null}
 				</div>
+				{mode === "location" && (
+					<div className="pj-location-footer">
+						<code>{listing === null || home === null ? "" : shortPath(listing.path, home)}</code>
+						<button type="button" className="home-action" onClick={onClose}>
+							Cancel
+						</button>
+						<button
+							type="button"
+							className="home-action home-action-primary"
+							disabled={listing === null || busy}
+							onClick={() => {
+								if (listing === null || busy || onLocation === undefined) return;
+								setBusy(true);
+								void onLocation(listing.path)
+									.then((result) => {
+										if (result.ok) onClose();
+										else setNotice(result.reason ?? "Could not save this folder. Try again.");
+									})
+									.catch(() => setNotice("Could not save this folder. Reconnect and try again."))
+									.finally(() => setBusy(false));
+							}}
+						>
+							Use this folder
+						</button>
+					</div>
+				)}
 			</dialog>
 		</div>
 	);

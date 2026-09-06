@@ -25,6 +25,7 @@ export type SettingGroup = "general" | "agent" | "appearance" | "theme";
 
 export type SettingKind =
 	| { readonly kind: "boolean" }
+	| { readonly kind: "directory" }
 	| { readonly kind: "choice"; readonly choices: readonly string[] }
 	/** a six-digit hex colour, lowercase, `#` first */
 	| { readonly kind: "colour" };
@@ -147,6 +148,14 @@ const themeEntries = Object.fromEntries(
 ) as { readonly [Key in ThemeKey]: SettingEntry<string> };
 
 export const SETTINGS = {
+	"projects.location": {
+		scope: "machine",
+		group: "general",
+		shape: { kind: "directory" },
+		fallback: "~/spool",
+		label: "Save projects in",
+		says: "The folder for projects you start in spool.",
+	},
 	history: {
 		scope: "project",
 		group: "general",
@@ -206,6 +215,14 @@ export function parseSetting<Key extends SettingKey>(
 ): { readonly ok: true; readonly value: SettingValue<Key> } | { readonly ok: false; readonly reason: string } {
 	const shape: SettingKind = SETTINGS[key].shape;
 	switch (shape.kind) {
+		case "directory":
+			if (
+				typeof raw === "string" &&
+				(raw.startsWith("/") || raw === "~" || raw.startsWith("~/")) &&
+				Array.from(raw).every((character) => character.charCodeAt(0) >= 32)
+			)
+				return { ok: true, value: raw as SettingValue<Key> };
+			return { ok: false, reason: `"${key}" must be an absolute folder path or start with ~/` };
 		case "boolean":
 			if (typeof raw === "boolean") return { ok: true, value: raw as SettingValue<Key> };
 			return { ok: false, reason: `"${key}" must be true or false` };

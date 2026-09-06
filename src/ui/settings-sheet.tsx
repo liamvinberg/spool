@@ -21,6 +21,7 @@ import { cn } from "./cn";
 import { attachHotkeyLayer, type HotkeyHandler } from "./hotkey-dispatch";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { RibbonMark } from "./icons";
+import { FolderPicker } from "./picker";
 import { useSettings, useWriteSetting, useWriteSettings } from "./settings";
 
 /**
@@ -184,13 +185,33 @@ function General({
 /** One registry entry, as its shape draws it. */
 function SettingRow({ entry, write }: { entry: SettingReading; write: Write }) {
 	const [reason, setReason] = useState<string | undefined>();
+	const [picking, setPicking] = useState(false);
 	const move = async (value: boolean | string) => {
 		const written = await write(entry.key, value);
 		setReason(written.ok ? undefined : written.reason);
 	};
 	return (
 		<Row label={entry.label} says={entry.says} reason={reason}>
-			{entry.shape.kind === "boolean" ? (
+			{entry.shape.kind === "directory" ? (
+				<>
+					<button
+						type="button"
+						className="max-w-64 truncate rounded-md border border-border-raised px-3 py-2 font-mono text-xs"
+						onClick={() => setPicking(true)}
+						title={String(entry.value)}
+					>
+						{String(entry.value)} · Change…
+					</button>
+					{picking && (
+						<FolderPicker
+							initial="location"
+							onOpened={() => {}}
+							onClose={() => setPicking(false)}
+							onLocation={(path) => write(entry.key, path)}
+						/>
+					)}
+				</>
+			) : entry.shape.kind === "boolean" ? (
 				<Switch on={Boolean(entry.value)} label={entry.label} onChange={move} />
 			) : entry.shape.kind === "choice" ? (
 				<Segmented choices={entry.shape.choices} value={String(entry.value)} label={entry.label} onChange={move} />

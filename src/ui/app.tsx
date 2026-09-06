@@ -10,6 +10,7 @@ import {
 	putSession,
 	putSessionOrder,
 	reloadForNewBundle,
+	startProject,
 	subscribeSse,
 } from "./api";
 import { type CanvasChrome, ProjectCanvas } from "./canvas/canvas";
@@ -21,8 +22,8 @@ import { attachHotkeyLayer, type HotkeyHandler, runMenuHotkey } from "./hotkey-d
 import { HotkeySheet } from "./hotkey-sheet";
 import { type HotkeyIdFor, hotkeyKey } from "./hotkeys";
 import { EdgeIcon, HomeIcon } from "./icons";
-import { FolderPicker } from "./picker";
-import { settingsMoved, useSettings } from "./settings";
+import { FolderPicker, type ProjectPickerMode } from "./picker";
+import { settingsMoved, useSetting, useSettings, useWriteSetting } from "./settings";
 import { SettingsSheet } from "./settings-sheet";
 import { type TabProject, TabStrip } from "./tab-strip";
 import { type UpdateToast, UpdateToastPill } from "./update-toast";
@@ -52,12 +53,18 @@ export function App() {
 	// moves on another page lands on this one too
 	useSettings();
 	const [projects, setProjects] = useState<ProjectCard[]>([]);
+	const [projectsLoaded, setProjectsLoaded] = useState(false);
 	const [open, setOpen] = useState<string[]>([]);
 	const openRef = useRef(open);
 	openRef.current = open;
 	const [focused, setFocused] = useState<string | null>(null);
 	const [booted, setBooted] = useState(false);
-	const [picking, setPicking] = useState(false);
+	const [picking, setPicking] = useState<ProjectPickerMode | false>(false);
+	const location = useSetting("projects.location") ?? "~/spool";
+	const writeSetting = useWriteSetting();
+	const [starting, setStarting] = useState(false);
+	const startingRef = useRef(false);
+	const [startNotice, setStartNotice] = useState<string | null>(null);
 	const [chrome, setChrome] = useState<CanvasChrome | null>(null);
 	const [pendingForget, setPendingForget] = useState<TabProject | null>(null);
 	const pendingForgetRef = useRef<TabProject | null>(null);
@@ -82,6 +89,7 @@ export function App() {
 	const refetch = useCallback(async () => {
 		const [cards, session] = await Promise.all([fetchProjects(), fetchSession()]);
 		setProjects(cards);
+		setProjectsLoaded(true);
 		setOpen(session);
 	}, []);
 
@@ -108,6 +116,7 @@ export function App() {
 			setFocused((current) => current ?? pathFocus(session));
 			setBooted(true);
 			setProjects(await fetchProjects());
+			setProjectsLoaded(true);
 		})();
 	}, []);
 
@@ -372,7 +381,7 @@ export function App() {
 				case "app.open-project":
 					setSettingsOpen(false);
 					setKeysOpen(false);
-					setPicking(true);
+					setPicking("folder");
 					break;
 				case "app.settings":
 					setPicking(false);
@@ -388,6 +397,23 @@ export function App() {
 			}
 		});
 	}, [appWindow, openSettings]);
+
+	const startDesigning = async () => {
+		if (startingRef.current) return;
+		startingRef.current = true;
+		setStarting(true);
+		setStartNotice(null);
+		try {
+			const outcome = await startProject();
+			if (outcome.kind === "opened") {
+				setPicking(false);
+				openTab(outcome);
+			} else if (outcome.kind === "error") setStartNotice(outcome.message);
+		} finally {
+			startingRef.current = false;
+			setStarting(false);
+		}
+	};
 
 	const canvasActive = focusedTab !== undefined && chrome !== null && !picking && !keysOpen && !settingsOpen;
 	useEffect(() => {
@@ -433,7 +459,7 @@ export function App() {
 						onFocus={focusProject}
 						onClose={closeTab}
 						onReorder={reorderTabs}
-						onPick={() => setPicking(true)}
+						onPick={() => setPicking("start")}
 					/>
 				</div>
 
@@ -471,6 +497,13 @@ export function App() {
 				{focusedTab === undefined ? (
 					<Home
 						projects={projects}
+						loading={!projectsLoaded}
+						location={location}
+						starting={starting}
+						notice={startNotice}
+						onStart={() => void startDesigning()}
+						onFolder={() => setPicking("folder")}
+						onChangeLocation={() => setPicking("location")}
 						forgetting={pendingForget?.root ?? null}
 						onOpenProject={(project) => openTab(project)}
 						onForgetProject={(project) => stageForget(project)}
@@ -479,6 +512,7 @@ export function App() {
 					<ProjectCanvas
 						key={focusedTab.root}
 						project={focusedTab.name}
+						root={focusedTab.root}
 						onChrome={setChrome}
 						onSettings={openSettings}
 					/>
@@ -502,6 +536,13 @@ export function App() {
 			{picking && (
 				<div className="absolute inset-0">
 					<FolderPicker
+						key={picking}
+						initial={picking}
+						location={location}
+						starting={starting}
+						startNotice={startNotice}
+						onStart={() => void startDesigning()}
+						onLocation={(path) => writeSetting("projects.location", path)}
 						onOpened={(project) => {
 							setPicking(false);
 							openTab(project);

@@ -1,9 +1,11 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { registerAndOpenProject } from "./daemon/session";
 import { SpoolError } from "./errors";
 import { isSafeName } from "./page-path";
 import { realDir } from "./paths";
+import { readRegistry } from "./registry";
 import { scaffoldDirs, scaffoldFiles } from "./templates";
 
 export interface InitOptions {
@@ -58,4 +60,31 @@ export function createProject(parentDir: string, name: string, spoolDir: string)
 	}
 	mkdirSync(target);
 	return initProject(target, spoolDir);
+}
+
+/** Allocate with mkdir itself: another request or process may take any name before us. */
+export function startProject(location: string, spoolDir: string): { root: string } {
+	const parent =
+		location === "~" ? homedir() : location.startsWith("~/") ? join(homedir(), location.slice(2)) : location;
+	try {
+		mkdirSync(parent, { recursive: true });
+		const directory = realDir(parent);
+		const registered = new Set(readRegistry(spoolDir).projects.map((project) => basename(project.root)));
+		for (let suffix = 1; ; suffix++) {
+			const name = suffix === 1 ? "untitled" : `untitled-${suffix}`;
+			if (registered.has(name)) continue;
+			const target = join(directory, name);
+			try {
+				mkdirSync(target);
+			} catch (error) {
+				if (error instanceof Error && "code" in error && error.code === "EEXIST") continue;
+				throw error;
+			}
+			return initProject(target, spoolDir);
+		}
+	} catch (error) {
+		throw new SpoolError(
+			`Could not create a project in ${parent}. Check that the folder is writable or change the save location. ${error instanceof Error ? error.message : ""}`,
+		);
+	}
 }

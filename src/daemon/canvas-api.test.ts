@@ -11,8 +11,9 @@ import {
 	writePageFrame,
 } from "../test-helpers";
 import { createDaemonApp } from "./app";
-import { writeSession } from "./session";
+import { readSession, writeSession } from "./session";
 import { createMachineStateWatchHarness } from "./session-test-harness";
+import { createSettingsStore } from "./settings";
 import { readCaptureError } from "./thumbs";
 
 /** Smallest real PNG: 1×1 transparent pixel. */
@@ -1270,5 +1271,70 @@ describe("thumbnails", () => {
 
 			expect(readCaptureError(root, "checkout")).toBeUndefined();
 		});
+	});
+});
+
+describe("start designing", () => {
+	it("creates lazily, preserves existing folders, and allocates distinct projects for simultaneous requests", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const parent = join(makeTempDir(), "projects");
+		const app = makeApp(spoolDir);
+		expect(createSettingsStore(spoolDir).write("projects.location", parent).ok).toBe(true);
+		expect(existsSync(parent)).toBe(false);
+		mkdirSync(join(parent, "untitled"), { recursive: true });
+		writeFileSync(join(parent, "untitled", "keep.txt"), "untouched");
+		writeFileSync(join(parent, "untitled-2"), "also untouched");
+		const responses = await Promise.all(
+			Array.from({ length: 3 }, () => app.request("/api/projects/start", { method: "POST" })),
+		);
+		expect(responses.map((response) => response.status)).toEqual([200, 200, 200]);
+		const projects = await Promise.all(
+			responses.map((response) => response.json() as Promise<{ root: string; name: string }>),
+		);
+		expect(projects.map((project) => project.name)).toEqual(["untitled-3", "untitled-4", "untitled-5"]);
+		for (const project of projects) {
+			expect(existsSync(join(project.root, "design", "AGENTS.md"))).toBe(true);
+			expect(JSON.parse(readFileSync(join(project.root, "design", "canvas.json"), "utf8"))).toEqual({
+				format: 1,
+				history: false,
+			});
+			expect(readSession(spoolDir).open).toContain(project.root);
+		}
+		expect(readFileSync(join(parent, "untitled", "keep.txt"), "utf8")).toBe("untouched");
+		expect(readFileSync(join(parent, "untitled-2"), "utf8")).toBe("also untouched");
+		expect(existsSync(join(parent, "untitled", "design"))).toBe(false);
+	});
+
+	it("keeps names routable when the save location changes and the daemon restarts", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const firstParent = makeTempDir();
+		const secondParent = makeTempDir();
+		const store = createSettingsStore(spoolDir);
+		const first = makeApp(spoolDir);
+		store.write("projects.location", firstParent);
+		expect(await (await first.request("/api/projects/start", { method: "POST" })).json()).toMatchObject({
+			name: "untitled",
+		});
+		store.write("projects.location", secondParent);
+		const restarted = makeApp(spoolDir);
+		const response = await restarted.request("/api/projects/start", { method: "POST" });
+		expect(await response.json()).toEqual({
+			root: join(realpathSync(secondParent), "untitled-2"),
+			name: "untitled-2",
+		});
+		expect((await restarted.request("/api/p/untitled-2/frames")).status).toBe(200);
+	});
+
+	it("returns an actionable failure and leaves the registry and existing file alone", async () => {
+		const spoolDir = join(makeTempDir(), ".spool");
+		const parent = join(makeTempDir(), "a-file");
+		writeFileSync(parent, "keep");
+		const app = makeApp(spoolDir);
+		createSettingsStore(spoolDir).write("projects.location", parent);
+		const response = await app.request("/api/projects/start", { method: "POST" });
+		expect(response.status).toBe(409);
+		expect(await response.json()).toMatchObject({ error: expect.stringContaining("change the save location") });
+		expect(readSession(spoolDir).open).toEqual([]);
+		expect(readFileSync(parent, "utf8")).toBe("keep");
 	});
 });

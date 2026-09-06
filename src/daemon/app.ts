@@ -13,7 +13,7 @@ import { SPOOL_DEVELOPMENT_FAVICON_SVG, SPOOL_DEVELOPMENT_THREAD, SPOOL_FAVICON_
 import type { Cover } from "../cover";
 import { DOOR_ORIGIN } from "../door";
 import { SpoolError } from "../errors";
-import { createProject, initProject } from "../init";
+import { createProject, initProject, startProject } from "../init";
 import { openProject } from "../open";
 import { isSafeName } from "../page-path";
 import { forgetResolvedProject, lookupProjectByName, readRegistry } from "../registry";
@@ -1069,6 +1069,16 @@ export function createDaemonApp({
 		.post("/api/projects/init", validator("json", requestedPath), (c) => {
 			try {
 				const { root } = initProject(c.req.valid("json").path, spoolDir);
+				return c.json({ root, name: basename(root) });
+			} catch (error) {
+				if (!(error instanceof SpoolError)) throw error;
+				return c.json({ error: error.message }, 409);
+			}
+		})
+		.post("/api/projects/start", (c) => {
+			try {
+				const location = settings.read().entries.find((entry) => entry.key === "projects.location");
+				const { root } = startProject(String(location?.value ?? "~/spool"), spoolDir);
 				return c.json({ root, name: basename(root) });
 			} catch (error) {
 				if (!(error instanceof SpoolError)) throw error;
