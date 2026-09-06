@@ -1,9 +1,10 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { type AssistantMessage, type Context, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { BundledRuntime } from "../bundled-runtime";
 import { BundledCredentialStore } from "../bundled-store";
+import { askOrder } from "./bundled-question";
 
 /** Replaces only provider inference. The host, credential store and SDK sessions are real. */
 export async function deterministicBundledRuntime(
@@ -73,13 +74,26 @@ export async function deterministicBundledRuntime(
 							.join("\n") ?? "");
 			const scriptAt = prompt.indexOf("file tools: ");
 			const script: { name: string; arguments: Record<string, unknown> }[] =
-				scriptAt < 0 ? [] : JSON.parse(prompt.slice(scriptAt + "file tools: ".length));
+				scriptAt < 0
+					? prompt.includes("Ask about the order number")
+						? [askOrder]
+						: []
+					: JSON.parse(prompt.slice(scriptAt + "file tools: ".length));
 			const afterUser = context.messages.slice(
 				context.messages.lastIndexOf(lastUser as NonNullable<typeof lastUser>) + 1,
 			);
 			const step = script[afterUser.filter((entry) => entry.role === "toolResult").length];
 			if (step !== undefined) {
-				queueMicrotask(() => {
+				const deliver = () => {
+					// The browser releases this provider response after its queued message is saved.
+					if (
+						prompt.includes("after queued") &&
+						!existsSync(join(directory, "question-ready")) &&
+						!options?.signal?.aborted
+					) {
+						setTimeout(deliver, 10);
+						return;
+					}
 					message.content = [
 						{
 							type: "toolCall",
@@ -92,7 +106,8 @@ export async function deterministicBundledRuntime(
 					stream.push({ type: "start", partial: message });
 					stream.push({ type: "done", reason: "toolUse", message });
 					stream.end(message);
-				});
+				};
+				queueMicrotask(deliver);
 				return stream;
 			}
 			const text = `Saved reply ${users.length}.\n\nStill working.`;

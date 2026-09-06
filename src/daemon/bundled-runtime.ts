@@ -19,6 +19,7 @@ import { BundledCommandPolicy, BundledCommandTurn } from "./bundled-commands";
 import { BUNDLED_CONNECTIONS, connectionLabel } from "./bundled-connections";
 import { BundledFilePolicy, BundledFileTurn } from "./bundled-files";
 import type { BundledReply, BundledRequest } from "./bundled-protocol";
+import { BundledQuestionTurn } from "./bundled-questions";
 import { bundledResources } from "./bundled-resources";
 import { BundledCredentialStore, privateDirectory, writePrivate } from "./bundled-store";
 
@@ -28,6 +29,7 @@ interface HeldSession {
 	session: AgentSession;
 	files: BundledFileTurn;
 	commands: BundledCommandTurn;
+	questions: BundledQuestionTurn;
 	idle?: ReturnType<typeof setTimeout>;
 }
 
@@ -225,6 +227,7 @@ export class BundledRuntime {
 			case "answer": {
 				const held = this.sessions.get(this.active.get(request.turn)?.session ?? "");
 				return (
+					held?.questions.answer(request.request, request.reply) ||
 					held?.files.answer(request.request, request.reply) ||
 					held?.commands.answer(request.request, request.reply) ||
 					false
@@ -243,6 +246,7 @@ export class BundledRuntime {
 					active.stopped = true;
 					this.sessions.get(active.session)?.files.stop();
 					this.sessions.get(active.session)?.commands.stop();
+					this.sessions.get(active.session)?.questions.stop();
 					await this.sessions.get(active.session)?.session.abort();
 				}
 				return null;
@@ -280,6 +284,7 @@ export class BundledRuntime {
 				const commandPolicy = this.commandPolicies.get(ref) ?? new BundledCommandPolicy(policy);
 				this.commandPolicies.set(ref, commandPolicy);
 				const commands = new BundledCommandTurn(commandPolicy, options.permissions, emit);
+				const questions = new BundledQuestionTurn(emit);
 				const { session } = await createAgentSession({
 					cwd: options.root,
 					agentDir: this.directory,
@@ -293,15 +298,16 @@ export class BundledRuntime {
 						images: { autoResize: false },
 					}),
 					noTools: "builtin",
-					tools: ["read", "write", "edit", "bash"],
-					customTools: [...files.tools(), commands.tool()],
+					tools: ["read", "write", "edit", "bash", "ask_person"],
+					customTools: [...files.tools(), commands.tool(), questions.tool()],
 					thinkingLevel: (offer.current.effort ?? "off") as ThinkingLevel,
 				});
-				held = { root: options.root, session, manager, files, commands };
+				held = { root: options.root, session, manager, files, commands, questions };
 				this.sessions.set(ref, held);
 			} else {
 				held.files.begin(options.permissions, emit);
 				held.commands.begin(options.permissions, emit);
+				held.questions.begin(emit);
 				await held.session.setModel(model);
 				held.session.setThinkingLevel((offer.current.effort ?? "off") as ThinkingLevel);
 			}
@@ -348,7 +354,7 @@ export class BundledRuntime {
 				version: "0.85.1",
 				permissionMode: options.permissions,
 				apiKeySource: "spool",
-				capabilities: ["read", "write", "edit", "bash"],
+				capabilities: ["read", "write", "edit", "bash", "ask_person"],
 				parent: null,
 			});
 			emit({ kind: "waiting", parent: null });
@@ -385,6 +391,7 @@ export class BundledRuntime {
 		} finally {
 			held?.files.stop();
 			held?.commands.stop();
+			held?.questions.stop();
 			unsubscribe?.();
 			this.active.delete(id);
 			this.reserved.delete(ref);
@@ -418,6 +425,7 @@ export class BundledRuntime {
 			if (held.idle !== undefined) clearTimeout(held.idle);
 			held.files.stop();
 			held.commands.stop();
+			held.questions.stop();
 			await held.session.abort();
 			this.save(held.manager);
 			held.session.dispose();
