@@ -1,4 +1,4 @@
-import { EngineRecovery } from "shared/ui/explore/engines/engine-recovery";
+import { SettingsSheetScreen } from "shared/ui/explore/settings/sheet";
 export default function Frame() {
-	return <EngineRecovery seed="settings" buttons="stack" />;
+	return <SettingsSheetScreen argues="" />;
 }

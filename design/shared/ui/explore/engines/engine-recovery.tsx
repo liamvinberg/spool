@@ -3,10 +3,11 @@ import { type Effort, useModels } from "shared/lib/spool/agent-model";
 import type { PlayEntry } from "shared/lib/spool/turn-play";
 import { cn } from "shared/lib/utils";
 import { FrameThumb } from "shared/ui/explore/agent/play-field";
-import { AccountDialog, SheetHeading } from "shared/ui/explore/engines/account-dialog";
+import { AccountDialog } from "shared/ui/explore/engines/account-dialog";
 import { EngineFooter } from "shared/ui/explore/engines/engine-footer";
 import { LoginSimulation, useLoginPrototype } from "shared/ui/explore/engines/login-flow";
 import { useModelScope } from "shared/ui/explore/engines/model-shortlist";
+import type { PermissionMode } from "shared/ui/explore/engines/permission-menu";
 import { CanvasChrome } from "shared/ui/spool/canvas-chrome";
 import { MenuItem } from "shared/ui/spool/context-menu";
 import { ChevronIcon, PlusIcon } from "shared/ui/spool/icons";
@@ -32,11 +33,10 @@ export type RecoverySeed =
 	| "quiet"
 	| "question"
 	| "edits"
-	| "bypass"
-	| "settings";
+	| "bypass";
 type Engine = "spool" | "claude";
 type Access = "file" | "command" | "unavailable";
-type Mode = "ask" | "edits" | "bypass";
+type Mode = PermissionMode;
 type Grant = "src/ui/" | "commands";
 type Thread = {
 	id: number;
@@ -108,24 +108,23 @@ const textNote = (text: string, count: number): PlayEntry => ({ key: `note-${cou
 export function EngineRecovery({
 	seed,
 	buttons = "row",
-	permissionFooter = false,
+	permissionFooter = true,
+	permissionMenu = false,
+	initialEngine,
 	railWidth = 420,
 	initialModel,
 }: {
 	seed: RecoverySeed;
 	buttons?: "stack" | "row";
 	permissionFooter?: boolean;
+	permissionMenu?: boolean;
+	initialEngine?: Engine;
 	railWidth?: number;
 	initialModel?: string;
 }) {
-	const isClaude = seed.startsWith("claude-") && seed !== "claude-choice";
+	const isClaude = initialEngine === "claude" || (seed.startsWith("claude-") && seed !== "claude-choice");
 	const isLimit = seed.startsWith("limit");
-	const initialRequest: Access | null =
-		seed === "file" || seed === "command" || seed === "unavailable"
-			? seed
-			: seed === "settings"
-				? "unavailable"
-				: null;
+	const initialRequest: Access | null = seed === "file" || seed === "command" || seed === "unavailable" ? seed : null;
 	const initial: Thread = {
 		...EMPTY,
 		id: 1,
@@ -161,8 +160,8 @@ export function EngineRecovery({
 	const [active, setActive] = useState(1);
 	const [remembered, setRemembered] = useState<Engine>(initial.engine);
 	const current = threads.find((thread) => thread.id === active) ?? initial;
-	const [menu, setMenu] = useState<"models" | "threads" | null>(
-		seed === "claude-choice" || seed === "limit-models" ? "models" : null,
+	const [menu, setMenu] = useState<"models" | "threads" | "permissions" | null>(
+		permissionMenu ? "permissions" : seed === "claude-choice" || seed === "limit-models" ? "models" : null,
 	);
 	const [machine, setMachine] = useState<"ready" | "missing" | "signed-out">(
 		seed === "claude-choice" || seed === "claude-missing"
@@ -174,7 +173,6 @@ export function EngineRecovery({
 	const [checking, setChecking] = useState(false);
 	const [providerReady, setProviderReady] = useState(false);
 	const [mode, setMode] = useState<Mode>(seed === "bypass" ? "bypass" : seed === "edits" ? "edits" : "ask");
-	const [settingsOpen, setSettingsOpen] = useState(seed === "settings");
 	const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	useEffect(
 		() => () => {
@@ -361,12 +359,20 @@ export function EngineRecovery({
 			scope={current.engine === "spool" ? scope : undefined}
 			modelTake="favorites"
 			permissions={
-				permissionFooter && current.engine === "spool"
+				permissionFooter
 					? {
 							mode,
-							onOpen: () => {
+							open: menu === "permissions",
+							onToggle: () => setMenu(menu === "permissions" ? null : "permissions"),
+							onClose: () => setMenu(null),
+							onChange: (next) => {
+								setMode(next);
 								setMenu(null);
-								setSettingsOpen(true);
+								if (
+									current.request !== null &&
+									(next === "bypass" || (next === "edits" && current.request === "file"))
+								)
+									approve(next);
 							},
 						}
 					: undefined
@@ -448,7 +454,7 @@ export function EngineRecovery({
 				access={current.request}
 				buttons={buttons}
 				onAnswer={approve}
-				onSettings={() => setSettingsOpen(true)}
+				onPermissions={() => setMenu("permissions")}
 			/>
 		) : undefined;
 	return (
@@ -480,7 +486,7 @@ export function EngineRecovery({
 								type="button"
 								aria-label="Close menu"
 								tabIndex={-1}
-								className="absolute inset-0 z-20 cursor-default"
+								className={cn("inset-0 z-20 cursor-default", menu === "permissions" ? "fixed" : "absolute")}
 								onClick={() => setMenu(null)}
 							/>
 						)}
@@ -597,13 +603,7 @@ export function EngineRecovery({
 						<>
 							<QuietAction
 								onClick={() =>
-									request(
-										seed === "file"
-											? "file"
-											: seed === "unavailable" || seed === "settings"
-												? "unavailable"
-												: "command",
-									)
+									request(seed === "file" ? "file" : seed === "unavailable" ? "unavailable" : "command")
 								}
 							>
 								repeat action
@@ -626,7 +626,7 @@ export function EngineRecovery({
 							>
 								restart agent
 							</QuietAction>
-							<QuietAction onClick={() => setSettingsOpen(true)}>agent permissions</QuietAction>
+							<QuietAction onClick={() => setMenu("permissions")}>agent permissions</QuietAction>
 						</>
 					)}
 				</div>
@@ -636,20 +636,6 @@ export function EngineRecovery({
 						<LoginSimulation login={login} />
 					</>
 				)}
-				{settingsOpen ? (
-					<PermissionSettings
-						mode={mode}
-						onClose={() => setSettingsOpen(false)}
-						onMode={(next) => {
-							setMode(next);
-							if (
-								current.request !== null &&
-								(next === "bypass" || (next === "edits" && current.request === "file"))
-							)
-								approve(next);
-						}}
-					/>
-				) : null}
 			</CanvasChrome>
 		</SpoolShell>
 	);
@@ -680,12 +666,12 @@ function AccessPrompt({
 	access,
 	buttons,
 	onAnswer,
-	onSettings,
+	onPermissions,
 }: {
 	access: Access;
 	buttons: "stack" | "row";
 	onAnswer: (choice: "once" | "thread" | "deny") => void;
-	onSettings: () => void;
+	onPermissions: () => void;
 }) {
 	const file = access === "file";
 	return (
@@ -724,106 +710,7 @@ function AccessPrompt({
 					</button>
 				))}
 			</div>
-			<QuietAction onClick={onSettings}>bypass approvals in settings…</QuietAction>
-		</div>
-	);
-}
-
-function PermissionSettings({
-	mode,
-	onMode,
-	onClose,
-}: {
-	mode: Mode;
-	onMode: (mode: Mode) => void;
-	onClose: () => void;
-}) {
-	const ref = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		const previous = document.activeElement;
-		ref.current?.focus();
-		return () => {
-			if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-		};
-	}, []);
-	return (
-		<div
-			className="fixed inset-0 z-50 flex items-center justify-center bg-bg/48 px-8 backdrop-blur-[2px]"
-			onKeyDown={(event) => {
-				if (event.key === "Escape") {
-					event.stopPropagation();
-					onClose();
-				}
-				if (event.key !== "Tab") return;
-				const controls = [...(ref.current?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
-				if (event.shiftKey && (document.activeElement === controls[0] || document.activeElement === ref.current)) {
-					event.preventDefault();
-					controls.at(-1)?.focus();
-				} else if (!event.shiftKey && document.activeElement === controls.at(-1)) {
-					event.preventDefault();
-					controls[0]?.focus();
-				}
-			}}
-		>
-			<button
-				type="button"
-				tabIndex={-1}
-				aria-label="Dismiss settings"
-				className="absolute inset-0 cursor-default"
-				onClick={onClose}
-			/>
-			<div
-				ref={ref}
-				role="dialog"
-				aria-modal="true"
-				aria-label="Settings"
-				tabIndex={-1}
-				className="relative flex h-[560px] max-h-[calc(100%-128px)] w-[760px] animate-find-panel-in flex-col overflow-hidden rounded-lg border border-border-raised bg-surface outline-none"
-			>
-				<SheetHeading onClose={onClose}>Settings</SheetHeading>
-				<div className="flex h-10 items-stretch gap-6 border-border border-b px-6">
-					<span className="relative flex items-center text-base text-text leading-base">
-						General
-						<span className="absolute inset-x-0 bottom-0 h-[2px] bg-thread" />
-					</span>
-					<button type="button" data-go="settings-sheet--theme" className="text-base text-muted leading-base">
-						Appearance
-					</button>
-				</div>
-				<div className="px-6 pt-5">
-					<h3 className="mb-4 font-medium text-md text-text leading-md">This project, on this machine</h3>
-					<div className="flex items-start justify-between gap-6 border-border border-t py-4">
-						<div className="flex max-w-[370px] flex-col gap-1">
-							<p className="text-base text-text leading-base">Agent permissions</p>
-							<p className="text-base text-muted leading-base">What the agent may do here without asking.</p>
-						</div>
-						<span className="flex h-7 items-stretch rounded-sm border border-border p-px">
-							{(["ask", "edits", "bypass"] as const).map((choice) => (
-								<button
-									key={choice}
-									type="button"
-									aria-label={`Agent permissions: ${choice}`}
-									aria-pressed={mode === choice}
-									onClick={() => onMode(choice)}
-									className={cn(
-										"flex items-center rounded-[5px] px-2.5 font-mono text-xs leading-xs",
-										mode === choice ? "bg-raised text-text" : "text-muted hover:text-text",
-									)}
-								>
-									{choice}
-								</button>
-							))}
-						</span>
-					</div>
-					<p className="text-base text-muted leading-base">
-						{mode === "ask"
-							? "Design work proceeds quietly. Other access asks first."
-							: mode === "edits"
-								? "File edits proceed without asking. Broader command access still asks."
-								: "Tool approvals and command restrictions are skipped. Design questions still wait for you."}
-					</p>
-				</div>
-			</div>
+			<QuietAction onClick={onPermissions}>change permissions…</QuietAction>
 		</div>
 	);
 }

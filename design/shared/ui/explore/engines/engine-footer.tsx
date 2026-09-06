@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { type ClaudeModel, EFFORT_SAYS, type Effort } from "shared/lib/spool/agent-model";
 import { cn } from "shared/lib/utils";
 import { type ModelScope, ModelSearch, modelMatches } from "shared/ui/explore/engines/model-shortlist";
 import { FavoriteOptions, type ModelTake } from "shared/ui/explore/engines/model-variants";
+import { PermissionMenu, type PermissionMode } from "shared/ui/explore/engines/permission-menu";
 import { MenuItem } from "shared/ui/spool/context-menu";
 import { ChevronIcon } from "shared/ui/spool/icons";
 import { ModelRow } from "shared/ui/spool/model-control";
@@ -47,8 +48,17 @@ export function EngineFooter({
 	modelTake?: ModelTake;
 	claudeState?: "ready" | "missing" | "signed-out";
 	notice?: string | undefined;
-	permissions?: { mode: "ask" | "edits" | "bypass"; onOpen: () => void } | undefined;
+	permissions?:
+		| {
+				mode: PermissionMode;
+				open: boolean;
+				onToggle: () => void;
+				onClose: () => void;
+				onChange: (mode: PermissionMode) => void;
+		  }
+		| undefined;
 }) {
+	const permissionTrigger = useRef<HTMLButtonElement>(null);
 	const [over, setOver] = useState<string | null>(null);
 	const current = models.find((entry) => entry.value === model);
 	const levels = current?.supportedEffortLevels ?? [];
@@ -90,17 +100,29 @@ export function EngineFooter({
 			</button>
 			{permissions === undefined ? null : (
 				<button
+					ref={permissionTrigger}
 					type="button"
 					data-permission-trigger=""
-					aria-label={`Agent permissions: ${permissions.mode}. Open settings`}
-					title={`Agent permissions: ${permissions.mode}. Change in settings.`}
-					onClick={permissions.onOpen}
+					aria-label={`Agent permissions: ${permissions.mode}`}
+					aria-haspopup="menu"
+					aria-expanded={permissions.open}
+					title={`Agent permissions: ${permissions.mode}`}
+					onClick={permissions.onToggle}
 					className={cn(QUIET, "relative z-30 flex shrink-0 items-center gap-1 py-1 text-muted hover:text-text")}
 				>
 					{permissions.mode}
-					<ChevronIcon open={false} className="h-2 w-2 shrink-0" />
+					<ChevronIcon open={permissions.open} className="h-2 w-2 shrink-0" />
 				</button>
 			)}
+			{permissions?.open ? (
+				<PermissionMenu
+					engine={engine}
+					mode={permissions.mode}
+					trigger={permissionTrigger}
+					onChange={permissions.onChange}
+					onClose={permissions.onClose}
+				/>
+			) : null}
 			{open ? (
 				<div
 					data-combined-menu=""
