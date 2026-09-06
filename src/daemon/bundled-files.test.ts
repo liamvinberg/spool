@@ -17,7 +17,7 @@ function fileOptions(
 		root,
 		session: { id },
 		permissions: "ask",
-		ask: { value: "openai/spool-test" },
+		ask: { value: "spool/openai/api_key/spool-test" },
 		said: [{ selection: "", prompt: `file tools: ${JSON.stringify(calls)}` }],
 	};
 }

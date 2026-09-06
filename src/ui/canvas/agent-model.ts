@@ -302,7 +302,10 @@ export function useAgentModel(project: string, thread: string, engine?: AgentEng
 
 	// the press only ever answers for the thread it was made about, so a rail that moved
 	// on draws the report it has rather than the last thread's finger
-	const offer = pressed === null || pressed.thread !== thread ? reported : pressedOffer(reported, pressed.ask);
+	const offer =
+		engine === "spool" || pressed === null || pressed.thread !== thread
+			? reported
+			: pressedOffer(reported, pressed.ask);
 
 	return {
 		...(engine === undefined ? {} : { engine }),

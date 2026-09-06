@@ -82,6 +82,7 @@ it("connects through the rendered canvas, preserves image and queued selection, 
 	await dialog.getByRole("button", { name: "Done", exact: true }).click();
 	expect(await field.inputValue()).toBe("keep this draft");
 	await page.getByRole("button", { name: "Choose engine and model" }).click();
+	await page.getByRole("button", { name: "All models", exact: true }).click();
 	await expect.poll(() => page.locator("[data-combined-menu]").textContent()).toContain("Test image model");
 	await shot("engine-combined-choosing");
 	await page.locator('[data-agent-model-row="Test image model"]').click();

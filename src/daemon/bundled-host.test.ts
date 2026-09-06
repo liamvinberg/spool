@@ -45,7 +45,7 @@ it("starts one lazy real host, stops on host failure and reopens the exact saved
 		root: makeTempDir(),
 		session: { id: randomUUID() },
 		said: [{ prompt: "hello", selection: "selection one" }],
-		ask: { value: "openai/spool-test" },
+		ask: { value: "spool/openai/api_key/spool-test" },
 		permissions: "ask" as const,
 	};
 	const first: AgentEvent[] = [];

@@ -21,7 +21,7 @@ function options(root: string, id = randomUUID(), prompt = "hello"): EngineTurnO
 				attachment: { media: "image/png", data: "aGVsbG8=" },
 			},
 		],
-		ask: { value: "openai/spool-test", effort: "high" },
+		ask: { value: "spool/openai/api_key/spool-test", effort: "high" },
 		permissions: "ask",
 	};
 }

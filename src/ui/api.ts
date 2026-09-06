@@ -1398,9 +1398,25 @@ export async function fetchAgentLogin(
 			query: { ...(engine === undefined ? {} : { engine }), ...(thread ? { thread } : {}) },
 		});
 		if (!res.ok) return null;
-		const login = (await res.json()) as { signedIn?: unknown; account?: unknown };
+		const login = (await res.json()) as { signedIn?: unknown; account?: unknown; connections?: unknown };
 		if (typeof login.signedIn !== "boolean") return null;
-		return { signedIn: login.signedIn, account: typeof login.account === "string" ? login.account : null };
+		const connections: NonNullable<AgentLogin["connections"]>[number][] = [];
+		if (Array.isArray(login.connections))
+			for (const value of login.connections) {
+				if (typeof value !== "object" || value === null) continue;
+				const entry = value as Record<string, unknown>;
+				if (
+					typeof entry.provider === "string" &&
+					(entry.method === "oauth" || entry.method === "api_key") &&
+					typeof entry.label === "string"
+				)
+					connections.push({ provider: entry.provider, method: entry.method, label: entry.label });
+			}
+		return {
+			signedIn: login.signedIn,
+			account: typeof login.account === "string" ? login.account : null,
+			...(Array.isArray(login.connections) ? { connections } : {}),
+		};
 	} catch {
 		return null;
 	}

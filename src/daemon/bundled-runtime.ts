@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type Api, getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
 	createAgentSession,
@@ -14,6 +14,7 @@ import type { EngineOfferOptions, EngineTurnOptions } from "./agent-engine";
 import type { AgentEvent } from "./agent-events";
 import type { AgentOffer } from "./agent-offer";
 import { BundledAuth } from "./bundled-auth";
+import { BundledCatalog } from "./bundled-catalog";
 import { BUNDLED_CONNECTIONS, connectionLabel } from "./bundled-connections";
 import { BundledFilePolicy, BundledFileTurn } from "./bundled-files";
 import type { BundledReply, BundledRequest } from "./bundled-protocol";
@@ -41,8 +42,10 @@ export class BundledRuntime {
 		readonly models: ModelRuntime,
 		private readonly persist = writePrivate,
 		private readonly idleMs = 60_000,
+		private readonly catalog?: BundledCatalog,
 	) {
 		privateDirectory(join(directory, "sessions"));
+		privateDirectory(join(directory, "offers"));
 		this.auth = new BundledAuth(models, credentials);
 		const anthropic = models.getProvider("anthropic");
 		if (anthropic?.auth.apiKey)
@@ -50,13 +53,17 @@ export class BundledRuntime {
 	}
 	static async create(directory: string): Promise<BundledRuntime> {
 		const credentials = new BundledCredentialStore(directory);
+		const catalog = new BundledCatalog(directory);
 		const models = await ModelRuntime.create({
 			credentials,
+			modelsStore: catalog,
 			modelsPath: null,
 			refreshOnCreate: false,
 			allowModelNetwork: false,
 		});
-		return new BundledRuntime(directory, credentials, models);
+		catalog.install(models);
+		await catalog.restore(models);
+		return new BundledRuntime(directory, credentials, models, writePrivate, 60_000, catalog);
 	}
 	private path(id: string): string {
 		if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
@@ -83,54 +90,86 @@ export class BundledRuntime {
 			`${[manager.getHeader(), ...manager.getEntries()].map((entry) => JSON.stringify(entry)).join("\n")}\n`,
 		);
 	}
-	private async available(): Promise<readonly Model<Api>[]> {
-		// The launch allowlist is explicit. A model cannot make another connection available.
+	private async available() {
 		const connections = await this.credentials.list();
 		return connections.flatMap((connection) =>
 			BUNDLED_CONNECTIONS.some((item) => item.provider === connection.providerId && item.method === connection.type)
-				? this.models.getModels(connection.providerId).filter((model) => model.input.includes("image"))
+				? this.models
+						.getModels(connection.providerId)
+						.filter((model) => model.input.includes("image"))
+						.map((model) => ({
+							model,
+							value: `spool/${connection.providerId}/${connection.type}/${model.id}`,
+							connection: connectionLabel(connection.providerId, connection.type),
+						}))
 				: [],
 		);
 	}
 	async offer(options: Omit<EngineOfferOptions, "signal">): Promise<AgentOffer> {
+		void this.catalog?.refresh(this.models);
 		const models = await this.available();
-		const connections = await this.credentials.list();
-		const label = (provider: string) =>
-			connectionLabel(provider, connections.find((item) => item.providerId === provider)?.type ?? "");
 		const saved = this.manager(options.root, options.session.id).buildSessionContext();
-		const wanted =
-			(models.some((model) => `${model.provider}/${model.id}` === options.choose?.value)
-				? options.choose?.value
-				: undefined) ??
-			options.ask.value ??
-			(saved.model === null ? undefined : `${saved.model.provider}/${saved.model.modelId}`);
+		const choicePath = join(this.directory, "offers", `${options.session.id}.json`);
+		const previous: { value?: string; effort?: string; name?: string; resolved?: string } = {};
+		if (existsSync(choicePath)) {
+			const data: unknown = JSON.parse(readFileSync(choicePath, "utf8"));
+			if (typeof data === "object" && data !== null) {
+				if ("value" in data && typeof data.value === "string") previous.value = data.value;
+				if ("effort" in data && typeof data.effort === "string") previous.effort = data.effort;
+				if ("name" in data && typeof data.name === "string") previous.name = data.name;
+				if ("resolved" in data && typeof data.resolved === "string") previous.resolved = data.resolved;
+			}
+		}
+		if (options.choose?.value !== undefined && !models.some((entry) => entry.value === options.choose?.value))
+			throw new Error("That model is not available through this connection");
+		const wanted = options.choose?.value ?? options.ask.value ?? previous.value;
 		const current =
 			wanted === undefined
-				? (models.find((model) => model.id === "gpt-6-astra") ?? models[0])
-				: models.find((model) => `${model.provider}/${model.id}` === wanted);
-		const levels =
-			current === undefined || !current.reasoning
-				? []
-				: getSupportedThinkingLevels(current).filter((level) => level !== "off");
-		const effort = options.choose?.effort ?? options.ask.effort ?? saved.thinkingLevel;
+				? (models.find((entry) => entry.model.id === "gpt-6-astra") ?? models[0])
+				: models.find((entry) => entry.value === wanted);
+		const levels = current?.model.reasoning
+			? getSupportedThinkingLevels(current.model).filter((level) => level !== "off")
+			: [];
+		const effort = options.choose?.effort ?? options.ask.effort ?? previous.effort ?? saved.thinkingLevel;
 		const chosenEffort =
-			levels.find((level) => level === effort) ?? levels.find((level) => level === "medium") ?? levels[0] ?? null;
+			current === undefined
+				? (previous.effort ?? null)
+				: (levels.find((level) => level === effort) ??
+					levels.find((level) => level === "medium") ??
+					levels[0] ??
+					null);
+		const value = current?.value ?? wanted ?? null;
+		if (value !== null) {
+			const next = {
+				value,
+				...((current?.model.name ?? previous.name) ? { name: current?.model.name ?? previous.name } : {}),
+				...((current?.model.id ?? previous.resolved) ? { resolved: current?.model.id ?? previous.resolved } : {}),
+				...(chosenEffort === null ? {} : { effort: chosenEffort }),
+			};
+			if (
+				next.value !== previous.value ||
+				next.name !== previous.name ||
+				next.resolved !== previous.resolved ||
+				next.effort !== previous.effort
+			)
+				this.persist(choicePath, JSON.stringify(next));
+		}
 		return {
-			models: models.map((model) => ({
-				value: `${model.provider}/${model.id}`,
+			models: models.map(({ model, value, connection }) => ({
+				value,
 				resolvedModel: model.id,
 				displayName: model.name,
-				description: `Uses your ${label(model.provider)} connection.`,
-				connection: label(model.provider),
+				description: `Uses your ${connection} connection.`,
+				connection,
 				supportsEffort: model.reasoning,
 				supportedEffortLevels: model.reasoning
 					? getSupportedThinkingLevels(model).filter((level) => level !== "off")
 					: [],
 			})),
 			current: {
-				value: current === undefined ? (wanted ?? null) : `${current.provider}/${current.id}`,
-				resolved: current?.id ?? saved.model?.modelId ?? null,
-				name: current?.name ?? null,
+				value,
+				resolved: current?.model.id ?? previous.resolved ?? null,
+				name: current?.model.name ?? previous.name ?? null,
 				effort: chosenEffort,
 				pin: null,
 			},
@@ -221,9 +260,7 @@ export class BundledRuntime {
 		let reason: string | null = null;
 		try {
 			const offer = await this.offer({ ...options, ask: options.ask });
-			const model = (await this.available()).find(
-				(candidate) => `${candidate.provider}/${candidate.id}` === offer.current.value,
-			);
+			const model = (await this.available()).find((candidate) => candidate.value === offer.current.value)?.model;
 			if (model === undefined) throw new Error("Connect an account and choose an available model");
 			held = this.sessions.get(ref);
 			if (held?.idle !== undefined) clearTimeout(held.idle);
@@ -362,6 +399,7 @@ export class BundledRuntime {
 		}
 	}
 	async close(): Promise<void> {
+		this.catalog?.close();
 		this.auth.close();
 		for (const active of this.active.values()) active.stopped = true;
 		for (const held of this.sessions.values()) {

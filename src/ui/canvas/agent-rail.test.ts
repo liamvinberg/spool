@@ -3951,6 +3951,69 @@ const warned: AgentEvent = {
 };
 
 describe("the model menu", () => {
+	it("organizes spool favorites in place and waits for the accepted account-scoped model before changing the footer", async () => {
+		const canvas = mount();
+		canvas.stored.served = [storedThread({ id: ONE, ask: "saved thread", engine: "spool", draft: "keep my draft" })];
+		canvas.offered.offer = {
+			models: [
+				{
+					value: "spool/openai/api_key/opus",
+					resolvedModel: "opus",
+					displayName: "Opus",
+					connection: "OpenAI API key",
+					description: "unused description",
+					supportsEffort: true,
+					supportedEffortLevels: ["low", "high"],
+				},
+				{
+					value: "spool/google/api_key/opus",
+					resolvedModel: "opus",
+					displayName: "Opus",
+					connection: "Google API key",
+					description: "unused description",
+					supportsEffort: false,
+					supportedEffortLevels: [],
+				},
+			],
+			current: { value: "spool/openai/api_key/opus", resolved: "opus", name: "Opus", effort: "high", pin: null },
+		};
+		await canvas.render();
+		await openModelMenu(canvas);
+		expect(menuSlot(canvas.host)).toBeNull();
+		const click = async (label: string) => {
+			const button = [...canvas.host.querySelectorAll<HTMLButtonElement>("button")].find(
+				(button) => button.textContent === label || button.getAttribute("aria-label") === label,
+			);
+			if (!button) throw new Error(`Missing ${label}`);
+			await act(async () => button.click());
+		};
+		await click("Favorite Opus through OpenAI API key");
+		await click("All models");
+		await click("Favorite Opus through Google API key");
+		await click("Favorites");
+		await click("Unfavorite Opus through OpenAI API key");
+		expect(canvas.host.querySelectorAll("[data-model-offer]")).toHaveLength(2);
+		expect(canvas.offered.chose).toHaveLength(0);
+		let release: (() => void) | undefined;
+		canvas.offered.hold = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		await act(async () =>
+			canvas.host
+				.querySelector<HTMLButtonElement>('[data-model-offer="spool/google/api_key/opus"] [data-agent-model-row]')
+				?.click(),
+		);
+		expect(modelMenu(canvas.host)).toBeNull();
+		expect(canvas.host.querySelector("[data-agent-model]")?.getAttribute("data-agent-model")).toBe("Opus · high");
+		await act(async () => release?.());
+		await until(() => canvas.host.querySelector("[data-agent-model]")?.getAttribute("data-agent-model") === "Opus");
+		await openModelMenu(canvas);
+		expect(canvas.host.querySelectorAll("[data-model-offer]")).toHaveLength(1);
+		expect(modelRows(canvas.host)).toEqual(["Opus"]);
+		expect(field(canvas.host)?.value).toBe("keep my draft");
+		expect(canvas.offered.chose).toEqual([{ thread: ONE, value: "spool/google/api_key/opus" }]);
+	});
+
 	it("is populated by the binary rather than by a table spool ships", async () => {
 		const canvas = mount();
 		await canvas.render();
